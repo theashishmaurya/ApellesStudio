@@ -28,6 +28,19 @@
  * tile defect D-128 removed. Two copies of these numbers drifting apart
  * would reintroduce it quietly, so there is exactly one.
  */
+/** The timeline library's own ruler-bar height, in px —
+ *  `.timeline-editor-time-area { height: 32px }` in its bundled
+ *  `react-timeline-editor.css`, read there rather than guessed.
+ *
+ *  A constant here rather than a literal at each site (D-222) because two
+ *  unrelated files now need the same number and must not disagree about it:
+ *  `TimelinePane.tsx` adds it to the marker strip's height to get
+ *  `RULER_AND_MARGIN_PX`, the origin every absolutely-positioned overlay and
+ *  the drop-target row math measure from, and `TimelineMarkers.tsx` uses it as
+ *  the strip's own `top`. It lives in this module, with the ruler's other
+ *  layout constants, rather than in either consumer — neither one owns it. */
+export const RULER_HEIGHT_PX = 32;
+
 export const MIN_PX_PER_SEC = 1;
 export const MAX_PX_PER_SEC = 480;
 export const DEFAULT_PX_PER_SEC = 90;

@@ -1549,6 +1549,7 @@ pub fn new_project_in(
             name: clean.clone(),
             rate: None,
             tracks: Vec::new(),
+            markers: Vec::new(),
         };
         manifest.timelines.push(timeline);
         manifest.active_timeline = manifest.timelines.len() - 1;
@@ -3053,6 +3054,7 @@ mod tests {
             name: "unify-add-shot".into(),
             rate: None,
             tracks: Vec::new(),
+            markers: Vec::new(),
         });
         manifest.active_timeline = 0;
 
@@ -3108,6 +3110,7 @@ mod tests {
             name: "x".into(),
             rate: None,
             tracks: Vec::new(),
+            markers: Vec::new(),
         });
         manifest.active_timeline = 0;
         let path = root.join("a.mov").to_string_lossy().to_string();
@@ -3177,6 +3180,7 @@ mod tests {
                 }],
                 ..Default::default()
             }],
+            markers: Vec::new(),
         });
 
         let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
@@ -3215,6 +3219,7 @@ mod tests {
             name: "x".into(),
             rate: None,
             tracks: Vec::new(),
+            markers: Vec::new(),
         });
 
         let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
@@ -3271,6 +3276,7 @@ mod tests {
                 clips: vec![clip("clip-a"), clip("clip-b")],
                 ..Default::default()
             }],
+            markers: Vec::new(),
         });
 
         let report = migrate_shot_grades_to_clips(&manifest, &grade_dir);
@@ -3323,6 +3329,7 @@ mod tests {
                 }],
                 ..Default::default()
             }],
+            markers: Vec::new(),
         });
 
         let first = migrate_shot_grades_to_clips(&manifest, &grade_dir);
@@ -3474,6 +3481,7 @@ mod tests {
                     ..Default::default()
                 },
             ],
+            markers: Vec::new(),
         });
         m.active_timeline = 0;
 

@@ -72,6 +72,7 @@ Pinned in `package.json`:
 | `ScrollArea`, `ScrollBar` | `@base-ui/react/scroll-area` | |
 | `Separator` | `@base-ui/react/separator` | |
 | `Input` | `@base-ui/react/input` | + `bgClassName` prop (default `bg-surface`) — back-compat |
+| `Textarea` | plain `<textarea>` | (Base UI has no textarea primitive — canonical for shadcn too). Classes mirror `Input` field for field, same `bgClassName` prop/default. Added D-222 |
 | `Label` | plain `<label>` | (Base UI has no Label primitive — canonical for shadcn too) |
 | `Collapsible`, `CollapsibleTrigger`, `CollapsibleContent` | `@base-ui/react/collapsible` | |
 | `Toaster` | `sonner` | theme via mapped CSS vars, no `next-themes` |

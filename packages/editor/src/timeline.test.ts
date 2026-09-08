@@ -12,6 +12,7 @@ import {
   clipAt,
   clipFromDraggedMedia,
   computeInsertion,
+  DEFAULT_MARKER_COLOR,
   endFrame,
   ensureAudioTrackWithRoom,
   FADE_PRESETS,
@@ -21,14 +22,19 @@ import {
   labelForOp,
   linkedClipIds,
   linkedClipsFromDraggedMedia,
+  MARKER_COLORS,
+  markersOf,
+  newMarker,
   nextAppendFrame,
   resolveClipLanding,
+  resolveMarkerColor,
   syncLinkedClipIds,
   syncLinkedClipIdsAtPosition,
   timelineDuration,
   trackDuration,
   trackIndexAfterMove,
   type Clip,
+  type Marker,
   type Timeline,
   type Track,
 } from './timeline';
@@ -2400,5 +2406,170 @@ describe('B-077 — mixed native-fps clips (source_fps vs. timelineFps)', () => 
     const x = after.tracks[0].clips.find((c) => c.id === 'x');
     expect(moved?.start_frame).toBe(300);
     expect(x?.start_frame).toBe(350); // rippled by 50 (the mover's real footprint), not 100
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-222 — timeline markers (roadmap item 27)
+// ---------------------------------------------------------------------------
+
+describe('newMarker / resolveMarkerColor (D-222)', () => {
+  it('builds a marker with a generated id, the default colour and no name/note', () => {
+    const m = newMarker(120);
+    expect('error' in m).toBe(false);
+    if ('error' in m) return;
+    expect(m.frame).toBe(120);
+    expect(m.color).toBe(DEFAULT_MARKER_COLOR);
+    expect(m.id).toMatch(/^marker-/);
+    expect(m.name).toBeUndefined();
+    expect(m.note).toBeUndefined();
+  });
+
+  it('resolves a palette NAME and a raw hex to the same kind of #RRGGBB', () => {
+    expect(resolveMarkerColor('red')).toBe(MARKER_COLORS.find((c) => c.name === 'red')?.hex);
+    expect(resolveMarkerColor('RED')).toBe(MARKER_COLORS.find((c) => c.name === 'red')?.hex);
+    expect(resolveMarkerColor('#abc')).toBe('#ABC');
+    expect(resolveMarkerColor('a1b2c3')).toBe('#A1B2C3');
+    expect(resolveMarkerColor(null)).toBe(DEFAULT_MARKER_COLOR);
+  });
+
+  it('rejects a colour that is neither a palette name nor a hex, naming the palette', () => {
+    const r = resolveMarkerColor('chartreuse');
+    expect(r).toHaveProperty('error');
+    if (typeof r === 'string') return;
+    expect(r.error).toContain('chartreuse');
+    expect(r.error).toContain('lavender');
+  });
+
+  it('floors the frame at 0, rounds it, and drops a whitespace-only name/note', () => {
+    const m = newMarker(-7.6, 'green', '   ', '\n');
+    if ('error' in m) throw new Error(m.error);
+    expect(m.frame).toBe(0);
+    expect(m.name).toBeUndefined();
+    expect(m.note).toBeUndefined();
+
+    const m2 = newMarker(41.4, 'green', '  sync point  ', ' clap ');
+    if ('error' in m2) throw new Error(m2.error);
+    expect(m2.frame).toBe(41);
+    expect(m2.name).toBe('sync point');
+    expect(m2.note).toBe('clap');
+  });
+
+  it('rejects a non-finite frame rather than writing NaN into the document', () => {
+    expect(newMarker(Number.NaN)).toHaveProperty('error');
+  });
+});
+
+describe('add_marker / remove_marker / set_marker ops (D-222)', () => {
+  const mk = (id: string, frame: number, over: Partial<Marker> = {}): Marker => ({
+    id,
+    frame,
+    color: DEFAULT_MARKER_COLOR,
+    ...over,
+  });
+
+  it('a pre-D-222 timeline (no `markers` key at all) takes a marker without error', () => {
+    const before = tl(backToBack());
+    expect(before.markers).toBeUndefined();
+    const after = applyOp(before, { kind: 'add_marker', marker: mk('m1', 50) });
+    expect(after.markers).toEqual([mk('m1', 50)]);
+    // …and the original is untouched — `applyOp` clones, never mutates.
+    expect(before.markers).toBeUndefined();
+  });
+
+  it('markersOf reads an absent list as empty and sorts an unsorted one', () => {
+    expect(markersOf(tl(backToBack()))).toEqual([]);
+    const unsorted: Timeline = { ...tl(backToBack()), markers: [mk('b', 90), mk('a', 10)] };
+    expect(markersOf(unsorted).map((m) => m.id)).toEqual(['a', 'b']);
+  });
+
+  it('keeps the list sorted by frame on insert, stably on a tie', () => {
+    let t: Timeline = tl(backToBack());
+    for (const [id, frame] of [
+      ['c', 200],
+      ['a', 10],
+      ['b', 90],
+      ['b2', 90],
+    ] as const) {
+      t = applyOp(t, { kind: 'add_marker', marker: mk(id, frame) });
+    }
+    expect(t.markers?.map((m) => m.id)).toEqual(['a', 'b', 'b2', 'c']);
+  });
+
+  it('remove_marker deletes exactly one, and an unknown id is a no-op (same object back)', () => {
+    const before: Timeline = { ...tl(backToBack()), markers: [mk('a', 10), mk('b', 90)] };
+    const after = applyOp(before, { kind: 'remove_marker', id: 'a' });
+    expect(after.markers?.map((m) => m.id)).toEqual(['b']);
+    expect(applyOp(before, { kind: 'remove_marker', id: 'nope' })).toBe(before);
+  });
+
+  it('set_marker patches only the named fields, re-sorting after a frame move', () => {
+    const before: Timeline = {
+      ...tl(backToBack()),
+      markers: [mk('a', 10, { name: 'one', note: 'n' }), mk('b', 90)],
+    };
+    const after = applyOp(before, { kind: 'set_marker', id: 'a', patch: { frame: 150 } });
+    expect(after.markers?.map((m) => m.id)).toEqual(['b', 'a']);
+    const a = after.markers?.find((m) => m.id === 'a');
+    expect(a?.frame).toBe(150);
+    // untouched fields survive the patch
+    expect(a?.name).toBe('one');
+    expect(a?.note).toBe('n');
+    expect(a?.color).toBe(DEFAULT_MARKER_COLOR);
+  });
+
+  it('set_marker clears a name/note on an explicit null (and on an empty string), but not on an absent key', () => {
+    const before: Timeline = { ...tl(backToBack()), markers: [mk('a', 10, { name: 'one', note: 'n' })] };
+    const cleared = applyOp(before, { kind: 'set_marker', id: 'a', patch: { name: null } });
+    expect(cleared.markers?.[0].name).toBeUndefined();
+    expect(cleared.markers?.[0].note).toBe('n'); // absent key left alone
+
+    const clearedByEmpty = applyOp(before, { kind: 'set_marker', id: 'a', patch: { note: '  ' } });
+    expect(clearedByEmpty.markers?.[0].note).toBeUndefined();
+    expect(clearedByEmpty.markers?.[0].name).toBe('one');
+  });
+
+  it('set_marker resolves a colour NAME, and ignores an unresolvable one rather than storing it', () => {
+    const before: Timeline = { ...tl(backToBack()), markers: [mk('a', 10)] };
+    const named = applyOp(before, { kind: 'set_marker', id: 'a', patch: { color: 'red' } });
+    expect(named.markers?.[0].color).toBe(MARKER_COLORS.find((c) => c.name === 'red')?.hex);
+    const bad = applyOp(before, { kind: 'set_marker', id: 'a', patch: { color: 'chartreuse' } });
+    expect(bad.markers?.[0].color).toBe(DEFAULT_MARKER_COLOR);
+  });
+
+  it('set_marker floors a negative frame at 0 and ignores a NaN one', () => {
+    const before: Timeline = { ...tl(backToBack()), markers: [mk('a', 10)] };
+    expect(applyOp(before, { kind: 'set_marker', id: 'a', patch: { frame: -5 } }).markers?.[0].frame).toBe(0);
+    expect(applyOp(before, { kind: 'set_marker', id: 'a', patch: { frame: Number.NaN } }).markers?.[0].frame).toBe(10);
+  });
+
+  it('set_marker on an unknown id is a no-op (same object back)', () => {
+    const before: Timeline = { ...tl(backToBack()), markers: [mk('a', 10)] };
+    expect(applyOp(before, { kind: 'set_marker', id: 'nope', patch: { frame: 5 } })).toBe(before);
+  });
+
+  it('a marker survives the clip under it being trimmed, moved and removed — the whole point of living on the Timeline', () => {
+    const before: Timeline = { ...tl(backToBack()), markers: [mk('a', 120, { name: 'cut here' })] };
+    let t = applyOp(before, { kind: 'trim_start', track: 0, clip: 1, delta: 20 });
+    t = applyOp(t, { kind: 'move', fromTrack: 0, toTrack: 0, clip: 1, startFrame: 400 });
+    t = applyOp(t, { kind: 'remove', track: 0, clip: 1 });
+    expect(t.markers).toEqual([mk('a', 120, { name: 'cut here' })]);
+  });
+
+  it('a marker is untouched by track-level ops, including removing the track it sat over', () => {
+    const before: Timeline = { ...tl(backToBack()), markers: [mk('a', 50)] };
+    const after = applyOp(applyOp(before, { kind: 'add_track', trackKind: 'audio' }), {
+      kind: 'remove_track',
+      track: 0,
+    });
+    expect(after.markers).toEqual([mk('a', 50)]);
+  });
+
+  it('labelForOp names the marker for all three ops', () => {
+    const before: Timeline = { ...tl(backToBack()), markers: [mk('a', 10, { name: 'sync' }), mk('b', 90)] };
+    expect(labelForOp({ kind: 'add_marker', marker: mk('c', 5, { name: 'new' }) }, before)).toBe('Add marker "new"');
+    expect(labelForOp({ kind: 'add_marker', marker: mk('c', 5) }, before)).toBe('Add marker at 5');
+    expect(labelForOp({ kind: 'remove_marker', id: 'a' }, before)).toBe('Remove marker "sync"');
+    expect(labelForOp({ kind: 'set_marker', id: 'b', patch: { color: 'red' } }, before)).toBe('Edit marker at 90');
   });
 });

@@ -97,6 +97,18 @@
 //! why they are normalised to the source rather than pixels, and flat
 //! scalars rather than a nested rect.
 
+//! **Timeline markers (D-222, roadmap item 27):** [`Timeline::markers`] — a
+//! flat list of [`Marker`]s, each an id + a TIMELINE frame + a colour + an
+//! optional name/note. They hang off the *timeline*, not off a [`Clip`],
+//! because a marker names a position in the edit and must survive the clip
+//! beneath it being trimmed, moved to another track or deleted (see the
+//! field's own doc). This crate carries and round-trips them and nothing
+//! more: a marker is an annotation, never a render input, so no compositor,
+//! mixer or exporter consults one. The edit ops that add/remove/patch them
+//! live in `@chroma/editor`'s `timeline.ts` alongside every other op that
+//! actually runs (`chroma_timeline_set` stores what the frontend sends
+//! verbatim — D-058's own note above).
+
 use serde::{Deserialize, Serialize};
 
 use chroma_types::Rational;
@@ -158,6 +170,61 @@ pub struct Timeline {
     /// Output timebase (frame rate) for the assembled edit.
     pub rate: Option<Rational>,
     pub tracks: Vec<Track>,
+    /// **Timeline-anchored annotations (D-222, roadmap item 27).** Colour-coded
+    /// flags at a frame position — "client wants a cut here", "sync point",
+    /// "VFX shot start" — drawn on their own strip beside the ruler.
+    ///
+    /// **On the `Timeline`, not on a `Clip`, and that is the whole point.** A
+    /// marker names a position in the *edit*, not a moment in some piece of
+    /// media: it has to survive the clip underneath it being trimmed, moved to
+    /// another track, or deleted outright, which a `Clip`-owned field could not.
+    /// Same reasoning that put `gain`/`duck_from` on [`Track`] rather than on
+    /// its clips — the owner is whichever level the thing is actually a
+    /// property of. (DaVinci Resolve does have per-clip markers as well as
+    /// timeline ones; only the timeline kind is in scope here — see D-222.)
+    ///
+    /// **`#[serde(default)]`, and a bare one is correct here** (unlike
+    /// [`Track::gain`]'s `default = "default_track_gain"`): `Vec::default()` is
+    /// the empty vec, and "a project saved before markers existed has no
+    /// markers" is exactly right — no silent behaviour change, no migration.
+    ///
+    /// This crate never reads it: a marker is an annotation, not a render
+    /// input, so nothing in the compositor, the mixer or the exporter consults
+    /// it. It is stored, round-tripped and shown.
+    #[serde(default)]
+    pub markers: Vec<Marker>,
+}
+
+/// One timeline marker (D-222) — see [`Timeline::markers`] for why these hang
+/// off the timeline rather than off a clip.
+///
+/// Deliberately **flat and dumb**: an id, a frame, a colour string, and two
+/// optional strings. There is no duration (Resolve's own marker dialog has one,
+/// for a range marker; out of scope for this pass — see D-222) and no keyword
+/// field. `color` is a plain string rather than an enum so the palette can grow
+/// without a schema migration, and so an MCP caller can pass a raw hex; the
+/// GUI's own swatch row is `@chroma/editor/timeline.ts`'s `MARKER_COLORS`, the
+/// one place the named palette is defined.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Marker {
+    /// Stable id — how the `remove_marker`/`set_marker` edit ops name one.
+    pub id: String,
+    /// TIMELINE frame this marker is pinned to (the same space as
+    /// [`Clip::start_frame`], never a clip's own source frames).
+    pub frame: i64,
+    /// The flag's colour, as a CSS colour string (the GUI writes a `#RRGGBB`
+    /// from its own named palette). Not a `--color-*` theme token: this is
+    /// document content the user chose and that must mean the same thing in
+    /// every theme, not app chrome — see D-222.
+    pub color: String,
+    /// Short title, shown next to the flag. `None`/absent is a perfectly
+    /// ordinary unnamed marker (`skip_serializing_if`, matching
+    /// [`Clip::shot_id`]'s own convention for an absent optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Longer free-text note, shown only in the marker's own popover.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// One track: a typed, ordered lane of clips.
@@ -1294,6 +1361,7 @@ impl Timeline {
                 clips,
                 ..Default::default()
             }],
+            markers: Vec::new(),
         }
     }
 
@@ -3441,6 +3509,91 @@ mod tests {
         );
     }
 
+    // ---- D-222: timeline markers -----------------------------------------
+
+    /// The backward-compatibility guarantee `Timeline::markers`'s
+    /// `#[serde(default)]` exists for: a `project.json` written before D-222
+    /// has no `markers` key at all, and must load as a timeline with NO
+    /// markers rather than as a hard deserialization error.
+    #[test]
+    fn timeline_markers_default_to_empty_on_pre_d222_json() {
+        let j = r#"{"id":"t1","name":"Timeline 1","rate":null,"tracks":[]}"#;
+        let tl: Timeline = serde_json::from_str(j).expect("pre-D-222 JSON must still load");
+        assert!(tl.markers.is_empty());
+        assert_eq!(tl.id, "t1");
+    }
+
+    /// …including a pre-D-222 timeline that has real content on it, so the
+    /// default cannot be passing only because everything else was empty too.
+    #[test]
+    fn timeline_markers_default_to_empty_alongside_real_tracks() {
+        let j = r#"{"id":"t1","name":"T","rate":{"num":24,"den":1},"tracks":[
+            {"kind":"video","clips":[{"id":"c1","name":"A","source_path":"/a.mov",
+             "source_start":0,"duration":40,"source_len":40,"start_frame":0}]}]}"#;
+        let tl: Timeline = serde_json::from_str(j).expect("pre-D-222 JSON must still load");
+        assert!(tl.markers.is_empty());
+        assert_eq!(tl.tracks.len(), 1);
+        assert_eq!(tl.tracks[0].clips.len(), 1);
+    }
+
+    /// A marker round-trips verbatim, and an absent `name`/`note` is omitted
+    /// from the wire rather than written as `null` — `Clip::shot_id`'s own
+    /// `skip_serializing_if` convention, applied to the same shape of field.
+    #[test]
+    fn timeline_markers_round_trip_through_serde() {
+        let tl = Timeline {
+            id: "t1".into(),
+            name: "T".into(),
+            rate: None,
+            tracks: Vec::new(),
+            markers: vec![
+                Marker {
+                    id: "m1".into(),
+                    frame: 120,
+                    color: "#D9434E".into(),
+                    name: Some("cut here".into()),
+                    note: Some("client note".into()),
+                },
+                Marker {
+                    id: "m2".into(),
+                    frame: 5,
+                    color: "#3B8FE3".into(),
+                    name: None,
+                    note: None,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&tl).unwrap();
+        assert!(json.contains("\"frame\":120"), "{json}");
+        assert!(json.contains("\"name\":\"cut here\""), "{json}");
+        let back: Timeline = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.markers, tl.markers);
+
+        let m2_json = serde_json::to_string(&tl.markers[1]).unwrap();
+        assert!(
+            !m2_json.contains("name") && !m2_json.contains("note"),
+            "an unnamed marker omits both optional keys entirely: {m2_json}"
+        );
+    }
+
+    /// The list is stored in whatever order it is handed — this crate does no
+    /// sorting of its own (`chroma_timeline_set` stores verbatim; the ordering
+    /// contract lives in `@chroma/editor`'s `applyOp`, see `markersOf`). Pinned
+    /// so a future "helpfully sort on load" change has to be a deliberate one.
+    #[test]
+    fn timeline_markers_preserve_wire_order() {
+        // `r##"…"##`, not `r#"…"#` — a `#RRGGBB` colour followed by a quote
+        // would otherwise close a single-hash raw string early.
+        let j = r##"{"id":"t","name":"T","rate":null,"tracks":[],"markers":[
+            {"id":"b","frame":90,"color":"#111111"},
+            {"id":"a","frame":10,"color":"#222222"}]}"##;
+        let tl: Timeline = serde_json::from_str(j).unwrap();
+        assert_eq!(
+            tl.markers.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["b", "a"]
+        );
+    }
+
     /// Legacy JSON (every pre-unify-clip-model `project.json` clip, and every
     /// clip `Timeline::from_shots` builds) has no `media_id` key at all —
     /// must deserialize to `None`, not error, and no migration is needed.
@@ -3808,6 +3961,7 @@ mod tests {
             name: "t".into(),
             rate: None,
             tracks: vec![mk(track0), mk(track1)],
+            markers: Vec::new(),
         }
     }
 
@@ -3959,6 +4113,7 @@ mod tests {
             name: "t".into(),
             rate: None,
             tracks: vec![mk(TrackKind::Video, vec![v]), mk(TrackKind::Audio, vec![a])],
+            markers: Vec::new(),
         }
     }
 
@@ -4450,6 +4605,7 @@ mod tests {
             name: "t".into(),
             rate: None,
             tracks: vec![mk(TrackKind::Video, vec![v]), mk(TrackKind::Audio, vec![a])],
+            markers: Vec::new(),
         }
     }
 

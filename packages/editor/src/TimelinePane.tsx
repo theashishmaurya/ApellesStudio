@@ -166,6 +166,21 @@
  * see `ClipFadeOverlay.tsx`'s own doc for the full coexistence story, and
  * `clipFade.ts` for the pure geometry, which is where all of the math lives.
  *
+ * D-222 (timeline markers) — a FOURTH interactive surface on this pane, and
+ * the first that lives in the ruler band rather than over the tracks:
+ * `MarkerStrip` (`TimelineMarkers.tsx`) draws one coloured flag per
+ * `Timeline.markers` entry in the gap between the library's 32px ruler and
+ * track row 0, which `timeline-overrides.css` widens to `MARKER_STRIP_HEIGHT`
+ * for the purpose — so `RULER_AND_MARGIN_PX` is now derived from that
+ * constant instead of being the library's own fixed 42. It cannot collide
+ * with the marquee (D-137), the clip drag (D-098) or the fade handles
+ * (D-207): the strip carries `data-chroma-no-marquee`, the escape hatch
+ * `marquee.ts` already documents, and its flags are distinct hit targets that
+ * stop their own presses — the same "separated by DOM position" principle,
+ * not by ordering or precedence. Everything else in the strip is
+ * `pointer-events-none`, so an ordinary press in that band still reaches the
+ * library beneath it.
+ *
  * D-058 (ruler): tick labels are real timecode (`ruler.ts`'s
  * `formatTimecode`, `HH:MM:SS` or `HH:MM:SS:FF` depending on the current
  * tick density) via `getScaleRender`, and the labeled-tick interval
@@ -266,6 +281,12 @@ import {
 } from '@chroma/ui';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
+import {
+  AddMarkerButton,
+  MarkerListMenu,
+  MarkerStrip,
+  MARKER_STRIP_HEIGHT,
+} from './TimelineMarkers';
 import { Waveform } from './Waveform';
 import { Filmstrip } from './Filmstrip';
 import { ClipFadeOverlay } from './ClipFadeOverlay';
@@ -276,6 +297,7 @@ import {
   MIN_PX_PER_SEC,
   MAX_PX_PER_SEC,
   DEFAULT_PX_PER_SEC,
+  RULER_HEIGHT_PX,
 } from './ruler';
 import {
   CHROMA_MEDIA_DRAG_MIME,
@@ -290,6 +312,7 @@ import {
   gapAt,
   linkedClipIds,
   linkedClipsFromDraggedMedia,
+  newMarker,
   newTextClipFields,
   newTextLayer,
   resolveClipLanding,
@@ -341,12 +364,19 @@ const RIPPLE_FLASH_MS = 550;
 const HEADER_WIDTH = 156;
 const HEADER_MIN_WIDTH = 110;
 const HEADER_MAX_WIDTH = 340;
-/** `.timeline-editor-time-area` (32px, the ruler bar) + `.timeline-editor-
- *  edit-area`'s `margin-top` (10px) — read from the library's own bundled
- *  CSS (`react-timeline-editor.css`), not guessed, since `dropTargetTrack`
- *  (D-080) needs to know exactly where row 0 actually starts on screen to
- *  convert a drop's `clientY` into a track index. */
-const RULER_AND_MARGIN_PX = 42;
+/** The ruler bar (`ruler.ts`'s `RULER_HEIGHT_PX`) + `.timeline-editor-edit-
+ *  area`'s `margin-top`, i.e. exactly
+ *  where row 0 starts on screen — which `dropTargetTrack` (D-080) and every
+ *  absolutely-positioned overlay in this file need in order to convert a
+ *  `clientY` into a track index (and back).
+ *
+ *  D-222 — that margin is the library's own 10px NO LONGER: the marker strip
+ *  lives in it, and `timeline-overrides.css` widens it to
+ *  `MARKER_STRIP_HEIGHT` via the `--chroma-marker-strip-height` custom
+ *  property this pane sets. One definition, in `TimelineMarkers.tsx`, read by
+ *  both the CSS and this constant — see that file and the override's own
+ *  comment. */
+const RULER_AND_MARGIN_PX = RULER_HEIGHT_PX + MARKER_STRIP_HEIGHT;
 /** The library's own `startLeft` prop (px before frame 0) — kept as a named
  *  constant (D-095) since `xToFrame` below needs the exact same value the
  *  `<TimelineEditor startLeft={...}>` prop uses to convert a drop's
@@ -2089,6 +2119,20 @@ export function TimelinePane() {
     }
   };
 
+  /** D-222 — drop a marker at the playhead. Not clip-scoped and never
+   *  refused: a marker annotates a POSITION in the edit, so there is nothing
+   *  to select first and no track lock to respect (see `Timeline.markers`).
+   *  `newMarker` owns id generation and the default colour, so this button and
+   *  `editor_add_marker` build an identical marker. */
+  const doAddMarker = () => {
+    const marker = newMarker(playhead);
+    // `newMarker` only rejects a caller-supplied colour or a non-finite frame;
+    // this call site passes neither, so the guard is a type narrow, not a real
+    // branch (same shape as `doAddTitle`'s own `newTextLayer` guard above).
+    if ('error' in marker) return;
+    applyOp({ kind: 'add_marker', marker });
+  };
+
   /** D-128 — break the selected clip's A/V link so its halves can be edited
    *  independently (the L-cut/J-cut workflow: unlink, slip one half). The
    *  same explicit action both reference NLEs expose (Premiere `Clip >
@@ -2588,8 +2632,30 @@ export function TimelinePane() {
           'flex flex-col min-h-0 h-full bg-bg-primary outline-none ' +
           (dragOver ? 'ring-2 ring-inset ring-accent' : '')
         }
+        // D-222 — the one place `MARKER_STRIP_HEIGHT` crosses into CSS:
+        // `timeline-overrides.css` widens the timeline library's own
+        // ruler/edit-area gap to exactly this, so the strip has room and
+        // `RULER_AND_MARGIN_PX` (which every overlay's `top` is measured from)
+        // stays true. Set here rather than written as a literal in the
+        // stylesheet so there is a single definition of the number.
+        style={{ '--chroma-marker-strip-height': `${MARKER_STRIP_HEIGHT}px` } as CSSProperties}
         tabIndex={0}
         onKeyDown={(e) => {
+          // D-222 — `M` drops a marker at the playhead, the shortcut DaVinci
+          // Resolve, Premiere and Final Cut all bind to exactly this action.
+          // Guarded on the modifiers being clear so it can never shadow a
+          // system/browser chord (⌘M minimises on macOS), and on the press not
+          // coming from a text field — this pane's toolbar and its popovers
+          // contain real `<input>`s, and typing "m" in one must type an "m".
+          if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            const el = e.target as HTMLElement | null;
+            const tag = el?.tagName;
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA' && el?.isContentEditable !== true) {
+              e.preventDefault();
+              doAddMarker();
+              return;
+            }
+          }
           if (e.key === 'Delete' || e.key === 'Backspace') {
             // D-105 — a selected gap takes the same Delete/Backspace as a
             // selected clip; the two are mutually exclusive (see
@@ -2644,6 +2710,12 @@ export function TimelinePane() {
               and colour in the Inspector
             </TooltipContent>
           </Tooltip>
+          {/* D-222 — markers. The add action sits with Title above (both are
+              "put something new at the playhead", neither is selection-scoped);
+              the jump list appears beside it only once there is something to
+              jump to. */}
+          <AddMarkerButton onAdd={doAddMarker} shortcut="M" />
+          <MarkerListMenu timeline={timeline} fps={fps} onJump={setPlayhead} />
           <Tooltip>
             <TooltipTrigger
               render={
@@ -3098,6 +3170,27 @@ export function TimelinePane() {
             {tracks.map((_, i) => (
               <TrackDropZone key={i} track={i} top={RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop} height={ROW_HEIGHT} />
             ))}
+            {/* D-222 — the marker flag strip, in the band between the ruler's
+                ticks and track row 0 (`timeline-overrides.css` widened that
+                band to fit it). Last in this container so it paints over the
+                row lines and drag ghosts: a marker must stay visible while a
+                clip is being dragged past it. NOT scroll-offset here — it
+                takes `scrollLeft` and derives each flag's own x, exactly like
+                every other overlay above, and it is pinned vertically (a
+                marker belongs to the ruler, not to a scrolled track row), so
+                `scrollTop` is deliberately not applied. */}
+            {timeline && (
+              <MarkerStrip
+                timeline={timeline}
+                fps={fps}
+                pxPerSec={pxPerSec}
+                scrollLeft={scrollLeft}
+                startLeftPx={START_LEFT_PX}
+                onJump={setPlayhead}
+                onPatch={(id, patch) => applyOp({ kind: 'set_marker', id, patch })}
+                onRemove={(id) => applyOp({ kind: 'remove_marker', id })}
+              />
+            )}
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>

@@ -42,6 +42,15 @@
  * dragging onto this timeline already carries the pool-item link
  * `chroma::project`'s grade-file migration and "add to grading" convenience
  * both key off.
+ *
+ * D-222 (timeline markers, roadmap item 27): `Timeline.markers` +
+ * `add_marker`/`remove_marker`/`set_marker`. Markers are real document
+ * content — persisted and undoable through the ordinary `EditOp` path —
+ * unlike D-216's `selection` and D-218's `previewView`, which are store-only
+ * view state; the ops' own docs spell out why that split falls where it does.
+ * `newMarker`/`resolveMarkerColor`/`MARKER_COLORS` are the shared
+ * construction path the ruler's flag strip and the `editor_*_marker` MCP ops
+ * both go through.
  */
 
 export interface Rational {
@@ -539,6 +548,128 @@ export interface Timeline {
   name: string;
   rate?: Rational | null;
   tracks: Track[];
+  /** D-222 — timeline-anchored annotations (roadmap item 27). Mirrors
+   *  `chroma_timeline::Timeline::markers`, whose `#[serde(default)]` is why
+   *  this is optional here: a `project.json` written before markers existed
+   *  has no key at all, and every read below treats absent and `[]` the same.
+   *  Kept **sorted by `frame`** by `applyOp` — see the `add_marker` op. */
+  markers?: Marker[];
+}
+
+/** One timeline marker (D-222) — a colour-coded flag pinned to a TIMELINE
+ *  frame, independent of any clip. Mirrors `chroma_timeline::Marker`
+ *  field-for-field (serde snake_case; the type has no multi-word field, so
+ *  the two spellings coincide).
+ *
+ *  **On the `Timeline`, not on a `Clip`, deliberately** — see the Rust type's
+ *  own doc: a marker names a position in the edit and must survive the clip
+ *  under it being trimmed, moved or deleted. */
+export interface Marker {
+  id: string;
+  /** TIMELINE frame — the same space as `Clip.start_frame`, never source frames. */
+  frame: number;
+  /** CSS colour string; the GUI writes a `#RRGGBB` from [`MARKER_COLORS`]. */
+  color: string;
+  name?: string;
+  note?: string;
+}
+
+/** The marker swatch palette — DaVinci Resolve's own sixteen marker colours,
+ *  in its own order, read off the real Markers dialog in
+ *  `scratch/resolve-reference/markers.jpg` (CLAUDE.md's "research the real
+ *  pattern first" rule; cited in D-222).
+ *
+ *  **Why literal hexes and not `--color-*` tokens**, given CLAUDE.md's "one
+ *  token source" rule: a marker's colour is *document content* — a choice the
+ *  user made, persisted into `project.json`, and carrying meaning ("red = fix
+ *  this", "green = approved") that must stay the same colour in every theme
+ *  and in a colleague's copy of the project. Theme tokens are app chrome and
+ *  change with the theme; binding document data to one would silently
+ *  recolour a marker set when the theme changed. This constant is the single
+ *  named source for the palette, so there is still exactly one definition —
+ *  which is what that rule is actually protecting. */
+export const MARKER_COLORS: ReadonlyArray<{ name: string; hex: string }> = [
+  { name: 'blue', hex: '#3B8FE3' },
+  { name: 'cyan', hex: '#3FC7D4' },
+  { name: 'green', hex: '#4CAF50' },
+  { name: 'yellow', hex: '#E5A93B' },
+  { name: 'red', hex: '#D9434E' },
+  { name: 'pink', hex: '#E255A6' },
+  { name: 'purple', hex: '#8A5CD6' },
+  { name: 'fuchsia', hex: '#C13BC1' },
+  { name: 'rose', hex: '#E88AA8' },
+  { name: 'lavender', hex: '#A79BE0' },
+  { name: 'sky', hex: '#7FC4EE' },
+  { name: 'mint', hex: '#8FD9A8' },
+  { name: 'lemon', hex: '#D9D96B' },
+  { name: 'sand', hex: '#A9793F' },
+  { name: 'cocoa', hex: '#7A5A47' },
+  { name: 'cream', hex: '#EFE9DC' },
+];
+
+/** The colour a marker gets when the caller didn't name one — Resolve's own
+ *  default (the first swatch, Blue). */
+export const DEFAULT_MARKER_COLOR = MARKER_COLORS[0].hex;
+
+/** Resolve a caller-supplied colour to a real `#RRGGBB`: a palette NAME
+ *  (`"red"`), a raw `#RGB`/`#RRGGBB` hex, or absent for the default. Returns
+ *  `{ error }` for anything else rather than silently substituting, matching
+ *  [`newTextLayer`]'s own convention — this is the one place the GUI's swatch
+ *  row and `editor_add_marker`/`editor_set_marker` both resolve a colour, so
+ *  the two can never disagree about what `"red"` means. */
+export function resolveMarkerColor(color?: string | null): string | { error: string } {
+  if (color == null || color === '') return DEFAULT_MARKER_COLOR;
+  const named = MARKER_COLORS.find((c) => c.name === color.toLowerCase());
+  if (named) return named.hex;
+  if (/^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) {
+    return color.startsWith('#') ? color.toUpperCase() : `#${color.toUpperCase()}`;
+  }
+  return {
+    error: `color must be a palette name (${MARKER_COLORS.map((c) => c.name).join(' | ')}) or a #RGB/#RRGGBB hex, got "${color}"`,
+  };
+}
+
+/** Build a valid [`Marker`] — the ONE construction path, shared by the
+ *  timeline's own "Add marker" button/`M` shortcut and the `editor_add_marker`
+ *  MCP op (CLAUDE.md: "the same op/store action underneath both"). Returns
+ *  `{ error }` on a bad colour, like [`newTextLayer`] does; `frame` is floored
+ *  at 0 and rounded, since a marker before the start of the timeline is not a
+ *  position a user can mean. An empty/whitespace `name`/`note` is dropped
+ *  rather than stored as `""`, so "unnamed" has exactly one representation. */
+export function newMarker(
+  frame: number,
+  color?: string | null,
+  name?: string | null,
+  note?: string | null,
+): Marker | { error: string } {
+  const hex = resolveMarkerColor(color);
+  if (typeof hex !== 'string') return hex;
+  if (!Number.isFinite(frame)) return { error: 'frame must be a finite number of timeline frames' };
+  const marker: Marker = {
+    id: `marker-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    frame: Math.max(0, Math.round(frame)),
+    color: hex,
+  };
+  const trimmedName = name?.trim();
+  if (trimmedName) marker.name = trimmedName;
+  const trimmedNote = note?.trim();
+  if (trimmedNote) marker.note = trimmedNote;
+  return marker;
+}
+
+/** Every marker on `tl`, sorted by frame — the read-side counterpart to
+ *  `applyOp`'s own sorted writes, so a caller that got its `Timeline` from
+ *  somewhere else (a hand-built fixture, a pre-D-222 `project.json` an MCP
+ *  client wrote by hand) still sees them in ruler order. */
+export function markersOf(tl: Timeline | null | undefined): Marker[] {
+  return sortedMarkers(tl?.markers ?? []);
+}
+
+/** Frame order, stable on ties — the one sort the marker ops and
+ *  [`markersOf`] share, so the write-side invariant and the read-side
+ *  fallback can never disagree about ordering. */
+function sortedMarkers(markers: readonly Marker[]): Marker[] {
+  return [...markers].sort((a, b) => a.frame - b.frame);
 }
 
 export const DEFAULT_FPS = 24;
@@ -1580,13 +1711,62 @@ export type EditOp =
    *  changing. A patch that fails validation (multi-line content, a bad
    *  colour) is a no-op — the caller is expected to have run `newTextLayer`
    *  itself to get the real error message. */
-  | { kind: 'set_text_clip'; track: number; clip: number; patch: Partial<TextLayer> };
+  | { kind: 'set_text_clip'; track: number; clip: number; patch: Partial<TextLayer> }
+  /** D-222 — pin a [`Marker`] to a timeline frame. A real `EditOp`, not a
+   *  store field, and that is the deliberate difference from D-216's
+   *  `selection` and D-218's `previewView`: those describe how the user is
+   *  *looking* at the edit (never persisted, never undoable), a marker is
+   *  something the user *wrote into* the edit — it belongs in `project.json`
+   *  and a `cmd-Z` after adding one must remove it, which it gets for free
+   *  from D-051's whole-`Timeline` snapshot mechanism by being here.
+   *
+   *  The caller builds the whole `Marker` (via [`newMarker`], which owns id
+   *  generation and colour resolution), exactly like `add_clip` takes a
+   *  fully-built `NewClipFields` — so the GUI button and `editor_add_marker`
+   *  construct one the same way rather than two.
+   *
+   *  **The list is kept sorted by `frame`** here (and by `set_marker` below),
+   *  not at read time: markers are rendered and listed in ruler order
+   *  everywhere, and sorting once on write beats re-sorting on every render.
+   *  Ties keep insertion order (`Array.sort` is stable), so two markers on
+   *  one frame stay in the order they were added. Never rejected — any frame
+   *  is a legal place for an annotation, including past the last clip. */
+  | { kind: 'add_marker'; marker: Marker }
+  /** D-222 — delete the marker with this id. A no-op (rejected) for an id
+   *  that isn't there, same "reject rather than corrupt" discipline every
+   *  other op here uses; not gated by any track's lock, since a marker
+   *  belongs to no track. */
+  | { kind: 'remove_marker'; id: string }
+  /** D-222 — patch an existing marker's frame/colour/name/note.
+   *
+   *  **A `patch`, not the full record** — the same call `set_text_clip` made
+   *  and for the same reason: the reducer merges against what is already
+   *  there, so an omitted field provably keeps its value, and the popover's
+   *  colour swatch does not have to restate the note it is not editing.
+   *  (`set_clip_transform`'s all-fields-required shape exists because an
+   *  omitted field there would silently RESET a real value; there is no such
+   *  hazard in a merge.) An explicit `null` for `name`/`note` CLEARS it —
+   *  the popover's own "clear the title" gesture — which `undefined` cannot
+   *  express in a patch. */
+  | {
+      kind: 'set_marker';
+      id: string;
+      patch: { frame?: number; color?: string; name?: string | null; note?: string | null };
+    };
 
 /** Clip name at `track`/`clip` in `tl`, or a short fallback — for history
  *  labels (D-051) only, never used in the actual edit logic below. */
 function clipLabel(tl: Timeline, track: number, clip: number): string {
   const name = tl.tracks[track]?.clips[clip]?.name;
   return name ? `"${name}"` : 'clip';
+}
+
+/** D-222 — the marker's own name, or its frame, for a history label. Same
+ *  role and same fallback shape as [`clipLabel`] above. */
+function markerLabel(tl: Timeline, id: string): string {
+  const m = tl.markers?.find((x) => x.id === id);
+  if (!m) return id;
+  return m.name ? `"${m.name}"` : `at ${m.frame}`;
 }
 
 /** Human-readable one-liner for an `EditOp`, evaluated against the timeline
@@ -1651,6 +1831,14 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.patch.content !== undefined
         ? `Set title text to "${op.patch.content}"`
         : `Edit ${clipLabel(before, op.track, op.clip)} title`;
+    // D-222 — a marker's own name is the one thing worth putting in an undo
+    // label ("Add marker" three times over says nothing about which).
+    case 'add_marker':
+      return op.marker.name ? `Add marker "${op.marker.name}"` : `Add marker at ${op.marker.frame}`;
+    case 'remove_marker':
+      return `Remove marker ${markerLabel(before, op.id)}`;
+    case 'set_marker':
+      return `Edit marker ${markerLabel(before, op.id)}`;
     default:
       return 'Edit timeline';
   }
@@ -1791,6 +1979,64 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     const group = `lg-${videoClip.id}-${audioClip.id}`;
     clipA.link_group = group;
     clipB.link_group = group;
+    return next;
+  }
+
+  // D-222 — marker ops. Handled first, and entirely outside the track/clip
+  // machinery below, because a marker belongs to no track and no clip: there
+  // is no `op.track` to bounds-check, no lock to respect, and nothing about
+  // them ripples. See `Timeline.markers` and the ops' own docs.
+  if (op.kind === 'add_marker') {
+    const next = clone(tl);
+    next.markers = sortedMarkers([...(next.markers ?? []), op.marker]);
+    return next;
+  }
+  if (op.kind === 'remove_marker') {
+    const existing = tl.markers ?? [];
+    if (!existing.some((m) => m.id === op.id)) return tl;
+    const next = clone(tl);
+    next.markers = (next.markers ?? []).filter((m) => m.id !== op.id);
+    return next;
+  }
+  if (op.kind === 'set_marker') {
+    const existing = tl.markers ?? [];
+    const at = existing.findIndex((m) => m.id === op.id);
+    if (at < 0) return tl;
+    const next = clone(tl);
+    const m = (next.markers ?? [])[at];
+    if (op.patch.frame !== undefined) {
+      // Floored/rounded on the way in, exactly as `newMarker` does, so the
+      // GUI's number field and MCP's own arg can never write a fractional or
+      // negative frame into `project.json`. `NaN` (a cleared numeric input)
+      // leaves the frame alone rather than propagating — the same
+      // `Number.isFinite` guard `set_track_duck` already applies.
+      if (Number.isFinite(op.patch.frame)) m.frame = Math.max(0, Math.round(op.patch.frame));
+    }
+    if (op.patch.color !== undefined) {
+      const hex = resolveMarkerColor(op.patch.color);
+      // An unresolvable colour is a caller bug, not a reason to write garbage
+      // into the document; the caller is expected to have run
+      // `resolveMarkerColor` itself for the real message (same posture
+      // `set_text_clip` takes for a failed `newTextLayer`).
+      if (typeof hex === 'string') m.color = hex;
+    }
+    // `null` clears, `undefined` (absent) leaves alone — see the op's doc.
+    // A whitespace-only string clears too, so "unnamed" has one
+    // representation here just as it does in `newMarker`.
+    if (op.patch.name !== undefined) {
+      const v = op.patch.name?.trim();
+      if (v) m.name = v;
+      else delete m.name;
+    }
+    if (op.patch.note !== undefined) {
+      const v = op.patch.note?.trim();
+      if (v) m.note = v;
+      else delete m.note;
+    }
+    // A frame change can reorder the list; re-sort so the invariant the
+    // `add_marker` op establishes holds after every write, not just after an
+    // insert.
+    next.markers = sortedMarkers(next.markers ?? []);
     return next;
   }
 

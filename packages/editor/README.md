@@ -47,6 +47,19 @@ dragging a pool item in from the shell's Sources panel.
   that is `chroma_types::fade_gain` and its one mirror,
   `timelineExportAudio.ts`'s `fadeGainAt`. `ClipFadeOverlay.tsx` is the
   DOM/pointer wiring around it. See **On-clip fade handles** below.
+- `TimelineMarkers.tsx` (D-222, roadmap item 27) — timeline markers: the flag
+  strip drawn in the band between the ruler's ticks and track 0 (Resolve's own
+  placement), the marker editor popover, the jump-to dropdown and the toolbar's
+  add button. `MARKER_STRIP_HEIGHT` is exported from here and is the single
+  definition of that band's height — `TimelinePane`'s `RULER_AND_MARGIN_PX`
+  derives from it, and `timeline-overrides.css` reads it through the
+  `--chroma-marker-strip-height` custom property `TimelinePane` sets. The model
+  and ops (`Marker`, `MARKER_COLORS`, `newMarker`, `resolveMarkerColor`,
+  `markersOf`, and the `add_marker`/`remove_marker`/`set_marker` `EditOp`s) are
+  in `timeline.ts` with everything else; markers are real, persisted, undoable
+  document content, unlike the store-only `selection` (D-216) and `previewView`
+  (D-218). The strip carries `data-chroma-no-marquee` — `marquee.ts`'s own
+  documented escape hatch — so no gesture here can collide with the marquee.
 
 **Marquee-select (D-137, roadmap item 12 Phase 2).** Click-drag on empty
 timeline canvas draws a rubber band; every clip whose bounding box the rect

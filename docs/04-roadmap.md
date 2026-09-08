@@ -1471,8 +1471,17 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       tape-style scrub (ref: `scrubbing.jpg`).
     - ⬜ Adjustment clips — one effect, applied top-down over every clip
       beneath it (ref: `adjustments.jpg`).
-    - ⬜ Markers — colour-coded, titled, timeline-anchored (ref:
-      `markers.jpg`).
+    - ~~**Markers** — colour-coded, titled, timeline-anchored (ref:
+      `markers.jpg`)~~ — **DONE, 2026-09-08 (D-222).** `Timeline.markers`
+      (not `Clip` — a marker survives the clip under it being trimmed/moved/
+      deleted), real `EditOp`s so they persist and undo, a Resolve-shaped
+      flag strip in the ruler's own band (which `timeline-overrides.css`
+      widens to fit), click-to-jump / double-click-to-edit, an `M` shortcut
+      + toolbar button, a jump-to dropdown, and
+      `editor_add_marker`/`_list_markers`/`_set_marker`/`_remove_marker`.
+      **Deferred, deliberately:** marker DURATION (Resolve's range marker)
+      and its Keyword field — see D-222 for why neither is needed to flag a
+      frame and what a duration would cost the model.
     - ⬜ Subtitles / captions — import SRT/TTML, own track type, styleable
       (ref: `captioning.jpg`).
     - Explicitly **out of scope** (owner's own cut): hardware control
