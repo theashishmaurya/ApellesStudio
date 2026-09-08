@@ -41,6 +41,27 @@ One or two lines per session. Detail lives in the decision it references.
   worth knowing: the Edit↔grade link is **`Clip::id`** (D-070), not the
   `shot_id` it looks like.
 
+- **2026-09-09** — **D-257: the Motion tab gets its real MCP surface — 32
+  `motion_*` tools, closing `mcp-tool-coverage.md`'s "Gap: Motion tab — 0
+  tools"** — the last tab an agent could not drive at all, despite a fully
+  shipped visual builder. 18 tools wrap ops that already existed on the bridge
+  (D-167→D-170) and were never exposed; **14 are new ops**, because eight
+  shipped GUI gestures had nothing to wrap (add a scene, reorder layers,
+  scale/rotation/opacity, retime a camera key, ease one key, edit a card,
+  multi-select edits, read the selection). Split the op registry out of
+  `useMotionControl`'s `useEffect` into a pure `motionOps.ts`/`createMotionOps`
+  factory so it could be tested at all — 78 new tests, each mutating one
+  asserting the op produces the IDENTICAL manifest the GUI's own
+  `manifestEdit.ts` call does; the whole prior surface had zero. Deferred, and
+  said so: delete-a-layer/scene (neither the GUI nor `manifestEdit.ts` has one —
+  MCP-only would break parity from the other side).
+
+- **2026-09-09** — **B-125: `motion_select` had silently drifted from the GUI
+  gesture it mirrors**, always re-seeking to the scene start and throwing away
+  the playhead — `onSelect` gained D-173's same-scene check and D-176's
+  seek-to-the-layer's-own-start, the hand-copied op received neither. Found by
+  D-257's new tests, which are the first this op surface has ever had.
+
 - **2026-09-09** — **D-253: numeric fields lose the native spinner and gain
   drag-to-scrub** — finishes B-113, whose `pr-5` reserve could never have
   worked (WebKit lays the spin button out INSIDE the padding box, so padding

@@ -922,11 +922,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       remaining friction. Needs a composition-coords ↔ screen-coords mapping over
       `MotionPreview`'s `<Player>`, then drag → `setLayerField('x'|'y')`. D-136
       solved the analogous Edit-tab problem and is the reference.
-    - **3. A Motion MCP surface** — the AI-native gap, and the sharpest one:
+    - ~~**3. A Motion MCP surface** — the AI-native gap, and the sharpest one:
       `mcp/server.py` has 45 tools and **zero** touch Motion, so it is the one tab
-      an agent cannot use at all. Cheap now that D-151's ops exist —
-      `get_manifest`/`add_layer`/`set_layer_field`/`render_manifest` wrap tested
-      pure functions instead of reimplementing manifest surgery in Python.
+      an agent cannot use at all.~~ **DONE — D-257, 2026-09-09: 32 `motion_*`
+      tools.** It stayed open longer than this entry expected because it was
+      only half-diagnosed: the frontend bridge shipped in D-167→D-170 (18 ops),
+      leaving just the Python wrappers missing, but by then eight *newer* GUI
+      gestures (add a scene, reorder layers, scale/rotation/opacity, retime a
+      camera key, ease one key, edit a card, multi-select edits, read the
+      selection) had shipped with no op to wrap either — so 14 of the 32 are new
+      ops, not wrappers. Also split the registry into a pure
+      `motionOps.ts`/`createMotionOps` factory so it could be tested at all (78
+      new tests; the whole prior surface had zero), which caught B-125. Still
+      open, deliberately: **no delete-a-layer / delete-a-scene tool**, because
+      neither `manifestEdit.ts` nor the GUI has one — see item 6 below, where
+      that now belongs as a both-halves-together build.
     - **4. Undo/redo for Motion** — D-052 deferred it for a real reason ("no
       natural edit-history unit"); with `addLayer`/`setLayerField` as discrete
       named immutable ops that unit now exists. Push before/after `Manifest`
@@ -934,9 +944,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - **5. A scene/layer timeline UI** — the biggest visible gap vs. both After
       Effects and this repo's own Edit tab, and the largest build. After #2, so it
       can reuse those drag mechanics rather than inventing a second set.
-    - **6. Lower-urgency, mutually independent** — multi-select, delete/duplicate,
-      multi-manifest per project (D-046's deliberate one-per-project limit; wait
-      for a real need), and **B-059**'s camera easing, which is nearly free.
+    - **6. Lower-urgency, mutually independent** — ~~multi-select~~ (done,
+      D-158), **delete/duplicate**, multi-manifest per project (D-046's
+      deliberate one-per-project limit; wait for a real need), and **B-059**'s
+      camera easing, which is nearly free.
+      - **delete/duplicate is now the top Motion gap**, promoted by D-257:
+        `manifestEdit.ts` has **no delete function at all** and the GUI has no
+        delete gesture, so there is no way — by hand OR by agent — to remove a
+        layer or a scene once added. D-257 deliberately did NOT add an MCP-only
+        deletion, since that would break the human-AND-AI rule from the other
+        side. Build both halves together: a `deleteLayer`/`deleteScene` in
+        `manifestEdit.ts` (with the `resolveSelections` re-resolve every other
+        shape-changing op already does), a GUI affordance in `LayerList.tsx`
+        beside its "+ Scene" button, and `motion_delete_layer`/
+        `motion_delete_scene` wrapping the same functions. Duplicate is the same
+        shape and worth doing in the same pass.
 17. **Show the export's real start/end bound in the Edit-tab timeline UI** — owner,
     2026-09-07, live, after B-076 (D-187): `editor_export` renders the WHOLE
     timeline only up to the furthest clip's own end (`-t <that>` — the `color=[base]`
@@ -2413,9 +2435,9 @@ overnight pass as everything above.
 **Deferred, not abandoned:** multi-subject batch tracking (D-017, → Later).
 
 **The marketing website is no longer on the list below — it SHIPPED
-(2026-09-09, D-255),** out of sequence at the owner's explicit instruction. It
+(2026-09-09, D-257),** out of sequence at the owner's explicit instruction. It
 lives in a new top-level `website/` (Astro, its own project, deliberately
-outside the npm workspace); see `website/README.md` to run it and **D-255** for
+outside the npm workspace); see `website/README.md` to run it and **D-257** for
 the reversal itself, the token-derivation approach, and what it deliberately
 leaves undone. Building it early unblocked nothing and committed nothing —
 `docs/notes/pre-launch-plan.md` §0 already named the website as one of the two

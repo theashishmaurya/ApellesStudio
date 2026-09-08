@@ -202,23 +202,91 @@ inclusion, no longer a silent video).
 > preserve. Results are cached, so a repeat ask returns `state: "done"`
 > immediately; `force=True` re-runs.
 
-## Gap: Motion tab — 0 tools
+## Motion tab — CLOSED, 32 tools (D-257, 2026-09-09)
 
-`chroma_motion_get_manifest` / `chroma_motion_save_manifest` / `chroma_motion_render`
-— no MCP tool touches any of these. An agent cannot read, edit, save, or render a
-Motion scene manifest today, despite the whole `/animate` skill workflow (in the
-*other* repo, `videoAgent`, this app is the target for) being built around an
-agent authoring exactly this kind of manifest. This is arguably the highest-value
-gap to close, if/when this is picked up — it's the one place "an agent driving
-this app" and "the manifest-authoring workflow this app is *for*" directly meet.
-D-081's new `LayerList`/`Selection` (Motion tab) has no MCP surface either. That
-was dismissed here as "a pure UI-navigation concept"; **D-216 is the correction
-to that reasoning for the Edit tab**, and the same caveat applies to Motion:
-selection stops being pure navigation the moment a surface renders ONLY for a
-selection (the Edit tab's on-canvas transform box did, and was unreachable for
-it). Worth re-checking against Motion's own selection-gated UI when this is
-picked up — the manifest get/save/render triad is still the bigger, more
-load-bearing gap.
+> **This section used to be headed "Gap: Motion tab — 0 tools" and called it
+> "arguably the highest-value gap to close… the one place 'an agent driving this
+> app' and 'the manifest-authoring workflow this app is *for*' directly meet."**
+> It is closed. Count:
+> `grep -c '^def motion_' mcp/server.py` returns **32**, and a cross-language
+> check confirms those 32 Python wire names and the 32 op keys in
+> `packages/motion/src/motionOps.ts` agree exactly.
+>
+> 18 of the 32 wrap ops that already existed on the bridge (D-167→D-170) and were
+> simply never exposed — the "Step 2 was never done for that tab" case
+> `mcp-architecture.md` described. The other **14 are new ops**, because Step 2
+> alone would have left real, shipped GUI gestures with nothing to wrap: adding a
+> scene, reordering layers, setting scale/rotation/opacity, retiming a camera
+> key, easing one keyframe, editing a card, multi-select field edits, and reading
+> the selection at all.
+
+| Tool | What it does |
+|---|---|
+| `motion_get_state` (new) | Read-only orientation, the Motion analogue of `editor_get_state` — `loadState`/`dirty`/`parseError`, the live `selection`, `playheadFrame`, `fps`/`totalFrames`/`width`/`height`, and one row per scene (`id`, `dur` in SECONDS, absolute `startFrame`, layer/child/camera-key counts). **Answers rather than erroring when no project is open** — that is how an agent finds that out. Call it first. |
+| `motion_get_manifest` | The whole live document, exactly as the preview renders it (parsed, not necessarily saved). Prefer `motion_get_state`/`motion_list_layers` for orientation; this is a lot to read. |
+| `motion_list_layers` (new) | The addressing INDEX — every layer flattened, each with the exact `target` a mutating tool wants, its `use`, the same `label` the GUI's layer list shows, world-space `position`/`size`, and key counts. What `editor_get_timeline` is for clips. |
+| `motion_list_primitives` (new) | Static reference, no app round trip — the Motion counterpart of `editor_get_capabilities`. Every primitive's `use` string, what it is for, whether it is 2D or a 3D child (and which target kind addresses it), the editable fields per primitive, plus scene/transform/camera-key field lists. Without it, a legal `use` or field key was only discoverable by reading the app's source. |
+| `motion_add_scene` (new) | The layer panel's "+ Scene" button (D-178) — a new 4s scene after the given index. Each scene renders to its OWN video file, so a scene is the unit of "one shot". |
+| `motion_set_scene_field` | One field on the scene itself — most often `dur`, the length in SECONDS that every keyframe in it is clamped to. |
+| `motion_set_camera_2d` / `_3d` | Replace a scene's camera animation WHOLESALE. The only way to change a camera key's VALUES — `manifestEdit.ts` has no granular per-key camera write, stated on both tools rather than worked around. |
+| `motion_add_layer` | The Catalog panel's insert (D-151) — a schema-valid default instance of a primitive, placed into `scene.layers` or `scene.scene3d.children` automatically by its own `in3d` flag. |
+| `motion_reorder_layers` (new) | The layer list's drag-to-reorder (D-177). **Array order IS paint order**, so this is the only tool that changes what covers what. |
+| `motion_set_layer_field` | A layer's own content/look fields. Writes an unknown key anyway (a hand-authored manifest may carry one) but returns a `warning` — the usual explanation for "I set it and nothing happened". |
+| `motion_set_field_on_layers` (new) | The Inspector's multi-select lockstep edit. **One undo entry**, unlike N single calls — which is the whole point. `transform=True` writes the nested transform group instead. |
+| `motion_set_layer_item` (new) | One CARD inside a `layers` primitive (D-182/B-068): its `dx`/`dy` offset (the per-card drag), any other field, or `reset=True` (both offsets in one undo step). |
+| `motion_select` | The layer-list row click: select one thing AND seek to it — conditionally, matching the GUI exactly (see B-125, which is the drift this fixed). Reports `seekedTo`, or `null` when it deliberately stayed put. |
+| `motion_set_selection` (new) | The marquee / shift-click half: the whole array, no seek, `[]` clears. **The Motion answer to D-216's reasoning** — this tab has surfaces that render ONLY for a selection (the Inspector's form, the on-canvas transform box and resize handles, align/distribute, the keyframe timeline's per-row lanes), and until this existed nothing but a mouse could reach them. Pair with `debug_screenshot`. |
+| `motion_set_layer_position` / `_size` | The canvas drag / resize handles, in WORLD pixels (the manifest's own space, not screen px and not fractions). Refused, naming the `use`, for a primitive that has no such field. |
+| `motion_set_layer_transform_field` (new) | **The tool for scale, rotation and opacity** — the generic transform wrapper every primitive shares (D-157), as distinct from the two above, which write a primitive's own native geometry. Warns when the layer already has keyframes, since a keyed property silently beats a static one. |
+| `motion_move_layers_by_delta` | The multi-select canvas drag. `auto_key=True` (+ `at`) routes each layer the way the real drag does — an already-keyframed layer gets a keyframe UPSERTED instead of a static write, a mixed selection routes per layer (D-159). |
+| `motion_align_layers` / `motion_distribute_layers` | The align (2+) and distribute (3+) buttons. |
+| `motion_set_layer_transform_keys` | Replace a layer's whole animation. `at` is SECONDS from its SCENE's start. `[]` removes the animation entirely. |
+| `motion_add_layer_keyframe` | Upsert ONE key without replacing the rest — the auto-keyframe a canvas drag performs. With `x`/`y` omitted it keys the layer WHERE IT ALREADY IS at that moment, which is how a hold is authored. Attaches `ease` in the SAME undo step. |
+| `motion_move_layer_keyframe` | Retime one key, values untouched. `lane="active"` retimes a step schedule instead. Clamped to the scene's `[0, dur]` with a warning, never refused for range. |
+| `motion_delete_layer_keyframe` (new) | Remove one key. Deleting the last one clears the animation (`clearedAnimation`) — a visible change, not a no-op. |
+| `motion_move_camera_keyframe` (new) | Retime one camera key, 2D or 3D — the camera's own half of the timeline drag gesture. |
+| `motion_move_keys_by_delta` (new) | The box-select-then-nudge gesture (D-163) — many keys, across lanes and scenes, one shared delta. **D-169 deliberately left this out**, on the grounds that its `baseAtSeconds` is captured at a live drag's start and an MCP call has no drag to capture from; resolved by reading each base off the current manifest, the same "current position is the only honest base for a one-shot op" rule `motion_move_layers_by_delta` already used. Clamping is per key, never a group veto; every target is validated before anything is written. |
+| `motion_set_keyframe_ease` (new) | D-164's real bezier model on ONE existing key, in one call instead of a whole-array resend. `x1`/`x2` outside `0..1` are clamped with a warning (B-062 — the runtime throws on them); `y` outside `0..1` is legal and is real overshoot. `null` clears to linear. An `active` step schedule has no ease and is refused by name. |
+| `motion_set_layer_active_schedule` (new) | A `layers`/`layerstack` primitive's `active` STEP schedule (D-178/B-067) — which child shows, from when. A step, not an interpolation, hence no ease anywhere on it. |
+| `motion_seek` | Move the playhead — an absolute `frame`, or `{scene_index, at}` in the same seconds space every keyframe uses. Clamped with a warning, never refused. Do this before a `debug_screenshot` of a specific moment. |
+| `motion_save_manifest` | Write the sidecar now. Returns the real path or the real error, never a silent success. |
+| `motion_render` | The real Remotion render — **one video file PER SCENE** (D-180), never one combined video. See the note below on what actually happens to those files. |
+
+> **Every mutating op goes through `useMotionManifest().commit`**, the same path
+> an Inspector edit takes, so an agent's edit lands on the same
+> `@chroma/history` undo stack a human's does (D-140). **`motion_select`,
+> `motion_set_selection` and `motion_seek` deliberately push nothing** — the same
+> carve-out, for the same reason, as `editor_set_selection`/
+> `editor_set_preview_zoom`: selection and playhead are component state, not
+> part of the manifest, nothing persists them, and the GUI's own click pushes
+> nothing either.
+>
+> **The Motion→Edit boundary, since it is easy to assume wrongly** (this pass
+> began with the wrong assumption and corrected it against `app/src/Root.tsx`):
+> a rendered scene is imported into the Edit tab's Sources pool **automatically**,
+> per scene, by `onMotionRendered` → `useMediaPoolStore.importPaths` (D-062).
+> **You do not call `editor_import_media` on these paths** — it has already
+> happened. What is not automatic is PLACEMENT on the timeline, left as one
+> explicit action deliberately. And there is **no live link**: a rendered file is
+> a flat video frozen at render time, so re-editing the manifest changes nothing
+> already imported or placed.
+>
+> **Structural note.** The op registry now lives in
+> `packages/motion/src/motionOps.ts` as a pure `createMotionOps(ctx)` factory;
+> `useMotionControl.ts` is the thin listener shell. That split is what makes the
+> ops testable at all in this package's `node` vitest environment — the reason
+> the whole D-167→D-170 surface had shipped with zero tests. There are now 78,
+> each mutating one asserting the op produces the IDENTICAL manifest the GUI's
+> own `manifestEdit.ts` call produces. See D-257.
+
+**Still open for Motion, deliberately (D-257):** there is **no delete-a-layer or
+delete-a-scene tool**, because `manifestEdit.ts` has no delete function and the
+GUI has no delete gesture — adding one MCP-only would break the human-AND-AI rule
+from the other side, which is the defect this pass exists to fix. It is a real
+product gap and both halves should land together. Also deferred: a
+`motion_snap_to_layer` (needs a live screen-space measurement, not a manifest
+read), and granular camera-key VALUE editing (no such write function exists;
+`motion_set_camera_2d`/`_3d` replace the array).
 
 ## Gap: Media / Sources pool — 2 of 6 tools (D-183 added import; `_remove` closed 2026-09-07)
 

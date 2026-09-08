@@ -24218,3 +24218,136 @@ this. Nothing here forecloses it.
   `@chroma/editor` 1543/1543 (80 files). `cargo fmt`/`clippy` clean on the new
   code; `tsc --noEmit` clean on `packages/editor` and unchanged at 64
   pre-existing errors repo-wide.
+
+## D-257 — The Motion tab gets its real MCP surface: 32 `motion_*` tools, and a thin-shell/fat-core split to make them testable
+
+**Context.** `docs/notes/mcp-tool-coverage.md` carried a section headed **"Gap:
+Motion tab — 0 tools"** and called it "arguably the highest-value gap to close…
+the one place 'an agent driving this app' and 'the manifest-authoring workflow
+this app is *for*' directly meet." It was accurate. The Motion tab is a fully
+shipped visual builder — multi-scene management (D-178), a layer list with
+thumbnails and drag-to-reorder (D-177), a creation Catalog (D-151), on-canvas
+click-select / drag / resize / marquee / align-distribute (D-156→D-158), per-layer
+keyframes with auto-keyframe-on-drag (D-159), a full per-row keyframe timeline
+with drag / nudge / box-select (D-162/D-163), a real bezier easing editor
+(D-164), and per-card drag for the layers primitive (D-182/B-068). **An agent
+could not create a scene, add a layer, move it, key it, or render it.** That is
+a direct, total violation of this repo's own standing rule that every feature is
+built for a human AND an AI.
+
+The frontend half was NOT missing, which is the part that made this tractable:
+`useMotionControl.ts` (D-167/D-168/D-169/D-170) already had 18 working ops on the
+control-server bridge. `mcp-architecture.md` names this exactly — "a
+half-finished example… its Python half is not [complete]: zero `motion_*` tools
+exist in `mcp/server.py`… Closing it is exactly Step 2 of the recipe, nothing
+more." That framing turned out to be right about the mechanism and incomplete
+about the scope: Step 2 alone would have exposed 18 ops while leaving real,
+shipped GUI gestures (add a scene, reorder layers, set scale/rotation/opacity,
+retime a camera key, ease one keyframe, edit a card, read the selection) with no
+op to wrap at all.
+
+**Options.**
+
+1. **Step 2 only — wrap the existing 18.** Smallest, honest to the doc's own
+   framing. Rejected as half a fix: it would close the "0 tools" heading while
+   leaving eight distinct human gestures still unreachable, which is the same
+   parity failure one level down. The coverage doc would have to immediately
+   grow a new gap list.
+2. **Wrap the 18, and add the missing ops for gestures that already ship.**
+   Chosen. Every new op wraps a `manifestEdit.ts` function that already exists
+   and already has a GUI caller — no new manifest-mutation primitives, no new
+   schema fields, no new capability that a human cannot also perform.
+3. **Also add capabilities the GUI lacks** (delete a layer, delete a scene).
+   Rejected — see "deliberately deferred" below.
+
+**Decision — 32 tools, `motion_*`, one per op, in the one `mcp/server.py`.**
+Prefix chosen for consistency with `useMotionControl.ts`'s existing
+`MOTION_OP_PREFIX` and the `chroma_motion_*` Tauri command naming; the Python
+tool name equals the wire op name throughout, so there is nothing to map.
+
+| group | tools |
+|---|---|
+| read (4) | `motion_get_manifest`, `motion_get_state`*, `motion_list_layers`*, `motion_list_primitives`* |
+| scenes (4) | `motion_add_scene`*, `motion_set_scene_field`, `motion_set_camera_2d`, `motion_set_camera_3d` |
+| layers (5) | `motion_add_layer`, `motion_reorder_layers`*, `motion_set_layer_field`, `motion_set_field_on_layers`*, `motion_set_layer_item`* |
+| selection (2) | `motion_select`, `motion_set_selection`* |
+| transform (5) | `motion_set_layer_position`, `motion_set_layer_size`, `motion_set_layer_transform_field`*, `motion_move_layers_by_delta`, `motion_align_layers`, `motion_distribute_layers` |
+| keyframes (8) | `motion_set_layer_transform_keys`, `motion_add_layer_keyframe`, `motion_move_layer_keyframe`, `motion_delete_layer_keyframe`*, `motion_move_camera_keyframe`*, `motion_move_keys_by_delta`*, `motion_set_keyframe_ease`*, `motion_set_layer_active_schedule`* |
+| nav / persist / render (3) | `motion_seek`, `motion_save_manifest`, `motion_render` |
+
+`*` = 14 ops that did not exist before this pass. The other 18 are D-167→D-170's,
+now reachable.
+
+**The structural half: `motionOps.ts`, a pure factory.** The registry used to be
+an object literal declared INSIDE `useMotionControl`'s `useEffect`, closed over
+React refs. Nothing could call one op without rendering the hook, and this
+package's vitest environment is `node` — no jsdom, no react-dom, no
+testing-library. **That is why the entire D-167→D-170 surface shipped with zero
+tests.** The alternative (add three dependencies to `@chroma/motion` to render a
+hook that only registers a listener) was rejected as a heavy fix to the wrong
+layer. Instead the registry is now `createMotionOps(ctx)` — pure, React-free,
+Tauri-free — and `useMotionControl.ts` is the thin shell that owns the listener,
+the prefix filter, the `emit`, and the refs. Same thin-shell/fat-core direction
+D-039 already sets for the Rust side. Behaviour is unchanged: same handlers,
+same messages, same `commit` calls.
+
+`ctx` passes accessor FUNCTIONS, not values (`api()`, `selections()`,
+`player()`), because the registry is built once at mount and called much later —
+a captured value would go stale. The player is typed structurally
+(`seekTo`/`getCurrentFrame`), so the pure module imports nothing from
+`@remotion/player`.
+
+**Verification, and why it is shaped this way.** 78 new tests. For every mutating
+op the assertion is the same: run the op, then run the REAL `manifestEdit.ts`
+function the equivalent GUI gesture calls, and assert the two manifests are
+deeply equal — the executable form of `mcp-architecture.md`'s one non-optional
+rule and of D-216's "an MCP tool call and a GUI button click both flow through
+the identical code path." A future refactor that quietly gives an op its own
+logic fails there. It already caught one real drift (see B-125 in
+`docs/BUGS.md`). Plus: a sweep
+asserting all 32 refuse cleanly with no project open and commit nothing, one
+asserting the view-state ops commit nothing at all (the Motion half of
+D-216/D-218), and one asserting no refused op ever leaves a partial write.
+A cross-language check confirms the 32 Python wire names and the 32 TypeScript
+registry keys agree exactly — a mismatch there would fail silently at runtime.
+
+**Deliberately deferred, with reasons.**
+
+- **Delete a layer / delete a scene.** The single most conspicuous absence, and
+  it is deferred because `manifestEdit.ts` contains **no delete function at all**
+  and the GUI has **no delete gesture** — that file's own comment says so
+  ("no scene-delete or scene-reorder op yet either — out of THIS pass's own
+  scope"). Adding MCP-only deletion would violate the human-AND-AI rule from the
+  other side, which is the same defect this decision exists to fix. It is a real
+  product gap and belongs to whoever builds the GUI affordance; both halves land
+  together then. Logged on the roadmap.
+- **`motion_snap_to_layer`.** Needs a live screen-space measurement from
+  `measureApiRef` (a rendered canvas), not a manifest read. The ref is plumbed
+  through for it; no op yet.
+- **Granular camera-key VALUE editing.** `manifestEdit.ts` exposes only wholesale
+  `setCamera2d`/`setCamera3d` for values, so those two tools replace the array;
+  `motion_move_camera_keyframe` covers retiming. Stated on both tools rather than
+  worked around with new logic this pass was not scoped to add.
+- **A combined `motion_render_and_import`** (proposed mid-pass). **Rejected on
+  discovery that it would be redundant**: `app/src/Root.tsx`'s `onMotionRendered`
+  already calls `useMediaPoolStore.importPaths` for every scene as it finishes
+  (D-062), so a rendered Motion scene ALREADY lands in the Edit tab's Sources
+  pool automatically. A combined tool would duplicate an import that has already
+  happened. What is genuinely not automatic is PLACEMENT on the timeline — left
+  as one explicit action by D-062's own decision, since the app cannot know the
+  intended track or position. `motion_render`'s docstring now states the real
+  chain (render → files auto-appear in Sources → `editor_add_clip` to place),
+  which is more accurate than the "render then `editor_import_media`" assumption
+  this pass began with.
+
+**The Motion→Edit boundary, stated once.** There is no live link. A rendered file
+is a flat video frozen at render time; editing the manifest afterwards changes
+nothing already imported or placed, and a clip on the timeline keeps showing the
+old content until it is swapped or re-added. Both `motion_render`'s docstring and
+`useMotionControl.ts`'s module comment say so.
+
+**Rust: zero changes**, as D-167 §1 established — `control.rs` is a fully generic
+dispatcher that forwards `{op, args}` blind and has never needed a code change
+for a new tab's ops. The pre-existing 20 s `BRIDGE_TIMEOUT` still applies to a
+slow render and is documented on the tool as "inconclusive, not failed" rather
+than papered over.

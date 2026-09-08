@@ -264,11 +264,29 @@ re-checked against what D-155–D-163 actually closed rather than assumed
 stale: Phase 5b's last piece still unbuilt (`docs/notes/
 motion-keyframe-timeline-research.md` — a curve/easing editor; D-163 closed
 "box-select + nudge multiple keys"), no drag-and-drop
-from outside the app, no delete/duplicate of a layer from the GUI, no
-multi-manifest per project (D-046), no snapping GUIDES while dragging
-(D-158's own explicit scope-down), no group RESIZE for a multi-selection
-(single-selection only), and **no MCP tools at all** — Motion is the one
-tab an agent cannot drive. The Catalog (D-151) closed the largest
+from outside the app, no multi-manifest per project (D-046), no snapping
+GUIDES while dragging (D-158's own explicit scope-down), and no group RESIZE
+for a multi-selection (single-selection only).
+
+**`no delete/duplicate of a layer` is now the top gap** — and note it is a
+gap on BOTH sides, not just the GUI: `manifestEdit.ts` has no delete function
+at all, so neither a human nor an agent can remove a layer or a scene once
+added. D-257 deliberately declined to ship an MCP-only deletion (that would
+break the human-AND-AI rule from the other side); both halves should land in
+one pass. See roadmap item 16.6.
+
+~~**no MCP tools at all** — Motion is the one tab an agent cannot drive.~~
+**Closed by D-257 (2026-09-09): 32 `motion_*` tools.** The op registry lives
+in `motionOps.ts` as a pure `createMotionOps(ctx)` factory (React-free,
+Tauri-free, so it is testable under this package's `node` vitest env);
+`useMotionControl.ts` is the thin shell owning the `chroma://request`
+listener, the `motion_` prefix filter and the response `emit`. Every mutating
+op wraps a real `manifestEdit.ts` function — the same one the equivalent GUI
+gesture calls — and commits through the same `useMotionManifest().commit`, so
+an agent's edit lands on the same undo stack a human's does. Full tool
+inventory: `docs/notes/mcp-tool-coverage.md`.
+
+The Catalog (D-151) closed the largest
 GUI-creation gap; D-155–D-159 closed the largest on-canvas-manipulation
 gap; D-160/D-161/D-162/D-163 are four of four steps toward a real keyframe
 timeline — the curve/easing editor remains, Phase 5b's own final piece.

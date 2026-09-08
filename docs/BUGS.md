@@ -2203,3 +2203,51 @@ at all. Area: `packages/ui/src/components/ui/tabs.tsx`,
   built for. When a `debug_*` op reports the right state and the screenshot
   disagrees, suspect a frame that was never scheduled before suspecting the
   store.
+
+---
+
+## B-125 — `motion_select` had silently drifted away from the GUI gesture it exists to mirror: it always re-seeked, throwing away the playhead
+
+**Found:** 2026-09-09, by the new `motionOps.test.ts` (D-257) — the first tests
+this op surface has ever had. Not reported by a user; nothing outside the webview
+could observe Motion's selection or playhead before D-257, which is part of why
+it went unnoticed.
+
+**Symptom.** An agent calling `motion_select` to look at a layer lost the
+playhead every time: the preview jumped to the start of that layer's SCENE, even
+when the playhead was already parked inside the exact layer being selected. The
+equivalent human gesture — clicking the same row in the layer list — correctly
+stayed put.
+
+**Root cause: drift, not a coding error.** `motion_select` (D-170) was written to
+mirror `MotionTab.tsx`'s `onSelect`, and at the time it did, exactly:
+`setSelections([s]); playerRef.current?.seekTo(sceneStartFrame(...))`. `onSelect`
+then gained two refinements that the op never received:
+
+- **D-173** — only seek when the target is in a DIFFERENT scene than the playhead,
+  fixing "scrub to a moment, then edit what's there," which is the tab's core
+  workflow.
+- **D-176** — a layer target seeks to where that LAYER actually starts
+  (`layerVisibleFrameRange`), not merely to its scene's start, so selecting a
+  layer that hasn't begun yet actually shows it.
+
+Both edited the GUI callback. Neither edited the op, and nothing connected them —
+the op was an untested copy of a two-line gesture, so the copy rotted in place
+while the original improved. The generalisable lesson, and the reason this is a
+`B-` and not just a diff: **an MCP op that re-implements a GUI handler's logic
+instead of calling it will drift, and only a test comparing the two catches it.**
+
+**Fix (D-257).** `motion_select` now runs the same conditional logic `onSelect`
+does — `layerVisibleFrameRange` first, the scene-boundary check as the fallback
+for scene/camera targets — and reports `seekedTo` (the frame it moved to, or
+`null` when it deliberately stayed put) so the behaviour is observable rather
+than merely correct. Three tests pin it: seeks when outside the target's window,
+does NOT seek when already inside it, and applies the scene-boundary rule to a
+scene target from another scene.
+
+**Not fully fixed, and honestly so.** The op still holds its own copy of that
+logic rather than calling a single shared function — `onSelect` closes over
+`MotionTab.tsx`'s own `setWholeVideo` (D-181 solo-scene state) and its player ref,
+so extracting it is a real refactor of the tab, not a rename. The test that
+compares the two behaviours is what keeps them honest until then; extracting the
+shared seek decision is the proper follow-up.
