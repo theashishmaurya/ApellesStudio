@@ -1593,6 +1593,65 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - Explicitly **out of scope** (owner's own cut): hardware control
       surfaces, multi-user real-time collaboration.
 
+28. **A real caption panel + styled, Motion-built caption presets** (owner,
+    2026-09-08). Current state (D-229) is import-only: clicking "Subtitles"
+    just prompts for an `.srt`/`.vtt` file. The owner wants a proper panel
+    instead — opens on click, offers Import (`.srt`/`.vtt`, existing D-229
+    path) **and** a library of styled caption presets to drop straight onto
+    the timeline, plus a real editor for every property of a caption once
+    placed (font, size, color, background, position, animation-in/out, etc.
+    — "edit everything about caption like font this that").
+    - **Reference, explicit (open both before designing anything, per
+      CLAUDE.md's "research the real pattern first" rule — do not build from
+      this bullet's paraphrase):**
+      - The owner's own pasted screenshot in this session (2026-09-08,
+        message shown when this item was filed) — a CapCut-style panel: a
+        library grid of caption style thumbnails on one side, a live-editable
+        instance with a full property inspector (font family, size, weight,
+        color, outline/background, position) on the other. Re-derive the
+        exact layout from the real screenshot if it is still in this
+        session's own transcript; otherwise treat the URL below as
+        authoritative and scrape it fresh.
+      - **https://hyperframes.heygen.com/catalog/components/caption-camera-follow**
+        and the rest of that catalog ("look at ALL the caption components
+        there") — a real, live component library of animated caption styles
+        (word-by-word reveal, karaoke-highlight, camera-follow, etc.). Visit
+        the actual site (a live page, not a static image — use the browser
+        tools, the same way this session scraped DaVinci Resolve's own Edit
+        page into `scratch/resolve-reference/` before building the Inspector)
+        and catalogue what's actually there before picking which presets to
+        build first. The owner's own words: **"we want all of them exact
+        design and then highly customizable."**
+    - **Owner's own explicit build suggestion: use the Motion tab /
+      `packages/motion-engine/` for this** — "lets use motion :) for building
+      couple of them." The motion engine already has real primitives
+      (`text`, `emphasis`, `matrix`, `graph`, `layers`, `scene3d`,
+      `particleflow`) and a JSON-manifest compiler (D-047+) that is
+      exactly the shape a word-reveal/karaoke-highlight caption animation
+      needs. Whoever picks this up should evaluate seriously whether each
+      caption PRESET is best modelled as a Motion scene/manifest rendered
+      into the Edit timeline (reusing the existing engine, keeping one
+      animation system in the app rather than two) versus a native
+      `TrackKind::Subtitle`/`CaptionStyle` extension (D-229's existing model,
+      simpler for STATIC styling but with no real animation timeline of its
+      own today) — this is a real architectural decision, not a coin flip,
+      and deserves its own `D-NNN` either way. If Motion-authored captions
+      win, the cross-tab question D-229's own predecessor work flagged as
+      open ("using a Motion composition as a pool item inside an Edit
+      timeline") stops being hypothetical — this feature is exactly the
+      forcing function for it.
+    - **Whatever the model, preview and export must still agree** — this
+      repo's standing bar (B-090/B-094/B-095/B-098's family) applies here
+      exactly as it did to D-229's own static captions, and doubles in
+      difficulty the moment the captions actually ANIMATE (a word-reveal
+      timed to speech is exactly the kind of thing that's easy to get right
+      in a live JS-driven preview and very easy to get subtly wrong once
+      compiled to a static ffmpeg filtergraph).
+    - Not scoped further than this — the next agent to pick this up should
+      do the reference research first (both the screenshot and the live
+      HeyGen catalog), then come back and write the real spec / `D-NNN`
+      before implementing.
+
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
 **→ The execution map is `docs/notes/crate-extraction-plan.md` (D-141, 2026-09-05).**
