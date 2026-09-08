@@ -21652,3 +21652,188 @@ trim, and multi-clip/multi-track trim — all real Resolve features named on the
 same reference page, all separate scoped work. The armed body drag also shows no
 live preview: it suppresses the move path's landing ghost (which would promise a
 reposition that never happens) rather than drawing a slip/slide-specific one.
+---
+
+## D-236 — Speed ramps: one piecewise-linear time remap, shared by the preview and the exporter
+
+**Context.** Roadmap item 27's "speed ramp curve — variable speed over time, not
+a flat export-time override." The framing is a contrast with something that
+already existed, so the first job was to find it.
+
+**What already existed.** `TimelineExportOptions.speedOverrides` (D-183) — a
+`{clip_id: multiplier}` bag passed to `buildExportFfmpegArgs`, compiled to
+`setpts=PTS/<speed>` for the picture and a single `atempo` chain for the sound,
+with the clip's `enable=between()` window shrunk to `duration / speed`. Its own
+doc is explicit that it is deliberately **not** a `Clip` field: *"no interactive
+GUI scrubbing/preview of sped-up playback exists, so this stays a pure export
+parameter."* So before this decision a speed change had **no preview at all** —
+the app showed 1x and the file came out at 2x. There was nothing to keep in
+sync, which is exactly why the flat version could get away with living only in
+the exporter. Making speed previewable is what makes preview/export parity the
+whole problem here.
+
+**The real reference, read not recalled** (`scratch/resolve-reference/`, per
+CLAUDE.md's research-the-real-pattern rule). The set has a dedicated entry:
+`edit-create`, "Dramatic Speed Ramps", image `create.jpg`. It shows Resolve's
+**Retime Controls** — a bar over the clip cut into runs by draggable speed
+points, each run labelled with its own *constant* percentage (`100%`, `37%`,
+`234%`) — and below it a **Retime Curve** plotting source position against
+output time. Blackmagic's own copy: *"Variable speed changes, or speed ramps,
+allow the playback speed to change over time… you can create speed ramps in the
+timeline using the graphical curve editor for both frame position and playback
+speed."* Two things follow, and Chroma takes both: speed points are **anchored
+to source frames**, and each run between two points plays at a **constant** rate.
+
+### Decision 1 — a step function on the SOURCE axis, so the remap is piecewise LINEAR
+
+`Clip.speed_points: [{source_frame, speed}]` — "from this source frame onward,
+play at this speed". Speed is a step function of source position, so the time
+remap (its integral) is exactly piecewise linear in both directions.
+
+That shape was chosen because it is **the only one all three consumers can
+express identically**:
+
+- the preview needs `source = f⁻¹(output)` as closed-form Rust
+  (`Clip::source_frame_at`);
+- the export's picture needs `output = f(source)` as an ffmpeg `setpts`
+  expression — `setpts` takes a full expression, so a nested `if(lt(T,knot),…)`
+  is exact, not an approximation;
+- the export's **audio** needs it as `atempo`, and `atempo` takes a **number,
+  not an expression**. ffmpeg has no time-varying tempo filter at all.
+
+That last constraint is the load-bearing one: audio is what pins the model to
+piecewise *constant* speed. A smoothly-varying speed has no `atempo`
+implementation, so a model that let the picture ramp smoothly would have had no
+matching sound. A ramped clip's audio is instead `asplit` → per-segment
+`atrim`/`atempo` → `concat`, which is exact for this model and impossible for
+any other.
+
+**Rejected: reusing D-233's keyframe/ease-curve infrastructure.** The obvious
+move — speed as one more keyframed property with a bezier ease, reusing the
+curve editor, `keyframeExprAt` and `set_clip_keyframes` — does not work, and the
+reason is worth recording. Every other animatable property is *sampled* at time
+`t`. Speed is **integrated**: where the clip is at `t` depends on every speed
+before `t`, not on the speed at `t`. Integrating a bezier-eased keyframe track in
+closed form inside an ffmpeg expression is not feasible, and the audio side could
+not follow it at all. Speed is the one quantity here that is not a sampled
+property, so it gets its own representation.
+
+### Decision 2 — a flat speed IS a one-segment ramp; `speedOverrides` is generalised, not duplicated
+
+`resolveSpeedSegments(clip, flatOverride?)` resolves a clip's own points, an
+export-time `speedOverrides` entry, or neither into **one shape**: a list of
+constant-speed segments. Every consumer — the `setpts` builder, the `atempo`
+builder, all three duration sites in `timelineExport.ts`, `endFrame`,
+`Clip::end_frame_at` — reads segments and nothing else. The three inline
+`clip.duration / speed` spellings the exporter carried collapse into one
+`outputSourceFrames()`.
+
+Byte-compatibility is a hard requirement, not an aspiration: a single-segment
+ramp compiles to the *identical* pre-D-236 `PTS/<speed>` and single-`atempo`
+filtergraph, and an un-ramped clip serialises no new JSON key
+(`skip_serializing_if`). Pinned by the entire pre-existing export suite passing
+unchanged.
+
+**Precedence, not composition.** A clip with its own ramp **ignores** any
+`speedOverrides` entry rather than multiplying with it. Multiplying would make
+the exported clip match neither what the preview shows nor what the export
+dialog's own number says; one has to win, and the persisted, previewable,
+human-authored one is the right winner.
+
+### Decision 3 — the two renderers share one definition, proved against real pixels
+
+The whole risk of this feature is the B-090/B-094/B-095/B-098/B-103/B-108
+family: six shipped bugs where preview and export interpreted animation data
+differently. A speed ramp is that risk squared, because it animates *time
+itself* — a wrong ramp still renders a perfectly valid, perfectly smooth,
+perfectly wrong video that no argv assertion would notice.
+
+So `packages/editor/src/speedRamp.ts` and
+`crates/chroma-timeline/src/speed_ramp.rs` are deliberate line-for-line mirrors;
+the preview's inverse map and the exporter's forward map are written in the same
+file against the same segments; and `speedRamp.test.ts` asserts `f(f⁻¹(x)) == x`
+across and beyond the clip. Two quantisation rules are pinned because they are
+exactly where a half-frame drift would hide: speeds clamp to the same
+`[0.05, 20]` on both sides, and the source frame **floors** rather than rounds (a
+frame owns `[n, n+1)`, and `setpts` floors by construction — rounding would put
+the preview half a frame ahead of the file). The floor rule was found by a test
+failure, not by reasoning, and is documented at both call sites.
+
+The real proof is `speedRamp.ffmpeg.test.ts`: a real ffmpeg export of a fixture
+whose every frame is a distinct grey, decoded back frame by frame, with the
+recovered source frame compared against `clipSourceFrameAt` — the function the
+Rust preview mirrors. Across a three-segment `0.5x → 2x → 1.25x` ramp, **78 of 84
+output frames match exactly and the other 6 are off by exactly one** (boundary
+rounding, within the test's stated ±1). A negative control — exporting the same
+clip un-ramped while expecting the ramp — diverges by up to **18 frames**, so the
+test genuinely discriminates rather than passing on tolerance.
+
+Two findings from that test, recorded because they each cost real time:
+
+- The `setpts` expression **must be single-quoted** in the filtergraph. A comma
+  is how ffmpeg separates filters, so an unquoted `if(lt(T,x),a,b)` fails outright
+  with `No such filter: 'x)'`. Every other expression this compiler emits was
+  already quoted incidentally, by sitting inside a `key='value'` option.
+- A fixture encoding frame number as luma `2*N` is **broken below luma 16**
+  (limited-range black): frames 0-8 all decode to RGB 0, are indistinguishable,
+  and produce a confident, entirely fictional "the export holds frame 0 for 18
+  frames" failure. The fixture now offsets to `20 + 2*N`, and its guard checks
+  all 96 frames rather than a hand-picked seven — the weak guard is what let the
+  bad fixture through in the first place.
+
+### Decision 4 — a retime changes the clip's LENGTH, not its neighbours
+
+`endFrame` / `Clip::end_frame_at` now report the retimed footprint, so a ramp
+really does resize the clip on the timeline and in the preview. It deliberately
+does **not** ripple: the clips after it stay where they are, so speeding a clip
+up opens a gap and slowing it down overlaps its neighbour, closed with the tools
+that already exist (`remove_gap`, a move). That is Resolve's own behaviour with
+ripple off, and it keeps `set_clip_speed` a per-clip op like every other one
+rather than a timeline-wide rearrangement.
+
+A speed change on a clip a **transition** joins stays refused with a named
+reason at compile time — the D-226 refusal, now extended from `speedOverrides` to
+a clip's own ramp, for the identical reason (the cut the transition names is no
+longer where the clip's edge lands). It is also now checked unconditionally,
+since a ramp can exist in a document nobody handed an override to.
+
+### Decision 5 — both interfaces in the same pass
+
+Per CLAUDE.md's human-AND-AI rule: an Inspector **Speed** section (one editable
+percentage per run, "add speed point at playhead", remove, plus the Retime Curve
+drawn from the same forward map the exporter uses) and `editor_set_clip_speed`
+(`speed=` for flat, `points=` for a ramp), both writing the same
+`set_clip_speed` op over the same `Clip.speed_points`.
+
+One non-obvious rule came out of building the GUI, and the DOM test is what
+found it: **normalisation must NOT drop a "redundant" speed point.** Splitting a
+clip and *then* choosing a speed for the new run is the normal authoring order
+(and the only order in which adding a point does not retime the clip the instant
+you add it) — a redundant-point filter deletes that split before the editor can
+use it. Flatness is decided from the *speeds* instead, so a clip split at 1x
+still resolves to two segments for the UI while compiling the byte-identical
+flat path.
+
+**Not built, deliberately** (each a named follow-up in `docs/04-roadmap.md`;
+none needs a schema change):
+
+- **Reverse (negative) speed** — needs ffmpeg's whole-stream-buffering `reverse`
+  filter and a backwards decode in the preview; a separate feature, not a
+  degraded case of this one. Speed is clamped `> 0`.
+- **Smoothed S-curve speed transitions** (Resolve's optional "smooth" on a speed
+  point) — makes the remap piecewise *quadratic* and has no `atempo` equivalent,
+  per Decision 1. The model is closed under refinement, so a smooth ramp is
+  approximable to any tolerance by subdividing into more constant segments.
+- **Dragging speed points on the clip itself** — this pass puts the whole model
+  behind a complete Inspector control rather than a partial timeline gesture.
+- **Frame interpolation for slow motion** — source frames repeat (Resolve's
+  "nearest frame"); optical flow and frame blending are not attempted.
+- **Live-preview AUDIO retiming.** The picture previews the ramp; the live mixer
+  does not resample, so a ramped clip's preview sound plays at its recorded
+  rate. Not a regression (`speedOverrides` previewed neither), but a new
+  asymmetry — stated here rather than left to be discovered, and on the roadmap.
+
+**Verification.** `@chroma/editor` 1138/1138 (including the 4 real-ffmpeg parity
+tests, 19 ramp-math tests and 7 Inspector DOM tests added here);
+`chroma-timeline` 220/220; `cargo fmt`/`clippy` clean on the new code; `tsc`
+introduces zero new errors.

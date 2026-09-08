@@ -32,6 +32,9 @@ import {
   type TimelineExportOptions,
 } from './timelineExport';
 import { loadTextFonts, textFontPaths } from './textFonts';
+// D-236 — a clip's own persisted speed ramp, which clashes with a transition
+// for exactly the reason an export-time flat override does.
+import { hasSpeedRamp } from './speedRamp';
 
 /** Mirrors `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `FfmpegRunOutcome` —
  *  copied by hand, same reason `useEditorControl.ts`'s own copy already
@@ -74,12 +77,14 @@ function resolveHasAudioOverrides(tl: Timeline): Record<string, boolean> {
   return out;
 }
 
-/** D-226 — the names of every clip that both carries a `speedOverrides` entry
- *  and is joined by a transition. See the refusal at the point of use for why
- *  the combination is not compilable. */
-function transitionClipsWithSpeedOverride(
+/** D-226 — the names of every clip that is joined by a transition AND has a
+ *  speed change on it: either an export-time `speedOverrides` entry, or
+ *  (D-236) its own persisted speed ramp. See the refusal at the point of use
+ *  for why the combination is not compilable — it is the same reason for both,
+ *  since a ramp is exactly a speed change whose factor varies. */
+function transitionClipsWithSpeedChange(
   tl: Timeline,
-  speedOverrides: Record<string, number>,
+  speedOverrides: Record<string, number> | undefined,
   fps: number,
 ): string[] {
   const names = new Set<string>();
@@ -88,7 +93,8 @@ function transitionClipsWithSpeedOverride(
       const { outgoing, incoming } = transitionClipIndices(track, t.at_frame, fps);
       for (const idx of [outgoing, incoming]) {
         const clip = idx >= 0 ? track.clips[idx] : undefined;
-        if (clip && (speedOverrides[clip.id] ?? 1) !== 1) names.add(clip.name || clip.id);
+        if (!clip) continue;
+        if ((speedOverrides?.[clip.id] ?? 1) !== 1 || hasSpeedRamp(clip)) names.add(clip.name || clip.id);
       }
     }
   }
@@ -210,11 +216,15 @@ export function compileEditorExportArgs(a: {
   // factor. Named here, at compile time, for `textClipsMissingFonts`' own
   // reason: this is where a real reason can be reported, and the compiler
   // itself (`transitionPlansFor`) only skips such a transition defensively.
-  if (speedOverrides) {
-    const clashing = transitionClipsWithSpeedOverride(tl, speedOverrides, fps);
+  //
+  // D-236 — checked unconditionally now, not only when `speedOverrides` was
+  // passed: a speed ramp lives on the CLIP, so the clash can exist in a
+  // document nobody handed an override to.
+  {
+    const clashing = transitionClipsWithSpeedChange(tl, speedOverrides, fps);
     if (clashing.length > 0) {
       return {
-        error: `speed overrides are not supported on a clip joined by a transition (${clashing.join(', ')}) — a speed change moves the clip's edge away from the cut the transition sits on. Remove the transition, or export that clip's speed change separately.`,
+        error: `a speed change is not supported on a clip joined by a transition (${clashing.join(', ')}) — a speed change moves the clip's edge away from the cut the transition sits on. Remove the transition, or export that clip's speed change separately.`,
       };
     }
   }

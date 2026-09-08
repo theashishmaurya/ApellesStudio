@@ -21,7 +21,13 @@ import {
 } from './timelineExportAudio';
 import { EASE_PRESETS, panGains } from './timeline';
 import { easeCurveEval } from './easeCurve';
+import { resolveSpeedSegments } from './speedRamp';
 import type { Clip, Timeline, Track } from './timeline';
+
+/** D-236 — the one-segment speed ramp that IS "this clip plays at `speed`",
+ *  which is what these tests used to pass as a bare number. `speedRamp.test.ts`
+ *  pins separately that a flat ramp resolves to exactly one segment. */
+const flat = (c: Clip, speed = 1) => resolveSpeedSegments(c, speed);
 
 /** A tiny ffmpeg-expression interpreter for the subset this module emits
  *  (`if`, `between`, `lt`, `exp`, and D-223's `clip`/`cos`/`sin`/`max`/`PI`)
@@ -332,12 +338,12 @@ describe('panGainExprs', () => {
 
 describe('clipAudioParam', () => {
   it('an unkeyed clip is static at its own stored value, defaulting to the identity', () => {
-    expect(clipAudioParam(clip('a'), 'volume', 1, 24, 1)).toEqual({ kind: 'static', value: 1 });
-    expect(clipAudioParam(clip('a', { volume: 0.5 }), 'volume', 1, 24, 1)).toEqual({
+    expect(clipAudioParam(clip('a'), 'volume', 1, 24, flat(clip('a')))).toEqual({ kind: 'static', value: 1 });
+    expect(clipAudioParam(clip('a', { volume: 0.5 }), 'volume', 1, 24, flat(clip('a')))).toEqual({
       kind: 'static',
       value: 0.5,
     });
-    expect(clipAudioParam(clip('a', { pan: -0.5 }), 'pan', 0, 24, 1)).toEqual({
+    expect(clipAudioParam(clip('a', { pan: -0.5 }), 'pan', 0, 24, flat(clip('a')))).toEqual({
       kind: 'static',
       value: -0.5,
     });
@@ -354,7 +360,7 @@ describe('clipAudioParam', () => {
         { frame: 72, params: { volume: 1 } },
       ],
     });
-    const v = clipAudioParam(c, 'volume', 1, 24, 1);
+    const v = clipAudioParam(c, 'volume', 1, 24, flat(c));
     expect(v.kind).toBe('keys');
     if (v.kind !== 'keys') return;
     expect(evalExpr(v.expr, 0)).toBeCloseTo(0, 9); // the clip's own in-point
@@ -370,7 +376,7 @@ describe('clipAudioParam', () => {
         { frame: 48, params: { volume: 1 } },
       ],
     });
-    const v = clipAudioParam(c, 'volume', 1, 24, 2); // 2x speed
+    const v = clipAudioParam(c, 'volume', 1, 24, flat(c, 2)); // 2x speed
     expect(v.kind).toBe('keys');
     if (v.kind !== 'keys') return;
     // The 2s ramp is 1s of OUTPUT time once the clip plays twice as fast.
@@ -385,7 +391,7 @@ describe('clipAudioParam', () => {
         { frame: 48, params: { volume: 1 } },
       ],
     });
-    expect(clipAudioParam(c, 'volume', 1, 24, 1)).toEqual({ kind: 'static', value: 1 });
+    expect(clipAudioParam(c, 'volume', 1, 24, flat(c))).toEqual({ kind: 'static', value: 1 });
   });
 });
 
@@ -394,7 +400,7 @@ describe('buildAudioSourceChain — per-clip level (D-223)', () => {
     srcRef: '[3:a]',
     clipFps: 24,
     gain: 1,
-    speed: 1,
+    speedSegments: flat(clip('a')),
     startSec: 0,
     duck: null,
     idLabel: 'au0',

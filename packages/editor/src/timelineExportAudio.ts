@@ -79,6 +79,15 @@ import {
 import type { EqBand } from './eq';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
 import { easeCurveEval } from './easeCurve';
+// D-236 — the shared time remap. See `speedRamp.ts`'s module doc for why the
+// audio side is what pins the model to piecewise-CONSTANT speed.
+import {
+  flatSpeedOf,
+  isFlatSegments,
+  outputAtSourceFrame,
+  rampAudioSegments,
+  type SpeedSegment,
+} from './speedRamp';
 
 // --------------------------------------------------------------------------- //
 // fade — a sampled approximation of the exact cubic-bezier curve
@@ -374,12 +383,20 @@ export function clipAudioParam(
   param: 'volume' | 'pan',
   identity: number,
   clipFps: number,
-  speed: number,
+  /** D-236 — the clip's resolved speed segments (`resolveSpeedSegments`),
+   *  replacing the pre-D-236 scalar `speed` this divided by. A key's `frame`
+   *  is a SOURCE frame, and the expression is consumed on the POST-retime
+   *  axis, so the conversion between them is the ramp's forward map — which
+   *  for a single flat segment is exactly the division it replaces. Under a
+   *  real ramp the keys are no longer evenly spaced on the output axis, which
+   *  is the whole point: an automation key stays on the source moment it was
+   *  authored against, wherever the retime moves that moment to. */
+  speedSegments: SpeedSegment[],
 ): ClipAudioParamValue {
   const keys = (clip.chroma_keyframes ?? [])
     .filter((k) => Object.prototype.hasOwnProperty.call(k.params, param))
     .map((k) => ({
-      t: (k.frame - clip.source_start) / clipFps / speed,
+      t: outputAtSourceFrame(speedSegments, k.frame) / clipFps,
       value: Number(k.params[param]),
     }))
     .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.value))
@@ -530,6 +547,53 @@ export function atempoFilterChain(speed: number): string {
     .join(',');
 }
 
+/**
+ * D-236 — the RAMPED equivalent of [`atempoFilterChain`]: one `atempo` chain
+ * per constant-speed segment, spliced back together with `concat`.
+ *
+ * **This construction is the reason the whole speed-ramp model is piecewise
+ * constant** (see `speedRamp.ts`'s own module doc). `atempo` takes a NUMBER,
+ * not an expression — unlike `volume`, ffmpeg's audio filters have no
+ * per-sample tempo evaluation at all — so a time-varying tempo can only ever
+ * be expressed as a concatenation of constant-tempo runs. A model that let the
+ * picture ramp smoothly would therefore have had no audio implementation that
+ * matches it, which is exactly the preview/export divergence class this
+ * feature is most at risk from.
+ *
+ * `asplit` (not N separate inputs) because every segment reads the SAME
+ * already-`-ss`-trimmed stream; `asetpts=PTS-STARTPTS` after each `atrim`
+ * because `concat` requires its inputs to start at zero; `concat=n=N:v=0:a=1`
+ * because that is ffmpeg's own documented way to join audio segments
+ * end-to-end.
+ *
+ * Returns the filtergraph steps and the label the result lands in. A flat
+ * (single-segment) ramp is NOT handled here — the caller keeps the plain
+ * [`atempoFilterChain`] node, which is what every pre-D-236 export emits.
+ */
+export function buildRampedAtempoSteps(
+  srcRef: string,
+  segments: ReadonlyArray<{ startSec: number; endSec: number; speed: number }>,
+  idLabel: string,
+): { steps: string[]; label: string } {
+  const steps: string[] = [];
+  const splitLabels = segments.map((_, i) => `rs${idLabel}_${i}`);
+  steps.push(`${srcRef}asplit=${segments.length}${splitLabels.map((l) => `[${l}]`).join('')}`);
+
+  const partLabels: string[] = [];
+  segments.forEach((seg, i) => {
+    const part = `rp${idLabel}_${i}`;
+    steps.push(
+      `[${splitLabels[i]}]atrim=start=${seg.startSec}:end=${seg.endSec},asetpts=PTS-STARTPTS,` +
+        `${atempoFilterChain(seg.speed)}[${part}]`,
+    );
+    partLabels.push(part);
+  });
+
+  const out = `rc${idLabel}`;
+  steps.push(`${partLabels.map((l) => `[${l}]`).join('')}concat=n=${segments.length}:v=0:a=1[${out}]`);
+  return { steps, label: `[${out}]` };
+}
+
 // --------------------------------------------------------------------------- //
 // buildAudioSourceChain — one clip's full audio filter chain
 // --------------------------------------------------------------------------- //
@@ -572,10 +636,19 @@ export interface AudioSourceChainArgs {
    *  embedded audio — D-057's real, documented scoping — or `track.gain`
    *  for a genuine audio-track clip. */
   gain: number;
-  /** `speedOverrides[clip.id] ?? 1` — this source gets an `atempo` chain
-   *  when not `1`, keeping it in sync with a sped-up picture (or simply
-   *  honoring a caller's explicit speed request on a pure audio clip). */
-  speed: number;
+  /** D-236 — this clip's resolved speed segments (`resolveSpeedSegments`,
+   *  which folds BOTH the clip's own persisted ramp and an export-time
+   *  `speedOverrides[clip.id]` entry into one shape). A single segment at
+   *  speed `1` means "no speed change" and produces no `atempo` node at all;
+   *  a single segment at any other speed is the pre-D-236 flat case and
+   *  produces the identical single `atempo` chain it always did; two or more
+   *  become [`buildRampedAtempoSteps`]' `atrim`/`atempo`/`concat`.
+   *
+   *  Passing the SEGMENTS rather than a scalar is what lets every downstream
+   *  time conversion in this chain (the fade windows, the automation
+   *  keyframes, the clip's own length) go through the ramp's real forward map
+   *  instead of dividing by a constant that no longer exists. */
+  speedSegments: SpeedSegment[];
   /** This clip's real placement on the OUTPUT timeline, in seconds — what
    *  `adelay` shifts this source to. Already POST-speed (a clip's
    *  `start_frame` is unaffected by its own speed override — only its
@@ -613,14 +686,33 @@ export interface AudioSourceChainArgs {
  * on a clip that ALSO has a `speedOverrides` entry, not just a documented gap.
  */
 export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: string[]; ref: AudioRef } {
-  const { srcRef, clip, clipFps, gain, speed, startSec, duck, idLabel } = args;
+  const { srcRef, clip, clipFps, gain, speedSegments, startSec, duck, idLabel } = args;
   const steps: string[] = [];
   let ref = srcRef;
   let hasFilter = false;
 
-  if (speed !== 1 && speed > 0) {
+  // D-236 — clip-source-frame -> post-retime, clip-local OUTPUT seconds. Every
+  // time quantity below (the fade windows, the automation keys, the clip's own
+  // length) is authored in source frames and consumed on the axis `atempo`
+  // leaves behind, so this one function is the whole conversion. For a flat
+  // ramp it is exactly the pre-D-236 `(frame - source_start) / clipFps / speed`
+  // it replaces — `outputAtSourceFrame` on a single segment IS that division.
+  const outSec = (sourceFrame: number) => outputAtSourceFrame(speedSegments, sourceFrame) / clipFps;
+
+  // `isFlatSegments`, NOT `length > 1` — the same test the picture's own
+  // `rampSetptsSecondsExpr` makes, so the two halves of one clip can never
+  // disagree about whether it is ramped. A clip split by a speed point whose
+  // runs all play at the same rate is flat, and must emit the plain node (or
+  // none at all) rather than an `asplit`/`concat` that reassembles the
+  // identity.
+  if (!isFlatSegments(speedSegments)) {
+    const ramped = buildRampedAtempoSteps(ref, rampAudioSegments(speedSegments, clipFps), idLabel);
+    steps.push(...ramped.steps);
+    ref = ramped.label;
+    hasFilter = true;
+  } else if (flatSpeedOf(speedSegments) !== 1) {
     const label = `at${idLabel}`;
-    steps.push(`${ref}${atempoFilterChain(speed)}[${label}]`);
+    steps.push(`${ref}${atempoFilterChain(flatSpeedOf(speedSegments))}[${label}]`);
     ref = `[${label}]`;
     hasFilter = true;
   }
@@ -644,10 +736,16 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
     hasFilter = true;
   }
 
-  const effectiveSpeed = speed > 0 ? speed : 1;
-  const lenSec = clip.duration / clipFps / effectiveSpeed;
-  const fadeInSec = (clip.fade_in_frames ?? 0) / clipFps / effectiveSpeed;
-  const fadeOutSec = (clip.fade_out_frames ?? 0) / clipFps / effectiveSpeed;
+  // D-236 — all three are POST-retime output seconds, via the ramp's own
+  // forward map rather than a division by a constant speed. A fade is authored
+  // as a number of SOURCE frames from the clip's in/out point, so under a ramp
+  // its real on-screen length is however long those frames take to play — a
+  // 12-frame fade-in on a 0.5x head is a full second, not half of one, and it
+  // has to land on exactly the frames the picture's own fade lands on.
+  const clipEndSourceFrame = clip.source_start + clip.duration;
+  const lenSec = outSec(clipEndSourceFrame);
+  const fadeInSec = outSec(clip.source_start + (clip.fade_in_frames ?? 0));
+  const fadeOutSec = lenSec - outSec(clipEndSourceFrame - (clip.fade_out_frames ?? 0));
   const fadeExpr =
     fadeInSec > 0 || fadeOutSec > 0
       ? fadeGainExpr(lenSec, fadeInSec, fadeOutSec, clip.fade_in_curve ?? DEFAULT_EASE_CURVE, clip.fade_out_curve ?? DEFAULT_EASE_CURVE, 't')
@@ -663,8 +761,8 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
   // becoming a second factor — one number, exactly as the live mixer's own
   // `gains` slice and `LevelEnvelope` compose to, and it keeps a project that
   // uses neither feature on the same single `volume=<n>` node it had before.
-  const volume = clipAudioParam(clip, 'volume', 1, clipFps, effectiveSpeed);
-  const pan = clipAudioParam(clip, 'pan', 0, clipFps, effectiveSpeed);
+  const volume = clipAudioParam(clip, 'volume', 1, clipFps, speedSegments);
+  const pan = clipAudioParam(clip, 'pan', 0, clipFps, speedSegments);
   const staticGain = volume.kind === 'static' ? gain * clampClipVolume(volume.value) : gain;
 
   const factors: string[] = [];

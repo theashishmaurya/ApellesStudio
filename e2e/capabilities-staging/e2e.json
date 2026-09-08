@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "e2e",
+  "description": "D-104: grants the embedded WebDriver server's permission, only relevant when the binary is built with the `e2e-testing` Cargo feature (see Cargo.toml) — that's the only configuration where `tauri-plugin-wdio-webdriver`'s permission schema even exists. Not listed in tauri.conf.json's default `security.capabilities`, so this file is inert for every ordinary build; the E2E config in docs/notes/e2e-testing.md adds \"e2e\" to that list only for the test build.",
+  "windows": ["main"],
+  "permissions": ["wdio-webdriver:default"]
+}

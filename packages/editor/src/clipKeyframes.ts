@@ -69,6 +69,8 @@
 
 import {
   CLIP_KEYFRAME_DEFAULTS,
+  clipSourceFrameAt,
+  clipTimelineFrameAtSource,
   type ClipKeyframe,
   type ClipKeyframeParam,
   type EaseCurve,
@@ -76,6 +78,7 @@ import {
   timelineFramesToSource,
 } from './timeline';
 import { easeCurveEval, isIdentityEase } from './easeCurve';
+import type { SpeedPoint } from './speedRamp';
 
 // D-233 — `ClipKeyframe` moved to `timeline.ts` (beside `Clip`, whose field
 // holds an array of them) once a third module needed it. Re-exported here so
@@ -546,13 +549,29 @@ export function clearClipKeyframes(): ClipKeyframe[] | undefined {
  *  exactly mirroring `Track::clip_at`'s now-fixed formula. Identical to the
  *  pre-fix plain subtraction whenever `source_fps` is absent or equals
  *  `fps` — every same-native-fps clip computes the same source frame either
- *  way. */
+ *  way.
+ *
+ *  **D-236 — now ramp-aware, by delegating rather than by growing a second
+ *  copy of the arithmetic.** A speed ramp makes the playhead-to-source-frame
+ *  map non-linear, and this is the AUTHORING half of exactly the question
+ *  `Track::clip_at` answers for playback — if the two ever disagreed, a
+ *  keyframe placed at the playhead would land on a different frame than the
+ *  one on screen. So this is `clipSourceFrameAt` (the single definition,
+ *  shared with the preview and mirrored by the exporter) plus this function's
+ *  own clamp, and nothing else. */
 export function clipSourceFrame(
-  clip: { source_start: number; start_frame: number; source_len: number; source_fps?: number },
+  clip: {
+    source_start: number;
+    start_frame: number;
+    source_len: number;
+    source_fps?: number;
+    duration?: number;
+    speed_points?: SpeedPoint[];
+  },
   playhead: number,
   fps: number,
 ): number {
-  const raw = clip.source_start + timelineFramesToSource(clip, playhead - clip.start_frame, fps);
+  const raw = clipSourceFrameAt(clip, playhead, fps);
   return Math.max(0, Math.min(clip.source_len - 1, raw));
 }
 
@@ -568,9 +587,17 @@ export function clipSourceFrame(
  *  snapping to the clip's edge. `sourceFramesToTimeline` is the same
  *  `source_fps` conversion [`clipSourceFrame`] uses, run the other way. */
 export function clipTimelineFrame(
-  clip: { source_start: number; start_frame: number; source_fps?: number },
+  clip: {
+    source_start: number;
+    start_frame: number;
+    source_fps?: number;
+    duration?: number;
+    speed_points?: SpeedPoint[];
+  },
   sourceFrame: number,
   fps: number,
 ): number {
-  return clip.start_frame + sourceFramesToTimeline(clip, sourceFrame - clip.source_start, fps);
+  // D-236 — the ramp-aware inverse, for `clipSourceFrame`'s reasons exactly:
+  // one definition, so nav and playback cannot disagree about where a frame is.
+  return clipTimelineFrameAtSource(clip, sourceFrame, fps);
 }

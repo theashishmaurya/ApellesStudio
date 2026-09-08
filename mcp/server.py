@@ -428,6 +428,72 @@ def set_clip_fade(
 
 
 @mcp.tool()
+def set_clip_speed(
+    track: int,
+    clip: int,
+    speed: float | None = None,
+    points: list[dict] | None = None,
+) -> str:
+    """Retime a clip -- a flat speed change, or a real SPEED RAMP that varies
+    over the clip (D-236). `track` and `clip` are the 0-based indices from
+    get_timeline.
+
+    Pass exactly one of:
+
+    * `speed` -- one multiplier for the whole clip. `2.0` plays it twice as
+      fast in half the timeline space, `0.5` half as fast in twice the space,
+      `1.0` clears any ramp back to normal. Range 0.05-20; a value outside it
+      is REFUSED, not clamped, so a typo cannot silently retime to something
+      else.
+    * `points` -- a ramp, as a list of `{"source_frame": int, "speed": float}`.
+      Each point means "from this SOURCE frame onward, play at this speed", so
+      the clip becomes a run of constant-speed segments. Source frames are
+      absolute in the file (the same space as a clip's `source_start` and a
+      keyframe's `frame`), NOT clip-relative and NOT timeline frames -- which
+      is what makes a ramp survive a later trim: the speed stays on the moment
+      in the footage you put it on. Points are sorted and de-duplicated on the
+      way in, and a point that does not change the speed already in force is
+      dropped, so the stored list may be shorter than what you sent. `[]`
+      clears the ramp.
+
+    Five things worth knowing before you use it:
+
+    1. **A flat speed IS a one-segment ramp.** `speed=2` and
+       `points=[{"source_frame": <in-point>, "speed": 2}]` are the same edit and
+       store identically. There is no separate flat mechanism to keep in step.
+    2. **It changes the clip's LENGTH on the timeline, not its start.** A
+       retimed clip still begins at its own `start_frame`; the clips after it
+       do NOT move, so speeding a clip up opens a gap and slowing it down
+       overlaps its neighbour. Close it yourself (editor_remove_gap, or
+       editor_move_clip). This matches Resolve with ripple off.
+    3. **Picture and sound are retimed together**, with the audio pitch
+       preserved (an `atempo` chain per segment). A clip's own fades, volume
+       and pan automation follow the retime too -- a key stays on the source
+       moment you authored it against.
+    4. **The preview and the export agree frame for frame.** Both read the same
+       remap; `editor_get_state` and the exported file will show the same
+       source frame at the same timeline position.
+    5. **Reverse (negative) speed and smoothed S-curve speed transitions are
+       not supported yet** -- a speed change is a step, and every segment plays
+       forwards. A gradual ramp can be approximated by adding more points.
+
+    Returns the stored points, the RESOLVED segments (which is what actually
+    plays -- after a trim, some of your points may no longer bite), and the
+    clip's source vs. output length in frames.
+
+    Undoable: this goes through the same store action and the same undo stack
+    the GUI's own Inspector Speed section writes to, so a human can Cmd+Z it."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    if speed is not None:
+        args["speed"] = speed
+    if points is not None:
+        args["points"] = points
+    return json.dumps(_op("editor_set_clip_speed", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def set_track_duck(
     track: int,
     duck_from: int | None = None,
@@ -738,10 +804,33 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "alone (<= 0.036 dB across 50 Hz-15 kHz) — the standard property "
             "of any biquad EQ, not a divergence between the two paths."
         ),
+        "speed_ramp": (
+            "D-236: set_clip_speed is the REAL way to retime a clip — a "
+            "persisted `Clip.speed_points` ramp that the live preview and the "
+            "export both honour, frame for frame, and that a human can also "
+            "edit in the Inspector's Speed section. Prefer it over "
+            "editor_export's `speed_overrides` for anything you want to see "
+            "before you render. A flat speed is just a one-segment ramp "
+            "(`speed=2`), so there is no second mechanism to learn: points "
+            "sit on ABSOLUTE SOURCE frames (so a ramp survives a later trim), "
+            "each segment plays at a constant rate, and picture and sound are "
+            "retimed together with pitch preserved. It changes the clip's "
+            "LENGTH on the timeline but NOT its start_frame and does NOT "
+            "ripple its neighbours — speeding a clip up opens a gap you have "
+            "to close yourself. Not supported: reverse (negative) speed, "
+            "smoothed S-curve speed transitions (approximate one with more "
+            "points), and a speed change on a clip a transition joins (the "
+            "export refuses that combination outright, with a named reason)."
+        ),
         "speed_overrides": (
             "speed_overrides is export-time ONLY — it does not touch the "
             "clip's stored trim/duration, so editor_set_playhead scrubbing "
-            "and the GUI still show the clip at 1x. The sped-up clip's "
+            "and the GUI still show the clip at 1x. D-236 supersedes it for "
+            "most uses: set_clip_speed stores a real, previewable ramp "
+            "instead, and a clip carrying one IGNORES its speed_overrides "
+            "entry (the persisted ramp wins, rather than the two multiplying) "
+            "— so do not set both on the same clip and expect them to "
+            "compose. The sped-up clip's "
             "on-timeline window shrinks to duration/speed inside the "
             "export's own placement math; nothing else needs adjusting for "
             "it to line up against unsped clips on other tracks. "

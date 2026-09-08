@@ -86,6 +86,7 @@ import {
   DEFAULT_EASE_CURVE,
   EASE_PRESETS,
   easePresetName,
+  endFrame,
   findClip,
   isClipAudioParam,
   timelineFps,
@@ -95,6 +96,7 @@ import {
   type EaseCurve,
   type EqBand,
 } from './timeline';
+import type { SpeedPoint } from './speedRamp';
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 
@@ -180,6 +182,15 @@ export function EditorInspectorPanel() {
       fade_in_curve: patch.fade_in_curve ?? selectedClip.fade_in_curve ?? DEFAULT_EASE_CURVE,
       fade_out_curve: patch.fade_out_curve ?? selectedClip.fade_out_curve ?? DEFAULT_EASE_CURVE,
     });
+  };
+
+  // D-236 — the speed ramp gets its own op, for `set_clip_fade`'s reasons
+  // exactly (speed is not geometry, and it applies to audio clips with no
+  // transform at all). Whole-array replacement, like `set_clip_keyframes`:
+  // `SpeedRampEditor` computes the next point list and this writes it.
+  const applySpeed = (points: SpeedPoint[]) => {
+    if (!primary || !selectedClip || selectedIdx < 0) return;
+    applyOp({ kind: 'set_clip_speed', track: primary.track, clip: selectedIdx, points });
   };
 
   // D-223 — per-clip volume/pan get their own op, for exactly the reason
@@ -458,6 +469,18 @@ export function EditorInspectorPanel() {
       paramStates={paramStates}
       onTransformChange={applyTransform}
       onFadeChange={applyFade}
+      onSpeedChange={applySpeed}
+      // D-236 — `null` when the playhead is not over this clip at all, so the
+      // Speed section disables "add a point here" rather than guessing a
+      // position. `clipKfSourceFrame` is the same clamped source frame the
+      // keyframe rows use, which is why the two land together.
+      playheadSourceFrame={
+        selectedClip &&
+        playhead >= selectedClip.start_frame &&
+        playhead < endFrame(selectedClip, timelineFps(timeline))
+          ? Math.round(clipKfSourceFrame)
+          : null
+      }
       onEqBandChange={applyEqBand}
       onEqClear={clearEq}
       onParamChange={applyParam}

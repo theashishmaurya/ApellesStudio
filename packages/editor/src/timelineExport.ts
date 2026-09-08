@@ -75,6 +75,16 @@ import {
 } from './caption';
 import { buildAdjustmentSteps, clipAdjustmentOps } from './adjustment';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
+// D-236 — one definition of a clip's time remap, shared with the live
+// preview's own `clipSourceFrameAt`/`Clip::source_frame_at`. See `speedRamp.ts`.
+import {
+  flatSpeedOf,
+  hasSpeedRamp,
+  outputAtSourceFrame,
+  rampOutputSourceFrames,
+  rampSetptsSecondsExpr,
+  resolveSpeedSegments,
+} from './speedRamp';
 import { easeCurveEval, isIdentityEase } from './easeCurve';
 import {
   audioRefBracket,
@@ -723,7 +733,11 @@ export function transitionPlansFor(
     const outgoing = track.clips.find((c) => endFrame(c, opts.fps) === transition.at_frame);
     const incoming = track.clips.find((c) => c.start_frame === transition.at_frame);
     if (!outgoing || !incoming) continue;
-    const sped = (c: Clip) => (opts.speedOverrides?.[c.id] ?? 1) !== 1;
+    // D-236 — a clip's OWN speed ramp disqualifies a transition for exactly
+    // the same reason a `speedOverrides` entry does, one step further: a ramp
+    // moves the clip's edge AND makes the handle media it would need play at
+    // a position the dissolve's own linear window cannot name.
+    const sped = (c: Clip) => (opts.speedOverrides?.[c.id] ?? 1) !== 1 || hasSpeedRamp(c);
     if (sped(outgoing) || sped(incoming)) continue;
 
     const plan: TransitionPlan = {
@@ -811,6 +825,27 @@ interface ClipPlacement {
   clipStartSec: number;
 }
 
+/**
+ * D-236 — how many of `clip`'s own source-frame units of OUTPUT it produces
+ * under whichever speed applies to it: its own persisted ramp
+ * (`Clip.speed_points`), else an export-time flat `speedOverrides` entry, else
+ * neither.
+ *
+ * This is the ONE place this file converts a clip's trim window into an output
+ * length, replacing the `clip.duration / speed` that used to be spelled inline
+ * at three sites. It returns exactly `clip.duration` for an un-ramped,
+ * un-overridden clip and exactly `clip.duration / speed` for a flat override,
+ * so no existing export's timing moves by a frame.
+ *
+ * Its preview twin is `timeline.ts`'s `clipOutputSourceFrames` (and
+ * `chroma_timeline::Clip::output_source_frames`), which is the same sum over
+ * the same segments — that shared definition is what makes a ramped clip
+ * occupy the same number of timeline frames in the app as it does in the file.
+ */
+function outputSourceFrames(clip: Clip, opts: TimelineExportOptions): number {
+  return rampOutputSourceFrames(resolveSpeedSegments(clip, opts.speedOverrides?.[clip.id]));
+}
+
 /** One clip's `setpts`/`crop`/`scale` chain, ending in `[label]` — factored
  *  out of `buildExportFfmpegArgs` so it's independently testable. Takes the
  *  clip's ffmpeg INPUT index (`inputIdx`, one `-i` per clip, in track/clip
@@ -851,13 +886,41 @@ function buildClipFilterChain(
   // which is also what `overlay`'s own `enable`/`x`/`y` expressions have always
   // used. Two time bases in one chain is precisely how the position-keyframe
   // half of this bug went unnoticed.
-  const speed = opts.speedOverrides?.[clip.id];
-  const speedFactor = speed && speed !== 1 ? speed : 1;
-  const ptsTerms: string[] = [speedFactor !== 1 ? `PTS/${speedFactor}` : 'PTS'];
-  if (placement.inputStartSec !== 0) ptsTerms.push(`${placement.inputStartSec}/TB`);
-  if (ptsTerms.length > 1 || speedFactor !== 1) {
-    steps.push(`${src}setpts=${ptsTerms.join('+')}[s${label}]`);
+  //
+  // D-236 — the same `setpts` node now also carries a variable-speed RAMP,
+  // because a ramp is nothing but a non-constant version of the `PTS/speed`
+  // term that was already here. `rampSetptsSecondsExpr` returns `null` for a
+  // flat ramp, in which case the pre-D-236 `PTS/<speed>` form is emitted
+  // byte-for-byte — a plain speed override, and an un-ramped clip, compile to
+  // exactly the filtergraph they always did.
+  //
+  // The ramped form works in SECONDS (`T`) rather than PTS units and divides
+  // by `TB` once at the end, because the expression's knots are real
+  // source-time boundaries; `PTS*TB == T`, so the two forms are the same
+  // arithmetic written in different units, which is why the flat special case
+  // is an optimisation and not a second semantics.
+  const speedSegments = resolveSpeedSegments(clip, opts.speedOverrides?.[clip.id]);
+  const rampExpr = rampSetptsSecondsExpr(speedSegments, clipFps);
+  if (rampExpr !== null) {
+    const placeTerm = placement.inputStartSec !== 0 ? `+${placement.inputStartSec}` : '';
+    // SINGLE-QUOTED, and that is load-bearing rather than cosmetic: a comma is
+    // how a filtergraph separates one filter from the next, so an unquoted
+    // `if(lt(T,x),a,b)` is parsed as three filters and ffmpeg fails outright
+    // with "No such filter: 'x)'". Every other expression this file emits is
+    // already quoted because it sits in a `key='value'` option
+    // (`scale=w='...'`); `setpts` takes its expression as the whole argument,
+    // so the quotes go around that instead. Caught by the real-ffmpeg test in
+    // `speedRamp.ffmpeg.test.ts`, which is the only thing that would have.
+    steps.push(`${src}setpts='(${rampExpr}${placeTerm})/TB'[s${label}]`);
     src = `[s${label}]`;
+  } else {
+    const speedFactor = flatSpeedOf(speedSegments);
+    const ptsTerms: string[] = [speedFactor !== 1 ? `PTS/${speedFactor}` : 'PTS'];
+    if (placement.inputStartSec !== 0) ptsTerms.push(`${placement.inputStartSec}/TB`);
+    if (ptsTerms.length > 1 || speedFactor !== 1) {
+      steps.push(`${src}setpts=${ptsTerms.join('+')}[s${label}]`);
+      src = `[s${label}]`;
+    }
   }
 
   // Clip-relative time, for every expression authored against the clip's own
@@ -993,7 +1056,6 @@ function buildClipFilterChain(
   // emits a filter step at all unless it's actually doing something, so
   // every clip that never touches either (still the overwhelming majority)
   // compiles byte-identically to before this fix.
-  const speedValue = speedFactor;
   const opacity = clip.opacity ?? 1;
   const hasOpacityKeyframes = hasKeyframesFor(clip, 'opacity');
   // `geq` (below) is the only filter here whose time variable is spelled
@@ -1014,11 +1076,23 @@ function buildClipFilterChain(
   // own single ffmpeg input, whose `T == 0` is its own in-point; unlike
   // `buildTextDrawtextStep`, which runs on the composited BASE stream and
   // needs `clipTime` rebasing, nothing here needs an offset).
-  const lenSec = clip.duration / speedValue / clipFps;
+  //
+  // B-112 / D-236 — every one of the three is a POST-retime output second,
+  // obtained through the ramp's own forward map. `lenSec` always was (it
+  // divided by the flat speed), but the two fade windows were NOT: they were
+  // `frames / clipFps` with no speed division at all, so on a clip carrying a
+  // `speedOverrides` entry the picture's fade ran `speed`× longer than both
+  // its own clip length and the very same fade on that clip's AUDIO, which
+  // `buildAudioSourceChain` has always divided correctly. Routing all three
+  // through one map fixes that flat-speed bug and makes the ramped case right
+  // by construction, rather than adding a second way to be wrong.
+  const clipEndSourceFrame = clip.source_start + clip.duration;
+  const outSec = (sourceFrame: number) => outputAtSourceFrame(speedSegments, sourceFrame) / clipFps;
+  const lenSec = outSec(clipEndSourceFrame);
   const fadeExpr = fadeGainExpr(
     lenSec,
-    (clip.fade_in_frames ?? 0) / clipFps,
-    (clip.fade_out_frames ?? 0) / clipFps,
+    outSec(clip.source_start + (clip.fade_in_frames ?? 0)),
+    lenSec - outSec(clipEndSourceFrame - (clip.fade_out_frames ?? 0)),
     clip.fade_in_curve ?? DEFAULT_EASE_CURVE,
     clip.fade_out_curve ?? DEFAULT_EASE_CURVE,
     bigTVar,
@@ -1323,7 +1397,10 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     const orderedClips = [...track.clips].sort((a, b) => a.start_frame - b.start_frame);
     for (const clip of orderedClips) {
       const adjust = adjusts.get(clip.id) ?? emptyAdjust();
-      const speed = opts.speedOverrides?.[clip.id] ?? 1;
+      // D-236 — the clip's own OUTPUT length in its own source-frame units.
+      // Replaces the pre-D-236 `clip.duration / speed` this loop spelled
+      // inline twice, and is exactly that value for a flat clip.
+      const outSrcFrames = outputSourceFrames(clip, opts);
       // B-075 — `source_start`/`duration` (and a keyframe's `frame`) are
       // documented as SOURCE frames, i.e. at the CLIP's own native rate —
       // only `start_frame` is a TIMELINE frame, at the project/export rate
@@ -1363,10 +1440,10 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
           startSec,
           // A generated layer has no `source_fps` (see `newTextClipFields`),
           // so `clipFps` is the export's own rate and `duration` really is
-          // its timeline footprint. `speed` still divides it for the same
-          // reason it does for a media clip: `speedOverrides` shrinks the
-          // window a clip occupies in the output.
-          endSec: startSec + clip.duration / speed / clipFps,
+          // its timeline footprint. The speed still divides it for the same
+          // reason it does for a media clip: a speed change (flat or ramped,
+          // D-236) shrinks the window a clip occupies in the output.
+          endSec: startSec + outSrcFrames / clipFps,
           naturalStartSec: startSec,
           clipFps,
           trackIndex,
@@ -1395,7 +1472,9 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       // is correct here. `duration` is a SOURCE frame count — `clipFps` is
       // correct here, same reasoning as the `-ss`/`-t` conversion above.
       // When sped up, `setpts=PTS/speed` compresses playback into
-      // `duration / speed` (source seconds) worth of OUTPUT time — the
+      // `duration / speed` (source seconds) worth of OUTPUT time — or, under
+      // a D-236 ramp, into `Σ len_i / speed_i`, which is the same statement
+      // once the speed stops being constant. The
       // `enable=between()` gate below must shrink to match, or the clip
       // would appear to freeze/hold its last frame for the un-shrunk
       // remainder of its original window.
@@ -1407,7 +1486,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       // fine and simply never be shown — the same pairing D-188's freeze
       // already needs between its `tpad` and its `enable` window.
       const startSec = Math.min(clip.start_frame / opts.fps, adjust.startSec ?? Infinity);
-      const naturalEndSec = clip.start_frame / opts.fps + clip.duration / speed / clipFps;
+      const naturalEndSec = clip.start_frame / opts.fps + outSrcFrames / clipFps;
       const endSec = Math.max(naturalEndSec, adjust.endSec ?? -Infinity);
       pending.push({
         clip,
@@ -1466,9 +1545,8 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     .filter((t) => t.kind === 'audio')
     .flatMap((t) => t.clips)
     .map((c) => {
-      const speed = opts.speedOverrides?.[c.id] ?? 1;
       const clipFps = c.source_fps ?? opts.fps;
-      return c.start_frame / opts.fps + c.duration / speed / clipFps;
+      return c.start_frame / opts.fps + outputSourceFrames(c, opts) / clipFps;
     });
   const totalDurationSec = [...pending.map((p) => p.endSec), ...audioTrackEndSecs].reduce(
     (max, end) => Math.max(max, end),
@@ -1718,7 +1796,9 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     if (p.inputIdx === null || p.clip === null) continue;
     if (p.clip.link_group) continue;
     if (!(opts.hasAudioOverrides?.[p.clip.id] ?? false)) continue;
-    const speed = opts.speedOverrides?.[p.clip.id] ?? 1;
+    // D-236 — the SAME segments the picture's own `setpts` was built from,
+    // so a ramped clip's sound is retimed by exactly the curve its picture is.
+    const speedSegments = resolveSpeedSegments(p.clip, opts.speedOverrides?.[p.clip.id]);
     const idLabel = `au${audioLabelSeq++}`;
     // D-226 — **a video transition is a video transition, and the sound is not
     // part of it.** Premiere and Resolve both keep picture and audio
@@ -1749,7 +1829,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       clip: p.clip,
       clipFps: p.clipFps,
       gain: 1, // D-057: a video track's own embedded audio stays hardcoded at unity
-      speed,
+      speedSegments,
       startSec: p.naturalStartSec,
       duck: duckForTrack(p.trackIndex),
       idLabel,
@@ -1778,14 +1858,14 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
         clip.source_path,
       );
       const thisInputIdx = inputIdx++;
-      const speed = opts.speedOverrides?.[clip.id] ?? 1;
+      const speedSegments = resolveSpeedSegments(clip, opts.speedOverrides?.[clip.id]);
       const startSec = clip.start_frame / opts.fps;
       const { steps, ref } = buildAudioSourceChain({
         srcRef: `[${thisInputIdx}:a]`,
         clip,
         clipFps,
         gain: track.gain ?? 1,
-        speed,
+        speedSegments,
         startSec,
         duck: duckForTrack(trackIndex),
         idLabel: `au${audioLabelSeq++}`,
