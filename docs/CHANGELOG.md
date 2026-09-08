@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Fix B-102: total silence during live preview playback.**
+  `symphonia` was never built with MP3 decode support (`isomp4`/`aac`/`alac`/
+  `aiff` were explicitly enabled; `mp3` — the one common format symphonia keeps
+  OUT of its own defaults — was not), so every `.mp3` audio-track clip failed
+  to open and the failure was swallowed on a background thread with no error
+  surfaced anywhere. Found live against the owner's real project (4 audio
+  tracks, all `.mp3`). Added `"mp3"` to symphonia's feature list in both
+  `app/src-tauri/Cargo.toml` and `crates/chroma-media/Cargo.toml`; verified
+  end-to-end against the real project's own `music.mp3` (real non-silent PCM
+  out of the actual `cpal` device, `peak=1.0267`).
 - **2026-09-08** — **Per-clip audio: volume + pan (D-223, roadmap 27).** A clip
   now carries its OWN level and stereo position, independent of its track's
   fader — `Clip::volume` (linear, matching `Track::gain`'s unit) and

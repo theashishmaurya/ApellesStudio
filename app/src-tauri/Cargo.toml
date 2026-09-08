@@ -37,7 +37,7 @@ chroma-project = { path = "../../crates/chroma-project" }
 # Chroma editor-tab audio playback (D-049) — decode (symphonia) → resample
 # (rubato) → format-convert (dasp_sample) → device output (cpal). Pure Rust,
 # no FFI; the audio stack named in D-039/architecture-lock.md.
-symphonia = { version = "0.6.1", features = ["isomp4", "aac", "alac", "aiff"] }
+symphonia = { version = "0.6.1", features = ["isomp4", "aac", "alac", "aiff", "mp3"] }
 cpal = "0.18.2"
 rubato = "0.15"
 dasp_sample = "0.11.0"

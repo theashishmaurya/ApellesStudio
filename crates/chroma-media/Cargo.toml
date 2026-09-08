@@ -37,7 +37,7 @@ tokio = { version = "1", features = ["rt", "sync"] }
 # audio stack named in D-039 / architecture-lock.md. Versions pinned to match
 # what `app/src-tauri` had before D-146 moved this code — a move, not an
 # upgrade.
-symphonia = { version = "0.6.1", features = ["isomp4", "aac", "alac", "aiff"] }
+symphonia = { version = "0.6.1", features = ["isomp4", "aac", "alac", "aiff", "mp3"] }
 cpal = "0.18.2"
 rubato = "0.15"
 dasp_sample = "0.11.0"
