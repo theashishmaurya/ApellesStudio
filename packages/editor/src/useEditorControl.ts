@@ -1434,7 +1434,10 @@ export function useEditorControl(): void {
         const idPrefix = `cap-${sanitiseIdStem(stem)}-`;
         const captions = generatedCuesToCaptions(cues, fps, offsetFrames, idPrefix);
 
-        const style = captionStylePatch(a);
+        // A brand-new track has no "current" style yet — bold/italic with no
+        // font compose against the family the caller's own `font` names, or
+        // the catalogue default (same rule as the .srt import path above).
+        const style = captionStylePatch(a, a?.font !== undefined ? String(a.font) : DEFAULT_CAPTION_FONT);
         useEditorTimelineStore.getState().applyOp({
           kind: 'import_subtitles',
           cues: captions,
