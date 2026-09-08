@@ -74,6 +74,7 @@
 // never back. Re-exported because `Clip.eq_bands` is typed by it and a caller
 // working in the edit model should not have to know which file it came from —
 // exactly what `chroma-timeline` does with `chroma_types::eq` on the Rust side.
+import { captionLines, type CaptionCue, type CaptionStyle } from './caption';
 import { clampEqBand, eqBandsForDisplay, type EqBand } from './eq';
 
 export type {
@@ -81,6 +82,19 @@ export type {
   EqBand,
   EqBandKind,
 } from './eq';
+// D-228 — re-exported here so a consumer working with the edit model does not
+// have to know which file the caption types came from, exactly as the EQ types
+// above are.
+export type { CaptionAlign, CaptionCue, CaptionStyle } from './caption';
+export {
+  captionCharCount,
+  captionCps,
+  captionLayout,
+  captionLines,
+  resolveCaptionStyle,
+  DEFAULT_CAPTION_FONT,
+  DEFAULT_CAPTION_SIZE,
+} from './caption';
 export {
   EQ_BAND_COUNT,
   EQ_BAND_KIND_LABELS,
@@ -294,6 +308,17 @@ export interface Clip {
    *  compiling to `drawtext`, which has no scale/rotate/crop at all). See
    *  `docs/notes/text-title-clips.md`. */
   text?: TextLayer | null;
+  /** D-228 — present = this clip is one CAPTION on a `'subtitle'` track.
+   *  Mirrors `chroma_timeline::Clip::caption`.
+   *
+   *  The cue's timing is this clip's own `start_frame`/`duration`, which is
+   *  what makes every existing edit op (move, trim, split, remove, ripple,
+   *  marquee, undo) work on a caption for free. **None of the geometry fields
+   *  apply** — `position_*`, `scale`, `rotation`, the crop insets, `opacity`
+   *  and the fades are all ignored by BOTH renderers; a caption is positioned
+   *  and sized entirely by its resolved `CaptionStyle`. See the Rust field's
+   *  own doc and D-228 for why that line is drawn there. */
+  caption?: CaptionCue | null;
 }
 
 /** A generated text/title layer (D-211) — mirrors `chroma_timeline::TextLayer`
@@ -422,6 +447,51 @@ export function newTextClipFields(
     duration,
     source_len: duration,
     text: layer,
+  };
+}
+
+/** D-228 — whether `c` is a caption cue. The counterpart of [`isTextClip`],
+ *  asked the same way everywhere for the same reason. */
+export function isCaptionClip(c: Pick<Clip, 'caption'> | null | undefined): boolean {
+  return c?.caption != null;
+}
+
+/** D-228 — whether `c`'s picture is GENERATED rather than decoded from
+ *  `source_path`: a title or a caption. Mirrors `Clip::is_generated`.
+ *
+ *  The predicate every "do I need to open a media file for this clip" site
+ *  wants; before captions there was one kind of generated clip and
+ *  [`isTextClip`] doubled as this question. */
+export function isGeneratedClip(c: Pick<Clip, 'text' | 'caption'> | null | undefined): boolean {
+  return isTextClip(c) || isCaptionClip(c);
+}
+
+/** Build the `NewClipFields` for one caption cue — the ONE place a caption
+ *  clip is constructed, shared by the `.srt` importer, the GUI's Add-caption
+ *  button and `editor_add_caption` (CLAUDE.md: "the same op/store action
+ *  underneath both").
+ *
+ *  No validation to fail: unlike [`newTextLayer`], a caption's text is
+ *  deliberately allowed to be multi-line, and its style lives on the track. */
+export function newCaptionClipFields(
+  text: string,
+  durationFrames: number,
+  id?: string,
+): NewClipFields {
+  const duration = Math.max(1, Math.round(durationFrames));
+  return {
+    id: id ?? `cap-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    shot_id: null,
+    media_id: null,
+    link_group: null,
+    // The cue's own first line is the natural clip name — the reference shows
+    // a caption clip labelled with its own text on the timeline.
+    name: captionLines(text)[0] || 'Caption',
+    source_path: '',
+    source_start: 0,
+    duration,
+    source_len: duration,
+    caption: { text },
   };
 }
 
@@ -652,7 +722,13 @@ export function endFrame(c: Clip, fps: number): number {
 }
 
 export interface Track {
-  kind: 'video' | 'audio';
+  /** D-228 added `'subtitle'` — mirrors `chroma_timeline::TrackKind`. A
+   *  subtitle track's clips carry a `CaptionCue` and are drawn OVER the
+   *  finished picture by their own resolver; it is neither composited in the
+   *  video z-order nor mixed into the audio. Every existing
+   *  `kind === 'video'` / `=== 'audio'` test keeps its exact meaning, which is
+   *  why the variant could be added without revisiting them. */
+  kind: 'video' | 'audio' | 'subtitle';
   clips: Clip[];
   /** Linear volume multiplier (D-057) — mirrors `chroma_timeline::Track::gain`.
    *  `1.0` unity, `0.0` full mute, `> 1.0` boosts. Absent on a pre-D-057
@@ -715,6 +791,12 @@ export interface Track {
    *  this is optional here: a `project.json` written before transitions existed
    *  has no key at all, and every read below treats absent and `[]` the same. */
   transitions?: Transition[];
+  /** D-228 — the style every caption on this track draws with. Mirrors
+   *  `chroma_timeline::Track::caption_style`. Only meaningful when
+   *  `kind === 'subtitle'`; absent means the caption defaults (see
+   *  `resolveCaptionStyle`). A whole imported `.srt` is styled once here, not
+   *  cue by cue — the reference Inspector's "Track Style" tab. */
+  caption_style?: CaptionStyle | null;
 }
 
 /** D-226 — the two transition shapes v1 ships. Mirrors
@@ -1981,7 +2063,7 @@ export type EditOp =
   | { kind: 'move'; fromTrack: number; toTrack: number; clip: number; startFrame: number; ripple?: boolean }
   /** D-080 — append a new empty track. Mirrors `chroma_timeline::Timeline::
    *  add_track`: always succeeds, no validation to mirror. */
-  | { kind: 'add_track'; trackKind: 'video' | 'audio' }
+  | { kind: 'add_track'; trackKind: 'video' | 'audio' | 'subtitle' }
   /** D-080 — remove a track and every clip on it (no confirmation/undo
    *  special-casing here — same as the Rust op, recovery is the shared
    *  undo stack's job like any other edit, D-051). Mirrors `chroma_timeline
@@ -2281,6 +2363,40 @@ export type EditOp =
    *  colour) is a no-op — the caller is expected to have run `newTextLayer`
    *  itself to get the real error message. */
   | { kind: 'set_text_clip'; track: number; clip: number; patch: Partial<TextLayer> }
+  /** D-228 — replace one caption cue's text. Multi-line is legal (that is the
+   *  whole point of a caption), so unlike `set_text_clip` there is nothing to
+   *  reject; the reducer only refuses a clip that is not a caption, for the
+   *  same reason `set_text_clip` refuses one that is not a title. */
+  | { kind: 'set_caption_text'; track: number; clip: number; text: string }
+  /** D-228 — patch the TRACK's caption style: the reference Inspector's
+   *  "Track Style" tab, and how a whole imported `.srt` is styled in one
+   *  action.
+   *
+   *  **A `patch`, not the full record** — `set_text_clip`/`set_marker`'s call,
+   *  for the same reason: the reducer merges against what is there, so an
+   *  omitted field provably keeps its value rather than silently resetting to
+   *  a default. Refused on a track that is not a subtitle track. */
+  | { kind: 'set_caption_style'; track: number; patch: Partial<CaptionStyle> }
+  /** D-228 — the per-caption "Use Track Style" checkbox. A `patch` gives this
+   *  cue its own style (unticking the box, merged over whatever it resolves to
+   *  now, so the override starts from what the user can currently see rather
+   *  than from the bare defaults); `null` clears it back to the track's
+   *  (ticking the box). */
+  | { kind: 'set_caption_cue_style'; track: number; clip: number; patch: Partial<CaptionStyle> | null }
+  /** D-228 — import a whole subtitle file as a NEW subtitle track, in one
+   *  undoable step.
+   *
+   *  **One op for the whole file, not N `add_clip`s.** A 400-cue `.srt` would
+   *  otherwise be 400 undo entries and 400 whole-`Timeline` snapshots (D-051
+   *  snapshots the timeline per op), which is both a miserable undo experience
+   *  and a real memory cost. The cues arrive already converted to frames by
+   *  the Rust parser (`chroma_import_subtitles`), which is the single place
+   *  milliseconds ever meet the project timebase. */
+  | {
+      kind: 'import_subtitles';
+      cues: Array<{ id: string; start_frame: number; duration: number; text: string }>;
+      style?: Partial<CaptionStyle>;
+    }
   /** D-222 — pin a [`Marker`] to a timeline frame. A real `EditOp`, not a
    *  store field, and that is the deliberate difference from D-216's
    *  `selection` and D-218's `previewView`: those describe how the user is
@@ -2477,6 +2593,17 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.patch.content !== undefined
         ? `Set title text to "${op.patch.content}"`
         : `Edit ${clipLabel(before, op.track, op.clip)} title`;
+    // D-228 — same reasoning as the title label above: the text is the one
+    // thing worth naming, since "Edit caption" says nothing when a timeline
+    // holds four hundred of them.
+    case 'set_caption_text':
+      return `Set caption to "${captionLines(op.text)[0] ?? ''}"`;
+    case 'set_caption_style':
+      return 'Edit subtitle track style';
+    case 'set_caption_cue_style':
+      return op.patch === null ? 'Use track style for caption' : 'Override caption style';
+    case 'import_subtitles':
+      return `Import ${op.cues.length} subtitle${op.cues.length === 1 ? '' : 's'}`;
     // D-222 — a marker's own name is the one thing worth putting in an undo
     // label ("Add marker" three times over says nothing about which).
     case 'add_marker':
@@ -3016,6 +3143,67 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // `c.name === c.text.content` tests. Both references show a title clip
     // labelled with its own text.
     if (c.text && c.name === c.text.content) nc.name = merged.content || 'Title';
+    return next;
+  }
+  if (op.kind === 'set_caption_text') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const c = tr.clips[op.clip];
+    // Refused for anything that is not already a caption — patching a cue onto
+    // a media clip would silently stop its picture being decoded, exactly the
+    // hazard `set_text_clip` guards against.
+    if (!c || !isCaptionClip(c) || typeof op.text !== 'string') return tl;
+    const next = clone(tl);
+    const nc = next.tracks[op.track].clips[op.clip];
+    nc.caption = { ...(c.caption ?? { text: '' }), text: op.text };
+    // Keep the clip's NAME in step with its text while it has not been
+    // independently renamed — same rule, and same reason, as `set_text_clip`.
+    if (c.caption && c.name === (captionLines(c.caption.text)[0] || 'Caption')) {
+      next.tracks[op.track].clips[op.clip].name = captionLines(op.text)[0] || 'Caption';
+    }
+    return next;
+  }
+  if (op.kind === 'set_caption_style') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked || tr.kind !== 'subtitle') return tl;
+    const next = clone(tl);
+    next.tracks[op.track].caption_style = { ...(tr.caption_style ?? {}), ...op.patch };
+    return next;
+  }
+  if (op.kind === 'set_caption_cue_style') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked) return tl;
+    const c = tr.clips[op.clip];
+    if (!c || !isCaptionClip(c)) return tl;
+    const next = clone(tl);
+    const nc = next.tracks[op.track].clips[op.clip];
+    if (op.patch === null) {
+      // "Use Track Style" ticked — drop the override entirely rather than
+      // storing a copy of the track's values, so a later track-style change
+      // still reaches this cue.
+      nc.caption = { text: nc.caption?.text ?? '' };
+    } else {
+      // Unticking starts the override from what the cue currently RESOLVES to,
+      // not from the bare defaults: the user is departing from what they can
+      // see on screen, and starting anywhere else would visibly jump.
+      const base = c.caption?.style ?? tr.caption_style ?? {};
+      nc.caption = { text: nc.caption?.text ?? '', style: { ...base, ...op.patch } };
+    }
+    return next;
+  }
+  if (op.kind === 'import_subtitles') {
+    if (op.cues.length === 0) return tl;
+    const next = clone(tl);
+    next.tracks.push({
+      kind: 'subtitle',
+      clips: op.cues.map((cue) => ({
+        ...newCaptionClipFields(cue.text, cue.duration, cue.id),
+        start_frame: cue.start_frame,
+      })),
+      gain: DEFAULT_TRACK_GAIN,
+      sync_locked: DEFAULT_SYNC_LOCKED,
+      ...(op.style ? { caption_style: op.style } : {}),
+    });
     return next;
   }
   if (op.kind === 'move') {

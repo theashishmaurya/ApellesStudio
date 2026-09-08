@@ -1534,8 +1534,23 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       **Deferred, deliberately:** marker DURATION (Resolve's range marker)
       and its Keyword field — see D-222 for why neither is needed to flag a
       frame and what a duration would cost the model.
-    - ⬜ Subtitles / captions — import SRT/TTML, own track type, styleable
-      (ref: `captioning.jpg`).
+    - ✅ Subtitles / captions — **D-228**, `docs/notes/subtitles.md`.
+      `TrackKind::Subtitle` (a track kind, deliberately the opposite call from
+      D-211's title-as-a-clip-variant — a caption composites over the finished
+      picture whatever its index, and its style belongs to the track);
+      `.srt`/`.vtt` import + sidecar export; per-track style with a per-cue
+      override; Inspector sections + a CPS cue list; 5 `editor_*` MCP tools.
+      **Multi-line cues render identically in preview and export** because the
+      line layout is ours, not either engine's — `y_align=font` plus one
+      `drawtext` per line, proven by a real-ffmpeg pixel test.
+      - ⬜ **TTML / XML / embedded-MXF import is deliberately NOT built** — see
+        D-228 §4: TTML timings depend on `ttp:timeBase`/`ttp:frameRate` and a
+        subset parser would import real files with silently wrong times. Do it
+        properly (full timebase + region/style resolution) or not at all.
+      - ⬜ Auto-captioning from the D-189 transcript — the timed words already
+        exist; turning them into cues is the obvious high-value follow-up.
+      - ⬜ Italic/bold rendering (needs italic faces in `chroma::text`'s
+        catalogue first, with their own export-parity question).
     - Explicitly **out of scope** (owner's own cut): hardware control
       surfaces, multi-user real-time collaboration.
 

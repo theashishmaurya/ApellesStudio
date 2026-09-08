@@ -320,6 +320,7 @@ import {
   computeInsertion,
   cutFrames,
   endFrame,
+  captionLines,
   gapAt,
   newTransition,
   linkedClipIds,
@@ -483,12 +484,39 @@ function buildRows(tl: Timeline, fps: number): TimelineRow[] {
   });
 }
 
-/** "Video 1" / "Audio 1" / "Video 2" … — numbered per kind, matching the
- *  label this file always showed for the single video track before D-080. */
+/** A clip body's fill, per its track's kind.
+ *
+ *  D-228 gave the subtitle lane its own entry and, in doing so, replaced the
+ *  inline `kind === 'audio' ? … : …` ternary this file used in two places —
+ *  a two-way ternary cannot express a third kind without silently colouring
+ *  it as video, which is the bug a lookup avoids by construction.
+ *
+ *  These stay literal `rgba()` rather than `--color-*` tokens because they are
+ *  what the pre-existing code already used here and are deliberately
+ *  translucent overlays on the filmstrip beneath them; unifying the timeline's
+ *  clip-body palette onto the token set is a real, separate cleanup, not
+ *  something to half-do while adding a lane. */
+const CLIP_BODY_BACKGROUND: Record<'video' | 'audio' | 'subtitle', string> = {
+  video: 'rgba(90,120,180,0.55)',
+  audio: 'rgba(120,170,110,0.55)',
+  // A warm sand, the closest token-free match to the reference's own tan cue
+  // blocks, and distinct from both the blue video and green audio bodies.
+  subtitle: 'rgba(190,165,110,0.55)',
+};
+
+/** "Video 1" / "Audio 1" / "Subtitle 1" … — numbered per kind, matching the
+ *  label this file always showed for the single video track before D-080.
+ *  D-228 added the subtitle lane, named the way the reference names it
+ *  (`scratch/resolve-reference/captioning.jpg` shows "Subtitle 1"). */
 function trackLabels(tl: Timeline): string[] {
   let videoN = 0;
   let audioN = 0;
-  return tl.tracks.map((t) => (t.kind === 'video' ? `Video ${++videoN}` : `Audio ${++audioN}`));
+  let subN = 0;
+  return tl.tracks.map((t) => {
+    if (t.kind === 'audio') return `Audio ${++audioN}`;
+    if (t.kind === 'subtitle') return `Subtitle ${++subN}`;
+    return `Video ${++videoN}`;
+  });
 }
 
 /** id -> timeline start frame for every clip on every track — the snapshot
@@ -1527,10 +1555,23 @@ export function TimelinePane() {
    *  source has audio (its audio half gets its own track via
    *  `ensureAudioTrackWithRoom`, not this boundary). Drop context remains
    *  the right signal for this specific question. */
+  /*  D-228 — a **subtitle** neighbour is deliberately not inferable. This
+   *  function answers "what track should a dropped MEDIA item get", and the
+   *  answer is never a subtitle track: captions come from a subtitle file or
+   *  the Add-caption action, never from dropping footage, and a media clip
+   *  placed on a subtitle track would be invisible (the caption resolver only
+   *  looks for cues, the video compositor skips the track entirely). So a
+   *  subtitle neighbour falls through to the next signal rather than being
+   *  continued. Adding the variant to `TrackKind` is what surfaced this —
+   *  before it, the function returned `tracks[i].kind` unexamined. */
   const inferNewTrackKind = (index: number): 'video' | 'audio' => {
-    if (index > 0 && tracks[index - 1]) return tracks[index - 1].kind;
-    if (tracks[index]) return tracks[index].kind;
-    return 'video';
+    const mediaKind = (t: (typeof tracks)[number] | undefined): 'video' | 'audio' | null =>
+      t?.kind === 'video' || t?.kind === 'audio' ? t.kind : null;
+    if (index > 0) {
+      const above = mediaKind(tracks[index - 1]);
+      if (above) return above;
+    }
+    return mediaKind(tracks[index]) ?? 'video';
   };
 
   /** D-095 — a drop's `clientX` to a timeline frame, mirroring the library's
@@ -1838,7 +1879,7 @@ export function TimelinePane() {
             // `CLAUDE.md`'s "no magic colours, use `--color-*`") is the
             // ONLY selection indicator now — a real outline, not a
             // background-colour gamble.
-            background: track?.kind === 'audio' ? 'rgba(120,170,110,0.55)' : 'rgba(90,120,180,0.55)',
+            background: CLIP_BODY_BACKGROUND[track?.kind ?? 'video'],
           }}
         >
           {/* D-211 — a TEXT clip has no picture to filmstrip and no audio to
@@ -1860,7 +1901,23 @@ export function TimelinePane() {
               </span>
             </div>
           )}
-          {clip && !clip.text && track?.kind === 'video' && (
+          {/* D-228 — a CAPTION clip, like a title, has no picture and no
+              audio: its cue text IS its visual, which is exactly what the
+              reference frame shows (a tinted block with the caption written
+              across it). Same placement and same reasoning as the title
+              branch above, and the media branch's guard below excludes it for
+              the same reason. */}
+          {clip?.caption && (
+            <div
+              className="absolute inset-0 flex items-center overflow-hidden px-2"
+              style={{ background: CLIP_BODY_BACKGROUND.subtitle }}
+            >
+              <span className="truncate text-[11px] font-medium text-button-text/90">
+                {captionLines(clip.caption.text).join(' ') || 'Caption'}
+              </span>
+            </div>
+          )}
+          {clip && !clip.text && !clip.caption && track?.kind === 'video' && (
             <>
               {/* D-119 — real filmstrip thumbnails, the clip's actual picture
                   content tiled across its full width/height, replacing the
@@ -3315,7 +3372,7 @@ export function TimelinePane() {
               width: dragOverlayWidth,
               height: ROW_HEIGHT,
               background:
-                dragOverlayTrack?.kind === 'audio' ? 'rgba(120,170,110,0.55)' : 'rgba(90,120,180,0.55)',
+                CLIP_BODY_BACKGROUND[dragOverlayTrack?.kind ?? 'video'],
             }}
           >
             {dragOverlayTrack?.kind === 'video' && (

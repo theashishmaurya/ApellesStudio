@@ -80,7 +80,7 @@ use chroma_timeline::{Clip, LayerRole, LayerSource, Timeline, TrackKind, Visible
 
 use super::state;
 use super::video::VideoInfo;
-use super::{decode_pipe, project, text};
+use super::{caption_render, decode_pipe, project, text};
 
 // --------------------------------------------------------------------------- //
 // per-clip probe cache — moved out of this file into `chroma-media` (D-146,
@@ -842,7 +842,52 @@ pub(crate) fn timeline_frame_image(
         _ => composite_video_frame(&layers, max_long_edge, comp)?,
     };
 
+    // D-228 — captions go on last, over the finished picture, whatever the
+    // video z-order turned out to be. That includes over the single-layer fast
+    // path above: a caption must not be the reason a plain one-clip frame
+    // stops taking it, so this is a separate pass rather than another arm of
+    // the match. `draw_captions_onto` returns the frame untouched when there
+    // are none, which is every pre-D-228 project and every frame of a project
+    // with no subtitle track — so the common case pays one `Vec` allocation
+    // that comes back empty.
+    let img = draw_captions_onto(img, &timeline, pos as i64)?;
+
     Ok(Some(img))
+}
+
+/// D-228 — alpha-composite every caption showing at `pos` onto `frame`.
+///
+/// **A separate pass over the finished picture, deliberately** (see
+/// `Timeline::resolve_visible_captions_at`): a caption is not a video layer,
+/// takes no part in the video z-order, and never occludes what is under it the
+/// way an opaque clip does. Painting it here — after the compositor, after the
+/// single-layer fast path — is what makes those three facts true in the
+/// preview as well as in the model.
+///
+/// **The canvas is whatever the frame already is**, not the composition: the
+/// caption layer is rasterised at the frame's own size, so its style's
+/// fractions resolve against the same picture the viewer is looking at. That
+/// is the same resolution-independence contract the export honours by
+/// resolving the identical fractions against the output size.
+fn draw_captions_onto(
+    frame: DynamicImage,
+    timeline: &Timeline,
+    pos: i64,
+) -> Result<DynamicImage, String> {
+    let captions = timeline.resolve_visible_captions_at(pos);
+    if captions.is_empty() {
+        return Ok(frame);
+    }
+    let (w, h) = (frame.width(), frame.height());
+    let mut canvas = frame.to_rgba8();
+    for cap in captions {
+        let layer = caption_render::render_caption_layer(cap.cue, &cap.style, w, h)?;
+        // Full opacity: a caption has no `opacity`/fade of its own (see
+        // `Clip::caption`'s doc) — its only transparency is the background
+        // box's, which is already baked into the layer's own alpha.
+        image::imageops::overlay(&mut canvas, layer.as_ref(), 0, 0);
+    }
+    Ok(DynamicImage::ImageRgba8(canvas))
 }
 
 /// D-226 — the decode-pipe slot a clip layer belongs in: the track's own slot

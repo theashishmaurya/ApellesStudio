@@ -57,6 +57,13 @@ import {
   transitionWindow,
   transitionsOf,
 } from './timeline';
+import {
+  captionLayout,
+  captionLines,
+  resolveCaptionStyle,
+  type CaptionCue,
+  type CaptionStyle,
+} from './caption';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
 import {
   audioRefBracket,
@@ -289,6 +296,161 @@ export function buildTextDrawtextStep(
     `enable='between(t,${startSec},${endSec})'`,
   ];
   return `[${inLabel}]drawtext=${optsList.join(':')}[${outLabel}]`;
+}
+
+// --------------------------------------------------------------------------- //
+// Subtitles / captions (D-228) — one `drawtext` per LINE, over everything
+// --------------------------------------------------------------------------- //
+
+/**
+ * The `drawtext` nodes for one caption cue — **one per line**, chained.
+ *
+ * **Why one node per line, rather than a `\n` in a single `drawtext`**
+ * (D-228). `drawtext` can render multi-line text itself, and doing so would be
+ * shorter. It is not used, deliberately: its inter-line layout (line height,
+ * per-line alignment) is libfreetype's, and the live preview's is `ab_glyph`'s,
+ * and those two genuinely disagree — which is precisely why D-211 forbade
+ * multi-line titles outright. Emitting each line as its own single-line draw at
+ * a `y` that `captionLayout` computed means neither engine is ever asked to lay
+ * out a second line, so the case where they agree is the only case that ever
+ * runs. See `caption.ts`'s header and `chroma_timeline::caption`'s module doc.
+ *
+ * **`y_align=font` is load-bearing.** It makes `y` refer to the font's own line
+ * box rather than to the rendered string's ink, which is what makes a `y` mean
+ * the same thing for a line of "xx" as for a line of "Ag" — measured directly
+ * against ffmpeg 7.1: with `y_align=font` those two strings produce an
+ * identical box, with the default `y_align=text` they do not. It is also what
+ * makes `box=1` a uniform band anchored at `y` instead of a rectangle that
+ * jitters with each line's descenders, which is the shape
+ * `scratch/resolve-reference/captioning.jpg` actually shows.
+ *
+ * **Every geometry number here comes from `captionLayout`**, the exact mirror
+ * of the Rust `CaptionLayout` the live preview resolves — this function
+ * chooses nothing. The one thing it leaves to ffmpeg is `text_w`, the measured
+ * advance width used to apply the alignment; `chroma::caption_render` measures
+ * the same advance from the same font file with `ab_glyph` (D-212).
+ *
+ * `fontFile` is the absolute path the caller resolved from the backend's own
+ * `chroma_text_fonts` catalogue — the same file the preview rasterised.
+ */
+export function buildCaptionDrawtextSteps(
+  cue: CaptionCue,
+  style: Required<CaptionStyle>,
+  inLabel: string,
+  outLabelFor: (lineIndex: number) => string,
+  opts: Pick<TimelineExportOptions, 'width' | 'height'>,
+  startSec: number,
+  endSec: number,
+  fontFile: string,
+): string[] {
+  const lines = captionLines(cue.text);
+  if (lines.length === 0) return [];
+  const layout = captionLayout(style, opts.width, opts.height, lines.length);
+
+  const steps: string[] = [];
+  let last = inLabel;
+  lines.forEach((line, i) => {
+    const geom = layout.lines[i];
+    const out = outLabelFor(i);
+    // `text_w` is ffmpeg's measurement of this line's advance width. The
+    // anchor semantics match `chroma::caption_render`'s `pen_x` exactly.
+    const xExpr =
+      style.align === 'left'
+        ? `${geom.x_anchor}`
+        : style.align === 'right'
+          ? `${geom.x_anchor}-text_w`
+          : `${geom.x_anchor}-text_w/2`;
+
+    const optsList = [
+      // Quoted through the same escaper the title path uses — a font path can
+      // contain spaces ("Arial Bold.ttf"), and caption text is arbitrary user
+      // text straight out of a `.srt` file, which is exactly where a stray
+      // `:` or `'` comes from.
+      `fontfile=${quoteFiltergraphValue(fontFile)}`,
+      `text=${quoteFiltergraphValue(line)}`,
+      `fontcolor=${ffmpegColorLiteral(style.color)}`,
+      `fontsize=${layout.font_px}`,
+      // `expansion=none` — see `quoteFiltergraphValue`'s own doc. Without it a
+      // caption containing `%` or `{` is a text-expansion directive, not text.
+      // Real subtitles contain both.
+      'expansion=none',
+      'y_align=font',
+      `y=${geom.line_top}`,
+      `x='${xExpr}'`,
+    ];
+    if (style.box_enabled && style.box_opacity > 0) {
+      optsList.push(
+        `box=1`,
+        // `@a` is ffmpeg's own colour-alpha suffix. Clamped and fixed to 3
+        // decimals so the compiled argv is stable for a given style rather
+        // than carrying a float's full printed precision.
+        `boxcolor=${ffmpegColorLiteral(style.box_color)}@${clampUnit(style.box_opacity).toFixed(3)}`,
+        `boxborderw=${layout.box_padding}`,
+      );
+    }
+    optsList.push(`enable='between(t,${startSec},${endSec})'`);
+    steps.push(`[${last}]drawtext=${optsList.join(':')}[${out}]`);
+    last = out;
+  });
+  return steps;
+}
+
+function clampUnit(v: number): number {
+  if (!Number.isFinite(v)) return 1;
+  return Math.min(1, Math.max(0, v));
+}
+
+/** Every caption showing anywhere on `timeline`, in the order they must be
+ *  drawn — the export-side mirror of `Timeline::resolve_visible_captions_at`.
+ *
+ *  Walks subtitle tracks in index order (lowest first, so a higher-index track
+ *  draws on top of it — the same order the Rust resolver documents), and each
+ *  track's clips in `start_frame` order so the compiled filtergraph is stable
+ *  rather than depending on the bookkeeping order of `Track.clips`. */
+export function captionsForExport(
+  timeline: Timeline,
+  fps: number,
+): Array<{ clip: Clip; cue: CaptionCue; style: Required<CaptionStyle>; startSec: number; endSec: number }> {
+  const out: Array<{
+    clip: Clip;
+    cue: CaptionCue;
+    style: Required<CaptionStyle>;
+    startSec: number;
+    endSec: number;
+  }> = [];
+  for (const track of timeline.tracks ?? []) {
+    if (track.kind !== 'subtitle' || track.hidden) continue;
+    const clips = [...(track.clips ?? [])].sort((a, b) => a.start_frame - b.start_frame);
+    for (const clip of clips) {
+      if (!clip.caption) continue;
+      out.push({
+        clip,
+        cue: clip.caption,
+        style: resolveCaptionStyle(clip.caption.style, track.caption_style),
+        startSec: clip.start_frame / fps,
+        endSec: endFrame(clip, fps) / fps,
+      });
+    }
+  }
+  return out;
+}
+
+/** D-228/D-212 — every distinct caption font key on `timeline` that
+ *  `fontFiles` cannot resolve, so the caller can refuse the export with a real
+ *  reason instead of handing ffmpeg a `drawtext` with no `fontfile=` (a hard
+ *  failure with an opaque message). The caption counterpart of
+ *  `textClipsMissingFonts`. */
+export function captionClipsMissingFonts(
+  timeline: Timeline,
+  fontFiles: Record<string, string> | undefined,
+  fps: number,
+): Array<{ clipId: string; font: string }> {
+  const missing: Array<{ clipId: string; font: string }> = [];
+  for (const c of captionsForExport(timeline, fps)) {
+    if (fontFiles?.[c.style.font]) continue;
+    missing.push({ clipId: c.clip.id, font: c.style.font });
+  }
+  return missing;
 }
 
 // --------------------------------------------------------------------------- //
@@ -1282,9 +1444,17 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   const bg = `color=black:size=${opts.width}x${opts.height}:rate=${opts.fps}[base]`;
   filterSteps.push(bg);
 
+  // D-228 — captions are drawn over the FINISHED picture, after every video
+  // overlay, in subtitle-track order. Resolved up front because it decides
+  // which node gets to be `[outv]`: with captions present the last overlay is
+  // no longer the end of the video chain.
+  const captions = captionsForExport(timeline, opts.fps);
+  const captionSteps: string[] = [];
+
   let lastLabel = 'base';
   chains.forEach((chain, i) => {
-    const outLabel = i === chains.length - 1 ? 'outv' : `ov${i}`;
+    const outLabel =
+      i === chains.length - 1 && captions.length === 0 ? 'outv' : `ov${i}`;
     // D-211 — a text clip paints with `drawtext` on the stream built so far,
     // at exactly the position in the chain its `overlay` would have taken, so
     // z-order needs no separate rule. A clip whose font could not be resolved
@@ -1344,6 +1514,35 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     );
     lastLabel = outLabel;
   });
+
+  // D-228 — now the captions, on top of everything the loop above built.
+  //
+  // The video stream is `-map`ped by whatever `lastLabel` ends up being (see
+  // the `-map` below), so appending here needs no label surgery: each cue's
+  // lines chain off the current end and become the new end. A cue whose font
+  // could not be resolved, or whose text is empty, simply contributes no node
+  // and leaves `lastLabel` alone — it cannot strand a dangling label.
+  // (`compileEditorExportArgs` has already refused the whole export via
+  // `captionClipsMissingFonts` for the font case, so that arm is the
+  // defensive second line only.)
+  captions.forEach((cap, ci) => {
+    const fontFile = opts.fontFiles?.[cap.style.font];
+    if (!fontFile) return;
+    const steps = buildCaptionDrawtextSteps(
+      cap.cue,
+      cap.style,
+      lastLabel,
+      (li) => `cap${ci}_${li}`,
+      opts,
+      cap.startSec,
+      cap.endSec,
+      fontFile,
+    );
+    if (steps.length === 0) return;
+    captionSteps.push(...steps);
+    lastLabel = `cap${ci}_${steps.length - 1}`;
+  });
+  filterSteps.push(...captionSteps);
 
   // B-076 — `color=...[base]` (the black backdrop every clip overlays onto)
   // is an ffmpeg `lavfi` source with NO duration of its own — unlike a real
