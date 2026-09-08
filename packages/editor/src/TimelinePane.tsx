@@ -1201,7 +1201,51 @@ export function TimelinePane() {
   const [viewportWidth, setViewportWidth] = useState(0);
 
   const editorRef = useRef<TimelineState>(null);
-  const editAreaRef = useRef<HTMLDivElement>(null);
+  /**
+   * B-123 — the scrollable edit area. A ref for READING, plus a state mirror
+   * whose only job is to be a DEPENDENCY.
+   *
+   * **The bug.** This node is behind two early returns further down
+   * (`!timeline`, and `tracks.length === 0`'s "Empty timeline — drag a clip
+   * from Sources" placeholder), so on the real app's own startup path — a
+   * freshly created project, which has no tracks at all — it does not exist
+   * when this component first commits. Three effects below bind NATIVE
+   * listeners to it: D-235's capture-phase `pointerdown` (the smart trim
+   * tool's entire arm), B-116's non-passive `wheel` (ctrl-zoom) and D-128's
+   * `ResizeObserver`. All three were `useEffect(..., [])` reading
+   * `editAreaRef.current`. With an empty dependency array they run exactly
+   * once, find `null`, bail — and never run again. The node then mounts, for
+   * the rest of the session, carrying none of them.
+   *
+   * **Why both, and not just one of them.**
+   *
+   * A ref alone cannot fix it: a ref write does not schedule anything, so
+   * there is no moment at which an effect could learn the node had arrived.
+   * That is the whole defect.
+   *
+   * State alone cannot replace the ref either, and this was tried first and
+   * reverted after it broke six real tests. Several handlers on this surface
+   * (D-137's marquee, the fade drags) are bound ONCE to `window`/`document`
+   * and outlive many renders. A ref read inside them is always the current
+   * node; a state value captured at bind time is the node as of THAT render —
+   * and since `setEditArea` only lands after the first commit, that value is
+   * `null` for exactly the renders those listeners are created in. Converting
+   * the reads is therefore not a refactor of the same behaviour, it is a
+   * different one, and a worse one.
+   *
+   * So: `editAreaRef` stays the single read path everywhere (unchanged, and
+   * always current), and `editArea` exists solely so the three node-bound
+   * effects have something real to depend on. `attachEditArea` writes both.
+   * A dependency on some boolean mirroring the render condition would work
+   * today and rot silently the first time a third early return is added; this
+   * cannot, because it depends on the node itself.
+   */
+  const editAreaRef = useRef<HTMLDivElement | null>(null);
+  const [editArea, setEditArea] = useState<HTMLDivElement | null>(null);
+  const attachEditArea = useCallback((node: HTMLDivElement | null) => {
+    editAreaRef.current = node;
+    setEditArea(node);
+  }, []);
   const fps = timelineFps(timeline);
   const tracks = timeline?.tracks ?? [];
   const labels = useMemo(() => (timeline ? trackLabels(timeline) : []), [timeline]);
@@ -1313,7 +1357,10 @@ export function TimelinePane() {
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, []);
+    // B-123 — `editArea`, not `[]`: this node mounts LATE on the real app's
+    // own startup path (see its declaration), and an empty array bound this
+    // listener to nothing at all for the whole session.
+  }, [editArea]);
 
   /** B-116 — the frame + viewport x a zoom in flight has to keep together,
    *  handed from `zoomBy` to the effect below. A ref, not state: it is a
@@ -1347,7 +1394,8 @@ export function TimelinePane() {
     const ro = new ResizeObserver(() => setViewportWidth(el.clientWidth));
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+    // B-123 — see the `wheel` effect above; same late-mount, same fix.
+  }, [editArea]);
 
   // --------------------------------------------------------------------- //
   // D-235 — the context-sensitive trim tool (roadmap item 27). A FIFTH
@@ -1437,7 +1485,13 @@ export function TimelinePane() {
     };
     el.addEventListener('pointerdown', onPointerDown, true);
     return () => el.removeEventListener('pointerdown', onPointerDown, true);
-  }, []);
+    // B-123 — `editArea`, not `[]`. THIS is the listener whose absence made
+    // the whole D-235/D-250 smart trim tool inert in the real app: with no
+    // capture-phase press to read, `trimPressRef` stayed `null`, every
+    // gesture resolved unarmed, and Alt+drag silently fell back to the plain
+    // move/trim it has always been — while the badge and cursor (React props,
+    // bound with the JSX) kept correctly announcing "Slip"/"Roll".
+  }, [editArea]);
 
   /** D-235 — which mode a press at this pointer position would commit, or
    *  `null` when it is not over a clip at all. The hover affordance's whole
@@ -3836,7 +3890,7 @@ export function TimelinePane() {
           <ResizablePanelGroup orientation="vertical" className="h-full min-h-0">
             <ResizablePanel className="relative min-h-0 overflow-hidden">
           <div
-            ref={editAreaRef}
+            ref={attachEditArea}
             data-bench-id="timeline-edit-area"
             className="relative h-full overflow-hidden"
             // D-250 — the cursor half of Resolve's own context-sensitive trim

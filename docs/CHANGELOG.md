@@ -30,6 +30,31 @@ One or two lines per session. Detail lives in the decision it references.
   `@chroma/editor` 1507/1507, `@chroma/debug` 32/32, production `vite build`
   re-verified debug-only (0 occurrences of the new op name in the bundle).
 
+- **2026-09-09** — **B-123 fixed: the whole D-235/D-250 smart trim tool
+  (ripple/roll/slip/slide) was inert in the real app.** Reported live by the
+  owner — "none of the roll slip etc we built works with alt key" — after both
+  features shipped fully green. `TimelinePane` binds three NATIVE listeners to
+  its edit-area node in `useEffect(…, [])`: D-235's capture-phase `pointerdown`
+  (the tool's entire arm), B-116's ctrl-`wheel` zoom and D-128's
+  `ResizeObserver`. That node sits behind two early returns — including the
+  `tracks.length === 0` "Empty timeline" placeholder every NEW project starts
+  in — so on the app's own startup path it does not exist when the component
+  first commits; the effects ran once against `null` and never again, and the
+  node then mounted carrying none of them for the rest of the session. With no
+  press captured, every armed gesture resolved UNARMED and fell back to a plain
+  move/trim, while the badge and cursor (React props, not effect-bound) kept
+  correctly announcing "Slip"/"Roll". Every test tier missed it because all of
+  them seed a populated timeline BEFORE mounting — the B-092/B-093 pattern
+  again. Fixed by giving those effects a real dependency (a `useState` mirror of
+  the node) while leaving the ref as the read path; a first attempt that
+  replaced the ref outright was reverted after it broke 6 marquee tests and
+  bailed the React Compiler. Verified in real Chromium over CDP with real
+  trusted input — listener attachment read out of the browser, all four modes
+  committing real ops on a timeline that started empty — plus a regression test
+  that mounts in the real app's order and provably fails without the fix.
+  B-116's ctrl-wheel zoom and D-128's viewport tracking were dead the same way
+  and are restored by the same three lines.
+
 - **2026-09-08** — **B-122 fixed: dragging a clip onto a track HEADER crashed
   the whole app, because two different dnd-kit droppables both called
   themselves `type: 'track'`.** Caught in the dev-server log while the owner

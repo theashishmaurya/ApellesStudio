@@ -528,3 +528,64 @@ describe('pointer-adjacent mode badge (D-250)', () => {
     }
   });
 });
+
+// --------------------------------------------------------------------------- //
+// B-123 — the LATE-MOUNT regression: the edit area does not exist yet when the
+// pane first commits.
+// --------------------------------------------------------------------------- //
+
+describe('B-123 — the smart trim tool survives a late-mounted edit area', () => {
+  // WHY THIS BLOCK EXISTS, and why all 17 tests above it passed while the
+  // feature was completely dead in the real app.
+  //
+  // Every other test in this file — and the whole real-Chromium harness tier,
+  // and D-235's own verification — seeds a POPULATED timeline before mounting
+  // `TimelinePane`. On that order the edit-area node exists on the very first
+  // commit, so the pane's `[]`-dependency effects find it and bind their
+  // native listeners. Nothing in that order can observe the bug.
+  //
+  // The real app does the opposite. `TimelinePane` early-returns the "Empty
+  // timeline — drag a clip from Sources to get started" placeholder whenever
+  // `tracks.length === 0`, which is exactly what a freshly created project
+  // has. The effects ran once against nothing and never re-ran, so the edit
+  // area mounted — for the rest of the session — with no capture-phase
+  // `pointerdown` listener. `trimPressRef` stayed `null`, every gesture
+  // resolved UNARMED, and Alt+drag silently fell back to the plain move it has
+  // always been, while the badge and cursor (React props, bound with the JSX)
+  // kept correctly announcing "Slip".
+  //
+  // So this block mounts in the REAL APP'S order. It is the only test in this
+  // file that fails without B-123's fix.
+  it('18. an Alt body drag still SLIPS when the timeline starts empty and gains its clips later', async () => {
+    // Re-mount over a timeline that has NO tracks: the pane renders its
+    // placeholder and the edit area genuinely is not in the DOM.
+    actSync(() =>
+      useEditorTimelineStore.setState({
+        timeline: { id: 'late-tl', name: 'late', rate: { num: FPS, den: 1 }, tracks: [] },
+      }),
+    );
+    mounted?.unmount();
+    mounted = mount(React.createElement(TimelinePane), { strictMode: true });
+    await waitFrames(2);
+    expect(mounted.container.querySelector('[data-bench-id="timeline-edit-area"]')).toBeNull();
+
+    // Now the clips arrive, exactly as the first drag from Sources delivers them.
+    actSync(() => useEditorTimelineStore.setState({ timeline: buildFixture() }));
+    await waitFrames(2);
+    expect(mounted.container.querySelector('[data-bench-id="timeline-edit-area"]')).not.toBeNull();
+
+    const before = clipById('a').source_start;
+    await setAlt(true);
+    // Upper band of clip 'a' — Resolve's over-the-thumbnails half, so: slip.
+    await bodyDrag(bodies()[0], 20, 50, 8, { altKey: true });
+    await setAlt(false);
+
+    // The assertion that fails without the fix: the drag committed a real
+    // slip, which is only possible if the capture-phase press listener was
+    // actually bound to the node that mounted late.
+    expect(clipById('a').source_start).not.toBe(before);
+    // A slip never moves the clip — this is what separates it from the move
+    // the broken build silently did instead.
+    expect(clipById('a').start_frame).toBe(0);
+  });
+});

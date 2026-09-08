@@ -1874,3 +1874,144 @@ status: fixed (2026-09-08) · severity: **blocker** (an unhandled `TypeError` in
 - **verification:** `dndTargets.test.ts`, 13 new cases. The first feeds `laneDropTrack` the **exact payload a track header emits** — the input that crashed the app — and asserts `null`; others cover the mirror-image confusion, a stale/out-of-range track index, malformed payloads, junk-input non-throwing, and a regression guard asserting the legacy shared `type: 'track'` is now recognised by *nothing*. `npm test --workspace @chroma/editor` 1499/1499 (77 files). `npx tsc --noEmit -p packages/editor` clean — and TypeScript itself caught one call site the rename had missed, which is the point of naming the types once.
 
 - **honest tier note:** these are unit tests, not a DOM drag, because `TimelinePane.trim.dom.test.tsx` already documents that **dnd-kit resolves no `over` at all under jsdom** — a drop-on-a-header cannot be driven end to end in that tier. Making the wrong decision into a pure function is what made the crashing input a value a test can simply pass in, and it pins the contract rather than one gesture that happens to reach it. The real-browser gesture remains an owner check.
+
+## B-123 — The whole D-235/D-250 smart trim tool (ripple/roll/slip/slide) was inert in the real app: three `useEffect(…, [])` bound their native listeners to an edit area that does not exist yet on the app's own startup path
+
+**Status: fixed, 2026-09-09.** Severity: **blocker for the feature** — D-235 and
+D-250 shipped, complete and fully tested, and did literally nothing when the
+owner held Alt in the running app. Area: `packages/editor/src/TimelinePane.tsx`.
+
+- **found:** 2026-09-09, reported live by the owner against the real running
+  app, in these words: *"none of the roll slip etc we built works with alt key
+  also it does not."* Both features had landed green — D-235 with 50 unit tests
+  plus 12 real-DOM `PointerEvent` tests, D-250 with more on top.
+
+- **repro (the important part — the order of mount is the bug):**
+  1. Open or create a project whose timeline has **no tracks yet** — which is
+     what `chroma_timeline_create` produces, i.e. every new project.
+  2. `TimelinePane` renders its `tracks.length === 0` early return, the
+     "Empty timeline — drag a clip from Sources to get started" placeholder.
+     The edit-area node is **not in the DOM**.
+  3. Drag in the first clip. The edit area now mounts.
+  4. Hold Alt/Option and drag a clip body or edge. The badge and cursor
+     correctly announce "Slip" / "Roll" / "Ripple" / "Slide" — and the gesture
+     commits a plain `move` or plain `trim` anyway.
+
+  Seed a populated timeline *before* mounting the pane and every one of the
+  four modes works perfectly. That difference is the entire bug, and it is
+  exactly why every existing test tier passed.
+
+- **expected:** Alt/Option arms the smart trim tool and position picks the mode
+  (D-235's own table): edge-at-a-cut → roll, free edge → ripple, upper body →
+  slip, lower body → slide.
+
+- **actual:** every armed gesture resolved **unarmed**, silently falling back to
+  the pre-D-235 behaviour — a body drag moved the clip, an edge drag did the
+  plain gap-leaving trim. No error, no console warning, and the on-screen
+  affordance kept promising the edit that was not going to happen.
+
+- **cause.** `TimelinePane` binds three **native** listeners to its scrollable
+  edit area, each in a `useEffect` that reads `editAreaRef.current` and bails on
+  `null`, with an **empty dependency array**:
+
+  | effect | what it binds | what its absence breaks |
+  |---|---|---|
+  | D-235 | capture-phase `pointerdown` | the smart trim tool's entire arm |
+  | B-116 | non-passive `wheel` | ctrl-wheel timeline zoom |
+  | D-128 | `ResizeObserver` | `viewportWidth`, the filmstrip's fetch range |
+
+  That node sits behind **two early returns** further down the same component
+  (`if (!timeline) return null;` and the `tracks.length === 0` placeholder), so
+  on the app's own startup path it does not exist when the component first
+  commits. With `[]`, those effects run exactly once, find `null`, return — and
+  **never run again**. The node then mounts, and carries none of them, for the
+  rest of the session.
+
+  The specific mechanism for the trim tool: with no capture-phase `pointerdown`
+  listener, `trimPressRef` is never written, so it stays `null`. `resizeEndOp`
+  reads `press?.altKey ?? false` → unarmed → plain trim. `onDndDragEnd` computes
+  `press = captured && {…}`, which is `null` when `captured` is `null`, so
+  `bodyDragOp` returns `null` *and* the `press?.altKey` guard is falsy → the
+  gesture falls straight through to the move path.
+
+  The affordance kept working throughout — and this is what made the bug read as
+  "the feature is half-built" rather than "a listener is missing" — because the
+  badge, cursor and hover readout are React **props** on the JSX
+  (`onPointerMove`/`onPointerLeave`), bound whenever the div renders, not
+  effect-bound to a captured node.
+
+- **why every test tier was green.** All of them seed a populated timeline
+  *before* mounting the pane: the 12 D-235 DOM tests do it in `beforeEach`, and
+  `app/src/harness-main.tsx` calls `seed()` above `render()`. On that order the
+  node exists on the first commit and the effects bind normally. Not one tier
+  ever mounted this component in the order the real app mounts it. This is the
+  same shape as B-092 and B-093 — "passed every test and the browser harness,
+  then did nothing in the real app" — and the same lesson: the tier was not too
+  weak, it was set up in the one arrangement that cannot see the defect.
+
+- **fix.** `editAreaRef` stays the single read path everywhere (unchanged, and
+  always current), and a `useState`-held mirror of the same node, written by a
+  `useCallback` ref, gives the three effects a real dependency: `[editArea]`
+  instead of `[]`. They now re-run at exactly the two moments they must — when
+  the node appears and when it goes away.
+
+  **A first attempt replaced the ref with state outright and was reverted**,
+  because it is not the same behaviour: D-137's marquee and the fade drags bind
+  handlers **once** to `window`/`document` and outlive many renders. A ref read
+  inside those is always the current node; a state value captured at bind time
+  is the node as of *that* render — and since the setter only lands after the
+  first commit, it is `null` for precisely the renders those listeners are
+  created in. That version broke 6 marquee DOM tests and bailed `TimelinePane`
+  out of the React Compiler (caught by `reactCompiler.test.ts`, D-201). Both
+  failures are recorded here rather than quietly discarded, because the reverted
+  version is the one a future reader would otherwise reach for as "the cleaner
+  fix."
+
+  A dependency on a boolean mirroring the render condition was also rejected: it
+  would work today and rot silently the first time a third early return is
+  added. Depending on the node itself cannot.
+
+- **also fixed, same three lines, same root cause:** B-116's ctrl-wheel timeline
+  zoom and D-128's `viewportWidth` `ResizeObserver` were dead on the identical
+  path and for the identical reason. Neither had been reported; both are
+  confirmed restored below.
+
+- **verification — real Chromium with real trusted input, not jsdom alone.**
+  This is the one place jsdom could not be trusted, since jsdom passing is what
+  shipped the bug. Driven through CDP `Input.dispatchMouseEvent` /
+  `Input.dispatchKeyEvent` (real browser input pipeline, real modifier state,
+  real interact.js, real dnd-kit, real layout) against D-142's own harness
+  (`app/harness.html`), on the real app's startup order — mount empty, then add
+  clips:
+
+  - **Listener attachment, read straight out of the browser** via CDP
+    `DOMDebugger.getEventListeners` on the live node.
+    Before the fix, late-mounted: `["click"]` — both native listeners gone.
+    After the fix, late-mounted: `["click", "pointerdown(capture)", "wheel"]`.
+  - **The four armed modes, committed against the real store**, all on a
+    timeline that started empty:
+    - roll → `{kind:'roll'}`; `a` 48→60 frames, `b` start 48→60 and 48→36 frames
+      (the cut moved, total length unchanged).
+    - ripple (Alt+Shift at the cut) → `{kind:'trim_end', ripple:true}`; `a`
+      48→60, `b` pushed 48→60 keeping its length.
+    - slip → `{kind:'slip'}`; `source_start` 120→132, `start_frame` unmoved.
+    - slide → `{kind:'slide'}`; neighbour absorbed the move.
+  - **The unarmed gestures are untouched:** plain body drag still moves; plain
+    edge drag still does the D-058 gap-leaving trim (correctly refused where a
+    butted neighbour leaves it no room).
+  - **Before the fix, the same script on the same build**, first Alt gesture on
+    a late-mounted edit area: `{kind:'move', startFrame:24}` — the owner's
+    reported behaviour, reproduced exactly.
+
+- **regression test:** `TimelinePane.trim.dom.test.tsx` test 18, the only test in
+  that file that mounts in the **real app's** order (empty timeline → placeholder
+  → clips arrive → Alt-drag). Confirmed to fail with `[]` restored and pass with
+  `[editArea]`, so it genuinely pins this bug rather than merely passing
+  alongside it. `@chroma/editor` 1507/1507 green (77 files);
+  `npx tsc --noEmit -p packages/editor` clean.
+
+- **worth noting for next time.** Every `useEffect(…, [])` that reads a
+  `ref.current` DOM node in a component with **any** early return above that
+  node's JSX is this bug waiting to happen, and no test that seeds state before
+  mounting can see it. The cheap habit: mount the component the way the app
+  mounts it — empty first — at least once per pointer-gesture feature.
