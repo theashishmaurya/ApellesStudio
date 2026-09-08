@@ -1,4 +1,4 @@
-# Transitions — the worked design (D-224 / D-225, roadmap item 27)
+# Transitions — the worked design (D-226 / D-227, roadmap item 27)
 
 **Status:** v1 shipped 2026-09-08. Two transition types (cross dissolve, dip to
 colour), real live-preview compositing, real ffmpeg export, a drag-onto-a-cut
@@ -47,7 +47,7 @@ not move. The transition owns a duration and an alignment, and during its own
 window the compositor reads the outgoing clip's tail and/or the incoming clip's
 head — frames *outside* each clip's own trim, i.e. **handle media**.
 
-### Why option 2 (D-224)
+### Why option 2 (D-226)
 
 Option 1 breaks every row of the table above, and one of them is not a
 refactor but a real cost: two clips decoding on one track through
@@ -118,7 +118,7 @@ frame rather than approximating it.
 
 Between them they prove both mechanisms. Wipes, slides and pushes are another
 generated matte over the same two, which is why more types are additive later
-rather than a redesign (D-225).
+rather than a redesign (D-227).
 
 ## 5. Live preview (`app/src-tauri/src/chroma/edit.rs`)
 
@@ -127,7 +127,7 @@ rather than a redesign (D-225).
 the compositor's existing "paint the list in reverse" needs no new rule:
 
 - no transition → one layer, exactly `clip_at`'s answer, alpha 1.0
-  (byte-identical to pre-D-224 for every project without transitions);
+  (byte-identical to pre-D-226 for every project without transitions);
 - dip → `[plate(alpha), clip_at]`;
 - cross dissolve → `[incoming(alpha = p), outgoing(alpha = 1)]`, each read at
   its own handle frame via `Clip::clamped_source_frame_at`.
@@ -188,7 +188,7 @@ expresses exactly.
   clip's own window and it is placed at its **natural** start. An audio
   crossfade is a separate, tracked feature.
 
-### The bug this uncovered — B-102
+### The bug this uncovered — B-103
 
 Building the first dissolve test showed the incoming clip fully opaque from the
 window's first frame. The cause was not the transition: **the video compiler had
@@ -201,7 +201,7 @@ sources (`adelay`); the video half never grew the equivalent. Fixed with
 `setpts=PTS+<start>/TB` at the head of every clip chain, which also gave the
 graph a single time base and fixed the second half of the same bug (position
 keyframes emitted in clip-relative seconds against `overlay`'s timeline clock).
-See `docs/BUGS.md` B-102 — with a real regression test that uses a
+See `docs/BUGS.md` B-103 — with a real regression test that uses a
 two-colour source, the only fixture shape that can see it.
 
 ## 7. Placement rules (`checkTransition`)
@@ -235,7 +235,7 @@ exists — renders the plain cut in both engines rather than erroring.
 - **Dragging the transition's own edges** to re-time it on the timeline. The
   duration field in its popover is the other half of Resolve's own sentence and
   does the same job; the drag is a second, independent gesture layered on the
-  same op. (D-225.)
+  same op. (D-227.)
 - **More transition types** — wipes, slides, pushes, smooth cut. Additive once
   the mechanism is proven; each is a generated matte over §5's two paths.
 - **Audio transitions** (constant-power crossfade at a cut) — a separate
@@ -252,6 +252,6 @@ exists — renders the plain cut in both engines rather than erroring.
 | --- | --- |
 | The preview really blends both clips | `chroma::edit`'s `preview_transition_tests` — real solid-colour media, real `timeline_frame` JPEG, decoded. Measured centre pixel mid-dissolve: **`[125, 0, 126]`** (red↔blue), against `[255,0,0]`/`[0,0,255]` for a hard cut. Includes its own hard-cut control. |
 | The export renders the same blend | `timelineExportTransitions.ffmpeg.test.ts` — real ffmpeg, real decoded pixels at 0 / 25 / 50 / 75 / 100% through the window, monotonic, plus a hard-cut control, `end_at_cut`, dip-to-black, dip-to-green, and a dangling transition. |
-| The window/handle arithmetic agrees across engines | `chroma-timeline`'s `d224_transitions` module and `timeline.test.ts`'s `D-224 transitions — model` assert the same numbers for the same inputs on both sides. |
+| The window/handle arithmetic agrees across engines | `chroma-timeline`'s `d224_transitions` module and `timeline.test.ts`'s `D-226 transitions — model` assert the same numbers for the same inputs on both sides. |
 | The badge is drawn at the right pixels and its popover writes the real field | `TimelinePane.transitions.dom.test.tsx` — real `TimelinePane`, real store; the badge's `left`/`width` asserted against the DERIVED window (not `at_frame`), `end_at_cut` drawn entirely before the cut, Remove committing a real op and moving neither clip. Its own stated limit: jsdom cannot drive `@dnd-kit`'s measured drag, so the part of the drop gesture that actually decides anything (`nearestCut`, including the near-miss refusal) is asserted directly. |
 | A project without transitions is unchanged | The whole pre-existing suite (863 TS tests, 186 Rust) passes with byte-identical export argv. |

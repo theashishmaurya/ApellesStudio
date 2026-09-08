@@ -48,7 +48,7 @@
  * write real document content: a marker is persisted into `project.json` and
  * undone by the ordinary shared undo stack.
  *
- * **D-224 — transitions.** `editor_list_transitions` / `_add_transition` /
+ * **D-226 — transitions.** `editor_list_transitions` / `_add_transition` /
  * `_set_transition` / `_remove_transition`, driving the same
  * `add_transition`/`set_transition`/`remove_transition` `EditOp`s the
  * timeline's own palette drag and badge popover do. Every one takes a `track`
@@ -286,7 +286,7 @@ function timelineDto(tl: Timeline) {
       duckDb: t.duck_db ?? 0,
       duckAttackMs: t.duck_attack_ms ?? DEFAULT_DUCK_ATTACK_MS,
       duckReleaseMs: t.duck_release_ms ?? DEFAULT_DUCK_RELEASE_MS,
-      // D-224 — this track's transitions, in cut order, alongside its clips so
+      // D-226 — this track's transitions, in cut order, alongside its clips so
       // `editor_get_timeline` stays one call for "what is on this timeline".
       transitions: transitionsOf(t).map(transitionDto),
       clips: t.clips.map((c, ci) => ({
@@ -358,7 +358,7 @@ function markerDto(m: Marker) {
  *  that guessed or held a stale id can recover in one round trip. Mirrors
  *  `resolveClip`'s own "no track N (0..M)" convention of naming the valid
  *  range in the error itself. */
-/** D-224 — one transition, in the same camelCase-ish shape every `editor_*`
+/** D-226 — one transition, in the same camelCase-ish shape every `editor_*`
  *  response uses, with its DERIVED window and handle split reported alongside
  *  the stored fields.
  *
@@ -386,7 +386,7 @@ function transitionDto(t: Transition) {
   };
 }
 
-/** D-224 — "no transition with that id on this track", with the ids that DO
+/** D-226 — "no transition with that id on this track", with the ids that DO
  *  exist. Same one-round-trip-recovery convention `markerNotFound` uses. */
 function transitionNotFound(tl: Timeline, track: number, id: string): string {
   const ids = (tl.tracks[track]?.transitions ?? []).map((t) => t.id);
@@ -1501,7 +1501,7 @@ export function useEditorControl(): void {
         return { ok: true, marker: after ? markerDto(after) : null };
       },
 
-      // ---- transitions (D-224, roadmap item 27) ---------------------------
+      // ---- transitions (D-226, roadmap item 27) ---------------------------
       //
       // The agent half of `Track.transitions`. All four drive the exact same
       // `add_transition`/`set_transition`/`remove_transition` `EditOp`s the

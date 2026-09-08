@@ -69,7 +69,7 @@ function resolveHasAudioOverrides(tl: Timeline): Record<string, boolean> {
   return out;
 }
 
-/** D-224 — the names of every clip that both carries a `speedOverrides` entry
+/** D-226 — the names of every clip that both carries a `speedOverrides` entry
  *  and is joined by a transition. See the refusal at the point of use for why
  *  the combination is not compilable. */
 function transitionClipsWithSpeedOverride(
@@ -190,7 +190,7 @@ export function compileEditorExportArgs(a: {
     };
   }
 
-  // D-224 — a speed override on a clip that a transition joins is refused
+  // D-226 — a speed override on a clip that a transition joins is refused
   // outright rather than compiled into something wrong. `speedOverrides` is an
   // export-time-only knob that changes a clip's on-timeline FOOTPRINT (see that
   // option's own doc), so the cut a transition names is no longer where that

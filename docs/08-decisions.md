@@ -20138,7 +20138,7 @@ preview played. Stereo sources are unaffected (`aformat` is a verified no-op
 for them). Not fixed here because the fix belongs to the mono-adaptation layer,
 not to this feature — see B-101 for the two real options.
 
-## D-224 — Transitions bridge an edit point; clips never overlap. Handle media is the price, and it is the same one every real NLE pays
+## D-226 — Transitions bridge an edit point; clips never overlap. Handle media is the price, and it is the same one every real NLE pays
 
 **Context.** Roadmap item 27's transitions library. A transition needs **two
 clips visible at once** for its own duration. This codebase's clips on one track
@@ -20203,13 +20203,13 @@ moving your clips.
   before assuming, per the brief.
 
 Full worked design, the tables and the verification evidence:
-`docs/notes/transitions.md`. **This decision uncovered B-102** (the export
+`docs/notes/transitions.md`. **This decision uncovered B-103** (the export
 compiler never placed a clip in time at all), which had to be fixed for any
 transition to render correctly.
 
-## D-225 — Transitions v1 ships two types and a drag-onto-the-cut palette; edge-drag re-timing is deferred
+## D-227 — Transitions v1 ships two types and a drag-onto-the-cut palette; edge-drag re-timing is deferred
 
-**Context.** With D-224's model settled, what is the right first slice? Resolve
+**Context.** With D-226's model settled, what is the right first slice? Resolve
 ships 100+ transitions and lets you drag the placed transition's own edges to
 re-time it.
 

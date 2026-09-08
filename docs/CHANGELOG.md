@@ -4,9 +4,9 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-08** — **Transitions library (D-224 + D-225, roadmap 27).** A
+- **2026-09-08** — **Transitions library (D-226 + D-227, roadmap 27).** A
   transition **bridges** an edit point: the two clips stay abutting and never
-  overlap, and it reads their handle media instead — D-224 weighs that against
+  overlap, and it reads their handle media instead — D-226 weighs that against
   real clip overlap (Premiere's shape) and records why the bridging model
   composes with this codebase's own resolution/decode/landing machinery while
   the other fights it. Two types: a cross dissolve (both clips visible at once,
@@ -20,7 +20,7 @@ One or two lines per session. Detail lives in the decision it references.
   engines — a mid-dissolve preview frame measured `[125, 0, 126]` for a
   red↔blue blend against `[255,0,0]`/`[0,0,255]` for a hard cut, and the export
   sampled at 0/25/50/75/100% of the same window. **Found and fixed on the way:
-  B-102** — the export compiler had never placed a clip in TIME at all
+  B-103** — the export compiler had never placed a clip in TIME at all
   (`overlay` pairs inputs by timestamp; only the audio half ever had its
   `adelay`), so every clip at `start_frame > 0` exported its last frame frozen.
   Design detail: `docs/notes/transitions.md`.

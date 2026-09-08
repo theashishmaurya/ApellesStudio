@@ -1145,7 +1145,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   of D-218 possible at all. No backend change of any kind: a viewport zoom is
   display-only and the compositor never learns about it.
 
-- **2026-09-08** — **Transitions (D-224/D-225) + B-102** · **zero upstream-file
+- **2026-09-08** — **Transitions (D-226/D-227) + B-103** · **zero upstream-file
   edits.** Everything inside the fork is in Chroma's own `src/chroma/edit.rs`
   (the `VisibleLayer`-shaped layer list, the colour-plate arm and the
   `with_transition_alpha` multiply in `composite_video_frame`, the `pipe_slot`

@@ -1383,9 +1383,9 @@ status: open, deliberately (found and measured while building D-223; the fix bel
 - **workaround meanwhile:** none needed for stereo sources. For a mono one, raise that clip's own `volume` by 3 dB (×1.41) if the export must match the preview exactly.
 - **documented at the point of use:** `editor_get_capabilities`' `export.per_clip_level` entry states it, so an agent reading the capabilities before an export is told rather than left to measure it.
 
-## B-102 — the ffmpeg export compiler never placed a clip in TIME: any clip at `start_frame > 0` rendered its last frame, frozen, for its whole window
+## B-103 — the ffmpeg export compiler never placed a clip in TIME: any clip at `start_frame > 0` rendered its last frame, frozen, for its whole window
 
-**Status: fixed, 2026-09-08 (found while building D-224's transitions).**
+**Status: fixed, 2026-09-08 (found while building D-226's transitions).**
 
 **What was wrong.** `timelineExport.ts` gives every clip its own `-i` (with
 `-ss`/`-t`) and composites it with
@@ -1421,7 +1421,7 @@ keyframes, its D-147 fade, `overlay`'s `x`/`y`) is now explicitly re-based
 through `(t − clipStartSec)` / `(T − clipStartSec)`, the exact re-basing
 `buildTextDrawtextStep` already did for a title.
 
-**Regression test.** `timelineExport.ffmpeg.test.ts` — "B-102: a clip at
+**Regression test.** `timelineExport.ffmpeg.test.ts` — "B-103: a clip at
 start_frame > 0 renders its OWN REAL FRAMES at its own position". It builds the
 two-colour source deliberately, because that is the only fixture shape that can
 see this: it asserts red in the clip's own first second, lime in its second, and

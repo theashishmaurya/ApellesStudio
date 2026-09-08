@@ -60,7 +60,7 @@ dragging a pool item in from the shell's Sources panel.
   document content, unlike the store-only `selection` (D-216) and `previewView`
   (D-218). The strip carries `data-chroma-no-marquee` — `marquee.ts`'s own
   documented escape hatch — so no gesture here can collide with the marquee.
-- `TimelineTransitions.tsx` (D-224/D-225, roadmap item 27) — the transitions
+- `TimelineTransitions.tsx` (D-226/D-227, roadmap item 27) — the transitions
   library: the toolbar's browsable palette (a real `@dnd-kit` drag source — a
   third drag kind sharing `TimelinePane`'s one `DndContext` alongside `track`
   and `clip`, disambiguated by `data.type` as those two already are), the

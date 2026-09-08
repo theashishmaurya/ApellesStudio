@@ -31,7 +31,7 @@
  * `normalize=0` + `asoftclip=type=tanh` instead of ffmpeg's default
  * per-input attenuation).
  *
- * **D-224 — transitions.** A `Track.transitions` entry compiles to a widened
+ * **D-226 — transitions.** A `Track.transitions` entry compiles to a widened
  * input window (its handle media), a widened `enable` gate, and one
  * `fade=alpha=1` step on the incoming layer — deliberately NOT ffmpeg's own
  * `xfade`, which concatenates two continuous streams and so is a different
@@ -39,13 +39,13 @@
  * to colour compiles to a `color` filter SOURCE with no `-i` at all, the same
  * shape `[base]` already uses. `docs/notes/transitions.md` §6.
  *
- * **B-102 — every clip is now placed in TIME** (`setpts=PTS+<start>/TB` at the
+ * **B-103 — every clip is now placed in TIME** (`setpts=PTS+<start>/TB` at the
  * head of its chain). It never was: `overlay` pairs its inputs by timestamp,
  * and nothing shifted a clip's stream to where it sits on the timeline, so a
  * clip at `start_frame > 0` exported its last frame frozen for its whole
  * window. The audio half of this compiler always did place its sources
  * (`adelay`); the video half simply never grew the equivalent. See
- * `buildClipFilterChain`'s own note and `docs/BUGS.md` B-102.
+ * `buildClipFilterChain`'s own note and `docs/BUGS.md` B-103.
  */
 
 import type { Clip, Timeline, Track, Transition } from './timeline';
@@ -388,11 +388,11 @@ export interface TimelineExportOptions {
 }
 
 // --------------------------------------------------------------------------- //
-// Transitions (D-224) — see `docs/notes/transitions.md`
+// Transitions (D-226) — see `docs/notes/transitions.md`
 // --------------------------------------------------------------------------- //
 
 /**
- * D-224 — how ONE transition changes what this compiler emits for the two clips
+ * D-226 — how ONE transition changes what this compiler emits for the two clips
  * it joins.
  *
  * **Why not ffmpeg's own `xfade`, which is literally the crossfade filter.**
@@ -424,7 +424,7 @@ interface TransitionPlan {
   incoming?: { clip: Clip; headSrcFrames: number };
 }
 
-/** D-224 — per-clip accumulation of every transition touching it. A clip
+/** D-226 — per-clip accumulation of every transition touching it. A clip
  *  between two dissolved cuts is the incoming of one and the outgoing of the
  *  other, so these are sums/extremes, not single values. */
 interface ClipTransitionAdjust {
@@ -447,7 +447,7 @@ function emptyAdjust(): ClipTransitionAdjust {
 }
 
 /**
- * D-224 — every transition on `track` that this compiler will actually honour,
+ * D-226 — every transition on `track` that this compiler will actually honour,
  * resolved against the real clips it joins.
  *
  * Skips (rather than mis-compiles) a transition that:
@@ -496,7 +496,7 @@ export function transitionPlansFor(
   return plans;
 }
 
-/** D-224 — the dip-to-colour plate's own filter chain, ending in `[label]`.
+/** D-226 — the dip-to-colour plate's own filter chain, ending in `[label]`.
  *
  * A generated full-frame layer with **no ffmpeg input of its own** — the same
  * shape `[base]` already uses (`color` is a filter *source*), so it costs no
@@ -529,19 +529,19 @@ export function buildDipPlateChain(
 interface ClipChain {
   /** This clip's finished filter-chain output label, e.g. `v0`. */
   label: string;
-  /** `null` for a D-224 dip-to-colour plate, which is a generated layer with no
+  /** `null` for a D-226 dip-to-colour plate, which is a generated layer with no
    *  clip behind it (`plate` carries what it is instead). */
   clip: Clip | null;
-  /** D-224 — set only for a dip-to-colour plate; `null` for every real clip. */
+  /** D-226 — set only for a dip-to-colour plate; `null` for every real clip. */
   plate: TransitionPlan | null;
   /** This clip's own on-timeline window at the OUTPUT rate, in seconds —
    *  already accounts for `speedOverrides` shrinking it (see below), and for
-   *  D-224's transition windows widening it. */
+   *  D-226's transition windows widening it. */
   startSec: number;
   endSec: number;
-  /** B-102 — where this clip's OWN in-point sits on the timeline, which
+  /** B-103 — where this clip's OWN in-point sits on the timeline, which
    *  `overlay`'s timeline-clock `x`/`y` expressions have to be re-based
-   *  against. Differs from `startSec` only when a D-224 transition widened the
+   *  against. Differs from `startSec` only when a D-226 transition widened the
    *  composited window backwards into handle media. */
   clipStartSec: number;
   /** B-075 — this clip's own real frame rate (`clip.source_fps ?? opts.fps`),
@@ -550,11 +550,11 @@ interface ClipChain {
   clipFps: number;
 }
 
-/** Where one clip's ffmpeg stream sits on the OUTPUT timeline (B-102). */
+/** Where one clip's ffmpeg stream sits on the OUTPUT timeline (B-103). */
 interface ClipPlacement {
   /** The timeline second the stream's FIRST frame belongs at. Equal to
    *  `clipStartSec` for an ordinary clip; earlier by the head handle for the
-   *  incoming half of a D-224 cross dissolve. */
+   *  incoming half of a D-226 cross dissolve. */
   inputStartSec: number;
   /** The timeline second the clip's OWN in-point belongs at, i.e.
    *  `clip.start_frame / opts.fps`. Every expression authored relative to the
@@ -579,7 +579,7 @@ function buildClipFilterChain(
   const steps: string[] = [];
   let src = `[${inputIdx}:v]`;
 
-  // B-102 — **place this clip in TIME.** Every `-i` here decodes to a stream
+  // B-103 — **place this clip in TIME.** Every `-i` here decodes to a stream
   // whose own timestamps start at ~0, and `overlay` pairs its two inputs BY
   // TIMESTAMP (ffmpeg's `framesync`), so without this shift a clip at
   // `start_frame > 0` had its real frames consumed against the base stream's
@@ -775,7 +775,7 @@ function buildClipFilterChain(
     bigTVar,
   );
   const alphaExpr = fadeExpr ? `(${opacityExpr})*(${fadeExpr})` : opacityExpr;
-  // D-224 — a dissolve's own ramp is NOT folded in here: it is a separate
+  // D-226 — a dissolve's own ramp is NOT folded in here: it is a separate
   // `fade=alpha=1` step appended after this one (see `after` below), because
   // `fade`'s frame-index linearity is exactly the preview's own `progress_at`
   // and an expression would only approximate it. Both multiply the same alpha
@@ -802,7 +802,7 @@ function buildClipFilterChain(
   if (needsRotation || needsAlpha || dissolveInSec !== null) {
     // `format=rgba` first: a plain decoded video frame (yuv420p, no alpha
     // plane) makes `rotate`'s transparent `fillcolor`, `geq`'s alpha
-    // read/write and (D-224) `fade`'s own `alpha=1` all silently no-op.
+    // read/write and (D-226) `fade`'s own `alpha=1` all silently no-op.
     // Needed for any one of the three alone.
     after.push({ tag: 'fmt', build: (inLabel) => `[${inLabel}]format=rgba` });
   }
@@ -839,10 +839,10 @@ function buildClipFilterChain(
         `[${inLabel}]geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(${alphaExpr})'`,
     });
   }
-  // D-224 — the dissolve ramp: this clip is the INCOMING half of a cross
+  // D-226 — the dissolve ramp: this clip is the INCOMING half of a cross
   // dissolve, so its alpha rises linearly from nothing at the transition
   // window's first frame to full at its last. `st` is the window's own start in
-  // TIMELINE seconds, which is what this chain's clock reads after B-102's
+  // TIMELINE seconds, which is what this chain's clock reads after B-103's
   // `setpts` placement above — and it is exactly `placement.inputStartSec`,
   // since the input was opened `headSrcFrames` early for precisely this window.
   //
@@ -899,7 +899,7 @@ function rebaseKeyframesToClipInput(clip: Clip): ExportKeyframe[] {
   return (clip.chroma_keyframes ?? []).map((k) => ({ frame: k.frame - clip.source_start, params: k.params }));
 }
 
-/** B-102 — `overlay`'s `x`/`y` expressions are evaluated on the MAIN (base)
+/** B-103 — `overlay`'s `x`/`y` expressions are evaluated on the MAIN (base)
  *  stream's clock, i.e. TIMELINE seconds, so a clip's own keyframe times have to
  *  be re-based against where that clip starts on the timeline (`clipStartSec`).
  *  Before this they were emitted in clip-relative seconds against a timeline
@@ -967,7 +967,7 @@ export function textClipsMissingFonts(
  * video track, with each lower index overlaid on top of it in turn, ending
  * with track 0 last (topmost).
  *
- * **Transitions (D-224).** A track's clips are walked in **time order** here
+ * **Transitions (D-226).** A track's clips are walked in **time order** here
  * (a stable sort on `start_frame`), not in `Track.clips` `Vec` order. That is a
  * strict no-op for every project without transitions — clips on one track never
  * overlap (D-104), so their paint order among themselves is unobservable — and
@@ -999,12 +999,12 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   // frozen clip needs, and that isn't known until every clip's own natural
   // end has been computed once.
   interface PendingClip {
-    /** `null` for a D-224 dip-to-colour PLATE, which is a generated layer with
+    /** `null` for a D-226 dip-to-colour PLATE, which is a generated layer with
      *  no clip and no media of its own (`plate` says what it is instead). */
     clip: Clip | null;
-    /** D-224 — set only for a dip-to-colour plate. */
+    /** D-226 — set only for a dip-to-colour plate. */
     plate: TransitionPlan | null;
-    /** `null` for a TEXT clip (D-211) and for a D-224 plate: neither opens a
+    /** `null` for a TEXT clip (D-211) and for a D-226 plate: neither opens a
      *  file, so neither consumes an `-i` or has a `[N:v]` to address. A text
      *  clip's picture comes from a `drawtext` node spliced into the overlay
      *  chain (see `buildTextDrawtextStep`), a plate's from a `color` filter
@@ -1013,7 +1013,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     label: string;
     startSec: number;
     endSec: number;
-    /** D-224 — this clip's own on-timeline start, BEFORE any transition widened
+    /** D-226 — this clip's own on-timeline start, BEFORE any transition widened
      *  `startSec`. The picture has to be composited early (that is the
      *  dissolve); the SOUND does not — see the embedded-audio walk below. */
     naturalStartSec: number;
@@ -1022,7 +1022,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
      *  audio ducking (`resolveDuckForTrack` looks up `duck_from` on THIS
      *  track, not the clip). */
     trackIndex: number;
-    /** D-224 — everything the transitions touching this clip change about its
+    /** D-226 — everything the transitions touching this clip change about its
      *  input window, its composited window and its alpha. All zero/`null` for
      *  a clip no transition touches, which is every clip in a project with
      *  none. */
@@ -1031,7 +1031,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   const pending: PendingClip[] = [];
 
   for (const { track, index: trackIndex } of paintOrder) {
-    // D-224 — resolve this track's transitions once, then fold each one into
+    // D-226 — resolve this track's transitions once, then fold each one into
     // the two clips it joins. Accumulated per clip (not assigned) because a
     // clip between two dissolved cuts is the incoming half of one and the
     // outgoing half of the other.
@@ -1059,7 +1059,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       }
     }
 
-    // D-224 — TIME order, not `Vec` order. A strict no-op without transitions
+    // D-226 — TIME order, not `Vec` order. A strict no-op without transitions
     // (clips on a track never overlap, so their relative paint order is
     // unobservable); load-bearing with one — see this function's own doc.
     const orderedClips = [...track.clips].sort((a, b) => a.start_frame - b.start_frame);
@@ -1109,11 +1109,11 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
         continue;
       }
 
-      // D-224 — a transition widens this clip's INPUT window into its handle
+      // D-226 — a transition widens this clip's INPUT window into its handle
       // media: `headSrcFrames` before its in-point, `tailSrcFrames` past its
       // out-point, both already in this clip's OWN source frames. Zero for a
       // clip no transition touches, so the `-ss`/`-t` pair below is
-      // byte-identical to pre-D-224 for it. `checkTransition` has already
+      // byte-identical to pre-D-226 for it. `checkTransition` has already
       // refused any transition whose handles do not exist, so this never asks
       // ffmpeg for media outside the file.
       inputs.push(
@@ -1134,7 +1134,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       // would appear to freeze/hold its last frame for the un-shrunk
       // remainder of its original window.
       //
-      // D-224 — a transition also widens the window this clip is COMPOSITED
+      // D-226 — a transition also widens the window this clip is COMPOSITED
       // over: the outgoing half keeps being drawn (opaquely) until the window
       // ends, and the incoming half starts being drawn (from zero alpha) when
       // it begins. Without both halves the extra handle media would decode
@@ -1159,7 +1159,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       inputIdx++;
     }
 
-    // D-224 — this track's dip-to-colour plates, emitted AFTER its own clips
+    // D-226 — this track's dip-to-colour plates, emitted AFTER its own clips
     // (so a dip covers them) and before the next, higher-priority track's (so
     // it never covers a track above). No `-i`, no decode: a plate is a `color`
     // filter source. `clipFps` is the export's own rate — a generated layer has
@@ -1217,7 +1217,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     // frame, and there is nothing decoded to hold. A title that should stay
     // up longer is simply a longer title.
     //
-    // D-224 — a dip-to-colour plate takes the same "no input, no per-clip
+    // D-226 — a dip-to-colour plate takes the same "no input, no per-clip
     // chain here" branch, but it DOES have a filter chain of its own: a
     // `color` filter source, which (like `[base]`) is emitted as a standalone
     // step rather than reading a `[N:v]`.
@@ -1292,7 +1292,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     // (`compileEditorExportArgs`) has already refused the whole export via
     // `textClipsMissingFonts`, so this is the defensive second line only.
     //
-    // D-224 — a dip-to-colour plate is a full-frame layer with no geometry of
+    // D-226 — a dip-to-colour plate is a full-frame layer with no geometry of
     // its own (mirroring `chroma::edit`'s `plate_transform`, which pins the
     // identity for exactly this reason): a plain `overlay` at the origin,
     // gated to the transition's own window. Its alpha triangle is already
@@ -1395,7 +1395,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
     if (!(opts.hasAudioOverrides?.[p.clip.id] ?? false)) continue;
     const speed = opts.speedOverrides?.[p.clip.id] ?? 1;
     const idLabel = `au${audioLabelSeq++}`;
-    // D-224 — **a video transition is a video transition, and the sound is not
+    // D-226 — **a video transition is a video transition, and the sound is not
     // part of it.** Premiere and Resolve both keep picture and audio
     // transitions as separate effects (Resolve's own Effects Library lists
     // "Audio Transitions" apart from "Video Transitions"), so a cross dissolve

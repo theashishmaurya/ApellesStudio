@@ -1,7 +1,7 @@
 /**
  * @chroma/editor — the transitions library: the browsable palette, the
  * drag-onto-a-cut source, the on-timeline badges, and the per-transition editor
- * popover (D-224, roadmap item 27).
+ * popover (D-226, roadmap item 27).
  *
  * **What it is.** The human half of `Track.transitions` (`timeline.ts`). Three
  * pieces, deliberately in one module the way `TimelineMarkers.tsx` keeps the
@@ -16,14 +16,14 @@
  *
  * **The interaction is DaVinci Resolve's own, from its own copy** (the Edit
  * page's "Transitions and Effects Library" section, `scratch/resolve-reference/`
- * — CLAUDE.md's "research the real pattern first" rule, cited in D-224):
+ * — CLAUDE.md's "research the real pattern first" rule, cited in D-226):
  * *"click the effects library icon at the top left of the page to open it,
  * select the effect you want and drag it onto a clip in the timeline or onto
  * the cut point between clips … Transition duration can be changed by dragging
  * the edges of the transition in the timeline or by changing it in the
  * inspector."* So: a browsable panel, a drag onto the cut, and a duration you
  * can retype. **Dragging the transition's own edges to re-time it is
- * deliberately NOT built in this pass** — see D-225 for that scope call; the
+ * deliberately NOT built in this pass** — see D-227 for that scope call; the
  * duration field in this popover is the other half of Resolve's own sentence
  * and does the same job.
  *
@@ -66,7 +66,7 @@ import {
   type TransitionKind,
 } from './timeline';
 
-/** D-224 — the `@dnd-kit` drag id and `data.type` a palette entry carries.
+/** D-226 — the `@dnd-kit` drag id and `data.type` a palette entry carries.
  *  A third drag "kind" sharing `TimelinePane`'s one `DndContext` alongside
  *  `track` and `clip`, disambiguated by `data.current.type` exactly as those
  *  two already are (D-098's own convention, not a new mechanism). */
@@ -79,7 +79,7 @@ export function transitionDragId(kind: TransitionKind): string {
   return `transition:${kind}`;
 }
 
-/** D-224 — how close (in px) a drop has to land to a real cut for it to count
+/** D-226 — how close (in px) a drop has to land to a real cut for it to count
  *  as being ON that cut. Matches `TimelinePane`'s own `INSERT_SNAP_PX`
  *  intent — a drop gesture is never frame-accurate, and the target here is a
  *  single frame, so without a real snap radius the gesture would essentially
@@ -111,7 +111,7 @@ function PaletteEntry({ kind, label, blurb }: { kind: TransitionKind; label: str
   );
 }
 
-/** D-224 — the toolbar's Transitions library. A popover rather than a docked
+/** D-226 — the toolbar's Transitions library. A popover rather than a docked
  *  panel: with two entries a permanent column would be mostly empty chrome, and
  *  the drag still starts from inside it either way (the popover stays open for
  *  the whole gesture because `@dnd-kit`'s pointer sensor captures the pointer,
@@ -146,7 +146,7 @@ export function TransitionsPaletteButton() {
   );
 }
 
-/** D-224 — a transition drawn on its track: a hatched band spanning its own
+/** D-226 — a transition drawn on its track: a hatched band spanning its own
  *  `[start, end)` window, centred on the cut it belongs to, with an X through
  *  it (the mark every reference NLE uses for a dissolve). Click to open its
  *  editor.
@@ -245,9 +245,9 @@ export interface TransitionPatch {
   color?: string | null;
 }
 
-/** D-224 — one transition's own editor: the type, its duration in frames, its
+/** D-226 — one transition's own editor: the type, its duration in frames, its
  *  alignment to the cut, and (for a dip) its colour. Resolve's own listed
- *  affordances for a placed transition, minus edge-dragging (D-225).
+ *  affordances for a placed transition, minus edge-dragging (D-227).
  *
  *  Duration is committed on blur/Enter rather than per keystroke: every commit
  *  is a real undo entry, and a three-digit number typed a digit at a time would
@@ -362,7 +362,7 @@ function TransitionEditor({
   );
 }
 
-/** D-224 — the nearest real cut on `track` to `frame`, within `snapFrames`, or
+/** D-226 — the nearest real cut on `track` to `frame`, within `snapFrames`, or
  *  `null`. The drop gesture's whole target resolution: a transition can only
  *  live on a cut, so a drop that is not near one is refused rather than snapped
  *  to something arbitrary.
@@ -383,7 +383,7 @@ export function nearestCut(cuts: number[], frame: number, snapFrames: number): n
   return best;
 }
 
-/** D-224 — the default duration for a newly-dropped transition, clamped so it
+/** D-226 — the default duration for a newly-dropped transition, clamped so it
  *  cannot swallow either neighbouring clip whole. [`DEFAULT_TRANSITION_FRAMES`]
  *  (one second at the default rate, Resolve's own default) unless one of the two
  *  clips is shorter than that, in which case a drop still produces a real,

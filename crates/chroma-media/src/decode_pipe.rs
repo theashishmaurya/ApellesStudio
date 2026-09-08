@@ -305,7 +305,7 @@ pub enum PipeSlot {
     /// legitimately hold the same file at different positions — the real
     /// project this was found on does exactly that.
     Track(usize),
-    /// D-224 — the SECOND clip a video track shows while a cross-dissolve
+    /// D-226 — the SECOND clip a video track shows while a cross-dissolve
     /// transition is running on it, keyed by that same track index.
     ///
     /// A transition is the one situation where a single track has two different
@@ -394,7 +394,7 @@ pub fn playback_frame_scaled(
 /// session, not to the Edit tab's frame, and nothing here knows whether that tab
 /// still wants it.
 ///
-/// **D-224 — takes real [`PipeSlot`]s, not bare track indices.** A cross
+/// **D-226 — takes real [`PipeSlot`]s, not bare track indices.** A cross
 /// dissolve gives one track two live slots ([`PipeSlot::Track`] and
 /// [`PipeSlot::TrackTransition`]) with genuinely different lifetimes: the
 /// partner slot must be released the moment the transition window ends, while

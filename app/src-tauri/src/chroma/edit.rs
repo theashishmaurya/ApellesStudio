@@ -24,7 +24,7 @@
 //! What it does NOT do: no `wgpu`, no colour grade — the editor preview is
 //!   deliberately independent of the Colorist's `AppState`/GPU render path.
 //!   Still no transcript cut / OTIO export.
-//!   **Transitions ARE here as of D-224** (roadmap item 27,
+//!   **Transitions ARE here as of D-226** (roadmap item 27,
 //!   `docs/notes/transitions.md`): a `chroma_timeline::Transition` bridges a cut
 //!   without the two clips ever overlapping, so
 //!   `Timeline::resolve_visible_video_layers_at` can now hand this module TWO
@@ -727,7 +727,7 @@ pub(crate) fn timeline_frame_image(
     // to make an exception for it, or a title would resolve, be discarded
     // here, and silently never appear.
     //
-    // D-224 — a `LayerSource::Color` plate (a dip-to-colour transition) is
+    // D-226 — a `LayerSource::Color` plate (a dip-to-colour transition) is
     // likewise generated and has no `source_path`, so the same exception
     // applies to it; the filter below only ever discards an EMPTY-source media
     // clip, which is what it was always for.
@@ -743,7 +743,7 @@ pub(crate) fn timeline_frame_image(
     // Release the decode pipe of any slot that is no longer a visible layer
     // here (hidden, deleted, or just a gap under the playhead) before decoding
     // — D-125: pipes are per track index now, and each one owns a live ffmpeg
-    // process, so the set has to track what's actually on screen. D-224: keyed
+    // process, so the set has to track what's actually on screen. D-226: keyed
     // by real `PipeSlot`, since a transition's partner clip holds a second slot
     // on the same track whose lifetime is the transition window, not the
     // track's.
@@ -768,7 +768,7 @@ pub(crate) fn timeline_frame_image(
     // defect as B-043's position drift and would have made the transform
     // overlay draw a box in a place the picture disagrees with.
     //
-    // D-224 — a layer carrying a transition alpha below 1.0 never takes it
+    // D-226 — a layer carrying a transition alpha below 1.0 never takes it
     // either, for exactly D-132/B-053's reason: the alpha is a real blend the
     // plain decode cannot express, so a fast path that ignored it would show a
     // hard cut where the document says there is a dissolve. (A cross dissolve
@@ -845,7 +845,7 @@ pub(crate) fn timeline_frame_image(
     Ok(Some(img))
 }
 
-/// D-224 — the decode-pipe slot a clip layer belongs in: the track's own slot
+/// D-226 — the decode-pipe slot a clip layer belongs in: the track's own slot
 /// for an ordinary layer, its transition-partner slot for the second clip of a
 /// cross dissolve. See `chroma_timeline::LayerRole` for why the two must not
 /// share (B-040).
@@ -856,7 +856,7 @@ fn pipe_slot(track: usize, role: LayerRole) -> decode_pipe::PipeSlot {
     }
 }
 
-/// D-224 — the slot a layer will decode through, or `None` for one that decodes
+/// D-226 — the slot a layer will decode through, or `None` for one that decodes
 /// nothing (a generated text clip, a dip-to-colour plate). Drives the per-frame
 /// `retain_pipe_slots` release so a slot whose layer went away frees its
 /// `ffmpeg` process the same frame.
@@ -1227,7 +1227,7 @@ fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransfo
     }
 }
 
-/// D-224 — fold a [`VisibleLayer`]'s transition alpha into an already-resolved
+/// D-226 — fold a [`VisibleLayer`]'s transition alpha into an already-resolved
 /// [`ClipTransform`]'s opacity.
 ///
 /// **Multiplied in last, after the clip's own static/keyframed opacity and its
@@ -1236,13 +1236,13 @@ fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransfo
 /// through a dissolve is all three at once, and any ordering where one silently
 /// replaces another would make two of the three controls appear broken. A layer
 /// outside a transition has `alpha == 1.0` and this is exactly a no-op, so every
-/// pre-D-224 frame is byte-identical.
+/// pre-D-226 frame is byte-identical.
 fn with_transition_alpha(mut t: ClipTransform, alpha: f64) -> ClipTransform {
     t.opacity *= alpha.clamp(0.0, 1.0);
     t
 }
 
-/// D-224 — the transform for a dip-to-colour **plate**: identity geometry (it
+/// D-226 — the transform for a dip-to-colour **plate**: identity geometry (it
 /// is generated at exactly canvas size and covers the frame), carrying only the
 /// transition's own alpha as its opacity.
 ///
@@ -1330,7 +1330,7 @@ fn composite_video_frame(
 
     let mut decoded: Vec<Decoded> = Vec::with_capacity(layers.len());
     for layer in layers {
-        // D-224 — a generated full-frame plate: a dip-to-colour transition's
+        // D-226 — a generated full-frame plate: a dip-to-colour transition's
         // colour, at the canvas's own size, with the transition's own alpha as
         // its opacity. Structurally the same "generated layer" case D-211's text
         // clip already established (`natural` is the canvas, no resize step
@@ -1385,7 +1385,7 @@ fn composite_video_frame(
         // One decode pipe per track (D-125/B-040) — sharing a single global
         // pipe across layers made every layer after the first respawn ffmpeg
         // (different path, or the same path stepping backwards), which is what
-        // reduced this whole path to ~0.85 fps. D-224 — and one more per track
+        // reduced this whole path to ~0.85 fps. D-226 — and one more per track
         // while a cross dissolve is running there, for that same reason applied
         // within a single track; see `pipe_slot`.
         let img =
@@ -3111,7 +3111,7 @@ mod preview_text_tests {
     }
 }
 
-/// **D-224 — real, end-to-end preview pixels for a transition.**
+/// **D-226 — real, end-to-end preview pixels for a transition.**
 ///
 /// The whole feature's claim is that a cut with a transition on it renders as a
 /// real BLEND rather than a hard cut, and only a decoded pixel from the middle

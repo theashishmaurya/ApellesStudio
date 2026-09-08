@@ -97,14 +97,14 @@
 //! why they are normalised to the source rather than pixels, and flat
 //! scalars rather than a nested rect.
 
-//! **Transitions (D-224, roadmap item 27, `docs/notes/transitions.md`):**
+//! **Transitions (D-226, roadmap item 27, `docs/notes/transitions.md`):**
 //! [`Track::transitions`] — a [`Transition`] per edit point, naming the cut it
 //! straddles ([`Transition::at_frame`]), a shape ([`TransitionKind`]), a
 //! duration and an alignment. **The clips it joins stay abutting and
 //! non-overlapping**: this crate's "one clip per track per frame" invariant
 //! (`Track::clip_at`'s single-winner `find`, and every op that refuses an
 //! overlap — D-104) is completely unchanged, which is the whole point of
-//! D-224's choice. What a transition costs instead is **handle media** — for
+//! D-226's choice. What a transition costs instead is **handle media** — for
 //! its own duration one of the two clips is shown at a position outside its own
 //! trimmed window ([`Clip::source_frame_at`] / [`Clip::clamped_source_frame_at`]).
 //!
@@ -386,10 +386,10 @@ pub struct Track {
     /// why this is a named default.
     #[serde(default = "default_duck_release_ms")]
     pub duck_release_ms: f32,
-    /// **Transitions at this track's edit points (D-224, roadmap item 27).**
+    /// **Transitions at this track's edit points (D-226, roadmap item 27).**
     /// Each [`Transition`] names one cut — the frame where one clip on THIS
     /// track ends and the next begins — plus a shape, a duration and an
-    /// alignment. See [`Transition`] for the whole model and D-224 for why a
+    /// alignment. See [`Transition`] for the whole model and D-226 for why a
     /// transition is its own object bridging two still-abutting clips rather
     /// than a real overlap of the two.
     ///
@@ -408,7 +408,7 @@ pub struct Track {
     pub transitions: Vec<Transition>,
 }
 
-/// Which blend a [`Transition`] performs (D-224).
+/// Which blend a [`Transition`] performs (D-226).
 ///
 /// Deliberately **two shapes in v1**, not a library. They are the two that
 /// exercise the two genuinely different mechanisms this feature needed to
@@ -417,7 +417,7 @@ pub struct Track {
 /// ONE clip against a generated plate (no handles at all, so it is always
 /// available). Everything a bigger library would add — wipes, slides, pushes —
 /// is another generated matte over the same two mechanisms, which is why more
-/// types are additive later rather than a redesign. See D-224.
+/// types are additive later rather than a redesign. See D-226.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransitionKind {
@@ -435,7 +435,7 @@ pub enum TransitionKind {
 }
 
 /// Where a [`Transition`]'s own window sits relative to the cut it is applied
-/// to (D-224) — Premiere Pro's own three, under its own names ("Center at
+/// to (D-226) — Premiere Pro's own three, under its own names ("Center at
 /// Cut" / "Start at Cut" / "End at Cut", Adobe's *Align and reposition
 /// transitions* help page).
 ///
@@ -460,7 +460,7 @@ pub enum TransitionAlignment {
     EndAtCut,
 }
 
-/// One transition at one edit point (D-224, `docs/notes/transitions.md`).
+/// One transition at one edit point (D-226, `docs/notes/transitions.md`).
 ///
 /// **The clips it joins stay abutting and non-overlapping.** This object
 /// bridges the cut rather than the two clips overlapping in the stored model:
@@ -468,7 +468,7 @@ pub enum TransitionAlignment {
 /// incoming clip's `start_frame`, the same number), and the transition's own
 /// window is derived from that plus [`Self::duration`] and
 /// [`Self::alignment`]. Nothing about the timeline's "one clip per track per
-/// frame" invariant changes — see D-224 for the two real options that were
+/// frame" invariant changes — see D-226 for the two real options that were
 /// weighed and why this one composes with this codebase's existing
 /// resolution / decode / export machinery while the other fights it.
 ///
@@ -1375,7 +1375,7 @@ impl Clip {
         self.start_frame + source_frames_to_timeline(self.source_fps, self.duration, fps)
     }
 
-    /// D-224 — the SOURCE frame this clip shows at TIMELINE frame
+    /// D-226 — the SOURCE frame this clip shows at TIMELINE frame
     /// `timeline_frame`, **without** [`Track::clip_at`]'s "is it inside this
     /// clip's window" check: the identical arithmetic, extrapolated.
     ///
@@ -1396,7 +1396,7 @@ impl Clip {
             + timeline_frames_to_source(self.source_fps, timeline_frame - self.start_frame, fps)
     }
 
-    /// D-224 — [`Self::source_frame_at`] pinned into the source's own real
+    /// D-226 — [`Self::source_frame_at`] pinned into the source's own real
     /// extent, `[0, source_len)`.
     ///
     /// **The freeze-frame fallback, and it is deliberately the LAST line of
@@ -1477,7 +1477,7 @@ impl Clip {
     }
 }
 
-/// One thing the compositor has to paint for one timeline position (D-224) —
+/// One thing the compositor has to paint for one timeline position (D-226) —
 /// what [`Timeline::resolve_visible_video_layers_at`] hands back.
 ///
 /// Was a bare `(track, &Clip, source_frame)` tuple before transitions existed.
@@ -1495,14 +1495,14 @@ pub struct VisibleLayer<'a> {
     pub source: LayerSource<'a>,
     /// Extra alpha multiplier contributed by a [`Transition`], in `0.0..=1.0`;
     /// exactly `1.0` for every layer outside one, which is every layer in every
-    /// pre-D-224 project. The consumer multiplies it into the layer's resolved
+    /// pre-D-226 project. The consumer multiplies it into the layer's resolved
     /// opacity **after** the clip's own static/keyframed opacity and its fade —
     /// the same multiplicative composition D-147 established for fade × opacity,
     /// so no one of the three silently overrides another.
     pub alpha: f64,
 }
 
-/// What a [`VisibleLayer`]'s picture comes from (D-224).
+/// What a [`VisibleLayer`]'s picture comes from (D-226).
 #[derive(Debug, Clone)]
 pub enum LayerSource<'a> {
     /// A real clip on the track, at a resolved SOURCE frame.
@@ -1518,7 +1518,7 @@ pub enum LayerSource<'a> {
 }
 
 /// Which decode stream a [`LayerSource::Clip`] belongs to within its track
-/// (D-224).
+/// (D-226).
 ///
 /// **This exists for the decode pipe, and it is a real performance constraint,
 /// not bookkeeping.** `chroma_media::decode_pipe` keys one live `ffmpeg` process
@@ -1851,7 +1851,7 @@ impl Timeline {
     /// "gap = nothing here, not an error" contract every other resolver in
     /// this crate already has.
     ///
-    /// **D-224 — a track may now contribute TWO entries, not at most one**, and
+    /// **D-226 — a track may now contribute TWO entries, not at most one**, and
     /// an entry may be a generated colour plate rather than a clip: that is what
     /// a [`Transition`] is. The per-track ordering follows the same
     /// topmost-first rule as the across-track one, so a caller that already
@@ -2762,13 +2762,13 @@ impl Track {
         self.clips
             .iter()
             .find(|c| timeline_frame >= c.start_frame && timeline_frame < c.end_frame_at(fps))
-            // D-224 — the arithmetic moved to `Clip::source_frame_at`, which a
+            // D-226 — the arithmetic moved to `Clip::source_frame_at`, which a
             // transition's handle lookup also needs (unbounded by this
             // method's own window check). Byte-identical result here.
             .map(|c| (c, c.source_frame_at(timeline_frame, fps)))
     }
 
-    /// D-224 — append everything this track contributes at TIMELINE frame
+    /// D-226 — append everything this track contributes at TIMELINE frame
     /// `pos` to `out`, **topmost first** (the same ordering
     /// [`Timeline::resolve_visible_video_layers_at`] uses across tracks, so a
     /// caller painting the flat list in reverse needs no per-track special
@@ -2778,7 +2778,7 @@ impl Track {
     ///
     /// 1. **No transition covering `pos`** — at most one layer, exactly
     ///    [`Self::clip_at`]'s answer at full alpha. Byte-identical to the
-    ///    pre-D-224 behaviour for every project that has no transitions.
+    ///    pre-D-226 behaviour for every project that has no transitions.
     /// 2. **[`TransitionKind::DipToColor`]** — the plate on top (alpha
     ///    [`Transition::dip_alpha_at`]) and, underneath it, the ordinary
     ///    `clip_at` layer. Needs no handle media and no second decode: the clip
@@ -2863,7 +2863,7 @@ impl Track {
         }
     }
 
-    /// D-224 — the [`Transition`] on this track whose window covers
+    /// D-226 — the [`Transition`] on this track whose window covers
     /// `timeline_frame`, if any.
     ///
     /// First match in stored order, not "the best" one: `checkTransition`
@@ -2877,7 +2877,7 @@ impl Track {
         self.transitions.iter().find(|t| t.covers(timeline_frame))
     }
 
-    /// D-224 — the two clips a transition at `at_frame` joins: the one whose
+    /// D-226 — the two clips a transition at `at_frame` joins: the one whose
     /// exclusive end IS that frame (outgoing) and the one whose `start_frame`
     /// is (incoming). Either may be absent — a transition left dangling by a
     /// later trim/delete is a real, reachable state, and every consumer degrades
@@ -4538,7 +4538,7 @@ mod tests {
         assert_eq!(t.move_track(0, 0), Ok(()));
     }
 
-    /// D-224 — the clip behind a [`VisibleLayer`], for tests that only care
+    /// D-226 — the clip behind a [`VisibleLayer`], for tests that only care
     /// about which clip resolved. Panics for a generated colour plate, which is
     /// the right failure for a test that did not expect one.
     fn layer_clip<'a>(l: &VisibleLayer<'a>) -> &'a Clip {
@@ -4548,7 +4548,7 @@ mod tests {
         }
     }
 
-    /// D-224 — the resolved SOURCE frame behind a [`VisibleLayer`]. Same
+    /// D-226 — the resolved SOURCE frame behind a [`VisibleLayer`]. Same
     /// panic-on-a-plate contract as [`layer_clip`].
     fn layer_source_frame(l: &VisibleLayer<'_>) -> i64 {
         match l.source {
@@ -4569,7 +4569,7 @@ mod tests {
         assert_eq!(layer_clip(&layers[1]).name, "B");
         assert!(
             layers.iter().all(|l| l.alpha == 1.0),
-            "no transition — every layer is fully opaque, exactly as before D-224"
+            "no transition — every layer is fully opaque, exactly as before D-226"
         );
     }
 
@@ -5470,7 +5470,7 @@ mod tests {
     // clip's own source frames, and every 1 source frame is 0.5 timeline
     // frames — chosen for exact, non-rounded expected numbers.
     // ----------------------------------------------------------------- //
-    /// D-224 — the transition model itself: window arithmetic per alignment,
+    /// D-226 — the transition model itself: window arithmetic per alignment,
     /// the handle split that arithmetic implies, and what
     /// [`Timeline::resolve_visible_video_layers_at`] hands the compositor
     /// inside a transition window. The pixels those layers turn into are
@@ -5740,7 +5740,7 @@ mod tests {
             let back: Timeline = serde_json::from_str(&json).unwrap();
             assert_eq!(back.tracks[0].transitions, tl.tracks[0].transitions);
 
-            // A pre-D-224 track has no `transitions` key at all.
+            // A pre-D-226 track has no `transitions` key at all.
             let legacy: Track = serde_json::from_str(r#"{"kind":"video","clips":[]}"#).unwrap();
             assert!(legacy.transitions.is_empty());
             // …and an alignment-less transition defaults to centre-at-cut.

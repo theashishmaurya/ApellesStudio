@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM regression coverage for the transitions UI (D-224 /
- * D-225), built on `testUtils/pointerHarness.ts` (D-142) and modelled on
+ * @chroma/editor — real-DOM regression coverage for the transitions UI (D-226 /
+ * D-227), built on `testUtils/pointerHarness.ts` (D-142) and modelled on
  * `TimelinePane.markers.dom.test.tsx`.
  *
  * **Why this file exists.** `timeline.test.ts` is exhaustive at the pure-op
@@ -156,7 +156,7 @@ function fireClick(target: EventTarget): void {
   });
 }
 
-describe('transitions — real DOM (D-224/D-225)', () => {
+describe('transitions — real DOM (D-226/D-227)', () => {
   it('1. draws one badge per transition, spanning its own DERIVED window at the ruler’s own pixel math', async () => {
     await mountWith(buildFixture([fixtureTransition()]));
     const all = badges();
@@ -198,7 +198,7 @@ describe('transitions — real DOM (D-224/D-225)', () => {
 
     expect(transitions()).toEqual([]);
     // A transition never moved either clip to make room, so removing it must
-    // not move them back — the whole point of D-224's bridging model.
+    // not move them back — the whole point of D-226's bridging model.
     expect(useEditorTimelineStore.getState().timeline?.tracks[0].clips).toEqual(clipsBefore);
   });
 

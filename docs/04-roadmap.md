@@ -1462,27 +1462,27 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ⬜ Timeline curve editor — bezier ease curves under a clip, editable
       directly (ref: `curve.jpg`).
     - ~~**Transitions library** — crossfade/dissolve/wipe, drag onto an edit
-      point~~ — **DONE, 2026-09-08 (D-224 + D-225).** (Ref is
+      point~~ — **DONE, 2026-09-08 (D-226 + D-227).** (Ref is
       `transitions.jpg` / the `edit-transitions` section's own text, not
       `addeffects.jpg` — that one is Picture in Picture, as the reference
       set's own README already records.) A `Transition` **bridges** a cut:
       the two clips stay abutting and never overlap, and the transition
-      reads their handle media instead — D-224 weighs that against real
+      reads their handle media instead — D-226 weighs that against real
       clip overlap and says why, since it is the decision the whole feature
       hangs on. Two types (`cross_dissolve`, `dip_to_color` — the pair that
       proves both mechanisms, and the dip needs no handles so it always
       works), real live-preview compositing, real ffmpeg export
-      (`fade=alpha=1`, **not** `xfade` — see D-224), a drag-onto-the-cut
+      (`fade=alpha=1`, **not** `xfade` — see D-226), a drag-onto-the-cut
       palette + on-track badge + its own popover, and
       `editor_list_transitions`/`_add_transition`/`_set_transition`/
       `_remove_transition`. Verified by real pixel measurement on BOTH
       engines (preview mid-dissolve centre pixel measured `[125, 0, 126]`
       for a red↔blue crossfade; the export's own ffmpeg test samples the
       same ramp at 0/25/50/75/100%). Design detail:
-      `docs/notes/transitions.md`. **Found and fixed on the way: B-102** —
+      `docs/notes/transitions.md`. **Found and fixed on the way: B-103** —
       the export compiler had never placed a clip in TIME at all, so any
       clip at `start_frame > 0` exported its last frame frozen.
-      **Deferred, deliberately (D-225 / transitions.md §8):** dragging the
+      **Deferred, deliberately (D-227 / transitions.md §8):** dragging the
       transition's own edges to re-time it (the duration field does the same
       job), more transition types, audio transitions, and combining a
       transition with an export-time speed override (refused with a named

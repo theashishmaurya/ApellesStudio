@@ -2582,13 +2582,13 @@ describe('add_marker / remove_marker / set_marker ops (D-222)', () => {
 });
 
 // --------------------------------------------------------------------------- //
-// D-224 — transitions: the derived window/handle arithmetic, the placement
+// D-226 — transitions: the derived window/handle arithmetic, the placement
 // preconditions, and the three ops. The PIXELS these produce are
 // `timelineExportTransitions.ffmpeg.test.ts` (export) and `chroma::edit`'s own
 // `preview_transition_tests` (preview); what is checked here is the model.
 // --------------------------------------------------------------------------- //
 
-describe('D-224 transitions — model', () => {
+describe('D-226 transitions — model', () => {
   /** Two abutting 48-frame clips cut at frame 48, each trimmed INSIDE its own
    *  144-frame source so real handle media exists on both sides — the shape a
    *  razor split produces, and the one a cross dissolve needs. */

@@ -52,7 +52,7 @@
  * construction path the ruler's flag strip and the `editor_*_marker` MCP ops
  * both go through.
  *
- * D-224 (transitions, roadmap item 27, `docs/notes/transitions.md`):
+ * D-226 (transitions, roadmap item 27, `docs/notes/transitions.md`):
  * `Track.transitions` + `add_transition`/`remove_transition`/`set_transition`,
  * mirroring `chroma_timeline::Transition`. A transition bridges a CUT — the two
  * clips stay abutting and never overlap, so nothing about this module's
@@ -653,23 +653,23 @@ export interface Track {
    *  defaulted to non-zero values rather than read as falsy-absent. */
   duck_attack_ms?: number;
   duck_release_ms?: number;
-  /** D-224 — transitions at THIS track's edit points. Mirrors
+  /** D-226 — transitions at THIS track's edit points. Mirrors
    *  `chroma_timeline::Track::transitions`, whose `#[serde(default)]` is why
    *  this is optional here: a `project.json` written before transitions existed
    *  has no key at all, and every read below treats absent and `[]` the same. */
   transitions?: Transition[];
 }
 
-/** D-224 — the two transition shapes v1 ships. Mirrors
+/** D-226 — the two transition shapes v1 ships. Mirrors
  *  `chroma_timeline::TransitionKind` (serde `snake_case`).
  *
  *  Two, not a library, and the pair is deliberate: `cross_dissolve` is the one
  *  that needs TWO clips visible at once plus handle media, `dip_to_color` is the
  *  one that needs neither — so between them they prove both mechanisms, and a
- *  cut with no handles still has a transition that works. See D-224. */
+ *  cut with no handles still has a transition that works. See D-226. */
 export type TransitionKind = 'cross_dissolve' | 'dip_to_color';
 
-/** D-224 — where a transition's window sits relative to its cut. Premiere Pro's
+/** D-226 — where a transition's window sits relative to its cut. Premiere Pro's
  *  own three, under its own names (Adobe's *Align and reposition transitions*
  *  help page): the choice decides WHICH clip has to supply handle media, which
  *  is why it is a real field and not cosmetic. Mirrors
@@ -682,7 +682,7 @@ export const TRANSITION_ALIGNMENTS: ReadonlyArray<{ value: TransitionAlignment; 
   { value: 'end_at_cut', label: 'End at Cut' },
 ];
 
-/** D-224 — the browsable transition palette: what the timeline's Transitions
+/** D-226 — the browsable transition palette: what the timeline's Transitions
  *  popover lists and what `editor_add_transition` accepts. One named source, so
  *  the human's palette and the agent's enum can never drift. */
 export const TRANSITION_KINDS: ReadonlyArray<{
@@ -704,18 +704,18 @@ export const TRANSITION_KINDS: ReadonlyArray<{
   },
 ];
 
-/** D-224 — default transition length in TIMELINE frames. One second at the
+/** D-226 — default transition length in TIMELINE frames. One second at the
  *  project's own rate would be a `fps`-dependent constant this pure module has
  *  no access to at construction time; 24 frames is exactly one second at
  *  [`DEFAULT_FPS`] and a normal dissolve length at any rate this app targets.
  *  Resolve's own default is 1 second, for the same reason. */
 export const DEFAULT_TRANSITION_FRAMES = 24;
 
-/** One transition at one edit point (D-224, `docs/notes/transitions.md`).
+/** One transition at one edit point (D-226, `docs/notes/transitions.md`).
  *  Mirrors `chroma_timeline::Transition` field-for-field.
  *
  *  **The clips it joins stay abutting and non-overlapping** — see the Rust
- *  type's own doc and D-224 for the two real data-model options and why this
+ *  type's own doc and D-226 for the two real data-model options and why this
  *  one was chosen. `at_frame` IS the cut; the window is derived from it (see
  *  [`transitionWindow`]) so a duration or alignment change can never detach the
  *  transition from the cut it was dropped on. */
@@ -733,7 +733,7 @@ export interface Transition {
   color?: string;
 }
 
-/** D-224 — a transition's `[start, end)` TIMELINE-frame window. **Exact mirror
+/** D-226 — a transition's `[start, end)` TIMELINE-frame window. **Exact mirror
  *  of `chroma_timeline::Transition::window`**, integer halving and all, so the
  *  live preview and this compiler can never disagree about which frames a
  *  transition covers. */
@@ -754,7 +754,7 @@ export function transitionWindow(t: Transition): { start: number; end: number } 
   }
 }
 
-/** D-224 — how many TIMELINE frames of handle each side must supply: the part
+/** D-226 — how many TIMELINE frames of handle each side must supply: the part
  *  of the window before the cut comes out of the INCOMING clip's head, the part
  *  at or after it out of the OUTGOING clip's tail. Mirrors
  *  `Transition::head_handle` / `tail_handle`. */
@@ -763,7 +763,7 @@ export function transitionHandles(t: Transition): { head: number; tail: number }
   return { head: Math.max(0, t.at_frame - start), tail: Math.max(0, end - t.at_frame) };
 }
 
-/** D-224 — the outgoing/incoming clip indices at `atFrame` on `tr`, by exact
+/** D-226 — the outgoing/incoming clip indices at `atFrame` on `tr`, by exact
  *  frame match (the same fact `Transition.at_frame` is documented to mean).
  *  `-1` for a side that isn't there — a cut that drifted because one side was
  *  trimmed, which every consumer degrades on rather than erroring. */
@@ -778,7 +778,7 @@ export function transitionClipIndices(
   };
 }
 
-/** D-224 — every real cut on `tr`: a frame where one clip ends and the next
+/** D-226 — every real cut on `tr`: a frame where one clip ends and the next
  *  begins, with no gap. The set of places a transition can be dropped, which the
  *  timeline's drag-to-a-cut gesture snaps to and `editor_add_transition`
  *  reports back when a caller names a frame that isn't one. Ascending, deduped. */
@@ -791,7 +791,7 @@ export function cutFrames(tr: Track, fps: number): number[] {
   return [...new Set(cuts)];
 }
 
-/** D-224 — the outcome of checking whether a transition may be written.
+/** D-226 — the outcome of checking whether a transition may be written.
  *
  *  Shaped like [`LinkCheck`] (D-138) and for the identical reason: the palette's
  *  drop target, the Inspector's duration field and `editor_add_transition` all
@@ -805,7 +805,7 @@ export interface TransitionCheck {
   reason?: string;
 }
 
-/** D-224 — may a transition of this shape/length/alignment be written at
+/** D-226 — may a transition of this shape/length/alignment be written at
  *  `atFrame` on `track`? The one precondition check `applyOp`'s
  *  `add_transition`/`set_transition`, the timeline drop gesture and the MCP tool
  *  all go through.
@@ -927,7 +927,7 @@ export function checkTransition(
   return { ok: true };
 }
 
-/** D-224 — build a valid [`Transition`], the ONE construction path shared by the
+/** D-226 — build a valid [`Transition`], the ONE construction path shared by the
  *  timeline's transition palette and `editor_add_transition` (CLAUDE.md: "the
  *  same op/store action underneath both"). Owns id generation and colour
  *  resolution, exactly as [`newMarker`] does; returns `{ error }` rather than
@@ -965,7 +965,7 @@ export function newTransition(
   return t;
 }
 
-/** D-224 — every transition on `tr`, sorted by its cut frame. Same read-side
+/** D-226 — every transition on `tr`, sorted by its cut frame. Same read-side
  *  counterpart role [`markersOf`] plays for markers: a `Timeline` that arrived
  *  from a hand-built fixture or an older write still reads back in timeline
  *  order. */
@@ -2232,7 +2232,7 @@ export type EditOp =
       id: string;
       patch: { frame?: number; color?: string; name?: string | null; note?: string | null };
     }
-  /** D-224 — place a transition at an edit point on `track`. The caller builds
+  /** D-226 — place a transition at an edit point on `track`. The caller builds
    *  the whole `Transition` (via [`newTransition`], which owns id generation and
    *  colour resolution), exactly like `add_clip` takes a fully-built
    *  `NewClipFields` and `add_marker` a fully-built `Marker` — so the palette's
@@ -2251,13 +2251,13 @@ export type EditOp =
    *  own), since a track's transitions are drawn and listed in timeline order
    *  everywhere. */
   | { kind: 'add_transition'; track: number; transition: Transition }
-  /** D-224 — delete the transition with this id from `track`. A no-op for an id
+  /** D-226 — delete the transition with this id from `track`. A no-op for an id
    *  that isn't there, and refused on a locked track — same "reject rather than
    *  corrupt" discipline every other per-track op here uses. Touches no clip:
    *  removing a transition restores the plain cut, it never re-trims anything
-   *  (the clips never moved to make room for it in the first place — D-224). */
+   *  (the clips never moved to make room for it in the first place — D-226). */
   | { kind: 'remove_transition'; track: number; id: string }
-  /** D-224 — patch an existing transition's kind / duration / alignment /
+  /** D-226 — patch an existing transition's kind / duration / alignment /
    *  colour. The Inspector's own fields and `editor_set_transition` both write
    *  through this.
    *
@@ -2297,14 +2297,14 @@ function markerLabel(tl: Timeline, id: string): string {
   return m.name ? `"${m.name}"` : `at ${m.frame}`;
 }
 
-/** D-224 — a transition kind's display label, or the raw value for one this
+/** D-226 — a transition kind's display label, or the raw value for one this
  *  build doesn't know (a project written by a newer version). History-label and
  *  UI use only, never the edit logic. */
 function transitionLabel(kind: TransitionKind): string {
   return TRANSITION_KINDS.find((k) => k.value === kind)?.label ?? kind;
 }
 
-/** D-224 — "Cross Dissolve at 48" for the transition with `id` on `track`, or
+/** D-226 — "Cross Dissolve at 48" for the transition with `id` on `track`, or
  *  the bare id if it isn't there. Same role and same fallback shape
  *  [`markerLabel`] plays for markers. */
 function transitionAtLabel(tl: Timeline, track: number, id: string): string {
@@ -2387,7 +2387,7 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Remove marker ${markerLabel(before, op.id)}`;
     case 'set_marker':
       return `Edit marker ${markerLabel(before, op.id)}`;
-    // D-224 — the transition's SHAPE is what an undo entry needs to name
+    // D-226 — the transition's SHAPE is what an undo entry needs to name
     // ("Add transition" says nothing when a cut has had two tried on it).
     case 'add_transition':
       return `Add ${transitionLabel(op.transition.kind)} at ${op.transition.at_frame}`;
@@ -2548,10 +2548,10 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     return next;
   }
 
-  // D-224 — transition ops. Handled here, above the per-clip machinery below,
+  // D-226 — transition ops. Handled here, above the per-clip machinery below,
   // because a transition belongs to a track's edit POINT rather than to either
   // clip: no clip index to bounds-check, and nothing about one ripples (the
-  // clips never moved to make room for it — see D-224). The track's own lock IS
+  // clips never moved to make room for it — see D-226). The track's own lock IS
   // respected, via `checkTransition`, since a transition is that track's
   // content.
   if (op.kind === 'add_transition') {

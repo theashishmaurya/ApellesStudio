@@ -796,7 +796,7 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
     expect(tail - head).toBeGreaterThan(10);
   });
 
-  it('B-102: a clip at start_frame > 0 renders its OWN REAL FRAMES at its own position — not its last frame, frozen', () => {
+  it('B-103: a clip at start_frame > 0 renders its OWN REAL FRAMES at its own position — not its last frame, frozen', () => {
     // The bug, exactly: every `-i` decodes to a stream whose timestamps start
     // at ~0, and `overlay` pairs its inputs BY TIMESTAMP, so a clip placed
     // later on the timeline had its real frames consumed against the base

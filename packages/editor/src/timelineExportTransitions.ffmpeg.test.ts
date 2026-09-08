@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution pixel tests for D-224's transitions.
+// @chroma/editor — REAL ffmpeg-execution pixel tests for D-226's transitions.
 //
 // Its own file, mirroring `timelineExportText.ffmpeg.test.ts`'s precedent: the
 // fixtures here are two SOLID-COLOUR sources (not `testsrc`), because the whole
@@ -71,7 +71,7 @@ function expectNear(actual: number, expected: number, what: string) {
   expect(Math.abs(actual - expected), `${what}: got ${actual}, expected ~${expected}`).toBeLessThanOrEqual(TOL);
 }
 
-describe.skipIf(!FFMPEG_AVAILABLE)('D-224 transitions — real ffmpeg pixels', () => {
+describe.skipIf(!FFMPEG_AVAILABLE)('D-226 transitions — real ffmpeg pixels', () => {
   let dir: string;
   let redSrc: string;
   let blueSrc: string;

@@ -1269,7 +1269,7 @@ export function TimelinePane() {
     { kind: 'edge'; track: number; frame: number } | { kind: 'new_track'; index: number } | null
   >(null);
 
-  /** D-224 — why the last transition drop was refused, shown as a transient
+  /** D-226 — why the last transition drop was refused, shown as a transient
    *  toolbar note. A refusal is the NORMAL outcome of a near-miss drop (a
    *  transition can only live on a cut, and a cross dissolve additionally needs
    *  handle media), so it has to say WHY rather than silently doing nothing —
@@ -2468,7 +2468,7 @@ export function TimelinePane() {
       setClipDragPreview((prev) => (prev === null ? prev : null));
       if (!data) return;
 
-      // D-224 — a transition dragged out of the palette. Its only legal target
+      // D-226 — a transition dragged out of the palette. Its only legal target
       // is a real CUT on a video track, so the drop resolves to the nearest one
       // within `TRANSITION_SNAP_PX` and is refused (with a real reason) rather
       // than snapped to something arbitrary — a transition is not a clip, it
@@ -2792,7 +2792,7 @@ export function TimelinePane() {
               jump to. */}
           <AddMarkerButton onAdd={doAddMarker} shortcut="M" />
           <MarkerListMenu timeline={timeline} fps={fps} onJump={setPlayhead} />
-          {/* D-224 — the transitions library. Beside Title/Marker for the same
+          {/* D-226 — the transitions library. Beside Title/Marker for the same
               reason those two sit together: all three are "bring something new
               into the edit", none is scoped to the current selection. The drag
               itself starts inside its popover — see `TimelineTransitions.tsx`. */}
@@ -3187,7 +3187,7 @@ export function TimelinePane() {
                   />
                 );
               })()}
-            {/* D-224 — one badge per transition, spanning its own window and
+            {/* D-226 — one badge per transition, spanning its own window and
                 centred on its cut. Rendered here, in the same overlay layer as
                 the gap highlight and the drag previews above, because a
                 transition belongs to the EDIT POINT between two clips and not to
