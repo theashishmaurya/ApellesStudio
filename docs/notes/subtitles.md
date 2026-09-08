@@ -229,9 +229,13 @@ parse one), and `.xml` (which in Resolve's list means TTML by another name).
 
 **Inline formatting** (`<i>`, `<b>`, `<u>`, `<font …>`, WebVTT's `<c>`/`<v>`)
 is **stripped, not rendered**, and XML entities are decoded. The text reaches
-the screen correct; the emphasis is dropped. Real cause: the shared font
-catalogue has no italic face, so there is nothing honest to switch to, and
-leaving the literal `<i>` in would burn markup into the picture.
+the screen correct; the emphasis is dropped. **D-239** removed the original
+cause (the shared font catalogue now has real italic/bold faces,
+`caption_render.rs` already resolves through `chroma::text`'s catalogue
+unchanged) but per-RUN emphasis inside one cue's text is still not attempted —
+`CaptionStyle.font` is one style for the whole cue, and `<i>`/`<b>` ask for a
+DIFFERENT face mid-line, which is a real (if now unblocked) parsing job, not
+just a missing font file. Tracked below.
 
 ---
 
@@ -261,8 +265,12 @@ Tracked here so the next pass has the list, not hidden:
 - **TTML import/export** — see §5. The reason is written down; do it properly
   or not at all.
 - **Embedded MXF/IMF subtitle extraction.**
-- **Italic/bold rendering** — needs italic faces in the catalogue first, which
-  is a `chroma::text` change (and an export-parity question of its own).
+- ~~**Italic/bold rendering**~~ — **done, D-239.** A whole cue/style can be
+  bold/italic (Bold/Italic toggle buttons in the Caption Inspector's Track
+  Style section, `bold`/`italic` on `editor_set_caption_style`/
+  `editor_import_subtitles`). What is still NOT attempted: per-run emphasis
+  inside one cue's text from `<i>`/`<b>` markup (see §5 above) — a real,
+  separate parsing job now that the font side is unblocked.
 - **Auto-captioning from the transcript.** `editor_get_transcript` (D-189)
   already produces timed words; turning those into cues is a small, obvious
   follow-up and the single highest-value one on this list.

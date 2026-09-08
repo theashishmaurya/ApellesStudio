@@ -1,4 +1,4 @@
-//! Text/title rasterisation for the Edit tab (D-211/D-212,
+//! Text/title rasterisation for the Edit tab (D-211/D-212/D-239,
 //! `docs/notes/text-title-clips.md`).
 //!
 //! **What it is:** the media-layer half of the text/title clip primitive —
@@ -16,8 +16,14 @@
 //!   Inspector's font picker lists it, and `@chroma/editor`'s export compiler
 //!   reads the SAME resolved `path` into `drawtext`'s `fontfile=`, which is
 //!   the whole reason live preview and export draw the same glyphs (D-212).
+//!   Each entry also carries D-239's `group`/`bold`/`italic` metadata, which
+//!   is what a Bold/Italic TOGGLE composes across — the composition itself
+//!   lives once in `@chroma/editor`'s `textFonts.ts`, not here or duplicated
+//!   in the MCP layer (see [`FontFamily`]'s own doc).
 //! - [`render_text_layer`] — rasterise one `TextLayer` into a canvas-sized
-//!   `RgbaImage`, the text centred, transparent everywhere else.
+//!   `RgbaImage`, the text centred, transparent everywhere else. Unchanged by
+//!   D-239: an italic/bold face is just another catalogue key to this
+//!   function, resolved and rasterised exactly like any other.
 //!
 //! **What it does NOT do:** no compositing (that is `chroma::edit`'s
 //! `composite_layer_onto`, which takes this module's buffer like any other
@@ -64,10 +70,34 @@ use serde::Serialize;
 /// already states. v1's platform scope is macOS ARM (`docs/02-scope.md`); the
 /// trailing Linux candidates are a courtesy for a dev box, not a support
 /// claim.
+///
+/// **`group`/`bold`/`italic` (D-239)** are the style axis a Bold/Italic
+/// TOGGLE composes across, on top of the flat `key` a `TextLayer`/
+/// `CaptionStyle` actually stores. A family belongs to a `group` — a real
+/// type design with regular/bold/italic/bold-italic siblings ALSO in this
+/// catalogue under the same `group` — or to no group at all (`None`), for a
+/// design with no such siblings to switch to (`impact`, `sans-black`: neither
+/// ships an italic face, and both are already at their own maximum weight).
+/// The Inspector's Bold/Italic buttons and the `editor_set_text_clip`/
+/// `editor_set_caption_style` `bold`/`italic` MCP params both compose
+/// `(group, bold, italic)` into the flat catalogue key that actually gets
+/// stored — see `@chroma/editor`'s `textFonts.ts::composeFontStyleKey`, the
+/// ONE place that composition happens (both the GUI and MCP paths route
+/// through it, per CLAUDE.md's "same op/store action underneath both"). This
+/// struct carries the data; it carries no composition logic of its own,
+/// exactly as the rest of this module never re-derives what a resolved key
+/// means.
 pub struct FontFamily {
     pub key: &'static str,
     pub label: &'static str,
     pub candidates: &'static [&'static str],
+    /// The type-design group this face belongs to, or `None` if it has no
+    /// bold/italic siblings in this catalogue.
+    pub group: Option<&'static str>,
+    /// Whether THIS entry is the group's bold face.
+    pub bold: bool,
+    /// Whether THIS entry is the group's italic (or bold-italic) face.
+    pub italic: bool,
 }
 
 /// The Edit tab's font catalogue.
@@ -79,6 +109,20 @@ pub struct FontFamily {
 /// shape where "both renderers read the same file" also means "both
 /// renderers read the same *face*". That is why the obvious macOS choices
 /// (Helvetica, Avenir, SF) are absent — they ship only as `.ttc`.
+///
+/// **Italic/bold faces (D-239, roadmap item 27).** Every family that has a
+/// real regular/bold/italic/bold-italic quartet on disk now lists all four,
+/// sharing a `group`: `sans` (Arial), `condensed` (Arial Narrow), `serif`
+/// (Georgia, falling back to Times New Roman), `mono` (Courier New). **No new
+/// font asset was added or bundled** — these are the SAME system font
+/// families D-212 already relies on (candidate absolute paths on this
+/// machine, never a file vendored into the repo), so D-212's license
+/// reasoning (Apple-supplied, referenced not shipped) covers these entries
+/// unchanged; see D-239 for why that means no new licensing question. `impact`
+/// and `sans-black` stay standalone (`group: None`): Impact and Arial Black
+/// ship no italic face on macOS, and both are already at a design's own
+/// maximum weight, so a Bold toggle has nothing to switch to either — see
+/// `chroma_text_fonts`'s own doc for how a toggle degrades on those two.
 pub const TEXT_FONTS: &[FontFamily] = &[
     FontFamily {
         key: "sans",
@@ -88,6 +132,9 @@ pub const TEXT_FONTS: &[FontFamily] = &[
             "/Library/Fonts/Arial.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         ],
+        group: Some("sans"),
+        bold: false,
+        italic: false,
     },
     FontFamily {
         key: "sans-bold",
@@ -97,6 +144,31 @@ pub const TEXT_FONTS: &[FontFamily] = &[
             "/Library/Fonts/Arial Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         ],
+        group: Some("sans"),
+        bold: true,
+        italic: false,
+    },
+    FontFamily {
+        key: "sans-italic",
+        label: "Sans Italic",
+        candidates: &[
+            "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
+            "/Library/Fonts/Arial Italic.ttf",
+        ],
+        group: Some("sans"),
+        bold: false,
+        italic: true,
+    },
+    FontFamily {
+        key: "sans-bold-italic",
+        label: "Sans Bold Italic",
+        candidates: &[
+            "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
+            "/Library/Fonts/Arial Bold Italic.ttf",
+        ],
+        group: Some("sans"),
+        bold: true,
+        italic: true,
     },
     FontFamily {
         key: "sans-black",
@@ -105,6 +177,20 @@ pub const TEXT_FONTS: &[FontFamily] = &[
             "/System/Library/Fonts/Supplemental/Arial Black.ttf",
             "/Library/Fonts/Arial Black.ttf",
         ],
+        group: None,
+        bold: false,
+        italic: false,
+    },
+    FontFamily {
+        key: "condensed",
+        label: "Condensed",
+        candidates: &[
+            "/System/Library/Fonts/Supplemental/Arial Narrow.ttf",
+            "/Library/Fonts/Arial Narrow.ttf",
+        ],
+        group: Some("condensed"),
+        bold: false,
+        italic: false,
     },
     FontFamily {
         key: "condensed-bold",
@@ -113,6 +199,31 @@ pub const TEXT_FONTS: &[FontFamily] = &[
             "/System/Library/Fonts/Supplemental/Arial Narrow Bold.ttf",
             "/Library/Fonts/Arial Narrow Bold.ttf",
         ],
+        group: Some("condensed"),
+        bold: true,
+        italic: false,
+    },
+    FontFamily {
+        key: "condensed-italic",
+        label: "Condensed Italic",
+        candidates: &[
+            "/System/Library/Fonts/Supplemental/Arial Narrow Italic.ttf",
+            "/Library/Fonts/Arial Narrow Italic.ttf",
+        ],
+        group: Some("condensed"),
+        bold: false,
+        italic: true,
+    },
+    FontFamily {
+        key: "condensed-bold-italic",
+        label: "Condensed Bold Italic",
+        candidates: &[
+            "/System/Library/Fonts/Supplemental/Arial Narrow Bold Italic.ttf",
+            "/Library/Fonts/Arial Narrow Bold Italic.ttf",
+        ],
+        group: Some("condensed"),
+        bold: true,
+        italic: true,
     },
     FontFamily {
         key: "impact",
@@ -121,6 +232,9 @@ pub const TEXT_FONTS: &[FontFamily] = &[
             "/System/Library/Fonts/Supplemental/Impact.ttf",
             "/Library/Fonts/Impact.ttf",
         ],
+        group: None,
+        bold: false,
+        italic: false,
     },
     FontFamily {
         key: "serif",
@@ -130,6 +244,9 @@ pub const TEXT_FONTS: &[FontFamily] = &[
             "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
         ],
+        group: Some("serif"),
+        bold: false,
+        italic: false,
     },
     FontFamily {
         key: "serif-bold",
@@ -139,6 +256,33 @@ pub const TEXT_FONTS: &[FontFamily] = &[
             "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
         ],
+        group: Some("serif"),
+        bold: true,
+        italic: false,
+    },
+    FontFamily {
+        key: "serif-italic",
+        label: "Serif Italic",
+        candidates: &[
+            "/System/Library/Fonts/Supplemental/Georgia Italic.ttf",
+            "/System/Library/Fonts/Supplemental/Times New Roman Italic.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
+        ],
+        group: Some("serif"),
+        bold: false,
+        italic: true,
+    },
+    FontFamily {
+        key: "serif-bold-italic",
+        label: "Serif Bold Italic",
+        candidates: &[
+            "/System/Library/Fonts/Supplemental/Georgia Bold Italic.ttf",
+            "/System/Library/Fonts/Supplemental/Times New Roman Bold Italic.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-BoldItalic.ttf",
+        ],
+        group: Some("serif"),
+        bold: true,
+        italic: true,
     },
     FontFamily {
         key: "mono",
@@ -148,6 +292,42 @@ pub const TEXT_FONTS: &[FontFamily] = &[
             "/System/Library/Fonts/Menlo.ttc",
             "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
         ],
+        group: Some("mono"),
+        bold: false,
+        italic: false,
+    },
+    FontFamily {
+        key: "mono-bold",
+        label: "Mono Bold",
+        candidates: &[
+            "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+        ],
+        group: Some("mono"),
+        bold: true,
+        italic: false,
+    },
+    FontFamily {
+        key: "mono-italic",
+        label: "Mono Italic",
+        candidates: &[
+            "/System/Library/Fonts/Supplemental/Courier New Italic.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Oblique.ttf",
+        ],
+        group: Some("mono"),
+        bold: false,
+        italic: true,
+    },
+    FontFamily {
+        key: "mono-bold-italic",
+        label: "Mono Bold Italic",
+        candidates: &[
+            "/System/Library/Fonts/Supplemental/Courier New Bold Italic.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-BoldOblique.ttf",
+        ],
+        group: Some("mono"),
+        bold: true,
+        italic: true,
     },
 ];
 
@@ -163,6 +343,15 @@ pub struct ResolvedFont {
     /// the GUI can grey out a family instead of silently offering a shorter
     /// list than the one a stored `TextLayer::font` may name.
     pub path: Option<String>,
+    /// D-239 — the style-axis group this entry belongs to (`Some("sans")`,
+    /// …), or `None` for a standalone design with no bold/italic siblings.
+    /// See [`FontFamily::group`].
+    pub group: Option<String>,
+    /// D-239 — whether THIS entry is its group's bold face.
+    pub bold: bool,
+    /// D-239 — whether THIS entry is its group's italic (or bold-italic)
+    /// face.
+    pub italic: bool,
 }
 
 /// The font catalogue resolved against this machine.
@@ -185,6 +374,9 @@ pub fn chroma_text_fonts() -> Vec<ResolvedFont> {
             key: f.key.to_string(),
             label: f.label.to_string(),
             path: first_existing(f.candidates).map(|p| p.to_string_lossy().into_owned()),
+            group: f.group.map(str::to_string),
+            bold: f.bold,
+            italic: f.italic,
         })
         .collect()
 }
@@ -625,5 +817,149 @@ mod tests {
         };
         let cold = rasterise(&layer("BEFORE"), &key).expect("render");
         assert_eq!(a.as_raw(), cold.as_raw());
+    }
+
+    // ---- D-239: italic/bold faces --------------------------------------
+
+    /// Every `group`ed entry has a real sibling — the composer in
+    /// `@chroma/editor`'s `textFonts.ts` assumes a group is never a group of
+    /// one, and this is the catalogue-side guarantee of that. Also asserts no
+    /// two entries in one group share the same `(bold, italic)` pair, which
+    /// would make composition ambiguous (which key does "sans, bold, not
+    /// italic" mean?).
+    #[test]
+    fn every_group_has_a_sibling_and_no_duplicate_style_pair() {
+        use std::collections::HashSet;
+        let mut seen: HashMap<&str, HashSet<(bool, bool)>> = HashMap::new();
+        for f in TEXT_FONTS {
+            let Some(g) = f.group else { continue };
+            let set = seen.entry(g).or_default();
+            assert!(
+                set.insert((f.bold, f.italic)),
+                "group \"{g}\" has two entries claiming (bold={}, italic={})",
+                f.bold,
+                f.italic
+            );
+        }
+        for (g, set) in &seen {
+            assert!(
+                set.len() > 1,
+                "group \"{g}\" has only one member — not really a group"
+            );
+        }
+    }
+
+    /// Every italic/bold-italic entry added for D-239 resolves to a real file
+    /// on this machine AND rasterises visible ink — a font that merely
+    /// resolves but fails to outline any glyph would still be a broken
+    /// picker entry. Also the source of the ink-width numbers cross-checked
+    /// against the export side's real-ffmpeg measurement in
+    /// `textItalicBold.ffmpeg.test.ts` (D-239's own empirical parity check,
+    /// the same "print it, cross-reference it" methodology
+    /// `text_is_drawn_centred_on_its_own_ink_box` and D-212/D-229 already
+    /// use).
+    #[test]
+    fn italic_and_bold_italic_faces_render_visible_ink() {
+        const W: u32 = 640;
+        const H: u32 = 360;
+        for key in [
+            "sans-italic",
+            "sans-bold-italic",
+            "condensed-italic",
+            "condensed-bold-italic",
+            "serif-italic",
+            "serif-bold-italic",
+            "mono-italic",
+            "mono-bold-italic",
+        ] {
+            let img = render_text_layer(
+                &TextLayer {
+                    font: key.into(),
+                    ..layer("AFTER")
+                },
+                W,
+                H,
+            )
+            .unwrap_or_else(|e| panic!("{key}: render failed: {e}"));
+            let (x0, y0, x1, y1) =
+                ink_bounds(&img).unwrap_or_else(|| panic!("{key}: no ink drawn"));
+            eprintln!(
+                "{key}: ink=[{x0},{y0}..{x1},{y1}] w={} h={}",
+                x1 - x0,
+                y1 - y0
+            );
+            assert!(x1 - x0 > 40, "{key}: five glyphs should be wider than 40px");
+        }
+    }
+
+    /// D-239's actual empirical claim: `freetype_equivalent_scale` (D-212) is
+    /// computed from each face's OWN `units_per_em`/`height_unscaled`, not
+    /// hardcoded to Arial Bold's measured ratio — so it should keep the
+    /// preview's ink height consistent with the export's for an italic face
+    /// too, not just the regular/bold faces D-212 originally measured. This
+    /// asserts italic ink height is within a few percent of upright ink
+    /// height at the same `size` (an italic face's cap height is not
+    /// identical to its upright sibling's by design, but a real Arial-family
+    /// italic is close) — a gross mismatch here would mean the scale
+    /// conversion silently stopped generalising.
+    #[test]
+    fn italic_cap_height_is_close_to_its_upright_sibling() {
+        const W: u32 = 640;
+        const H: u32 = 360;
+        let upright = render_text_layer(
+            &TextLayer {
+                font: "sans".into(),
+                ..layer("AFTER")
+            },
+            W,
+            H,
+        )
+        .expect("sans render");
+        let italic = render_text_layer(
+            &TextLayer {
+                font: "sans-italic".into(),
+                ..layer("AFTER")
+            },
+            W,
+            H,
+        )
+        .expect("sans-italic render");
+        let (_, uy0, _, uy1) = ink_bounds(&upright).expect("upright ink");
+        let (_, iy0, _, iy1) = ink_bounds(&italic).expect("italic ink");
+        let ratio = (iy1 - iy0) as f64 / (uy1 - uy0) as f64;
+        eprintln!(
+            "sans cap height={} sans-italic cap height={} ratio={ratio:.3}",
+            uy1 - uy0,
+            iy1 - iy0
+        );
+        assert!(
+            (ratio - 1.0).abs() < 0.15,
+            "italic cap height should be within 15% of upright, ratio was {ratio}"
+        );
+    }
+
+    /// `chroma_text_fonts` — the Tauri command both the Inspector and the MCP
+    /// `editor_text_fonts` tool read — actually carries the D-239 metadata a
+    /// caller needs to compose a styled key, not just the flat list D-212
+    /// shipped.
+    #[test]
+    fn resolved_catalogue_carries_group_bold_italic_metadata() {
+        let resolved = chroma_text_fonts();
+        let sans_bold_italic = resolved
+            .iter()
+            .find(|f| f.key == "sans-bold-italic")
+            .expect("sans-bold-italic is in the catalogue");
+        assert_eq!(sans_bold_italic.group.as_deref(), Some("sans"));
+        assert!(sans_bold_italic.bold);
+        assert!(sans_bold_italic.italic);
+
+        let impact = resolved
+            .iter()
+            .find(|f| f.key == "impact")
+            .expect("impact is in the catalogue");
+        assert_eq!(
+            impact.group, None,
+            "impact has no bold/italic siblings to toggle to"
+        );
     }
 }

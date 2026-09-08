@@ -77,8 +77,10 @@ import {
   CLIP_KEYFRAME_DEFAULTS,
   EASE_PRESETS,
   DEFAULT_EASE_CURVE,
+  DEFAULT_CAPTION_FONT,
   DEFAULT_DUCK_ATTACK_MS,
   DEFAULT_DUCK_RELEASE_MS,
+  DEFAULT_TEXT_FONT,
   DEFAULT_TITLE_SECONDS,
   EQ_BAND_KINDS,
   describeEqBand,
@@ -101,6 +103,7 @@ import {
   newTextClipFields,
   newTextLayer,
   panGains,
+  resolveCaptionStyle,
   resolveMarkerColor,
   timelineFps,
   trackIndexAfterMove,
@@ -143,7 +146,7 @@ import { MIN_SPEED, MAX_SPEED, resolveSpeedSegments, type SpeedPoint } from './s
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
-import { loadTextFonts, textFontsSync } from './textFonts';
+import { composeFontStyleKey, fontStyleOf, loadTextFonts, textFontsSync } from './textFonts';
 import {
   clampPreviewZoom,
   FIT_ZOOM,
@@ -523,7 +526,11 @@ interface ImportedCaption {
  *  position and the box. The same patch discipline `editor_set_text_clip`
  *  follows, factored out here because both the track style and the per-cue
  *  override read it. */
-function captionStylePatch(a: any): Partial<CaptionStyle> {
+/** `currentFont` is the style's font BEFORE this patch — the track's own for
+ *  a new import, or the resolved (cue-or-track) font for an existing style —
+ *  so `bold`/`italic` alone (no `font`) composes against what is already
+ *  there rather than against nothing. See D-239's `composeFontStyleKey`. */
+function captionStylePatch(a: any, currentFont: string): Partial<CaptionStyle> {
   const patch: Partial<CaptionStyle> = {};
   if (a?.font !== undefined) patch.font = String(a.font);
   if (a?.size !== undefined) patch.size = Number(a.size);
@@ -542,6 +549,18 @@ function captionStylePatch(a: any): Partial<CaptionStyle> {
   }
   if (a?.positionX !== undefined) patch.position_x = Number(a.positionX);
   if (a?.positionY !== undefined) patch.position_y = Number(a.positionY);
+  // D-239 — `bold`/`italic` are composed into `font` HERE, the one place a
+  // caption style patch is built for both the GUI and every MCP caller
+  // (`editor_import_subtitles`, `editor_set_caption_style`). Neither survives
+  // as its own stored field — see `textFonts.ts::composeFontStyleKey`.
+  if (a?.bold !== undefined || a?.italic !== undefined) {
+    const fonts = textFontsSync();
+    const baseFont = patch.font ?? currentFont;
+    const cur = fontStyleOf(fonts, baseFont);
+    const bold = a?.bold !== undefined ? !!a.bold : cur.bold;
+    const italic = a?.italic !== undefined ? !!a.italic : cur.italic;
+    patch.font = composeFontStyleKey(fonts, baseFont, bold, italic);
+  }
   return patch;
 }
 
@@ -1030,7 +1049,18 @@ export function useEditorControl(): void {
         const defaults = newTextLayer({});
         return {
           ok: true,
-          fonts: fonts.map((f) => ({ key: f.key, label: f.label, available: f.path !== null })),
+          // D-239 — `group`/`bold`/`italic` let a caller see which keys are
+          // siblings without guessing from the label string; most callers
+          // won't need this and should just pass `bold`/`italic` on
+          // `editor_add_text_clip`/`editor_set_text_clip` directly.
+          fonts: fonts.map((f) => ({
+            key: f.key,
+            label: f.label,
+            available: f.path !== null,
+            group: f.group,
+            bold: f.bold,
+            italic: f.italic,
+          })),
           defaultTitle: 'error' in defaults ? null : defaults,
         };
       },
@@ -1039,9 +1069,21 @@ export function useEditorControl(): void {
         const tl = useEditorTimelineStore.getState().timeline;
         if (!tl) return noTimeline();
 
+        // D-239 — `bold`/`italic` compose into `font` HERE, before
+        // `newTextLayer` ever sees it: neither survives as its own field on
+        // `TextLayer` (D-212's `font` stays the one stored catalogue key).
+        let font = a?.font !== undefined ? String(a.font) : undefined;
+        if (a?.bold !== undefined || a?.italic !== undefined) {
+          const fonts = textFontsSync();
+          const baseFont = font ?? DEFAULT_TEXT_FONT;
+          const cur = fontStyleOf(fonts, baseFont);
+          const bold = a?.bold !== undefined ? !!a.bold : cur.bold;
+          const italic = a?.italic !== undefined ? !!a.italic : cur.italic;
+          font = composeFontStyleKey(fonts, baseFont, bold, italic);
+        }
         const layer = newTextLayer({
           content: typeof a?.content === 'string' ? a.content : '',
-          font: a?.font !== undefined ? String(a.font) : undefined,
+          font,
           size: a?.size !== undefined ? Number(a.size) : undefined,
           color: a?.color !== undefined ? String(a.color) : undefined,
         });
@@ -1110,8 +1152,20 @@ export function useEditorControl(): void {
         if (a?.font !== undefined) patch.font = String(a.font);
         if (a?.size !== undefined) patch.size = Number(a.size);
         if (a?.color !== undefined) patch.color = String(a.color);
+        // D-239 — `bold`/`italic` compose against whatever `font` this patch
+        // is about to set, or the clip's CURRENT font if this patch does not
+        // touch `font` at all — never against nothing, since a
+        // bold-only patch on an existing title must not reset its family.
+        if (a?.bold !== undefined || a?.italic !== undefined) {
+          const fonts = textFontsSync();
+          const baseFont = patch.font ?? found.c.text?.font ?? DEFAULT_TEXT_FONT;
+          const cur = fontStyleOf(fonts, baseFont);
+          const bold = a?.bold !== undefined ? !!a.bold : cur.bold;
+          const italic = a?.italic !== undefined ? !!a.italic : cur.italic;
+          patch.font = composeFontStyleKey(fonts, baseFont, bold, italic);
+        }
         if (Object.keys(patch).length === 0) {
-          return { error: 'nothing to change — pass at least one of content / font / size / color' };
+          return { error: 'nothing to change — pass at least one of content / font / size / color / bold / italic' };
         }
         // Validate here, where there is somewhere to report to: `applyOp`'s
         // own reducer is pure and can only no-op on a bad patch.
@@ -1170,7 +1224,10 @@ export function useEditorControl(): void {
         }
         if (imported.cues.length === 0) return { error: 'that file contained no cues' };
 
-        const style = captionStylePatch(a);
+        // A brand-new track has no "current" style yet — bold/italic with no
+        // font compose against the family the caller's own `font` names, or
+        // the catalogue default.
+        const style = captionStylePatch(a, a?.font !== undefined ? String(a.font) : DEFAULT_CAPTION_FONT);
         useEditorTimelineStore.getState().applyOp({
           kind: 'import_subtitles',
           cues: imported.cues,
@@ -1281,7 +1338,14 @@ export function useEditorControl(): void {
           return { ok: true, track, clip: cueIndex, usingTrackStyle: true };
         }
 
-        const patch = captionStylePatch(a);
+        // The font `bold`/`italic` composes against: the cue's own resolved
+        // style if `clip` names one (falling through to the track's, exactly
+        // as the Inspector's `resolveCaptionStyle` does), else the track's.
+        const currentFont = resolveCaptionStyle(
+          cueIndex !== null ? tr.clips[cueIndex]?.caption?.style : null,
+          tr.caption_style,
+        ).font;
+        const patch = captionStylePatch(a, currentFont);
         if (Object.keys(patch).length === 0) {
           return {
             error:

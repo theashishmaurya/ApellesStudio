@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Italic/bold caption/title rendering (D-239, roadmap item
+  27).** `chroma::text`'s catalogue gained italic/bold-italic faces for every
+  family that has them on macOS (sans/condensed/serif/mono) — no new font, the
+  same system families D-212 already references. Bold/Italic toggle buttons
+  landed in both the Title and Caption Inspectors, plus matching `bold`/
+  `italic` params on the four MCP tools that already set `font`; both compose
+  the right flat catalogue key through one shared `composeFontStyleKey`, so
+  neither `TextLayer` nor `CaptionStyle` grew a new stored field. Export
+  parity measured (not assumed): `ab_glyph` vs. real `drawtext` ink widths
+  agree within 1.5% for the new faces.
 - **2026-09-08** — **Context-sensitive trim: ripple / roll / slip / slide from
   one gesture (D-235, roadmap item 27).** Hold Alt/Option over the timeline and
   the same drag becomes a different edit depending on where you point — an edge
