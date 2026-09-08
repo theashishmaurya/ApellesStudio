@@ -1645,3 +1645,29 @@ status: fixed (2026-09-08, in D-236) · severity: medium (a real, visible export
 - **fix:** all three quantities now go through one function — `outputAtSourceFrame(speedSegments, sourceFrame) / clipFps`, the D-236 ramp's own forward map — so the clip's length, its fade-in and its fade-out are obtained the same way and cannot drift again. For an un-sped clip that map is the identity and the emitted expression is byte-identical to before, which is why the whole existing export suite passes unchanged; for a flat-sped clip it is the division that was missing; and for a D-236 ramp it is correct by construction rather than by a second special case. A fade is authored as a number of SOURCE frames from the clip's in/out point, so under a ramp its real on-screen length is however long those frames take to play — a 12-frame fade-in on a 0.5x head is a full second.
 
 - **why it is a real bug and not just a D-236 design note:** it is wrong today, on the pre-D-236 flat `speedOverrides` path, in a shipped export, with no ramp involved. D-236 is what surfaced it, not what caused it.
+
+## B-114 — "Captions from Transcript" on a clip with no audio showed the raw `CalledProcessError` from an ffmpeg subprocess, argv and temp path and all
+
+status: fixed (2026-09-08) · severity: medium (not a wrong pixel — an unusable error. The one thing the message did not say is the one thing that was wrong, and it names a `/tmp` path the user has never seen) · area: `app/src-tauri/src/chroma/media_understanding.rs`, `ai-media/transcribe.py`, `ai-media/server.py`, `ai-media/errors.py`
+
+- **found:** 2026-09-08, owner-reported live while working in `perf-comparison-reel-v3` — clicking **Captions from Transcript** on a screen recording put this in the Edit tab's error line:
+
+  `CalledProcessError: Command ['ffmpeg', '-y', '-i', '/Users/…/after-1.08.16pm.mov', '-ar', '16000', '-ac', '1', '/tmp/….wav'] returned non-zero exit status 234.`
+
+- **repro:** select a clip whose source has a video stream and **no audio stream at all** (any screen recording captured without audio — the owner's reel is made of them), then click Captions from Transcript.
+
+- **expected:** "this clip has no audio to transcribe", in words, immediately.
+
+- **actual:** the string above, ~200 characters of subprocess argv, after the sidecar had already spun up.
+
+- **cause — and ffmpeg is not the one at fault.** `transcribe.py`'s `extract_audio` shells out to `ffmpeg -i <source> -ar 16000 -ac 1 out.wav` with `check=True`. On a source with no audio stream ffmpeg is *correct* to fail — reproduced directly on the owner's own file: `Output file does not contain any stream` / `Error opening output file`. It is being asked to write a WAV containing an audio stream that does not exist. The defect is entirely on our side of that call, in two places at once:
+  1. nothing anywhere on the path asked whether the source had audio before trying, even though the app already answers exactly that question elsewhere (`chroma_media::VideoInfo::has_audio`, which gates `chroma_audio_play`'s embedded-audio resolution and makes `waveform_peaks` return an empty envelope);
+  2. `server.py`'s job runner records every failure as `f"{type(e).__name__}: {e}"`, and a `CalledProcessError`'s `str()` *is* the argv. That format is right for an unexpected fault (a `KeyError`'s class name is real information) and exactly wrong for a predicted one. The job record is handed to the Tauri bridge, the bridge to `mediaUnderstandingStore`, the store to `CaptionsFromTranscriptButton`'s `setError` — which was already rendering it perfectly reasonably. It was a good error line displaying a terrible string.
+
+- **fix, in the two places the two causes are:**
+  - **The app refuses before the job starts.** `chroma_transcribe` calls a new `no_audio_message(path)`, which probes through the same disk-backed `probe_cached` (D-128) every other clip fact on this surface comes from and returns a sentence when `has_audio` is false. One probe, one answer to "does this file have sound" — not a second implementation beside the existing one. It also means the refusal is instant instead of arriving after a ~3 GB whisper subprocess has loaded. A path that cannot be probed is deliberately **not** refused: an unprobeable container is not evidence of silence, and the sidecar stays the backstop.
+  - **The sidecar is correct on its own.** `extract_audio` no longer uses `check=True`. It reads ffmpeg's stderr, recognises the no-stream markers, and raises `errors.UserFacingError` — a new one-class module meaning "this message is already written for a human". `_run_job` reports that class as its message alone; everything else keeps the `ClassName:` prefix it should have. Any *other* ffmpeg failure now reports ffmpeg's own last stderr line, which is the diagnostic, instead of a repeat of the argv.
+
+- **MCP half:** none needed. `editor_get_transcript` / `editor_generate_captions_from_transcript` already surface the job's `error` verbatim, so the agent-facing message improves with the human-facing one, from the same change — which is the point of there being one string.
+
+- **regression tests:** 3 in `app/src-tauri/src/chroma/media_understanding.rs` against real ffmpeg-synthesized files (a video-only `-an` clip is refused, in words, with no `CalledProcessError` / `exit status` / `ffmpeg` / `/tmp` anywhere in the message; a clip with a real `sine` audio stream is *not* refused; an unprobeable path is not refused), and `ai-media/test_transcribe_errors.py`, a runnable script in `ai/test_depth_track.py`'s convention which additionally proves the message survives `_run_job` **verbatim** and that an ordinary `KeyError` still keeps its class name. All synthesize their own fixtures via `ffmpeg` and skip cleanly when it is absent.
