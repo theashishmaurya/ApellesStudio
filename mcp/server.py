@@ -2582,5 +2582,185 @@ def debug_sample_pixel(path: str, x: int, y: int) -> str:
     )
 
 
+# --------------------------------------------------------------------------- #
+# debug — drive and inspect the real UI (D-219)
+#
+# The other half of D-210's screenshot: these DRIVE real UI state and DUMP the
+# real DOM, so "open the Inspector, screenshot it, check the element is really
+# there and really that colour" is one loop an agent can run end to end.
+#
+# Every write below goes through the SAME zustand store action the human's own
+# click calls — no synthesised clicks, no pixel coordinates, so the result is
+# deterministic and it proves the app works rather than proving a simulation
+# works.
+#
+# All of these are DEV-BUILD ONLY (CLAUDE.md: internal debug tooling is never
+# shipped). They are answered by `@chroma/debug`'s op registry, which a
+# production `vite build` drops entirely.
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def debug_ui_state() -> str:
+    """Read the running app's real UI state: which tab is showing, which panels
+    are open, what is selected, and every dialog currently on screen.
+
+    Call this FIRST when you are about to drive the UI — it tells you what is
+    already open, so you do not toggle a panel closed thinking you are opening
+    it. Call it again after a `debug_set_*` to confirm the change landed
+    (each setter also echoes its own field back, so a second call is only
+    needed when you want the whole picture).
+
+    Open dialogs are read off the DOM (`role="dialog"`/`alertdialog`), not off
+    a store flag, so the list stays correct as modals are added to the app.
+
+    Returns {shell:{activeTab,tabs,sourcesPanelOpen,wgpuSurfaceActive},
+             editor:{inspectorOpen,projectOpen,timelineStatus,selection,
+                     selectedGap,playing,playhead},
+             openDialogs:[{tag,role,label,rect}]}."""
+    import json
+
+    return json.dumps(_op("debug_get_ui_state"), indent=2, default=str)
+
+
+@mcp.tool()
+def debug_set_active_tab(tab: str) -> str:
+    """Switch the app to a top-level tab: "edit", "motion" or "colorist".
+
+    Drives `useShellStore.setActiveTab` — literally the function the tab
+    button's onClick calls — so this is a real tab switch, not a simulated
+    click on a coordinate. A 1-based index ("1"/"2"/"3", matching the
+    Cmd/Ctrl+1/2/3 shortcut) is accepted too. An unknown name is refused with
+    the accepted list rather than silently ignored.
+
+    Note the tabs only render while a project is open; with none open the app
+    shows the project launcher and this changes which tab is *behind* it.
+
+    Returns {ok, activeTab}."""
+    import json
+
+    return json.dumps(_op("debug_set_active_tab", tab=tab), indent=2, default=str)
+
+
+@mcp.tool()
+def debug_set_sources_panel(open: bool) -> str:
+    """Show or hide the shell's docked Sources (media pool) column — the same
+    state the panel's own toggle button drives.
+
+    Returns {ok, sourcesPanelOpen}."""
+    import json
+
+    return json.dumps(
+        _op("debug_set_sources_panel", open=open), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def debug_set_editor_inspector(open: bool) -> str:
+    """Show or hide the Edit tab's Inspector column — the same state its own
+    toggle button (top-right of the preview) drives.
+
+    Useful as the first step of a verification loop: open the Inspector here,
+    `debug_screenshot` to see it, `debug_dom_tree('[data-chroma-panel=
+    "editor-inspector"]')` to check where it actually landed.
+
+    Returns {ok, inspectorOpen}."""
+    import json
+
+    return json.dumps(
+        _op("debug_set_editor_inspector", open=open), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def debug_dom_tree(
+    selector: str | None = None,
+    max_depth: int | None = None,
+    max_nodes: int | None = None,
+    styles: list[str] | None = None,
+    include_hidden: bool = False,
+    text: bool = True,
+) -> str:
+    """Dump the real DOM under `selector`: element hierarchy, ids/classes,
+    data-*/aria-*/role attributes, each element's `getBoundingClientRect()`,
+    and a chosen set of computed styles.
+
+    This answers WHY, where a screenshot only answers WHAT. "The panel looks
+    too narrow" -> dump it and read the real width, its parent's width, and
+    which one is `position:absolute`. "The button isn't visible" -> the node is
+    flagged `invisible` (display:none/visibility:hidden) or `zeroArea`, with
+    the styles that caused it right there.
+
+    ALWAYS pass a `selector` when you know the region you care about — Chroma's
+    full page is thousands of nodes and the default bounds will truncate it
+    into uselessness. Stable hooks exist for the big panels:
+    `[data-chroma-panel="editor-inspector"]`, `[data-chroma-panel="sources"]`.
+
+    Coordinates are CSS pixels; `debug_screenshot` pixels are DEVICE pixels.
+    Multiply by the screenshot's `scaleFactor` (== `viewport.devicePixelRatio`
+    here) to point `debug_sample_pixel` at a rect from this dump.
+
+    Args:
+        selector: CSS selector for the root. Default "body". No match returns
+            root=null (not an error); a malformed selector IS an error.
+        max_depth: how deep to walk. Default 12.
+        max_nodes: total node budget. Default 300, max 5000.
+        styles: computed properties to report, e.g. ["display","width",
+            "position"]. Default a small layout/colour set; [] for none.
+        include_hidden: walk into display:none subtrees too. Default false.
+        text: include each element's own direct text. Default true.
+
+    Every bound REPORTS itself: `truncated` on the result, and
+    `childrenTruncated: "depth"|"nodes"|"invisible"` on the node where it bit,
+    so you can always tell "that's all there is" from "there was more"."""
+    import json
+
+    args: dict[str, Any] = {"includeHidden": include_hidden, "text": text}
+    if selector:
+        args["selector"] = selector
+    if max_depth is not None:
+        args["maxDepth"] = max_depth
+    if max_nodes is not None:
+        args["maxNodes"] = max_nodes
+    if styles is not None:
+        args["styles"] = styles
+    return json.dumps(_op("debug_dom_tree", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def debug_frame_timing(limit: int | None = None, reset: bool = False) -> str:
+    """Read what the Edit tab's preview playback loop ACTUALLY did: the real
+    frame-to-frame intervals, in the webview, as measured by the app itself.
+
+    Use it to answer "is playback smooth?" — a question no Rust-side timing and
+    no screenshot can answer. Two independent channels, and the difference
+    between them is the diagnosis:
+      * `paint` — frames actually put on screen. Low fps here = decode/
+        composite is too slow.
+      * `raf`   — requestAnimationFrame ticks, i.e. how often the play loop got
+        to run at all. Near-zero here with healthy `paint` means the WINDOW is
+        throttled (backgrounded/occluded), not that rendering is slow. Bring
+        the window to the front and measure again.
+
+    Each channel returns {samples, intervalsMs, minMs, medianMs, p95Ms, maxMs,
+    fps, hitches} — `hitches` counts intervals over twice the median, which is
+    the "stutter" a human reports. min/median/p95/max/fps cover the whole ring
+    buffer (240 samples); `intervalsMs` is just the tail.
+
+    Measure properly: `debug_frame_timing(reset=True)` to clear, then
+    `editor_set_playing(True)`, wait a few seconds, `editor_set_playing(False)`,
+    then read. Numbers from before a reset mix scrubbing in with playback.
+
+    Args:
+        limit: how many raw intervals to return per channel. Default 60.
+        reset: clear both buffers first (and return the now-empty report)."""
+    import json
+
+    args: dict[str, Any] = {}
+    if limit is not None:
+        args["limit"] = limit
+    if reset:
+        args["reset"] = True
+    return json.dumps(_op("debug_frame_timing", **args), indent=2, default=str)
+
+
 if __name__ == "__main__":
     mcp.run()

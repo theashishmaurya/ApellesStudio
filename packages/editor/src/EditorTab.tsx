@@ -43,7 +43,7 @@
  * violation for what a tab-local button delivers just as well.
  */
 
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@chroma/ui';
 import { PanelRight } from 'lucide-react';
 
@@ -81,7 +81,11 @@ export function EditorTab() {
   const status = useEditorTimelineStore((s) => s.status);
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const error = useEditorTimelineStore((s) => s.error);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  // D-219 — the Inspector's open/closed flag lives in the store now, not in a
+  // `useState` here, so the human's toggle below and the debug UI-state op
+  // `debug_set_editor_inspector` drive one piece of state rather than two.
+  const inspectorOpen = useEditorTimelineStore((s) => s.inspectorOpen);
+  const setInspectorOpen = useEditorTimelineStore((s) => s.setInspectorOpen);
 
   // D-183 — the Edit tab's own control-server surface (see
   // `useEditorControl.ts`'s own module doc comment for the full
@@ -156,7 +160,7 @@ export function EditorTab() {
               <Button
                 variant="ghost"
                 size="xs"
-                onClick={() => setInspectorOpen((v) => !v)}
+                onClick={() => setInspectorOpen(!inspectorOpen)}
                 title="Inspector"
                 aria-label="Inspector"
                 aria-pressed={inspectorOpen}
@@ -189,6 +193,12 @@ export function EditorTab() {
         <>
           <ResizableHandle />
           <ResizablePanel
+            // D-219 — a stable, human-readable hook for the debug DOM-tree
+            // dump (`debug_dom_tree {selector}`) and for any future
+            // targeted query. Not a test-only artefact: it is the one thing
+            // that lets a tool ask about "the Inspector" without matching on
+            // a Tailwind class string that changes whenever the styling does.
+            data-chroma-panel="editor-inspector"
             defaultSize={INSPECTOR_DEFAULT_WIDTH}
             minSize={INSPECTOR_MIN_WIDTH}
             maxSize={INSPECTOR_MAX_WIDTH}

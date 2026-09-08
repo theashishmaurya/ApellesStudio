@@ -136,6 +136,7 @@ import {
   pannedByPixels,
   steppedZoom,
 } from './previewZoom';
+import { recordPreviewTiming } from './previewTiming';
 
 /**
  * One preview resolution for both scrub and play (D-125). D-031 originally
@@ -366,6 +367,13 @@ export function PreviewPane() {
   /** Put one freshly-fetched frame's bytes on screen, releasing the previous
    *  frame's object URL (D-217 — see `frameUrl`'s own note). */
   const showFrame = useCallback((bytes: ArrayBuffer) => {
+    // D-219 (debug-tooling piece 5) — one timestamp per frame that reaches
+    // the screen, so `debug_frame_timing` can report the real playback
+    // interval D-217 had no way to measure. `import.meta.env.DEV` is folded
+    // to `false` by `vite build`, so this line and `previewTiming.ts` itself
+    // are dropped from a production bundle — it is a compile-time gate, not
+    // a flag.
+    if (import.meta.env.DEV) recordPreviewTiming('paint');
     const url = URL.createObjectURL(new Blob([bytes], { type: PREVIEW_MIME }));
     const previous = frameUrl.current;
     frameUrl.current = url;
@@ -476,6 +484,12 @@ export function PreviewPane() {
 
     const tick = async () => {
       if (stopped) return;
+      // D-219 — the other half of the frame-timing readout: how often the rAF
+      // loop got to run at all. A stalled `raf` channel next to a healthy
+      // `paint` one is the signature of a THROTTLED (backgrounded) window,
+      // which is precisely the blocker that stopped D-217 measuring this from
+      // outside. Same `import.meta.env.DEV` compile-time gate as `showFrame`.
+      if (import.meta.env.DEV) recordPreviewTiming('raf');
       const elapsed = (performance.now() - startTime) / 1000;
       const want = startFrame + Math.floor(elapsed * fps);
       if (want >= duration) {

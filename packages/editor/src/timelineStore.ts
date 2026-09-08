@@ -169,6 +169,19 @@ interface EditorTimelineState {
    *
    *  Nothing here is a clip's `scale`/`position_*` — see `previewZoom.ts`. */
   previewView: PreviewView;
+  /** D-219 — whether the Edit tab's Inspector column is shown. Lifted out of
+   *  `EditorTab.tsx`'s own `useState` for exactly the reason `selection`
+   *  above was lifted out of `TimelinePane`'s: something other than that one
+   *  component now needs to read and write it — the debug UI-state op
+   *  `debug_set_editor_inspector`, which runs outside React and so has no way
+   *  to reach a component's local state, and which must drive the SAME state
+   *  the human's toggle button drives rather than simulate a click on it.
+   *
+   *  Deliberately NOT cleared by `setOpenProject`, unlike every other field
+   *  here: it describes this session's chrome, not the open project. And
+   *  deliberately not an `EditOp` (D-216's rule): it is store state, never
+   *  part of `Timeline`, so it is neither persisted nor undoable. */
+  inspectorOpen: boolean;
   /** B-088 — a monotonic counter bumped **only** when the BACKEND's copy of
    *  the active timeline is known to have changed: a `chroma_timeline_set`
    *  that actually resolved, or a `chroma_timeline_get` that actually
@@ -212,6 +225,9 @@ interface EditorTimelineState {
    *  updater as well as a value, matching `setSelection` above — the wheel
    *  and button handlers each derive the next view from the current one. */
   setPreviewView: (view: PreviewView | ((prev: PreviewView) => PreviewView)) => void;
+  /** D-219 — show/hide the Inspector column. The one writer for both the
+   *  human's toggle button (`EditorTab.tsx`) and the debug op. */
+  setInspectorOpen: (open: boolean) => void;
   applyOp: (op: EditOp) => void;
   /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),
    *  bypassing the debounced save so it lands immediately. */
@@ -285,6 +301,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   selection: [],
   selectedGap: null,
   previewView: FIT_VIEW,
+  // D-118 shipped the Inspector open; keep that default now the flag lives here.
+  inspectorOpen: true,
   savedVersion: 0,
 
   setOpenProject: (key) => {
@@ -409,6 +427,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     set((s) => ({
       previewView: clampPreviewView(typeof view === 'function' ? view(s.previewView) : view),
     })),
+
+  setInspectorOpen: (open) => set({ inspectorOpen: open }),
 
   applyOp: (op) => {
     const before = get().timeline;

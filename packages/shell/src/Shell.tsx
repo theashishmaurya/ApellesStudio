@@ -254,6 +254,10 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
         {projectOpen && sourcesPanel && sourcesPanelOpen && (
           <>
             <ResizablePanel
+              // D-219 — same stable hook the Edit tab's Inspector carries, so
+              // the debug DOM-tree dump can be pointed at "the Sources panel"
+              // by name rather than by a Tailwind class string.
+              data-chroma-panel="sources"
               defaultSize={SOURCES_PANEL_DEFAULT_WIDTH}
               minSize={SOURCES_PANEL_MIN_WIDTH}
               maxSize={SOURCES_PANEL_MAX_WIDTH}

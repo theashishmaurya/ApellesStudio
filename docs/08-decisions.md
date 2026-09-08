@@ -19474,6 +19474,168 @@ and conclude the transform is broken.
   is now covered is everything up to that: real app, real WKWebView, real
   control server, real compositor, and a picture of the result.
 
+## D-219 — Debug tooling pieces 2–5: explicit named `debug_*` ops that drive the app's OWN store actions, a bounded DOM dump, and the preview's own frame timing
+
+**decided (2026-09-08)**
+
+**Context.** D-210 gave an agent a real picture of the running app
+(`debug_screenshot` / `debug_sample_pixel`). That closed half the loop the
+owner asked for — "work as a user: open things, edit things, take a screenshot
+to validate." The other half was still missing: nothing could *open* anything,
+nothing could say *why* an element rendered where it did, and nothing could
+measure whether playback was actually smooth. `docs/notes/debug-tooling.md`
+scoped those as pieces 2 (UI open/close/select), 3 (pixel inspection), 4 (DOM
+tree) and 5 (frame timing). This is 2, 4 and 5; **3 was already complete** —
+`debug_sample_pixel` reads any saved PNG at any `(x, y)`, including one written
+long before the app's current state, so there was nothing to build and nothing
+was rebuilt.
+
+### Piece 2 — the shape of a UI-state debug surface
+
+**Options.**
+(a) **A generic backdoor** — one `debug_set_state {store, field, value}` op.
+Rejected on the same grounds D-216 rejected it for selection: it can write a
+field nothing renders, or a value no code path can produce, and answer `ok`
+either way. It also documents nothing — an agent reading the tool list learns
+that some fields exist somewhere.
+(b) **Synthesised input** — dispatch a real click/keypress at the toggle
+button. Rejected: it needs a pixel coordinate (the exact fragility this
+initiative exists to escape), it fails silently when the button moved, and
+what it proves is that the *simulation* works.
+(c) **Explicit, named, validated ops per UI state that matters, each calling
+the same store action the human's own control calls.** Chosen.
+
+`debug_set_active_tab` calls `useShellStore.setActiveTab` — literally the
+function the tab button's `onClick` invokes. `debug_set_sources_panel` and
+`debug_set_editor_inspector` likewise. There is **one** piece of state under
+both interfaces, per this repo's standing "human AND AI, same source of truth"
+rule, so the two can never disagree; and a passing debug op is evidence about
+the app, not about the tooling.
+
+**One real refactor fell out of that, and it is the interesting part.** The Edit
+tab's Inspector flag was `useState` inside `EditorTab.tsx` — unreachable from
+outside React. Rather than add a parallel path to it, it was **lifted into
+`useEditorTimelineStore`**, exactly as `TimelinePane`'s own `selection` was
+lifted before it (same file, same documented reason: something other than that
+one component now needs it). Not an `EditOp`, not persisted, not undoable —
+store state, D-216's rule. Had the choice been (b), that lie would have stayed
+in the codebase.
+
+**Reads matter as much as writes.** `debug_get_ui_state` reports every flag
+above plus the open dialogs — and those are read off the **DOM**
+(`role="dialog"`/`alertdialog`), not off a store. Chroma's modals are a dozen
+independent flags in three stores with a dozen different shapes (upstream's
+`useUIStore` alone has seven `…ModalState` fields); an enumeration would go
+stale the next time someone adds one. Asking the document is complete and
+self-maintaining.
+
+**Deliberately NOT covered: the Colorist tab's own panel/visibility/settings
+state.** It lives in `app/src/store/useUIStore.ts` — inside the vendored fork,
+i.e. the *app* layer — and `@chroma/debug` is a package. Reaching up would
+invert D-039's one-way dependency direction, and inverting it via an injected
+op map would reintroduce (a)'s indirection. Left as a stated gap in
+`docs/notes/debug-tooling.md` rather than half-solved.
+
+**Where it lives: a new `@chroma/debug` package.** It needs `@chroma/shell`'s
+store *and* `@chroma/editor`'s, so it cannot live in either (shell is
+deliberately tab-agnostic — its own module doc says so). It cannot live in
+`app/src` either: `app` has no test runner, and the DOM serialiser has real
+answers that must be unit-tested. A package above the tab packages and below
+the app is the only position that satisfies the layering, and it earns its
+README and its own vitest suite.
+
+### Piece 4 — DOM tree
+
+**Tauri has no eval-with-result.** `WebviewWindow::eval()` returns `Result<()>`
+in 2.11 — checked, not assumed. So the two candidates were: `eval` a snippet
+that posts its answer back over a Tauri event (a custom bridge, in an untyped
+string of JS, for a value the frontend could just return), or make it an
+ordinary frontend op. The second is what D-020 already prescribes for anything
+the frontend can answer, and it makes the serialiser real TypeScript that
+jsdom can test. Chosen.
+
+**Bounded three ways, and every bound reports itself.** A `selector` root, a
+`maxDepth` (12), and a `maxNodes` budget (300, ceiling 5000); plus per-node
+caps on classes and text. An unbounded dump of this UI is megabytes and pushes
+out the answer it contains. When a bound bites, the node carries
+`childrenTruncated: "depth" | "nodes" | "invisible"` and the result carries
+`truncated`, so a caller can always tell "that is all there is" from "there was
+more" — the failure mode of a silently-clipped dump is confidently reading it
+as complete.
+
+**A zero-area box is flagged, never pruned.** First cut treated `0×0` as
+invisible and skipped the subtree. That is wrong in the exact case the tool is
+for: a zero-size parent whose children still render is a real layout bug, and
+pruning there hides what the dump was opened to find. Only `display:none` /
+`visibility:hidden` prune (and `includeHidden` overrides even that); zero area
+is its own `zeroArea` flag.
+
+**Stable hooks, not class strings.** `data-chroma-panel="editor-inspector"` /
+`"sources"` on the two big panels, so a query names the panel rather than
+matching a Tailwind string that changes whenever the styling does.
+
+### Piece 5 — frame timing
+
+Two ring buffers written by `PreviewPane` itself: one per rAF tick, one per
+frame handed to the screen. D-217 could measure the Rust half precisely but
+**could not measure the thing the owner reported** — perceived smoothness —
+because a second app instance needs its `identifier` overridden and, worse, a
+**background** window's `requestAnimationFrame` is throttled to a stop. Keeping
+both channels separate is what makes the readout diagnostic rather than merely
+numeric: a dead `raf` next to a healthy `paint` *is* the signature of a
+throttled window, so the tool distinguishes "the app is slow" from "you are
+measuring a backgrounded window" instead of conflating them. `hitches` counts
+intervals over twice the median rather than over a fixed millisecond
+threshold — "slow" depends on the frame rate being attempted.
+
+### The gate (and B-100)
+
+**Every one of these is compiled out of a production build, and so are D-210's,
+which were not.** Auditing the pattern before copying it turned up that
+`chroma_debug_screenshot` / `chroma_debug_sample_pixel` had shipped with no
+compile-time gate at all — a real defect against CLAUDE.md's standing "debug
+tooling is never shipped" invariant, filed as **B-100** and fixed here.
+
+- **Rust:** `#[cfg(debug_assertions)]` on `chroma::debug_capture`, on both
+  commands *inside* `tauri::generate_handler!` (its macro parses an outer
+  attribute per command and re-emits it on that command's match arm — verified
+  in `tauri-macros` 2.6.3's source, so this is a real gate on the IPC name's
+  existence, not a runtime check), and on `control.rs`'s `native_op`, which
+  gets a `None`-returning release twin so its one call site reads identically
+  in both configurations.
+- **Frontend:** `import.meta.env.DEV` — Vite substitutes the literal `false` at
+  build time — **plus** a dynamic `import('./debugOps')` inside that branch, so
+  Rollup drops the registry's whole chunk rather than merely leaving it
+  unreachable. `@chroma/debug`'s barrel exports exactly one value (the hook) to
+  keep everything else out of the static graph.
+- **Verified, not asserted:** a real production `vite build`, then a grep of
+  `dist/` for the op names. Numbers in `docs/notes/debug-tooling.md`.
+
+**Verified live, not just compiled** — a real `tauri dev` instance from this
+worktree (`CHROMA_CONTROL_PORT=19791`), a real project, a real 4K clip. The
+whole loop ran: `debug_set_editor_inspector(True)` → `debug_dom_tree` reported
+the panel at `x 960, y 40, 320 × 680` CSS px with `background-color: rgb(28,
+28, 28)` (independently confirming D-118's `INSPECTOR_DEFAULT_WIDTH = 320`) →
+`debug_screenshot` (2560 × 1440, `scaleFactor` 2.0, read back and looked at) →
+`debug_sample_pixel` at device `(2000, 600)`, i.e. CSS `(1000, 300)` inside
+that rect, read **`#1c1c1c`** — the exact colour the DOM had just reported,
+with `#0e0e0e` 50 CSS px to its left. **DOM and pixels agreeing on a number is
+the thing this initiative existed to make possible.** Closed with it: the
+Inspector *unmounts* when closed (`root: null`, not merely hidden); every
+bound and every refusal produced its real message; `debug_nonesuch` →
+"unknown debug op" while `nonesuch` → "unknown op", so the prefix routing
+does not race the Colorist registry.
+
+`debug_frame_timing` reproduced D-217's own blocker on purpose: 6 s of
+playback in a non-frontmost window gave **`raf.samples: 0`, `paint.samples:
+0`** — the loop never ticked, which is now one call to find out instead of a
+frozen playhead of unknown cause. Scrubbing (no rAF needed) recorded real
+paints: 7 seeks → 2 frames, one 90 ms interval, 11.11 fps — 2 rather than 7
+because `fetchFrame` coalesces in-flight requests (D-125/D-201), so the
+readout counts frames that reached the screen, not requests made.
+Full numbers, and the two things NOT exercised live (a positive `openDialogs`
+case, and a real pointer drag), in `docs/notes/debug-tooling.md`.
+
 ---
 
 ## D-218 — Preview viewport zoom: a mathematical transform of the content box, not a scrolled container

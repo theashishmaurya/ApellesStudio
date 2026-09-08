@@ -2208,7 +2208,16 @@ pub fn run() {
             chroma::export::chroma_bake_lut,
             chroma::ffmpeg_run::chroma_run_ffmpeg,
             chroma::write_text_file::chroma_write_text_file,
+            // B-100/D-219 — internal debug tooling is never shipped
+            // (CLAUDE.md). `tauri::generate_handler!` parses an outer
+            // attribute per command and re-emits it on that command's match
+            // arm, so this is a real compile-time gate on the command's very
+            // existence: in a release build the IPC name is not registered
+            // and an `invoke('chroma_debug_screenshot')` gets "command not
+            // found". Not a runtime check.
+            #[cfg(debug_assertions)]
             chroma::debug_capture::chroma_debug_screenshot,
+            #[cfg(debug_assertions)]
             chroma::debug_capture::chroma_debug_sample_pixel,
             chroma::grade::chroma_save_grade,
             chroma::grade::chroma_load_grade,

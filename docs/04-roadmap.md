@@ -1303,6 +1303,15 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         intervals the preview actually painted" — which would make this whole
         class of fix live-verifiable; it belongs in
         `docs/notes/debug-tooling.md`'s scope.
+        **✅ That op is now BUILT (D-219, 2026-09-08): `debug_frame_timing`.**
+        It reports two independent channels — `paint` (frames actually put on
+        screen) and `raf` (how often the play loop got to run at all) — which
+        makes blocker (2) above *diagnosable* rather than merely fatal: a dead
+        `raf` next to a healthy `paint` IS the throttled-window signature, so
+        the tool says "you are measuring a backgrounded window" instead of
+        reporting 0 fps and letting it be read as a regression. The latency
+        number itself is still un-taken (it needs a frontmost instance on real
+        footage); the instrument for taking it now exists.
       - ⬜ **Still open:** `useCanvasClipPick` removes and re-adds its
         capture-phase `pointerdown` listener on every render, because its
         `layers` dependency is a fresh array each time. Cheap per occurrence,

@@ -34,6 +34,18 @@ export { PreviewPane } from './PreviewPane';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
 export type { TimelineSummary } from './timelineStore';
+/** D-219 (debug tooling piece 5) — the preview's own frame-timing ring
+ *  buffers. Exported for `@chroma/debug`'s `debug_frame_timing` op, which
+ *  reads them; `PreviewPane` writes them. Both writes and the reader are
+ *  compile-time gated out of a production build (see `previewTiming.ts`), so
+ *  this export tree-shakes away with them. */
+export {
+  previewTimingReport,
+  recordPreviewTiming,
+  resetPreviewTiming,
+  TIMING_CAPACITY,
+} from './previewTiming';
+export type { PreviewTimingReport, ChannelTimingReport, PreviewTimingChannel } from './previewTiming';
 /** D-198 — the Edit tab's own Export button/dialog/queue. Exported
  *  alongside `TimelinePane` (which already renders it in its own toolbar)
  *  for the same D-142 harness-mounting reason `TimelinePane` itself is —
