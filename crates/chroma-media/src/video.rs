@@ -319,11 +319,11 @@ fn probe_audio_stream(path: &Path) -> (bool, u32, u16) {
 
 /// Decode exactly one frame to an 8-bit RGB `DynamicImage`.
 ///
-/// Built through [`crate::conform`] (D-224), so the frame this returns for index
+/// Built through [`crate::conform`] (D-228), so the frame this returns for index
 /// `N` is the same picture [`crate::decode_pipe`] and the export produce for
 /// `N` — the one on screen at `N / source_fps` seconds. This function is the
 /// pipe's own fallback when a pipe errors, so "the same picture" is a hard
-/// requirement, not a nicety: before B-103 a fallback could silently swap in a
+/// requirement, not a nicety: before B-104 a fallback could silently swap in a
 /// different frame mid-playback.
 ///
 /// A `FramePos::Secs` query is resolved to the grid slot *holding* that instant
@@ -386,12 +386,12 @@ pub fn decode_frame(path: &Path, at: FramePos, info: &VideoInfo) -> Result<Dynam
 /// MJPEG which we split on the JPEG SOI marker. This is O(one linear read of the
 /// file) instead of O(count) seeks+decodes.
 ///
-/// D-224: the source is conformed to its nominal grid *first*, which is what
+/// D-228: the source is conformed to its nominal grid *first*, which is what
 /// makes the `select` below legitimate — it filters on the filter graph's own
 /// frame counter `n`, and only after the conform does `n` mean "source frame
 /// `n`" as the rest of Chroma defines it. On a VFR source it previously meant
 /// "the `n`th coded frame", so every returned index labelled a picture that
-/// lives somewhere else (B-103).
+/// lives somewhere else (B-104).
 pub fn extract_thumb_strip(
     path: &Path,
     info: &VideoInfo,

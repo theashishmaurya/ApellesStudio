@@ -20138,9 +20138,9 @@ preview played. Stereo sources are unaffected (`aformat` is a verified no-op
 for them). Not fixed here because the fix belongs to the mono-adaptation layer,
 not to this feature — see B-101 for the two real options.
 
-## D-224 — One definition of "source frame N": conform every decode onto the source's nominal grid, rather than proxy-transcoding VFR footage or making the model PTS-aware
+## D-228 — One definition of "source frame N": conform every decode onto the source's nominal grid, rather than proxy-transcoding VFR footage or making the model PTS-aware
 
-**Context (B-103).** The owner reported, live, that the Edit tab's on-canvas
+**Context (B-104).** The owner reported, live, that the Edit tab's on-canvas
 transform box "IS DETACHED AND LAGGING" from the picture under it on one real
 clip — and got *worse* the longer playback ran, snapping back on a scrub. The
 clip is a macOS screen recording, which is genuinely **variable frame rate**:
@@ -20241,6 +20241,6 @@ VFR fixture with a known 2 s hold (`testsrc` at 30 fps with coded frames 30–89
 dropped ⇒ `avg_frame_rate` exactly 15), plus a CFR control and an env-gated
 (`CHROMA_TEST_VFR_VIDEO`) test against the owner's own clip that checks each
 index against `ffprobe`'s PTS list — an oracle sharing no code with the thing
-under test. Three of them were confirmed to **fail** against the pre-D-224
+under test. Three of them were confirmed to **fail** against the pre-D-228
 behaviour and pass after; the CFR control passes both ways, which is the point.
-See B-103.
+See B-104.

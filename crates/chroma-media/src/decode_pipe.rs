@@ -14,14 +14,14 @@
 //!   fall back to `video::decode_frame`. The pipe is a fast path, never a new
 //!   failure mode.
 //!
-//! ## Frame `N` means the same thing here as everywhere else (D-224, B-103)
+//! ## Frame `N` means the same thing here as everywhere else (D-228, B-104)
 //!
 //! Every spawn is built through [`crate::conform`], so "frame `N`" is the
 //! picture at `N / source_fps` seconds — the same definition the timeline, the
 //! keyframes, the audio clock, the export and `video::decode_frame` use. That
 //! is a real constraint on this module in particular: it is the only decoder
 //! that keeps reading *without* re-seeking, so it is the only one where a
-//! per-frame error could accumulate. It no longer can — see B-103 for what
+//! per-frame error could accumulate. It no longer can — see B-104 for what
 //! happened when it did.
 //!
 //! ## Why a pool of pipes and not one (D-125, B-040)
@@ -137,11 +137,11 @@ impl Drop for FramePipe {
 impl FramePipe {
     /// Spawn ffmpeg decoding `path` from absolute frame `start` to EOF as a raw
     /// rgb24 stream, **conformed to the source's nominal frame grid**
-    /// ([`crate::conform`], D-224) so the `n`th frame out of this pipe is source
+    /// ([`crate::conform`], D-228) so the `n`th frame out of this pipe is source
     /// frame `start + n` as the rest of Chroma defines it — the picture at
     /// `(start + n) / source_fps` seconds.
     ///
-    /// B-103: this used to be `-ss (start-0.5)/fps` + `-fps_mode passthrough`,
+    /// B-104: this used to be `-ss (start-0.5)/fps` + `-fps_mode passthrough`,
     /// i.e. seek once by time and then **count coded frames**. That is only the
     /// same thing on CFR footage. On a variable-frame-rate source the two
     /// diverge without bound between respawns — measured at up to 4.07 s on the
@@ -177,7 +177,7 @@ impl FramePipe {
     ) -> Result<Self> {
         let fps = info.fps();
         if fps <= 0.0 || info.resolution.width == 0 || info.resolution.height == 0 {
-            // "a nominal rate", not "a CFR source": since D-224 a
+            // "a nominal rate", not "a CFR source": since D-228 a
             // variable-frame-rate source is decoded through this pipe just
             // like any other — it is conformed to the rate `probe` measured.
             // What is still required is that there BE a rate and a picture
@@ -531,7 +531,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------- //
-    // B-103 / D-224 — the nominal frame grid, on a real VFR source.
+    // B-104 / D-228 — the nominal frame grid, on a real VFR source.
     //
     // These synthesize their own footage with `ffmpeg` (the same technique
     // `audio.rs`'s tests use for test tones) rather than gating on
@@ -552,7 +552,7 @@ mod tests {
     // so slots 15..=44 MUST be one still picture and slots 14/45 MUST differ
     // from it. Pre-fix the pipe returned coded frames 15..=44 for those slots
     // — thirty different pictures, wandering up to 2 s away from the instant
-    // the index names. That is B-103 in miniature.
+    // the index names. That is B-104 in miniature.
     // ----------------------------------------------------------------- //
 
     /// 30 fps `testsrc`, coded frames 30..=89 dropped, timestamps preserved =>
@@ -638,7 +638,7 @@ mod tests {
         );
     }
 
-    /// **The B-103 regression test.** Across a hold, consecutive nominal frames
+    /// **The B-104 regression test.** Across a hold, consecutive nominal frames
     /// name the same instant-range and must therefore be the same picture.
     #[test]
     fn a_held_frame_is_held_for_every_grid_slot_it_covers() {
@@ -661,7 +661,7 @@ mod tests {
             assert_eq!(
                 d, 0.0,
                 "grid slot {n} is inside the hold that slot 15 starts, so it must be the \
-                 identical picture — mean|Δ| {d}. Anything non-zero here is B-103: the pipe \
+                 identical picture — mean|Δ| {d}. Anything non-zero here is B-104: the pipe \
                  is counting coded frames again instead of nominal ones."
             );
         }
@@ -692,7 +692,7 @@ mod tests {
     /// A nominal frame index names one picture, no matter where the decoder
     /// happened to be opened. This is the property the live preview actually
     /// depends on: a scrub respawns the pipe, playback does not, and before
-    /// D-224 those two routes to the same index returned different pictures —
+    /// D-228 those two routes to the same index returned different pictures —
     /// which is why the drift *snapped back* whenever the owner scrubbed.
     #[test]
     fn a_frame_is_the_same_picture_wherever_the_pipe_was_opened() {
@@ -815,7 +815,7 @@ mod tests {
     ///
     /// Env-gated (`CHROMA_TEST_VFR_VIDEO`) the same way
     /// [`pipe_matches_single_frame_decode`] is — real footage lives outside the
-    /// repo. Run against the clip B-103 was reported on:
+    /// repo. Run against the clip B-104 was reported on:
     ///
     /// ```text
     /// CHROMA_TEST_VFR_VIDEO=scratch/reel-src/before-1.09.51pm.mov \
@@ -868,7 +868,7 @@ mod tests {
         assert!(
             worst > 1.0 / fps,
             "CHROMA_TEST_VFR_VIDEO is effectively constant-rate (worst drift {worst:.4}s) — \
-             point it at a screen recording or phone clip to exercise B-103"
+             point it at a screen recording or phone clip to exercise B-104"
         );
         eprintln!(
             "{} — {:.4} fps nominal, {} coded frames, worst index-vs-time drift {worst:.3}s",
@@ -878,7 +878,7 @@ mod tests {
         );
 
         // Reach each index the way playback does: one respawn, then sequential
-        // reads. That is the arrangement in which B-103's error accumulated.
+        // reads. That is the arrangement in which B-104's error accumulated.
         let probes: Vec<u64> = [20u64, 208, 500, 866, 1020, 1228, 1600, 1948]
             .into_iter()
             .filter(|n| (*n as usize) < pts.len())

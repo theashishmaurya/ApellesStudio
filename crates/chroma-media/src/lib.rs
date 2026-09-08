@@ -11,7 +11,7 @@
 //!   decode (D-015, D-124, D-128).
 //! - [`conform`] — the one definition of what "source frame `N`" means, as the
 //!   `ffmpeg` options that deliver it. Every decode path below builds its
-//!   command through it so they cannot disagree (D-224, B-103).
+//!   command through it so they cannot disagree (D-228, B-104).
 //! - [`decode_pipe`] — the long-lived sequential-decode `ffmpeg` pipe pool,
 //!   one slot per playback stream (D-030, D-125).
 //! - [`media_cache`] — the persistent, source-keyed disk cache for derived

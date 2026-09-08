@@ -4,8 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-08** — **Fix B-103: the on-canvas transform box detached from the
-  picture and drifted worse the longer playback ran (D-224).** Owner-reported
+- **2026-09-08** — **Fix B-104: the on-canvas transform box detached from the
+  picture and drifted worse the longer playback ran (D-228).** Owner-reported
   on a real macOS screen recording — a genuinely variable-frame-rate source.
   Root cause was not the probe but three decoders each meaning something
   different by "source frame N": the model says *the picture at `N/source_fps`

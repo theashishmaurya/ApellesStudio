@@ -177,7 +177,7 @@ fn tail(sink: &std::sync::Arc<Mutex<Vec<u8>>>) -> String {
 /// timestamps source-absolute — frame `from` is still frame `from` — while
 /// skipping the O(from) decode from 0.
 ///
-/// D-224/B-103: the command is now built by [`chroma_media::conform`], which
+/// D-228/B-104: the command is now built by [`chroma_media::conform`], which
 /// supplies exactly that `-copyts` + `select=gte(t,…)` pair and puts the
 /// nominal-grid conform in front of it. The `select` only ever fixed the
 /// **first** frame of the range; every frame after it came out of `-fps_mode

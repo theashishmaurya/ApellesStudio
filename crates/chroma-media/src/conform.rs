@@ -1,4 +1,4 @@
-//! Conform a source onto its **nominal frame grid** (D-224, B-103).
+//! Conform a source onto its **nominal frame grid** (D-228, B-104).
 //!
 //! **What it is:** the one place that turns "I want source frame `N`" into the
 //! `ffmpeg` input options and filter links that actually deliver it. Every
@@ -22,9 +22,9 @@
 //! `project.json` + the original file stay the only inputs to a render (the
 //! determinism invariant in `CLAUDE.md`).
 //!
-//! ## Why this module had to exist (B-103)
+//! ## Why this module had to exist (B-104)
 //!
-//! Before D-224 the decoders disagreed with the model, and with each other.
+//! Before D-228 the decoders disagreed with the model, and with each other.
 //! `decode_pipe` and `export::spawn_decoder` seeked by time *once* and then
 //! **counted coded frames** — `-fps_mode passthrough`, one output frame per
 //! coded frame. On a CFR source that is the same thing. On a **variable frame
@@ -214,7 +214,7 @@ mod tests {
 
     /// `round=up` is the whole correctness argument (see the module doc). If
     /// this ever silently becomes `near` — the ffmpeg default — a grid slot can
-    /// show a frame from the future and B-103 is back.
+    /// show a frame from the future and B-104 is back.
     #[test]
     fn the_rounding_mode_is_up_not_the_ffmpeg_default() {
         assert_eq!(GRID_ROUND, "up");
@@ -260,7 +260,7 @@ mod tests {
     }
 
     /// A source with no usable rate (audio-only, unprobeable) yields nothing to
-    /// splice in, so callers keep their pre-D-224 command exactly.
+    /// splice in, so callers keep their pre-D-228 command exactly.
     #[test]
     fn a_source_with_no_frame_rate_conforms_to_nothing() {
         assert_eq!(from_frame(&info(0, 1), 10), GridDecode::default());
