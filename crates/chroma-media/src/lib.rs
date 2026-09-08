@@ -25,6 +25,10 @@
 //!   → cpal, D-049/D-050/D-057) and the waveform-envelope path (D-051/D-128).
 //!   Its *timeline resolution* — which clip is under a playhead — stayed in
 //!   `app/src-tauri` on purpose; see that module's doc.
+//! - [`scrub`] — tape-style audio scrubbing (D-232): the **position-driven**
+//!   playback mode that sits beside [`audio`]'s time-driven one, sharing its
+//!   single transport, its `cpal` output stream and its `DecodedSource` decode
+//!   path rather than duplicating any of them.
 //!
 //! **What it does NOT do:**
 //! - **No `#[tauri::command]`.** That is a hard `tauri-macros` constraint, not
@@ -47,4 +51,5 @@ pub mod decode_pipe;
 pub mod filmstrip;
 pub mod media_cache;
 pub mod probe;
+pub mod scrub;
 pub mod video;

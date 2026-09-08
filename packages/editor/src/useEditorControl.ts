@@ -121,6 +121,7 @@ import {
   type TransitionAlignment,
   type TransitionKind,
 } from './timeline';
+import { scrubSourceAt, waveformWindowAt, WAVEFORM_WINDOW_SECS } from './scrubSource';
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
@@ -579,6 +580,12 @@ export function useEditorControl(): void {
             panY: s.previewView.panY,
             fit: isFitView(s.previewView),
           },
+          // D-232 — whether the viewer's audio waveform strip is showing. The
+          // read half of `editor_set_waveform_view`, and reported for the same
+          // reason `previewZoom` above is: a screenshot of the preview is
+          // ambiguous without it (the strip changes what the transport area
+          // even contains).
+          waveformView: s.waveformView,
         };
       },
 
@@ -598,6 +605,90 @@ export function useEditorControl(): void {
       editor_set_playing: (a) => {
         useEditorTimelineStore.getState().setPlaying(!!a?.playing);
         return { ok: true, playing: useEditorTimelineStore.getState().playing };
+      },
+
+      // ---- D-232: the waveform strip, both halves --------------------------
+      //
+      // CLAUDE.md's standing rule is that a GUI affordance and an MCP surface
+      // land together, driving the same store action. These two are that for
+      // roadmap item 27's waveform half.
+      //
+      // **The scrub half deliberately has no tool of its own**, and that is a
+      // decision rather than an omission: tape-scrub is a live pointer drag
+      // whose entire content is "audio, now, while my hand moves" — an agent
+      // cannot hear it, and there is nothing a `editor_scrub(from, to)` would
+      // do that `editor_set_playhead` does not already do better and
+      // observably. What an agent actually needs from the same capability is
+      // the *information* a human gets by ear, and that is
+      // `editor_get_waveform` below: the same envelope the strip draws, as
+      // numbers. See D-232.
+
+      editor_set_waveform_view: (a) => {
+        if (a?.open === undefined || a?.open === null) {
+          return { error: 'pass open: true to show the waveform strip, false to hide it' };
+        }
+        useEditorTimelineStore.getState().setWaveformView(!!a.open);
+        return { ok: true, waveformView: useEditorTimelineStore.getState().waveformView };
+      },
+
+      editor_get_waveform: async (a) => {
+        const s = useEditorTimelineStore.getState();
+        if (!s.timeline) return noTimeline();
+        const frame = a?.frame === undefined || a?.frame === null ? s.playhead : Math.round(Number(a.frame));
+        if (!Number.isFinite(frame)) return { error: 'frame must be a finite timeline frame' };
+
+        // The SAME resolver the strip and the scrub engine use — an agent
+        // reading this and a human looking at the strip cannot be told two
+        // different things about what is under the playhead.
+        const source = scrubSourceAt(s.timeline, frame);
+        if (!source) {
+          return {
+            frame,
+            source: null,
+            note: 'no audible source under this frame (a gap, a generated clip, a muted track, or past the end)',
+          };
+        }
+
+        const windowSecs = Number(a?.windowSecs ?? WAVEFORM_WINDOW_SECS);
+        if (!Number.isFinite(windowSecs) || windowSecs <= 0) {
+          return { error: 'windowSecs must be a positive number of seconds' };
+        }
+        const buckets = Math.round(Number(a?.buckets ?? 64));
+        if (!Number.isFinite(buckets) || buckets <= 0 || buckets > 2000) {
+          return { error: 'buckets must be between 1 and 2000' };
+        }
+
+        const win = waveformWindowAt(source, timelineFps(s.timeline), windowSecs);
+        // Straight to the backend at the caller's own bucket count rather than
+        // through `getPeaks`'s tile cache: an agent asks once for a specific
+        // window, where the strip asks continuously for a sliding one, so the
+        // tiling that makes the strip cheap would only add a re-bucketing step
+        // here. Rust caches the decode either way (D-128).
+        const peaks = await invoke<[number, number][]>('chroma_audio_waveform', {
+          sourcePath: win.path,
+          startSecs: win.startSecs,
+          durationSecs: win.durationSecs,
+          buckets,
+        });
+        return {
+          frame,
+          source: {
+            path: source.path,
+            sourceSecs: source.sourceSecs,
+            track: source.track,
+            clipId: source.clip.id,
+          },
+          window: {
+            startSecs: win.startSecs,
+            durationSecs: win.durationSecs,
+            playheadFraction: win.playheadFraction,
+            clipStartFraction: win.clipStartFraction,
+            clipEndFraction: win.clipEndFraction,
+          },
+          // `[min, max]` per bucket, both in -1..1 — exactly what the strip
+          // draws and what `chroma_audio_waveform` returns.
+          peaks,
+        };
       },
 
       // D-216 (roadmap item 26) — the WRITE half of `editor_get_state`'s

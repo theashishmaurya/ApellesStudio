@@ -4,6 +4,29 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-08** — **Tape-style audio scrubbing + the viewer waveform strip
+  (D-232, roadmap item 27).** Dragging the playhead — on the timeline cursor or
+  the player's position bar — now makes sound: a new `chroma_media::scrub`
+  emits a short enveloped grain from wherever the pointer is, ~17×/second, out
+  of a decoded window it only re-anchors when you leave it. The load-bearing
+  call is that scrub is a **third request on the existing single audio
+  transport**, not a parallel engine, so "a scrub stops playback" and "Play
+  stops a scrub" fall out of the D-130 ordering protocol with no new invariant
+  (and the frontend's request stamp moved to a shared `audioTransport.ts`,
+  because two counters feeding one high-water mark is not two orderings).
+  Constant-pitch granular scrub, not varispeed — argued, with the reference
+  behaviour cited. The waveform half is a full-width strip between the picture
+  and the position bar (read off `scratch/resolve-reference/scrubbing.jpg`),
+  showing a 4 s window centred on the playhead, fetched in **snapped tiles** so
+  a moving playhead does not re-miss D-128's cache on every frame. MCP:
+  `editor_set_waveform_view` + `editor_get_waveform`; deliberately **no**
+  `editor_scrub` — an agent cannot hear, so it gets the envelope as numbers
+  instead (D-232 §5). Verified to real `cpal` output on real media
+  (`rms=0.0807 peak=0.3783`); what it *sounds* like still needs a human ear.
+  Detail: `docs/notes/audio-fade-duck-crossfade-plan.md` §11. **Found and fixed
+  on the way: B-106** — the three live-device playback tests read a
+  once-per-second meter after 1.5 s, so they could fail for having nothing to
+  read rather than nothing to hear.
 - **2026-09-08** — **Docs reconciliation, round 2 (D-231).** Docs-only. The product
   docs had drifted on *feature status*, not framing: `01-prd.md` still called Edit a
   single-track MVP and Motion a placeholder tab, `02-scope.md` listed shipped features

@@ -313,6 +313,12 @@ function installInvokeStub(): void {
     chroma_audio_play: () => undefined,
     chroma_audio_stop: () => undefined,
     chroma_audio_set_volume: () => undefined,
+    // D-232 — the scrub transport. The harness drives real playhead drags on
+    // `TimelinePane`/`PreviewPane`, which now issue these; without stubs every
+    // drag would reject on an unknown command.
+    chroma_audio_scrub_begin: () => undefined,
+    chroma_audio_scrub_update: () => undefined,
+    chroma_audio_scrub_end: () => undefined,
     // D-198 — `EditorExportDialog`'s "Add to queue" -> `chroma_run_ffmpeg`
     // path, reachable from `TimelinePane`'s own toolbar. A real-looking
     // success/failure DTO — this harness never actually spawns ffmpeg, and

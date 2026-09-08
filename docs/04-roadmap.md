@@ -1519,8 +1519,30 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       pinned by measurement, already reported by `editor_set_clip_eq`) are all
       in place for it — what is missing is only the interactive plot. A
       log-scaled frequency drag on the band's own Freq field belongs with it.
-    - ⬜ Audio scrubbing + waveform toggle — source-viewer waveform,
-      tape-style scrub (ref: `scrubbing.jpg`).
+    - ~~**Audio scrubbing + waveform toggle** — source-viewer waveform,
+      tape-style scrub (ref: `scrubbing.jpg`)~~ — **DONE, 2026-09-08 (D-232).**
+      Dragging the playhead (timeline cursor OR the player's position bar) now
+      makes sound: `chroma_media::scrub` emits a 60 ms enveloped grain from
+      wherever the pointer is, ~17×/second, out of a 4 s decoded window it
+      re-anchors only when you leave it. The decision the whole feature hangs
+      on is that a scrub is a **third request on the existing single audio
+      transport** (D-130's generation/`seq` protocol), not a parallel engine —
+      so scrub-vs-play mutual exclusion needed no new invariant, and the
+      frontend's request stamp became genuinely shared (`audioTransport.ts`).
+      Constant-pitch granular scrub, **not varispeed** — a stated decision with
+      two named reasons, matching what Premiere/Resolve's own playhead drag
+      sounds like. The waveform half is a full-width strip between the picture
+      and the position bar, per the reference image, showing a 4 s window
+      centred on the playhead with the current clip's own extent drawn brighter
+      — fetched in **snapped 12 s tiles** so a sliding window does not re-miss
+      D-128's peaks cache on every frame. `editor_set_waveform_view` +
+      `editor_get_waveform`; **no `editor_scrub` on purpose** (an agent cannot
+      hear a drag — it gets the envelope as numbers instead). Verified to real
+      `cpal` output on real media (`rms=0.0807 peak=0.3783`), plus pure grain/
+      window math, the resolver, and both ops through the real dispatch path.
+      Design detail: `docs/notes/audio-fade-duck-crossfade-plan.md` §11.
+      **Deferred, deliberately:** varispeed pitch, and scrubbing the full MIX
+      rather than the one source under the playhead (§11h).
     - ~~**Adjustment clips** — one effect, applied top-down over every clip
       beneath it (ref: `adjustments.jpg`)~~ — **DONE, 2026-09-08 (D-230).**
       A third `Clip` variant (`Clip.adjustment`, following D-211's text-clip

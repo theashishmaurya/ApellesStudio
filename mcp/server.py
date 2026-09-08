@@ -886,7 +886,11 @@ def editor_get_state() -> str:
     `debug_screenshot` of the preview: at a non-fit view the picture on screen
     is a magnified crop of the frame, so a clip that looks off-centre may
     simply be being looked at from off-centre. `editor_set_preview_zoom` is
-    the write half."""
+    the write half.
+
+    Also reports `waveformView` (D-232) — whether the viewer is showing its
+    audio waveform strip under the picture. `editor_set_waveform_view` is that
+    one's write half; `editor_get_waveform` reads the envelope itself."""
     import json
 
     return json.dumps(_op("editor_get_state"), indent=2, default=str)
@@ -907,6 +911,79 @@ def editor_set_playing(playing: bool) -> str:
     import json
 
     return json.dumps(_op("editor_set_playing", playing=playing), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_waveform_view(open: bool) -> str:
+    """Show (`True`) or hide (`False`) the Edit-tab viewer's **audio waveform
+    strip** (D-232, roadmap item 27) — the band drawn between the picture and
+    the position bar, showing a 4-second window of the audio around the
+    playhead with a line at the playhead itself.
+
+    The same flag the human's waveform-toggle button in the transport bar
+    drives, not a parallel one. Useful before a `debug_screenshot` of the
+    preview (the strip changes what the transport area contains), and to leave
+    the user looking at the audio you have been reasoning about.
+
+    To read the envelope as NUMBERS rather than pixels, use
+    `editor_get_waveform` — that is the tool for actually inspecting audio;
+    this one only changes what is on screen."""
+    import json
+
+    return json.dumps(_op("editor_set_waveform_view", open=open), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_get_waveform(
+    frame: int | None = None,
+    window_secs: float | None = None,
+    buckets: int | None = None,
+) -> str:
+    """The audio amplitude envelope around a timeline frame — **the same window
+    the viewer's waveform strip draws, as numbers** (D-232, roadmap item 27).
+
+    This is the agent-side half of Chroma's audio scrubbing feature. Tape-style
+    scrub (dragging the playhead and hearing the audio under it) is a live
+    pointer gesture and has, deliberately, no MCP tool of its own — you cannot
+    hear it, and `editor_set_playhead` already moves the playhead observably.
+    What a scrub actually tells a human is *where the sound is*, and this
+    returns exactly that.
+
+    Use it to answer questions you would otherwise have to ask the user to
+    listen for: where a sentence starts or ends, whether a cut lands in silence
+    or mid-word, whether a clip is silent at all, how loud one stretch is
+    against another. Pair it with `editor_get_transcript` (D-189) when you need
+    words as well as levels.
+
+    - `frame` — the timeline frame to centre on. Defaults to the current
+      playhead.
+    - `window_secs` — how much source audio to cover, centred on that frame
+      (default 4, matching the strip). Clamped forward at the head of a file.
+    - `buckets` — how many `[min, max]` amplitude pairs to reduce it to
+      (default 64, max 2000). More buckets = finer time resolution.
+
+    Returns the resolved `source` (`path`, `sourceSecs`, `track`, `clipId`),
+    the `window` it covered (including `clipStartFraction`/`clipEndFraction` —
+    the part of the window that is actually this clip's own trimmed material,
+    outside which the source exists but is not on your timeline), and `peaks`:
+    one `[min, max]` pair per bucket, each in `-1..1`. An all-zero pair is
+    silence.
+
+    `source: null` is a normal answer, not an error: a gap, a title/adjustment
+    clip, a muted audio track, or past the end of the timeline. It resolves the
+    one audible source the way playback does — a real audio track first
+    (topmost wins), otherwise the video clip's own embedded audio unless that
+    clip is A/V-linked (D-129)."""
+    import json
+
+    args: dict = {}
+    if frame is not None:
+        args["frame"] = frame
+    if window_secs is not None:
+        args["windowSecs"] = window_secs
+    if buckets is not None:
+        args["buckets"] = buckets
+    return json.dumps(_op("editor_get_waveform", **args), indent=2, default=str)
 
 
 @mcp.tool()
