@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-251: Export moved again, out of the Edit tab entirely,
+  to `@chroma/shell`'s own chrome bar beside the tab switcher** — the owner's
+  live follow-up to D-249. `ShellTab` gained a `headerAction` slot, rendered
+  only while that tab is active; `Root.tsx` supplies the Edit tab's real
+  `EditorExportDialog` for it, `Shell.tsx` still never imports
+  `@chroma/editor`. A considered, narrow reversal of D-118's tab-agnostic
+  rule for this one slot (Colorist/Motion have no export action to conflict
+  with). New `packages/shell` DOM test suite (first one the package has had)
+  proves the real dialog opens from the chrome bar and hides on other tabs.
+
 - **2026-09-08** — **B-122 fixed: dragging a clip onto a track HEADER crashed
   the whole app, because two different dnd-kit droppables both called
   themselves `type: 'track'`.** Caught in the dev-server log while the owner

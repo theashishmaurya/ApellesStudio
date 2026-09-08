@@ -13,6 +13,14 @@
  * `<Shell projectOpen={false} launcher={...}>` renders it full-window with no
  * tabs. The shell still doesn't import `ProjectLauncher` (app → shell only); it
  * arrives via the `launcher` prop.
+ *
+ * D-251: a `ShellTab` may also carry a `headerAction` node, rendered in the
+ * chrome bar's own right-hand cluster (beside the window controls) only
+ * while that tab is active — the Edit tab's Export trigger/dialog today, via
+ * the same injection pattern as `launcher`. See `Shell.tsx`'s own module doc
+ * ("Per-tab chrome-bar action") for the full reasoning, including why this
+ * narrows D-118's "`Shell` stays tab-agnostic" rule without reopening the
+ * `@chroma/editor`-free dependency boundary this file describes above.
  */
 
 export { Shell, type ShellTab, type ShellProps } from './Shell';

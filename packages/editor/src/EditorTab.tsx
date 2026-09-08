@@ -49,7 +49,6 @@ import { PanelRight } from 'lucide-react';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { EditLibraryRail } from './EditLibraryRail';
-import { EditorExportDialog } from './EditorExportDialog';
 import { PreviewPane } from './PreviewPane';
 import { CaptionInspectorPanel } from './CaptionInspectorPanel';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
@@ -160,15 +159,13 @@ export function EditorTab() {
         <ResizablePanelGroup orientation="vertical" className="flex-1 min-h-0">
           <ResizablePanel minSize={PREVIEW_MIN_HEIGHT} className="flex flex-col min-h-0">
             <div className="flex-1 min-h-0 flex flex-col relative">
-              <PreviewPane
-                // B-118/D-249 — the top strip's own right-hand cluster. The
-                // Export dialog moved here out of the timeline toolbar (the
-                // owner drew an arrow from it to exactly this corner), and it
-                // is rendered INSIDE the strip's flow rather than floated over
-                // it like the Inspector chip beside it, so it can never
-                // overlap the "Timeline" label at a narrow width.
-                headerActions={<EditorExportDialog />}
-              />
+              {/* D-249 put Export in this pane's own top strip (`Player`'s
+                  `menu` slot via `PreviewPane`'s now-removed `headerActions`
+                  prop); D-251 moved it again, out of this tab entirely, to
+                  `@chroma/shell`'s chrome bar beside the tab switcher — see
+                  `Root.tsx`'s `headerAction` wiring and `Shell.tsx`'s own
+                  module doc. Nothing left in this tab renders it. */}
+              <PreviewPane />
               {/* D-118 — the Inspector's own opener: tab-local (see this file's
                   module doc for why it isn't a `Shell.tsx` chrome-bar button
                   like Sources'), placed at the preview's top-right so it reads

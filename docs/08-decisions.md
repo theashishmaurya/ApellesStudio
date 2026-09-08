@@ -23415,3 +23415,124 @@ badge would stay as the thing that tells slip from slide. Nothing here touches
 where these controls live: the left-icon-rail redesign the owner sketched on
 the same screenshot is a separate, concurrent pass, and this change is
 deliberately position-neutral so it survives whatever that lands.
+
+---
+
+## D-251 — Export moves again, this time to the shell's own chrome bar, beside the tab switcher
+
+**Context.** D-198 first put Export at the far right of the Edit tab's timeline
+toolbar. D-249 moved it up into the tab's own top strip (`Player`'s `menu`
+slot via `PreviewPane`'s `headerActions` prop), reasoning it as the tab's
+terminal action rather than a per-clip edit tool. The owner, live, pointed
+higher still: "lets move export at very top right corner where the tab is
+there" — the actual application chrome bar, where the CHROMA wordmark, the
+"‹ Projects" breadcrumb, and the Edit/Motion/Colorist tab switcher live
+(`packages/shell/src/Shell.tsx` / `WindowChrome.tsx`).
+
+**The real architecture question, investigated before touching anything.**
+`Shell.tsx`'s own module doc declares it "deliberately tab-agnostic" — this
+rule traces to **D-118**, which kept the Edit tab's Inspector toggle tab-local
+specifically because making it shell-level "would mean `Shell` needing to
+know which tab is active just to decide whether to render it — a real
+layering violation." A single Export button in the top bar runs into the same
+question, sharper: **Export is not a shared, tab-agnostic concept today.**
+Checked directly — `app/src/components` has no top-bar/persistent export
+control for Colorist; its export UI (`ExportDialog.tsx`, `ExportPanel.tsx`,
+`ExportPresetsList.tsx`) is a differently-scoped, per-image/batch action
+triggered from Colorist's own toolbar (`EditorToolbar.tsx`) and
+`SourcesPanel.tsx` — unrelated to the Edit tab's whole-timeline export.
+`packages/motion` has no export action of any kind yet. So a single
+"Export" slot at the shell level cannot mean the same thing on all three
+tabs; it would have to become tab-aware (`Shell` behaving differently per
+active tab, reversing D-118's rule) or expose a generic per-tab slot only
+Edit fills in today.
+
+**Decision — the owner resolved this directly, live, once told the
+tradeoff: go shell-level, tab-aware.** Rather than leaving it as an open
+design question, the owner's explicit call was: "We need it to the shell
+level" — `Shell` reads which tab is active (it already has to, to decide
+which tab's `element` shows) and renders the Edit tab's Export
+trigger/dialog only while Edit is active. This is a considered, narrow
+reversal of D-118's rule for this ONE slot, not a blanket one: D-118's
+Inspector case is unaffected (still tab-local — Colorist/Motion each have
+their own non-toggleable panel, unlike Export which has no Colorist/Motion
+equivalent at all to conflict with).
+
+**What actually changed, and what didn't.** `ShellTab` (`Shell.tsx`) gained
+an optional `headerAction?: ReactNode`, rendered in the chrome bar's own
+right-hand cluster — left of the window controls, right where the owner
+pointed — only while that tab is the active one (computed via
+`tabs.find((t) => t.id === active)?.headerAction`, the same lookup the tab
+body switch already does). `Root.tsx` (the composition root) populates it
+for the `edit` entry with the real `EditorExportDialog` from `@chroma/editor`
+— the exact same component D-249 placed in the tab's own strip, unmoved
+internally, just relocated in the tree. **`Shell.tsx` itself still never
+imports `@chroma/editor`** — the injected node is supplied by the caller
+exactly like `launcher`/`sourcesPanel` already are, so the "shell depends
+only on react + zustand + Tauri" boundary this package's own `package.json`
+and module doc describe is unchanged. What narrows is the *behavioral* rule
+(Shell may now show/hide per-tab chrome based on which tab is active), not
+the *dependency* rule (Shell may not import a tab package's source) — D-118's
+"real layering violation" language was about the latter, which stays intact.
+Motion/Colorist entries omit `headerAction`, so nothing renders for them;
+the field stays generic so either can register its own later without another
+`Shell` change.
+
+D-249's `PreviewPane.headerActions` prop (and the `menu` value it forwarded
+to `Player`) is removed — nothing calls it anymore, and CLAUDE.md's no-dead-
+code rule means it doesn't get to sit there unused "for later." `Player`'s
+own `menu` prop is untouched; it remains a general capability of
+`@chroma/player` for any future caller.
+
+**Reference check (CLAUDE.md's "research the real pattern first").** A
+persistent Export/Share affordance living beside a small, fixed set of
+workspace tabs — rather than buried in a per-page toolbar — matches Premiere
+Pro's own modern UI, which keeps a permanent "Export" button at the top-right
+of its window next to the workspace-layout switcher, reachable regardless of
+which workspace panel has focus. DaVinci Resolve's model doesn't transfer
+here: its "Deliver" is a whole page in a 7-page switcher (Cut/Edit/Fusion/
+Color/Fairlight/Deliver/Cut), not a persistent button beside the switcher —
+`scratch/resolve-reference/` (the owner's own named reference, scraped for
+D-231/earlier Edit-tab work) has nothing analogous to check because Resolve
+doesn't do this the same way. Chroma's flat 3-tab model (no dedicated
+"export page") is structurally closer to Premiere's than to Resolve's, so
+Premiere's pattern is the one that actually applies.
+
+**No MCP-facing change.** Pure GUI relocation — `editor_export` already
+exists and is untouched; this only moves where a human clicks to open the
+same dialog.
+
+**Verification.** New real-DOM suite,
+`packages/shell/src/Shell.exportAction.dom.test.tsx` (3/3 passing) —
+deliberately mounts the REAL `EditorExportDialog` (a `devDependency`-only
+import, see that file's own doc for why a stand-in wouldn't actually prove
+what the owner asked for), and asserts: (1) the Export trigger renders inside
+`Shell`'s own chrome bar while Edit is active, not inside the Edit tab's own
+body; (2) clicking it opens the SAME dialog (its real "Export timeline"
+title text appears); (3) switching to Motion or Colorist removes the trigger
+from the DOM, and switching back to Edit restores it. `@chroma/shell` had no
+test infrastructure before this pass — added `vitest.config.ts` (mirroring
+`packages/editor`'s `environment: 'node'` + per-file `@vitest-environment
+jsdom` convention) and `vitest`/`jsdom`/`react-dom` devDependencies, plus
+`@chroma/editor` as a **devDependency only** (not a runtime `dependency` —
+the distinction the whole entry above turns on). `packages/shell/tsconfig.json`
+gained `"types": ["vite/client"]`: with no TS project references between
+packages, `tsc -p packages/shell` type-checks `@chroma/editor`'s reachable
+source too (pulled in by the new test's import) under `shell`'s own
+compiler options, which then needs the same ambient types editor's own
+tsconfig declares (`import.meta.env`, and `vite/client`'s CSS
+side-effect-import declarations `TimelinePane.tsx` relies on) — a real fix,
+not a workaround, since any program that includes that source needs to know
+about it. `npx tsc --noEmit -p packages/editor -p packages/shell` clean, and
+each alone. `@chroma/editor` 1506/1506 (its own two-line
+`EditorExportDialog`/`PreviewPane` edits caused zero regressions). `app`'s
+own `tsc --noEmit` — checked because `Root.tsx` changed — sits at exactly 64
+errors, the documented pre-existing baseline (D-118), confirming zero new
+`app`-side errors from this change; that count was itself corrupted to a
+false 143+ inside this pass's worktree by the exact symlinked-`node_modules`
+artifact D-118 already diagnosed for Vite (`app/node_modules/@chroma/shell`
+resolving through the real physical path of a whole-`node_modules` symlink
+back into the main checkout instead of this worktree) — fixed the real way,
+per CLAUDE.md's "fix the tool, don't route around it": a real `npm install`
+in this worktree (9s, from the local cache) rather than re-symlinking around
+it, which is what produced the correct, matching-baseline count above.
