@@ -121,7 +121,6 @@ import {
   newTextClipFields,
   newTextLayer,
   panGains,
-  resolveCaptionStyle,
   resolveMarkerColor,
   timelineFps,
   trackIndexAfterMove,
