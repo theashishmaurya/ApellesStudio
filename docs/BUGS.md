@@ -1695,3 +1695,19 @@ status: fixed (2026-09-08) · severity: high (the waveform is a *positioning* ai
 - **the other half of what the owner saw, which was NOT this bug.** Their reel's sources genuinely have no audio stream (the same fact behind B-114), and for those the strip drew a flat centre line — correctly. But it drew the *same* flat line for "still fetching" and for "no source resolved here", so the one state a user must be able to tell apart from a defect was indistinguishable from one. `ScrubWaveform` now labels it: "This clip has no audio" / "No audio at the playhead", and **no label at all** while peaks are in flight, so a slow fetch can never claim silence. Pinned by a real-DOM test that drives all three states.
 
 - **honest limit:** the owner's exact screenshot could not be reproduced without the running app, which an agent does not have. What is claimed here is what was measured: a real, provable positioning error in the envelope, fixed, plus an ambiguity in how emptiness was drawn, removed. Whether the strip now reads correctly to their eye on that project is theirs to confirm.
+
+## B-116 — the Captions panel was correctly wired, correctly rendering, and unfindable: its button still said "Subtitles", exactly like the file-picker it had replaced
+
+status: fixed (2026-09-08) · severity: low (nothing is broken — a shipped feature is simply unreachable in practice, which is the same outcome) · area: `packages/editor/src/CaptionPanel.tsx`
+
+- **found:** 2026-09-08, owner-reported live — they could not find the styled caption preset library D-243/D-244 shipped, in a running app that was rendering it.
+
+- **not** a wiring fault, checked first: `<CaptionPanel />` is mounted in `EditorTab.tsx`'s timeline sub-toolbar beside `<CaptionsFromTranscriptButton />`, behind no conditional, and its own DOM tests were passing.
+
+- **cause:** D-243 replaced D-229's "Subtitles" button — which went straight to a file picker — with this panel, and kept that button's exact label, icon and flat ghost styling. So the control that used to open a file dialog looked identical afterwards, and a user who had already learned what it does has no reason to click it again. Its own module doc even opened with "what clicking *Subtitles* opens". The feature was findable only by clicking a button whose label said it was something else.
+
+- **fix:** the trigger is labelled **Captions** — what the feature is called everywhere else in it (`CaptionPanel`, `captionPresets.ts`, `editor_add_caption_preset`, `CaptionInspectorPanel`) — with a chevron, the standard sign that a control opens a panel rather than a dialog. "Subtitles" now names only the `.srt`/`.vtt` tab inside, which is the one thing it still describes accurately.
+
+- **regression test:** `CaptionPanel.dom.test.tsx` asserts the trigger is in the DOM, reads "Captions", does **not** read "Subtitles", and carries a disclosure affordance.
+
+- **left to the left-rail work, deliberately:** the owner's own annotation on this screenshot proposed moving caption actions into a left icon rail, which a sibling pass is designing. This change does not move anything — it makes the control in its current home say what it is, which is worth doing whether or not it later relocates.

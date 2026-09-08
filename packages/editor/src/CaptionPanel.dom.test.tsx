@@ -95,8 +95,10 @@ async function render() {
 /** Open the popover by clicking the trigger. The library lives inside it, so
  *  nothing is in the DOM until this runs. */
 async function openPanel() {
-  const trigger = mounted!.container.querySelector('button');
-  expect(trigger, 'the Subtitles trigger should render').not.toBeNull();
+  const trigger = mounted!.container.querySelector<HTMLElement>(
+    '[data-testid="caption-panel-trigger"]',
+  );
+  expect(trigger, 'the Captions trigger should render').not.toBeNull();
   trigger!.click();
   await waitFrames(3);
 }
@@ -107,6 +109,29 @@ function q(selector: string): HTMLElement | null {
 }
 
 describe('the Captions panel', () => {
+  /** B-116 — the panel was correctly wired into the toolbar and correctly
+   *  rendering, and the owner still could not find the caption styles: its
+   *  trigger was labelled "Subtitles", exactly like the D-229 button that went
+   *  straight to a file picker and which D-243 replaced. Nothing on the control
+   *  said it had become something else, so it read as the thing it used to be.
+   *  This pins the two properties that fix that — the name of the feature, and
+   *  a visible sign that it opens a panel rather than a file dialog. */
+  it('is labelled for the feature it opens, not for the button it replaced', async () => {
+    await render();
+    const trigger = mounted!.container.querySelector<HTMLElement>(
+      '[data-testid="caption-panel-trigger"]',
+    );
+    expect(trigger, 'the trigger must actually be in the DOM').not.toBeNull();
+    expect(trigger!.textContent).toContain('Captions');
+    expect(
+      trigger!.textContent,
+      'a plain "Subtitles" label is what made this indistinguishable from the import button',
+    ).not.toContain('Subtitles');
+    // A disclosure affordance — the reason a user expects a panel here rather
+    // than an immediate file dialog.
+    expect(trigger!.querySelectorAll('svg').length).toBeGreaterThanOrEqual(2);
+  });
+
   it('opens on click and shows the preset library', async () => {
     await render();
     expect(q('[data-testid="caption-panel"]'), 'closed before the click').toBeNull();
