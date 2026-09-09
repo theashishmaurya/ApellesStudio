@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-267: a new photographic brand mark, converted into a
+  real, properly-generated asset set** — the owner's own AI-generated medallion
+  (an "A" + a marble bust profile, the same terracotta/ochre/marble palette
+  D-264 already quarried from the Alexander Mosaic). Fixed the source's one
+  real defect first: no alpha, a solid black square baked in behind the
+  circular badge — cleared with a flood fill from the four corners only, so
+  connected background comes out but nothing enclosed in the design (a hair
+  shadow, an iris) is touched; verified on green and on a checkerboard, not
+  assumed. The desktop app icon set (60 files: macOS/Windows/iOS/Android) was
+  regenerated in one pass via this repo's own `npx tauri icon`, not hand-resized.
+  The website favicon (D-264's tesserae SVG) is replaced with a real
+  favicon.ico + PNG set from the same master; checked at real pixel scale
+  first — legible by 48×48, soft at 16×16, shown to the owner before they
+  confirmed the swap. `Nav.astro`'s separate inline mark is untouched, out of
+  scope for this pass. `palette.test.ts`'s two SVG-hex-counting tests (no
+  longer applicable to a photograph) are replaced with tests that check what
+  IS still real: every declared favicon file exists at its real size, and
+  every href Base.astro declares resolves to a file on disk. `astro build`/
+  `check` clean, 190/190 tests (net +2).
+
 - **2026-09-09** — **D-266: the last two MCP coverage gaps, one closed and one
   found to have been mis-scoped.** The media pool's four missing tools shipped
   (`editor_list_media` / `_list_media_folders` / `_create_media_folder` /

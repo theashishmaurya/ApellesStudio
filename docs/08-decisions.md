@@ -25753,3 +25753,107 @@ B-073's underlying staleness — no re-probe on demand, nothing expires a stale
 pool entry — is untouched by this pass and remains the media pool's real
 architectural gap. The audio side has no GUI level meter, for the ~1 Hz reason
 above; if a meter is ever wanted, the measurement window has to shrink first.
+
+---
+
+## D-267 — The brand mark splits in two: a photographic seal for large contexts, the tesserae glyph retired from the one place it was actually solving a real problem
+
+**Date:** 2026-09-09.
+
+### Context
+
+The owner generated a new mark outside this repo — a circular medallion: an
+"A" and a marble bust in profile (Apelles' own subject, an ancient
+Greek portrait), a gold ring, on the ochre/terracotta/marble palette this
+session had already quarried from the Alexander Mosaic for D-264, by
+coincidence or not. The ask was concrete: make it "a properly scalable logo
+file, as we do" — i.e. take a single AI-generated raster and turn it into a
+real, correctly-built asset set, not just resize the PNG by hand.
+
+### The real constraint: this cannot become a vector
+
+The image has genuine photographic texture — marble grain, aged gold-leaf
+patina, a hand-painted terracotta wash. Auto-vectorising it (Illustrator's
+Image Trace, Inkscape, vectorizer.ai) reduces a bitmap to flat colour
+regions; run on a textured photographic image, it does not produce a
+faithful vector, it produces a crude flat cartoon of it — the trace would
+throw away exactly what makes the mark look considered. Vector tracing is
+for flat, simple source art; this is the opposite of that, deliberately.
+
+The professional answer for a photographic mark is not "make it a vector,"
+it is "keep one sufficiently large raster master, and generate every real
+fixed size from it" — you only lose quality scaling a raster PAST its native
+resolution, never scaling one down. The source (1254×1254, no alpha) is
+large enough to cover every real use this app has, once one real defect in
+it is fixed.
+
+### What was actually broken: no transparency, not resolution
+
+The source had a solid black square baked into its pixels behind the
+circular badge — fine for a favicon or a hero image (a background is
+expected there), wrong for a desktop app icon, since macOS/Windows apply
+their OWN rounded-square mask over whatever you give them; a black square
+underneath a circular design shows as ugly black wedges outside the circle
+once the OS's mask reveals corners the design never accounted for.
+
+Fixed with a **flood fill from the four image corners only** (not a global
+colour-key on "near black"), so only pixels CONNECTED to the actual
+background are cleared — an isolated dark pixel enclosed by the design
+(a shadow in the marble hair, the iris) is never touched, because a flood
+fill can only reach it by crossing non-background pixels first. Verified
+three ways, not assumed: alpha sampled at the four corners (0) versus the
+centre (255), a composite onto solid green, and a composite onto a
+checkerboard — the standard way a design tool itself shows transparency,
+so there is no ambiguity from a viewer that happens to render on a dark
+background.
+
+### What got built, and where each mark actually lives now
+
+**The desktop app icon — this repo's own Tauri CLI, not a hand rolled
+script.** `npx tauri icon <transparent master>` regenerated the entire real
+icon set in one pass: macOS `.icns`/`.ico`, every `Square*Logo` Windows
+tile, the `32/64/128/128@2x` PNGs, and the iOS/Android sets this project's
+own `tauri.conf.json` already declared — 60 files total, all real Tauri
+build outputs, none hand-resized.
+
+**The website favicon (D-264's tesserae SVG, retired here).** Replaced with
+a real PNG/ICO set generated from the same transparent master: `favicon.ico`
+(16/32/48 bundled), `favicon-{32,48}x32.png`, `apple-touch-icon.png` (180),
+`icon-192.png` — `Base.astro`'s single `<link rel="icon" href="favicon.svg">`
+became the standard multi-`<link>` set browsers actually expect for a raster
+mark. Checked at real pixel scale, not assumed: at 16×16 the fine texture
+does turn to noise (still reads as "the right coloured circular badge," not
+as the actual face/letter); by 48×48 it is genuinely legible. The owner was
+shown this exact render before confirming the replacement, not after.
+
+**The site's own inline nav-bar mark (`Nav.astro`'s four-square glyph) is
+UNCHANGED** — a small in-page SVG rendered directly in the header, a
+different asset from the favicon entirely, and out of scope for this pass
+(the owner asked to replace the favicon specifically).
+
+D-264's own "the favicon uses only real pigments" / "the favicon spends
+[the signature] once too" tests in `palette.test.ts` asserted things that
+were true of a hand-authored, token-driven SVG and are simply not
+applicable to a photographic PNG — removed, not weakened, and replaced with
+tests for what IS still real about this asset: every declared favicon file
+exists on disk at its real declared pixel size (read straight off the PNG's
+own IHDR chunk, no new dependency), `favicon.ico` is non-empty, the old SVG
+is actually gone rather than merely unlinked, and every `href` `Base.astro`
+declares resolves to a file that exists — the exact class of bug ("linked a
+file that isn't there") a hex-count could never have caught anyway.
+
+### Verified
+
+`npx tauri icon` output diffed file-by-file against the previous icon set
+(60 real files, all regenerated, none orphaned). Website: `astro build`
+clean (5 pages), `astro check` clean (0/0/0), `npm test` 190/190 (net +2:
+2 removed, 4 added). Transparency proved three ways (see above), not
+assumed from the flood-fill running without error.
+
+### Left as-is, deliberately
+
+`Nav.astro`'s inline mark, per the owner's own scoped request. No attempt to
+also vectorise the new mark for contexts that want true SVG scaling — the
+raster-master approach covers every real size this app currently needs;
+revisit only if a genuinely vector-only context (large-format print, a
+laser-cut sign) ever comes up.

@@ -143,13 +143,6 @@ describe('no colour exists outside those two sources', () => {
     expect(offenders, `hard-coded colours:\n${offenders.join('\n')}`).toEqual([]);
   });
 
-  it('the favicon uses only real pigments', () => {
-    const svg = readFileSync(abs('../public/favicon.svg'), 'utf8');
-    const hexes = [...svg.matchAll(/fill="(#[0-9a-f]{6})"/gi)].map((m) => m[1].toLowerCase());
-    const allowed = new Set(PIGMENTS.map((p) => p.hex));
-    expect(hexes.length).toBeGreaterThan(4);
-    for (const h of hexes) expect(allowed.has(h), `${h} is not in the palette`).toBe(true);
-  });
 });
 
 describe('the signature is spent once, the way the mosaic spent it', () => {
@@ -177,10 +170,52 @@ describe('the signature is spent once, the way the mosaic spent it', () => {
     expect(emitters[0]).toMatch(/Signature\.astro$/);
   });
 
-  it('the favicon spends it once too — one rose tessera out of nine', () => {
-    const svg = readFileSync(abs('../public/favicon.svg'), 'utf8');
-    const rose = PIGMENTS.find((p) => p.token === SIGNATURE_TOKEN)?.hex ?? '';
-    expect(svg.split(rose).length - 1).toBe(1);
+});
+
+/**
+ * The favicon: the tesserae SVG this describe block used to check is gone —
+ * replaced by a photographic mark (D-267), which isn't a token-driven design
+ * a hex-count can verify. What's still real and worth asserting: the files
+ * Base.astro links to actually exist, at the pixel size they claim to be.
+ */
+describe('the favicon (D-267): a photographic mark replaces the tesserae SVG', () => {
+  const publicDir = abs('../public');
+  const declaredSizes: Record<string, number> = {
+    'favicon-32x32.png': 32,
+    'favicon-48x48.png': 48,
+    'apple-touch-icon.png': 180,
+    'icon-192.png': 192,
+  };
+
+  function pngDimensions(path: string): { width: number; height: number } {
+    const buf = readFileSync(path);
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  }
+
+  it('every declared favicon PNG exists on disk at its real declared size', () => {
+    for (const [file, size] of Object.entries(declaredSizes)) {
+      const { width, height } = pngDimensions(join(publicDir, file));
+      expect(width, `${file} width`).toBe(size);
+      expect(height, `${file} height`).toBe(size);
+    }
+  });
+
+  it('favicon.ico exists and is non-empty', () => {
+    expect(statSync(join(publicDir, 'favicon.ico')).size).toBeGreaterThan(0);
+  });
+
+  it('the old tesserae SVG is gone, not just unlinked', () => {
+    expect(readdirSync(publicDir)).not.toContain('favicon.svg');
+  });
+
+  it('Base.astro references only favicon files that actually exist', () => {
+    const base = read('../src/layouts/Base.astro');
+    const hrefs = [...base.matchAll(/href="\/([\w.-]+\.(?:ico|png|svg))"/g)].map((m) => m[1]);
+    const files = readdirSync(publicDir);
+    expect(hrefs.length).toBeGreaterThan(0);
+    for (const href of hrefs) {
+      expect(files, `${href} is linked from Base.astro but missing from public/`).toContain(href);
+    }
   });
 });
 
