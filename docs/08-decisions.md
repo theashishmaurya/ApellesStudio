@@ -25286,3 +25286,162 @@ compiled out of production like the rest of D-219's registry).
   the MCP layer, and the real fix (teach `checkAddClip` the question
   `computeInsertion` already answers, so drag, click and agent share one
   placement rule) belongs in the op layer, not in a layout change.
+
+## D-264 — The website is rebuilt for the Apelles brand: a visual system quarried from the Alexander Mosaic, a multi-page structure, and copy that argues "who this is for" instead of "what it has"
+
+**Date:** 2026-09-09.
+
+### Context
+
+The product is being renamed from Chroma to **Apelles** — Apelles of Kos, court
+painter to Alexander the Great and, by the reckoning of every ancient writer who
+mentions him, the greatest painter of antiquity. The rename across the codebase
+(crates, packages, MCP server) was done in parallel by another agent; this
+decision covers `website/` only.
+
+D-255's site was a single page under the old brand, in a dark-terminal aesthetic
+derived verbatim from the app's own Dark theme, whose copy led with what the
+software *has* — three tabs, an MCP tool count, a local-first architecture. That
+was accurate and it was the right site to build first. It was also selling the
+architecture rather than the outcome, to a reader the product does not primarily
+target.
+
+The owner's framing for this pass: *"our mission is to make non-creators
+creators with the ease of AI"*, tone *"super super friendly," "not 100%
+technical," "very very very premium."*
+
+### The options
+
+1. **Rename in place.** Swap the strings, keep the dark single page. Cheapest,
+   and it would have kept a site whose whole argument was aimed at the wrong
+   reader — and kept a visual identity with no relationship to the new name.
+2. **New brand, new palette, invented.** Pick a nice warm palette and a nice
+   serif. Fast, defensible, and indistinguishable from every other AI product
+   site; nothing about it could be *argued*, only preferred.
+3. **New brand grounded in a real artifact, real multi-page IA, rewritten copy.**
+   Chosen.
+
+### The choice
+
+#### The visual system comes out of the Alexander Mosaic
+
+The mosaic (Pompeii, c. 100 BC; now in the National Archaeological Museum of
+Naples) is believed to be a Roman copy of a lost Hellenistic painting, and it is
+the one tangible object with a credible documented link to Apelles himself. His
+own work is entirely lost, so this is as close to a primary source as the brand
+can get.
+
+Its palette is not a guess. The first scientific campaign on the mosaic —
+Balassone et al., *"From tiny to immense: Geological spotlight on the Alexander
+Mosaic (National Archaeological Museum of Naples, Italy) using non-invasive in
+situ analyses"*, **PLOS ONE, January 2025**
+(<https://pmc.ncbi.nlm.nih.gov/articles/PMC11734927/>) — discriminated ten
+tesserae colours and proposed geological provenances: white from Carrara marble,
+darks from Greek serpentinite and Iberian basalt, the reds and yellows from iron
+oxides, and, on Alexander's face and nowhere else in the work, several shades of
+pink whose composition points to Portugal.
+
+That last detail is the design rule, not a decoration. Out of roughly two million
+tesserae, the makers imported one colour from the far end of the empire and spent
+it on a single face. So `--pigment-rose` (`#c98c86`) is spent the same way: **one
+element per page, the single action that page exists for**, and nowhere else. It
+is referenced by exactly one CSS rule, emitted by exactly one component, and
+rendered at most once per built page — all three asserted by tests, because a
+signature colour used twice has stopped being a signature.
+
+The rest follows the same discipline. Warm bone-white marble (`#f4efe6`) is the
+ground — the page is a gallery wall, and the product screenshots hang on it as
+dark framed objects, which is also the only place the site is permitted to be
+dark. Warm charcoal basalt (`#1c1a17`) is the ink; there is no `#000` anywhere.
+Terracotta (`#a6432c`, 5.3:1 on marble) and ochre (`#b4823a`, 3.0:1, so marks and
+rules only, never body text) are the working pair.
+
+**This supersedes D-255's "the site palette IS the app palette" rule, and the
+coverage moves rather than disappears.** The site still transcribes six `--app-*`
+tokens verbatim from `app/src/utils/themes.ts` for the one context that draws the
+application itself, and `tests/palette.test.ts` still reads that real file and
+fails on drift — plus it now fails on an app token that is declared and never
+used, on any colour literal in a component that did not come through a token, and
+on either of the two default typefaces appearing anywhere.
+
+#### Typography: Newsreader + Instrument Sans + IBM Plex Mono
+
+Newsreader (Production Type) carries display and prose, requested with its real
+optical-size axis so the display cut and the reading cut are one family behaving
+correctly at both ends. It was chosen against the obvious alternative — a
+Trajan-style Roman capital — because Apelles *painted*: a drawn, high-contrast
+serif is truer to the subject than a chiselled inscription, and it sidesteps the
+pastiche every "ancient" brand reaches for first. Instrument Sans carries the
+interface; IBM Plex Mono carries technical material only. Inter and Space Grotesk
+are banned in a named constant and asserted absent, per this repo's own AI-slop
+warnings and impeccable.style's.
+
+#### The quality bar was explicit
+
+impeccable.style's stated standard — single focal points instead of competing
+elements, restrained and functional typography over decorative flourishes,
+meaningful contrast used strategically, consistency preserved as a real system,
+structure that matches actual workflows rather than templated patterns — was held
+as a checklist per page, and this repo's CLAUDE.md independently warns against the
+same tells. Concretely: no uniform card grids (the three rooms and the four
+commitments are flowing lists with real rules between them, not boxes), one
+typographic flourish on the whole site (the home headline's roman-then-italic
+turn), and one ornament (a 5px ochre tessera used as a list mark).
+
+#### Information architecture: four pages, one action each
+
+- `/` — the promise, the demonstration, the differentiation in short, the rooms,
+  how it is built, the ask.
+- `/who-its-for/` — the full argument, given room.
+- `/inside/` — what each of the three rooms really does, shipped items only.
+- `/docs/mcp/` — the one deliberately technical page. The friendliness mandate is
+  for the marketing pages; an integrator needs exact commands, paths and ports.
+
+#### The copy argues who it is for
+
+The differentiation is stated as a fact about how each tool was *designed*, not
+as a boast, and names its subjects directly: *"DaVinci Resolve and Premiere Pro
+were made by editors, for editors. Every timeline, node graph and keyframe panel
+in them assumes you already have the craft — years of it. That assumption is a
+fair one, and it is exactly why those tools are so good at what they do. It is
+also the reason most people never make the video they had in mind."* `/who-its-for/`
+then says out loud who Apelles is **not** for — *"If you edit for a living,
+Resolve is faster than this and will stay faster for a long time"* — which is the
+part that makes the rest believable. A test asserts the vague claims ("easier to
+use", "faster than", "better than") never appear.
+
+### What this cost, and what it caught
+
+The anti-fabrication tests are the reason this was worth doing as a rebuild rather
+than a restyle. On the first run of the new suite, `mcp-data.test.ts` failed:
+the site was publishing **106** shipped MCP tools and the server had **144**. The
+Motion room's entire 37-tool gap — which D-255 had printed as the product's
+sharpest shortfall — had closed (D-257/D-259/D-260) and the site had gone on
+saying otherwise. `MOTION_GAP` is replaced by `GAPS`, carrying the two real
+remaining shortfalls (the half-covered media pool, the zero-coverage audio
+transport), because a site that prints only the gaps it has already closed is
+back to being marketing.
+
+The screenshots in `public/shots/` predate the rename, so the app's own title bar
+in them still reads `CHROMA`. They are **disclosed in the caption, not retouched**
+— painting a new wordmark onto a real capture would be the same failure as
+shipping a mockup, only more deniable. Tracked in
+`website/TODO-RECAPTURE-SHOTS.md`, with tests asserting the disclosure survives
+while the old images do.
+
+### Verification
+
+`npm run verify` (check → build → test) clean: 0 astro-check errors, 5 pages
+built, **186 tests passing** across five files. All four pages were rendered in a
+real browser at 1440px and checked against the brief by eye before this landed;
+two things that check caught and fixed were a dead vertical band between the hero
+and the demonstration, and a doubled window chrome where the site's own caption
+strip sat directly above the application's real title bar in the screenshot
+beneath it.
+
+### Still open
+
+`website/TODO-DEMO-VIDEO.md` (no recorded product demo exists) and
+`website/TODO-RECAPTURE-SHOTS.md` (retake the four captures post-rename). The
+`site` origin in `astro.config.mjs` remains a placeholder; no domain is
+registered.

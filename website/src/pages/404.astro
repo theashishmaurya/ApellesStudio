@@ -1,19 +1,25 @@
 ---
 /**
- * 404.astro — the not-found page (D-255).
- * Set as a timecode that ran past the end of the sequence, because that is the
- * one joke this product is actually entitled to make.
+ * 404.astro — the not-found page (D-264).
+ *
+ * Written as a timecode that ran past the end of the sequence, because that is
+ * the one joke this product is entitled to make. No signature colour here: this
+ * page's job is to send you back, not to ask you for anything.
  */
 import Base from '../layouts/Base.astro';
 ---
 
-<Base title="Not found — Chroma" description="That page does not exist on Chroma's site.">
+<Base title="Not found — Apelles" description="That page does not exist on the Apelles site.">
   <section class="nf">
     <div class="shell">
       <p class="eyebrow">404</p>
       <h1>Past the last frame.</h1>
       <p class="lede">There is nothing at this address. The timeline ends earlier than that.</p>
-      <p class="back"><a href="/">Back to the start &rarr;</a></p>
+      <p class="back">
+        <a class="onward" href="/">
+          Back to the start <span class="arrow" aria-hidden="true">&rarr;</span>
+        </a>
+      </p>
     </div>
   </section>
 </Base>
@@ -24,19 +30,10 @@ import Base from '../layouts/Base.astro';
   }
   h1 {
     font-size: var(--step-4);
+    margin: 1.25rem 0 1.5rem;
     font-weight: 300;
-    margin: 1rem 0 1.25rem;
   }
   .back {
-    margin-top: 2rem;
-  }
-  .back a {
-    font-size: var(--step--1);
-    border-bottom: 1px solid var(--color-border-color);
-    padding-bottom: 2px;
-    transition: border-color var(--dur-slow) var(--ease-out);
-  }
-  .back a:hover {
-    border-color: var(--color-accent);
+    margin-top: 2.5rem;
   }
 </style>

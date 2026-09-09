@@ -2515,17 +2515,23 @@ overnight pass as everything above.
 **Deferred, not abandoned:** multi-subject batch tracking (D-017, → Later).
 
 **The marketing website is no longer on the list below — it SHIPPED
-(2026-09-09, D-257),** out of sequence at the owner's explicit instruction. It
-lives in a new top-level `website/` (Astro, its own project, deliberately
-outside the npm workspace); see `website/README.md` to run it and **D-257** for
-the reversal itself, the token-derivation approach, and what it deliberately
-leaves undone. Building it early unblocked nothing and committed nothing —
-`docs/notes/pre-launch-plan.md` §0 already named the website as one of the two
-items that do **not** depend on the unresolved D-002 licensing question.
-Still open on it: no demo video (`website/TODO-DEMO-VIDEO.md`), no real
-Formspree endpoint (`website/BETA_SIGNUP_SETUP.md`), no domain or deployment,
-no download links (they wait on real installers), no public changelog page, and
-no Motion/Colorist screenshots (none have ever been captured).
+(2026-09-09, D-255), and was REBUILT for the Apelles brand the same day
+(D-264).** It went out of sequence at the owner's explicit instruction. It lives
+in a new top-level `website/` (Astro, its own project, deliberately outside the
+npm workspace); see `website/README.md` to run it, **D-255** for the reversal
+itself and the original token-derivation approach, and **D-264** for the
+rebrand — the Alexander Mosaic palette and its one-signature-colour rule, the
+Newsreader/Instrument Sans type system, and the move from one page to four.
+(This paragraph previously cited D-257 for both, which is the Motion MCP
+decision; corrected by D-264.) Building it early unblocked nothing and committed
+nothing — `docs/notes/pre-launch-plan.md` §0 already named the website as one of
+the two items that do **not** depend on the unresolved D-002 licensing question.
+Still open on it: no demo video (`website/TODO-DEMO-VIDEO.md`), the four
+screenshots predate the rename and need retaking
+(`website/TODO-RECAPTURE-SHOTS.md`), no real Formspree endpoint
+(`website/BETA_SIGNUP_SETUP.md`), no domain or deployment, no download links
+(they wait on real installers), no public changelog page, and no
+Motion/Colorist screenshots (none have ever been captured).
 
 **Motion primitive catalog — now 10, not 8 (2026-09-09, D-258):** the eight
 abstract explainer primitives (`text`, `emphasis`, `matrix`, `graph`, `layers`,

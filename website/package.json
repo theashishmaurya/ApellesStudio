@@ -1,9 +1,9 @@
 {
-  "name": "chroma-website",
-  "version": "0.1.0",
+  "name": "apelles-website",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Chroma's marketing + docs website (Astro). Deliberately NOT a member of the repo's npm workspaces — see website/README.md and D-255.",
+  "description": "Apelles's marketing + docs website (Astro). Deliberately NOT a member of the repo's npm workspaces — see website/README.md, D-255 and D-264.",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",

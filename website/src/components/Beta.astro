@@ -1,16 +1,22 @@
 ---
 /**
- * Beta.astro — pre-launch signup (D-255).
+ * Beta.astro — pre-launch signup (D-255's mechanism, D-264's presentation).
  *
  * What it is: a real form with real client-side validation and real
- * submitting/success/error states, posting to Formspree's JSON endpoint.
+ * submitting/success/error states, posting to Formspree's JSON endpoint. The
+ * submit button is <Signature />, which makes it the one rose element on the
+ * home page — this is the single action the page exists for.
  * What it does NOT do: post anywhere until the owner drops a real endpoint into
  * `src/data/beta.ts`. Until then it validates, then tells the visitor plainly
  * that signup is not open yet rather than silently swallowing an address.
  *
+ * The submit logic below is deliberately unchanged by the rebrand: it worked,
+ * and rewriting working infrastructure to match a new palette is churn.
+ *
  * Setup: website/BETA_SIGNUP_SETUP.md.
  */
 import { BETA_FORM_ENDPOINT, isPlaceholderEndpoint, ROLES } from '../data/beta.ts';
+import Signature from './Signature.astro';
 
 const endpoint = BETA_FORM_ENDPOINT;
 const placeholder = isPlaceholderEndpoint(endpoint);
@@ -20,15 +26,14 @@ const placeholder = isPlaceholderEndpoint(endpoint);
   <div class="shell wrap">
     <div class="copy">
       <p class="eyebrow">Pre-launch</p>
-      <h2>Get it when it opens.</h2>
+      <h2>Be there when it opens.</h2>
       <p class="lede">
-        Chroma has not shipped a public build yet. Leave an address and you will hear from us once
-        there is one worth installing &mdash; nothing else, and no list you have to escape from
-        afterwards.
+        There is no public build yet. Leave an address and you will hear from us once there is one
+        worth installing &mdash; that message, and nothing else.
       </p>
       <p class="fine">
-        We store your address to send you that one message. It is not sold, and there is no
-        analytics or tracking script anywhere on this site.
+        We keep your address to send you that one email. It is not sold, and there is no analytics
+        or tracking script anywhere on this site.
       </p>
     </div>
 
@@ -49,7 +54,7 @@ const placeholder = isPlaceholderEndpoint(endpoint);
           type="email"
           inputmode="email"
           autocomplete="email"
-          placeholder="you@studio.com"
+          placeholder="you@example.com"
           required
           aria-describedby="beta-email-err"
         />
@@ -70,9 +75,7 @@ const placeholder = isPlaceholderEndpoint(endpoint);
         <input id="beta-company" name="_gotcha" type="text" tabindex="-1" autocomplete="off" />
       </div>
 
-      <button type="submit" data-submit>
-        <span data-label>Request beta access</span>
-      </button>
+      <Signature label="Request beta access" />
 
       <p class="status" data-status role="status" aria-live="polite"></p>
     </form>
@@ -80,11 +83,6 @@ const placeholder = isPlaceholderEndpoint(endpoint);
 </section>
 
 <style>
-  .beta {
-    border-top: 1px solid var(--color-border-color);
-    background: var(--color-surface);
-  }
-
   .wrap {
     display: grid;
     grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
@@ -94,15 +92,16 @@ const placeholder = isPlaceholderEndpoint(endpoint);
 
   h2 {
     font-size: var(--step-4);
-    font-weight: 300;
     margin: 1rem 0 1.5rem;
+    font-weight: 300;
   }
 
   .fine {
     margin-top: 1.5rem;
-    font-size: 0.75rem;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
     line-height: 1.7;
-    color: var(--color-text-secondary);
+    color: var(--pigment-basalt-soft);
     max-width: 46ch;
   }
 
@@ -110,9 +109,9 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     display: flex;
     flex-direction: column;
     gap: 1.1rem;
-    border: 1px solid var(--color-border-color);
+    border: 1px solid var(--edge-strong);
     border-radius: var(--radius-lg);
-    background: var(--color-bg-primary);
+    background: var(--pigment-marble-deep);
     padding: clamp(1.25rem, 0.8rem + 1.6vw, 2rem);
   }
 
@@ -123,24 +122,24 @@ const placeholder = isPlaceholderEndpoint(endpoint);
   }
 
   label {
+    font-family: var(--font-ui);
     font-size: var(--step--1);
-    color: var(--color-text-secondary);
+    color: var(--pigment-basalt-soft);
   }
 
   .opt {
-    font-family: var(--font-mono);
-    font-size: 0.6875rem;
-    opacity: 0.7;
+    font-size: var(--step--2);
+    opacity: 0.75;
   }
 
   input[type='email'],
   select {
     width: 100%;
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-color);
+    background: var(--pigment-marble);
+    border: 1px solid var(--edge-strong);
     border-radius: var(--radius-md);
-    color: var(--color-text-primary);
-    font-family: inherit;
+    color: var(--pigment-basalt);
+    font-family: var(--font-ui);
     font-size: var(--step-0);
     padding: 0.7rem 0.8rem;
     transition: border-color var(--dur-slow) var(--ease-out);
@@ -148,20 +147,21 @@ const placeholder = isPlaceholderEndpoint(endpoint);
 
   input[type='email']:hover,
   select:hover {
-    border-color: var(--color-text-secondary);
+    border-color: var(--pigment-basalt-soft);
   }
   input[type='email']:focus,
   select:focus {
-    border-color: var(--color-accent);
+    border-color: var(--pigment-basalt);
   }
   input[aria-invalid='true'] {
-    border-color: var(--marker-red);
+    border-color: var(--pigment-terracotta);
   }
 
   .err {
     margin: 0;
-    font-size: 0.75rem;
-    color: var(--marker-red);
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    color: var(--pigment-terracotta);
   }
 
   .hp {
@@ -172,47 +172,22 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     overflow: hidden;
   }
 
-  button {
-    margin-top: 0.25rem;
-    background: var(--color-accent);
-    color: var(--color-button-text);
-    border: 1px solid var(--color-accent);
-    border-radius: var(--radius-md);
-    font-family: inherit;
-    font-size: var(--step-0);
-    font-weight: 500;
-    padding: 0.75rem 1rem;
-    cursor: pointer;
-    transition:
-      opacity var(--dur-slow) var(--ease-out),
-      transform var(--dur-fast) var(--ease-out);
-  }
-  button:hover:not(:disabled) {
-    opacity: 0.88;
-  }
-  button:active:not(:disabled) {
-    transform: translateY(1px);
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
   .status {
     margin: 0;
-    font-size: 0.8125rem;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
     line-height: 1.6;
-    color: var(--color-text-secondary);
+    color: var(--pigment-basalt-soft);
     min-height: 1.2em;
   }
   .status[data-tone='ok'] {
-    color: var(--marker-green);
+    color: var(--pigment-basalt);
   }
   .status[data-tone='bad'] {
-    color: var(--marker-red);
+    color: var(--pigment-terracotta);
   }
 
-  @media (max-width: 860px) {
+  @media (max-width: 880px) {
     .wrap {
       grid-template-columns: minmax(0, 1fr);
     }
