@@ -293,6 +293,7 @@ function FieldControl({
         <span className={label}>{spec.label}</span>
         <MotionNumberField
           value={typeof value === 'number' ? value : null}
+          step={spec.step}
           placeholder="(default)"
           onCommit={onCommit}
           onClear={() => onCommit(undefined)}

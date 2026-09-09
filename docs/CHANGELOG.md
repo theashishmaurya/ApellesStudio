@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **B-061 + B-062 fixed — Motion Inspector camera-time
+  label and a schema validation gap** — B-061: the camera-keyframe `at`
+  field was labelled "At (frame)" while the manifest stores seconds;
+  relabelled `'At (s)'` on both `CAM2D_KEY_FIELDS` and `CAM3D_KEY_FIELDS`
+  (`packages/motion/src/propCatalog.ts`), paired with a new `FieldSpec.step`
+  (`step: 0.1`) so a keyboard/scrub nudge no longer jumps a whole second.
+  B-062: an `ease` curve's `x1`/`x2` had no validation against
+  `Easing.bezier`'s own hard `[0,1]` requirement, so a hand-edited
+  out-of-range value parsed fine and only crashed at render time;
+  `schema.ts`'s `easeCurve` now `.refine()`s that at PARSE time (`y1`/`y2`
+  stay unconstrained — `design.ease.anticipate`'s own legitimate overshoot).
+  Both already fully diagnosed with a proposed fix in `docs/BUGS.md`; applied
+  verbatim. New tests: `propCatalog.test.ts` (4 tests), a new `B-062` block
+  in `schema.test.ts` (6 tests).
+
 - **2026-09-09** — **D-255: the marketing website shipped, out of sequence** —
   a new top-level `website/` (Astro, its own project, deliberately outside the
   npm workspace), reversing the standing "build the website LAST, right before
