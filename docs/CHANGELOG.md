@@ -4,6 +4,13 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — 9 freshly-shot clips imported into a new project all played
+  upside-down; investigated rather than assumed a decode bug — `ffprobe` shows
+  no rotation metadata on the sources at all, so the pixels are genuinely
+  stored upside-down and there's nothing for Apelles to misread. Backlogged
+  (`04-roadmap.md`, Later) as a real gap instead: no bulk clip-transform apply
+  across a selection, so fixing N clips the same way costs N Inspector visits.
+
 - **2026-09-09** — **four small Edit-tab UI fixes.** The timeline ruler's first
   timecode label and playhead flag sat clipped against the pane's left edge
   (`START_LEFT_PX` 20→32, the one shared constant both the ruler and every

@@ -2387,6 +2387,23 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
 - Node graph, ACES/HDR (OpenColorIO); CoTracker planar tracking + bezier roto;
   film-emulation chain; Windows/Linux + batch/headless mode; OFX plugin export (the
   gyroflow model); a public MCP contract + web review viewer.
+- **Bulk clip-transform apply (rotate, scale, position…) across a multi-selection** —
+  owner hit this live (2026-09-09): 9 freshly-imported clips all played upside-down,
+  and fixing it means setting `rotation: 180` on every one. Investigated, not
+  assumed: `ffprobe` shows **no `rotate` tag and no `displaymatrix` side data** on
+  the source files at all, and Apelles' own decode path (`crates/apelles-media`)
+  has no rotation-reading logic to be silently misapplying — so this is not a
+  metadata bug on Apelles' side, the source pixels are genuinely stored
+  upside-down (camera/rig orientation at capture), and `editor_set_clip_transform`
+  already supports fixing any one clip today. The real gap is that fixing N clips
+  the same way needs N calls (GUI: N Inspector visits) — one MCP tool / one
+  Inspector action that applies a transform field to every clip in the current
+  selection is the actual missing primitive, not a decode fix.
+- **A 180°-independent "reset to upright" heuristic** — a smaller, deferred
+  sibling of the above: even with bulk-apply, someone still has to notice and
+  remember a full stack is upside-down before selecting it. Not scoped further
+  than "someone noticed this would help" — no proposal for how it would detect
+  "upside down" from pixels alone without real per-camera provenance data.
 
 ---
 
