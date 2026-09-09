@@ -1017,20 +1017,53 @@ pub(crate) fn clip_geometry(track: usize, clip: usize) -> Result<ClipGeometry, S
         .get(track)
         .and_then(|t| t.clips.get(clip))
         .ok_or_else(|| format!("no clip {clip} on track {track}"))?;
-    // D-211 — a text clip's layer is generated at exactly the composition's
-    // size (see `composite_video_frame`), so its natural footprint IS the
-    // whole frame. Answered here rather than erroring "clip has no source",
-    // so the Inspector's own geometry fetch works for a title the same way it
-    // does for a media clip.
+    // B-130/D-262 — a TITLE's footprint is the size of its rendered INK, not
+    // the whole frame.
     //
-    // D-230 — an adjustment clip is the same answer for a different reason: it
-    // draws nothing, but its correction covers the whole frame, so "the whole
-    // composition" is the honest footprint. Grouped with the text case rather
-    // than left to fall through to the `source_path.is_empty()` error below,
-    // which would have made every selection of an adjustment clip a failed IPC
-    // round trip that the caller then had to interpret — an error used as
-    // control flow for a case that is not an error.
-    if c.is_text() || c.is_adjustment() {
+    // D-211 answered "the whole composition" here, on the true-but-irrelevant
+    // fact that a text clip's RGBA layer is allocated at the composition's
+    // size (see `composite_video_frame`). That buffer is almost entirely
+    // transparent: the glyphs occupy a small box centred in it. Nothing ever
+    // decided that the whole buffer was the right thing to report — the
+    // `TransformOverlay` box and `useCanvasClipPick`'s hit rect are both
+    // derived from this number, so a 12%-of-frame-height title got a selection
+    // box spanning the entire 1080x1920 frame and swallowed every canvas click
+    // meant for the footage under it. `chroma::text::text_layer_ink_fraction`
+    // measures the ink with the SAME advance-and-kern walk that rasterises it,
+    // so the box is around the glyphs actually drawn.
+    //
+    // A title with no ink (empty content — its ordinary state the moment it is
+    // added, before anything is typed) falls back to the whole frame: there is
+    // no ink to measure, and a zero-size box would leave the clip with no
+    // grabbable move handle at all, which is strictly worse than an oversized
+    // one. Same fallback for an unmeasurable font, rather than failing the
+    // whole geometry fetch over it.
+    if c.is_text() {
+        let (nw, nh) = c
+            .text
+            .as_ref()
+            .and_then(|t| {
+                super::text::text_layer_ink_fraction(t, comp_w, comp_h)
+                    .ok()
+                    .flatten()
+            })
+            .unwrap_or((1.0, 1.0));
+        return Ok(ClipGeometry {
+            comp_width: comp_w,
+            comp_height: comp_h,
+            natural_width: nw,
+            natural_height: nh,
+        });
+    }
+    // D-230 — an adjustment clip IS the whole frame, for a reason the title
+    // above turned out not to share: it draws nothing at all, but its
+    // correction covers every pixel, so "the whole composition" is the honest
+    // footprint. Answered here rather than left to fall through to the
+    // `source_path.is_empty()` error below, which would have made every
+    // selection of an adjustment clip a failed IPC round trip that the caller
+    // then had to interpret — an error used as control flow for a case that is
+    // not an error.
+    if c.is_adjustment() {
         return Ok(ClipGeometry {
             comp_width: comp_w,
             comp_height: comp_h,

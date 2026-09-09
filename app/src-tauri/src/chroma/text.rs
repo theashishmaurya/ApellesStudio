@@ -564,7 +564,7 @@ pub fn render_text_layer(
     canvas_w: u32,
     canvas_h: u32,
 ) -> Result<Arc<RgbaImage>, String> {
-    let px = (layer.size * canvas_h as f64).round().max(1.0) as u32;
+    let px = layer_px(layer, canvas_h);
     let key = LayerKey {
         content: layer.content.clone(),
         font: layer.font.clone(),
@@ -616,19 +616,42 @@ pub(super) fn freetype_equivalent_scale(font: &FontVec, px: f32) -> PxScale {
     PxScale::from(px * font.height_unscaled() / upem)
 }
 
-/// The uncached body of [`render_text_layer`].
-fn rasterise(layer: &TextLayer, key: &LayerKey) -> Result<RgbaImage, String> {
-    let (canvas_w, canvas_h) = key.canvas;
-    let mut canvas = RgbaImage::new(canvas_w, canvas_h);
-    // Empty text is a real, ordinary state (a title clip the moment it is
-    // added, before anything is typed) — a fully transparent layer, not an
-    // error.
-    if layer.content.trim().is_empty() {
-        return Ok(canvas);
-    }
+/// One laid-out title: every glyph outline positioned along a baseline at
+/// `y = 0`, plus the union of their pixel bounds — the **ink box**.
+///
+/// D-262 — extracted out of [`rasterise`] so the on-canvas transform box can
+/// be measured from the SAME advance-and-kern walk that actually draws the
+/// glyphs. A second, "close enough" estimate (character count × font size)
+/// would drift from the rendered ink the moment kerning, a proportional face
+/// or a wide glyph got involved, and a selection box that is nearly-but-not
+/// quite around the text is the defect B-130 is about, one size down.
+struct TextInk {
+    outlines: Vec<ab_glyph::OutlinedGlyph>,
+    min: (f32, f32),
+    max: (f32, f32),
+}
 
+impl TextInk {
+    fn width(&self) -> f32 {
+        self.max.0 - self.min.0
+    }
+    fn height(&self) -> f32 {
+        self.max.1 - self.min.1
+    }
+}
+
+/// Lay `layer`'s content out at `px` and measure its ink box.
+///
+/// `Ok(None)` — not an error — when there is nothing to draw: empty or
+/// all-whitespace content (a title clip the moment it is added, before
+/// anything is typed) and content whose every character has no outline are
+/// both ordinary states, and both mean "a fully transparent layer".
+fn lay_out_text(layer: &TextLayer, px: u32) -> Result<Option<TextInk>, String> {
+    if layer.content.trim().is_empty() {
+        return Ok(None);
+    }
     let font = load_font(&resolve_font_path(&layer.font)?)?;
-    let scale = freetype_equivalent_scale(&font, key.px as f32);
+    let scale = freetype_equivalent_scale(&font, px as f32);
     let scaled = font.as_scaled(scale);
 
     // Pass 1 — lay the glyphs out along a baseline at y = 0, x growing by
@@ -651,11 +674,8 @@ fn rasterise(layer: &TextLayer, key: &LayerKey) -> Result<RgbaImage, String> {
         pen_x += scaled.h_advance(id);
         prev = Some(id);
     }
-    // Every character was whitespace or had no outline — nothing to draw, and
-    // an ink box of zero extent to centre. Same transparent layer as empty
-    // text, for the same reason.
     if outlines.is_empty() {
-        return Ok(canvas);
+        return Ok(None);
     }
 
     // Pass 2 — the union of every glyph's own pixel bounds: the ink box.
@@ -670,12 +690,75 @@ fn rasterise(layer: &TextLayer, key: &LayerKey) -> Result<RgbaImage, String> {
         max_x = max_x.max(b.max.x);
         max_y = max_y.max(b.max.y);
     }
+    Ok(Some(TextInk {
+        outlines,
+        min: (min_x, min_y),
+        max: (max_x, max_y),
+    }))
+}
+
+/// The em size [`render_text_layer`] rasterises `layer` at on a `canvas_h`-tall
+/// canvas. One expression, named, because the box measurement below and the
+/// rasteriser must agree on it exactly.
+fn layer_px(layer: &TextLayer, canvas_h: u32) -> u32 {
+    (layer.size * canvas_h as f64).round().max(1.0) as u32
+}
+
+/// **B-130 / D-262 — a title's real on-canvas footprint**: the width and
+/// height of its rendered ink, each as a fraction of the composition.
+///
+/// This is what [`crate::chroma::edit::clip_geometry`] reports as a text
+/// clip's `natural_width`/`natural_height`, and therefore the size of the
+/// selection box the Edit tab's `TransformOverlay` draws and the rect
+/// `useCanvasClipPick` hit-tests. It is measured with [`lay_out_text`] — the
+/// same walk [`rasterise`] draws with — so the box is around the glyphs that
+/// are actually there, at the same size, for the same font.
+///
+/// **`None` when there is no ink** (empty content, or an all-whitespace
+/// title): the caller decides what to show for a title that draws nothing,
+/// which is a UI question, not a measurement one. A font that cannot be
+/// loaded is a real `Err`, propagated rather than silently reported as
+/// unmeasurable.
+///
+/// The fractions are NOT clamped to 1.0. A title whose text is wider than the
+/// frame really does overflow it — the export's `drawtext` crops it at the
+/// frame edge exactly as the preview does — and a box that silently stopped at
+/// the frame edge would be the same "the box does not match the text" defect
+/// this function exists to fix, in the other direction.
+pub fn text_layer_ink_fraction(
+    layer: &TextLayer,
+    canvas_w: u32,
+    canvas_h: u32,
+) -> Result<Option<(f64, f64)>, String> {
+    if canvas_w == 0 || canvas_h == 0 {
+        return Ok(None);
+    }
+    let Some(ink) = lay_out_text(layer, layer_px(layer, canvas_h))? else {
+        return Ok(None);
+    };
+    Ok(Some((
+        ink.width() as f64 / canvas_w as f64,
+        ink.height() as f64 / canvas_h as f64,
+    )))
+}
+
+/// The uncached body of [`render_text_layer`].
+fn rasterise(layer: &TextLayer, key: &LayerKey) -> Result<RgbaImage, String> {
+    let (canvas_w, canvas_h) = key.canvas;
+    let mut canvas = RgbaImage::new(canvas_w, canvas_h);
+    // Nothing to draw (empty text, or no outlined glyph) is a real, ordinary
+    // state — a fully transparent layer, not an error. See `lay_out_text`.
+    let Some(ink) = lay_out_text(layer, key.px)? else {
+        return Ok(canvas);
+    };
+    let outlines = &ink.outlines;
+
     // Translate the ink box's own centre onto the canvas's centre.
-    let off_x = (canvas_w as f32 - (max_x - min_x)) / 2.0 - min_x;
-    let off_y = (canvas_h as f32 - (max_y - min_y)) / 2.0 - min_y;
+    let off_x = (canvas_w as f32 - ink.width()) / 2.0 - ink.min.0;
+    let off_y = (canvas_h as f32 - ink.height()) / 2.0 - ink.min.1;
 
     let (r, g, b) = key.rgb;
-    for o in &outlines {
+    for o in outlines {
         let bounds = o.px_bounds();
         o.draw(|gx, gy, coverage| {
             // `draw`'s coordinates are relative to this glyph's own
@@ -706,6 +789,133 @@ fn rasterise(layer: &TextLayer, key: &LayerKey) -> Result<RgbaImage, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B-130/D-262 — a title's measured footprint is a SMALL BOX, not the
+    /// frame.
+    ///
+    /// This is the whole bug, at the layer it was actually wrong:
+    /// `clip_geometry` reported `1.0 x 1.0` for every title, so a 12%-of-frame
+    /// -height title got an on-canvas selection box spanning the entire
+    /// composition ("why it has such a big frame"). The numbers here are the
+    /// owner's own real title — the default `sans-bold` at `size: 0.12` on a
+    /// 1080x1920 portrait frame.
+    #[test]
+    fn a_titles_ink_is_a_small_box_not_the_whole_frame() {
+        let layer = TextLayer {
+            content: "Title".into(),
+            size: 0.12,
+            ..Default::default()
+        };
+        let (w, h) = text_layer_ink_fraction(&layer, 1080, 1920)
+            .expect("measuring a catalogue font should not fail")
+            .expect("real text has real ink");
+
+        // The old answer was 1.0 for both. Cap height at `size: 0.12` of a
+        // 1920-tall frame is ~230 px against 1920 — well under a fifth of the
+        // frame — and five glyphs of it are nowhere near 1080 px across.
+        assert!(h < 0.2, "ink height was {h} of the frame, expected << 1.0");
+        assert!(w < 0.5, "ink width was {w} of the frame, expected << 1.0");
+        assert!(w > 0.0 && h > 0.0, "ink must have real extent, got {w}x{h}");
+    }
+
+    /// The measurement tracks the two things that actually change the drawn
+    /// glyphs — how big the type is, and how much of it there is. A box that
+    /// did not move with these would be a constant dressed up as a
+    /// measurement.
+    #[test]
+    fn ink_scales_with_font_size_and_grows_with_content() {
+        let small = TextLayer {
+            content: "Title".into(),
+            size: 0.06,
+            ..Default::default()
+        };
+        let big = TextLayer {
+            size: 0.12,
+            ..small.clone()
+        };
+        let longer = TextLayer {
+            content: "Title Title".into(),
+            ..big.clone()
+        };
+
+        let m = |l: &TextLayer| text_layer_ink_fraction(l, 1000, 1000).unwrap().unwrap();
+        let (sw, sh) = m(&small);
+        let (bw, bh) = m(&big);
+        let (lw, _) = m(&longer);
+
+        // Doubling `size` doubles the ink in both axes, to within the rounding
+        // `layer_px` does and the glyph rasteriser's own pixel bounds.
+        assert!((bh / sh - 2.0).abs() < 0.05, "height ratio was {}", bh / sh);
+        assert!((bw / sw - 2.0).abs() < 0.05, "width ratio was {}", bw / sw);
+        // More text is wider; the height (cap/descender extent) is unchanged.
+        assert!(lw > bw, "longer content should be wider: {lw} vs {bw}");
+    }
+
+    /// An empty title — its ordinary state the moment it is added, before
+    /// anything is typed — has no ink to measure. `None`, not an error and not
+    /// a zero-size box: what to draw for a title that draws nothing is the
+    /// caller's decision (`clip_geometry` falls back to the whole frame, so
+    /// the clip keeps a grabbable move handle).
+    #[test]
+    fn an_empty_title_has_no_ink_to_measure() {
+        for content in ["", "   "] {
+            let layer = TextLayer {
+                content: content.into(),
+                ..Default::default()
+            };
+            assert!(
+                text_layer_ink_fraction(&layer, 1000, 1000)
+                    .expect("empty text is not an error")
+                    .is_none(),
+                "{content:?} should measure as no ink"
+            );
+        }
+    }
+
+    /// The measurement and the rasteriser must agree — they are the same walk
+    /// (`lay_out_text`), and this pins that they stay so. The drawn glyphs'
+    /// own bounding box, found by scanning the rendered alpha, must match what
+    /// `text_layer_ink_fraction` reported for the same layer and canvas.
+    #[test]
+    fn the_measured_ink_box_is_where_the_glyphs_actually_land() {
+        let (w, h) = (400u32, 200u32);
+        let layer = TextLayer {
+            content: "AFTER".into(),
+            size: 0.2,
+            ..Default::default()
+        };
+        let (fw, fh) = text_layer_ink_fraction(&layer, w, h).unwrap().unwrap();
+        let img = render_text_layer(&layer, w, h).expect("rasterise");
+
+        let (mut min_x, mut min_y, mut max_x, mut max_y) = (u32::MAX, u32::MAX, 0u32, 0u32);
+        for (x, y, px) in img.enumerate_pixels() {
+            if px[3] > 0 {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+        let drawn_w = (max_x - min_x + 1) as f64 / w as f64;
+        let drawn_h = (max_y - min_y + 1) as f64 / h as f64;
+        // Within a pixel or so each way: `px_bounds` is the outline's own
+        // bounding box and the drawn alpha is that box's antialiased coverage.
+        assert!(
+            (drawn_w - fw).abs() < 2.0 / w as f64,
+            "measured width {fw} vs drawn {drawn_w}"
+        );
+        assert!(
+            (drawn_h - fh).abs() < 2.0 / h as f64,
+            "measured height {fh} vs drawn {drawn_h}"
+        );
+
+        // And it is CENTRED — the property `TransformOverlay`'s box relies on
+        // to sit over the glyphs rather than merely be the right size.
+        let cx = (min_x + max_x) as f64 / 2.0;
+        let cy = (min_y + max_y) as f64 / 2.0;
+        assert!((cx - w as f64 / 2.0).abs() < 2.0, "ink centre x was {cx}");
+        assert!((cy - h as f64 / 2.0).abs() < 2.0, "ink centre y was {cy}");
+    }
 
     /// Every catalogue key resolves to a real file on this machine (v1's
     /// platform scope is macOS ARM). A failure here is a genuine finding —

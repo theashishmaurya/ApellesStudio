@@ -65,7 +65,6 @@ import {
   GENERATOR_LABELS,
   clipFromDraggedGenerator,
   timelineFps,
-  videoTrackIndex,
   type DraggedGenerator,
 } from './timeline';
 
@@ -185,7 +184,7 @@ function RailButton({
 const GENERATORS: GeneratorEntry[] = [
   {
     kind: 'title',
-    blurb: 'A text title. Drop it above your video tracks; type into it in the Inspector.',
+    blurb: 'A text title. Adding it makes a new video track above your picture; type into it in the Inspector.',
   },
   {
     kind: 'adjustment',
@@ -200,22 +199,26 @@ export function EditLibraryRail() {
   const playhead = useEditorTimelineStore((s) => s.playhead);
   const [error, setError] = useState<string | null>(null);
 
-  /** Place a generator at the playhead on the topmost video track — the exact
-   *  behaviour (and the exact ops) the Title/Adjust toolbar buttons had, moved
-   *  here with them.
+  /** Place a generator at the playhead on a **brand-new video track above
+   *  everything else** (`onNewVideoTrack`, one atomic op — see that field's own
+   *  doc on the `add_clip` op).
    *
-   *  **Track 0, deliberately.** Track index order is compositing z-order
-   *  (D-086, lower index = on top), so the topmost video track is where a
-   *  title composites over the picture and where an adjustment clip reaches
-   *  everything below it — which is what both reference entries describe
-   *  ("above your video tracks" / "on a higher video track over your clips").
+   *  **B-129 — this used to target `videoTrackIndex(timeline)`, the first
+   *  EXISTING video track,** and that was the bug the owner hit: on any real
+   *  project that track is full of footage, so a title either landed in a gap
+   *  between two shots — where it renders over BLACK rather than over the
+   *  picture, which is exactly what their live project contained — or was
+   *  refused outright for want of room. Their words: "it should be added on a
+   *  new timeline meaning a new track instead of adding on top of other."
    *
-   *  `ripple: false`, so it lands in whatever space is there and simply does
-   *  not place if that space is occupied — `add_clip`'s own documented
-   *  non-ripple contract, never silently pushing the edit around. That refusal
-   *  used to be SILENT (the pre-rail toolbar button just did nothing, which is
-   *  half of what the owner hit when a title "didn't place properly"); it now
-   *  says so. */
+   *  A new track is also what both reference entries describe ("drag it into
+   *  the timeline **above your video tracks**" for a title; "place it on a
+   *  **higher** video track over your clips" for an adjustment clip), and it
+   *  removes a whole failure mode: an empty track always has room, so this
+   *  button can no longer refuse to place anything.
+   *
+   *  Placement is still `ripple: false` — an overlay is added ALONGSIDE the
+   *  edit, never by pushing it around. */
   const addAtPlayhead = (kind: DraggedGenerator['kind']) => {
     setError(null);
     if (!timeline) return;
@@ -224,17 +227,16 @@ export function EditLibraryRail() {
       setError(built.error);
       return;
     }
-    const track = Math.max(videoTrackIndex(timeline), 0);
-    applyOp({ kind: 'add_clip', track, clip: built, startFrame: playhead });
+    applyOp({ kind: 'add_clip', track: 0, clip: built, startFrame: playhead, onNewVideoTrack: true });
+    // The new track is index 0 by construction, so the clip is always there —
+    // but this reads it back rather than asserting, for the same reason
+    // `selectDroppedGenerator` does: pointing the Inspector at a clip that was
+    // never created is worse than leaving the selection alone.
     const after = useEditorTimelineStore.getState().timeline;
-    if (after?.tracks[track]?.clips.some((c) => c.id === built.id)) {
-      setSelection([{ track, id: built.id }]);
+    if (after?.tracks[0]?.clips.some((c) => c.id === built.id)) {
+      setSelection([{ track: 0, id: built.id }]);
     } else {
-      setError(
-        `There is already a clip at the playhead on the top video track — move the playhead, or drag the ${GENERATOR_LABELS[
-          kind
-        ].toLowerCase()} onto an empty spot.`,
-      );
+      setError(`Could not add the ${GENERATOR_LABELS[kind].toLowerCase()} — the timeline refused the edit.`);
     }
   };
 

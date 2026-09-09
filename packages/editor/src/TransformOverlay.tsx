@@ -103,13 +103,20 @@
  * nothing — one box per meaning, never a third stroke on top of the pair.
  *
  * **D-211 follow-up — a text clip gets the box and its MOVE (reposition)
- * drag, never the four corner handles.** `chroma_timeline_clip_geometry`
- * already answers correctly for a text clip (its natural footprint is the
- * whole composition — `chroma::edit::clip_geometry`'s own `is_text()`
- * branch), so the box itself needs no special-casing at all: `resolveClip
- * BoxTransform` reads the same `position_x`/`position_y`/`scale` fields
- * either way, and a title's `scale` is simply always its identity `1`
- * (never set by anything that writes to a text clip). The corner handles ARE
+ * drag, never the four corner handles.** The box itself needs no
+ * special-casing here at all: `resolveClipBoxTransform` reads the same
+ * `position_x`/`position_y`/`scale` fields either way, and a title's `scale`
+ * is simply always its identity `1` (never set by anything that writes to a
+ * text clip). Its SIZE comes from `chroma_timeline_clip_geometry` like every
+ * other clip's — **B-130/D-262: that command now reports a title's real
+ * rendered INK box**, measured by the same advance-and-kern walk that
+ * rasterises the glyphs, rather than the whole composition. It used to report
+ * the whole frame, on the true-but-irrelevant fact that a text layer's RGBA
+ * buffer is allocated at composition size; the buffer is almost entirely
+ * transparent, so a modest 12%-of-frame-height title drew a selection box
+ * spanning the entire frame. Nothing here changed for that fix — this
+ * component was already asking the right question, and was being given a
+ * wrong answer. The corner handles ARE
  * special-cased, and had to be: a scale drag's `commit` writes `scale`
  * through the SAME `set_clip_transform` op a video clip's does, and unlike
  * the MCP tool of the same name, that op's own store reducer

@@ -39,9 +39,22 @@ const FPS = 24;
  *  overlay) mounts at all. */
 const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
 
-// D-211 — `clip_geometry`'s own `is_text()` branch: a text clip's natural
-// footprint is exactly the composition, `naturalWidth`/`naturalHeight` both 1.
-const TEXT_NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
+// B-130/D-262 — `clip_geometry`'s own `is_text()` branch: a title's natural
+// footprint is its rendered INK box as a fraction of the composition, measured
+// Rust-side by `chroma::text::text_layer_ink_fraction` from the same
+// advance-and-kern walk that rasterises the glyphs. It used to be the whole
+// frame (`1, 1`), which drew a full-frame selection box around a modest title.
+//
+// These are the real, measured numbers for this fixture's own title — the five
+// caps of "AFTER" in the default `sans-bold` at `size: 0.12` on a 1000x500
+// canvas, which `text_layer_ink_fraction` answers as exactly this pair (200 px
+// of ink across, 43 px of cap height). Nothing in jsdom
+// can measure a glyph, so the command is stubbed with what the Rust side
+// really answers — `app/src-tauri/src/chroma/text.rs` owns that half, and
+// `the_measured_ink_box_is_where_the_glyphs_actually_land` there pins the
+// measurement against the actual rasterised alpha. What THIS file tests is
+// that the overlay draws the box the geometry reports, whatever that is.
+const TEXT_NATURAL_INK = { naturalWidth: 0.2, naturalHeight: 0.086 };
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
@@ -49,12 +62,12 @@ vi.mock('@tauri-apps/api/core', () => ({
     chroma_timeline_composition_size: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,
-      ...TEXT_NATURAL_FULL_FRAME,
+      ...TEXT_NATURAL_INK,
     }),
     chroma_timeline_clip_geometry: () => ({
       compWidth: CANVAS_W,
       compHeight: CANVAS_H,
-      ...TEXT_NATURAL_FULL_FRAME,
+      ...TEXT_NATURAL_INK,
     }),
     chroma_project_get_settings: () => ({ width: CANVAS_W, height: CANVAS_H }),
     chroma_audio_play: () => undefined,
@@ -168,12 +181,35 @@ afterEach(() => {
 });
 
 describe("D-211 follow-up — a text clip's on-canvas box", () => {
-  it('renders a full-frame box (its natural footprint is the whole composition) with zero corner handles', async () => {
+  it('B-130 — sizes the box to the title’s reported INK, not the whole frame, with zero corner handles', async () => {
     const box = await mountWithSelected(textClip());
     const rect = boxRect(box);
-    expect(rect.width).toBeCloseTo(CANVAS_W, 3);
-    expect(rect.height).toBeCloseTo(CANVAS_H, 3);
+
+    // The box is the reported footprint mapped onto the canvas, exactly as it
+    // is for a video clip — no text-specific sizing anywhere in the overlay.
+    expect(rect.width).toBeCloseTo(TEXT_NATURAL_INK.naturalWidth * CANVAS_W, 3);
+    expect(rect.height).toBeCloseTo(TEXT_NATURAL_INK.naturalHeight * CANVAS_H, 3);
+
+    // The regression this test exists for, stated in the terms the owner saw
+    // it in ("why it has such a big frame"): a modest title must NOT get a box
+    // spanning the composition. Asserted as its own expectation rather than
+    // left implicit in the numbers above, so a future change that quietly
+    // reverts to the full frame fails on the reason rather than on an
+    // arithmetic mismatch.
+    expect(rect.width).toBeLessThan(CANVAS_W / 2);
+    expect(rect.height).toBeLessThan(CANVAS_H / 2);
+
     expect(box.querySelectorAll('[data-transform-handle]').length).toBe(0);
+  });
+
+  it('B-130 — the box stays CENTRED on the composition, where the glyphs are rasterised', async () => {
+    const box = await mountWithSelected(textClip());
+    const rect = boxRect(box);
+    // `rasterise` translates the ink box's own centre onto the canvas centre,
+    // so an un-repositioned title's box must be centred too — a correctly
+    // SIZED box in the wrong place would be no better than the full-frame one.
+    expect(rect.left + rect.width / 2).toBeCloseTo(CANVAS_W / 2, 3);
+    expect(rect.top + rect.height / 2).toBeCloseTo(CANVAS_H / 2, 3);
   });
 
   it('the body drag still works — a MOVE commits position_x/position_y via set_clip_transform', async () => {

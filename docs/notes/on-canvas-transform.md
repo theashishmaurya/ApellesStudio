@@ -393,6 +393,11 @@ B-093 for the failure it fixes.
    (D-136/D-193), which is exactly why `TransformOverlay` can draw its box today — so the
    frontend can derive every visible layer's rect itself (`canvasPick.ts`, mirroring
    `Timeline::resolve_visible_video_layers_at`'s own filtering and topmost-first order).
+   **B-130/D-262 later found the one clip kind whose reported footprint was wrong:** a
+   TITLE claimed the whole composition (its layer buffer's size, not its ink), so a
+   selected title swallowed every press on the picture and nothing under it could be
+   picked. `clip_geometry` reports a title's measured ink box now; this machinery was
+   correct throughout and needed no change.
    The real difficulty turned out to be elsewhere: a z-ordered hit layer under the
    overlay **cannot work**, because a full-frame clip's own transform box is full-bleed
    and swallows every press once selected. `useCanvasClipPick.ts` decides per press in
