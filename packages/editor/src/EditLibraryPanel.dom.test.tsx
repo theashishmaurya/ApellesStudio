@@ -329,21 +329,22 @@ describe('D-263 — click-to-add at the playhead, and its refusal', () => {
     await waitFrames(2);
 
     const state = useEditorTimelineStore.getState();
+    // D-262/B-129 — on a brand-new video track at index 0, the top of the
+    // compositing stack, so a title always has room and always composites over
+    // the picture rather than into a gap between two shots.
     const added = state.timeline!.tracks[0].clips.find((c) => c.start_frame === 200);
-    expect(added, 'placed at the playhead on the top video track').toBeTruthy();
+    expect(added, 'placed at the playhead on a new top video track').toBeTruthy();
     expect(state.selection.map((s) => s.id)).toEqual([added!.id]);
   });
 
-  /** B-131 — the case that WOULD show the refusal note (a playhead already
-   *  inside a clip on the top video track) does not refuse at all today: the
-   *  `add_clip` op splices the new clip in at the given frame and produces a
-   *  same-track OVERLAP, which is a state D-104 forbids the move path from
-   *  ever creating. That is a pre-existing defect in the op layer, not in this
-   *  panel — `addAtPlayhead` is the same code D-248 wrote, moved here — so it
-   *  is written up in `docs/BUGS.md` rather than fixed inside a layout change,
-   *  and NOT pinned here as if it were correct behaviour. What is pinned is
-   *  that the add path lands where it says it does, above. */
-  it('7. an add onto free space at the playhead leaves the existing clip untouched', async () => {
+  /** D-262/B-129 (landed the same night, merged into this panel with the code
+   *  it rewrote): an add makes its own new video track, so it never has to
+   *  compete for room and the old occupied-playhead refusal is unreachable
+   *  from here. `TimelinePane.drop.dom.test.tsx` 10-12 pin that behaviour
+   *  itself; what this pins is that the EFFECTS library reaches it too, from
+   *  the docked panel. (The op-level gap that refusal was guarding is still
+   *  real for an explicit track+frame from MCP — B-131.) */
+  it('7. an add from the Effects library makes its own track and leaves the edit untouched', async () => {
     await mountAll();
     actSync(() => useEditorTimelineStore.setState({ playhead: 300 }));
     await pick('effects');
@@ -353,9 +354,12 @@ describe('D-263 — click-to-add at the playhead, and its refusal', () => {
     actSync(() => add!.click());
     await waitFrames(2);
 
-    const track0 = useEditorTimelineStore.getState().timeline!.tracks[0];
-    const original = track0.clips.find((c) => c.id === 'v')!;
-    expect(original.start_frame, 'a non-rippling add moves nothing else').toBe(0);
-    expect(track0.clips.find((c) => c.start_frame === 300)?.adjustment).toBeTruthy();
+    const tracks = useEditorTimelineStore.getState().timeline!.tracks;
+    expect(tracks, 'a new video track above the picture').toHaveLength(2);
+    expect(tracks[0].clips[0].adjustment).toBeTruthy();
+    expect(tracks[0].clips[0].start_frame).toBe(300);
+    // The existing edit is renumbered, never moved or overwritten.
+    expect(tracks[1].clips.map((c) => c.id)).toEqual(['v']);
+    expect(tracks[1].clips[0].start_frame).toBe(0);
   });
 });

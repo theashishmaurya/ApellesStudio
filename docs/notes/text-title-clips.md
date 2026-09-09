@@ -373,10 +373,18 @@ started.
   *rasteriser* as well as the font. That needs the export compiler to stop
   being pure (it would need to write a file), which is a real design decision
   of its own, hence Phase 2.
-- **On-canvas drag of a title** — `TransformOverlay.tsx` was off-limits this
-  pass (concurrent work). `chroma_timeline_clip_geometry` already answers
-  correctly for a text clip (natural footprint = the whole composition), so
-  this should be close to free.
+- ~~**On-canvas drag of a title**~~ — **done** (D-211 follow-up; the box and its
+  MOVE drag, never the corner handles, since a title's `scale` is pinned
+  server-side). The claim this entry made on the way — that
+  `chroma_timeline_clip_geometry` "already answers correctly for a text clip
+  (natural footprint = the whole composition)" — **was wrong, and shipped as
+  B-130.** That is what the *buffer* is: `render_text_layer` allocates a
+  composition-sized RGBA canvas and draws a small centred ink box into it. As a
+  *footprint* it gave every title a full-frame selection box, and made a selected
+  title swallow every canvas click meant for the footage beneath it. Fixed in
+  **D-262**: `clip_geometry` reports the measured ink box
+  (`chroma::text::text_layer_ink_fraction`, the same glyph walk `rasterise`
+  draws with). An adjustment clip really is full-frame and still reports `1 x 1`.
 - **Hiding the unsupported Transform rows** for a text clip in
   `ClipInspectorPanel.tsx` — same reason it is not done, same "close to free".
 

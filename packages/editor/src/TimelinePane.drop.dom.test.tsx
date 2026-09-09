@@ -57,9 +57,13 @@ import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import { EditLibraryRail } from './EditLibraryRail';
 import { EditLibraryPanel } from './EditLibraryPanel';
+import { useHistoryStore } from '@chroma/history';
 import {
   CHROMA_GENERATOR_DRAG_MIME,
   CHROMA_MEDIA_DRAG_MIME,
+  applyOp as applyOpPure,
+  checkAddClip,
+  clipFromDraggedGenerator,
   isTextClip,
   type DraggedMedia,
   type Timeline,
@@ -448,5 +452,157 @@ describe('B-117 / D-248 — a Title is a real drag source and a real drop', () =
       { kind: 'video', clips: ['v'] },
       { kind: 'audio', clips: ['a'] },
     ]);
+  });
+});
+
+/**
+ * B-129 — "Add Title" put the title on whatever track was already there.
+ *
+ * Reported live by the owner with a screenshot, and confirmed against their
+ * real project before this suite was written: a title sitting on video track 0
+ * wedged between two shots, and a second one sitting on an AUDIO track, where
+ * it composites into nothing at all.
+ *
+ * Two distinct defects, one per test below. The DROP path (tests 5-9 above)
+ * was always right; these cover the two ways in that were not.
+ */
+describe('B-129 — adding a Title targets a NEW video track, never an occupied or audio one', () => {
+  /** Select Titles on the rail and press the library's click-to-add button —
+   *  the exact gesture the owner used. D-263 split those two across the rail
+   *  and the DOCKED panel it switches (they were one popover when B-129 was
+   *  filed), so this mounts both, exactly as the shell does. */
+  async function addTitleAtPlayhead(playhead = 0): Promise<void> {
+    actSync(() =>
+      useEditorTimelineStore.setState({
+        timeline: fixture(),
+        openProjectKey: '/projects/drop-fixture.chroma',
+        status: 'ready',
+        playhead,
+        selection: [],
+        selectedGap: null,
+        libraryMode: 'sources',
+      }),
+    );
+    ui = mount(React.createElement(LibraryHarness), { strictMode: true });
+    await waitFrames(2);
+    const trigger = document.querySelector<HTMLElement>('[data-chroma-rail-button="titles"]');
+    actSync(() => trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+    await waitFrames(2);
+    const add = document.querySelector<HTMLElement>('[aria-label="Add title at the playhead"]');
+    expect(add, 'the Titles library has a click-to-add button').not.toBeNull();
+    actSync(() => add!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+    await waitFrames(2);
+  }
+
+  it('10. click-to-add makes a NEW video track above the picture instead of sharing track 0', async () => {
+    await addTitleAtPlayhead(0);
+
+    const tracks = useEditorTimelineStore.getState().timeline!.tracks;
+    // A third track, at index 0 — the top of the compositing stack (D-086).
+    expect(tracks).toHaveLength(3);
+    expect(tracks[0].kind).toBe('video');
+    expect(tracks[0].clips).toHaveLength(1);
+    expect(isTextClip(tracks[0].clips[0])).toBe(true);
+    // The existing edit is untouched and simply renumbered — nothing was
+    // moved, overwritten or rippled to make room for an overlay.
+    expect(layout().slice(1)).toEqual([
+      { kind: 'video', clips: ['v'] },
+      { kind: 'audio', clips: ['a'] },
+    ]);
+    // Selected on the track it really landed on, so the Inspector's Title
+    // section opens on it.
+    expect(useEditorTimelineStore.getState().selection).toEqual([
+      { track: 0, id: tracks[0].clips[0].id },
+    ]);
+  });
+
+  it('11. …even when the playhead sits over an existing clip, which used to be a silent refusal', async () => {
+    // Frame 48 is the middle of the 96-frame clip `v` on track 0. The old
+    // behaviour targeted track 0, found the space occupied, placed nothing and
+    // showed an error; the whole point of a new track is that there is always
+    // room on it.
+    await addTitleAtPlayhead(48);
+
+    const tracks = useEditorTimelineStore.getState().timeline!.tracks;
+    expect(tracks).toHaveLength(3);
+    expect(tracks[0].clips[0].start_frame).toBe(48);
+    expect(document.querySelector('[data-chroma-library-error]'), 'no refusal').toBeNull();
+  });
+
+  it('12. creating the track and placing the clip is ONE history entry, so one Undo covers both', async () => {
+    actSync(() => useHistoryStore.getState().clear());
+    await addTitleAtPlayhead(0);
+    expect(useEditorTimelineStore.getState().timeline!.tracks).toHaveLength(3);
+
+    // The store pushes one entry per applied op (D-051), so the entry count IS
+    // the Undo count. Three chained ops (`add_track` + `move_track` +
+    // `add_clip`, the shape the drop path uses) would take three Undos and
+    // leave an empty track behind after the first — this op does the whole
+    // thing at once.
+    const stack = useHistoryStore.getState().undoStack;
+    expect(stack).toHaveLength(1);
+    // …and the entry says a track was created, so the history list does not
+    // read as a plain clip add whose Undo mysteriously removes a track.
+    expect(stack[0].label).toBe('Add "Title" on a new video track');
+
+    // What that single Undo restores, asserted on the op rather than through
+    // the store's IPC round trip (`restoreSnapshot` re-reads the timeline from
+    // Rust, which this suite does not stub — see the file header's tier note).
+    const before = fixture();
+    const title = clipFromDraggedGenerator({ kind: 'title' }, FPS);
+    if ('error' in title) throw new Error(title.error);
+    const after = applyOpPure(before, {
+      kind: 'add_clip',
+      track: 0,
+      clip: title,
+      startFrame: 0,
+      onNewVideoTrack: true,
+    });
+    expect(after.tracks).toHaveLength(3);
+    expect(before.tracks, 'the op is pure — the pre-state is the undo target').toHaveLength(2);
+  });
+
+  it('13. the reducer itself refuses a title on an audio track, whatever the caller', async () => {
+    // The other half of B-129: the ONLY track-kind guard used to live in
+    // `TimelinePane`'s `onDrop`, so any other caller — the MCP tool, a future
+    // one — walked straight past it and landed a text clip on an audio track,
+    // which is what the owner's real project contained. The gate is in
+    // `applyOp` now, so this is asserted against the op directly rather than
+    // through any one UI path.
+    const before = fixture();
+    const title = clipFromDraggedGenerator({ kind: 'title' }, FPS);
+    if ('error' in title) throw new Error(title.error);
+
+    // Track 1 is the audio track.
+    expect(checkAddClip(before, 1, title).ok).toBe(false);
+    expect(checkAddClip(before, 1, title).reason).toContain('video track');
+    const after = applyOpPure(before, { kind: 'add_clip', track: 1, clip: title, startFrame: 0 });
+    expect(after, 'a refused add is a no-op, not a half-applied one').toBe(before);
+
+    // …and the same op on the VIDEO track is still allowed, so the gate is a
+    // kind check and not a blanket refusal of titles.
+    expect(checkAddClip(before, 0, title).ok).toBe(true);
+    const ok = applyOpPure(before, { kind: 'add_clip', track: 0, clip: title, startFrame: 200 });
+    expect(ok.tracks[0].clips).toHaveLength(2);
+  });
+
+  it('14. an adjustment clip is gated and re-homed by exactly the same rules', async () => {
+    const before = fixture();
+    const adj = clipFromDraggedGenerator({ kind: 'adjustment' }, FPS);
+    if ('error' in adj) throw new Error(adj.error);
+
+    expect(checkAddClip(before, 1, adj).ok).toBe(false);
+    expect(applyOpPure(before, { kind: 'add_clip', track: 1, clip: adj, startFrame: 0 })).toBe(before);
+
+    const onTop = applyOpPure(before, {
+      kind: 'add_clip',
+      track: 0,
+      clip: adj,
+      startFrame: 0,
+      onNewVideoTrack: true,
+    });
+    expect(onTop.tracks).toHaveLength(3);
+    expect(onTop.tracks[0].kind).toBe('video');
+    expect(onTop.tracks[0].clips[0].adjustment).toBeTruthy();
   });
 });

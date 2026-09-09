@@ -25080,6 +25080,55 @@ Zoom); nested tool slots with the corner triangle (five buttons fit); and a
 per-tool custom cursor bitmap, still the thing neither D-250 nor this pass will
 ship (`trimModeCursor`'s standard keywords remain the compromise).
 
+---
+
+## D-262 — Adding a title creates its own video track, and a title's on-canvas box is its real ink: two live bugs, fixed at the layer each actually lived on
+
+**Context.** Both reported live by the owner against the running app, from one screenshot, and both confirmed against their real project (`perf-comparison-reel-v3.chroma`, read via `get_timeline`) before any code was written — B-129 and B-130 in `docs/BUGS.md` carry the evidence.
+
+---
+
+### Decision 1 — the track-kind rule belongs in the op, not in one caller
+
+B-129's real defect is not "the Add Title button picked the wrong track." It is that **`add_clip` never had a track-kind rule at all**, and the one place that did — `TimelinePane.tsx`'s `onDrop`, added by D-248 — is a UI event handler. Everything that was not a drop (the library rail's own button, `editor_add_text_clip`, any future caller) walked straight past it, which is how a text clip ended up on an audio track in a real project. `editor_add_text_clip`'s own failure string even claimed the reducer checked this, which is how the gap survived review.
+
+**Options.**
+
+1. *Fix the two callers.* Rejected: it is the third instance of the same class (D-248 wrote the rule for the drop, D-229 wrote a parallel one for captions), and it leaves the next caller to rediscover it.
+2. *A general clip-kind/track-kind matrix in the reducer.* Rejected as inventing rules the model has never had, on the back of a report about one of them. A media clip on an audio track is an ordinary, intentional edit — that is what a detached audio clip IS.
+3. **Chosen: one narrow predicate, in the op.** `checkAddClip(tl, track, clip)` says exactly one thing: a *generated picture clip* (a title, D-211; an adjustment clip, D-230) belongs on a `'video'` track. Shaped like the `checkTransition`/`checkEditIn`/`LinkCheck` family this file already has, for their stated reason — `applyOp` refuses on it, and the MCP tools ask it for the message, so the guard and the explanation cannot drift.
+
+### Decision 2 — "add a title" means a NEW track, not the topmost existing one
+
+The GUI targeted `videoTrackIndex(timeline)`. D-248's comment reasoned correctly about z-order and then equated "on top" with "the first existing video track" — which on any real project is full of footage. A title that lands in a *gap* in that track renders over **black**, not over the picture; that is not a smaller version of the bug, it is the bug.
+
+Owner: *"it should be added on a new timeline meaning a new track instead of adding on top of other."* The reference this repo already scraped agrees, in Blackmagic's own words: *"drag it into the timeline **above your video tracks**"* (titles) and *"place it on a **higher** video track over your clips"* (adjustment clips) — `scratch/resolve-reference/resolve-edit-features.json`, the same two quotes D-248 cited and then did not follow for its click path.
+
+**Chosen:** `add_clip` gains `onNewVideoTrack`, which unshifts an empty video track at index 0 and places there. `unshift` rather than a fresh rule of its own, because D-239's `resolvePlaceOnTopTrack` already does exactly that for the same "no room above" case — the two ops agree on what "on top" means instead of each having an opinion.
+
+**One op, not three,** deliberately. The drop path builds the same outcome as `add_track` + `move_track` + `add_clip`, which is three history entries and therefore three Undos for one gesture, leaving an empty track behind after the first. This is the reasoning D-129 used to fold a dropped source's audio half into `add_clip`, applied again. A ripple is force-disabled on this branch: an empty track is already all room, and `propagateSyncLockRipple` would otherwise shove real clips on other tracks aside to make space in it.
+
+**Both interfaces, same op** (CLAUDE.md's human-AND-AI rule). `track` on `editor_add_text_clip`/`editor_add_adjustment_clip` became **optional**, defaulting to the same `onNewVideoTrack` the button uses. This deletes a whole class of agent error: the old docstring had to teach a three-call `editor_add_track` → `editor_move_track` → `editor_add_text_clip` dance to get a title above existing footage, and an agent that skipped it produced precisely the clip the owner screenshotted. Both tools now report `track`, `createdTrack` and `trackCount`, because inserting at 0 renumbers every existing track.
+
+### Decision 3 — a title's on-canvas box is its ink, measured, not the frame
+
+B-130 looked like a considered decision and was not. `clip_geometry` returned `1.0 x 1.0` for a text clip on D-211's stated reasoning — "its layer is generated at exactly the composition's size, so its natural footprint IS the whole frame." True about the *buffer*; irrelevant to the question. `rasterise` allocates a composition-sized canvas and draws a small centred ink box into it; the rest is transparent. D-211's real decision about the on-canvas box was to hide the corner *handles*; `docs/notes/text-title-clips.md` listed the box itself as deferred work that "should be close to free." So the size was inherited from an implementation detail and never weighed — and a test named `renders a full-frame box (its natural footprint is the whole composition)` then documented the side-effect as intent.
+
+Two options were on the table:
+
+- *(b) Keep the full-frame footprint and re-style it* as a "positioning canvas" — a dashed or lighter outline, or just an anchor point. Rejected. It preserves reasoning that does not survive inspection: nothing about a title's positioning needs a rectangle the size of the frame, and the second half of the bug is unfixable this way — `useCanvasClipPick` hit-tests the same footprint, so a selected title was claiming the ENTIRE canvas for click-to-select and no click could reach the footage beneath it. A restyled full-frame box still swallows every click.
+- **(a) Chosen: report the real ink box.** `chroma::text::text_layer_ink_fraction` measures the glyphs' union bounds as a fraction of the composition. Crucially it is a **measurement, not an estimate**: the layout walk was extracted out of `rasterise` into `lay_out_text` and both call it, so the box is around the glyphs that are actually drawn, at the same size, with the same kerning. A "font size x character count" approximation would have drifted the moment a proportional face or a kerned pair got involved, and a box nearly-but-not-quite around the text is the same defect one size down.
+
+The worry that this changes what dragging means turned out to be unfounded: the move gesture commits a *delta* on `position_x`/`position_y`, so box size never entered into it. **No frontend change was needed at all** — `TransformOverlay` was already asking the right question and being handed a wrong answer.
+
+An adjustment clip keeps `1.0 x 1.0`: its correction genuinely is full-frame. The two were grouped under one comment that was only ever right about one of them; they are separate branches now. A title with no ink (empty content — its ordinary state the moment it is added) falls back to the whole frame rather than a zero-size, ungrabbable box: what to draw for a clip that draws nothing is a UI question, not a measurement one.
+
+---
+
+**Verified.** Rust: 4 new tests in `text.rs`, including `the_measured_ink_box_is_where_the_glyphs_actually_land`, which scans the rasterised alpha and asserts the measurement matches the drawn glyphs to within a pixel and stays centred — the measurement is checked against the picture, not against itself. `cargo fmt`/`clippy` clean on both touched files. TS: 5 new tests in `TimelinePane.drop.dom.test.tsx` (new track, occupied playhead, one history entry, the reducer gate from any caller, adjustment parity) and the stale full-frame assertion in `TransformOverlay.textClip.dom.test.tsx` replaced. 1564 tests in `@chroma/editor`, `tsc --noEmit` clean.
+
+**Not verified live in the GUI**, the same disclosure D-208/D-211 make: the main checkout has a dev server running against it and this worktree has no `app/node_modules` of its own. Two pre-existing `cargo test` failures (`grade_lut::…stays_inside_the_budget`, a timing budget; `project::…track_resolution_opaque_top_wins_across_two_video_tracks`, an off-by-one on a source frame) were confirmed to fail identically on a clean baseline with both Rust files reverted to `HEAD` — neither is in any path this decision touches, and neither is introduced here.
+
 ## D-263 — The Edit tab's left library becomes a real activity bar: the icon rail moves to the far left, and its buttons switch the DOCKED column instead of opening popovers
 
 **Date:** 2026-09-09.
@@ -25223,9 +25272,17 @@ compiled out of production like the rest of D-219's registry).
   longer exists. `PANEL_IDS` is `canvas-settings`, `export-dialog`, and
   `@chroma/debug`'s real-DOM proof for `debug_set_popover_open` drives
   `CanvasSettingsPopover` instead (same proof, different real popover).
-- Found while testing, deliberately NOT fixed here: **B-131** — "Add at
-  playhead" onto a frame already covered by a clip creates a same-track
-  overlap instead of the refusal its own code reports, because the `add_clip`
-  op splices in regardless. Pre-existing (D-248's code, moved verbatim), in the
-  op layer, and in territory a concurrent session is editing; written up rather
-  than patched from inside a layout change.
+- **Landed alongside D-262, which rewrote the very code this pass moved.**
+  That entry's B-129 fix — "Add at playhead" places on a brand-new video track
+  (`onNewVideoTrack`) instead of the first existing one — was merged into
+  `EditLibraryPanel.tsx` verbatim as part of this move, so the behaviour is
+  theirs and lives in one place, not two. Their B-129 DOM tests
+  (`TimelinePane.drop.dom.test.tsx` 10-12) drive the rail and the docked panel
+  together now instead of the rail's old popover.
+- Found while testing, deliberately NOT fixed here: **B-131** — the `add_clip`
+  op has no occupancy check at all, so an explicit `track` + `startFrame` can
+  splice a clip into a span another clip already covers. Its GUI repro closed
+  hours later with D-262's new-track placement; what is left is reachable from
+  the MCP layer, and the real fix (teach `checkAddClip` the question
+  `computeInsertion` already answers, so drag, click and agent share one
+  placement rule) belongs in the op layer, not in a layout change.

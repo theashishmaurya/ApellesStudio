@@ -56,7 +56,6 @@ import {
   GENERATOR_LABELS,
   clipFromDraggedGenerator,
   timelineFps,
-  videoTrackIndex,
   type DraggedGenerator,
 } from './timeline';
 
@@ -68,7 +67,7 @@ interface GeneratorEntry {
 const GENERATORS: Record<'titles' | 'effects', GeneratorEntry> = {
   titles: {
     kind: 'title',
-    blurb: 'A text title. Drop it above your video tracks; type into it in the Inspector.',
+    blurb: 'A text title. Adding it makes a new video track above your picture; type into it in the Inspector.',
   },
   effects: {
     kind: 'adjustment',
@@ -133,29 +132,32 @@ export function EditLibraryPanel() {
   const playhead = useEditorTimelineStore((s) => s.playhead);
   const [error, setError] = useState<string | null>(null);
 
-  /** Place a generator at the playhead on the topmost video track — the exact
-   *  behaviour (and the exact ops) the rail's popovers had, moved here with
-   *  them.
+  /** Place a generator at the playhead on a **brand-new video track above
+   *  everything else** (`onNewVideoTrack`, one atomic op — see that field's own
+   *  doc on the `add_clip` op). D-263 moved this here from the rail unchanged;
+   *  the behaviour itself is D-262's (B-129), and the two landed the same
+   *  night, so this is that code in its new home, not a second copy of it.
    *
-   *  **Track 0, deliberately.** Track index order is compositing z-order
-   *  (D-086, lower index = on top), so the topmost video track is where a
-   *  title composites over the picture and where an adjustment clip reaches
-   *  everything below it — which is what both reference entries describe
-   *  ("above your video tracks" / "on a higher video track over your clips").
+   *  **B-129 — this used to target `videoTrackIndex(timeline)`, the first
+   *  EXISTING video track,** and that was the bug the owner hit: on any real
+   *  project that track is full of footage, so a title either landed in a gap
+   *  between two shots — where it renders over BLACK rather than over the
+   *  picture — or was refused outright for want of room. Their words: "it
+   *  should be added on a new timeline meaning a new track instead of adding on
+   *  top of other."
    *
-   *  `ripple: false`, so it lands where the playhead is and never silently
-   *  pushes the rest of the edit around — `add_clip`'s own documented
-   *  non-ripple contract. The guard below reports an add the op declined,
-   *  rather than leaving it looking like a dead button (B-117), and now that
-   *  this is a docked column rather than a 44px rail it reports it as a whole
-   *  sentence instead of a red "!" chip.
+   *  A new track is also what both reference entries describe ("drag it into
+   *  the timeline **above your video tracks**" for a title; "place it on a
+   *  **higher** video track over your clips" for an adjustment clip), and it
+   *  removes a whole failure mode: an empty track always has room, so this
+   *  button can no longer refuse to place anything.
    *
-   *  **B-131** — that guard does NOT fire for the case it names. An
-   *  `add_clip` at a frame already covered by a clip on the same track
-   *  currently splices in anyway and produces an overlap, which D-104 forbids
-   *  the move path from ever creating. The defect is in the op layer, not
-   *  here; this is D-248's own code moved verbatim, and it is written up in
-   *  `docs/BUGS.md` rather than patched from inside a layout change. */
+   *  Placement is still `ripple: false` — an overlay is added ALONGSIDE the
+   *  edit, never by pushing it around. The error surface below stays because
+   *  `clipFromDraggedGenerator` can still refuse (B-117: a refused add has to
+   *  say why rather than look like a dead button), and now that this is a
+   *  docked column rather than a 44px rail it says so as a whole sentence
+   *  instead of a red "!" chip. */
   const addAtPlayhead = (kind: DraggedGenerator['kind']) => {
     setError(null);
     if (!timeline) return;
@@ -167,17 +169,16 @@ export function EditLibraryPanel() {
       setError(built.error);
       return;
     }
-    const track = Math.max(videoTrackIndex(timeline), 0);
-    applyOp({ kind: 'add_clip', track, clip: built, startFrame: playhead });
+    applyOp({ kind: 'add_clip', track: 0, clip: built, startFrame: playhead, onNewVideoTrack: true });
+    // The new track is index 0 by construction, so the clip is always there —
+    // but this reads it back rather than asserting, for the same reason
+    // `selectDroppedGenerator` does: pointing the Inspector at a clip that was
+    // never created is worse than leaving the selection alone.
     const after = useEditorTimelineStore.getState().timeline;
-    if (after?.tracks[track]?.clips.some((c) => c.id === built.id)) {
-      setSelection([{ track, id: built.id }]);
+    if (after?.tracks[0]?.clips.some((c) => c.id === built.id)) {
+      setSelection([{ track: 0, id: built.id }]);
     } else {
-      setError(
-        `There is already a clip at the playhead on the top video track — move the playhead, or drag the ${GENERATOR_LABELS[
-          kind
-        ].toLowerCase()} onto an empty spot.`,
-      );
+      setError(`Could not add the ${GENERATOR_LABELS[kind].toLowerCase()} — the timeline refused the edit.`);
     }
   };
 

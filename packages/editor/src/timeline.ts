@@ -597,6 +597,17 @@ export function isAdjustmentClip(c: Pick<Clip, 'adjustment'> | null | undefined)
   return c?.adjustment != null;
 }
 
+/** B-129/D-262 — whether a clip is a GENERATED PICTURE clip: a title
+ *  (D-211) or an adjustment clip (D-230). Both are built by
+ *  [`clipFromDraggedGenerator`], both composite into the picture by track
+ *  z-order, and both are therefore only meaningful on a `'video'` track —
+ *  which is the one rule [`checkAddClip`] enforces. A caption is deliberately
+ *  NOT one of these: it belongs on a `'subtitle'` track and D-229 already owns
+ *  that placement. */
+export function isGeneratedPictureClip(c: Pick<Clip, 'text' | 'adjustment'> | null | undefined): boolean {
+  return isTextClip(c) || isAdjustmentClip(c);
+}
+
 /** D-229/D-230 — whether a clip contributes no decoded picture of its own,
  *  i.e. it is a text clip, a caption, or an adjustment clip. The predicate for
  *  "don't ask the media layer about this clip": it has no `source_path` to
@@ -1294,6 +1305,49 @@ export interface TransitionCheck {
   /** Present only when `ok` is false — a real, actionable sentence naming what
    *  is missing and what would fix it. */
   reason?: string;
+}
+
+/** B-129/D-262 — whether an `add_clip` may put `clip` on track `track`.
+ *
+ *  Same shape and same reason as [`TransitionCheck`]/[`EditInCheck`]: the
+ *  timeline's own drop handler, `editor_add_text_clip`/
+ *  `editor_add_adjustment_clip` and `applyOp` itself all need the SAME answer,
+ *  and a guard that lives in only one of them is a guard the other two walk
+ *  straight past. That is exactly what B-129 was: the only track-kind check in
+ *  the app sat in `TimelinePane`'s `onDrop`, so a title added any other way
+ *  (the library rail's button, an MCP call) could be — and in the owner's real
+ *  project was — spliced onto an AUDIO track, where it composites into
+ *  nothing.
+ *
+ *  **One rule, deliberately narrow.** A generated picture clip
+ *  ([`isGeneratedPictureClip`] — a title or an adjustment clip) belongs on a
+ *  `'video'` track and nowhere else. Everything else this op places is left
+ *  exactly as it was: a media clip on an audio track is an ordinary,
+ *  intentional edit (that is what a detached audio clip IS), and a caption's
+ *  own subtitle-track placement is D-229's, already enforced at its own write
+ *  path. Widening this into a general clip-kind/track-kind matrix would be
+ *  inventing rules the model has never had, on the back of a bug report about
+ *  one of them.
+ *
+ *  A track index that does not exist is NOT refused here — `add_clip`'s own
+ *  documented fallbacks (an empty timeline gets a video track made for it, an
+ *  out-of-range index collapses to 0) are long-standing behaviour that several
+ *  callers rely on, and both of those land the clip on a video track anyway. */
+export function checkAddClip(
+  tl: Timeline,
+  track: number,
+  clip: Pick<Clip, 'text' | 'adjustment'>,
+): TransitionCheck {
+  const tr = tl.tracks[track];
+  if (!tr || !isGeneratedPictureClip(clip)) return { ok: true };
+  if (tr.kind !== 'video') {
+    const what = isTextClip(clip) ? 'A title' : 'An adjustment clip';
+    return {
+      ok: false,
+      reason: `${what} is picture — it cannot go on the ${tr.kind} track ${track}. Put it on a video track, or add it without naming one to get a new video track above the picture.`,
+    };
+  }
+  return { ok: true };
 }
 
 /** D-226 — may a transition of this shape/length/alignment be written at
@@ -2581,6 +2635,29 @@ export type EditOp =
    *  pair is atomic: one history entry, one undo, and never a half-linked
    *  timeline in between. Absent = today's behaviour exactly (a silent
    *  source, or a pool item whose audio status isn't known). */
+  /*
+   *  B-129/D-262 — `onNewVideoTrack: true` places the clip on a **brand-new,
+   *  empty video track inserted at index 0**, i.e. the top of the compositing
+   *  stack (a LOWER index paints on top, D-086), and `track` is ignored.
+   *
+   *  This is what "add a title" means: a title is an OVERLAY, and the owner's
+   *  own words for the bug were "it should be added on a new timeline meaning
+   *  a new track instead of adding on top of other". Reusing an existing video
+   *  track is not a smaller version of that — a title dropped into a GAP in the
+   *  footage track renders over BLACK instead of over the picture, which is
+   *  what the owner's real project actually contained. Resolve's own Edit page
+   *  says the same thing ("drag it into the timeline **above your video
+   *  tracks**"), and D-230's adjustment clip has the identical requirement for
+   *  its own reason (it corrects the layers BENEATH it, so a track that already
+   *  holds footage is the wrong place for it).
+   *
+   *  **One op, not three.** `placeDroppedClip` builds the same outcome for a
+   *  DROP as `add_track` + `move_track` + `add_clip`, which is three history
+   *  entries and therefore three Undos for one gesture. Folded into this op it
+   *  is atomic — the same reasoning D-129 used to fold a dropped source's audio
+   *  half in here, and the same shape D-239's `place_on_top` already has.
+   *  A fresh track is always empty, so this branch cannot fail to place.
+   */
   | {
       kind: 'add_clip';
       track: number;
@@ -2589,6 +2666,7 @@ export type EditOp =
       startFrame?: number;
       ripple?: boolean;
       linkedAudio?: NewClipFields;
+      onNewVideoTrack?: boolean;
     }
   /** D-239 (roadmap item 27) — **the seven edit types on drop**: Insert,
    *  Overwrite, Replace, Fit to Fill, Place on Top, Append at End, Ripple
@@ -3271,6 +3349,10 @@ export function labelForOp(op: EditOp, before: Timeline): string {
     case 'remove_gap':
       return `Close gap on track ${op.track + 1}`;
     case 'add_clip':
+      // B-129/D-262 — the new-track case says so: this one op also created a
+      // track, so its Undo removes one, and a history entry reading only
+      // `Add "Title"` would not account for the track disappearing.
+      if (op.onNewVideoTrack) return `Add "${op.clip.name}" on a new video track`;
       return op.linkedAudio ? `Add "${op.clip.name}" + audio` : `Add "${op.clip.name}"`;
     // D-239 — named for the EDIT TYPE, not just the clip: "Insert" and
     // "Overwrite" of the same source are two entirely different edits to undo
@@ -3781,10 +3863,25 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
   // own "fixed for a given timeline" contract.
   const fps = timelineFps(tl);
   if (op.kind === 'add_clip') {
+    // B-129/D-262 — the ONE track-kind gate, here rather than in any one
+    // caller, so no path into this op can place a title or an adjustment clip
+    // on an audio track. Refused as a no-op, the same way `add_transition`
+    // refuses on `checkTransition`; the caller holds the `reason` string for
+    // the message. Skipped for `onNewVideoTrack`, whose track is a video track
+    // by construction.
+    if (!op.onNewVideoTrack && !checkAddClip(tl, op.track, op.clip).ok) return tl;
     const next = clone(tl);
     if (next.tracks.length === 0)
       next.tracks.push({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
-    const trackIdx = op.track < next.tracks.length ? op.track : 0;
+    // B-129/D-262 — a brand-new empty video track at the TOP of the stack (see
+    // the op's own doc). `unshift` is exactly what `resolvePlaceOnTopTrack`
+    // does for the same "there is no room above" case, so the two ops agree on
+    // what "on top" means rather than each having its own idea.
+    if (op.onNewVideoTrack) {
+      next.tracks.unshift({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
+    }
+    const requested = op.onNewVideoTrack ? 0 : op.track;
+    const trackIdx = requested < next.tracks.length ? requested : 0;
     const track = next.tracks[trackIdx];
     let startFrame: number;
     if (op.startFrame !== undefined) {
@@ -3794,7 +3891,13 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // clip's own duration to make room — `false` means it was already
       // confirmed to fit in an open gap, so nothing else moves.
       startFrame = Math.max(0, op.startFrame);
-      if (op.ripple) {
+      // B-129/D-262 — a ripple is meaningless on a brand-new empty track
+      // (nothing on it to push), and worse than meaningless via
+      // `propagateSyncLockRipple`, which would shove every sync-locked track's
+      // real clips out of the way to make room in a track that is already
+      // entirely room. An overlay is added ALONGSIDE the edit, never by moving
+      // it.
+      if (op.ripple && !op.onNewVideoTrack) {
         // B-033 — reject upfront (checked against the ORIGINAL, pre-clone
         // tracks) if a sync-locked track has a clip straddling the
         // insertion point; never auto-split. See the doc on

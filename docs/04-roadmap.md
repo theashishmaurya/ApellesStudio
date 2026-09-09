@@ -1905,7 +1905,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       (`CaptionLibrary.tsx`), retiring D-252's `caption-panel` popover id.
       Correctly GUI-only, checked rather than assumed: every capability the
       rail reaches already has its `editor_*` tool and none of them depend on
-      what is on screen. Found and filed, not fixed: **B-131**.
+      what is on screen. Found and filed, not fixed: **B-131** (the `add_clip`
+      op has no occupancy check; its GUI repro closed the same night with
+      D-262's new-track placement, the MCP one is still open).
     - Explicitly **out of scope** (owner's own cut): hardware control
       surfaces, multi-user real-time collaboration.
 

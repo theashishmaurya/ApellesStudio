@@ -29,8 +29,11 @@ One or two lines per session. Detail lives in the decision it references.
   of the column can still be read. 11 new real-DOM tests (7 in `@chroma/editor`,
   4 in `@chroma/shell`, the latter mounting the REAL rail + panel to pin
   "rail before column" in document order); 1596/1596 editor, 32/32 debug, 7/7
-  shell green, `tsc` clean. Found and written up, not fixed here: **B-131**,
-  "Add at playhead" onto an occupied frame overlaps instead of refusing.
+  shell green, `tsc` clean. Lands on top of D-262, whose B-129 new-track fix
+  rewrote the very `addAtPlayhead` this pass moved — merged in verbatim, one
+  copy, and its own DOM tests now drive the rail plus the docked panel. Found
+  and written up, not fixed: **B-131**, `add_clip` has no occupancy check
+  (GUI repro closed by D-262; the MCP one is open).
 
 - **2026-09-09** — **D-261: the smart trims get a real tool palette — five icons
   in the timeline toolbar, Alt kept underneath** — the owner, live: *"for roll
@@ -51,6 +54,26 @@ One or two lines per session. Detail lives in the decision it references.
   GUI-only. 15 new unit + 14 new real-DOM tests; the central pair proves the
   icon path and the Alt path commit the identical timeline, and D-235/D-250's
   68 tests pass unchanged.
+
+- **2026-09-09** — **B-129 + B-130 fixed (D-262): "Add Title" now makes its own
+  video track, and a title's on-canvas box is its real ink** — both live-reported
+  by the owner from one screenshot and both confirmed against their real project
+  first. B-129: the track-kind rule existed only in `TimelinePane`'s drop handler,
+  so every other caller walked past it — a title had landed on an AUDIO track, and
+  another in a gap between two shots on the footage track, where it renders over
+  black. The rule moved into the op (`checkAddClip`, shaped like the existing
+  `checkTransition`/`checkEditIn`), and `add_clip` gained `onNewVideoTrack` —
+  a new video track at index 0, placed in ONE op so one Undo removes both. The GUI
+  button and `editor_add_text_clip`/`editor_add_adjustment_clip` both default to
+  it; `track` is optional now, deleting the three-call add-track/move-track dance
+  the old docstring taught. B-130: `clip_geometry` reported a title's footprint as
+  the whole frame — inherited from D-211's "the layer buffer is composition-sized",
+  never actually decided — so a 12%-tall title got a full-frame selection box and
+  swallowed every canvas click meant for the footage beneath it. It now reports the
+  measured ink box, from the same glyph walk that rasterises the text
+  (`text_layer_ink_fraction`); no frontend change was needed. 1564 tests in
+  `@chroma/editor` (+6), 4 new Rust tests, `tsc` clean, `fmt`/`clippy` clean.
+
 - **2026-09-09** — **D-258: Motion's first representational primitives — a Claude
   chat UI and a phone frame, deliberately decoupled** — the catalog goes from 8
   primitives to 10. `claudechat` draws the real Claude mobile app screen (header,
