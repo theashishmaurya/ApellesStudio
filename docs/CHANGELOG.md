@@ -4,6 +4,13 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-137 logged, not fixed:** a clip edge-trim drag's own
+  preview appears to stay pinned at the clip's original position instead of
+  tracking the cursor (screenshot: the selected-clip box near `00:00:00`,
+  the cursor visibly at `00:00:06`, mid-drag). Not yet root-caused — only
+  one before/after-style screenshot exists, not a captured mid-drag
+  sequence — reference saved at `scratch/b137-trim-drag-preview-static.png`.
+
 - **2026-09-10** — **B-136, sixth and (hopefully) final attempt: static
   `cursor: none`, never changed at all.** Owner-driven research surfaced a
   real published shadcn scrubber component using `active:cursor-none` — a
