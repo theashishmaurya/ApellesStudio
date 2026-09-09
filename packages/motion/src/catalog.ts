@@ -87,6 +87,18 @@ const CATALOG: Record<PrimitiveUse, CatalogEntry> = {
     description: 'A tilted stack of labelled cards. Model architecture, a caching stack, a request lifecycle, pipeline stages.',
     in3d: false,
   },
+  deviceframe: {
+    use: 'deviceframe',
+    name: 'Device frame',
+    description: 'A phone body — rounded chassis, titanium rim, Dynamic Island or notch. Its glass is a real hole, so it frames whatever layer sits under it.',
+    in3d: false,
+  },
+  claudechat: {
+    use: 'claudechat',
+    name: 'Claude chat UI',
+    description: 'The Claude mobile app screen: header, message thread, tool and document cards, input bar. Animates through several conversations over one scene.',
+    in3d: false,
+  },
   particleflow: {
     use: 'particleflow',
     name: 'Particle flow',
@@ -170,6 +182,60 @@ export function defaultLayerFor(use: PrimitiveUse): Record<string, unknown> {
       };
     case 'layers':
       return { use: 'layers', at: 0, items: ['first', 'second', 'third'] };
+    // D-258. Neither of these sets `x`/`y`/`width`/`height`: both primitives
+    // default to a canvas-centred iPhone 15 Pro, and `claudechat`'s default
+    // rect IS `deviceframe`'s glass (both ask `lib/device.ts` the same
+    // question), so adding one of each lands the chat inside the phone with
+    // no manual alignment — while leaving every one of those fields free for
+    // the Inspector to move either layer independently.
+    case 'deviceframe':
+      return { use: 'deviceframe', at: 0, model: 'iphone-15-pro', scale: 1 };
+    // Two conversations and an `active` schedule out of the box, so the
+    // primitive's actual point — animating THROUGH conversations — is visible
+    // on the first click rather than needing to be authored to be seen.
+    case 'claudechat':
+      return {
+        use: 'claudechat',
+        at: 0,
+        active: [
+          { at: 0, i: 0 },
+          { at: 3.5, i: 1 },
+        ],
+        conversations: [
+          { welcome: 'How can I help you this morning?', messages: [] },
+          {
+            model: 'Sonnet 4',
+            messages: [
+              {
+                from: 'user',
+                sender: 'Brooke',
+                text: "I'm planning to move to France for work - can you help me plan my move and research visa requirements?",
+              },
+              {
+                from: 'assistant',
+                text: "I'll help coordinate your move to France. First, let me check your Google Drive for itineraries and travel documents.",
+              },
+              { kind: 'tool', label: 'Searched Google Drive', icon: 'drive' },
+              {
+                from: 'assistant',
+                text: "Next, I'll start my deep dive into French visa requirements, work permit processes, and all the documentation you'll need!",
+              },
+              {
+                kind: 'task',
+                title: 'French work visa research',
+                meta: 'Research complete · 300 sources · 3m 36s',
+                icon: 'web',
+              },
+              { from: 'assistant', text: 'Your France work visa guide is ready:' },
+              {
+                kind: 'doc',
+                title: 'Working in France: Comprehensive Visa Guide for 2025',
+                subtitle: 'Document',
+              },
+            ],
+          },
+        ],
+      };
     case 'particleflow':
       return { use: 'particleflow', preset: 'stream', from: [-6, 0, 0], to: [6, 0, 0] };
     case 'labelbox':

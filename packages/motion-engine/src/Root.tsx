@@ -10,6 +10,7 @@ import { GraphDemo } from "./compositions/GraphDemo";
 import { Scene3DDemo } from "./compositions/Scene3DDemo";
 import { LayersDemo } from "./compositions/LayersDemo";
 import { ParticleDemo } from "./compositions/ParticleDemo";
+import { ClaudeChatDemo } from "./compositions/ClaudeChatDemo";
 
 /**
  * Motion engine — the Remotion replacement for HyperFrames.
@@ -77,6 +78,16 @@ export const RemotionRoot: React.FC = () => {
         id="ParticleDemo"
         component={ParticleDemo}
         durationInFrames={200}
+        fps={design.fps}
+        width={1920}
+        height={1080}
+      />
+      {/* D-258 — long enough to walk all three of the demo's conversations
+          (the last step starts at 11s) */}
+      <Composition
+        id="ClaudeChatDemo"
+        component={ClaudeChatDemo}
+        durationInFrames={480}
         fps={design.fps}
         width={1920}
         height={1080}

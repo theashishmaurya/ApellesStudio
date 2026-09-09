@@ -2447,6 +2447,23 @@ Formspree endpoint (`website/BETA_SIGNUP_SETUP.md`), no domain or deployment,
 no download links (they wait on real installers), no public changelog page, and
 no Motion/Colorist screenshots (none have ever been captured).
 
+**Motion primitive catalog — now 10, not 8 (2026-09-09, D-258):** the eight
+abstract explainer primitives (`text`, `emphasis`, `matrix`, `graph`, `layers`,
+`particleflow`, `labelbox`, `layerstack`) are joined by the first two
+*representational* ones — **`claudechat`** (the Claude mobile app screen:
+header, user bubbles, serif assistant prose, tool chips, task/document cards,
+input bar, sunburst welcome state; animates through **multiple conversations**
+over one scene via the existing `active` step schedule) and **`deviceframe`**
+(generic phone chrome — chassis, rim, Dynamic Island/notch, home indicator —
+with a real transparent glass cutout, so it frames any layer placed under it).
+Deliberately two primitives, not one: they compose by agreeing on a screen rect
+(`motion-engine/src/lib/device.ts`), never by nesting, so both stay separately
+selectable, draggable and keyframable. Both are creatable from the Catalog
+panel and from `motion_add_layer` with no new MCP tool. Living reference:
+`compositions/ClaudeChatDemo.tsx`. Still a `json` Inspector field for the
+`conversations` array (same fallback `layers.items` uses) — a purpose-built
+thread editor is open polish.
+
 **Deferred, not abandoned — build LAST, right before launch, per the owner's own
 sequencing (2026-09-08):** fal.ai media generation (auto-added to the timeline),
 a lightweight backend for sign-in/credits/payment/usage tracking, an opt-in

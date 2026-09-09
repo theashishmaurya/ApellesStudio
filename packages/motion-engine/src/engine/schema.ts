@@ -168,6 +168,12 @@ const layer = z
       "matrix",
       "graph",
       "layers",
+      // D-258 — the device/app-UI pair. Two entries, not one, because the
+      // phone chrome and the app content are deliberately separate
+      // primitives: `deviceframe` frames anything, `claudechat` renders
+      // full-bleed or inside a frame, and neither requires the other.
+      "deviceframe",
+      "claudechat",
       // scene3d children:
       "particleflow",
       "labelbox",

@@ -21,9 +21,13 @@ src/
   engine/
     build.ts           ← the JSON scene-manifest compiler
     schema.ts / registry.ts / Video.tsx / sample.ts
-  primitives/          ← text, emphasis, matrix, graph, layers, scene3d, particleflow
+  primitives/          ← text, emphasis, matrix, graph, layers, scene3d, particleflow,
+                         deviceframe, claudechat (D-258 — the phone chrome and the
+                         Claude app UI, decoupled: they agree on a screen rect,
+                         neither requires the other)
   compositions/        ← *Demo compositions (living primitive references)
-  lib/  helpers/        ← deterministic roughjs + frame helpers
+  lib/  helpers/        ← deterministic roughjs + frame helpers, device geometry
+                         (device.ts) and chat thread layout/scheduling (chatLayout.ts)
   Root.tsx             ← registers compositions
 ```
 

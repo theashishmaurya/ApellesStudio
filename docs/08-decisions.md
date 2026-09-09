@@ -24351,3 +24351,142 @@ dispatcher that forwards `{op, args}` blind and has never needed a code change
 for a new tab's ops. The pre-existing 20 s `BRIDGE_TIMEOUT` still applies to a
 slow render and is documented on the tool as "inconclusive, not failed" rather
 than papered over.
+
+---
+
+## D-258 — A Claude chat UI as a Motion primitive, and the phone frame as a SEPARATE one
+
+**Context.** The owner supplied a real reference screenshot of the shipping
+Claude iOS app (three iPhone frames on a coral ground: a welcome screen with
+the sunburst mark, a live conversation with tool chips and a generated-document
+card, and an in-progress agentic task) and asked for it as a Motion catalog
+primitive — with one explicit structural requirement, in their own words: *"we
+do need the mobile cover but as a separate scene not like attached."* The core
+feature, not a garnish, was *"animate multiple conversations dynamically"*.
+
+Before this pass Motion had 8 primitives, all of them abstract explainer
+shapes (`text`, `emphasis`, `matrix`, `graph`, `layers`, plus three 3D
+children). None of them depict a product UI. This is the first primitive of a
+new kind — a *representational* one — so the shape it takes sets the pattern
+for the next such primitive.
+
+**Options.**
+
+1. **One `claudechat` primitive that draws its own phone.** Fewest moving
+   parts, one layer to place. Rejected: it makes the phone unreachable for
+   anything else, and it is precisely what the owner ruled out.
+2. **Two primitives nested through the manifest** — a `deviceframe` layer
+   carrying a nested child-layer spec, resolved recursively in `registry.ts`.
+   Gives real containment. Rejected: it introduces recursion into a registry
+   that has been a flat `use → component` map since it was written, and it
+   makes the inner layer un-addressable by the selection model, the Inspector,
+   the keyframe timeline and every `motion_*` tool, all of which key off
+   `{sceneIndex, layerIndex}` in a flat array. A nested layer would be visible
+   but not editable — a real regression dressed up as a feature.
+3. **Two primitives that compose by agreeing on a rectangle.** Chosen.
+
+**Decision.** `deviceframe` and `claudechat` ship as two independent,
+peer-level primitives.
+
+- `deviceframe` is pure chrome and content-agnostic. Its glass is a **real
+  hole** — the chassis is drawn as a CSS `border` on a rounded box, so the
+  middle is genuinely transparent. Place the content layer first and the frame
+  after it in `scene.layers` and the bezel draws over the content while the
+  screen shows it through. It frames a `claudechat`, a `text`, a `matrix`, or
+  nothing.
+- `claudechat` renders full-bleed by default and never asks whether a frame
+  exists.
+- The two agree only on `motion-engine/src/lib/device.ts` — a table of real
+  device dimensions (iPhone 15 Pro's actual 393×852 pt, etc.) plus
+  `deviceBodyRect`/`deviceScreenRect`. `DeviceFrame` draws a bezel around that
+  rect; `ClaudeChat` defaults its own rect to exactly it. Drop one of each in
+  and they line up with no manual alignment, while remaining two separately
+  selectable, draggable, keyframable layers. Extracting the arithmetic rather
+  than duplicating it in both is this repo's own "if two places need it,
+  extract it."
+
+`DeviceFrame` *additionally* accepts React `children` (clipped to the glass)
+for direct composition in a `.tsx` composition, which is how `ClaudeChatDemo`
+uses it. That is a second, additive path — not the manifest's mechanism.
+
+**Multiple conversations reuse the EXISTING `active` schedule.** `claudechat`
+takes a `conversations[]` array, and which one is on screen at a given frame is
+driven by the manifest's existing `active` step schedule (`[{at, i}]` in
+seconds) — the same field `layers`/`layerstack` already use for "which card is
+lit when". No parallel scheduling mechanism was invented. The one thing the
+chat needs beyond the existing `resolveActive` is *the frame the step began
+on*, so a switched-to conversation replays its own messages from its own zero
+instead of appearing already fully built; so `resolveActiveStep` (returning
+`{i, since}`) was written once in `lib/chatLayout.ts` and **`registry.ts`'s
+existing `resolveActive` was redefined as a wrapper over it** rather than
+being copied. One implementation, two callers.
+
+**Reference-grounding — what was actually sampled.** Per this repo's
+"research the real pattern first, don't guess" rule, colours were read out of
+the owner's screenshot with PIL region-dominance rather than recalled: coral
+ground `#da7758`, app page `#f8f7f3`, user-bubble `#f1eee7` (a warmer, darker
+cream than the page), card/chip `#f5f4f0`, hairline `#e4e2dc`, ink `#262523`
+(the darkest pixel in a text block — mid-tones are JPEG antialiasing), input
+bar `#fbfbfb`, chassis `#000`. The structural reads that a from-memory
+"chat app" would have got wrong: the assistant's prose is **serif** and has
+**no bubble** (only the user gets one), the tool chip is a full-width
+hairline-bordered rect rather than a pill, the header pairs a bold serif
+"Claude" with a muted serif model name and a chevron, and the input bar is a
+brighter white than the page with a large top-corner radius. The
+research/magnifier control in the input row is tinted blue only in the
+conversation screen.
+
+**Type is deliberately a system-font stack** (`fontSerif`/`fontSans` props,
+Georgia- and Avenir-led). Loading a webfont would make a frame's layout depend
+on font loading having completed, which is a real source of drift in a Remotion
+render and would violate the determinism invariant. The stacks name the true
+faces first so a machine that has them uses them.
+
+**Text is measured arithmetically, not by the DOM**, for the same reason:
+`lib/chatLayout.ts` estimates wrapping from an average glyph ratio and the
+component renders into a box of exactly that computed height. The ratio is
+**calibrated, not assumed** — the reference conversation's paragraphs were
+rendered through `remotion still` and their true line counts solved back
+through `wrapLines`: everything in 0.40–0.46 predicts all of them correctly and
+0.48+ over-estimates the serif by a whole line each, which showed as visible
+dead space in the first render. `AVG_GLYPH_RATIO = 0.45` sits mid-band. An
+explicit `\n` is a hard break in both the measurement and the render
+(`white-space: pre-wrap`), found live: the calendar thread collapsed onto one
+run before it was fixed.
+
+**Both interfaces came for free, and that was verified rather than assumed.**
+`motion_list_primitives` maps over `catalogEntries` and `fieldsForPrimitive`,
+and `motion_add_layer` accepts any catalogued `use` — so registering in the
+engine schema + `catalog.ts` + `propCatalog.ts` is the whole job, with no new
+MCP tool and no per-primitive branch in `motionOps.ts`. A test asserts both new
+primitives appear in `motion_list_primitives` with their real fields and are
+creatable via `motion_add_layer`.
+
+**One structural change was needed and made properly:** `deviceframe`'s only
+size knob is a uniform `scale` over a fixed model body, which no existing
+`SizeKind` described. It would have "fit" `'scalar'`, but that branch is
+matrix-specific arithmetic whose `key` holds **pixels**, whereas this holds a
+unitless ratio — mapping it there would write a pixel count into a multiplier.
+A real fourth variant (`{kind:'scale'}`, with its own `MIN_SCALE` floor,
+because `MIN_RESIZE_PX = 8` would mean "eight times life size") was added
+instead.
+
+**Verification.** Real pixels, not "it compiles": stills rendered from a new
+`ClaudeChatDemo` composition at the welcome state, mid-conversation, and after
+a conversation switch, each compared against the reference — that comparison is
+what caught both the wrap over-estimate and the newline collapse. Determinism
+re-checked per the render-path rule: frame 305 rendered twice is byte-identical
+(sha256 `74c3ceae…`). 561 tests green in `@chroma/motion` (37 new, covering
+device geometry, wrapping, stacking, reveal ordering, scroll clamping and the
+conversation schedule), 2155 across all workspaces; `tsc` clean on both touched
+packages (the two pre-existing `Scene3D.tsx` `document` errors are untouched
+and unrelated).
+
+**What this deliberately does NOT do.** The `conversations` array is a `json`
+Inspector field, the same lighter-touch fallback `layers.items` and
+`graph.nodes` already use — a purpose-built thread editor is real future
+polish, not something to guess at speed (D-099's own reasoning, applied
+unchanged). There is no keyboard on the welcome screen (the reference shows
+one; it is iOS chrome, not app UI, and belongs to `deviceframe` if anywhere).
+The `deviceframe` glyph and models cover four devices; adding a fifth is a
+table entry.

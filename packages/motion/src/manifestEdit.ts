@@ -23,6 +23,7 @@
 import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey, TransformKey } from '@chroma/motion-engine/src/engine/schema';
 import { interpolateKeys } from '@chroma/motion-engine/src/lib/interpolateKeys';
 import { design } from '@chroma/motion-engine/src/design';
+import { deviceBodyRect } from '@chroma/motion-engine/src/lib/device';
 import { sceneStartFrame, sceneDurationFrames } from '@chroma/motion-engine/src/engine/build';
 import type { Selection } from './LayerList';
 import { catalogEntry, defaultLayerFor, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
@@ -452,6 +453,14 @@ const TEXT_MAX_WIDTH_SEED = 800;
  *  (or, for `matrix`, divide-by-effectively-nothing on the next read). */
 const MIN_RESIZE_PX = 8;
 
+/** The floor for a `'scale'`-kind resize (D-258, `deviceframe.scale`). Not
+ *  `MIN_RESIZE_PX`: that constant is in pixels and this field is a unitless
+ *  multiplier, so 8 would mean "eight times life size," the opposite of a
+ *  floor. 0.05 is the same intent expressed in the right unit — small enough
+ *  never to obstruct a real drag, large enough that the layer stays findable
+ *  on the canvas instead of collapsing to nothing. */
+const MIN_SCALE = 0.05;
+
 /** A layer's current size in WORLD px, per `propCatalog.ts`'s `sizeFields`
  *  (D-157, Phase 2 of `docs/notes/motion-visual-builder-research.md`) — the
  *  resize-handle counterpart to `layerWorldPosition` above, same shape and
@@ -498,6 +507,16 @@ export function layerWorldSize(manifest: Manifest, selection: Selection): { w: n
     const gap = typeof raw.gap === 'number' ? raw.gap : MATRIX_DEFAULT_GAP;
     const step = cell + gap;
     return { w: cols * step - gap, h: rows * step - gap };
+  }
+
+  if (kind.kind === 'scale') {
+    // D-258 — deviceframe: its model's intrinsic body size times the layer's
+    // own `scale`. The body dimensions come from the engine's own device
+    // table, never re-typed here, so the handle's rect is exactly the rect
+    // `DeviceFrame.tsx` draws.
+    const scale = typeof raw[kind.key] === 'number' ? (raw[kind.key] as number) : 1;
+    const body = deviceBodyRect({ model: raw.model as string | undefined, x: 0, y: 0, scale });
+    return { w: body.width, h: body.height };
   }
 
   // w-only (text.maxWidth)
@@ -559,6 +578,19 @@ export function setLayerSize(manifest: Manifest, selection: Selection, w: number
     const cellFromW = (W + gap) / cols - gap;
     const cellFromH = (H + gap) / rows - gap;
     raw[kind.key] = Math.max(MIN_RESIZE_PX, (cellFromW + cellFromH) / 2);
+    return next;
+  }
+
+  if (kind.kind === 'scale') {
+    // D-258 — a uniform multiplier over a fixed intrinsic size. The target
+    // rect can have any aspect ratio the drag happened to produce, while the
+    // multiplier has one degree of freedom, so the two axes are averaged the
+    // same way the `'scalar'` branch above averages its two candidate cell
+    // sizes — one consistent rule for "a 2-number resize collapsing onto a
+    // 1-number field," not a second convention.
+    const body = deviceBodyRect({ model: raw.model as string | undefined, x: 0, y: 0, scale: 1 });
+    const ratio = (W / body.width + H / body.height) / 2;
+    raw[kind.key] = Math.max(MIN_SCALE, ratio);
     return next;
   }
 
