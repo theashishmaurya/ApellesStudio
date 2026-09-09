@@ -14,11 +14,11 @@ const { fontFamily } = loadFont();
  */
 export const HelloWorld: React.FC = () => {
   const frame = useCurrentFrame();
-  const { width, height } = useVideoConfig();
+  const { width, height, fps } = useVideoConfig();
 
   const titleIn = inAt(frame, 4, 22);
   const underlineDraw = inAt(frame, 20, 40); // 0→1, used as strokeDashoffset progress
-  const drift = ambientDrift(frame, 1);
+  const drift = ambientDrift(frame, fps, 1);
 
   const underlineLen = width * 0.34;
   const underlineD = roughLine([0, 0], [underlineLen, 0], {

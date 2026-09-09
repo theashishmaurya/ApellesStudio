@@ -21,6 +21,30 @@ export type CameraKey = {
   ease?: readonly [number, number, number, number];
 };
 
+/**
+ * The camera's own ambient-drift offset, pulled out of the component as a
+ * pure function so it is directly unit-testable (B-060, `docs/BUGS.md`) —
+ * mirrors `../lib/draw.ts`'s `ambientDrift`, which is the same idea for the
+ * 2D primitives, kept separate rather than unified because the two have
+ * always used different amplitudes/phase constants (this one's `* 2`,
+ * different `0.6`/`0.43` rates and `1.7` phase offset) and B-060 did not ask
+ * to change that, only the fps source both read from.
+ *
+ * `fps` must be the COMPOSITION'S real frame rate (`useVideoConfig().fps`),
+ * not `design.fps` (a fixed authoring-default token, `30`) — before this fix
+ * `Camera` divided `frame` by `design.fps` regardless of the actual render
+ * fps, so the same manifest's camera drift ran at a different perceived
+ * wall-clock rate at 60fps (twice as fast) vs 24fps (20% slower) than at the
+ * 30fps the token happened to match. `design.fps` itself is untouched — it
+ * stays the authoring default a NEW manifest gets.
+ */
+export function cameraDrift(frame: number, fps: number): { dx: number; dy: number } {
+  return {
+    dx: design.ambientDriftPx * 2 * Math.sin((frame / fps) * 0.6),
+    dy: design.ambientDriftPx * 2 * Math.sin((frame / fps) * 0.43 + 1.7),
+  };
+}
+
 export const Camera: React.FC<{
   keys: CameraKey[];
   children: React.ReactNode;
@@ -28,7 +52,7 @@ export const Camera: React.FC<{
   drift?: boolean;
 }> = ({ keys, children, drift = true }) => {
   const frame = useCurrentFrame();
-  const { width, height } = useVideoConfig();
+  const { width, height, fps } = useVideoConfig();
   const cx = width / 2;
   const cy = height / 2;
 
@@ -46,12 +70,7 @@ export const Camera: React.FC<{
     design.ease.inOut,
   );
 
-  const dx = drift
-    ? design.ambientDriftPx * 2 * Math.sin((frame / design.fps) * 0.6)
-    : 0;
-  const dy = drift
-    ? design.ambientDriftPx * 2 * Math.sin((frame / design.fps) * 0.43 + 1.7)
-    : 0;
+  const { dx, dy } = drift ? cameraDrift(frame, fps) : { dx: 0, dy: 0 };
 
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>

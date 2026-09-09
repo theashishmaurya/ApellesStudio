@@ -19,6 +19,23 @@ One or two lines per session. Detail lives in the decision it references.
   verbatim. New tests: `propCatalog.test.ts` (4 tests), a new `B-062` block
   in `schema.test.ts` (6 tests).
 
+- **2026-09-09** — **B-060 fixed — ambient drift now scales with the real
+  render fps, not a fixed 30 token** — both ambient-drift implementations
+  (`draw.ts`'s `ambientDrift`, `Camera.tsx`'s inline camera drift) divided
+  frame-by-`design.fps` (a fixed authoring-default token, `30`) instead of
+  the composition's REAL fps, so the same manifest drifted at a visibly
+  different perceived speed at 60fps vs 24fps than at the default 30fps.
+  `ambientDrift` now takes `fps` as a parameter (the same shape as its
+  neighbour `pop(frame, fps, delay)`); `Camera.tsx`'s inline expression
+  became an exported, unit-tested `cameraDrift(frame, fps)` reading
+  `useVideoConfig().fps`. Own commit (changes rendered pixels for any
+  non-30fps manifest) with a before/after: at the same 1-second wall-clock
+  instant, the old formula gave `cameraDrift`'s 24fps-render and 60fps-render
+  DIFFERENT values (`{dx:1.385,dy:2.670}` vs `{dx:2.796,dy:1.648}`); the
+  fixed function gives both the SAME value (`{dx:1.694,dy:2.543}`). New test:
+  `ambientDrift.test.ts` (7 tests) — 536 total in `@chroma/motion`, `tsc`
+  clean on both packages.
+
 - **2026-09-09** — **D-255: the marketing website shipped, out of sequence** —
   a new top-level `website/` (Astro, its own project, deliberately outside the
   npm workspace), reversing the standing "build the website LAST, right before
