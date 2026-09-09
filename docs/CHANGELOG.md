@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **B-132/D-268: a wedged session could permanently stop the
+  app creating or opening ANY project** — found live, `new_project` answering
+  `session busy` call after call with nothing in flight. `useSessionStore.busy`
+  was a bare latching boolean: it had no timeout and no reset, so one `await`
+  that never settled held it `true` for the life of the process and all seven
+  session actions refused forever (relaunch was the only recovery); it was not
+  re-entrant, so `_hydrateOpenDto` released its *caller's* lock and left the
+  tail of five actions unguarded (a D-063 oversight); and it named nothing, on
+  any surface — `debug_ui_state` reports the Edit tab's store, not this one,
+  which is why a wedged app read as "idle". Now a real lock
+  (`app/src/store/sessionLock.ts`): named holder in the refusal, re-entrancy by
+  explicit hand-off with an identity-checked `release()`, and an abandoned lock
+  broken after 2 minutes with a loud log naming the op. `get_state` reports
+  `session.busy`/`heldBy`/`heldForMs` so an agent can see it too. The
+  zustand-`persist`-rehydration theory was refuted (there is no `persist`
+  middleware) — no on-disk state is corrupted and no install needs recovery.
+  `app/` had no test runner at all, which is how this shipped: vitest added,
+  13 tests, each verified to fail against the behaviour it pins.
+
 - **2026-09-09** — **D-267: a new photographic brand mark, converted into a
   real, properly-generated asset set** — the owner's own AI-generated medallion
   (an "A" + a marble bust profile, the same terracotta/ochre/marble palette
