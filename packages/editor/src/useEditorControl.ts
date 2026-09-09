@@ -1427,13 +1427,27 @@ export function useEditorControl(): void {
           source_fps: media.video?.fps ?? undefined,
         };
 
+        const startFrame = a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined;
+        const ripple = !!a?.ripple;
+        // B-131 — an explicit `track`+`startFrame` used to splice straight
+        // into a span another clip already covered, with no refusal at all;
+        // `checkAddClip` now answers that occupancy question (the same one
+        // `move`'s own `overlaps` check answers for a repositioned clip), so
+        // this call gets a real, actionable reason instead of a silent
+        // overlap or an opaque "check track index / project state".
+        const tlBefore = useEditorTimelineStore.getState().timeline;
+        if (tlBefore) {
+          const check = checkAddClip(tlBefore, track, clip, timelineFps(tlBefore), startFrame, ripple);
+          if (!check.ok) return { error: check.reason ?? 'that track cannot hold this clip' };
+        }
+
         useEditorTimelineStore.getState().applyOp({
           kind: 'add_clip',
           track,
           clip,
           atIndex: a?.atIndex !== undefined ? Math.round(Number(a.atIndex)) : undefined,
-          startFrame: a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined,
-          ripple: !!a?.ripple,
+          startFrame,
+          ripple,
         });
 
         const tl = useEditorTimelineStore.getState().timeline;
@@ -1632,19 +1646,23 @@ export function useEditorControl(): void {
         }
 
         const clip: NewClipFields = newTextClipFields(layer, duration, a?.name);
+        const startFrame = a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined;
+        const ripple = !!a?.ripple;
         // The same `checkAddClip` the reducer refuses on, asked here so the
         // refusal is a real sentence rather than a silent no-op — the posture
-        // `editor_add_transition`/`editor_edit_in` already take.
+        // `editor_add_transition`/`editor_edit_in` already take. B-131 —
+        // `checkAddClip` now also answers the occupancy question, so this
+        // catches a conflicting `startFrame` too, not just a bad track kind.
         if (!onNewVideoTrack) {
-          const check = checkAddClip(tl, track, clip);
+          const check = checkAddClip(tl, track, clip, fps, startFrame, ripple);
           if (!check.ok) return { error: check.reason ?? 'that track cannot hold a title' };
         }
         useEditorTimelineStore.getState().applyOp({
           kind: 'add_clip',
           track,
           clip,
-          startFrame: a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined,
-          ripple: !!a?.ripple,
+          startFrame,
+          ripple,
           onNewVideoTrack,
         });
 
@@ -2076,16 +2094,20 @@ export function useEditorControl(): void {
         }
 
         const clip: NewClipFields = newAdjustmentClipFields(layer, duration, a?.name);
+        const startFrame = a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined;
+        const ripple = !!a?.ripple;
+        // B-131 — `checkAddClip` also answers the occupancy question now, so
+        // a conflicting `startFrame` is refused with a real reason here too.
         if (!onNewVideoTrack) {
-          const check = checkAddClip(tl, track, clip);
+          const check = checkAddClip(tl, track, clip, fps, startFrame, ripple);
           if (!check.ok) return { error: check.reason ?? 'that track cannot hold an adjustment clip' };
         }
         useEditorTimelineStore.getState().applyOp({
           kind: 'add_clip',
           track,
           clip,
-          startFrame: a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined,
-          ripple: !!a?.ripple,
+          startFrame,
+          ripple,
           onNewVideoTrack,
         });
 

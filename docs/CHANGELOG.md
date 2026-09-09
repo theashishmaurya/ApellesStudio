@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-131 fixed (D-272):** `add_clip` now refuses an explicit
+  `track`+`startFrame` that lands on a span another clip already covers,
+  naming the conflicting clip, instead of silently splicing into it —
+  `checkAddClip` learned the occupancy question via the same "overlap
+  rejected unless `ripple`" contract `move` already enforces, and all three
+  MCP placement tools (`editor_add_clip`/`editor_add_text_clip`/
+  `editor_add_adjustment_clip`) now run it as a real pre-flight check.
+
 - **2026-09-10** — **B-137 logged, not fixed:** a clip edge-trim drag's own
   preview appears to stay pinned at the clip's original position instead of
   tracking the cursor (screenshot: the selected-clip box near `00:00:00`,

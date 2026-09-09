@@ -26476,3 +26476,84 @@ ghost in place of their static corner glyph — chosen because the ghost was
 already confirmed genuinely rendering and tracking correctly live, which is
 strictly more informative feedback than a fixed icon that doesn't move with
 the pointer.
+
+## D-272 — `checkAddClip` learns the occupancy question, answered the same way `move` already answers it (B-131)
+
+**Date:** 2026-09-10.
+
+### Context
+
+B-131: `add_clip`'s `applyOp` case had no occupancy check. An explicit `track`
++ `startFrame` (only reachable with `ripple` left `false`) was clamped to
+`>= 0` and spliced straight in, regardless of whether another clip already
+covered that span. The GUI never hit this — every drag/click path resolves
+its `startFrame` through `computeInsertion`/`resolveClipLanding` first, which
+only ever hands back a genuinely free span or an explicit `ripple: true` — but
+the three MCP tools that place a clip by explicit position
+(`editor_add_clip`, `editor_add_text_clip`, `editor_add_adjustment_clip`) pass
+a caller's raw `track`/`startFrame` straight through, with no such guarantee.
+`checkAddClip` — the one precondition function all three of those tools *do*
+call — only asked about track KIND (can a title go on an audio track), never
+about occupancy, so it had nothing to refuse with.
+
+### The options
+
+1. **A second, ad hoc overlap check inside `applyOp`'s `add_clip` case**,
+   silently no-op-ing on conflict with no reason string reaching the caller.
+   Rejected: `editor_add_clip`'s own generic "did not place — check track
+   index / project state" fallback is exactly the unhelpful message this
+   would produce, and B-131 explicitly asks for one that names the
+   conflicting clip.
+2. **Invent a new "OccupancyCheck" type/function, separate from
+   `checkAddClip`.** Rejected: this is the same track/track-kind question
+   `checkAddClip` already exists to answer for this exact op — a second
+   function answering an adjacent question about the same op is the two-
+   sources-of-truth problem CLAUDE.md forbids, and B-131's own "honest shape
+   of the fix" note already named `checkAddClip` as where this belongs.
+3. **Widen `checkAddClip` to also ask the occupancy question, using the same
+   overlap test `move`'s `EditOp` already enforces for a repositioned clip**
+   (`start < endFrame(other) && end > other.start_frame`, refused unless
+   `ripple` is set). Chosen.
+
+### The fix
+
+`checkAddClip(tl, track, clip, fps?, startFrame?, ripple?)` — three new
+**optional** trailing parameters, so every caller that only cares about the
+track-kind question (the `TimelinePane.drop.dom.test.tsx` unit tests included)
+keeps compiling and behaving unchanged. When `fps`/`startFrame` are given and
+`ripple` is falsy, it now also checks whether `[startFrame, startFrame +
+footprint)` on that track is covered by an existing clip and, if so, refuses
+naming that clip and its own span:
+
+```
+frames 150-179 on track 0 are already covered by "B-roll 1" (frames 100-199)
+— pass ripple: true to push it out of the way, or choose a startFrame outside
+that span
+```
+
+This is deliberately the SAME contract `move` already has — "explicit
+position, overlap rejected unless you opt into ripple" — not a new one:
+`applyOp`'s `add_clip` case now calls the widened `checkAddClip` (against the
+original, pre-clone tracks) exactly where it already called the narrower one,
+and refuses (a plain `return tl`, same no-op convention `move`'s own overlap
+rejection uses) on the same call. `useEditorControl.ts`'s three placement
+tools (`editor_add_clip`, `editor_add_text_clip`, `editor_add_adjustment_clip`)
+all now run this pre-flight and surface `check.reason` as a real tool error —
+`editor_add_clip` did not call `checkAddClip` at all before this, which was
+the other half of the gap: even once the reducer refused, that tool's own
+"did not place" fallback named neither the cause nor the conflicting clip.
+
+**No Rust change.** `apelles-timeline`'s own module doc is explicit that the
+crate "still has no clip-*creation* op of its own" — `add_clip` has only ever
+existed in `@apelles/editor`'s TS model, so there is no Rust counterpart to
+mirror.
+
+### Tests
+
+`packages/editor/src/timeline.test.ts`, new `add_clip occupancy check
+(B-131)` block: `checkAddClip` refuses a naive same-track overlap and names
+the conflicting clip; `applyOp` leaves the timeline byte-for-byte unchanged
+(no splice) on that same overlap; both accept a legitimate non-overlapping
+`startFrame`; `ripple: true` remains the documented escape hatch and is left
+alone by the occupancy question entirely (mirrors `move`'s own ripple
+contract, not a new one).

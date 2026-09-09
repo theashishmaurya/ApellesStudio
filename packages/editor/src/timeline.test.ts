@@ -17,6 +17,7 @@ import {
   EQ_MIN_Q,
   hasActiveEq,
   isEqBandActive,
+  checkAddClip,
   checkLink,
   clipAt,
   clipFromDraggedMedia,
@@ -298,6 +299,72 @@ describe('add_clip ripple insert (D-095)', () => {
     const before = tl(backToBack());
     const after = applyOp(before, { kind: 'add_clip', track: 0, clip: clip('c', 'C', { duration: 30 }) });
     expect(after.tracks[0].clips[2].start_frame).toBe(200);
+  });
+});
+
+// B-131 — `add_clip` had no occupancy check at all: an explicit `track` +
+// `startFrame` with no `ripple` used to splice straight into a span another
+// clip already covered instead of refusing, which the drag/click paths never
+// hit because they only ever reach this op through `computeInsertion`'s own
+// "real gap or explicit ripple" contract (see `computeInsertion (D-095)`
+// above). The fix teaches `checkAddClip` the same occupancy question `move`'s
+// own `overlaps` check already answers — these are the tests that prove the
+// naive overlap is now refused, and that a legitimate non-overlapping add
+// still goes through untouched.
+describe('add_clip occupancy check (B-131)', () => {
+  it('checkAddClip refuses an explicit startFrame that lands on top of an existing clip, naming it', () => {
+    const before = tl(backToBack()); // a:[0,100) b:[100,200)
+    const incoming = clip('c', 'New shot', { duration: 30, source_len: 30 });
+    const check = checkAddClip(before, 0, incoming, 24, 150, false);
+    expect(check.ok).toBe(false);
+    expect(check.reason).toContain('B-roll 1'); // the conflicting clip's own name
+    expect(check.reason).toContain('track 0');
+  });
+
+  it('applyOp refuses (no-op) the same naive overlap rather than splicing into the covered span', () => {
+    const before = tl(backToBack()); // a:[0,100) b:[100,200)
+    const after = applyOp(before, {
+      kind: 'add_clip',
+      track: 0,
+      clip: clip('c', 'New shot', { duration: 30, source_len: 30 }),
+      startFrame: 150, // squarely inside b's [100,200) span
+      ripple: false,
+    });
+    // Untouched: still exactly the two original clips, no third clip spliced in.
+    expect(after.tracks[0].clips.map((c) => c.id)).toEqual(['a', 'b']);
+    expect(after).toEqual(before);
+  });
+
+  it('checkAddClip and applyOp both accept a legitimate non-overlapping add', () => {
+    const before = tl(backToBack()); // a:[0,100) b:[100,200)
+    const incoming = clip('c', 'New shot', { duration: 30, source_len: 30 });
+    expect(checkAddClip(before, 0, incoming, 24, 300, false).ok).toBe(true);
+
+    const after = applyOp(before, {
+      kind: 'add_clip',
+      track: 0,
+      clip: incoming,
+      startFrame: 300, // well past b's end — a real, empty span
+      ripple: false,
+    });
+    const added = after.tracks[0].clips.find((c) => c.id === 'c');
+    expect(added?.start_frame).toBe(300);
+    expect(endFrame(added!, 24)).toBe(330);
+    // The pre-existing clips are exactly as they were.
+    expect(after.tracks[0].clips.find((c) => c.id === 'a')?.start_frame).toBe(0);
+    expect(after.tracks[0].clips.find((c) => c.id === 'b')?.start_frame).toBe(100);
+  });
+
+  it('ripple:true is still the documented escape hatch — it makes room instead of refusing', () => {
+    const before = tl(backToBack()); // a:[0,100) b:[100,200)
+    const incoming = clip('c', 'New shot', { duration: 30, source_len: 30 });
+    // Occupied at frame 150 without ripple: refused.
+    expect(checkAddClip(before, 0, incoming, 24, 150, false).ok).toBe(false);
+    // Same request with ripple: true is a different question — not refused by
+    // checkAddClip (it only asks the occupancy question when ripple is off,
+    // mirroring `move`'s own "explicit position, overlap rejected unless
+    // ripple" contract), and applyOp's own ripple path makes room for it.
+    expect(checkAddClip(before, 0, incoming, 24, 150, true).ok).toBe(true);
   });
 });
 

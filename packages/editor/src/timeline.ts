@@ -1332,20 +1332,50 @@ export interface TransitionCheck {
  *  A track index that does not exist is NOT refused here — `add_clip`'s own
  *  documented fallbacks (an empty timeline gets a video track made for it, an
  *  out-of-range index collapses to 0) are long-standing behaviour that several
- *  callers rely on, and both of those land the clip on a video track anyway. */
+ *  callers rely on, and both of those land the clip on a video track anyway.
+ *
+ *  **B-131 — occupancy, the second question this function answers.** An
+ *  explicit `startFrame` with no `ripple` must land in a real, empty span:
+ *  the drag/click paths only ever reach `add_clip` with a `startFrame`
+ *  already resolved by `computeInsertion`/`resolveClipLanding` (always either
+ *  a genuinely free gap or an explicit ripple), so they satisfy this by
+ *  construction. The MCP tools hand a caller's raw `track`+`startFrame`
+ *  straight through, which is the gap B-131 found: `applyOp`'s `add_clip`
+ *  case used to splice into whatever span it was given, ripple or not. This
+ *  is the SAME "explicit position, overlap rejected unless you opt into
+ *  ripple" contract the `move` `EditOp` already enforces (see its own
+ *  `overlaps` check) — reused rather than a second, differently-shaped
+ *  overlap rule for the same class of conflict. `fps`/`startFrame`/`ripple`
+ *  are optional so every existing caller that only cares about the track-kind
+ *  question keeps working unchanged; the occupancy question is only asked
+ *  when a caller actually has an explicit, non-rippled `startFrame` to check. */
 export function checkAddClip(
   tl: Timeline,
   track: number,
-  clip: Pick<Clip, 'text' | 'adjustment'>,
+  clip: Pick<Clip, 'text' | 'adjustment' | 'duration' | 'source_fps'>,
+  fps?: number,
+  startFrame?: number,
+  ripple?: boolean,
 ): TransitionCheck {
   const tr = tl.tracks[track];
-  if (!tr || !isGeneratedPictureClip(clip)) return { ok: true };
-  if (tr.kind !== 'video') {
+  if (!tr) return { ok: true };
+  if (isGeneratedPictureClip(clip) && tr.kind !== 'video') {
     const what = isTextClip(clip) ? 'A title' : 'An adjustment clip';
     return {
       ok: false,
       reason: `${what} is picture — it cannot go on the ${tr.kind} track ${track}. Put it on a video track, or add it without naming one to get a new video track above the picture.`,
     };
+  }
+  if (fps !== undefined && startFrame !== undefined && !ripple) {
+    const start = Math.max(0, Math.round(startFrame));
+    const end = start + sourceFramesToTimeline(clip, clip.duration, fps);
+    const hit = tr.clips.find((c) => start < endFrame(c, fps) && end > c.start_frame);
+    if (hit) {
+      return {
+        ok: false,
+        reason: `frames ${start}-${end - 1} on track ${track} are already covered by "${hit.name}" (frames ${hit.start_frame}-${endFrame(hit, fps) - 1}) — pass ripple: true to push it out of the way, or choose a startFrame outside that span`,
+      };
+    }
   }
   return { ok: true };
 }
@@ -3869,7 +3899,10 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // refuses on `checkTransition`; the caller holds the `reason` string for
     // the message. Skipped for `onNewVideoTrack`, whose track is a video track
     // by construction.
-    if (!op.onNewVideoTrack && !checkAddClip(tl, op.track, op.clip).ok) return tl;
+    // B-131 — occupancy is now part of the same check, against the ORIGINAL
+    // (pre-clone) tracks, so an explicit non-rippled `startFrame` that lands
+    // on top of an existing clip is refused here rather than spliced in.
+    if (!op.onNewVideoTrack && !checkAddClip(tl, op.track, op.clip, fps, op.startFrame, op.ripple).ok) return tl;
     const next = clone(tl);
     if (next.tracks.length === 0)
       next.tracks.push({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
