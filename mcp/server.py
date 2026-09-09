@@ -807,13 +807,16 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "keyframed via editor_set_clip_keyframes) export exactly as they "
             "play — the same `track gain x clip volume x fade x duck` product "
             "then the same constant-power pan law, verified by real "
-            "per-channel level measurement of real exported files. ONE "
-            "measured divergence, for MONO sources only: panning a mono clip "
-            "makes the exporter upmix it to stereo through ffmpeg's own "
-            "power-preserving rematrix (-3 dB per channel) while the live "
-            "mixer duplicates the channel at unity, so an exported panned "
-            "MONO clip sits 3 dB below what the preview played. Stereo "
-            "sources — the normal case — are unaffected. See B-101."
+            "per-channel level measurement of real exported files. Mono "
+            "sources included: a panned MONO clip used to export 3 dB below "
+            "what the preview played, because the exporter upmixed it to "
+            "stereo through ffmpeg's power-preserving rematrix while the live "
+            "mixer duplicates the channel at unity — fixed (B-101/D-269), the "
+            "exporter now performs the same unity duplicate for a source "
+            "probed as mono. If a mono clip predates the probed channel count "
+            "and no editor_list_media has run to backfill it, the old upmix "
+            "is kept rather than guessed at; call editor_list_media once (or "
+            "editor_reprobe_media that item) and re-export."
         ),
         "per_clip_eq": (
             "D-224: a clip's own parametric EQ (editor_set_clip_eq) exports "
@@ -974,20 +977,20 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "docs/notes/caption-presets.md."
         ),
         "media_pool_stuck_item_B073": (
-            "A media-pool item whose FIRST probe failed (e.g. a transient "
-            "file-access race) never gets re-probed and is invisible to "
-            "editor_add_clip after the project is reopened — even though "
-            "editor_import_media on the identical path reports success. "
-            "The underlying bug is still open (docs/BUGS.md B-073 — there is "
-            "no re-probe-on-demand or expiry), but it is now fully "
-            "DIAGNOSABLE and RECOVERABLE over MCP, so never recreate a "
-            "project or hand-read project.json for it again: "
-            "editor_list_media names the bad item (usable: false, plus a "
-            "`problem` string, and the response's `unusable` array is just "
-            "the ids), and editor_remove_media that id then "
-            "editor_import_media the same path forces the fresh probe. If "
-            "editor_add_clip refuses a path you just imported, that is the "
-            "sequence — don't just retry the same call."
+            "FIXED (docs/BUGS.md B-073), and the recovery is now one call. A "
+            "media-pool item whose FIRST probe failed (e.g. a transient "
+            "file-access race) is pooled with no video metadata, which makes "
+            "editor_add_clip refuse it — editor_list_media names it "
+            "(usable: false, plus a `problem` string; the response's "
+            "`unusable` array is just the ids). Fix the underlying file "
+            "problem, then editor_reprobe_media those ids: the item is "
+            "re-probed in place and comes back usable, keeping its id and "
+            "every reference to it. editor_import_media on the identical "
+            "path now heals such an item too (it used to dedup to a silent "
+            "no-op, which is how this bug was found). Never recreate a "
+            "project or hand-read project.json for this. A source that is "
+            "STILL missing comes back honestly unusable — check the "
+            "response's `stillUnusable`, don't assume the re-probe worked."
         ),
         "control_server_wedge_B069": (
             "FIXED (docs/BUGS.md B-069, a Rules-of-Hooks violation in "
@@ -1438,7 +1441,14 @@ def editor_import_media(paths: list[str], folder: str | None = None) -> str:
     directory listing first; see `editor_get_capabilities` for the full story
     (docs/BUGS.md B-070). If this reports success but a later `editor_add_clip`
     on the same path still can't find the pool item, see B-073 there too —
-    don't just retry."""
+    don't just retry.
+
+    A path already in the pool is skipped, not duplicated — with one
+    exception (B-073): an entry whose own first probe failed and therefore
+    has no video metadata is re-probed here and returned if it now succeeds,
+    so re-importing really is a valid repair for that case. To repair such an
+    item by id instead — keeping its id and every reference to it — use
+    `editor_reprobe_media`."""
     import json
 
     args: dict = {"paths": paths}
@@ -1454,15 +1464,13 @@ def editor_remove_media(ids: list[str]) -> str:
     Wraps the SAME `chroma_media_remove` Tauri command the GUI's own Sources
     panel delete action already calls — no separate/new removal logic.
 
-    **This is the only correction mechanism the pool has right now** (roadmap
-    item 23, 2026-09-07): `editor_import_media`'s dedup treats "already known
-    by this exact source path" as permanent, so a pool item whose probe
-    failed once (a transient race, or a real probe bug — see `docs/BUGS.md`
-    B-073/B-089) stays wrong for the rest of the project's life otherwise.
-    There is still no re-probe-on-demand or expiry (that remains an open
-    architectural gap, not fixed by this tool) — the only way to fix a
-    stuck/wrong item today is `editor_remove_media` the bad id, then
-    `editor_import_media` the same path again to get a fresh probe.
+    **For a pool item that is merely STALE or UNPROBED, reach for
+    `editor_reprobe_media` first, not this** (B-073, fixed): that re-probes
+    the item in place, keeping its id and every reference to it, which is
+    almost always what you want for a source whose probe failed once or whose
+    file has since been fixed. Remove is for an item you genuinely want gone
+    from the pool — a wrong file, a duplicate, a path that will never come
+    back.
 
     An id already gone from the pool (already removed, a stale id) is
     silently skipped, not an error — same "the caller's own already-rendered
@@ -1520,6 +1528,40 @@ def editor_list_media() -> str:
     import json
 
     return json.dumps(_op("editor_list_media"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_reprobe_media(ids: list[str]) -> str:
+    """Re-probe media-pool items by id — the repair action for an item
+    `editor_list_media` reports as `usable: false` (B-073, fixed).
+
+    A pool item whose FIRST probe failed (an offline drive, a file still
+    being written, a transient ffprobe error) is stored with no video
+    metadata at all, so `editor_add_clip` refuses it: there is no frame count
+    to place a clip with. Before this tool the item was also unrepairable —
+    re-importing the identical path deduped to a no-op and nothing ever
+    re-read it.
+
+    **The sequence:** fix the underlying file problem (remount the drive,
+    restore the file, wait for the write to finish), then call this with the
+    ids `editor_list_media` listed in `unusable`. The item is re-probed in
+    place and keeps its id, so every clip and reference that already points
+    at it stays valid — unlike remove-and-re-import, which mints a new id.
+
+    **Check `stillUnusable` in the response, don't assume it worked.** A
+    source that is still unavailable comes back unchanged and honestly
+    unusable rather than as a false success you would only discover at the
+    next `editor_add_clip`. `unknownIds` lists any id that is not in the pool
+    at all (skipped, not an error). Ids you did not name are never touched.
+
+    On demand only, by design: a re-probe is a real ffprobe (plus a thumbnail
+    regeneration if the source actually changed), so `editor_list_media` does
+    not fire one for every row behind your back. Wraps the same
+    `chroma_media_reprobe` command as the Sources panel's own "Re-probe" row
+    action."""
+    import json
+
+    return json.dumps(_op("editor_reprobe_media", ids=ids), indent=2, default=str)
 
 
 @mcp.tool()

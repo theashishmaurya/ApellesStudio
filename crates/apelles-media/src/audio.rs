@@ -286,6 +286,22 @@ use symphonia::core::units::Time;
 /// stereo↔5.1-ish cases this MVP is unlikely to actually hit — a talking-head
 /// / screen-capture source is overwhelmingly mono or stereo). `src_channels
 /// == dst_channels` (the common case) is a no-op copy. Pure — no I/O.
+///
+/// **B-101/D-269 — the mono → N case is a UNITY duplicate, and that is now a
+/// cross-engine contract, not a local choice.** Each output channel carries
+/// the sample unchanged, so total power doubles going to stereo (+3 dB). The
+/// power-preserving alternative (each channel at 1/√2, which is what
+/// libswresample does by default and what the exporter used to inherit from
+/// `aformat=channel_layouts=stereo`) is equally defensible in isolation and
+/// wrong *here*: [`apelles_types::pan_gains`] is normalised to a **0 dB
+/// centre**, and that law only means what it says on top of a unity duplicate.
+/// On a power-preserving upmix, `pan = 0` would quietly be −3 dB and a mono
+/// clip's level would jump the instant it was nudged off centre.
+///
+/// `@apelles/editor`'s `buildAudioSourceChain` mirrors this exactly for a
+/// source it knows is mono, and `b101_export_mono_upmix_matches_the_live_mixer`
+/// measures the two against each other rather than trusting that they look
+/// alike. Changing the law here without changing it there re-opens B-101.
 pub(crate) fn adapt_channels(src: &[f32], src_channels: usize, dst_channels: usize) -> Vec<f32> {
     if src_channels == 0 || dst_channels == 0 || src_channels == dst_channels {
         return src.to_vec();
@@ -5865,5 +5881,153 @@ mod tests {
                 "output second {out_secs}: retime reads source {mine}, expected {expected}"
             );
         }
+    }
+
+    // ----------------------------------------------------------------- //
+    // B-101/D-269 — the live mixer's mono→stereo law vs. the exporter's,
+    // both MEASURED on the same signal.
+    // ----------------------------------------------------------------- //
+
+    /// Per-channel RMS of an interleaved buffer.
+    fn channel_rms(interleaved: &[f32], channels: usize) -> Vec<f64> {
+        (0..channels)
+            .map(|c| {
+                let sq: f64 = interleaved
+                    .iter()
+                    .skip(c)
+                    .step_by(channels)
+                    .map(|s| (*s as f64) * (*s as f64))
+                    .sum();
+                let n = (interleaved.len() / channels).max(1) as f64;
+                (sq / n).sqrt()
+            })
+            .collect()
+    }
+
+    /// Run one filtergraph over a raw f32le mono fixture and return the real
+    /// decoded stereo result. Raw PCM in and out on purpose: no encoder, no
+    /// container, nothing lossy between the filter and the measurement.
+    fn ffmpeg_stereo_through(dir: &Path, mono_path: &Path, chain: &str, tag: &str) -> Vec<f32> {
+        let out = dir.join(format!("{tag}.raw"));
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "f32le",
+                "-ar",
+                "48000",
+                "-ac",
+                "1",
+                "-i",
+            ])
+            .arg(mono_path)
+            .args(["-filter_complex", chain, "-map", "[o]", "-f", "f32le"])
+            .arg(&out)
+            .status()
+            .expect("ffmpeg runs");
+        assert!(status.success(), "ffmpeg failed for chain: {chain}");
+        let bytes = std::fs::read(&out).expect("read raw f32 output");
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect()
+    }
+
+    /// **B-101, the whole claim, measured on both sides.**
+    ///
+    /// A panned MONO clip must come out of the exporter at the level the live
+    /// mixer plays it. The two paths adapt mono to stereo differently by
+    /// nature — this mixer duplicates the sample at unity
+    /// ([`adapt_channels`]), while libswresample's default matrix (what a bare
+    /// `aformat=channel_layouts=stereo` selects) preserves power at 1/√2 — and
+    /// until this fix the exporter used the second while the preview used the
+    /// first, so an exported panned mono clip sat 3.01 dB below what was heard.
+    ///
+    /// Neither side is recomputed from a formula here. The live level is the
+    /// REAL [`adapt_channels`] output with the REAL [`apelles_types::pan_gains`]
+    /// applied the way [`SourceEnvelopes::apply`] applies them (the pan pair
+    /// into the first two channels of the already-adapted buffer); the export
+    /// level is a REAL ffmpeg run of the chain `@apelles/editor`'s
+    /// `buildAudioSourceChain` emits for a source it knows is mono — pinned
+    /// string-for-string on that side by `timelineExportAudio.test.ts`'s
+    /// "a panned MONO clip is upmixed by a UNITY duplicate" test, so the two
+    /// halves of this claim cannot drift apart silently.
+    ///
+    /// The pre-fix chain is measured in the same run: a test that only checked
+    /// the new one could not show it was ever able to see the bug.
+    #[test]
+    fn b101_export_mono_upmix_matches_the_live_mixer() {
+        if !have_ffmpeg() {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("apelles_b101_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        // A deterministic mono signal — no file format, no codec, just samples.
+        let rate = 48_000usize;
+        let mono: Vec<f32> = (0..rate)
+            .map(|n| {
+                (0.5 * (2.0 * std::f64::consts::PI * 440.0 * n as f64 / rate as f64).sin()) as f32
+            })
+            .collect();
+        let mono_path = dir.join("mono.raw");
+        let mut raw = Vec::with_capacity(mono.len() * 4);
+        for s in &mono {
+            raw.extend_from_slice(&s.to_le_bytes());
+        }
+        std::fs::write(&mono_path, &raw).expect("write mono fixture");
+
+        // --- the LIVE path, run for real -------------------------------- //
+        let pan = -0.5; // a real pan, not an extreme: both channels stay audible
+        let (gl, gr) = apelles_types::pan_gains(pan);
+        let mut live = adapt_channels(&mono, 1, 2);
+        for frame in live.chunks_mut(2) {
+            frame[0] *= gl as f32;
+            frame[1] *= gr as f32;
+        }
+        let live_rms = channel_rms(&live, 2);
+
+        // --- the EXPORT path, run for real ------------------------------ //
+        // Exactly `buildAudioSourceChain`'s mono branch: the unity duplicate,
+        // the channelsplit, one `volume` per channel carrying that channel's
+        // own pan-law constant, and the join back to stereo.
+        let fixed = format!(
+            "[0:a]pan=stereo|c0=c0|c1=c0[s];[s]channelsplit=channel_layout=stereo[l][r];\
+             [l]volume=volume='({gl})'[lv];[r]volume=volume='({gr})'[rv];\
+             [lv][rv]join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR[o]"
+        );
+        let export_rms = channel_rms(&ffmpeg_stereo_through(&dir, &mono_path, &fixed, "fixed"), 2);
+
+        // The claim: the same clip, the same level, in both engines.
+        for c in 0..2 {
+            let db = 20.0 * (export_rms[c] / live_rms[c]).log10();
+            assert!(
+                db.abs() < 0.05,
+                "channel {c}: export is {db:.3} dB from the live mixer \
+                 (live {:.6}, export {:.6})",
+                live_rms[c],
+                export_rms[c]
+            );
+        }
+
+        // --- and the pre-fix chain, so this test can see the bug -------- //
+        let old = fixed.replace("pan=stereo|c0=c0|c1=c0", "aformat=channel_layouts=stereo");
+        let old_rms = channel_rms(&ffmpeg_stereo_through(&dir, &mono_path, &old, "old"), 2);
+        for c in 0..2 {
+            let db = 20.0 * (old_rms[c] / live_rms[c]).log10();
+            assert!(
+                (db + 3.0103).abs() < 0.05,
+                "channel {c}: the pre-fix upmix should sit 3.01 dB below the \
+                 live mixer, measured {db:.3} dB"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

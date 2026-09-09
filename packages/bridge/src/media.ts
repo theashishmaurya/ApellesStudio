@@ -43,6 +43,17 @@ export interface MediaVideoInfo {
    *  one-time backfill resolves it (see the Rust field's own doc). Treated
    *  conservatively as "no audio half" while it's unknown. */
   hasAudio?: boolean | null;
+  /** B-101/D-269 — the source's own audio channel count (`0` for a silent
+   *  source). The export compiler reads it to know whether a clip is **mono**,
+   *  which decides how it is adapted to stereo before a pan: a mono source is
+   *  duplicated into both channels at unity, matching the live mixer's own
+   *  `adapt_channels` and the 0 dB-centre pan law.
+   *
+   *  **Absent/`null` means "not probed for this yet", NOT "silent"** — same
+   *  sentinel discipline as `hasAudio` above, resolved by `chroma_media_list`'s
+   *  one-time backfill. Treated as "channel count unknown" (keep the pre-fix
+   *  upmix) while it is, never guessed. */
+  audioChannels?: number | null;
 }
 
 /** Mirrors `chroma::project::MediaItemDto` (serde camelCase). */
@@ -123,6 +134,23 @@ interface MediaPoolState {
     paths: string[],
     motionSceneId?: string,
   ) => Promise<{ ok: boolean; error?: string; items?: MediaItem[] }>;
+  /** B-073 — **re-probe** the pool items named by `ids` and merge whatever
+   *  comes back into `items` by id. The repair action for an item whose first
+   *  probe failed (offline drive, a file still being written, a transient
+   *  `ffprobe` error): such an item is pooled with no `video` block, which
+   *  makes it unusable (`editor_add_clip` has no frame count to place a clip
+   *  with) and, before this, unrepairable — re-importing the same path deduped
+   *  to a no-op and nothing else ever re-read it.
+   *
+   *  Addressed by **id**, not path, because that is the handle a caller
+   *  looking at one bad row actually has (`refreshPaths` above is the same
+   *  work addressed the other way, for the Motion re-render that knows a file
+   *  and not a pool item; both go through one Rust implementation).
+   *
+   *  On demand only — never fired for the whole pool by a listing. A source
+   *  that is still unavailable comes back unchanged and still unusable, never
+   *  falsely marked probed. */
+  reprobeMedia: (ids: string[]) => Promise<{ ok: boolean; error?: string; items?: MediaItem[] }>;
   /** re-file an existing pool item into a different bin (D-045); pass
    *  `folder: null` to move it back to the pool root. Updates `items` in
    *  place on success. */
@@ -155,6 +183,23 @@ interface MediaPoolState {
  *  guard, for the same reason, as `@apelles/editor`'s `timelineStore` `load()`
  *  (B-034/D-112). */
 let refreshToken = 0;
+
+/** Merge `incoming` into `existing` **by id**: an item already in the list is
+ *  replaced in place (order preserved, so the Sources panel does not reshuffle
+ *  under the cursor), one that isn't is appended.
+ *
+ *  Shared by every action that can return a MIX of new and already-known items
+ *  — `refreshPaths` (D-260) and `reprobeMedia`/`importPaths` (B-073). Appending
+ *  blindly would duplicate the row for the already-known half, which is the
+ *  exact failure `refreshPaths`' own doc warned about; extracted here rather
+ *  than copied a third time. */
+function mergeById(existing: MediaItem[], incoming: MediaItem[]): MediaItem[] {
+  if (incoming.length === 0) return existing;
+  const byId = new Map(incoming.map((it) => [it.id, it]));
+  const merged = existing.map((it) => byId.get(it.id) ?? it);
+  const known = new Set(existing.map((it) => it.id));
+  return [...merged, ...incoming.filter((it) => !known.has(it.id))];
+}
 
 export const useMediaPoolStore = create<MediaPoolState>((set, get) => ({
   items: [],
@@ -197,10 +242,23 @@ export const useMediaPoolStore = create<MediaPoolState>((set, get) => ({
         paths,
         folder: folder && folder.trim() ? folder : null,
       });
-      if (added.length > 0) {
-        set((s) => ({ items: [...s.items, ...added] }));
-      }
+      // B-073 — merged by id, not appended: `chroma_media_import` may now
+      // return an item that is ALREADY in the pool (one whose first probe
+      // failed and that this call re-probed successfully), and appending it
+      // would show the same media twice in the Sources panel.
+      set((s) => ({ items: mergeById(s.items, added) }));
       return { ok: true, added };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  reprobeMedia: async (ids) => {
+    if (ids.length === 0) return { ok: true, items: [] };
+    try {
+      const items = await invoke<MediaItem[]>('chroma_media_reprobe', { ids });
+      set((s) => ({ items: mergeById(s.items, items) }));
+      return { ok: true, items };
     } catch (e) {
       return { ok: false, error: String(e) };
     }
@@ -213,17 +271,10 @@ export const useMediaPoolStore = create<MediaPoolState>((set, get) => ({
         paths,
         motionSceneId: motionSceneId ?? null,
       });
-      if (items.length > 0) {
-        // Merge by id, never append: a refreshed item is already in `items`,
-        // and an added one is not. One pass, order preserved for the existing
-        // rows so the Sources panel doesn't reshuffle under the cursor.
-        set((s) => {
-          const byId = new Map(items.map((it) => [it.id, it]));
-          const merged = s.items.map((it) => byId.get(it.id) ?? it);
-          const known = new Set(s.items.map((it) => it.id));
-          return { items: [...merged, ...items.filter((it) => !known.has(it.id))] };
-        });
-      }
+      // Merge by id, never append: a refreshed item is already in `items`,
+      // and an added one is not. Order preserved for the existing rows so the
+      // Sources panel doesn't reshuffle under the cursor.
+      set((s) => ({ items: mergeById(s.items, items) }));
       return { ok: true, items };
     } catch (e) {
       return { ok: false, error: String(e) };

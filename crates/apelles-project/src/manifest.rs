@@ -409,12 +409,31 @@ pub struct MediaVideoInfo {
     /// deserialize it to `false`: indistinguishable from a genuinely silent
     /// source, and permanently wrong for every existing project (no linked
     /// audio would ever be created for its media again).
-    /// [`backfill_has_audio`] resolves the sentinel once, on the next media
+    /// [`backfill_audio_facts`] resolves the sentinel once, on the next media
     /// list, and persists the real answer. The same "an absent value is not
     /// the value" discipline `Clip::start_frame`'s own migration sentinel
     /// already keeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_audio: Option<bool>,
+    /// B-101/D-269 — the source's own audio channel count
+    /// (`video::VideoInfo::audio_channels`; `0` for a silent source). The
+    /// exporter reads it to know whether a clip is **mono**, which decides how
+    /// it is adapted to stereo before a pan: a mono source is duplicated into
+    /// both channels at unity, matching `apelles_media::audio::adapt_channels`
+    /// and the 0 dB-centre pan law in `apelles_types::pan`. Without it the
+    /// exporter fell back to libswresample's power-preserving mono→stereo
+    /// matrix (each channel at 1/√2) and a panned mono clip exported 3.01 dB
+    /// below what the preview played.
+    ///
+    /// `Option<u16>`, `#[serde(default)]`, for exactly [`Self::has_audio`]'s
+    /// reason: `None` is a real **"never probed for this"** sentinel, and a
+    /// bare `u16` would deserialize a pre-D-269 pool item to `0`, which is
+    /// indistinguishable from a genuinely silent source.
+    /// [`backfill_audio_facts`] resolves the sentinel once, on the next media
+    /// list, and persists the real answer; until then the exporter keeps its
+    /// pre-fix behaviour rather than guessing a channel count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_channels: Option<u16>,
 }
 
 impl From<&video::VideoInfo> for MediaVideoInfo {
@@ -425,33 +444,40 @@ impl From<&video::VideoInfo> for MediaVideoInfo {
             frame_count: info.frame_count,
             duration_secs: info.duration_secs,
             has_audio: Some(info.has_audio),
+            audio_channels: Some(info.audio_channels),
         }
     }
 }
 
-/// D-129 — resolve the `has_audio: None` migration sentinel for every pool
-/// item that predates the field, by re-probing its source once. Returns
-/// `true` if anything changed, so the caller can persist the manifest — which
-/// makes this a genuinely **one-time** pass per project, not a re-probe on
-/// every media list.
+/// D-129/B-101 — resolve the migration sentinels on [`MediaVideoInfo`]'s audio
+/// facts (`has_audio`, D-129; `audio_channels`, B-101/D-269) for every pool
+/// item that predates the field in question, by re-probing its source once.
+/// Returns `true` if anything changed, so the caller can persist the manifest —
+/// which makes this a genuinely **one-time** pass per project, not a re-probe
+/// on every media list.
+///
+/// One function for both because both come off the *same* probe: resolving them
+/// separately would mean two passes over the pool and, for an item missing
+/// both, two `probe_cached` calls where one answers everything.
 ///
 /// Deliberately cheap and forgiving: [`apelles_media::probe::probe_cached`] is the same
 /// memoised probe the preview and waveform paths already share, so a source
 /// touched anywhere else this session costs nothing here; an offline or
 /// unprobeable source is left as `None` (still *unknown*, never falsely
-/// recorded as silent) rather than failing the whole list, matching this
-/// module's standing "offline is flagged, not fatal" discipline.
-pub fn backfill_has_audio(manifest: &mut ProjectManifest) -> bool {
+/// recorded as silent or as mono) rather than failing the whole list, matching
+/// this module's standing "offline is flagged, not fatal" discipline.
+pub fn backfill_audio_facts(manifest: &mut ProjectManifest) -> bool {
     let mut changed = false;
     for item in manifest.media.iter_mut() {
         let Some(video) = item.video.as_mut() else {
             continue;
         };
-        if video.has_audio.is_some() {
+        if video.has_audio.is_some() && video.audio_channels.is_some() {
             continue;
         }
         if let Ok(info) = apelles_media::probe::probe_cached(Path::new(&item.source_path)) {
             video.has_audio = Some(info.has_audio);
+            video.audio_channels = Some(info.audio_channels);
             changed = true;
         }
     }
@@ -763,12 +789,63 @@ pub fn refresh_media(
     (touched, changed)
 }
 
+/// B-073 — re-probe the pool items named by `ids`, in `ids` order, and return
+/// them as they now stand. `changed` reports whether anything was actually
+/// written, so the caller can skip the manifest save; an id that is not in the
+/// pool is skipped silently (same "a bulk action's ids come from an
+/// already-rendered list" contract [`remove_media`] keeps).
+///
+/// **Why an id-addressed entry point exists at all.** [`refresh_media`] does
+/// the identical work but is addressed by *path*, because its caller (a Motion
+/// re-render, D-260) knows the file it just wrote and not which pool item, if
+/// any, points at it. B-073's caller is the exact opposite: a human or an agent
+/// looking at one row of the media pool that came back `usable: false`, whose
+/// only stable handle is the item's own id. Resolving ids to paths and calling
+/// the same [`refresh_media`] keeps ONE re-probe implementation rather than two
+/// that could drift — this function is the address translation and nothing
+/// else.
+///
+/// It repairs B-073's stuck item because a probe **failure is never memoised**
+/// (`apelles_media::probe::probe_cached` only caches a successful
+/// [`apelles_media::video::VideoInfo`]), so the moment the underlying file is
+/// readable again this really does re-run `ffprobe` and fill in the `video`
+/// metadata that a transient failure at import time left empty. A source that
+/// is *still* unavailable is left exactly as it was — `video: None`, `offline:
+/// true` on the returned DTO — never falsely recorded as probed.
+pub fn reprobe_media(manifest: &mut ProjectManifest, ids: &[String]) -> (Vec<MediaItem>, bool) {
+    let paths: Vec<String> = ids
+        .iter()
+        .filter_map(|id| manifest.media_for(id).map(|m| m.source_path.clone()))
+        .collect();
+    refresh_media(manifest, &paths, None)
+}
+
 /// Probe + append the entries of `paths` not already in `manifest.media`
 /// (matched by source path — re-importing the same file is a no-op, not a
 /// duplicate, regardless of `folder`; use `chroma_media_move` to re-file an
-/// existing item) and return just the items that were added, all filed into
-/// `folder`. Pure model logic — no persistence; callers `save_manifest`
-/// themselves.
+/// existing item), all filed into `folder`. Pure model logic — no persistence;
+/// callers `save_manifest` themselves.
+///
+/// Returns every item the call *produced a usable answer for*: the ones newly
+/// added, plus (B-073) any already-pooled path that had **no probed `video`
+/// metadata** and gained some here. Callers merge the result into their own
+/// list **by id**, never append blindly — a healed item is already in the pool.
+///
+/// **B-073, the self-heal.** This used to skip an already-pooled path
+/// unconditionally, which is right for the case it was written for (importing
+/// the same file twice must not duplicate it) and silently wrong for the case
+/// that actually bites: an item whose *first* probe failed transiently. It has
+/// `id`/`sourcePath`/`name` and no `video` at all, so `editor_add_clip` has no
+/// frame count to place a clip with and refuses it — and re-importing the exact
+/// path, the obvious recovery, returned `added: []` and changed nothing,
+/// forever. A pool entry with no `video` is not "already imported", it is a
+/// half-finished import, and finishing it is exactly what an import of that
+/// path is asking for. A fully-probed entry is still skipped, so re-importing a
+/// healthy file costs one `HashSet` lookup and writes nothing, unchanged.
+///
+/// The narrower `video.is_none()` condition — rather than reconciling every
+/// named path the way [`refresh_media`] does — is deliberate: import must not
+/// silently become a re-probe of files the caller believes it is only adding.
 pub fn add_media(
     manifest: &mut ProjectManifest,
     paths: &[String],
@@ -779,6 +856,19 @@ pub fn add_media(
         .iter()
         .map(|m| m.source_path.as_str())
         .collect();
+    // B-073 — the already-pooled paths that never got real video metadata.
+    // Resolved before the borrow below, and re-probed through the one shared
+    // `refresh_media` implementation rather than a second copy of it.
+    let unprobed: Vec<String> = paths
+        .iter()
+        .filter(|p| {
+            manifest
+                .media
+                .iter()
+                .any(|m| &&m.source_path == p && m.video.is_none())
+        })
+        .cloned()
+        .collect();
     let added: Vec<MediaItem> = paths
         .iter()
         .filter(|p| !existing.contains(p.as_str()))
@@ -788,7 +878,17 @@ pub fn add_media(
     if !added.is_empty() {
         register_folder(manifest, folder);
     }
+    if unprobed.is_empty() {
+        return added;
+    }
+    let (healed, _) = refresh_media(manifest, &unprobed, None);
+    // Only the ones that actually gained metadata are worth reporting — a
+    // still-offline source is unchanged, and saying "imported" about it would
+    // be the same false signal the original bug was made of.
     added
+        .into_iter()
+        .chain(healed.into_iter().filter(|m| m.video.is_some()))
+        .collect()
 }
 
 /// Add `folder` to [`ProjectManifest::folders`] if it isn't already known
@@ -1657,6 +1757,40 @@ pub fn infer_settings_from_clip(clip: Option<&str>) -> ProjectSettings {
     s
 }
 
+/// B-097 — the **exact** timebase to stamp on a freshly created [`Timeline`],
+/// probed from `clip` (the same first-media path [`infer_settings_from_clip`]
+/// derives the project's output spec from). `None` for no path / an offline or
+/// unprobeable source / a nonsensical rate, which leaves the timeline on
+/// `apelles_timeline::DEFAULT_FPS` exactly as before.
+///
+/// **Why this exists.** [`infer_settings_from_clip`] already recorded the real
+/// frame rate in `ProjectSettings::fps` (D-038's "sensible resolution +
+/// timebase"), but every timeline-creation site left [`Timeline::rate`] at
+/// `None` — and `Timeline::fps()` reads *that*, falling back to
+/// `DEFAULT_FPS` (24). So a project seeded from 25fps media recorded 25 in its
+/// settings and then resolved its whole edit at 24: `Track::clip_at`
+/// dutifully fps-converted every clip's own `source_fps` against a timebase
+/// nothing had actually chosen, and a caller reasoning in the media's frames
+/// (the natural thing to do when every clip in the project is 25fps) got an
+/// answer one frame off at the first position past a clip boundary. That is
+/// B-097 — not an arithmetic error in `clip_at`, which is exactly right, but
+/// two sources of truth for the project's timebase, only one of which was ever
+/// filled in. Same shape as B-082's fix, which found `source_fps` left `None`
+/// at a creation site with the probe sitting right above it.
+///
+/// The rate comes back as the probe's own `fps_num`/`fps_den` rational, never
+/// a float re-rationalised by guesswork, so 30000/1001 stays 30000/1001.
+///
+/// Only ever applied to a timeline being **created**. A timeline already
+/// persisted with `rate: None` keeps it (and keeps resolving at 24) — this
+/// deliberately does not migrate existing projects, whose edits were made
+/// against whatever timebase they have.
+pub fn infer_timeline_rate(clip: Option<&str>) -> Option<apelles_types::Rational> {
+    let info = apelles_media::probe::probe_cached(Path::new(clip?)).ok()?;
+    (info.fps_num > 0 && info.fps_den > 0)
+        .then(|| apelles_types::Rational::new(info.fps_num as i64, info.fps_den as i64))
+}
+
 /// Create `<dir>/<name>.chroma/` + `grades/` + `project.json` with one shot per
 /// media path. Errors if a project of that name already exists.
 pub fn new_project_in(
@@ -1687,7 +1821,9 @@ pub fn new_project_in(
         let timeline = Timeline {
             id: uuid::Uuid::new_v4().to_string(),
             name: clean.clone(),
-            rate: None,
+            // B-097 — the media's own timebase, not `DEFAULT_FPS`. See
+            // `infer_timeline_rate`.
+            rate: infer_timeline_rate(media_paths.first().map(String::as_str)),
             tracks: Vec::new(),
             markers: Vec::new(),
         };
@@ -2275,9 +2411,16 @@ mod tests {
         // `source_fps` at `None` even though the probe sitting right above it
         // already had the real rate — every fps-aware consumer then fell back
         // to the timeline's own fps for a clip whose native rate differs.
-        // 25fps here vs. the project's default 24fps timeline is exactly that
-        // mismatch: pre-fix, a null `source_fps` and a false-agreement with
-        // 24fps would have been indistinguishable, so it has to differ.
+        // 25fps here vs. `DEFAULT_FPS` (24) is exactly that mismatch: pre-fix,
+        // a null `source_fps` and a false-agreement with 24fps would have been
+        // indistinguishable, so it has to differ from 24.
+        //
+        // B-097 note: the project's timeline is no longer 24fps here — it is
+        // seeded from this same 25fps media now (`infer_timeline_rate`). That
+        // does not weaken this test: `source_fps` must still be a real,
+        // positive, probed number on the clip rather than `None`, which is
+        // what the assertion below actually checks, and 25 ≠ 24 keeps the
+        // pre-fix false-agreement distinguishable in the persisted JSON.
         let Some(clip) = make_test_clip("b082", 176, 144, "25", 1) else {
             eprintln!("skip: ffmpeg not on PATH");
             return;
@@ -2296,6 +2439,50 @@ mod tests {
         let reloaded = load_manifest(&dir).unwrap();
         let reloaded_clip = &reloaded.timelines[reloaded.active_timeline].tracks[0].clips[0];
         assert_eq!(reloaded_clip.source_fps, Some(25.0));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&clip);
+    }
+
+    #[test]
+    fn new_project_seeds_the_timeline_rate_from_the_real_probe_b097() {
+        // B-097: `infer_settings_from_clip` recorded the media's real 25fps in
+        // `settings.fps` and the timeline's own `rate` was left `None`, so
+        // `Timeline::fps()` answered `DEFAULT_FPS` (24) — two sources of truth
+        // for one project's timebase, and the reason a caller reasoning in the
+        // media's own frames got an answer one frame off past a clip boundary.
+        let Some(clip) = make_test_clip("b097", 176, 144, "25", 1) else {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        };
+        let root = tmp("b097_timeline_rate");
+        let (dir, manifest) =
+            new_project_in(&root, "b097", &[clip.to_string_lossy().to_string()]).unwrap();
+        let tl = &manifest.timelines[manifest.active_timeline];
+        assert_eq!(
+            tl.rate,
+            Some(apelles_types::Rational::new(25, 1)),
+            "the timeline carries the media's own EXACT rational rate"
+        );
+        assert_eq!(tl.fps(), 25.0);
+        assert_eq!(
+            Some(tl.fps()),
+            manifest.settings.fps,
+            "the timeline's timebase and the project's recorded one agree — \
+             the whole point of B-097"
+        );
+        // With the two agreeing, a clip's timeline footprint is its own source
+        // frame count, so the frame arithmetic a caller reasons about in the
+        // media's frames is finally the identity it always looked like.
+        let placed = &tl.tracks[0].clips[0];
+        assert_eq!(placed.end_frame_at(tl.fps()), placed.duration);
+
+        let reloaded = load_manifest(&dir).unwrap();
+        assert_eq!(
+            reloaded.timelines[reloaded.active_timeline].rate,
+            Some(apelles_types::Rational::new(25, 1)),
+            "and it survives the save/reload round trip"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_file(&clip);
@@ -2539,6 +2726,126 @@ mod tests {
         let _ = std::fs::remove_file(&clip);
     }
 
+    /// B-073 — a pool item whose FIRST probe failed is repairable, by id,
+    /// once the underlying file problem is resolved.
+    ///
+    /// The file is made genuinely unavailable (moved aside) and genuinely
+    /// available again (moved back) — nothing about the probe itself is
+    /// stubbed, because the whole bug lives in what a real failed probe
+    /// leaves behind and whether anything ever re-runs it.
+    #[test]
+    fn reprobe_media_repairs_an_item_whose_first_probe_failed_b073() {
+        let Some(clip) = make_test_clip("b073_reprobe", 320, 240, "30", 1) else {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        };
+        let root = tmp("b073_reprobe");
+        let (_dir, mut manifest) = new_project_in(&root, "b073", &[]).unwrap();
+
+        // The file is not there when the import happens — exactly B-073's
+        // "the import raced a transient file-access failure".
+        let path = root.join("footage.mp4");
+        let path_str = path.to_string_lossy().to_string();
+        let stashed = root.join("footage.mp4.away");
+        std::fs::rename(&clip, &stashed).unwrap();
+
+        let added = add_media(&mut manifest, std::slice::from_ref(&path_str), None);
+        assert_eq!(added.len(), 1, "the item is still POOLED, not dropped");
+        assert!(
+            added[0].video.is_none(),
+            "and it is the stuck shape this bug is about: no probed metadata"
+        );
+        let id = added[0].id.clone();
+
+        // Re-probing while it is STILL unavailable must not invent metadata.
+        let (touched, changed) = reprobe_media(&mut manifest, std::slice::from_ref(&id));
+        assert_eq!(touched.len(), 1);
+        assert!(
+            touched[0].video.is_none(),
+            "a still-missing source stays unknown — never falsely recorded"
+        );
+        assert!(!changed, "and nothing was written, so nothing to persist");
+
+        // The underlying file problem is resolved.
+        std::fs::rename(&stashed, &path).unwrap();
+
+        let (touched, changed) = reprobe_media(&mut manifest, std::slice::from_ref(&id));
+        assert!(changed, "the repair really changed the manifest");
+        let info = touched[0]
+            .video
+            .as_ref()
+            .expect("B-073: the item comes back USABLE once the file is back");
+        assert_eq!(info.resolution.width, 320);
+        assert_eq!(info.resolution.height, 240);
+        assert_eq!(info.fps, 30.0);
+        assert!(
+            info.frame_count > 0,
+            "and with the frame count `editor_add_clip` refused it for"
+        );
+        // The repair is on the manifest itself, not only on the returned copy.
+        assert_eq!(
+            manifest.media_for(&id).and_then(|m| m.video.as_ref()),
+            touched[0].video.as_ref()
+        );
+        // An unknown id is skipped, not an error.
+        let (none, changed) = reprobe_media(&mut manifest, &["no-such-id".to_string()]);
+        assert!(none.is_empty() && !changed);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// B-073's other half: re-IMPORTING the identical path — the obvious
+    /// recovery, and the one the bug was found by — now finishes the
+    /// half-finished import instead of deduping to a silent no-op.
+    #[test]
+    fn add_media_heals_an_already_pooled_but_unprobed_path_b073() {
+        let Some(clip) = make_test_clip("b073_import", 320, 240, "30", 1) else {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        };
+        let root = tmp("b073_import");
+        let (_dir, mut manifest) = new_project_in(&root, "b073i", &[]).unwrap();
+
+        let path = root.join("footage.mp4");
+        let path_str = path.to_string_lossy().to_string();
+        let stashed = root.join("footage.mp4.away");
+        std::fs::rename(&clip, &stashed).unwrap();
+
+        let added = add_media(&mut manifest, std::slice::from_ref(&path_str), None);
+        assert_eq!(added.len(), 1);
+        assert!(added[0].video.is_none());
+        let id = added[0].id.clone();
+
+        // Still unavailable: re-importing reports nothing, because nothing
+        // was actually fixed. (Pre-fix this was ALSO the answer once the file
+        // came back, which is the bug.)
+        assert!(
+            add_media(&mut manifest, std::slice::from_ref(&path_str), None).is_empty(),
+            "no usable answer yet — and still no duplicate row"
+        );
+        assert_eq!(manifest.media.len(), 1);
+
+        std::fs::rename(&stashed, &path).unwrap();
+
+        let healed = add_media(&mut manifest, std::slice::from_ref(&path_str), None);
+        assert_eq!(healed.len(), 1, "the same path now yields a usable item");
+        assert_eq!(
+            healed[0].id, id,
+            "the SAME pool item, healed — not a new one"
+        );
+        assert_eq!(manifest.media.len(), 1, "and still exactly one row");
+        assert_eq!(
+            healed[0].video.as_ref().map(|v| v.resolution.width),
+            Some(320)
+        );
+
+        // A fully-probed path is still a plain dedup no-op, unchanged.
+        assert!(add_media(&mut manifest, &[path_str], None).is_empty());
+        assert_eq!(manifest.media.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn media_item_dto_flags_offline_live() {
         let root = tmp("media_offline_dto");
@@ -2657,6 +2964,11 @@ mod tests {
             v.has_audio, None,
             "absent means never probed, not 'no audio' — the migration sentinel"
         );
+        assert_eq!(
+            v.audio_channels, None,
+            "B-101's sentinel behaves the same: absent means never probed, \
+             not 'zero channels'"
+        );
     }
 
     /// A known value round-trips, and `None` stays off the wire entirely
@@ -2673,25 +2985,33 @@ mod tests {
             frame_count: 100,
             duration_secs: 4.16,
             has_audio: Some(true),
+            audio_channels: Some(1),
         };
         let json = serde_json::to_string(&v).unwrap();
         assert!(json.contains("\"hasAudio\":true"), "{json}");
+        assert!(json.contains("\"audioChannels\":1"), "{json}");
         let back: MediaVideoInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(back.has_audio, Some(true));
+        assert_eq!(back.audio_channels, Some(1));
 
         v.has_audio = None;
+        v.audio_channels = None;
         let json2 = serde_json::to_string(&v).unwrap();
         assert!(!json2.contains("hasAudio"), "None omits the key: {json2}");
+        assert!(
+            !json2.contains("audioChannels"),
+            "None omits the key: {json2}"
+        );
     }
 
-    /// `backfill_has_audio` is the one-time migration that resolves the
-    /// sentinel. Three real properties: an already-resolved item is left
+    /// `backfill_audio_facts` is the one-time migration that resolves the
+    /// sentinels. Three real properties: an already-resolved item is left
     /// alone (so the pass is idempotent and does no I/O on a settled
     /// project), an item whose source can't be probed stays **unknown**
-    /// rather than being falsely recorded as silent, and "nothing changed"
-    /// is reported as `false` so the caller skips the manifest write.
+    /// rather than being falsely recorded as silent or as mono, and "nothing
+    /// changed" is reported as `false` so the caller skips the manifest write.
     #[test]
-    fn backfill_has_audio_is_idempotent_and_never_guesses_silent() {
+    fn backfill_audio_facts_is_idempotent_and_never_guesses_silent() {
         let root = tmp("has_audio_backfill");
         let (_dir, mut manifest) = new_project_in(&root, "has-audio", &[]).unwrap();
 
@@ -2704,6 +3024,8 @@ mod tests {
             frame_count: 10,
             duration_secs: 0.41,
             has_audio: has,
+            // B-101 — resolved exactly when `has_audio` is, off the same probe.
+            audio_channels: has.map(|_| 2),
         };
         manifest.media.push(MediaItem {
             id: "resolved".into(),
@@ -2739,7 +3061,7 @@ mod tests {
         });
 
         assert!(
-            !backfill_has_audio(&mut manifest),
+            !backfill_audio_facts(&mut manifest),
             "nothing resolvable changed, so the caller must not rewrite the manifest"
         );
         assert_eq!(
@@ -2751,6 +3073,12 @@ mod tests {
             manifest.media[1].video.as_ref().unwrap().has_audio,
             None,
             "an unprobeable source stays UNKNOWN — never falsely recorded as silent"
+        );
+        assert_eq!(
+            manifest.media[1].video.as_ref().unwrap().audio_channels,
+            None,
+            "B-101: and never falsely recorded as mono either, which would \
+             change how the exporter adapts it to stereo"
         );
         assert!(manifest.media[2].video.is_none());
 
@@ -2778,6 +3106,10 @@ mod tests {
         assert!(
             v.has_audio.is_some(),
             "a real probe always yields a definite answer, never the unknown sentinel"
+        );
+        assert!(
+            v.audio_channels.is_some(),
+            "B-101: same for the channel count the exporter's mono handling needs"
         );
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_file(&clip);

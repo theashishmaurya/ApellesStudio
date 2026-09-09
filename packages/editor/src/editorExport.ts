@@ -85,6 +85,34 @@ function resolveHasAudioOverrides(tl: Timeline): Record<string, boolean> {
   return out;
 }
 
+/**
+ * B-101/D-269 — every clip's source **audio channel count**, from the media
+ * pool's own probed `MediaVideoInfo.audioChannels`, for
+ * `TimelineExportOptions.audioChannelsOverrides`. Same
+ * the-compiler-stays-pure/the-caller-supplies-the-fact split as
+ * `resolveHasAudioOverrides` right above, reading the same pool items.
+ *
+ * A clip whose source was never probed for this — an offline item, or one
+ * pooled before the field existed and not yet reached by
+ * `backfill_audio_facts` — is simply **absent** from the record rather than
+ * defaulted. The compiler reads absence as "unknown" and keeps its pre-B-101
+ * upmix; writing a `0` or a guessed `2` here would turn "we don't know" into a
+ * confident wrong answer, which is the same mistake `hasAudio`'s own `null`
+ * sentinel exists to prevent.
+ */
+function resolveAudioChannelsOverrides(tl: Timeline): Record<string, number> {
+  const items = useMediaPoolStore.getState().items;
+  const out: Record<string, number> = {};
+  for (const track of tl.tracks) {
+    for (const clip of track.clips) {
+      const media = items.find((m) => m.id === clip.media_id || m.sourcePath === clip.source_path);
+      const channels = media?.video?.audioChannels;
+      if (typeof channels === 'number' && channels > 0) out[clip.id] = channels;
+    }
+  }
+  return out;
+}
+
 /** D-226 — the names of every clip that is joined by a transition AND has a
  *  speed change on it: either an export-time `speedOverrides` entry, or
  *  (D-236) its own persisted speed ramp. See the refusal at the point of use
@@ -280,6 +308,7 @@ export function compileEditorExportArgs(a: {
     fitOverrides,
     freezeOverrides,
     hasAudioOverrides: resolveHasAudioOverrides(tl),
+    audioChannelsOverrides: resolveAudioChannelsOverrides(tl),
     fontFiles,
     captionMetrics,
     gradeLutPaths,

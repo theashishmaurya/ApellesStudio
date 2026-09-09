@@ -4584,6 +4584,113 @@ mod tests {
         assert_eq!(source_frame, 0);
     }
 
+    /// B-097 — the exact regression case the bug report describes, pinned at
+    /// the frame instead of via the app's ffmpeg-fixture integration test.
+    ///
+    /// Top track holds a clip `[0, len_a)` and nothing after it; the bottom
+    /// track holds a longer clip starting at timeline frame 0. The first
+    /// timeline frame past the top clip's end — `len_a`, the frame the gap
+    /// starts at — must fall through to the bottom clip AND report that clip's
+    /// own source frame exactly.
+    ///
+    /// Both halves matter, and B-097 is entirely about the difference between
+    /// them: when the clips' native rate IS the timeline's, the mapping is the
+    /// identity and the source frame is just the timeline frame; when it is
+    /// NOT, `Track::clip_at` fps-converts — correctly — and the answer is
+    /// deliberately *not* the timeline frame. The bug was never in this
+    /// arithmetic; it was that nothing seeded `Timeline::rate` from the media,
+    /// so a project whose footage was all one rate silently resolved against
+    /// `DEFAULT_FPS` and landed in the second case when it should have been in
+    /// the first (`apelles_project::infer_timeline_rate`).
+    fn gap_fallthrough_timeline(timeline_rate: i64, source_fps: f64, len_a: i64) -> Timeline {
+        let mk = |name: &str, start_frame: i64, duration: i64| Clip {
+            id: name.to_string(),
+            name: name.to_string(),
+            source_path: format!("/{name}.mov"),
+            source_start: 0,
+            duration,
+            source_len: duration,
+            start_frame,
+            source_fps: Some(source_fps),
+            ..Default::default()
+        };
+        Timeline {
+            id: String::new(),
+            name: String::new(),
+            rate: Some(Rational::new(timeline_rate, 1)),
+            tracks: vec![
+                Track {
+                    kind: TrackKind::Video,
+                    clips: vec![mk("A", 0, len_a)],
+                    ..Default::default()
+                },
+                Track {
+                    kind: TrackKind::Video,
+                    clips: vec![mk("B", 0, len_a * 3)],
+                    ..Default::default()
+                },
+            ],
+            markers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn b097_source_frame_at_the_frame_a_top_track_gap_begins_same_timebase() {
+        // 25fps media on a 25fps timeline — the shape a project seeded from
+        // its own footage now really has (B-097's fix). A occupies timeline
+        // [0, 25); frame 25 is the first frame of the gap.
+        let t = gap_fallthrough_timeline(25, 25.0, 25);
+        assert!(
+            t.tracks[0].clip_at(24, t.fps()).is_some(),
+            "24 is still inside A — the gap has not started yet"
+        );
+        assert!(
+            t.tracks[0].clip_at(25, t.fps()).is_none(),
+            "25 is the first frame of the top track's gap"
+        );
+        let (track_idx, clip, source_frame) = t.resolve_video_clip_at(25).unwrap();
+        assert_eq!((track_idx, clip.name.as_str()), (1, "B"));
+        assert_eq!(
+            source_frame, 25,
+            "B starts at timeline 0 with source_start 0 at the timeline's own \
+             rate, so its source frame here is the timeline frame itself"
+        );
+        // and the frame either side of the boundary, so an off-by-one in
+        // either direction is caught rather than only the boundary itself.
+        assert_eq!(t.resolve_video_clip_at(26).unwrap().2, 26);
+        let (before_idx, before_clip, before_source) = t.resolve_video_clip_at(24).unwrap();
+        assert_eq!(
+            (before_idx, before_clip.name.as_str(), before_source),
+            (0, "A", 24),
+            "one frame earlier the TOP track still wins, at its own source frame"
+        );
+    }
+
+    #[test]
+    fn b097_source_frame_at_the_frame_a_top_track_gap_begins_mixed_timebase() {
+        // The pre-fix shape, kept as a real test rather than deleted: 25fps
+        // media resolved against a 24fps timeline. A's 25 source frames
+        // occupy only 24 timeline frames, so the gap starts at 24 — and B's
+        // source frame there is 25, not 24, because 24 timeline frames at
+        // 24fps is one second, which is 25 of B's own frames. That is
+        // `clip_at` being right, not wrong.
+        let t = gap_fallthrough_timeline(24, 25.0, 25);
+        assert!(
+            t.tracks[0].clip_at(24, t.fps()).is_none(),
+            "A's 25 source frames span [0, 24) of a 24fps timeline"
+        );
+        let (track_idx, clip, source_frame) = t.resolve_video_clip_at(24).unwrap();
+        assert_eq!((track_idx, clip.name.as_str()), (1, "B"));
+        assert_eq!(source_frame, 25, "24 timeline frames @24fps = 25 @25fps");
+        // The bug report's own literal numbers: its app-level repro probed
+        // timeline frame 25 — A's 25 *source* frames used as a *timeline*
+        // frame, which they only are when the two rates agree — and recorded
+        // `left: 26, right: 25`. 26 is the right answer for that question;
+        // asking it was the mistake, and seeding the timeline's rate from the
+        // media is what stops a project from being in this state at all.
+        assert_eq!(t.resolve_video_clip_at(25).unwrap().2, 26);
+    }
+
     #[test]
     fn resolve_video_clip_at_neither_track_has_content() {
         let t = two_video_track_timeline();

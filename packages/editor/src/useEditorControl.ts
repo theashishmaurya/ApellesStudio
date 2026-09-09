@@ -381,8 +381,8 @@ function mediaItemDto(m: MediaItem) {
     problem: placeable
       ? undefined
       : m.offline
-        ? 'source file is missing from disk right now, and no probed frame count is stored — editor_add_clip will refuse this item. Restore the file and re-import the same path.'
-        : 'no probed video metadata (frameCount) — editor_add_clip will refuse this item. This is B-073: the probe failed once and import dedup means re-importing the same path is a no-op. editor_remove_media this id, then editor_import_media the path again for a fresh probe.',
+        ? 'source file is missing from disk right now, and no probed frame count is stored — editor_add_clip will refuse this item. Restore the file, then editor_reprobe_media this id.'
+        : 'no probed video metadata (frameCount) — editor_add_clip will refuse this item. This is B-073: the first probe failed. Call editor_reprobe_media with this id to re-probe it in place.',
   };
 }
 
@@ -1227,6 +1227,36 @@ export function useEditorControl(): void {
           // the symptom a session actually hits — so the list names the
           // unusable items up front instead of handing back an opaque array.
           unusable: s.items.filter((m) => !isPlaceable(m)).map((m) => m.id),
+        };
+      },
+
+      // B-073 — the action `editor_list_media`'s own `usable: false` / `problem`
+      // report has always pointed at and never had. Same store action, same
+      // `chroma_media_reprobe` command, as the Sources panel's own "Re-probe"
+      // row action — one op under both interfaces.
+      //
+      // Reports every requested item's usability AFTER the re-probe, and
+      // `stillUnusable` up front, because "I re-probed it" is not the answer a
+      // caller needs; "can I place a clip from it now" is. A source that is
+      // still unavailable comes back honestly unusable rather than as a
+      // success that fails at the next `editor_add_clip`.
+      editor_reprobe_media: async (a) => {
+        const ids: unknown = a?.ids;
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string') || ids.length === 0) {
+          return { error: 'ids must be a non-empty array of media-pool item ids (editor_list_media reports them, and names the unusable ones in `unusable`)' };
+        }
+        const res = await useMediaPoolStore.getState().reprobeMedia(ids as string[]);
+        if (!res.ok) return { error: res.error ?? 'could not re-probe the media' };
+        const items = res.items ?? [];
+        const unknownIds = (ids as string[]).filter((id) => !items.some((m) => m.id === id));
+        return {
+          ok: true,
+          items: items.map(mediaItemDto),
+          stillUnusable: items.filter((m) => !isPlaceable(m)).map((m) => m.id),
+          // An id that is not in the pool at all is skipped by the backend
+          // rather than failing the batch — say so instead of letting it look
+          // like a silent success.
+          unknownIds,
         };
       },
 

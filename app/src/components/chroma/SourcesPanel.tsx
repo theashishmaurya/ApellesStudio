@@ -41,6 +41,7 @@ import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
 import {
+  AlertTriangle,
   Check,
   CheckSquare,
   ChevronRight,
@@ -49,6 +50,7 @@ import {
   FolderOpen,
   FolderPlus,
   Plus,
+  RefreshCw,
   Search,
   Square,
   Trash2,
@@ -305,12 +307,17 @@ export function SourcesPanel() {
   const importPaths = useMediaPoolStore((s) => s.importPaths);
   const moveToFolder = useMediaPoolStore((s) => s.moveToFolder);
   const removeMedia = useMediaPoolStore((s) => s.removeMedia);
+  const reprobeMedia = useMediaPoolStore((s) => s.reprobeMedia);
   const createFolder = useMediaPoolStore((s) => s.createFolder);
 
   const [search, setSearch] = useState('');
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
+  // B-073 — which row is mid-re-probe, so its action can show it is working.
+  // A re-probe shells out to ffprobe; without this the card is silent for as
+  // long as that takes and the only feedback is the eventual toast.
+  const [reprobingId, setReprobingId] = useState<string | null>(null);
   // `undefined` = closed; `null` = open, creating at the pool root; a string
   // = open, creating nested inside that folder (D-059).
   const [newFolderParent, setNewFolderParent] = useState<string | null | undefined>(undefined);
@@ -382,6 +389,29 @@ export function SourcesPanel() {
     const res = await removeMedia(ids);
     if (!res.ok) toast.error(`Couldn't remove: ${res.error}`);
     else toast.success(`Removed ${label} from the pool`);
+  };
+
+  // B-073 — re-read one item's source from disk. The GUI half of
+  // `editor_reprobe_media`: same store action, same `chroma_media_reprobe`
+  // command, per CLAUDE.md's human-AND-AI rule. Offered on every row (a
+  // healthy one is a cheap, memoised no-op that also picks up a file replaced
+  // in place) and the only way to repair a row whose first probe failed, which
+  // is otherwise stuck unusable forever.
+  //
+  // Reports the real outcome rather than "done": a source that is still
+  // missing comes back honestly unusable, and saying "Re-probed" for that
+  // would be exactly the false success that made this bug hard to see.
+  const doReprobe = async (id: string, label: string) => {
+    setReprobingId(id);
+    const res = await reprobeMedia([id]);
+    setReprobingId(null);
+    if (!res.ok) {
+      toast.error(`Couldn't re-probe: ${res.error}`);
+      return;
+    }
+    const item = res.items?.find((m) => m.id === id);
+    if (item?.video?.frameCount) toast.success(`Re-probed ${label}`);
+    else toast.warning(`${label} still can't be read — check the file is where the pool expects it`);
   };
 
   const toggleSelecting = () => {
@@ -577,6 +607,12 @@ export function SourcesPanel() {
           <div className="grid grid-cols-2 gap-2">
             {filtered.map((it) => {
               const isSelected = selectedIds.has(it.id);
+              // B-073 — an item with no probed frame count cannot be placed on
+              // the timeline (`editor_add_clip` refuses it, and a drag builds a
+              // zero-length clip). It used to look identical to a healthy one
+              // unless it also happened to be offline, so the card says so and
+              // offers the repair.
+              const unusable = !it.video?.frameCount;
               return (
                 <ContextMenu key={it.id}>
                   <ContextMenuTrigger>
@@ -625,10 +661,19 @@ export function SourcesPanel() {
                         ) : (
                           <Film className="size-4 text-text-secondary/50" />
                         )}
-                        {it.offline && (
+                        {it.offline ? (
                           <div className="absolute top-1 right-1 text-amber-400" title="Media offline">
                             <WifiOff className="size-3" />
                           </div>
+                        ) : (
+                          unusable && (
+                            <div
+                              className="absolute top-1 right-1 text-amber-400"
+                              title="Not probed — this clip can't be placed on the timeline yet. Right-click › Re-probe."
+                            >
+                              <AlertTriangle className="size-3" />
+                            </div>
+                          )
                         )}
                       </div>
                       <span className="text-[10px] truncate text-text-secondary group-hover:text-text-primary">
@@ -679,6 +724,13 @@ export function SourcesPanel() {
                     </div>
                   </ContextMenuTrigger>
                   <ContextMenuContent>
+                    <ContextMenuItem
+                      onClick={() => void doReprobe(it.id, it.name)}
+                      disabled={reprobingId === it.id}
+                    >
+                      <RefreshCw className={cn('size-3.5', reprobingId === it.id && 'animate-spin')} />{' '}
+                      {reprobingId === it.id ? 'Re-probing…' : 'Re-probe'}
+                    </ContextMenuItem>
                     <ContextMenuItem onClick={() => void doRemove([it.id], it.name)} variant="destructive">
                       <Trash2 className="size-3.5" /> Remove from pool
                     </ContextMenuItem>

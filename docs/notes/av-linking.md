@@ -121,7 +121,11 @@ That change is here: `has_audio: Option<bool>` on `MediaVideoInfo`, set at
 import, surfaced through `MediaItemDto` → `@apelles/bridge`'s `MediaItem` →
 the Sources-panel drag payload. `None` is a real "never probed" sentinel (a
 bare `bool` would read every pre-D-129 pool item as *silent*), resolved once
-by `backfill_has_audio` on the next `chroma_media_list` and persisted.
+by `backfill_audio_facts` on the next `chroma_media_list` and persisted. (That
+function was called `backfill_has_audio` until 2026-09-09; B-101/D-269 added a
+second audio fact off the same probe — `MediaVideoInfo::audio_channels`, with
+the identical sentinel — and resolving them in two passes would have meant two
+`probe_cached` calls for an item missing both.)
 
 ### Link-aware ops — lockstep or reject
 

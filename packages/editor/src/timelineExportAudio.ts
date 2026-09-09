@@ -700,6 +700,13 @@ export interface AudioSourceChainArgs {
    *  (`at<id>`, `v<id>`, `d<id>`) — the caller hands out one per audio
    *  source so labels never collide across the whole filtergraph. */
   idLabel: string;
+  /** B-101/D-269 — this source's probed audio channel count, or `undefined`
+   *  when it was never probed for (see `TimelineExportOptions.
+   *  audioChannelsOverrides`). Read for exactly one decision, and only on a
+   *  clip that is actually panned: a value of `1` (known mono) selects the
+   *  unity duplicate the live mixer performs, anything else — including
+   *  unknown — keeps `aformat`'s own upmix/downmix. */
+  sourceChannels?: number;
 }
 
 /**
@@ -849,12 +856,38 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
     // expression, so the pan is expressed as two of them. `stereotools`'
     // `balance_in`/`balance_out` are likewise static options.
     //
-    // `aformat=channel_layouts=stereo` first because `channelsplit` on a MONO
-    // source is an error, and a mono clip is exactly the case where panning is
-    // most meaningful: the upmix duplicates the mono channel into both, which
-    // is precisely what `apelles_media::audio::adapt_channels` does before the
-    // live mixer's own pan, so a panned mono clip becomes stereo-positioned
-    // mono in both paths rather than one of them.
+    // A stereo stage first, because `channelsplit` on a MONO source is an
+    // error and a mono clip is exactly the case where panning is most
+    // meaningful.
+    //
+    // **B-101/D-269 — WHICH mono→stereo law, and why it is not `aformat`.**
+    // The claim in this comment's previous life ("the upmix duplicates the
+    // mono channel into both, which is precisely what `adapt_channels` does")
+    // was measured and found false: `aformat=channel_layouts=stereo` hands the
+    // job to libswresample, whose default mono→stereo matrix is
+    // POWER-preserving — each output channel gets the sample at 1/√2 — while
+    // `apelles_media::audio::adapt_channels` duplicates at UNITY. Both are
+    // defensible laws; they are 3.01 dB apart, and a panned mono clip
+    // therefore exported 3.01 dB below what the preview played (measured with
+    // `volumedetect`: a mono sine at −21.1 dB, upmixed by `aformat`, reads
+    // −24.1 dB per channel; the same sine through the unity duplicate reads
+    // −21.1 dB, the live mixer's answer).
+    //
+    // The live mixer is the source of truth, because this codebase's pan law
+    // is already normalised to a **0 dB centre** (`apelles_types::pan` —
+    // `pan_gains(0.0)` is exactly `(1, 1)`, and `gl² + gr² == 2`). That law
+    // only means what it says on top of a unity duplicate; on a
+    // power-preserving upmix, `pan = 0` would quietly be −3 dB, so a clip's
+    // level would jump the instant it was nudged off centre. See D-269.
+    //
+    // Only a source POSITIVELY KNOWN to be mono takes the duplicate. A stereo
+    // (or unknown, or multichannel) source keeps `aformat` exactly as before —
+    // `pan=stereo|c0=c0|c1=c0` on a real stereo source would copy its left
+    // channel over its right, which is far worse than a 3 dB error.
+    const stereoStep =
+      args.sourceChannels === 1
+        ? 'pan=stereo|c0=c0|c1=c0'
+        : 'aformat=channel_layouts=stereo';
     const [leftExpr, rightExpr] =
       pan.kind === 'static'
         ? (panGains(clampClipPan(pan.value)).map(String) as [string, string])
@@ -870,7 +903,7 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
     const leftOut = `lv${idLabel}`;
     const rightOut = `rv${idLabel}`;
     const joined = `p${idLabel}`;
-    steps.push(`${ref}aformat=channel_layouts=stereo[${stereo}]`);
+    steps.push(`${ref}${stereoStep}[${stereo}]`);
     steps.push(`[${stereo}]channelsplit=channel_layout=stereo[${left}][${right}]`);
     steps.push(`[${left}]volume=${evalMode}volume='${common}(${leftExpr})'[${leftOut}]`);
     steps.push(`[${right}]volume=${evalMode}volume='${common}(${rightExpr})'[${rightOut}]`);

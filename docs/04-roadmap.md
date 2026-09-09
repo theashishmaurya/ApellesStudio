@@ -1216,9 +1216,29 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     `usable: false` with a `problem` string naming the cause and the fix, and
     collects their ids in `unusable`. So the trail is now visible and
     clearable, and the format-agnostic-probe audit named above is still worth
-    its own pass. **The architectural gap is STILL OPEN and unchanged**: no
+    its own pass. **The architectural gap was still open after this slice**: no
     expiry, no re-probe-on-demand, still a manual two-call correction — this
-    slice makes it diagnosable, not self-healing.
+    slice made it diagnosable, not recoverable.
+
+    **Re-probe slice DONE, 2026-09-09 (D-270, closing B-073):** the gap this
+    item is actually about — "the pool has no correction mechanism at all" — is
+    closed. `chroma_media_reprobe(ids)` re-probes pool items **by id**, reached
+    from the Sources panel's own "Re-probe" row action and from
+    `editor_reprobe_media`, so the item is repaired **in place**: it keeps its
+    id, and every clip and reference pointing at it survives — which the
+    remove-and-re-import correction above could never offer, since it mints a
+    new id. This item's own earlier judgement that a `reprobe` command "would
+    duplicate remove-then-reimport's own effect" was wrong on exactly that
+    point, and it is not a parallel implementation either: `reprobe_media` is
+    id→path translation onto D-260's existing `refresh_media`, one re-probe
+    implementation shared with the Motion re-render path. `add_media` also
+    heals an already-pooled path that never got `video` metadata, so
+    re-importing the same path — the recovery a session naturally reaches for —
+    finally does something. **Deliberately still not done:** expiry, and any
+    automatic re-probe on listing. A re-probe is a real `ffprobe`, and doing it
+    for every row of every listing is work nobody asked for on the call whose
+    job is to be the cheap way to see the pool (D-270). The format-agnostic
+    probe audit named above also remains open, unaffected by this.
 24. ~~**No text/title clip primitive in the Edit tab at all**~~ — **BUILT,
     2026-09-08 (D-211/D-212/D-213, `docs/notes/text-title-clips.md`).** The
     original entry: owner, 2026-09-07, asking for real "AFTER"/"BEFORE" labels
