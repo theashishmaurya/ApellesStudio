@@ -26413,3 +26413,29 @@ individually confirmed either ineffective or actively worse than the
 current state. `ScrubCursorGhost` plus a redundant real arrow is the
 accepted final state for this feature, not a placeholder waiting on a sixth
 idea.
+
+### A real regression caught by the owner's own further research, and fixed: pointer capture had been released too early
+
+The owner's own follow-up research (a real, cited walkthrough of the
+standard `setPointerCapture` pattern for exactly this kind of scrub gesture)
+caught something this session's cursor-chasing had introduced and never
+revisited: the second dead-end attempt (native `setCursorIcon` re-asserted
+every move) had also added `element.releasePointerCapture(...)` the moment
+a drag went active, on the theory — abandoned two attempts later, but never
+cleaned up — that WebKit's freeze was tied to capture specifically. It
+is not, and the early release survived purely as inert leftover from a
+theory that turned out wrong.
+
+**Why this mattered regardless of the cursor saga:** `setPointerCapture`'s
+real job is not "deliver events once the pointer leaves this ~80px
+element" (that already works via the `window` listeners this hook already
+uses) — it is "keep delivering events once the pointer leaves the actual
+WINDOW's bounds," which a fast or wide scrub can do easily on a small
+screen. Releasing capture the moment a drag goes active would have quietly
+reintroduced exactly that gap: a scrub that exits the window mid-drag would
+stop responding, for real, independent of anything cursor-related. Fixed by
+simply not releasing early — capture now holds for the drag's entire
+duration, released only where it always correctly was, in `stop.current()`
+at the gesture's natural end. Caught before it reached a live report only
+because the owner asked for real research rather than accepting "two
+cursors is the final state" at face value.

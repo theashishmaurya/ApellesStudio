@@ -270,11 +270,18 @@ export function useNumberScrub({
     // Pointer capture keeps a real browser delivering the rest of the gesture
     // to this element once the pointer leaves it — which happens almost at
     // once, since the field is 80px wide and a scrub routinely runs further
-    // than that. Guarded rather than assumed: jsdom implements no pointer
-    // capture API at all (`pointerHarness.ts`'s own
-    // `installPointerCaptureStub` documents the same gap), and the gesture is
-    // driven off `window` listeners below, so capture is a nicety here, not
-    // the mechanism.
+    // than that. It matters for more than just clearing the element's own
+    // box: without it, a drag that exits the actual WINDOW's bounds (a wide
+    // scrub on a small screen, or a multi-monitor setup) stops delivering
+    // `pointermove` to `window` at all once the OS cursor leaves the webview
+    // — capture is what keeps a fast, wide scrub tracking correctly past the
+    // window edge, not merely past this element's own edge. (A prior B-136
+    // detour released this early, on an unrelated cursor-visibility theory
+    // that never panned out — reverted, since doing so would have silently
+    // reintroduced exactly this edge-of-window gap for no benefit.) Guarded
+    // rather than assumed: jsdom implements no pointer capture API at all
+    // (`pointerHarness.ts`'s own `installPointerCaptureStub` documents the
+    // same gap).
     if (typeof element.setPointerCapture === 'function') {
       try {
         element.setPointerCapture(event.pointerId);
@@ -300,23 +307,7 @@ export function useNumberScrub({
         // `ScrubbableNumberInput`'s `ScrubCursorGhost`, a portaled DOM
         // element that isn't a cursor property at all and so cannot be
         // frozen or overridden by WebKit's mousedown cursor freeze the way
-        // every cursor-API attempt was. `onPointerDown`'s own `cursor: none`
-        // write (above, at press time) is a best-effort attempt to also hide
-        // the real OS arrow underneath the ghost — set there rather than
-        // here because the freeze locks in whatever the cursor was AT
-        // mousedown, and by the time this code runs (only once a real drag
-        // is already confirmed) that moment has already passed. This capture
-        // release remains for its own, independent reason: capture was only
-        // ever "a nicety" here (see the comment where it's taken, above),
-        // since the window listeners are the real delivery mechanism and
-        // releasing it early costs nothing.
-        if (typeof g.element.releasePointerCapture === 'function') {
-          try {
-            g.element.releasePointerCapture(e.pointerId);
-          } catch {
-            // Already released, or never captured.
-          }
-        }
+        // every cursor-API attempt (D-271/B-136) was.
       }
       // Stops the travel from selecting the field's own digits as it goes.
       e.preventDefault();
