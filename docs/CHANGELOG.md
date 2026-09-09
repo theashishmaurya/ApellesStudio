@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **B-135/B-136: two more Inspector numeric-field bugs, found
+  live right after B-133.** B-135 — undo (or any other external write) landed
+  correctly in the store immediately, but a FOCUSED field kept showing its own
+  stale typed draft until it lost focus; `useNumberField` now clears the draft
+  the instant an incoming value didn't come from the field's own last edit,
+  corrected during render so there's no stale-frame flash. B-136 — the
+  drag-to-scrub gesture never visibly moved the cursor; the first fix assumed
+  it was B-133's exact bug and applied the same technique, which the owner's
+  own follow-up screenshot proved wrong — WebKit freezes the VISIBLE system
+  cursor for an entire held-mouse-button gesture and won't repaint a CSS
+  `cursor` write until release, no matter how it's applied. Real fix (D-271):
+  Tauri's native `setCursorIcon`, which bypasses WebKit's WebView layer
+  entirely — `@apelles/ui` takes a real `@tauri-apps/api` dependency for it,
+  scoped to `ScrubbableNumberInput` specifically since every consumer of that
+  component (not the shared, framework-agnostic scrub hooks Motion also
+  reaches) already only runs inside the real Tauri window.
+
 - **2026-09-09** — 9 freshly-shot clips imported into a new project all played
   upside-down; investigated rather than assumed a decode bug — `ffprobe` shows
   no rotation metadata on the sources at all, so the pixels are genuinely

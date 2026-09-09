@@ -226,3 +226,42 @@ describe('the Inspector’s numeric field clears its own spinner (B-113)', () =>
     expect(currentClip().crop_left).toBe(0.123456);
   });
 });
+
+describe('B-135: an external value change reaches a focused field immediately, not on blur', () => {
+  it('undo (or any other external write) overrides a typed draft while still focused', async () => {
+    await render();
+    const input = field('Opacity');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+
+    // Type a value — this is what leaves a draft behind (B-135's own defect
+    // needed one: a field that was merely focused, never edited, had no
+    // draft to pin it, and already updated live).
+    actSync(() => input.focus());
+    actSync(() => {
+      setter?.call(input, '0.35');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await waitFrames(1);
+    expect(input.value).toBe('0.35');
+
+    // An external write to the SAME property — exactly what undo does: it
+    // pops the history stack and applies the previous value directly to the
+    // store, with no idea this field exists or that it has a draft.
+    actSync(() => {
+      useEditorTimelineStore.setState((s) => {
+        const tl = s.timeline;
+        if (!tl) return s;
+        const clip = tl.tracks[0].clips[0] as unknown as { opacity?: number };
+        clip.opacity = 1;
+        return { ...s, timeline: { ...tl } };
+      });
+    });
+    await waitFrames(1);
+
+    // The defect: this stayed '0.35' (the stale draft) until blur. The fix:
+    // an update that did not come from this field's own last `onValueChange`
+    // clears the draft immediately, so the field shows the real value while
+    // STILL focused — no blur required.
+    expect(input.value).toBe('1');
+  });
+});

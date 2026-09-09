@@ -26168,3 +26168,80 @@ comes back honestly unusable (`stillUnusable` over MCP, a warning toast in the
 GUI) rather than as a success the caller only discovers is false at the next
 `editor_add_clip`. That false-success shape is what made B-073 hard to see in
 the first place.
+
+---
+
+## D-271 — `@apelles/ui` takes a real `@tauri-apps/api` dependency: the numeric field's scrub cursor needs the NATIVE cursor, not CSS
+
+**Date:** 2026-09-09. Fixes **B-136**, a distinct bug from B-133 (a different
+control, a different root cause) that the first attempt at it wrongly assumed
+would fall to the same fix.
+
+### Context
+
+B-133 fixed the Inspector's **trim-mode** cursor (the timeline's Slip/Slide
+tool) by writing `style.cursor` directly onto the hovered element instead of
+relying on a static class. The **numeric field's** drag-to-scrub gesture is a
+different control with its own cursor problem, and the first fix attempt
+applied the same technique on the assumption it was the same bug
+(`useNumberScrub`, `document.body.style.cursor = 'ew-resize'` while active) —
+the owner reported, live, with a screenshot of the plain OS arrow sitting over
+a focused, actively-scrubbed field, that it still did not work.
+
+**The real cause is different from B-133's:** WebKit (this app's WKWebView)
+freezes the VISIBLE system cursor for the entire duration of an actively-held
+mouse button. It does not re-query the DOM's `cursor` property again until the
+button is released, no matter how many times that property is written
+mid-drag. This is a documented WebKit limitation, not a masking bug a CSS fix
+can route around — B-133's own fix worked because hovering a clip during a
+trim-tool gesture is a series of discrete hovers with the button typically NOT
+held (or, when it is, the cursor was already correct before the press); a
+number-field scrub is, by definition, one continuous held-button drag.
+
+### The real options
+
+1. **Release pointer capture the moment the drag goes active**, hoping WebKit's
+   normal hit-test-driven cursor repaint resumes once nothing has explicit
+   capture. Tried first (committed, then superseded by option 2 below): capture
+   was already "a nicety, not the mechanism" here (the gesture runs off
+   `window` listeners regardless), so releasing it was free — but the owner's
+   own follow-up screenshot showed it made no difference. WebKit's cursor
+   freeze during a held mouse button turned out to be independent of the DOM
+   pointer-capture API entirely — an AppKit-level tracking-area freeze, not a
+   pointer-capture side effect. Left in as a harmless no-op (still correctly
+   releases capture early, which is good hygiene) rather than reverted.
+2. **Tauri's native `getCurrentWindow().setCursorIcon(...)`.** Chosen. It sets
+   the OS cursor directly through the window server, which is unaffected by
+   WebKit's CSS-during-mousedown freeze because it never asks WebKit at all.
+
+### Where it lives, and why not in the shared hook
+
+`use-number-scrub.ts` states its own constraint: it "pulls in nothing but
+React", because `@apelles/motion`'s `InspectorPanel` reaches the raw
+`useNumberField`/`useNumberScrub` hooks directly through the
+`@apelles/ui/number-scrub` subpath (it cannot import this package's barrel at
+all — a separate, pre-existing constraint) and may not always run inside a
+real Tauri window. Adding Tauri there would break that boundary for a
+consumer that doesn't need it.
+
+`ScrubbableNumberInput` (`scrubbable-number-input.tsx`) is a different module
+with no such constraint: every one of its consumers (`grep` confirms) is
+`@apelles/editor` or `@apelles/shell`, both of which already depend on
+`@tauri-apps/api` directly and only ever run inside the real app. So the
+native call lives here, gated through a `setNativeCursor` helper that
+swallows any failure (a plain-browser/Storybook/jsdom render has no native
+window to talk to, and must not throw for lacking one) — the CSS write in
+the shared hook stays as that context's own fallback.
+
+`@apelles/ui`'s `package.json` gains `@tauri-apps/api: ^2.11.1`, the same
+version every other package in this monorepo that already depends on it
+pins.
+
+### Verification
+
+`ScrubbableNumberInput.dom.test.tsx` and `PropertyRow.numericField.dom.test.tsx`
+(26 tests) pass unchanged with the dependency added — `setNativeCursor`'s own
+try/catch is what keeps a jsdom render (no `window.__TAURI_INTERNALS__`) from
+throwing. The actual cursor icon change during a real drag needs the owner's
+own trackpad against the live app to fully confirm; jsdom has no OS cursor to
+assert against.

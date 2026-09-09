@@ -304,6 +304,22 @@ export function useNumberScrub({
         // timeline's trim cursor, since neither case can be solved with a
         // static class scoped to one element.
         document.body.style.cursor = 'ew-resize';
+        // WebKit (this app's WKWebView) freezes the VISIBLE system cursor for
+        // the whole duration of an active pointer capture — it does not
+        // re-query CSS `cursor` again until the capture ends, so the body
+        // write above is correct but invisible while still captured. Capture
+        // was only ever "a nicety" here (see the comment where it's taken,
+        // above) — the window listeners are the real delivery mechanism and
+        // do not need it — so releasing it the moment the drag goes active
+        // lets WebKit resume normal hit-test-driven cursor painting for the
+        // rest of the gesture, with no effect on the drag itself.
+        if (typeof g.element.releasePointerCapture === 'function') {
+          try {
+            g.element.releasePointerCapture(e.pointerId);
+          } catch {
+            // Already released, or never captured.
+          }
+        }
       }
       // Stops the travel from selecting the field's own digits as it goes.
       e.preventDefault();
@@ -430,8 +446,23 @@ export function useNumberField({
 }: NumberFieldOptions): NumberField {
   const [draft, setDraft] = React.useState<string | null>(null);
   const [focused, setFocused] = React.useState(false);
+  // What this field itself last pushed via `onValueChange` — the only way to
+  // tell "the incoming `value` prop is the round-trip of my own edit" (leave
+  // the draft alone, so a trailing "." or "0" the user just typed survives)
+  // apart from "something ELSE changed it" (undo/redo, a different clip's
+  // value arriving on the same prop, a keyframe/playhead move) — which must
+  // win immediately, not just on blur.
+  const lastPushedRef = React.useRef<number | null>(null);
 
   const { scrubbing, onPointerDown } = useNumberScrub({ value, step, min, max, disabled, onValueChange });
+
+  // Adjusting state during render (React's own documented pattern for
+  // resetting derived state on an external change) rather than an effect: an
+  // effect would commit one stale frame first, letting Cmd+Z's real value
+  // flash the old draft before correcting itself.
+  if (draft !== null && value !== lastPushedRef.current) {
+    setDraft(null);
+  }
 
   const editing = focused && draft !== null;
   const shown = editing
@@ -476,7 +507,10 @@ export function useNumberField({
           return;
         }
         const typed = Number(text);
-        if (Number.isFinite(typed)) onValueChange(typed);
+        if (Number.isFinite(typed)) {
+          lastPushedRef.current = typed;
+          onValueChange(typed);
+        }
       },
     },
   };

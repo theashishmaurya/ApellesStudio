@@ -35,10 +35,24 @@
  * impossible to type into.
  */
 import * as React from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 import { cn } from '../../lib/utils';
 import { useNumberField } from '../../hooks/use-number-scrub';
 import { Input } from './input';
+
+/** Best-effort: a test/Storybook/non-Tauri render of this component must not
+ *  throw just because there is no real native window to talk to. */
+function setNativeCursor(icon: 'ewResize' | 'default') {
+  try {
+    void getCurrentWindow()
+      .setCursorIcon(icon)
+      .catch(() => {});
+  } catch {
+    // No Tauri runtime present (a plain browser/jsdom render) — the CSS
+    // fallback in `useNumberScrub` is what such a context gets instead.
+  }
+}
 
 export interface ScrubbableNumberInputProps
   extends Omit<
@@ -86,6 +100,17 @@ function ScrubbableNumberInput({
     onValueChange,
     onClear,
   });
+
+  // See this file's own module doc (D-271): the CSS `cursor` write in
+  // `useNumberScrub` cannot repaint the visible pointer mid-drag under
+  // WebKit, so the native OS cursor is set directly instead, in step with
+  // the same `scrubbing` flag that already drives the CSS fallback.
+  React.useEffect(() => {
+    setNativeCursor(scrubbing ? 'ewResize' : 'default');
+    return () => {
+      if (scrubbing) setNativeCursor('default');
+    };
+  }, [scrubbing]);
 
   return (
     <Input
