@@ -312,6 +312,20 @@ export function useChromaControl() {
                 i !== useSessionStore.getState().activeIndex,
             })),
             active: useSessionStore.getState().activeIndex,
+            // B-132/D-268 — the session lock, reported so an agent that gets
+            // `session busy` back from `new_project`/`open_project`/
+            // `add_shots`/`set_active_shot` can SEE what is holding it and for
+            // how long, instead of being told only that something is. Before
+            // this the flag was invisible to every surface — the GUI showed a
+            // spinner, `debug_ui_state` reports the *Edit* tab's store, and
+            // nothing anywhere reported this one — which is exactly how a
+            // wedged session read as "the app is idle but refuses to work".
+            // `busy: false, heldBy: null` is the normal, healthy answer.
+            busy: useSessionStore.getState().busy,
+            heldBy: useSessionStore.getState().lock?.op ?? null,
+            heldForMs: useSessionStore.getState().lock
+              ? Date.now() - (useSessionStore.getState().lock?.since ?? 0)
+              : null,
           },
         };
       },

@@ -25902,3 +25902,104 @@ true SVG scaling — the raster-master approach (two source files, one
 opaque one transparent) covers every real size and context this app
 currently needs; revisit only if a genuinely vector-only context
 (large-format print, a laser-cut sign) ever comes up.
+
+---
+
+## D-268 — `useSessionStore.busy` becomes a real lock: it names its holder, is re-entrant by explicit hand-off, and cannot wedge the app forever
+
+**Date:** 2026-09-09. Fixes **B-132** (blocker).
+
+### Context
+
+Every project operation in the product — create, open, close, add/remove a
+shot, switch shot, relink, save-as — funnels through one of seven
+`useSessionStore` actions, and all seven were gated by a single
+`busy: boolean`. That flag is the app's only mutual exclusion over the Rust
+decode session, and both interfaces depend on it: the GUI's launcher and shot
+strip call these actions directly, and so does the MCP layer
+(`useChromaControl.ts`'s `new_project`/`open_project`/`add_shots`/
+`set_active_shot`). One guard, both surfaces — the "one source of truth"
+pattern working as intended.
+
+Found live (B-132): a running app answered `session busy` to every
+`new_project` call, permanently. A bare boolean turned out to be the wrong
+primitive for this job in three separate ways at once — it could not survive a
+hung caller, it could not tell a nested call from a concurrent one, and it
+could not say anything about itself.
+
+### Options
+
+1. **Leave the boolean; fix whichever hang caused this one wedge.** Rejected.
+   The specific hang was never identified (see B-132's honest-limit note), and
+   even if it had been, the next never-settling `await` — a lost IPC transport
+   (B-081), a blocking Rust command, an op outliving the 20s bridge timeout —
+   reproduces the same dead app. The flag itself is the defect: it converts any
+   transient hang into a permanent one.
+2. **A general async mutex with a queue.** Rejected as the wrong semantics, not
+   merely heavier. These callers do not want to wait: a second launcher click
+   or a second MCP call while an open is in flight should be *refused with a
+   reason*, not silently queued behind a multi-second decode and applied later
+   against a session that has since changed underneath it. Refusal is also what
+   the existing callers are already written to handle.
+3. **A small, explicit lock: named holder, explicit re-entrancy, staleness
+   break.** Chosen.
+
+### Choice
+
+`app/src/store/sessionLock.ts` — a pure, store-agnostic primitive (it talks to
+a two-method `LockSlot`, so it unit-tests without zustand). `busy` stays as the
+derived boolean the UI already reads; `lock: { op, since } | null` is the real
+state, and the two can never drift because one function writes both.
+
+- **Named holder.** `session busy` becomes `session busy — 'newProject' has
+  held the session lock for 4.2s`. Actionable for a human reading a toast and
+  for an agent reading an MCP error; the old string was neither.
+- **Re-entrant by hand-off, not by accident.** `_hydrateOpenDto` takes an
+  optional `held` handle. Its five in-store callers pass theirs (so it takes no
+  second lock and, crucially, releases none); `SourcesPanel`'s direct call
+  passes nothing and gets its own. `release()` is identity-checked, so a nested
+  callee cannot drop a lock it did not take. This is the half that was silently
+  broken: before, the nested call cleared its caller's flag and left the tail of
+  five actions unguarded.
+- **Staleness break.** A lock held past `STALE_SESSION_LOCK_MS` (2 minutes) is
+  treated as abandoned, logged with `console.error` naming the holder, and
+  broken. Two minutes is far outside the slowest legitimate holder (a cold
+  `openProject` probing every clip) and outside `control.rs`'s own 20s
+  `BRIDGE_TIMEOUT`, so it can only ever affect an op that is already, plainly,
+  not coming back. `closeProject` drops the lock too, making "‹ Projects" a
+  real human recovery.
+
+**This is containment, not a cure, and is documented as such** in the module's
+own header: nothing in the Tauri bridge is cancellable, so a stolen-from op
+runs to completion and merely finds it no longer owns the lock. The value it
+adds over the old behaviour is that the app survives, *and* that the log line
+names the op — which is the evidence the next investigation starts from, and
+which did not exist at all before.
+
+### Both interfaces (the standing rule)
+
+The fix is to shared logic, so both surfaces get it by construction — but that
+was verified rather than assumed: `ProjectLauncher.tsx`/`ShotStrip.tsx` and
+`useChromaControl.ts` were both read, and both call the same store actions, so
+the improved refusal reaches the GUI toast and the MCP error identically. The
+AI half needed one addition: `get_state` now reports
+`session.busy`/`heldBy`/`heldForMs`. Nothing exposed this flag anywhere before
+— `debug_ui_state` reports the *Edit tab's* `openProjectKey`, a different
+store answering a different question, which is precisely why a wedged session
+read as "idle" during the live debugging that found this.
+
+### Testing — and why this reached a live session at all
+
+`app/` had **no test runner**, so the store gating every project operation in
+the product had zero tests while eleven `packages/*` workspaces had suites.
+This adds vitest to the `app` workspace (`vitest run`, `environment: 'node'` —
+the same shape every package already uses, nothing bespoke) with 13 tests
+across the lock primitive and the real store.
+
+The store suite drives the actual actions with `invoke` mocked, and each test
+was verified to genuinely fail against the behaviour it pins, by
+reintroducing that behaviour: making the nested release unconditional fails
+the re-entrancy test, and making the lock unbreakable fails the recovery test.
+One of those checks initially passed vacuously because it derived its time
+offset from the very constant under test — caught by that mutation step and
+rewritten to pin a real wall-clock duration.

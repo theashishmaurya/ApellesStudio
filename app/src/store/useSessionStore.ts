@@ -32,6 +32,18 @@
 // Colorist tab today — their grade files still stay genuinely separate on
 // disk, this only affects which one's *pixels* are currently shown.
 //
+// **Mutual exclusion (B-132/D-268).** The seven actions that mutate the
+// session — `newProject`, `openProject`, `addShots`, `removeShot`,
+// `switchToShot`, `relinkShot`, `saveUntitledAs` — are serialised by a single
+// lock, and both interfaces go through them (the GUI's launcher/shot strip
+// call them directly; so does the MCP layer, via `useChromaControl.ts`). The
+// lock lives in `sessionLock.ts`; `busy` here is the derived boolean the UI
+// reads, `lock` is the real state. It is NOT the bare `busy` flag it looks
+// like: read that module's header before touching any of this, because all
+// three of its properties (a named holder, re-entrancy by explicit hand-off,
+// and a stale-lock break) exist to fix a blocker that made a running app
+// permanently unable to create or open a project.
+//
 // For an in-memory **"Untitled"** session (no project on disk — a loose clip
 // opened via the file picker / MCP `open`), there is no timeline/clip concept
 // at all: `SessionShot.id` is just the clip's `path` (decode-session identity
@@ -45,6 +57,13 @@ import { trackEvent } from '@apelles/bridge';
 import { useEditorStore } from './useEditorStore';
 import { useChromaStore, ChromaVideoInfo } from './useChromaStore';
 import { useAgentStore } from './useAgentStore';
+import {
+  acquireSessionLock,
+  type AcquireResult,
+  type HeldLock,
+  type LockSlot,
+  type SessionLockHandle,
+} from './sessionLock';
 import { Adjustments, INITIAL_ADJUSTMENTS, normalizeLoadedAdjustments } from '../utils/adjustments';
 
 /** The raw per-shot shape `chroma_session_list`/`_set_active`/`_add`/`_remove`
@@ -183,8 +202,18 @@ interface SessionState {
    *  for a real project, a path for an in-memory Untitled session; see the
    *  module doc). Fills as you switch. */
   grades: Record<string, Adjustments>;
-  /** true while a switch / add / remove is in flight (disables the strip) */
+  /** true while a switch / add / remove is in flight (disables the strip).
+   *  Derived from `lock` and kept in lockstep with it — the UI wants a plain
+   *  boolean, everything that needs to know WHO is holding it reads `lock`. */
   busy: boolean;
+  /** B-132/D-268: which action currently holds the session lock, and when it
+   *  took it. `null` = free. Replaces the bare `busy` boolean as the real
+   *  state; see `sessionLock.ts` for why a bare flag could not work (it let a
+   *  nested `_hydrateOpenDto` release its caller's lock, and it latched
+   *  `true` forever behind any `await` that never settled). Reported over MCP
+   *  by `get_state` so an agent can see a wedged session instead of guessing
+   *  at an opaque "session busy". */
+  lock: HeldLock | null;
 
   /** re-read the Rust session and reconcile the store. Also scopes the agent
    *  feed to the active shot. Call after the normal open flow. */
@@ -248,8 +277,34 @@ interface SessionState {
   saveProject: (opts?: { force?: boolean }) => Promise<{ ok: boolean; error?: string; thumbRegenerated?: boolean }>;
   /** re-point an offline shot at a new file and reopen the project */
   relinkShot: (shotId: string, newPath: string) => Promise<{ ok: boolean; error?: string }>;
-  /** internal: populate the store from a chroma_project_open/new/relink/add_shot(_paths)/remove_clip result */
-  _hydrateOpenDto: (dto: ProjectOpenDto) => Promise<void>;
+  /** internal: populate the store from a chroma_project_open/new/relink/add_shot(_paths)/remove_clip result.
+   *
+   *  B-132/D-268 — `held` is the session lock of a caller that ALREADY holds
+   *  it (every in-store caller does). Passing it is what makes this
+   *  re-entrant: the hand-off means this never takes a second lock and, far
+   *  more importantly, never releases its caller's. Omit it only from a true
+   *  top-level caller — `SourcesPanel`'s "add to grading" — which then gets a
+   *  lock of its own. */
+  _hydrateOpenDto: (dto: ProjectOpenDto, held?: SessionLockHandle) => Promise<void>;
+}
+
+type SessionSet = (partial: Partial<SessionState>) => void;
+
+/** The session lock's storage cell, backed by the store's own `lock` field.
+ *  Writing `busy` alongside it is what keeps the UI's plain boolean honest —
+ *  the two can never drift because this is the only place either is set. */
+function lockSlot(set: SessionSet, get: () => SessionState): LockSlot {
+  return {
+    read: () => get().lock,
+    write: (next) => set({ lock: next, busy: next !== null }),
+  };
+}
+
+/** Take the session lock for `op`, or refuse with a message naming the current
+ *  holder. Every guarded action starts with this and ends with
+ *  `finally { held.lock.release() }`. */
+function acquire(set: SessionSet, get: () => SessionState, op: string): AcquireResult {
+  return acquireSessionLock(lockSlot(set, get), op);
 }
 
 /** persist one shot's grade file if a real (non-Untitled) project is loaded. */
@@ -356,6 +411,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   activeIndex: 0,
   grades: {},
   busy: false,
+  lock: null,
 
   projectPath: null,
   projectName: null,
@@ -421,17 +477,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   switchToShot: async (index) => {
-    const { shots, activeIndex, busy } = get();
-    if (busy) return { ok: false, error: 'session busy' };
+    const { shots, activeIndex } = get();
+    // Both of these are decided before the lock is taken: they are pure reads
+    // that mutate nothing, so refusing them must not depend on, or disturb,
+    // whoever currently holds the session.
     if (index === activeIndex) return { ok: true };
     if (index < 0 || index >= shots.length) return { ok: false, error: `shot index ${index} out of range` };
+    const held = acquire(set, get, 'switchToShot');
+    if (!held.ok) return { ok: false, error: held.error };
 
     const outgoing = shots[activeIndex];
     get().stashActiveGrade();
     // flush the outgoing shot's grade to disk — autosave only ever writes the
     // active shot's grade file, so a switch is our chance to persist this one.
     void persistShotGrade(get, outgoing, get().grades[outgoing?.id]);
-    set({ busy: true });
     try {
       const res = await invoke<SessionSwitchDto>('chroma_session_set_active', { index });
       const nextShots = reattachIds(res.session.shots, shots);
@@ -444,13 +503,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     } finally {
-      set({ busy: false });
+      held.lock.release();
     }
   },
 
   addShots: async (paths) => {
     if (!paths.length) return { ok: false, error: 'no paths' };
-    if (get().busy) return { ok: false, error: 'session busy' };
+    const held = acquire(set, get, 'addShots');
+    if (!held.ok) return { ok: false, error: held.error };
     const { projectPath, projectName } = get();
 
     // D-070: a real project's "+" appends real timeline clips (find-or-create
@@ -458,22 +518,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // same action as dragging a Sources-panel item onto the Edit tab, just
     // triggered from the Colorist strip. An in-memory Untitled session (no
     // project, no timeline) keeps the old decode-session-only behaviour.
-    if (projectPath && projectName !== 'Untitled') {
-      set({ busy: true });
-      try {
-        const dto = await invoke<ProjectOpenDto>('chroma_project_add_shot_paths', { paths });
-        await get()._hydrateOpenDto(dto);
-        return { ok: true };
-      } catch (e: any) {
-        return { ok: false, error: String(e?.message || e) };
-      } finally {
-        set({ busy: false });
-      }
-    }
-
-    get().stashActiveGrade();
-    set({ busy: true });
+    // One lock for both branches, taken above and released in the single
+    // `finally` below — the two paths are alternatives, not nested scopes.
     try {
+      if (projectPath && projectName !== 'Untitled') {
+        const dto = await invoke<ProjectOpenDto>('chroma_project_add_shot_paths', { paths });
+        await get()._hydrateOpenDto(dto, held.lock);
+        return { ok: true };
+      }
+
+      get().stashActiveGrade();
       const res = await invoke<SessionSwitchDto>('chroma_session_add', { paths });
       const nextShots = reattachIds(res.session.shots, get().shots);
       set({ shots: nextShots, activeIndex: res.session.active });
@@ -484,33 +538,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     } finally {
-      set({ busy: false });
+      held.lock.release();
     }
   },
 
   removeShot: async (index) => {
-    const { shots, activeIndex, busy, grades, projectPath, projectName } = get();
-    if (busy) return { ok: false, error: 'session busy' };
+    const { shots, activeIndex, grades, projectPath, projectName } = get();
     if (index < 0 || index >= shots.length) return { ok: false, error: 'out of range' };
+    const held = acquire(set, get, 'removeShot');
+    if (!held.ok) return { ok: false, error: held.error };
 
-    // D-070: a real project's remove drops the clip from the active timeline.
-    if (projectPath && projectName !== 'Untitled') {
-      const clipId = shots[index].id;
-      set({ busy: true });
-      try {
-        const dto = await invoke<ProjectOpenDto>('chroma_project_remove_clip', { clipId });
-        await get()._hydrateOpenDto(dto);
-        return { ok: true };
-      } catch (e: any) {
-        return { ok: false, error: String(e?.message || e) };
-      } finally {
-        set({ busy: false });
-      }
-    }
-
-    if (index === activeIndex) get().stashActiveGrade();
-    set({ busy: true });
+    // One lock for both branches, taken above and released in the single
+    // `finally` below — the two paths are alternatives, not nested scopes.
     try {
+      // D-070: a real project's remove drops the clip from the active timeline.
+      if (projectPath && projectName !== 'Untitled') {
+        const clipId = shots[index].id;
+        const dto = await invoke<ProjectOpenDto>('chroma_project_remove_clip', { clipId });
+        await get()._hydrateOpenDto(dto, held.lock);
+        return { ok: true };
+      }
+
+      if (index === activeIndex) get().stashActiveGrade();
       const res = await invoke<SessionSwitchDto>('chroma_session_remove', { index });
       // forget the removed shot's cached grade
       const removedId = shots[index]?.id;
@@ -533,7 +582,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     } finally {
-      set({ busy: false });
+      held.lock.release();
     }
   },
 
@@ -557,19 +606,33 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // --- project model (D-037) ------------------------------------------------
 
-  _hydrateOpenDto: async (dto) => {
-    // D-063: `busy` set here, not just left to each caller — `openProject`/
-    // `newProject`/etc. (the in-store callers) already wrap their own call
-    // to this in `busy: true`/`false`, but `SourcesPanel`'s "add to grading"
-    // action calls this directly and never did, which is exactly why
-    // clicking "+" on a Sources clip flashed to a blank/stale preview during
-    // the real decode round trip below with zero loading feedback —
-    // `Editor.tsx`'s spinner (D-063, now wired to this flag too) had
-    // nothing to key off. Setting it here, inside the one function every
-    // path funnels through, means a future caller gets this for free
-    // instead of needing to remember it. A redundant `true`→`true` from an
-    // outer caller that already set it is harmless.
-    set({ busy: true });
+  _hydrateOpenDto: async (dto, heldByCaller) => {
+    // B-132/D-268 — the re-entrancy fix. This is called from two kinds of
+    // place: five in-store actions that already hold the session lock, and
+    // `SourcesPanel`'s "add to grading", which holds nothing. As a bare
+    // `busy` flag it could not tell them apart, so it set `busy: true` on
+    // entry and cleared it in its own `finally` — which on all five in-store
+    // paths released the CALLER's lock while the caller was still running,
+    // leaving the rest of `newProject`/`openProject`/`addShots`/`removeShot`/
+    // `relinkShot` completely unguarded. A caller now hands its lock down and
+    // this takes none; `release()` is identity-checked, so this can no longer
+    // drop a lock it did not take. See `sessionLock.ts`.
+    //
+    // D-063: a lock is taken here, not just left to each caller —
+    // `SourcesPanel`'s "add to grading" calls this directly and never did,
+    // which is exactly why clicking "+" on a Sources clip flashed to a
+    // blank/stale preview during the real decode round trip below with zero
+    // loading feedback — `Editor.tsx`'s spinner (D-063, wired to `busy`) had
+    // nothing to key off.
+    const own = heldByCaller ? null : acquire(set, get, '_hydrateOpenDto');
+    if (own && !own.ok) {
+      // A direct caller (SourcesPanel) racing a real project switch. Refusing
+      // is right — hydrating on top of an in-flight open would interleave two
+      // sessions — and it must be a real throw, because this returns `void`
+      // and its one external caller reports failure from its own `catch`.
+      throw new Error(own.error);
+    }
+    const lock = heldByCaller ?? (own as { ok: true; lock: SessionLockHandle }).lock;
     try {
       // the Rust session already holds the online clips (chroma_project_open
       // et al loaded them). Mirror it, then attach per-shot grades + project
@@ -626,7 +689,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         useAgentStore.getState().scopeToShot(null);
       }
     } finally {
-      set({ busy: false });
+      // A no-op when the lock came from the caller (identity check in
+      // `release()`) — the caller's own `finally` is what frees it.
+      if (own) lock.release();
     }
   },
 
@@ -697,17 +762,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   openProject: async (path) => {
-    if (get().busy) return { ok: false, error: 'session busy' };
-    set({ busy: true });
+    const held = acquire(set, get, 'openProject');
+    if (!held.ok) return { ok: false, error: held.error };
     try {
       const dto = await invoke<ProjectOpenDto>('chroma_project_open', { path });
-      await get()._hydrateOpenDto(dto);
+      await get()._hydrateOpenDto(dto, held.lock);
       trackEvent('project_open', { shotCount: get().shots.length });
       return { ok: true, hasShots: get().shots.length > 0 || get().offlineShots.length > 0 };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     } finally {
-      set({ busy: false });
+      held.lock.release();
     }
   },
 
@@ -731,7 +796,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       shots: [],
       activeIndex: 0,
       grades: {},
+      // B-132/D-268 — the lock is dropped with everything else, so "‹ Projects"
+      // is a real, human-reachable recovery from a wedged session rather than
+      // a button that inherits the wedge. A still-running holder's own
+      // `release()` is identity-checked and becomes a no-op, so it cannot
+      // reach back in and clear a lock a LATER action has since taken.
       busy: false,
+      lock: null,
       projectPath: null,
       projectName: null,
       gradeDir: null,
@@ -746,11 +817,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   newProject: async (name, mediaPaths) => {
-    if (get().busy) return { ok: false, error: 'session busy' };
-    set({ busy: true });
+    const held = acquire(set, get, 'newProject');
+    if (!held.ok) return { ok: false, error: held.error };
     try {
       const dto = await invoke<ProjectOpenDto>('chroma_project_new', { name, mediaPaths });
-      await get()._hydrateOpenDto(dto);
+      await get()._hydrateOpenDto(dto, held.lock);
       trackEvent('project_new', { mediaCount: mediaPaths.length });
       // write an initial thumb.jpg from the active shot
       void get().saveProject({ force: true });
@@ -758,24 +829,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     } finally {
-      set({ busy: false });
+      held.lock.release();
     }
   },
 
   saveUntitledAs: async (name) => {
     const paths = get().shots.map((s) => s.path);
     if (!paths.length) return { ok: false, error: 'nothing to save' };
-    if (get().busy) return { ok: false, error: 'session busy' };
-    set({ busy: true });
+    const held = acquire(set, get, 'saveUntitledAs');
+    if (!held.ok) return { ok: false, error: held.error };
     try {
       const dto = await invoke<ProjectOpenDto>('chroma_project_new', { name, mediaPaths: paths });
-      await get()._hydrateOpenDto(dto);
+      await get()._hydrateOpenDto(dto, held.lock);
       void get().saveProject({ force: true });
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     } finally {
-      set({ busy: false });
+      held.lock.release();
     }
   },
 
@@ -808,10 +879,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   relinkShot: async (shotId, newPath) => {
-    const { projectPath, busy } = get();
+    const { projectPath } = get();
     if (!projectPath) return { ok: false, error: 'no project loaded' };
-    if (busy) return { ok: false, error: 'session busy' };
-    set({ busy: true });
+    const held = acquire(set, get, 'relinkShot');
+    if (!held.ok) return { ok: false, error: held.error };
     try {
       // D-070: `shotId` here is a `apelles_timeline::Clip` id (offlineShots
       // now come from the clip-derived `ProjectShotDto`) — the Rust command
@@ -821,12 +892,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         clipId: shotId,
         newPath,
       });
-      await get()._hydrateOpenDto(dto);
+      await get()._hydrateOpenDto(dto, held.lock);
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: String(e?.message || e) };
     } finally {
-      set({ busy: false });
+      held.lock.release();
     }
   },
 }));
