@@ -58,7 +58,7 @@ const AREA = { left: 0, top: 0, width: 1200, height: 600 };
 /** `TimelinePane.tsx`'s own zoom step, restated (see `ZOOM_STEP`). */
 const ZOOM_STEP = 1.2;
 const DEFAULT_PX_PER_SEC = 90;
-const START_LEFT_PX = 20;
+const START_LEFT_PX = 32;
 
 /** One clip long enough to zoom around, and a marker at 6s to measure. */
 function fixture(): Timeline {

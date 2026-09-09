@@ -507,7 +507,7 @@ const RULER_AND_MARGIN_PX = RULER_HEIGHT_PX + MARKER_STRIP_HEIGHT;
  *  left-px→seconds helper (`(left - startLeft) / scaleWidth * scale`, which
  *  reduces to `/ pxPerSec` since `scaleWidth = tickSeconds * pxPerSec` —
  *  checked against its bundled source, not guessed). */
-const START_LEFT_PX = 20;
+const START_LEFT_PX = 32;
 
 /** D-233 — below this clip width (px) the curve button is not drawn.
  *
@@ -1446,6 +1446,8 @@ export function TimelinePane() {
 
   // Declared beside `trimArmed` because disarming has to clear it (see below).
   const [hoverTrimMode, setHoverTrimMode] = useState<TrimMode | null>(null);
+  // The clip body last given a direct cursor override — see `onTrimHoverMove`.
+  const cursorOverrideElRef = useRef<HTMLElement | null>(null);
 
   // D-261 — the trim palette's active tool: the primary, visible way to reach
   // the four smart trims, replacing "hold Alt and hope you are at the right
@@ -1645,8 +1647,29 @@ export function TimelinePane() {
     const next = trimModeAtPointer(e.nativeEvent);
     setHoverTrimMode((prev) => (prev === next ? prev : next));
     if (next) placeTrimBadge(e);
+    // The resolved mode's cursor is also written straight onto the hovered
+    // clip's own element, not just the edit area's ancestor style: `ClipBody`
+    // carries its own `cursor-grab` class on that same node, and an element's
+    // own declared `cursor` always wins over an ancestor's, no matter the
+    // ancestor's specificity — so without this, selecting Slip/Slide (which
+    // own the clip BODY, not just its edges) never visibly changed the
+    // cursor. Direct DOM write, not React state, for the same per-pointer-move
+    // performance reason `placeTrimBadge` above is one.
+    const target = e.nativeEvent.target instanceof Element ? e.nativeEvent.target : null;
+    const hoveredBody = target?.closest<HTMLElement>('[data-chroma-clip-drag]') ?? null;
+    if (cursorOverrideElRef.current && cursorOverrideElRef.current !== hoveredBody) {
+      cursorOverrideElRef.current.style.cursor = '';
+    }
+    if (hoveredBody) hoveredBody.style.cursor = next ? trimModeCursor(next) : '';
+    cursorOverrideElRef.current = hoveredBody;
   };
-  const onTrimHoverLeave = () => setHoverTrimMode((prev) => (prev === null ? prev : null));
+  const onTrimHoverLeave = () => {
+    setHoverTrimMode((prev) => (prev === null ? prev : null));
+    if (cursorOverrideElRef.current) {
+      cursorOverrideElRef.current.style.cursor = '';
+      cursorOverrideElRef.current = null;
+    }
+  };
 
   // Ripple visual feedback (D-051) — diff each clip id's timeline start frame
   // against the previous render; anything that moved (chiefly a `move` now,
@@ -3672,17 +3695,21 @@ export function TimelinePane() {
               render={
                 <Button
                   variant="ghost"
-                  size="sm"
+                  size="icon-sm"
                   onClick={doSplit}
                   disabled={selection.length === 0}
                   aria-label="Split at playhead"
                 >
                   <Scissors />
-                  Split
                 </Button>
               }
             />
-            <TooltipContent>Split every selected clip at the playhead</TooltipContent>
+            <TooltipContent>
+              <span className="font-medium">Split</span>
+              <span className="ml-1.5 text-text-secondary">
+                Split every selected clip at the playhead
+              </span>
+            </TooltipContent>
           </Tooltip>
           {/* D-261 — the trim palette. It sits here, first among the actions
               that operate on the clips already in the timeline, because unlike
@@ -3757,17 +3784,21 @@ export function TimelinePane() {
               render={
                 <Button
                   variant="ghost"
-                  size="sm"
+                  size="icon-sm"
                   onClick={doRemove}
                   disabled={selection.length === 0}
                   aria-label="Remove clip"
                 >
                   <Trash2 />
-                  Remove
                 </Button>
               }
             />
-            <TooltipContent>Remove every selected clip (with its linked audio)</TooltipContent>
+            <TooltipContent>
+              <span className="font-medium">Remove</span>
+              <span className="ml-1.5 text-text-secondary">
+                Remove every selected clip (with its linked audio)
+              </span>
+            </TooltipContent>
           </Tooltip>
           {/* D-128 — only shown when the selection is actually linked: an
               Unlink button that's permanently present but almost always
@@ -3779,14 +3810,16 @@ export function TimelinePane() {
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Button variant="ghost" size="sm" onClick={doUnlink} aria-label="Unlink audio and video">
+                  <Button variant="ghost" size="icon-sm" onClick={doUnlink} aria-label="Unlink audio and video">
                     <Unlink />
-                    Unlink
                   </Button>
                 }
               />
               <TooltipContent>
-                Break the A/V link so the picture and its audio can be trimmed and moved apart (an L-cut)
+                <span className="font-medium">Unlink</span>
+                <span className="ml-1.5 text-text-secondary">
+                  Break the A/V link so the picture and its audio can be trimmed and moved apart (an L-cut)
+                </span>
               </TooltipContent>
             </Tooltip>
           )}
@@ -3806,20 +3839,22 @@ export function TimelinePane() {
                 render={
                   <Button
                     variant="ghost"
-                    size="sm"
+                    size="icon-sm"
                     onClick={doLink}
                     disabled={!linkCheck.result.ok}
                     aria-label="Link audio and video"
                   >
                     <Link />
-                    Link
                   </Button>
                 }
               />
               <TooltipContent>
-                {linkCheck.result.ok
-                  ? 'Link these two clips so they move, trim, split and delete together'
-                  : linkCheck.result.reason}
+                <span className="font-medium">Link</span>
+                <span className="ml-1.5 text-text-secondary">
+                  {linkCheck.result.ok
+                    ? 'Link these two clips so they move, trim, split and delete together'
+                    : linkCheck.result.reason}
+                </span>
               </TooltipContent>
             </Tooltip>
           )}
@@ -3839,13 +3874,17 @@ export function TimelinePane() {
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Button variant="ghost" size="sm" onClick={doRemoveGap} aria-label="Close gap">
+                  <Button variant="ghost" size="icon-sm" onClick={doRemoveGap} aria-label="Close gap">
                     <FoldHorizontal />
-                    Close Gap
                   </Button>
                 }
               />
-              <TooltipContent>Close the selected gap — everything after it shifts left</TooltipContent>
+              <TooltipContent>
+                <span className="font-medium">Close Gap</span>
+                <span className="ml-1.5 text-text-secondary">
+                  Close the selected gap — everything after it shifts left
+                </span>
+              </TooltipContent>
             </Tooltip>
           )}
 
@@ -3853,14 +3892,23 @@ export function TimelinePane() {
               dropdown and not a drag gesture. */}
           {primary && otherTracks.length > 0 && (
             <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button variant="ghost" size="sm" aria-label="Move to another track">
-                    <ArrowRightLeft />
-                    Move to
-                  </Button>
-                }
-              />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <DropdownMenuTrigger
+                      render={
+                        <Button variant="ghost" size="icon-sm" aria-label="Move to another track">
+                          <ArrowRightLeft />
+                        </Button>
+                      }
+                    />
+                  }
+                />
+                <TooltipContent>
+                  <span className="font-medium">Move to</span>
+                  <span className="ml-1.5 text-text-secondary">Move the selected clip to another track</span>
+                </TooltipContent>
+              </Tooltip>
               <DropdownMenuContent align="start">
                 {otherTracks.map((i) => (
                   <DropdownMenuItem key={i} onClick={() => doMoveToTrack(i)}>

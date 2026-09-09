@@ -437,15 +437,17 @@ export function AddMarkerButton({ onAdd, shortcut }: AddMarkerButtonProps) {
     <Tooltip>
       <TooltipTrigger
         render={
-          <Button variant="ghost" size="sm" onClick={onAdd} aria-label="Add marker">
+          <Button variant="ghost" size="icon-sm" onClick={onAdd} aria-label="Add marker">
             <Flag />
-            Marker
           </Button>
         }
       />
       <TooltipContent>
-        Add a marker at the playhead ({shortcut}) — click a flag on the ruler to jump to it, double-click to
-        rename, recolour or delete it
+        <span className="font-medium">Marker ({shortcut})</span>
+        <span className="ml-1.5 text-text-secondary">
+          Add a marker at the playhead — click a flag on the ruler to jump to it, double-click to rename,
+          recolour or delete it
+        </span>
       </TooltipContent>
     </Tooltip>
   );

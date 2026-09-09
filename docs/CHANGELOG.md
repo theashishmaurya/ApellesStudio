@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **four small Edit-tab UI fixes.** The timeline ruler's first
+  timecode label and playhead flag sat clipped against the pane's left edge
+  (`START_LEFT_PX` 20→32, the one shared constant both the ruler and every
+  clip/marker/gap overlay already key off, so nothing desynced). The toolbar's
+  Split/Marker/Transitions/Remove/Unlink/Link/Close Gap/Move to buttons
+  dropped their visible text labels to match the icon-only tool palette
+  beside them — every one of them already had a tooltip carrying the full
+  name, now bolded as the tooltip's first line. **B-133** — selecting Slip/Slide
+  (or arming the Alt smart-trim heuristic) never visibly changed the cursor:
+  `ClipBody`'s own hardcoded `cursor-grab` class was masking the edit area's
+  already-correct `trimModeCursor` style, since an element's own declared
+  cursor always beats an ancestor's; fixed by writing the resolved cursor
+  straight onto the specific hovered clip. Investigated but found NOT a bug:
+  trackpad pinch-zoom on the preview canvas — `PreviewPane.tsx` already
+  implements the identical `ctrlKey`-wheel convention the timeline uses, with
+  a passing test exercising real pinch; if it's still not working live, the
+  next step is confirming WKWebView actually delivers `ctrlKey: true` on a
+  real trackpad pinch, not another code change.
+
 - **2026-09-09** — **three open bugs fixed: B-073, B-097, B-101.**
   **B-073 (D-270)** — a media-pool item whose first probe failed is repairable
   again: `chroma_media_reprobe` re-probes **by id** (address translation onto

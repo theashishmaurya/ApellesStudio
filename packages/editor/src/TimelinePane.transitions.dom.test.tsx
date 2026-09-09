@@ -54,7 +54,7 @@ import { transitionWindow, type Timeline, type Transition } from './timeline';
 
 const FPS = 24;
 const PX_PER_SEC = 90; // DEFAULT_PX_PER_SEC, as `TimelinePane.tsx` defines it
-const START_LEFT_PX = 20; // ditto
+const START_LEFT_PX = 32; // ditto
 
 /** Two abutting 48-frame clips cut at frame 48, each trimmed inside its own
  *  144-frame source so a cross dissolve has real handle media — the same

@@ -79,7 +79,7 @@ import { MARQUEE_MIN_DRAG_PX } from './marquee';
 
 const FPS = 24;
 const ROW_HEIGHT = 52;
-const START_LEFT_PX = 20;
+const START_LEFT_PX = 32;
 // D-222: the library's 32px ruler + the ruler/edit-area gap, which is now the
 // marker strip's own `MARKER_STRIP_HEIGHT` (16) rather than the library's
 // default 10 — `TimelinePane.tsx`'s `RULER_AND_MARGIN_PX`, mirrored.

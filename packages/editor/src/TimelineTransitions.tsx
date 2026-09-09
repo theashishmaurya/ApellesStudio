@@ -124,16 +124,18 @@ export function TransitionsPaletteButton() {
           render={
             <PopoverTrigger
               render={
-                <Button variant="ghost" size="sm" aria-label="Transitions">
+                <Button variant="ghost" size="icon-sm" aria-label="Transitions">
                   <Wand2 />
-                  Transitions
                 </Button>
               }
             />
           }
         />
         <TooltipContent>
-          Drag a transition onto a cut between two clips on the same video track
+          <span className="font-medium">Transitions</span>
+          <span className="ml-1.5 text-text-secondary">
+            Drag a transition onto a cut between two clips on the same video track
+          </span>
         </TooltipContent>
       </Tooltip>
       <PopoverContent className="w-64 space-y-2 p-2">
