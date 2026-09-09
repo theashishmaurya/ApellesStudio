@@ -1616,6 +1616,25 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       tests. **Deferred, deliberately:** dynamic (JKL) trimming during playback,
       asymmetric trim, and multi-clip/multi-track trim — all named on the same
       reference page, all separately scoped.
+      **Superseded as the PRIMARY path, 2026-09-09 (D-261):** the owner, live —
+      *"for roll slip etc, instead of alt lets have icons for all of them :)
+      much better."* Three passes (D-235, D-250, this one) established that a
+      modifier-plus-position gesture is not discoverable however well it is
+      labelled, because every label appears only once the key is already held.
+      There is now a real five-button icon palette in the timeline toolbar —
+      Select / Ripple / Roll / Slip / Slide, Adobe's own Tools-panel set and its
+      own V/B/N/Y/U shortcuts, from a fresh scrape of Adobe's help into
+      `scratch/premiere-tools-reference/`. A chosen tool decides alone
+      (position and modifiers ignored), so the same drag on the same pixel
+      always commits the same edit. The Alt heuristic is **kept**, strictly
+      layered underneath: it does something only while Select is active. 15 new
+      unit + 14 new real-DOM tests, the central two asserting that the icon path
+      and the Alt path produce the identical timeline. MCP parity was
+      **checked, not assumed** — all five behaviours are already directly
+      nameable (`editor_trim_clip`'s `ripple`, `editor_roll_edit`,
+      `editor_slip_clip`, `editor_slide_clip`, `editor_move_clip`), so this one
+      is correctly GUI-only: a palette is a mode that persists between
+      gestures, and an agent has no gestures.
     - ~~**Speed ramp curve** — variable speed over time, not a flat export-time
       override~~ — **DONE, 2026-09-08 (D-236).** `Clip.speed_points` — "from
       this SOURCE frame onward, play at this speed" — so the speed profile is a

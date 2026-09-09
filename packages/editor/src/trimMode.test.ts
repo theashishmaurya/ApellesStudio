@@ -21,7 +21,11 @@ import {
   resolveTrimMode,
   trimModeLabel,
   trimOpFor,
+  trimToolForKey,
+  trimToolOwns,
+  TRIM_TOOLS,
   type TrimGesture,
+  type TrimTool,
 } from './trimMode';
 
 function clip(id: string, overrides: Partial<Clip> = {}): Clip {
@@ -58,8 +62,19 @@ function at(tlx: Timeline, id: string): Clip {
   return c;
 }
 
+/** D-261 added `tool` to the gesture. It defaults to `'select'` here so every
+ *  pre-D-261 assertion below still reads as what it always asserted: the
+ *  Selection tool's behaviour, which is the one the palette must not change. */
 function gesture(overrides: Partial<TrimGesture> = {}): TrimGesture {
-  return { zone: 'body', altKey: false, shiftKey: false, atEditPoint: false, bodyYRatio: 0.5, ...overrides };
+  return {
+    zone: 'body',
+    tool: 'select',
+    altKey: false,
+    shiftKey: false,
+    atEditPoint: false,
+    bodyYRatio: 0.5,
+    ...overrides,
+  };
 }
 
 // --------------------------------------------------------------------------- //
@@ -113,6 +128,196 @@ describe('resolveTrimMode — armed, the mode comes from the pointer position', 
   it('Shift on the body does not change the slip/slide band', () => {
     expect(resolveTrimMode(gesture({ zone: 'body', altKey: true, shiftKey: true, bodyYRatio: 0.2 }))).toBe('slip');
     expect(resolveTrimMode(gesture({ zone: 'body', altKey: true, shiftKey: true, bodyYRatio: 0.8 }))).toBe('slide');
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// 1b. the trim-tool palette (D-261)
+// --------------------------------------------------------------------------- //
+
+describe('TRIM_TOOLS — the palette itself', () => {
+  it('is Adobe’s five tools, Selection first', () => {
+    expect(TRIM_TOOLS.map((t) => t.tool)).toEqual(['select', 'ripple', 'roll', 'slip', 'slide']);
+  });
+
+  it('carries Adobe’s own shortcut for each, all distinct', () => {
+    // V/B/N/Y/U, quoted from Adobe's own help pages in
+    // `scratch/premiere-tools-reference/premiere-tools-panel.json`.
+    expect(TRIM_TOOLS.map((t) => t.shortcut)).toEqual(['V', 'B', 'N', 'Y', 'U']);
+    expect(new Set(TRIM_TOOLS.map((t) => t.shortcut)).size).toBe(TRIM_TOOLS.length);
+  });
+
+  it('gives every tool a label and a blurb, so nothing renders blank', () => {
+    for (const t of TRIM_TOOLS) {
+      expect(t.label.length, `${t.tool} has no label`).toBeGreaterThan(0);
+      expect(t.blurb.length, `${t.tool} has no blurb`).toBeGreaterThan(0);
+    }
+  });
+
+  it('owns the zones each reference actually edits in: edges for ripple/roll, the whole clip for slip/slide', () => {
+    expect(trimToolOwns('ripple', 'edge-start')).toBe(true);
+    expect(trimToolOwns('ripple', 'edge-end')).toBe(true);
+    expect(trimToolOwns('ripple', 'body')).toBe(false);
+    expect(trimToolOwns('roll', 'body')).toBe(false);
+    expect(trimToolOwns('slip', 'body')).toBe(true);
+    expect(trimToolOwns('slip', 'edge-end')).toBe(true);
+    expect(trimToolOwns('slide', 'body')).toBe(true);
+    // Select owns nothing — it is what every other tool falls back TO.
+    expect(trimToolOwns('select', 'body')).toBe(false);
+    expect(trimToolOwns('select', 'edge-start')).toBe(false);
+  });
+
+  it('maps a keystroke to a tool, case-insensitively, and nothing else', () => {
+    expect(trimToolForKey('v')).toBe('select');
+    expect(trimToolForKey('V')).toBe('select');
+    expect(trimToolForKey('b')).toBe('ripple');
+    expect(trimToolForKey('n')).toBe('roll');
+    expect(trimToolForKey('y')).toBe('slip');
+    expect(trimToolForKey('u')).toBe('slide');
+    // Caps Lock must not silently disable the palette, and a key that is not a
+    // tool must not be swallowed — `M` is this pane's marker shortcut.
+    expect(trimToolForKey('m')).toBe(null);
+    expect(trimToolForKey('Escape')).toBe(null);
+    expect(trimToolForKey('')).toBe(null);
+  });
+});
+
+describe('resolveTrimMode — an explicit tool decides alone (D-261)', () => {
+  it('each tool names its own edit in the zones it owns', () => {
+    expect(resolveTrimMode(gesture({ tool: 'ripple', zone: 'edge-end' }))).toBe('ripple');
+    expect(resolveTrimMode(gesture({ tool: 'ripple', zone: 'edge-start' }))).toBe('ripple');
+    expect(resolveTrimMode(gesture({ tool: 'roll', zone: 'edge-end' }))).toBe('roll');
+    expect(resolveTrimMode(gesture({ tool: 'slip', zone: 'body' }))).toBe('slip');
+    expect(resolveTrimMode(gesture({ tool: 'slide', zone: 'body' }))).toBe('slide');
+    // Slip and Slide own the edge bands too — they are part of the clip, and
+    // grabbing one with Slip chosen must not fall back to a destructive trim.
+    expect(resolveTrimMode(gesture({ tool: 'slip', zone: 'edge-start' }))).toBe('slip');
+    expect(resolveTrimMode(gesture({ tool: 'slide', zone: 'edge-end' }))).toBe('slide');
+  });
+
+  it('falls back to the plain gesture in a zone the tool does not own', () => {
+    // The reason Ripple/Roll do not own the body: repositioning a clip must
+    // keep working while a trim tool is selected.
+    expect(resolveTrimMode(gesture({ tool: 'ripple', zone: 'body' }))).toBe('move');
+    expect(resolveTrimMode(gesture({ tool: 'roll', zone: 'body' }))).toBe('move');
+  });
+
+  it('IGNORES every input the Alt heuristic reads — that is what makes it deterministic', () => {
+    // The owner's actual ask: the same drag on the same pixel always commits
+    // the same edit once a tool is chosen. So none of the four heuristic
+    // inputs may change the answer.
+    for (const altKey of [false, true]) {
+      for (const shiftKey of [false, true]) {
+        for (const bodyYRatio of [0, 0.25, 0.5, 0.75, 1]) {
+          expect(resolveTrimMode(gesture({ tool: 'slip', zone: 'body', altKey, shiftKey, bodyYRatio }))).toBe('slip');
+          expect(resolveTrimMode(gesture({ tool: 'slide', zone: 'body', altKey, shiftKey, bodyYRatio }))).toBe('slide');
+        }
+        for (const atEditPoint of [false, true]) {
+          // Under Alt, an edit point resolves to Roll and Shift forces Ripple.
+          // With a tool chosen, neither has any say.
+          expect(resolveTrimMode(gesture({ tool: 'ripple', zone: 'edge-end', altKey, shiftKey, atEditPoint }))).toBe(
+            'ripple',
+          );
+          expect(resolveTrimMode(gesture({ tool: 'roll', zone: 'edge-end', altKey, shiftKey, atEditPoint }))).toBe(
+            'roll',
+          );
+        }
+      }
+    }
+  });
+
+  it('leaves the Selection tool as the exact pre-D-261 surface, armed or not', () => {
+    // The regression that matters most: adding a palette must not re-map a
+    // single gesture anyone already has in their fingers.
+    expect(resolveTrimMode(gesture({ tool: 'select', zone: 'body' }))).toBe('move');
+    expect(resolveTrimMode(gesture({ tool: 'select', zone: 'edge-end' }))).toBe('trim');
+    expect(resolveTrimMode(gesture({ tool: 'select', zone: 'body', altKey: true, bodyYRatio: 0.2 }))).toBe('slip');
+    expect(resolveTrimMode(gesture({ tool: 'select', zone: 'body', altKey: true, bodyYRatio: 0.8 }))).toBe('slide');
+    expect(resolveTrimMode(gesture({ tool: 'select', zone: 'edge-end', altKey: true, atEditPoint: true }))).toBe('roll');
+    expect(resolveTrimMode(gesture({ tool: 'select', zone: 'edge-end', altKey: true, atEditPoint: false }))).toBe(
+      'ripple',
+    );
+  });
+});
+
+describe('the icon path and the Alt path build the SAME op (D-261)', () => {
+  // The edge half of D-261's central claim. Its body half is asserted on real
+  // DOM in `TimelinePane.trimTools.dom.test.tsx`; the two EDGE modes cannot be
+  // driven from pointer events in jsdom at all (the timeline library's resize
+  // is interact.js-driven — see `resizeEndOp`'s own doc), so this is where
+  // ripple and roll are really pinned.
+  const t = threeUp();
+  const alt = (shiftKey = false) => ({ altKey: true, shiftKey });
+  const tool = (tool: TrimTool) => ({ altKey: false, shiftKey: false, tool });
+
+  it('Ripple: the tool with no modifier == Alt+Shift at an edit point', () => {
+    const args = { tl: t, track: 0, clip: 1, dir: 'right' as const, startFrame: 100, endFrame: 225 };
+    expect(resizeEndOp({ ...args, press: tool('ripple') })).toEqual(resizeEndOp({ ...args, press: alt(true) }));
+    expect(resizeEndOp({ ...args, press: tool('ripple') })).toEqual({
+      kind: 'trim_end',
+      track: 0,
+      clip: 1,
+      delta: 25,
+      ripple: true,
+    });
+  });
+
+  it('Roll: the tool with no modifier == plain Alt at an edit point, redirect included', () => {
+    // Grabbed at the clip's HEAD, so this also proves the tool path goes
+    // through the same outgoing-clip redirect the Alt path does — a roll
+    // applied to the wrong side of the cut would still "work" and be wrong.
+    const args = { tl: t, track: 0, clip: 1, dir: 'left' as const, startFrame: 125, endFrame: 200 };
+    expect(resizeEndOp({ ...args, press: tool('roll') })).toEqual(resizeEndOp({ ...args, press: alt() }));
+    expect(resizeEndOp({ ...args, press: tool('roll') })).toEqual({ kind: 'roll', track: 0, clip: 0, delta: 25 });
+  });
+
+  it('Slip / Slide: the tool with no modifier == Alt in the matching vertical band', () => {
+    const args = { tl: t, track: 0, clip: 1, delta: 30 };
+    expect(bodyDragOp({ ...args, press: { ...tool('slip'), bodyYRatio: 0.9 } })).toEqual(
+      bodyDragOp({ ...args, press: { ...alt(), bodyYRatio: 0.2 } }),
+    );
+    expect(bodyDragOp({ ...args, press: { ...tool('slide'), bodyYRatio: 0.1 } })).toEqual(
+      bodyDragOp({ ...args, press: { ...alt(), bodyYRatio: 0.8 } }),
+    );
+  });
+
+  it('Ripple at a FREE edge still ripples — the tool does not need an edit point', () => {
+    // Where the two paths legitimately differ is only in what they can REACH:
+    // under Alt a free edge ripples and an edit point rolls, so roll is
+    // unreachable without a neighbour. The tool says which edit you want
+    // outright, so it never has to guess.
+    expect(
+      resizeEndOp({ tl: t, track: 0, clip: 2, dir: 'right', startFrame: 200, endFrame: 320, press: tool('ripple') }),
+    ).toEqual({ kind: 'trim_end', track: 0, clip: 2, delta: 20, ripple: true });
+  });
+
+  it('Roll at a free edge is a safe no-op, never a silent plain trim', () => {
+    // 'a' starts the track: there is no cut at its head to roll. The op must
+    // either be null or be refused by the model — what it must NOT be is a
+    // destructive trim the user did not ask for.
+    const op = resizeEndOp({ tl: t, track: 0, clip: 0, dir: 'left', startFrame: 15, endFrame: 100, press: tool('roll') });
+    expect(op).toBe(null);
+    const endOp = resizeEndOp({
+      tl: t,
+      track: 0,
+      clip: 2,
+      dir: 'right',
+      startFrame: 200,
+      endFrame: 320,
+      press: tool('roll'),
+    });
+    expect(endOp).toEqual({ kind: 'roll', track: 0, clip: 2, delta: 20 });
+    expect(applyOp(t, endOp!), 'a roll with no edit point must change nothing').toBe(t);
+  });
+
+  it('an unknown tool on the press bag resolves to Select, never to a surprise', () => {
+    // `press` without a `tool` is what every pre-D-261 caller passes.
+    expect(
+      resizeEndOp({ tl: t, track: 0, clip: 1, dir: 'right', startFrame: 100, endFrame: 230, press: { altKey: false, shiftKey: false } }),
+    ).toEqual({ kind: 'trim_end', track: 0, clip: 1, delta: 30 });
+    expect(bodyDragOp({ tl: t, track: 0, clip: 1, delta: 30, press: { altKey: false, shiftKey: false, bodyYRatio: 0.2 } })).toBe(
+      null,
+    );
   });
 });
 
