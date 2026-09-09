@@ -68,6 +68,23 @@
  * outside this package), so they naturally read as "on the right" once
  * Sources vacates that slot.
  *
+ * Per-tab library rail (D-263): each `ShellTab` may also carry a
+ * `libraryRail` node and a `libraryPanel` node. The rail renders as the
+ * LEFTMOST column of the content area — left of the docked column above — and
+ * the panel renders INSIDE that column in place of `sourcesPanel`, both only
+ * while that tab is active. This is the same injection slot, with the same
+ * reasoning, as `headerAction` below: the Edit tab's library rail
+ * (`@chroma/editor`'s `EditLibraryRail`) is tab-local content that has to sit
+ * at a specific position relative to a panel the SHELL owns, which reordering
+ * anything inside `EditorTab.tsx` could never achieve — it was rendering to
+ * the right of the very column it switches. `Shell` still imports nothing from
+ * the tab packages and learns nothing about what a tab's libraries are: it
+ * renders the nodes it is handed, and "no `libraryPanel` this render" simply
+ * means the shared Sources panel shows. The docked column keeps its
+ * `data-chroma-panel="sources"` hook (same column, same name every doc and
+ * debug recipe already uses) and the shared `sourcesPanel` stays MOUNTED but
+ * hidden while a tab's own library shows, so its search/bin state survives.
+ *
  * Per-tab chrome-bar action (D-251): each `ShellTab` may carry a
  * `headerAction` node, rendered in the top bar's own right-hand cluster
  * (left of the window controls) ONLY while that tab is the active one. This
@@ -115,6 +132,23 @@ export interface ShellTab {
    *  doesn't reopen `@chroma/shell`'s "never imports the tab packages" rule.
    *  Omit for a tab with no such action (Motion/Colorist today). */
   headerAction?: ReactNode;
+  /** D-263 — this tab's own icon rail, rendered as the LEFTMOST column of the
+   *  content area (left of the docked library column), ONLY while this tab is
+   *  active. Same injection slot and same reasoning as `headerAction` above;
+   *  see this file's "Per-tab library rail" doc section. A tab that supplies
+   *  one owns the docked column's toggle itself, so the shell's own floating
+   *  Sources chip is not drawn for it. Omit for a tab with no rail
+   *  (Motion/Colorist today). */
+  libraryRail?: ReactNode;
+  /** D-263 — content this tab puts in the docked library column INSTEAD of
+   *  the shared `sourcesPanel`, while this tab is active.
+   *
+   *  Supply the node only while the tab is actually taking the column over:
+   *  `undefined` means "show the shared media pool", which is what the Edit
+   *  tab's `sources` library mode is. `Root.tsx` (which owns both the mode and
+   *  both nodes) is where that choice is made — the shell deliberately does
+   *  not learn what a tab's library modes are called. */
+  libraryPanel?: ReactNode;
 }
 
 export interface ShellProps {
@@ -150,10 +184,15 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
 
   // If persisted/default tab isn't in the registry, fall back to the first tab.
   const active = tabs.some((t) => t.id === activeTab) ? activeTab : tabs[0]?.id;
+  const activeTabEntry = projectOpen ? tabs.find((t) => t.id === active) : undefined;
   // D-251 — the active tab's own chrome-bar action, if it registered one.
   // `undefined` renders nothing (Motion/Colorist today), and switching tabs
   // switches which node (if any) shows here, same as the tab content below.
-  const activeHeaderAction = projectOpen ? tabs.find((t) => t.id === active)?.headerAction : undefined;
+  const activeHeaderAction = activeTabEntry?.headerAction;
+  // D-263 — the same, for the active tab's left icon rail and for the content
+  // it puts in the docked library column in place of the shared media pool.
+  const activeLibraryRail = activeTabEntry?.libraryRail;
+  const activeLibraryPanel = activeTabEntry?.libraryPanel;
 
   useEffect(() => {
     if (!projectOpen) return;
@@ -286,24 +325,46 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
       </div>
 
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0 overflow-hidden relative">
-        {/* docked Sources panel (D-046; left + resizable, D-116) — a sibling
-            column, never layered over the tab content, so it can't fight
-            Colorist's own panels or Editor's timeline pane for space. A real
+        {/* D-263 — the active tab's icon rail, LEFTMOST, immediately left of
+            the column it switches. A plain fixed-width sibling of the
+            resizable columns, not a `ResizablePanel`: whatever a tab puts here
+            holds icon buttons and nothing else, exactly the case CLAUDE.md's
+            resizable-panels rule exempts. Rendered whether or not that column
+            is open — collapsing it is one of the rail's own jobs. */}
+        {activeLibraryRail}
+
+        {/* docked library column (D-046's Sources panel; left + resizable,
+            D-116; content switchable per-tab, D-263) — a sibling column, never
+            layered over the tab content, so it can't fight Colorist's own
+            panels or Editor's timeline pane for space. A real
             `ResizablePanel`, not a fixed width, per this project's own
             "resizable-by-nature panels must actually be resizable" rule. */}
         {projectOpen && sourcesPanel && sourcesPanelOpen && (
           <>
             <ResizablePanel
               // D-219 — same stable hook the Edit tab's Inspector carries, so
-              // the debug DOM-tree dump can be pointed at "the Sources panel"
-              // by name rather than by a Tailwind class string.
+              // the debug DOM-tree dump can be pointed at this column by name
+              // rather than by a Tailwind class string. Still `sources` after
+              // D-263 made the column switchable: it is the same column, the
+              // name is what every existing doc and debug recipe says, and the
+              // Edit tab's own content inside it carries its own
+              // `data-chroma-panel="edit-library"` hook.
               data-chroma-panel="sources"
               defaultSize={SOURCES_PANEL_DEFAULT_WIDTH}
               minSize={SOURCES_PANEL_MIN_WIDTH}
               maxSize={SOURCES_PANEL_MAX_WIDTH}
               className="shrink-0 h-full border-r border-border-color bg-surface overflow-hidden"
             >
-              {sourcesPanel}
+              {/* D-263 — the shared media pool stays MOUNTED while a tab shows
+                  its own library here, hidden rather than unmounted, so its
+                  search text, open bin and scroll position survive a trip
+                  through the Titles library. Hidden with the same
+                  `hidden`-class swap on a wrapper with no other `display`
+                  utility that the tab panels below use — never a Base UI
+                  primitive that defers the hide to a `requestAnimationFrame`
+                  that a non-frontmost window never fires (B-124). */}
+              <div className={activeLibraryPanel ? 'hidden' : 'h-full'}>{sourcesPanel}</div>
+              {activeLibraryPanel}
             </ResizablePanel>
             <ResizableHandle />
           </>
@@ -321,8 +382,16 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
               opposite corners of the content area, not the "two openers"
               the owner previously found both crowded into one corner. Stays
               here in `Shell.tsx`, not duplicated per-tab, because Sources is
-              genuinely shell-level (all three tabs), unlike the Inspector. */}
-          {projectOpen && sourcesPanel && (
+              genuinely shell-level (all three tabs), unlike the Inspector.
+
+              D-263 — NOT drawn on a tab that supplies its own `libraryRail`:
+              that rail's own Sources button both selects the media pool and
+              collapses the column (VS Code activity-bar semantics, see
+              `EditLibraryRail.tsx`), so this chip would be a second control
+              for the same panel sitting one step to its right — the exact
+              disconnected-opener complaint D-120 exists to answer. Motion and
+              Colorist have no rail, so they keep it. */}
+          {projectOpen && sourcesPanel && !activeLibraryRail && (
             // A floating control positioned relative to the whole tab-content
             // area (deliberately, D-120 — reachable regardless of which tab
             // is active) will always land directly on top of *some* tab's

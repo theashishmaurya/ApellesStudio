@@ -141,7 +141,15 @@ export function CanvasSettingsPopover() {
           </Button>
         }
       />
-      <PopoverContent className="w-64 bg-surface border-border-color text-text-primary" align="end">
+      {/* D-263 — a stable hook for `@chroma/debug`'s real-DOM proof that
+          `debug_set_popover_open` opens a real popover rather than only a
+          store flag. That proof used to drive `CaptionPanel`, whose popover
+          D-263 retired by docking its content. */}
+      <PopoverContent
+        data-testid="canvas-settings"
+        className="w-64 bg-surface border-border-color text-text-primary"
+        align="end"
+      >
         <div className="flex flex-col gap-3 text-xs">
           <div className="font-medium text-text-primary">Canvas size</div>
           <p className="text-text-secondary">

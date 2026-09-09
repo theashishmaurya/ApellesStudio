@@ -56,6 +56,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import { EditLibraryRail } from './EditLibraryRail';
+import { EditLibraryPanel } from './EditLibraryPanel';
 import { useHistoryStore } from '@chroma/history';
 import {
   CHROMA_GENERATOR_DRAG_MIME,
@@ -156,6 +157,19 @@ function dragEvent(
     },
   });
   return e;
+}
+
+/** The rail plus the docked column it switches, mounted the way `Shell.tsx`
+ *  mounts them (D-263): rail first, then the column. The dock-open flag is
+ *  shell state in the real app, so it is a plain prop here — `true`, i.e. the
+ *  column is showing, which is the state a library drag starts from. */
+function LibraryHarness(): React.ReactElement {
+  return React.createElement(
+    'div',
+    null,
+    React.createElement(EditLibraryRail, { dockOpen: true, onDockOpenChange: () => {} }),
+    React.createElement(EditLibraryPanel),
+  );
 }
 
 function layout(): Array<{ kind: string; clips: string[] }> {
@@ -287,14 +301,19 @@ describe('B-117 / D-248 — a Title is a real drag source and a real drop', () =
         status: 'ready',
         playhead: 0,
         selection: [],
+        libraryMode: 'sources',
       }),
     );
-    ui = mount(React.createElement(EditLibraryRail), { strictMode: true });
+    // D-263 — the rail and the docked panel it switches, mounted the way the
+    // shell mounts them (rail, then the column beside it). Before D-263 the
+    // rail held the library inside its own popover and this test mounted only
+    // the rail.
+    ui = mount(React.createElement(LibraryHarness), { strictMode: true });
     await waitFrames(2);
 
-    // The rail's Titles button opens the library popover.
-    const trigger = document.querySelector<HTMLElement>('[aria-label="Titles"]');
-    expect(trigger, 'the rail has a Titles entry').not.toBeNull();
+    // The rail's Titles button switches the docked panel to the Titles library.
+    const trigger = document.querySelector<HTMLElement>('[data-chroma-rail-button="titles"]');
+    expect(trigger, 'the rail has a Titles button').not.toBeNull();
     actSync(() => trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
     await waitFrames(2);
 
@@ -448,8 +467,10 @@ describe('B-117 / D-248 — a Title is a real drag source and a real drop', () =
  * was always right; these cover the two ways in that were not.
  */
 describe('B-129 — adding a Title targets a NEW video track, never an occupied or audio one', () => {
-  /** Open the rail's Titles popover and press its click-to-add button — the
-   *  exact gesture the owner used. */
+  /** Select Titles on the rail and press the library's click-to-add button —
+   *  the exact gesture the owner used. D-263 split those two across the rail
+   *  and the DOCKED panel it switches (they were one popover when B-129 was
+   *  filed), so this mounts both, exactly as the shell does. */
   async function addTitleAtPlayhead(playhead = 0): Promise<void> {
     actSync(() =>
       useEditorTimelineStore.setState({
@@ -459,11 +480,12 @@ describe('B-129 — adding a Title targets a NEW video track, never an occupied 
         playhead,
         selection: [],
         selectedGap: null,
+        libraryMode: 'sources',
       }),
     );
-    ui = mount(React.createElement(EditLibraryRail), { strictMode: true });
+    ui = mount(React.createElement(LibraryHarness), { strictMode: true });
     await waitFrames(2);
-    const trigger = document.querySelector<HTMLElement>('[aria-label="Titles"]');
+    const trigger = document.querySelector<HTMLElement>('[data-chroma-rail-button="titles"]');
     actSync(() => trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
     await waitFrames(2);
     const add = document.querySelector<HTMLElement>('[aria-label="Add title at the playhead"]');
@@ -504,7 +526,7 @@ describe('B-129 — adding a Title targets a NEW video track, never an occupied 
     const tracks = useEditorTimelineStore.getState().timeline!.tracks;
     expect(tracks).toHaveLength(3);
     expect(tracks[0].clips[0].start_frame).toBe(48);
-    expect(document.querySelector('[data-chroma-rail-error]'), 'no refusal').toBeNull();
+    expect(document.querySelector('[data-chroma-library-error]'), 'no refusal').toBeNull();
   });
 
   it('12. creating the track and placing the clip is ONE history entry, so one Undo covers both', async () => {

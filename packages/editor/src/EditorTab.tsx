@@ -48,7 +48,6 @@ import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@c
 import { PanelRight } from 'lucide-react';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
-import { EditLibraryRail } from './EditLibraryRail';
 import { PreviewPane } from './PreviewPane';
 import { CaptionInspectorPanel } from './CaptionInspectorPanel';
 import { TextClipInspectorPanel } from './TextClipInspectorPanel';
@@ -146,15 +145,13 @@ export function EditorTab() {
 
   return (
     <ResizablePanelGroup orientation="horizontal" className="h-full w-full min-h-0 bg-bg-primary">
-      {/* D-248 — the Edit tab's library rail. A plain fixed-width sibling of
-          the resizable columns, not a `ResizablePanel`: it holds icon buttons
-          and nothing else, which is exactly the case CLAUDE.md's
-          resizable-panels rule exempts. Tab-local rather than in `Shell.tsx`
-          for the same reason D-118 kept the Inspector toggle local — its
-          contents (titles, adjustment clips, subtitles) are Edit-tab concepts,
-          and a shell-level rail would need `Shell` to know which tab is
-          active just to decide what to show. */}
-      <EditLibraryRail />
+      {/* D-263 — the library rail used to be rendered here, as this group's
+          first child, which put it to the RIGHT of the shell-level Sources
+          column it is supposed to switch. It is now injected into the shell as
+          this tab's `libraryRail` (`Root.tsx` → `Shell.tsx`), so the whole
+          left edge reads rail → library column → this tab's content, and it
+          stays owned by this package. See `EditLibraryRail.tsx`'s module doc
+          and D-263 for why that slot rather than a `Shell` import. */}
       <ResizablePanel className="min-w-0 flex flex-col min-h-0">
         <ResizablePanelGroup orientation="vertical" className="flex-1 min-h-0">
           <ResizablePanel minSize={PREVIEW_MIN_HEIGHT} className="flex flex-col min-h-0">

@@ -1,18 +1,24 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — the Captions panel's real behaviour (D-243).
+ * @chroma/editor — the caption library's real behaviour (D-243; docked by
+ * D-263, which is why this file is no longer `CaptionPanel.dom.test.tsx`).
  *
  * `captionPresets.test.ts` proves the preset DATA is sane and
  * `captionAnim.test.ts` proves the model's arithmetic. What neither can catch
- * is the panel wiring: a library tile that renders but applies nothing, or
- * applies the wrong preset, or drops a caption onto a video track. Those are
- * only visible by mounting the thing and clicking it, which is what this file
- * does.
+ * is the wiring: a library tile that renders but applies nothing, or applies
+ * the wrong preset, or drops a caption onto a video track. Those are only
+ * visible by mounting the thing and clicking it, which is what this file does.
  *
  * The placement path itself (`applyCaptionPreset`) is exercised here through
  * the UI rather than being stubbed, deliberately: it is the SAME function
- * `editor_add_caption_preset` calls, so proving it through the panel proves it
- * for the agent surface too (CLAUDE.md's human-AND-AI rule).
+ * `editor_add_caption_preset` calls, so proving it through the library proves
+ * it for the agent surface too (CLAUDE.md's human-AND-AI rule).
+ *
+ * **What D-263 changed for these tests.** There is no trigger to click and no
+ * popover to open: the library is docked content now, so it is in the DOM as
+ * soon as it is mounted, and it stays there after a pick (which is the point —
+ * a second look can be tried straight after the first). Every assertion below
+ * about what the library DOES is unchanged.
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
@@ -34,7 +40,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 }));
 
 const { useEditorTimelineStore } = await import('./timelineStore');
-const { CaptionPanel } = await import('./CaptionPanel');
+const { CaptionLibrary } = await import('./CaptionLibrary');
 const { CAPTION_PRESETS } = await import('./captionPresets');
 const { captionAnimationOf } = await import('./captionAnim');
 import type { Clip, Timeline } from './timeline';
@@ -64,8 +70,8 @@ let restoreAnimations: (() => void) | null = null;
 
 beforeEach(() => {
   restoreResizeObserver = installResizeObserverStub();
-  // The panel contains a ScrollArea, whose Base UI viewport calls
-  // `Element.getAnimations` from a timer — absent in jsdom (see the stub).
+  // Base UI's `Tabs` reaches for `Element.getAnimations` — absent in jsdom
+  // (see the stub).
   restoreAnimations = installElementAnimationsStub();
   useEditorTimelineStore.setState({
     timeline: fixture(),
@@ -75,11 +81,6 @@ beforeEach(() => {
     playing: false,
     selection: [],
     selectedGap: null,
-    // D-252 — the popover's open flag now lives in this shared store (was a
-    // per-mount `useState`), so it must be reset here the same way every
-    // other piece of this fixture's state is, or a previous test's open
-    // popover leaks into the next test's fresh mount as already-open.
-    openPanels: {},
   });
 });
 
@@ -93,60 +94,31 @@ afterEach(() => {
 });
 
 async function render() {
-  mounted = mount(React.createElement(CaptionPanel), { strictMode: true });
+  mounted = mount(React.createElement(CaptionLibrary), { strictMode: true });
   await waitFrames(2);
 }
 
-/** Open the popover by clicking the trigger. The library lives inside it, so
- *  nothing is in the DOM until this runs. */
-async function openPanel() {
-  const trigger = mounted!.container.querySelector<HTMLElement>(
-    '[data-testid="caption-panel-trigger"]',
-  );
-  expect(trigger, 'the Captions trigger should render').not.toBeNull();
-  trigger!.click();
-  await waitFrames(3);
-}
-
-/** The popover renders in a portal, so queries go against the document. */
 function q(selector: string): HTMLElement | null {
   return document.querySelector(selector);
 }
 
-describe('the Captions panel', () => {
-  /** B-121 — the panel was correctly wired into the toolbar and correctly
-   *  rendering, and the owner still could not find the caption styles: its
-   *  trigger was labelled "Subtitles", exactly like the D-229 button that went
-   *  straight to a file picker and which D-243 replaced. Nothing on the control
-   *  said it had become something else, so it read as the thing it used to be.
-   *  This pins the two properties that fix that — the name of the feature, and
-   *  a visible sign that it opens a panel rather than a file dialog. */
-  it('is labelled for the feature it opens, not for the button it replaced', async () => {
+describe('the caption library', () => {
+  /** B-121 — the styles were once behind a button labelled like the file-picker
+   *  button it had replaced, and the owner could not find them. D-263 removed
+   *  the button entirely: selecting Subtitles on the library rail puts the
+   *  styled tiles on screen, on the Styles tab, with nothing to click first.
+   *  That is the same property, pinned at its new (stronger) location. */
+  it('shows the styled preset tiles immediately, with no trigger to find first', async () => {
     await render();
-    const trigger = mounted!.container.querySelector<HTMLElement>(
-      '[data-testid="caption-panel-trigger"]',
-    );
-    expect(trigger, 'the trigger must actually be in the DOM').not.toBeNull();
-    expect(trigger!.textContent).toContain('Captions');
+    expect(q('[data-testid="caption-library"]'), 'the library is docked content').not.toBeNull();
     expect(
-      trigger!.textContent,
-      'a plain "Subtitles" label is what made this indistinguishable from the import button',
-    ).not.toContain('Subtitles');
-    // A disclosure affordance — the reason a user expects a panel here rather
-    // than an immediate file dialog.
-    expect(trigger!.querySelectorAll('svg').length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('opens on click and shows the preset library', async () => {
-    await render();
-    expect(q('[data-testid="caption-panel"]'), 'closed before the click').toBeNull();
-    await openPanel();
-    expect(q('[data-testid="caption-panel"]')).not.toBeNull();
+      q('[data-testid="caption-preset-caption-highlight"]'),
+      'a real preset tile, on the default (Styles) tab',
+    ).not.toBeNull();
   });
 
   it('renders a tile with a live thumbnail for every preset in the library', async () => {
     await render();
-    await openPanel();
     for (const preset of CAPTION_PRESETS) {
       expect(q(`[data-testid="caption-preset-${preset.id}"]`), `${preset.id} tile`).not.toBeNull();
       // The thumbnail is the preset's own style in CSS — its absence would
@@ -161,7 +133,6 @@ describe('the Captions panel', () => {
 
   it('offers the D-229 import path as its own tab', async () => {
     await render();
-    await openPanel();
     const importTab = [...document.querySelectorAll('button')].find(
       (b) => b.textContent?.trim() === 'Import',
     );
@@ -173,7 +144,6 @@ describe('the Captions panel', () => {
 
   it('clicking a preset creates a subtitle track and drops a caption on it', async () => {
     await render();
-    await openPanel();
 
     expect(
       useEditorTimelineStore.getState().timeline?.tracks.some((t) => t.kind === 'subtitle'),
@@ -205,16 +175,15 @@ describe('the Captions panel', () => {
 
   it('applies a different preset to the SAME track rather than stacking tracks', async () => {
     await render();
-    await openPanel();
     (q('[data-testid="caption-preset-caption-highlight"]') as HTMLElement).click();
     await waitFrames(3);
 
     const afterFirst = useEditorTimelineStore.getState().timeline!;
-    const subtitleCount = afterFirst.tracks.filter((t) => t.kind === 'subtitle').length;
-    expect(subtitleCount).toBe(1);
+    expect(afterFirst.tracks.filter((t) => t.kind === 'subtitle').length).toBe(1);
 
-    // Re-open (the panel closes on pick) and choose a different look.
-    await openPanel();
+    // D-263 — no re-opening step: the library stayed on screen after the pick,
+    // which is exactly why a second look can be tried straight away.
+    expect(q('[data-testid="caption-preset-caption-kinetic-slam"]'), 'still docked').not.toBeNull();
     (q('[data-testid="caption-preset-caption-kinetic-slam"]') as HTMLElement).click();
     await waitFrames(3);
 
@@ -232,7 +201,6 @@ describe('the Captions panel', () => {
 
   it('a static preset applies with no animation at all', async () => {
     await render();
-    await openPanel();
     (q('[data-testid="caption-preset-plain-subtitle"]') as HTMLElement).click();
     await waitFrames(3);
 

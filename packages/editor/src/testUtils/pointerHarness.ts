@@ -376,7 +376,8 @@ export function installResizeObserverStub(): () => void {
  *  restore function, like every other stub here.
  *
  *  Needed by any test mounting a component that contains a `ScrollArea` —
- *  `CaptionPanel.dom.test.tsx` is the first. */
+ *  `CaptionLibrary.dom.test.tsx` (D-243's own suite, renamed by D-263) is the
+ *  first. */
 export function installElementAnimationsStub(): () => void {
   const proto = (globalThis as any).Element?.prototype;
   if (!proto || typeof proto.getAnimations === 'function') return () => {};

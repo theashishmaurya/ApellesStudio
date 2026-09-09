@@ -29,16 +29,22 @@
  *   `debug_get_ui_state`          — read every UI-state flag below, plus the
  *                                   open dialogs the DOM actually has.
  *   `debug_set_active_tab`        — Edit / Motion / Colorist.
- *   `debug_set_sources_panel`     — the shell's docked Sources column.
+ *   `debug_set_sources_panel`     — the shell's docked library column (Sources
+ *                                   is its default content; D-263 lets the
+ *                                   Edit tab's rail switch it to Titles /
+ *                                   Effects / Subtitles, reported as
+ *                                   `editor.libraryMode`).
  *   `debug_set_editor_inspector`  — the Edit tab's Inspector column.
  *   `debug_set_inspector_tab`     — that Inspector's Video/Audio tab (D-246).
  *   `debug_set_popover_open`      — any registered Edit-tab popover/dialog by
  *                                   id (D-252, `@chroma/editor`'s
- *                                   `panelRegistry.ts`) — the caption preset
- *                                   library, the canvas-size popover, the
- *                                   export dialog, and whatever the next one
- *                                   registers, through ONE op rather than a
- *                                   new bespoke op per popover.
+ *                                   `panelRegistry.ts`) — the canvas-size
+ *                                   popover, the export dialog, and whatever
+ *                                   the next one registers, through ONE op
+ *                                   rather than a new bespoke op per popover.
+ *                                   (D-252's original `caption-panel` id went
+ *                                   away with its popover in D-263, which
+ *                                   docked that library.)
  *   `debug_dom_tree`              — bounded DOM dump (see `domTree.ts`).
  *   `debug_frame_timing`          — the Edit-tab preview's real paint
  *                                   intervals (see `@chroma/editor`'s
@@ -60,6 +66,7 @@ import {
   parseClipInspectorTab,
   PANEL_IDS,
   parsePanelId,
+  EDIT_LIBRARY_MODES,
 } from '@chroma/editor';
 
 import { describeOpenDialogs, serializeDomTree } from './domTree';
@@ -100,6 +107,16 @@ function uiStateSnapshot() {
       // filled in lazily and `panelIds` is the reference for what CAN appear.
       openPanels: editor.openPanels,
       panelIds: PANEL_IDS,
+      // D-263 — which library the docked left column is showing while the Edit
+      // tab is active (`sources` = the shared media pool, i.e. `Shell`'s own
+      // `sourcesPanel`). Reported because it changes what a screenshot of that
+      // column MEANS; `shell.sourcesPanelOpen` above still says whether the
+      // column is open at all. Read-only on purpose — see D-263 on why no
+      // `debug_set_library_mode` op: an agent adds a title or a caption with
+      // `editor_add_text_clip` / `editor_add_caption`, which do not care what
+      // the human currently has on screen.
+      libraryMode: editor.libraryMode,
+      libraryModes: EDIT_LIBRARY_MODES,
       projectOpen: editor.openProjectKey !== null,
       timelineStatus: editor.status,
       selection: editor.selection,

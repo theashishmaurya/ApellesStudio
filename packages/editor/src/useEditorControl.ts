@@ -68,7 +68,7 @@ import { useMediaPoolStore } from '@chroma/bridge';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
 // D-243 — the caption preset library and the one action that applies it,
-// shared verbatim with `CaptionPanel.tsx` so the agent and the human cannot
+// shared verbatim with `CaptionLibrary.tsx` so the agent and the human cannot
 // drift apart.
 import { CAPTION_PRESETS } from './captionPresets';
 import { applyCaptionPreset } from './captionPresetAction';
@@ -1651,7 +1651,7 @@ export function useEditorControl(): void {
       },
 
       // D-243 — the preset library, as the agent sees it. The GUI half is
-      // `CaptionPanel.tsx`'s Styles tab; both read the SAME `captionPresets.ts`
+      // `CaptionLibrary.tsx`'s Styles tab; both read the SAME `captionPresets.ts`
       // and both place through the SAME `applyCaptionPreset`, so an agent can
       // reach every look a human can (CLAUDE.md).
       editor_list_caption_presets: () => ({

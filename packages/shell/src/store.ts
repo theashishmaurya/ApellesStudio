@@ -26,6 +26,16 @@
  * that would otherwise silently reappear/disappear across a restart"
  * reasoning `activeTab` documents. Defaults closed so it never surprises an
  * existing single-panel Colorist layout on first launch after this change.
+ *
+ * D-263 widened what that one flag governs without renaming it: the docked
+ * column can now show a tab's OWN library (the Edit tab's Titles / Effects /
+ * Subtitles) instead of the shared media pool, so this is "is the docked
+ * library column open", of which Sources is the default content. The name is
+ * kept because it is the name `debug_set_sources_panel`, `debug_get_ui_state`
+ * and every existing doc and debug recipe already use for exactly this flag,
+ * and WHICH library is showing is a separate piece of state owned by the tab
+ * (`@chroma/editor`'s `libraryMode`) — the shell deliberately does not learn
+ * what a tab's libraries are called.
  */
 
 import { create } from 'zustand';

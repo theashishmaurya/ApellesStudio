@@ -1,303 +1,172 @@
 /**
- * @chroma/editor — the Edit tab's left library rail (D-248, roadmap item 27).
+ * @chroma/editor — the Edit tab's left library rail (D-248; rebuilt as a real
+ * activity bar by D-263, roadmap item 27).
  *
- * **What it is.** A vertical strip of icon buttons down the left edge of the
- * Edit tab, each opening a small library popover: **Titles** and **Effects**
- * (the generated clips — a text title, an adjustment clip), and **Subtitles**
- * (the two caption entry points). Every library entry is BOTH a real
- * drag source onto the timeline and a click-to-add-at-the-playhead button.
+ * **What it is.** The leftmost strip of the window: one icon button per
+ * library — **Sources** (the shared media pool), **Titles**, **Effects** and
+ * **Subtitles** — that switches what the docked column immediately to its
+ * right is showing, and collapses that column when you click the library
+ * already showing. It renders no library content itself; that is
+ * `EditLibraryPanel.tsx` (this tab's own three) and `app/`'s `SourcesPanel`
+ * (the shared pool, injected into `@chroma/shell`).
  *
- * **This is DaVinci Resolve's own effects library, in its own place.** Its
- * Edit-page copy is explicit about all three: *"click the effects library icon
- * at the **top left of the page**"* (`edit-transitions`); *"open the effects
- * library at the **top left of the screen**, find the text generator … and
- * **drag it into the timeline** above your video tracks"* (`edit-titles`);
- * *"**drag** a new adjustment clip **from the effects library** and place it on
- * a higher video track over your clips"* (`edit-adjustments`) — all in
- * `scratch/resolve-reference/resolve-edit-features.json`, per CLAUDE.md's
- * research-the-real-pattern-first rule. So: a left-edge icon that opens a
- * library, and a DRAG out of it, not a toolbar button that teleports a clip to
- * the playhead. Before this, dragging a title did nothing at all (B-117) —
- * there was no drag source anywhere in the app for one.
+ * **This is VS Code's Activity Bar, and Final Cut Pro's browser buttons.**
+ * VS Code's own docs: the Activity Bar is on the far left, the Primary Side
+ * Bar sits *immediately to its right*, and the Activity Bar "lets you switch
+ * between views"; clicking the already-active view collapses the side bar
+ * (⌘B toggles it too). Final Cut Pro is the same shape in an NLE: "the Titles
+ * and Generators button in the **top-left corner** of the Final Cut Pro
+ * window" swaps what the one browser column shows, and a title is then either
+ * double-clicked in at the playhead or dragged from the browser to the
+ * timeline. Both references, with the quotes, are in
+ * `scratch/activity-bar-reference/notes.md` per CLAUDE.md's
+ * research-the-real-pattern-first rule; Resolve's own Edit-page copy ("open
+ * the effects library at the top left of the screen … drag it into the
+ * timeline") is what D-248 built from and is unchanged by this.
  *
- * **The rail shape is this repo's own, not a new one.** The Colorist tab has
- * had a real vertical icon rail since it was RapidRAW — `PanelSwitcher.tsx`'s
- * column of icon buttons that open panels. This is the same idea with this
- * package's own `@chroma/ui` primitives (D-042 shadcn/Base UI) instead of that
- * file's framer-motion/clsx stack, which is Colorist-local.
+ * **Why it moved out of `EditorTab.tsx` (D-263).** The rail used to be the
+ * first child of the Edit tab's own panel group, which put it to the RIGHT of
+ * the shell-level Sources column — the panel a rail is supposed to be the
+ * switcher for. Reordering divs inside one file could not fix that: Sources
+ * lives in `Shell.tsx` (D-046/D-116, shared by all three tabs) and the rail is
+ * deliberately Edit-tab-local. It is now injected into the shell as the active
+ * tab's `libraryRail`, which is precisely the slot D-251 established for a
+ * tab-owned node that must sit at a specific place in the shell's own chrome
+ * (`headerAction`, the Export button). `Shell` still never imports this
+ * package: `Root.tsx` passes the node, exactly as it passes `sourcesPanel` and
+ * `launcher`.
  *
- * **Native HTML5 drag, deliberately** (`CHROMA_GENERATOR_DRAG_MIME`), not the
- * `@dnd-kit` drag the transitions palette (D-226) uses: that palette renders
- * *inside* `TimelinePane`'s own `DndContext`, and this rail is a sibling of the
- * entire timeline pane, where a `useDraggable` would simply not be a drag. It
- * is the same package boundary the Sources panel crosses, so it uses the
- * mechanism the Sources panel already crosses it with — proven in this app's
- * WKWebView (D-098's native-drag trouble was specifically the cross-track clip
- * MOVE, a gesture that starts and ends inside one component; a panel→timeline
- * drop has worked since D-046).
- *
- * **What it does NOT do.** It owns no timeline state: click-to-add and the
- * drop path both build their clip with `clipFromDraggedGenerator` and commit
- * it with the ordinary `add_clip` `EditOp`, so a dragged title and a clicked
- * one are identical and both are one undo entry. It does not host the
- * transitions palette — a transition's only legal target is a CUT, resolved
- * through the timeline pane's own `DndContext`, so it stays in the timeline
- * toolbar where that context is (see D-248).
+ * **What it does NOT do.** It owns no timeline state and no open/closed state
+ * of its own: which library is selected is `useEditorTimelineStore`'s
+ * `libraryMode`, and whether the column is open at all is the shell's
+ * `sourcesPanelOpen` — a flag this package must not import (`@chroma/shell`
+ * depends on nothing here and it stays that way), so it arrives as the
+ * `dockOpen`/`onDockOpenChange` props the composition root wires up, the same
+ * way `MotionTab` gets `onRendered`. It also does not host the transitions
+ * palette — a transition's only legal target is a CUT, resolved through the
+ * timeline pane's own `DndContext`, so it stays in the timeline toolbar where
+ * that context is (D-248).
  */
-import { useState } from 'react';
-import { Captions, Type, Wand2, type LucideIcon } from 'lucide-react';
+import { Captions, Film, Type, Wand2, type LucideIcon } from 'lucide-react';
 import {
   Button,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from '@chroma/ui';
 
-import { CaptionPanel } from './CaptionPanel';
-import { CaptionsFromTranscriptButton } from './CaptionsFromTranscriptButton';
-import { useEditorTimelineStore } from './timelineStore';
 import {
-  CHROMA_GENERATOR_DRAG_MIME,
-  GENERATOR_LABELS,
-  clipFromDraggedGenerator,
-  timelineFps,
-  type DraggedGenerator,
-} from './timeline';
+  EDIT_LIBRARY_MODES,
+  EDIT_LIBRARY_MODE_LABELS,
+  type EditLibraryMode,
+} from './editLibrary';
+import { useEditorTimelineStore } from './timelineStore';
 
 /** The rail's width. Fixed by nature — it holds icon buttons and nothing else,
  *  which is the case CLAUDE.md's "every resizable-by-nature panel must
  *  actually be resizable" rule explicitly exempts ("fixed-width panels,
- *  popovers and dialogs that don't need to flex are fine as-is"). The real
- *  content it opens lives in popovers; the resizable panes on this tab (the
- *  Sources column, the preview/timeline split, the Inspector) are all
- *  unchanged. */
+ *  popovers and dialogs that don't need to flex are fine as-is"). The column
+ *  it switches is the resizable one (`Shell.tsx`'s `ResizablePanel`). */
 const RAIL_WIDTH_PX = 44;
 
-/**
- * `@chroma/shell`'s Sources toggle is `absolute top-2 left-2 h-6 w-6`
- * (`Shell.tsx`) and D-120 floats it over the tab CONTENT area's top-left
- * corner on purpose, so it is reachable whichever tab is active — which means
- * it lands on this rail's own top-left corner. `pt-10` (40px) clears that
- * chip's 32px bottom edge with an 8px gap: exactly the reservation B-051/D-131
- * made on `Player`'s title strip (`pl-10`) for the same chip, for the same
- * reason, in the other axis.
- */
-const RAIL_TOP_CLEARANCE = 'pt-10';
+const RAIL_ICONS: Record<EditLibraryMode, LucideIcon> = {
+  // `Film` is what the Sources panel labels its own "All media" row with, so
+  // the rail button and the thing it opens carry the same mark.
+  sources: Film,
+  titles: Type,
+  effects: Wand2,
+  subtitles: Captions,
+};
 
-interface GeneratorEntry {
-  kind: DraggedGenerator['kind'];
-  blurb: string;
+const RAIL_TIPS: Record<EditLibraryMode, string> = {
+  sources: 'Sources — the project’s media pool. Drag a clip onto the timeline.',
+  titles: 'Titles — drag one onto the timeline, or add it at the playhead',
+  effects: 'Effects — drag an adjustment clip onto a track above your picture',
+  subtitles: 'Subtitles and captions — apply a caption style, import a file, or generate cues from the transcript',
+};
+
+export interface EditLibraryRailProps {
+  /** Whether the docked library column is currently shown. Shell state
+   *  (`useShellStore.sourcesPanelOpen`), passed in rather than imported —
+   *  see this file's module doc. */
+  dockOpen: boolean;
+  /** Show/hide that column. The SAME setter the shell's own toggle calls, so
+   *  the rail and `debug_set_sources_panel` drive one flag, not two. */
+  onDockOpenChange: (open: boolean) => void;
 }
 
-/** One library row: a real HTML5 drag source AND a click-to-add button.
- *
- *  **Both, not one or the other.** The drag is the reference gesture and the
- *  only way to say *where* — but a click that places at the playhead is what
- *  the Title/Adjust toolbar buttons did before this rail existed, it is what
- *  `editor_add_text_clip` does over MCP, and it is the faster gesture when the
- *  playhead is already where you want the clip. Removing it while adding the
- *  drag would have traded one missing half for another. */
-function LibraryEntry({ entry, onAdd }: { entry: GeneratorEntry; onAdd: (kind: DraggedGenerator['kind']) => void }) {
-  const label = GENERATOR_LABELS[entry.kind];
-  return (
-    <div
-      draggable
-      data-chroma-library-entry={entry.kind}
-      aria-label={`${label} — drag onto the timeline`}
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = 'copy';
-        e.dataTransfer.setData(
-          CHROMA_GENERATOR_DRAG_MIME,
-          JSON.stringify({ kind: entry.kind } satisfies DraggedGenerator),
-        );
-      }}
-      className="cursor-grab select-none rounded-md border border-border-color bg-surface p-2 text-left transition-colors hover:border-accent active:cursor-grabbing"
-    >
-      <div className="flex items-center gap-2 text-xs font-medium text-text-primary">
-        {entry.kind === 'title' ? <Type className="size-3.5 shrink-0" /> : <Wand2 className="size-3.5 shrink-0" />}
-        {label}
-      </div>
-      <p className="mt-1 text-[10px] leading-snug text-text-secondary">{entry.blurb}</p>
-      <Button
-        variant="ghost"
-        size="xs"
-        className="mt-1.5 h-6 w-full justify-center px-2 text-[11px]"
-        aria-label={`Add ${label.toLowerCase()} at the playhead`}
-        onClick={() => onAdd(entry.kind)}
-      >
-        Add at playhead
-      </Button>
-    </div>
-  );
-}
+export function EditLibraryRail({ dockOpen, onDockOpenChange }: EditLibraryRailProps) {
+  const mode = useEditorTimelineStore((s) => s.libraryMode);
+  const setLibraryMode = useEditorTimelineStore((s) => s.setLibraryMode);
 
-/** One rail button + the popover it opens. A `Popover` rather than a docked
- *  panel for the same reason D-226's transitions palette is one: at these
- *  libraries' size a permanent column would be mostly empty chrome, and a
- *  native HTML5 drag out of a popover keeps the popover open for the whole
- *  gesture (the press never becomes a click, so its dismiss handling never
- *  fires). */
-function RailButton({
-  icon: Icon,
-  label,
-  tip,
-  children,
-}: {
-  icon: LucideIcon;
-  label: string;
-  tip: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <Popover>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PopoverTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  aria-label={label}
-                  data-chroma-rail-button={label.toLowerCase()}
-                  className="h-8 w-8 p-0 text-text-secondary hover:text-text-primary"
-                >
-                  <Icon className="size-4" />
-                </Button>
-              }
-            />
-          }
-        />
-        <TooltipContent side="right">{tip}</TooltipContent>
-      </Tooltip>
-      <PopoverContent align="start" side="right" className="w-60 space-y-2 p-2">
-        {children}
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-const GENERATORS: GeneratorEntry[] = [
-  {
-    kind: 'title',
-    blurb: 'A text title. Adding it makes a new video track above your picture; type into it in the Inspector.',
-  },
-  {
-    kind: 'adjustment',
-    blurb: 'A colour correction that applies to every clip beneath it, for the span it covers.',
-  },
-];
-
-export function EditLibraryRail() {
-  const timeline = useEditorTimelineStore((s) => s.timeline);
-  const applyOp = useEditorTimelineStore((s) => s.applyOp);
-  const setSelection = useEditorTimelineStore((s) => s.setSelection);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
-  const [error, setError] = useState<string | null>(null);
-
-  /** Place a generator at the playhead on a **brand-new video track above
-   *  everything else** (`onNewVideoTrack`, one atomic op — see that field's own
-   *  doc on the `add_clip` op).
-   *
-   *  **B-129 — this used to target `videoTrackIndex(timeline)`, the first
-   *  EXISTING video track,** and that was the bug the owner hit: on any real
-   *  project that track is full of footage, so a title either landed in a gap
-   *  between two shots — where it renders over BLACK rather than over the
-   *  picture, which is exactly what their live project contained — or was
-   *  refused outright for want of room. Their words: "it should be added on a
-   *  new timeline meaning a new track instead of adding on top of other."
-   *
-   *  A new track is also what both reference entries describe ("drag it into
-   *  the timeline **above your video tracks**" for a title; "place it on a
-   *  **higher** video track over your clips" for an adjustment clip), and it
-   *  removes a whole failure mode: an empty track always has room, so this
-   *  button can no longer refuse to place anything.
-   *
-   *  Placement is still `ripple: false` — an overlay is added ALONGSIDE the
-   *  edit, never by pushing it around. */
-  const addAtPlayhead = (kind: DraggedGenerator['kind']) => {
-    setError(null);
-    if (!timeline) return;
-    const built = clipFromDraggedGenerator(kind === 'title' ? { kind: 'title' } : { kind: 'adjustment' }, timelineFps(timeline));
-    if ('error' in built) {
-      setError(built.error);
+  /** Activity-bar semantics, from the reference: clicking a different library
+   *  switches to it (opening the column if it was closed); clicking the one
+   *  already showing collapses the column. One button is therefore both the
+   *  view switcher and the panel toggle, which is why the shell's own floating
+   *  Sources chip (D-120) is not rendered on a tab that has a rail — two
+   *  controls for one panel, a step apart, is the exact complaint D-120 was
+   *  itself answering. */
+  const onPick = (next: EditLibraryMode) => {
+    if (dockOpen && next === mode) {
+      onDockOpenChange(false);
       return;
     }
-    applyOp({ kind: 'add_clip', track: 0, clip: built, startFrame: playhead, onNewVideoTrack: true });
-    // The new track is index 0 by construction, so the clip is always there —
-    // but this reads it back rather than asserting, for the same reason
-    // `selectDroppedGenerator` does: pointing the Inspector at a clip that was
-    // never created is worse than leaving the selection alone.
-    const after = useEditorTimelineStore.getState().timeline;
-    if (after?.tracks[0]?.clips.some((c) => c.id === built.id)) {
-      setSelection([{ track: 0, id: built.id }]);
-    } else {
-      setError(`Could not add the ${GENERATOR_LABELS[kind].toLowerCase()} — the timeline refused the edit.`);
-    }
+    setLibraryMode(next);
+    if (!dockOpen) onDockOpenChange(true);
   };
 
   return (
     <TooltipProvider>
       <div
         data-chroma-panel="edit-library-rail"
+        role="tablist"
+        aria-label="Edit libraries"
+        aria-orientation="vertical"
         style={{ width: RAIL_WIDTH_PX }}
-        className={`shrink-0 h-full border-r border-border-color bg-surface flex flex-col items-center gap-1 ${RAIL_TOP_CLEARANCE}`}
+        className="shrink-0 h-full border-r border-border-color bg-surface flex flex-col items-center gap-1 pt-2"
       >
-        <RailButton
-          icon={Type}
-          label="Titles"
-          tip="Titles — drag one onto the timeline, or add it at the playhead"
-        >
-          <p className="px-1 text-[10px] uppercase tracking-wide text-text-secondary">Titles</p>
-          <LibraryEntry entry={GENERATORS[0]} onAdd={addAtPlayhead} />
-        </RailButton>
-
-        <RailButton
-          icon={Wand2}
-          label="Effects"
-          tip="Effects — drag an adjustment clip onto a track above your picture"
-        >
-          <p className="px-1 text-[10px] uppercase tracking-wide text-text-secondary">Effects</p>
-          <LibraryEntry entry={GENERATORS[1]} onAdd={addAtPlayhead} />
-        </RailButton>
-
-        {/* D-243/D-238 moved here from the cramped inline strip above the
-            timeline (see D-248). Both of these create a whole subtitle TRACK,
-            which is a library-shaped action, not a per-clip toolbar one — and
-            the owner named this rail as where they wanted them ("add caption
-            from transcript / subtitle here"). Rendered as the components
-            themselves, unchanged: their own popovers/behaviour are already
-            right, they were only in the wrong place. */}
-        <RailButton
-          icon={Captions}
-          label="Subtitles"
-          tip="Subtitles and captions — import a file, apply a caption style, or generate cues from the transcript"
-        >
-          <p className="px-1 text-[10px] uppercase tracking-wide text-text-secondary">Subtitles</p>
-          <div className="flex flex-col items-stretch gap-1">
-            <CaptionPanel />
-            <CaptionsFromTranscriptButton />
-          </div>
-        </RailButton>
-
-        {error && (
-          // Same transient, dismissible note the timeline toolbar's own drop
-          // refusals use — a refused add has to say why rather than look like
-          // a dead button.
-          <button
-            type="button"
-            data-chroma-rail-error
-            onClick={() => setError(null)}
-            title={`${error} (click to dismiss)`}
-            className="mx-1 rounded-sm bg-red-500/15 p-1 text-[10px] leading-tight text-red-400"
-          >
-            !
-          </button>
-        )}
+        {EDIT_LIBRARY_MODES.map((m) => {
+          const Icon = RAIL_ICONS[m];
+          const label = EDIT_LIBRARY_MODE_LABELS[m];
+          const showing = dockOpen && m === mode;
+          return (
+            <Tooltip key={m}>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    role="tab"
+                    aria-label={label}
+                    aria-selected={showing}
+                    data-chroma-rail-button={m}
+                    onClick={() => onPick(m)}
+                    className={
+                      'relative h-8 w-8 p-0 ' +
+                      (showing ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
+                    }
+                  >
+                    <Icon className="size-4" />
+                    {/* The selected marker: an accent bar on the rail's own
+                        outer edge, which is how every activity bar in the
+                        reference draws it — and Chroma already draws a
+                        selected tab as an accent bar (`Shell.tsx`'s tab
+                        underline, `TimelineSwitcher`'s), just in the other
+                        axis. */}
+                    <span
+                      className={
+                        'absolute left-0 top-1 bottom-1 w-0.5 rounded-full ' +
+                        (showing ? 'bg-accent' : 'bg-transparent')
+                      }
+                    />
+                  </Button>
+                }
+              />
+              <TooltipContent side="right">{RAIL_TIPS[m]}</TooltipContent>
+            </Tooltip>
+          );
+        })}
       </div>
     </TooltipProvider>
   );

@@ -1888,6 +1888,26 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         Export parity measured, not assumed: `ab_glyph`/`drawtext` ink widths
         agree within 1.5% for the new italic/bold-italic faces, matching
         D-212's own measured tolerance for the original regular/bold ones.
+    - ~~**The Edit tab's left library — one docked, switchable browser**~~ —
+      **DONE, 2026-09-09 (D-263).** D-248 gave the tab an icon rail whose
+      buttons opened floating popovers, rendered (because Sources is
+      shell-level and the rail is tab-local) to the RIGHT of the very column it
+      switches. It is now a real activity bar in the reference's own sense —
+      VS Code's Activity Bar + Primary Side Bar, and Final Cut Pro's own
+      "Titles and Generators button in the top-left corner" swapping what the
+      one browser shows (`scratch/activity-bar-reference/`): the rail is the
+      leftmost column, its four buttons (Sources / Titles / Effects /
+      Subtitles) switch the DOCKED column in place, and clicking the library
+      already showing collapses it. Solved across the shell/tab boundary with
+      D-251's existing per-tab injection slot (`ShellTab.libraryRail` /
+      `libraryPanel`, supplied by `Root.tsx`), so `Shell` still imports nothing
+      from `@chroma/editor`. The caption style library docked with them
+      (`CaptionLibrary.tsx`), retiring D-252's `caption-panel` popover id.
+      Correctly GUI-only, checked rather than assumed: every capability the
+      rail reaches already has its `editor_*` tool and none of them depend on
+      what is on screen. Found and filed, not fixed: **B-131** (the `add_clip`
+      op has no occupancy check; its GUI repro closed the same night with
+      D-262's new-track placement, the MCP one is still open).
     - Explicitly **out of scope** (owner's own cut): hardware control
       surfaces, multi-user real-time collaboration.
 

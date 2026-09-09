@@ -38,6 +38,27 @@ export { PreviewPane } from './PreviewPane';
  *  both-panels-visible bug ship green (see that bug's entry in
  *  `docs/BUGS.md`). */
 export { EditorInspectorPanel } from './EditorInspectorPanel';
+/** D-263 — the Edit tab's library rail and its docked library column. Both are
+ *  mounted by the composition root (`app/src/Root.tsx`) into `@chroma/shell`'s
+ *  per-tab `libraryRail` / `libraryPanel` slots rather than by `EditorTab`
+ *  itself, because they must sit to the LEFT of the shell-level Sources
+ *  column; `Shell` renders whatever node it is handed and still imports
+ *  nothing from this package (D-251's own injection pattern). */
+export { EditLibraryRail } from './EditLibraryRail';
+export type { EditLibraryRailProps } from './EditLibraryRail';
+export { EditLibraryPanel } from './EditLibraryPanel';
+/** D-263 — the library-mode model, exported for the same reason the clip
+ *  Inspector's tab model below is: `Root.tsx` reads the active mode to decide
+ *  whether the Edit tab is taking the shell's docked column over, and
+ *  `@chroma/debug` reports it, both against this one list rather than a
+ *  restated copy. */
+export {
+  EDIT_LIBRARY_MODES,
+  EDIT_LIBRARY_MODE_LABELS,
+  DEFAULT_EDIT_LIBRARY_MODE,
+  parseEditLibraryMode,
+} from './editLibrary';
+export type { EditLibraryMode } from './editLibrary';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
 // D-246 — the clip Inspector's tab model. Exported for `@chroma/debug`'s
@@ -60,12 +81,12 @@ export type { TimelineSummary } from './timelineStore';
 // generalises D-219/D-246's own bespoke-field pattern to N popovers.
 export { PANEL_IDS, parsePanelId, usePanelOpen } from './panelRegistry';
 export type { PanelId } from './panelRegistry';
-/** D-252 — otherwise internal (mounted only via `EditLibraryRail.tsx`'s own
- *  relative import). Exported here for `@chroma/debug`'s own DOM proof test,
- *  the same rationale `previewTimingReport` above is exported for: proving
- *  `debug_set_popover_open` really opens the real component's real popover,
- *  not a stand-in for it. */
-export { CaptionPanel } from './CaptionPanel';
+/** D-252 exported `CaptionPanel` here for `@chroma/debug`'s DOM proof that
+ *  `debug_set_popover_open` opens a REAL popover. D-263 docked that content
+ *  (`CaptionLibrary.tsx`), so the popover — and its `caption-panel` panel id —
+ *  are gone; that proof test now drives `CanvasSettingsPopover`, which is
+ *  exported for exactly the same reason and nothing else. */
+export { CanvasSettingsPopover } from './CanvasSettingsPopover';
 /** D-219 (debug tooling piece 5) — the preview's own frame-timing ring
  *  buffers. Exported for `@chroma/debug`'s `debug_frame_timing` op, which
  *  reads them; `PreviewPane` writes them. Both writes and the reader are

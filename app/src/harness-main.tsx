@@ -73,6 +73,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import {
+  EditLibraryPanel,
+  EditLibraryRail,
   EditorInspectorPanel,
   PreviewPane,
   TimelinePane,
@@ -80,9 +82,11 @@ import {
   timelineDuration,
   useEditorTimelineStore,
   type ClipInspectorTab,
+  type EditLibraryMode,
   type EditOp,
   type Timeline,
 } from '@chroma/editor';
+import { DEFAULT_THEME_ID, THEMES } from './utils/themes';
 import '../src/styles.css';
 
 /** D-199 — which component this page mounts, switchable at runtime via
@@ -98,8 +102,18 @@ import '../src/styles.css';
  *  answers every layout question with zero, so it is structurally incapable of
  *  seeing the bug that shipped (both panels painted, stacked, the Audio one
  *  1076px below the fold). Real Chromium measures it in one
- *  `getBoundingClientRect`. */
-type HarnessMode = 'timeline' | 'preview' | 'inspector';
+ *  `getBoundingClientRect`.
+ *
+ *  **D-263 added `'library'`**, for exactly that reason again: whether the
+ *  icon rail actually paints to the LEFT of the docked library column, at its
+ *  own width, with the column filling the rest, is a layout question jsdom
+ *  answers with zeroes. This mode mounts the rail and the docked panel in the
+ *  same geometry `Shell.tsx` gives them (a horizontal row; the column at the
+ *  shell's own 288px default width), so a real browser can measure and
+ *  screenshot it. `window.__chromaHarness.setLibraryMode('titles' | 'effects'
+ *  | 'subtitles' | 'sources')` switches what the column shows without a
+ *  synthesised click, the same store action the rail's own button calls. */
+type HarnessMode = 'timeline' | 'preview' | 'inspector' | 'library';
 
 function setStatus(text: string): void {
   const el = document.getElementById('harness-status');
@@ -429,7 +443,7 @@ function select(track?: number, id?: string): void {
 let strict = true;
 let mode: HarnessMode = ((): HarnessMode => {
   const raw = new URLSearchParams(window.location.search).get('mode');
-  return raw === 'preview' || raw === 'inspector' ? raw : 'timeline';
+  return raw === 'preview' || raw === 'inspector' || raw === 'library' ? raw : 'timeline';
 })();
 let root: ReturnType<typeof createRoot> | null = null;
 
@@ -465,13 +479,54 @@ function render(): void {
           { className: 'flex h-full w-full flex-col min-h-0 bg-surface' },
           React.createElement('div', { className: 'flex-1 min-h-0' }, React.createElement(EditorInspectorPanel)),
         )
-      : mode === 'preview'
-        ? React.createElement(PreviewPane)
-        : React.createElement(React.Fragment, null, React.createElement(TimelineSwitcher), React.createElement(TimelinePane));
+      : mode === 'library'
+        ? // D-263 — the shell's own left region, reproduced: the rail (fixed
+          // width, its own) followed by the docked column at `Shell.tsx`'s
+          // `SOURCES_PANEL_DEFAULT_WIDTH`. The real column is a
+          // `ResizablePanel`; a fixed-width box is the same geometry at its
+          // default size, without pulling the whole shell (and its Tauri
+          // window chrome) into a page that has no Tauri behind it.
+          React.createElement(
+            'div',
+            { className: 'flex h-full w-full min-h-0' },
+            React.createElement(EditLibraryRail, {
+              dockOpen: true,
+              onDockOpenChange: () => {},
+            }),
+            React.createElement(
+              'div',
+              {
+                className: 'h-full shrink-0 border-r border-border-color bg-surface overflow-hidden',
+                style: { width: 288 },
+              },
+              React.createElement(EditLibraryPanel),
+            ),
+          )
+        : mode === 'preview'
+          ? React.createElement(PreviewPane)
+          : React.createElement(React.Fragment, null, React.createElement(TimelineSwitcher), React.createElement(TimelinePane));
   root.render(strict ? React.createElement(React.StrictMode, null, el) : el);
   setStatus(`mounted mode=${mode} (strictMode=${strict}) — window.__chromaHarness`);
 }
 
+/** D-263 — paint the app's real theme variables onto this page.
+ *
+ *  Every `--color-*` token in `styles.css` is an alias for an `--app-*`
+ *  variable that the real app sets at RUNTIME (`themes.ts`, applied when a
+ *  theme is chosen), so a harness page that never applies one renders every
+ *  panel in unstyled black-on-white — which was fine while this file only
+ *  measured rects, and is not fine for a screenshot anyone looks at. Applies
+ *  the same default theme the app boots with, from the same table, so the
+ *  colours here are the app's own rather than a second definition. */
+function applyDefaultTheme(): void {
+  const theme = THEMES.find((t) => t.id === DEFAULT_THEME_ID) ?? THEMES[0];
+  for (const [name, value] of Object.entries(theme.cssVariables as Record<string, string>)) {
+    document.documentElement.style.setProperty(name, value);
+  }
+  document.body.style.background = 'var(--color-bg-primary)';
+}
+
+applyDefaultTheme();
 installInvokeStub();
 seed(defaultFixture());
 // D-195, Task 3 — `TimelineSwitcher` fetches its own tab list via `loadList()`
@@ -514,6 +569,15 @@ render();
   },
   tab(): ClipInspectorTab {
     return useEditorTimelineStore.getState().inspectorTab;
+  },
+  /** D-263 — switch which library the docked column shows, through the SAME
+   *  store action the rail's own button calls, for the same reason
+   *  `setInspectorTab` above is a store action rather than a click. */
+  setLibraryMode(next: EditLibraryMode) {
+    useEditorTimelineStore.getState().setLibraryMode(next);
+  },
+  libraryMode(): EditLibraryMode {
+    return useEditorTimelineStore.getState().libraryMode;
   },
   get settings() {
     return { ...harnessSettings };

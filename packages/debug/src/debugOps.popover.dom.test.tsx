@@ -13,10 +13,14 @@
  * click) — so the only test that actually proves it is one that mounts the
  * real component and watches its real popover appear.
  *
- * `CaptionPanel` is this repo's motivating case (the owner's ask this landed
- * for): its preset library was reachable only via a real mouse click before
- * this op existed, which is exactly the wall a headless agent hits with no
- * Accessibility/Screen-Recording permission on the native window.
+ * D-252's motivating case was `CaptionPanel`, whose preset library was
+ * reachable only via a real mouse click — exactly the wall a headless agent
+ * hits with no Accessibility/Screen-Recording permission on the native window.
+ * **D-263 docked that library** (`CaptionLibrary` inside the Edit tab's
+ * library column), so that popover and its `caption-panel` panel id no longer
+ * exist and this proof drives `CanvasSettingsPopover` instead: a different
+ * real registered popover, mounted for real, with the same point — the op
+ * opens the actual thing, through the actual store action, not a stand-in.
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import React, { act } from 'react';
@@ -29,7 +33,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: async () => null,
 }));
 
-const { useEditorTimelineStore, CaptionPanel } = await import('@chroma/editor');
+const { useEditorTimelineStore, CanvasSettingsPopover } = await import('@chroma/editor');
 const { DEBUG_OPS } = await import('./debugOps');
 
 if (typeof globalThis !== 'undefined') {
@@ -38,7 +42,7 @@ if (typeof globalThis !== 'undefined') {
 
 /** jsdom has no `ResizeObserver`; Base UI's `Popover` positioning needs SOME
  *  implementation present, not a real one — nothing in this test resizes.
- *  Same stub `CaptionPanel.dom.test.tsx` uses, kept local rather than shared
+ *  Same stub `CaptionLibrary.dom.test.tsx` uses, kept local rather than shared
  *  across the package boundary (D-039: a test-only helper is not worth a new
  *  export). */
 function installResizeObserverStub(): () => void {
@@ -57,8 +61,8 @@ function installResizeObserverStub(): () => void {
 }
 
 /** jsdom has no Web Animations API; Base UI's `ScrollAreaViewport` (inside
- *  the caption preset library) calls `Element.getAnimations` from a timer.
- *  Same stub `CaptionPanel.dom.test.tsx` uses. */
+ *  and its own popover) calls `Element.getAnimations` from a timer. Same stub
+ *  `CaptionLibrary.dom.test.tsx` uses. */
 function installElementAnimationsStub(): () => void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a jsdom global with no type of its own to widen against, same shape the harness this mirrors uses
   const proto = (globalThis as any).Element?.prototype as Record<string, unknown> | undefined;
@@ -131,7 +135,7 @@ beforeEach(() => {
           ],
         },
       ],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a minimal Timeline fixture, same shape CaptionPanel.dom.test.tsx uses
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a minimal Timeline fixture, same shape the editor package's own DOM suites use
     } as any,
     status: 'ready',
     error: null,
@@ -151,53 +155,53 @@ afterEach(() => {
 });
 
 function popoverInDom(): boolean {
-  return document.querySelector('[data-testid="caption-panel"]') !== null;
+  return document.querySelector('[data-testid="canvas-settings"]') !== null;
 }
 
 describe('debug_set_popover_open', () => {
-  it('opens the real CaptionPanel popover through the op, not a synthesised click', async () => {
-    mounted = mount(React.createElement(CaptionPanel));
+  it('opens the real CanvasSettingsPopover through the op, not a synthesised click', async () => {
+    mounted = mount(React.createElement(CanvasSettingsPopover));
     await waitFrames(2);
     expect(popoverInDom(), 'closed before the op runs').toBe(false);
 
-    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'caption-panel', open: true });
+    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'canvas-settings', open: true });
     await waitFrames(2);
 
-    expect(result).toEqual({ ok: true, id: 'caption-panel', open: true });
+    expect(result).toEqual({ ok: true, id: 'canvas-settings', open: true });
     expect(popoverInDom(), 'the op must actually open the real popover').toBe(true);
-    // Not a stand-in: the real preset library content (the Styles tab, shown
-    // by default) is what rendered, not an empty shell.
-    expect(document.querySelector('[data-testid^="caption-preset-"]')).not.toBeNull();
+    // Not a stand-in: the popover's own real content is what rendered, not an
+    // empty shell.
+    expect(document.body.textContent).toContain('Canvas size');
   });
 
   it('closes it again the same way', async () => {
-    mounted = mount(React.createElement(CaptionPanel));
+    mounted = mount(React.createElement(CanvasSettingsPopover));
     await waitFrames(2);
-    await DEBUG_OPS.debug_set_popover_open({ id: 'caption-panel', open: true });
+    await DEBUG_OPS.debug_set_popover_open({ id: 'canvas-settings', open: true });
     await waitFrames(2);
     expect(popoverInDom()).toBe(true);
 
-    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'caption-panel', open: false });
+    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'canvas-settings', open: false });
     await waitFrames(2);
 
-    expect(result).toEqual({ ok: true, id: 'caption-panel', open: false });
+    expect(result).toEqual({ ok: true, id: 'canvas-settings', open: false });
     expect(popoverInDom()).toBe(false);
   });
 
   it('refuses an unknown panel id by name, per D-216, rather than silently no-op-ing', async () => {
-    mounted = mount(React.createElement(CaptionPanel));
+    mounted = mount(React.createElement(CanvasSettingsPopover));
     await waitFrames(2);
 
     const result = await DEBUG_OPS.debug_set_popover_open({ id: 'no-such-panel', open: true });
 
     expect(result).toEqual({
-      error: `unknown panel "no-such-panel" — expected one of caption-panel, canvas-settings, export-dialog`,
+      error: `unknown panel "no-such-panel" — expected one of canvas-settings, export-dialog`,
     });
     expect(popoverInDom(), 'a refused op must not have opened anything').toBe(false);
   });
 
   it('refuses a missing `open` argument', async () => {
-    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'caption-panel' });
+    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'canvas-settings' });
     expect(result).toEqual({ error: "'open' is required (true or false)" });
   });
 });

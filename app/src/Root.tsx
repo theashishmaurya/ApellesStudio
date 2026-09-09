@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'react-toastify';
-import { Shell, useActiveTab } from '@chroma/shell';
-import { EditorExportDialog, EditorTab, useEditorTimelineStore } from '@chroma/editor';
+import { Shell, useActiveTab, useShellStore } from '@chroma/shell';
+import {
+  EditLibraryPanel,
+  EditLibraryRail,
+  EditorExportDialog,
+  EditorTab,
+  useEditorTimelineStore,
+} from '@chroma/editor';
 import {
   MotionTab,
   clipReadsItem,
@@ -231,6 +237,19 @@ export function Root() {
     toast.success(`Rendered — refreshed ${linked} Edit clip${linked === 1 ? '' : 's'}`);
   }, []);
 
+  // D-263 — the Edit tab's library rail is a tab-owned node that must sit to
+  // the LEFT of the shell's own docked column, so it is injected through
+  // `@chroma/shell`'s per-tab `libraryRail` slot (D-251's pattern) rather than
+  // rendered inside `EditorTab`. This is the one place that legitimately spans
+  // both stores — the shell owns whether the column is OPEN
+  // (`sourcesPanelOpen`), `@chroma/editor` owns WHICH library it shows
+  // (`libraryMode`) — and the composition root is where they meet, exactly
+  // like the `onRendered`/`editLinks` props below and the store bridges above.
+  // Neither package imports the other for it.
+  const sourcesPanelOpen = useShellStore((s) => s.sourcesPanelOpen);
+  const setSourcesPanelOpen = useShellStore((s) => s.setSourcesPanelOpen);
+  const libraryMode = useEditorTimelineStore((s) => s.libraryMode);
+
   // D-260 — the Motion tab's view of what its scenes feed in Edit: the input
   // to both the per-scene "N in Edit" badge and the `motion_get_edit_links`
   // MCP tool, so a human and an agent are told the same thing from the same
@@ -264,7 +283,22 @@ export function Root() {
         // direction as `element` below, `Shell` itself still never imports
         // `@chroma/editor`. Motion/Colorist have no export action of their
         // own yet, so their entries omit it.
-        { id: 'edit', label: 'Edit', element: <EditorTab />, headerAction: <EditorExportDialog /> },
+        {
+          id: 'edit',
+          label: 'Edit',
+          element: <EditorTab />,
+          headerAction: <EditorExportDialog />,
+          // D-263 — the icon rail, leftmost. It drives the shell's own
+          // open/closed flag through these props rather than importing
+          // `@chroma/shell` itself (a tab package must not).
+          libraryRail: (
+            <EditLibraryRail dockOpen={sourcesPanelOpen} onDockOpenChange={setSourcesPanelOpen} />
+          ),
+          // …and the docked column's content while a non-`sources` library is
+          // selected. `undefined` in `sources` mode is what tells `Shell` to
+          // show the shared media pool instead — see `ShellTab.libraryPanel`.
+          libraryPanel: libraryMode === 'sources' ? undefined : <EditLibraryPanel />,
+        },
         {
           id: 'motion',
           label: 'Motion',
