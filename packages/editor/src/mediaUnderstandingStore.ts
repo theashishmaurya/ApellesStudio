@@ -1,5 +1,5 @@
 /**
- * `@chroma/editor` — media understanding for the Edit tab (D-189).
+ * `@apelles/editor` — media understanding for the Edit tab (D-189).
  *
  * **What it is:** a small Zustand store holding what the `ai-media/` sidecar
  * has told us about each media file — its transcript ("what was said, and

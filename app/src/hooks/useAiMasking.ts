@@ -2,7 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
 import { v4 as uuidv4 } from 'uuid';
-import { trackEvent } from '@chroma/bridge';
+import { trackEvent } from '@apelles/bridge';
 import { useEditorStore } from '../store/useEditorStore';
 import { useEditorActions } from './useEditorActions';
 import {
@@ -18,7 +18,7 @@ import { createSubMask } from '../utils/maskUtils';
 import { Invokes } from '../components/ui/AppProperties';
 import { useChromaStore } from '../store/useChromaStore';
 
-// Chroma has no cloud-AI auth (D-029) — RapidRAW's generative-replace / cloud-inpaint
+// Apelles has no cloud-AI auth (D-029) — RapidRAW's generative-replace / cloud-inpaint
 // pass this token; a null token = unauthenticated, which those paths already handle.
 const getToken = async (): Promise<string | null> => null;
 
@@ -305,7 +305,7 @@ export function useAiMasking() {
 
     try {
       const transformAdjustments = getTransformAdjustments(adjustments);
-      // Chroma: a loaded video routes the subject mask through the AI sidecar
+      // Apelles: a loaded video routes the subject mask through the AI sidecar
       // (SAM 2 → ViTMatte, D-016) instead of the in-process ONNX SAM.
       const isChromaVideo = useChromaStore.getState().videoInfo?.isVideo ?? false;
       const newParameters = isChromaVideo
@@ -342,7 +342,7 @@ export function useAiMasking() {
     }
   };
 
-  // Chroma: precompute a subject matte per frame for the whole clip. The cache
+  // Apelles: precompute a subject matte per frame for the whole clip. The cache
   // dir is stored on the sub-mask (`chromaTrackDir`) and the renderer reads the
   // current frame's PNG from it — no per-seek matte swap in the frontend.
   const handleTrackSubject = async (subMaskId: string, mode: 'fast' | 'quality' = 'fast') => {
@@ -391,7 +391,7 @@ export function useAiMasking() {
     }
   };
 
-  // Chroma (D-036): precompute a temporally-consistent depth map per frame for
+  // Apelles (D-036): precompute a temporally-consistent depth map per frame for
   // the whole clip via the sidecar's Video Depth Anything (/depth_track). The
   // cache dir is stored on the depth sub-mask (`chromaDepthDir`) and the renderer
   // reads the current frame's PNG from it — no per-seek swap in the frontend,
@@ -429,7 +429,7 @@ export function useAiMasking() {
     }
   };
 
-  // Chroma (D-048): same `chroma_depth_track`/`_status` job as `handleTrackDepth`
+  // Apelles (D-048): same `chroma_depth_track`/`_status` job as `handleTrackDepth`
   // above — the underlying track is per-clip, not per-mask (the sidecar cancels
   // only a running "depth" job regardless of caller) — but the resulting
   // directory is written to the top-level `adjustments.relightDepthDir` rather
@@ -466,7 +466,7 @@ export function useAiMasking() {
     }
   };
 
-  // Chroma (D-054, follow-up to D-048): static single-frame depth-bake
+  // Apelles (D-054, follow-up to D-048): static single-frame depth-bake
   // fallback for a clip with no temporal depth track — parity with D-024's
   // AI-Depth mask, which already has this fallback. Reuses the SAME
   // single-frame Depth-Anything-V2 command the AI-Depth mask and lens-blur

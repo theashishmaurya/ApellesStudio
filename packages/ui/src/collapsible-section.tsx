@@ -24,7 +24,7 @@ interface CollapsibleSectionProps {
  *
  * Props + behaviour are unchanged, so the `app/src/components/ui/CollapsibleSection.tsx`
  * shim and its call sites are untouched. The two visibility-toggle tooltips are
- * still inlined in English (`@chroma/ui` does not pull `react-i18next`).
+ * still inlined in English (`@apelles/ui` does not pull `react-i18next`).
  */
 export default function CollapsibleSection({
   canToggleVisibility = true,

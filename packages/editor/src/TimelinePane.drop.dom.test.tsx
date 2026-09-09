@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for what happens when something is
+ * @apelles/editor — real-DOM coverage for what happens when something is
  * DROPPED on the timeline: the library rail's generator drag (D-248 / B-117)
  * and the "create a new track above the top one" insertion boundary (B-115).
  *
@@ -57,7 +57,7 @@ import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import { EditLibraryRail } from './EditLibraryRail';
 import { EditLibraryPanel } from './EditLibraryPanel';
-import { useHistoryStore } from '@chroma/history';
+import { useHistoryStore } from '@apelles/history';
 import {
   CHROMA_GENERATOR_DRAG_MIME,
   CHROMA_MEDIA_DRAG_MIME,

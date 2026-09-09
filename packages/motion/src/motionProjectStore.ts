@@ -1,10 +1,10 @@
 /**
- * @chroma/motion — the Motion tab's readiness state machine (B-058 / D-150).
+ * @apelles/motion — the Motion tab's readiness state machine (B-058 / D-150).
  *
  * What it is: the one place that knows (a) whether a real `.chroma` project is
  *   open and (b) where the read of that project's motion manifest actually
  *   stands. Deliberately a store, not the tab's own `useState`, for the same
- *   reason `@chroma/editor`'s `timelineStore` is one: the "a project is open"
+ *   reason `@apelles/editor`'s `timelineStore` is one: the "a project is open"
  *   signal comes from *outside* this package (the composition root,
  *   `app/src/main.tsx`, which owns `useSessionStore`) and the tab stays mounted
  *   from boot, so the signal has to be pushable into state that outlives any
@@ -18,14 +18,14 @@
  *   a monotonic token so a slow stale read can never overwrite a newer one.
  * What it does NOT do: no manifest text/parse/save/render state — that stays
  *   component-local in `useMotionManifest`, which seeds itself from `loaded`.
- *   No retry ladder and no IPC timeout (`@chroma/editor`'s store has both):
+ *   No retry ladder and no IPC timeout (`@apelles/editor`'s store has both):
  *   those exist there for faults that were actually observed on that path
  *   (B-004's IPC corruption on cold boot), and speculating machinery here for
  *   faults this path has never shown would be exactly the kind of "fix" B-058
  *   is a lesson against.
  *
  * B-058 — **this tab used to infer "no project is open" from a failed read**,
- * the identical structural fault B-034/D-112 removed from `@chroma/editor`
+ * the identical structural fault B-034/D-112 removed from `@apelles/editor`
  * after it had produced a false "No project open" screen five separate times
  * from five unrelated causes. A read that fails while a project is genuinely
  * open now says so (`status: 'error'` + the real backend text), and the only
@@ -86,7 +86,7 @@ interface MotionProjectState {
 
 /** Monotonic request token. `load()` can be called from the composition-root
  *  bridge, a window `focus` recheck and the tab's own Retry button, and nothing
- *  serialises them — only the newest may write. (`@chroma/editor`'s store has
+ *  serialises them — only the newest may write. (`@apelles/editor`'s store has
  *  the same guard, for the same reason: a stale failure landing after a fresh
  *  success is how a transient hiccup becomes a permanent wrong screen.) */
 let loadToken = 0;

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — `scrubSource.ts` (D-232, roadmap item 27).
+ * @apelles/editor — `scrubSource.ts` (D-232, roadmap item 27).
  *
  * This resolver is what a scrub actually *hears* and what the viewer's waveform
  * strip actually *draws*, so its failure mode is not a wrong pixel: it is

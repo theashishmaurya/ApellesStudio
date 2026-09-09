@@ -925,7 +925,7 @@ fn generate_ai_depth_bitmap(
         crop_offset,
     };
 
-    // Chroma (D-036): a depth-tracked sub-mask (`params.chromaDepthDir` set) reads
+    // Apelles (D-036): a depth-tracked sub-mask (`params.chromaDepthDir` set) reads
     // the current source frame's precomputed Video-Depth-Anything PNG instead of
     // the static base64 bake — per-frame, temporally consistent, in lockstep with
     // the frame being rendered. Absent -> the static bake, byte-identical to before.
@@ -1030,7 +1030,7 @@ fn generate_ai_subject_bitmap(
         crop_offset,
     };
 
-    // Chroma: a tracked subject (`params.chromaTrackDir` set) reads the current
+    // Apelles: a tracked subject (`params.chromaTrackDir` set) reads the current
     // video frame's cached matte instead of the static base64 — matte and frame
     // stay in lockstep, no per-frame state churn in the frontend.
     let mut mask = match crate::chroma::mask::tracked_full_mask(params_value) {
@@ -1266,7 +1266,7 @@ fn generate_sub_mask_bitmap(
         return None;
     }
 
-    // Chroma (D-034): a shape sub-mask carrying `parameters.chromaKeyframes`
+    // Apelles (D-034): a shape sub-mask carrying `parameters.chromaKeyframes`
     // animates its geometry across source frames. Interpolate the parameters for
     // the currently-decoded frame (`chroma::state::current_video().frame`, set by
     // scrub / playback / export alike) and generate from those. Returns `None`

@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution proof that REVERSE speed (D-241)
+// @apelles/editor — REAL ffmpeg-execution proof that REVERSE speed (D-241)
 // exports the exact source frames, in the exact order, the live preview
 // resolves.
 //

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — real video filmstrip thumbnails for a timeline clip:
+ * @apelles/editor — real video filmstrip thumbnails for a timeline clip:
  * **windowed over the visible scroll range**, at a level of detail that
  * matches the current zoom (D-128). Supersedes D-119/D-121/D-124's
  * fixed-64-frame whole-clip strip.

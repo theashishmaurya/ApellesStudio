@@ -64,7 +64,7 @@ the model they'll actually need, not on the current split with a rewrite later.
    appends to, and what `_hydrateOpenDto` reads to repopulate #1/#2 on open. Grade
    files persist as `<gradeDir>/<ProjectShot.id>.grade.json` — **keyed by shot id**,
    a third key scheme alongside #1/#2's path-keying.
-4. **`chroma-timeline::Clip` (Rust, `crates/chroma-timeline/src/lib.rs`, the Edit
+4. **`apelles-timeline::Clip` (Rust, `crates/apelles-timeline/src/lib.rs`, the Edit
    tab's timeline)** — `{ id, shot_id?, name, source_path, source_start, duration,
    source_len, start_frame }`. Has its own `id` and an *optional* `shot_id`
    back-link, but **references media by a raw `source_path` string, not
@@ -73,7 +73,7 @@ the model they'll actually need, not on the current split with a rewrite later.
    independently-created records unless something explicitly wires `shot_id`.
 
 **Consequence, confirmed by the owner's own repro:** dragging a clip from Sources
-onto the Edit tab's timeline creates a `chroma-timeline::Clip` (#4) — it does **not**
+onto the Edit tab's timeline creates a `apelles-timeline::Clip` (#4) — it does **not**
 touch `ProjectShot` (#3) at all. Colorist's empty state is gated on `useEditorStore
 .selectedImage`, populated only by `applyLoaded`, only reachable via `switchToShot`
 (#1/#2) or `_hydrateOpenDto` (#3 → #1/#2). A clip that only exists as #4 is
@@ -85,7 +85,7 @@ frontend/backend model mismatch, D-063's dead-flag wiring).
 
 One clip identity, flowing through both tabs:
 
-- **The Edit tab's active timeline's clips (#4, `chroma-timeline::Clip`) become
+- **The Edit tab's active timeline's clips (#4, `apelles-timeline::Clip`) become
   the single source of truth for "what clips exist in this project."** No
   separate "add to grading" step. `ProjectShot` (#3) is retired as a parallel
   list — its two jobs (referencing a pool item, and being a stable grade-file
@@ -112,7 +112,7 @@ One clip identity, flowing through both tabs:
   disagree) would need rework the moment this lands anyway.
 - **The shot strip (`ShotStrip.tsx`) becomes a timeline-clip strip** — same visual
   shape (thumbnail + name + a dot for a non-neutral grade), but reads from the
-  active `chroma-timeline::Timeline`'s clips instead of `useSessionStore.shots`.
+  active `apelles-timeline::Timeline`'s clips instead of `useSessionStore.shots`.
   Click a clip → Colorist grades it. "Add shots" (today: opens a file picker,
   imports + appends to the session) becomes secondary to drag-from-Sources,
   which already does the real job on the Edit tab.
@@ -121,12 +121,12 @@ One clip identity, flowing through both tabs:
 
 **All five steps below are DONE (D-070, 2026-09-03).**
 
-1. **`chroma-timeline::Clip.media_id: Option<String>`** — additive, `#[serde
+1. **`apelles-timeline::Clip.media_id: Option<String>`** — additive, `#[serde
    (default)]`, no migration needed for existing `project.json` (absent = `None`,
    resolved lazily by path if ever needed, same discipline `Clip.shot_id` already
-   uses). **DONE** — `crates/chroma-timeline/src/lib.rs`, 5 unit tests.
+   uses). **DONE** — `crates/apelles-timeline/src/lib.rs`, 5 unit tests.
 2. **Grade-file migration, one-time, on project open.** For each existing
-   `ProjectShot`, find the `chroma-timeline::Clip`(s) referencing the same
+   `ProjectShot`, find the `apelles-timeline::Clip`(s) referencing the same
    `media_id`/`source_path` on the active timeline. If exactly one match: rename/
    copy `<gradeDir>/<ProjectShot.id>.grade.json` → `<gradeDir>/<Clip.id>.grade.json`.
    If zero or multiple matches (a shot with no corresponding timeline clip yet —
@@ -143,7 +143,7 @@ One clip identity, flowing through both tabs:
    `#[ignore]`d, run explicitly): 3 shots, 0 renamed, 2 warned, nothing lost.
 3. **`useSessionStore` rewrite.** `shots`/`switchToShot`/`addShots`/`removeShot`
    swap their source from `state::Session` (path-keyed) to the active
-   `chroma-timeline::Timeline`'s clips (id-keyed, already has `start_frame`/
+   `apelles-timeline::Timeline`'s clips (id-keyed, already has `start_frame`/
    `duration`/trim state Phase A gave it). `grades` keys off `Clip.id`. The
    in-memory decode session (#1, `state::Shot`) likely still exists underneath
    (something has to hold decoded frames/GPU state) but stops being the
@@ -181,7 +181,7 @@ One clip identity, flowing through both tabs:
   level grade vs per-instance grade) — real feature, real UI (a toggle or a
   right-click action), not required for the base unification.
 - **The `state::Shot`/decode-session layer's own possible retirement** — once
-  everything reads off `chroma-timeline::Clip`, whether the in-memory decode
+  everything reads off `apelles-timeline::Clip`, whether the in-memory decode
   session still needs its own parallel `Vec` or can be a plain per-clip-id cache
   is an implementation detail worth revisiting once the rewrite is in front of
   someone, not decided here.

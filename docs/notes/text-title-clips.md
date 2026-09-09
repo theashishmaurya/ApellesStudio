@@ -14,7 +14,7 @@ Before this pass there was **no text concept anywhere in the codebase** —
 nothing. A video track held only decoded video, an audio track only decoded or
 synthesised audio. The 2026-09-07 comparison reel got its "BEFORE"/"AFTER"
 labels from an **external `ffmpeg drawtext` finishing pass** laid on top of a
-correct Chroma export — disclosed at the time as not a Chroma feature, and
+correct Apelles export — disclosed at the time as not a Apelles feature, and
 something no GUI user (and no MCP agent, short of dropping to raw ffmpeg)
 could do at all.
 
@@ -45,7 +45,7 @@ Three things carried straight over:
 
 ## The model — D-211: a `Clip` variant, not a `TrackKind`
 
-`chroma_timeline::Clip` gains one field:
+`apelles_timeline::Clip` gains one field:
 
 ```rust
 #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,7 +71,7 @@ title on track 0 is drawn last, over everything. Nothing to add.
 A new track kind, by contrast, would have needed its own resolver, its own
 compositing-order rule against the video tracks, its own branch in every
 `kind == Video` / `kind == Audio` walk (there are ~15 across
-`chroma-timeline`, `chroma::edit`, `chroma::audio`, `timeline.ts` and
+`apelles-timeline`, `chroma::edit`, `chroma::audio`, `timeline.ts` and
 `timelineExport.ts`), and its own pass in the export compiler — all
 re-deriving what track index order already gives. It would also have made "a
 title on the same track as the shot it labels" *unrepresentable*, which every
@@ -162,7 +162,7 @@ one-line-per-row follow-up. Tracked in roadmap item 24.
   `.ttc`. **D-240** grew the catalogue from 8 to 18 entries — every family
   with a real italic/bold-italic sibling on disk (`sans`/`condensed`/
   `serif`/`mono`) now lists all four, each also carrying `group`/`bold`/
-  `italic` metadata that `@chroma/editor`'s `composeFontStyleKey` uses to turn
+  `italic` metadata that `@apelles/editor`'s `composeFontStyleKey` uses to turn
   a Bold/Italic TOGGLE into the right flat key — `impact`/`sans-black` stay
   standalone (no italic face ships for either on macOS, and both are already
   a design's own maximum weight).

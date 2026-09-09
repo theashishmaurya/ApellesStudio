@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — the caption library's real behaviour (D-243; docked by
+ * @apelles/editor — the caption library's real behaviour (D-243; docked by
  * D-263, which is why this file is no longer `CaptionPanel.dom.test.tsx`).
  *
  * `captionPresets.test.ts` proves the preset DATA is sane and

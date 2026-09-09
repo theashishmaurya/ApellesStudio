@@ -1,15 +1,15 @@
-# @chroma/player
+# @apelles/player
 
 **The shared preview component** (D-039 roadmap "Next" item 1) — one canvas
 viewport + title strip + transport bar all 3 tabs embed. Fully controlled and
 **presentational only**: it renders whatever `surface` the caller hands it and
 calls back on every interaction. It owns no frame-fetch, no IPC, no timeline
 model, no playback-loop state — that logic is tab-owned and stays in the
-caller (see `@chroma/editor`'s `PreviewPane.tsx` for the reference pattern:
+caller (see `@apelles/editor`'s `PreviewPane.tsx` for the reference pattern:
 the `chroma_timeline_frame` invoke, the scrub-refetch effect, the wall-clock
 `requestAnimationFrame` play loop with frame-dropping).
 
-Deps: `react`, `lucide-react`, `@chroma/ui` (Button/Slider from the shadcn kit,
+Deps: `react`, `lucide-react`, `@apelles/ui` (Button/Slider from the shadcn kit,
 D-042). **No `@tauri-apps/api`, no zustand, no video/decode logic** — if this
 package ever grows a `useEffect` that calls `invoke(...)`, that's a bug; move
 it to the caller.
@@ -78,7 +78,7 @@ without the Editor's choices constraining them. Exceptions, by design:
 - **`zoom` carries no math** (D-218). It is a multiplier where `1` = fit,
   shown as a percentage; the three callbacks are pure intent ("in" / "out" /
   "back to fit") and the tab owns its own bounds, step and clamping, since
-  only the tab knows what its `surface` is. `@chroma/editor`'s
+  only the tab knows what its `surface` is. `@apelles/editor`'s
   `previewZoom.ts` is the reference implementation.
 - `onStep`, `onPlayPause`, `frame`, `total`, `playing` are not optional — the
   ±1 step buttons and play/pause are always shown; there is no "not a
@@ -92,14 +92,14 @@ pair `TimelinePane`'s own timeline-zoom cluster uses — one tab, one zoom
 idiom).
 
 Nothing throws when `total`/`fps` are `0` — `fmtTimecode` (also exported,
-single source of truth, `@chroma/editor` imports it from here) falls back to
+single source of truth, `@apelles/editor` imports it from here) falls back to
 a bare frame counter when `fps` is missing or non-positive, and the scrub
 slider clamps its range and disables itself when `total <= 0`.
 
 ## Example call site
 
 ```tsx
-import { Player } from '@chroma/player';
+import { Player } from '@apelles/player';
 
 function MyTabPreview() {
   const [playhead, setPlayhead] = useState(0);
@@ -124,7 +124,7 @@ function MyTabPreview() {
 }
 ```
 
-The Editor tab (`@chroma/editor`'s `PreviewPane.tsx`) is the real consumer —
+The Editor tab (`@apelles/editor`'s `PreviewPane.tsx`) is the real consumer —
 read it for how the frame-fetch + rAF play-loop logic stays in the caller
 while only the rendered transport JSX moves to `<Player>`.
 
@@ -142,7 +142,7 @@ the picture actually occupies — the same "where did `object-contain` put the
 letterboxed image" question `RelightPuckLayer.tsx`'s markers answer for the
 Colorist tab.
 
-`@chroma/editor`'s `TransformOverlay.tsx` is the first real consumer: it
+`@apelles/editor`'s `TransformOverlay.tsx` is the first real consumer: it
 renders as a sibling of `PreviewPane.tsx`'s `<img>`, both children of one
 `relative` wrapper div, and uses `useContentBox` on that same wrapper to map
 a selected clip's composition-fraction box (`Clip.position_x`/`position_y`/
@@ -161,4 +161,4 @@ deferred refactor.
 - No craft-specific controls (color scopes, mask overlay toggles, LUT
   preview) — those stay in the Colorist tab's own chrome around `surface`.
 - Colorist and Motion have not adopted this component yet (follow-on items on
-  `docs/04-roadmap.md`'s "Next" queue) — only `@chroma/editor` uses it today.
+  `docs/04-roadmap.md`'s "Next" queue) — only `@apelles/editor` uses it today.

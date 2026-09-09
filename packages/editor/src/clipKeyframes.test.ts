@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for `clipKeyframes.ts` (D-090): the clip
+// @apelles/editor — unit tests for `clipKeyframes.ts` (D-090): the clip
 // transform keyframe CRUD used by the Inspector's transform rows, plus
 // D-208's per-property helpers and D-209's on-canvas box resolution.
 import { describe, expect, it } from 'vitest';

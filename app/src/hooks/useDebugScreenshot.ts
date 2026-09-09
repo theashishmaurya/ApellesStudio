@@ -19,7 +19,7 @@
  * upstream RapidRAW's user-rebindable keybind system, and every entry needs an
  * i18n description string in each locale. This is a fixed developer/bug-report
  * affordance, not a user-facing editing action, so it stays a self-contained
- * Chroma file with a documented, non-rebindable combo — a smaller divergence
+ * Apelles file with a documented, non-rebindable combo — a smaller divergence
  * from upstream (D-003) than widening the shared table.
  *
  * Mounted once in App.tsx, next to `useChromaControl()`.

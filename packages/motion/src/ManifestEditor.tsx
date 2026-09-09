@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the raw scene-manifest JSON textarea (D-046).
+ * @apelles/motion — the raw scene-manifest JSON textarea (D-046).
  *
  * D-172 — following through on D-153's own research doc (Part C), which
  * this file originally implemented in a smaller shape: Save/Render, the

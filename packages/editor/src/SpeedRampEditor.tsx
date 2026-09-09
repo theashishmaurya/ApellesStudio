@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Speed (Retime) section of the clip Inspector (D-236).
+ * @apelles/editor — the Speed (Retime) section of the clip Inspector (D-236).
  *
  * **What it is.** The human half of the speed ramp, opposite the
  * `editor_set_clip_speed` MCP tool. Both write the same `set_clip_speed` op
@@ -43,8 +43,8 @@
  * calls back with the next point list; `EditorInspectorPanel` owns the write.
  */
 
-import { Button, ScrubbableNumberInput } from '@chroma/ui';
-import { InspectorSection } from '@chroma/inspector';
+import { Button, ScrubbableNumberInput } from '@apelles/ui';
+import { InspectorSection } from '@apelles/inspector';
 
 import {
   clampSpeed,

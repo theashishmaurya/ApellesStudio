@@ -11,10 +11,10 @@
 // reason this E2E harness exists.
 describe('project launcher', () => {
   it('opens a project and shows the tab view', async () => {
-    // The launcher renders "Welcome to Chroma" full-window until a project
+    // The launcher renders "Welcome to Apelles" full-window until a project
     // is open (Shell.tsx, D-039) — a real signal this test starts from the
     // right screen, not mid-project from a previous run's leftover state.
-    const heading = await $('h1=Welcome to Chroma');
+    const heading = await $('h1=Welcome to Apelles');
     await heading.waitForDisplayed({ timeout: 15000 });
 
     // The first real project card — a <button title="<path>"> per

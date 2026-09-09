@@ -1,5 +1,5 @@
 /**
- * Chroma — the isolated pointer-gesture browser harness (D-142).
+ * Apelles — the isolated pointer-gesture browser harness (D-142).
  *
  * **What it is.** This exact kind of scratch entry point — mount one real
  * component standalone in a real browser tab, seed a hand-built store
@@ -19,7 +19,7 @@
  * the native shell; stubbing enough of `window.__TAURI_INTERNALS__` to reach
  * a real open project turned out to be a much deeper rabbit hole than the
  * timeline UI itself, not worth it for verifying a pointer gesture.
- * `TimelinePane` is now a real, intentional export of `@chroma/editor`
+ * `TimelinePane` is now a real, intentional export of `@apelles/editor`
  * (alongside `EditorTab`, see that package's `index.ts`) specifically so this
  * file can mount it without reaching past the package's public API.
  *
@@ -85,7 +85,7 @@ import {
   type EditLibraryMode,
   type EditOp,
   type Timeline,
-} from '@chroma/editor';
+} from '@apelles/editor';
 import { DEFAULT_THEME_ID, THEMES } from './utils/themes';
 import '../src/styles.css';
 

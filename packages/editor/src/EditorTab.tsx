@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab (D-041).
+ * @apelles/editor — the Edit tab (D-041).
  *
  * MVP: a single-video-track timeline of the open project's shots, scrub + play
  * with a live preview, and basic edits (reorder / trim / split / remove).
@@ -29,7 +29,7 @@
  * Panel`) is now a real sibling of the preview+timeline column, in its own
  * full-height `ResizablePanel`, not a third pane nested inside
  * `TimelinePane.tsx`'s own split (which was capped at the timeline row's
- * height, `h-[46%]` below). Same architectural treatment `@chroma/shell`'s
+ * height, `h-[46%]` below). Same architectural treatment `@apelles/shell`'s
  * D-116 gave the Sources panel on the left — a real resizable column, not a
  * fixed width, spanning the full tab. Toggled by a local button in this
  * tab's own preview-area toolbar (not a `Shell.tsx` chrome-bar button like
@@ -44,7 +44,7 @@
  */
 
 import { useEffect } from 'react';
-import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@chroma/ui';
+import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
 import { PanelRight } from 'lucide-react';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
@@ -159,7 +159,7 @@ export function EditorTab() {
               {/* D-249 put Export in this pane's own top strip (`Player`'s
                   `menu` slot via `PreviewPane`'s now-removed `headerActions`
                   prop); D-251 moved it again, out of this tab entirely, to
-                  `@chroma/shell`'s chrome bar beside the tab switcher — see
+                  `@apelles/shell`'s chrome bar beside the tab switcher — see
                   `Root.tsx`'s `headerAction` wiring and `Shell.tsx`'s own
                   module doc. Nothing left in this tab renders it. */}
               <PreviewPane />

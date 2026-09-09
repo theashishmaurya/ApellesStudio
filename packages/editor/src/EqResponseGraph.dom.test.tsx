@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for D-237's EQ response graph
+ * @apelles/editor — real-DOM coverage for D-237's EQ response graph
  * (`EqResponseGraph.tsx`, roadmap item 27's "EQ response curve UI").
  *
  * **Why a DOM test.** `eqCurve.test.ts` already proves the geometry (screen

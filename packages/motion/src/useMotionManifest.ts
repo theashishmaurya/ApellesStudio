@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the manifest-editing state (D-046; readiness split out to
+ * @apelles/motion — the manifest-editing state (D-046; readiness split out to
  * `motionProjectStore` in B-058/D-150).
  *
  * The *editing* state is component-local (text, parse errors, dirty, save,
@@ -10,7 +10,7 @@
  * store. This hook seeds its editor text from whatever that store last read
  * (falling back to the engine's own sample manifest for a project with no
  * saved manifest yet), live-validates every edit (debounced) against
- * `@chroma/motion-engine`'s `zod` schema — the schema's single source of truth
+ * `@apelles/motion-engine`'s `zod` schema — the schema's single source of truth
  * — and drives save/render through `manifestIO`.
  *
  * B-058: `loadState` is *derived* — `'no-project'` comes from the store's
@@ -24,8 +24,8 @@
  * D-155 (Phase 0c of `docs/notes/motion-visual-builder-research.md`) adds
  * `commit` — the ONE path that both an Inspector field edit and a Phase 1
  * canvas drag write a whole-manifest change through, so both get undo/redo
- * "for free" from `@chroma/history` (D-051) with no per-mutation-site
- * wiring. It mirrors `@chroma/editor`'s own `timelineStore.applyOp`
+ * "for free" from `@apelles/history` (D-051) with no per-mutation-site
+ * wiring. It mirrors `@apelles/editor`'s own `timelineStore.applyOp`
  * (`before`/`after` snapshots closed over by `undo`/`redo`, pushed to the
  * SAME shared `useHistoryStore`) — adapted to this tab's "the JSON text is
  * the one serialized source of truth" contract (`setText`) rather than a
@@ -60,10 +60,10 @@
  * return value is exactly as before) nor any other existing caller reads.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { manifestSchema, type Manifest } from '@chroma/motion-engine/src/engine/schema';
-import { sample } from '@chroma/motion-engine/src/engine/sample';
-import { sceneStartFrame, sceneDurationFrames } from '@chroma/motion-engine/src/engine/build';
-import { useHistoryStore } from '@chroma/history';
+import { manifestSchema, type Manifest } from '@apelles/motion-engine/src/engine/schema';
+import { sample } from '@apelles/motion-engine/src/engine/sample';
+import { sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
+import { useHistoryStore } from '@apelles/history';
 
 import { saveManifest, renderManifest, type MotionRenderResult } from './manifestIO';
 import { useMotionProjectStore } from './motionProjectStore';
@@ -169,7 +169,7 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
   // The old version re-read whenever it believed no project was open, which was
   // this tab's only escape from that (wrong) state and never fired for the real
   // case — a project opened from the in-window launcher blurs nothing. It is
-  // deliberately NOT a refetch-on-every-focus like `@chroma/editor`'s: this tab
+  // deliberately NOT a refetch-on-every-focus like `@apelles/editor`'s: this tab
   // holds unsaved editor text, and re-seeding it from disk on an alt-tab would
   // silently throw the owner's work away.
   useEffect(() => {
@@ -208,7 +208,7 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
   // doc's own Phase 0c) and a Phase 1 canvas-drag commit both call this
   // instead of `setText(JSON.stringify(...))` directly. `label` is a short,
   // human-readable one-liner for a future "Undo <label>" affordance, same
-  // spirit as `@chroma/editor`'s `labelForOp`.
+  // spirit as `@apelles/editor`'s `labelForOp`.
   const commit = useCallback(
     (next: Manifest, label: string) => {
       const after = JSON.stringify(next, null, 2);
@@ -296,7 +296,7 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
         // use it, so "does render create a video I can drag into my own
         // video?" was a real "no" until this callback. `onRendered` is
         // owned by the app layer (D-039: a tab package like this one must
-        // not reach into `@chroma/bridge`'s media pool store directly),
+        // not reach into `@apelles/bridge`'s media pool store directly),
         // which imports it into Sources — called once per scene now, so
         // every scene's own file lands there individually.
         //

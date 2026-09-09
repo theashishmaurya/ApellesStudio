@@ -29,9 +29,9 @@ looks:
 
 | Where | What assumes it |
 | --- | --- |
-| `chroma_timeline::Track::clip_at` | `.find(…)` — returns **one** clip per track per frame |
+| `apelles_timeline::Track::clip_at` | `.find(…)` — returns **one** clip per track per frame |
 | `Timeline::resolve_visible_video_layers_at` | one layer per track |
-| `chroma_media::decode_pipe::PipeSlot::Track(usize)` | **one live `ffmpeg` process per track** |
+| `apelles_media::decode_pipe::PipeSlot::Track(usize)` | **one live `ffmpeg` process per track** |
 | `Track::gap_at` / `clip_spans_from` | gaps and duck-trigger spans derived from non-overlap |
 | `applyOp`'s `move` / `add_clip` (D-104) | overlap is *rejected*, never a reachable drag outcome |
 | `TimelinePane` hit-testing / `resolveClipLanding` | one clip under a point |
@@ -252,6 +252,6 @@ exists — renders the plain cut in both engines rather than erroring.
 | --- | --- |
 | The preview really blends both clips | `chroma::edit`'s `preview_transition_tests` — real solid-colour media, real `timeline_frame` JPEG, decoded. Measured centre pixel mid-dissolve: **`[125, 0, 126]`** (red↔blue), against `[255,0,0]`/`[0,0,255]` for a hard cut. Includes its own hard-cut control. |
 | The export renders the same blend | `timelineExportTransitions.ffmpeg.test.ts` — real ffmpeg, real decoded pixels at 0 / 25 / 50 / 75 / 100% through the window, monotonic, plus a hard-cut control, `end_at_cut`, dip-to-black, dip-to-green, and a dangling transition. |
-| The window/handle arithmetic agrees across engines | `chroma-timeline`'s `d224_transitions` module and `timeline.test.ts`'s `D-226 transitions — model` assert the same numbers for the same inputs on both sides. |
+| The window/handle arithmetic agrees across engines | `apelles-timeline`'s `d224_transitions` module and `timeline.test.ts`'s `D-226 transitions — model` assert the same numbers for the same inputs on both sides. |
 | The badge is drawn at the right pixels and its popover writes the real field | `TimelinePane.transitions.dom.test.tsx` — real `TimelinePane`, real store; the badge's `left`/`width` asserted against the DERIVED window (not `at_frame`), `end_at_cut` drawn entirely before the cut, Remove committing a real op and moving neither clip. Its own stated limit: jsdom cannot drive `@dnd-kit`'s measured drag, so the part of the drop gesture that actually decides anything (`nearestCut`, including the near-miss refusal) is asserted directly. |
 | A project without transitions is unchanged | The whole pre-existing suite (863 TS tests, 186 Rust) passes with byte-identical export argv. |

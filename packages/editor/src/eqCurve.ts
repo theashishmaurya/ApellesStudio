@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the EQ response graph's pure geometry (D-237, roadmap item
+ * @apelles/editor — the EQ response graph's pure geometry (D-237, roadmap item
  * 27's "EQ response curve UI" — the half of D-224's per-clip parametric EQ
  * that was deliberately deferred: Resolve's ±24 dB / log-frequency plot with a
  * draggable, hit-tested point per band).

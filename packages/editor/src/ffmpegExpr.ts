@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the shared ffmpeg piecewise-linear time-expression
+ * @apelles/editor — the shared ffmpeg piecewise-linear time-expression
  * builder (D-197), extracted out of `timelineExport.ts`'s `keyframeExprAt`.
  *
  * What it is: given a sorted list of `{t, value}` points, the nested

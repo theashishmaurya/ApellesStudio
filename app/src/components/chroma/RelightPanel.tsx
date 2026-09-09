@@ -1,4 +1,4 @@
-// Chroma — interactive relight panel (D-048).
+// Apelles — interactive relight panel (D-048).
 //
 // The right-panel controls for the "Relight" grade layer: a ClipDrop-style
 // bottom tab strip (Preset / Ambient / Light 1 / Light 2 / … / + Add Light),
@@ -19,9 +19,9 @@
 // panel is the numeric-control half of the same interaction, matching the
 // brief's "drag = position, a control = falloff radius" split.
 //
-// Styling (D-068): rebuilt on `@chroma/ui`'s shadcn/Base UI primitives
+// Styling (D-068): rebuilt on `@apelles/ui`'s shadcn/Base UI primitives
 // (`Button`, `Slider`) — was plain elements + app tokens matching
-// MasksPanel's pre-Chroma-pivot style, flagged by the owner as visibly
+// MasksPanel's pre-Apelles-pivot style, flagged by the owner as visibly
 // inconsistent with the rest of the app ("feels like it's not from this
 // app"). Interaction logic (tab selection, preset apply, keyframe ops) is
 // untouched — this pass only changes what renders it, not what it does.
@@ -41,8 +41,8 @@
 // "finalize for the whole video" action it actually is.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Diamond, Info, Loader2, Plus, RotateCw, Trash2, Eye, EyeOff, Video, X } from 'lucide-react';
-import { Button, Slider, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@chroma/ui';
-import { trackEvent } from '@chroma/bridge';
+import { Button, Slider, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@apelles/ui';
+import { trackEvent } from '@apelles/bridge';
 
 import { useEditorStore } from '../../store/useEditorStore';
 import { useEditorActions } from '../../hooks/useEditorActions';
@@ -195,10 +195,10 @@ export default function RelightPanel() {
     [activeLightId, updateLights],
   );
 
-  // `@chroma/ui`'s `Slider` (Base UI) always deals in `number | readonly
+  // `@apelles/ui`'s `Slider` (Base UI) always deals in `number | readonly
   // number[]` since it's shared with range sliders — every call here only
   // ever uses one thumb, so unwrap once and reuse (same pattern
-  // `@chroma/player`'s `Player.tsx` uses for its own scrub bar).
+  // `@apelles/player`'s `Player.tsx` uses for its own scrub bar).
   const sliderValue = (v: number | readonly number[]): number => (Array.isArray(v) ? v[0] : (v as number));
 
   return (
@@ -396,7 +396,7 @@ export default function RelightPanel() {
 
           <div className="flex items-center gap-2">
             <span className="text-text-secondary text-xs flex-1">Color</span>
-            {/* A real color-picker component doesn't exist yet in `@chroma/ui`
+            {/* A real color-picker component doesn't exist yet in `@apelles/ui`
                 — the native `<input type="color">` still does the real job
                 (opens the OS picker), just given a proper bordered/rounded
                 button shell around it instead of a bare swatch, matching
@@ -530,7 +530,7 @@ export default function RelightPanel() {
           positional light yet (tracking ahead of adding one is a real,
           reasonable workflow). Compact by design (owner: "keep the track
           full depth at right bottom with I icon instead of so much text") —
-          the explanation lives in a real `@chroma/ui` `Tooltip` (D-042,
+          the explanation lives in a real `@apelles/ui` `Tooltip` (D-042,
           `render={<Button/>}` — the same pattern `TimelinePane.tsx`'s
           toolbar already establishes) instead of always-visible paragraph
           text; only the compact progress readout stays inline while a track

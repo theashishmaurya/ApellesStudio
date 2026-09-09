@@ -1,7 +1,7 @@
-// @chroma/editor — unit tests for the pure edit-model helpers in
+// @apelles/editor — unit tests for the pure edit-model helpers in
 // `timeline.ts`: `labelForOp` (D-051) and, since D-058, the edit ops
 // themselves — real inputs/outputs asserted against the same clamp/position
-// rules `chroma-timeline::lib.rs`'s Rust ops use, per the D-058 fix (a
+// rules `apelles-timeline::lib.rs`'s Rust ops use, per the D-058 fix (a
 // frontend/backend model mismatch introduced by D-054 that nothing had
 // re-verified until this pass — see D-058 in docs/08-decisions.md).
 import { describe, expect, it } from 'vitest';
@@ -148,7 +148,7 @@ describe('labelForOp', () => {
   });
 });
 
-// D-058 — every op below mirrors `chroma-timeline::lib.rs`'s Rust op of the
+// D-058 — every op below mirrors `apelles-timeline::lib.rs`'s Rust op of the
 // same name; these are the ported equivalents of that crate's own unit
 // tests (`trim_start`'s neighbor clamp, `trim_end`'s neighbor clamp,
 // `split`'s new-half `start_frame`, `remove`'s "lift, not ripple", the
@@ -1210,7 +1210,7 @@ describe('set_clip_fade (D-147)', () => {
 
   /** Deliberately NOT clamped to the clip's own `duration`: a fade longer
    *  than the clip is legitimate (the two windows overlap and their
-   *  multipliers multiply — see `fade_gain`'s doc in `chroma-timeline`), and
+   *  multipliers multiply — see `fade_gain`'s doc in `apelles-timeline`), and
    *  clamping would silently move a handle the user placed. */
   it('does not clamp a fade longer than the clip', () => {
     const after = applyOp(tl([clip('a', 'Short', { duration: 10 })]), {
@@ -1431,7 +1431,7 @@ describe('swap_media (D-195)', () => {
   });
 });
 
-describe('track lock enforcement (D-086/D-089) — mirrors chroma_timeline::TimelineError::TrackLocked', () => {
+describe('track lock enforcement (D-086/D-089) — mirrors apelles_timeline::TimelineError::TrackLocked', () => {
   function lockedTl(): Timeline {
     return { id: 't1', name: 'Timeline', tracks: [{ kind: 'video', clips: backToBack(), locked: true }] };
   }
@@ -1545,7 +1545,7 @@ describe('clipFromDraggedMedia (D-070)', () => {
 });
 
 // -------------------------------------------------------------------------- //
-// cross-track ripple sync (D-106) — mirrors crates/chroma-timeline's own
+// cross-track ripple sync (D-106) — mirrors crates/apelles-timeline's own
 // sync-lock test suite field-for-field, same fixtures/assertions.
 // -------------------------------------------------------------------------- //
 
@@ -2261,7 +2261,7 @@ describe('linkedClipIds (D-129)', () => {
   });
 });
 
-// B-077 — `chroma-timeline::Clip`'s own doc is explicit that `source_start`/
+// B-077 — `apelles-timeline::Clip`'s own doc is explicit that `source_start`/
 // `duration` are in the clip's own SOURCE frames while `start_frame` is a
 // TIMELINE frame (the project's own `timelineFps`) — genuinely two different
 // frame-rate spaces whenever a clip's native rate differs from the project's.
@@ -2594,7 +2594,7 @@ describe('add_marker / remove_marker / set_marker ops (D-222)', () => {
 
 // D-224 — per-clip parametric EQ: the model half (the band type, the clamps,
 // the default strip and the `set_clip_eq` reducer). The DSP itself has its own
-// real-measurement tests in `chroma_types::eq` and, through real ffmpeg, in
+// real-measurement tests in `apelles_types::eq` and, through real ffmpeg, in
 // `timelineExport.ffmpeg.test.ts` — what lives here is everything the EDIT
 // MODEL adds on top: materialisation, partial writes, clamping, and the
 // no-op/identity short-circuits that keep an untouched EQ free.
@@ -2757,7 +2757,7 @@ describe('per-clip parametric EQ — the model (D-224)', () => {
     ];
     expect(eqResponseDb(bands, 1000)).toBeCloseTo(4, 9);
     // A bell IS its gain at its own centre, and flat far away — the cookbook's
-    // own defining property, mirrored here from `chroma_types::eq`.
+    // own defining property, mirrored here from `apelles_types::eq`.
     expect(eqResponseDb([bands[0]], 1000)).toBeCloseTo(6, 9);
     expect(Math.abs(eqResponseDb([bands[0]], 20))).toBeLessThan(0.05);
     expect(eqResponseDb(undefined, 1000)).toBe(0);
@@ -2805,7 +2805,7 @@ describe('D-226 transitions — model', () => {
     expect(transitionWindow(tr({ alignment: 'end_at_cut' }))).toEqual({ start: 24, end: 48 });
     expect(transitionHandles(tr({ alignment: 'end_at_cut' }))).toEqual({ head: 24, tail: 0 });
     // An odd duration puts the extra frame AFTER the cut — the same integer
-    // halving `chroma_timeline::Transition::window` does, stated so the two
+    // halving `apelles_timeline::Transition::window` does, stated so the two
     // engines agree by construction rather than by luck.
     expect(transitionWindow(tr({ duration: 5 }))).toEqual({ start: 46, end: 51 });
   });

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the timeline strip (D-041; drag-to-track D-046 pass 3;
+ * @apelles/editor — the timeline strip (D-041; drag-to-track D-046 pass 3;
  * mature-timeline-UI pass D-051; position-model + ruler fixes D-058;
  * multi-track UI D-080).
  *
@@ -15,7 +15,7 @@
  * the editor is seconds (frame / fps).
  *
  * D-058: every clip's on-screen position is read from its own `start_frame`
- * (`timeline.ts`'s `Clip.start_frame`, mirroring `chroma-timeline`'s D-054
+ * (`timeline.ts`'s `Clip.start_frame`, mirroring `apelles-timeline`'s D-054
  * field) — not re-derived from summed preceding durations, which is what
  * this file did before this pass and is the actual root cause of "drag from
  * Sources doesn't work" / "edge-trim doesn't work" (see D-058 in
@@ -111,7 +111,7 @@
  *     reads, `0` muted / `1` unmuted — "muted" has no separate boolean to
  *     drift out of sync with), **and a remove-track button**. "Lock" /
  *     "solo" are real standard-NLE affordances but have no backing model
- *     field anywhere yet (`chroma_timeline::Track` has no `locked`/`solo`)
+ *     field anywhere yet (`apelles_timeline::Track` has no `locked`/`solo`)
  *     — not built this pass rather than faked with only-frontend state that
  *     `chroma_timeline_set`'s verbatim-storage contract wouldn't actually
  *     persist.
@@ -349,7 +349,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from '@chroma/ui';
+} from '@apelles/ui';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
 import { animatedParams } from './clipKeyframes';
@@ -679,7 +679,7 @@ function trackDragId(index: number): string {
  *
  *  **A track-header control, not a clip Inspector one**, because ducking is a
  *  relationship between two tracks rather than a property of a clip — the same
- *  reason the field lives on `chroma_timeline::Track` and not on `Clip`. It
+ *  reason the field lives on `apelles_timeline::Track` and not on `Clip`. It
  *  sits behind a popover rather than inline because the header row is already
  *  dense (grip, kind, name, lock, sync-lock, hide/mute, remove) and four
  *  controls would not fit at `ROW_HEIGHT`; the trigger button lights up when
@@ -1588,7 +1588,7 @@ export function TimelinePane() {
 
   // D-235 — the hover affordance. Resolve swaps between four custom cursors
   // (`scratch/resolve-reference/trim.jpg` is literally those four glyphs);
-  // Chroma names the mode in the toolbar instead, which needs no cursor
+  // Apelles names the mode in the toolbar instead, which needs no cursor
   // bitmaps, survives every zoom level, and is legible to a screen reader.
   //
   // A React `onPointerMove` prop on the edit area (see the JSX below), NOT a
@@ -2287,7 +2287,7 @@ export function TimelinePane() {
     if (boundary !== null) {
       // D-096/D-097 — dropped at a real track-insertion boundary: past the
       // last row, above the first, or between two existing ones. `add_track`
-      // always appends at the end (`chroma_timeline::Timeline::add_track`),
+      // always appends at the end (`apelles_timeline::Timeline::add_track`),
       // computed from this render's own `tracks.length` since every op
       // below runs synchronously in this one handler, before either the
       // store or this component re-renders — so a brand-new track is
@@ -3061,7 +3061,7 @@ export function TimelinePane() {
   // (`GripVertical`, plain HTML5 drag/drop — same mechanism as the
   // Sources-panel clip drop, just scoped to the header sidebar's own DOM,
   // entirely separate from the library's action-drag), replacing D-090's
-  // up/down buttons. `move_track(from, to)` mirrors `chroma_timeline::
+  // up/down buttons. `move_track(from, to)` mirrors `apelles_timeline::
   // Timeline::move_track` exactly (`Vec::remove(from)` then `insert(to,
   // _)`) — a plain button swap only ever needed `from`/`to` adjacent, but a
   // real drag can drop a track anywhere in the list, which shifts every
@@ -3493,7 +3493,7 @@ export function TimelinePane() {
   };
   // The wheel listener is attached once, for the component's whole life, so it
   // reads the current closure through this ref instead of a stale one (the
-  // same `onSeekEndRef` pattern `@chroma/player`'s transport already uses for
+  // same `onSeekEndRef` pattern `@apelles/player`'s transport already uses for
   // a callback that outlives the render it came from).
   //
   // Written in an effect, not during render: the React Compiler (D-201) bails

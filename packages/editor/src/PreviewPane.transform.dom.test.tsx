@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — permanent real-DOM regression coverage for B-093/D-209:
+ * @apelles/editor — permanent real-DOM regression coverage for B-093/D-209:
  * the on-canvas transform box on a KEYFRAMED clip, and what a drag on one
  * writes.
  *

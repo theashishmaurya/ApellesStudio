@@ -25,7 +25,7 @@ import { cn } from '../../lib/utils';
  * number input", not of any one panel, and every `type="number"` in the app —
  * including the vendored RapidRAW fork's, via `app/src/components/ui/Input.tsx`
  * — had it. Exported so a caller reasoning about the field's usable text width
- * (`@chroma/editor`'s `numericField.ts`) can assert on the same string this
+ * (`@apelles/editor`'s `numericField.ts`) can assert on the same string this
  * file applies rather than restating it.
  */
 const NUMBER_INPUT_SPINNER_SUPPRESSION =
@@ -34,7 +34,7 @@ const NUMBER_INPUT_SPINNER_SUPPRESSION =
 /**
  * shadcn `input` on the Base UI `Input` primitive (D-042).
  *
- * Backwards-compat: the pre-D-042 `@chroma/ui` Input exposed a `bgClassName`
+ * Backwards-compat: the pre-D-042 `@apelles/ui` Input exposed a `bgClassName`
  * prop (default `bg-surface`); three SettingsPanel call sites pass
  * `bgClassName="bg-bg-primary"`. Kept, same default. Everything else is the
  * canonical shadcn input, token-themed.

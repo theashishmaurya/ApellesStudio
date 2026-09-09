@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the timeline ruler's tick-interval + label logic
+ * @apelles/editor — the timeline ruler's tick-interval + label logic
  * (D-058, item 4 of the 2026-09-03 timeline-fixes pass).
  *
  * Two pure, unit-tested functions, deliberately kept out of `TimelinePane.tsx`

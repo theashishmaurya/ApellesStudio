@@ -894,7 +894,7 @@ pub async fn load_image(
     let (source_path, sidecar_path) = parse_virtual_path(&path);
     let source_path_str = source_path.to_string_lossy().to_string();
 
-    // Chroma: a video loads as its first decoded frame (transport comes later).
+    // Apelles: a video loads as its first decoded frame (transport comes later).
     if crate::chroma::video::is_video_file(&source_path) {
         return crate::chroma::load::load_video_frame(&source_path, &path, 0, &state).await;
     }

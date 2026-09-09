@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// score.mjs — the CI-able regression gate for Chroma's grading agent.
+// score.mjs — the CI-able regression gate for Apelles' grading agent.
 //
 //   node eval/score.mjs [resultsDir]   score grade.json / result.png files
 //   node eval/score.mjs --baseline     (re)write eval/baseline.json — the floor

@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — on-canvas select + drag (D-156, Phase 1) + resize (D-157,
+ * @apelles/motion — on-canvas select + drag (D-156, Phase 1) + resize (D-157,
  * Phase 2) + multi-select/marquee/group-move (D-158, Phase 3) of
  * `docs/notes/motion-visual-builder-research.md`. The owner's original ask:
  * "i would like to drag and drop multiple elements and set position or
@@ -127,7 +127,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import type { PlayerRef } from '@remotion/player';
-import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
+import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 
 import type { Selection } from './LayerList';
 import { sameSelection, toggleSelection } from './LayerList';

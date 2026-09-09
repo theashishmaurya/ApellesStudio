@@ -442,9 +442,9 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   ()=>null}`, `useClerk` → `{signOut: async ()=>{}}`) so RapidRAW's cloud-provider
   code paths compile and behave as "unauthenticated" (which they already handle).
   `SettingsPanel.tsx`: the `<SignIn>` / `<CloudDashboard>` block replaced with a
-  one-line "Chroma runs all AI locally" note (`CloudDashboard` now dead but left in
+  one-line "Apelles runs all AI locally" note (`CloudDashboard` now dead but left in
   place). Kills the `<TitleBar>` React error + the Clerk dev-key console warnings.
-  No Rust change. All Chroma AI is local (the `ai/` sidecar + in-process ONNX), so
+  No Rust change. All Apelles AI is local (the `ai/` sidecar + in-process ONNX), so
   there is no account to sign into.
 
 - **2026-09-02** · **persistent decode pipe / smooth playback (D-030)** — new
@@ -522,14 +522,14 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
 - **2026-09-02** · **agent activity feed + `request_human` (D-032)** — frontend
   only, **no `src-tauri` / Rust change** (the op rides the generic `POST /op`
   bridge path).
-  · New (all Chroma-owned): `src/store/useAgentStore.ts` (the feed + the
+  · New (all Apelles-owned): `src/store/useAgentStore.ts` (the feed + the
   single-slot `request_human` state), `src/utils/agentActivity.ts` (`diffAdjustments`
   — structural before/after grade diff, mask containers matched by id, matte
   blobs collapsed to `<matte>`; `summarizeActivity` — per-op one-liners),
   `src/components/chroma/AgentActivityDock.tsx` (fixed bottom-left dock: feed
   with per-entry expandable diff + jump-to-here undo, + the `request_human`
   banner), `src/components/chroma/AgentRoiHighlight.tsx` (canvas ROI rect).
-  · `src/hooks/useChromaControl.ts` (Chroma-only file, D-020): new `request_human`
+  · `src/hooks/useChromaControl.ts` (Apelles-only file, D-020): new `request_human`
   op (validates `reason`, clamps `roi` to 0..1, `useAgentStore.postHumanRequest`,
   returns an ack — added to `READ_ONLY` so no settle); `get_state` now returns
   `pendingHumanRequest`; the `chroma://request` handler records one
@@ -576,7 +576,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   strip — the doc-09 "replace `components/panel/library/` with a shot strip"
   line; the library browser is left in place, the strip is additive).
   `src/store/useAgentStore.ts` +3 (`activeShotKey`, `shotFeeds`, `scopeToShot`)
-  — the D-032 feed is now per-shot. `src/hooks/useChromaControl.ts` (Chroma-only
+  — the D-032 feed is now per-shot. `src/hooks/useChromaControl.ts` (Apelles-only
   file) — `list_shots` / `set_active_shot` / `add_shots` ops, `get_state` +=
   `session`. Upstream-file edit: `src/components/panel/BottomBar.tsx` +4 (import
   + `<ShotStrip/>` + a session-sync effect).
@@ -609,8 +609,8 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   · Frontend: new `src/utils/maskKeyframes.ts` (mirror of the Rust interpolator —
   same rules/cases; drives the interpolated canvas overlay + the keyframe
   button/drag), new `src/components/chroma/MaskKeyframeBar.tsx` (mounted in the
-  Chroma-owned `ChromaTimeline` — ◆ keyframe button + a diamond track + delete /
-  clear). Chroma-only `src/hooks/useChromaControl.ts` += 4 ops
+  Apelles-owned `ChromaTimeline` — ◆ keyframe button + a diamond track + delete /
+  clear). Apelles-only `src/hooks/useChromaControl.ts` += 4 ops
   (`add_mask_keyframe` / `list_mask_keyframes` / `clear_mask_keyframe` /
   `clear_mask_keyframes`; `list_mask_keyframes` is `READ_ONLY`).
   · **Upstream-file edit — `src/components/panel/editor/ImageCanvas.tsx` +~4:**
@@ -655,7 +655,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   · Frontend: `src/hooks/useAiMasking.ts` — new `handleTrackDepth` (mirror of
   `handleTrackSubject`); `handleAddDepthHaze` gains `tracked?` (video only →
   also runs the track and stamps `chromaDepthDir`). `src/store/useChromaStore.ts`
-  +2 (`depthTrackProgress` + setter). Chroma-only `src/hooks/useChromaControl.ts`
+  +2 (`depthTrackProgress` + setter). Apelles-only `src/hooks/useChromaControl.ts`
   += `depth_track` (non-blocking — starts the job, fire-and-forget poll stamps
   the dir) + `depth_track_status` ops; `apply_haze` op forwards `tracked`.
   `src/utils/agentActivity.ts` +1 formatter. **Upstream-file edit —
@@ -701,7 +701,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   `(hasRoots || activeView === 'projects')`. `src/hooks/useAppNavigation.ts` —
   the editor "back" button routes to `'projects'` (folder / album navigation
   still routes to `'library'`; **LibraryView / albums / culling NOT deleted**).
-  · Chroma-only frontend: new `components/chroma/ProjectLauncher.tsx`, new
+  · Apelles-only frontend: new `components/chroma/ProjectLauncher.tsx`, new
   `hooks/useProjectAutosave.ts`. `store/useSessionStore.ts` (D-033) extends with
   `projectPath` / `projectName` / `gradeDir` / `dirty` / `shotIds` /
   `offlineShots` + `openProject` / `newProject` / `saveProject` /
@@ -747,7 +747,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   encoder pass-through / display transform deferred to D-004.
   · **Upstream-file edits:** `lib.rs` +1 (`chroma_project_set_settings` in
   `generate_handler!`). Nothing else in Rust core.
-  · Chroma-only frontend: `store/useSessionStore.ts` += `ProjectSettings` type,
+  · Apelles-only frontend: `store/useSessionStore.ts` += `ProjectSettings` type,
   `projectSettings` state (hydrated from `_hydrateOpenDto`'s `dto.settings`),
   `setProjectSettings(partial)` thunk. `hooks/useChromaControl.ts` +=
   `get_state().project.settings` + op `set_project_settings`. New
@@ -764,12 +764,12 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   modal, a 1080p-override export, a clear-to-clip-res export, and MCP
   `set_project_settings` + `get_state` are an open manual smoke test
   (`docs/notes/project-model.md`) — the `useEffect([])` bridge listener does not
-  hot-reload; a stale cargo fingerprint may need `cargo clean -p RapidRAW` + a
+  hot-reload; a stale cargo fingerprint may need `cargo clean -p apelles` + a
   dev-server restart to link the new command.
 
 - **2026-09-02** · **Editor tab MVP — single-track timeline + scrub preview (D-041)** —
   new crate consumer: `app/src-tauri` gains a path dep
-  `chroma-timeline = { path = "../../crates/chroma-timeline" }` (D-039 L2, made
+  `apelles-timeline = { path = "../../crates/apelles-timeline" }` (D-039 L2, made
   real in this task). All bridge code is new: `src/chroma/edit.rs` — three
   commands (`chroma_timeline_get` / `_set` / `_frame`), a per-clip `VideoInfo`
   probe cache, timeline build-from-shots, and a **standalone decode→jpeg preview
@@ -778,30 +778,30 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   render path.
   · **Upstream-file edits (minimal):** `chroma/mod.rs` +1 (`pub mod edit;` +
   doc line); `chroma/project.rs` — `ProjectManifest.timeline:
-  Option<chroma_timeline::Timeline>` (`#[serde(default)]`, schema major
+  Option<apelles_timeline::Timeline>` (`#[serde(default)]`, schema major
   unchanged, threaded through `fresh()`); `lib.rs` +3 `generate_handler!` lines;
   `app/src-tauri/Cargo.toml` +1 path dep. Nothing else in Rust core.
-  · **Frontend (`@chroma/editor`, greenfield):** `timeline.ts` (model mirror +
+  · **Frontend (`@apelles/editor`, greenfield):** `timeline.ts` (model mirror +
   pure ops), `timelineStore.ts` (`useEditorTimelineStore` zustand), `PreviewPane`
   (img + transport + rAF play loop), `TimelinePane`
   (`@xzdarcy/react-timeline-editor`), `EditorTab` (layout + empty state). New
-  deps on `@chroma/editor` only: `@xzdarcy/react-timeline-editor`,
+  deps on `@apelles/editor` only: `@xzdarcy/react-timeline-editor`,
   `@tauri-apps/api`, `zustand`.
   · Verified: `cargo build --no-default-features` clean; `cargo test
-  --no-default-features -p chroma-timeline` **9/9**; `cargo test
+  --no-default-features -p apelles-timeline` **9/9**; `cargo test
   --no-default-features chroma::` **54/54** (unchanged); `npm install` clean;
   `cd app && npx tsc --noEmit` **74** (baseline unchanged, none in
   `packages/editor`); `cd app && npm run build` (vite prod) green. **Manual
   smoke test open** (open a project in the Colorist tab → Edit tab → scrub /
   split / trim / reorder / delete / restart-persistence). New commands were
-  added → a `cargo clean -p RapidRAW` + dev-server restart may be needed to
+  added → a `cargo clean -p apelles` + dev-server restart may be needed to
   clear the stale-incremental-fingerprint issue before the commands link.
 
 - **2026-09-02** · **Strip RapidRAW's DAM/welcome/library/community shell (D-043)**
   — the largest single divergence from upstream to date, and the first that
   **deletes** rather than adds. Prior analysis: `docs/notes/colorist-strip.md`.
   Overrides D-003 ("keep everything cherry-pickable") for this one layer: the
-  library/welcome/albums/culling/community code will never run again in Chroma,
+  library/welcome/albums/culling/community code will never run again in Apelles,
   so keeping it as dead routed code was pure noise, and the branding actively
   misled. The **grading engine stays untouched** — wgsl shader, masks,
   adjustments model, every `panel/right/*` panel, canvas/preview, scopes, LUT,
@@ -929,13 +929,13 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   kept for reference), `SettingsPanel.tsx`'s `CloudDashboard` `getrapidraw.com`
   links (removed — the buttons were unreachable anyway, `isPro` never true per
   D-029), the exported-file EXIF `Software` tag and the skeleton-XMP
-  `x:xmptk` attribute (`RapidRAW` → `Chroma` — these ship in every exported
+  `x:xmptk` attribute (`RapidRAW` → `Apelles` — these ship in every exported
   file/sidecar, not just UI chrome) all fixed. i18n: `library.splash.*` block
   (welcome splash — brand/version/donate/contribute/continue-session copy)
   removed from **all 13 locale files**; every other `RapidRAW` string
   (`settings.thanks.description`, `settings.general.nativeTitlebarDesc`, the
   AI-connector provider blurbs, the OSS-credits list entries) renamed to
-  `Chroma` in all 13 locales; `*.rapidRawPreset` label reworded to drop the
+  `Apelles` in all 13 locales; `*.rapidRawPreset` label reworded to drop the
   brand word entirely (`"RapidRAW Preset"` → `"Preset"`, and equivalent for
   each locale's translation) rather than just swapping the brand name in, per
   the analysis's call. Explanatory code comments citing "RapidRAW" as the
@@ -999,15 +999,15 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   now calls, tracked dir first then static-bake fallback; +6 tests),
   `lib.rs` (`process_preview_job` now calls `resolve_relight_depth_bitmap`
   instead of its old inline dir-then-bitmap two-step — same behaviour for
-  the tracked case, the fallback for free). `chroma/export.rs` (new Chroma
+  the tracked case, the fallback for free). `chroma/export.rs` (new Apelles
   code, not an upstream-fork file) wires the same resolver into
   `grade_frame` — see D-054 for the full write-up.
 
 - **2026-09-04** — **Per-clip crop in the Edit-tab compositor (D-132)** ·
-  **zero upstream-file edits** — the whole change lives in Chroma's own
+  **zero upstream-file edits** — the whole change lives in Apelles' own
   `chroma/edit.rs` (`crop_pixel_rect`, crop applied at the head of
   `composite_layer_onto`, `ClipTransform::is_identity` gating the
-  single-layer fast path) plus the `chroma-timeline` crate. Logged anyway
+  single-layer fast path) plus the `apelles-timeline` crate. Logged anyway
   because it *deliberately did not* reach for the upstream function that
   looks like it fits: `image_processing::apply_crop` (Colorist's) takes an
   absolute-pixel `{x, y, width, height}` on one loaded still and physically
@@ -1019,7 +1019,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   whole D-082 transform — unconditionally.
 
 - **2026-09-04** — **Video export honours the Colorist's geometry (D-135,
-  B-042)** · **zero upstream-file edits** — everything is in Chroma's own
+  B-042)** · **zero upstream-file edits** — everything is in Apelles' own
   `chroma/export.rs` (`prepare_frame`, `align_encoder_dims`,
   `resolve_encoder_dims`, `fit_frame_to_encoder`, `EncoderPipe`, and
   `unsupported_geometry` deleted). Logged because it is the opposite move to
@@ -1037,13 +1037,13 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   shear the whole file.
 
 - **2026-09-05** — **Per-clip fades (D-147)** · **zero upstream-file edits.**
-  Everything is in Chroma's own files: `crates/chroma-types/src/{fade.rs,
-  lib.rs}`, `crates/chroma-timeline/src/lib.rs`,
-  `crates/chroma-media/src/audio.rs`, `chroma/audio.rs`, `chroma/edit.rs`,
+  Everything is in Apelles' own files: `crates/apelles-types/src/{fade.rs,
+  lib.rs}`, `crates/apelles-timeline/src/lib.rs`,
+  `crates/apelles-media/src/audio.rs`, `chroma/audio.rs`, `chroma/edit.rs`,
   `packages/editor/*`, and one
-  Chroma-owned frontend file in the fork, `app/src/hooks/useChromaControl.ts`
-  (the D-020 MCP bridge — a Chroma addition, not an upstream RapidRAW file), which
-  gains two ops in its existing `OPS` registry and an `@chroma/editor` import.
+  Apelles-owned frontend file in the fork, `app/src/hooks/useChromaControl.ts`
+  (the D-020 MCP bridge — a Apelles addition, not an upstream RapidRAW file), which
+  gains two ops in its existing `OPS` registry and an `@apelles/editor` import.
   No `generate_handler!` line was added: the fade rides the existing
   `chroma_timeline_get`/`chroma_timeline_set` verbatim-document contract rather
   than getting a command of its own, so the Tauri surface is unchanged. Logged
@@ -1055,7 +1055,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   upstream-file edits.** All of the behaviour is in `packages/editor/*`
   (`canvasPick.ts`, `useCanvasClipPick.ts`, `transformGeometry.ts`,
   `useClipGeometry.ts`, `PreviewPane.tsx`, `TransformOverlay.tsx`). The only
-  file touched inside the fork is `app/src/harness-main.tsx` — a Chroma
+  file touched inside the fork is `app/src/harness-main.tsx` — a Apelles
   addition (D-142's permanent pointer-gesture browser harness), not an upstream
   RapidRAW file: its `chroma_timeline_clip_geometry` stub now resolves its real
   track/clip arguments instead of returning one fixed answer, so two layers can
@@ -1079,13 +1079,13 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   the Colorist "Paste" button stayed disabled after copying adjustments until
   something else happened to re-render `EditorView`. See `docs/BUGS.md` B-087.
 
-- **2026-09-08** — **Debug webview screenshot (D-210)** · new Chroma code only,
+- **2026-09-08** — **Debug webview screenshot (D-210)** · new Apelles code only,
   plus three one-to-two-line upstream-file edits. New: `src-tauri/src/chroma/
   debug_capture.rs` (the `WKWebView takeSnapshot` capture + PNG pixel probe)
-  and `src/hooks/useDebugScreenshot.ts` (a Chroma addition, not an upstream
+  and `src/hooks/useDebugScreenshot.ts` (a Apelles addition, not an upstream
   RapidRAW file — the Cmd/Ctrl+Shift+D affordance). Upstream-file edits, all
   minimal: `src-tauri/src/chroma/mod.rs` (+`pub mod debug_capture;` and its
-  doc-list line — a Chroma-owned file anyway), `src-tauri/src/lib.rs` (+2
+  doc-list line — a Apelles-owned file anyway), `src-tauri/src/lib.rs` (+2
   `generate_handler!` lines, `chroma_debug_screenshot` /
   `chroma_debug_sample_pixel`), and `src/App.tsx` (+2: the import and the
   `useDebugScreenshot()` call, mounted next to the existing
@@ -1098,13 +1098,13 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   ObjC-interop file (it uses `objc` 0.2 + raw `msg_send!`; new code uses the
   typed `objc2` stack instead — see D-210 — and churning working upstream code
   to unify the two was not worth it). `chroma/control.rs`'s new `native_op()`
-  is in a Chroma-owned file.
+  is in a Apelles-owned file.
 
 - **2026-09-08** — **Text/title clips (D-211/D-212/D-213)** · **zero
-  upstream-file edits.** The whole feature lands in Chroma-owned code: a new
+  upstream-file edits.** The whole feature lands in Apelles-owned code: a new
   `app/src-tauri/src/chroma/text.rs` (the font catalogue + `ab_glyph`
-  rasteriser), additions inside `app/src-tauri/src/chroma/edit.rs` (Chroma's
-  own module), `crates/chroma-timeline` and `packages/editor/*`. The upstream
+  rasteriser), additions inside `app/src-tauri/src/chroma/edit.rs` (Apelles'
+  own module), `crates/apelles-timeline` and `packages/editor/*`. The upstream
   footprint is the usual two lines and nothing else: `pub mod text;` in
   `app/src-tauri/src/chroma/mod.rs` and one `chroma::text::chroma_text_fonts,`
   entry in `lib.rs`'s `generate_handler!` — exactly the shape D-003 asks for.
@@ -1116,15 +1116,15 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   does not have.
 
 - **2026-09-08** — **Preview compositor + frame IPC payload (D-217)** · **zero
-  upstream-file edits.** Everything is inside Chroma-owned code:
+  upstream-file edits.** Everything is inside Apelles-owned code:
   `app/src-tauri/src/chroma/edit.rs` (`blend_layer_sampled`, the
   `timeline_frame` → `timeline_frame_image` + `encode_preview_jpeg` split, and
   `chroma_timeline_frame` now returning `tauri::ipc::Response` instead of a
   `String`), plus `packages/editor/*`. `app/src-tauri/src/chroma/project.rs`'s
-  own test was updated for the new return type — also a Chroma file. **No
+  own test was updated for the new return type — also a Apelles file. **No
   `lib.rs` change at all:** the command's `generate_handler!` entry is
   unchanged, since the macro does not name the return type. `app/src/
-  harness-main.tsx` (the Chroma-owned browser harness, see the 2026-09-08
+  harness-main.tsx` (the Apelles-owned browser harness, see the 2026-09-08
   D-210 entry above) had its `chroma_timeline_frame` stub switched to raw
   bytes to keep modelling the real backend. No new dependency, so `Cargo.toml`
   and the lock are untouched.
@@ -1135,7 +1135,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   `TransformOverlay.tsx`, `CanvasBoundary.tsx`, `useCanvasClipPick.ts`,
   `timelineStore.ts`, `useEditorControl.ts`) and `packages/player/*`
   (`Player.tsx`'s zoom prop set). The only file touched inside the fork is
-  `app/src/harness-main.tsx` — the Chroma-owned browser harness again (see the
+  `app/src/harness-main.tsx` — the Apelles-owned browser harness again (see the
   two entries above), and this time as a **bug fix, B-099**: the entry
   immediately above switched its `chroma_timeline_frame` stub to
   `atob(STUB_FRAME_BASE64)` but left the `data:image/jpeg;base64,` prefix on
@@ -1146,15 +1146,15 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   display-only and the compositor never learns about it.
 
 - **2026-09-08** — **Transitions (D-226/D-227) + B-103** · **zero upstream-file
-  edits.** Everything inside the fork is in Chroma's own `src/chroma/edit.rs`
+  edits.** Everything inside the fork is in Apelles' own `src/chroma/edit.rs`
   (the `VisibleLayer`-shaped layer list, the colour-plate arm and the
   `with_transition_alpha` multiply in `composite_video_frame`, the `pipe_slot`
   helper, and a new `preview_transition_tests` module). No `generate_handler!`
   line changed: the four `editor_*_transition` ops are frontend control-bridge
-  ops (`@chroma/editor`'s `useEditorControl.ts`), not Tauri commands, so
-  `lib.rs` is untouched. The rest is Chroma-owned crates
-  (`crates/chroma-timeline`'s `Transition`/`VisibleLayer`,
-  `crates/chroma-media`'s `PipeSlot::TrackTransition` +
+  ops (`@apelles/editor`'s `useEditorControl.ts`), not Tauri commands, so
+  `lib.rs` is untouched. The rest is Apelles-owned crates
+  (`crates/apelles-timeline`'s `Transition`/`VisibleLayer`,
+  `crates/apelles-media`'s `PipeSlot::TrackTransition` +
   `retain_track_slots` → `retain_pipe_slots`) and `packages/editor/*`
   (`timeline.ts`, `timelineExport.ts`, `editorExport.ts`, `TimelinePane.tsx`,
   the new `TimelineTransitions.tsx`) plus `mcp/server.py`. No new dependency:
@@ -1166,7 +1166,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
 
 - **2026-09-08** — **Italic/bold faces + a Bold/Italic style toggle (D-240)**
   · **zero upstream-file edits.** Everything lands inside the same
-  already-Chroma-owned `app/src-tauri/src/chroma/text.rs` D-212 created (10 new
+  already-Apelles-owned `app/src-tauri/src/chroma/text.rs` D-212 created (10 new
   `TEXT_FONTS` entries + `group`/`bold`/`italic` metadata on `FontFamily`/
   `ResolvedFont`), `packages/editor/*` (`textFonts.ts`'s new
   `composeFontStyleKey`/`fontStyleOf`/`baseFontFamilies`,
@@ -1181,12 +1181,12 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
 
 - **2026-09-09** — **The Colorist grade rendering on the Edit timeline
   (D-256)** · **one upstream-file line.** The whole bridge is a new
-  Chroma-owned module, `app/src-tauri/src/chroma/grade_lut.rs`, plus edits to
-  Chroma-owned files only (`chroma/edit.rs`'s compositor, `chroma/export.rs`'s
+  Apelles-owned module, `app/src-tauri/src/chroma/grade_lut.rs`, plus edits to
+  Apelles-owned files only (`chroma/edit.rs`'s compositor, `chroma/export.rs`'s
   `bake_primary_lut` — whose body moved into the new module rather than being
   copied — `chroma/project.rs`'s two `join("grades")` call sites, and
-  `chroma/mod.rs`'s module list). The Chroma crates take the rest
-  (`chroma-types`' new pure `lut3d` module, `chroma-project`'s new
+  `chroma/mod.rs`'s module list). The Apelles crates take the rest
+  (`apelles-types`' new pure `lut3d` module, `apelles-project`'s new
   `grade_dir`), as do `packages/editor/*` (the new `gradeLuts.ts`,
   `timelineExport.ts`, `editorExport.ts`, `EditorExportDialog.tsx`,
   `useEditorControl.ts`) and `mcp/server.py`.
@@ -1221,15 +1221,15 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   Everything else is inside our own `src/chroma/` or in the `crates/`:
   - `chroma/motion.rs` — the render now writes to a staging sibling and
     `rename`s it onto the destination, then drops any live decode pipe on that
-    path. Chroma-only file (created by D-046); no upstream code involved.
+    path. Apelles-only file (created by D-046); no upstream code involved.
   - `chroma/project.rs` — a new `chroma_media_refresh` command beside the
-    existing `chroma_media_*` family. Chroma-only file.
-  - `crates/chroma-media/src/decode_pipe.rs` — a new
+    existing `chroma_media_*` family. Apelles-only file.
+  - `crates/apelles-media/src/decode_pipe.rs` — a new
     `drop_pipes_for_path`; nothing existing changed.
-  - `crates/chroma-media/src/filmstrip.rs` — B-127: `KEYFRAME_MEM` now carries
+  - `crates/apelles-media/src/filmstrip.rs` — B-127: `KEYFRAME_MEM` now carries
     the `source_key` it was measured under. Behaviour change is strictly "a
     replaced file is re-measured instead of serving a stale answer."
-  - `crates/chroma-project/src/manifest.rs` — an optional
+  - `crates/apelles-project/src/manifest.rs` — an optional
     `MediaItem::motion_scene_id`, a `refresh_media` model function, and
     `thumb_is_stale`.
 

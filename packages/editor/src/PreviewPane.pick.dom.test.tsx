@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — permanent real-DOM regression coverage for canvas
+ * @apelles/editor — permanent real-DOM regression coverage for canvas
  * click-to-select (D-204, fixing B-085), built on `testUtils/pointerHarness.ts`
  * (D-142) exactly like `TimelinePane.marquee.dom.test.tsx`.
  *

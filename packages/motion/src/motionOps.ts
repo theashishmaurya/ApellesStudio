@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the Motion tab's MCP op registry, as a PURE function.
+ * @apelles/motion — the Motion tab's MCP op registry, as a PURE function.
  *
  * **What it is.** Every `motion_*` op an agent can call, in one place, built
  * by a plain factory (`createMotionOps`) that takes a context object and
@@ -15,7 +15,7 @@
  * its own**: every mutating op is a thin adapter over a REAL
  * `manifestEdit.ts` function — the same function the equivalent GUI gesture
  * calls — committed through the same `useMotionManifest().commit` an
- * Inspector edit uses, so an agent's edit lands on the SAME `@chroma/history`
+ * Inspector edit uses, so an agent's edit lands on the SAME `@apelles/history`
  * undo stack a human's does (D-140, restated in
  * `docs/notes/mcp-architecture.md`).
  *
@@ -149,8 +149,8 @@ import {
 } from './propCatalog';
 import { clampEaseCurve, resolveEaseCurve, type EaseCurve } from './easeCurve';
 import { layerLabel, type Selection } from './LayerList';
-import { sceneStartFrame, totalFrames } from '@chroma/motion-engine/src/engine/build';
-import type { Cam2dKey, Cam3dKey, Manifest, TransformKey } from '@chroma/motion-engine/src/engine/schema';
+import { sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/build';
+import type { Cam2dKey, Cam3dKey, Manifest, TransformKey } from '@apelles/motion-engine/src/engine/schema';
 import type { LoadState, RenderOutcome, SaveOutcome } from './useMotionManifest';
 
 /**
@@ -193,8 +193,8 @@ export interface MotionOpsContext {
    *
    *  **An injected accessor, not an import**, for the same D-039 layer reason
    *  `onRendered` (D-062) is a prop: answering "which Edit clips does this
-   *  scene feed" needs the media pool (`@chroma/bridge`) and the Edit timeline
-   *  (`@chroma/editor`), and a tab package must not depend on either. The
+   *  scene feed" needs the media pool (`@apelles/bridge`) and the Edit timeline
+   *  (`@apelles/editor`), and a tab package must not depend on either. The
    *  composition root owns both and computes this; this package only reads it.
    *  Same one value drives the GUI's per-scene badge and the
    *  `motion_get_edit_links` MCP tool, so the two can never disagree. */

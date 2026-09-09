@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Inspector's EQ response graph (D-237, roadmap item 27
+ * @apelles/editor — the Inspector's EQ response graph (D-237, roadmap item 27
  * "EQ response curve UI" — the half of D-224's per-clip parametric EQ that was
  * deliberately deferred).
  *

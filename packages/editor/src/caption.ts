@@ -1,13 +1,13 @@
-// @chroma/editor — subtitles / captions: the types and the shared layout
+// @apelles/editor — subtitles / captions: the types and the shared layout
 // arithmetic (D-229, `docs/notes/subtitles.md`).
 //
-// **What it is:** the TypeScript mirror of `chroma_timeline::caption` — the
+// **What it is:** the TypeScript mirror of `apelles_timeline::caption` — the
 // caption cue and style types the store and the Inspector work with, plus
 // `captionLayout`, the arithmetic that decides where every line of a cue
 // lands.
 //
 // **What it does NOT do:** no rendering, no file parsing, no ffmpeg. Reading
-// `.srt`/`.vtt` is the Rust side's `chroma_timeline::subtitle_import` (reached
+// `.srt`/`.vtt` is the Rust side's `apelles_timeline::subtitle_import` (reached
 // through the `chroma_import_subtitles` command) — deliberately ONE parser, not
 // one per language; compiling the export filtergraph is `timelineExport.ts`.
 //
@@ -18,7 +18,7 @@
 // must resolve the identical integers for the identical cue, and there is no
 // shared language between them. What keeps a mirror honest is that both sides
 // assert the SAME fixtures — see `layout_numbers_are_the_documented_arithmetic`
-// in `crates/chroma-timeline/src/caption.rs` and
+// in `crates/apelles-timeline/src/caption.rs` and
 // `captionLayout matches the Rust fixture exactly` in `caption.test.ts`. If
 // one side's rounding ever drifts, those two tests disagree.
 
@@ -47,7 +47,7 @@ export const DEFAULT_CAPTION_POSITION_Y = 0.82;
 
 export type CaptionAlign = 'left' | 'center' | 'right';
 
-/** How a caption is drawn — mirrors `chroma_timeline::caption::CaptionStyle`
+/** How a caption is drawn — mirrors `apelles_timeline::caption::CaptionStyle`
  *  field for field.
  *
  *  Every field is optional here and defaulted server-side, the same convention
@@ -84,7 +84,7 @@ export interface CaptionStyle {
   animation?: CaptionAnimation | null;
 }
 
-/** One caption — mirrors `chroma_timeline::caption::CaptionCue`.
+/** One caption — mirrors `apelles_timeline::caption::CaptionCue`.
  *
  *  The cue's TIMING is its clip's own `start_frame`/`duration`, not a field
  *  here: a caption is an ordinary `Clip` on a `'subtitle'` track, which is what
@@ -164,7 +164,7 @@ export function captionCps(text: string, secs: number): number | null {
 }
 
 /** One laid-out line, in composition pixels — mirrors
- *  `chroma_timeline::caption::CaptionLine`. */
+ *  `apelles_timeline::caption::CaptionLine`. */
 export interface CaptionLineGeometry {
   index: number;
   /** Top of this line's FONT LINE BOX — `drawtext`'s `y` under
@@ -176,7 +176,7 @@ export interface CaptionLineGeometry {
 }
 
 /** The resolved, font-independent geometry of one cue — mirrors
- *  `chroma_timeline::caption::CaptionLayout`. */
+ *  `apelles_timeline::caption::CaptionLayout`. */
 export interface CaptionLayoutResult {
   /** `drawtext`'s `fontsize`, in composition pixels. */
   font_px: number;

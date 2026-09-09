@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution regression tests for
+// @apelles/editor — REAL ffmpeg-execution regression tests for
 // `timelineExport.ts` (B-075, same session as B-074).
 //
 // `timelineExport.test.ts` only ever asserts on the generated argv STRINGS —
@@ -726,7 +726,7 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
     expect(right).toBeLessThan(-60);
     // …and the left is BOOSTED by ~3.01dB (20*log10(sqrt(2))), which is the
     // measured, deliberate cost of this app's 0dB-centre constant-power law
-    // (see `chroma_types::pan`). A law that merely turned the right channel
+    // (see `apelles_types::pan`). A law that merely turned the right channel
     // down would leave the left unchanged, which this window excludes.
     expect(left - source).toBeGreaterThan(2);
     expect(left - source).toBeLessThan(4);
@@ -852,7 +852,7 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
 // swapped coefficient, a wrong sign, or ffmpeg's own (measurably different)
 // shelf parameterisation would still produce a perfectly valid file at a
 // perfectly plausible overall level. So the numbers below are the SAME table
-// `chroma_types::eq`'s own tests assert against the live mixer's cascade —
+// `apelles_types::eq`'s own tests assert against the live mixer's cascade —
 // measured here through real ffmpeg instead. If either engine drifts, one of
 // the two fails.
 describe.skipIf(!FFMPEG_AVAILABLE)('per-clip parametric EQ — real frequency response (D-224)', () => {
@@ -866,8 +866,8 @@ describe.skipIf(!FFMPEG_AVAILABLE)('per-clip parametric EQ — real frequency re
     rmSync(dir, { recursive: true, force: true });
   });
 
-  /** The band set both engines measure — mirrors `chroma_types::eq::tests::
-   *  reference_band_set` and `chroma_media::audio::tests::reference_eq_bands`
+  /** The band set both engines measure — mirrors `apelles_types::eq::tests::
+   *  reference_band_set` and `apelles_media::audio::tests::reference_eq_bands`
    *  exactly. One of each interesting kind, at deliberately awkward numbers
    *  (nothing at a default, nothing round) so an accidental identity or a
    *  swapped argument cannot pass, plus a DISABLED band loud enough (+18 dB)
@@ -879,8 +879,8 @@ describe.skipIf(!FFMPEG_AVAILABLE)('per-clip parametric EQ — real frequency re
     { kind: 'low_shelf', freq_hz: 400, gain_db: 18, q: 0.9, enabled: false },
   ];
 
-  /** The exact same table `chroma_types::eq::tests::REFERENCE_RESPONSE_DB` and
-   *  `chroma_media::audio::tests` carry. Three engines, one set of numbers. */
+  /** The exact same table `apelles_types::eq::tests::REFERENCE_RESPONSE_DB` and
+   *  `apelles_media::audio::tests` carry. Three engines, one set of numbers. */
   const REFERENCE_RESPONSE_DB: Array<[number, number]> = [
     [50, -10.5923],
     [120, -1.1989],

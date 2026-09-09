@@ -1,5 +1,5 @@
 @import 'tailwindcss';
-/* D-042: shadcn/Base-UI token layer for @chroma/ui. Single definition of the
+/* D-042: shadcn/Base-UI token layer for @apelles/ui. Single definition of the
    shadcn token names, all aliased onto the existing --app-* / --color-* vars. */
 @import '../../packages/ui/src/styles.css';
 @source not "../src-tauri";

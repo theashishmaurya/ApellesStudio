@@ -1,12 +1,12 @@
 /**
- * @chroma/editor — the fade "rubber band" and its two draggable handles, drawn
+ * @apelles/editor — the fade "rubber band" and its two draggable handles, drawn
  * directly on a timeline clip's own body (D-207).
  *
  * **What it is.** The standard NLE fade affordance the owner asked for by
  * screenshot: a ramp from silence at the clip's edge up to unity, drawn across
  * the clip's waveform/filmstrip, with a small handle where the ramp meets the
  * flat unity line that you drag horizontally to set the fade's length.
- * Premiere, Resolve and Final Cut all have one; Chroma had the whole model,
+ * Premiere, Resolve and Final Cut all have one; Apelles had the whole model,
  * render path and MCP surface for it since D-147 but no way to author a fade
  * except the Inspector's numeric frame field.
  *
@@ -19,7 +19,7 @@
  *
  * **Rendered for EVERY clip, on video tracks and audio tracks alike**, because
  * that is what the model means: one fade pair drives picture and sound
- * together (`chroma_timeline::Clip::fade_in_frames`' own doc, and
+ * together (`apelles_timeline::Clip::fade_in_frames`' own doc, and
  * `set_clip_fade`'s — opacity on a video clip, gain on an audio one, both on a
  * video clip carrying its own embedded audio). Drawing the handle only on
  * audio-track clips would have made a feature the model deliberately unified

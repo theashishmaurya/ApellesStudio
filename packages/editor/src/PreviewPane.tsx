@@ -1,6 +1,6 @@
 /**
- * @chroma/editor — the preview pane (D-041, transport migrated to
- * `@chroma/player` — D-039 roadmap "Next" item 1).
+ * @apelles/editor — the preview pane (D-041, transport migrated to
+ * `@apelles/player` — D-039 roadmap "Next" item 1).
  *
  * A plain `<img>` fed by `chroma_timeline_frame(playhead)` (a lightweight
  * backend decode→jpeg — no grade, no compositing). Play is a wall-clock
@@ -127,7 +127,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Loader2 } from 'lucide-react';
-import { Player, useContentBox } from '@chroma/player';
+import { Player, useContentBox } from '@apelles/player';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
@@ -182,7 +182,7 @@ const PREVIEW_MIME = 'image/jpeg';
 
 // D-249 added a `headerActions` prop here (`Player`'s own `menu` slot) for
 // the Edit tab's Export dialog; D-251 moved Export again, out of this tab
-// entirely, to `@chroma/shell`'s chrome bar (see `EditorTab.tsx`'s own note
+// entirely, to `@apelles/shell`'s chrome bar (see `EditorTab.tsx`'s own note
 // at its `<PreviewPane />` call site and `Shell.tsx`'s module doc). Nothing
 // else ever used the slot, so the prop is removed rather than left with no
 // caller — `Player`'s own `menu` prop is untouched and still generally

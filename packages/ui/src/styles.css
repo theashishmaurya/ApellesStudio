@@ -1,5 +1,5 @@
 /**
- * @chroma/ui — the shadcn/Base-UI token layer (D-042).
+ * @apelles/ui — the shadcn/Base-UI token layer (D-042).
  *
  * This file is the SINGLE definition of the shadcn token names (`--color-background`,
  * `--color-primary`, …). It is `@import`ed by `app/src/styles.css` right after

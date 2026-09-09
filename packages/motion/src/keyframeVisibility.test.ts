@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { sample } from '@chroma/motion-engine/src/engine/sample';
-import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
+import { sample } from '@apelles/motion-engine/src/engine/sample';
+import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 import {
   layerKeyCount,
   layerActiveKeyCount,

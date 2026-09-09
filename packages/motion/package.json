@@ -1,19 +1,19 @@
 {
-  "name": "@chroma/motion",
+  "name": "@apelles/motion",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Chroma Motion tab (D-039 / D-046) — @remotion/player embed of @chroma/motion-engine's Animation composition + a JSON scene-manifest editor, validated against the engine's zod schema. Global Inspector Phase 2 (D-099): a real property panel bound to the layer-list selection. Depends on @chroma/ui for the `@chroma/ui/number-scrub` SUBPATH only (D-253) — never the barrel, which conflicts with @react-three/fiber's JSX augmentation; see src/Button.tsx.",
+  "description": "Apelles Motion tab (D-039 / D-046) — @remotion/player embed of @apelles/motion-engine's Animation composition + a JSON scene-manifest editor, validated against the engine's zod schema. Global Inspector Phase 2 (D-099): a real property panel bound to the layer-list selection. Depends on @apelles/ui for the `@apelles/ui/number-scrub` SUBPATH only (D-253) — never the barrel, which conflicts with @react-three/fiber's JSX augmentation; see src/Button.tsx.",
   "scripts": {
     "test": "vitest run"
   },
   "dependencies": {
-    "@chroma/history": "*",
-    "@chroma/inspector": "*",
-    "@chroma/motion-engine": "*",
-    "@chroma/ui": "*",
+    "@apelles/history": "*",
+    "@apelles/inspector": "*",
+    "@apelles/motion-engine": "*",
+    "@apelles/ui": "*",
     "@remotion/player": "4.0.519",
     "@tauri-apps/api": "^2.11.1",
     "lucide-react": "^1.33.0",

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sample } from '@chroma/motion-engine/src/engine/sample';
+import { sample } from '@apelles/motion-engine/src/engine/sample';
 import {
   selectedScene,
   selectedLayer,
@@ -55,7 +55,7 @@ import {
 } from './manifestEdit';
 import { measureWorldMap } from './canvasGeometry';
 import type { Selection } from './LayerList';
-import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
+import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 
 describe('selectedScene / selectedLayer / selectedCamera2d / selectedCamera3d', () => {
   it('resolves a real scene by index', () => {

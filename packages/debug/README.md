@@ -1,4 +1,4 @@
-# @chroma/debug
+# @apelles/debug
 
 **Internal debug tooling for the running app** (D-219) — the `debug_*`
 control-server op registry. It lets an agent (or a developer at an HTTP
@@ -43,9 +43,9 @@ MCP as tools of the same name.
 | `debug_set_sources_panel` | `{open: bool}` — the shell's docked Sources column |
 | `debug_set_editor_inspector` | `{open: bool}` — the Edit tab's Inspector column |
 | `debug_set_inspector_tab` | `{tab: 'video'\|'audio'}` — that Inspector's own Video/Audio tab (D-246); only one is on screen at a time, so set it before screenshotting or dumping the panel |
-| `debug_set_popover_open` | `{id, open: bool}` — any registered Edit-tab popover/dialog (D-252, `@chroma/editor`'s `panelRegistry.ts`): `caption-panel`, `canvas-settings`, `export-dialog` today. One op for every popover rather than a bespoke one per popover — see D-252 for why. |
+| `debug_set_popover_open` | `{id, open: bool}` — any registered Edit-tab popover/dialog (D-252, `@apelles/editor`'s `panelRegistry.ts`): `caption-panel`, `canvas-settings`, `export-dialog` today. One op for every popover rather than a bespoke one per popover — see D-252 for why. |
 | `debug_dom_tree` | `{selector?, maxDepth?, maxNodes?, styles?, includeHidden?, text?}` → bounded JSON of the real DOM: hierarchy, semantic attributes, `getBoundingClientRect()`, chosen computed styles |
-| `debug_frame_timing` | `{limit?, reset?}` → the preview's real rAF/paint intervals (see `@chroma/editor`'s `previewTiming.ts`) |
+| `debug_frame_timing` | `{limit?, reset?}` → the preview's real rAF/paint intervals (see `@apelles/editor`'s `previewTiming.ts`) |
 
 **Every write calls the same store action the human's own control calls** —
 `useShellStore.setActiveTab` is literally what the tab button's `onClick`
@@ -63,7 +63,7 @@ between them.
 
 ## Boundary
 
-- **Depends on** `@chroma/shell` (the tab/Sources store) and `@chroma/editor`
+- **Depends on** `@apelles/shell` (the tab/Sources store) and `@apelles/editor`
   (the Inspector flag, the preview timing buffers) — one way only, so this
   package sits *above* the tab packages and below the app.
 - **Does not** import the app (`app/src`). That is why the Colorist tab's own
@@ -91,4 +91,4 @@ by name rather than silently accepted. The other ops are verified live
 against a running app; the loop and its results are recorded in
 `docs/notes/debug-tooling.md`.
 
-`npm run test --workspace @chroma/debug`, or `npm test` from the repo root.
+`npm run test --workspace @apelles/debug`, or `npm test` from the repo root.

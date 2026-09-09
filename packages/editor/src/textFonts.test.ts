@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — unit tests for the D-240 Bold/Italic style-axis helpers
+ * @apelles/editor — unit tests for the D-240 Bold/Italic style-axis helpers
  * (`baseFontFamilies`, `fontStyleOf`, `composeFontStyleKey`).
  *
  * Pure, no Tauri, no DOM — these three functions are plain lookups over a

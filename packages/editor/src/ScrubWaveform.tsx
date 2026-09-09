@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the viewer's audio waveform strip (D-232, roadmap item 27:
+ * @apelles/editor — the viewer's audio waveform strip (D-232, roadmap item 27:
  * "Audio scrubbing + waveform toggle", ref `scratch/resolve-reference/scrubbing.jpg`).
  *
  * What it is: the *waveform toggle* half of D-232 — a thin, full-width strip

@@ -2,18 +2,18 @@
  * Tests for `motion-engine`'s shared `interpolateKeys` (D-159, Phase 4 —
  * extracted verbatim from `Camera.tsx`'s own pre-D-159 inline sort/clamp/
  * ease/interpolate logic, see that file's own doc comment). Lives in
- * `@chroma/motion`'s test suite, not `@chroma/motion-engine`'s, because the
+ * `@apelles/motion`'s test suite, not `@apelles/motion-engine`'s, because the
  * engine package has no `test` script at all (confirmed pre-existing by
  * D-155/D-157's own decision entries) — the SAME cross-package import
  * pattern `canvasGeometry.test.ts`/`manifestEdit.test.ts` already use for
- * `@chroma/motion-engine`'s `sample`/`schema` types, applied here to a pure
+ * `@apelles/motion-engine`'s `sample`/`schema` types, applied here to a pure
  * function instead. This is the load-bearing test coverage for BOTH
  * consumers this phase gives the function (`Camera.tsx`'s x/y/zoom, and
  * `Video.tsx`'s per-layer transform-key x/y/scale/rot/opacity) — a bug here
  * would silently mis-animate every camera move AND every keyed layer.
  */
 import { describe, it, expect } from 'vitest';
-import { interpolateKeys, type KeyframeBase } from '@chroma/motion-engine/src/lib/interpolateKeys';
+import { interpolateKeys, type KeyframeBase } from '@apelles/motion-engine/src/lib/interpolateKeys';
 
 type ValKey = KeyframeBase & { val?: number };
 const FIELDS = ['val'] as const;

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the real `editor_export` compiler+runner (D-198,
+ * @apelles/editor — the real `editor_export` compiler+runner (D-198,
  * `docs/notes/export-dialog-queue.md`), extracted out of `useEditorControl
  * .ts`'s `OPS` map so the SAME logic backs both the MCP/control-bridge
  * `editor_export` op AND the Edit tab's own GUI Export dialog + queue
@@ -21,7 +21,7 @@
  *   queue's own runner, which already has a job's frozen `args`.
  */
 import { invoke } from '@tauri-apps/api/core';
-import { useMediaPoolStore } from '@chroma/bridge';
+import { useMediaPoolStore } from '@apelles/bridge';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineFps, transitionClipIndices, type Timeline } from './timeline';

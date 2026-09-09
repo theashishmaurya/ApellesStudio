@@ -1,4 +1,4 @@
-// @chroma/motion — unit tests for the keyframe timeline's reimplemented
+// @apelles/motion — unit tests for the keyframe timeline's reimplemented
 // tick-density algorithm (D-162, Phase 5b part 2). See `timelineRuler.ts`'s
 // module doc comment for why this is a local reimplementation of
 // `packages/editor/src/ruler.ts`'s algorithm, not an import of it — the

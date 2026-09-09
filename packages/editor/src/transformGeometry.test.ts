@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for TransformOverlay's pure geometry (D-136,
+// @apelles/editor — unit tests for TransformOverlay's pure geometry (D-136,
 // Phase 1 of `docs/notes/on-canvas-transform.md`). See `transformGeometry.ts`'s
 // module doc for why this is a separate, DOM-free file.
 import { describe, expect, it } from 'vitest';

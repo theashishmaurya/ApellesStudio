@@ -58,7 +58,7 @@ different reasons, and the difference is worth stating precisely:
 | Style lives on | the clip | the **track**, with a per-cue override |
 | Text | single line (enforced) | multi-line (required) |
 
-The load-bearing row is **compositing rule**. Chroma's video-track index *is*
+The load-bearing row is **compositing rule**. Apelles' video-track index *is*
 its z-order (`resolve_visible_video_layers_at`). If captions were clips on
 video tracks, a subtitle track's position in the track list would mean
 "compositing priority against the picture" — so inserting a caption lane
@@ -243,9 +243,9 @@ just a missing font file. Tracked below.
 
 | Layer | File | What |
 |---|---|---|
-| L2 model | `crates/chroma-timeline/src/caption.rs` | `CaptionCue`, `CaptionStyle`, `CaptionLayout` — the layout spec |
-| L2 model | `crates/chroma-timeline/src/subtitle_import.rs` | the `.srt`/`.vtt` parser and writer; `cues_to_clips` |
-| L2 model | `crates/chroma-timeline/src/lib.rs` | `TrackKind::Subtitle`, `Track::caption_style`, `Clip::caption`, `resolve_visible_captions_at` |
+| L2 model | `crates/apelles-timeline/src/caption.rs` | `CaptionCue`, `CaptionStyle`, `CaptionLayout` — the layout spec |
+| L2 model | `crates/apelles-timeline/src/subtitle_import.rs` | the `.srt`/`.vtt` parser and writer; `cues_to_clips` |
+| L2 model | `crates/apelles-timeline/src/lib.rs` | `TrackKind::Subtitle`, `Track::caption_style`, `Clip::caption`, `resolve_visible_captions_at` |
 | media | `app/src-tauri/src/chroma/caption_render.rs` | the `ab_glyph` rasteriser |
 | media | `app/src-tauri/src/chroma/edit.rs` | `draw_captions_onto` — the last compositing pass |
 | shell | `app/src-tauri/src/chroma/subtitles.rs` | `chroma_import_subtitles` / `chroma_export_subtitles` |

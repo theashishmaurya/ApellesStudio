@@ -30,8 +30,8 @@ changed the file on disk, and the clip kept showing the old picture.
 
 ### Q1 — how a clip references media; is there provenance?
 
-`chroma_timeline::Clip` carries `source_path` (ground truth) and a nullable
-`media_id` back-link into the pool. `chroma_project::MediaItem` carries the file
+`apelles_timeline::Clip` carries `source_path` (ground truth) and a nullable
+`media_id` back-link into the pool. `apelles_project::MediaItem` carries the file
 and its probed `video` facts. **Nothing anywhere records where a file came
 from.**
 
@@ -180,12 +180,12 @@ what the write actually does.
 
 ## 4. Layering
 
-`@chroma/motion` may not import `@chroma/bridge` or `@chroma/editor` (D-039:
+`@apelles/motion` may not import `@apelles/bridge` or `@apelles/editor` (D-039:
 app → tabs → services → domain). So:
 
 - the composition root computes the link map and passes it down, exactly as
   D-062 made `onRendered` a prop;
-- the link *types* live in `@chroma/motion` (it is the consumer and defines the
+- the link *types* live in `@apelles/motion` (it is the consumer and defines the
   shape), and `computeEditLinks`' parameters are **structural** — the minimum
   fields it reads — so it imports nothing across a layer while remaining fully
   type-checked at the call site;

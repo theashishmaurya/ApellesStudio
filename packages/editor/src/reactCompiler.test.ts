@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — a build-quality guard, not a behavior test (D-201).
+ * @apelles/editor — a build-quality guard, not a behavior test (D-201).
  *
  * The React Compiler (D-091) auto-memoizes a component only when it can
  * *preserve* every hand-written `useMemo`/`useCallback` already in it. A
@@ -61,7 +61,7 @@ async function bailoutsFor(file: string): Promise<string[]> {
   return [...new Set(reasons)];
 }
 
-describe('React Compiler coverage across @chroma/editor (D-201)', () => {
+describe('React Compiler coverage across @apelles/editor (D-201)', () => {
   it('found source files to check', () => {
     expect(SOURCE_FILES.length).toBeGreaterThan(10);
   });

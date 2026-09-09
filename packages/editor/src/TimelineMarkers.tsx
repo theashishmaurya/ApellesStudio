@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — timeline markers: the ruler flag strip, the marker editor
+ * @apelles/editor — timeline markers: the ruler flag strip, the marker editor
  * popover and the jump-to list (D-222, roadmap item 27).
  *
  * **What it is.** The human half of `Timeline.markers` (`timeline.ts`): a
@@ -42,7 +42,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@chroma/ui';
+} from '@apelles/ui';
 
 import { MARKER_COLORS, markersOf, type Marker, type Timeline } from './timeline';
 import { formatTimecode, RULER_HEIGHT_PX } from './ruler';

@@ -18,7 +18,7 @@ inline and in D-129/D-138.
 
 ## The real gap, precisely (as it was before D-129)
 
-Chroma's model had exactly two states, both all-or-nothing:
+Apelles' model had exactly two states, both all-or-nothing:
 - **Audio embedded inside a video clip** (D-050) — inseparable. Always plays
   together, can never be independently trimmed, moved, or selected. There was
   no "audio half" to address at all; not a second `Clip`, just a stream
@@ -40,7 +40,7 @@ on a linked A1.**
   Tool on a linked clip "cuts both tracks at once"; to cut only one you
   "unlink the clip first." Premiere additionally has a **global Linked
   Selection toggle** plus an Option/Alt per-gesture override — real UI surface
-  Chroma does not have.
+  Apelles does not have.
 - **DaVinci Resolve.** "When clips are linked, any changes made to one (such
   as **moving, trimming, or deleting**) will automatically apply to the
   other." Unlink via right-click → *Unlink Clips*, ⌘⇧L, or the chain-link
@@ -94,7 +94,7 @@ audio half. `unlink` is the way back to embedded playback.
 
 ### Creating the pair — the drop path
 
-`@chroma/editor`'s `linkedClipsFromDraggedMedia` builds **two** `Clip`s from
+`@apelles/editor`'s `linkedClipsFromDraggedMedia` builds **two** `Clip`s from
 one dragged pool item when the source has audio, sharing one `link_group`;
 `applyOp`'s `add_clip` op takes the audio half as `linkedAudio` and places it
 itself. **One op, not two chained ones** — one history entry, one undo, and
@@ -118,7 +118,7 @@ so which entry point created a clip never changes whether it has an audio half.
 D-097 explicitly flagged that `MediaItem`/`DraggedMedia` carried **no**
 audio-vs-video signal and that fixing it needed "a real backend model change."
 That change is here: `has_audio: Option<bool>` on `MediaVideoInfo`, set at
-import, surfaced through `MediaItemDto` → `@chroma/bridge`'s `MediaItem` →
+import, surfaced through `MediaItemDto` → `@apelles/bridge`'s `MediaItem` →
 the Sources-panel drag payload. `None` is a real "never probed" sentinel (a
 bare `bool` would read every pre-D-129 pool item as *silent*), resolved once
 by `backfill_has_audio` on the next `chroma_media_list` and persisted.
@@ -213,7 +213,7 @@ references rather than invented: deleting one member deletes the whole group.
   sync-locked.** It rejects rather than guessing at room that was never made.
   Turning sync-lock back on, or closing the gap manually, both work today.
 - **Premiere's global Linked-Selection toggle + per-gesture Option/Alt
-  override.** Real UI surface Chroma has nowhere else; option (b) is a
+  override.** Real UI surface Apelles has nowhere else; option (b) is a
   strictly smaller increment and this doc's own recommendation —
   **re-confirmed by D-138, not just carried forward unexamined**: no new
   evidence surfaced that the unlink/relink dance is too slow in the owner's

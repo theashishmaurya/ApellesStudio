@@ -12,7 +12,7 @@ the first consumer of it.
 - **Where** — spatial: what's in frame, exactly where, tracked across frames — reframe
   to vertical, multicam sync, "find every shot with two people," masking.
 
-An editor needs both. The good news: **Chroma already has half of this stack**, just
+An editor needs both. The good news: **Apelles already has half of this stack**, just
 under-exposed.
 
 ## What's already built (the "where" half)
@@ -61,7 +61,7 @@ Re-checked against the actual `allenai/Molmo2-8B` model card, not the blog post:
 > subject to academic and non-commercial research use only."**
 
 That's the model author stating the intended use, not a licence ambiguity to
-"verify later." **Chroma does not ship, bundle, or auto-download Molmo 2, and it is
+"verify later." **Apelles does not ship, bundle, or auto-download Molmo 2, and it is
 not the default sidecar model.** Shipping it as part of an OSS project's default code
 path is redistribution + implicitly encouraging every downstream user (including any
 future commercial use) toward a non-cleared use — that's the actual risk, separate
@@ -69,14 +69,14 @@ from any one person's own local experimentation.
 
 **The middle path:** document it as an optional, self-configured model — "point the
 sidecar at Molmo 2 yourself if you want to try it" — same shape as any BYO-model
-config. Whoever opts in owns that compliance call; Chroma's defaults and its other
+config. Whoever opts in owns that compliance call; Apelles' defaults and its other
 users aren't implicated.
 
 **Whether it's even worth opting into, for this specific job:** Molmo 2's benchmarked
 edge over other open models (and even over Gemini 3 Pro) is on **video pointing and
-tracking** — spatial, "where is this object." Chroma's SAM 2 already answers "where,
+tracking** — spatial, "where is this object." Apelles' SAM 2 already answers "where,
 exactly" at pixel precision, which is a *higher* bar than Molmo 2's box/point output.
-Molmo 2 would be an incremental upgrade on a capability Chroma already has a working
+Molmo 2 would be an incremental upgrade on a capability Apelles already has a working
 answer for. **Not needed for v1.**
 
 (No published VRAM/speed numbers from Ai2 at all, no MLX port — GGUF-quantized only.
@@ -132,7 +132,7 @@ not before discussing it.
 ## What this layer unlocks (search is just the first consumer)
 
 - **Search**: "find where I was driving and said X" — Qwen3-VL (when/what) ∩ whisper
-  transcript (said X) → `chroma-timeline::reorder` (already built, D-041) to act on it.
+  transcript (said X) → `apelles-timeline::reorder` (already built, D-041) to act on it.
 - **B-roll auto-tagging** (Eddie AI ships this as a headline feature — real demand
   proof) — Qwen3-VL captions each pool item.
 - **Shot classification** — interview vs. B-roll vs. establishing shot.
@@ -150,7 +150,7 @@ not before discussing it.
 2. Query → intersect transcript hits (audio) with grounding-index hits (vision) — pure
    data, no new model needed for the intersection.
 3. A query needing cloud quality (opt-in) asks first, per the Explicit-Permission rules.
-4. Result → `chroma-timeline::reorder` / insert — **already built**, D-041.
+4. Result → `apelles-timeline::reorder` / insert — **already built**, D-041.
 
 ## Where it sits
 

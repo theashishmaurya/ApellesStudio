@@ -1,4 +1,4 @@
-// @chroma/editor — the adjustment-clip MODEL and OP layer (D-230).
+// @apelles/editor — the adjustment-clip MODEL and OP layer (D-230).
 //
 // The pixel-level claims live in the two real-render suites
 // (`timelineExportAdjustment.ffmpeg.test.ts` and `chroma::edit`'s

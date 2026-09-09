@@ -1,11 +1,11 @@
 /**
- * @chroma/editor — the Edit tab (D-041 MVP; timeline switcher + drag-to-track
+ * @apelles/editor — the Edit tab (D-041 MVP; timeline switcher + drag-to-track
  * D-046 pass 3).
  *
  * Single-video-track timeline of the open project's shots, scrub + play with a
  * lightweight decode→jpeg preview (independent of the Colorist render path),
  * and basic edits (reorder / trim / split / remove / add via drag-from-Sources)
- * persisted in the `.chroma` project via the `chroma-timeline` crate. A
+ * persisted in the `.chroma` project via the `apelles-timeline` crate. A
  * project can hold several named timelines (D-045); `TimelineSwitcher`
  * (D-046) is the first UI for that.
  *
@@ -39,7 +39,7 @@ export { PreviewPane } from './PreviewPane';
  *  `docs/BUGS.md`). */
 export { EditorInspectorPanel } from './EditorInspectorPanel';
 /** D-263 — the Edit tab's library rail and its docked library column. Both are
- *  mounted by the composition root (`app/src/Root.tsx`) into `@chroma/shell`'s
+ *  mounted by the composition root (`app/src/Root.tsx`) into `@apelles/shell`'s
  *  per-tab `libraryRail` / `libraryPanel` slots rather than by `EditorTab`
  *  itself, because they must sit to the LEFT of the shell-level Sources
  *  column; `Shell` renders whatever node it is handed and still imports
@@ -50,7 +50,7 @@ export { EditLibraryPanel } from './EditLibraryPanel';
 /** D-263 — the library-mode model, exported for the same reason the clip
  *  Inspector's tab model below is: `Root.tsx` reads the active mode to decide
  *  whether the Edit tab is taking the shell's docked column over, and
- *  `@chroma/debug` reports it, both against this one list rather than a
+ *  `@apelles/debug` reports it, both against this one list rather than a
  *  restated copy. */
 export {
   EDIT_LIBRARY_MODES,
@@ -61,7 +61,7 @@ export {
 export type { EditLibraryMode } from './editLibrary';
 export { TimelineSwitcher } from './TimelineSwitcher';
 export { useEditorTimelineStore } from './timelineStore';
-// D-246 — the clip Inspector's tab model. Exported for `@chroma/debug`'s
+// D-246 — the clip Inspector's tab model. Exported for `@apelles/debug`'s
 // `debug_set_inspector_tab`, which validates against the same list the panel
 // renders rather than restating it.
 export {
@@ -74,21 +74,21 @@ export {
 } from './clipInspectorTabs';
 export type { ClipInspectorTab } from './clipInspectorTabs';
 export type { TimelineSummary } from './timelineStore';
-// D-252 — the popover/dialog panel registry. Exported for `@chroma/debug`'s
+// D-252 — the popover/dialog panel registry. Exported for `@apelles/debug`'s
 // `debug_set_popover_open`, which validates against the same id list the
 // panels themselves register with via `usePanelOpen` rather than restating
 // it. See `panelRegistry.ts`'s module doc for why a shared map + one op
 // generalises D-219/D-246's own bespoke-field pattern to N popovers.
 export { PANEL_IDS, parsePanelId, usePanelOpen } from './panelRegistry';
 export type { PanelId } from './panelRegistry';
-/** D-252 exported `CaptionPanel` here for `@chroma/debug`'s DOM proof that
+/** D-252 exported `CaptionPanel` here for `@apelles/debug`'s DOM proof that
  *  `debug_set_popover_open` opens a REAL popover. D-263 docked that content
  *  (`CaptionLibrary.tsx`), so the popover — and its `caption-panel` panel id —
  *  are gone; that proof test now drives `CanvasSettingsPopover`, which is
  *  exported for exactly the same reason and nothing else. */
 export { CanvasSettingsPopover } from './CanvasSettingsPopover';
 /** D-219 (debug tooling piece 5) — the preview's own frame-timing ring
- *  buffers. Exported for `@chroma/debug`'s `debug_frame_timing` op, which
+ *  buffers. Exported for `@apelles/debug`'s `debug_frame_timing` op, which
  *  reads them; `PreviewPane` writes them. Both writes and the reader are
  *  compile-time gated out of a production build (see `previewTiming.ts`), so
  *  this export tree-shakes away with them. */

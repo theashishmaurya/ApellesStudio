@@ -29,7 +29,7 @@ boundary than sending data to a third party — it's still infrastructure *you* 
 Needs a real abstraction — Gemini doesn't speak the sidecar's protocol and can't do
 everything SAM2/YOLO do locally (pixel masks vs. boxes).
 
-- A `chroma-ai` crate (already reserved in `architecture-lock.md`'s layer table) defines
+- A `apelles-ai` crate (already reserved in `architecture-lock.md`'s layer table) defines
   **capability traits, not vendor calls**: `trait VisionProvider { fn segment(...); fn
   caption(...); }`, `trait VideoUnderstanding { fn ground(query) -> [(start,end,confidence)];
   }`.
@@ -52,9 +52,9 @@ build this as a separate initiative, it's the same work.
 
 ## 3. An agent that lives *inside* the app, as chat — not just MCP from outside
 
-The bigger reframe: today the only "agent" driving Chroma is external — Claude Code (or
+The bigger reframe: today the only "agent" driving Apelles is external — Claude Code (or
 any MCP client) calling the 38+ MCP tools from a terminal. The idea: a chat panel *inside*
-Chroma itself, talking directly to a model (Gemini, Claude, GPT — user's choice), that can
+Apelles itself, talking directly to a model (Gemini, Claude, GPT — user's choice), that can
 also act on the app.
 
 The hard part is already done: `D-020`'s control server + MCP bridge, `D-032`'s agent
@@ -74,7 +74,7 @@ new one.
 - **A `ChatProvider` trait** (separate from the vision-provider trait in §2) —
   `GeminiProvider`, `ClaudeProvider`, etc. — so the chat brain isn't locked to one vendor
   either. User brings their own API key (Keychain), calls go straight from the app to the
-  vendor — no Chroma-run backend/proxy, keeping this out of "hosting a service" territory
+  vendor — no Apelles-run backend/proxy, keeping this out of "hosting a service" territory
   and in keeping with local-first even for a cloud-model chat.
 - **UI: a chat panel docked in the shell**, not inside one tab — actions can span
   Colorist/Editor/Motion. Every tool call it makes shows up in the *same* D-032 activity

@@ -1,7 +1,7 @@
 # Internal debug tooling — for agent/dev use, never shipped
 
 Owner, 2026-09-08: build a real set of internal tools that let an agent (a future
-Claude Code session) inspect and drive the running Chroma app directly — screenshots,
+Claude Code session) inspect and drive the running Apelles app directly — screenshots,
 UI state open/close/select, pixel-level inspection — instead of relying on the owner's
 own eyes and manual screenshots every time a UI bug needs verifying. This doc is the
 durable tracker for that initiative; individual pieces still get their own `D-NNN`/
@@ -11,7 +11,7 @@ bug entries as they land.
 of a production build** — never a runtime flag, never "just don't call it in prod,"
 a real compile-time gate (`#[cfg(debug_assertions)]`, a Cargo feature, or equivalent)
 so there is no path for one of these to ship. These are for us, not for an end user's
-build of Chroma.
+build of Apelles.
 
 **How that gate is actually implemented** (D-219; the Rust half was missing until
 then — **B-100**):
@@ -25,7 +25,7 @@ then — **B-100**):
 - **Frontend.** `import.meta.env.DEV` — Vite substitutes the literal `false` in a
   production build — **plus** a dynamic `import()` of the op registry inside that
   branch, so Rollup drops the whole chunk rather than merely leaving it unreachable.
-  `@chroma/debug`'s barrel exports exactly one value (the hook) so nothing else is in
+  `@apelles/debug`'s barrel exports exactly one value (the hook) so nothing else is in
   the app's static import graph.
 - **Checked, not assumed.** See "Gate verification" at the bottom for the real
   `vite build` + bundle grep.
@@ -64,7 +64,7 @@ several rounds of the owner's own screenshots before an agent could even confirm
    **Extended (D-252, 2026-09-08): `debug_set_popover_open({id, open})`** — one
    generic op for any registered Edit-tab popover/dialog, backed by
    `useEditorTimelineStore`'s `openPanels: Record<string, boolean>` map and
-   `@chroma/editor`'s `panelRegistry.ts` (`PANEL_IDS`, `parsePanelId`,
+   `@apelles/editor`'s `panelRegistry.ts` (`PANEL_IDS`, `parsePanelId`,
    `usePanelOpen`). Landed because a repo sweep found the D-219 bespoke-field
    shape (one store field + one op + one snapshot line per popover) does not
    scale: `CaptionPanel`'s caption-preset-library popover (the case that
@@ -85,7 +85,7 @@ several rounds of the owner's own screenshots before an agent could even confirm
    caption style library is docked content now (`CaptionLibrary.tsx` inside the
    Edit tab's library column), so there is no open flag to drive. The same pass
    removed `EditLibraryRail`'s own uncontrolled rail popovers, for the same
-   reason, and `@chroma/debug`'s real-DOM proof for this op now drives
+   reason, and `@apelles/debug`'s real-DOM proof for this op now drives
    `CanvasSettingsPopover`. `debug_get_ui_state` gained `editor.libraryMode` /
    `editor.libraryModes` in their place: which library the docked left column
    is showing (`sources` = the shell's shared media pool), because a screenshot
@@ -94,7 +94,7 @@ several rounds of the owner's own screenshots before an agent could even confirm
    **Remaining gap, deliberately:** the **Colorist tab's** own panel/visibility/
    settings state (`app/src/store/useUIStore.ts` — `setPanel`, `uiVisibility`,
    `isSettingsOpen`). It lives in the vendored fork, i.e. the *app* layer, and
-   `@chroma/debug` is a package; reaching up would invert D-039's dependency
+   `@apelles/debug` is a package; reaching up would invert D-039's dependency
    direction. Closing it properly means either moving that UI state into a package or
    having the app register its own named ops into the registry — a real design call,
    not a line of code, so it is stated here rather than half-done. Also still open:
@@ -116,7 +116,7 @@ several rounds of the owner's own screenshots before an agent could even confirm
    **Tauri has no eval-with-result** — `WebviewWindow::eval()` returns `Result<()>`
    in 2.11 (checked, not assumed), so the choice was "a custom event bridge around an
    untyped JS string" vs. "an ordinary frontend op." It is a frontend op
-   (`@chroma/debug`'s `domTree.ts`), which is what D-020 already prescribes and which
+   (`@apelles/debug`'s `domTree.ts`), which is what D-020 already prescribes and which
    makes the serialiser real TypeScript with a jsdom unit suite.
    **Bounded three ways** (selector root, `maxDepth` 12, `maxNodes` 300/ceiling 5000,
    plus per-node class/text caps) and **every bound reports itself** —
@@ -285,7 +285,7 @@ The `identifier` override is what `tauri-plugin-single-instance` keys on — wit
 the second launch just focuses the first app's window and exits. `--no-watch` stops the
 dev watcher from rebuilding under the running instance. A worktree also needs its own
 `node_modules` (`npm install` in the worktree), or Node resolution walks up and serves
-the *shared* checkout's `@chroma/*` — see D-216's own note about that exact trap.
+the *shared* checkout's `@apelles/*` — see D-216's own note about that exact trap.
 
 **Then always kill it by PID**, never by process name: `pkill RapidRAW` or
 `pkill node` will take the owner's app and dev server down with it, which has
@@ -319,7 +319,7 @@ checked is how B-100 happened in the first place.
   setter — is present (**2**), the same absent-op/present-action shape as
   every check above. Still one `index-*.js` chunk, no separate `debugOps` or
   `panelRegistry` chunk.
-- **Rust.** `cargo check -p RapidRAW --release --lib` compiles clean with the whole
+- **Rust.** `cargo check -p apelles --release --lib` compiles clean with the whole
   `debug_capture` module and both commands cfg'd out (release turns `debug_assertions`
   off), which also proves nothing outside the gate still references them.
 

@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for the ruler's tick-interval + timecode
+// @apelles/editor — unit tests for the ruler's tick-interval + timecode
 // formatting logic (D-058, item 4). Pure functions, real inputs/outputs —
 // see `ruler.ts`'s module doc for why this exists as a separate,
 // independently-testable file.

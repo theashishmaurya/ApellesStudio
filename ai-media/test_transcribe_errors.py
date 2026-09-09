@@ -2,8 +2,8 @@
 """B-119 — a source with no audio must fail with a SENTENCE, not a subprocess dump.
 
 What this checks, on a real file synthesized with `ffmpeg` at run time (the same
-"generate the fixture, don't commit a binary" convention `chroma-media`'s own
-`synth_test_tone` and `chroma-project`'s `make_test_clip` use):
+"generate the fixture, don't commit a binary" convention `apelles-media`'s own
+`synth_test_tone` and `apelles-project`'s `make_test_clip` use):
 
   1. `transcribe.extract_audio` on a video-only file raises `UserFacingError`
      whose message names the file and says what is wrong — and leaks none of

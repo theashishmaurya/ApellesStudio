@@ -58,7 +58,7 @@
 //! stored on the segment's start key rather than as an in/out handle pair per
 //! key, and why [`interpolate`] deliberately ignores it.
 
-use chroma_types::EaseCurve;
+use apelles_types::EaseCurve;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 

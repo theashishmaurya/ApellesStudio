@@ -1,5 +1,5 @@
 {
-  "$comment": "Chroma agent eval harness — the task set. A task is data. See eval/README.md and docs/notes/eval-harness.md. Frames live in eval/fixtures/ (regenerate with node eval/fixtures/_gen.mjs). goal.type: reference | targetScopes | rubric. Checks use the metric vocabulary in eval/score.mjs. All coords are in the 480x270 fixture pixel space.",
+  "$comment": "Apelles agent eval harness — the task set. A task is data. See eval/README.md and docs/notes/eval-harness.md. Frames live in eval/fixtures/ (regenerate with node eval/fixtures/_gen.mjs). goal.type: reference | targetScopes | rubric. Checks use the metric vocabulary in eval/score.mjs. All coords are in the 480x270 fixture pixel space.",
   "tasks": [
     {
       "id": "neutralise_cast",

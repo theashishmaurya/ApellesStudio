@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — which tabs the clip Inspector offers, and which one is
+ * @apelles/editor — which tabs the clip Inspector offers, and which one is
  * actually showing (D-246).
  *
  * **What it is.** The whole tab model for `ClipInspectorPanel`, as pure
@@ -78,7 +78,7 @@ export function resolveClipInspectorTab(
 }
 
 /** Parse an untyped tab id (the `debug_set_inspector_tab` op's argument), or
- *  say why it is not one. Kept here rather than in `@chroma/debug`'s
+ *  say why it is not one. Kept here rather than in `@apelles/debug`'s
  *  `uiState.ts` so the accepted set has exactly one definition — the same
  *  reason `SHELL_TABS` lives next to its own store. */
 export function parseClipInspectorTab(raw: unknown): ClipInspectorTab | null {

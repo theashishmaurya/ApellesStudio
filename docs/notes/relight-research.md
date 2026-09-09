@@ -17,7 +17,7 @@ capability; the tech has moved since D-013 was written.
 - **RelightVid** (`Aleafy/RelightVid`, arXiv 2501.16330) — **the video successor to
   IC-Light.** Adds temporal layers + a video lighting dataset (LightAtlas), keeps
   IC-Light's albedo-preserving prior. Conditions on a **background video**, text, or an
-  **environment map**. Open source. This is the leading candidate for a Chroma relight
+  **environment map**. Open source. This is the leading candidate for a Apelles relight
   bake.
 - **Light-A-Video** (`bujiazi/light-a-video.github.io`, arXiv 2502.08590) —
   **training-free** video relighting via progressive light fusion over an image
@@ -50,7 +50,7 @@ capability; the tech has moved since D-013 was written.
 
 ## Where it sits in the three-tab architecture
 
-A relight bake is a `chroma-ai` service producing a relit source clip; `chroma-project`
+A relight bake is a `apelles-ai` service producing a relit source clip; `apelles-project`
 references it (`.chroma/relight/<key>/`), the Colorist tab grades on top. It is **not** a
 compositor or timeline concern. No change to the crate plan in
 `architecture-lock.md`.
@@ -102,7 +102,7 @@ cached. Same two-tier shape as a still-image color-grade preview vs. a full expo
 "minutes/clip, run once" cost as a discrete step only after the *look* is already
 validated, not before.
 
-Engine placement: the interactive pass lives in `chroma-grade` (it's a grade-shader
-stage driven by the depth texture); the puck geometry is in `chroma-grade-model`
-(keyframeable via D-034, like any mask geometry). The bake is `chroma-ai` +
-`chroma-project` as above.
+Engine placement: the interactive pass lives in `apelles-grade` (it's a grade-shader
+stage driven by the depth texture); the puck geometry is in `apelles-grade-model`
+(keyframeable via D-034, like any mask geometry). The bake is `apelles-ai` +
+`apelles-project` as above.

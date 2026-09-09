@@ -1,5 +1,5 @@
 // Deterministic UI perf benchmark — Edit-tab multi-track timeline.
-// Paste into the browser devtools Console of a running Chroma build
+// Paste into the browser devtools Console of a running Apelles build
 // (right-click -> Inspect) and press Enter.
 //
 // Drives the same pan/dragover/clip-move interaction with fixed synthetic
@@ -125,7 +125,7 @@
   // value phase in this rewrite, a direct regression test for that fix and
   // for whether the React Compiler (D-091) measurably helps this class of
   // interaction. A real Sources-panel drag also carries a
-  // `application/x-chroma-media` DataTransfer type
+  // `application/x-apelles-media` DataTransfer type
   // (`CHROMA_MEDIA_DRAG_MIME`, `timeline.ts`) that a synthetic `DragEvent`
   // built in a console context can't fully replicate (DataTransfer
   // construction is restricted outside a trusted user gesture in most

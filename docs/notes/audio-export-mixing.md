@@ -28,7 +28,7 @@ actually apply:
   (`atempoFactors`) — the standard technique for anything outside that range.
 - **`volume`** folds gain (a plain number), fade (a sampled expression) and duck (an
   exact expression) into ONE filter, multiplied together — mirrors
-  `chroma_media::audio::SourceEnvelopes::apply`'s own "one pass, both envelopes, they
+  `apelles_media::audio::SourceEnvelopes::apply`'s own "one pass, both envelopes, they
   multiply" contract exactly. If NONE of the three apply, this stage is omitted
   entirely (byte-identical to no mixing at all).
 - **`adelay=<ms>:all=1`** places the source at its real position on the OUTPUT
@@ -55,7 +55,7 @@ simpler AND correct, not merely convenient.
 
 ffmpeg's expression language (`libavutil/eval.c`) has `exp`, `sin`, `pow`, `if`,
 `between`, `lt`, etc. — no bezier root-finder. `fadeGainAt` mirrors
-`chroma_types::fade_gain`/`FadeCurve::eval`'s exact Newton-Raphson-then-bisection
+`apelles_types::fade_gain`/`FadeCurve::eval`'s exact Newton-Raphson-then-bisection
 solve in TypeScript (pinned against the Rust presets' own control points in
 `timelineExportAudio.test.ts`). `fadeGainExpr` then samples the REAL, exact
 `fadeGainAt` at `FADE_SAMPLE_STEPS` (20) evenly-spaced points across each configured
@@ -73,7 +73,7 @@ evaluates the TRUE combined `fadeGainAt`, not one window's contribution alone.
 
 ## Duck: exact, because `exp()` exists
 
-`chroma_media::audio::DuckEnvelope`'s one-pole smoother has a genuine closed form:
+`apelles_media::audio::DuckEnvelope`'s one-pole smoother has a genuine closed form:
 
 ```
 presence(t) = target + (entry - target) * exp(-(t - t0) / tau)      [piecewise, per segment]
@@ -112,7 +112,7 @@ source3 ─┘
 input count, which is not what a real mixer does (louder just because more tracks
 exist would be backwards — SOFTER). `asoftclip`'s default `type` is already `tanh`,
 so `asoftclip=type=tanh` is a precise, direct reuse of a real ffmpeg filter for the
-exact "sum then soft-saturate" topology `chroma_media::audio::mix_sources` documents
+exact "sum then soft-saturate" topology `apelles_media::audio::mix_sources` documents
 for live playback (roadmap's Phase C write-up) — not an invented approximation.
 
 Exactly ONE total audio-contributing clip bypasses `amix`/`asoftclip` entirely,

@@ -1582,16 +1582,16 @@ const ImageCanvas = memo(
       return null;
     }, [activeContainer, activeMaskId, activeAiSubMaskId, isMasking, isAiEditing]);
 
-    // Chroma (D-034): mask keyframes. `chromaFrame` is the currently-decoded
+    // Apelles (D-034): mask keyframes. `chromaFrame` is the currently-decoded
     // source frame; a keyframed shape sub-mask's on-canvas overlay is drawn at
     // its interpolated geometry for that frame (what you see = what renders),
     // and dragging it writes/updates the keyframe AT that frame.
     const chromaFrame = useChromaStore((s) => s.currentFrame);
 
-    // Chroma (D-046): interactive relight. Reads/writes `useEditorStore`
+    // Apelles (D-046): interactive relight. Reads/writes `useEditorStore`
     // directly (same precedent as `useChromaStore` above) rather than
     // threading every relight prop through — this component is already
-    // fully prop-driven for the upstream RapidRAW surface; the Chroma-owned
+    // fully prop-driven for the upstream RapidRAW surface; the Apelles-owned
     // active-light selection doesn't need to join that surface.
     const activeRelightLightId = useEditorStore((s) => s.activeRelightLightId);
     const setEditorForRelight = useEditorStore((s) => s.setEditor);
@@ -1737,7 +1737,7 @@ const ImageCanvas = memo(
     const isAiSubjectActive =
       (isMasking || isAiEditing) &&
       (activeSubMask?.type === Mask.AiSubject || activeSubMask?.type === Mask.QuickEraser) &&
-      // Chroma: a tracked subject is locked — a stray canvas click shouldn't
+      // Apelles: a tracked subject is locked — a stray canvas click shouldn't
       // re-segment it. Re-draw via the "Re-track subject across clip" button.
       !(activeSubMask?.parameters as any)?.chromaTrackDir;
     const isParametricActive =
@@ -2914,7 +2914,7 @@ const ImageCanvas = memo(
                 />
               )}
 
-              {/* Chroma: request_human(reason, roi) region highlight (D-032) */}
+              {/* Apelles: request_human(reason, roi) region highlight (D-032) */}
               <AgentRoiHighlight imageRenderSize={imageRenderSize} isMaxZoom={isMaxZoom} />
             </div>
 
@@ -3050,7 +3050,7 @@ const ImageCanvas = memo(
                             subMask.id === activeId && localInitialDrawParams
                               ? { ...subMask, parameters: localInitialDrawParams }
                               : subMask;
-                          // Chroma (D-034): show the interpolated shape at the
+                          // Apelles (D-034): show the interpolated shape at the
                           // current frame when this sub-mask has keyframes.
                           const effParams = effectiveParameters(baseSubMask.parameters, chromaFrame);
                           const renderSubMask =

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for the edit overlay (D-239).
+ * @apelles/editor — real-DOM coverage for the edit overlay (D-239).
  *
  * **Why this tier.** `editTypes.test.ts` proves the seven ops and the pure
  * pointer→row math, but the GESTURE is the feature: does a Sources drag
@@ -31,7 +31,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 const { EditOverlay } = await import('./EditOverlay');
 const { useEditorTimelineStore } = await import('./timelineStore');
 const { CHROMA_MEDIA_DRAG_MIME, DROP_EDIT_TYPES } = await import('./timeline');
-const { useHistoryStore } = await import('@chroma/history');
+const { useHistoryStore } = await import('@apelles/history');
 type Timeline = import('./timeline').Timeline;
 type DraggedMedia = import('./timeline').DraggedMedia;
 

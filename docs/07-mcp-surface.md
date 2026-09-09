@@ -20,7 +20,7 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 5. **Deterministic.** Same doc + same frame ⇒ same output.
 6. Merge semantics like Palmier's `apply_color`: pass only the knobs you want to change;
    the rest are preserved. `reset: true` to start a layer from neutral. Mutating tools
-   echo the resulting grade in Chroma's own vocabulary — pasteable to copy a grade.
+   echo the resulting grade in Apelles' own vocabulary — pasteable to copy a grade.
 7. **One shared state (D-020).** Every op is a real frontend action; the UI and the
    agent never diverge. Reads reflect the user's manual edits.
 
@@ -29,7 +29,7 @@ Status: **draft**. The v1 subset ships via the in-app control server (D-020,
 ### Session / inventory  — *call `get_state` once at session start; re-read after an out-of-band change (the user edited by hand). Modelled on Palmier's `get_media` + `get_timeline`.*
 | Tool | Params | Returns |
 |---|---|---|
-| `get_state` | — | what's loaded (image\|video, path, `w×h`, fps, `frameCount`, colour space), current frame, the grade (Chroma vocabulary), mask list `[{id, name, type, subMasks, adjust-summary}]`, the multi-shot `session`, and the loaded `project` (`{name, path, dirty, settings}` — `settings` is the D-038 output spec, `null` for Untitled / no explicit settings) |
+| `get_state` | — | what's loaded (image\|video, path, `w×h`, fps, `frameCount`, colour space), current frame, the grade (Apelles vocabulary), mask list `[{id, name, type, subMasks, adjust-summary}]`, the multi-shot `session`, and the loaded `project` (`{name, path, dirty, settings}` — `settings` is the D-038 output spec, `null` for Untitled / no explicit settings) |
 | `open` ✅ (D-024) | `path` (absolute) | loads a still or video into the editor headlessly, `{path, ready, size, video}`. Sets `selectedImage`; `useImageLoader` decodes + populates the transport store |
 | `open_shot` | `source`, `in`, `out`, `fps?`, `reference?` | `shot_id`, `{frame, scopes}` — Phase 1 shot model |
 | `list_shots` / `select_shot` | … | Phase 1 |

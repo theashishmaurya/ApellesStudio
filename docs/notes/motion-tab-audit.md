@@ -183,7 +183,7 @@ reimplementing manifest surgery in Python.
    `manifestEdit.ts` through the same in-app bridge the Edit-tab tools use.
 4. **Undo/redo for Motion fourth.** D-052 deferred it for a real reason ("no natural edit-
    history unit") — but with `addLayer`/`setLayerField` as discrete, named, immutable ops, the
-   unit now exists: push a before/after `Manifest` snapshot per op into `@chroma/history`,
+   unit now exists: push a before/after `Manifest` snapshot per op into `@apelles/history`,
    exactly as `useEditorTimelineStore.applyOp` does for the timeline. The textarea stays
    outside the stack (it has the browser's own undo).
 5. **A scene/layer timeline UI fifth.** The most visible difference from After Effects and

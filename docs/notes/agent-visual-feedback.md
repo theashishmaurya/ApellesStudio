@@ -35,7 +35,7 @@ measurement.**
 
 The loop: **`render → inspect_color → reason about the numbers → adjust → re-inspect`.**
 Palmier's `inspect_color` is built for exactly this ("grade by the numbers instead
-of eyeballing"); Chroma's is modelled on it.
+of eyeballing"); Apelles' is modelled on it.
 
 ## The rest of the toolkit
 
@@ -66,7 +66,7 @@ of eyeballing"); Chroma's is modelled on it.
    frames, diff consecutive, flag jumps. The agent can't eyeball 500 frames; it can
    reason about a diff.
 
-## What this means for Chroma's MCP
+## What this means for Apelles' MCP
 
 - **Scope-first by default.** The agent's standard loop is measure → adjust →
   re-measure. The rendered image is for *creative* judgment (often deferred to the

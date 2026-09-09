@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the layer list (D-081, Phase 1 of
+ * @apelles/motion — the layer list (D-081, Phase 1 of
  * `docs/notes/global-inspector.md`).
  *
  * The real prerequisite the Inspector scoping doc identified before any
@@ -7,13 +7,13 @@
  * expand-per-scene list — scene → its 2D camera (if any) → its `layers[]`
  * (2D) or its `scene3d` camera + `children[]` (3D) — click any row to select
  * it and jump the player to that scene's start frame
- * (`sceneStartFrame`, `@chroma/motion-engine`'s `build.ts` — the exact same
+ * (`sceneStartFrame`, `@apelles/motion-engine`'s `build.ts` — the exact same
  * math `<Series>` (`Video.tsx`) uses to lay scenes back to back, not a second
  * guess at it). No property panel consumes `Selection` yet (Phase 2,
  * deferred) — this pass is the selection model + a way to see/pick
  * something, standalone-useful on its own as real scene/layer navigation.
  *
- * Not `@chroma/ui`: see `Button.tsx`'s doc comment for why this package
+ * Not `@apelles/ui`: see `Button.tsx`'s doc comment for why this package
  * can't use that barrel (a real, documented `@react-three/fiber` JSX-typing
  * conflict) — plain elements on the app's own `--color-*` tokens, matching
  * every other file here.
@@ -116,7 +116,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { Copy, Plus, Trash2 } from 'lucide-react';
-import type { Manifest, Layer } from '@chroma/motion-engine/src/engine/schema';
+import type { Manifest, Layer } from '@apelles/motion-engine/src/engine/schema';
 import { layerKeyCount, cameraKeyCount, scene3dCameraKeyCount } from './keyframeVisibility';
 import {
   addScene,
@@ -490,21 +490,21 @@ export function LayerList({
    * with a confirm step.
    *
    * **Why a scene delete is guarded and a layer delete is not.** Both are
-   * undoable (`onCommit` → `m.commit` → `@chroma/history`, D-155, reachable
+   * undoable (`onCommit` → `m.commit` → `@apelles/history`, D-155, reachable
    * on Cmd/Ctrl+Z from `Shell.tsx`), so this is not about recoverability —
    * it is about proportionality, and it follows what real tools do rather
    * than a guess (`scratch/motion-delete-reference/NOTES.md`): Figma,
    * Premiere and every layer panel delete ONE object with no prompt, and the
    * one case Premiere does prompt for is a delete that CASCADES into
    * contained content ("the selection you are deleting contains clip
-   * references… do you want to continue?"). Deleting a Chroma scene is
+   * references… do you want to continue?"). Deleting a Apelles scene is
    * exactly that case — it takes every layer, the camera and the whole
    * `scene3d` block with it, and renumbers every scene after it — while
    * deleting one layer is the routine, high-frequency edit a prompt would
    * just make tedious.
    *
    * **A two-step arm-then-confirm button, not a modal dialog.** This package
-   * cannot use `@chroma/ui`'s barrel (a real `@react-three/fiber` JSX-typing
+   * cannot use `@apelles/ui`'s barrel (a real `@react-three/fiber` JSX-typing
    * conflict — see `Button.tsx`), so there is no shared dialog component
    * available to it, and the app has no `window.confirm` anywhere to follow
    * either. Arming the button in place is the lightest thing that is still a
@@ -778,7 +778,7 @@ export function LayerList({
         </button>
         {/* D-259 — duplicate and delete, hover-revealed. No confirm on
            either: one layer is the routine edit, and both are undoable
-           (Cmd/Ctrl+Z, `Shell.tsx` → `@chroma/history`) — see
+           (Cmd/Ctrl+Z, `Shell.tsx` → `@apelles/history`) — see
            `sceneActions` above for the full proportionality reasoning and
            why a SCENE delete is the one thing here that does confirm. */}
         {onCommit && (

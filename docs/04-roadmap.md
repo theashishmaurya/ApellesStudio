@@ -157,11 +157,11 @@ restarted once each is done.
   (D-043) — it's the grading editor only now. **Shot-switch now shows a real
   loading spinner** (D-063/B-015) instead of a silent flash to blank — the
   spinner already existed, fully built, wired to a dead pre-pivot flag.
-- **Editor** — MVP: single-video-track timeline (`chroma-timeline` + `react-timeline-editor`),
+- **Editor** — MVP: single-video-track timeline (`apelles-timeline` + `react-timeline-editor`),
   scrub/play preview (independent of the Colorist render path) via the shared
-  `@chroma/player` component, reorder/trim/split/remove/**add via drag-from-Sources**,
+  `@apelles/player` component, reorder/trim/split/remove/**add via drag-from-Sources**,
   persisted in the project. Multiple named timelines per project, switchable via
-  a **tab-strip `TimelineSwitcher`** (D-046, rebuilt on `@chroma/ui` `Tabs`,
+  a **tab-strip `TimelineSwitcher`** (D-046, rebuilt on `@apelles/ui` `Tabs`,
   D-058). **Real audio during playback** (D-050 —
   `symphonia`→`rubato`→`dasp_sample`→`cpal`, single video track's embedded
   audio stream, synced-at-start-not-tightly-coupled to the video playhead).
@@ -199,7 +199,7 @@ restarted once each is done.
   (validated against the engine's own `zod` schema — a visual editor is
   still an open question, now queued below as its own scoping task), Save
   (project-scoped sidecar `<project>.chroma/motion/manifest.json`) and
-  Render (`chroma-motion` crate → `npx remotion render`) — **render now
+  Render (`apelles-motion` crate → `npx remotion render`) — **render now
   auto-imports its output into Sources** (D-062), ready to drag onto the
   Edit timeline like any other clip (deliberately not auto-placed on any
   timeline). No multi-manifest, render progress/cancel, or packaged-build
@@ -210,7 +210,7 @@ restarted once each is done.
   import, search, a bin tree with real "New Folder" creation — even an empty
   one persists and lists, drag-to-track — D-046, D-059; **real delete**, single
   via a hover trash icon/right-click or multi-select "Select all"/"Delete (N)"
-  — D-060/D-061), `@chroma/ui` (shadcn/Base UI, 18 components, themed). **Sources
+  — D-060/D-061), `@apelles/ui` (shadcn/Base UI, 18 components, themed). **Sources
   docks on the left as a real resizable panel** (was a fixed-width right column —
   D-116, corrected here from an earlier mis-citation of D-114, which is
   actually the unrelated manifest-cache decision), matching the media-bin-left
@@ -299,7 +299,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 3. **Export → a top-right button + an Export window** — done, 2026-09-03 (**D-049**):
    `ExportDialog`, the right-most button in the Colorist tab's `EditorToolbar`
    (top-right of the tab), backed by the existing `chroma_export_video`/
-   `chroma_bake_lut` (D-022) via `@chroma/ui`'s `Dialog`/`Select` (D-042). Codec,
+   `chroma_bake_lut` (D-022) via `@apelles/ui`'s `Dialog`/`Select` (D-042). Codec,
    resolution (Project spec / Clip / Custom — D-038 project spec is the default when
    set), frame range (full clip / custom), a `.cube` bake toggle, an output path via
    the native save dialog, and a real progress bar (polled `chroma_export_progress` —
@@ -311,7 +311,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    push-based/percent-exact progress event (polling is coarse but real).
 4. **Global undo/redo** — done, 2026-09-03 (**D-052**): shell-level Cmd/Ctrl+Z
    (undo) / Cmd/Ctrl+Y or Cmd/Ctrl+Shift+Z (redo) spanning all 3 tabs, owned by
-   `Shell.tsx` — pops the new `@chroma/history` store (`{tab, label, undo(),
+   `Shell.tsx` — pops the new `@apelles/history` store (`{tab, label, undo(),
    redo(), ts}`) regardless of which tab is active and **switches to that tab**
    so the effect is always visible. The Colorist's existing 50-deep
    `useEditorStore` history was left untouched and bridged in via
@@ -335,7 +335,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    verified against the actual current code (not assumed): `docs/notes/multi-track-nle.md`.
    Real finding: clips have no position field today — every track is forced
    back-to-back by construction, the actual blocker under "just add tracks." Phased:
-   **A** (clip positions + gap item + add/remove-track ops, `chroma-timeline` — cheap,
+   **A** (clip positions + gap item + add/remove-track ops, `apelles-timeline` — cheap,
    one pass) and **C** (audio mixing, extends D-050's `cpal` pipeline — moderate) are
    independent and approachable now. **B** (the actual compositor — render N video
    tracks together, feed both preview and export) is the real long pole, sub-phased
@@ -343,7 +343,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    **D** (multi-track timeline UI), **E** (transitions), **F** (export through the
    real timeline) all sit downstream of B and shouldn't start earlier.
    - ~~**Phase A — data model foundation**~~ — **done, D-054 (2026-09-03).**
-     `chroma-timeline::Clip` gained an explicit `start_frame: i64`
+     `apelles-timeline::Clip` gained an explicit `start_frame: i64`
      (timeline-absolute), not the OTIO-style `Gap` item — see D-054 for the
      full rationale (it maps directly onto `@xzdarcy/react-timeline-editor`'s
      own start/end-time item model, which the Edit tab's UI already uses).
@@ -363,7 +363,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      top track's content fully hides whatever's below, so this is a
      track-**selection** problem (which one source do we decode and show),
      not a pixel-compositing one. Landed as `Timeline::resolve_video_clip_at`
-     in `chroma-timeline` (pure model logic — video tracks walked in index
+     in `apelles-timeline` (pure model logic — video tracks walked in index
      order, lower index = higher priority/"on top", first one with a clip,
      not a gap, at the position wins; falls through only on a gap), with
      `edit.rs`'s `resolve_video_position` (shared by `chroma_timeline_frame`
@@ -376,7 +376,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      video-embedded audio (unchanged, unity gain, D-050's existing behaviour)
      plus every genuine `TrackKind::Audio` clip overlapping the play
      position — instead of playing exactly one stream. New
-     `chroma_timeline::Track::gain: f32` (default `1.0`) is per-track volume,
+     `apelles_timeline::Track::gain: f32` (default `1.0`) is per-track volume,
      read (for genuine audio tracks; the video track's own embedded audio
      stays hardcoded at unity this pass) by a new `mix_sources` mixer: sum
      the active (nonzero-gain) sources, then a soft (`tanh`) limiter — chosen
@@ -387,7 +387,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      case byte-identical and makes "mute via `gain: 0.0`" an exact,
      checkable property, not an approximation. Pan/stereo positioning
      deliberately scoped out (mono gain scaling covers this phase's actual
-     goal). `chroma-timeline` 25/25, `chroma::audio` 29/29 (new: real,
+     goal). `apelles-timeline` 25/25, `chroma::audio` 29/29 (new: real,
      deterministic mixing-math tests against two distinct real decoded
      files, plus live-`cpal` end-to-end 2-track tests), `chroma::` wide
      122/122, `tsc` 64/64 unchanged (no frontend touched — Phase D still
@@ -411,7 +411,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      confirmation.
    - ~~**Phase D — multi-track UI**~~ — **done, D-080 (2026-09-03).** B2
      (N-track compositing) confirmed first (was claimed but never actually
-     exercised past 2 tracks — new 3-track test in `chroma-timeline`
+     exercised past 2 tracks — new 3-track test in `apelles-timeline`
      proves the walk falls through *two* consecutive gaps correctly, not
      just one). `TimelinePane.tsx` now renders one row per track (was a
      single hardcoded video row), a real custom track-header sidebar
@@ -422,7 +422,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      the real, working substitute, not a live drag gesture). New
      `add_track`/`remove_track`/`set_track_gain` ops in `timeline.ts`;
      `move` generalized from one `track` field to `fromTrack`/`toTrack`.
-     `cargo test -p chroma-timeline` 39/39, `chroma::` 143/143 unchanged,
+     `cargo test -p apelles-timeline` 39/39, `chroma::` 143/143 unchanged,
      `vitest` 45/45, `tsc` both packages clean/unchanged. **No live
      click-through this pass** — built while the owner was away (their own
      instruction: "work on the composition UI, don't sit idle"), and this
@@ -446,7 +446,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    the manifest schema is `.passthrough()` so nothing declares them
    centrally yet) — an Inspector here is UI + a schema-extraction pass, no
    backend blocker. **NLE's clips have zero transform fields today**
-   (`chroma-timeline::Clip` — no position/scale/rotation/opacity/fade) —
+   (`apelles-timeline::Clip` — no position/scale/rotation/opacity/fade) —
    the Inspector's NLE half needs new compositor work, which is the same
    work as Phase B (specifically B3) in item 6's multi-track effort, not a
    separate track. **Full scoping doc now exists:
@@ -484,7 +484,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    including the commit-before-unmount race when switching selection
    mid-edit). `MotionTab.tsx`'s right-hand cluster is now a real
    `react-resizable-panels`-backed `PanelGroup` (`resizable.tsx` — a local
-   wrapper, not `@chroma/ui`'s, due to the same `@react-three/fiber`
+   wrapper, not `@apelles/ui`'s, due to the same `@react-three/fiber`
    JSX-typing conflict `Button.tsx` already documented), honouring the
    new "every resizable-by-nature pane must actually be resizable" rule.
    **Phase 3 (NLE half) is actually now unblocked** — Phase B3 (real
@@ -524,19 +524,19 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    camera target) and the NLE's (a `Clip` + track/id) are different enough
    in shape and edit ops that forcing them together would mean rewriting
    two already-working, already-tested panels for no real user-facing
-   benefit. Instead: a new tiny package, **`@chroma/inspector`**, holding
+   benefit. Instead: a new tiny package, **`@apelles/inspector`**, holding
    only the pieces `InspectorPanel.tsx` and `ClipInspectorPanel.tsx` had
    genuinely, independently converged on byte-identical (the "nothing
    selected" empty state, the section-heading typography) — both panels now
    import `InspectorEmptyState`/`InspectorSection` from it instead of
-   duplicating that JSX. A separate package because `@chroma/motion` cannot
-   depend on `@chroma/ui` at all (the `@react-three/fiber` JSX conflict
+   duplicating that JSX. A separate package because `@apelles/motion` cannot
+   depend on `@apelles/ui` at all (the `@react-three/fiber` JSX conflict
    `Button.tsx`/`resizable.tsx` already document) — so shared chrome both
    tabs use has to live somewhere neither's existing constraints block, and
-   putting it in `@chroma/ui` would have been unusable from Motion's side.
-   The resizable-panel wrapping was deliberately NOT unified — `@chroma/
-   editor` correctly uses `@chroma/ui`'s real `ResizablePanel` (no conflict
-   there), `@chroma/motion` uses its own local motion-safe wrapper; routing
+   putting it in `@apelles/ui` would have been unusable from Motion's side.
+   The resizable-panel wrapping was deliberately NOT unified — `@apelles/
+   editor` correctly uses `@apelles/ui`'s real `ResizablePanel` (no conflict
+   there), `@apelles/motion` uses its own local motion-safe wrapper; routing
    both through a third shared one would either downgrade the editor away
    from the real component it already correctly uses, or reintroduce the
    JSX conflict into Motion. `Selection` was NOT lifted to a shared,
@@ -560,9 +560,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    `docs/notes/unified-clip-model.md`; built as D-070 in
    `docs/08-decisions.md`.** Real finding: this was a *four*-way split
    (`state::Shot`, `useSessionStore.shots`/`.grades`, `ProjectShot`,
-   `chroma-timeline::Clip` — each with its own keying scheme, verified
+   `apelles-timeline::Clip` — each with its own keying scheme, verified
    against real code, not assumed), not the two-list gap it first looked
-   like. **Done, 2026-09-03** — `chroma-timeline::Clip` gained `media_id`
+   like. **Done, 2026-09-03** — `apelles-timeline::Clip` gained `media_id`
    and is the single source of truth Colorist's shot strip reads;
    `ProjectShot` retired as the persisted grading list (kept read-only, for
    the one-time grade migration to read — see D-070 for why full removal
@@ -600,7 +600,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    / relight are inherently outside a 3D LUT and are dropped with a warning
    surfaced in the Export dialog and via `editor_get_grade_status`, never
    silently. Carrying those too needs a real shared compositor
-   (`chroma-grade` + `chroma-compositor`) and stays future work.
+   (`apelles-grade` + `apelles-compositor`) and stays future work.
 9. ~~**Real sidecar ownership — detect a stale external AI process instead of
    deferring to it forever**~~ — **done, D-101 (2026-09-04, overnight
    autonomous pass).** All four real design questions this item raised are
@@ -746,7 +746,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       `RelightPuckLayer` (D-046) already uses, now actually implemented in
       `TransformOverlay.tsx` (Phase 1, below).
     - **Phase 1 — reposition + uniform corner-scale only — ✅ BUILT
-      (D-136).** `TransformOverlay.tsx` in `@chroma/editor`, a DOM overlay
+      (D-136).** `TransformOverlay.tsx` in `@apelles/editor`, a DOM overlay
       rendered as a sibling of `PreviewPane`'s `<img>` (the preview is
       **not** a canvas; `<Player>`'s `surface` prop took any ReactNode
       already, so that package needed no change beyond a new
@@ -758,11 +758,11 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       clip's own source resolution against the composition); the actual
       box/drag/corner-scale math is pure and unit-tested
       (`transformGeometry.ts`, 16 tests). `useImageRenderSize`'s letterbox
-      math was extracted into `@chroma/player` as `useContentBox` — the
+      math was extracted into `@apelles/player` as `useContentBox` — the
       original stays in place, still owning every Colorist-tab call site;
       migrating those is separate, deliberately deferred work.
     - **Phase 2 — rotation** (already a `Clip` field, mostly UI; note
-      Chroma has no anchor point and both references do) **and
+      Apelles has no anchor point and both references do) **and
       non-uniform scale** (needs `scale_x`/`scale_y` replacing `scale`,
       with a migration). **Still scoped, not built.**
     - **Phase 3 — crop — ✅ BUILT (D-132, 2026-09-04), except its
@@ -941,7 +941,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ~~**4. Undo/redo for Motion** — D-052 deferred it for a real reason ("no
       natural edit-history unit"); with `addLayer`/`setLayerField` as discrete
       named immutable ops that unit now exists. Push before/after `Manifest`
-      snapshots into `@chroma/history`, as `useEditorTimelineStore.applyOp` does.~~
+      snapshots into `@apelles/history`, as `useEditorTimelineStore.applyOp` does.~~
       **DONE — D-155 (2026-09-06); this entry was stale, corrected 2026-09-09 by
       D-259.** `useMotionManifest`'s `commit(next, label)` is exactly the
       before/after-snapshot push described here, and `Shell.tsx`'s global
@@ -1053,7 +1053,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     fields entirely. Neither touches `Clip.box_width`/`box_height`/`scale` or the
     Rust/TS export parity story D-193's own decision entry covers. **Done — see the
     ✅ line above.**
-19. ✅ **B-079 — bring `crates/chroma-timeline`'s live playback/preview/audio-decode
+19. ✅ **B-079 — bring `crates/apelles-timeline`'s live playback/preview/audio-decode
     methods up to the same fps-aware standard B-077/D-194 gave the GUI/MCP edit
     model.** Done, **D-200** (same session as item 18, found to be a real,
     well-evidenced contributing cause of that item's own "AFTER full-bleed" report).
@@ -1067,8 +1067,8 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     `Timeline::fps()` + `source_frames_to_timeline`/`timeline_frames_to_source`,
     threaded into `Track::duration`/`clip_at`/`clip_spans_from` and every real
     caller; `packages/editor/src/clipKeyframes.ts::clipSourceFrame` fixed in the
-    SAME change per its own doc comment. `cargo test -p chroma-timeline` 137/137
-    (+8), `cargo test -p RapidRAW --lib` 146/146, `cargo test -p chroma-project`
+    SAME change per its own doc comment. `cargo test -p apelles-timeline` 137/137
+    (+8), `cargo test -p apelles --lib` 146/146, `cargo test -p apelles-project`
     52/52, clippy/fmt clean on touched code. See `docs/BUGS.md`'s B-079 entry and D-200.
 20. **Timeline-editing feature gaps vs. a comparable competitor** — owner, 2026-09-07,
     pointed at a competitor's own docs for comparison. Full writeup:
@@ -1099,13 +1099,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
        **Vite full page reload of the whole app**, triggered because
        `app/src/main.tsx` held the `Root` component while exporting nothing,
        making it an invalidating React Fast Refresh boundary that every edit
-       behind a `@chroma/*` barrel propagated to. `Root` now lives in
+       behind a `@apelles/*` barrel propagated to. `Root` now lives in
        `app/src/Root.tsx` (exports only components); verified live that editing
        `timeline.ts` / `timelineStore.ts` / the editor barrel now hot-updates
        instead of full-reloading.
     2. ~~**React Compiler bailout coverage** — a real inventory of 55 unique
        bailouts across 45 files~~ — **the Edit-tab half is fixed (D-201,
-       2026-09-07)**: all 22 source files in `@chroma/editor` now compile with
+       2026-09-07)**: all 22 source files in `@apelles/editor` now compile with
        ZERO bailouts (`TimelinePane`/`TransformOverlay`'s hand-written
        memoization was fighting the compiler and costing them ALL
        auto-memoization; `PreviewPane`, `Filmstrip`, `useEditorControl` and
@@ -1151,13 +1151,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     (`editorExport.ts`), not a parallel implementation. `docs/notes/export-dialog-
     queue.md` has the full design + the honest gaps (no cancel, no reordering, no
     real concurrent worker pool this pass — sequential only, stated plainly).
-    `npm test --workspace @chroma/editor` 408/408 (was 357); real `ffprobe`/
+    `npm test --workspace @apelles/editor` 408/408 (was 357); real `ffprobe`/
     `volumedetect`-verified ffmpeg execution tests, not just argv string matches;
     the dialog/queue live-tested in a real Chromium tab via the D-142 harness.
 23. **The media pool has no way to recover a stuck/wrong item — a real architectural
     gap, not a one-off bug** — owner, 2026-09-07, after hitting it TWICE live in one
     session and being asked directly to fix the shape of the problem, not patch the
-    symptom again. `add_media`'s own dedup (`crates/chroma-project/src/manifest.rs`)
+    symptom again. `add_media`'s own dedup (`crates/apelles-project/src/manifest.rs`)
     treats "already known by this exact source path" as permanent and final — there
     is no expiry, no re-probe-on-demand, and (until today) no MCP-reachable way to
     even remove an item, only the GUI's Sources panel has `removeMedia` →
@@ -1169,7 +1169,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     one real gap: **the pool has no correction mechanism at all**, video-only or not.
     Confirmed by re-deriving it live: this session hit a stuck-path variant of B-073
     THREE times while adding real SFX/music (mp3/flac files, no video stream) —
-    every workaround was copying the file to a path Chroma had never seen, which
+    every workaround was copying the file to a path Apelles had never seen, which
     works but is not a fix, is not available to a GUI user, and leaves an
     ever-growing trail of dead pool entries no one can see or clean up (the SAME
     `docs/notes/mcp-tool-coverage.md` gap: "no `chroma_media_list`/`_remove` MCP
@@ -1178,7 +1178,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     panel today) as an `editor_remove_media` MCP tool — closing the gap with the
     primitive that's already proven correct, rather than inventing a parallel
     `reprobe` command that would duplicate remove-then-reimport's own effect. A
-    genuine "why did this happen twice" root cause worth naming too: `chroma-media`'s
+    genuine "why did this happen twice" root cause worth naming too: `apelles-media`'s
     own probing layer (`VideoInfo`, `is_video_file`, `video::probe`) was designed
     video-first and had audio-track support (D-057/D-149) layered on top of it
     without a pass back through the FOUNDATIONAL probe/pool layer to make it
@@ -1210,9 +1210,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     original entry: owner, 2026-09-07, asking for real "AFTER"/"BEFORE" labels
     on the comparison reel; confirmed by grep that no `TrackKind::Text` and no
     title-clip concept existed anywhere in
-    `packages/editor/src/timeline.ts`/`crates/chroma-timeline`, and worked
+    `packages/editor/src/timeline.ts`/`crates/apelles-timeline`, and worked
     around at the time with an external `ffmpeg drawtext` pass on top of
-    Chroma's own correct export (disclosed then as a finishing step, not a
+    Apelles' own correct export (disclosed then as a finishing step, not a
     feature). All three of that entry's own "at minimum" requirements now
     exist, and both interfaces landed in the same pass:
     - **Model** — `Clip::text: Option<TextLayer>` (content / font / size /
@@ -1293,7 +1293,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     live Tauri/GUI run wasn't performed for this pass (same worktree
     constraint D-211/D-208 already document) and what stands in for it
     instead (a reindexing-correctness unit test plus the full 691-test
-    `@chroma/editor` suite, all green, `tsc` clean).
+    `@apelles/editor` suite, all green, `tsc` clean).
 25. **A real Resolve-Edit-page-inspired build-out — owner, 2026-09-08, several items
     logged live while a fix was in flight, to action once it lands (not
     investigated individually yet — this is the log, not the diagnosis):**
@@ -1380,7 +1380,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       - ⬜ **Still open — no live end-to-end LATENCY number.** D-217's figures
         are the real code path on the real footage but they are Rust-side. Two
         things block a live measurement, both worth knowing before anyone tries
-        again: (1) a second Chroma instance cannot run alongside the owner's at
+        again: (1) a second Apelles instance cannot run alongside the owner's at
         all without overriding the app `identifier`
         (`tauri-plugin-single-instance`) — `npx tauri dev --config
         '{"identifier":"…","build":{"devUrl":"http://localhost:1431",
@@ -1447,7 +1447,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       consequence — `TransformOverlay`'s box + four corner handles actually
       mounting, unmounting on clear, absent for a multi-clip selection,
       handle-less on a locked track — plus zero pushes onto the shared undo
-      stack. `npm test --workspace @chroma/editor` 703/703; `tsc` clean.
+      stack. `npm test --workspace @apelles/editor` 703/703; `tsc` clean.
       **And live, end to end** — a second isolated instance (vite 1436,
       `CHROMA_CONTROL_PORT=19802`), a real clip, `debug_screenshot` before and
       after each step and the PNGs actually looked at: no box → call the op →
@@ -1492,7 +1492,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         both drag gestures proven correct at 200%-and-panned against a point
         where the pre-zoom mapping gives a different answer; all five
         pre-existing preview suites pass unmodified. `npm test --workspace
-        @chroma/editor` 766/766, `tsc` clean. **And in a real browser** —
+        @apelles/editor` 766/766, `tsc` clean. **And in a real browser** —
         D-142's Chromium harness, with real layout and real
         `document.elementFromPoint` hit-testing: the same screen point selects
         the background at fit and the PIP at 200%-panned, a real 200px drag
@@ -1544,7 +1544,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ~~**Per-clip audio: volume, pan**~~ — **DONE, 2026-09-08 (D-223).**
       Real `Clip::volume` (linear, matching `Track::gain`'s unit) and
       `Clip::pan` (normalised, constant-power law at a 0 dB centre —
-      `chroma_types::pan`), keyframeable through the existing per-property
+      `apelles_types::pan`), keyframeable through the existing per-property
       machinery, composed as `track.gain × clip.volume × fade × duck` then
       split per channel, identically in the live mixer and the ffmpeg export.
       Inspector "Audio" section (two `PropertyRow`s) + `editor_set_clip_audio`
@@ -1560,7 +1560,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       presets + keyframe nav in a header strip, value range labelled at both
       ends, keys as dots, flat holds outside the keyed range). Not a second
       curve concept — D-147's `FadeCurve` was renamed `EaseCurve`, moved to
-      its own `chroma_types::ease`, and is now shared by fades and keyframes;
+      its own `apelles_types::ease`, and is now shared by fades and keyframes;
       one solver, one preset list, one MCP parser. Absent `ease` means linear,
       so every pre-D-233 project resolves bit-identically and compiles to
       byte-identical ffmpeg argv. Preview (Rust `interpolate_param`),
@@ -1762,7 +1762,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       (a list; the Inspector authors Resolve's own four-band strip), each band
       `{kind, freq_hz, gain_db, q, enabled}` across five shapes (low/high
       shelf, bell, high/low pass). Real Audio EQ Cookbook biquads in
-      `chroma_types::eq`, applied per channel with persistent state in the live
+      `apelles_types::eq`, applied per channel with persistent state in the live
       mixer and as ffmpeg's generic `biquad` filter fed the SAME coefficients
       in the export (its own `bass`/`treble` measurably do not implement the
       cookbook's Q — see D-224). Applied before the volume/fade/duck gain
@@ -1799,7 +1799,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ~~**Audio scrubbing + waveform toggle** — source-viewer waveform,
       tape-style scrub (ref: `scrubbing.jpg`)~~ — **DONE, 2026-09-08 (D-232).**
       Dragging the playhead (timeline cursor OR the player's position bar) now
-      makes sound: `chroma_media::scrub` emits a 60 ms enveloped grain from
+      makes sound: `apelles_media::scrub` emits a 60 ms enveloped grain from
       wherever the pointer is, ~17×/second, out of a 4 s decoded window it
       re-anchors only when you leave it. The decision the whole feature hangs
       on is that a scrub is a **third request on the existing single audio
@@ -1833,7 +1833,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       **not** the Colorist grade: that blob is untyped in Rust (D-020/D-025)
       and wgpu-shader-only, so the ffmpeg export could not reproduce it at
       all — a guaranteed preview/export divergence of the B-090/B-095/B-098
-      class. One shared operator in `chroma_types::adjustment` feeds both
+      class. One shared operator in `apelles_types::adjustment` feeds both
       engines (`lutrgb` + `colorchannelmixer`; `geq` measured ~39× slower and
       rejected; agreement ≤ 1/255). Toolbar button + on-timeline body +
       Inspector panel + `editor_add_adjustment_clip` /
@@ -1901,7 +1901,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       already showing collapses it. Solved across the shell/tab boundary with
       D-251's existing per-tab injection slot (`ShellTab.libraryRail` /
       `libraryPanel`, supplied by `Root.tsx`), so `Shell` still imports nothing
-      from `@chroma/editor`. The caption style library docked with them
+      from `@apelles/editor`. The caption style library docked with them
       (`CaptionLibrary.tsx`), retiring D-252's `caption-panel` popover id.
       Correctly GUI-only, checked rather than assumed: every capability the
       rail reaches already has its `editor_*` tool and none of them depend on
@@ -1944,7 +1944,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ✅ **MCP**: `editor_list_caption_presets`, `editor_add_caption_preset`,
       and `editor_set_caption_style` extended with the animation fields — the
       same `applyCaptionPreset` the panel calls.
-    - ✅ **8 presets shipped**: `plain-subtitle`, `plain-clean` (Chroma's own),
+    - ✅ **8 presets shipped**: `plain-subtitle`, `plain-clean` (Apelles' own),
       `caption-highlight`, `caption-kinetic-slam`, `caption-pill-karaoke`,
       `caption-neon-accent`, `caption-clip-wipe`, `caption-editorial-build`
       (adapted from HyperFrames' catalogue, Apache-2.0 — D-244).
@@ -1960,7 +1960,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       glyph-shaped mask, a blend mode, particles) — which is the point at
       which the Motion/Remotion route deserves re-opening, per D-243.
     - ⬜ **Bundle the reference typefaces.** The looks are set in Montserrat,
-      Anton, Poppins, Outfit, Space Grotesk and Gabarito; Chroma's catalogue is
+      Anton, Poppins, Outfit, Space Grotesk and Gabarito; Apelles' catalogue is
       system faces only (D-212 requires both renderers read the same
       single-face `.ttf`), so each preset names the nearest one and says so.
       All six are SIL OFL 1.1 and freely bundleable — a mechanical follow-up
@@ -1988,20 +1988,20 @@ before `app/src-tauri/src/chroma/` had been read for extractability. What it cha
 `#[tauri::command]` functions **stay in `app/src-tauri`** (a real `tauri-macros`
 constraint plus an `AppState` dependency cycle, both traced in D-141), every
 extraction leaves a `pub use` shim in the same commit so `lib.rs`'s handler list is
-never contended, and **`chroma-agent` is rescoped out of this wave** — `control.rs`
+never contended, and **`apelles-agent` is rescoped out of this wave** — `control.rs`
 has no Tauri-free core and its op registry lives in the frontend. Real order:
 
 1. **wave 1, parallel — all three landed, 2026-09-05.**
-   ~~`chroma-grade-model`~~ **done, D-143** — `save_grade`/`load_grade` +
-   the schema migration gate move verbatim. ~~`chroma-ai`~~ **done, D-145** —
+   ~~`apelles-grade-model`~~ **done, D-143** — `save_grade`/`load_grade` +
+   the schema migration gate move verbatim. ~~`apelles-ai`~~ **done, D-145** —
    `sidecar.rs` moves almost whole; `depth.rs`/`mask.rs` split cleanly at
-   the crate boundary with zero call-site changes. ~~`chroma-gpu`~~ **done,
+   the crate boundary with zero call-site changes. ~~`apelles-gpu`~~ **done,
    partial, D-144** — `render_core::init_gpu_context()` moved to the new
    crate (headless device/queue/limits); `render_core::render()` stays
-   app-side, it's `chroma-grade`'s. `GpuContext` really did split into two
+   app-side, it's `apelles-grade`'s. `GpuContext` really did split into two
    structs — see D-144 and `crates/README.md`.
-2. ~~**wave 2, alone** — `chroma-media`, in three ordered commits (`probe_cached` must
-   leave `edit.rs` first, or `chroma-media` would depend on the app)~~ — **done,
+2. ~~**wave 2, alone** — `apelles-media`, in three ordered commits (`probe_cached` must
+   leave `edit.rs` first, or `apelles-media` would depend on the app)~~ — **done,
    D-146 (2026-09-05).** All three commits landed in order: (1) `video.rs` +
    `decode_pipe.rs` + `media_cache.rs` verbatim, (2) `probe_cached` out of
    `edit.rs` with **B-056** fixed on the way, (3) `filmstrip.rs` whole and
@@ -2010,30 +2010,30 @@ has no Tauri-free core and its op registry lives in the frontend. Real order:
    app-side because that is a layer above media, with **B-057** fixed while in
    `filmstrip.rs`. Both bug fixes carry regression tests confirmed to fail
    pre-fix.
-3. ~~**wave 3** — `chroma-project` (needs `chroma-media`; an edge
+3. ~~**wave 3** — `apelles-project` (needs `apelles-media`; an edge
    `architecture-lock.md`'s table is missing)~~ — **done, D-148 (2026-09-05).**
    The missing edge is now in the lock doc's table, along with a
-   `chroma-grade-model` edge the table claimed and the real code never had.
+   `apelles-grade-model` edge the table claimed and the real code never had.
    **Waves 1–3 are complete: the sequential part of the migration is finished.**
 4. **wave 4 — next, and the only remaining migration step before the gated ones**
    — delete the shims (`chroma/{video,media_cache,decode_pipe}.rs` are pure
-   re-export files; `chroma/project.rs`'s `pub use chroma_project::*;` and
-   `chroma/edit.rs`'s `pub(crate) use chroma_project::timeline::ensure_timeline;`
+   re-export files; `chroma/project.rs`'s `pub use apelles_project::*;` and
+   `chroma/edit.rs`'s `pub(crate) use apelles_project::timeline::ensure_timeline;`
    are the same thing inside a live file), retarget every call site at
-   `chroma_media::` / `chroma_project::`, and fix the doc set —
+   `apelles_media::` / `apelles_project::`, and fix the doc set —
    `docs/03-architecture.md` has been stale since Phase 0 and the crate graph is
    only now the real one. Mechanical, one commit, no behaviour.
-5. **later, gated** — `chroma-grade` wraps `app/`, `chroma-app` goes thin, then
-   **`chroma-compositor`** (the real multi-track engine) + `@chroma/editor` greenfield
+5. **later, gated** — `apelles-grade` wraps `app/`, `apelles-app` goes thin, then
+   **`apelles-compositor`** (the real multi-track engine) + `@apelles/editor` greenfield
 
 This is where isolated-worktree parallel subagents start making sense — the plan says
 which slices are genuinely disjoint and which must be sequential (see the "worktrees"
 discussion, 2026-09-02: file-boundary discipline is the actual lever, not the worktree
 flag itself).
 
-- ~~**Wave 2 — `chroma-media`**~~ — **done, D-146 (2026-09-05).** The widest
+- ~~**Wave 2 — `apelles-media`**~~ — **done, D-146 (2026-09-05).** The widest
   slice in the plan and the only sequential-within-itself one. ~3,900 lines
-  now live in `crates/chroma-media/` across `video`, `decode_pipe`,
+  now live in `crates/apelles-media/` across `video`, `decode_pipe`,
   `media_cache`, `probe`, `filmstrip` and `audio`. The two real judgement
   calls: `probe_cached` moved into a module of its own (it is the
   *composition* of `video::probe` with `media_cache`, not part of either), and
@@ -2041,15 +2041,15 @@ flag itself).
   `begin_play` → *(app resolves the timeline)* → `start`, preserving the exact
   ordering the D-125 skew compensation depends on. Three `#[cfg(test)]` items
   became a `test-support` feature enabled only from `[dev-dependencies]`, so a
-  release build links none of them. **Next:** wave 3 (`chroma-project`), then
+  release build links none of them. **Next:** wave 3 (`apelles-project`), then
   wave 4's shim sweep — `chroma/{video,media_cache,decode_pipe}.rs` are
   re-export files awaiting deletion.
 
-- ~~**Wave 3 — `chroma-project`**~~ — **done, D-148 (2026-09-05); closes the
+- ~~**Wave 3 — `apelles-project`**~~ — **done, D-148 (2026-09-05); closes the
   Wave 1–3 sequence.** `chroma/project.rs` L1–1638 (the manifest, every schema
   migration, the media pool + bins, the D-070 unified clip identity and
   grade-file migration, `list_projects_in`/`new_project_in`) moved verbatim
-  into `crates/chroma-project/`; `open_manifest` + the 20 commands stayed,
+  into `crates/apelles-project/`; `open_manifest` + the 20 commands stayed,
   because all 20 take `tauri::State<'_, AppState>`. The one piece of real
   relocation rather than a straight move: `ensure_timeline` /
   `load_and_ensure_timeline` / `resolve_timeline` /
@@ -2061,14 +2061,14 @@ flag itself).
   command-surface / process-state tests stayed, and the timeline lifecycle
   gained 5 unit tests it never had in `edit.rs`.
 
-- ~~**Wave 1, slice A — `chroma-grade-model`**~~ — **done, D-143 (2026-09-05).**
+- ~~**Wave 1, slice A — `apelles-grade-model`**~~ — **done, D-143 (2026-09-05).**
   `save_grade`/`load_grade`/`migrate_v1`/`relativize`/`resolve`/`grade_name` +
   `SCHEMA`/`MATTE_KEYS`/`SaveResult` moved out of `chroma/grade.rs` verbatim;
   the plan's zero-dependency-edge claim for this slice held on contact. The 2
   command wrappers stayed in `app/src-tauri` per the "commands do not move"
   rule and now just call the crate.
 
-- ~~**Step 2 — `chroma-types` real extraction**~~ — **done, partial-by-design,
+- ~~**Step 2 — `apelles-types` real extraction**~~ — **done, partial-by-design,
   D-053 (2026-09-03).** Audited `app/src-tauri/src/chroma/*` for real duplicates
   of resolution/rational/colour-space/time-range/error types. Real find:
   `width`/`height` field pairs (no dedicated `Resolution` struct existed, but
@@ -2080,15 +2080,15 @@ flag itself).
   correctly use `Result<T, String>`/`anyhow`, a different layer's
   convention, not a duplicate); `ColorSpace` (still a free `String` by
   design, D-038, pending real colour management, D-004); `TimeRange` (no
-  such struct exists outside `chroma-timeline`, out of scope this step);
+  such struct exists outside `apelles-timeline`, out of scope this step);
   `ProjectSettings`/`ExportOpts`'s width/height (independently-optional
   patch/override fields — a genuinely different concept from an atomic
   `Resolution`, not forced in). Full audit + reasoning in D-053. **Next:**
   steps 3–7 — scoped for real in **D-141**,
   `docs/notes/crate-extraction-plan.md`. (Correcting this line's own stale
-  premise: `chroma-timeline` is not a stub, it is 3,758 production lines;
-  `chroma-grade-model` is a stub and is not even a dependency of
-  `app/src-tauri` yet.) D-053's deferred `chroma-types` pickups —
+  premise: `apelles-timeline` is not a stub, it is 3,758 production lines;
+  `apelles-grade-model` is a stub and is not even a dependency of
+  `app/src-tauri` yet.) D-053's deferred `apelles-types` pickups —
   `VideoInfo.fps_num`/`fps_den` → `Rational`, `TimeRange`, `Frame` — are
   carried in that plan as flagged item **F-4**, to be decided when `video.rs`
   moves rather than left to drift.
@@ -2097,11 +2097,11 @@ flag itself).
   D-147 (2026-09-05).** Owner: "sound engineer"-style control, "enough for
   transitions etc.", then concretely "build the fade in and fade out with bezier
   curve support." `Clip::fade_in_frames`/`fade_out_frames` plus a real cubic-bezier
-  `FadeCurve` each, evaluated by the new `crates/chroma-types/src/fade.rs` (genuinely
+  `FadeCurve` each, evaluated by the new `crates/apelles-types/src/fade.rs` (genuinely
   new math — D-034's keyframe engine was verified to be strictly linear and left
   alone; L0 because its two consumers straddle crate layers — see D-147's
   reconciliation section). One fade drives picture and sound together: `opacity` in
-  the compositor, per-**sample-frame** gain in `chroma-media`'s mixer
+  the compositor, per-**sample-frame** gain in `apelles-media`'s mixer
   (`audio::FadeEnvelope`). Inspector section with the four presets, and
   the first two Edit-tab MCP tools (`get_timeline`, `set_clip_fade`). Scoping for the
   whole surface: `docs/notes/audio-fade-duck-crossfade-plan.md`.
@@ -2158,7 +2158,7 @@ flag itself).
 No urgency — each needs an earlier item to land first, or is a bigger bet.
 
 - **XMEML/FCP7 XML interchange export (Premiere)** — D-196 shipped the
-  FCPXML 1.7 half of "move a Chroma edit to another NLE" (DaVinci
+  FCPXML 1.7 half of "move a Apelles edit to another NLE" (DaVinci
   Resolve/Final Cut Pro), deliberately scoping XMEML out rather than guess at
   its shape by analogy — it's a genuinely different element vocabulary
   (`<sequence>`/`<track>`/`<clipitem>`/`<link>`) with no DTD published in the
@@ -2192,8 +2192,8 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   motion-keyframe-timeline-research.md` (2026-09-05).** That doc independently re-verifies "the
   Edit tab's timeline stack isn't reusable, but the cost is comparable" against the real code
   (confirmed piece by piece: nothing transfers as code, `ruler.ts`'s tick algorithm and D-137's
-  gesture-separation discipline transfer as technique only, per the standing `@chroma/motion`/
-  `@chroma/editor` package-boundary rule). **Phase 5a (built): `LayerList` key-count badges +
+  gesture-separation discipline transfer as technique only, per the standing `@apelles/motion`/
+  `@apelles/editor` package-boundary rule). **Phase 5a (built): `LayerList` key-count badges +
   a read-only `KeyframeStrip` under the player** (camera + selected-layer key markers across the
   whole composition, live playhead, click/marker-click-to-seek — pure navigation, no manifest
   mutation). One disclosed deviation: "the player's own scrubber gains markers" wasn't buildable
@@ -2295,7 +2295,7 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
 - **Believable AI background replacement** — matte the tracked subject over a
   still/plate/generated BG + the integration stack (light wrap, grade match via
   `match_to_reference`, relight-to-BG via the depth-driven puck relight, defocus +
-  grain match). Needs `chroma-compositor` + the relight work. v1 = static-camera only.
+  grain match). Needs `apelles-compositor` + the relight work. v1 = static-camera only.
   `docs/notes/background-replace.md`.
 - **Photoreal relight bake** — RelightVid/IC-Light diffusion in the `ai/` sidecar,
   seeded from the same puck setup, preview-one-frame-then-commit UX. v3, not before.
@@ -2381,11 +2381,11 @@ temporal depth track, Video Depth Anything (D-036).
 **The 3-tab pivot (2026-09-02, D-039):** Palmier closing triggered the decision — Edit
 / Motion / Colorist, Rust-native/small-binary constraint locked, architecture designed
 (`architecture-lock.md`) · de-submoduled to a monorepo (D-040) · workspace skeleton +
-3-tab shell · Editor tab MVP, `chroma-timeline` made real (D-041) · UI pass (window
-chrome in the shell, `@chroma/ui` started) · project launcher promoted to the app's
-entry screen · `@chroma/ui` rebuilt properly on shadcn/Base UI (D-042) · project
+3-tab shell · Editor tab MVP, `apelles-timeline` made real (D-041) · UI pass (window
+chrome in the shell, `@apelles/ui` started) · project launcher promoted to the app's
+entry screen · `@apelles/ui` rebuilt properly on shadcn/Base UI (D-042) · project
 settings — typed output spec (D-038) · **RapidRAW's DAM/welcome/library/community
-shell removed from the Colorist tab** (D-043, −7,836 LOC) · **`@chroma/player`**, the
+shell removed from the Colorist tab** (D-043, −7,836 LOC) · **`@apelles/player`**, the
 shared presentational preview component (viewport + title strip + transport), Editor
 tab migrated to it — Colorist + Motion adoption still open.
 
@@ -2400,7 +2400,7 @@ tab, `TimelineSwitcher`.
 **Motion tab MVP (2026-09-02, D-047):** the placeholder tab is real — `@remotion/player`
 live preview of `packages/motion-engine/`'s `Video` composition, a `zod`-validated
 JSON-in manifest editor, Save (project-scoped sidecar
-`<project>.chroma/motion/manifest.json`) and Render (new `chroma-motion` crate, Rust
+`<project>.chroma/motion/manifest.json`) and Render (new `apelles-motion` crate, Rust
 orchestrates `npx remotion render` rather than reimplementing the engine). Along the
 way: fixed a latent `@react-three/fiber` × `React.ElementType` typing collision
 (B-008) and a duplicate-Remotion-package runtime crash (B-009, an incomplete root
@@ -2429,12 +2429,12 @@ look like light."
 **Full NLE, P0 (2026-09-03 night, D-086/088/089/090):** real alpha-over multi-layer
 compositor (V1/V2 actually stacked, not opaque top-wins), track lock/hide/mute/
 rearrange, clip transform (position/scale/rotation/opacity) + keyframes end to end,
-`chroma-timeline` gains real fields for all of it. Alongside: the Edit tab's
+`apelles-timeline` gains real fields for all of it. Alongside: the Edit tab's
 stuck-on-open bug fixed (D-085/B-025), sidecar model memory gets a TTL auto-unload +
 `GET /memory`/`POST /unload` (D-087), React Compiler enabled for real on the v6
 Rolldown-Babel toolchain (D-091), the stale `app/bench` perf harness revived and
 retargeted at the Edit-tab timeline (D-092), local-only user-action telemetry wired
-into `@chroma/bridge` (D-093).
+into `@apelles/bridge` (D-093).
 
 **The NLE drag-and-drop saga (2026-09-03 night → 2026-09-04, D-094 through D-104,
 B-026/027/028/029/030):** seven live-tested rounds chasing the owner's real-time bug
@@ -2466,11 +2466,11 @@ clip-properties panel (`ClipInspectorPanel.tsx`, replacing D-090's transform pop
 outright) — both verified against real backward-compat cases, the NLE half against the
 owner's actual `~/Movies/Chroma/New.chroma/project.json`. **Phase 4** unified the two
 panels' shared, genuinely-identical chrome (the empty-state message, section-heading
-typography) into a new tiny package, `@chroma/inspector` — not a full merge: the two
+typography) into a new tiny package, `@apelles/inspector` — not a full merge: the two
 panels' selections/fields/edit ops stayed different enough that forcing one polymorphic
 component would have meant rewriting working code for no benefit, and the resizable-
-panel wrapping stayed package-local since `@chroma/editor`'s real `@chroma/ui`
-`ResizablePanel` and `@chroma/motion`'s motion-safe local one aren't interchangeable
+panel wrapping stayed package-local since `@apelles/editor`'s real `@apelles/ui`
+`ResizablePanel` and `@apelles/motion`'s motion-safe local one aren't interchangeable
 (the `@react-three/fiber` JSX conflict). `Selection` stayed local per tab — `Shell.tsx`
 already keeps every tab mounted and just hides inactive ones, so there was no real
 cross-tab gap to close by lifting state.
@@ -2507,7 +2507,7 @@ onto indirect signals. MCP `debug_screenshot` (shoot → `Read` the path → loo
 `debug_sample_pixel`; Cmd/Ctrl+Shift+D for a human. `docs/notes/debug-screenshot-tool.md`.
 
 **Deliberately deferred, not abandoned:** the deeper crate-extraction migration
-(`chroma-gpu`/`chroma-media`/`chroma-project`, eventually `chroma-compositor`) — the
+(`apelles-gpu`/`apelles-media`/`apelles-project`, eventually `apelles-compositor`) — the
 roadmap's own "Then" section already flags it as a bigger, no-urgency structural bet
 best done with isolated worktrees once underway, not rushed through in the same
 overnight pass as everything above.

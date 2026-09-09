@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for D-263's DOCKED library panel: the
+ * @apelles/editor — real-DOM coverage for D-263's DOCKED library panel: the
  * rail switches what the column shows, and every library in it is still a real
  * drag source onto the timeline.
  *

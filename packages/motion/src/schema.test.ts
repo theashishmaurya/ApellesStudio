@@ -8,8 +8,8 @@
  * `CameraRig` reads `CamKey.ease` the identical way), and the new
  * `transformKey` (D-159, Phase 4's per-layer keys).
  *
- * Lives in `@chroma/motion`'s test suite for the same reason
- * `interpolateKeys.test.ts` does — `@chroma/motion-engine` has no `test`
+ * Lives in `@apelles/motion`'s test suite for the same reason
+ * `interpolateKeys.test.ts` does — `@apelles/motion-engine` has no `test`
  * script (D-155's own finding, still true) — importing `manifestSchema`
  * across the package boundary the same way `manifestEdit.test.ts` already
  * imports `sample`/types from it.
@@ -27,8 +27,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { manifestSchema } from '@chroma/motion-engine/src/engine/schema';
-import { sample } from '@chroma/motion-engine/src/engine/sample';
+import { manifestSchema } from '@apelles/motion-engine/src/engine/schema';
+import { sample } from '@apelles/motion-engine/src/engine/sample';
 
 describe('B-059 — camera/layer keyframe `ease` survives schema validation', () => {
   it('retains an authored `ease` on a 2D camera key (the bug\'s own repro)', () => {

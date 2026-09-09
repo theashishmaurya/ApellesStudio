@@ -1,6 +1,6 @@
-# mcp/ — Chroma MCP server (D-020)
+# mcp/ — Apelles MCP server (D-020)
 
-A thin stdio MCP server that lets Claude drive the **running Chroma desktop app**.
+A thin stdio MCP server that lets Claude drive the **running Apelles desktop app**.
 Claude and the app share **one** grade/mask state: an MCP edit moves the app's
 sliders and re-renders its canvas; a read reflects the user's manual edits.
 
@@ -31,11 +31,11 @@ python3 -m venv .venv
 
 ## Add to Claude Code
 
-The Chroma desktop app must be running (the control server binds on app start),
+The Apelles desktop app must be running (the control server binds on app start),
 with an image or video open.
 
 ```bash
-claude mcp add chroma -- /ABS/PATH/chroma/mcp/.venv/bin/python /ABS/PATH/chroma/mcp/server.py
+claude mcp add apelles -- /ABS/PATH/chroma/mcp/.venv/bin/python /ABS/PATH/chroma/mcp/server.py
 ```
 
 Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
@@ -156,16 +156,16 @@ and `../docs/notes/eval-harness.md` (D-035).
 
 Adding a capability = one entry in the owning tab's own `OPS` registry + one
 tool here. Which hook that is depends on the tab — `useChromaControl.ts`
-(Colorist), `@chroma/editor`'s `useEditorControl.ts` (`editor_*`),
-`@chroma/motion`'s `useMotionControl.ts` (`motion_*`). The full recipe, and the
+(Colorist), `@apelles/editor`'s `useEditorControl.ts` (`editor_*`),
+`@apelles/motion`'s `useMotionControl.ts` (`motion_*`). The full recipe, and the
 op-prefix convention that keeps two hooks from racing for one response, is
 `../docs/notes/mcp-architecture.md`.
 
 ## Troubleshooting
 
-- **"Cannot reach the Chroma control server"** — the app isn't running, or it's
+- **"Cannot reach the Apelles control server"** — the app isn't running, or it's
   on another port (`CHROMA_CONTROL_PORT`).
-- **"The Chroma app did not respond"** (504) — the app window is closed or no
+- **"The Apelles app did not respond"** (504) — the app window is closed or no
   image/video is loaded. The bridge only runs while the editor view is mounted
   (i.e. something is open).
 - **No image in the response, only the histogram** — known v1 limitation: the app

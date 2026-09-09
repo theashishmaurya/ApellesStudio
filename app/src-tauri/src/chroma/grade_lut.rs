@@ -14,14 +14,14 @@
 //! `chroma::edit`'s compositor calls.
 //!
 //! What it does NOT do: no `.cube` parsing (the app's `lut_processing` owns
-//! that direction), no lattice maths (that is `chroma_types::lut3d`, pure and
+//! that direction), no lattice maths (that is `apelles_types::lut3d`, pure and
 //! unit-tested there), no timeline knowledge, no filtergraph knowledge. It does
 //! **not** carry the spatial half of a grade — see "What a LUT cannot carry"
 //! below; that is a documented, warned-about limit, not an oversight.
 //!
 //! ## Why a baked lattice, and not the shader itself (D-256)
 //!
-//! `chroma_types::adjustment`'s header states the obstacle this module removes,
+//! `apelles_types::adjustment`'s header states the obstacle this module removes,
 //! and states it correctly: the Colorist's `adjustments` blob is untyped in
 //! Rust and is applied *only* by RapidRAW's wgpu shader, the Edit compositor is
 //! deliberately GPU-free, and the ffmpeg exporter could never reproduce a
@@ -33,7 +33,7 @@
 //! Baking sidesteps both. The shader stays the *only* implementation of the
 //! grade maths — it is what renders the lattice — and what crosses into the
 //! other two engines is 3×33³ numbers. The Edit preview interpolates them on
-//! the CPU (`chroma_types::Lut3d::sample_trilinear`); the ffmpeg export hands
+//! the CPU (`apelles_types::Lut3d::sample_trilinear`); the ffmpeg export hands
 //! the very same lattice, written as a `.cube`, to ffmpeg's own `lut3d` filter
 //! with `interp=trilinear`. Preview and export therefore agree *by
 //! construction*.
@@ -67,8 +67,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use chroma_types::Lut3d;
-use chroma_types::lut3d::{DEFAULT_SIZE, IDENTITY_TOL};
+use apelles_types::Lut3d;
+use apelles_types::lut3d::{DEFAULT_SIZE, IDENTITY_TOL};
 use image::{DynamicImage, RgbImage, RgbaImage};
 use once_cell::sync::Lazy;
 use serde_json::{Value, json};
@@ -131,7 +131,7 @@ impl BakeSession {
         size: u32,
         chain_source_lut: bool,
     ) -> Result<BakedGrade, String> {
-        let size = size.clamp(chroma_types::lut3d::MIN_SIZE, chroma_types::lut3d::MAX_SIZE);
+        let size = size.clamp(apelles_types::lut3d::MIN_SIZE, apelles_types::lut3d::MAX_SIZE);
         let n = size as usize;
 
         // --- strip everything a 3D LUT provably cannot carry -----------------
@@ -275,7 +275,7 @@ pub fn bake_lut3d(
 /// `<project>/grades/<clip_id>.grade.json` — where the Colorist writes a clip's
 /// grade (D-025's document, at D-070's clip-id-keyed name).
 pub fn grade_file_for(project_dir: &Path, clip_id: &str) -> PathBuf {
-    chroma_project::grade_dir(project_dir).join(format!("{clip_id}.grade.json"))
+    apelles_project::grade_dir(project_dir).join(format!("{clip_id}.grade.json"))
 }
 
 /// A grade file's staleness fingerprint: (mtime nanos, length). Never an input
@@ -421,14 +421,14 @@ pub fn resolve_clip_lut(clip_id: &str, session: Option<&BakeSession>) -> Resolve
 }
 
 /// Read one `grade.json` and bake its `adjustments`. Loads through
-/// `chroma_grade_model::load_grade`, the same loader the Colorist itself uses,
+/// `apelles_grade_model::load_grade`, the same loader the Colorist itself uses,
 /// so schema migration happens exactly once in exactly one place.
 pub fn bake_clip_grade(
     grade_path: &Path,
     size: u32,
     session: Option<&BakeSession>,
 ) -> Result<BakedGrade, String> {
-    let grade = chroma_grade_model::load_grade(&grade_path.to_string_lossy())?;
+    let grade = apelles_grade_model::load_grade(&grade_path.to_string_lossy())?;
     let adjustments = grade
         .get("adjustments")
         .cloned()
@@ -525,7 +525,7 @@ pub fn bake_luts_for_clips(clip_ids: &[String]) -> Result<GradeLutPaths, String>
         let Some(lut) = grade.lut else {
             continue; // graded, but the grade is a no-op — nothing for ffmpeg to do
         };
-        let text = lut.to_cube_text(&format!("Chroma clip grade {clip_id}"));
+        let text = lut.to_cube_text(&format!("Apelles clip grade {clip_id}"));
         let path = dir.join(format!("{clip_id}-{:016x}.cube", stable_hash(&text)));
         // Content-addressed, so an existing file with this name IS this lattice.
         if !path.is_file() {
@@ -599,7 +599,7 @@ pub async fn chroma_timeline_grade_luts(clip_ids: Vec<String>) -> Result<GradeLu
 /// for one graded layer, which is a visible stutter by CLAUDE.md's
 /// performance-first rule rather than a rounding error. Chunking by row brings
 /// it to ~3 ms. `rayon` is already an `app/src-tauri` dependency, and it stays
-/// here rather than in `chroma-types` so that L0 crate keeps its zero-heavy-deps
+/// here rather than in `apelles-types` so that L0 crate keeps its zero-heavy-deps
 /// rule (D-039) — the pure per-pixel maths is still `Lut3d::apply_rgb8`, called
 /// unchanged; only the walk over the buffer is parallel.
 ///

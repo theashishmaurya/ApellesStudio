@@ -1,36 +1,36 @@
-//! Chroma additions to the RapidRAW engine.
+//! Apelles additions to the RapidRAW engine.
 //!
-//! Everything Chroma-specific lives under this module so the fork stays a clean,
+//! Everything Apelles-specific lives under this module so the fork stays a clean,
 //! separable diff against upstream RapidRAW (see chroma/docs/08-decisions.md D-003).
 //! Ideal upstream footprint: `mod chroma;` in `lib.rs` + a couple of one-line hooks.
 //!
 //! - `video`    — ffmpeg-backed video probe + single-frame decode (D-015);
-//!   a re-export shim since D-146 — the real code is `chroma-media`
+//!   a re-export shim since D-146 — the real code is `apelles-media`
 //! - `media_cache` — persistent, source-keyed disk cache for derived media
 //!   artefacts: filmstrip tiles, probes, waveform peaks (D-128); a re-export
-//!   shim since D-146 — the real code is `chroma-media`
+//!   shim since D-146 — the real code is `apelles-media`
 //! - `filmstrip` — windowed, level-of-detail Edit-tab filmstrip tiles on top
 //!   of `media_cache` (D-128; supersedes D-119/D-121/D-124's whole-clip strip);
 //!   since D-146 just the `chroma_clip_thumbnails` command — the real code is
-//!   `chroma-media`
+//!   `apelles-media`
 //! - `audio`    — Edit-tab audio playback: symphonia decode → rubato resample
 //!   → dasp_sample format-convert → cpal device output (D-049); since D-146
 //!   just the 5 commands **plus** the timeline resolution that turns a
 //!   playhead frame into audio sources, which is deliberately *not* media —
-//!   the engine is `chroma-media`
+//!   the engine is `apelles-media`
 //! - `decode_pipe` — persistent sequential-decode pipe for smooth scrub/playback
-//!   (D-030); a re-export shim since D-146 — the real code is `chroma-media`
-//! - `state`    — Chroma's own process state (the multi-shot session, D-033)
+//!   (D-030); a re-export shim since D-146 — the real code is `apelles-media`
+//! - `state`    — Apelles' own process state (the multi-shot session, D-033)
 //! - `load`     — load a video as one decoded frame into the existing image pipeline
 //! - `commands` — tauri commands for the transport (`chroma_video_info`, `chroma_seek`)
 //! - `session`  — multi-shot session: add / list / switch / remove shots (D-033)
 //! - `project`  — the saved `<name>.chroma` project: list / open / new / save
 //!   (D-037); since D-148 just `open_manifest` + the 20 commands (all of which
-//!   take `tauri::State<AppState>`) — the model is `chroma-project`
-//! - `edit`     — the Edit-tab bridge: `chroma-timeline` model ⇄ frontend + a
+//!   take `tauri::State<AppState>`) — the model is `apelles-project`
+//! - `edit`     — the Edit-tab bridge: `apelles-timeline` model ⇄ frontend + a
 //!   lightweight decode→jpeg preview (D-041). Since D-148 the project's
 //!   *timeline lifecycle* (`ensure_timeline`/`resolve_timeline`) is
-//!   `chroma_project::timeline`, wrapped here to supply the open project's dir
+//!   `apelles_project::timeline`, wrapped here to supply the open project's dir
 //! - `playback` — fused decode+install+grade command for real-time playback (D-031)
 //! - `mask`     — subject matte via the AI sidecar (SAM 2 → ViTMatte, D-016)
 //! - `depth`    — per-frame temporally-consistent depth track (Video Depth Anything, D-036)
@@ -53,26 +53,26 @@
 //!   see `docs/notes/subtitles.md` for the measurement that makes that true
 //! - `subtitles` — read a `.srt`/`.vtt` file into cues already on the
 //!   project's own timebase, and write a subtitle track back out as one
-//!   (D-229). The parsing itself is `chroma_timeline::subtitle_import`
+//!   (D-229). The parsing itself is `apelles_timeline::subtitle_import`
 //! - `export`   — graded-clip render to ProRes/H.264 + `.cube` bake (D-022)
 //! - `ffmpeg_run` — generic `ffmpeg <argv>` spawn/capture primitive (D-183),
 //!   used by the Edit-tab timeline exporter (`packages/editor/src/
 //!   timelineExport.ts` builds the argv; this just runs it — no ffmpeg-arg
-//!   knowledge lives here, mirroring `chroma-motion`'s own render/exec split)
+//!   knowledge lives here, mirroring `apelles-motion`'s own render/exec split)
 //! - `grade`    — the `grade.json` document command bridge: save / load
-//!                (D-025); the model itself lives in `chroma-grade-model` (D-143)
+//!                (D-025); the model itself lives in `apelles-grade-model` (D-143)
 //! - `grade_lut` — **the Colorist ⇄ Edit bridge (D-256)**: bakes a clip's saved
-//!   grade into a `chroma_types::Lut3d` by running an identity lattice through
+//!   grade into a `apelles_types::Lut3d` by running an identity lattice through
 //!   the real Colorist wgpu pipeline, memoised on the grade file's own
 //!   (mtime, len). That lattice is what makes a Colorist grade visible on the
 //!   Edit timeline at all — `edit`'s CPU compositor interpolates it per clip,
 //!   and the ffmpeg exporter hands the same lattice to `lut3d` as a `.cube`, so
 //!   preview and export are the same maths by construction. Carries the
 //!   **global** grade only; masks/crop/relight are stripped with a warning
-//! - `motion`   — the Motion tab bridge: manifest sidecar + `chroma-motion` render (D-046)
+//! - `motion`   — the Motion tab bridge: manifest sidecar + `apelles-motion` render (D-046)
 //! - `media_understanding` — transcript + "what changed on screen, and when"
 //!   via the `ai-media/` sidecar (mlx-whisper + Qwen3-VL, D-189); just the 4
-//!   `#[tauri::command]`s — the wire client is `chroma_ai::media_understanding`
+//!   `#[tauri::command]`s — the wire client is `apelles_ai::media_understanding`
 //! - `sidecar`  — spawn + supervise the `ai/` and `ai-media/` FastAPI sidecars,
 //!   kill them on exit (D-028; second sidecar D-189, N-sidecar supervisor D-190)
 //! - `write_text_file` — generic "write this UTF-8 text to this absolute path"

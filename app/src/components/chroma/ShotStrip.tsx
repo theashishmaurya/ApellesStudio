@@ -1,4 +1,4 @@
-// Chroma — the shot strip (multi-shot session, D-033).
+// Apelles — the shot strip (multi-shot session, D-033).
 //
 // A horizontal strip of the shots in the grading job: thumbnail + filename + a
 // dot when the shot has a non-neutral grade. Click to switch (each shot keeps
@@ -7,7 +7,7 @@
 // browser for the clip-oriented workflow (docs/09 "replace with a shot strip").
 //
 // D-070 (unified clip identity, `docs/notes/unified-clip-model.md`): for a
-// real project, each `shot` here is backed by a `chroma_timeline::Clip` on
+// real project, each `shot` here is backed by a `apelles_timeline::Clip` on
 // the active Edit-tab timeline (`useSessionStore.shots`, keyed by
 // `shot.id` — a clip id, not a path — see that store's module doc); "+"
 // appends a new clip, "×" removes one from the timeline. Same visual shape

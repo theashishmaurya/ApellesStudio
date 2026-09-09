@@ -1,9 +1,9 @@
-# Scope: extract video/audio understanding into the `ai/` sidecar, expose via Chroma's own MCP only
+# Scope: extract video/audio understanding into the `ai/` sidecar, expose via Apelles' own MCP only
 
 Owner asked 2026-09-07, after a same-day prototype in the sibling `videoAgent`
 repo validated the approach on real footage: pull that prototype's two
-capabilities into Chroma properly — `ai/` sidecar, exposed only through
-Chroma's own `mcp/server.py` — rather than leaving a second, separate
+capabilities into Apelles properly — `ai/` sidecar, exposed only through
+Apelles' own `mcp/server.py` — rather than leaving a second, separate
 standalone MCP server (`videoagent`, in the videoAgent repo) as the permanent
 home. This extends `docs/notes/video-search.md`'s own roadmap ("an `ai/`
 sidecar addition, Qwen3-VL, sized per device... an MCP tool") with a concrete,
@@ -63,7 +63,7 @@ MLX with a large existing PyTorch/`transformers<5`-pinned venv is a strictly
 bigger version of the same risk, not a smaller one.
 
 **Recommended: a second, sibling sidecar process**, not a second venv inside
-the same process. Same supervised-subprocess pattern `chroma_ai::sidecar`
+the same process. Same supervised-subprocess pattern `apelles_ai::sidecar`
 (Rust, D-101/D-142) already implements for `ai/server.py` — content-hash
 health check, spawn/backoff/respawn, status snapshot — applied a second time
 to a new `ai-media/` (name TBD) directory: its own FastAPI app, its own
@@ -106,7 +106,7 @@ already has a precedent to copy.
 
 ## What happens to the videoAgent-side prototype
 
-**Retire it once Chroma's own version is live and tested**, don't run both
+**Retire it once Apelles' own version is live and tested**, don't run both
 permanently — maintaining the same capability in two places is exactly the
 confusion the owner flagged this same session (the whole reason this scope
 doc exists rather than just leaving the videoAgent version as-is). Until
@@ -125,7 +125,7 @@ Rust + TS + MCP tool, not a bare CLI script), not a port.
    `POST /transcribe` and `POST /understand_video`, each a thin wrapper
    around the already-validated logic from `video_understand.py` /
    mlx-whisper — port the logic, don't redesign it.
-3. **Rust supervisor**: extend `chroma_ai::sidecar`'s pattern for the second
+3. **Rust supervisor**: extend `apelles_ai::sidecar`'s pattern for the second
    process (or generalize it to supervise N sidecars if that's cleaner —
    judgment call for whoever picks this up, not decided here).
 4. **Control-server ops + MCP tools**: `editor_get_transcript`,
@@ -159,8 +159,8 @@ actually run:
   bought for nothing but avoiding one more supervised process.
 
 **Phases 2-4 — done.** `ai-media/` (`server.py` + `video_understand.py` +
-`transcribe.py` + `README.md`), `chroma_ai::media_understanding`,
-`app/src-tauri/src/chroma/media_understanding.rs`, `@chroma/editor`'s
+`transcribe.py` + `README.md`), `apelles_ai::media_understanding`,
+`app/src-tauri/src/chroma/media_understanding.rs`, `@apelles/editor`'s
 `mediaUnderstandingStore.ts`, the ops in `useEditorControl.ts`, the tools in
 `mcp/server.py`, and a second Settings status card.
 
@@ -170,7 +170,7 @@ reference implementation. The scope's own condition for retiring it is "once
 (4) is live-tested end-to-end (open app, real MCP call, real result)" — see
 "What was live-tested" below for exactly which layers were and were not. Do
 not delete anything in that repo until an owner has driven `editor_analyze_video`
-from a running Chroma app at least once.
+from a running Apelles app at least once.
 
 ### Deviations from the plan, and why
 
@@ -199,7 +199,7 @@ from a running Chroma app at least once.
    expressed as `mlx_vlm.generate` CLI flags.
 4. **`transcribe.py` dropped the prototype's `lightning-whisper-mlx` backend.**
    It cannot produce word-level timings (segments only), which is the entire
-   reason Chroma wants a transcript — keeping it would be an unusable second
+   reason Apelles wants a transcript — keeping it would be an unusable second
    model dependency. Its `--quant`/`--batch-size` knobs went with it.
 5. **The two analysis ops are the one documented exception** to
    `mcp-architecture.md`'s "a mutating op goes through the same store action a
@@ -229,9 +229,9 @@ from a running Chroma app at least once.
 
 **Not live-tested — built, type-checked and unit-tested only:** the middle of
 the chain (MCP tool → control server → Tauri event → op → Tauri command),
-because that requires a running Chroma desktop app, which this pass could not
-launch. Covered instead by: `cargo check -p RapidRAW` building, `cargo
-fmt`/`clippy` clean on all new Rust, 22 `chroma-ai` unit tests (5 new: registry
+because that requires a running Apelles desktop app, which this pass could not
+launch. Covered instead by: `cargo check -p apelles` building, `cargo
+fmt`/`clippy` clean on all new Rust, 22 `apelles-ai` unit tests (5 new: registry
 isolation, spec disjointness, dev-layout dir resolution for BOTH sidecars),
 `tsc -p packages/editor` clean, and **13 new unit tests** for the store's job
 protocol (polling terminates on `unknown`, cache hits/misses, `force`, a failed

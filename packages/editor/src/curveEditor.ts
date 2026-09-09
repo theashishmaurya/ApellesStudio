@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the timeline curve editor's pure geometry (D-233, roadmap
+ * @apelles/editor — the timeline curve editor's pure geometry (D-233, roadmap
  * item 27 "Bezier ease curves under a clip, editable directly").
  *
  * What it is: the maths behind `ClipCurveEditor.tsx` — the value axis a

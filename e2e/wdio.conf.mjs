@@ -18,7 +18,7 @@ export const config = {
     [
       'tauri',
       {
-        appBinaryPath: '../target/e2e/debug/RapidRAW',
+        appBinaryPath: '../target/e2e/debug/apelles',
         driverProvider: 'embedded',
       },
     ],

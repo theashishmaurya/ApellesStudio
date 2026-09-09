@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution pixel tests for D-230's adjustment
+// @apelles/editor — REAL ffmpeg-execution pixel tests for D-230's adjustment
 // clips.
 //
 // Its own file, mirroring `timelineExportTransitions.ffmpeg.test.ts`'s

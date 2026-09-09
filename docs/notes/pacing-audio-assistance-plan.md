@@ -36,7 +36,7 @@ miss, never an error**. Existing namespaces: `filmstrip`, `probe`, `waveform`,
 wants: memory `HashMap` → `media_cache` JSON → real decode, with the *caller's* display resolution
 deliberately kept out of the key.
 
-**The timeline model** (`crates/chroma-timeline`). `Timeline { id, name, rate, tracks }`,
+**The timeline model** (`crates/apelles-timeline`). `Timeline { id, name, rate, tracks }`,
 `Track { kind, clips, gain, locked, hidden, sync_locked }`,
 `Clip { id, source_path, source_start, duration, source_len, start_frame, link_group, transform… }`.
 `chroma_timeline_set` stores whatever it is sent **verbatim** — so any new field on these structs
@@ -45,7 +45,7 @@ owns forever. **There is no marker concept anywhere in the model, the store, or 
 by grep across the crate and `packages/editor` — the only hit is an unrelated comment.
 
 **Timeline snapping** (`packages/editor/src/timeline.ts`). Two pure, tested functions own every
-snap decision Chroma actually controls: `computeInsertion` (Sources-panel drop → nearest clip edge
+snap decision Apelles actually controls: `computeInsertion` (Sources-panel drop → nearest clip edge
 within `snapFrames`, then the D-100 clip-half fallback) and `resolveClipLanding` (dnd-kit clip move,
 D-104, delegates to `computeInsertion`). `TimelinePane.tsx` derives `snapFrames` from a fixed
 `INSERT_SNAP_PX = 28` at the current zoom.
@@ -59,7 +59,7 @@ playhead, full stop. **This is load-bearing for the phasing below.**
 **all Colorist** — `docs/notes/mcp-tool-coverage.md` records a verified **zero** Edit-tab tools.
 Two facts that matter here: `useChromaControl()` is mounted **app-level in `App.tsx`**, not inside
 the Colorist editor, so an Edit-tab op is reachable today; and `app` already depends on
-`@chroma/editor`, so the bridge can call `timelineStore`'s actions directly.
+`@apelles/editor`, so the bridge can call `timelineStore`'s actions directly.
 
 **The owner's real content.** `projects/prompt-caching-explained/` (the videoAgent sibling repo):
 a single continuous 4K HEVC talking-head take (`A001_08302215_C019.MOV`, 517s) plus hand-generated
@@ -78,7 +78,7 @@ ship) and a real ceiling (read-only pacing-signal inspection). This plan takes t
 **In scope**
 
 - Beat/onset detection on a clip's audio, offline, cached, exposed as timeline guides.
-- Snap-to-beat wherever Chroma already owns the snap decision.
+- Snap-to-beat wherever Apelles already owns the snap decision.
 - Read-only pacing signals an agent or a human can reason about numerically.
 - Full MCP parity for both, designed at the same level of care as the GUI.
 
@@ -153,9 +153,9 @@ than fixed by quietly adding `Clip.show_beats`.
 ### The call: the `ai/` Python sidecar, with the coupling named
 
 D-139's finding is unambiguous: there is no Rust-native beat tracker with librosa/essentia/madmom's
-track record; the credible native option is `aubio-rs` (GPL-3.0, and Chroma's licence is still an
+track record; the credible native option is `aubio-rs` (GPL-3.0, and Apelles' licence is still an
 open product decision — D-002) or a single-maintainer crate with no published accuracy numbers.
-The mature path is Python, and Chroma already runs a supervised Python sidecar.
+The mature path is Python, and Apelles already runs a supervised Python sidecar.
 
 **Library: `librosa` (BSD-3, no model weights).** `essentia` and `madmom` are both excluded on the
 licence gate D-139 found — their *pretrained models* are non-commercial (CC-BY-NC-ND and
@@ -292,7 +292,7 @@ Arming a clip: a "Detect beats" action in `ClipInspectorPanel` for a clip whose 
 
 ### Snapping — and the honest limit
 
-Beat frames join the existing snap-target set in the two functions Chroma owns:
+Beat frames join the existing snap-target set in the two functions Apelles owns:
 `computeInsertion` and `resolveClipLanding` gain an optional `beatFrames: number[]` argument,
 merged into the same "nearest target within `snapFrames`" scan that already handles clip edges and
 0. One scan, one tie-break rule, no second snapping system — and the existing tests keep passing
@@ -360,8 +360,8 @@ an attempt to close the whole Edit-tab MCP gap, which is its own tracked item.
 - **`inspect_pacing` computes cut frequency from the timeline model, not from scene detection.**
   This is the plan's other significant departure from the research doc's framing, and it is a
   simplification, not a compromise: D-139 reached for PySceneDetect because it was thinking about
-  analysing a finished video file. Chroma *owns the edit* — every cut is a `Clip` boundary in
-  `chroma-timeline`. Shot lengths, cuts-per-minute and their variance are arithmetic over
+  analysing a finished video file. Apelles *owns the edit* — every cut is a `Clip` boundary in
+  `apelles-timeline`. Shot lengths, cuts-per-minute and their variance are arithmetic over
   `Track.clips`, exact by construction, instant, and needing no new dependency at all.
   PySceneDetect only becomes relevant for an *imported, already-cut* video, which is not a v1
   scenario. **Loudness** likewise reuses the `waveform` cache that already exists (`chroma::audio`,
@@ -379,11 +379,11 @@ commands (`chroma_timeline_move_clip`) or replicate the GUI's `applyOp` + `chrom
 
 **Answer: replicate the GUI path — call `timelineStore.applyOp` through the bridge.** The reason is
 concrete, not stylistic. `timelineStore.applyOp` pushes a before/after snapshot pair onto the shared
-`@chroma/history` undo stack (D-051); `chroma_timeline_move_clip` does not. Going direct to the Rust
+`@apelles/history` undo stack (D-051); `chroma_timeline_move_clip` does not. Going direct to the Rust
 command would produce an agent edit the user cannot undo — a straight violation of MCP design rule 7
 ("one shared state… the UI and the agent never diverge") and of the vision doc's "each pass
 reviewable and undoable, not a black box." The bridge is mounted app-level and `app` already depends
-on `@chroma/editor`, so this needs no new plumbing. Recorded here so the next Edit-tab tool does not
+on `@apelles/editor`, so this needs no new plumbing. Recorded here so the next Edit-tab tool does not
 re-litigate it.
 
 ---

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the clip Inspector's tab model (D-246).
+ * @apelles/editor — the clip Inspector's tab model (D-246).
  *
  * The DOM half lives in `ClipInspectorPanel.tabs.dom.test.tsx`; this file
  * pins the pure decisions underneath it, which are the ones that would

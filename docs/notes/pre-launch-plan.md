@@ -19,14 +19,14 @@ items 0–4 below.
 **This is the load-bearing decision, and it was already flagged, unresolved, in
 `docs/08-decisions.md`'s D-002 before tonight:**
 
-> D-002 — Chroma's own license: **open** (undecided). Leaning: AGPL-3.0 for the
+> D-002 — Apelles' own license: **open** (undecided). Leaning: AGPL-3.0 for the
 > whole project... **Blocks a closed SaaS**; does not block an open project,
 > sponsorships, or paid support. **Decide before: first public push.**
 
 Items 2 and 3 below (a paid-credits backend, a cloud AI sidecar) are exactly the
 "closed SaaS" shape D-002's own leaning flags as blocked by a straight AGPL
 posture on the whole codebase. This repo vendors RapidRAW at `app/` under
-AGPL-3.0 (D-003) — that part of the binary is AGPL regardless of what Chroma's
+AGPL-3.0 (D-003) — that part of the binary is AGPL regardless of what Apelles'
 own code is licensed as, since it's a hard fork, not a separate program.
 
 **The real fork in the road, stated plainly, not resolved here:**
@@ -157,7 +157,7 @@ opt into a cloud-run equivalent instead.
   freedom as RunPod, different developer experience (Python decorators vs. a
   Dockerfile).
 - **Replicate** — best for using models you don't own (a huge public catalog,
-  one-line API); a weaker fit for hosting Chroma's own fine-tuned/custom
+  one-line API); a weaker fit for hosting Apelles' own fine-tuned/custom
   models as a first-class deploy.
 - **Baseten** — production-grade (SLAs, monitoring, TensorRT-LLM/vLLM
   backends); more overhead than an indie sidecar workload needs until usage is
@@ -218,7 +218,7 @@ Not deeply researched (lower-risk, well-understood category) — scoped from
 this project's own existing positioning docs (`docs/00-vision.md`,
 `docs/02-scope.md`) rather than external research. Minimum real scope for a
 launch:
-- A landing page stating what Chroma actually is (the AI-native local
+- A landing page stating what Apelles actually is (the AI-native local
   video/color tool, 3-tab Edit/Motion/Colorist framing per D-039) and who
   it's for — pull real language from `docs/00-vision.md` rather than
   rewriting the pitch from scratch.

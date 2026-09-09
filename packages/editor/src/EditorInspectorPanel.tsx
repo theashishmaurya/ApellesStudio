@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's Inspector, as a full-height sibling panel
+ * @apelles/editor — the Edit tab's Inspector, as a full-height sibling panel
  * (D-118).
  *
  * D-102 built `ClipInspectorPanel` as a *third pane nested inside

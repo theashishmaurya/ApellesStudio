@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 /**
- * @chroma/shell — real-DOM coverage for D-263's per-tab `libraryRail` /
+ * @apelles/shell — real-DOM coverage for D-263's per-tab `libraryRail` /
  * `libraryPanel` slots, using the SAME real consumers `Root.tsx` wires in
- * production (`@chroma/editor`'s `EditLibraryRail` and `EditLibraryPanel`)
+ * production (`@apelles/editor`'s `EditLibraryRail` and `EditLibraryPanel`)
  * and the same composition, for the same reason `Shell.exportAction.dom.
  * test.tsx` uses the real `EditorExportDialog`: the owner's ask was about
  * where the REAL rail sits relative to the REAL docked column, and a stand-in
  * `<div>` would only prove `Shell` renders *something* in a slot.
  *
- * `@chroma/editor` is a **devDependency** of this package (`package.json`) and
+ * `@apelles/editor` is a **devDependency** of this package (`package.json`) and
  * is imported only by these tests. `Shell.tsx` itself imports nothing from it;
  * the harness below mirrors what `Root.tsx` does at runtime — hold both
  * stores, hand `Shell` two nodes it never has to know the insides of.
@@ -63,7 +63,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 
 import { Shell, type ShellTab } from './Shell';
 import { useShellStore } from './store';
-import { EditLibraryPanel, EditLibraryRail, useEditorTimelineStore } from '@chroma/editor';
+import { EditLibraryPanel, EditLibraryRail, useEditorTimelineStore } from '@apelles/editor';
 
 /** jsdom has no layout engine, and `react-resizable-panels` expects a
  *  `ResizeObserver`; Base UI's tooltip/tabs reach for `getAnimations`. Same
@@ -137,7 +137,7 @@ afterEach(() => {
 });
 
 /** Exactly what `Root.tsx` does: the shell owns whether the column is OPEN,
- *  `@chroma/editor` owns WHICH library it shows, and the composition root is
+ *  `@apelles/editor` owns WHICH library it shows, and the composition root is
  *  the only place that holds both. */
 function Harness(): React.ReactElement {
   const sourcesPanelOpen = useShellStore((s) => s.sourcesPanelOpen);

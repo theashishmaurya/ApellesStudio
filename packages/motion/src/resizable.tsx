@@ -1,13 +1,13 @@
 /**
- * @chroma/motion — a tiny local resizable-panel wrapper (D-099).
+ * @apelles/motion — a tiny local resizable-panel wrapper (D-099).
  *
- * Not `@chroma/ui`'s `ResizablePanelGroup`/`ResizablePanel`/`ResizableHandle`:
+ * Not `@apelles/ui`'s `ResizablePanelGroup`/`ResizablePanel`/`ResizableHandle`:
  * that package's barrel also exports `Text`, whose polymorphic `as`-prop
  * typing breaks once `@react-three/fiber`'s global `JSX.IntrinsicElements`
- * augmentation — pulled in transitively via `@chroma/motion-engine`'s
+ * augmentation — pulled in transitively via `@apelles/motion-engine`'s
  * `Scene3D`/`ParticleFlow` — sits in the same `tsc` program (see `Button.tsx`'s
- * doc comment; a pre-existing `@chroma/ui` fragility, not this tab's bug).
- * `@chroma/ui`'s own `resizable.tsx` is itself just a thin styled wrapper
+ * doc comment; a pre-existing `@apelles/ui` fragility, not this tab's bug).
+ * `@apelles/ui`'s own `resizable.tsx` is itself just a thin styled wrapper
  * around `react-resizable-panels` (confirmed by reading it, not assumed) —
  * this mirrors that exact wrapper directly against the same underlying
  * library, so the CLAUDE.md "every resizable-by-nature pane must actually be

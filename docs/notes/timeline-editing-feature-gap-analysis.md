@@ -1,7 +1,7 @@
 # Edit-tab timeline-editing feature gap analysis (2026-09-07)
 
 Owner asked, pointing at a competitor's own docs (Palmier, a similar AI-native editor):
-compare its documented timeline-editing feature set against what Chroma's Edit tab
+compare its documented timeline-editing feature set against what Apelles' Edit tab
 actually has today, and scope the gaps. This is a comparison + scope note, not a build
 log — nothing below has been built as part of writing this.
 
@@ -13,7 +13,7 @@ exists today — not assumed from a feature's plausibility.
 
 ## Already have (verified against real code)
 
-| Feature | Chroma's real equivalent |
+| Feature | Apelles' real equivalent |
 |---|---|
 | Trimming | `editor_trim_clip` / `trim_start`/`trim_end` `EditOp`s (D-051/D-058 edge-drag) |
 | Splitting/Razoring | `editor_split_clip` / `split` `EditOp` |

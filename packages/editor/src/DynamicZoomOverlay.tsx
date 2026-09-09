@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — dynamic zoom's on-canvas START and END boxes (D-234,
+ * @apelles/editor — dynamic zoom's on-canvas START and END boxes (D-234,
  * roadmap 27).
  *
  * **The reference, and what it actually says.** Blackmagic's own Edit-page
@@ -13,11 +13,11 @@
  * green = start, red = end; armed from the **Inspector**, not a viewer
  * toolbar; and the whole clip is the animation's span. This component is that,
  * with two deliberate divergences recorded in D-234 — what the box MEANS, and
- * that Chroma bakes keyframes instead of keeping a separate stage.
+ * that Apelles bakes keyframes instead of keeping a separate stage.
  *
  * **What a box means here — the divergence worth knowing.** Resolve's dynamic
  * zoom rectangles are a FRAMING rect: the part of the image you end up seeing,
- * so a smaller box means more zoomed in. Chroma's boxes are the clip's own
+ * so a smaller box means more zoomed in. Apelles' boxes are the clip's own
  * layer footprint on the canvas — the exact same rectangle `TransformOverlay`
  * has always drawn, where a BIGGER box means more zoomed in. Two opposite
  * meanings for "the box" in one viewer would be worse than one consistent

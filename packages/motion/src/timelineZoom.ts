@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — Phase 5b part 2 ("per-row lanes", D-162 —
+ * @apelles/motion — Phase 5b part 2 ("per-row lanes", D-162 —
  * `docs/notes/motion-keyframe-timeline-research.md` §4: "a shared time axis
  * and independent zoom").
  *

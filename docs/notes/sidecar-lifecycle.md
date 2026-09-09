@@ -1,6 +1,6 @@
 # Sidecar lifecycle (D-028; two sidecars since D-189, N-sidecar supervisor D-190)
 
-The Chroma app starts and supervises its Python sidecars itself. No more
+The Apelles app starts and supervises its Python sidecars itself. No more
 `cd <dir> && ./run.sh` before using the features that depend on them.
 
 **There are two**, and everything in this doc applies to each independently —
@@ -11,7 +11,7 @@ they are separate processes, separate venvs, separate ports, separate status:
 | `AI` | `ai/` | 8765 | SAM 2 → ViTMatte matting (D-012/D-016), depth track (D-036), MoGe-2 normals (D-077) | — |
 | `AI_MEDIA` | `ai-media/` | 8766 | word-level transcript (mlx-whisper) + video understanding (ffmpeg scene-detect + Qwen3-VL), D-189 | PyTorch/`transformers<5` vs. MLX/`transformers>=5.5` — pip reports the union as `ResolutionImpossible` (D-189) |
 
-Code: `chroma_ai::sidecar` (the whole implementation, D-145) +
+Code: `apelles_ai::sidecar` (the whole implementation, D-145) +
 `app/src-tauri/src/chroma/sidecar.rs` (the Tauri-only bits). Upstream
 footprint: `chroma/mod.rs` +1 (`pub mod sidecar;`), `lib.rs` +2
 `std::thread::spawn` in `.setup()` (one per sidecar), +2
@@ -44,7 +44,7 @@ Each spec names its own four env vars. For `AI` they are `CHROMA_AI_*`; for
 1. `<spec>.dir_env` (`CHROMA_AI_DIR` / `CHROMA_AI_MEDIA_DIR`), if it contains
    `server.py` (else warn + fall through).
 2. `env!("CARGO_MANIFEST_DIR")/../../<dir>` → `../<dir>` → `./<dir>` (first with
-   `server.py`). `CARGO_MANIFEST_DIR` is `<workspace>/crates/chroma-ai` since
+   `server.py`). `CARGO_MANIFEST_DIR` is `<workspace>/crates/apelles-ai` since
    D-145, so `../../ai` and `../../ai-media` are the dev checkout's sidecars.
 
 **Python** (`resolve`):
@@ -54,8 +54,8 @@ Each spec names its own four env vars. For `AI` they are `CHROMA_AI_*`; for
 3. `python3` on `PATH`.
 
 **Port**: `<spec>.port_env` — `CHROMA_AI_PORT` (default `8765`), the same value
-`chroma_ai::sidecar_base_url()` uses; `CHROMA_AI_MEDIA_PORT` (default `8766`),
-the same value `chroma_ai::media_understanding::media_base_url()` uses.
+`apelles_ai::sidecar_base_url()` uses; `CHROMA_AI_MEDIA_PORT` (default `8766`),
+the same value `apelles_ai::media_understanding::media_base_url()` uses.
 
 ## Modes
 
@@ -104,7 +104,7 @@ needs no per-sidecar change. External sidecars are never touched. Result:
 `chroma_ai_status` and `chroma_ai_media_status` (D-189) both return
 `{ managed: bool, healthy: bool, pid?: u32, restarts: u32, stale: bool,
 lastError?: string }` — the same `SidecarStatus`, one per spec, from
-`chroma_ai::sidecar::status_snapshot(&SPEC)`. Both are consumed by the Settings
+`apelles_ai::sidecar::status_snapshot(&SPEC)`. Both are consumed by the Settings
 panel's sidecar status cards (D-101 built the first, D-189 the second; before
 D-101 nothing consumed the command at all).
 

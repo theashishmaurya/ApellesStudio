@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — marquee-select, the pure half (roadmap item 12 Phase 2,
+ * @apelles/editor — marquee-select, the pure half (roadmap item 12 Phase 2,
  * D-137).
  *
  * **What it is.** Every DOM-free decision a rubber-band selection on the Edit

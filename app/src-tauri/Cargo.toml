@@ -1,12 +1,18 @@
 [package]
-name = "RapidRAW"
-description = "A blazingly-fast, non-destructive, and GPU-accelerated RAW image editor built with performance in mind."
-authors = ["Timon Käch"]
+# Renamed from `RapidRAW` to `apelles` by D-265 (the product rename off the old
+# "Chroma" name). This is OUR Tauri wrapper crate, not upstream's own source — the
+# rename was already anticipated as a migration step by D-040. Upstream
+# RapidRAW's authorship below is preserved deliberately: the engine this crate
+# wraps is Timon Käch's work, vendored under AGPL-3.0, and that attribution
+# stays regardless of what we call the product.
+name = "apelles"
+description = "Apelles — AI-native local video tool (Edit / Motion / Colorist), built on the RapidRAW engine."
+authors = ["Timon Käch", "Ashish Maurya"]
 edition = "2024"
 rust-version = "1.98"
 
 [lib]
-name = "rapidraw_lib"
+name = "apelles_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
@@ -24,17 +30,17 @@ tethering = ["dep:gphoto2"]
 e2e-testing = ["dep:tauri-plugin-wdio-webdriver"]
 
 [dependencies]
-# Chroma's own layered crates (D-039 thin-shell/fat-core). Pure domain models,
+# Apelles' own layered crates (D-039 thin-shell/fat-core). Pure domain models,
 # no wgpu/ffmpeg — see crates/README.md.
-chroma-timeline = { path = "../../crates/chroma-timeline" }
-chroma-motion = { path = "../../crates/chroma-motion" }
-chroma-grade-model = { path = "../../crates/chroma-grade-model" }
-chroma-types = { path = "../../crates/chroma-types" }
-chroma-gpu = { path = "../../crates/chroma-gpu" }
-chroma-ai = { path = "../../crates/chroma-ai" }
-chroma-media = { path = "../../crates/chroma-media" }
-chroma-project = { path = "../../crates/chroma-project" }
-# Chroma editor-tab audio playback (D-049) — decode (symphonia) → resample
+apelles-timeline = { path = "../../crates/apelles-timeline" }
+apelles-motion = { path = "../../crates/apelles-motion" }
+apelles-grade-model = { path = "../../crates/apelles-grade-model" }
+apelles-types = { path = "../../crates/apelles-types" }
+apelles-gpu = { path = "../../crates/apelles-gpu" }
+apelles-ai = { path = "../../crates/apelles-ai" }
+apelles-media = { path = "../../crates/apelles-media" }
+apelles-project = { path = "../../crates/apelles-project" }
+# Apelles editor-tab audio playback (D-049) — decode (symphonia) → resample
 # (rubato) → format-convert (dasp_sample) → device output (cpal). Pure Rust,
 # no FFI; the audio stack named in D-039/architecture-lock.md.
 symphonia = { version = "0.6.1", features = ["isomp4", "aac", "alac", "aiff", "mp3"] }
@@ -60,7 +66,7 @@ tokio = { version = "1", features = ["full"] }
 uuid = { version = "1.25", features = ["v4", "serde"] }
 walkdir = "2.5.0"
 imageproc = "0.27.0"
-# Chroma: text/title clip rasterisation (D-209/D-210, `chroma::text`). Already
+# Apelles: text/title clip rasterisation (D-209/D-210, `chroma::text`). Already
 # in this workspace's tree as `imageproc`'s own dependency at exactly this
 # version — declaring it directly adds no new crate to the build, it just
 # lets `chroma::text` name the glyph-outlining API instead of going through
@@ -102,8 +108,8 @@ libc = "0.2.189"
 rgb = "0.8.53"
 imgref = "1.12.2"
 sysinfo = "0.39.6"
-tiny_http = "0.12" # Chroma: the in-app control server (D-020)
-# Chroma: real E2E testing (D-104) — backend access/mocking side of
+tiny_http = "0.12" # Apelles: the in-app control server (D-020)
+# Apelles: real E2E testing (D-104) — backend access/mocking side of
 # WebdriverIO's @wdio/tauri-service. Always present (its own permission
 # system gates what it can do); the actual embedded WebDriver SERVER
 # (`tauri-plugin-wdio-webdriver`) is `optional`, only pulled in by the
@@ -122,7 +128,7 @@ gphoto2 = { git = "https://github.com/CyberTimon/libgphoto2-rs", optional = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
-# Chroma: the in-process WKWebView screenshot (D-209). All five are already in
+# Apelles: the in-process WKWebView screenshot (D-209). All five are already in
 # the workspace lock as transitive deps of tauri/wry/muda/cpal — naming them
 # here adds a direct edge, not a new crate to the build. `objc2-*` (the
 # maintained successor to the `objc` 0.2 above, same `objc2` project as wry's
@@ -163,13 +169,13 @@ webkit2gtk = "=2.0.2"
 webkit2gtk-nvidia-quirk = "2.0"
 
 [dev-dependencies]
-# D-146 — `chroma-media`'s test-only hooks (`media_cache::init_for_tests`,
+# D-146 — `apelles-media`'s test-only hooks (`media_cache::init_for_tests`,
 # `decode_pipe::open_pipe_count`) are behind its `test-support` feature.
 # Enabling it *here* rather than in `[dependencies]` is what keeps them out of
 # a release build while `cargo test` / `cargo check --all-targets` still see
 # them: Cargo unifies a dev-dependency's features only for the targets that
 # actually need dev-dependencies.
-chroma-media = { path = "../../crates/chroma-media", features = ["test-support"] }
+apelles-media = { path = "../../crates/apelles-media", features = ["test-support"] }
 
 [build-dependencies]
 tauri-build = { version = "2.6", features = [] }

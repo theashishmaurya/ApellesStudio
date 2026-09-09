@@ -51,7 +51,7 @@ export function cssPropName(prop: string): string {
   return prop.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 }
 
-/** Bounds. Chosen so a default call on a real Chroma panel comes back in a
+/** Bounds. Chosen so a default call on a real Apelles panel comes back in a
  *  few KB rather than a few MB, and so a caller who wants more has to say so. */
 export const DEFAULT_MAX_DEPTH = 12;
 export const DEFAULT_MAX_NODES = 300;
@@ -289,7 +289,7 @@ export interface OpenDialogInfo {
 /**
  * Every dialog currently on screen, read off the DOM rather than off a store.
  *
- * Deliberately DOM-derived: Chroma's modals are spread across a dozen
+ * Deliberately DOM-derived: Apelles' modals are spread across a dozen
  * independent flags in three different stores (upstream RapidRAW's
  * `useUIStore` alone has seven `…ModalState` fields with seven different
  * shapes), and enumerating them would be a list that silently goes stale the

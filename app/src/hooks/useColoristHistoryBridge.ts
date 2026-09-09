@@ -3,11 +3,11 @@ import { useEffect } from 'react';
 import { useEditorStore } from '../store/useEditorStore';
 import { restoreEditorHistorySnapshot } from '../utils/editorHistorySnapshot';
 import { diffAdjustments, summarizeActivity } from '../utils/agentActivity';
-import { useHistoryStore } from '@chroma/history';
+import { useHistoryStore } from '@apelles/history';
 
 /**
  * D-051 — bridges the Colorist's pre-existing `useEditorStore` grade history
- * into the shared `@chroma/history` stack, WITHOUT touching `useEditorStore`
+ * into the shared `@apelles/history` stack, WITHOUT touching `useEditorStore`
  * itself (its internals — `pushHistory`/`undo`/`redo`/`goToHistoryIndex` —
  * are unchanged; this only observes them). Mounted once in App.tsx next to
  * `useChromaControl()`/`useProjectAutosave()`.

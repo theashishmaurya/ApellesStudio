@@ -1,4 +1,4 @@
-# ai/ — Chroma AI sidecar
+# ai/ — Apelles AI sidecar
 
 Local FastAPI service. Models run on MPS (Apple Silicon). Nothing here is on the network;
 nothing here touches `grade.json` — it returns mattes, the engine applies them.
@@ -11,7 +11,7 @@ nothing here touches `grade.json` — it returns mattes, the engine applies them
 cd ai && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
-Then just launch Chroma — `app/src-tauri/src/chroma/sidecar.rs` spawns
+Then just launch Apelles — `app/src-tauri/src/chroma/sidecar.rs` spawns
 `uvicorn` on app start, pipes its logs into `app.log` (grep `[sidecar]`), and
 restarts it if it crashes. Details + env vars (`CHROMA_AI_DIR`,
 `CHROMA_AI_PYTHON`, `CHROMA_AI_PORT`, `CHROMA_AI_NO_SPAWN`) in

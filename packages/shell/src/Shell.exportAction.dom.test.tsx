@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
- * @chroma/shell — real-DOM coverage for D-251's chrome-bar `headerAction`
+ * @apelles/shell — real-DOM coverage for D-251's chrome-bar `headerAction`
  * slot, using the SAME real consumer `Root.tsx` wires in production
- * (`@chroma/editor`'s `EditorExportDialog`) rather than a stand-in.
+ * (`@apelles/editor`'s `EditorExportDialog`) rather than a stand-in.
  *
  * Why the real component and not a fake. The owner's own ask was explicit:
  * "the real button/dialog lives in `WindowChrome.tsx`/`Shell.tsx` now, not
@@ -10,13 +10,13 @@
  * prove `Shell`'s own plumbing renders *something*; it would not prove the
  * thing the owner actually asked to see moved — the real Export trigger and
  * the real dialog it opens — actually lands there. So this file takes on
- * `@chroma/editor` as a **devDependency only** (`package.json`): the
+ * `@apelles/editor` as a **devDependency only** (`package.json`): the
  * package's own runtime `dependencies` are unchanged (still just
  * react + zustand + Tauri, per this package's module doc / `Shell.tsx`'s own
  * "Per-tab chrome-bar action" note), and `Shell.tsx`'s source never imports
- * `@chroma/editor` — only this test does, mirroring exactly what the real
+ * `@apelles/editor` — only this test does, mirroring exactly what the real
  * composition root (`app/src/Root.tsx`) does at runtime: build the tabs
- * array with `@chroma/shell` and `@chroma/editor` both in scope, hand
+ * array with `@apelles/shell` and `@apelles/editor` both in scope, hand
  * `Shell` a `headerAction` node it never has to know the insides of.
  *
  * Three properties pinned:
@@ -69,7 +69,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 
 import { Shell, type ShellTab } from './Shell';
 import { useShellStore } from './store';
-import { EditorExportDialog } from '@chroma/editor';
+import { EditorExportDialog } from '@apelles/editor';
 
 /** Same stub `packages/editor/src/testUtils/pointerHarness.ts` installs for
  *  the identical reason: jsdom has no real layout engine, and

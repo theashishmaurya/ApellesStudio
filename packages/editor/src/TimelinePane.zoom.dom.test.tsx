@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for anchored timeline zoom (B-116).
+ * @apelles/editor — real-DOM coverage for anchored timeline zoom (B-116).
  *
  * **Why a DOM test on top of `timelineZoom.test.ts`.** That file proves the
  * arithmetic; this proves the WIRING, which is where the bug actually was. The

@@ -17,7 +17,7 @@
  *   refused by name, with the accepted set in the message.
  */
 
-import type { ShellTabId } from '@chroma/shell';
+import type { ShellTabId } from '@apelles/shell';
 
 /** The three top-level tabs, in the order `Shell.tsx` renders them —
  *  Cmd/Ctrl+1/2/3 map to these indices, so the order is meaningful. */

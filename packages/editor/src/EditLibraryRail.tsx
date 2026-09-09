@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's left library rail (D-248; rebuilt as a real
+ * @apelles/editor — the Edit tab's left library rail (D-248; rebuilt as a real
  * activity bar by D-263, roadmap item 27).
  *
  * **What it is.** The leftmost strip of the window: one icon button per
@@ -8,7 +8,7 @@
  * right is showing, and collapses that column when you click the library
  * already showing. It renders no library content itself; that is
  * `EditLibraryPanel.tsx` (this tab's own three) and `app/`'s `SourcesPanel`
- * (the shared pool, injected into `@chroma/shell`).
+ * (the shared pool, injected into `@apelles/shell`).
  *
  * **This is VS Code's Activity Bar, and Final Cut Pro's browser buttons.**
  * VS Code's own docs: the Activity Bar is on the far left, the Primary Side
@@ -39,7 +39,7 @@
  * **What it does NOT do.** It owns no timeline state and no open/closed state
  * of its own: which library is selected is `useEditorTimelineStore`'s
  * `libraryMode`, and whether the column is open at all is the shell's
- * `sourcesPanelOpen` — a flag this package must not import (`@chroma/shell`
+ * `sourcesPanelOpen` — a flag this package must not import (`@apelles/shell`
  * depends on nothing here and it stays that way), so it arrives as the
  * `dockOpen`/`onDockOpenChange` props the composition root wires up, the same
  * way `MotionTab` gets `onRendered`. It also does not host the transitions
@@ -54,7 +54,7 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from '@chroma/ui';
+} from '@apelles/ui';
 
 import {
   EDIT_LIBRARY_MODES,
@@ -150,7 +150,7 @@ export function EditLibraryRail({ dockOpen, onDockOpenChange }: EditLibraryRailP
                     <Icon className="size-4" />
                     {/* The selected marker: an accent bar on the rail's own
                         outer edge, which is how every activity bar in the
-                        reference draws it — and Chroma already draws a
+                        reference draws it — and Apelles already draws a
                         selected tab as an accent bar (`Shell.tsx`'s tab
                         underline, `TimelineSwitcher`'s), just in the other
                         axis. */}

@@ -1,4 +1,4 @@
-// Chroma — multi-shot session (D-033).
+// Apelles — multi-shot session (D-033).
 //
 // A grading job is N shots from one shoot, each with its own grade. This store
 // mirrors the Rust session (`engine/src-tauri/src/chroma/session.rs`): the
@@ -14,7 +14,7 @@
 //
 // **Unified clip identity (D-070, `docs/notes/unified-clip-model.md`).** For a
 // real (non-Untitled) project, `shots` is now sourced from the active
-// `chroma_timeline::Timeline`'s clips — `chroma_project_open`/`_new`/
+// `apelles_timeline::Timeline`'s clips — `chroma_project_open`/`_new`/
 // `_relink`/`_hydrateOpenDto`'s `ProjectOpenDto.shots[i].id` is a **clip id**,
 // not the old `ProjectShot.id`. `grades`/`gradeWrapper`/`persistShotGrade` all
 // key off `SessionShot.id` (that clip id) instead of `SessionShot.path`, so two
@@ -40,7 +40,7 @@
 // "explicitly deferred" case.
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import { trackEvent } from '@chroma/bridge';
+import { trackEvent } from '@apelles/bridge';
 
 import { useEditorStore } from './useEditorStore';
 import { useChromaStore, ChromaVideoInfo } from './useChromaStore';
@@ -65,7 +65,7 @@ interface RawShotDto {
 }
 
 /** A shot as the store/UI sees it: the decode session's raw fields plus a
- *  stable `id` — a `chroma_timeline::Clip` id for a real project's shot
+ *  stable `id` — a `apelles_timeline::Clip` id for a real project's shot
  *  (D-070), or the shot's own `path` for an in-memory "Untitled" session
  *  (see the module doc). Everything that used to key off `path` (grades,
  *  the strip's React key, grade-file persistence) keys off `id` now. */
@@ -94,7 +94,7 @@ interface SessionSwitchDto {
 
 // --- project model (D-037) ---------------------------------------------------
 export interface ProjectShotDto {
-  /** D-070: a `chroma_timeline::Clip` id, not a `ProjectShot` id — see the
+  /** D-070: a `apelles_timeline::Clip` id, not a `ProjectShot` id — see the
    *  module doc. The field name/shape on the wire is unchanged. */
   id: string;
   sourcePath: string;
@@ -203,7 +203,7 @@ interface SessionState {
    *  its grade (or neutral), reset history + scope the agent feed. */
   switchToShot: (index: number) => Promise<{ ok: boolean; error?: string }>;
   /** append clips to the session and switch to the last one. For a real
-   *  project this appends real `chroma_timeline::Clip`s to the active
+   *  project this appends real `apelles_timeline::Clip`s to the active
    *  timeline (D-070, same action as dragging onto the Edit tab); for an
    *  in-memory Untitled session it stays a plain decode-session upsert. */
   addShots: (paths: string[]) => Promise<{ ok: boolean; error?: string }>;
@@ -337,8 +337,8 @@ function applyLoaded(
  *  loose-clip session, and `null` when the launcher is showing.
  *
  *  B-083/D-203 — the composition root (`Root.tsx`) hands this to every store
- *  that caches per-project state (`@chroma/editor`'s timeline, `@chroma/motion`'s
- *  manifest, `@chroma/bridge`'s media pool), so each of them can tell "no
+ *  that caches per-project state (`@apelles/editor`'s timeline, `@apelles/motion`'s
+ *  manifest, `@apelles/bridge`'s media pool), so each of them can tell "no
  *  project → project A" apart from "project A → project B". The bare boolean
  *  those bridges used before could not, and `open_project`/`new_project`
  *  (GUI and MCP alike) switch projects without ever closing the first — which
@@ -573,7 +573,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       // the Rust session already holds the online clips (chroma_project_open
       // et al loaded them). Mirror it, then attach per-shot grades + project
-      // metadata. D-070: `dto.shots[i].id` is now a `chroma_timeline::Clip`
+      // metadata. D-070: `dto.shots[i].id` is now a `apelles_timeline::Clip`
       // id — attach it onto the (path-keyed) decode-session read by matching
       // source path, since the decode session itself carries no clip
       // identity of its own (see the module doc).
@@ -813,7 +813,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (busy) return { ok: false, error: 'session busy' };
     set({ busy: true });
     try {
-      // D-070: `shotId` here is a `chroma_timeline::Clip` id (offlineShots
+      // D-070: `shotId` here is a `apelles_timeline::Clip` id (offlineShots
       // now come from the clip-derived `ProjectShotDto`) — the Rust command
       // takes `clipId`, renamed from `shotId` for the same reason.
       const dto = await invoke<ProjectOpenDto>('chroma_project_relink', {

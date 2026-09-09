@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the timeline's trim-tool palette (D-261).
+ * @apelles/editor — the timeline's trim-tool palette (D-261).
  *
  * **What it is.** The row of five icon buttons in `TimelinePane`'s toolbar that
  * chooses which edit a drag on a clip performs: Select, Ripple, Roll, Slip,
@@ -43,7 +43,7 @@
 
 import { GalleryHorizontal, MousePointer2, MoveHorizontal, SeparatorVertical, UnfoldHorizontal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@chroma/ui';
+import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@apelles/ui';
 
 import { TRIM_TOOLS, type TrimTool } from './trimMode';
 
@@ -52,7 +52,7 @@ import { TRIM_TOOLS, type TrimTool } from './trimMode';
  * `scratch/premiere-tools-reference/premiere-tools-panel.jpg` (Adobe's own
  * labelled Tools panel) and `scratch/resolve-reference/trim.jpg` (literally the
  * four cursors Resolve swaps between) — not from a guess at what a trim icon
- * looks like. Chroma cannot use either product's artwork, so each is the
+ * looks like. Apelles cannot use either product's artwork, so each is the
  * closest glyph in the icon set this app already uses:
  *
  *   - **Select → `MousePointer2`.** Adobe's Selection tool is an arrow pointer;

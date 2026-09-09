@@ -1,10 +1,10 @@
-# The matte-edge problem — how Chroma isolates a subject
+# The matte-edge problem — how Apelles isolates a subject
 
 *Worklog, 2026-09-01. The reasoning behind [D-016](../../08-decisions.md#d-016).*
 
 This is the feature that started the whole project — the **"hands problem"**: in Palmier
 (and every ellipse/rectangle masking tool) you cannot draw a mask that hugs a body. Splay
-your forearms out and they fall into "background" and get darkened with it. Chroma's answer
+your forearms out and they fall into "background" and get darkened with it. Apelles' answer
 is a real per-subject matte. Getting that matte *clean* took three tries.
 
 The test frame is a 4K (3840×2160) Rec.709 talking-head still, deliberately underexposed —
@@ -69,7 +69,7 @@ The edge now follows the actual garment line. Crisp, no steps, no halo.
 
 ---
 
-## The pipeline Chroma ships
+## The pipeline Apelles ships
 
 ```
 YOLO person box  →  SAM 2.1  →  trimap (erode/dilate)  →  ViTMatte  →  alpha
@@ -89,5 +89,5 @@ Runs in the `ai/` Python sidecar on Apple GPU (MPS), fully local, no network, no
 - *Guided-filter finesse alone* — shown above; fails on low-contrast edges.
 
 The lesson: **segmentation answers *what*, matting answers *where exactly*.** Every serious
-tool does both — Resolve leans on finesse, Adobe's Roto Brush pairs with Refine Edge. Chroma
+tool does both — Resolve leans on finesse, Adobe's Roto Brush pairs with Refine Edge. Apelles
 pairs SAM with ViTMatte.

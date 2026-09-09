@@ -1,8 +1,8 @@
 /**
- * @chroma/motion — pure screen↔world coordinate math for `MotionCanvasOverlay.tsx`
+ * @apelles/motion — pure screen↔world coordinate math for `MotionCanvasOverlay.tsx`
  * (D-155/D-156, Phase 0d/Phase 1 of `docs/notes/motion-visual-builder-research.md`).
  *
- * Kept apart from the component for the same reason `@chroma/editor`'s own
+ * Kept apart from the component for the same reason `@apelles/editor`'s own
  * `transformGeometry.ts` is split from `TransformOverlay.tsx`: this
  * package's `vitest.config.ts` runs in a bare `node` environment, and this
  * is exactly the kind of math the research doc's own §7.2 warns is a real,

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's own canvas (output composition)
+ * @apelles/editor — the Edit tab's own canvas (output composition)
  * width/height surface (D-199, `docs/notes/preview-canvas-boundary.md`).
  *
  * **The gap this closes.** `ProjectSettings` (D-038) already has a real
@@ -32,7 +32,7 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Settings2 } from 'lucide-react';
-import { Button, Input, Popover, PopoverContent, PopoverTrigger } from '@chroma/ui';
+import { Button, Input, Popover, PopoverContent, PopoverTrigger } from '@apelles/ui';
 
 import { usePanelOpen } from './panelRegistry';
 
@@ -43,7 +43,7 @@ const RES_PRESETS: { label: string; w: number; h: number }[] = [
   { label: '1080×1920', w: 1080, h: 1920 },
 ];
 
-/** Mirrors the fields `crate::chroma_project::ProjectSettings` actually has
+/** Mirrors the fields `crate::apelles_project::ProjectSettings` actually has
  *  — only `width`/`height` are this popover's concern (see module doc). */
 interface ProjectSettingsWH {
   width?: number | null;
@@ -141,7 +141,7 @@ export function CanvasSettingsPopover() {
           </Button>
         }
       />
-      {/* D-263 — a stable hook for `@chroma/debug`'s real-DOM proof that
+      {/* D-263 — a stable hook for `@apelles/debug`'s real-DOM proof that
           `debug_set_popover_open` opens a real popover rather than only a
           store flag. That proof used to drive `CaptionPanel`, whose popover
           D-263 retired by docking its content. */}

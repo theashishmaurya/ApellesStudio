@@ -1,7 +1,7 @@
-// @chroma/editor — the caption model and the shared layout arithmetic (D-229).
+// @apelles/editor — the caption model and the shared layout arithmetic (D-229).
 //
 // **The point of this file is the mirror.** `captionLayout` here and
-// `CaptionLayout::resolve` in `crates/chroma-timeline/src/caption.rs` are two
+// `CaptionLayout::resolve` in `crates/apelles-timeline/src/caption.rs` are two
 // hand-written implementations of one specification, in two languages that
 // share no code — the live preview resolves one, the ffmpeg export compiler
 // resolves the other, and a caption renders in the wrong place the moment they

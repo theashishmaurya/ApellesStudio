@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — context-sensitive trim: which edit a timeline drag really is
+ * @apelles/editor — context-sensitive trim: which edit a timeline drag really is
  * (D-235, roadmap item 27 "Ripple/roll/slip/slide by pointer position, not a
  * mode switch").
  *
@@ -31,10 +31,10 @@
  * with the Trim tool, dragging a clip's middle is a slip and OPTION-dragging it
  * is a slide.
  *
- * Chroma takes Resolve's horizontal axis verbatim, Resolve's vertical band for
+ * Apelles takes Resolve's horizontal axis verbatim, Resolve's vertical band for
  * slip-vs-slide, and adds ONE thing neither reference needs: an Alt/Option
  * "arm". Resolve and FCP both put these four behind a tool the user has already
- * switched into (Resolve's Trim Edit Mode, `T`); Chroma has no tool palette and
+ * switched into (Resolve's Trim Edit Mode, `T`); Apelles has no tool palette and
  * the roadmap explicitly asks for no mode switch, so the plain, unmodified
  * gestures must keep meaning exactly what they have always meant — a body drag
  * is `move` (D-100) and an edge drag is a plain, gap-leaving `trim` (D-058).
@@ -44,7 +44,7 @@
  * ---------------------------------------------------------------------------
  * D-261 — AND THE TOOL PALETTE, WHICH IS NOW THE PRIMARY PATH.
  *
- * The sentence above — "Chroma has no tool palette" — is what D-261 changed,
+ * The sentence above — "Apelles has no tool palette" — is what D-261 changed,
  * on the owner's own report from live use: *"for roll slip etc, instead of alt
  * lets have icons for all of them :) much better."* D-235's arm and D-250's
  * badge are both invisible until Alt is already held, so the four edits were
@@ -97,7 +97,7 @@ export type TrimMode = 'move' | 'trim' | 'ripple' | 'roll' | 'slip' | 'slide';
 export type TrimZone = 'edge-start' | 'edge-end' | 'body';
 
 /** The active tool in the timeline's trim palette (D-261) — Premiere's own
- *  Tools-panel set, minus the tools Chroma has no edit for.
+ *  Tools-panel set, minus the tools Apelles has no edit for.
  *
  *  `'select'` is Adobe's Selection tool: a real, selectable, highlightable
  *  default, not an empty slot (see the module doc). The other four are named
@@ -220,12 +220,12 @@ export interface TrimGesture {
  *
  *  Resolve splits at the bottom of the clip's thumbnail strip, which on its own
  *  timeline sits a little above the row's midpoint (the title bar under it is
- *  the shorter of the two). A clean half is used here instead: Chroma's clip
+ *  the shorter of the two). A clean half is used here instead: Apelles' clip
  *  rows are much shorter than Resolve's, a row's lower band already carries the
  *  waveform rather than a title bar, and at this row height an unequal split
  *  makes the smaller of the two a target the owner's own "widen the tight hit
  *  target" note (`INSERT_SNAP_PX`, D-100) is explicitly against. Two equal
- *  bands is the version of Resolve's rule that survives the row height Chroma
+ *  bands is the version of Resolve's rule that survives the row height Apelles
  *  actually has. */
 export const SLIP_BAND_RATIO = 0.5;
 
@@ -260,7 +260,7 @@ export function resolveTrimMode(g: TrimGesture): TrimMode {
   }
   if (!g.altKey) return 'trim';
   // At an edit point BOTH ripple and roll are meaningful, and Resolve reaches
-  // them by aiming at two hot zones a few pixels apart. Chroma cannot: the
+  // them by aiming at two hot zones a few pixels apart. Apelles cannot: the
   // library gives one 10px band per side and the seam between two touching
   // clips is the boundary BETWEEN those two bands, so "on the cut" and "just
   // inside a clip" are the same pixels here. Shift is the disambiguator
@@ -429,7 +429,7 @@ export function outgoingClipAt(tl: Timeline, track: number, clip: number): numbe
 
 /** The label shown to the user for an armed mode — the readable stand-in for
  *  Resolve's four swapped cursors (`scratch/resolve-reference/trim.jpg`), which
- *  Chroma cannot reproduce without shipping four custom cursor bitmaps. `null`
+ *  Apelles cannot reproduce without shipping four custom cursor bitmaps. `null`
  *  for the two unarmed modes, which need no announcement because they are what
  *  the surface has always done. */
 export function trimModeLabel(mode: TrimMode): string | null {
@@ -480,7 +480,7 @@ export function trimModeHint(mode: TrimMode): string | null {
 
 /**
  * The `cursor` a clip shows while armed (D-250) — the half of Resolve's own
- * affordance that Chroma CAN reproduce.
+ * affordance that Apelles CAN reproduce.
  *
  * The reference's rule is that the signal lives at the pointer: "You'll see the
  * cursor change to different types of trim tools as you move your mouse. This
@@ -516,7 +516,7 @@ export function trimModeCursor(mode: TrimMode): string {
  *  its readout appears only once the key is already down. Resolve does not
  *  have this problem because its trim tool is a visible button in a visible
  *  toolbar ("Select the trim icon in the toolbar, then click anywhere inside a
- *  clip"). D-261 gave Chroma that toolbar ([`TRIM_TOOLS`]), so this string is
+ *  clip"). D-261 gave Apelles that toolbar ([`TRIM_TOOLS`]), so this string is
  *  no longer the feature's only discoverability — it is now what it should
  *  always have been: the shortcut hint for people who would rather hold a key
  *  than click a button. It goes on every clip's own tooltip — visible on dwell,

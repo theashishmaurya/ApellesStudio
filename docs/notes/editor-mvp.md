@@ -4,7 +4,7 @@ The first real cut of the Edit tab — a working timeline. Deliberately bounded.
 
 ## In
 
-- **Model** (`crates/chroma-timeline`, made real):
+- **Model** (`crates/apelles-timeline`, made real):
   - `Timeline` / `Track` / `Clip` (serde, our own plain JSON — **not** OTIO yet).
     `Clip` has a stable `id`, an optional `shot_id` back-link, and `source_len`
     (media frame-count ceiling for trims).
@@ -39,9 +39,9 @@ The first real cut of the Edit tab — a working timeline. Deliberately bounded.
     + Delete / "Remove clip" → `remove`. Each edit → `useEditorTimelineStore`
     optimistic op → debounced (~400 ms) `chroma_timeline_set` → `chroma_timeline_get`
     refetch. **Undo/redo (D-051, 2026-09-03):** every op also pushes a
-    before/after `Timeline` snapshot pair onto the shared `@chroma/history`
+    before/after `Timeline` snapshot pair onto the shared `@apelles/history`
     stack — no local keybinding here, undo/redo is shell-level (Cmd/Ctrl+Z /
-    Cmd/Ctrl+Y, `@chroma/shell`) and works regardless of which tab is active.
+    Cmd/Ctrl+Y, `@apelles/shell`) and works regardless of which tab is active.
   - Empty state when no project is open.
 
 ## Deferred (later tracked steps)
@@ -50,7 +50,7 @@ The first real cut of the Edit tab — a working timeline. Deliberately bounded.
 - audio (symphonia/cpal/rubato per D-039)
 - transitions (cross-dissolve etc.)
 - transcript cut (whisper word-timestamps → EDL)
-- GPU compositing (`chroma-compositor`)
+- GPU compositing (`apelles-compositor`)
 - grade-in-the-preview (the editor preview stays a plain decode; grade comes with
   the compositor)
 - OTIO (`.otio`) interchange export — the model is OTIO-*shaped* but serialises
@@ -59,4 +59,4 @@ The first real cut of the Edit tab — a working timeline. Deliberately bounded.
 - editor fps from project `settings.fps` (currently defaults to 24 —
   `from_shots` leaves `rate: None`)
 - gaps in the model (clips are strictly back to back)
-- `@chroma/bridge` extraction of `useEditorTimelineStore`
+- `@apelles/bridge` extraction of `useEditorTimelineStore`

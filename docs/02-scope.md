@@ -108,7 +108,7 @@ shipped (D-048/D-077/D-078/D-079, see the GUI section above and
 - ✅ track lock / hide / mute / gain / reorder (D-088, D-214), and an emptied track
   auto-decommissions (D-123)
 - ✅ reorder, trim (head/tail), split, remove, **ripple**, **roll**, **slip** (D-195),
-  slide, **swap media** (D-195) — unit-tested `chroma-timeline` ops
+  slide, **swap media** (D-195) — unit-tested `apelles-timeline` ops
 - ✅ gap select + ripple-close (D-105), **multi-select** + marquee (D-107/D-137),
   **cross-track ripple / sync-lock** (D-107), **real A/V linking** (D-138)
 - ✅ **timeline markers** — colour-coded, titled, frame-anchored, undoable, persisted (D-222)
@@ -149,15 +149,15 @@ shipped (D-048/D-077/D-078/D-079, see the GUI section above and
 
 ### Explicitly OUT of the Edit tab's current scope
 Tracked in `docs/04-roadmap.md` (mostly item 27), not abandoned:
-- 🔨 **GPU compositing** — the compositor is CPU today; `chroma-compositor` is unbuilt
+- 🔨 **GPU compositing** — the compositor is CPU today; `apelles-compositor` is unbuilt
 - ✅ **grade-in-preview** — landed as **D-256** (2026-09-09): a clip's saved Colorist grade
   now renders in the Edit preview *and* in the Edit export, carried across as a 33³ 3D LUT
   baked by running an identity lattice through the Colorist's own wgpu pipeline. The two
   engines are still two passes, but they no longer disagree — measured equal, pixel for
   pixel. **The global grade only**: masks / local layers / the Colorist crop / relight are
   inherently outside a 3D LUT and are dropped with a warning (Export dialog +
-  `editor_get_grade_status`), never silently. Carrying those needs `chroma-grade` +
-  `chroma-compositor`, which is what remains of roadmap item 8.
+  `editor_get_grade_status`), never silently. Carrying those needs `apelles-grade` +
+  `apelles-compositor`, which is what remains of roadmap item 8.
   `docs/notes/colorist-edit-grade-bridge.md`
 - 🔨 **OTIO export** — FCPXML shipped instead (D-196); XMEML/Premiere also unbuilt
 - ✅ **subtitles / captions** — landed on `main` as **D-229** while this reconciliation pass
@@ -204,7 +204,7 @@ Tracked in `docs/04-roadmap.md` (mostly item 27), not abandoned:
 - ✅ a `zod`-validated JSON manifest editor, collapsed behind a `</>` toggle by default
   (D-153/D-173)
 - ✅ Save (project-scoped `<project>.chroma/motion/manifest.json`) and Render via the
-  `chroma-motion` crate → `npx remotion render`, **auto-imported into Sources** afterwards
+  `apelles-motion` crate → `npx remotion render`, **auto-imported into Sources** afterwards
   (D-047, D-062)
 
 ### Explicitly OUT of the Motion tab's current scope
@@ -268,7 +268,7 @@ on video. Ships as part of masked grading.
   `docs/notes/product-direction.md` §7).
 - **No longer anti-scope, corrected 2026-09-02:** editing, trimming, transitions, and
   motion graphics were previously listed here as "the editor's job (Palmier / Resolve /
-  Premiere)." That's exactly backwards now — Palmier closing is *why* Chroma has an Edit
-  and a Motion tab (D-039). Chroma no longer hands a cut back to an external editor by
+  Premiere)." That's exactly backwards now — Palmier closing is *why* Apelles has an Edit
+  and a Motion tab (D-039). Apelles no longer hands a cut back to an external editor by
   design; it can, because grade/`.cube`/ProRes export still round-trips, but that's an
   interop feature, not a scope boundary.

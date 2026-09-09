@@ -8,7 +8,7 @@ skill, or the agent prompt, and want to know if the agent got better or worse.
 
 ## Prereqs
 
-- Chroma desktop app running (`cd engine && npm run tauri dev`), a clip/still
+- Apelles desktop app running (`cd engine && npm run tauri dev`), a clip/still
   open is not required — the runbook `open`s each fixture.
 - The MCP server reachable (`mcp/server.py`, control server on
   `127.0.0.1:19788`).

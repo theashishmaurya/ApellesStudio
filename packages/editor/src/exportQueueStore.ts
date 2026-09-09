@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's export queue (D-198,
+ * @apelles/editor — the Edit tab's export queue (D-198,
  * `docs/notes/export-dialog-queue.md`).
  *
  * What it is: a real, SEQUENTIAL job queue over `editorExport.ts`'s

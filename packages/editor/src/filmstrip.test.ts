@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the filmstrip's windowing arithmetic (D-128).
+ * @apelles/editor — the filmstrip's windowing arithmetic (D-128).
  *
  * These pin the property the whole feature rests on and the one D-124 could
  * not deliver: **at every zoom the UI allows, a tile is a real distinct

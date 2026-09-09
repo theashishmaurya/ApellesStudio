@@ -1,5 +1,5 @@
 /**
- * @chroma/ui — ScrubbableNumberInput: the app's numeric field (D-253,
+ * @apelles/ui — ScrubbableNumberInput: the app's numeric field (D-253,
  * completing B-113).
  *
  * **What it is.** A `type="number"` shadcn `Input` with no spinner arrows and
@@ -7,11 +7,11 @@
  * slider", Blender's number button, Adobe's scrubbable hot text. Press and
  * drag to change the value; click without moving to get a caret and type an
  * exact one. The gesture itself lives in `useNumberScrub` (shared with
- * `@chroma/motion`, which cannot import this package's barrel); this component
+ * `@apelles/motion`, which cannot import this package's barrel); this component
  * is what pairs it with a real controlled input.
  *
  * **What it does NOT do.** It has no label, no keyframe controls, and no
- * knowledge of any panel — `@chroma/editor`'s `PropertyRow` wraps it for the
+ * knowledge of any panel — `@apelles/editor`'s `PropertyRow` wraps it for the
  * Inspector rows. It is not a slider: there is no track, and the value is
  * unbounded except by whatever `min`/`max` the caller declares.
  *

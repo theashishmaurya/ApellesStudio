@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for the D-211 follow-up: a text clip
+ * @apelles/editor — real-DOM coverage for the D-211 follow-up: a text clip
  * gets the on-canvas box and its MOVE drag, never the four corner (scale)
  * handles. See `TransformOverlay.tsx`'s own module doc for the full "why" —
  * in short, a scale drag would silently write a `scale` value nothing in

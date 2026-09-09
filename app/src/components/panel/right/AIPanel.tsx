@@ -68,7 +68,7 @@ import { useUIStore } from '../../../store/useUIStore';
 import { useEditorActions } from '../../../hooks/useEditorActions';
 import { useAiMasking } from '../../../hooks/useAiMasking';
 
-// Chroma has no cloud-AI account (D-029) — stubs for RapidRAW's cloud-provider path.
+// Apelles has no cloud-AI account (D-029) — stubs for RapidRAW's cloud-provider path.
 const useUser = () => ({ user: null as any, isSignedIn: false });
 const useAuth = () => ({ getToken: async (): Promise<string | null> => null });
 

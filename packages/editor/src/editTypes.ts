@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the seven edit types (D-239, roadmap item 27).
+ * @apelles/editor — the seven edit types (D-239, roadmap item 27).
  *
  * **What it is.** The names, order, and human copy of the seven ways a source
  * clip can be edited into the timeline — Insert, Overwrite, Replace, Fit to

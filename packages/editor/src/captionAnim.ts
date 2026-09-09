@@ -1,8 +1,8 @@
-// @chroma/editor — animated caption presets: the per-word model and its
+// @apelles/editor — animated caption presets: the per-word model and its
 // evaluation (D-243, `docs/notes/caption-presets.md`).
 //
 // **What it is:** the exact TypeScript mirror of
-// `chroma_timeline::caption_anim` — when each word of a cue is "spoken", and
+// `apelles_timeline::caption_anim` — when each word of a cue is "spoken", and
 // what a renderer should draw for it at a given moment.
 //
 // **What it does NOT do:** no rendering, no font measurement, no ffmpeg.
@@ -16,7 +16,7 @@
 // that must resolve identical numbers for the identical cue, and there is no
 // shared language between them. What keeps a mirror honest is that both sides
 // assert the SAME fixtures — `state_numbers_are_the_documented_arithmetic` in
-// `crates/chroma-timeline/src/caption_anim.rs` and
+// `crates/apelles-timeline/src/caption_anim.rs` and
 // `captionWordState matches the Rust fixture exactly` in `captionAnim.test.ts`.
 // If one side's arithmetic ever drifts, exactly one of those two fails.
 //
@@ -45,7 +45,7 @@ export const DEFAULT_CAPTION_ACTIVE_BOX_PAD_X = 0.15;
 export const DEFAULT_CAPTION_ACTIVE_BOX_PAD_Y = 0.075;
 
 /** What an animated caption does, per word — mirrors
- *  `chroma_timeline::caption_anim::CaptionAnimKind`.
+ *  `apelles_timeline::caption_anim::CaptionAnimKind`.
  *
  *  A closed set rather than a composable effect graph: every kind is
  *  implemented TWICE, pixel-compatibly, and five is auditable where an
@@ -80,7 +80,7 @@ export function isSingleWordAnim(kind: CaptionAnimKind): boolean {
 }
 
 /** How an animated caption behaves — mirrors
- *  `chroma_timeline::caption_anim::CaptionAnimation` field for field.
+ *  `apelles_timeline::caption_anim::CaptionAnimation` field for field.
  *
  *  Every field optional and defaulted through `resolveCaptionAnimation`, the
  *  same convention `CaptionStyle` follows: a style saved before a field
@@ -156,7 +156,7 @@ export function captionAnimationOf(style: CaptionStyle | null | undefined) {
 }
 
 /** One word of a cue with the time window it owns — mirrors
- *  `chroma_timeline::caption_anim::CaptionWord`.
+ *  `apelles_timeline::caption_anim::CaptionWord`.
  *
  *  `start`/`end` are CLIP-LOCAL seconds, so a cue that is moved or rippled
  *  keeps its word timings unchanged. */

@@ -5,7 +5,7 @@ import { Toaster as Sonner, type ToasterProps } from 'sonner';
 /**
  * shadcn `sonner` toast (D-042).
  *
- * The shadcn source reads the active theme from `next-themes`; Chroma has no
+ * The shadcn source reads the active theme from `next-themes`; Apelles has no
  * next-themes (RapidRAW swaps `--app-*` vars at runtime, `app/src/utils/themes.ts`).
  * The toast surface is driven entirely by the mapped CSS vars below, so it
  * always tracks the current RapidRAW theme without a `theme` prop. `theme`

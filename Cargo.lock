@@ -3,100 +3,6 @@
 version = 4
 
 [[package]]
-name = "RapidRAW"
-version = "0.0.0"
-dependencies = [
- "ab_glyph",
- "anyhow",
- "base64 0.23.1",
- "blake3",
- "block2",
- "bytemuck",
- "chroma-ai",
- "chroma-gpu",
- "chroma-grade-model",
- "chroma-media",
- "chroma-motion",
- "chroma-project",
- "chroma-timeline",
- "chroma-types",
- "chrono",
- "cpal",
- "dasp_sample",
- "fern",
- "filetime",
- "futures",
- "fuzzy-matcher",
- "glam 0.33.5",
- "gphoto2",
- "gtk",
- "half",
- "hex",
- "image",
- "image-hdr",
- "image_hasher",
- "imageproc",
- "imgref",
- "include_dir",
- "jni 0.21.1",
- "jni 0.22.4",
- "jxl-encoder",
- "jxl-oxide",
- "kamadak-exif",
- "libc",
- "little_exif",
- "log",
- "memmap2",
- "mimalloc",
- "mozjpeg-rs",
- "nalgebra",
- "ndarray",
- "ndk-context",
- "objc",
- "objc2-app-kit",
- "objc2-foundation",
- "objc2-web-kit",
- "once_cell",
- "ort",
- "pollster",
- "quick-xml 0.41.0",
- "rand 0.10.2",
- "rawler",
- "rayon",
- "regex",
- "reqwest",
- "rgb",
- "rubato",
- "rustls-platform-verifier",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "symphonia",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-os",
- "tauri-plugin-process",
- "tauri-plugin-shell",
- "tauri-plugin-single-instance",
- "tauri-plugin-wdio",
- "tauri-plugin-wdio-webdriver",
- "tempfile",
- "tiny_http",
- "tokenizers",
- "tokio",
- "trash",
- "uuid",
- "walkdir",
- "webkit2gtk",
- "webkit2gtk-nvidia-quirk",
- "webp",
- "wgpu",
-]
-
-[[package]]
 name = "ab_glyph"
 version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -231,6 +137,198 @@ name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+
+[[package]]
+name = "apelles"
+version = "0.0.0"
+dependencies = [
+ "ab_glyph",
+ "anyhow",
+ "apelles-ai",
+ "apelles-gpu",
+ "apelles-grade-model",
+ "apelles-media",
+ "apelles-motion",
+ "apelles-project",
+ "apelles-timeline",
+ "apelles-types",
+ "base64 0.23.1",
+ "blake3",
+ "block2",
+ "bytemuck",
+ "chrono",
+ "cpal",
+ "dasp_sample",
+ "fern",
+ "filetime",
+ "futures",
+ "fuzzy-matcher",
+ "glam 0.33.5",
+ "gphoto2",
+ "gtk",
+ "half",
+ "hex",
+ "image",
+ "image-hdr",
+ "image_hasher",
+ "imageproc",
+ "imgref",
+ "include_dir",
+ "jni 0.21.1",
+ "jni 0.22.4",
+ "jxl-encoder",
+ "jxl-oxide",
+ "kamadak-exif",
+ "libc",
+ "little_exif",
+ "log",
+ "memmap2",
+ "mimalloc",
+ "mozjpeg-rs",
+ "nalgebra",
+ "ndarray",
+ "ndk-context",
+ "objc",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-web-kit",
+ "once_cell",
+ "ort",
+ "pollster",
+ "quick-xml 0.41.0",
+ "rand 0.10.2",
+ "rawler",
+ "rayon",
+ "regex",
+ "reqwest",
+ "rgb",
+ "rubato",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "symphonia",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-os",
+ "tauri-plugin-process",
+ "tauri-plugin-shell",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-wdio",
+ "tauri-plugin-wdio-webdriver",
+ "tempfile",
+ "tiny_http",
+ "tokenizers",
+ "tokio",
+ "trash",
+ "uuid",
+ "walkdir",
+ "webkit2gtk",
+ "webkit2gtk-nvidia-quirk",
+ "webp",
+ "wgpu",
+]
+
+[[package]]
+name = "apelles-ai"
+version = "0.0.0"
+dependencies = [
+ "image",
+ "log",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
+name = "apelles-gpu"
+version = "0.0.0"
+dependencies = [
+ "log",
+ "pollster",
+ "wgpu",
+]
+
+[[package]]
+name = "apelles-grade-model"
+version = "0.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "apelles-media"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "apelles-types",
+ "base64 0.23.1",
+ "blake3",
+ "cpal",
+ "dasp_sample",
+ "filetime",
+ "futures",
+ "image",
+ "log",
+ "once_cell",
+ "rubato",
+ "serde",
+ "serde_json",
+ "symphonia",
+ "tempfile",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
+name = "apelles-motion"
+version = "0.0.0"
+dependencies = [
+ "apelles-types",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "apelles-project"
+version = "0.0.0"
+dependencies = [
+ "apelles-media",
+ "apelles-timeline",
+ "apelles-types",
+ "base64 0.23.1",
+ "chrono",
+ "log",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "apelles-timeline"
+version = "0.0.0"
+dependencies = [
+ "apelles-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "apelles-types"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "approx"
@@ -1023,104 +1121,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "chroma-ai"
-version = "0.0.0"
-dependencies = [
- "image",
- "log",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.11.0",
-]
-
-[[package]]
-name = "chroma-gpu"
-version = "0.0.0"
-dependencies = [
- "log",
- "pollster",
- "wgpu",
-]
-
-[[package]]
-name = "chroma-grade-model"
-version = "0.0.0"
-dependencies = [
- "base64 0.23.1",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "chroma-media"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "base64 0.23.1",
- "blake3",
- "chroma-types",
- "cpal",
- "dasp_sample",
- "filetime",
- "futures",
- "image",
- "log",
- "once_cell",
- "rubato",
- "serde",
- "serde_json",
- "symphonia",
- "tempfile",
- "tokio",
- "walkdir",
-]
-
-[[package]]
-name = "chroma-motion"
-version = "0.0.0"
-dependencies = [
- "chroma-types",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "chroma-project"
-version = "0.0.0"
-dependencies = [
- "base64 0.23.1",
- "chroma-media",
- "chroma-timeline",
- "chroma-types",
- "chrono",
- "log",
- "once_cell",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "chroma-timeline"
-version = "0.0.0"
-dependencies = [
- "chroma-types",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "chroma-types"
-version = "0.0.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror 2.0.20",
 ]
 
 [[package]]

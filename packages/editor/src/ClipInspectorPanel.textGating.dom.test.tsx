@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — a text/title clip's Inspector hides the rows that don't
+ * @apelles/editor — a text/title clip's Inspector hides the rows that don't
  * do anything for it (a follow-up to D-211, filed live in this repo's own
  * roadmap right after that feature shipped).
  *

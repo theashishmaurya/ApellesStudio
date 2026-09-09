@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution, PIXEL-level export-parity test for
+// @apelles/editor — REAL ffmpeg-execution, PIXEL-level export-parity test for
 // D-240's italic/bold faces (roadmap item 27).
 //
 // D-212 measured, once, that `ab_glyph`'s em-sized `PxScale` and `drawtext`'s

@@ -1,4 +1,4 @@
-// Chroma — video transport state. Kept separate from useEditorStore so the fork
+// Apelles — video transport state. Kept separate from useEditorStore so the fork
 // diff stays small (docs/08 D-003).
 import { create } from 'zustand';
 

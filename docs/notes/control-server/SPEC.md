@@ -1,6 +1,6 @@
-# Chroma control server + MCP — build spec (D-020)
+# Apelles control server + MCP — build spec (D-020)
 
-Goal: **Claude (via MCP) and the running Chroma app share ONE state — for every
+Goal: **Claude (via MCP) and the running Apelles app share ONE state — for every
 action.** Not just primary grade: creating a mask, editing a mask, per-mask grades,
 tracking, transport — all of it. An MCP call moves the app's UI and re-renders the
 canvas; a read reflects the user's manual edits. Pull-based, like Palmier.
@@ -89,7 +89,7 @@ Keep it small (~150 lines). Zero grade/mask logic here.
   `set_color_grade(shadows?, midtones?, highlights?, blending?, balance?)`, `seek(frame)`,
   `list_masks()`, `add_subject_mask(bbox?)`, `track_subject(sub_mask_id, mode="fast")`,
   `set_mask_adjust(mask_id, **knobs)`, `invert_mask(sub_mask_id)`, `delete_mask(mask_id)`.
-- `mcp/README.md`: how to add to Claude Code — `claude mcp add chroma -- <abs>/mcp/.venv/bin/python <abs>/mcp/server.py` (stdio). Note: the Chroma app must be running.
+- `mcp/README.md`: how to add to Claude Code — `claude mcp add chroma -- <abs>/mcp/.venv/bin/python <abs>/mcp/server.py` (stdio). Note: the Apelles app must be running.
 
 ## Done =
 

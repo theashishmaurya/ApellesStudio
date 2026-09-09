@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the timeline curve editor lane (D-233, roadmap item 27:
+ * @apelles/editor — the timeline curve editor lane (D-233, roadmap item 27:
  * "Bezier ease curves under a clip, editable directly").
  *
  * What it is: a lane docked under the timeline's track area, time-aligned with
@@ -56,7 +56,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { Button } from '@chroma/ui';
+import { Button } from '@apelles/ui';
 
 import {
   CLIP_KEYFRAME_DEFAULTS,

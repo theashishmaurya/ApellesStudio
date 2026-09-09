@@ -1,11 +1,11 @@
 /**
- * @chroma/editor — clip transform keyframe CRUD (D-090, Phase 4 of the P0
+ * @apelles/editor — clip transform keyframe CRUD (D-090, Phase 4 of the P0
  * full-NLE effort).
  *
  * `Clip.chroma_keyframes` (D-086/D-088) is the RAW `[{frame, params}]` array
  * itself, not a `parameters.chromaKeyframes`-wrapped object the way
  * `app/src/utils/maskKeyframes.ts`'s mask/relight-light keyframes are — see
- * `chroma_timeline::edit::resolve_clip_transform` (Rust), which wraps the
+ * `apelles_timeline::edit::resolve_clip_transform` (Rust), which wraps the
  * clip's own array into a synthetic `{chromaKeyframes: [...]}` object only at
  * the moment it hands it to the shared `chroma::keyframes::parse_keyframes`.
  * `packages/editor` cannot import `app/src/utils/maskKeyframes.ts` (a

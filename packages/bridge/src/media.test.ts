@@ -1,4 +1,4 @@
-// @chroma/bridge — unit tests for the media pool's project-identity input
+// @apelles/bridge — unit tests for the media pool's project-identity input
 // (B-083 / D-203).
 //
 // The pool is per-project state that nothing ever invalidated on a project

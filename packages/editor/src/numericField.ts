@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Inspector's numeric field: its declared geometry
+ * @apelles/editor — the Inspector's numeric field: its declared geometry
  * (B-113, D-253).
  *
  * **What it is.** One place that answers the question every numeric row in the
@@ -8,11 +8,11 @@
  *
  * **What it does NOT do.** It does not render anything, it knows nothing about
  * `Clip`, and it no longer owns the DISPLAY-precision arithmetic — that moved
- * to `@chroma/ui`'s `useNumberScrub` module (`displayNumber` /
+ * to `@apelles/ui`'s `useNumberScrub` module (`displayNumber` /
  * `displayDecimals`), because rounding what a number field shows is intrinsic
  * to "a numeric field" rather than to this tab, and `ScrubbableNumberInput`
  * needs it in a package that sits BELOW this one. Import them from
- * `@chroma/ui`.
+ * `@apelles/ui`.
  *
  * **Why it exists (B-113).** The crop rows showed values like `0.0` with the
  * spinner arrows drawn over the missing digits. Two independent causes:
@@ -21,13 +21,13 @@
  *     padding strip for it, which could not work — WebKit lays
  *     `::-webkit-inner-spin-button` out inside the padding box, so padding
  *     moves the text and the arrows together. D-253 removed the spinner
- *     instead (`@chroma/ui`'s `Input`, for every `type="number"` in the app)
+ *     instead (`@apelles/ui`'s `Input`, for every `type="number"` in the app)
  *     and put drag-to-scrub in its place, so the field's whole width minus its
  *     own padding is now really the value's.
  *  2. **The raw stored float was rendered at full precision.** An on-canvas
  *     crop drag stores e.g. `0.052212`; eight characters do not fit a field
  *     this narrow at any padding, so the text overflowed and was scrolled out
- *     of view. `@chroma/ui`'s `displayNumber` rounds what is SHOWN to a
+ *     of view. `@apelles/ui`'s `displayNumber` rounds what is SHOWN to a
  *     precision derived from the row's own `step` — one decimal finer than a
  *     hand nudge — while the field shows the exact value again the moment it
  *     is focused, so typing and stepping are byte-for-byte what they were.
@@ -58,7 +58,7 @@ export const NUM_FIELD = {
   widthPx: 80,
   /** `pl-2` */
   padLeftPx: 8,
-  /** `px-3` from `@chroma/ui`'s `Input` base, unopposed on the right now that
+  /** `px-3` from `@apelles/ui`'s `Input` base, unopposed on the right now that
    *  no spinner is painted there (D-253). */
   padRightPx: 12,
   /** `text-sm` (the `Input` base class), in px. */
@@ -90,6 +90,6 @@ export function numericFieldCapacityChars(): number {
 }
 
 // `DISPLAY_DECIMALS_MAX` / `displayDecimals` / `displayNumber` used to live
-// here. They are `@chroma/ui`'s now (`hooks/use-number-scrub.ts`) — see this
+// here. They are `@apelles/ui`'s now (`hooks/use-number-scrub.ts`) — see this
 // module's own doc for why — and are re-exported by nothing: import them from
-// `@chroma/ui` directly.
+// `@apelles/ui` directly.

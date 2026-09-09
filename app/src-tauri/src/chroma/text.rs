@@ -2,7 +2,7 @@
 //! `docs/notes/text-title-clips.md`).
 //!
 //! **What it is:** the media-layer half of the text/title clip primitive —
-//! the font catalogue that turns a [`chroma_timeline::TextLayer`]'s `font`
+//! the font catalogue that turns a [`apelles_timeline::TextLayer`]'s `font`
 //! KEY into a real font file on disk, and the rasteriser that turns a
 //! `TextLayer` into an RGBA layer `chroma::edit`'s compositor can alpha-blend
 //! onto a frame exactly like a decoded one.
@@ -13,12 +13,12 @@
 //!   (first one that exists wins).
 //! - [`chroma_text_fonts`] — that catalogue, resolved against this machine,
 //!   as a Tauri command. **One source of truth for both renderers**: the
-//!   Inspector's font picker lists it, and `@chroma/editor`'s export compiler
+//!   Inspector's font picker lists it, and `@apelles/editor`'s export compiler
 //!   reads the SAME resolved `path` into `drawtext`'s `fontfile=`, which is
 //!   the whole reason live preview and export draw the same glyphs (D-212).
 //!   Each entry also carries D-240's `group`/`bold`/`italic` metadata, which
 //!   is what a Bold/Italic TOGGLE composes across — the composition itself
-//!   lives once in `@chroma/editor`'s `textFonts.ts`, not here or duplicated
+//!   lives once in `@apelles/editor`'s `textFonts.ts`, not here or duplicated
 //!   in the MCP layer (see [`FontFamily`]'s own doc).
 //! - [`render_text_layer`] — rasterise one `TextLayer` into a canvas-sized
 //!   `RgbaImage`, the text centred, transparent everywhere else. Unchanged by
@@ -33,7 +33,7 @@
 //! (no bidi, no complex scripts, no ligature substitution — see the
 //! "Deferred" section of `docs/notes/text-title-clips.md`), and no
 //! multi-line layout (Phase 1 is single-line only — see
-//! `chroma_timeline::TextLayer`'s own doc for why that boundary is where
+//! `apelles_timeline::TextLayer`'s own doc for why that boundary is where
 //! preview/export parity is provable rather than hoped for).
 //!
 //! **Why `ab_glyph` (D-212):** it is already in this workspace's dependency
@@ -54,7 +54,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ab_glyph::{Font, FontVec, GlyphId, PxScale, ScaleFont, point};
-use chroma_timeline::TextLayer;
+use apelles_timeline::TextLayer;
 use image::RgbaImage;
 use serde::Serialize;
 
@@ -81,7 +81,7 @@ use serde::Serialize;
 /// The Inspector's Bold/Italic buttons and the `editor_set_text_clip`/
 /// `editor_set_caption_style` `bold`/`italic` MCP params both compose
 /// `(group, bold, italic)` into the flat catalogue key that actually gets
-/// stored — see `@chroma/editor`'s `textFonts.ts::composeFontStyleKey`, the
+/// stored — see `@apelles/editor`'s `textFonts.ts::composeFontStyleKey`, the
 /// ONE place that composition happens (both the GUI and MCP paths route
 /// through it, per CLAUDE.md's "same op/store action underneath both"). This
 /// struct carries the data; it carries no composition logic of its own,
@@ -356,7 +356,7 @@ pub struct ResolvedFont {
 
 /// The font catalogue resolved against this machine.
 ///
-/// Called by the Inspector's font picker AND by `@chroma/editor`'s
+/// Called by the Inspector's font picker AND by `@apelles/editor`'s
 /// `editorExport.ts`, which passes the resolved `path` down to the pure
 /// ffmpeg-argv compiler as `fontFiles` — the same "the compiler stays pure,
 /// the caller supplies what only it can know" split `hasAudioOverrides`
@@ -442,7 +442,7 @@ fn first_existing(candidates: &[&str]) -> Option<PathBuf> {
 
 /// The real font file for a catalogue `key`.
 ///
-/// An **unknown key falls back to [`chroma_timeline::DEFAULT_TEXT_FONT`]**
+/// An **unknown key falls back to [`apelles_timeline::DEFAULT_TEXT_FONT`]**
 /// rather than erroring, the same "the model stores what the UI wrote, the
 /// consumer degrades safely" rule `TextLayer::rgb` already follows — a
 /// project authored with a family this build no longer ships should render in
@@ -456,7 +456,7 @@ pub fn resolve_font_path(key: &str) -> Result<PathBuf, String> {
         .or_else(|| {
             TEXT_FONTS
                 .iter()
-                .find(|f| f.key == chroma_timeline::DEFAULT_TEXT_FONT)
+                .find(|f| f.key == apelles_timeline::DEFAULT_TEXT_FONT)
         })
         .ok_or_else(|| "no font families are configured".to_string())?;
     first_existing(family.candidates)
@@ -557,7 +557,7 @@ fn layer_cache() -> &'static Mutex<Vec<(LayerKey, Arc<RgbaImage>)>> {
 /// centre the same measured ink, which is what makes the two agree.
 ///
 /// `layer.size` is a fraction of the canvas HEIGHT (see
-/// `chroma_timeline::DEFAULT_TEXT_SIZE`), so this is resolution-independent:
+/// `apelles_timeline::DEFAULT_TEXT_SIZE`), so this is resolution-independent:
 /// the same `TextLayer` renders the same picture at 640, 960 or 1920 wide.
 pub fn render_text_layer(
     layer: &TextLayer,
@@ -938,7 +938,7 @@ mod tests {
         let fallback = resolve_font_path("no-such-font").expect("unknown key should fall back");
         assert_eq!(
             fallback,
-            resolve_font_path(chroma_timeline::DEFAULT_TEXT_FONT).expect("default resolves"),
+            resolve_font_path(apelles_timeline::DEFAULT_TEXT_FONT).expect("default resolves"),
         );
     }
 
@@ -1071,8 +1071,8 @@ mod tests {
         // And bypassing the cache entirely gives the same bytes.
         let key = LayerKey {
             content: "BEFORE".into(),
-            font: chroma_timeline::DEFAULT_TEXT_FONT.into(),
-            px: (chroma_timeline::DEFAULT_TEXT_SIZE * 270.0).round() as u32,
+            font: apelles_timeline::DEFAULT_TEXT_FONT.into(),
+            px: (apelles_timeline::DEFAULT_TEXT_SIZE * 270.0).round() as u32,
             rgb: (255, 255, 255),
             canvas: (480, 270),
         };
@@ -1083,7 +1083,7 @@ mod tests {
     // ---- D-240: italic/bold faces --------------------------------------
 
     /// Every `group`ed entry has a real sibling — the composer in
-    /// `@chroma/editor`'s `textFonts.ts` assumes a group is never a group of
+    /// `@apelles/editor`'s `textFonts.ts` assumes a group is never a group of
     /// one, and this is the catalogue-side guarantee of that. Also asserts no
     /// two entries in one group share the same `(bold, italic)` pair, which
     /// would make composition ambiguous (which key does "sans, bold, not

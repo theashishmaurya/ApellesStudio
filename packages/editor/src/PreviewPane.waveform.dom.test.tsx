@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — permanent real-DOM coverage for the viewer's audio waveform
+ * @apelles/editor — permanent real-DOM coverage for the viewer's audio waveform
  * strip and its MCP surface (D-232, roadmap item 27).
  *
  * **Why this asserts on the DOM rather than on the store.** `scrubSource.test.ts`

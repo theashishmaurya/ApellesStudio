@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — drag-to-scrub on a numeric field (D-253, finishing B-113).
+ * @apelles/editor — drag-to-scrub on a numeric field (D-253, finishing B-113).
  *
- * **Why the tests for a `@chroma/ui` component live in `@chroma/editor`.**
- * `@chroma/ui` has no test tier at all today (only `bridge`, `editor`,
+ * **Why the tests for a `@apelles/ui` component live in `@apelles/editor`.**
+ * `@apelles/ui` has no test tier at all today (only `bridge`, `editor`,
  * `history`, `motion` and `debug` have one), and this file's real subject —
  * real `PointerEvent`s, correctly sequenced, a frame apart, under
- * `<React.StrictMode>` — needs the harness `@chroma/editor` already owns
+ * `<React.StrictMode>` — needs the harness `@apelles/editor` already owns
  * (`testUtils/pointerHarness.ts`, D-142). Building a second copy of that
- * harness in `@chroma/ui` to test one component is exactly the duplication
+ * harness in `@apelles/ui` to test one component is exactly the duplication
  * this repo's own rules exist to stop; standing up a whole vitest tier there
  * for it is a bigger, separate change. The component is also consumed here
  * more than anywhere else, so this is where a regression would actually bite.
@@ -24,7 +24,7 @@
 
 import { describe, expect, it, afterEach } from 'vitest';
 import React from 'react';
-import { NUMBER_SCRUB, ScrubbableNumberInput } from '@chroma/ui';
+import { NUMBER_SCRUB, ScrubbableNumberInput } from '@apelles/ui';
 
 import {
   actSync,

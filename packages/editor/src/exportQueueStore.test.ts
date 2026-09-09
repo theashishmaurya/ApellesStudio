@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for the export queue (D-198): a REAL
+// @apelles/editor — unit tests for the export queue (D-198): a REAL
 // sequential queue, not a decorative list — job 2 must not start until job 1
 // actually settles, and every transition (`queued` -> `running` ->
 // `done`/`failed`) must be observable, live, on the store.
@@ -9,7 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeM
 
 const { useExportQueueStore } = await import('./exportQueueStore');
 const { useEditorTimelineStore } = await import('./timelineStore');
-const { useMediaPoolStore } = await import('@chroma/bridge');
+const { useMediaPoolStore } = await import('@apelles/bridge');
 // D-256 — `enqueue` compiles the argv, and the compiler refuses outright
 // unless each clip's Colorist grade has been baked (see `gradeLuts.ts`'s
 // cold-cache rule). The GUI's own Export dialog awaits this before enqueueing;

@@ -1,12 +1,12 @@
 /**
- * @chroma/bridge — the media pool (D-044/D-045/D-046/D-059, the roadmap's
+ * @apelles/bridge — the media pool (D-044/D-045/D-046/D-059, the roadmap's
  * "media pool + import + multiple timelines" item — this store's pass 4
  * shape).
  *
  * What it is: a typed binding over the `chroma_media_*` / `chroma_project_add_shot`
  * Tauri commands (`app/src-tauri/src/chroma/project.rs`) + a zustand store holding
  * the open project's media pool client-side, consumed by the Sources panel
- * (`app/src/components/chroma/SourcesPanel.tsx`, docked in `@chroma/shell`).
+ * (`app/src/components/chroma/SourcesPanel.tsx`, docked in `@apelles/shell`).
  * What it does: import (probe + pool), list, move between bins (D-045 —
  * `folder` is a plain path string, no separate bin entity), create a new,
  * possibly-still-empty bin (D-059 — `chroma_media_create_folder`, distinct
@@ -37,7 +37,7 @@ export interface MediaVideoInfo {
   durationSecs: number;
   /** D-129 — whether this source has a decodeable audio stream. The Edit tab
    *  reads it at drop time to decide whether the dropped clip gets a linked
-   *  audio half (`@chroma/editor`'s `linkedClipsFromDraggedMedia`).
+   *  audio half (`@apelles/editor`'s `linkedClipsFromDraggedMedia`).
    *  **Absent/`null` means "not probed for this yet", NOT "silent"** — a pool
    *  item imported before D-129 has no value until `chroma_media_list`'s
    *  one-time backfill resolves it (see the Rust field's own doc). Treated
@@ -67,7 +67,7 @@ export interface MediaItem {
    *  for every pool item that isn't a Motion render (nearly all of them).
    *  This is the entire Motion→Edit link: a clip's `mediaId`/`sourcePath`
    *  reaches the pool item, and the pool item names the scene. See the Rust
-   *  field's own doc (`chroma_project::manifest::MediaItem::motion_scene_id`)
+   *  field's own doc (`apelles_project::manifest::MediaItem::motion_scene_id`)
    *  for why provenance lives on the pool item and not on the clip. */
   motionSceneId?: string | null;
 }
@@ -141,7 +141,7 @@ interface MediaPoolState {
   createFolder: (path: string) => Promise<{ ok: boolean; error?: string }>;
   // NOTE: D-046's "add to grading" action (`chroma_project_add_shot`) is
   // deliberately NOT a store action here — it needs `useSessionStore.
-  // _hydrateOpenDto` (`app/src/store`), which `@chroma/bridge` cannot depend
+  // _hydrateOpenDto` (`app/src/store`), which `@apelles/bridge` cannot depend
   // on without inverting the D-039 layer direction (`app → tabs → services →
   // domain`). It lives in the app layer's `SourcesPanel.tsx` instead, the
   // same place `ProjectLauncher.tsx` already bridges Tauri commands into
@@ -152,7 +152,7 @@ interface MediaPoolState {
  *  while an earlier one (the Sources panel's own, an import's fallback) may
  *  still be in flight; without this the slower call wins by writing last, and
  *  the outgoing project's pool lands on top of the incoming project's. Same
- *  guard, for the same reason, as `@chroma/editor`'s `timelineStore` `load()`
+ *  guard, for the same reason, as `@apelles/editor`'s `timelineStore` `load()`
  *  (B-034/D-112). */
 let refreshToken = 0;
 

@@ -1,11 +1,11 @@
-// @chroma/motion — unit tests for the Motion tab's readiness state machine
+// @apelles/motion — unit tests for the Motion tab's readiness state machine
 // (B-058 / D-150).
 //
 // The live report: a real project open (breadcrumb showing, Edit and Colorist
 // both working against it), switch to Motion, get "No project open".
 //
 // The cause these assert shut is structural, and is the same one B-034/D-112
-// removed from `@chroma/editor` after five unrelated faults had all surfaced as
+// removed from `@apelles/editor` after five unrelated faults had all surfaced as
 // that identical sentence: this tab *inferred* "no project is open" from a
 // failed read. It is mounted from boot (`Shell` keeps every tab mounted), so
 // its one read happened before any project existed, failed correctly, and was

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Chroma MCP server (D-020).
+"""Apelles MCP server (D-020).
 
-Thin stdio MCP server. Every tool is a wrapper around the Chroma *control
-server* — a tiny HTTP server running inside the Chroma desktop app
+Thin stdio MCP server. Every tool is a wrapper around the Apelles *control
+server* — a tiny HTTP server running inside the Apelles desktop app
 (`app/src-tauri/src/chroma/control.rs`). The control server forwards each op
 to the app's frontend, which applies it through the SAME store actions the GUI
 buttons use and renders. So an edit made here moves the app's sliders and
@@ -17,7 +17,7 @@ control server itself, in Rust, with no frontend round trip — a screenshot is 
 picture of the webview, not a fact about the store, and the moment it is most
 worth having is when the frontend is too wedged to answer.
 
-Requires: the Chroma app running (the control server binds on start).
+Requires: the Apelles app running (the control server binds on start).
 Base URL: http://127.0.0.1:${CHROMA_CONTROL_PORT:-19788}
 """
 
@@ -47,11 +47,11 @@ SCOPE_DISCIPLINE = (
 )
 
 mcp = MCPServer(
-    "chroma",
+    "apelles",
     instructions=(
-        "Drive the running Chroma color-grading app. Edits move the app's real "
+        "Drive the running Apelles color-grading app. Edits move the app's real "
         "UI and re-render its canvas; reads reflect the user's manual edits. "
-        "The Chroma desktop app must be open. Call get_state first to see the "
+        "The Apelles desktop app must be open. Call get_state first to see the "
         "current image/video, adjustments and masks.\n\n"
         + SCOPE_DISCIPLINE
         + "\n\nMutating tools return the rendered frame, its histogram, and the "
@@ -87,12 +87,12 @@ def _op(op: str, **args: Any) -> dict:
         )
     except httpx.ConnectError as e:
         raise RuntimeError(
-            f"Cannot reach the Chroma control server at {BASE_URL}. "
-            "Is the Chroma desktop app running?"
+            f"Cannot reach the Apelles control server at {BASE_URL}. "
+            "Is the Apelles desktop app running?"
         ) from e
     if r.status_code == 504:
         raise RuntimeError(
-            "The Chroma app did not respond (its window may be closed or busy)."
+            "The Apelles app did not respond (its window may be closed or busy)."
         )
     r.raise_for_status()
     return r.json()
@@ -329,7 +329,7 @@ def seek(frame: int) -> list:
 # attempt to close the whole Edit-tab MCP gap (D-183 below is that attempt).
 #
 # D-183 moved the frontend handlers for these three ops out of
-# `useChromaControl.ts` (Colorist's own catch-all) into `@chroma/editor`'s own
+# `useChromaControl.ts` (Colorist's own catch-all) into `@apelles/editor`'s own
 # `useEditorControl.ts`, renamed `editor_get_timeline` / `editor_set_clip_fade`
 # / `editor_set_track_duck` — every Edit-tab op now lives under that one
 # prefix, `docs/notes/mcp-architecture.md`'s "every tab owns its own ops"
@@ -582,14 +582,14 @@ def set_track_duck(
 # --------------------------------------------------------------------------- #
 # Edit tab, continued (D-183) — closing the whole Edit-tab MCP gap that
 # D-147/D-149 above deliberately left open. Every tool below wraps one
-# `editor_*` op in `@chroma/editor`'s `useEditorControl.ts` — read that file's
+# `editor_*` op in `@apelles/editor`'s `useEditorControl.ts` — read that file's
 # own `OPS` map for the authoritative behavior; these are thin wrappers, same
 # shape as `get_timeline`/`set_clip_fade`/`set_track_duck` above.
 #
 # `editor_get_capabilities` (D-191) is the one exception: it is pure static
 # documentation, answered entirely in this process with NO round trip to
 # `chroma::control` — deliberately, so it works even with no project open and
-# no Chroma window running at all. See docs/08-decisions.md's D-191 entry
+# no Apelles window running at all. See docs/08-decisions.md's D-191 entry
 # (and D-184's own closing note, which flagged this as a separate, parallel
 # effort) for why this exists: D-183's own first live use surfaced real,
 # hard-won facts (the `scale`/aspect-ratio gap fixed by D-184/B-074, plus
@@ -996,11 +996,11 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "any Edit-tab panel yet, so a *different* future crash there "
             "could still reproduce this. If a previously-working "
             "editor_get_state call suddenly times out or errors, suspect a "
-            "control-server wedge — restart the Chroma app; don't retry in a "
+            "control-server wedge — restart the Apelles app; don't retry in a "
             "loop."
         ),
         "first_call_after_restart_B071": (
-            "The FIRST editor_* call right after restarting the Chroma app "
+            "The FIRST editor_* call right after restarting the Apelles app "
             "can fail once and then succeed on an immediate identical retry "
             "(a stale pooled HTTP connection to the old process's now-closed "
             "socket). See docs/BUGS.md B-071 (status: open). One retry is the "
@@ -1012,7 +1012,7 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "Recording 2026-09-07 at 1.08.16 PM.mov'. A hand-typed path "
             "using an ordinary space will silently fail to match the real "
             "file in ANY tool, including editor_import_media — this is not a "
-            "Chroma bug (docs/BUGS.md B-070; every process doing direct-path "
+            "Apelles bug (docs/BUGS.md B-070; every process doing direct-path "
             "access hits the identical trap). Resolve the real path via a "
             "shell glob or a directory listing first; never hand-transcribe "
             "a visible screen-recording filename into a tool call."
@@ -1049,13 +1049,13 @@ def editor_get_capabilities() -> str:
     """Hard-won, non-obvious facts about the Edit tab's compositing/export
     model and its rough edges — the things reading `mcp/server.py`'s other
     docstrings alone will NOT tell you, because they were only discovered by
-    reading Chroma's own source or hitting them live. Call this ONCE per
+    reading Apelles' own source or hitting them live. Call this ONCE per
     session, before your first `editor_set_clip_transform` /
     `editor_set_clip_keyframes` / `editor_export`, not per-op.
 
     Static reference data: answered entirely in this process, no round trip
     to the running app — the only `editor_*`-prefixed tool that works with no
-    Chroma window running and no project open at all.
+    Apelles window running and no project open at all.
 
     Covers: what `scale`/`fit_overrides` actually control in the live preview
     vs. export (a stacking/picture-in-picture primitive, not a "fill this
@@ -1178,7 +1178,7 @@ def editor_get_waveform(
     """The audio amplitude envelope around a timeline frame — **the same window
     the viewer's waveform strip draws, as numbers** (D-232, roadmap item 27).
 
-    This is the agent-side half of Chroma's audio scrubbing feature. Tape-style
+    This is the agent-side half of Apelles' audio scrubbing feature. Tape-style
     scrub (dragging the playhead and hearing the audio under it) is a live
     pointer gesture and has, deliberately, no MCP tool of its own — you cannot
     hear it, and `editor_set_playhead` already moves the playhead observably.
@@ -2519,7 +2519,7 @@ def editor_move_track(from_index: int, to_index: int) -> str:
     `from_index` so it ends up at `to_index`, shifting every track between
     the two by one to close the gap (exactly `Vec::remove(from)` then
     `insert(to, _)` — the identical primitive the GUI's own drag-to-reorder
-    track headers already use, `chroma_timeline::Timeline::move_track`).
+    track headers already use, `apelles_timeline::Timeline::move_track`).
 
     **Track index order IS compositing z-order — lower index paints on
     top (D-086).** `editor_add_track` only ever appends at the highest index
@@ -3351,7 +3351,7 @@ def editor_export_fcpxml(
     Format DaVinci Resolve and Final Cut Pro both import natively (D-196).
     Unlike `editor_export`, this produces no picture/audio at all — a text
     file describing the EDIT itself, so the same cuts/composite/trims can be
-    finished in another NLE instead of (or in addition to) Chroma's own
+    finished in another NLE instead of (or in addition to) Apelles' own
     render.
 
     Verified against Apple's own real, published FCPXML 1.7 DTD (a real DTD
@@ -3361,7 +3361,7 @@ def editor_export_fcpxml(
     scope, not a stub:
 
     MAPS: clip placement/trims (`start_frame`/`source_start`/`duration`),
-    track z-order (Chroma's own "track 0 = topmost" convention becomes the
+    track z-order (Apelles' own "track 0 = topmost" convention becomes the
     HIGHEST fcpxml `lane` number), the compositing transform
     (`position_x`/`position_y`/`scale`/`box_width`/`box_height`/`rotation`),
     crop, static opacity, A/V `link_group` (exported as one shared FCPXML
@@ -3617,7 +3617,7 @@ def add_shots(paths: list[str]) -> list:
 # --------------------------------------------------------------------------- #
 @mcp.tool()
 def list_projects() -> str:
-    """Every saved Chroma project in the projects folder (`~/Movies/Chroma` by
+    """Every saved Apelles project in the projects folder (`~/Movies/Chroma` by
     default), newest first. A project is a `<name>.chroma` directory holding
     project.json (shots referenced by absolute source path — media is never
     copied), thumb.jpg, and grades/<shotId>.grade.json per shot. Returns
@@ -4257,7 +4257,7 @@ def debug_screenshot(
     window: str | None = None,
     inline: bool = False,
 ) -> list:
-    """Take a REAL screenshot of the running Chroma app's window and save it as
+    """Take a REAL screenshot of the running Apelles app's window and save it as
     a PNG. This is how you SEE the UI instead of inferring it from state.
 
     THE WORKFLOW (this is the whole point of the tool):
@@ -4362,7 +4362,7 @@ def debug_sample_pixel(path: str, x: int, y: int) -> str:
 # works.
 #
 # All of these are DEV-BUILD ONLY (CLAUDE.md: internal debug tooling is never
-# shipped). They are answered by `@chroma/debug`'s op registry, which a
+# shipped). They are answered by `@apelles/debug`'s op registry, which a
 # production `vite build` drops entirely.
 # --------------------------------------------------------------------------- #
 @mcp.tool()
@@ -4492,7 +4492,7 @@ def debug_dom_tree(
     flagged `invisible` (display:none/visibility:hidden) or `zeroArea`, with
     the styles that caused it right there.
 
-    ALWAYS pass a `selector` when you know the region you care about — Chroma's
+    ALWAYS pass a `selector` when you know the region you care about — Apelles'
     full page is thousands of nodes and the default bounds will truncate it
     into uselessness. Stable hooks exist for the big panels:
     `[data-chroma-panel="editor-inspector"]`, `[data-chroma-panel="sources"]`.
@@ -4571,10 +4571,10 @@ def debug_frame_timing(limit: int | None = None, reset: bool = False) -> str:
 #
 # Every tool below posts one `motion_*` op to the SAME control server the
 # Colorist and Edit tools use (`chroma::control`, port 19788), which forwards
-# it to `@chroma/motion`'s `useMotionControl.ts` -> `motionOps.ts`. Each
+# it to `@apelles/motion`'s `useMotionControl.ts` -> `motionOps.ts`. Each
 # mutating op calls the SAME `manifestEdit.ts` function the equivalent GUI
 # gesture calls and commits through the SAME `useMotionManifest().commit`, so
-# an agent's edit lands on the same `@chroma/history` undo stack a human's
+# an agent's edit lands on the same `@apelles/history` undo stack a human's
 # does and the tab visibly re-renders. See `docs/notes/mcp-architecture.md`.
 #
 # The manifest is this tab's single source of truth, exactly as `grade.json`

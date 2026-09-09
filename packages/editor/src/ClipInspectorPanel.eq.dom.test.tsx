@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for D-224's Inspector EQ section.
+ * @apelles/editor — real-DOM coverage for D-224's Inspector EQ section.
  *
  * **Why a DOM test.** `timeline.test.ts` already proves the `set_clip_eq`
- * reducer and `chroma_types::eq` proves the filter math; neither proves the
+ * reducer and `apelles_types::eq` proves the filter math; neither proves the
  * half a human actually touches — that the section renders Resolve's four
  * bands, that a band's fields write only that band's own field, that the
  * band-number button really bypasses, and that the section's reset takes the
@@ -21,7 +21,7 @@
  * Same tier and same honest limits as `EditorInspectorPanel.keyframes.dom.
  * test.tsx`: jsdom, real components, real store, a stubbed Tauri `invoke`. It
  * proves the AUTHORING contract — what ends up in `Clip.eq_bands` — and
- * nothing about what is heard; that is `chroma-media`'s own measured cascade
+ * nothing about what is heard; that is `apelles-media`'s own measured cascade
  * tests and `timelineExport.ffmpeg.test.ts`'s real-ffmpeg response
  * measurement.
  *

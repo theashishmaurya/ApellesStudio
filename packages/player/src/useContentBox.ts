@@ -1,13 +1,13 @@
 /**
- * `@chroma/player` — the letterbox math for an `object-contain` surface: the
+ * `@apelles/player` — the letterbox math for an `object-contain` surface: the
  * on-screen rect a picture of `size` actually occupies inside its container,
  * once the browser has centred and scaled it to fit. Extracted (not
  * reimplemented) from `app/src/hooks/useImageRenderSize.ts` (D-046's own
- * on-canvas overlay math) so a tab built on `@chroma/player` — whose
+ * on-canvas overlay math) so a tab built on `@apelles/player` — whose
  * `surface` may be anything, per this package's own contract — can place
  * DOM/SVG markers over its `<img>`/`<canvas>` without reaching into `app/`
  * (D-039's one-way dependency rule forbids `packages/editor` importing from
- * `app/`). First real consumer: `@chroma/editor`'s `TransformOverlay.tsx`
+ * `app/`). First real consumer: `@apelles/editor`'s `TransformOverlay.tsx`
  * (D-136, Phase 1 of `docs/notes/on-canvas-transform.md`).
  *
  * `app/src/hooks/useImageRenderSize.ts` itself is left in place, still

@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for canvas click-to-select's pure hit-testing
+// @apelles/editor — unit tests for canvas click-to-select's pure hit-testing
 // (D-204, fixing B-085). See `canvasPick.ts`'s module doc for what this
 // deliberately does and does not model; DOM-free for the same reason
 // `transformGeometry.test.ts` is (this package's vitest env is bare `node`).

@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the Catalog panel (D-151).
+ * @apelles/motion — the Catalog panel (D-151).
  *
  * What it is: a browsable list of every primitive the motion engine can
  * render (`catalog.ts`, exhaustive against the engine's own `use` enum),
@@ -43,7 +43,7 @@
  * sidebar of 2D previews is a separate, smaller design call this pass didn't
  * need to make to ship the reorder/thumbnail work it was scoped for).
  *
- * Not `@chroma/ui`: same documented `@react-three/fiber` JSX-typing conflict
+ * Not `@apelles/ui`: same documented `@react-three/fiber` JSX-typing conflict
  * every other file in this package works around — see `Button.tsx` and
  * `resizable.tsx`.
  */

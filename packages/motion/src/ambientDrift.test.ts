@@ -7,8 +7,8 @@
  * same manifest's drift ran at a different perceived wall-clock rate at a
  * non-30fps render: twice as fast at 60fps, 20% slower at 24fps.
  *
- * Lives in `@chroma/motion`'s test suite for the same reason
- * `interpolateKeys.test.ts`/`schema.test.ts` do — `@chroma/motion-engine`
+ * Lives in `@apelles/motion`'s test suite for the same reason
+ * `interpolateKeys.test.ts`/`schema.test.ts` do — `@apelles/motion-engine`
  * has no `test` script (D-155's own finding) — importing the two pure
  * functions across the package boundary the same established way.
  *
@@ -19,9 +19,9 @@
  * render's real fps happened to equal `design.fps` (30) agreed with itself.
  */
 import { describe, it, expect } from 'vitest';
-import { design } from '@chroma/motion-engine/src/design';
-import { ambientDrift } from '@chroma/motion-engine/src/lib/draw';
-import { cameraDrift } from '@chroma/motion-engine/src/primitives/Camera';
+import { design } from '@apelles/motion-engine/src/design';
+import { ambientDrift } from '@apelles/motion-engine/src/lib/draw';
+import { cameraDrift } from '@apelles/motion-engine/src/primitives/Camera';
 
 /** the OLD (pre-B-060) formula, both implementations, reconstructed here
  *  byte-for-byte from the bug entry's own quoted expressions so the

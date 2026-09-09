@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Inspector's **Adjustment** section: an adjustment
+ * @apelles/editor — the Inspector's **Adjustment** section: an adjustment
  * clip's five-parameter primary correction (D-230,
  * `docs/notes/adjustment-clips.md`).
  *
@@ -35,8 +35,8 @@
  * uses — one op and one validator under both interfaces, per CLAUDE.md.
  */
 import { useState } from 'react';
-import { Button, ScrubbableNumberInput } from '@chroma/ui';
-import { InspectorSection } from '@chroma/inspector';
+import { Button, ScrubbableNumberInput } from '@apelles/ui';
+import { InspectorSection } from '@apelles/inspector';
 import { RotateCcw } from 'lucide-react';
 
 import {

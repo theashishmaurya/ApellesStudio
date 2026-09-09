@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 //
-// @chroma/editor — unit tests for `timelineInterchange.ts`: the rational-time
+// @apelles/editor — unit tests for `timelineInterchange.ts`: the rational-time
 // helpers, and `buildFcpxml`'s real Timeline -> FCPXML compiler.
 //
 // Verification bar (D-196, matching this session's own `timelineExport.
@@ -184,7 +184,7 @@ describe('buildFcpxml — structure', () => {
 });
 
 describe('buildFcpxml — track order / lanes', () => {
-  it('gives track 0 (Chroma\'s own topmost/foreground track) the HIGHEST fcpxml lane', () => {
+  it('gives track 0 (Apelles\'s own topmost/foreground track) the HIGHEST fcpxml lane', () => {
     const tl = timeline([
       track('video', [clip('top', { name: 'top' })]),
       track('video', [clip('mid', { name: 'mid' })]),

@@ -1,9 +1,9 @@
 /**
- * @chroma/shell — the tab store (D-039).
+ * @apelles/shell — the tab store (D-039).
  *
  * One tiny zustand store holding which of the 3 tabs is active. Kept separate
  * from the app's stores on purpose: the shell must not depend on
- * `@chroma/bridge` or the colorist app.
+ * `@apelles/bridge` or the colorist app.
  *
  * `activeTab` is deliberately session-only, not persisted (B-007, 2026-09-02).
  * It was persisted to localStorage at first, but that meant "Edit opens by
@@ -34,7 +34,7 @@
  * kept because it is the name `debug_set_sources_panel`, `debug_get_ui_state`
  * and every existing doc and debug recipe already use for exactly this flag,
  * and WHICH library is showing is a separate piece of state owned by the tab
- * (`@chroma/editor`'s `libraryMode`) — the shell deliberately does not learn
+ * (`@apelles/editor`'s `libraryMode`) — the shell deliberately does not learn
  * what a tab's libraries are called.
  */
 

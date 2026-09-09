@@ -1,6 +1,6 @@
 # Product direction — decided (D-039), this is the research record
 
-**Status: DECIDED.** Chroma is a 3-tab AI-native video app — **Edit / Motion /
+**Status: DECIDED.** Apelles is a 3-tab AI-native video app — **Edit / Motion /
 Colorist** — locked as **D-039** (`docs/08-decisions.md`) and under active
 construction (`docs/04-roadmap.md`). This file is the **research and rationale
 archive** that led there and keeps accumulating as the build continues — not an
@@ -28,7 +28,7 @@ actually runs — script → cut → motion graphics → grade → publish:
 2. **Motion** — the Remotion motion-graphics engine, moved in from `videoAgent`
    as `packages/motion-engine/` (7 primitives + JSON manifest compiler — already
    built, just needs a tab UI wired to it).
-3. **Colorist** — Chroma as it existed pre-pivot: the grade pipeline, the agent,
+3. **Colorist** — Apelles as it existed pre-pivot: the grade pipeline, the agent,
    scopes, tracking, depth, the project model.
 
 **Constraint lock (owner, non-negotiable):** Rust-native, performance-first
@@ -64,14 +64,14 @@ duplicated here.
 | path | what | verdict |
 |---|---|---|
 | **A — Remotion-as-editor** | `react-timeline-editor` / Vanta / Remotion's own timeline component | **Rejected as the engine** (JS/WebCodecs, against the constraint lock). `react-timeline-editor` still used as the **UI widget** — it's a control surface, not a render path, so it doesn't violate the lock (Editor MVP, D-041). |
-| **B — OpenCut's Rust compositor** | `OpenCut-app/OpenCut` (MIT, ~88k★), mid-rewrite to a wgpu compositor in `rust/crates/` (compositor/effects/masks/gpu/time), shipping since v0.3.0 | **Watch, adopt when it stabilises.** Same wgpu foundation as Chroma's grade shader — the path to one render engine for cut+grade. Pre-release risk today. |
-| **C — Rust-native from parts** | `wgpu` (already in Chroma) + OTIO-shaped serde timeline + ffmpeg CLI (already wired, D-015) | **The actual chosen path** (see `architecture-lock.md`'s `chroma-compositor`). Path B's crates are the reference implementation to study. |
+| **B — OpenCut's Rust compositor** | `OpenCut-app/OpenCut` (MIT, ~88k★), mid-rewrite to a wgpu compositor in `rust/crates/` (compositor/effects/masks/gpu/time), shipping since v0.3.0 | **Watch, adopt when it stabilises.** Same wgpu foundation as Apelles' grade shader — the path to one render engine for cut+grade. Pre-release risk today. |
+| **C — Rust-native from parts** | `wgpu` (already in Apelles) + OTIO-shaped serde timeline + ffmpeg CLI (already wired, D-015) | **The actual chosen path** (see `architecture-lock.md`'s `apelles-compositor`). Path B's crates are the reference implementation to study. |
 | **D — Diffusion Studio** | `diffusionstudio/core`, MPL-2.0, WebCodecs, built on Mediabunny (already a `motion-engine` dep) | **Rejected as the engine** (browser/WebCodecs, against the lock). Genuinely the closest philosophical match (*"the video editor your agents can drive"*) — reference for feature completeness, not a dependency. |
 
 **libopenshot** — evaluated separately, **rejected outright**: C++, SWIG-only API
 (no Rust bindings), **CPU compositing** (HW accel is ffmpeg decode/encode only —
 their own docs admit the GPU↔CPU round-trip is the bottleneck), heavy deps
-(JUCE audio, historically Qt/ImageMagick). Even today's Chroma (wgpu grade
+(JUCE audio, historically Qt/ImageMagick). Even today's Apelles (wgpu grade
 pipeline) is architecturally ahead of it. Keep its `Timeline`/`Clip`/`Keyframe`
 headers as a *reading* reference only.
 
@@ -80,16 +80,16 @@ headers as a *reading* reference only.
 | layer | pick | why |
 |---|---|---|
 | Decode | `re_video` (Rerun, MIT/Apache) or native VideoToolbox → wgpu texture; ffmpeg-CLI fallback (D-015, already wired) | zero-copy on Apple Silicon, no GStreamer bloat |
-| Compositor | `chroma-compositor` on `wgpu`, extending `render_core` (D-014); OpenCut's crate as reference | one engine for cut + grade |
-| Timeline model | OTIO-shaped serde structs (not the OTIO C bindings) | "the edit is code," parallel to `grade.json`; `chroma-timeline` (D-041) already started this |
+| Compositor | `apelles-compositor` on `wgpu`, extending `render_core` (D-014); OpenCut's crate as reference | one engine for cut + grade |
+| Timeline model | OTIO-shaped serde structs (not the OTIO C bindings) | "the edit is code," parallel to `grade.json`; `apelles-timeline` (D-041) already started this |
 | Timeline UI | `react-timeline-editor` (MIT) | a control surface — video never flows through it, so it's perf-neutral despite being JS |
 | Transcript cut | whisper `--word-timestamps` (already have) + the CutScript/Rescript edit-model | low risk, well-trodden |
 | Audio | `symphonia` + `cpal` + `rubato` + `dasp` | native Rust, no runtime cost |
-| UI kit | `@chroma/ui` on **shadcn/ui + Base UI** (D-042, built) | canonical, not hand-rolled — see D-042 |
+| UI kit | `@apelles/ui` on **shadcn/ui + Base UI** (D-042, built) | canonical, not hand-rolled — see D-042 |
 
 ### 4.3 Why the editing tab is *bounded* work, not greenfield
 
-Chroma already owns the hard single-clip parts: wgpu context, decode pipe
+Apelles already owns the hard single-clip parts: wgpu context, decode pipe
 (D-030), render-to-surface, export pipe (D-022), the grade compute pass, 30fps
 playback (D-031). The Editor tab is an *extension* of proven code — the
 multi-layer compositor is the one genuinely new system.
@@ -137,7 +137,7 @@ eats the gains — that's *why* the rule exists, not decoration.
 
 ## 6. What's already true and reusable (as of 2026-09-02)
 
-- **Colorist tab** — the pre-pivot Chroma: grade pipeline, agent + MCP (38+
+- **Colorist tab** — the pre-pivot Apelles: grade pipeline, agent + MCP (38+
   tools), scopes, subject tracking (SAM2+ViTMatte), temporal depth track (VDA),
   mask keyframes, multi-shot session, activity feed, eval harness.
 - **Project model (D-037/38)** — `~/Movies/Chroma/<name>.chroma`, the container
@@ -146,7 +146,7 @@ eats the gains — that's *why* the rule exists, not decoration.
   tab UI (`@remotion/player` embed + manifest editor) — **currently the
   single biggest gap in the active roadmap queue**, see `04-roadmap.md`.
 - **Transcript / word timestamps** — `videoAgent`'s mlx-whisper backend.
-- **`@chroma/ui`** — shadcn/Base UI, themed, 18 structural components (D-042).
+- **`@apelles/ui`** — shadcn/Base UI, themed, 18 structural components (D-042).
 - **3-tab shell, launcher-as-entry-screen, Editor MVP** — all live (D-039
   migration log).
 
@@ -164,7 +164,7 @@ unclaimed anymore, but validated at scale:
 - **Avid** shipped agentic features at IBC2026 — when a 40-year incumbent moves,
   the category's mainstream.
 - **Runway** — $544.5M+ raised, ambient signal of capital in adjacent AI-video.
-- **Eddie AI** (`heyeddie.ai`) — closest *feature* shape to Chroma's ambition:
+- **Eddie AI** (`heyeddie.ai`) — closest *feature* shape to Apelles' ambition:
   rough-cut, transcription + soundbite ID, **B-roll auto-tagging with visual
   descriptions** (real proof-of-demand for the visual-search feature, see
   `docs/notes/video-search.md`), colour grading, AI music, multicam, MCP-callable.
@@ -176,7 +176,7 @@ unclaimed anymore, but validated at scale:
 **Open-source, local competitors also emerged — the part that actually narrows
 the "unclaimed" claim:**
 - **`MartinDelophy/ai-video-editor`** — "creators and AI agents edit the same
-  real timeline," open-source, local-first. **This is Chroma's exact D-020
+  real timeline," open-source, local-first. **This is Apelles' exact D-020
   shared-state thesis, arrived at independently.**
 - **OpenReel Video** (MIT) — chat-driven timeline agent, free, local.
 - **OpenMontage** — "world's first open-source agentic video *production*
@@ -184,13 +184,13 @@ the "unclaimed" claim:**
   own skill set) than a GUI app.
 - **LTX Desktop** — free/local NLE built around the LTX-Video generation model.
 
-**What still differentiates Chroma, checked against all of the above:**
+**What still differentiates Apelles, checked against all of the above:**
 1. **Real colour science** — none of them have a grade pipeline this deep (GPU
    shader stack, scopes, `match_to_reference`, depth-based haze/relight, mask
-   keyframes). Still Chroma's alone.
+   keyframes). Still Apelles' alone.
 2. **Rust-native, not browser** — Cardboard/OpenReel/Diffusion Studio are all
    WebCodecs-in-browser, the exact class rejected on performance grounds.
-   Nobody surveyed is building the wgpu-native compositor Chroma's architecture
+   Nobody surveyed is building the wgpu-native compositor Apelles' architecture
    calls for.
 3. **One integrated studio**, not a point tool.
 4. **MCP**, an open standard — any MCP client, not a bespoke chat UI.
@@ -227,11 +227,11 @@ Short version, not financial advice:
   all shift under the 3-tab framing, not yet re-decided.
 - Does the Editor tab's compositor eventually *replace* the Colorist's grade
   path, or do they stay two passes (composite → grade)? Leaning two-pass for
-  now (`chroma-compositor` → `chroma-grade`, per `architecture-lock.md`), not
+  now (`apelles-compositor` → `apelles-grade`, per `architecture-lock.md`), not
   re-litigated since.
 - Multi-timeline / nested-sequence support (a Motion composition as a pool
   item) — flagged, deferred, not designed.
-- ~~Whether `chroma-motion`'s manifest editor becomes visual or stays
+- ~~Whether `apelles-motion`'s manifest editor becomes visual or stays
   JSON-in/agent-driven for v1 — not decided, no strong signal either way yet.~~
   **Signal arrived 2026-09-05, from the owner, unprompted: visual.** *"i would
   like to drag and drop multiple elements and set position or change them size

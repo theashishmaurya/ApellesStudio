@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — one keyframeable Inspector row: label, numeric field,
+ * @apelles/editor — one keyframeable Inspector row: label, numeric field,
  * per-property keyframe nav (`<`/`>`), the stopwatch diamond, and a reset
  * (D-208, extracted from `ClipInspectorPanel.tsx` as its own reusable
  * component — roadmap 25, "foundational, unblocks the rest").
@@ -12,7 +12,7 @@
  * this panel's narrow side-by-side numeric rows) — forcing all three into
  * one shared component across tab boundaries would mean rewriting two
  * working, tested layouts for no real gain, exactly the over-unification
- * `@chroma/inspector`'s own README warns against. What actually IS shared,
+ * `@apelles/inspector`'s own README warns against. What actually IS shared,
  * and was worth pulling out, is narrower and real: every new keyframeable
  * numeric property this tab adds — the Transform/Crop rows already here,
  * and the per-clip audio pan/volume and EQ rows still to come — needs the
@@ -35,7 +35,7 @@
  * — TypeScript infers `TParam` from the `state`/callbacks passed in, so
  * nothing at either existing call site changed shape.
  *
- * **B-113 / D-253 — the field itself is `@chroma/ui`'s
+ * **B-113 / D-253 — the field itself is `@apelles/ui`'s
  * `ScrubbableNumberInput`.** The crop rows showed values like `0.0` with the
  * spinner arrows painted over the digits that did not fit; the field was
  * `w-16` with no room for WebKit's inner-spin-button, and `0.052212` (a real
@@ -51,7 +51,7 @@
  * `Clip` knowledge, nothing beyond the props below.
  */
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, Spline } from 'lucide-react';
-import { Button, ScrubbableNumberInput, displayNumber } from '@chroma/ui';
+import { Button, ScrubbableNumberInput, displayNumber } from '@apelles/ui';
 
 import { NUM_FIELD } from './numericField';
 

@@ -10,14 +10,14 @@ already play for their areas.
 ## The API
 
 `trackEvent(event: string, props?: Record<string, unknown>)`, exported from
-`@chroma/bridge` (`packages/bridge/src/telemetry.ts`). D-039 layer rules put it
-there because `@chroma/bridge` is "the frontend↔backend seam... consumed by every
-tab package" — the one place code that isn't `@chroma/shell` itself (which must
+`@apelles/bridge` (`packages/bridge/src/telemetry.ts`). D-039 layer rules put it
+there because `@apelles/bridge` is "the frontend↔backend seam... consumed by every
+tab package" — the one place code that isn't `@apelles/shell` itself (which must
 not depend on bridge, see `packages/shell/src/store.ts`'s own header) can reach a
 single shared telemetry call from.
 
 ```ts
-import { trackEvent } from '@chroma/bridge';
+import { trackEvent } from '@apelles/bridge';
 
 trackEvent('relight_light_add', { kind: 'key' });
 ```
@@ -67,8 +67,8 @@ truncation/serialization logic built for error objects, not designed for this).
 
 - **Tab switches** — `app/src/main.tsx`'s `Root()`, a `useEffect` watching
   `useActiveTab()` or a previous value (skips the initial mount). Lives at the
-  composition root rather than inside `@chroma/shell`'s own store, because that
-  store explicitly must not depend on `@chroma/bridge` (same layering reason the
+  composition root rather than inside `@apelles/shell`'s own store, because that
+  store explicitly must not depend on `@apelles/bridge` (same layering reason the
   existing B-007/D-062 bridges in that file already document).
   `event: "tab_switch"`, `props: { from, to }`.
 - **Project lifecycle** — `app/src/store/useSessionStore.ts`: `openProject`
@@ -100,14 +100,14 @@ truncation/serialization logic built for error objects, not designed for this).
   `EditOp` in one place, same reasoning as the Relight/session hookups above) or
   at `TimelinePane.tsx`'s individual UI handlers, whichever that rework's final
   shape makes more natural. `packages/editor` is a tab package and may depend on
-  `@chroma/bridge` per D-039, so no layering obstacle — this is pure "someone
+  `@apelles/bridge` per D-039, so no layering obstacle — this is pure "someone
   needs to sit down and add the calls."
 - **Motion tab actions** (scene/layer selection, render trigger) — zero coverage.
-  `packages/motion` cannot depend on `@chroma/ui` (a real `@react-three/fiber`
+  `packages/motion` cannot depend on `@apelles/ui` (a real `@react-three/fiber`
   JSX-typing conflict, documented in `packages/motion/src/Button.tsx`) but CAN
-  depend on `@chroma/bridge` — no known obstacle, just not done yet.
+  depend on `@apelles/bridge` — no known obstacle, just not done yet.
 - **Media/Sources pool actions** (import, move, create folder) — zero coverage;
-  `useMediaPoolStore` (`@chroma/bridge`) already sits in the right package, so
+  `useMediaPoolStore` (`@apelles/bridge`) already sits in the right package, so
   adding `trackEvent` calls to its own actions is the same one-choke-point pattern
   `useSessionStore` above uses.
 - **Export/render actions** (Colorist export, Motion render) — zero coverage.
@@ -118,7 +118,7 @@ truncation/serialization logic built for error objects, not designed for this).
 
 ## Adopting this for a new surface
 
-1. Import `trackEvent` from `@chroma/bridge` (any tab package or `app/src` may —
+1. Import `trackEvent` from `@apelles/bridge` (any tab package or `app/src` may —
    check `docs/notes/architecture-lock.md`'s layer table if unsure).
 2. Call it after the action actually succeeds (mirrors the Relight bake handlers
    above), not on click — a failed action shouldn't read as a completed one.

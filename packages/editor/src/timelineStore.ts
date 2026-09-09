@@ -1,11 +1,11 @@
 /**
- * @chroma/editor — the Edit-tab timeline store (D-041, timeline switcher D-046
+ * @apelles/editor — the Edit-tab timeline store (D-041, timeline switcher D-046
  * pass 3, undo/redo D-051).
  *
- * Kept in `@chroma/editor` for now; a `@chroma/bridge` extraction (shared
+ * Kept in `@apelles/editor` for now; a `@apelles/bridge` extraction (shared
  * stores + typed Tauri bindings) is a separate later task (D-039 step 6).
  *
- * State: the `chroma-timeline` model for the **active** timeline, the
+ * State: the `apelles-timeline` model for the **active** timeline, the
  * playhead (timeline frame), a play flag, and — D-046 pass 3 — the project's
  * full timeline list for the switcher UI (`TimelineSwitcher.tsx`). `load()`
  * fetches (`chroma_timeline_get`, always the active one); `applyOp()` mutates
@@ -26,7 +26,7 @@
  * for the full failure mode.
  *
  * D-051: every real (non-no-op) `applyOp` call pushes a `{tab:'edit', ...}`
- * before/after snapshot pair onto `@chroma/history`'s shared undo stack —
+ * before/after snapshot pair onto `@apelles/history`'s shared undo stack —
  * whole-`Timeline` snapshots (not inverse deltas), because every op here is
  * already whole-document replace/persist, so restoring a snapshot is exactly
  * what a normal edit does. `restoreSnapshot()` is what the history entries'
@@ -64,7 +64,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
-import { useHistoryStore } from '@chroma/history';
+import { useHistoryStore } from '@apelles/history';
 
 import {
   applyOp as applyOpPure,
@@ -163,7 +163,7 @@ interface EditorTimelineState {
    *  and `null` when none is. Pushed down from the composition root
    *  (`app/src/Root.tsx` → `setOpenProject`). This store must never *infer* it
    *  from a failed fetch — see `TimelineLoadStatus`. The dependency direction
-   *  stays app → tabs (D-039): `@chroma/editor` is told, it never reaches up
+   *  stays app → tabs (D-039): `@apelles/editor` is told, it never reaches up
    *  into `useSessionStore` to ask.
    *
    *  B-083/D-203 — this was a bare `projectOpen: boolean` until 2026-09-07,
@@ -315,7 +315,7 @@ interface EditorTimelineState {
    *
    *  Whether that column is SHOWN at all is separate and shell-level
    *  (`useShellStore.sourcesPanelOpen`) — this package must not depend on
-   *  `@chroma/shell`, so the rail takes that flag and its setter as props. */
+   *  `@apelles/shell`, so the rail takes that flag and its setter as props. */
   libraryMode: EditLibraryMode;
   /** B-088 — a monotonic counter bumped **only** when the BACKEND's copy of
    *  the active timeline is known to have changed: a `chroma_timeline_set`

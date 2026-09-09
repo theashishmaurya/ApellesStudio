@@ -5,10 +5,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { safeUnlisten } from '../utils/tauriListeners';
 
 // D-183 — the three Edit-tab ops that used to live here (`get_timeline`,
-// `set_clip_fade`, `set_track_duck`) moved to `@chroma/editor`'s own
+// `set_clip_fade`, `set_track_duck`) moved to `@apelles/editor`'s own
 // `useEditorControl.ts` (renamed `editor_get_timeline`/`editor_set_clip_fade`/
 // `editor_set_track_duck`) — see `docs/notes/mcp-architecture.md`'s "every
-// tab owns its own ops" rule. This file no longer imports `@chroma/editor`
+// tab owns its own ops" rule. This file no longer imports `@apelles/editor`
 // at all.
 import { useEditorStore } from '../store/useEditorStore';
 import { useChromaStore } from '../store/useChromaStore';
@@ -47,7 +47,7 @@ import {
 } from '../utils/scopes';
 
 /**
- * The MCP ⇄ frontend bridge for the Chroma control server (D-020).
+ * The MCP ⇄ frontend bridge for the Apelles control server (D-020).
  *
  * Mounted ONCE (in Editor). The Rust control server (`src/chroma/control.rs`)
  * emits `chroma://request` for every HTTP `/op`; this hook runs the op against
@@ -317,7 +317,7 @@ export function useChromaControl() {
       },
 
       // ---- D-183: get_timeline / set_clip_fade / set_track_duck moved OUT
-      // of this file into @chroma/editor's own useEditorControl.ts, renamed
+      // of this file into @apelles/editor's own useEditorControl.ts, renamed
       // editor_get_timeline / editor_set_clip_fade / editor_set_track_duck
       // — see docs/notes/mcp-architecture.md's "every tab owns its own ops"
       // rule, and this file's own top-of-file comment.
@@ -1439,7 +1439,7 @@ export function useChromaControl() {
     const unlistenP = listen('chroma://request', async (ev: any) => {
       const payload = ev?.payload || {};
       const { id, op, args } = payload;
-      // Motion ops (namespaced `motion_*`) are answered by `@chroma/motion`'s
+      // Motion ops (namespaced `motion_*`) are answered by `@apelles/motion`'s
       // own `useMotionControl` listener, mounted from `MotionTab.tsx` — see
       // docs/notes/motion-mcp-surface-research.md §6. Both listeners see
       // every `chroma://request` event (Tauri doesn't scope `listen()` by
@@ -1449,7 +1449,7 @@ export function useChromaControl() {
       // `chroma://response/<id>` slot with a false "unknown op" error.
       //
       // D-183 — `editor_*` gets the SAME treatment, for the SAME reason, now
-      // that `@chroma/editor`'s own `useEditorControl` (mounted from
+      // that `@apelles/editor`'s own `useEditorControl` (mounted from
       // `EditorTab.tsx`) is a second real listener on this same event —
       // this file is deliberately NOT a catch-all any more (see
       // `docs/notes/mcp-architecture.md`'s "every tab opts IN to its own
@@ -1459,7 +1459,7 @@ export function useChromaControl() {
       // from answering "unknown op" for its own former ops under their new
       // names.
       // D-219 — `debug_*` gets the same treatment for the same reason: the
-      // internal debug UI-state/DOM ops are `@chroma/debug`'s registry
+      // internal debug UI-state/DOM ops are `@apelles/debug`'s registry
       // (`useDebugControl`, dev builds only). Without this skip they would
       // land here as "unknown op" and race that registry for the one-shot
       // response slot. Note `debug_screenshot`/`debug_sample_pixel` (D-210)

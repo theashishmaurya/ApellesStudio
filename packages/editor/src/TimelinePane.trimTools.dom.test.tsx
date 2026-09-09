@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for the trim-tool palette (D-261), built
+ * @apelles/editor — real-DOM coverage for the trim-tool palette (D-261), built
  * on the same harness and fixture as `TimelinePane.trim.dom.test.tsx` (D-235),
  * which this file is the direct sequel to.
  *

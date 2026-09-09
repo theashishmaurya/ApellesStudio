@@ -1,4 +1,4 @@
-"""Chroma AI sidecar — local, MPS. FastAPI over SAM 2 (via ultralytics) + ViTMatte.
+"""Apelles AI sidecar — local, MPS. FastAPI over SAM 2 (via ultralytics) + ViTMatte.
 
 Endpoints
   GET  /health                       -> {ok, device, models}
@@ -46,7 +46,7 @@ os.environ.setdefault("YOLO_CONFIG_DIR", MODELS_DIR)
 
 VITMATTE_ID = os.environ.get("CHROMA_VITMATTE", "hustvl/vitmatte-small-composition-1k")
 
-app = FastAPI(title="chroma-ai")
+app = FastAPI(title="apelles-ai")
 
 # D-101 — real sidecar ownership: a content hash of this file's own bytes, not
 # a hand-bumped version string (which needs remembering to bump — the exact
@@ -890,7 +890,7 @@ def refine_track(req: RefineTrackReq):
 # whose temporal self-attention makes the depth stable frame-to-frame — this is
 # what DaVinci Resolve's "temporal z-depth" does, and what a per-frame model +
 # a hand-rolled EMA can only approximate. The vitb / vitl checkpoints are
-# CC-BY-NC-4.0 (non-commercial) — do NOT use them; Chroma ships as a product.
+# CC-BY-NC-4.0 (non-commercial) — do NOT use them; Apelles ships as a product.
 #
 # The engine's Rust Depth Anything V2 (ONNX) path is unchanged — it stays the
 # static single-frame bake for stills and for apply_haze when no track exists.

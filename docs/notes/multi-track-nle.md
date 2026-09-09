@@ -6,19 +6,19 @@ workflow — N video tracks (top wins where it has content), N audio tracks (all
 each with vol/mute/solo/pan), clips placeable anywhere on any track (not forced
 back-to-back), drag between tracks, track headers (mute/lock/solo), add/remove tracks,
 basic transitions (cross-dissolve), and the composite actually renders in both preview
-and export. This is `architecture-lock.md`'s `chroma-compositor` — this note is the
+and export. This is `architecture-lock.md`'s `apelles-compositor` — this note is the
 real scoping for it, replacing the one-line placeholder that's stood in for it so far.
 
 ## Current state, verified against the actual code (not assumed)
 
-- **The data model already has `Timeline.tracks: Vec<Track>`** (`chroma-timeline`,
+- **The data model already has `Timeline.tracks: Vec<Track>`** (`apelles-timeline`,
   D-041) — structurally not hardcoded to one track. But `Timeline::from_shots` always
   builds exactly `vec![Track { kind: Video, clips }]`, and **there is no `add_track`
   command anywhere in the codebase** — zero capability, backend or UI, to create a
   second track today.
 - **Clips have no position field.** A track's clips are placed by walking the list and
   summing durations — always back-to-back, zero gaps, by construction (`Track::clip_at`,
-  every edit op in `chroma-timeline/src/lib.rs`). There is no `start_frame` on `Clip`.
+  every edit op in `apelles-timeline/src/lib.rs`). There is no `start_frame` on `Clip`.
   **This is the real structural blocker**, deeper than "just add more tracks" — even
   with a second track today, there'd be no way to place a clip at an arbitrary point in
   time or leave a gap before it. Needs either an explicit position per clip or an
@@ -58,7 +58,7 @@ Wired `chroma_timeline_add_track`/`_remove_track`/`_move_clip` Tauri
 commands in `edit.rs`. Legacy `project.json` migration
 (`backfill_legacy_positions`, a typed post-deserialize step, not a raw-JSON
 rewrite like D-045/D-046's — see D-054) verified against the real
-`~/Movies/Chroma/New.chroma/project.json`. `chroma-timeline` 23/23 tests;
+`~/Movies/Chroma/New.chroma/project.json`. `apelles-timeline` 23/23 tests;
 no frontend touched, `tsc` baseline unaffected. **Nothing in the app
 populates a second track or a gap yet** — `build_from_shots` is unchanged,
 one video track, clips still back to back — this phase is "the model *can*
@@ -85,12 +85,12 @@ part is the compositing math/pipeline itself, not "how many."
   alpha in play, the top track (when it has a clip at the position) fully
   obscures whatever's below, so this reduced entirely to a track-**priority-
   selection** problem, not a compositing one. Landed as
-  `chroma_timeline::Timeline::resolve_video_clip_at` (pure model logic: video
+  `apelles_timeline::Timeline::resolve_video_clip_at` (pure model logic: video
   tracks walked in index order, lower index = higher priority/"on top", first
   one with a clip — not a gap — at the position wins, falling through only on
   a gap), with `edit.rs`'s `resolve_video_position` (shared by
   `chroma_timeline_frame` and the audio path) as a thin wrapper that probes
-  the winning clip's source. `cargo test -p chroma-timeline` 30/30 (+7 for the
+  the winning clip's source. `cargo test -p apelles-timeline` 30/30 (+7 for the
   new resolution logic); `cargo test --manifest-path app/src-tauri/Cargo.toml
   chroma::` 113/113 (+1 real-clip integration test). Still nothing in the app
   populates a second video track (Phase D territory) — this phase proved the
@@ -109,7 +109,7 @@ part is the compositing math/pipeline itself, not "how many."
   beat an unbuilt GPU one for this pass. Per-clip position/scale/rotation
   (arbitrary angle, real — `imageproc::geometric_transformations::
   rotate_about_center`)/opacity, keyframeable via the existing D-034
-  engine (`chroma_timeline::Clip.chroma_keyframes`, D-086). Single-track
+  engine (`apelles_timeline::Clip.chroma_keyframes`, D-086). Single-track
   case untouched, byte-identical fast path. 7 new pure compositing-math
   tests. A GPU version can follow later if CPU compositing proves too slow
   in practice — not attempted this pass, no evidence yet that it's needed.
@@ -119,7 +119,7 @@ part is the compositing math/pipeline itself, not "how many."
 **Done, D-057 (2026-09-03).** `chroma::audio`'s `cpal` pipeline now sums every active
 audio source — the baseline video-embedded audio (unchanged, unity gain, D-050's
 existing behaviour) plus every genuine `TrackKind::Audio` clip overlapping the play
-position — instead of playing exactly one stream. `chroma_timeline::Track` gained a
+position — instead of playing exactly one stream. `apelles_timeline::Track` gained a
 `gain: f32` field (default `1.0`, D-057), read by a new mixer (`mix_sources`/
 `soft_limit` in `chroma::audio`) that sums the active (nonzero-gain) sources and passes
 the result through a soft (`tanh`) limiter — chosen over a hard clamp (real digital

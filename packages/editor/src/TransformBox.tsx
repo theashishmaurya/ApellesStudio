@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — ONE draggable transform box: the rectangle, its four corner
+ * @apelles/editor — ONE draggable transform box: the rectangle, its four corner
  * handles, and the pointer wiring that turns a gesture into a committed
  * framing. Extracted from `TransformOverlay.tsx` by D-234.
  *

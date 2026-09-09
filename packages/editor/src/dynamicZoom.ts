@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — dynamic zoom: the box→keyframe math (D-234, roadmap 27).
+ * @apelles/editor — dynamic zoom: the box→keyframe math (D-234, roadmap 27).
  *
  * **What it is.** Two framings — a START and an END — turned into the
  * `position_x`/`position_y`/`scale` keyframes that animate the clip from one
@@ -20,7 +20,7 @@
  * the curve editor (roadmap 27) will re-shape it, undo undoes it, and both
  * renderers already agree about it because there is nothing new for them to
  * agree about. Resolve's own Dynamic Zoom is instead a persistent, separately
- * re-editable transform stage; D-234 records why Chroma deliberately bakes.
+ * re-editable transform stage; D-234 records why Apelles deliberately bakes.
  *
  * **Consequence of baking, stated plainly:** the START/END framings and the
  * EASE are not stored anywhere. They are re-derived on the way back in — the

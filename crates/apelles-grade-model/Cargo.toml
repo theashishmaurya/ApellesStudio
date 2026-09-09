@@ -1,0 +1,13 @@
+[package]
+name = "apelles-grade-model"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apelles L2 — the grade.json document model (D-025): save/load, schema migration, matte/track/depth-ref externalization. Pure model (vs apelles-grade, the renderer). Zero fork deps."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.23"

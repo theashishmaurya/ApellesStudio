@@ -1,14 +1,14 @@
 ---
 name: chroma-comparison-reel
-description: Build a stacked before/after (or side-by-side) comparison Reel from raw screen recordings using Chroma's own Edit-tab MCP tools end-to-end — import, place, composite/stack, per-clip zoom keyframes, whole-clip speed change, export. Use when asked to turn two or more raw recordings into a comparison-style vertical/portrait video inside this repo's Chroma app. Not for grading (that's Chroma's Colorist MCP tools) and not for a from-scratch HyperFrames composition (that's the hyperframes skill family in a different repo).
+description: Build a stacked before/after (or side-by-side) comparison Reel from raw screen recordings using Apelles' own Edit-tab MCP tools end-to-end — import, place, composite/stack, per-clip zoom keyframes, whole-clip speed change, export. Use when asked to turn two or more raw recordings into a comparison-style vertical/portrait video inside this repo's Apelles app. Not for grading (that's Apelles' Colorist MCP tools) and not for a from-scratch HyperFrames composition (that's the hyperframes skill family in a different repo).
 ---
 
-# Chroma comparison reel
+# Apelles comparison reel
 
 What this is: a checked-in, repeatable procedure for the one real end-to-end job this
 repo's Edit-tab MCP surface (D-183, `mcp/server.py`'s `editor_*` tools) has actually been
 used for in production — stacking two or more screen recordings into one comparison Reel,
-driven entirely through Chroma's own MCP tools, no raw ffmpeg scripting alongside the app.
+driven entirely through Apelles' own MCP tools, no raw ffmpeg scripting alongside the app.
 What it does NOT do: grade the result (Colorist's own MCP tools, `mcp/server.py`'s
 non-`editor_*` tools, are a separate surface — see `docs/notes/mcp-architecture.md`), or
 build a from-scratch animated composition (that's the `hyperframes` skill family, a
@@ -18,14 +18,14 @@ session that shipped D-183/D-184/D-191 and hit the gaps this skill exists to rou
 
 **The standing rule this whole workflow runs on** (owner, verbatim, mid-session): *"wtf
 then why are we building chroma when you want to do it with ffmpeg? never do such edits"*
-— a missing Chroma capability gets built into the tool (an MCP op), never worked around by
+— a missing Apelles capability gets built into the tool (an MCP op), never worked around by
 scripting the edit outside the app. If a step below seems to need raw ffmpeg against the
 source files instead of an `editor_*` call, that is a real MCP gap, not a shortcut to take
 — go build the tool (`docs/notes/mcp-architecture.md`'s recipe), don't route around it.
 
 ## 0. Prerequisites
 
-- The Chroma desktop app is running (`npm run tauri:dev` from the repo root, or
+- The Apelles desktop app is running (`npm run tauri:dev` from the repo root, or
   `cd app && npm run tauri dev`) — every `editor_*` tool needs its control server
   (port 19788) up.
 - The `chroma` MCP server is connected in this Claude Code session (`claude mcp list`
@@ -55,7 +55,7 @@ specific cause is fixed; no error boundary exists yet around Edit-tab panels, so
    project) followed by `editor_add_track`. Then call `editor_get_state` /
    `get_timeline` again and confirm the change actually landed — not just that the
    call returned `ok: true`.
-3. If step 1 or 2 fails or hangs: **restart the Chroma app** and retry. Don't loop
+3. If step 1 or 2 fails or hangs: **restart the Apelles app** and retry. Don't loop
    retries against a wedged bridge hoping it clears itself.
 4. If the very first `editor_*` call right after an app restart fails once, retry it
    immediately — that one is expected (`docs/BUGS.md` B-071, a stale pooled HTTP
@@ -71,7 +71,7 @@ regular space, before AM/PM — e.g. `Screen Recording 2026-09-07 at 1.08.16 PM.
 identical to the eye and to a hand-typed literal, but the bytes differ, so a hand-typed
 path with an ordinary space silently matches nothing (`docs/BUGS.md` B-070). This breaks
 ANY tool given a literal path, including `editor_import_media`, `ffprobe`, and a plain
-shell `ls` on the "same" path — it is not a Chroma bug.
+shell `ls` on the "same" path — it is not a Apelles bug.
 
 Always resolve the real path one of these ways, never by transcribing what you see:
 
@@ -156,14 +156,14 @@ done — `editor_export` blocks until ffmpeg finishes and reports the resolved p
 
 ## 5. Optional: cross-repo video understanding + local SFX generation
 
-Legitimate today, as a one-off pattern, NOT something to build into Chroma itself yet: a
-real migration of this into Chroma's own `ai/` sidecar is scoped in
+Legitimate today, as a one-off pattern, NOT something to build into Apelles itself yet: a
+real migration of this into Apelles' own `ai/` sidecar is scoped in
 `docs/notes/media-understanding-sidecar-scope.md` but not done — read that doc rather
 than re-deriving the migration plan here, and don't start that migration as a side
 effect of building a reel.
 
 Until that migration lands, reach into the sibling `videoAgent` repo directly for two
-things Chroma's own MCP surface doesn't cover yet:
+things Apelles' own MCP surface doesn't cover yet:
 
 ```bash
 # Understand what's actually in a clip (for deciding zoom moments, cut points):
@@ -207,5 +207,5 @@ documentation tool came to exist.
 - `docs/08-decisions.md` D-183 (the Edit-tab MCP surface itself), D-184 (`fit_overrides`),
   D-191 (the capabilities tool), D-192 (this skill).
 - `docs/notes/media-understanding-sidecar-scope.md` — the scoped, not-yet-started plan to
-  bring §5's cross-repo calls into Chroma's own `ai/` sidecar. Read it before touching
+  bring §5's cross-repo calls into Apelles' own `ai/` sidecar. Read it before touching
   that migration; it is out of scope for this skill.

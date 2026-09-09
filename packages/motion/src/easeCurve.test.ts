@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { design } from '@chroma/motion-engine/src/design';
+import { design } from '@apelles/motion-engine/src/design';
 import {
   clamp,
   clampEaseCurve,

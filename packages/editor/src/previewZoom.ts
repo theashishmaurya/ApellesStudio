@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — pure math for the Edit-tab preview's VIEWPORT zoom + pan
+ * @apelles/editor — pure math for the Edit-tab preview's VIEWPORT zoom + pan
  * (D-218, roadmap item 25's "No canvas/preview zoom control").
  *
  * **What this is.** A display-only magnification of the composited picture:
@@ -35,7 +35,7 @@
  *      centre" stays one third of a frame left of centre at any panel size.
  *
  * **How it composes with the existing coordinate contract.**
- * `@chroma/player`'s `useContentBox` still measures exactly what it always
+ * `@apelles/player`'s `useContentBox` still measures exactly what it always
  * measured — the `object-contain` FIT rect of the picture inside its
  * container — and its own documented assumption (the container fills the
  * space the picture is centred within) stays true, because zoom is applied

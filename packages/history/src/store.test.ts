@@ -1,4 +1,4 @@
-// @chroma/history — unit tests for the shared undo/redo stack (D-051).
+// @apelles/history — unit tests for the shared undo/redo stack (D-051).
 // Pure store logic, no DOM/Tauri involved: push/undo/redo/stack-limit have a
 // real correct/incorrect answer, so these run for real rather than being
 // eyeballed.

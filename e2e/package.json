@@ -1,5 +1,5 @@
 {
-  "name": "@chroma/e2e",
+  "name": "@apelles/e2e",
   "private": true,
   "description": "D-104 — real E2E tests against the actual Tauri window (WebdriverIO + @wdio/tauri-service, embedded provider). Deliberately NOT an npm workspace member (packages/*) — this is a standalone test harness with its own dependency tree, not app code. Run via ../e2e/run.sh, not directly, since the app binary needs staging first (see that script + docs/notes/e2e-testing.md).",
   "scripts": {

@@ -1,5 +1,5 @@
 /**
- * `easeCurve.ts` — the TS mirror of `chroma_types::ease` (D-233).
+ * `easeCurve.ts` — the TS mirror of `apelles_types::ease` (D-233).
  *
  * The point of this file is not that the solver works (D-147's Rust tests
  * already pin that, and this is the same algorithm). It is that the TWO
@@ -22,7 +22,7 @@ const EASE_IN_OUT = EASE_PRESETS[3].curve;
 
 /** `y` at `x`, solved by plain bisection on `x(t) = x` — deliberately NOT via
  *  `solveTForX`, so a test that reuses the implementation proves nothing.
- *  This is the exact same independent method `chroma_types::ease`'s own
+ *  This is the exact same independent method `apelles_types::ease`'s own
  *  `ease_in_midpoint_matches_an_independently_computed_value` uses. */
 function referenceEval(c: EaseCurve, x: number): number {
   let lo = 0;

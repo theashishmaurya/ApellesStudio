@@ -1,11 +1,11 @@
-# notes/project-model.md — the Chroma project launcher + `<name>.chroma`
+# notes/project-model.md — the Apelles project launcher + `<name>.chroma`
 
 Built 2026-09-02. See **D-037** (the decision), **D-033** (the multi-shot
 `Session` this loads into), **D-025** (`grade.json`, unchanged), `docs/09` §
 Divergence log.
 
 Replaces RapidRAW's inherited folder-browser + photo-grid **Library view** as
-the default landing screen with a **project launcher** — a grid of saved Chroma
+the default landing screen with a **project launcher** — a grid of saved Apelles
 projects, click to open.
 
 ## What shipped
@@ -33,7 +33,7 @@ Upstream footprint: `chroma/mod.rs` +2, `lib.rs` +8 `generate_handler!` lines.
 
 ### Frontend — `app/src/`
 
-- **`components/chroma/ProjectLauncher.tsx`** — "Welcome to Chroma" + "My
+- **`components/chroma/ProjectLauncher.tsx`** — "Welcome to Apelles" + "My
   Projects" grid of `ProjectCard`s (thumb + name + `relTime(modified)` + shot
   count), a "＋ New Project" card (name field + multi-select video picker), and a
   "Projects folder" control (shows the path, directory picker → `set_dir`).
@@ -58,7 +58,7 @@ Upstream footprint: `chroma/mod.rs` +2, `lib.rs` +8 `generate_handler!` lines.
   `<LibraryView/>` directly and "back" → `'library'`.
 
 > **Update (D-039 step 6c, 2026-09-02):** the launcher moved **out of the
-> Colorist tab up to `@chroma/shell`**. The app opens on `<ProjectLauncher/>`
+> Colorist tab up to `@apelles/shell`**. The app opens on `<ProjectLauncher/>`
 > full-window with no tab bar; `useSessionStore.projectPath` (or `projectName`
 > for an Untitled quick-open) being set flips `<Shell>` into the 3-tab layout,
 > and a chrome-bar "‹ Projects" button calls the new `useSessionStore.closeProject()`
@@ -124,7 +124,7 @@ media_paths?)` / `save_project()` (D-037). **(D-038)**
 ```
 
 - Versioned + a `chroma.project/<major>` gate (untagged → v1; newer major →
-  "Upgrade Chroma"), same as `grade.json`. **D-038's `settings` shape is additive
+  "Upgrade Apelles"), same as `grade.json`. **D-038's `settings` shape is additive
   — schema major stays `1`.** `ProjectSettings` deserializes leniently: a legacy
   `settings: {}` or `settings: { "fps": 24 }` still loads (missing keys → `None`,
   unknown keys ignored).

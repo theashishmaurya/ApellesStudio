@@ -43,7 +43,7 @@ if pgrep -f "cargo|rustc" >/dev/null 2>&1; then
 fi
 
 echo "[e2e] building the e2e-testing binary into target/e2e (separate from the shared dev target/debug)"
-CARGO_TARGET_DIR=target/e2e cargo build -p RapidRAW --no-default-features --features e2e-testing --manifest-path app/src-tauri/Cargo.toml
+CARGO_TARGET_DIR=target/e2e cargo build -p apelles --no-default-features --features e2e-testing --manifest-path app/src-tauri/Cargo.toml
 
 echo "[e2e] running the WebdriverIO suite"
 cd e2e

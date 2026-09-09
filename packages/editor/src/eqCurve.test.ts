@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for `eqCurve.ts` (D-237, roadmap item 27's "EQ
+// @apelles/editor — unit tests for `eqCurve.ts` (D-237, roadmap item 27's "EQ
 // response curve UI"): the log-frequency/±24 dB screen mapping, the sampled
 // composite curve, a band's own point, drag-to-patch, and the scroll-wheel Q
 // mapping. No DOM here — `EqResponseGraph.dom.test.tsx` covers the real
@@ -100,7 +100,7 @@ describe('EQ_FREQ_GRIDLINES / EQ_DB_GRIDLINES', () => {
 
 // A high-pass, a bell cut and a disabled shelf — deliberately awkward numbers
 // so an accidental identity can't pass, the same discipline
-// `chroma_types::eq`'s own `reference_band_set` uses.
+// `apelles_types::eq`'s own `reference_band_set` uses.
 function sampleBands(): EqBand[] {
   return [
     { kind: 'high_pass', freq_hz: 90, gain_db: 0, q: 0.71, enabled: true },

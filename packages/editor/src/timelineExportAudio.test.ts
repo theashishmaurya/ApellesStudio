@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for `timelineExportAudio.ts`'s pure math:
+// @apelles/editor — unit tests for `timelineExportAudio.ts`'s pure math:
 // the fade-curve solver/sampler, the duck one-pole envelope, and the atempo
 // speed-factor decomposition. These pin the math against known-correct
 // reference values (the Rust engine's own presets/test numbers where
@@ -188,7 +188,7 @@ describe('buildDuckSegments', () => {
 });
 
 describe('duckGainExpr', () => {
-  it('evaluates to the exact one-pole closed form at real gain_at values (mirrors chroma_media::audio::DuckEnvelope tests)', () => {
+  it('evaluates to the exact one-pole closed form at real gain_at values (mirrors apelles_media::audio::DuckEnvelope tests)', () => {
     const built = buildDuckSegments([[2, 3]], -12, 10, 300)!;
     const expr = duckGainExpr(built.segments, built.duckedGain, 't');
     // Before the trigger: unity.
@@ -297,7 +297,7 @@ describe('panGains — the pan law itself', () => {
 
   it('holds constant power across the whole sweep (gl^2 + gr^2 === 2)', () => {
     // The defining property of a constant-power law, checked as arithmetic —
-    // the same assertion `chroma_types::pan::tests` makes about the Rust
+    // the same assertion `apelles_types::pan::tests` makes about the Rust
     // implementation, so the two are pinned to one law rather than to each
     // other's current output.
     for (let i = -100; i <= 100; i++) {

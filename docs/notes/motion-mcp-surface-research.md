@@ -1,8 +1,8 @@
 # Motion tab MCP surface — scoping (2026-09-06)
 
 **Where this came from.** The owner asked, late in an overnight session: "how come we don't
-have MCP / AI-native features?" — and it turns out Chroma already has a real one: D-020, a
-38-tool grading/masking MCP server that drives the *running* Chroma app over HTTP, verified live
+have MCP / AI-native features?" — and it turns out Apelles already has a real one: D-020, a
+38-tool grading/masking MCP server that drives the *running* Apelles app over HTTP, verified live
 the same night (`curl` against `POST /op` while the app was open, no MCP client registration
 needed). This note scopes the same architecture for the Motion tab. No feature code beyond a
 first slice — see the end of this doc for what was actually built and verified.
@@ -222,7 +222,7 @@ Implemented + verified end to end against the real running app (not just typeche
 - `motion_get_manifest` — read-only, returns the live parsed manifest + `dirty`/`saveError`.
 - `motion_add_layer` — `{scene_index, use}` → inserts `catalog.defaultLayerFor(use)` via
   `manifestEdit.addLayer`, commits through `useMotionManifest().commit()` (the real undo-wired
-  write path — confirmed a `chroma://motion` op now shows up on `@chroma/history`'s undo stack
+  write path — confirmed a `chroma://motion` op now shows up on `@apelles/history`'s undo stack
   exactly like an Inspector edit would).
 
 See §7 below for the exact commands run and the before/after JSON.
@@ -231,7 +231,7 @@ See §7 below for the exact commands run and the before/after JSON.
 
 Done for real, against a real second running instance, in a follow-up pass on 2026-09-06 (see
 D-167). The first attempt at this verification (same day, earlier) risked being a false positive:
-the coordinator's own `main`-repo Chroma instance was already holding `control.rs`'s default port
+the coordinator's own `main`-repo Apelles instance was already holding `control.rs`'s default port
 `19788`, and a bind failure there is silently non-fatal — so a naive `curl :19788` would have
 round-tripped to that OTHER, pre-Motion-MCP instance and returned a real-looking (but meaningless)
 answer. Caught before any verification was claimed; see D-167's "port-collision gotcha" for the

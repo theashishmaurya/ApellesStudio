@@ -1,5 +1,5 @@
 /**
- * @chroma/debug — internal debug tooling for the running app (D-219).
+ * @apelles/debug — internal debug tooling for the running app (D-219).
  *
  * The `debug_*` control-server op registry: drive real UI state through the
  * same store actions a human's click uses, dump a bounded slice of the real

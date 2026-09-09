@@ -1,10 +1,10 @@
-// Chroma — the Sources / Library panel (D-046 pass 3, D-059 pass 4).
+// Apelles — the Sources / Library panel (D-046 pass 3, D-059 pass 4).
 //
 // Docked in the shell (via `Shell`'s `sourcesPanel` prop, wired in
 // `app/src/main.tsx`) so it's reachable from every tab, not nested inside one
-// tab's own panel system. Lives in `app/` rather than `@chroma/shell` because
+// tab's own panel system. Lives in `app/` rather than `@apelles/shell` because
 // it needs `useSessionStore` (`_hydrateOpenDto`, for "add to grading") and
-// `@chroma/editor`'s drag-to-track contract — the shell package must not
+// `@apelles/editor`'s drag-to-track contract — the shell package must not
 // depend on either (D-039 layer direction: app → tabs → services → domain;
 // shell stays generic, same reasoning `ProjectLauncher` being injected via a
 // prop already established).
@@ -19,11 +19,11 @@
 // and a grid of the pool with a real poster-frame thumbnail per item when one
 // has been cached (D-059 — `MediaItem.thumb`; falls back to a placeholder
 // icon otherwise) — drag a grid item onto the Edit tab's timeline to add it
-// as a clip (`@chroma/editor`'s `CHROMA_MEDIA_DRAG_MIME` contract, plain
+// as a clip (`@apelles/editor`'s `CHROMA_MEDIA_DRAG_MIME` contract, plain
 // HTML5 drag/drop, not a shared DnD context — see `TimelinePane`'s doc). A
 // "+" on each item is a **convenience** that does the same thing server-side
 // (D-070, `docs/notes/unified-clip-model.md`): `chroma_project_add_shot`
-// appends a real `chroma_timeline::Clip` to the active timeline referencing
+// appends a real `apelles_timeline::Clip` to the active timeline referencing
 // this pool item — the exact same "this clip exists in my project" action as
 // the drag, just reachable from the Colorist tab without switching to Edit
 // first. It no longer creates a separate `ProjectShot` (retired as of D-070
@@ -68,9 +68,9 @@ import {
   DialogTitle,
   Input,
   cn,
-} from '@chroma/ui';
-import { useMediaPoolStore } from '@chroma/bridge';
-import { CHROMA_MEDIA_DRAG_MIME } from '@chroma/editor';
+} from '@apelles/ui';
+import { useMediaPoolStore } from '@apelles/bridge';
+import { CHROMA_MEDIA_DRAG_MIME } from '@apelles/editor';
 
 import { useSessionStore, type ProjectOpenDto } from '../../store/useSessionStore';
 import { pickClips } from './ProjectLauncher';
@@ -104,7 +104,7 @@ function buildFolderTree(folders: string[]): FolderNode[] {
 }
 
 /** "Name this folder" prompt for both root-level and nested "New Folder"
- *  (D-059) — reached from the header button or either context menu. `@chroma/ui`'s
+ *  (D-059) — reached from the header button or either context menu. `@apelles/ui`'s
  *  `Dialog` (D-042 shadcn/Base UI), same controlled-`open` pattern
  *  `ExportDialog` already uses, rather than a bespoke modal. */
 function NewFolderDialog({
@@ -413,7 +413,7 @@ export function SourcesPanel() {
   const addToGrading = async (id: string) => {
     setAddingId(id);
     try {
-      // D-070: `chroma_project_add_shot` appends a `chroma_timeline::Clip`
+      // D-070: `chroma_project_add_shot` appends a `apelles_timeline::Clip`
       // to the active timeline referencing this pool item (the same action
       // as a drag onto the Edit tab), then returns the exact same
       // `ProjectOpenDto` shape `chroma_project_open`/`_new`/`_relink` do,

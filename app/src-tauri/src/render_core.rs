@@ -2,7 +2,7 @@
 //!
 //! The grade compute path — GPU context init and `RenderRequest -> DynamicImage`
 //! — with **no `tauri::State` / `tauri::AppHandle`**, so it can run from a test, a
-//! batch binary, or the Chroma control/MCP server without a live GUI.
+//! batch binary, or the Apelles control/MCP server without a live GUI.
 //!
 //! This is a *seam*, not a rewrite: the heavy body still lives in
 //! `gpu_processing::process_and_get_dynamic_image_inner` (now parameterised on
@@ -11,16 +11,16 @@
 //! way so upstream RapidRAW fixes to the render path still cherry-pick.
 //!
 //! **D-144 update:** the actual headless wgpu device/queue/limits construction
-//! now lives in the `chroma-gpu` crate (`crates/chroma-gpu`) — this module's
-//! [`init_gpu_context`] is a thin wrapper that calls `chroma_gpu::init_gpu_context()`
+//! now lives in the `apelles-gpu` crate (`crates/apelles-gpu`) — this module's
+//! [`init_gpu_context`] is a thin wrapper that calls `apelles_gpu::init_gpu_context()`
 //! and adds the `display` field back on, so its signature (and every one of the
 //! 6 `render_core::` call sites in `chroma/export.rs`, `chroma/playback.rs` and
 //! `chroma/relight.rs`) is unchanged. `render()` itself, and `GpuContext` as used
 //! here, stay exactly as they were — see the crate's module doc for why they
-//! don't move (the grade path, `chroma-grade`, is a separate later effort).
+//! don't move (the grade path, `apelles-grade`, is a separate later effort).
 
 // The headless entry points (`render`, `init_gpu_context`, `OwnedRenderCaches`) are
-// unused until the Chroma control/MCP server lands — that's the point of the seam.
+// unused until the Apelles control/MCP server lands — that's the point of the seam.
 #![allow(dead_code)]
 
 use std::sync::{Arc, Mutex};
@@ -88,11 +88,11 @@ pub fn render(
 /// the native `WgpuDisplay` surface and needs the `AppHandle` + window.
 ///
 /// D-144: the device/queue/limits construction itself now lives in
-/// `chroma_gpu::init_gpu_context()` — this wrapper calls it and adds the
+/// `apelles_gpu::init_gpu_context()` — this wrapper calls it and adds the
 /// app-side `display` field (always `None` here; only the GUI path ever
 /// populates it), so the return type and every call site are unchanged.
 pub fn init_gpu_context() -> Result<GpuContext, String> {
-    let headless = chroma_gpu::init_gpu_context()?;
+    let headless = apelles_gpu::init_gpu_context()?;
     Ok(GpuContext {
         device: headless.device,
         queue: headless.queue,

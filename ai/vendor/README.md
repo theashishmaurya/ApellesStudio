@@ -12,7 +12,7 @@ model used by the `/depth_track` job (D-036).
   (`video_depth_anything/` package, commit `4f5ae23`, 2026-09-02).
 - Licence: **Apache-2.0** (`video_depth_anything/LICENSE`). Bytedance Ltd.
   - The **`vits` checkpoint is Apache-2.0**. The `vitb` / `vitl` checkpoints are
-    **CC-BY-NC-4.0 (non-commercial)** — Chroma ships as a real product, so
+    **CC-BY-NC-4.0 (non-commercial)** — Apelles ships as a real product, so
     **only `vits` may be used**. Do not "upgrade" the encoder.
 - Local modifications:
   - `_align.py` — the two `utils/util.py` helpers `video_depth.py` imports,

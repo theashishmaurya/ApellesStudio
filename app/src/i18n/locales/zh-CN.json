@@ -1506,7 +1506,7 @@
       "font": "字体",
       "fontDesc": "更改应用程序字体。",
       "nativeTitlebar": "原生标题栏",
-      "nativeTitlebarDesc": "使用系统默认的窗口标题栏，而非 Chroma 的自定义标题栏。",
+      "nativeTitlebarDesc": "使用系统默认的窗口标题栏，而非 Apelles 的自定义标题栏。",
       "poppins": "Poppins",
       "showImageCounts": "显示图像计数",
       "system": "系统默认",
@@ -1619,7 +1619,7 @@
         "connector": {
           "address": "AI 连接器地址",
           "addressDesc": "输入您正在运行的 AI 连接器实例的地址和端口。这是使用生成式 AI 功能所必需的。",
-          "description": "对于拥有强大 GPU 且希望最大程度控制的用户，可以将 Chroma 连接到您自己的连接器服务器。这为您提供了技术工作流的完全控制。",
+          "description": "对于拥有强大 GPU 且希望最大程度控制的用户，可以将 Apelles 连接到您自己的连接器服务器。这为您提供了技术工作流的完全控制。",
           "failed": "连接失败。",
           "feature1": "使用您自己的 ComfyUI 实例",
           "feature2": "免费的进阶生成式编辑",
@@ -1627,16 +1627,16 @@
           "success": "连接成功！",
           "test": "测试",
           "testing": "测试中...",
-          "title": "自托管（Chroma AI 连接器）"
+          "title": "自托管（Apelles AI 连接器）"
         },
         "cpu": {
-          "description": "直接集成到 Chroma 中，这些功能完全在您的计算机上运行。它们快速、免费且无需设置，非常适合日常加速工作流程。",
+          "description": "直接集成到 Apelles 中，这些功能完全在您的计算机上运行。它们快速、免费且无需设置，非常适合日常加速工作流程。",
           "feature1": "AI 蒙版（主体、天空、前景）",
           "feature2": "自动图像标签",
           "feature3": "简单的 CPU 生成式替换",
           "title": "内置 AI（CPU）"
         },
-        "description": "Chroma 的 AI 专为灵活性而设计。选择您理想的工作流程，从快速的本地工具到强大的自托管。",
+        "description": "Apelles 的 AI 专为灵活性而设计。选择您理想的工作流程，从快速的本地工具到强大的自托管。",
         "providers": {
           "aiConnector": "AI 连接器",
           "cloud": "云端",
@@ -1755,7 +1755,7 @@
       "clearCustomTooltip": "清除 AI 标签列表",
       "clearShortcutsTooltip": "清除快捷方式标签列表",
       "customList": "自定义 AI 标签列表",
-      "customListDesc": "如果提供，AI 将仅使用此列表中的标签，覆盖 Chroma 内置的标签列表。标签功能仅支持英文。",
+      "customListDesc": "如果提供，AI 将仅使用此列表中的标签，覆盖 Apelles 内置的标签列表。标签功能仅支持英文。",
       "maxAiTags": "最大 AI 标签数",
       "maxAiTagsDesc": "每张图像生成的最大标签数量。",
       "noCustomTags": "无自定义 AI 标签（使用内置列表）",
@@ -1767,20 +1767,20 @@
       "title": "标签"
     },
     "thanks": {
-      "description": "衷心感谢以下项目，它们在 Chroma 的开发过程中非常重要：",
+      "description": "衷心感谢以下项目，它们在 Apelles 的开发过程中非常重要：",
       "list": {
         "darktable": "为部分参考实现提供了指导。",
         "depth": "为强大的单目深度估计模型提供支持，实现了 AI 深度蒙版功能。",
         "lama": "为强大且简单的图像修复模型提供支持，实现了内容感知填充和对象移除。",
         "lensfun": "为无价的开源库和全面的数据库提供支持，实现了自动镜头校正。",
-        "libgphoto2": "感谢提供全面的相机通信库，为 Chroma 的联机拍摄与远程控制子系统提供支持。",
+        "libgphoto2": "感谢提供全面的相机通信库，为 Apelles 的联机拍摄与远程控制子系统提供支持。",
         "negpy": "为负片转换逻辑提供了灵感。",
-        "nind": "为 AI 模型提供支持，驱动了 Chroma 中的 AI 降噪功能。",
+        "nind": "为 AI 模型提供支持，驱动了 Apelles 中的 AI 降噪功能。",
         "rawler": "为优秀的 Rust 库提供支持，构成了本项目 RAW 文件处理的基础。",
         "sam2": "为提供基础模型，用于 AI 主体检测功能。",
-        "spektrafilm": "感谢 Andrea Volpato 提供基于光谱的胶片模拟 LUT，为 Chroma 的内置胶片模拟提供支持。采用 CC BY-SA 4.0 许可。",
+        "spektrafilm": "感谢 Andrea Volpato 提供基于光谱的胶片模拟 LUT，为 Apelles 的内置胶片模拟提供支持。采用 CC BY-SA 4.0 许可。",
         "u2net": "为提供稳健的架构，用于 AI 天空和前景检测功能。",
-        "you": "感谢您使用和支持 Chroma。您的关注使本项目持续发展。",
+        "you": "感谢您使用和支持 Apelles。您的关注使本项目持续发展。",
         "youLabel": "您"
       },
       "title": "特别鸣谢"

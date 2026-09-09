@@ -2,7 +2,7 @@
 
 Research pass only — **no feature design, no phased build plan**. The owner's ask, verbatim:
 *"we need to understand video, understand emotion, manage beats, sync transitions, etc — all
-those things sound engineers do."* This is new territory for Chroma; nothing in `docs/` covers
+those things sound engineers do."* This is new territory for Apelles; nothing in `docs/` covers
 the audio/rhythm/pacing side today. The one adjacent roadmap item, "Visual understanding for the
 Editor tab" (`docs/04-roadmap.md`, Later section), is about *visual* footage understanding
 (Qwen3-VL search, B-roll tagging, shot classification, auto-reframe, highlight detection) — not
@@ -30,17 +30,17 @@ gap.
   modern neural approaches on genres with a weak or syncopated pulse.
 - **`aubio`** (C library, Python/Rust/other bindings) — designed for **causal, low-latency**
   onset/beat/tempo/pitch detection, i.e. it can run on a live stream, not just after-the-fact on
-  a whole file. That's not what Chroma needs (Chroma always has the whole track available
+  a whole file. That's not what Apelles needs (Apelles always has the whole track available
   up-front — a bake, not a live input), so aubio's headline strength doesn't buy anything extra
   here. **License: GPL-3.0** — copyleft, distribution-triggering; needs the same kind of check
-  Chroma already runs on every new dependency (D-NNN per `CLAUDE.md`), and is a meaningfully
+  Apelles already runs on every new dependency (D-NNN per `CLAUDE.md`), and is a meaningfully
   different license posture than a permissive dep even though the `app/` fork itself is AGPL.
 - **`essentia`** (C++ with Python/JS bindings, from the Music Technology Group, Barcelona) — a
   much broader MIR toolkit; ships multiple beat trackers (`BeatTrackerDegara` — fast, tuned for
   batch processing of large audio collections; `BeatTrackerMultiFeature` — combines several
   detection functions, higher accuracy, slower). **License: AGPL-3.0** for the code (compatible
-  in spirit with Chroma's own AGPL posture at `app/`), but its **pretrained models are
-  CC-BY-NC-ND** (non-commercial, no-derivatives) — a real gate if Chroma ever ships a commercial
+  in spirit with Apelles' own AGPL posture at `app/`), but its **pretrained models are
+  CC-BY-NC-ND** (non-commercial, no-derivatives) — a real gate if Apelles ever ships a commercial
   build using any essentia *model* (as opposed to just its signal-processing algorithms, which
   don't need the models). Essentia is C++/Python only; no native Rust essentia exists (only
   essentia.js, a WASM build for the browser, not directly usable from a Rust/Tauri backend).
@@ -50,7 +50,7 @@ gap.
   **License is split**: source code is BSD (permissive), but the *pretrained model/data files*
   are **CC-BY-NC-SA-4.0 — non-commercial only**, with an explicit note to contact the author for
   a commercial license. This is a hard blocker for shipping madmom's actual trained weights in a
-  commercial local-first app without a separate agreement — the same shape of gate Chroma's own
+  commercial local-first app without a separate agreement — the same shape of gate Apelles' own
   `docs/notes/relight-research.md` and `04-roadmap.md` (Molmo 2 exclusion) have already hit and
   documented for other models.
 - **Newer transformer-based trackers** (2024–2025 papers, e.g. "Beat this! Accurate beat
@@ -72,16 +72,16 @@ Modern neural trackers (madmom-class and newer transformer models) push into the
 range on the same kind of benchmarks. **Downbeat** (which beat in the bar is beat 1) is
 consistently and substantially harder than plain beat detection — the BEAST paper reports beat
 F1 ~80% vs. downbeat F1 ~53% for the *same* system, and that gap shows up across the literature,
-not just that one paper. **Practical takeaway for Chroma:** plain beat detection on typical
+not just that one paper. **Practical takeaway for Apelles:** plain beat detection on typical
 BGM/stock-music tracks is reliable enough to build on; downbeat/meter detection is meaningfully
 less reliable and should be treated as a stretch goal, not a v1 assumption.
 
 ### Can it run local/offline, and where (Python sidecar vs. native Rust)?
 
 - **All four Python options run fully offline, no network call** — this is standard, mature
-  desktop/server MIR tooling, not a cloud API. That satisfies Chroma's local-first invariant
+  desktop/server MIR tooling, not a cloud API. That satisfies Apelles' local-first invariant
   trivially.
-- **Python sidecar (`ai/`)**: straightforward. Chroma already runs a FastAPI Python sidecar for
+- **Python sidecar (`ai/`)**: straightforward. Apelles already runs a FastAPI Python sidecar for
   vision models (SAM 2, ViTMatte, Video Depth Anything, MoGe-2 — confirmed by reading
   `ai/server.py` and `ai/requirements.txt`). It currently has **zero audio dependencies** —
   adding `librosa` (or essentia) would be a new dependency *category* for that sidecar, not an
@@ -126,7 +126,7 @@ measured").
 
 Beat detection is the cleanest, most obviously agent-scriptable capability in this whole
 research pass. A tool shaped like `detect_beats(clip_id) -> { beats: [seconds...], tempo_bpm,
-confidence }` (returning positions, not making edit decisions) is a natural fit for Chroma's
+confidence }` (returning positions, not making edit decisions) is a natural fit for Apelles'
 existing MCP design rules (`docs/07-mcp-surface.md`: reads are cheap and side-effect-free, tools
 return numbers not vibes) — an agent could call it, then place cuts or `Timeline::link`-style
 ops at those positions itself, exactly the "agent sets intent, precise placement is a tool call"
@@ -163,7 +163,7 @@ signal-processing-driven marker placement, sometimes wired to an editing action.
   transcript** to tighten pacing in rhythm with the soundtrack — notable because Descript's whole
   editing model is text-based (edit video by editing a transcript), so its beat feature is
   transcript-cut-suggestion, not timeline-marker placement — a genuinely different UX shape worth
-  noting since Chroma's own footage-editing model is closer to a traditional timeline than
+  noting since Apelles' own footage-editing model is closer to a traditional timeline than
   Descript's. Its separate Audiogram feature (waveform pulsing to the beat) is a visual-effect
   application of the same beat data, not an editing decision.
 - **Kapwing**: no beat-sync-specific feature found in search results; nothing to report as a
@@ -179,7 +179,7 @@ none of these consumer tools attempt.
 
 ### MCP angle
 
-Given the finding above, the natural Chroma-shaped tool isn't `auto_edit_to_beat()` (that's the
+Given the finding above, the natural Apelles-shaped tool isn't `auto_edit_to_beat()` (that's the
 CapCut/blunt-instrument shape, and its own users report needing to correct it) — it's closer to
 `detect_beats` (§1) feeding a second, separate, human-or-agent-driven step that actually places
 cuts, mirroring Premiere's "detect, then a human/agent snaps to it" model more than CapCut's
@@ -206,7 +206,7 @@ research-paper territory, not a shipped, usable capability.
   been an academic practice for over a decade; it's not a new idea, just not previously wired
   into an editing tool's assistance layer.
 - **Audio loudness / energy curve**: real and standard sound-engineering practice, and already
-  adjacent to what Chroma's own sibling project (videoAgent's `/music-score` skill) documents in
+  adjacent to what Apelles' own sibling project (videoAgent's `/music-score` skill) documents in
   concrete terms — LUFS measurement, RMS/short-term loudness over time. Plotting a track's
   loudness envelope is bog-standard audio engineering (any DAW, `ffmpeg`'s `loudnorm`/`astats`
   filters, or a few lines of librosa RMS), not research-grade.
@@ -215,7 +215,7 @@ research-paper territory, not a shipped, usable capability.
 - **Motion intensity from the picture itself**: real, existing, standard computer-vision
   technique — optical flow magnitude (Farneback, RAFT, etc.) or simple frame-difference energy
   gives a genuine "how much is moving on screen" signal per frame, cheaply, without any
-  exotic model. This is a much lower bar than the vision-side items already scoped on Chroma's
+  exotic model. This is a much lower bar than the vision-side items already scoped on Apelles'
   own roadmap (Qwen3-VL semantic search) — it's classical CV, not an LLM/VLM call.
 
 ### Research-grade, not practical today
@@ -243,7 +243,7 @@ research-paper territory, not a shipped, usable capability.
 
 The real signals above (shot-length distribution from PySceneDetect-style detection, loudness/
 energy curve, tempo curve, motion-intensity curve) are each independently exposable as a
-read-only inspection tool in the same shape as Chroma's existing `inspect_color` — e.g.
+read-only inspection tool in the same shape as Apelles' existing `inspect_color` — e.g.
 `inspect_pacing(clip_id) -> { cuts_per_minute, shot_length_curve, loudness_curve,
 motion_intensity_curve }` — numbers an agent (or a human) can reason about, not a verdict the
 tool hands down. That mirrors design rule 0 in `docs/07-mcp-surface.md` almost exactly: "grade
@@ -291,9 +291,9 @@ Collected here for the scoping pass, not re-derived per section above:
 | Shot-length / cut-frequency analysis | `inspect_pacing(clip_id) -> {cuts_per_minute, shot_length_curve}` | Same "numbers, not vibes" shape as `inspect_color`. |
 | Loudness / energy envelope | folds into `inspect_pacing` or a sibling `inspect_audio_energy` | Standard audio engineering, cheap to compute. |
 | Motion-intensity curve | folds into `inspect_pacing` or computed alongside the roadmap's existing visual-understanding item | Classical CV (optical flow / frame-diff), no new model class needed. |
-| Auto-cut-to-beat (CapCut-style) | *if ever built*, something like `snap_clip_to_beat(clip_id, beat_index)` — a precise, single-clip, human/agent-approved op | Explicitly not `auto_edit_to_beat()` — the real tools that do blunt auto-cutting are the ones users report fighting; a scriptable single-cut primitive lets an agent make the same kind of considered, one-at-a-time decision Chroma's other MCP tools already model (`match_to_reference`'s damped-iteration pattern is the closest existing precedent for "agent nudges toward a target, doesn't just yank the value there"). |
+| Auto-cut-to-beat (CapCut-style) | *if ever built*, something like `snap_clip_to_beat(clip_id, beat_index)` — a precise, single-clip, human/agent-approved op | Explicitly not `auto_edit_to_beat()` — the real tools that do blunt auto-cutting are the ones users report fighting; a scriptable single-cut primitive lets an agent make the same kind of considered, one-at-a-time decision Apelles' other MCP tools already model (`match_to_reference`'s damped-iteration pattern is the closest existing precedent for "agent nudges toward a target, doesn't just yank the value there"). |
 
-None of these need new architectural surface beyond what Chroma already has for other AI
+None of these need new architectural surface beyond what Apelles already has for other AI
 sidecar calls (`ai/server.py` FastAPI routes → `mcp/server.py` tool wrappers, the same shape
 `depth_track`/`add_subject_mask` already use) — this is a new *dependency and route*, not a new
 *pattern*.

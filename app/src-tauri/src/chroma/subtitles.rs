@@ -1,7 +1,7 @@
 //! Subtitle file I/O for the Edit tab (D-229, `docs/notes/subtitles.md`).
 //!
 //! **What it is:** the thin shell around
-//! [`chroma_timeline::subtitle_import`] — read a `.srt`/`.vtt` file off disk,
+//! [`apelles_timeline::subtitle_import`] — read a `.srt`/`.vtt` file off disk,
 //! parse it, and hand the frontend cues already converted to the **project's
 //! own timebase**; and the reverse, write the active timeline's captions back
 //! out as a `.srt` or `.vtt` file.
@@ -14,14 +14,14 @@
 //!
 //! **Why the conversion to frames happens HERE and not in TypeScript.** A cue's
 //! milliseconds meet the project's frame rate exactly once, in
-//! [`chroma_timeline::subtitle_import::cues_to_clips`]. Doing it on this side
+//! [`apelles_timeline::subtitle_import::cues_to_clips`]. Doing it on this side
 //! means the GUI importer and `editor_import_subtitles` cannot round
 //! differently — the same "one op underneath both interfaces" rule CLAUDE.md
 //! states for every feature.
 
 use std::path::{Path, PathBuf};
 
-use chroma_timeline::subtitle_import::{
+use apelles_timeline::subtitle_import::{
     ImportedCue, cues_to_clips, cues_to_srt, cues_to_vtt, parse_subtitles,
 };
 use serde::{Deserialize, Serialize};
@@ -57,7 +57,7 @@ pub struct SubtitleImport {
 /// from the same list rather than hardcoded twice.
 ///
 /// **TTML is deliberately absent** — see
-/// [`chroma_timeline::subtitle_import`]'s module doc and D-229 for why a
+/// [`apelles_timeline::subtitle_import`]'s module doc and D-229 for why a
 /// subset parser was refused rather than shipped.
 pub const SUBTITLE_EXTENSIONS: &[&str] = &["srt", "vtt"];
 
@@ -126,7 +126,7 @@ pub fn chroma_export_subtitles(track: usize, path: String) -> Result<usize, Stri
         .tracks
         .get(track)
         .ok_or_else(|| format!("no track {track}"))?;
-    if tr.kind != chroma_timeline::TrackKind::Subtitle {
+    if tr.kind != apelles_timeline::TrackKind::Subtitle {
         return Err(format!("track {track} is not a subtitle track"));
     }
 
@@ -168,7 +168,7 @@ pub fn chroma_export_subtitles(track: usize, path: String) -> Result<usize, Stri
 /// SubRip grammar produces "no subtitle cues found", which reads like a
 /// corrupt file and sends the user looking in the wrong place. TTML is a
 /// format we deliberately do not support (see
-/// [`chroma_timeline::subtitle_import`]'s module doc and D-229), and saying so
+/// [`apelles_timeline::subtitle_import`]'s module doc and D-229), and saying so
 /// is the difference between a limitation and a bug.
 ///
 /// A file with no extension at all is allowed through to the parser: the
@@ -183,7 +183,7 @@ fn check_supported_extension(path: &Path) -> Result<(), String> {
     }
     if matches!(ext.as_str(), "ttml" | "dfxp" | "xml" | "itt") {
         return Err(format!(
-            ".{ext} is a TTML-family timed-text file, which Chroma deliberately does not read \
+            ".{ext} is a TTML-family timed-text file, which Apelles deliberately does not read \
              (its cue times depend on ttp:timeBase/ttp:frameRate, and a partial parser would \
              import real files with silently wrong timings). Convert it to .srt first."
         ));
@@ -226,7 +226,7 @@ fn frames_to_ms(frames: i64, fps: f64) -> i64 {
     let fps = if fps.is_finite() && fps > 0.0 {
         fps
     } else {
-        chroma_timeline::DEFAULT_FPS
+        apelles_timeline::DEFAULT_FPS
     };
     (frames as f64 * 1000.0 / fps).round() as i64
 }

@@ -1,6 +1,6 @@
 //! Tauri bridge for the Edit-tab audio engine (D-049/D-050/D-051/D-057).
 //!
-//! What it is: the app-side half of the D-146 `chroma-media` extraction
+//! What it is: the app-side half of the D-146 `apelles-media` extraction
 //! (`docs/notes/crate-extraction-plan.md` §2.2). Two things live here, and
 //! only two:
 //!
@@ -10,37 +10,37 @@
 //! 2. The body of [`chroma_audio_play`] that turns a **timeline frame** into a
 //!    set of audio sources. That is timeline resolution
 //!    (`edit::resolve_video_position` / `edit::resolve_audio_track_positions`
-//!    over `chroma-timeline`), which sits a layer *above* media and will
-//!    belong to `chroma-compositor` when that becomes real (plan §2.8). It is
+//!    over `apelles-timeline`), which sits a layer *above* media and will
+//!    belong to `apelles-compositor` when that becomes real (plan §2.8). It is
 //!    exactly why `audio.rs` was split rather than moved whole.
 //!
 //! What it does NOT do: any decoding, resampling, mixing, device output,
-//! waveform extraction or session bookkeeping — `chroma_media::audio` owns all
+//! waveform extraction or session bookkeeping — `apelles_media::audio` owns all
 //! of it, including the D-130 request-ordering protocol. This file used to be
 //! the whole 3,086-line implementation; see D-146 in `docs/08-decisions.md`.
 //!
 //! The ordering that the D-125 skew compensation depends on is preserved
-//! exactly: `chroma_media::audio::begin_play` stamps `requested_at` and claims
+//! exactly: `apelles_media::audio::begin_play` stamps `requested_at` and claims
 //! the session **before** the resolution below runs, so the resolution's own
 //! cost is still inside the skew `run_session` measures.
 //!
 //! D-147 added a third, strictly-derived thing to point 2: [`fade_for_clip`],
 //! which turns a clip's fade *frames* into the seconds-based
-//! `chroma_media::audio::FadeEnvelope` the mixer applies. That conversion is
+//! `apelles_media::audio::FadeEnvelope` the mixer applies. That conversion is
 //! the same frames→seconds step [`chroma_audio_play`] already does for
 //! `start_secs` / `duration_secs`, done for one more pair of fields; the
 //! envelope's arithmetic, and the decision to apply it per output sample-frame,
 //! are the crate's. D-223 added [`level_for_clip`] beside it on exactly the
 //! same seam — a clip's own `volume`/`pan` (and their keyframes, in the clip's
 //! own source-frame space) turned into the seconds-based
-//! `chroma_media::audio::LevelEnvelope`.
+//! `apelles_media::audio::LevelEnvelope`.
 
 use std::path::PathBuf;
 
-use chroma_media::audio::{
+use apelles_media::audio::{
     AudioSourceSpec, AudioSpeedSegment, DuckEnvelope, FadeEnvelope, LevelEnvelope,
 };
-use chroma_media::scrub::ScrubSource;
+use apelles_media::scrub::ScrubSource;
 
 /// Stop whatever is currently playing (or a no-op if nothing is). Called on
 /// pause and on unmount; also called implicitly by [`chroma_audio_play`]
@@ -55,7 +55,7 @@ use chroma_media::scrub::ScrubSource;
 /// the session that superseded it.
 #[tauri::command(async)]
 pub fn chroma_audio_stop(seq: u64) {
-    chroma_media::audio::stop(seq);
+    apelles_media::audio::stop(seq);
 }
 
 /// Set the master preview-monitoring volume (D-126) — a `0.0..=1.0` linear
@@ -63,7 +63,7 @@ pub fn chroma_audio_stop(seq: u64) {
 /// Out-of-range input is clamped rather than rejected.
 #[tauri::command]
 pub fn chroma_audio_set_volume(volume: f32) {
-    chroma_media::audio::set_volume(volume);
+    apelles_media::audio::set_volume(volume);
 }
 
 /// Last-measured (rms, peak) of the audio actually written to the output
@@ -72,7 +72,7 @@ pub fn chroma_audio_set_volume(volume: f32) {
 /// non-silent PCM" (D-049 verification); not wired to any meter UI yet.
 #[tauri::command]
 pub fn chroma_audio_level() -> (f32, f32) {
-    chroma_media::audio::level()
+    apelles_media::audio::level()
 }
 
 /// Downsampled amplitude envelope for `source_path`'s `[start_secs,
@@ -88,7 +88,7 @@ pub async fn chroma_audio_waveform(
     duration_secs: f64,
     buckets: usize,
 ) -> Result<Vec<(f32, f32)>, String> {
-    chroma_media::audio::waveform(source_path, start_secs, duration_secs, buckets).await
+    apelles_media::audio::waveform(source_path, start_secs, duration_secs, buckets).await
 }
 
 /// Turn the frontend's `(path, source_secs)` pair into a scrub target (D-232),
@@ -98,15 +98,15 @@ pub async fn chroma_audio_waveform(
 ///
 /// **Why the frontend resolves this and not us.** Every other timeline→media
 /// conversion in this file ([`fade_for_clip`] and friends) is app-side
-/// precisely because it needs a `chroma_timeline::Clip`. A scrub's is not: it
+/// precisely because it needs a `apelles_timeline::Clip`. A scrub's is not: it
 /// arrives already resolved, in exactly the "bare source path + source seconds"
 /// shape [`chroma_audio_waveform`] has taken since D-051, and for the same
 /// reason — the caller is a pointer drag firing tens of times a second, and
 /// [`super::edit::resolve_video_position`] would re-read and clone the whole
 /// active `Timeline` out of the project manifest on every one of them. See
 /// D-232 for the full weighing, including why this is a real boundary call
-/// rather than a convenience: `@chroma/editor`'s `clipAt` is already the
-/// pointwise mirror of `chroma_timeline::Track::clip_at` and is already what
+/// rather than a convenience: `@apelles/editor`'s `clipAt` is already the
+/// pointwise mirror of `apelles_timeline::Track::clip_at` and is already what
 /// every other Edit-tab UI decision resolves through.
 fn scrub_source(source_path: Option<String>, source_secs: f64, gain: f32) -> Option<ScrubSource> {
     let path = source_path.filter(|p| !p.is_empty())?;
@@ -118,7 +118,7 @@ fn scrub_source(source_path: Option<String>, source_secs: f64, gain: f32) -> Opt
         source_secs: source_secs.max(0.0),
         // B-110 — the frontend resolves this the same way it resolves the path
         // and the second (`ScrubSource.gain`); a malformed value is normalised
-        // to unity by `chroma_media::scrub::apply_gain` rather than here, so
+        // to unity by `apelles_media::scrub::apply_gain` rather than here, so
         // there is one rule for it and not two.
         gain,
     })
@@ -142,12 +142,12 @@ pub fn chroma_audio_scrub_begin(
     gain: f32,
     seq: u64,
 ) -> Result<(), String> {
-    let Some(session) = chroma_media::scrub::begin(seq) else {
+    let Some(session) = apelles_media::scrub::begin(seq) else {
         // Overtaken by a newer transport request before this task got a worker
         // thread — same drop the play path makes, for the same reason.
         return Ok(());
     };
-    chroma_media::scrub::start(session, scrub_source(source_path, source_secs, gain))
+    apelles_media::scrub::start(session, scrub_source(source_path, source_secs, gain))
 }
 
 /// Move the scrub read head — called for every pointer move of the drag.
@@ -157,10 +157,10 @@ pub fn chroma_audio_scrub_begin(
 /// nothing to get off the main thread; and running inline on the IPC drain
 /// means these keep their issue order for free, where the `(async)` commands
 /// around it cannot. A position is a level, not an edge — last writer wins is
-/// exactly what a scrub wants. See `chroma_media::scrub::update`.
+/// exactly what a scrub wants. See `apelles_media::scrub::update`.
 #[tauri::command]
 pub fn chroma_audio_scrub_update(source_path: Option<String>, source_secs: f64, gain: f32) {
-    chroma_media::scrub::update(scrub_source(source_path, source_secs, gain));
+    apelles_media::scrub::update(scrub_source(source_path, source_secs, gain));
 }
 
 /// End the scrub gesture (pointer up, or the component unmounting mid-drag).
@@ -168,7 +168,7 @@ pub fn chroma_audio_scrub_update(source_path: Option<String>, source_secs: f64, 
 /// it by.
 #[tauri::command(async)]
 pub fn chroma_audio_scrub_end(seq: u64) {
-    chroma_media::scrub::end(seq);
+    apelles_media::scrub::end(seq);
 }
 
 /// Resolve `frame` on the active timeline to every currently-active audio
@@ -183,9 +183,9 @@ pub fn chroma_audio_scrub_end(seq: u64) {
 /// preview's own "blank frame past the end" behaviour.
 ///
 /// **This resolution is the whole reason `audio.rs` split rather than moved
-/// (D-146).** Everything [`chroma_media::audio::run_session`] does with the
+/// (D-146).** Everything [`apelles_media::audio::run_session`] does with the
 /// `Vec` this returns is that crate's; the two `edit::resolve_*` calls here
-/// are `chroma-timeline`'s model seen through the Edit-tab bridge, and a
+/// are `apelles-timeline`'s model seen through the Edit-tab bridge, and a
 /// media crate that reached for them would be reaching *up* a layer — which
 /// is exactly why this function is handed to `run_session` as a `Send`
 /// closure (B-111) rather than the crate calling back into `chroma::edit`
@@ -195,18 +195,18 @@ pub fn chroma_audio_scrub_end(seq: u64) {
 /// embedded-audio source: its sound now lives in a real, linked audio clip
 /// that the audio-track walk below picks up on its own. See the inline
 /// comment at that check for why the suppression is unconditional, and
-/// `chroma_timeline::Clip::link_group` for what the field means on a video
+/// `apelles_timeline::Clip::link_group` for what the field means on a video
 /// clip. A pre-D-129 clip has no `link_group` and takes the unchanged
 /// D-050 path.
 ///
 /// **B-111 — called more than once per session.** [`chroma_audio_play`]
 /// calls this once, for its own `start_frame`, to build the session's
-/// initial `Vec`; `chroma_media::audio::start` is ALSO given this function
+/// initial `Vec`; `apelles_media::audio::start` is ALSO given this function
 /// itself (as `resolve_at`), and `run_session` calls it again periodically
 /// on its own thread as the timeline plays forward, so a clip that starts
 /// later than `start_frame` is discovered and opened when its own moment
 /// comes rather than never at all. Every `AudioSourceSpec` carries its
-/// [`chroma_timeline::Clip::id`] as `clip_id` so `run_session` can tell "this
+/// [`apelles_timeline::Clip::id`] as `clip_id` so `run_session` can tell "this
 /// is the same clip, still playing" from "this is a clip that just started"
 /// across two calls at different frames — this function has no idea that
 /// matters, it just resolves `frame` fresh every time, exactly as if it were
@@ -224,7 +224,7 @@ fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
     {
         if clip.link_group.is_some() {
             // D-129 — this video clip's audio has been externalized into a
-            // linked audio clip (see `chroma_timeline::Clip::link_group`), so
+            // linked audio clip (see `apelles_timeline::Clip::link_group`), so
             // it contributes NO embedded-audio source here: the linked clip
             // is picked up below by `resolve_audio_track_positions` like any
             // other audio-track clip, with its own track's gain/mute, its own
@@ -271,7 +271,7 @@ fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
                 // D-147 — a fade on a VIDEO clip fades its embedded audio too,
                 // not just its picture. One fade handle per clip, whose meaning
                 // follows what the clip contributes (see
-                // `chroma_timeline::Clip::fade_in_frames` and the plan doc §2);
+                // `apelles_timeline::Clip::fade_in_frames` and the plan doc §2);
                 // this is the "…and its sound" half of that, the compositor's
                 // `resolve_clip_transform` being the picture half.
                 fade: fade_for_clip(&clip, &info, frame as i64 - clip.start_frame),
@@ -291,7 +291,7 @@ fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
                 // an EQ band needs no frames→seconds conversion (hertz,
                 // decibels and Q are not timeline quantities), so there is no
                 // `eq_for_clip` beside `fade_for_clip`/`level_for_clip` — the
-                // filter itself is built by `chroma_media`, at the output
+                // filter itself is built by `apelles_media`, at the output
                 // device's real sample rate, which only it knows.
                 eq_bands: clip.eq_bands.clone(),
                 // B-111 — see this function's own doc: the identity
@@ -357,7 +357,7 @@ fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
 }
 
 /// Seek-and-play in one call: resolve `start_frame` via
-/// [`resolve_sources_at`] and hand the result to `chroma_media::audio::start`
+/// [`resolve_sources_at`] and hand the result to `apelles_media::audio::start`
 /// — which decodes and mixes it, AND (B-111) calls [`resolve_sources_at`]
 /// again on its own as playback continues, so a clip starting later than
 /// `start_frame` is not silent for the whole session. See
@@ -376,7 +376,7 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
     // Claims the transport and stamps the "the frontend asked for playback"
     // instant the D-125 skew compensation measures against — deliberately
     // before the resolution below, exactly as the pre-split code did.
-    let Some(session) = chroma_media::audio::begin_play(seq) else {
+    let Some(session) = apelles_media::audio::begin_play(seq) else {
         // Overtaken by a newer request before this task got a worker thread.
         // Starting anyway would replay the timeline from a playhead the
         // picture has already moved past (B-047).
@@ -386,7 +386,7 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
     let fps = super::edit::timeline_fps()?;
     let sources = resolve_sources_at(start_frame)?;
 
-    chroma_media::audio::start(
+    apelles_media::audio::start(
         session,
         sources,
         start_frame,
@@ -401,10 +401,10 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
 /// per-sample pass entirely rather than multiply by a 1.0 it computed).
 ///
 /// **This is the timeline→media half of D-147, which is why it is app-side
-/// rather than in `chroma-media`.** [`FadeEnvelope`] is seconds — a media
+/// rather than in `apelles-media`.** [`FadeEnvelope`] is seconds — a media
 /// fact, exactly like [`AudioSourceSpec`]'s `start_secs`/`duration_secs`
 /// beside it. A *clip* with fade *frames* is not: converting one to the other
-/// needs `chroma_timeline::Clip` and the clip's probed
+/// needs `apelles_timeline::Clip` and the clip's probed
 /// [`super::video::VideoInfo`], and a media crate reaching for either would be
 /// reaching *up* a layer (D-039/D-146 — the same rule that kept
 /// [`chroma_audio_play`]'s body here at all).
@@ -426,7 +426,7 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
 /// exactly like [`fade_for_clip`] and [`level_for_clip`] and for the same
 /// reason: an [`AudioSpeedSegment`] is seconds and a number — media facts —
 /// while "this clip's speed runs, in its own source-frame space, from the
-/// playhead on" needs a `chroma_timeline::Clip` and its probed
+/// playhead on" needs a `apelles_timeline::Clip` and its probed
 /// [`super::video::VideoInfo`], which a media crate reaching for would be
 /// reaching *up* a layer (D-039/D-146).
 ///
@@ -439,7 +439,7 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
 /// direction each run travels. For an all-forward ramp that lowest frame IS
 /// the frame under the playhead, so nothing changes.
 fn speed_for_clip(
-    clip: &chroma_timeline::Clip,
+    clip: &apelles_timeline::Clip,
     info: &super::video::VideoInfo,
     start_frame: i64,
     fps: f64,
@@ -459,7 +459,7 @@ fn speed_for_clip(
         .max(0);
     let open_secs = info.frame_to_secs(open_frame as u64);
     // Relative to the open point, in the clip's OWN native rate — the same
-    // conversion `@chroma/editor`'s `rampSegmentSeconds` makes for the
+    // conversion `@apelles/editor`'s `rampSegmentSeconds` makes for the
     // exporter, so the live chain and the ffmpeg chain are built from the same
     // numbers.
     let segments = runs
@@ -496,7 +496,7 @@ struct ClipSpeed {
 }
 
 fn fade_for_clip(
-    clip: &chroma_timeline::Clip,
+    clip: &apelles_timeline::Clip,
     info: &super::video::VideoInfo,
     elapsed_frames: i64,
 ) -> Option<FadeEnvelope> {
@@ -524,7 +524,7 @@ fn fade_for_clip(
 /// exactly like [`fade_for_clip`] above and for the same reason: a
 /// [`LevelEnvelope`] is seconds and plain numbers — media facts — while "this
 /// clip's `volume` keyframes, in its own source-frame space" needs a
-/// `chroma_timeline::Clip` and its probed [`super::video::VideoInfo`], which a
+/// `apelles_timeline::Clip` and its probed [`super::video::VideoInfo`], which a
 /// media crate reaching for would be reaching *up* a layer (D-039/D-146).
 ///
 /// **Keyframes are read through [`super::keyframes::parse_keyframes`]**, the
@@ -542,7 +542,7 @@ fn fade_for_clip(
 /// `elapsed_frames` is how far into the clip playback is starting, in timeline
 /// frames — the same argument, meaning and conversion [`fade_for_clip`] takes.
 fn level_for_clip(
-    clip: &chroma_timeline::Clip,
+    clip: &apelles_timeline::Clip,
     info: &super::video::VideoInfo,
     elapsed_frames: i64,
 ) -> Option<LevelEnvelope> {
@@ -561,9 +561,9 @@ fn level_for_clip(
         super::keyframes::parse_keyframes(&wrapped)
     });
 
-    let curve = |name: &str, static_value: f64| -> chroma_media::audio::LevelCurve {
+    let curve = |name: &str, static_value: f64| -> apelles_media::audio::LevelCurve {
         let Some(keys) = keyframes.as_ref() else {
-            return chroma_media::audio::LevelCurve::Const(static_value);
+            return apelles_media::audio::LevelCurve::Const(static_value);
         };
         let points: Vec<(f64, f64)> = keys
             .iter()
@@ -578,12 +578,12 @@ fn level_for_clip(
         // No key names this param -> its static field governs, exactly as
         // `interpolate_param` returning `None` means for the compositor.
         if points.is_empty() {
-            chroma_media::audio::LevelCurve::Const(static_value)
+            apelles_media::audio::LevelCurve::Const(static_value)
         } else {
             // `parse_keyframes` is frame-sorted, so this is already ascending
             // — `LevelCurve::value_at`'s stated precondition, met by
             // construction rather than by a re-sort.
-            chroma_media::audio::LevelCurve::Keys(points)
+            apelles_media::audio::LevelCurve::Keys(points)
         }
     };
 
@@ -604,7 +604,7 @@ fn level_for_clip(
 /// [`DuckEnvelope`] is seconds, like [`FadeEnvelope`] and
 /// [`AudioSourceSpec`]'s `start_secs`/`duration_secs` beside it. "Which frames
 /// does the dialogue track have clips on" is not: answering it needs a
-/// `chroma_timeline::Timeline`, and a media crate reaching for one would be
+/// `apelles_timeline::Timeline`, and a media crate reaching for one would be
 /// reaching *up* a layer (D-039/D-146 — the same rule that kept
 /// [`chroma_audio_play`]'s body here at all). So the app resolves the trigger
 /// track's layout and converts frames → session-relative seconds; the crate
@@ -660,10 +660,10 @@ mod tests {
 
     // D-146 — the transport-ordering tests below drive the real commands, so
     // they stayed here when the engine moved; these three are
-    // `chroma-media`'s `test-support` hooks onto the session state they
+    // `apelles-media`'s `test-support` hooks onto the session state they
     // assert on (see that crate's README for why a feature, not a bare `pub`).
-    use chroma_media::audio::waveform_peaks;
-    use chroma_media::audio::{
+    use apelles_media::audio::waveform_peaks;
+    use apelles_media::audio::{
         session_begin_request as begin_request, session_is_current as is_current, session_snapshot,
     };
 
@@ -715,7 +715,7 @@ mod tests {
     // The timeline→media conversion is what lives here, so it is what is
     // tested here. The envelope's own arithmetic (`apply` — the
     // per-sample-frame ramp, the cross-chunk continuation, the untouched
-    // no-envelope buffer) is `chroma-media`'s and is tested in that crate's
+    // no-envelope buffer) is `apelles-media`'s and is tested in that crate's
     // `audio::tests`.
 
     /// A 25 fps `VideoInfo` with an audio stream — enough for
@@ -723,7 +723,7 @@ mod tests {
     /// conversion.
     fn info_25fps() -> super::super::video::VideoInfo {
         super::super::video::VideoInfo {
-            resolution: chroma_types::Resolution {
+            resolution: apelles_types::Resolution {
                 width: 1920,
                 height: 1080,
             },
@@ -742,8 +742,8 @@ mod tests {
         }
     }
 
-    fn clip_with_fade(duration: i64, fade_in: i64, fade_out: i64) -> chroma_timeline::Clip {
-        chroma_timeline::Clip {
+    fn clip_with_fade(duration: i64, fade_in: i64, fade_out: i64) -> apelles_timeline::Clip {
+        apelles_timeline::Clip {
             duration,
             source_len: duration,
             fade_in_frames: fade_in,
@@ -754,7 +754,7 @@ mod tests {
 
     /// **The backward-compatibility case for the mixer.** A clip with no fade
     /// gets NO envelope at all — not an envelope that happens to return 1.0 —
-    /// so `chroma-media`'s `mix_chunk` skips the per-sample pass entirely and
+    /// so `apelles-media`'s `mix_chunk` skips the per-sample pass entirely and
     /// the mix runs exactly the arithmetic it ran before D-147.
     #[test]
     fn a_clip_with_no_fade_gets_no_envelope_at_all() {
@@ -809,10 +809,10 @@ mod tests {
     // The timeline→media half is what lives here: a clip's static fields and
     // its `chroma_keyframes` turned into clip-local seconds. The pan law, the
     // per-channel application and the interpolation itself are
-    // `chroma-media`'s / `chroma-types`' and are tested there.
+    // `apelles-media`'s / `apelles-types`' and are tested there.
 
-    fn clip_with_level(volume: f64, pan: f64) -> chroma_timeline::Clip {
-        chroma_timeline::Clip {
+    fn clip_with_level(volume: f64, pan: f64) -> apelles_timeline::Clip {
+        apelles_timeline::Clip {
             duration: 250,
             source_len: 250,
             volume,
@@ -853,7 +853,7 @@ mod tests {
     /// source frame 25 is 1 s into a clip starting at source frame 0).
     #[test]
     fn keyframed_volume_becomes_a_clip_local_seconds_curve() {
-        let clip = chroma_timeline::Clip {
+        let clip = apelles_timeline::Clip {
             chroma_keyframes: Some(serde_json::json!([
                 { "frame": 0, "params": { "volume": 0.0 } },
                 { "frame": 50, "params": { "volume": 1.0 } },
@@ -875,7 +875,7 @@ mod tests {
     /// automation must not slide by the trim amount.
     #[test]
     fn keyframe_times_are_rebased_on_the_clips_source_start() {
-        let clip = chroma_timeline::Clip {
+        let clip = apelles_timeline::Clip {
             source_start: 25, // 1 s into the source at 25 fps
             chroma_keyframes: Some(serde_json::json!([
                 { "frame": 25, "params": { "volume": 0.0 } },
@@ -895,7 +895,7 @@ mod tests {
     /// work at all (B-094).
     #[test]
     fn a_key_naming_only_pan_leaves_volume_on_its_static_field() {
-        let clip = chroma_timeline::Clip {
+        let clip = apelles_timeline::Clip {
             chroma_keyframes: Some(serde_json::json!([
                 { "frame": 0, "params": { "pan": -1.0 } },
                 { "frame": 50, "params": { "pan": 1.0 } },
@@ -918,7 +918,7 @@ mod tests {
     /// that the app-side builder really routes through it.)
     #[test]
     fn keyframes_that_are_all_identity_still_produce_no_envelope() {
-        let clip = chroma_timeline::Clip {
+        let clip = apelles_timeline::Clip {
             chroma_keyframes: Some(serde_json::json!([
                 { "frame": 0, "params": { "volume": 1.0, "pan": 0.0 } },
                 { "frame": 50, "params": { "volume": 1.0, "pan": 0.0 } },
@@ -933,7 +933,7 @@ mod tests {
     /// `a_mid_fade_play_starts_part_way_down_the_ramp` pins for a fade.
     #[test]
     fn a_mid_ramp_play_starts_part_way_along_the_automation() {
-        let clip = chroma_timeline::Clip {
+        let clip = apelles_timeline::Clip {
             chroma_keyframes: Some(serde_json::json!([
                 { "frame": 0, "params": { "volume": 0.0 } },
                 { "frame": 50, "params": { "volume": 1.0 } },
@@ -955,7 +955,7 @@ mod tests {
     // real trigger track, its clip layout to session-relative seconds, and the
     // whole thing to `None` when it can't apply. The smoother's own arithmetic
     // (the one-pole closed form, attack-vs-release, fade×duck composition) is
-    // `chroma-media`'s and is tested in that crate's `audio::tests`.
+    // `apelles-media`'s and is tested in that crate's `audio::tests`.
 
     /// A three-track project on disk and made active: V0 (a video clip), A1 (a
     /// music bed, the track that gets ducked, configured by `duck`) and A2 (the
@@ -972,7 +972,7 @@ mod tests {
         let project_dir = tmp.path().join("DuckTest.chroma");
         std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
 
-        let clip = |id: &str, path: &str, start: i64, len: i64| chroma_timeline::Clip {
+        let clip = |id: &str, path: &str, start: i64, len: i64| apelles_timeline::Clip {
             id: id.into(),
             name: id.into(),
             source_path: path.to_string(),
@@ -982,8 +982,8 @@ mod tests {
             start_frame: start,
             ..Default::default()
         };
-        let mut bed = chroma_timeline::Track {
-            kind: chroma_timeline::TrackKind::Audio,
+        let mut bed = apelles_timeline::Track {
+            kind: apelles_timeline::TrackKind::Audio,
             clips: vec![clip("bed", "/bed.m4a", 0, 250)],
             ..Default::default()
         };
@@ -993,19 +993,19 @@ mod tests {
             bed.duck_attack_ms = attack;
             bed.duck_release_ms = release;
         }
-        let timeline = chroma_timeline::Timeline {
+        let timeline = apelles_timeline::Timeline {
             id: "tl1".into(),
             name: "DuckTest".into(),
             rate: None,
             tracks: vec![
-                chroma_timeline::Track {
-                    kind: chroma_timeline::TrackKind::Video,
+                apelles_timeline::Track {
+                    kind: apelles_timeline::TrackKind::Video,
                     clips: vec![clip("vid", "/vid.mov", 0, 250)],
                     ..Default::default()
                 },
                 bed,
-                chroma_timeline::Track {
-                    kind: chroma_timeline::TrackKind::Audio,
+                apelles_timeline::Track {
+                    kind: apelles_timeline::TrackKind::Audio,
                     clips: trigger_spans
                         .iter()
                         .enumerate()
@@ -1060,7 +1060,7 @@ mod tests {
         let _guard = session_test_guard();
         // attack/release deliberately fast (10 ms) so "settled" is unambiguous
         // at the sample points below; the smoothing itself is tested for real
-        // in `chroma-media`.
+        // in `apelles-media`.
         let _project = open_duck_test_project(Some((2, -12.0, 10.0, 10.0)), &[(50, 75)]);
         let env = duck_for_track(1, 0, &info_25fps())
             .expect("resolves")
@@ -1303,7 +1303,7 @@ mod tests {
         let project_dir = tmp.path().join("AudioTest.chroma");
         std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
 
-        let clip = chroma_timeline::Clip {
+        let clip = apelles_timeline::Clip {
             id: "clip1".into(),
             shot_id: None,
             media_id: None,
@@ -1315,15 +1315,15 @@ mod tests {
             start_frame: 0, // D-054: the only clip on its track
             ..Default::default()
         };
-        let mut tracks = vec![chroma_timeline::Track {
-            kind: chroma_timeline::TrackKind::Video,
+        let mut tracks = vec![apelles_timeline::Track {
+            kind: apelles_timeline::TrackKind::Video,
             clips: vec![clip],
             ..Default::default()
         }];
         if let Some((audio_path, gain)) = audio_track {
-            tracks.push(chroma_timeline::Track {
-                kind: chroma_timeline::TrackKind::Audio,
-                clips: vec![chroma_timeline::Clip {
+            tracks.push(apelles_timeline::Track {
+                kind: apelles_timeline::TrackKind::Audio,
+                clips: vec![apelles_timeline::Clip {
                     id: "audio-clip1".into(),
                     shot_id: None,
                     media_id: None,
@@ -1339,7 +1339,7 @@ mod tests {
                 ..Default::default()
             });
         }
-        let timeline = chroma_timeline::Timeline {
+        let timeline = apelles_timeline::Timeline {
             id: "tl1".into(),
             name: "AudioTest".into(),
             rate: None,
@@ -1579,7 +1579,7 @@ mod tests {
     // scrub is a THIRD request on the existing single transport rather than a
     // parallel subsystem, so the first two tests below assert exactly that
     // against the same session state the play/stop ordering tests above use.
-    // The grain/window arithmetic itself is `chroma-media`'s and is unit-tested
+    // The grain/window arithmetic itself is `apelles-media`'s and is unit-tested
     // in `scrub.rs`; what lives here is the command surface.
     // ------------------------------------------------------------------ //
 
@@ -1648,7 +1648,7 @@ mod tests {
     }
 
     /// A position update carries no `seq` and must never touch the transport —
-    /// it is a level, not an edge (see `chroma_media::scrub::update`). If it
+    /// it is a level, not an edge (see `apelles_media::scrub::update`). If it
     /// bumped the generation it would kill the very scrub thread it is steering.
     #[test]
     fn a_scrub_position_update_never_touches_the_transport() {

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — canvas click-to-select for the Edit-tab preview (D-204,
+ * @apelles/editor — canvas click-to-select for the Edit-tab preview (D-204,
  * fixing B-085; answers Open Question 3 of
  * `docs/notes/on-canvas-transform.md`).
  *

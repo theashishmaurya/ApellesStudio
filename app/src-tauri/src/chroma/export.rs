@@ -177,7 +177,7 @@ fn tail(sink: &std::sync::Arc<Mutex<Vec<u8>>>) -> String {
 /// timestamps source-absolute — frame `from` is still frame `from` — while
 /// skipping the O(from) decode from 0.
 ///
-/// D-228/B-104: the command is now built by [`chroma_media::conform`], which
+/// D-228/B-104: the command is now built by [`apelles_media::conform`], which
 /// supplies exactly that `-copyts` + `select=gte(t,…)` pair and puts the
 /// nominal-grid conform in front of it. The `select` only ever fixed the
 /// **first** frame of the range; every frame after it came out of `-fps_mode
@@ -191,7 +191,7 @@ fn tail(sink: &std::sync::Arc<Mutex<Vec<u8>>>) -> String {
 /// needs and is not a guess at the file's longest hold.
 fn spawn_decoder(path: &Path, info: &VideoInfo, from: u64, to: u64) -> Result<Child, String> {
     let count = to.saturating_sub(from) + 1;
-    let grid = chroma_media::conform::from_frame(info, from);
+    let grid = apelles_media::conform::from_frame(info, from);
 
     let mut cmd = Command::new(ffmpeg_bin());
     cmd.args(["-hide_banner", "-loglevel", "error"])
@@ -258,7 +258,7 @@ fn spawn_encoder(
 // output geometry: what size the encoder is actually told to expect (D-135)
 // --------------------------------------------------------------------------- //
 
-/// Chroma-subsampling alignment for the encoder's frame size.
+/// Apelles-subsampling alignment for the encoder's frame size.
 ///
 /// h.264 here is written as `yuv420p`, which subsamples 2× on **both** axes —
 /// libx264 rejects an odd width or an odd height outright. ProRes here is
@@ -304,7 +304,7 @@ struct EncoderDims {
 ///
 /// Premiere and Resolve never hit this case: their Crop is a *filter* inside a
 /// fixed sequence/timeline resolution, so the encoded size is whatever the
-/// sequence says and a free-form crop rect can't change it. Chroma's Colorist
+/// sequence says and a free-form crop rect can't change it. Apelles' Colorist
 /// crop is a stills-style crop that genuinely sets the output size (D-127
 /// Finding 1, and it is `react-image-crop` writing absolute pixels), so it is
 /// the one place that needs a stated rounding policy.
@@ -579,10 +579,10 @@ pub fn export_video(
     };
     let fps_str = match opts.fps_override {
         Some(f) if f > 0.0 => format!("{f}"),
-        // D-053: `chroma_types::Rational`'s `Display` is exactly this
+        // D-053: `apelles_types::Rational`'s `Display` is exactly this
         // `"{num}/{den}"` ffmpeg-arg form — was a bare `format!` before.
         _ if info.fps_den != 0 && info.fps_num != 0 => {
-            chroma_types::Rational::new(info.fps_num as i64, info.fps_den as i64).to_string()
+            apelles_types::Rational::new(info.fps_num as i64, info.fps_den as i64).to_string()
         }
         _ => "24".to_string(),
     };
@@ -592,7 +592,7 @@ pub fn export_video(
     super::decode_pipe::reset();
 
     // The grade path fetches tracked mattes for `current_video().frame` (D-019).
-    // Point Chroma's clip state at the export target, restore it afterwards.
+    // Point Apelles' clip state at the export target, restore it afterwards.
     let prev = current_video();
     set_current_video(Some(super::state::CurrentVideo {
         path: video_path.to_path_buf(),
@@ -735,7 +735,7 @@ pub fn export_video(
 ///
 /// **D-256 factored the body out of here.** The strip / lattice / GPU render /
 /// read-back is now `chroma::grade_lut`'s `BakeSession::bake`, and the `.cube`
-/// serialisation is `chroma_types::Lut3d::to_cube_text` — because the Edit
+/// serialisation is `apelles_types::Lut3d::to_cube_text` — because the Edit
 /// tab's grade bridge needs exactly this bake, and a second copy of it would
 /// have been two lattice generators to keep in step (this repo's own
 /// "shared logic → extract, never copy-paste" rule). `chain_source_lut: false`
@@ -752,7 +752,7 @@ pub fn bake_primary_lut(
     out_path: &Path,
 ) -> Result<LutBakeResult, String> {
     let baked = super::grade_lut::bake_lut3d(js_adjustments, size, false)?;
-    let text = baked.lut.to_cube_text("Chroma primary grade");
+    let text = baked.lut.to_cube_text("Apelles primary grade");
     std::fs::write(out_path, text).map_err(|e| format!("write {}: {e}", out_path.display()))?;
     Ok(LutBakeResult {
         out_path: out_path.to_string_lossy().to_string(),

@@ -4,14 +4,14 @@
 //!   project's one scene manifest to a sidecar file
 //!   (`<project>.chroma/motion/manifest.json`, the same "path-addressed
 //!   sidecar" convention `grade.rs` uses for each shot's `grade.json`) and
-//!   drive a real render through the `chroma-motion` crate
+//!   drive a real render through the `apelles-motion` crate
 //!   (→ `npx remotion render` in `packages/motion-engine`).
 //! What it does: `chroma_motion_get_manifest` / `chroma_motion_save_manifest`
 //!   read/write that sidecar for the currently open project, resolved via
 //!   `state::current_project()` — the same source `edit.rs`'s
 //!   `current_project_dir()` reads. `chroma_motion_render` resolves
 //!   `packages/motion-engine` relative to this crate's own source location
-//!   and calls `chroma_motion::run_render` on a blocking thread, returning
+//!   and calls `apelles_motion::run_render` on a blocking thread, returning
 //!   once the render finishes (no progress reporting this pass).
 //!   **D-260** — `chroma_motion_render` additionally makes the rest of the app
 //!   see the new file: it renders to a staging sibling and `rename`s it onto
@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use chroma_motion::RenderRequest;
+use apelles_motion::RenderRequest;
 
 use super::state;
 
@@ -172,7 +172,7 @@ fn default_output_path(project_dir: &Path, scene_id: Option<&str>) -> PathBuf {
 }
 
 /// Render the current project's saved manifest via `npx remotion render`
-/// (the `chroma-motion` crate), to `output_path` or, if `None`,
+/// (the `apelles-motion` crate), to `output_path` or, if `None`,
 /// [`default_output_path`]. The manifest must already be saved
 /// (`chroma_motion_save_manifest`) before calling this. Blocks on a
 /// background thread until the render finishes — no progress reporting, one
@@ -215,7 +215,7 @@ pub async fn chroma_motion_render(
     if let Some((start, end)) = frame_range {
         req = req.with_frame_range(start, end);
     }
-    let outcome = tauri::async_runtime::spawn_blocking(move || chroma_motion::run_render(&req))
+    let outcome = tauri::async_runtime::spawn_blocking(move || apelles_motion::run_render(&req))
         .await
         .map_err(|e| format!("render task panicked: {e}"))?
         .map_err(|e| e.to_string())?;
@@ -237,8 +237,8 @@ pub async fn chroma_motion_render(
     // never of content. Everything else derived from this file — the probe, the
     // filmstrip chunks, the waveform peaks — is `blake3(path ‖ mtime ‖ len)`-
     // keyed (D-128) and re-reads by itself. See
-    // `chroma_media::decode_pipe::drop_pipes_for_path`.
-    let dropped = chroma_media::decode_pipe::drop_pipes_for_path(&out);
+    // `apelles_media::decode_pipe::drop_pipes_for_path`.
+    let dropped = apelles_media::decode_pipe::drop_pipes_for_path(&out);
     if dropped > 0 {
         log::info!(
             "[chroma::motion] re-render of {} — dropped {dropped} live decode pipe(s) on it",
@@ -266,7 +266,7 @@ pub async fn chroma_motion_render(
 mod motion_relink_tests {
     use std::path::{Path, PathBuf};
 
-    use chroma_timeline::{Clip, Timeline, Track, TrackKind};
+    use apelles_timeline::{Clip, Timeline, Track, TrackKind};
 
     use super::super::PROJECT_STATE_LOCK;
 
@@ -399,7 +399,7 @@ mod motion_relink_tests {
         solid_clip(&staging, colour, 2);
         std::fs::rename(&staging, out).expect("rename staged render onto the output");
         if invalidate {
-            chroma_media::decode_pipe::drop_pipes_for_path(out);
+            apelles_media::decode_pipe::drop_pipes_for_path(out);
         }
     }
 
@@ -425,7 +425,7 @@ mod motion_relink_tests {
 
         solid_clip(&out, "red", 2);
         open_project_with_placed_render(&dir, &out);
-        chroma_media::decode_pipe::reset();
+        apelles_media::decode_pipe::reset();
 
         let before = preview_pixel(0);
         assert!(
@@ -468,7 +468,7 @@ mod motion_relink_tests {
 
         solid_clip(&out, "red", 2);
         open_project_with_placed_render(&dir, &out);
-        chroma_media::decode_pipe::reset();
+        apelles_media::decode_pipe::reset();
 
         assert!(is_red(preview_pixel(0)));
         re_render(&out, "blue", false);

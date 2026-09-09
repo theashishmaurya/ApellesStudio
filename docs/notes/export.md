@@ -66,7 +66,7 @@ crop+rotation+flip from the adjustments, renders it once through `render_core::r
 with **no masks and no LUT**, and writes the graded lattice red-fastest:
 
 ```
-TITLE "Chroma primary grade"
+TITLE "Apelles primary grade"
 LUT_3D_SIZE <size>
 DOMAIN_MIN 0 0 0
 DOMAIN_MAX 1 1 1
@@ -79,7 +79,7 @@ DOMAIN_MAX 1 1 1
 - the lattice is 8-bit on the input axis (`DynamicImage` is `Rgb8`): ~1/256 quantisation.
   Fine for the talking-head grades v1 targets; move to an f32 grid + f32 readback if
   banding appears. The output transform / AgX the grade shader applies **is** baked in
-  (intended — that's what makes the `.cube` match Chroma's look in another app).
+  (intended — that's what makes the `.cube` match Apelles' look in another app).
 
 ## MCP
 

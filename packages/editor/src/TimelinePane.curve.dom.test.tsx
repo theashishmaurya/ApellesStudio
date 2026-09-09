@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for the timeline curve editor (D-233),
+ * @apelles/editor — real-DOM coverage for the timeline curve editor (D-233),
  * built on `testUtils/pointerHarness.ts` (D-142) and modelled on
  * `TimelinePane.fade.dom.test.tsx`.
  *

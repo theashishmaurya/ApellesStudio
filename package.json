@@ -1,8 +1,8 @@
 {
-  "name": "chroma",
+  "name": "apelles",
   "version": "0.0.0",
   "private": true,
-  "description": "Chroma — AI-native local video tool (Edit / Motion / Colorist). Monorepo root (D-039).",
+  "description": "Apelles — AI-native local video tool (Edit / Motion / Colorist). Monorepo root (D-039).",
   "license": "AGPL-3.0-only",
   "workspaces": [
     "app",

@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — `PrimitiveGlyph` (extracted D-176 from `CatalogPanel.tsx`,
+ * @apelles/motion — `PrimitiveGlyph` (extracted D-176 from `CatalogPanel.tsx`,
  * D-151's original home for it).
  *
  * A tiny, deterministic, theme-token-coloured SVG icon per primitive `use` —

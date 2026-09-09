@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the Motion MCP op registry's test suite (D-257).
+ * @apelles/motion — the Motion MCP op registry's test suite (D-257).
  *
  * **What this proves, and why it is the whole point.** `docs/notes/
  * mcp-architecture.md`'s one non-optional design rule is that a mutating MCP
@@ -23,8 +23,8 @@
  * same-reference no-op convention makes easy to write by accident.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { sample } from '@chroma/motion-engine/src/engine/sample';
-import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
+import { sample } from '@apelles/motion-engine/src/engine/sample';
+import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 
 import {
   addLayer,

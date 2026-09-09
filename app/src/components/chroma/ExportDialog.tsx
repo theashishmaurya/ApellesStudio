@@ -1,4 +1,4 @@
-// Chroma — the Colorist Export dialog (D-049, roadmap "Next" item 3).
+// Apelles — the Colorist Export dialog (D-049, roadmap "Next" item 3).
 //
 // A top-right button in the Colorist tab's `EditorToolbar` (next to
 // undo/redo/show-original/fullscreen) that opens a proper video-export
@@ -21,8 +21,8 @@
 //
 // Styling: plain elements + app colour tokens (the `ProjectSettingsModal` /
 // `ShotStrip` convention) for most fields; `Dialog` + `Select` are
-// `@chroma/ui` (D-042) per the roadmap item's explicit ask. No progress
-// primitive exists in `@chroma/ui` yet, so the bar is a plain div (same
+// `@apelles/ui` (D-042) per the roadmap item's explicit ask. No progress
+// primitive exists in `@apelles/ui` yet, so the bar is a plain div (same
 // weight as adding one for a single caller).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
@@ -43,7 +43,7 @@ import {
   SelectTrigger,
   SelectValue,
   Switch,
-} from '@chroma/ui';
+} from '@apelles/ui';
 
 import { useChromaStore } from '../../store/useChromaStore';
 import { useSessionStore } from '../../store/useSessionStore';

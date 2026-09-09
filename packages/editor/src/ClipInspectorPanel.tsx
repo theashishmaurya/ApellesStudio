@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Inspector, NLE half (D-102, Phase 3 of
+ * @apelles/editor — the Inspector, NLE half (D-102, Phase 3 of
  * `docs/notes/global-inspector.md`).
  *
  * A real, persistent property panel for the selected clip's compositing
@@ -33,8 +33,8 @@
  * clip out of sync with each other for no real benefit.
  *
  * D-103 (Phase 4): the empty-state message and section-heading styling come
- * from `@chroma/inspector` (a tiny shared package with no `@chroma/ui`
- * dependency — see its README), the same components `@chroma/motion`'s
+ * from `@apelles/inspector` (a tiny shared package with no `@apelles/ui`
+ * dependency — see its README), the same components `@apelles/motion`'s
  * `InspectorPanel.tsx` uses. The field layout (`row`/`numInput` below) stays
  * local and different from Motion's — this panel's side-by-side label/input
  * rows were built for a narrower panel with only numeric fields, Motion's
@@ -42,7 +42,7 @@
  * selects/colour-pickers too; forcing one shape onto the other would mean
  * rewriting a working, tested layout for no real benefit, exactly the
  * "don't force a deeper unification than is actually clean" call
- * `@chroma/inspector`'s README documents. Motion's `InspectorPanel.tsx` and
+ * `@apelles/inspector`'s README documents. Motion's `InspectorPanel.tsx` and
  * Colorist's `ControlsPanel` remain each tab's own always-visible right
  * panel — this pass only changed the Edit tab's own internal layout, not
  * `Shell.tsx` or the other two tabs (D-118's own decision entry has the
@@ -100,7 +100,7 @@
  * clip's level MULTIPLIES with its track's gain (otherwise "I turned the track
  * down and this clip is still loud" reads as a bug) and states the 3 dB boost
  * a hard pan applies (the real, documented cost of this app's 0 dB-centre pan
- * law — `chroma_types::pan`).
+ * law — `apelles_types::pan`).
  *
  * **D-224 — an EQ section: this clip's own multi-band parametric equaliser.**
  * FOUR bands, which is exactly what the same reference screenshot shows under
@@ -178,7 +178,7 @@
  * unmount waits on a `requestAnimationFrame` a non-frontmost window never
  * fires; and the selected tab had no selected state at all, because the kit
  * styled `data-selected:` while Base UI emits `data-active`. Both are fixed in
- * `@chroma/ui`'s `tabs.tsx` (see `TABS_CONTENT_HIDDEN` there), so this file
+ * `@apelles/ui`'s `tabs.tsx` (see `TABS_CONTENT_HIDDEN` there), so this file
  * only carries what is genuinely app-specific: the `line` variant plus the
  * accent underline that matches `Shell.tsx`'s own tab switcher and
  * `TimelineSwitcher`, and `INSPECTOR_SECTION_DIVIDERS` below. jsdom cannot see
@@ -199,8 +199,8 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
-} from '@chroma/ui';
-import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
+} from '@apelles/ui';
+import { InspectorEmptyState, InspectorSection } from '@apelles/inspector';
 // D-246 — the tab model (which tabs a clip has, and which one resolves as
 // active) is pure and lives on its own so it can be unit-tested and so the
 // store, the debug op and this panel all read one definition.
@@ -395,7 +395,7 @@ const EQ_BAND_FIELDS: Array<{
 
 /** D-224 — each EQ field's own rest value, for its `PropertyRow`'s reset.
  *  The same one-source-of-truth role `CLIP_TRANSFORM_DEFAULTS` plays, and
- *  matching `chroma_types::EqBand`'s own serde defaults exactly (`1 kHz`,
+ *  matching `apelles_types::EqBand`'s own serde defaults exactly (`1 kHz`,
  *  flat, Butterworth) so a reset writes the value the backend would also treat
  *  as unset. Deliberately per FIELD rather than per band: resetting Gain must
  *  not also move a frequency the user placed. */
@@ -416,7 +416,7 @@ const DEFAULT_EQ_BAND_VALUES: Readonly<Record<'freq_hz' | 'gain_db' | 'q', numbe
  *
  *  Expressed as a between-children rule (`* + *`) on the tab panel rather
  *  than a `<Separator />` interleaved six times, or a border baked into
- *  `@chroma/inspector`'s shared `InspectorSection`. The first is six edits to
+ *  `@apelles/inspector`'s shared `InspectorSection`. The first is six edits to
  *  keep in sync and one more thing to forget when a seventh section lands;
  *  the second would reach into Motion's Inspector too, where the same
  *  component is returned as the root of a dozen different subcomponents and
@@ -637,7 +637,7 @@ export function ClipInspectorPanel({
             Inspector renders exactly the single scrolling column it always
             did, with no chrome that does nothing. */}
         {/* D-254 — the app's OWN tab language, not shadcn's default pill.
-            Chroma draws a selected tab as an accent underline under a
+            Apelles draws a selected tab as an accent underline under a
             full-strength label, in both places it already had tabs: the
             shell's Edit/Motion/Colorist switcher (`Shell.tsx` — a `bg-accent`
             2px bar plus `text-text-primary`) and this same tab's own
@@ -646,7 +646,7 @@ export function ClipInspectorPanel({
             which is why it read as borrowed; `line` is the kit's own
             no-pill variant, and the accent underline below is the same
             `border-b-2` idiom `TimelineSwitcher` uses, stated at the call
-            site (the `editor` layer) rather than pushed into `@chroma/ui`,
+            site (the `editor` layer) rather than pushed into `@apelles/ui`,
             so the generic kit stays generic. */}
         {tabs.length > 1 && (
           <TabsList variant="line" className="w-full gap-0 p-0">
@@ -1096,7 +1096,7 @@ export function ClipInspectorPanel({
                 first is what stops "I turned the track down and this clip is
                 still loud" being read as a bug, and the second is the real,
                 stated cost of this app's own pan law (a 0 dB centre means the
-                boost lands at the extremes — see `chroma_types::pan`). */}
+                boost lands at the extremes — see `apelles_types::pan`). */}
             <p className="text-text-secondary/60 pt-1 text-[10px] leading-snug">
               This clip's own level, multiplied with its track's gain — not a replacement for it.
               Hard panning boosts the destination channel by 3 dB, so lower Volume if the source is

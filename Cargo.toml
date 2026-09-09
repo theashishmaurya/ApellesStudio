@@ -1,14 +1,15 @@
-# Chroma — Rust workspace root (D-039 migration step 1)
+# Apelles — Rust workspace root (D-039 migration step 1)
 #
-# Virtual workspace. The Tauri binary crate is `app/src-tauri` (still named
-# `RapidRAW` — the vendored fork, D-040; renamed in a later migration step).
-# `crates/*` are Chroma's own layered crates (thin-shell / fat-core, D-039):
+# Virtual workspace. The Tauri binary crate is `app/src-tauri` — the vendored
+# RapidRAW fork (D-040), whose Cargo package is `apelles` since D-265 did the
+# rename D-040 had deferred.
+# `crates/*` are Apelles' own layered crates (thin-shell / fat-core, D-039):
 # pure domain models with no wgpu / ffmpeg, GPU + media I/O isolated below them.
 #
-# Only 3 stub crates exist today (chroma-types, chroma-timeline,
-# chroma-grade-model). The full planned set (~11) is in `crates/README.md`.
-# No real code has moved out of `app/src-tauri` yet — that is per-crate,
-# tracked, and later (D-039 migration steps 2+).
+# 8 crates exist today, 6 of them real and load-bearing (extraction waves 1-3
+# landed 2026-09-05): apelles-{types,gpu,media,timeline,grade-model,project,
+# motion,ai}. Still future: apelles-grade, apelles-compositor. The live table
+# and each crate's boundary are in `crates/README.md`.
 
 [workspace]
 resolver = "2"

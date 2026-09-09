@@ -1,5 +1,5 @@
 /**
- * @chroma/ui — drag-to-scrub for a numeric field: the arithmetic, and the
+ * @apelles/ui — drag-to-scrub for a numeric field: the arithmetic, and the
  * headless gesture (D-253, completing B-113).
  *
  * **What it is.** The "virtual slider" every established grading/NLE tool puts
@@ -21,10 +21,10 @@
  * handed back as props to spread onto whatever `<input>` the caller owns.
  *
  * The two consumers are [`ScrubbableNumberInput`] (this package, on the shadcn
- * `Input`) and `@chroma/motion`'s `InspectorPanel`, which cannot import this
+ * `Input`) and `@apelles/motion`'s `InspectorPanel`, which cannot import this
  * package's barrel at all (`@react-three/fiber`'s global JSX augmentation vs.
  * `Text.tsx`'s polymorphic `as` prop — see `packages/motion/src/Button.tsx`)
- * and therefore reaches this file through the `@chroma/ui/number-scrub`
+ * and therefore reaches this file through the `@apelles/ui/number-scrub`
  * subpath, which pulls in nothing but React. Sharing the behaviour rather than
  * writing it twice is the whole reason it is split out from the component.
  *
@@ -69,7 +69,7 @@ export const NUMBER_SCRUB = {
    *  what counts as "a drag rather than a click," and a second, different
    *  answer on another surface is exactly the near-miss that file's own
    *  history is made of. (Restated here rather than imported because
-   *  `@chroma/editor` sits ABOVE this package; the dependency may not run the
+   *  `@apelles/editor` sits ABOVE this package; the dependency may not run the
    *  other way.) */
   MIN_DRAG_PX: 4,
   /** Shift — ten steps per notch.
@@ -386,7 +386,7 @@ export interface NumberField {
  *  rounded-at-rest field still editable at full precision.
  *
  *  Split out from [`ScrubbableNumberInput`] rather than living inside it
- *  because `@chroma/motion` needs exactly this behaviour on a raw `<input>` of
+ *  because `@apelles/motion` needs exactly this behaviour on a raw `<input>` of
  *  its own (it cannot import this package's barrel — see the module doc), and
  *  a second hand-written copy of the draft rules is precisely the duplication
  *  this repo's "shared logic → extract, don't copy" rule exists to prevent.

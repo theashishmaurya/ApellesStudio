@@ -1,12 +1,12 @@
 /**
- * @chroma/editor — the Edit-tab half of the Chroma control server bridge
+ * @apelles/editor — the Edit-tab half of the Apelles control server bridge
  * (D-020's architecture, reused a third time — see `docs/notes/
  * mcp-architecture.md` for the full pattern this hook follows, and D-183
  * for why this file exists at all: the owner's own live "why are we
  * building chroma when you want to do it with ffmpeg… build all the MCP
  * and register the MCP its our own tool" — the Edit tab had no control
  * surface at all before this pass, only Colorist (`useChromaControl.ts`)
- * and Motion (`@chroma/motion`'s `useMotionControl.ts`) did.
+ * and Motion (`@apelles/motion`'s `useMotionControl.ts`) did.
  *
  * **Same event pair as both existing hooks, no Rust changes.** Listens on
  * the SAME `chroma://request`/`chroma://response/<id>` Tauri events
@@ -14,7 +14,7 @@
  * has never needed an op-name change to carry a new tab's ops — it forwards
  * `{op,args}` blind). Every op here is namespaced `editor_*`, mirroring
  * Motion's own OPT-IN convention exactly (`MOTION_OP_PREFIX`,
- * `@chroma/motion/src/useMotionControl.ts`) — NOT Colorist's own
+ * `@apelles/motion/src/useMotionControl.ts`) — NOT Colorist's own
  * opt-OUT/catch-all shape, which `docs/notes/mcp-architecture.md` calls
  * out as the one NOT to copy. `useChromaControl.ts` has its own matching
  * skip for `editor_*` (D-183) so the two listeners never race for the
@@ -22,7 +22,7 @@
  * request id.
  *
  * **No ref/argument plumbing needed, unlike Motion.** `useEditorTimelineStore`
- * and `@chroma/bridge`'s `useMediaPoolStore` are real module-level zustand
+ * and `@apelles/bridge`'s `useMediaPoolStore` are real module-level zustand
  * stores, reachable via `.getState()` from any JS context independent of
  * React's render cycle — the exact same reason `useChromaControl.ts` never
  * needed a ref for Colorist's own `useEditorStore`. `useMotionControl.ts`
@@ -64,7 +64,7 @@ import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit } from '@tauri-apps/api/event';
 
-import { useMediaPoolStore } from '@chroma/bridge';
+import { useMediaPoolStore } from '@apelles/bridge';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
 // D-243 — the caption preset library and the one action that applies it,
@@ -389,7 +389,7 @@ function timelineDto(tl: Timeline) {
         sourceStart: c.source_start,
         sourceLen: c.source_len,
         // B-077 — `duration`/`sourceStart` are in the clip's OWN native
-        // frames, `startFrame` is a TIMELINE frame (`chroma-timeline::Clip`'s
+        // frames, `startFrame` is a TIMELINE frame (`apelles-timeline::Clip`'s
         // own doc) — the exact distinction that silently displayed a 47.86s
         // clip's real length as 88s before this fix. A caller computing this
         // clip's real length/end needs `sourceFps` (falls back to the
@@ -430,7 +430,7 @@ function timelineDto(tl: Timeline) {
         // a title, so a caller can read back what it wrote without a second
         // round trip and can tell the two kinds of clip apart from this one
         // response (there is no `kind` field on a clip — being a title IS
-        // having a text layer, see `chroma_timeline::Clip::text`).
+        // having a text layer, see `apelles_timeline::Clip::text`).
         text: c.text ?? null,
       })),
     })),

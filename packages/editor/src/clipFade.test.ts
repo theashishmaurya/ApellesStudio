@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — unit coverage for `clipFade.ts` (D-207), the pure geometry
+ * @apelles/editor — unit coverage for `clipFade.ts` (D-207), the pure geometry
  * behind the timeline's on-clip fade handles.
  *
  * Everything here has a correct answer: the frames↔px conversion (including

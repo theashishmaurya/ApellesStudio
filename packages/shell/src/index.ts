@@ -1,5 +1,5 @@
 /**
- * @chroma/shell — the Chroma app shell (D-039).
+ * @apelles/shell — the Apelles app shell (D-039).
  *
  * The 3-tab layout (Edit / Motion / Colorist): a title bar (window chrome +
  * tabs) + the active tab's content, a persisted tab store, and Cmd/Ctrl+1/2/3
@@ -20,7 +20,7 @@
  * the same injection pattern as `launcher`. See `Shell.tsx`'s own module doc
  * ("Per-tab chrome-bar action") for the full reasoning, including why this
  * narrows D-118's "`Shell` stays tab-agnostic" rule without reopening the
- * `@chroma/editor`-free dependency boundary this file describes above.
+ * `@apelles/editor`-free dependency boundary this file describes above.
  */
 
 export { Shell, type ShellTab, type ShellProps } from './Shell';

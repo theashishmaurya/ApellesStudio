@@ -1,5 +1,5 @@
 //! Tauri command bridge for the `.chroma` project (D-037/D-038) — the app-side
-//! half of the D-148 `chroma-project` extraction
+//! half of the D-148 `apelles-project` extraction
 //! (`docs/notes/crate-extraction-plan.md` §2.3).
 //!
 //! What it is: `open_manifest` (manifest -> the D-033 `Session`) plus the 20
@@ -16,7 +16,7 @@
 //! What it does NOT do: any of the model. The manifest, its schema
 //!   migrations, the media pool + bins, the D-070 unified clip identity, the
 //!   grade-file migration and the timeline lifecycle are all
-//!   [`chroma_project`] now. The glob re-export below keeps every one of them
+//!   [`apelles_project`] now. The glob re-export below keeps every one of them
 //!   nameable at this module's old path, so `chroma::edit`, `chroma::audio`,
 //!   `chroma::export` and this file's own commands did not change.
 //!
@@ -37,8 +37,8 @@ use super::{load, video};
 
 /// The whole project model, re-exported at its historical path (D-141 §1's
 /// shim rule) so no call site outside this slice had to change. Deleted in
-/// the wave-4 sweep, when every caller is retargeted at `chroma_project::`.
-pub use chroma_project::*;
+/// the wave-4 sweep, when every caller is retargeted at `apelles_project::`.
+pub use apelles_project::*;
 
 // --------------------------------------------------------------------------- //
 // open  (manifest -> the D-033 Session)
@@ -93,7 +93,7 @@ async fn open_manifest(
 
     let mut manifest = super::edit::ensure_timeline(&project_dir, manifest, true)?;
 
-    let grade_dir = chroma_project::grade_dir(&project_dir);
+    let grade_dir = apelles_project::grade_dir(&project_dir);
     let migration = migrate_shot_grades_to_clips(&manifest, &grade_dir);
     for w in &migration.warnings {
         log::warn!("[chroma::project] grade migration: {w}");
@@ -246,7 +246,7 @@ pub async fn chroma_project_resync_clips(
     let dir = require_open_project()?;
     let manifest = load_manifest(&dir)?;
     let mut manifest = super::edit::ensure_timeline(&dir, manifest, false)?;
-    let grade_dir = chroma_project::grade_dir(&dir);
+    let grade_dir = apelles_project::grade_dir(&dir);
 
     let clips = active_timeline_video_clips(&manifest);
     let clip_paths: std::collections::HashSet<PathBuf> = clips
@@ -419,7 +419,7 @@ pub fn chroma_project_set_dir(dir: String) -> Result<String, String> {
 }
 
 /// The launcher's own delete button (a hover-revealed trash icon on a
-/// project card) — irreversible, `chroma_project::manifest::delete_project_at`
+/// project card) — irreversible, `apelles_project::manifest::delete_project_at`
 /// does the actual `remove_dir_all` plus its own real-project validation.
 /// Refuses to delete whichever project is CURRENTLY open (`state::current_
 /// project()`) — the launcher itself is only ever shown with no project
@@ -458,7 +458,7 @@ pub async fn chroma_project_new(
     open_manifest(dir, manifest, &state).await
 }
 
-/// D-070: no longer takes a `shots` list — `chroma_timeline::Clip`s are the
+/// D-070: no longer takes a `shots` list — `apelles_timeline::Clip`s are the
 /// durable clip list now, persisted separately by `chroma::edit`'s
 /// `chroma_timeline_set` (called whenever the Edit-tab timeline actually
 /// changes). This command's job shrinks to what the frontend's
@@ -526,7 +526,7 @@ pub fn chroma_project_current() -> Option<Value> {
 }
 
 /// Re-point one clip at a new source path and reopen the project. D-070:
-/// operates on the active timeline's `chroma_timeline::Clip` (by id) now,
+/// operates on the active timeline's `apelles_timeline::Clip` (by id) now,
 /// not the retired `ProjectShot` — a clip's `source_path` is its own ground
 /// truth (Colorist's shot strip reads it directly), not solely derived
 /// through `media_id`/`MediaItem` the way `ProjectShot` used to be, so the
@@ -729,7 +729,7 @@ pub async fn chroma_media_import(
 /// pool agree", which is what a Motion re-render to a fixed per-scene path
 /// needs and what import structurally cannot do (B-128). Everything expensive
 /// is conditional: an unchanged file re-probes from
-/// `chroma_media::probe`'s `(mtime, len)` memo and regenerates no thumbnail, so
+/// `apelles_media::probe`'s `(mtime, len)` memo and regenerates no thumbnail, so
 /// calling this on a path that did not move costs a couple of `stat`s and
 /// writes nothing to disk.
 ///
@@ -904,7 +904,7 @@ pub async fn chroma_media_list() -> Result<Vec<MediaItemDto>, String> {
 /// D-070: repurposed — "add to grading" now means "append a clip to the
 /// active timeline referencing this pool item," the Colorist-side
 /// equivalent of dragging the same Sources-panel card onto the Edit tab's
-/// timeline (`@chroma/editor`'s `clipFromDraggedMedia`); it no longer
+/// timeline (`@apelles/editor`'s `clipFromDraggedMedia`); it no longer
 /// pushes a `ProjectShot` (see the module doc). Ensures a timeline exists
 /// first (same lazy-build fallback every other timeline-touching command
 /// has). Errors if `media_id` isn't in the pool. The new clip becomes
@@ -982,9 +982,9 @@ pub async fn chroma_project_remove_clip(
 #[cfg(test)]
 mod tests {
     use super::*;
-    // `chroma-timeline` types these tests build directly; the model names
+    // `apelles-timeline` types these tests build directly; the model names
     // them without re-exporting them, so the shim glob above does not.
-    use chroma_timeline::{Clip, TrackKind};
+    use apelles_timeline::{Clip, TrackKind};
 
     /// `state::set_project` is process-global (D-033/D-037); `cargo test`
     /// runs test fns on multiple threads by default, so any test that
@@ -1409,12 +1409,12 @@ mod tests {
 
         // add_track
         let new_idx =
-            super::super::edit::chroma_timeline_add_track(chroma_timeline::TrackKind::Audio)
+            super::super::edit::chroma_timeline_add_track(apelles_timeline::TrackKind::Audio)
                 .unwrap();
         assert_eq!(new_idx, 1);
         let tl2 = super::super::edit::chroma_timeline_get().unwrap();
         assert_eq!(tl2.tracks.len(), 2);
-        assert_eq!(tl2.tracks[1].kind, chroma_timeline::TrackKind::Audio);
+        assert_eq!(tl2.tracks[1].kind, apelles_timeline::TrackKind::Audio);
 
         // move_clip: from the video track (0) onto the fresh audio track (1).
         // B-038 — this block used to expect track 0 to survive the move as an
@@ -1427,7 +1427,7 @@ mod tests {
         super::super::edit::chroma_timeline_move_clip(0, 0, 1, 500, false).unwrap();
         let tl3 = super::super::edit::chroma_timeline_get().unwrap();
         assert_eq!(tl3.tracks.len(), 1, "the emptied source track 0 was pruned");
-        assert_eq!(tl3.tracks[0].kind, chroma_timeline::TrackKind::Audio);
+        assert_eq!(tl3.tracks[0].kind, apelles_timeline::TrackKind::Audio);
         assert_eq!(tl3.tracks[0].clips.len(), 1, "landed on the audio track");
         assert_eq!(tl3.tracks[0].clips[0].id, clip_id, "identity preserved");
         assert_eq!(tl3.tracks[0].clips[0].start_frame, 500);
@@ -1458,7 +1458,7 @@ mod tests {
 
     // --- A/V link groups: `chroma_timeline_link_clips`/`_unlink_clip` (D-138) --
     //
-    // `chroma-timeline`'s own crate tests already cover `Timeline::link`'s
+    // `apelles-timeline`'s own crate tests already cover `Timeline::link`'s
     // validation exhaustively (kind mismatch, already-linked, locked track,
     // same clip, out-of-range) and `Timeline::unlink`'s (D-129) — this test
     // is deliberately NOT re-proving that logic. What only a command-level
@@ -1492,7 +1492,7 @@ mod tests {
         let mut tl = super::super::edit::chroma_timeline_get().unwrap();
         assert_eq!(tl.tracks.len(), 1);
         let video_id = tl.tracks[0].clips[0].id.clone();
-        tl.tracks.push(chroma_timeline::Track {
+        tl.tracks.push(apelles_timeline::Track {
             kind: TrackKind::Audio,
             clips: vec![Clip {
                 id: "a1".into(),
@@ -1558,7 +1558,7 @@ mod tests {
     // --- opaque top-wins video-track resolution (D-056, Phase B1) -----------
 
     /// End-to-end through the real Tauri command path (`resolve_video_position`
-    /// / `chroma_timeline_frame`, not just the pure `chroma-timeline` crate
+    /// / `chroma_timeline_frame`, not just the pure `apelles-timeline` crate
     /// logic already unit-tested there): two *real*, ffmpeg-probed clips of
     /// different lengths, laid onto two video tracks via the actual
     /// `add_track`/`move_clip` commands, then queried at positions covering
@@ -1609,7 +1609,7 @@ mod tests {
         // add a second video track and move B onto it at frame 0 — leaves
         // track 0 with just A at [0, dur_a), track 1 with B at [0, dur_b).
         let new_idx =
-            super::super::edit::chroma_timeline_add_track(chroma_timeline::TrackKind::Video)
+            super::super::edit::chroma_timeline_add_track(apelles_timeline::TrackKind::Video)
                 .unwrap();
         assert_eq!(new_idx, 1);
         super::super::edit::chroma_timeline_move_clip(0, 1, 1, 0, false).unwrap();

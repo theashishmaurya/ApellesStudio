@@ -1,4 +1,4 @@
-# `ai-media/` — Chroma media-understanding sidecar (D-189)
+# `ai-media/` — Apelles media-understanding sidecar (D-189)
 
 Local FastAPI service on **MLX** (Apple Silicon). Answers the two "understand
 this footage" questions the app itself can't:
@@ -27,7 +27,7 @@ state. Same supervised-subprocess pattern, one more instance of it.
 
 ## Run
 
-The app starts this for you (`chroma_ai::sidecar`, same supervisor as `ai/`).
+The app starts this for you (`apelles_ai::sidecar`, same supervisor as `ai/`).
 Set the venv up once:
 
 ```
