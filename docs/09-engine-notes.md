@@ -1245,3 +1245,46 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
 
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).
+
+---
+
+## D-273 (2026-09-10) — the keybind registry moved out of the fork
+
+**What changed in `app/`:**
+
+- **`app/src/utils/keyboardUtils.ts` — DELETED.** Its `KEYBIND_DEFINITIONS`
+  (45 rows), `KEYBIND_SECTIONS`, `normalizeCombo`, `formatKeyCode` and the
+  `symMap` are now `packages/keymap/src/{shortcuts,combo}.ts`, behaviour
+  unchanged. The move was forced by layering, not preference: `packages/*` may
+  not import from `app/src`, so the Edit and Motion tabs could never have used
+  the fork's registry where it sat — which is exactly why they had grown their
+  own hardcoded keys. Action **ids and default combos are byte-identical**, so
+  the `keybinds` map already in a user's `settings.json` keeps working.
+- **`app/src/hooks/useKeyboardShortcuts.ts`** — no longer owns a `window`
+  listener or its own combo map. The same `actions` table (unchanged
+  behaviour, including every `shouldFire` guard) is now registered with
+  `@apelles/keymap`'s shared dispatcher via `useShortcuts`, and every row is
+  `scope: 'colorist'` so it cannot fire under the Edit or Motion tab (B-138).
+  Its two `builtinShortcuts` (Escape-backs-out, contextual mask-Delete) keep a
+  small listener of their own — deliberately not registry rows, being modal
+  contextual gestures rather than rebindable shortcuts.
+- **`app/src/components/panel/SettingsPanel.tsx`** — the inlined keybind editor
+  (the `KeybindRow` component, `handleKeybindSave`, `conflictingKeys`, and the
+  section-rendering block) is **removed**; that card now points at the new
+  app-level Keyboard Shortcuts window. Moved rather than duplicated: the fork's
+  pane listed Colorist's actions only and was unreachable without switching to
+  the Colorist tab first.
+- **`app/src/Root.tsx`** — new bridge effects hydrating `@apelles/keymap` from
+  `appSettings.keybinds` and handing it a persistence sink back to
+  `handleSettingsChange`, plus `translate={t}` passed to `Shell` so the fork's
+  13 translated locales still render translated Colorist rows.
+
+**No Rust change.** `app_settings.rs`'s `keybinds: HashMap<String, Vec<String>>`
+is generic enough to carry the new action ids as-is; `Cargo.toml` and the lock
+are untouched.
+
+**Cherry-pick impact:** an upstream change to RapidRAW's `keyboardUtils.ts` or
+to `SettingsPanel.tsx`'s keybind section will now conflict. Upstream keybind
+*definition* changes port to `packages/keymap/src/shortcuts.ts` (the
+`colorist(...)` rows); upstream *behaviour* changes to a shortcut's action port
+to `useKeyboardShortcuts.ts`'s `actions` table, which is otherwise unchanged.

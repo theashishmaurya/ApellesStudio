@@ -350,6 +350,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@apelles/ui';
+import { useShortcut } from '@apelles/keymap';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
 import { animatedParams } from './clipKeyframes';
@@ -440,7 +441,6 @@ import {
   trimModeCursor,
   trimModeHint,
   trimModeLabel,
-  trimToolForKey,
   trimToolOwns,
   TRIM_ARM_HINT,
   type TrimMode,
@@ -3026,6 +3026,38 @@ export function TimelinePane() {
     setSelectedGap(null);
   };
 
+  // D-272 — every one of this pane's shortcuts, resolved from the registry.
+  //
+  // These used to be a `onKeyDown` on the pane's own root div comparing
+  // `e.key` to 'm' / 'Delete' / the trim-tool letters, each with its own
+  // hand-rolled "no modifier held" and "not in a text field" guard. Two things
+  // were wrong with that beyond the literals: the guards were duplicated per
+  // branch (and drifted — the Delete branch had neither), and because the
+  // handler hung off a `tabIndex={0}` div, NONE of them worked unless the user
+  // had clicked the timeline first. Pressing M straight after dragging a clip
+  // in from Sources did nothing at all. The dispatcher is window-level and
+  // tab-scoped, so they now work whenever the Edit tab is frontmost, and the
+  // typing guard lives in exactly one place.
+  //
+  // `edit.split` is new: the Split button has been in this toolbar since D-093
+  // with no key bound to it anywhere.
+  useShortcut('edit.add_marker', doAddMarker);
+  useShortcut('edit.split', () => {
+    if (selection.length > 0) doSplit();
+  });
+  useShortcut('edit.delete_selection', () => {
+    // D-105 — a selected gap takes the same key as a selected clip; the two
+    // are mutually exclusive (see `selectedGap`'s own doc), so at most one
+    // branch ever fires.
+    if (selection.length > 0) doRemove();
+    else if (selectedGap) doRemoveGap();
+  });
+  useShortcut('edit.tool_select', () => selectTrimTool('select'));
+  useShortcut('edit.tool_ripple', () => selectTrimTool('ripple'));
+  useShortcut('edit.tool_roll', () => selectTrimTool('roll'));
+  useShortcut('edit.tool_slip', () => selectTrimTool('slip'));
+  useShortcut('edit.tool_slide', () => selectTrimTool('slide'));
+
   // D-080: "Move to another track" — the library has no cross-row drag (see
   // the module doc), so this is a discoverable affordance for the same
   // cross-track move `ClipBody`'s drag handle does. D-104: lands via
@@ -3690,54 +3722,6 @@ export function TimelinePane() {
         // stylesheet so there is a single definition of the number.
         style={{ '--chroma-marker-strip-height': `${MARKER_STRIP_HEIGHT}px` } as CSSProperties}
         tabIndex={0}
-        onKeyDown={(e) => {
-          // D-222 — `M` drops a marker at the playhead, the shortcut DaVinci
-          // Resolve, Premiere and Final Cut all bind to exactly this action.
-          // Guarded on the modifiers being clear so it can never shadow a
-          // system/browser chord (⌘M minimises on macOS), and on the press not
-          // coming from a text field — this pane's toolbar and its popovers
-          // contain real `<input>`s, and typing "m" in one must type an "m".
-          if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-            const el = e.target as HTMLElement | null;
-            const tag = el?.tagName;
-            if (tag !== 'INPUT' && tag !== 'TEXTAREA' && el?.isContentEditable !== true) {
-              e.preventDefault();
-              doAddMarker();
-              return;
-            }
-          }
-          // D-261 — the trim palette's single-key shortcuts: V/B/N/Y/U, which
-          // are Adobe's own for these five tools (Selection, Ripple Edit,
-          // Rolling Edit, Slip, Slide — see `scratch/premiere-tools-reference/
-          // premiere-tools-panel.json`), so anyone arriving from Premiere finds
-          // them already bound to what they expect. Guarded exactly like `M`
-          // above and for the same two reasons: no modifier, so a system or
-          // browser chord can never be shadowed, and not while a text field has
-          // focus, because this pane's toolbar and popovers contain real
-          // `<input>`s where "v" must type a "v".
-          if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-            const tool = trimToolForKey(e.key);
-            const el = e.target as HTMLElement | null;
-            const tag = el?.tagName;
-            if (tool && tag !== 'INPUT' && tag !== 'TEXTAREA' && el?.isContentEditable !== true) {
-              e.preventDefault();
-              selectTrimTool(tool);
-              return;
-            }
-          }
-          if (e.key === 'Delete' || e.key === 'Backspace') {
-            // D-105 — a selected gap takes the same Delete/Backspace as a
-            // selected clip; the two are mutually exclusive (see
-            // `selectedGap`'s own doc), so at most one branch ever fires.
-            if (selection.length > 0) {
-              e.preventDefault();
-              doRemove();
-            } else if (selectedGap) {
-              e.preventDefault();
-              doRemoveGap();
-            }
-          }
-        }}
       >
       <TooltipProvider>
         <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 border-b border-border-color bg-surface text-text-primary">

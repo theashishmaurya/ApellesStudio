@@ -22,19 +22,29 @@
  * rounded corners + clip) — before D-039 that class was on the Colorist app
  * root; the whole window is the shell's now.
  *
- * Keyboard: Cmd/Ctrl+1 / +2 / +3 switch tabs (only while a project is open).
+ * Keyboard (D-272): the shell owns four registry actions — `app.tab_edit` /
+ * `app.tab_motion` / `app.tab_colorist` (Cmd/Ctrl+1/2/3, only while a project
+ * is open) and `app.undo` / `app.redo`. It compares no keys itself: every
+ * binding comes from `@apelles/keymap`'s registry, so all five are listed and
+ * rebindable in the Keyboard Shortcuts window this file also opens (the
+ * keyboard button in the chrome bar's right-hand cluster).
+ *
+ * The shell is also the component that tells the keymap **which tab is
+ * frontmost** (`setActiveScope`). That is what stops a tab's shortcuts firing
+ * while another tab is on screen — B-138, where Colorist's `window` listener
+ * toggled its panels underneath the Edit tab because a `window` listener
+ * cannot see what the user is looking at.
  *
  * Global undo/redo (D-051): Cmd/Ctrl+Z undoes, Cmd/Ctrl+Y **or**
- * Cmd/Ctrl+Shift+Z redoes (the codebase's existing Colorist-only keybind
- * already used Ctrl+Y — `app/src/utils/keyboardUtils.ts` — kept as the
- * primary redo combo for consistency; Cmd+Shift+Z accepted too since it's
- * the platform convention on macOS and costs nothing to also support). Both
- * pop `@apelles/history`'s shared stack regardless of which tab is active,
- * and — the real UX decision here, see D-051 — **switch the active tab** to
- * whichever tab the undone/redone entry belongs to, so the user always sees
- * the effect of the undo/redo they just triggered rather than it applying
- * silently behind a different tab. Skipped while a text input/textarea/
- * contenteditable has focus, so native text-field undo isn't hijacked.
+ * Cmd/Ctrl+Shift+Z redoes (Ctrl+Y is the primary combo, matching the keybind
+ * the fork already shipped; Cmd+Shift+Z rides along as a registry *alias*
+ * since it's the platform convention on macOS). Both pop `@apelles/history`'s
+ * shared stack regardless of which tab is active, and — the real UX decision
+ * here, see D-051 — **switch the active tab** to whichever tab the
+ * undone/redone entry belongs to, so the user always sees the effect of the
+ * undo/redo they just triggered rather than it applying silently behind a
+ * different tab. The "don't hijack a text field" guard is the dispatcher's
+ * now, and applies to every shortcut in the app rather than only these two.
  *
  * Project gating (D-039): the shell renders `launcher` (passed in — the shell
  * never imports the D-037 `ProjectLauncher`, dependency direction is app →
@@ -114,10 +124,11 @@
  * later without another `Shell` change.
  */
 
-import { useEffect, type ReactNode } from 'react';
-import { ChevronLeft, PanelLeft } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { ChevronLeft, Keyboard, PanelLeft } from 'lucide-react';
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
-import { useHistoryStore } from '@apelles/history';
+import { useHistoryStore, type HistoryEntry } from '@apelles/history';
+import { KeyboardShortcutsDialog, useKeymapStore, useShortcut } from '@apelles/keymap';
 import { useShellStore, type ShellTabId } from './store';
 import { useWindowChrome, MacTrafficLights, WindowControls } from './WindowChrome';
 
@@ -164,6 +175,11 @@ export interface ShellProps {
    *  only, same reasoning as `launcher`). Docked to the right of the tab
    *  content, toggled via a chrome-bar button; omit to run without one. */
   sourcesPanel?: ReactNode;
+  /** D-272 — i18next's `t`, injected for the Keyboard Shortcuts window so the
+   *  fork's 13 translated locales keep rendering translated Colorist rows.
+   *  Same app → shell direction as `launcher`: neither `@apelles/shell` nor
+   *  `@apelles/keymap` depends on i18next. Omit to render English labels. */
+  translate?: (key: string) => string;
 }
 
 // D-116: default/min/max for the Sources column's `ResizablePanel` — same
@@ -174,7 +190,8 @@ const SOURCES_PANEL_DEFAULT_WIDTH = 288;
 const SOURCES_PANEL_MIN_WIDTH = 220;
 const SOURCES_PANEL_MAX_WIDTH = 480;
 
-export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPanel }: ShellProps) {
+export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPanel, translate }: ShellProps) {
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const activeTab = useShellStore((s) => s.activeTab);
   const setActiveTab = useShellStore((s) => s.setActiveTab);
   const wgpuSurfaceActive = useShellStore((s) => s.wgpuSurfaceActive);
@@ -194,56 +211,34 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
   const activeLibraryRail = activeTabEntry?.libraryRail;
   const activeLibraryPanel = activeTabEntry?.libraryPanel;
 
+  // D-272 — which tab is frontmost gates which shortcuts can fire at all.
+  // Before this, every keydown handler in the app was a bare `window`
+  // listener with no idea what the user was looking at, so Colorist's panel
+  // toggles fired while the Edit tab was on screen (B-138). `Shell` is the one
+  // component that knows the answer, so it is the one that reports it.
   useEffect(() => {
-    if (!projectOpen) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      const idx = { '1': 0, '2': 1, '3': 2 }[e.key];
-      if (idx === undefined) return;
-      const tab = tabs[idx];
-      if (!tab) return;
-      e.preventDefault();
-      setActiveTab(tab.id);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [tabs, setActiveTab, projectOpen]);
+    if (active) useKeymapStore.getState().setActiveScope(active);
+  }, [active]);
 
-  // D-051 — global undo/redo, see the module doc comment above.
-  useEffect(() => {
-    if (!projectOpen) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
+  // Cmd/Ctrl+1/2/3 — now read off the registry rather than an inline
+  // `{'1':0,'2':1,'3':2}` map, so they show up in the settings window and can
+  // be rebound like anything else. Positional, as before: the Nth registry
+  // action selects the Nth registered tab.
+  useShortcut('app.tab_edit', () => tabs[0] && setActiveTab(tabs[0].id), { enabled: projectOpen });
+  useShortcut('app.tab_motion', () => tabs[1] && setActiveTab(tabs[1].id), { enabled: projectOpen });
+  useShortcut('app.tab_colorist', () => tabs[2] && setActiveTab(tabs[2].id), { enabled: projectOpen });
 
-      const key = e.key.toLowerCase();
-      const isUndo = key === 'z' && !e.shiftKey;
-      const isRedo = key === 'y' || (key === 'z' && e.shiftKey);
-      if (!isUndo && !isRedo) return;
-
-      const el = document.activeElement;
-      // A number input (the Inspector's `ScrubbableNumberInput`/`PropertyRow`
-      // fields) is excluded from the "don't hijack an in-progress edit" guard
-      // below: it has no meaningful native undo of its own worth protecting
-      // (there's no prose to lose), and being focused there is the NORMAL
-      // state while using the Inspector at all — so treating it as free text
-      // silently dropped every Cmd+Z while a value field merely had focus,
-      // not just while someone was mid-edit in it.
-      const isNumberInput = el instanceof HTMLInputElement && el.type === 'number';
-      const isTextInput =
-        el instanceof HTMLElement &&
-        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) &&
-        !isNumberInput;
-      if (isTextInput) return;
-
-      e.preventDefault();
-      const entry = isUndo ? useHistoryStore.getState().undo() : useHistoryStore.getState().redo();
-      if (entry && tabs.some((t) => t.id === entry.tab) && entry.tab !== active) {
-        setActiveTab(entry.tab as ShellTabId);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [tabs, active, setActiveTab, projectOpen]);
+  // D-051 — global undo/redo, see the module doc comment above. The
+  // don't-hijack-an-in-progress-edit guard (including its "a number input is
+  // not prose" refinement) moved into the shared dispatcher in D-272, where it
+  // now protects every shortcut in the app rather than only these two.
+  const applyHistoryEntry = (entry: HistoryEntry | null) => {
+    if (entry && tabs.some((t) => t.id === entry.tab) && entry.tab !== active) {
+      setActiveTab(entry.tab as ShellTabId);
+    }
+  };
+  useShortcut('app.undo', () => applyHistoryEntry(useHistoryStore.getState().undo()), { enabled: projectOpen });
+  useShortcut('app.redo', () => applyHistoryEntry(useHistoryStore.getState().redo()), { enabled: projectOpen });
 
   return (
     <div
@@ -329,9 +324,29 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
             Inspector's own toggle (opposite corner, same idea). */}
         <div className="ml-auto flex items-center h-full gap-1">
           {activeHeaderAction}
+          {/* D-272 — the Keyboard Shortcuts window's opener. Genuinely
+              shell-level (all three tabs share one registry), which is why it
+              lives here and not in a tab, on the same reasoning D-120 used to
+              keep Sources' own opener in `Shell` rather than duplicating it
+              per-tab. Only while a project is open: the launcher has no
+              shortcuts to configure. */}
+          {projectOpen && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setShortcutsOpen(true)}
+              title="Keyboard shortcuts"
+              aria-label="Keyboard shortcuts"
+              className="h-6 w-6 p-0 text-text-secondary hover:text-text-primary"
+            >
+              <Keyboard className="size-3.5" />
+            </Button>
+          )}
           <WindowControls chrome={chrome} />
         </div>
       </div>
+
+      <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} translate={translate} />
 
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0 overflow-hidden relative">
         {/* D-263 — the active tab's icon rail, LEFTMOST, immediately left of

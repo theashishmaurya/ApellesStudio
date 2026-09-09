@@ -53,6 +53,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   }),
 }));
 
+import { useKeymapStore } from '@apelles/keymap';
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import { TRIM_TOOLS, type TrimTool } from './trimMode';
@@ -160,12 +161,13 @@ async function pickTool(tool: TrimTool) {
   await nextFrame();
 }
 
-/** Type a bare letter at the pane, the way the shortcut really arrives. */
-async function pressKey(key: string) {
-  const pane = mounted!.container.querySelector<HTMLElement>('[tabindex="0"]');
-  if (!pane) throw new Error('the timeline pane is not focusable');
+/** Press a bare letter at the WINDOW, the way the shortcut really arrives
+ *  since D-272 — `@apelles/keymap`'s single dispatcher listens there, not on
+ *  the pane, which is why these keys now work without clicking the timeline
+ *  first. `code` is what `normalizeCombo` reads. */
+async function pressKey(code: string, key: string) {
   actSync(() => {
-    pane.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true }));
   });
   await nextFrame();
 }
@@ -318,8 +320,9 @@ describe('the icon path commits exactly what the Alt path commits (D-261)', () =
   });
 
   it('6. a keyboard shortcut selects the same tool the icon does, and edits the same way', async () => {
-    // Adobe's own keys, so anyone arriving from Premiere finds them bound.
-    await pressKey('y');
+    // Adobe's own keys, so anyone arriving from Premiere finds them bound —
+    // and since D-272 they come from the registry, not a literal in this pane.
+    await pressKey('KeyY', 'y');
     expect(toolButton('slip').getAttribute('aria-pressed')).toBe('true');
 
     await bodyDrag(bodies()[1], 200, 290, ROW_HEIGHT_PX * 0.5);
@@ -328,8 +331,31 @@ describe('the icon path commits exactly what the Alt path commits (D-261)', () =
     expect(b.source_start).toBeGreaterThan(100);
 
     // …and V returns to Select, which Adobe explicitly tells users to do.
-    await pressKey('v');
+    await pressKey('KeyV', 'v');
     expect(toolButton('select').getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('7. D-272 — the palette reads its keys from the registry, not from a literal', async () => {
+    // The point of the registry: rebind the action and the SAME call-site
+    // starts answering to the new key, with nothing in `TimelinePane` or
+    // `TrimToolbar` changed. This is the regression test for "some call-sites
+    // migrated, others still hardcoded".
+    actSync(() => useKeymapStore.getState().setBinding('edit.tool_slip', ['KeyJ']));
+
+    await pressKey('KeyY', 'y');
+    expect(toolButton('slip').getAttribute('aria-pressed'), 'the old key must go dead').toBe('false');
+
+    await pressKey('KeyJ', 'j');
+    expect(toolButton('slip').getAttribute('aria-pressed'), 'the new key must select it').toBe('true');
+
+    // …and the tooltip/aria label teaches the NEW key, so the UI cannot
+    // disagree with what actually fires.
+    expect(toolButton('slip').getAttribute('aria-label')).toBe('Slip tool (J)');
+
+    actSync(() => useKeymapStore.getState().resetBinding('edit.tool_slip'));
+    await pressKey('KeyV', 'v');
+    await pressKey('KeyY', 'y');
+    expect(toolButton('slip').getAttribute('aria-pressed'), 'reset restores V/B/N/Y/U').toBe('true');
   });
 });
 

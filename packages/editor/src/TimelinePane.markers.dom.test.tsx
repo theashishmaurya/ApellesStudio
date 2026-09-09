@@ -51,6 +51,7 @@ vi.mock('@tauri-apps/api/core', () => ({
   }),
 }));
 
+import { useKeymapStore } from '@apelles/keymap';
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import { DEFAULT_MARKER_COLOR, MARKER_COLORS, type Marker, type Timeline } from './timeline';
@@ -290,33 +291,49 @@ describe('timeline markers — real DOM (D-222)', () => {
   });
 
   it('9. the `M` shortcut adds one too — but not while typing in a field', async () => {
+    // D-272 — this is now a REGISTRY shortcut (`edit.add_marker`), dispatched
+    // by `@apelles/keymap`'s single window-level listener rather than by an
+    // `onKeyDown` on the pane's own div. Two consequences this test pins:
+    // the press goes to `window` (it no longer needs the pane to have been
+    // clicked first — that was the bug), and it only fires while the Edit tab
+    // is the frontmost scope.
+    useKeymapStore.setState({ overrides: {}, activeScope: 'edit', osPlatform: 'macos' });
     await mountWith(buildFixture([]));
     actSync(() => useEditorTimelineStore.getState().setPlayhead(12));
 
-    const pane = mounted!.container.querySelector<HTMLElement>('[tabindex="0"]');
-    expect(pane).not.toBeNull();
-    actSync(() => {
-      pane!.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }));
-    });
+    const pressM = (init: KeyboardEventInit = {}) =>
+      actSync(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'm', bubbles: true, ...init }));
+      });
+
+    pressM();
     await waitFrames();
     expect(markers().map((m) => m.frame)).toEqual([12]);
 
-    // A modified press is somebody else's chord (⌘M minimises on macOS).
-    actSync(() => {
-      pane!.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', metaKey: true, bubbles: true }));
-    });
+    // A modified press is somebody else's chord (⌘M minimises on macOS), and
+    // resolves to no registry action at all.
+    pressM({ metaKey: true });
     await waitFrames();
     expect(markers()).toHaveLength(1);
 
-    // …and an `m` typed into a real text field is an "m", not a marker.
+    // …and an `m` typed into a real text field is an "m", not a marker. The
+    // guard is the dispatcher's now, so it applies to every shortcut at once.
+    const pane = mounted!.container.querySelector<HTMLElement>('[tabindex="0"]');
     const input = document.createElement('input');
     pane!.appendChild(input);
-    actSync(() => {
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', bubbles: true }));
-    });
+    input.focus();
+    pressM();
     await waitFrames();
     expect(markers()).toHaveLength(1);
+    input.blur();
     input.remove();
+
+    // …and not while another tab is frontmost (B-138).
+    actSync(() => useKeymapStore.getState().setActiveScope('colorist'));
+    pressM();
+    await waitFrames();
+    expect(markers()).toHaveLength(1);
+    actSync(() => useKeymapStore.getState().setActiveScope('edit'));
   });
 
   it('10. the marker list offers every marker in frame order and jumps to one', async () => {

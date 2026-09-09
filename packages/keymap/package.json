@@ -1,0 +1,23 @@
+{
+  "name": "@apelles/keymap",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "description": "Apelles' single source of truth for keyboard shortcuts (D-272) — one registry of {id, label, category, scope, defaultCombo}, one window-level dispatcher every call-site registers a handler with, user remaps persisted by an injected sink, and the Keyboard Shortcuts settings window. No Tauri, no tab-specific imports.",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@apelles/ui": "*",
+    "lucide-react": "^0.544.0",
+    "react": "^19.2.8",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.0",
+    "jsdom": "^27.0.0",
+    "vitest": "^3.2.4"
+  }
+}

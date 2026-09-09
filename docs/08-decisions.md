@@ -26557,3 +26557,116 @@ the conflicting clip; `applyOp` leaves the timeline byte-for-byte unchanged
 `startFrame`; `ripple: true` remains the documented escape hatch and is left
 alone by the occupancy question entirely (mirrors `move`'s own ripple
 contract, not a new one).
+
+---
+
+## D-273 — one shortcut registry for the whole app, with a shell-level Keyboard Shortcuts window
+
+**Date:** 2026-09-10. Closes the two owner requests logged 2026-09-10 (*"a full
+keyboard-shortcut audit — every shortcut actually registered and working, Play
+included"* and *"a real Keyboard Shortcuts settings window"*). Fixes **B-138**
+and **B-139**. Full audit + worked design: `docs/notes/keyboard-shortcuts.md`.
+
+### Context
+
+The audit was the point of the request, so it came first, exhaustively (every
+`keydown`/`onKeyDown`/`key ===` hit in `app/src` and `packages/*` read in
+place). It found **five independent listeners** that knew nothing about each
+other, and three real defects:
+
+1. **Play/Space was bound to nothing** — no `Space` handler existed anywhere
+   outside Colorist's own `cycle_zoom`. The preview's transport was click-only.
+   Exactly the owner's report. Same for ←/→ frame-stepping (B-139).
+2. **Colorist's 45 shortcuts fired in every tab.** `useKeyboardShortcuts` is
+   mounted by `App.tsx`, which stays mounted under all three tabs (B-007), and
+   a `window` listener cannot see which tab is on screen. `M` in the Edit tab
+   dropped a marker *and* toggled Colorist's Masks panel; ⌘1 switched tab *and*
+   zoomed Colorist to 100% (B-138).
+3. **The Edit tab's keys needed the timeline clicked first** — they hung off a
+   `tabIndex={0}` div, with per-branch guards that had drifted apart.
+
+Critically, RapidRAW **already had half a registry**: `KEYBIND_DEFINITIONS` in
+`app/src/utils/keyboardUtils.ts` plus a remap UI inside Colorist's settings
+modal. It could never serve the Edit tab where it sat — `packages/*` may not
+import from `app/src` — which is *why* the Edit tab grew hardcoded keys.
+
+### The real options
+
+1. **Bolt a settings window onto the existing five call-sites.** Rejected: it
+   would be a cosmetic pane over still-broken bindings, and could not fix
+   Play/Space, the focus dependency, or the cross-tab leak — which is what the
+   owner actually asked for.
+2. **Build a second, Apelles-only registry beside RapidRAW's**, leaving the
+   fork's alone. Rejected outright: two parallel keybind tables is the exact
+   "second source of truth" this repo's rules forbid, and the settings window
+   would then have to show two lists.
+3. **Extract the fork's registry into a shared low-layer package, extend it to
+   cover all three tabs, and route every call-site through one dispatcher.**
+   Chosen.
+
+### Decision
+
+A new `@apelles/keymap` package (react + zustand + `@apelles/ui`; no Tauri, no
+tab imports) holding:
+
+- **The registry** — `{ id, label, category, scope, defaultCombo, aliases? }`,
+  no handlers. `app/src/utils/keyboardUtils.ts` is **deleted**; its 45 rows are
+  the `colorist`-scoped rows here, **ids and defaults byte-identical**, so
+  existing user remaps keep working.
+- **One dispatcher** — a single `window` listener. A component claims an action
+  with `useShortcut(id, fn)` and compares no keys. The "don't hijack a text
+  field" guard lives here once (including D-051's "a number input is not prose"
+  refinement, now global instead of undo/redo-only).
+- **`scope`, reported by `Shell`** — the one component that knows which tab is
+  frontmost. This is what fixes B-138. Precedence is **`global` beats the
+  active tab**, so one keydown does at most one thing, deterministically; a
+  shadowed action is flagged ⚠ in the settings window and rebindable there
+  rather than silently losing.
+- **The settings window**, shell-level (title-bar keyboard button), reachable
+  from all three tabs. Colorist's own keybind section is **moved, not
+  duplicated** — it listed Colorist's actions only and was unreachable without
+  switching tabs first.
+
+**Persistence reuses `appSettings.keybinds`** — the
+`HashMap<String, Vec<String>>` `app_settings.rs` has persisted since RapidRAW,
+generic enough to carry the new action ids with **zero Rust change**. Checked
+rather than assumed: this app has no `localStorage` and no zustand `persist`
+middleware anywhere, so `appSettings` *is* the per-user-preference mechanism.
+The package stores nothing itself; the app injects the sink, same
+dependency-injection pattern `Shell` already uses for `launcher`/`sourcesPanel`.
+
+**Reference** (CLAUDE.md's research-the-real-pattern rule): macOS System
+Settings ▸ Keyboard ▸ Keyboard Shortcuts — grouped categories, the combo chip
+*is* the control, Escape-while-recording leaves the action unassigned, one
+"Restore Defaults". Two deliberate divergences: a per-row reset as well (~60
+rows here against macOS's dozen), and a per-section scope tag (macOS has no
+tabs). **Note:** the file the roadmap cites at
+`scratch/keyboard-shortcuts-settings-reference.png` is not the macOS pane — it
+is a screenshot of Apelles' own Edit tab, apparently saved over — so the pane's
+documented behaviour was used instead.
+
+### Why no MCP tool
+
+CLAUDE.md requires a GUI *and* an MCP surface for the same capability. The
+judgment here is that a key binding is not one: it is a **local human input
+preference**, like a theme choice. An agent never presses keys — its equivalent
+of every shortcut in the registry is the tool that shortcut invokes, and all of
+those already exist (`editor_set_playing`, `editor_set_playhead`,
+`editor_split_clip`, `editor_add_marker`, `editor_remove_clip`, …). A
+`set_shortcut` tool would let an agent silently rewrite the human's muscle
+memory: a real hazard for no capability gained. Stated here rather than forcing
+a tool that does not fit.
+
+### Consequences
+
+- **Play/Space works**, as do ←/→ stepping and a new ⌘K split; the Edit tab's
+  keys no longer need the timeline focused; Colorist's stay in Colorist.
+- Every shortcut in the app is visible and rebindable in one place.
+- The trim palette no longer stores its own letters — `TRIM_TOOLS` carries a
+  `shortcutId` and `TrimToolbar` formats whatever the registry currently
+  resolves, so a tooltip can never disagree with the key that fires.
+  `trimToolForKey` is deleted (the dispatcher resolves the key).
+- Adding a shortcut is: one registry row, one `useShortcut` call.
+- 36 new tests in `@apelles/keymap` plus a call-site regression test
+  (`TimelinePane.trimTools.dom.test.tsx` test 7: rebind the action, the same
+  call-site answers the new key and the old one goes dead).

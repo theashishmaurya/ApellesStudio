@@ -12,6 +12,7 @@
 // The real-DOM pointer-drag tests that prove the gestures actually reach these
 // ops through `TimelinePane` live in `TimelinePane.trim.dom.test.tsx`.
 import { describe, expect, it } from 'vitest';
+import { shortcutById } from '@apelles/keymap';
 import { applyOp, endFrame, labelForOp, timelineFps, type Clip, type Timeline } from './timeline';
 import {
   bodyDragOp,
@@ -21,7 +22,6 @@ import {
   resolveTrimMode,
   trimModeLabel,
   trimOpFor,
-  trimToolForKey,
   trimToolOwns,
   TRIM_TOOLS,
   type TrimGesture,
@@ -140,11 +140,28 @@ describe('TRIM_TOOLS — the palette itself', () => {
     expect(TRIM_TOOLS.map((t) => t.tool)).toEqual(['select', 'ripple', 'roll', 'slip', 'slide']);
   });
 
-  it('carries Adobe’s own shortcut for each, all distinct', () => {
+  it('links each tool to its registry action, all distinct', () => {
+    // D-272 — the LETTER is no longer stored here; the palette points at
+    // `@apelles/keymap` action ids and the registry owns the binding, so the
+    // toolbar tooltip and the key that actually fires cannot drift apart (and
+    // a user rebind shows up in both).
+    expect(TRIM_TOOLS.map((t) => t.shortcutId)).toEqual([
+      'edit.tool_select',
+      'edit.tool_ripple',
+      'edit.tool_roll',
+      'edit.tool_slip',
+      'edit.tool_slide',
+    ]);
+    expect(new Set(TRIM_TOOLS.map((t) => t.shortcutId)).size).toBe(TRIM_TOOLS.length);
+  });
+
+  it('is still bound to Adobe’s own V/B/N/Y/U by default', () => {
     // V/B/N/Y/U, quoted from Adobe's own help pages in
-    // `scratch/premiere-tools-reference/premiere-tools-panel.json`.
-    expect(TRIM_TOOLS.map((t) => t.shortcut)).toEqual(['V', 'B', 'N', 'Y', 'U']);
-    expect(new Set(TRIM_TOOLS.map((t) => t.shortcut)).size).toBe(TRIM_TOOLS.length);
+    // `scratch/premiere-tools-reference/premiere-tools-panel.json`. Asserted
+    // against the registry now that it is the one place the letters live.
+    expect(
+      TRIM_TOOLS.map((t) => shortcutById(t.shortcutId)?.defaultCombo),
+    ).toEqual([['KeyV'], ['KeyB'], ['KeyN'], ['KeyY'], ['KeyU']]);
   });
 
   it('gives every tool a label and a blurb, so nothing renders blank', () => {
@@ -167,18 +184,15 @@ describe('TRIM_TOOLS — the palette itself', () => {
     expect(trimToolOwns('select', 'edge-start')).toBe(false);
   });
 
-  it('maps a keystroke to a tool, case-insensitively, and nothing else', () => {
-    expect(trimToolForKey('v')).toBe('select');
-    expect(trimToolForKey('V')).toBe('select');
-    expect(trimToolForKey('b')).toBe('ripple');
-    expect(trimToolForKey('n')).toBe('roll');
-    expect(trimToolForKey('y')).toBe('slip');
-    expect(trimToolForKey('u')).toBe('slide');
-    // Caps Lock must not silently disable the palette, and a key that is not a
-    // tool must not be swallowed — `M` is this pane's marker shortcut.
-    expect(trimToolForKey('m')).toBe(null);
-    expect(trimToolForKey('Escape')).toBe(null);
-    expect(trimToolForKey('')).toBe(null);
+  it('does not collide with the pane’s other shortcuts', () => {
+    // D-272 — `trimToolForKey` is gone (the dispatcher resolves the key), so
+    // what is worth pinning is that the palette has not quietly taken a combo
+    // another Edit-tab action already owns. `M` is this pane's marker key.
+    const toolCombos = new Set(
+      TRIM_TOOLS.map((t) => shortcutById(t.shortcutId)!.defaultCombo.join('+')),
+    );
+    expect(toolCombos.has(shortcutById('edit.add_marker')!.defaultCombo.join('+'))).toBe(false);
+    expect(toolCombos.has(shortcutById('edit.play_pause')!.defaultCombo.join('+'))).toBe(false);
   });
 });
 

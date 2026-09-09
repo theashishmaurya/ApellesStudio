@@ -133,6 +133,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Loader2 } from 'lucide-react';
 import { Player, useContentBox } from '@apelles/player';
+import { useShortcut } from '@apelles/keymap';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
@@ -619,6 +620,26 @@ export function PreviewPane() {
     if (playing) setPlaying(false);
     setPlayhead(playhead + d);
   };
+
+  // D-272 — the Edit tab's transport shortcuts. Space/←/→ were bound to
+  // NOTHING before this pass: the preview had click-only transport buttons and
+  // not one key anywhere in the app reached them, which is the owner's own
+  // report ("play should play the preview"). Verified by audit, not assumed —
+  // there was no `Space` handler in `packages/*` or `app/src` at all outside
+  // Colorist's own `cycle_zoom`.
+  //
+  // Registered here rather than in `Player` because `Player` is the shared,
+  // stateless presentation component all three tabs embed (D-039): it is
+  // handed `playing`/`onPlayPause` and owns neither. This pane owns the Edit
+  // tab's transport state, so it is what can claim the action. The Motion tab
+  // has its own transport and can claim the same registry ids later without
+  // either pane learning about the other — only one of them is ever in scope.
+  //
+  // Gated on a timeline actually being loaded, so Space in an empty Edit tab
+  // stays inert rather than toggling a `playing` flag with nothing to play.
+  useShortcut('edit.play_pause', () => setPlaying(!playing), { enabled: hasTimeline });
+  useShortcut('edit.frame_back', () => step(-1), { enabled: hasTimeline });
+  useShortcut('edit.frame_forward', () => step(1), { enabled: hasTimeline });
 
   return (
     // D-126 — the real fullscreen target. `bg-bg-primary` matters here: a

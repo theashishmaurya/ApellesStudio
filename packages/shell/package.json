@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@apelles/history": "*",
+    "@apelles/keymap": "*",
     "@apelles/ui": "*",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-os": "^2.3.2",

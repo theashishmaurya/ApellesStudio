@@ -2539,24 +2539,34 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   see `docs/BUGS.md`. This addendum's own "resetting" complaint was never
   root-caused as the same defect and is left open here exactly as found;
   worth a fresh live check against the fix before assuming it's still live.
-- **A full keyboard-shortcut audit: every shortcut actually registered and
+- [x] **A full keyboard-shortcut audit: every shortcut actually registered and
   working, "Play" included** — owner request 2026-09-10 ("play should play
-  the preview and all the other shortcut registration"). Not scoped in
-  detail — this wants a real pass over every documented/intended shortcut
-  in the app (Play/Space being the one named explicitly) confirming each
-  one is genuinely wired up, not a guess at which ones might be broken.
-- **A real Keyboard Shortcuts settings window — view AND edit/remap any
-  shortcut** — owner request 2026-09-10, with a reference screenshot (macOS
-  System Settings' own "Keyboard Shortcuts" pane — categorised list,
-  checkboxes, a way to change the key combo per action; saved at
-  `scratch/keyboard-shortcuts-settings-reference.png`, gitignored but kept
-  for the next session). A real, standalone feature, not a quick fix:
-  needs an inventory of every shortcut currently hardcoded across the app
-  (`Shell.tsx`'s global handler, `TimelinePane.tsx`'s own keydown handling,
-  `TrimToolbar`'s single-key tool shortcuts, and wherever else one lives)
-  before a remappable settings surface can be built over them — the
-  research-the-real-pattern step CLAUDE.md already asks for, not a guess at
-  how many places currently own a shortcut binding.
+  the preview and all the other shortcut registration"). **Done 2026-09-10,
+  D-273.** Every `keydown`/`onKeyDown`/`key ===` hit in `app/src` and
+  `packages/*` was read in place; the full inventory is
+  `docs/notes/keyboard-shortcuts.md` (Part 1). Found five independent
+  listeners and three real defects: **Play/Space was bound to nothing at all**
+  (B-139 — confirmed by exhaustive search, the preview's transport was
+  click-only), Colorist's 45 shortcuts fired in **every** tab (B-138), and the
+  Edit tab's own keys only worked once the timeline had been clicked. All
+  fixed as part of routing every call-site through the new registry.
+- [x] **A real Keyboard Shortcuts settings window — view AND edit/remap any
+  shortcut** — owner request 2026-09-10. **Done 2026-09-10, D-273.** Built on
+  a real single-source-of-truth registry (`@apelles/keymap`) rather than
+  bolted over the old hardcoded call-sites: one list of
+  `{id, label, category, scope, defaultCombo}`, one window-level dispatcher
+  every call-site claims an action from, remaps persisted through the app's
+  existing `appSettings.keybinds` (no Rust change needed), and a shell-level
+  window reachable from all three tabs. RapidRAW's own half-registry
+  (`app/src/utils/keyboardUtils.ts` + a keybind pane buried in Colorist's
+  settings modal) was **absorbed, not duplicated** — that file is deleted and
+  its 45 rows are the `colorist`-scoped rows of the one registry, ids and
+  defaults unchanged so existing remaps survive. Pattern taken from the macOS
+  System Settings pane the request cited; note that the screenshot saved at
+  `scratch/keyboard-shortcuts-settings-reference.png` is **not** that pane (it
+  is a screenshot of Apelles' own Edit tab), so the pane's documented
+  behaviour was used instead — worth re-capturing if this surface is
+  revisited.
 - **A preview PLAYBACK-RATE control (2x/3x/4x/custom, WITH audio) — not the
   same thing as a clip's own Speed property** — owner request 2026-09-10,
   with a reference screenshot of the preview transport bar (saved at
