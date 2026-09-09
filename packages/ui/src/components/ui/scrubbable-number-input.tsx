@@ -33,33 +33,70 @@
  * out-of-range typed value is pinned to `min`/`max` at that point — during
  * typing it is not, since clamping mid-keystroke makes a field with a floor
  * impossible to type into.
+ *
+ * **The scrub cursor (B-136, three dead ends before this one).** A drag
+ * leaves the field's own ~80px box almost immediately, so neither its static
+ * `cursor-ew-resize` class nor a `document.body.style.cursor` write stays
+ * visible: WebKit (this app's WKWebView) freezes the VISIBLE system cursor
+ * for the whole duration of an actively-held mouse button, a documented
+ * platform bug (bugs.webkit.org/show_bug.cgi?id=53341). Tauri's own NATIVE
+ * `getCurrentWindow().setCursorIcon(...)` looked like the fix specifically
+ * because it bypasses CSS — confirmed, by direct log evidence, to genuinely
+ * bypass CSS and succeed on every call — but WKWebView's own AppKit
+ * cursor-rect tracking re-asserts ITS OWN frozen cursor over even a
+ * natively-set one, on every native mouse-moved event, faster than a JS
+ * `pointermove` handler can win back. Three attempts (CSS write, one native
+ * call, native call re-asserted every move) all failed live, confirmed by
+ * the owner each time.
+ *
+ * **The actual fix doesn't use a cursor API at all.** [`ScrubCursorGhost`]
+ * below renders a small icon that FOLLOWS the pointer as an ordinary
+ * portaled DOM element, positioned via a direct `style.transform` write on
+ * every `pointermove` — the same per-frame-write-not-React-state discipline
+ * `TimelinePane.tsx`'s `placeTrimBadge` (D-250) already uses for exactly
+ * this reason. Nothing here is a cursor property WebKit's own tracking can
+ * fight over, so nothing here CAN be frozen or overridden.
  */
 import * as React from 'react';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import * as ReactDOM from 'react-dom';
+import { MoveHorizontal } from 'lucide-react';
 
 import { cn } from '../../lib/utils';
 import { useNumberField } from '../../hooks/use-number-scrub';
 import { Input } from './input';
 
-/** A test/Storybook/non-Tauri render of this component must not throw just
- *  because there is no real native window to talk to — but a genuine Tauri
- *  context where the call still fails (a missing capability grant, the exact
- *  shape D-271 itself was, silently, until caught live) must NOT go quiet the
- *  same way. Swallowing that error is what let this exact bug ship once
- *  already — see D-271's own "honest limit" note, corrected in the same
- *  entry once this was found. */
-function setNativeCursor(icon: 'ewResize' | 'default') {
-  const hasTauriRuntime = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
-  if (!hasTauriRuntime) return;
-  try {
-    void getCurrentWindow()
-      .setCursorIcon(icon)
-      .catch((err) => {
-        console.error('[ScrubbableNumberInput] setCursorIcon failed — check the window capability grant', err);
-      });
-  } catch (err) {
-    console.error('[ScrubbableNumberInput] setCursorIcon threw synchronously', err);
-  }
+/** The ghost cursor: a small pill that tracks the real pointer while a scrub
+ *  is in progress. Portaled to `document.body` so it paints above every
+ *  panel regardless of this field's own stacking context. Off-screen
+ *  (`translate(-9999px, -9999px)`) until the first real coordinate arrives,
+ *  rather than at `0,0`, so it never flashes in the corner for one frame. */
+function ScrubCursorGhost({ active }: { active: boolean }) {
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!active) return;
+    const el = ref.current;
+    if (!el) return;
+    const onMove = (e: PointerEvent) => {
+      el.style.transform = `translate(${e.clientX - 12}px, ${e.clientY - 12}px)`;
+    };
+    window.addEventListener('pointermove', onMove);
+    return () => window.removeEventListener('pointermove', onMove);
+  }, [active]);
+
+  if (!active || typeof document === 'undefined') return null;
+
+  return ReactDOM.createPortal(
+    <div
+      ref={ref}
+      aria-hidden="true"
+      className="pointer-events-none fixed left-0 top-0 z-50 flex size-6 items-center justify-center rounded-full border border-border-color bg-surface text-text-primary shadow-md"
+      style={{ transform: 'translate(-9999px, -9999px)' }}
+    >
+      <MoveHorizontal className="size-3.5" />
+    </div>,
+    document.body,
+  );
 }
 
 export interface ScrubbableNumberInputProps
@@ -109,59 +146,43 @@ function ScrubbableNumberInput({
     onClear,
   });
 
-  // See this file's own module doc (D-271): the CSS `cursor` write in
-  // `useNumberScrub` cannot repaint the visible pointer mid-drag under
-  // WebKit, so the native OS cursor is set directly instead.
-  //
-  // A ONE-TIME call at the moment `scrubbing` flips true is not enough: the
-  // WKWebView itself owns real AppKit cursor-rect tracking for its own
-  // bounds, and re-asserts ITS OWN (frozen-per-bug-53341) cursor on every
-  // native mouse-moved event the drag generates — which immediately
-  // clobbers a single native `setCursorIcon` call the instant the pointer
-  // moves again. Re-asserting ours on every `pointermove` while scrubbing,
-  // not just once at the transition, is what actually wins that fight.
-  React.useEffect(() => {
-    if (!scrubbing) return;
-    setNativeCursor('ewResize');
-    const onMove = () => setNativeCursor('ewResize');
-    window.addEventListener('pointermove', onMove);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      setNativeCursor('default');
-    };
-  }, [scrubbing]);
-
   return (
-    <Input
-      // The caller's own leftovers first, so the field's own behaviour below
-      // cannot be silently replaced by one of them.
-      {...props}
-      {...inputProps}
-      className={cn(
-        // The affordance itself: Resolve's own "hover… until you see the
-        // virtual slider cursor". Swapped for a caret while the field is
-        // focused, because at that point it really is a text box.
-        'cursor-ew-resize',
-        focused && 'cursor-text',
-        scrubbing && 'select-none',
-        className,
-      )}
-      // Composed, not overridden: a caller may legitimately want to know about
-      // focus or a press (a panel that opens a section when a field is
-      // entered), and it must not cost the field its own handler.
-      onPointerDown={(e) => {
-        inputProps.onPointerDown(e);
-        onPointerDown?.(e);
-      }}
-      onFocus={(e) => {
-        inputProps.onFocus(e);
-        onFocus?.(e);
-      }}
-      onBlur={(e) => {
-        inputProps.onBlur(e);
-        onBlur?.(e);
-      }}
-    />
+    <>
+      <Input
+        // The caller's own leftovers first, so the field's own behaviour below
+        // cannot be silently replaced by one of them.
+        {...props}
+        {...inputProps}
+        className={cn(
+          // The affordance itself: Resolve's own "hover… until you see the
+          // virtual slider cursor". Swapped for a caret while the field is
+          // focused, because at that point it really is a text box. The real
+          // cursor may or may not actually hide during the drag (WebKit's own
+          // freeze, see the module doc) — `ScrubCursorGhost` below is what
+          // guarantees visible feedback regardless.
+          'cursor-ew-resize',
+          focused && 'cursor-text',
+          scrubbing && 'select-none',
+          className,
+        )}
+        // Composed, not overridden: a caller may legitimately want to know about
+        // focus or a press (a panel that opens a section when a field is
+        // entered), and it must not cost the field its own handler.
+        onPointerDown={(e) => {
+          inputProps.onPointerDown(e);
+          onPointerDown?.(e);
+        }}
+        onFocus={(e) => {
+          inputProps.onFocus(e);
+          onFocus?.(e);
+        }}
+        onBlur={(e) => {
+          inputProps.onBlur(e);
+          onBlur?.(e);
+        }}
+      />
+      <ScrubCursorGhost active={scrubbing} />
+    </>
   );
 }
 

@@ -26279,14 +26279,99 @@ live only while `scrubbing` is true, re-asserts `ewResize` on every move —
 matching WebKit's own re-assertion cadence instead of trying to win with one
 call up front.
 
+### Corrected a third time, same session: the native cursor API cannot win this fight at all — abandoned for a rendered cursor instead
+
+Unconditional diagnostic logging (`console.log`, not gated behind an error —
+the previous two rounds' silence had been ambiguous between "not failing"
+and "not running") was added and the owner tested again. The log showed,
+repeatedly: `setNativeCursor called {icon: 'ewResize', hasTauriRuntime:
+true}` immediately followed by `setCursorIcon resolved ewResize` — the call
+was succeeding, completely, every single time, on both the `ewResize` and
+`default` transitions. And the owner still saw no visible change at all.
+
+This is conclusive, not another guess: the native call cannot be failing
+silently (it resolves), cannot be misconfigured (the capability grant
+works), and cannot be racing behind on timing (it fires per move, verified
+in the log at the same cadence as the drag). WKWebView's own AppKit
+cursor-rect tracking is winning this fight at a level Tauri's JS-visible
+`setCursorIcon` IPC round-trip cannot react fast enough to preempt, or is
+overriding via a mechanism (a private, lower-level re-assertion tied
+directly to native mouse-tracking, not to anything the JS event loop can
+observe or race) that no amount of "call it more often" can beat. Continuing
+to iterate on native-cursor variants past this point would have been
+guessing a fourth time against the same wall.
+
+**Abandoned the cursor-API approach entirely.** The actual fix (`Scrub
+CursorGhost`, `scrubbable-number-input.tsx`) renders a small icon that
+tracks the pointer as an ordinary portaled DOM element — `position:
+fixed`, `style.transform` written directly on every `pointermove`, the same
+per-frame-direct-write discipline `TimelinePane.tsx`'s `placeTrimBadge`
+(D-250) already established for an unrelated per-pixel UI update. This is
+not a cursor property in any sense WebKit's tracking system has a stake in,
+so there is nothing left for it to override. `@apelles/ui` DROPS the
+`@tauri-apps/api` dependency this decision originally added (no longer
+used for anything) and gains `react-dom` instead, for the portal.
+`app/src-tauri/capabilities/default.json` drops `core:window:allow-set-
+cursor-icon` in the same commit — an unused capability grant is attack
+surface with no offsetting benefit, and this repo doesn't leave one lying
+around out of inertia.
+
+`useNumberScrub`'s own `document.body.style.cursor` write (this decision's
+very first attempt) is removed too, for the same reason — confirmed
+non-functional, superseded, and CLAUDE.md's own "no dead code" rule doesn't
+carve out an exception for code that was a reasonable first guess. The early
+`releasePointerCapture` call from the second attempt stays: it was already
+justified on its own terms (capture was never the gesture's real delivery
+mechanism — the `window` listeners are), independent of whether it helped
+the cursor fight it was originally added for.
+
 ### Verification
 
 `ScrubbableNumberInput.dom.test.tsx` and `PropertyRow.numericField.dom.test.tsx`
-(26 tests) pass unchanged through all three rounds of this fix. The actual
-cursor icon change during a real drag needs the owner's own trackpad to fully
-confirm; jsdom has no OS cursor to assert against, and no amount of unit
-testing would have caught either of the two live-only failure modes this bug
-actually had (a missing capability grant, a per-frame cursor re-assertion
-race) — both were found only by shipping, watching it still fail, and
-investigating further rather than declaring victory after the first
-plausible-looking fix.
+(26 tests, unchanged assertions) pass against the final, cursor-API-free
+implementation. `cargo` was not involved in this last round — a pure TS/TSX
+change plus a capability REMOVAL, both of which the running dev server
+picked up live (a capability change needs Tauri's own restart either way,
+same as the grant did). The actual on-screen ghost icon following the
+pointer during a real drag needs the owner's own trackpad to fully confirm;
+jsdom has no compositor to render a `position: fixed` portal against. No
+amount of unit testing would have caught any of this bug's three live-only
+failure modes (a WebKit CSS freeze, a missing capability grant, a
+per-frame-losing native re-assertion race) — all three were found only by
+shipping, watching it still fail, and investigating further each time
+rather than declaring victory after a plausible-looking fix.
+
+### The ghost cursor confirmed working — and a fifth attempt at hiding the real arrow, reverted as a regression
+
+The owner confirmed `ScrubCursorGhost` genuinely renders and tracks the
+pointer — real, working progress, the first of this bug's five rounds to
+actually show something. The remaining cosmetic gap: the real OS arrow was
+still ALSO visible alongside it, since nothing had ever successfully hidden
+it. One more variant was tried: `document.body.style.cursor = 'none'` set
+synchronously inside `onPointerDown` itself — unconditionally, on every
+press, not gated on the press turning into a real drag — on the theory that
+setting it AT the native `pointerdown` dispatch, rather than later inside
+the `move` handler once a drag is already confirmed, might land before
+WebKit's mousedown freeze latches in.
+
+**This made things worse, not better, and was reverted in the same
+session.** The owner reported the cursor disappearing in unrelated places —
+the timeline, other fields — entirely outside this one input's own gesture.
+`document.body.style.cursor` is global, shared, mutable state, and an
+unconditional set-on-every-press with cleanup only in `stop.current()` is
+exactly the shape of bug this whole session's `sessionLock`/`useSessionStore`
+work (D-268, earlier the same night) already named: a flag with no guarantee
+its own release path always runs. A missed or raced cleanup here doesn't
+just fail silently, it leaves the ENTIRE app's cursor invisible — a strictly
+worse failure mode than "the real arrow is redundantly still visible next to
+the ghost." Reverted outright rather than patched further: the ghost cursor
+alone is a complete, safe, working fix for the actual reported bug (no
+visible feedback during a scrub); hiding the redundant real arrow underneath
+it is cosmetic polish that isn't worth reintroducing a global-state leak risk
+for. `useNumberScrub` is back to touching no `cursor` property anywhere.
+
+This is the fifth and final attempt at B-136 this session. Any further
+polish on the "two cursors visible at once" cosmetic gap is a new, separate,
+lower-priority item — not something to keep iterating on inside this same
+bug now that the actual reported defect (no feedback at all) is fixed and
+confirmed live.

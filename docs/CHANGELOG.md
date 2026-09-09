@@ -4,6 +4,29 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-136, finally fixed: the scrub-cursor rabbit hole, five
+  rounds live with the owner.** A `document.body.style.cursor` write
+  (defeated by WebKit bug 53341, which freezes the visible cursor for the
+  whole duration of a held mouse button); Tauri's native `setCursorIcon`
+  once per drag (same freeze — WKWebView re-asserts its own cursor on every
+  native move faster than a one-time call can hold); the same native call
+  re-asserted on every `pointermove` (still lost — unconditional diagnostic
+  logging proved the calls were succeeding every time, ruling out
+  failure/misconfig/timing all at once); a `ScrubCursorGhost` — a small icon
+  that tracks the pointer as an ordinary portaled DOM element instead of
+  touching any cursor API, immune to the freeze by construction —
+  **confirmed genuinely working live**; and a fifth attempt at also hiding
+  the real OS arrow underneath it (`cursor: none` set unconditionally on
+  every press) that made things WORSE — a global-cursor-state regression
+  breaking the cursor elsewhere in the app — reverted outright rather than
+  chased further, since the ghost alone already fixed the actual reported
+  defect. `@apelles/ui` drops the `@tauri-apps/api` dependency the native
+  attempt needed (gains `react-dom` for the portal instead), and the
+  now-unused `core:window:allow-set-cursor-icon` capability grant comes back
+  out too. Along the way, also fixed: B-135 (undo not reaching a focused
+  field until blur) and confirmed-not-bugs (the track header's lock icon,
+  cropped out of two screenshots but present in the real DOM both times).
+
 - **2026-09-09** — **B-135/B-136: two more Inspector numeric-field bugs, found
   live right after B-133.** B-135 — undo (or any other external write) landed
   correctly in the store immediately, but a FOCUSED field kept showing its own

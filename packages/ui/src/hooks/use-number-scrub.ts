@@ -295,24 +295,21 @@ export function useNumberScrub({
         // any selection, so what is on screen for the rest of the drag is the
         // gesture's value rather than a half-typed draft.
         g.element.blur();
-        // The field's own `cursor-ew-resize` class (`ScrubbableNumberInput`)
-        // only paints while the pointer is actually over its ~80px box —
-        // which a scrub leaves almost immediately, the same reason this
-        // gesture is driven off `window` listeners rather than the element's
-        // own. A body-level override is what actually follows the pointer,
-        // the same direct-write technique B-133 (`docs/BUGS.md`) used for the
-        // timeline's trim cursor, since neither case can be solved with a
-        // static class scoped to one element.
-        document.body.style.cursor = 'ew-resize';
-        // WebKit (this app's WKWebView) freezes the VISIBLE system cursor for
-        // the whole duration of an active pointer capture — it does not
-        // re-query CSS `cursor` again until the capture ends, so the body
-        // write above is correct but invisible while still captured. Capture
-        // was only ever "a nicety" here (see the comment where it's taken,
-        // above) — the window listeners are the real delivery mechanism and
-        // do not need it — so releasing it the moment the drag goes active
-        // lets WebKit resume normal hit-test-driven cursor painting for the
-        // rest of the gesture, with no effect on the drag itself.
+        // B-136 (see `ScrubbableNumberInput`'s own module doc for the full,
+        // multi-round story): the ACTUAL visible feedback during a scrub is
+        // `ScrubbableNumberInput`'s `ScrubCursorGhost`, a portaled DOM
+        // element that isn't a cursor property at all and so cannot be
+        // frozen or overridden by WebKit's mousedown cursor freeze the way
+        // every cursor-API attempt was. `onPointerDown`'s own `cursor: none`
+        // write (above, at press time) is a best-effort attempt to also hide
+        // the real OS arrow underneath the ghost — set there rather than
+        // here because the freeze locks in whatever the cursor was AT
+        // mousedown, and by the time this code runs (only once a real drag
+        // is already confirmed) that moment has already passed. This capture
+        // release remains for its own, independent reason: capture was only
+        // ever "a nicety" here (see the comment where it's taken, above),
+        // since the window listeners are the real delivery mechanism and
+        // releasing it early costs nothing.
         if (typeof g.element.releasePointerCapture === 'function') {
           try {
             g.element.releasePointerCapture(e.pointerId);
@@ -350,9 +347,6 @@ export function useNumberScrub({
           // Already released, or never captured.
         }
       }
-      // Only clear it if this press ever actually went active (crossed
-      // `MIN_DRAG_PX`) — a plain click never set it in the first place.
-      if (gesture.current?.active) document.body.style.cursor = '';
       gesture.current = null;
       stop.current = () => {};
       setScrubbing(false);
