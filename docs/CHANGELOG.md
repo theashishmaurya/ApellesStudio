@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-134 fixed:** a dragged clip's A/V-linked partner (e.g.
+  the audio half of a clip on Video 1) now tracks the drag live via a new
+  ghost overlay (`TimelinePane.tsx`'s `linkDragGhosts`, same shape as the
+  pre-existing `dragSyncGhosts`), instead of sitting inert until drop. The
+  position math is a new pure function, `timeline.ts`'s `linkedDragGhosts`,
+  with 8 real unit tests in `timeline.test.ts` — pulled out of the component
+  specifically because a real-DOM proof turned out to be impossible here:
+  jsdom's `<DndContext>` never resolves a real drop target at all (confirmed
+  going further than `TimelinePane.marquee`/`trim.dom.test.tsx` had already
+  found, by also stubbing `TrackDropZone`'s own rect — dnd-kit's
+  `DragOverlay` preview node is what collision detection actually measures,
+  and its page position comes from a CSS transform jsdom cannot see).
+
 - **2026-09-10** — **B-137 logged, not fixed:** a clip edge-trim drag's own
   preview appears to stay pinned at the clip's original position instead of
   tracking the cursor (screenshot: the selected-clip box near `00:00:00`,

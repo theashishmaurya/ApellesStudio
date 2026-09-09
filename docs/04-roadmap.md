@@ -2534,7 +2534,11 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   under-specified (what resets: the drag preview snapping back, a
   selection, a zoom level, something else) and needs the owner's own
   clarification or a live repro pass before it can be root-caused as its
-  own item rather than folded into B-134.
+  own item rather than folded into B-134. **B-134 itself (the linked
+  partner never visually moving at all during the drag) is now fixed** —
+  see `docs/BUGS.md`. This addendum's own "resetting" complaint was never
+  root-caused as the same defect and is left open here exactly as found;
+  worth a fresh live check against the fix before assuming it's still live.
 - **A full keyboard-shortcut audit: every shortcut actually registered and
   working, "Play" included** — owner request 2026-09-10 ("play should play
   the preview and all the other shortcut registration"). Not scoped in

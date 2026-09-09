@@ -2242,6 +2242,72 @@ export function linkedClipIds(tl: Timeline, selection: { track: number; id: stri
   return linked;
 }
 
+/** One [`linkedDragGhosts`] result — a linked partner's live drag-preview
+ *  position, in the same shape `TimelinePane.tsx`'s pre-existing
+ *  `dragSyncGhosts` overlay uses. */
+export interface LinkDragGhost {
+  id: string;
+  track: number;
+  shiftedStart: number;
+  duration: number;
+}
+
+/** B-134 — the position math behind `TimelinePane.tsx`'s `linkDragGhosts`
+ *  live-drag-preview overlay: where a dragged clip's A/V-linked partner(s)
+ *  should be shown WHILE the primary clip is being dragged, before the drop
+ *  actually commits.
+ *
+ *  Pulled out to a pure function (rather than left inline in the component,
+ *  the way `dragSyncGhosts` still is) specifically so this math has a real,
+ *  direct unit test: `TimelinePane.tsx`'s own `<DndContext>` cannot be driven
+ *  to resolve a real drop target under jsdom at all (`TimelinePane.marquee.
+ *  dom.test.tsx`'s own header, and `TimelinePane.trim.dom.test.tsx`'s test 1,
+ *  both establish this independently — jsdom has no layout engine, and
+ *  dnd-kit's `DragOverlay` preview node's OWN measured rect, which collision
+ *  detection uses as `draggingNodeRect`, has no real relationship to the
+ *  dragged clip's true page position under jsdom regardless of how much
+ *  droppable geometry a test stubs — confirmed directly while building this
+ *  fix, not assumed from the prior two files' own findings alone). A DOM test
+ *  therefore cannot exercise `onDndDragMove` far enough to observe this
+ *  overlay's real output; this pure function is what makes the fix provable
+ *  at all, and is exactly what the component's `useMemo` calls.
+ *
+ *  `landingStartFrame` is `clipDragPreview.startFrame` — the dragged clip's
+ *  own RESOLVED landing frame (`resolveClipLanding`'s output, already
+ *  computed once by `onDndDragMove`/`onDndDragEnd` alike), not a raw pointer
+ *  delta. Mirrors the `move` op's own contract EXACTLY (`delta = op.
+ *  startFrame - c.start_frame`, applied to every other member of the same
+ *  `link_group`, D-129): a linked partner moves by that same frame delta and
+ *  stays on its OWN track, never the dragged clip's destination track —
+ *  cross-track or not, an A/V link keeps sync, it does not follow the other
+ *  half onto the other half's new track. Reusing the exact same delta this
+ *  way means the preview can never disagree with what `move` actually
+ *  commits on drop. */
+export function linkedDragGhosts(
+  tl: Timeline,
+  fromTrack: number,
+  clipId: string,
+  landingStartFrame: number,
+  fps: number,
+): LinkDragGhost[] {
+  const draggedClip = tl.tracks[fromTrack]?.clips.find((c) => c.id === clipId);
+  if (!draggedClip || !draggedClip.link_group) return [];
+  const delta = landingStartFrame - draggedClip.start_frame;
+  if (delta === 0) return [];
+  const ghosts: LinkDragGhost[] = [];
+  for (const [ti, ci] of linkGroupMembers(tl, draggedClip.link_group)) {
+    const sib = tl.tracks[ti]?.clips[ci];
+    if (!sib || sib.id === draggedClip.id) continue;
+    ghosts.push({
+      id: sib.id,
+      track: ti,
+      shiftedStart: sib.start_frame + delta,
+      duration: sourceFramesToTimeline(sib, sib.duration, fps),
+    });
+  }
+  return ghosts;
+}
+
 /** One clip's address for [`checkLink`]/the `link` op — `{ track, clip }`
  *  index pair, same addressing every other per-clip op on this surface uses. */
 export interface LinkTarget {
