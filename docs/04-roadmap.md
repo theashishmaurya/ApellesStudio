@@ -2469,6 +2469,26 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   question, not a bug, and needs the same real-pattern research CLAUDE.md
   already asks for before landing a UI change, not a re-guess of D-230's own
   reasoning.
+- **Project Settings: same feature, better UX — a persistent side-tab panel
+  open by default, not a modal you have to summon** — owner request
+  2026-09-10, with a reference screenshot (a docked "Project Settings"
+  panel, a collapsible "Canvas" section holding Resolution/Frame Rate/
+  Aspect Ratio, open at rest rather than behind a trigger; saved at
+  `scratch/project-settings-sidepanel-reference.png`, gitignored but kept
+  for the next session). **The settings themselves already exist and are
+  not being re-scoped** — `ProjectSettingsModal.tsx` (D-038) is a real,
+  working modal covering resolution/frame rate/colour space for the whole
+  project, reached today from a gear icon on the Colorist tab's shot strip.
+  This is a pure presentation change: dock it as an always-visible panel
+  section instead of a dialog someone has to know to open. **Not scoped
+  further than that** — which existing side-tab/panel surface it should
+  actually dock into is a real open question this note deliberately leaves
+  unanswered rather than guesses: `EditLibraryRail`/`EditLibraryPanel`
+  (D-263) is the Edit tab's own docked-panel-switching mechanism and may or
+  may not be the right home for a Colorist-tab-only settings surface: needs
+  a real look at where in the app this setting is actually reached from
+  today and where a user would expect to find it living permanently, not an
+  assumption.
 
 ---
 

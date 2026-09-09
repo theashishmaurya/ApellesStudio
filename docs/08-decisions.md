@@ -26375,3 +26375,41 @@ polish on the "two cursors visible at once" cosmetic gap is a new, separate,
 lower-priority item — not something to keep iterating on inside this same
 bug now that the actual reported defect (no feedback at all) is fixed and
 confirmed live.
+
+### Researched once more, same session: no sixth attempt exists — the two remaining real APIs are both worse
+
+The owner asked for real research into hiding the redundant real arrow
+rather than accepting the two-cursors state, given `ScrubCursorGhost` was
+already confirmed working. Two more real, standard approaches exist for
+"hide the OS cursor and show my own" on the web, and both were checked
+against real sources rather than assumed:
+
+1. **CSS `cursor: none` on the input/document, timed differently** (e.g. set
+   synchronously in the native `pointerdown` handler itself, before a drag
+   is even confirmed, on the chance WebKit's freeze-snapshot happens at
+   dispatch time rather than at a lower native layer). Tried — see the
+   section above — and reverted as a regression, not merely ineffective:
+   global `document.body.style.cursor` mutated unconditionally on every
+   press, with cleanup on only one path, left the cursor invisible
+   elsewhere in the app when that cleanup didn't run. Confirmed a strictly
+   worse failure mode than two visible cursors.
+2. **The Pointer Lock API** (`element.requestPointerLock()`) — the
+   standards-track answer for "hide the OS cursor and read relative
+   movement instead of absolute position," supported on desktop Safari
+   since 10.1 (confirmed via MDN/caniuse — mac Safari only, no iOS, which is
+   fine since this is a macOS-only app). Genuinely hides the cursor, unlike
+   either CSS attempt. **Rejected**, not merely untried: Safari surfaces a
+   real, mandatory browser-level banner the first time pointer lock
+   activates on a page ("the cursor is hidden — press Esc to exit"),
+   confirmed via WebKit's own bug tracker and MDN — designed for a
+   sustained lock (a game, a 3D viewport) held for minutes, not a lightweight
+   gesture a user repeats dozens of times per editing session dragging
+   Inspector fields. A banner flashing on every scrub would be strictly
+   worse UX than the two-cursors cosmetic gap it would be fixing.
+
+**No further cursor-API attempt is planned.** The three real options this
+platform offers (CSS, Tauri's native window API, Pointer Lock) are now all
+individually confirmed either ineffective or actively worse than the
+current state. `ScrubCursorGhost` plus a redundant real arrow is the
+accepted final state for this feature, not a placeholder waiting on a sixth
+idea.
