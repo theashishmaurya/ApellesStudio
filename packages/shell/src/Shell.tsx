@@ -221,9 +221,18 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
       if (!isUndo && !isRedo) return;
 
       const el = document.activeElement;
+      // A number input (the Inspector's `ScrubbableNumberInput`/`PropertyRow`
+      // fields) is excluded from the "don't hijack an in-progress edit" guard
+      // below: it has no meaningful native undo of its own worth protecting
+      // (there's no prose to lose), and being focused there is the NORMAL
+      // state while using the Inspector at all — so treating it as free text
+      // silently dropped every Cmd+Z while a value field merely had focus,
+      // not just while someone was mid-edit in it.
+      const isNumberInput = el instanceof HTMLInputElement && el.type === 'number';
       const isTextInput =
         el instanceof HTMLElement &&
-        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) &&
+        !isNumberInput;
       if (isTextInput) return;
 
       e.preventDefault();

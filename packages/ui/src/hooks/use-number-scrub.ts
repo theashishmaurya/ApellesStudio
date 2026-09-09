@@ -295,6 +295,15 @@ export function useNumberScrub({
         // any selection, so what is on screen for the rest of the drag is the
         // gesture's value rather than a half-typed draft.
         g.element.blur();
+        // The field's own `cursor-ew-resize` class (`ScrubbableNumberInput`)
+        // only paints while the pointer is actually over its ~80px box —
+        // which a scrub leaves almost immediately, the same reason this
+        // gesture is driven off `window` listeners rather than the element's
+        // own. A body-level override is what actually follows the pointer,
+        // the same direct-write technique B-133 (`docs/BUGS.md`) used for the
+        // timeline's trim cursor, since neither case can be solved with a
+        // static class scoped to one element.
+        document.body.style.cursor = 'ew-resize';
       }
       // Stops the travel from selecting the field's own digits as it goes.
       e.preventDefault();
@@ -325,6 +334,9 @@ export function useNumberScrub({
           // Already released, or never captured.
         }
       }
+      // Only clear it if this press ever actually went active (crossed
+      // `MIN_DRAG_PX`) — a plain click never set it in the first place.
+      if (gesture.current?.active) document.body.style.cursor = '';
       gesture.current = null;
       stop.current = () => {};
       setScrubbing(false);
