@@ -1,6 +1,6 @@
 # Multi-shot session + shot strip (D-033)
 
-Round-3 item 2. Chroma held one clip; a grading job is N shots from one shoot,
+Round-3 item 2. Apelles held one clip; a grading job is N shots from one shoot,
 each with its own grade, flip-between-able, grade-copyable.
 
 > **Update (D-037, 2026-09-02):** the "no session file / deferred

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's DOCKED library panel (D-263).
+ * @apelles/editor — the Edit tab's DOCKED library panel (D-263).
  *
  * **What it is.** The content of the left-hand library column while the rail
  * (`EditLibraryRail.tsx`) has one of this tab's own libraries selected:
@@ -41,11 +41,11 @@
  * renders the new one, with no frame, no animation and no `getAnimations()`
  * in between — the one arrangement that cannot have that class of bug. The
  * caption library inside `subtitles` mode still uses `Tabs`, which carries
- * B-124's own `[&[inert]]:hidden` fix in `@chroma/ui`.
+ * B-124's own `[&[inert]]:hidden` fix in `@apelles/ui`.
  */
 import { useState } from 'react';
 import { Type, Wand2 } from 'lucide-react';
-import { Button, TooltipProvider } from '@chroma/ui';
+import { Button, TooltipProvider } from '@apelles/ui';
 
 import { CaptionLibrary } from './CaptionLibrary';
 import { CaptionsFromTranscriptButton } from './CaptionsFromTranscriptButton';

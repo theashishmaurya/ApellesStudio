@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for dynamic zoom's on-canvas boxes
+ * @apelles/editor — real-DOM coverage for dynamic zoom's on-canvas boxes
  * (D-234): that arming draws two boxes and writes nothing, that dragging one
  * writes the whole animation through the existing keyframe op, and that the
  * ordinary transform box stands aside while the mode is on.

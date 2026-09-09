@@ -1,4 +1,4 @@
-// Chroma — the video UI. Replaces the filmstrip when a clip is loaded: a frame-
+// Apelles — the video UI. Replaces the filmstrip when a clip is loaded: a frame-
 // thumbnail strip with a playhead, plus play/step controls. Click/drag the strip
 // to seek. Lives in the BottomBar.
 import { useCallback, useEffect, useRef, useState } from 'react';

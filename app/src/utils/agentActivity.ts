@@ -1,4 +1,4 @@
-// Chroma — pure helpers for the agent activity feed (D-032).
+// Apelles — pure helpers for the agent activity feed (D-032).
 //
 // `diffAdjustments` — a structural before/after diff of the RapidRAW grade doc.
 // `summarizeActivity` — a per-op human-readable one-liner.

@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution, PIXEL-level tests for the text/title
+// @apelles/editor — REAL ffmpeg-execution, PIXEL-level tests for the text/title
 // clip export path (D-211/D-213, `docs/notes/text-title-clips.md`).
 //
 // `textClip.test.ts` asserts on the compiled argv STRINGS. That is exactly how

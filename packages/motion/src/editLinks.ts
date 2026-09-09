@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the Motion→Edit link, computed (D-260).
+ * @apelles/motion — the Motion→Edit link, computed (D-260).
  *
  * What it is: the one function that answers "which Edit-tab clips does each
  *   Motion scene feed?", from two plain arrays — the project's media pool and
@@ -14,8 +14,8 @@
  *   caller-named path links just as well as a default one.
  *
  * **Why the parameters are structural, not imported types.** Answering this
- * needs the media pool (`@chroma/bridge`'s `MediaItem`) and the Edit timeline
- * (`@chroma/editor`'s `Timeline`), and D-039's layer direction (app → tabs →
+ * needs the media pool (`@apelles/bridge`'s `MediaItem`) and the Edit timeline
+ * (`@apelles/editor`'s `Timeline`), and D-039's layer direction (app → tabs →
  * services → domain) forbids a tab package importing either — the same
  * constraint that makes `onRendered` a prop rather than a direct
  * `useMediaPoolStore` call (D-062). Declaring the minimum shape this function
@@ -29,14 +29,14 @@
 import type { MotionEditLink, MotionEditLinkClip, MotionEditLinks } from './motionOps';
 
 /** The media-pool fields this reads. Structurally satisfied by
- *  `@chroma/bridge`'s `MediaItem`. */
+ *  `@apelles/bridge`'s `MediaItem`. */
 export interface EditLinkMediaItem {
   id: string;
   sourcePath: string;
   motionSceneId?: string | null;
 }
 
-/** The clip fields this reads. Structurally satisfied by `@chroma/editor`'s
+/** The clip fields this reads. Structurally satisfied by `@apelles/editor`'s
  *  `Clip`. */
 export interface EditLinkClip {
   id: string;
@@ -45,7 +45,7 @@ export interface EditLinkClip {
   source_path: string;
 }
 
-/** The track fields this reads. Structurally satisfied by `@chroma/editor`'s
+/** The track fields this reads. Structurally satisfied by `@apelles/editor`'s
  *  `Track`. */
 export interface EditLinkTrack {
   clips: readonly EditLinkClip[];
@@ -102,7 +102,7 @@ export function computeEditLinks(
  *
  * Exported because the composition root needs the identical question answered
  * one more time — "how many clips did that re-render just refresh?" — and
- * because it must stay in step with `@chroma/editor`'s `refresh_media` matcher.
+ * because it must stay in step with `@apelles/editor`'s `refresh_media` matcher.
  * A second hand-written copy of the rule at either call site is how the badge
  * and the refresh would come to disagree about which clips are affected.
  */

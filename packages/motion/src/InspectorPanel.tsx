@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the Global Inspector, Motion half (D-099, Phase 2 of
+ * @apelles/motion — the Global Inspector, Motion half (D-099, Phase 2 of
  * `docs/notes/global-inspector.md`).
  *
  * A real form bound to whatever `LayerList.tsx`'s `Selection` currently
@@ -29,14 +29,14 @@
  * function in `manifestEdit.ts` is already written to respect.
  *
  * D-103 (Phase 4): the empty-state message and section-heading styling now
- * come from `@chroma/inspector` (a tiny shared package, no `@chroma/ui`
+ * come from `@apelles/inspector` (a tiny shared package, no `@apelles/ui`
  * dependency — see that package's README for why), the same components
- * `@chroma/editor`'s `ClipInspectorPanel.tsx` uses. Everything else here —
+ * `@apelles/editor`'s `ClipInspectorPanel.tsx` uses. Everything else here —
  * the field types, the manifest read/write logic, the layout — stays
  * local; Motion's and the NLE's selections are different enough (a
  * `Manifest`+scene/layer/camera target vs. a `Clip`+track/id) that forcing
  * them through one polymorphic component would mean rewriting two already-
- * working panels for no real benefit. See `@chroma/inspector`'s README for
+ * working panels for no real benefit. See `@apelles/inspector`'s README for
  * the full reasoning.
  *
  * **D-158, Phase 3 — the multi-layer view, and the design call behind it.**
@@ -93,16 +93,16 @@
  * change, marquee gesture, and align/distribute functions.
  */
 import { useState } from 'react';
-import type { Manifest, Cam2dKey, Cam3dKey, TransformKey } from '@chroma/motion-engine/src/engine/schema';
-import { InspectorEmptyState, InspectorSection } from '@chroma/inspector';
-// D-253 — the SUBPATH, never `@chroma/ui`'s barrel: that barrel exports
+import type { Manifest, Cam2dKey, Cam3dKey, TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import { InspectorEmptyState, InspectorSection } from '@apelles/inspector';
+// D-253 — the SUBPATH, never `@apelles/ui`'s barrel: that barrel exports
 // `Text`, whose polymorphic `as`-prop typing breaks once
 // `@react-three/fiber`'s global JSX augmentation (pulled in transitively via
-// `@chroma/motion-engine`) sits in the same `tsc` program (see `Button.tsx`).
-// `@chroma/ui/number-scrub` imports nothing but React, so the conflict cannot
+// `@apelles/motion-engine`) sits in the same `tsc` program (see `Button.tsx`).
+// `@apelles/ui/number-scrub` imports nothing but React, so the conflict cannot
 // reach here — and this tab's number fields get the app's one real numeric-
 // field behaviour instead of a second hand-written copy of it.
-import { useNumberField } from '@chroma/ui/number-scrub';
+import { useNumberField } from '@apelles/ui/number-scrub';
 import { EaseFieldControl } from './EaseCurveEditor';
 import { layerLabel, type Selection } from './LayerList';
 import {
@@ -149,7 +149,7 @@ const GROUP_ORDER: FieldSpec['group'][] = ['content', 'source', 'layout', 'fill'
 const label = 'block text-[10px] font-medium text-text-secondary mb-1';
 const inputBase =
   'w-full h-7 px-2 rounded bg-surface border border-border-color text-[11px] text-text-primary focus:outline-none focus:border-accent';
-/** B-113 / D-253 — the same treatment `@chroma/ui`'s `Input` gives every
+/** B-113 / D-253 — the same treatment `@apelles/ui`'s `Input` gives every
  *  `type="number"` in the app. Restated rather than imported because this tab
  *  cannot use that component (see the `useNumberField` import above), and a
  *  number field that still paints WebKit's spin buttons over its own digits is
@@ -162,7 +162,7 @@ const numberInputBase = [
 ].join(' ');
 
 /** D-253 — this tab's numeric field: `inputBase`, no spin buttons, and the
- *  shared drag-to-scrub/typing-draft behaviour from `@chroma/ui`.
+ *  shared drag-to-scrub/typing-draft behaviour from `@apelles/ui`.
  *
  *  `value` is `null` for a manifest property that is simply not set — the
  *  field shows its placeholder rather than a guessed default, and clearing it

@@ -1,4 +1,4 @@
-// @chroma/editor — the caption preset library (D-243/D-244,
+// @apelles/editor — the caption preset library (D-243/D-244,
 // `docs/notes/caption-presets.md`).
 //
 // **What it is:** the named, styled caption looks the Captions panel offers,
@@ -24,7 +24,7 @@
 //
 // **What was taken and what was changed.** No HyperFrames code is in this
 // repo: their compositions are HTML + CSS + GSAP rendered in a browser, and
-// Chroma renders captions twice, natively — `ab_glyph` for the live preview
+// Apelles renders captions twice, natively — `ab_glyph` for the live preview
 // and ffmpeg `drawtext` for the export (owner, 2026-09-08: "keeps things
 // local, fast, no new heavy runtime dependency chroma only"). What is reused
 // is the **design**: the colour values, type treatment, per-word timing feel
@@ -83,7 +83,7 @@ export type CaptionPresetGroup =
  *
  *  **A known fidelity gap, deliberately taken** (D-243): HyperFrames' looks
  *  are set in Montserrat, Anton, Poppins, Outfit, Space Grotesk and Gabarito,
- *  and Chroma's font catalogue (`chroma::text::TEXT_FONTS`) is system faces
+ *  and Apelles' font catalogue (`chroma::text::TEXT_FONTS`) is system faces
  *  only — Arial/Impact/Georgia/Courier — because both renderers must read the
  *  same single-face `.ttf` (D-212). Each preset therefore names the nearest
  *  catalogue face, and the `font` field stays editable like every other.
@@ -107,7 +107,7 @@ export const CAPTION_PRESETS: readonly CaptionPreset[] = [
     label: 'Subtitle',
     description: 'The standard broadcast subtitle — white on a soft black box.',
     group: 'Plain',
-    note: "Chroma's own D-229 default, not adapted from anything. The look every imported .srt starts with.",
+    note: "Apelles' own D-229 default, not adapted from anything. The look every imported .srt starts with.",
     style: {
       font: FONT_BOLD,
       size: 0.055,
@@ -128,7 +128,7 @@ export const CAPTION_PRESETS: readonly CaptionPreset[] = [
     label: 'Clean',
     description: 'No box — plain white type for footage that is already dark.',
     group: 'Plain',
-    note: "Chroma's own. The same geometry as Subtitle with the background box off.",
+    note: "Apelles' own. The same geometry as Subtitle with the background box off.",
     style: {
       font: FONT_BOLD,
       size: 0.055,
@@ -298,7 +298,7 @@ export const CAPTION_PRESETS: readonly CaptionPreset[] = [
     description: 'Elegant serif that assembles itself word by word, warm on dark.',
     group: 'Editorial',
     note:
-      "Adapted from HyperFrames caption-editorial-emphasis (Apache-2.0), partially: its cream-on-black palette and word build are reproduced, its dramatic per-word SIZE contrast is not — per-word size is the one property excluded from Chroma's animation vocabulary (D-243).",
+      "Adapted from HyperFrames caption-editorial-emphasis (Apache-2.0), partially: its cream-on-black palette and word build are reproduced, its dramatic per-word SIZE contrast is not — per-word size is the one property excluded from Apelles' animation vocabulary (D-243).",
     style: {
       font: FONT_SERIF_BOLD,
       size: 0.075,

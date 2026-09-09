@@ -1,6 +1,6 @@
-# @chroma/motion-engine
+# @apelles/motion-engine
 
-The Remotion motion engine for Chroma's **Motion tab** — data-driven motion
+The Remotion motion engine for Apelles' **Motion tab** — data-driven motion
 primitives + a JSON scene-manifest compiler, in the locked "dark Excalidraw"
 look.
 
@@ -11,7 +11,7 @@ is now canonical; **the `videoAgent` copy is stale — the user should delete
 `~/my_projects/videoAgent/engine/motion/`.** The design reference still lives in
 videoAgent: `engine/catalog.md`, `engine/DESIGN.md`, and the
 `.claude/skills/motion-primitives/` + `.claude/skills/animate/` skills. Those
-were not copied; port or re-point them if that knowledge is needed in Chroma.
+were not copied; port or re-point them if that knowledge is needed in Apelles.
 
 ## Layout
 
@@ -43,7 +43,7 @@ npx tsc --noEmit                               # typecheck
 
 Moved in verbatim (minus `node_modules` / `out/` / `.git` / its own
 `package-lock.json` — the workspace install uses the root lock). Not yet wired
-to `@chroma/motion` or the Tauri app — that is a later migration step.
+to `@apelles/motion` or the Tauri app — that is a later migration step.
 
 ## Determinism rules
 
@@ -55,7 +55,7 @@ Remotion renders each frame independently — same frame must produce same pixel
 
 ## DOM contract (D-155)
 
-`@chroma/motion`'s canvas overlay (`MotionCanvasOverlay.tsx`, Phase 1 of
+`@apelles/motion`'s canvas overlay (`MotionCanvasOverlay.tsx`, Phase 1 of
 `docs/notes/motion-visual-builder-research.md`) is a real, documented
 cross-package dependency on this engine's rendered DOM shape — not a lucky
 selector some component happens to work against today. Three attributes,
@@ -70,7 +70,7 @@ all pure additions with **zero pixel/visual change**:
   zoom, plus its translate and ambient drift — with no need for a consumer
   to re-read `scene.camera`, re-sort its keys, or re-run its easing. See the
   research doc §3a ("measure the live DOM, don't re-derive the camera") for
-  the full reasoning; `@chroma/motion`'s `canvasGeometry.ts` is the pure math
+  the full reasoning; `@apelles/motion`'s `canvasGeometry.ts` is the pure math
   built on top of a measurement taken this way.
 - **`data-motion-layer="<sceneIndex>.<layerIndex>"`** — on a wrapper `<div
   style={{display:"contents"}}>` around each 2D layer in `renderLayers`
@@ -131,8 +131,8 @@ Two things worth knowing before reaching for this:
   camera key already needs (`x`/`y` + `zoom` together to keep a target point
   fixed). Pivoting around a primitive's own reported anchor instead would
   need this ENGINE package to know per-primitive position semantics that
-  belong to `@chroma/motion`'s `propCatalog.ts` (`positionFields`) — the
-  wrong dependency direction (`@chroma/motion` depends on this package,
+  belong to `@apelles/motion`'s `propCatalog.ts` (`positionFields`) — the
+  wrong dependency direction (`@apelles/motion` depends on this package,
   never the reverse) — so it's a known, documented scope call, not an
   oversight.
 - **`clipWidth`/`clipHeight`** are the research doc's own "crop, honestly"
@@ -141,7 +141,7 @@ Two things worth knowing before reaching for this:
   analogous to a decoded video rectangle to inset) — the one real, small
   equivalent, clip-to-box via `overflow: hidden` on this same wrapper. Both
   absent (the common case) ⇒ no clipping at all.
-- **A drag/resize gap, disclosed rather than silently left:** `@chroma/
+- **A drag/resize gap, disclosed rather than silently left:** `@apelles/
   motion`'s `MotionCanvasOverlay.tsx` measures its screen↔world map off
   `[data-motion-world]` alone (the camera's own transform). A layer that ALSO
   carries a non-identity `transform` sits behind an EXTRA transform this map
@@ -161,9 +161,9 @@ zero effect on a rendered frame, verified with byte-for-byte `remotion still`
 renders of the engine's own sample manifest before/after the schema change,
 plus a smoke render with an id actually set on a real layer (all identical).
 
-`@chroma/motion`'s `addLayer` (D-151) stamps a short random id on every layer
+`@apelles/motion`'s `addLayer` (D-151) stamps a short random id on every layer
 it creates from here on; a hand-written or pre-existing manifest simply has no
-`id`, which `@chroma/motion`'s `resolveSelection`/`resolveSelections`
+`id`, which `@apelles/motion`'s `resolveSelection`/`resolveSelections`
 (`manifestEdit.ts`) treat as the fully-supported, non-breaking default —
 falling back to positional identity (the array index) exactly as this package
 did before `id` existed. When an `id` IS present, a selection built from it
@@ -196,7 +196,7 @@ inline logic (verified byte-for-byte unchanged via `remotion still`) and now
 used by BOTH `Camera.tsx` (`x`/`y`/`zoom`) and `Video.tsx`'s `renderLayers`
 (`x`/`y`/`scale`/`rot`/`opacity`) — "reuse the camera's own key mechanics,
 don't invent a second interpolator," per `docs/notes/motion-visual-builder-
-research.md` §4 Phase 4. `@chroma/motion`'s `manifestEdit.ts` ALSO imports
+research.md` §4 Phase 4. `@apelles/motion`'s `manifestEdit.ts` ALSO imports
 this function directly (a real, sanctioned cross-package value import, the
 same kind `MotionPreview.tsx` already makes for `Video`/`totalFrames`) to
 compute a drag's "current value" for the auto-keyframe decision below — the
@@ -214,7 +214,7 @@ real, typed `ease: easeCurve.optional()` instead of relying on a strict
 
 **The auto-keyframe drag decision** (Remotion Studio's own cited rule: a drag
 writes a keyframe at the current frame when the property is already
-keyframed, the static base when it is not) lives in `@chroma/motion`'s
+keyframed, the static base when it is not) lives in `@apelles/motion`'s
 `manifestEdit.ts` (`layerDragBase`/`upsertLayerTransformKeyXY`/
 `moveLayersByDeltaAutoKey`), not in this engine package — this package only
 needs to RENDER `transform.keys` correctly, which `renderLayers`'s use of

@@ -1,4 +1,4 @@
-// @chroma/editor — the text/title clip primitive's pure logic (D-211/D-213,
+// @apelles/editor — the text/title clip primitive's pure logic (D-211/D-213,
 // `docs/notes/text-title-clips.md`): the `TextLayer` validator, the
 // `set_text_clip` reducer, and the `drawtext` compilation in
 // `timelineExport.ts`.

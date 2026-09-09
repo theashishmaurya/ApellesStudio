@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — permanent real-DOM regression coverage for B-088: the live
+ * @apelles/editor — permanent real-DOM regression coverage for B-088: the live
  * preview must show a clip's CURRENT transform, not the one that happened to
  * be on disk before the edit.
  *
  * **Why this file exists, and why it models the backend the way it does.**
  * `chroma_timeline_frame` (the live-preview compositor, `chroma::edit`) does
  * not receive a timeline — it resolves the open project's **persisted**
- * manifest off disk (`chroma_project::timeline::resolve_timeline_and_settings`)
+ * manifest off disk (`apelles_project::timeline::resolve_timeline_and_settings`)
  * and composites from that. `timelineStore`'s `applyOp`, meanwhile, updates
  * `timeline` optimistically and persists it via `chroma_timeline_set` on a
  * 400 ms debounce. B-088 is the ordering bug between those two facts: the

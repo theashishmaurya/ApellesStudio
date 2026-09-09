@@ -15,7 +15,7 @@ import {
   pointerWithin,
 } from '@dnd-kit/core';
 import clsx from 'clsx';
-import { useShellStore } from '@chroma/shell';
+import { useShellStore } from '@apelles/shell';
 
 import SettingsPanel from './components/panel/SettingsPanel';
 import ExportPanel from './components/panel/right/ExportPanel';
@@ -57,7 +57,7 @@ import { useChromaControl } from './hooks/useChromaControl';
 import { useProjectAutosave } from './hooks/useProjectAutosave';
 import { useColoristHistoryBridge } from './hooks/useColoristHistoryBridge';
 import { useDebugScreenshot } from './hooks/useDebugScreenshot';
-import { useDebugControl } from '@chroma/debug';
+import { useDebugControl } from '@apelles/debug';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ExternalEditBar from './components/ui/ExternalEditBar';
 import { Status } from './components/ui/ExportImportProperties';
@@ -170,7 +170,7 @@ function App() {
   useChromaControl();
   // D-037: debounced project.json + grade + thumb autosave once a project is loaded
   useProjectAutosave();
-  // D-051: bridge useEditorStore's grade history into @chroma/history (shell
+  // D-051: bridge useEditorStore's grade history into @apelles/history (shell
   // global undo/redo) — single mount, same rationale as the two above.
   useColoristHistoryBridge();
   // D-210: Cmd/Ctrl+Shift+D screenshots the webview to a PNG — the human half
@@ -181,7 +181,7 @@ function App() {
   // loop D-210's screenshot started. Dev builds only: the hook's whole body
   // is behind `import.meta.env.DEV` and the registry itself is a dynamic
   // import inside that branch, so a production build drops it (see
-  // `@chroma/debug`'s README). Mounted here, next to the three above, for the
+  // `@apelles/debug`'s README). Mounted here, next to the three above, for the
   // same "reachable regardless of which tab is active" reason.
   useDebugControl();
 
@@ -652,7 +652,7 @@ function App() {
     selectedImage?.isReady &&
     hasRenderedFirstFrame;
 
-  // B-006: mirror isWgpuActive up to @chroma/shell so its root also drops its
+  // B-006: mirror isWgpuActive up to @apelles/shell so its root also drops its
   // own opaque background — see Shell.tsx's root class + the comment there.
   // Without this the shell's `bg-bg-primary` (added by D-039, sitting *above*
   // this component in the DOM) blocks the transparent "hole" below from ever
@@ -701,15 +701,15 @@ function App() {
       <ImageLoaderManager cachedEditStateRef={cachedEditStateRef} />
       <div
         className={clsx(
-          // h-full (not h-screen): the Colorist app is mounted inside a tab of @chroma/shell (D-039),
+          // h-full (not h-screen): the Colorist app is mounted inside a tab of @apelles/shell (D-039),
           // so it must fill the tab content area, not the whole viewport.
           'flex flex-col h-full font-sans text-text-primary overflow-hidden select-none',
-          // D-039: `.macos-window-shell` (14px rounded corners) is on the @chroma/shell
+          // D-039: `.macos-window-shell` (14px rounded corners) is on the @apelles/shell
           // root now — the whole window is the shell's, the Colorist app fills a tab.
           isWgpuActive ? 'bg-transparent' : 'bg-bg-primary',
         )}
       >
-        {/* D-039: window chrome (the title bar) moved to @chroma/shell — it now
+        {/* D-039: window chrome (the title bar) moved to @apelles/shell — it now
             sits above all three tabs, not inside the Colorist tab.
             `app/src/window/TitleBar.tsx` stays unrouted for reference. */}
         <div
@@ -844,7 +844,7 @@ function App() {
           executeDelete={executeDelete}
           handleSaveCollage={handleSaveCollage}
         />
-        {/* Chroma: the agent activity feed + request_human banner (D-032) */}
+        {/* Apelles: the agent activity feed + request_human banner (D-032) */}
         <AgentActivityDock />
         <ToastContainer
           position="bottom-right"

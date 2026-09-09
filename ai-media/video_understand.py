@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Video content understanding — "what changed on screen, and when" (D-189).
 
-**What it is:** the video-understanding half of Chroma's media sidecar. Given a
+**What it is:** the video-understanding half of Apelles' media sidecar. Given a
 video path and an open-ended question, it returns a list of
 `{time_s, event}` — real content moments with EXACT, frame-accurate
 timestamps and a natural-language description of what changed at each.
@@ -103,7 +103,7 @@ SAMPLING_ARGS = [
     "--presence-penalty", "1.5",
 ]
 
-# Local-first (a Chroma project invariant): a cached model must never trigger a
+# Local-first (a Apelles project invariant): a cached model must never trigger a
 # network round-trip just to revalidate itself.
 _ENV_OFFLINE = {**os.environ, "HF_HUB_OFFLINE": "1"}
 

@@ -1,20 +1,20 @@
 /**
- * @chroma/editor — the Inspector numeric field's display precision and its
+ * @apelles/editor — the Inspector numeric field's display precision and its
  * fit budget (B-113, D-253).
  *
  * The rendered half — that a real crop value, in a real Inspector, comes out
  * short enough to be read in full — is `PropertyRow.numericField.dom.test.
  * tsx`. This file pins the arithmetic that one depends on.
  *
- * The precision half of that arithmetic is `@chroma/ui`'s now (D-253 moved it
+ * The precision half of that arithmetic is `@apelles/ui`'s now (D-253 moved it
  * there, next to `ScrubbableNumberInput`, which needs it a layer below this
  * package). It is still exercised HERE, against this panel's own real steps
  * and its own real field width — that pairing is what the assertions are
- * about, and re-testing `displayNumber` in isolation in `@chroma/ui` would
+ * about, and re-testing `displayNumber` in isolation in `@apelles/ui` would
  * only restate the implementation.
  */
 import { describe, expect, it } from 'vitest';
-import { DISPLAY_DECIMALS_MAX, displayDecimals, displayNumber } from '@chroma/ui';
+import { DISPLAY_DECIMALS_MAX, displayDecimals, displayNumber } from '@apelles/ui';
 
 import {
   NUM_FIELD,

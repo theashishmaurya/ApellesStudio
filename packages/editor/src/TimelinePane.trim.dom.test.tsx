@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for the context-sensitive trim tool
+ * @apelles/editor — real-DOM coverage for the context-sensitive trim tool
  * (D-235, roadmap item 27), built on `testUtils/pointerHarness.ts` (D-142) and
  * modelled on `TimelinePane.fade.dom.test.tsx`.
  *

@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — tests for the Catalog's fragment construction and insert
+ * @apelles/motion — tests for the Catalog's fragment construction and insert
  * logic (D-151).
  *
  * The load-bearing assertion style here: a constructed fragment is validated
@@ -21,8 +21,8 @@
  * fails; make `at` a string ⇒ both schema tests fail).
  */
 import { describe, it, expect } from 'vitest';
-import { manifestSchema, type Manifest } from '@chroma/motion-engine/src/engine/schema';
-import { sample } from '@chroma/motion-engine/src/engine/sample';
+import { manifestSchema, type Manifest } from '@apelles/motion-engine/src/engine/schema';
+import { sample } from '@apelles/motion-engine/src/engine/sample';
 
 import { catalogEntries, catalogEntry, defaultLayerFor, type PrimitiveUse } from './catalog';
 import { addLayer, selectedLayer } from './manifestEdit';

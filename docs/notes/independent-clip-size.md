@@ -43,7 +43,7 @@ D-193 (falls back to `natural * scale`); a clip with either field set bypasses
 ## Persisted shape
 
 ```rust
-// chroma_timeline::Clip
+// apelles_timeline::Clip
 pub scale: f64,                    // unchanged — natural-footprint multiplier
 pub box_width: Option<f64>,        // NEW — fraction of composition width, or None
 pub box_height: Option<f64>,       // NEW — fraction of composition height, or None

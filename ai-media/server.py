@@ -1,6 +1,6 @@
-"""Chroma media-understanding sidecar — local, MLX, Apple Silicon (D-189).
+"""Apelles media-understanding sidecar — local, MLX, Apple Silicon (D-189).
 
-**What it is:** Chroma's *second* supervised Python sidecar. It answers the two
+**What it is:** Apelles' *second* supervised Python sidecar. It answers the two
 "understand this footage" questions the Edit tab needs and the app itself
 cannot: what was SAID and when (`transcribe.py`, mlx-whisper large-v3), and
 what CHANGED on screen and when (`video_understand.py`, ffmpeg scene-detect +

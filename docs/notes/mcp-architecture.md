@@ -2,7 +2,7 @@
 
 Owner: "make sure if follows the same architecture and write the architecture and
 rule so expose the MCP servers." This is that doc — the repeatable convention for
-giving a Chroma tab a real, agent-controllable MCP surface, written down once so
+giving a Apelles tab a real, agent-controllable MCP surface, written down once so
 the next tab (or the next op on an existing tab) doesn't have to re-derive it, and
 so nobody accidentally reinvents a second MCP server the way D-183's own first
 draft did (see "A mistake already made" below — read it before building a new one).
@@ -53,7 +53,7 @@ not a different Rust command that happens to produce the same on-disk result.
 Established D-140 (originally reasoned through for the Edit tab, applies to every
 tab equally):
 
-- **Undo/redo**: a store action like `@chroma/editor`'s `timelineStore.applyOp`
+- **Undo/redo**: a store action like `@apelles/editor`'s `timelineStore.applyOp`
   pushes a before/after pair onto the shared undo stack (D-051). A dedicated Rust
   command that mutates the same data but skips the store produces an edit the
   human cannot Cmd+Z — invisible, unreviewable, a "black box" edit in exactly the
@@ -96,8 +96,8 @@ to a private prefix and returns immediately (bare `return`, before doing any wor
 for anything outside it:
 
 ```ts
-const EDITOR_OP_PREFIX = 'editor_';   // @chroma/editor's useEditorControl.ts
-const MOTION_OP_PREFIX = 'motion_';   // @chroma/motion's useMotionControl.ts
+const EDITOR_OP_PREFIX = 'editor_';   // @apelles/editor's useEditorControl.ts
+const MOTION_OP_PREFIX = 'motion_';   // @apelles/motion's useMotionControl.ts
 
 const unlistenP = listen('chroma://request', async (ev) => {
   const { id, op, args } = ev.payload;

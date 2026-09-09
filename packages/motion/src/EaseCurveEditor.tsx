@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the real bezier curve/easing editor, Phase 5b's fourth
+ * @apelles/motion — the real bezier curve/easing editor, Phase 5b's fourth
  * and final piece (`docs/notes/motion-keyframe-timeline-research.md` §4/§9:
  * "a curve/easing editor... closer to a color-picker than to the timeline
  * strip itself... could ship independently"). Replaces the generic

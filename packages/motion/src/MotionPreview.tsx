@@ -1,8 +1,8 @@
 /**
- * @chroma/motion — the live preview (D-046; player ref forwarded D-081;
+ * @apelles/motion — the live preview (D-046; player ref forwarded D-081;
  * on-canvas select/drag D-156).
  *
- * A real `@remotion/player` embed of `@chroma/motion-engine`'s own `Video`
+ * A real `@remotion/player` embed of `@apelles/motion-engine`'s own `Video`
  * component — the exact component the `Animation` composition registers in
  * `packages/motion-engine/src/Root.tsx` — fed the manifest as `inputProps`.
  * Not a CLI render: an interactive, scrubbable, playable preview, driven by
@@ -16,7 +16,7 @@
  *
  * D-156 (Phase 1 of `docs/notes/motion-visual-builder-research.md`) wraps
  * `<Player>` in a `containerRef`'d div and renders `<MotionCanvasOverlay>`
- * as its DOM sibling, positioned over it — the same shape `@chroma/editor`'s
+ * as its DOM sibling, positioned over it — the same shape `@apelles/editor`'s
  * `PreviewPane.tsx` uses for `<TransformOverlay containerRef={surfaceRef}>`
  * next to its own `<img>` (see that component's own doc comment for why
  * this one's actual pointer-event wiring differs). `transientManifest` is
@@ -80,9 +80,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { Play, Pause } from 'lucide-react';
 import { Player, type PlayerRef } from '@remotion/player';
-import { Video } from '@chroma/motion-engine/src/engine/Video';
-import { totalFrames, sceneStartFrame, sceneDurationFrames } from '@chroma/motion-engine/src/engine/build';
-import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
+import { Video } from '@apelles/motion-engine/src/engine/Video';
+import { totalFrames, sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
+import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 
 import type { Selection } from './LayerList';
 import { MotionCanvasOverlay } from './MotionCanvasOverlay';

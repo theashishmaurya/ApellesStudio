@@ -24,10 +24,10 @@ pub struct ShotDto {
     pub path: String,
     /// filename, for the strip label
     pub name: String,
-    /// `chroma_types::Resolution` (D-053) via `#[serde(flatten)]` — same
+    /// `apelles_types::Resolution` (D-053) via `#[serde(flatten)]` — same
     /// `width`/`height` JSON keys the frontend already reads.
     #[serde(flatten)]
-    pub resolution: chroma_types::Resolution,
+    pub resolution: apelles_types::Resolution,
     pub fps: f64,
     pub frame_count: u64,
     pub duration_secs: f64,

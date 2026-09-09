@@ -33,7 +33,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: async () => null,
 }));
 
-const { useEditorTimelineStore, CanvasSettingsPopover } = await import('@chroma/editor');
+const { useEditorTimelineStore, CanvasSettingsPopover } = await import('@apelles/editor');
 const { DEBUG_OPS } = await import('./debugOps');
 
 if (typeof globalThis !== 'undefined') {

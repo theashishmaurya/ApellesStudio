@@ -1,4 +1,4 @@
-// @chroma/editor — D-239, roadmap item 27: the seven edit types on drop.
+// @apelles/editor — D-239, roadmap item 27: the seven edit types on drop.
 //
 // Two things are under test:
 //

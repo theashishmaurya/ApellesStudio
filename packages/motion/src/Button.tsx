@@ -1,12 +1,12 @@
 /**
- * @chroma/motion — a tiny local button (D-046).
+ * @apelles/motion — a tiny local button (D-046).
  *
- * Not `@chroma/ui`'s `Button`: that package's barrel also exports `Text`,
+ * Not `@apelles/ui`'s `Button`: that package's barrel also exports `Text`,
  * whose polymorphic `as`-prop typing breaks once `@react-three/fiber`'s
  * global `JSX.IntrinsicElements` augmentation — pulled in transitively via
- * `@chroma/motion-engine`'s `Scene3D`/`ParticleFlow` — sits in the same
- * `tsc` program (a pre-existing `@chroma/ui` fragility, not this tab's
- * bug). `@chroma/ui`'s own `exports` map also has no subpath for `Button`
+ * `@apelles/motion-engine`'s `Scene3D`/`ParticleFlow` — sits in the same
+ * `tsc` program (a pre-existing `@apelles/ui` fragility, not this tab's
+ * bug). `@apelles/ui`'s own `exports` map also has no subpath for `Button`
  * alone, so a deep import isn't an option either. Two buttons don't
  * warrant a shared-package edit — a plain styled `<button>` on the app's
  * existing `--color-*` tokens.

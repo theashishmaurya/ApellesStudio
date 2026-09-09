@@ -52,7 +52,7 @@ first place.
 
 Concretely:
 
-| | live preview (`chroma::edit`) | export (`@chroma/editor`) |
+| | live preview (`chroma::edit`) | export (`@apelles/editor`) |
 |---|---|---|
 | the layer | `Step::Adjust(ops)` in the paint list | a real slot in `pending`/`chains`, no `-i` |
 | the work | `apply_adjustment_to_canvas` on the canvas so far | two filter nodes on `lastLabel` |
@@ -100,7 +100,7 @@ splitting / deleting the adjustment clip like any other clip.
 > and its `mix` animates, neither of which a pre-baked table can express. The
 > split is what each is for.
 
-The obvious effect for an adjustment clip is Chroma's real grading stack. **It
+The obvious effect for an adjustment clip is Apelles' real grading stack. **It
 is structurally unavailable** *as a computation to call* (see the update
 above). Verified in the code before deciding:
 
@@ -137,7 +137,7 @@ rather than merely invisible.
 
 ## 4. The operator
 
-`chroma_types::adjustment` (L0, beside `fade`/`pan`/`eq` and for their reason:
+`apelles_types::adjustment` (L0, beside `fade`/`pan`/`eq` and for their reason:
 the operator is a property of the values, not of the timeline). **Both renderers
 consume the operator it builds rather than re-deriving the correction** — which
 is what makes preview and export the same maths *by construction* instead of by
@@ -249,7 +249,7 @@ numbers, and both cover: the control (no adjustment clip at all), the correction
 reaching the track below, the **z-order claim** (an adjustment below the picture
 must not touch it), the identity no-op, the `opacity` mix, and stacking.
 
-Underneath those: `crates/chroma-types/src/adjustment.rs`'s own unit tests (14),
+Underneath those: `crates/apelles-types/src/adjustment.rs`'s own unit tests (14),
 including one that pins the maths to **real ffmpeg output pasted in verbatim**
 and one that proves stage 2 never reaches ffmpeg's ±2 cap across the whole
 parameter space; and `packages/editor/src/adjustment.test.ts` (23) for the

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — pure timeline → ffmpeg export compiler (Phase 2 of the
+ * @apelles/editor — pure timeline → ffmpeg export compiler (Phase 2 of the
  * MCP-editor-control effort, `docs/notes/mcp-architecture.md`).
  *
  * No exporter anywhere in the codebase renders a full MULTI-track/MULTI-clip
@@ -148,7 +148,7 @@ const EASE_SAMPLE_STEPS = 20;
 /**
  * Build an ffmpeg filter expression (using `t`, ffmpeg's own per-frame time
  * in seconds) that piecewise-linearly interpolates `param` across
- * `keyframes`, exactly mirroring the semantics `chroma_timeline::edit::
+ * `keyframes`, exactly mirroring the semantics `apelles_timeline::edit::
  * resolve_clip_transform` (Rust) already applies for live preview —
  * reimplemented here as a static expression string because export happens
  * outside the Rust engine's own per-frame interpolation loop, in ffmpeg
@@ -163,7 +163,7 @@ const EASE_SAMPLE_STEPS = 20;
  *
  * `keyframes` is never mutated — a sorted copy is used internally, since
  * keyframes are not guaranteed to arrive in frame order (mirrors every other
- * keyframe reader in this codebase, e.g. `chroma-timeline`'s own parser).
+ * keyframe reader in this codebase, e.g. `apelles-timeline`'s own parser).
  *
  * D-197 — the actual nested-`if`/`between` construction now lives in
  * `ffmpegExpr.ts`'s `piecewiseLinearExpr`, extracted verbatim (byte-identical
@@ -233,7 +233,7 @@ export function keyframeExprAt(
         t: a.t + (b.t - a.t) * u,
         // The value is the EXACT one both the live preview and the authoring
         // layer resolve at this instant — `easeCurveEval` is the same mirror
-        // of `chroma_types::EaseCurve::eval` they call. Only the straight
+        // of `apelles_types::EaseCurve::eval` they call. Only the straight
         // lines drawn between these points are the approximation.
         value: a.value + (b.value - a.value) * easeCurveEval(a.ease, u),
       });
@@ -301,7 +301,7 @@ export function quoteFiltergraphValue(raw: string): string {
  *  is its documented canonical form and avoids relying on that; the 3-digit
  *  shorthand is expanded here (each nibble doubled, per CSS) because ffmpeg
  *  does not accept it at all. An unparseable value falls back to white — the
- *  same degrade `chroma_timeline::TextLayer::rgb` performs on the preview
+ *  same degrade `apelles_timeline::TextLayer::rgb` performs on the preview
  *  side, so a malformed colour renders the same in both engines rather than
  *  failing one of them. */
 export function ffmpegColorLiteral(color: string): string {
@@ -422,7 +422,7 @@ export function buildTextDrawtextStep(
  * multi-line titles outright. Emitting each line as its own single-line draw at
  * a `y` that `captionLayout` computed means neither engine is ever asked to lay
  * out a second line, so the case where they agree is the only case that ever
- * runs. See `caption.ts`'s header and `chroma_timeline::caption`'s module doc.
+ * runs. See `caption.ts`'s header and `apelles_timeline::caption`'s module doc.
  *
  * **`y_align=font` is load-bearing.** It makes `y` refer to the font's own line
  * box rather than to the rendered string's ink, which is what makes a `y` mean
@@ -1005,7 +1005,7 @@ export interface TimelineExportOptions {
  * multiply on the incoming layer's alpha plane — which is also what makes
  * preview/export parity provable rather than hopeful: it is frame-index linear
  * (ffmpeg's `vf_fade` computes `frame_index / nb_frames`), which is exactly
- * `chroma_timeline::Transition::progress_at`'s own `(pos - start) / duration`.
+ * `apelles_timeline::Transition::progress_at`'s own `(pos - start) / duration`.
  */
 interface TransitionPlan {
   transition: Transition;
@@ -1102,7 +1102,7 @@ export function transitionPlansFor(
  * shape `[base]` already uses (`color` is a filter *source*), so it costs no
  * `-i` and no decode. `d=` bounds the source at the window's end so it is not
  * generated for the whole export; the two `fade`s make the triangle
- * `chroma_timeline::Transition::dip_alpha_at` computes — up to fully opaque at
+ * `apelles_timeline::Transition::dip_alpha_at` computes — up to fully opaque at
  * the window's midpoint (the cut), back down to nothing at its end.
  *
  * `fade` rather than a `geq` alpha expression, deliberately: `geq` is a
@@ -1175,7 +1175,7 @@ interface ClipPlacement {
  * so no existing export's timing moves by a frame.
  *
  * Its preview twin is `timeline.ts`'s `clipOutputSourceFrames` (and
- * `chroma_timeline::Clip::output_source_frames`), which is the same sum over
+ * `apelles_timeline::Clip::output_source_frames`), which is the same sum over
  * the same segments — that shared definition is what makes a ramped clip
  * occupy the same number of timeline frames in the app as it does in the file.
  */
@@ -1381,7 +1381,7 @@ function buildClipFilterChain(
   // **`interp=trilinear`, explicitly, and NOT ffmpeg's default.** vf_lut3d
   // defaults to `tetrahedral`, which is the more accurate interpolation — and
   // therefore the wrong one here, because the preview's own sampler
-  // (`chroma_types::Lut3d::sample_trilinear`) is trilinear. Matching the other
+  // (`apelles_types::Lut3d::sample_trilinear`) is trilinear. Matching the other
   // engine beats being marginally better than it; that is the same call D-230
   // made when it quantised the preview's intermediate to 8 bits purely because
   // ffmpeg's two filters do.
@@ -1758,7 +1758,7 @@ export function textClipsMissingFonts(
  * `-map`ped audio stream — see `timelineExportAudio.ts` for the actual
  * gain/fade/duck math.
  *
- * Compositing order mirrors `chroma_timeline::edit::composite_video_frame`'s
+ * Compositing order mirrors `apelles_timeline::edit::composite_video_frame`'s
  * own documented paint contract (`edit.rs`): **track index 0 is the highest
  * z-priority (painted last, on top)**; higher track indices paint first, at
  * the back. So the base of the overlay chain is the highest-indexed visible
@@ -2343,7 +2343,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   }
 
   // Final mix. Exactly one total audio-contributing clip bypasses `amix`/
-  // `asoftclip` entirely — mirrors `chroma_media::audio::mix_sources`'s own
+  // `asoftclip` entirely — mirrors `apelles_media::audio::mix_sources`'s own
   // documented single-active-source bypass (Phase C, D-057), which is what
   // keeps the overwhelmingly common "just this one clip's own audio, no
   // separate tracks" case byte-simple. Two or more sum with `normalize=0`

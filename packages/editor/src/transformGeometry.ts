@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — pure geometry for `TransformOverlay.tsx` (D-136, Phase 1
+ * @apelles/editor — pure geometry for `TransformOverlay.tsx` (D-136, Phase 1
  * of `docs/notes/on-canvas-transform.md`).
  *
  * Kept apart from the component on purpose: this package's vitest config
@@ -15,7 +15,7 @@
  * already use post-migration, and the unit `chroma_timeline_clip_geometry`'s
  * `naturalWidth`/`naturalHeight` report a clip's own source footprint in
  * (see that command's Rust-side doc, `chroma::edit::ClipGeometry`). A
- * `ContentBox` (`@chroma/player`'s `useContentBox`) then maps that fraction
+ * `ContentBox` (`@apelles/player`'s `useContentBox`) then maps that fraction
  * space onto real screen pixels — see `boxToScreenRect`.
  *
  * **D-204 (B-085) — a second consumer.** `canvasPick.ts` (canvas

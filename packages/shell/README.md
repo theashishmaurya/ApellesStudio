@@ -1,4 +1,4 @@
-# @chroma/shell
+# @apelles/shell
 
 **The app shell** (D-039; docked Sources panel D-046) — the window title bar
 (window chrome + the tab switcher + the Sources-panel toggle) over the active
@@ -12,7 +12,7 @@ and draws its own chrome. That chrome is the shell's, once, above all three
 tabs:
 
 - **left** — macOS traffic lights (close / minimize / toggle-fullscreen) + the
-  `CHROMA` wordmark
+  `APELLES` wordmark
 - **centre** — the tabs (Edit / Motion / Colorist), absolutely centred
 - **right** — Windows / Linux window controls, or a matching spacer on macOS
   (the Sources-panel toggle button also lives in this cluster, project open
@@ -43,17 +43,17 @@ interface ShellProps {
 (a `ReactNode`), rendered in the chrome bar's own right-hand cluster — left
 of the window controls — **only while that tab is the active one**. Today
 only the `edit` entry (`app/src/Root.tsx`) sets it, to the real
-`EditorExportDialog` from `@chroma/editor` — the owner asked, live, for
+`EditorExportDialog` from `@apelles/editor` — the owner asked, live, for
 Export to sit beside the tab switcher rather than inside the Edit tab's own
 top strip (D-249's placement). This is a deliberate, narrow reversal of
 D-118's "`Shell` stays tab-agnostic" rule for this one slot: `Shell` now acts
 on which tab is active to decide chrome-bar content, not just tab-body
 content. It does NOT reopen the dependency boundary below — `Shell.tsx`
-still never imports `@chroma/editor`; the node is injected by the
+still never imports `@apelles/editor`; the node is injected by the
 composition root exactly like `launcher`/`sourcesPanel`.
 
 **Project gating (D-039 step 6c).** The shell is the app's entry screen. While
-`projectOpen` is `false` the chrome bar shows only traffic lights + `CHROMA` +
+`projectOpen` is `false` the chrome bar shows only traffic lights + `APELLES` +
 window controls, and the content area renders `{launcher}` full-window. Once a
 project opens the tabs appear plus a "‹ Projects" button (next to the wordmark)
 that calls `onCloseProject`; Cmd/Ctrl+1/2/3 are gated on `projectOpen`. The tab
@@ -66,7 +66,7 @@ routing flag is computed in a small `Root` component in `app/src/main.tsx` from
 **Docked Sources panel (D-046; moved left + made resizable, D-116).** Same
 injection pattern as `launcher`: the shell renders whatever `sourcesPanel`
 node is passed (`app/src/main.tsx` wires in `<SourcesPanel />`) as a real
-`@chroma/ui` `ResizablePanel` (default 288px, min 220, max 480 — was a fixed
+`@apelles/ui` `ResizablePanel` (default 288px, min 220, max 480 — was a fixed
 288px `div`) to the **left** of the tab content — a sibling, never layered
 over it, so it can't fight Colorist's own panels or Editor's timeline pane
 for space. Left placement matches every professional NLE reference
@@ -82,7 +82,7 @@ button carries `aria-pressed`, which WebKit maps to an `AXCheckBox` role, not
 
 The shell owns the **only** Cmd/Ctrl+Z (undo) and Cmd/Ctrl+Y / Cmd/Ctrl+Shift+Z
 (redo) keydown listener in the app, gated on `projectOpen` like the tab-switch
-shortcut. It pops `@chroma/history`'s shared stack — not any one tab's local
+shortcut. It pops `@apelles/history`'s shared stack — not any one tab's local
 history — so it works no matter which tab is active, and **switches the active
 tab** to whichever tab the popped entry belongs to (the real UX decision here:
 see D-051 for why "switch focus" was chosen over "apply silently in the
@@ -97,8 +97,8 @@ of truth.
 ## Deps
 
 `react` + `zustand` + `lucide-react` + `@tauri-apps/api` + `@tauri-apps/plugin-os`
-+ `@chroma/ui` (D-042 — the "‹ Projects" chrome button is a `@chroma/ui`
-`<Button variant="ghost">`) + `@chroma/history` (D-051 — the shared undo/redo
++ `@apelles/ui` (D-042 — the "‹ Projects" chrome button is a `@apelles/ui`
+`<Button variant="ghost">`) + `@apelles/history` (D-051 — the shared undo/redo
 stack; a generic leaf package, not a tab package, so this doesn't violate "the
 shell never imports the tab packages"). The Tauri coupling is deliberate and
 acceptable — **the shell is the app chrome now.** Tab content is still
@@ -113,8 +113,8 @@ D-039 — the 3-tab layout + window chrome + the project-launcher entry screen
 global undo/redo. D-116 moved the Sources panel to the left and made it a
 real resizable panel instead of a fixed width. D-251 added the per-tab
 `headerAction` chrome-bar slot (Edit's Export today). Follow-up: move
-`ProjectLauncher` + the session store into `@chroma/bridge` / a
-`@chroma/project` fe package so the shell can own the launcher outright
+`ProjectLauncher` + the session store into `@apelles/bridge` / a
+`@apelles/project` fe package so the shell can own the launcher outright
 instead of taking it as a prop.
 
 ## Testing
@@ -123,9 +123,9 @@ instead of taking it as a prop.
 `// @vitest-environment jsdom` for real-DOM coverage — mirrors
 `packages/editor`'s convention). `Shell.exportAction.dom.test.tsx` (D-251,
 added with this package's first test suite) mounts the real `Shell` with the
-real `EditorExportDialog` from `@chroma/editor` as a tab's `headerAction` and
+real `EditorExportDialog` from `@apelles/editor` as a tab's `headerAction` and
 proves it renders in the chrome bar, opens the same dialog, and hides/shows
-per active tab. `@chroma/editor` is a **devDependency only** here — this
+per active tab. `@apelles/editor` is a **devDependency only** here — this
 package's runtime `dependencies` are unchanged (still just
 react + zustand + Tauri, see "Deps" above); only the test crosses into
 editor's source, to exercise the exact wiring `Root.tsx` uses in production

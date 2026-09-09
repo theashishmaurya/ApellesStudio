@@ -1,4 +1,4 @@
-// @chroma/editor — D-235, roadmap item 27. Two things are under test here:
+// @apelles/editor — D-235, roadmap item 27. Two things are under test here:
 //
 //   1. `trimMode.ts` — the pure mode resolution ("given this pointer position
 //      and these modifiers, which of the six drags is this?") and the op it

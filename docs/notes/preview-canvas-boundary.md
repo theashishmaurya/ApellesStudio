@@ -104,7 +104,7 @@ own boundary or the compositor's placement math).
 tab:** `app/src/components/chroma/ProjectSettingsModal.tsx` reads
 `useSessionStore` (`app/src/store`), which `packages/editor` cannot import — D-039's
 dependency direction is `app -> packages`, never the reverse, and Colorist's own
-session store is app-layer, not a `@chroma/editor` concern. Building a second UI for
+session store is app-layer, not a `@apelles/editor` concern. Building a second UI for
 the same two fields is a real, if small, duplication; the alternative (lifting
 `ProjectSettingsModal`'s state into a shared package) is a genuinely bigger
 refactor with no other driver behind it tonight — scoped out, not silently

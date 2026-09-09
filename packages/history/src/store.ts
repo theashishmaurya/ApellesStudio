@@ -1,10 +1,10 @@
 /**
- * @chroma/history — the shell-level global undo/redo stack (D-051).
+ * @apelles/history — the shell-level global undo/redo stack (D-051).
  *
  * A generic "here's an action that happened, here's how to undo/redo it"
  * record — `{ tab, label, undo(), redo(), ts }` — with no knowledge of any
  * tab's actual data shape. Any tab pushes an entry when it performs an
- * undoable edit; `@chroma/shell` owns the Cmd/Ctrl+Z / Cmd/Ctrl+Y keybinding
+ * undoable edit; `@apelles/shell` owns the Cmd/Ctrl+Z / Cmd/Ctrl+Y keybinding
  * and calls `undo()`/`redo()` here regardless of which tab is active (see
  * `Shell.tsx`).
  *
@@ -28,7 +28,7 @@ export interface HistoryEntry {
   /** unique id, auto-generated on push if not supplied */
   id: string;
   /** which tab this entry belongs to — a plain string (not `ShellTabId`) so
-   *  this package never depends on `@chroma/shell`; the shell validates it
+   *  this package never depends on `@apelles/shell`; the shell validates it
    *  against its own known tab ids when deciding whether/how to switch. */
   tab: string;
   /** human-readable one-liner, e.g. "Trim clip (start)" or "primary: exposure +0.35" */

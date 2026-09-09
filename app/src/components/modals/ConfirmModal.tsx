@@ -2,14 +2,14 @@ import { useEffect, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import Button from '../ui/Button';
-import type { ButtonVariant } from '@chroma/ui';
+import type { ButtonVariant } from '@apelles/ui';
 import Text from '../ui/Text';
 import { TextVariants } from '../../types/typography';
 
 interface ConfirmModalProps {
   cancelText?: string;
   confirmText?: string;
-  /** a `@chroma/ui` Button variant name (permissive string — the callers /
+  /** a `@apelles/ui` Button variant name (permissive string — the callers /
    *  `useUIStore` pass `'primary'` | `'destructive'`); narrowed at the Button. */
   confirmVariant?: string;
   isOpen: boolean;

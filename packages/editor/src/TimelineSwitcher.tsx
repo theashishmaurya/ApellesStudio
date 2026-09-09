@@ -1,15 +1,15 @@
 /**
- * @chroma/editor — the timeline switcher (D-046 pass 3; rebuilt as a tab
+ * @apelles/editor — the timeline switcher (D-046 pass 3; rebuilt as a tab
  * strip, D-058 item 3).
  *
  * A horizontal tab strip above the timeline pane: one tab per project
  * timeline (`chroma_timeline_list`, D-045), switching via
  * `chroma_timeline_set_active` on click, plus a `+` tab at the end that
  * creates a new empty timeline (`chroma_timeline_create`). Built on
- * `@chroma/ui`'s `Tabs`/`TabsList`/`TabsTrigger` (shadcn-on-Base-UI, D-042)
+ * `@apelles/ui`'s `Tabs`/`TabsList`/`TabsTrigger` (shadcn-on-Base-UI, D-042)
  * rather than the previous `Select` dropdown + separate "+ New" button —
  * the owner's ask was specifically a tab strip ("New ▾ | + New" was the
- * thing to replace), and this repo's standard is the canonical `@chroma/ui`
+ * thing to replace), and this repo's standard is the canonical `@apelles/ui`
  * component for a job like this, not hand-rolled tab styling.
  *
  * The `+` tab is a `TabsTrigger` like any other so it gets the same
@@ -25,7 +25,7 @@
 
 import { useEffect, useState } from 'react';
 import { Plus } from 'lucide-react';
-import { Input, Tabs, TabsList, TabsTrigger } from '@chroma/ui';
+import { Input, Tabs, TabsList, TabsTrigger } from '@apelles/ui';
 
 import { useEditorTimelineStore } from './timelineStore';
 
@@ -97,7 +97,7 @@ export function TimelineSwitcher() {
               // B-124 — `data-active`, not `data-selected`: Base UI's own
               // `Tabs.Tab` emits the former, so this accent underline had
               // never once drawn and the active timeline was indistinguishable
-              // from the others. Same one-word defect as `@chroma/ui`'s
+              // from the others. Same one-word defect as `@apelles/ui`'s
               // `tabs.tsx` carried; fixed in the same pass so the two cannot
               // drift back apart.
               className="h-8 shrink-0 grow-0 basis-auto rounded-t-md rounded-b-none border-r border-border-color/60 border-b-2 border-b-transparent px-3 text-[11px] last:border-r-0 data-active:border-b-accent"

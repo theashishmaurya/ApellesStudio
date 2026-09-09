@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's own Export button + dialog + queue
+ * @apelles/editor — the Edit tab's own Export button + dialog + queue
  * (D-198, `docs/notes/export-dialog-queue.md`).
  *
  * The owner pointed at a real screenshot of the running Edit tab: no Export
@@ -12,7 +12,7 @@
  * Not a parallel implementation.
  *
  * Follows Colorist's own `ExportDialog.tsx` (D-049) conventions: a
- * `Dialog`/`DialogContent` from `@chroma/ui`, a native `save()` picker for
+ * `Dialog`/`DialogContent` from `@apelles/ui`, a native `save()` picker for
  * the output path, plain elements + colour tokens for the rest. What's
  * different here, because the underlying capability is different: per-clip
  * `speedOverrides`/`fitOverrides`/`freezeOverrides` rows (Colorist's export
@@ -51,7 +51,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@chroma/ui';
+} from '@apelles/ui';
 
 import { usePanelOpen } from './panelRegistry';
 import { useEditorTimelineStore } from './timelineStore';

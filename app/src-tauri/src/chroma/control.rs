@@ -1,4 +1,4 @@
-//! Chroma control server (D-020).
+//! Apelles control server (D-020).
 //!
 //! A tiny blocking HTTP server that runs *inside* the Tauri app and bridges
 //! `HTTP  ⇄  Tauri events  ⇄  the frontend`. Every request is turned into a
@@ -22,7 +22,7 @@
 //! (B-100/D-219): internal debug tooling is never shipped, so a release build
 //! has no [`native_op`] arms at all and forwards every op onward. The
 //! FRONTEND-side `debug_*` ops (D-219's UI-state / DOM-tree / frame-timing
-//! registry, `@chroma/debug`) need no special handling here — they are
+//! registry, `@apelles/debug`) need no special handling here — they are
 //! ordinary forwarded ops, gated on their own side by `import.meta.env.DEV`.
 //!
 //! See chroma/docs/08-decisions.md D-020 / D-210 and
@@ -132,7 +132,7 @@ pub fn serve(app: tauri::AppHandle) {
             Err(BridgeErr::Timeout) => {
                 let _ = req.respond(json_response(
                     504,
-                    err_body("frontend did not respond within 20s — is the Chroma window open?"),
+                    err_body("frontend did not respond within 20s — is the Apelles window open?"),
                 ));
             }
         }

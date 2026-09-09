@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — permanent real-DOM regression coverage for marquee-select
+ * @apelles/editor — permanent real-DOM regression coverage for marquee-select
  * (D-137, roadmap item 12 Phase 2), built on `testUtils/pointerHarness.ts`
  * (D-142).
  *

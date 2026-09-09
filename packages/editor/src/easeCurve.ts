@@ -1,9 +1,9 @@
 /**
- * @chroma/editor — the cubic-bezier easing curve solver, in TypeScript
+ * @apelles/editor — the cubic-bezier easing curve solver, in TypeScript
  * (D-233; the solver itself is D-147's, extracted here from
  * `timelineExportAudio.ts` where it lived when a fade was its only caller).
  *
- * What it is: an exact, field-for-field mirror of `chroma_types::ease`
+ * What it is: an exact, field-for-field mirror of `apelles_types::ease`
  * (Rust) — the `cubic-bezier(x1,y1,x2,y2)` model CSS transitions and After
  * Effects keyframe easing use, with `P0 = (0,0)` and `P3 = (1,1)` implicit.
  * Given normalised progress `x`, solve `x(t) = x` for the hidden parameter
@@ -42,12 +42,12 @@
 
 import type { EaseCurve } from './timeline';
 
-/** Newton-Raphson iteration cap — mirrors `chroma_types::ease::
+/** Newton-Raphson iteration cap — mirrors `apelles_types::ease::
  *  NEWTON_ITERATIONS` (WebKit's own number, see that constant's own doc). */
 const NEWTON_ITERATIONS = 8;
-/** Bisection fallback cap — mirrors `chroma_types::ease::BISECTION_ITERATIONS`. */
+/** Bisection fallback cap — mirrors `apelles_types::ease::BISECTION_ITERATIONS`. */
 const BISECTION_ITERATIONS = 32;
-/** Convergence tolerance — mirrors `chroma_types::ease::EPSILON`. */
+/** Convergence tolerance — mirrors `apelles_types::ease::EPSILON`. */
 const EPSILON = 1e-7;
 
 /** `B(t)` for a cubic bezier with `P0 = 0`, `P3 = 1` and the two given
@@ -92,7 +92,7 @@ function solveTForX(x: number, x1: number, x2: number): number {
 }
 
 /**
- * `y` at normalised progress `x` — mirrors `chroma_types::EaseCurve::eval`
+ * `y` at normalised progress `x` — mirrors `apelles_types::EaseCurve::eval`
  * field-for-field (same clamping, same short-circuit at the exact endpoints,
  * same Newton-then-bisection solve).
  *
@@ -125,7 +125,7 @@ export function easeCurveEval(curve: EaseCurve, x: number): number {
  *  such pair traces the straight line, which is why `linear` is stored as
  *  `(1/3, 2/3)` rather than CSS's `(0,0,1,1)` and why comparing against one
  *  literal preset would answer "no" for the other (see `EASE_PRESETS`' own
- *  doc, and `chroma_types::EaseCurve::LINEAR`'s).
+ *  doc, and `apelles_types::EaseCurve::LINEAR`'s).
  *
  *  Used to keep both renderers honest about the no-op case: the exporter emits
  *  a plain two-point linear segment rather than 20 sampled ones, and

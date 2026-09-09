@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — pure hit-testing for canvas click-to-select (D-204, fixing
+ * @apelles/editor — pure hit-testing for canvas click-to-select (D-204, fixing
  * B-085; Open Question 3 of `docs/notes/on-canvas-transform.md`, answered).
  * The DOM/pointer half — when a press counts as a selection at all — is
  * `useCanvasClipPick.ts`; this file is only the geometry it asks.
@@ -16,7 +16,7 @@
  * deliberate one-to-one mirror of the Rust that actually paints the preview:
  *
  *   - `visibleVideoLayersAt` mirrors `Timeline::resolve_visible_video_layers_at`
- *     (`crates/chroma-timeline/src/lib.rs`) exactly — video tracks only, a
+ *     (`crates/apelles-timeline/src/lib.rs`) exactly — video tracks only, a
  *     `hidden` track contributes nothing, and a track with a gap at that frame
  *     contributes nothing. It returns layers in **track-index-ascending order,
  *     which is topmost-first**: `composite_video_frame` decodes in that order

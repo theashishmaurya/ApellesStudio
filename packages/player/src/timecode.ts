@@ -1,7 +1,7 @@
 /**
  * `fmtTimecode` — single source of truth for the `HH:MM:SS:FF` readout used by
- * every `<Player>` transport bar. Moved here from `@chroma/editor`'s
- * `PreviewPane.tsx` (D-039 roadmap "Next" item 1) — `@chroma/editor` now
+ * every `<Player>` transport bar. Moved here from `@apelles/editor`'s
+ * `PreviewPane.tsx` (D-039 roadmap "Next" item 1) — `@apelles/editor` now
  * imports it from here instead of keeping its own copy.
  */
 export function fmtTimecode(frame: number, fps?: number): string {

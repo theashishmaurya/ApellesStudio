@@ -1547,7 +1547,7 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
     activeMaskContainerId,
     activeAiPatchContainerId,
     imageRenderSize,
-    chromaFrameNonce, // Chroma: regen the mask overlay when the tracked frame changes
+    chromaFrameNonce, // Apelles: regen the mask overlay when the tracked frame changes
   ]);
 
   useEffect(() => {

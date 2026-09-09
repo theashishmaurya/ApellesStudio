@@ -1,4 +1,4 @@
-//! Chroma's own bit of process state, kept out of upstream's `AppState` so the
+//! Apelles' own bit of process state, kept out of upstream's `AppState` so the
 //! fork diff stays minimal (D-003).
 //!
 //! **Multi-shot session (D-033).** A grading job is N shots from one shoot. The
@@ -306,7 +306,7 @@ mod tests {
 
     fn info() -> VideoInfo {
         VideoInfo {
-            resolution: chroma_types::Resolution::new(1920, 1080),
+            resolution: apelles_types::Resolution::new(1920, 1080),
             fps_num: 24,
             fps_den: 1,
             duration_secs: 10.0,

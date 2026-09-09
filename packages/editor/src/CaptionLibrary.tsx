@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's **caption library** (D-243, docked by
+ * @apelles/editor — the Edit tab's **caption library** (D-243, docked by
  * D-263; `docs/notes/caption-presets.md`).
  *
  * **What it is:** the Subtitles library, rendered inside the docked left-hand
@@ -53,7 +53,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@chroma/ui';
+} from '@apelles/ui';
 
 import { resolveCaptionStyle } from './caption';
 import { captionAnimationOf } from './captionAnim';
@@ -259,7 +259,7 @@ export function CaptionLibrary() {
         </div>
 
         <TabsContent value="styles" className="m-0 min-h-0 flex-1">
-          {/* A plain overflow scroller rather than `@chroma/ui`'s `ScrollArea`
+          {/* A plain overflow scroller rather than `@apelles/ui`'s `ScrollArea`
               (which is what the popover used at a fixed `h-[320px]`): docked,
               this fills whatever height the resizable column has, and a
               height-driven flex child is the one thing Base UI's ScrollArea

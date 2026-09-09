@@ -1,11 +1,11 @@
 /**
- * @chroma/editor — on-canvas transform handles for the Edit-tab preview
+ * @apelles/editor — on-canvas transform handles for the Edit-tab preview
  * (D-136, Phase 1 of `docs/notes/on-canvas-transform.md`). The owner's
  * original ask: "the player is canvas — once I have another video I can
  * select, drag and make it smaller or larger, PIP etc."
  *
  * Renders as a sibling of `PreviewPane.tsx`'s `<img>`, absolutely positioned
- * over the same wrapper `<div>` — no `@chroma/player` change needed, `Player`
+ * over the same wrapper `<div>` — no `@apelles/player` change needed, `Player`
  * already accepts an arbitrary `surface` ReactNode (see that package's own
  * contract doc). Draws a box + corner handles for the ONE selected clip
  * (`useEditorTimelineStore.selection`, D-107/D-118) — nothing when

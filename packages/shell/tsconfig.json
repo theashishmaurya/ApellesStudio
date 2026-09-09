@@ -8,7 +8,7 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    // D-251 — `Shell.exportAction.dom.test.tsx` imports `@chroma/editor`'s
+    // D-251 — `Shell.exportAction.dom.test.tsx` imports `@apelles/editor`'s
     // `EditorExportDialog` (a devDependency-only, test-only crossing — see
     // that test file's own doc). With no TS project references between
     // packages, `tsc -p packages/shell` type-checks editor's reachable

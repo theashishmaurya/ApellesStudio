@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Inspector's **Title** section: a text clip's own
+ * @apelles/editor — the Inspector's **Title** section: a text clip's own
  * content / font / size / colour (D-211, `docs/notes/text-title-clips.md`).
  *
  * **Its own component, rendered ABOVE `EditorInspectorPanel`, rather than a
@@ -44,8 +44,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@chroma/ui';
-import { InspectorSection } from '@chroma/inspector';
+} from '@apelles/ui';
+import { InspectorSection } from '@apelles/inspector';
 
 import { findClip, newTextLayer, type TextLayer } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';

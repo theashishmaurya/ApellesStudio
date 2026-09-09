@@ -219,7 +219,7 @@ interface MyLens {
 
 const EXECUTE_TIMEOUT = 3000;
 
-// Chroma has no cloud-AI account (D-029) — stubs for RapidRAW's cloud sign-in path.
+// Apelles has no cloud-AI account (D-029) — stubs for RapidRAW's cloud sign-in path.
 const useUser = () => ({ user: null as any });
 const useAuth = () => ({ getToken: async (): Promise<string | null> => null });
 const useClerk = () => ({ signOut: async () => {} });
@@ -2287,11 +2287,11 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                             </Text>
 
                             <div className="mt-8">
-                              {/* Chroma (D-029): no cloud-AI account. RapidRAW's hosted
-                                  generative features aren't part of Chroma — all AI runs
+                              {/* Apelles (D-029): no cloud-AI account. RapidRAW's hosted
+                                  generative features aren't part of Apelles — all AI runs
                                   locally (the ai/ sidecar + in-process ONNX). */}
                               <Text variant={TextVariants.small} className="opacity-70">
-                                Chroma runs all AI locally — there's no cloud account to sign in to.
+                                Apelles runs all AI locally — there's no cloud account to sign in to.
                               </Text>
                             </div>
                           </motion.div>

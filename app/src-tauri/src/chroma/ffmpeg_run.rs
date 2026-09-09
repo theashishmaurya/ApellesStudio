@@ -7,7 +7,7 @@
 //!   `packages/editor/src/timelineExport.ts` (D-183's Edit-tab timeline
 //!   exporter, a pure TS function that reads the real `Timeline`/`Clip[]`
 //!   model and emits one ffmpeg argv) — this command just runs whatever
-//!   argv it's handed, mirroring `crates/chroma-motion`'s own
+//!   argv it's handed, mirroring `crates/apelles-motion`'s own
 //!   `build_command`/`run_render` split (pure argv builder, unit-testable
 //!   without spawning anything; a thin execute wrapper on top of it) one
 //!   level more generic, since this one has no fixed program args of its
@@ -19,7 +19,7 @@
 //!   chroma_motion_render` already uses).
 //!
 //! **Both stdout AND stderr are captured and returned**, unlike
-//! `chroma-motion`'s own `RenderOutcome` (stdout only, since Remotion's CLI
+//! `apelles-motion`'s own `RenderOutcome` (stdout only, since Remotion's CLI
 //! puts its real output there) — ffmpeg puts almost everything useful
 //! (progress, encoder settings, the final "video:… audio:… muxing
 //! overhead:" summary) on STDERR, even on a successful run, so a caller
@@ -28,7 +28,7 @@
 use std::process::Command;
 
 /// One ffmpeg invocation: just the argv that follows `ffmpeg` itself. No
-/// cwd of its own (unlike `chroma_motion::RenderRequest`, which must run
+/// cwd of its own (unlike `apelles_motion::RenderRequest`, which must run
 /// inside `packages/motion-engine`) — every path an ffmpeg argv needs is
 /// expected to already be absolute, since the caller (`timelineExport.ts`)
 /// builds it from the project's own absolute source/output paths.
@@ -57,7 +57,7 @@ pub struct FfmpegRunOutcome {
 /// Build the `ffmpeg <args>` invocation — pure, no I/O beyond what
 /// `Command` construction itself needs. Split out from [`run_ffmpeg`] so
 /// the exact argv is unit-testable without actually spawning `ffmpeg`,
-/// mirroring `chroma_motion::build_command`'s own reason for existing.
+/// mirroring `apelles_motion::build_command`'s own reason for existing.
 pub fn build_command(req: &FfmpegRunRequest) -> Command {
     let mut cmd = Command::new("ffmpeg");
     cmd.args(&req.args);
@@ -66,7 +66,7 @@ pub fn build_command(req: &FfmpegRunRequest) -> Command {
 
 /// Run `req`, blocking until `ffmpeg` exits. Callers on an async runtime
 /// should wrap this in `spawn_blocking` (the Tauri command
-/// `chroma_run_ffmpeg` does) — same convention `chroma_motion::run_render`
+/// `chroma_run_ffmpeg` does) — same convention `apelles_motion::run_render`
 /// already established.
 pub fn run_ffmpeg(req: &FfmpegRunRequest) -> Result<FfmpegRunOutcome, String> {
     let output = build_command(req)
@@ -82,8 +82,8 @@ pub fn run_ffmpeg(req: &FfmpegRunRequest) -> Result<FfmpegRunOutcome, String> {
 
 /// The last `n` lines of `s` — enough context to explain a failure (or
 /// confirm a real success) without dumping ffmpeg's whole console log into
-/// the result. Copied verbatim from `chroma_motion`'s own private `tail()`
-/// helper (`crates/chroma-motion/src/lib.rs`) rather than importing it —
+/// the result. Copied verbatim from `apelles_motion`'s own private `tail()`
+/// helper (`crates/apelles-motion/src/lib.rs`) rather than importing it —
 /// that crate doesn't export it, and duplicating four lines of pure string
 /// logic is cheaper than widening its own public API for a second caller.
 fn tail(s: &str, n: usize) -> String {
@@ -135,7 +135,7 @@ mod tests {
     }
 
     /// A real integration test — `ffmpeg` is already a hard dependency
-    /// everywhere else in this crate's own siblings (`chroma-media`,
+    /// everywhere else in this crate's own siblings (`apelles-media`,
     /// `chroma::export`'s own module doc: "Decode the loaded clip
     /// frame-by-frame with ffmpeg"), so it's safe to assume present here
     /// too. `-version` is one of the few ffmpeg invocations that writes its

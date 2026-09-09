@@ -114,7 +114,7 @@ snapshot-restore fallback) now lives as a standalone, shared function —
 `restoreEditorHistorySnapshot(targetIndex, snapshot)` in
 `app/src/utils/editorHistorySnapshot.ts` — extracted out of
 `AgentActivityDock.tsx`'s `undoEntry` so the new shell-level global undo/redo
-(`@chroma/history`, bridged in via `useColoristHistoryBridge.ts`) can reuse
+(`@apelles/history`, bridged in via `useColoristHistoryBridge.ts`) can reuse
 the exact same restore logic instead of a second implementation drifting
 from this one. `undoEntry` now just calls it + `markUndoneFrom`. The feed
 itself, its jump-to-here semantics, and the limitations below are unchanged —
@@ -206,7 +206,7 @@ postHumanRequest(reason, roi)  clearHumanRequest()  setFeedOpen(b)
   `<AgentRoiHighlight>` in the existing absolute overlay layer.
 
 Everything else is new files or edits to `useChromaControl.ts` (itself a
-Chroma-only file from D-020) + `mcp/server.py` + `mcp/README.md`.
+Apelles-only file from D-020) + `mcp/server.py` + `mcp/README.md`.
 
 ## MCP
 

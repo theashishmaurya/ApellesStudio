@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the primitive catalog (D-151).
+ * @apelles/motion — the primitive catalog (D-151).
  *
  * What it is: the browsable inventory of every primitive the motion engine
  * can actually render, plus the schema-valid default manifest fragment to
@@ -30,7 +30,7 @@
  * `Scene3D.tsx`), so they belong in `scene.scene3d.children`, never in
  * `scene.layers`. The 2D five go the other way. `addLayer` enforces this.
  */
-import type { Layer } from '@chroma/motion-engine/src/engine/schema';
+import type { Layer } from '@apelles/motion-engine/src/engine/schema';
 
 /** the `use` string of a primitive — the engine's own enum, not a re-declaration */
 export type PrimitiveUse = Layer['use'];

@@ -1,4 +1,4 @@
-// @chroma/editor — auto-captioning from the D-189 transcript (D-238,
+// @apelles/editor — auto-captioning from the D-189 transcript (D-238,
 // roadmap item 27's "Auto-captioning from the D-189 transcript" line).
 //
 // **What it is:** the ONE new thing this feature needed — a pure function
@@ -202,7 +202,7 @@ export interface GeneratedCaption {
  *  `offsetFrames` - the same "drop it at the playhead, not at 0:00" rule
  *  `SubtitleImportButton`/`editor_import_subtitles` already use.
  *
- * **Mirrors `chroma_timeline::subtitle_import::cues_to_clips` exactly**: each
+ * **Mirrors `apelles_timeline::subtitle_import::cues_to_clips` exactly**: each
  * timestamp is rounded to a frame independently (not the duration computed
  * from an un-rounded seconds delta), and a cue is given a minimum duration of
  * one frame rather than being allowed to collapse to zero. Doing this

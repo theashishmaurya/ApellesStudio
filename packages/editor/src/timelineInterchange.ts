@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — pure timeline → FCPXML interchange compiler (D-196), the
+ * @apelles/editor — pure timeline → FCPXML interchange compiler (D-196), the
  * Edit tab's "move this edit to another NLE" export.
  *
  * What it is: takes the SAME `Timeline` model `timelineExport.ts` compiles to
@@ -165,7 +165,7 @@ function fileUrl(path: string): string {
 // --------------------------------------------------------------------------- //
 
 /** What this module needs to know about a clip's SOURCE media beyond what
- *  `Clip` itself carries, to convert Chroma's canvas-fraction transform
+ *  `Clip` itself carries, to convert Apelles' canvas-fraction transform
  *  (`scale`/`box_width`/`box_height`/`position_x`/`position_y`, all D-136/
  *  D-193 fractions of the OUTPUT composition) into FCPXML's `adjust-transform`
  *  (a multiplier of the clip's OWN NATIVE pixel size, plus a point offset from
@@ -207,7 +207,7 @@ export interface FcpxmlExportOptions {
   /** `<project name="...">` — defaults to `timeline.name`. */
   projectName?: string;
   /** `<event name="...">` this project lands in — defaults to
-   *  `"Chroma Export"`, matching every real FCPXML export's own convention
+   *  `"Apelles Export"`, matching every real FCPXML export's own convention
    *  of always having SOME event to file the project under. */
   eventName?: string;
   /** Per-clip source metadata this module cannot probe itself — see
@@ -228,7 +228,7 @@ export interface FcpxmlExportResult {
 }
 
 // --------------------------------------------------------------------------- //
-// Geometry — canvas-fraction (Chroma) -> native-multiplier + centre-offset
+// Geometry — canvas-fraction (Apelles) -> native-multiplier + centre-offset
 // (FCPXML `adjust-transform`) conversion. See `ClipSourceInfo`'s own doc for
 // why the native size may be a documented fallback rather than the real one.
 // --------------------------------------------------------------------------- //
@@ -283,7 +283,7 @@ function transformPosition(box: ResolvedBox, opts: FcpxmlExportOptions): string 
 
 /** `adjust-transform`'s own `"sx sy"` scale pair — a MULTIPLIER of the
  *  clip's OWN NATIVE (post-crop) pixel size, fundamentally different from
- *  Chroma's `scale` (a fraction of the OUTPUT canvas, `timelineExport.ts`'s
+ *  Apelles' `scale` (a fraction of the OUTPUT canvas, `timelineExport.ts`'s
  *  own B-074 doc) — this is the actual unit conversion between the two
  *  models, not a value passed through. `nativeWidth`/`nativeHeight` are
  *  already post-crop (the caller applies `adjust-crop` from the SAME
@@ -386,7 +386,7 @@ export function buildFcpxml(timeline: Timeline, opts: FcpxmlExportOptions): Fcpx
 
   // Lane assignment (D-196): FCPXML's own rule (DTD comment on `ao_attrs`) is
   // "positive lane = anchored ABOVE its parent, higher = more foreground."
-  // Chroma's own compositing contract (`chroma_timeline::edit::
+  // Apelles' own compositing contract (`apelles_timeline::edit::
   // composite_video_frame`, mirrored by `timelineExport.ts`'s own doc) is
   // "track index 0 is the highest z-priority" — so track 0 gets the HIGHEST
   // lane number, and the back-most video track gets lane 1 (never 0 — a
@@ -599,7 +599,7 @@ export function buildFcpxml(timeline: Timeline, opts: FcpxmlExportOptions): Fcpx
 
   const totalDurationStr = rationalTimeString(totalFrames, projectRate);
   const projectName = xmlEscape(opts.projectName ?? timeline.name);
-  const eventName = xmlEscape(opts.eventName ?? 'Chroma Export');
+  const eventName = xmlEscape(opts.eventName ?? 'Apelles Export');
 
   const xml =
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
@@ -611,7 +611,7 @@ export function buildFcpxml(timeline: Timeline, opts: FcpxmlExportOptions): Fcpx
     `<project name="${projectName}">` +
     `<sequence format="${sequenceFormat.id}" duration="${totalDurationStr}" tcStart="0s" tcFormat="NDF">` +
     '<spine>' +
-    `<gap name="Chroma Timeline" offset="0s" duration="${totalDurationStr}">${clipXmlParts.join('')}</gap>` +
+    `<gap name="Apelles Timeline" offset="0s" duration="${totalDurationStr}">${clipXmlParts.join('')}</gap>` +
     '</spine>' +
     '</sequence>' +
     '</project>' +

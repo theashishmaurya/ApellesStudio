@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution proof that a SPEED RAMP (D-236)
+// @apelles/editor — REAL ffmpeg-execution proof that a SPEED RAMP (D-236)
 // exports the exact source frames the live preview resolves.
 //
 // **Why this test is the point of the feature, not an afterthought.** This

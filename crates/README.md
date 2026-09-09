@@ -1,4 +1,4 @@
-# crates/ — Chroma's Rust workspace
+# crates/ — Apelles' Rust workspace
 
 The **thin-shell / fat-core** structure locked in **D-039** (the Gyroflow model):
 the Tauri app is glue; every capability is a library. Domain models are pure Rust
@@ -13,22 +13,22 @@ app  →  agent/ai  →  project/timeline/grade-model/motion  →  media/grade/c
 
 | layer | crate | exists? | responsibility | deps |
 |---|---|---|---|---|
-| L0 | `chroma-types` | **yes, real** | `Rational` / `Resolution` / error enums, plus the pure shared maths both render engines consume rather than each re-deriving: `ease`, `fade`, `pan`, `eq`, `adjustment` (D-230's operator) and `lut3d` (D-256's baked 3D LUT — the form the Colorist's grade travels in to reach the Edit compositor and the ffmpeg exporter). Zero heavy deps | — |
-| L0 | `chroma-gpu` | **yes, partial (D-144)** | headless wgpu device/queue/limits (`init_gpu_context`, D-014, extracted). No display surface, no texture pool yet, no `render()` — those stay app-side / gated on `chroma-grade` | `wgpu`, `pollster`, `log` |
-| L1 | `chroma-media` | **yes, real (D-146)** | `video` (ffmpeg-CLI probe + decode, D-015), `decode_pipe` (D-030/D-125), `media_cache` (D-128), `probe` (the two-layer probe cache, lifted out of `chroma/edit.rs`), `filmstrip` (D-128/D-134), `audio` (symphonia→rubato→cpal engine + waveforms, D-049/D-051/D-057). Export encode (D-022) is still in `chroma/export.rs`; VideoToolbox→texture is future | types (**no `gpu` edge yet** — nothing extracted so far needs one; the lock doc's table predicted one) |
-| L1 | `chroma-grade` | future | the grade **renderer** — wraps the RapidRAW (`app/`) shader + adjustments↔uniform bridge + masks + scopes (D-021). D-256's `chroma::grade_lut` (the identity-lattice bake that carries a grade into the Edit tab as a `chroma_types::Lut3d`) is app-side precisely because it links that shader, and is written to move here whole when this crate exists | gpu, types, `app/` engine |
-| L1 | `chroma-compositor` | future | multi-layer wgpu blend + transitions, then `chroma-grade` per output frame — new, for the Edit tab | gpu, media, grade, types |
-| L2 | `chroma-timeline` | **yes, real** (D-041/045/046/082/136/137/138/235) | OTIO-shaped edit model: tracks / clips / gaps / ripple / roll / slip / slide, plus the `speed_ramp` time remap the live preview decodes with (D-236, mirrored by `@chroma/editor`'s `speedRamp.ts`, which the exporter compiles from). **Pure.** | types |
-| L2 | `chroma-grade-model` | **yes, real** (D-143) | the `grade.json` document (D-025) — save/load, schema migration, matte/track/depth-ref externalization. **Pure** (model vs renderer). | — |
-| L2 | `chroma-project` | **yes, real (D-148)** | the `.chroma` project (D-037) + settings (D-038): the `project.json` manifest and every schema migration, the media pool + bins (D-044/D-045/D-059), the D-070 unified clip identity + grade-file migration, `list_projects_in`/`new_project_in`, and the project's timeline lifecycle (lifted out of `chroma/edit.rs`). The 20 commands + `open_manifest` stay app-side — all 20 take `tauri::State<'_, AppState>` | types, timeline, **media** (**not** grade-model — the table's earlier guess; the D-070 migration renames grade files, never parses one) |
-| L2 | `chroma-motion` | **yes** (D-046) | manifest → Remotion bridge: shells out to `npx remotion render` in `packages/motion-engine` rather than reimplementing it | types |
-| L3 | `chroma-ai` | **yes** (D-145) | sidecar client: lifecycle (spawn/health/hash, D-028/D-101), `/segment`+`/track`+`/refine_track` (D-016/D-018/D-019), `/depth_track` (D-036) wire plumbing | (none — no chroma-types dependency yet; whisper is not wired in this pass) |
-| L3 | `chroma-agent` | future | control server (D-020) + MCP op registry + scope exposure | project, grade-model, timeline, types |
-| L4 | `chroma-app` (`app/src-tauri`) | **yes** — the vendored fork, still named `RapidRAW` in its `Cargo.toml` | the Tauri binary — `#[tauri::command]` surface per tab, `RunEvent` hooks, sidecar spawn | all of the above |
+| L0 | `apelles-types` | **yes, real** | `Rational` / `Resolution` / error enums, plus the pure shared maths both render engines consume rather than each re-deriving: `ease`, `fade`, `pan`, `eq`, `adjustment` (D-230's operator) and `lut3d` (D-256's baked 3D LUT — the form the Colorist's grade travels in to reach the Edit compositor and the ffmpeg exporter). Zero heavy deps | — |
+| L0 | `apelles-gpu` | **yes, partial (D-144)** | headless wgpu device/queue/limits (`init_gpu_context`, D-014, extracted). No display surface, no texture pool yet, no `render()` — those stay app-side / gated on `apelles-grade` | `wgpu`, `pollster`, `log` |
+| L1 | `apelles-media` | **yes, real (D-146)** | `video` (ffmpeg-CLI probe + decode, D-015), `decode_pipe` (D-030/D-125), `media_cache` (D-128), `probe` (the two-layer probe cache, lifted out of `chroma/edit.rs`), `filmstrip` (D-128/D-134), `audio` (symphonia→rubato→cpal engine + waveforms, D-049/D-051/D-057). Export encode (D-022) is still in `chroma/export.rs`; VideoToolbox→texture is future | types (**no `gpu` edge yet** — nothing extracted so far needs one; the lock doc's table predicted one) |
+| L1 | `apelles-grade` | future | the grade **renderer** — wraps the RapidRAW (`app/`) shader + adjustments↔uniform bridge + masks + scopes (D-021). D-256's `chroma::grade_lut` (the identity-lattice bake that carries a grade into the Edit tab as a `apelles_types::Lut3d`) is app-side precisely because it links that shader, and is written to move here whole when this crate exists | gpu, types, `app/` engine |
+| L1 | `apelles-compositor` | future | multi-layer wgpu blend + transitions, then `apelles-grade` per output frame — new, for the Edit tab | gpu, media, grade, types |
+| L2 | `apelles-timeline` | **yes, real** (D-041/045/046/082/136/137/138/235) | OTIO-shaped edit model: tracks / clips / gaps / ripple / roll / slip / slide, plus the `speed_ramp` time remap the live preview decodes with (D-236, mirrored by `@apelles/editor`'s `speedRamp.ts`, which the exporter compiles from). **Pure.** | types |
+| L2 | `apelles-grade-model` | **yes, real** (D-143) | the `grade.json` document (D-025) — save/load, schema migration, matte/track/depth-ref externalization. **Pure** (model vs renderer). | — |
+| L2 | `apelles-project` | **yes, real (D-148)** | the `.chroma` project (D-037) + settings (D-038): the `project.json` manifest and every schema migration, the media pool + bins (D-044/D-045/D-059), the D-070 unified clip identity + grade-file migration, `list_projects_in`/`new_project_in`, and the project's timeline lifecycle (lifted out of `chroma/edit.rs`). The 20 commands + `open_manifest` stay app-side — all 20 take `tauri::State<'_, AppState>` | types, timeline, **media** (**not** grade-model — the table's earlier guess; the D-070 migration renames grade files, never parses one) |
+| L2 | `apelles-motion` | **yes** (D-046) | manifest → Remotion bridge: shells out to `npx remotion render` in `packages/motion-engine` rather than reimplementing it | types |
+| L3 | `apelles-ai` | **yes** (D-145) | sidecar client: lifecycle (spawn/health/hash, D-028/D-101), `/segment`+`/track`+`/refine_track` (D-016/D-018/D-019), `/depth_track` (D-036) wire plumbing | (none — no apelles-types dependency yet; whisper is not wired in this pass) |
+| L3 | `apelles-agent` | future | control server (D-020) + MCP op registry + scope exposure | project, grade-model, timeline, types |
+| L4 | `apelles-app` (`app/src-tauri`) | **yes** — the vendored fork; its Cargo package is `apelles` since D-265 (was `RapidRAW`) | the Tauri binary — `#[tauri::command]` surface per tab, `RunEvent` hooks, sidecar spawn | all of the above |
 
 `app/` (the vendored RapidRAW fork, D-040) stays the engine; over time these
 crates absorb more and RapidRAW shrinks to "grade shader + mask raster". Only
-`chroma-grade` will link it.
+`apelles-grade` will link it.
 
 ## Migration status (D-039)
 
@@ -37,15 +37,15 @@ crates absorb more and RapidRAW shrinks to "grade shader + mask raster". Only
   item + `it_builds` test), the Remotion motion engine moved to
   `packages/motion-engine/`. **No real code moved; the app still builds.**
 - **Step 2+:** extract per-crate, each its own commit, `cargo test` green,
-  roadmap-tracked. Order: leaf pure crates → `chroma-gpu` / `chroma-media` /
-  `chroma-project` → `chroma-agent` / `chroma-ai` → `chroma-grade` +
-  `chroma-app` thin binary. `chroma-compositor` is greenfield from day one.
-- **`chroma-gpu` (D-144, 2026-09-05):** `render_core::init_gpu_context()` moved
+  roadmap-tracked. Order: leaf pure crates → `apelles-gpu` / `apelles-media` /
+  `apelles-project` → `apelles-agent` / `apelles-ai` → `apelles-grade` +
+  `apelles-app` thin binary. `apelles-compositor` is greenfield from day one.
+- **`apelles-gpu` (D-144, 2026-09-05):** `render_core::init_gpu_context()` moved
   verbatim (device + queue + limits, headless). `render_core::render()` did
   **not** move — it is a pass-through into
   `gpu_processing::process_and_get_dynamic_image_inner`, whose signature is
   entirely RapidRAW-core types (`GpuContext`'s `display` field,
-  `RenderCaches`, `RenderRequest`), and moving it is `chroma-grade`, later.
+  `RenderCaches`, `RenderRequest`), and moving it is `apelles-grade`, later.
   Resolved the one open question from D-141's scoping pass: `GpuContext`
   *does* split into two structs — this crate's headless one, and the app's
   own `image_processing::GpuContext` (unchanged) which wraps it plus a
@@ -53,7 +53,7 @@ crates absorb more and RapidRAW shrinks to "grade shader + mask raster". Only
   `render_core.rs` keeps its old `init_gpu_context()` signature as a thin
   wrapper, so the 6 `render_core::` call sites in `chroma/export.rs`,
   `chroma/playback.rs`, `chroma/relight.rs` need zero changes.
-- **`chroma-media` (D-146, 2026-09-05):** the widest slice of the plan, in its
+- **`apelles-media` (D-146, 2026-09-05):** the widest slice of the plan, in its
   three required ordered commits. `video.rs` + `decode_pipe.rs` +
   `media_cache.rs` moved verbatim; `probe_cached` was lifted out of
   `chroma/edit.rs` into a `probe` module of its own (it is the *composition* of
@@ -70,12 +70,12 @@ crates absorb more and RapidRAW shrinks to "grade shader + mask raster". Only
   never invalidated) and **B-057** (`CHUNK_LOCKS` leaked on a failed
   extraction) were fixed inside the commits already rewriting that code, each
   with a regression test confirmed to fail pre-fix. Correction to the table
-  above: this crate has **no `chroma-gpu` edge** — everything extracted so far
+  above: this crate has **no `apelles-gpu` edge** — everything extracted so far
   is CPU/subprocess work; the predicted edge becomes real only if
   VideoToolbox→texture lands. See its own `README.md` for the `test-support`
   feature and why it is a feature rather than a `#[doc(hidden)] pub`.
-- **`chroma-project` (D-148, 2026-09-05) — closes the Wave 1–3 sequence.**
-  `chroma/project.rs` L1–1638 moved verbatim into `crates/chroma-project/`
+- **`apelles-project` (D-148, 2026-09-05) — closes the Wave 1–3 sequence.**
+  `chroma/project.rs` L1–1638 moved verbatim into `crates/apelles-project/`
   (`manifest`), and the timeline lifecycle — `ensure_timeline`,
   `load_and_ensure_timeline`, `resolve_timeline`,
   `resolve_timeline_and_settings`, `build_from_shots` — moved out of
@@ -88,8 +88,8 @@ crates absorb more and RapidRAW shrinks to "grade shader + mask raster". Only
   the original signatures and its ~20 call sites are unchanged.
   `open_manifest` + the 20 `#[tauri::command]`s stayed — every one takes
   `tauri::State<'_, AppState>`. Two corrections to the table above, made on
-  contact: **`chroma-project → chroma-media` is real** (probe + thumbnail) and
-  was missing from `architecture-lock.md`; the **`chroma-grade-model` edge is
+  contact: **`apelles-project → apelles-media` is real** (probe + thumbnail) and
+  was missing from `architecture-lock.md`; the **`apelles-grade-model` edge is
   not** and never was. Test split: 48 model tests moved, 11 command-surface /
   process-state tests stayed in `app/src-tauri`, 5 new tests were written for
   the timeline lifecycle (which had none in `edit.rs`).

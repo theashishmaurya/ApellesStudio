@@ -29,11 +29,11 @@ remain exactly as scoped below — plans, not code. Precisely:
 |---|---|
 | **0a — composition-space units** | **Built.** The timeline has a real composition space (`ProjectSettings.width`/`height`, or the first clip's probed resolution as fallback); `composite_video_frame`'s canvas is that composition, not the top layer's decode; `Clip::position_x`/`position_y` are normalised fractions of it. Existing pixel-valued positions are migrated via a real schema-minor gate on `chroma.project` (`1.1`, `Timeline::normalise_legacy_positions`), not silently reinterpreted in place. **B-043 closed.** See D-136 in `docs/08-decisions.md` for the full reasoning, including why this could only ever be a stated reinterpretation of the old values, not a recoverable conversion. |
 | 0b — one undo entry per drag | **Built**, as part of Phase 1: `TransformOverlay.tsx` keeps drag state local and uncommitted, applying exactly one `set_clip_transform` on pointer-up — the `RelightPuckLayer` pattern this section anticipated. |
-| **1 — select / move / corner-scale handles** | **Built.** `packages/editor/src/TransformOverlay.tsx`, a DOM overlay sibling of `PreviewPane`'s `<img>`. Content-box math extracted into `@chroma/player`'s new `useContentBox` (the original `useImageRenderSize.ts` stays in place, still owning every Colorist-tab call site — migrating those is separate, deliberately deferred work). Reads the existing `selection`, writes the existing `set_clip_transform` op. Box/drag/corner-scale math lives in `packages/editor/src/transformGeometry.ts`, pure and unit-tested (16 tests) since this package's vitest has no DOM. A new `chroma_timeline_clip_geometry` Tauri command supplies the one thing the frontend can't derive itself — a clip's own source footprint against the composition. |
+| **1 — select / move / corner-scale handles** | **Built.** `packages/editor/src/TransformOverlay.tsx`, a DOM overlay sibling of `PreviewPane`'s `<img>`. Content-box math extracted into `@apelles/player`'s new `useContentBox` (the original `useImageRenderSize.ts` stays in place, still owning every Colorist-tab call site — migrating those is separate, deliberately deferred work). Reads the existing `selection`, writes the existing `set_clip_transform` op. Box/drag/corner-scale math lives in `packages/editor/src/transformGeometry.ts`, pure and unit-tested (16 tests) since this package's vitest has no DOM. A new `chroma_timeline_clip_geometry` Tauri command supplies the one thing the frontend can't derive itself — a clip's own source footprint against the composition. |
 | **1b — click the picture to select** | **Built 2026-09-07 (D-204)**, fixing B-085 — the one thing that kept Phase 1's handles reachable only from the timeline. `useCanvasClipPick.ts` (a capture-phase decision on the preview surface, not a z-ordered hit layer — see Open Question 3 for why that distinction is the whole problem) + `canvasPick.ts` (pure hit-testing that mirrors `resolve_visible_video_layers_at`). No backend change needed; Open Question 3's own premise that one was required turned out to be wrong. |
 | 2 — rotation, anchor point, non-uniform scale | Rotation, anchor point: not built. **Non-uniform scale: built, Inspector-only, 2026-09-07 (D-193, `docs/notes/independent-clip-size.md`)** — `Clip.box_width`/`box_height`, an independent-axis box-size override with its own Width/Height/ratio-lock Inspector control, correctly rendered by the Rust live-preview compositor and the export compiler. Deliberately NOT extended to on-canvas DRAGGING here: `TransformOverlay.tsx`'s corner handles stay uniform-only by design (this note's own original Phase 1 scope), and committing a corner drag explicitly re-uniforms the box (clears the override) rather than silently only-partially respecting it — see D-193's own decision entry for the full "why." A future pass could add non-uniform on-canvas handles on top of this same persisted field; not attempted this pass. |
 | **3 — crop** | **Built, minus the on-canvas mode.** Real `crop_left`/`crop_top`/`crop_right`/`crop_bottom` on `Clip`, really applied by `composite_layer_onto`, a real Crop section in the Edit-tab Inspector, keyframeable through the existing engine. **Phase 1's overlay substrate now exists**, but crop still has no edge handles or Resolve-style mode toggle of its own — its bounding box happens to be unaffected by crop (`composite_layer_onto` crops a layer's pixels in place without shrinking its footprint), so Phase 1's box is correct for a cropped clip by accident, not because crop has any on-canvas affordance yet. |
-| **The coordinate contract itself — now zoom-aware (D-218, 2026-09-08)** | The screen↔composition-fraction mapping every row below depends on used to be `@chroma/player`'s `useContentBox` directly — the picture's `object-contain` FIT rect inside its container, measured identically and independently by all three consumers so they agreed pixel-for-pixel by construction. Since the preview gained a **viewport zoom + pan** (D-218) it is `usePreviewContentBox`: that same fit rect with the current `PreviewView` composed on top by `previewZoom.ts`'s `zoomedContentBox`, which is arithmetically the identical transform the `<img>` itself gets as one CSS `translate(...) scale(...)`. **Nothing else changed.** A zoomed content box is still a content box: `boxToScreenRect`/`screenToFraction` and every fraction on `Clip` mean exactly what they meant, and each of the three consumers changed by one line (which hook it calls). The by-construction agreement is preserved by there being ONE shared hook rather than three places that each remember to multiply. Viewport zoom is display-only — it is not `Clip.scale`/`position_*` and not the composition size, and its units are deliberately different (pan is a fraction of the FIT box, not of the composition) so the two can never be confused. |
+| **The coordinate contract itself — now zoom-aware (D-218, 2026-09-08)** | The screen↔composition-fraction mapping every row below depends on used to be `@apelles/player`'s `useContentBox` directly — the picture's `object-contain` FIT rect inside its container, measured identically and independently by all three consumers so they agreed pixel-for-pixel by construction. Since the preview gained a **viewport zoom + pan** (D-218) it is `usePreviewContentBox`: that same fit rect with the current `PreviewView` composed on top by `previewZoom.ts`'s `zoomedContentBox`, which is arithmetically the identical transform the `<img>` itself gets as one CSS `translate(...) scale(...)`. **Nothing else changed.** A zoomed content box is still a content box: `boxToScreenRect`/`screenToFraction` and every fraction on `Clip` mean exactly what they meant, and each of the three consumers changed by one line (which hook it calls). The by-construction agreement is preserved by there being ONE shared hook rather than three places that each remember to multiply. Viewport zoom is display-only — it is not `Clip.scale`/`position_*` and not the composition size, and its units are deliberately different (pan is a fraction of the FIT box, not of the composition) so the two can never be confused. |
 | **4 — keyframes** | **Built. Inspector half 2026-09-08 (D-208), on-canvas half the same day (D-209, fixing B-093).** Every transform/crop property has its own stopwatch diamond, `<`/`>` key nav and reset in the Inspector, and its number field shows/edits the value at the playhead. On canvas, the box DRAWS from the clip's interpolated transform at the playhead (`clipKeyframes.ts`'s `resolveClipBoxTransform`, five `paramValueAt` calls — the same interpolator the Inspector uses, not a second one) and a drag auto-keys **per property**: a dragged property that is already animated gets a keyframe merged in at the playhead, one that is not gets the ordinary static write. D-204's hit rect resolves the same way, so click-to-select still lands on the picture. |
 
 Also fixed on the way through D-132, because crop would have been invisible without it:
@@ -49,7 +49,7 @@ real compositor — a smaller source must still render at its true, smaller foot
 
 ### The data + the numeric path — real, and the right thing to drive
 
-`chroma_timeline::Clip` (`crates/chroma-timeline/src/lib.rs`) carries a real compositing
+`apelles_timeline::Clip` (`crates/apelles-timeline/src/lib.rs`) carries a real compositing
 transform: `opacity`, `position_x`, `position_y`, `scale`, `rotation` (D-082), plus
 D-034-shaped `chroma_keyframes` over those same fields. `app/src-tauri/src/chroma/edit.rs`'s
 `composite_video_frame` / `composite_layer_onto` really consume them (scale → rotate →
@@ -103,7 +103,7 @@ letterbox math the overlay needs — `{scale, offsetX, offsetY, width, height}` 
 image drawn `object-contain` inside a container. **It cannot be imported as-is**: it lives
 in `app/` and `packages/editor` may not reach into the app layer (D-039, one-way
 `app → tabs → services → domain`). It has to be extracted first — recommend into
-`@chroma/player`, which already owns the viewport and whose README already anticipates all
+`@apelles/player`, which already owns the viewport and whose README already anticipates all
 three tabs supplying their own `surface`.
 
 ---
@@ -126,7 +126,7 @@ resize proportionally, drag a **side** to squeeze/stretch one axis, drag the **c
 handle** to rotate. In Crop mode each side has its own handle. Resolve also exposes a real
 **Anchor Point X/Y** — the pivot rotation and scale act around — separately from Position.
 
-**What both agree on, and what Chroma should take:**
+**What both agree on, and what Apelles should take:**
 - corner = scale, side = one-axis scale, centre/dedicated handle = rotate, body drag =
   reposition;
 - **crop is a separate mode, not a modifier on the transform box** (Resolve makes this
@@ -142,8 +142,8 @@ Zoom" and "Cropping" (mirrored at `steakunderwater.com/VFXPedia/__man/Resolve18-
 the direct page 404'd on fetch, so the behaviour above is the cross-checked consensus of
 several independent descriptions of the same documented control, not one source).
 
-**Where they differ, and Chroma has to choose:** Premiere's corner drag is free and Shift
-constrains it; Resolve's corner drag is proportional by default. Chroma's `Clip` has a
+**Where they differ, and Apelles has to choose:** Premiere's corner drag is free and Shift
+constrains it; Resolve's corner drag is proportional by default. Apelles' `Clip` has a
 single uniform `scale` today (no `scale_x`/`scale_y`), so **proportional-by-default is the
 only behaviour it can currently express** — which happens to match Resolve. Recommend
 matching Resolve and deferring the modifier question to Phase 2, when non-uniform scale
@@ -227,7 +227,7 @@ rather than a preference:
 ### 0b. A drag must not push 60 undo entries per second
 
 `useEditorTimelineStore.applyOp` pushes a whole-`Timeline` before/after snapshot onto
-`@chroma/history` for **every non-no-op call** (D-051), and schedules a debounced
+`@apelles/history` for **every non-no-op call** (D-051), and schedules a debounced
 `chroma_timeline_set`. A naive `onPointerMove → applyOp` would flood the undo stack and
 the save queue.
 
@@ -246,12 +246,12 @@ Smallest thing that is genuinely useful ("drag it, make it smaller") and stays i
 the `Clip` model can already express.
 
 - **A new `packages/editor/src/TransformOverlay.tsx`.** `PreviewPane` wraps its `<img>` in
-  a `relative` div and renders the overlay as a sibling — no `@chroma/player` change
+  a `relative` div and renders the overlay as a sibling — no `@apelles/player` change
   needed (the `surface` prop is already "whatever ReactNode you like", by contract).
 - **Content-box math extracted** from `app/src/hooks/useImageRenderSize.ts` into
-  `@chroma/player` — a mechanical prerequisite of *this* phase, not one of Phase 0's two
+  `@apelles/player` — a mechanical prerequisite of *this* phase, not one of Phase 0's two
   behavioural ones. Necessary because `packages/editor` may not import from `app/`
-  (D-039's one-way dependency rule), and `@chroma/player` already owns the viewport all
+  (D-039's one-way dependency rule), and `@apelles/player` already owns the viewport all
   three tabs are meant to share. The `<img>` is `object-contain`, so the picture's real
   on-screen rect is not the element's rect.
 - **Which clip?** (D-204 note: still true — canvas click-to-select sets that same
@@ -272,7 +272,7 @@ the `Clip` model can already express.
   the drag; one op on release. `Escape` cancels the in-flight gesture. No-op when the
   clip's track is `locked` — same guard `ClipInspectorPanel` already applies.
 - **Look.** Handles and box strokes come from the existing `--color-*` token set
-  (`@chroma/ui`), never literal colours; handle size / hit-slop / minimum scale as named
+  (`@apelles/ui`), never literal colours; handle size / hit-slop / minimum scale as named
   constants in the component, per the house no-magic-numbers rule.
 - **Not in Phase 1:** rotation, non-uniform scale, crop, anchor point, click-to-select,
   snapping/guides, marquee, multi-clip transform. (Click-to-select has since been built
@@ -288,7 +288,7 @@ the `Clip` model can already express.
 > overlays are one component rather than two that drift — every behaviour this section
 > specifies (uniform corner scale about the box centre, body-drag reposition, live
 > overlay-only feedback, one op on release, `Escape` cancels, no-op on a locked track)
-> is unchanged and now lives there. Second, Chroma's dynamic-zoom boxes deliberately
+> is unchanged and now lives there. Second, Apelles' dynamic-zoom boxes deliberately
 > do **not** use Resolve's inverse framing-rect semantic: they are the layer footprint,
 > exactly like the box specified here, so a bigger box means more zoomed in. See D-234
 > for that argument.
@@ -297,7 +297,7 @@ the `Clip` model can already express.
 
 `rotation` already exists on `Clip` and is already applied by `composite_layer_onto`
 (`imageproc::rotate_about_center`), so a rotate handle is mostly UI. But note the "about
-center" — Chroma has **no anchor point**, while both references do. Adding one is a real
+center" — Apelles has **no anchor point**, while both references do. Adding one is a real
 `Clip` field + compositor change; recommend shipping rotation about the centre first and
 raising anchor point as its own decision only if a real edit needs it.
 
@@ -309,7 +309,7 @@ with a migration rather than a third field, so there is never a question of whic
 ### Phase 3 — crop, as its own mode — **BUILT (D-132), except the on-canvas mode**
 
 Both references treat crop as a **separate mode**, not an extra behaviour on the transform
-box. Chroma had **no crop on a timeline clip at all** (no field on `Clip`, nothing in the
+box. Apelles had **no crop on a timeline clip at all** (no field on `Clip`, nothing in the
 compositor). This phase was scoped as: a `crop` rect field on `Clip`, `composite_layer_onto`
 cropping the layer before scale/rotate, a `Crop` row in `ClipInspectorPanel`, and a
 Resolve-style mode toggle on the overlay.
@@ -439,7 +439,7 @@ Traced independently in both paths, because they share nothing but a word:
   trimming ≤1 row/column rather than padding or resampling. The only geometry a video
   export still refuses is a crop that rounds to zero in either axis.
 - **Edit tab — did not exist at all** (true as written, 2026-09-04 afternoon): no `crop`
-  field on `chroma_timeline::Clip`, no crop in `composite_layer_onto`, no Crop row in
+  field on `apelles_timeline::Clip`, no crop in `composite_layer_onto`, no Crop row in
   `ClipInspectorPanel`. Not a stub, not a dead control — the concept was simply absent.
   **Now built, that same evening — D-132**, see Phase 3 above for exactly what shipped and
   what didn't. Two things this earlier paragraph implied that turned out to matter: the

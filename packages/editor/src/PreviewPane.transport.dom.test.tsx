@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — permanent real-DOM coverage for the viewer transport's own
+ * @apelles/editor — permanent real-DOM coverage for the viewer transport's own
  * audio commands (D-232's scrub gesture beside D-049/D-130's play/stop), and
  * the regression guard for B-110.
  *
@@ -18,7 +18,7 @@
  *    position bar — the control immediately above the Play button, in the same
  *    transport component — to `beginScrub`/`endScrub` through Base UI's
  *    `onValueChange`/`onValueCommitted`. A scrub claims the SAME single Rust
- *    transport playback uses (`chroma_media::scrub`'s own module doc), so a
+ *    transport playback uses (`apelles_media::scrub`'s own module doc), so a
  *    stray `chroma_audio_scrub_begin` fired by a press on the neighbouring
  *    button would take the transport away from the play that press was for,
  *    and the picture would run in silence. That failure mode was investigated

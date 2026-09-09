@@ -7,7 +7,7 @@
  * surface — this package doesn't know or care) and calls back on every
  * interaction; it owns no frame-fetch, no IPC, no timeline model, no
  * playback-loop state. That logic is tab-owned and lives in the caller
- * (`@chroma/editor`'s `chroma_timeline_frame` fetch + rAF play loop is the
+ * (`@apelles/editor`'s `chroma_timeline_frame` fetch + rAF play loop is the
  * reference pattern — see `packages/editor/src/PreviewPane.tsx`).
  *
  * Every optional prop's control is **omitted, not disabled**, when its
@@ -36,7 +36,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { Button, Slider, cn } from '@chroma/ui';
+import { Button, Slider, cn } from '@apelles/ui';
 
 import { fmtTimecode } from './timecode';
 
@@ -266,7 +266,7 @@ export function Player({
     <div className={cn('flex flex-col min-h-0 flex-1 bg-bg-primary', className)}>
       {showTitleStrip && (
         // B-051/D-131: `pl-10` (not the uniform `px-3` every other edge
-        // uses) reserves the footprint of `@chroma/shell`'s Sources-panel
+        // uses) reserves the footprint of `@apelles/shell`'s Sources-panel
         // toggle — `absolute top-2 left-2 h-6 w-6` (`Shell.tsx`), i.e. an
         // 8px-inset 24px chip whose right edge lands at x=32px. D-120
         // deliberately floats that toggle over whichever tab is active, at
@@ -327,7 +327,7 @@ export function Player({
         {onSeek && (
           <div className="px-3 pt-2">
             <Slider
-              // B-050/D-131: `@chroma/ui`'s Slider wrapper (matching upstream
+              // B-050/D-131: `@apelles/ui`'s Slider wrapper (matching upstream
               // shadcn's own convention) only recognises an *array* value/
               // defaultValue as "a real controlled value" — a bare number
               // falls through to its `[min, max]` fallback and renders 2

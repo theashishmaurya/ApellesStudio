@@ -4,7 +4,7 @@
  * and `lib/chatLayout.ts` (thread layout, message reveal scheduling, scroll,
  * and the conversation step schedule).
  *
- * Lives in `@chroma/motion`'s suite rather than the engine's for the same
+ * Lives in `@apelles/motion`'s suite rather than the engine's for the same
  * reason `interpolateKeys.test.ts` does — the engine package has no `test`
  * script — using the same cross-package import.
  *
@@ -24,13 +24,13 @@ import {
   scrollOffset,
   wrapLines,
   type ChatMessage,
-} from '@chroma/motion-engine/src/lib/chatLayout';
+} from '@apelles/motion-engine/src/lib/chatLayout';
 import {
   DEVICE_SPECS,
   deviceBodyRect,
   deviceScreenRect,
   deviceSpec,
-} from '@chroma/motion-engine/src/lib/device';
+} from '@apelles/motion-engine/src/lib/device';
 
 const FPS = 30;
 

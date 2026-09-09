@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution pixel tests for D-256's Colorist
+// @apelles/editor — REAL ffmpeg-execution pixel tests for D-256's Colorist
 // grade in the Edit-tab export.
 //
 // Its own file, mirroring `timelineExportAdjustment.ffmpeg.test.ts`'s
@@ -63,7 +63,7 @@ const SRC_RGB: [number, number, number] = [0xc0, 0x80, 0x40];
 
 /**
  * A `size³` `.cube` applying `fn` per channel, written red-fastest — byte-for-
- * byte the layout `chroma_types::Lut3d::to_cube_text` produces, so this fixture
+ * byte the layout `apelles_types::Lut3d::to_cube_text` produces, so this fixture
  * exercises the same file shape the real baker emits.
  */
 function writeCube(path: string, size: number, fn: (rgb: [number, number, number]) => [number, number, number]) {

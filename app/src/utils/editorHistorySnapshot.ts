@@ -1,4 +1,4 @@
-// Chroma — shared "restore a grade snapshot" primitive (D-032 / D-051).
+// Apelles — shared "restore a grade snapshot" primitive (D-032 / D-051).
 //
 // Both the D-032 agent-activity feed's jump-to-here undo
 // (`AgentActivityDock.tsx`) and the D-051 Colorist→shared-history bridge

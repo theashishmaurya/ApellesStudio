@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the manifest-level prop catalog (D-099, Phase 2 of
+ * @apelles/motion — the manifest-level prop catalog (D-099, Phase 2 of
  * `docs/notes/global-inspector.md`).
  *
  * The one-time, mechanical schema-extraction pass the scoping doc called
@@ -56,7 +56,7 @@ export interface FieldSpec {
    *  writes back an array of exactly `components.length` numbers. */
   components?: string[];
   /** for `kind: 'number'` — the field's own step/precision, the same idea as
-   *  `@chroma/editor`'s `ClipInspectorPanel.tsx` per-field step tables
+   *  `@apelles/editor`'s `ClipInspectorPanel.tsx` per-field step tables
    *  (`CROP_STEP`, etc). Omitted fields keep `MotionNumberField`'s own
    *  default step of `1`, which is correct for most manifest numbers (pixel
    *  positions, counts) but wrong for a field measured in seconds — a whole-

@@ -1,4 +1,4 @@
-# Chroma
+# Apelles
 
 > **Working name — provisional.** AI-native, local, open-source **color grading** tool.
 > Not an editor. Grading only, done properly, with an agent that can actually drive it.
@@ -8,7 +8,7 @@ masks — all locally — but they're closed, and their scripting APIs don't exp
 color page anyway. Every open-source project in this space is an **editor** with grading
 bolted on as an afterthought. **Nobody is building an AI-native colorist tool.**
 
-Chroma is that tool: a GPU grading engine + a segmentation/depth/tracking AI layer + an
+Apelles is that tool: a GPU grading engine + a segmentation/depth/tracking AI layer + an
 MCP server so an agent can grade a shot, match it to a reference, and set up masks —
 with a real GUI for the human to do the parts an agent can't (place a bezier, nudge a
 tracker, judge a look).
@@ -19,7 +19,7 @@ tracker, judge a look).
 
 ## Layout
 
-> **As of D-039/D-040 (2026-09-02):** Chroma is becoming a 3-tab app
+> **As of D-039/D-040 (2026-09-02):** Apelles is becoming a 3-tab app
 > (Edit / Motion / Colorist) on a Cargo + npm **monorepo workspace**. The prose
 > above predates that — see `docs/08-decisions.md` D-039 and
 > `docs/notes/architecture-lock.md`.
@@ -28,9 +28,9 @@ tracker, judge a look).
 app/        the vendored RapidRAW fork (was the engine/ submodule — de-submoduled
             in D-040, working tree at app/; Rust + wgpu + Tauri grading engine).
             app/src (React/TS frontend) + app/src-tauri (the Rust crate)
-crates/     Chroma's own layered Rust crates (D-039) — chroma-types / chroma-timeline
-            / chroma-grade-model so far
-packages/   Chroma's frontend workspace — @chroma/{tokens,ui,bridge,editor,motion,shell}
+crates/     Apelles' own layered Rust crates (D-039) — apelles-types / apelles-timeline
+            / apelles-grade-model so far
+packages/   Apelles' frontend workspace — @apelles/{tokens,ui,bridge,editor,motion,shell}
             + packages/motion-engine/ (the Remotion motion engine, moved in)
 ai/         Python sidecar — SAM 2, Depth Anything V2, CoTracker, color-matcher (planned)
 mcp/        MCP server exposing the grade graph to an agent
@@ -55,7 +55,7 @@ docs/       everything: vision, PRD, scope, architecture, roadmap, research, dec
 
 ## License
 
-Chroma's own code: TBD (see [`docs/08-decisions.md`](docs/08-decisions.md) D-002).
+Apelles' own code: TBD (see [`docs/08-decisions.md`](docs/08-decisions.md) D-002).
 The vendored RapidRAW fork at `app/` is **AGPL-3.0** (inherited from RapidRAW) — any
 distributed build of the combined work is AGPL. This blocks a closed SaaS; it does not
 block an open project.

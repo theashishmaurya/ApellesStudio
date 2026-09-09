@@ -113,7 +113,7 @@ export default function TitleBar() {
             </div>
           )}
           <div data-tauri-drag-region className={`flex items-center h-full ${isMac ? '' : 'px-4'}`}>
-            <p className="text-sm font-semibold text-text-secondary pointer-events-none">Chroma</p>
+            <p className="text-sm font-semibold text-text-secondary pointer-events-none">Apelles</p>
           </div>
         </div>
         <div data-tauri-drag-region className="flex-1 h-full" />

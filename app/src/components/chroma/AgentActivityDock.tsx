@@ -1,4 +1,4 @@
-// Chroma — the agent activity feed + `request_human` banner (D-032).
+// Apelles — the agent activity feed + `request_human` banner (D-032).
 //
 // A fixed bottom-left dock, mounted once in App.tsx next to useChromaControl().
 // - top card: the `request_human` hand-back banner (reason + "Resume agent")

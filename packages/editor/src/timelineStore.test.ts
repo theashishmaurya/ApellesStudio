@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for the Edit tab's readiness state machine
+// @apelles/editor — unit tests for the Edit tab's readiness state machine
 // (B-034 / D-112).
 //
 // These are regression tests for the *class* of bug that produced a false

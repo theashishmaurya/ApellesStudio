@@ -1,4 +1,4 @@
-# Chroma media-understanding sidecar (D-184). MLX (Apple Silicon) — deliberately
+# Apelles media-understanding sidecar (D-184). MLX (Apple Silicon) — deliberately
 # NOT installable alongside ai/requirements.txt: `mlx-vlm >= 0.6` requires
 # `transformers >= 5.5`, `ai/` pins `transformers < 5` for ViTMatte, and pip
 # reports the union as ResolutionImpossible. That is the whole reason this is a

@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — Phase 5a (`docs/notes/motion-keyframe-timeline-research.md`,
+ * @apelles/motion — Phase 5a (`docs/notes/motion-keyframe-timeline-research.md`,
  * D-160/D-161) and Phase 5b part 2 ("per-row lanes", D-162 — this pass).
  *
  * Pure read-only logic for three real UI pieces: `LayerList.tsx`'s per-row
@@ -24,8 +24,8 @@
  * full layout decision and why the flat strip doesn't survive this pass
  * (rather than being kept alongside as a second, now-redundant read path).
  */
-import type { Manifest, Layer, Scene } from '@chroma/motion-engine/src/engine/schema';
-import { sceneStartFrame } from '@chroma/motion-engine/src/engine/build';
+import type { Manifest, Layer, Scene } from '@apelles/motion-engine/src/engine/schema';
+import { sceneStartFrame } from '@apelles/motion-engine/src/engine/build';
 import type { Selection } from './LayerList';
 import { layerTransformKeys, layerActiveSchedule } from './manifestEdit';
 import { rectsIntersect, type RectLike } from './canvasGeometry';

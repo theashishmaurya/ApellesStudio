@@ -480,7 +480,7 @@ export function useImageProcessing(
     isWaveformVisible,
   ]);
 
-  // Chroma: after a video seek swaps the base frame, re-render with the current grade.
+  // Apelles: after a video seek swaps the base frame, re-render with the current grade.
   const chromaFrameNonce = useChromaStore((s) => s.frameNonce);
   useEffect(() => {
     if (chromaFrameNonce === 0 || !selectedImage?.isReady) return;

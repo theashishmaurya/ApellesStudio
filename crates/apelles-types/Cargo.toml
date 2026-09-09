@@ -1,0 +1,15 @@
+[package]
+name = "apelles-types"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apelles L0 — shared value types (Frame/Rational/Resolution/ColorSpace/TimeRange), typed IDs, error enums. Zero heavy deps."
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

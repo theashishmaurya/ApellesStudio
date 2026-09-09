@@ -1,4 +1,4 @@
-# @chroma/bridge
+# @apelles/bridge
 
 **The frontend↔backend seam** (D-039): typed Tauri command bindings + the
 zustand stores + the control-bridge hook `useChromaControl` (D-020, currently
@@ -23,5 +23,5 @@ D-045/D-046 media-pool store, now consumed by a real panel (D-046's
   which this package cannot depend on without inverting the D-039 layer
   direction, so it lives directly in `SourcesPanel.tsx` instead.
 
-**Tests:** `npm test --workspace @chroma/bridge` (vitest, node environment) —
+**Tests:** `npm test --workspace @apelles/bridge` (vitest, node environment) —
 `src/media.test.ts` covers the pool's project-identity input (B-083/D-203).

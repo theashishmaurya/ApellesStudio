@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the edit overlay (D-239, roadmap item 27).
+ * @apelles/editor — the edit overlay (D-239, roadmap item 27).
  *
  * **What it is.** The GUI half of the seven edit types: drag a Sources-panel
  * item anywhere and a labelled strip of seven targets appears over the preview;

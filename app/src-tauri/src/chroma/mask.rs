@@ -1,16 +1,16 @@
-//! Tauri bridge for subject matte via the Chroma AI sidecar (SAM 2 → trimap →
+//! Tauri bridge for subject matte via the Apelles AI sidecar (SAM 2 → trimap →
 //! ViTMatte, D-016).
 //!
-//! What it is: the app-side half of the D-142 `chroma-ai` extraction
+//! What it is: the app-side half of the D-142 `apelles-ai` extraction
 //! (`docs/notes/crate-extraction-plan.md` §2.5). `chroma_subject_mask` stays
 //! whole here because it needs `crate::get_cached_full_warped_image(&state, …)`
 //! and returns `crate::ai_processing::AiSubjectMaskParameters` — both real
-//! fork types `chroma-ai` must not depend on — but its actual `/segment` wire
-//! call is now `chroma_ai::mask::segment`. The other three commands
+//! fork types `apelles-ai` must not depend on — but its actual `/segment` wire
+//! call is now `apelles_ai::mask::segment`. The other three commands
 //! (`chroma_track_subject`, `chroma_refine_tracked_frame`, plus
 //! `chroma_track_status`/`chroma_ai_health` with no state at all) are thin
 //! wrappers that resolve `chroma::state::current_video()` and call into
-//! `chroma_ai::mask`. [`tracked_full_mask`] gets the same treatment as
+//! `apelles_ai::mask`. [`tracked_full_mask`] gets the same treatment as
 //! `depth::tracked_depth_map`. This file used to be the whole 322-line
 //! implementation; see D-142 in `docs/08-decisions.md`.
 
@@ -21,7 +21,7 @@ use crate::AppState;
 use crate::ai_processing::AiSubjectMaskParameters;
 use crate::chroma::state;
 
-pub use chroma_ai::mask::MaskPoint;
+pub use apelles_ai::mask::MaskPoint;
 
 /// Segment the current frame's subject and return it as an AI-subject mask.
 ///
@@ -53,7 +53,7 @@ pub async fn chroma_subject_mask(
     .map_err(|e| e.to_string())??;
 
     let points = points.unwrap_or_default();
-    let seg = chroma_ai::mask::segment(&image_b64, &points, bbox, refine.unwrap_or(true)).await?;
+    let seg = apelles_ai::mask::segment(&image_b64, &points, bbox, refine.unwrap_or(true)).await?;
 
     if seg.width != frame_w || seg.height != frame_h {
         // The downstream transform math (generate_ai_bitmap_from_full_mask) assumes the
@@ -102,7 +102,7 @@ pub async fn chroma_track_subject(
     mode: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let cv = state::current_video().ok_or("no video loaded")?;
-    chroma_ai::mask::track(
+    apelles_ai::mask::track(
         &cv.path.to_string_lossy(),
         from_frame,
         to_frame,
@@ -117,7 +117,7 @@ pub async fn chroma_track_subject(
 /// Poll a `/track` job.
 #[tauri::command]
 pub async fn chroma_track_status(job_id: String) -> Result<serde_json::Value, String> {
-    chroma_ai::mask::track_status(&job_id).await
+    apelles_ai::mask::track_status(&job_id).await
 }
 
 /// Upgrade one cached tracked frame to a ViTMatte edge (the fast pass uses a
@@ -129,23 +129,23 @@ pub async fn chroma_refine_tracked_frame(track_dir: String, frame: u64) -> Resul
     let Some(cv) = state::current_video() else {
         return Ok(false);
     };
-    chroma_ai::mask::refine_tracked_frame(&cv.path.to_string_lossy(), &track_dir, frame).await
+    apelles_ai::mask::refine_tracked_frame(&cv.path.to_string_lossy(), &track_dir, frame).await
 }
 
 /// The tracked subject matte for the currently-decoded video frame, as a
 /// full-res `GrayImage` ready for `generate_ai_bitmap_from_full_mask`. Reads
 /// `params.chromaTrackDir` + `chroma::state::current_video().frame` and
-/// delegates the PNG lookup to `chroma_ai::mask::mask_at`. `None` when the
+/// delegates the PNG lookup to `apelles_ai::mask::mask_at`. `None` when the
 /// sub-mask isn't tracked, no video is loaded, or nothing is cached yet at
 /// that point.
 pub fn tracked_full_mask(params: &serde_json::Value) -> Option<image::GrayImage> {
     let dir = params.get("chromaTrackDir").and_then(|v| v.as_str())?;
     let frame = state::current_video()?.frame;
-    chroma_ai::mask::mask_at(dir, frame)
+    apelles_ai::mask::mask_at(dir, frame)
 }
 
-/// Is the Chroma AI sidecar up? Drives the UI hint. Never errors.
+/// Is the Apelles AI sidecar up? Drives the UI hint. Never errors.
 #[tauri::command]
 pub async fn chroma_ai_health() -> serde_json::Value {
-    chroma_ai::mask::health().await
+    apelles_ai::mask::health().await
 }

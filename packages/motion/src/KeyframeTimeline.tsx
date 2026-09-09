@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — Phase 5b part 2 of `docs/notes/
+ * @apelles/motion — Phase 5b part 2 of `docs/notes/
  * motion-keyframe-timeline-research.md` ("per-row lanes", D-162). Replaces
  * D-160/D-161's `KeyframeStrip.tsx` (one flat strip, every marker on one
  * row) with a real per-row lane timeline: one row per keyed 2D/3D camera and
@@ -165,8 +165,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import type { PlayerRef } from '@remotion/player';
-import { totalFrames, sceneStartFrame, sceneDurationFrames } from '@chroma/motion-engine/src/engine/build';
-import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
+import { totalFrames, sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
+import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 
 import type { Selection } from './LayerList';
 import { sameSelection, layerLabel } from './LayerList';
@@ -370,7 +370,7 @@ export function KeyframeTimeline({
     return () => player.removeEventListener('frameupdate', onFrameUpdate);
   }, [playerRef]);
 
-  // D-175 — ctrl+scroll-wheel zoom, matching `@chroma/editor`'s own
+  // D-175 — ctrl+scroll-wheel zoom, matching `@apelles/editor`'s own
   // `TimelinePane.tsx` convention exactly (its own doc comment there: the
   // library has no wheel handling of its own, so this is a plain native
   // listener rather than React's `onWheel`, which attaches passively by
@@ -719,7 +719,7 @@ export function KeyframeTimeline({
             <ZoomOut size={12} />
           </button>
           {/* D-175 — a percentage relative to `DEFAULT_PX_PER_SEC`, matching
-              `@chroma/editor`'s own `TimelinePane.tsx` zoom readout exactly
+              `@apelles/editor`'s own `TimelinePane.tsx` zoom readout exactly
               (`zoomPct = Math.round((pxPerSec / DEFAULT_PX_PER_SEC) * 100)`)
               — was a raw `px/s` number, meaningless without knowing this
               timeline's own bounds; "100%" reads the same way across both

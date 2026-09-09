@@ -1,4 +1,4 @@
-// Chroma — per-project output spec (D-038).
+// Apelles — per-project output spec (D-038).
 //
 // A small modal to set the loaded project's output resolution, frame rate, and
 // colour space — one spec for the whole (possibly multi-shot) project instead of

@@ -1,10 +1,10 @@
-# @chroma/ui
+# @apelles/ui
 
 **Shared component kit** — shadcn/ui components on **Base UI** primitives, themed
 onto the app's existing `--app-*` / `--color-*` CSS-var tokens (D-042, supersedes
 the D-039 hand-extraction).
 
-Consumed by `@chroma/editor`, `@chroma/shell`, `@chroma/motion`, and — via the
+Consumed by `@apelles/editor`, `@apelles/shell`, `@apelles/motion`, and — via the
 re-export shims in `app/src/components/ui/*.tsx` — `app/` itself.
 
 ## Setup: manual, not the CLI
@@ -115,13 +115,13 @@ gesture Resolve, Premiere/AE and Blender all use in their place:
 
 The behaviour lives in `hooks/use-number-scrub.ts` — `useNumberScrub` (the
 gesture alone) and `useNumberField` (the whole field, as props to spread). That
-module is also published as the **`@chroma/ui/number-scrub` subpath**, which
-imports nothing but React: `@chroma/motion` cannot import this package's barrel
+module is also published as the **`@apelles/ui/number-scrub` subpath**, which
+imports nothing but React: `@apelles/motion` cannot import this package's barrel
 (`@react-three/fiber`'s JSX augmentation vs. `Text.tsx`'s polymorphic `as` —
 see `packages/motion/src/Button.tsx`) and uses the subpath to get the same
 behaviour on its own raw `<input>` rather than a second hand-written copy.
 
-Its behavioural tests live in `@chroma/editor`
+Its behavioural tests live in `@apelles/editor`
 (`ScrubbableNumberInput.dom.test.tsx`) because this package has no test tier
 and that one owns the real-`PointerEvent` harness (D-142).
 
@@ -196,8 +196,8 @@ always `'primary'` / `'destructive'`.
 
 `src/typography.ts` is a **copy** of `app/src/types/typography.ts` — the app keeps
 its own copy for the ~40 sites that import the constants directly. The two must
-stay in sync (small, rarely-touched). Unifying them (a `@chroma/tokens` or
-`@chroma/typography` both import) is a **later task**, out of D-042 scope.
+stay in sync (small, rarely-touched). Unifying them (a `@apelles/tokens` or
+`@apelles/typography` both import) is a **later task**, out of D-042 scope.
 
 ## Tailwind
 

@@ -33,7 +33,7 @@ plus a temporal-gradient consistency loss. Temporal consistency is native.
 | `vitb` | CC-BY-NC-4.0 (non-commercial) | **NO** |
 | `vitl` | CC-BY-NC-4.0 (non-commercial) | **NO** |
 
-Chroma ships as a real product. `vitb`/`vitl` would poison the licence. The
+Apelles ships as a real product. `vitb`/`vitl` would poison the licence. The
 sidecar's `VDA_CFG` is pinned to `vits`; `ai/vendor/README.md` repeats this.
 The vendored *code* is Apache-2.0 regardless.
 

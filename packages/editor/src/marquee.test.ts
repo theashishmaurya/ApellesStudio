@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for marquee-select's pure half (`marquee.ts`,
+// @apelles/editor — unit tests for marquee-select's pure half (`marquee.ts`,
 // roadmap item 12 Phase 2, D-137).
 //
 // Two things are under test here, and they matter for different reasons:

@@ -12,10 +12,10 @@
   },
   "iconLibrary": "lucide",
   "aliases": {
-    "components": "@chroma/ui/components",
-    "ui": "@chroma/ui/components/ui",
-    "utils": "@chroma/ui/lib/utils",
-    "lib": "@chroma/ui/lib",
-    "hooks": "@chroma/ui/hooks"
+    "components": "@apelles/ui/components",
+    "ui": "@apelles/ui/components/ui",
+    "utils": "@apelles/ui/lib/utils",
+    "lib": "@apelles/ui/lib",
+    "hooks": "@apelles/ui/hooks"
   }
 }

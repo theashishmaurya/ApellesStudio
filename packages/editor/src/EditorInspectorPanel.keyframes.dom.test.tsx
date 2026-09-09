@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for D-208's per-property keyframing:
+ * @apelles/editor — real-DOM coverage for D-208's per-property keyframing:
  * the Inspector's per-row diamond / `<`-`>` nav / reset.
  *
  * **Why a DOM test and not more unit tests.** `clipKeyframes.test.ts` already
@@ -27,7 +27,7 @@
  * a static edit routes through the `set_clip_audio` op, not
  * `set_clip_transform`, so a volume nudge cannot restate (or reset) a clip's
  * geometry. Same authoring-contract scope: what the mixer and the exporter
- * then DO with those keys is `chroma-media`'s and
+ * then DO with those keys is `apelles-media`'s and
  * `timelineExport.ffmpeg.test.ts`'s.
  */
 

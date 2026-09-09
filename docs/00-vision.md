@@ -43,7 +43,7 @@ Four things are true as of 2026-09-02:
 **So there is a real, still-unclaimed space.** 2026 saw "agentic video editing" become a
 funded, named category (a16z's thesis piece, YC's Cardboard, Avid shipping agentic
 features) — editing got its agents. Nobody in that wave takes colour grading seriously as
-a craft (see `docs/notes/product-direction.md` §7 for the full competitive read). Chroma's
+a craft (see `docs/notes/product-direction.md` §7 for the full competitive read). Apelles'
 bet: be the one tool that's agent-native across cut, motion, *and* grade, with real colour
 science as the part nobody else has bothered to build.
 
@@ -51,7 +51,7 @@ science as the part nobody else has bothered to build.
 
 - **Real colour science is still the unclaimed wedge.** Editing agents are now a crowded
   field; a grading pipeline this deep — GPU shader stack, scopes, `match_to_reference`,
-  depth-based haze, tracked/keyframed masks — is still Chroma's alone among the local/open
+  depth-based haze, tracked/keyframed masks — is still Apelles' alone among the local/open
   competitors surveyed (`docs/notes/product-direction.md` §7). Grading is the part of post
   that's hardest to fake with a thin AI wrapper.
 - **The grade should be code.** A serialisable document — adjustments, keyframes, mask
@@ -91,7 +91,7 @@ science as the part nobody else has bothered to build.
   tab. Every parameter the agent sets is visible and editable in the GUI — cuts, motion
   primitives, grade adjustments alike.
 - **Not a Resolve/Premiere replacement on breadth.** Resolve still wins on Fusion,
-  Fairlight, conform, HDR mastering, feature-DI-scale tooling. Chroma wins on: agent-native
+  Fairlight, conform, HDR mastering, feature-DI-scale tooling. Apelles wins on: agent-native
   across the whole pipeline, grade-as-code, open, local, Rust-fast, scriptable end to end.
 - **Not a SaaS.** No cloud dependency in the critical path (see the licence note,
   `docs/08-decisions.md` D-002).

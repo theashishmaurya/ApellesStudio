@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for `timelineExport.ts`: `keyframeExprAt`'s
+// @apelles/editor — unit tests for `timelineExport.ts`: `keyframeExprAt`'s
 // piecewise-linear ffmpeg expression generator, and `buildExportFfmpegArgs`'s
 // real timeline -> ffmpeg-argv compiler.
 import { describe, expect, it } from 'vitest';

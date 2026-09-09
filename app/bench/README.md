@@ -37,7 +37,7 @@ need that version back for some reason.
   full re-render (including every track's waveform canvas), with cost scaling with track
   count. The single highest-value phase here — it's exactly the interaction class the
   React Compiler (D-091) was enabled to help with. Note: a real Sources-panel drag also
-  carries an `application/x-chroma-media` DataTransfer payload
+  carries an `application/x-apelles-media` DataTransfer payload
   (`CHROMA_MEDIA_DRAG_MIME`); a synthetic `DragEvent` built from a console context can't
   fully replicate that (DataTransfer construction is gated behind a trusted user gesture
   in most engines), so this phase exercises the real `onDragOver` re-render cost but

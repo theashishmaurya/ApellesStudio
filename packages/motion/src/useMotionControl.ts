@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — the Motion-tab half of the Chroma control server bridge.
+ * @apelles/motion — the Motion-tab half of the Apelles control server bridge.
  *
  * D-020 built an MCP-driven control server for the Colorist tab: a generic
  * `{op, args}` HTTP endpoint inside the running app (`app/src-tauri/src/

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — pointerHarness: the reusable real-DOM pointer-gesture test
+ * @apelles/editor — pointerHarness: the reusable real-DOM pointer-gesture test
  * harness (D-142, roadmap item 12 follow-up).
  *
  * **What it is.** This exact kind of harness — mount a real component into a

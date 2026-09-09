@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution, PIXEL-level tests for the
+// @apelles/editor — REAL ffmpeg-execution, PIXEL-level tests for the
 // subtitle/caption export path (D-229, `docs/notes/subtitles.md`).
 //
 // `timelineExport.test.ts` asserts on the compiled argv STRINGS. That is
@@ -11,7 +11,7 @@
 //
 // **What it asserts, and why that is the strong claim.** Like its sibling
 // `timelineExportText.ffmpeg.test.ts`, this file holds the export to the
-// written SPECIFICATION — `chroma_timeline::caption`'s layout contract — rather
+// written SPECIFICATION — `apelles_timeline::caption`'s layout contract — rather
 // than diffing it against the Rust preview's pixels. `ab_glyph` and libfreetype
 // are different rasterisers and will never be byte-identical. What CAN be
 // checked exactly, and is checked here, is the part the specification actually

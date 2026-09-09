@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — the clip Inspector's Video / Audio tabs (D-246).
+ * @apelles/editor — the clip Inspector's Video / Audio tabs (D-246).
  *
  * **Why a DOM test.** `clipInspectorTabs.test.ts` proves the pure model (which
  * tabs a clip has, how a remembered one resolves). What only this level can
@@ -51,7 +51,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
-const { useHistoryStore } = await import('@chroma/history');
+const { useHistoryStore } = await import('@apelles/history');
 import { DEFAULT_TEXT_FONT, type Clip, type Timeline } from './timeline';
 
 const CLIP_ID = 'clip-1';

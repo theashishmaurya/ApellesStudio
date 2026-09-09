@@ -57,7 +57,7 @@ export function useImageLoader(cachedEditStateRef: React.RefObject<any>) {
           const loadImageResult: any = await invoke(Invokes.LoadImage, { path: selectedImage.path });
           if (!isEffectActive) return;
 
-          // Chroma: is the loaded item a video? drives the transport + timeline
+          // Apelles: is the loaded item a video? drives the transport + timeline
           invoke<any>('chroma_video_info')
             .then((info) => useChromaStore.getState().setVideoInfo(info?.isVideo ? info : null))
             .catch(() => useChromaStore.getState().setVideoInfo(null));

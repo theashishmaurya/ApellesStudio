@@ -14,7 +14,7 @@ mod app_settings;
 mod app_state;
 mod cache_utils;
 mod camera_tethering;
-mod chroma; // Chroma fork additions — keep the upstream footprint to this one line
+mod chroma; // Apelles fork additions — keep the upstream footprint to this one line
 mod denoising;
 mod exif_processing;
 mod export_processing;
@@ -1881,7 +1881,7 @@ pub fn run() {
 
             if let Ok(cache_dir) = app_handle.path().app_cache_dir() {
                 crate::exif_processing::initialize_cache_dir(cache_dir.clone());
-                // Chroma (D-128): the persistent, source-keyed media cache —
+                // Apelles (D-128): the persistent, source-keyed media cache —
                 // filmstrip tiles, `ffprobe` results, waveform peaks. Same
                 // `app_cache_dir()` root RapidRAW's own thumbnail/exif caches
                 // already use. Pruning walks the tree, so it runs off-thread.
@@ -1890,7 +1890,7 @@ pub fn run() {
             }
 
             {
-                // Chroma: the in-app control server (D-020) — MCP ⇄ frontend bridge.
+                // Apelles: the in-app control server (D-020) — MCP ⇄ frontend bridge.
                 let control_handle = app_handle.clone();
                 std::thread::spawn(move || chroma::control::serve(control_handle));
             }
@@ -2013,13 +2013,13 @@ pub fn run() {
             jxl_oxide::integration::register_image_decoding_hook();
 
             {
-                // Chroma: start + supervise the `ai/` sidecar (D-028). Killed on exit
+                // Apelles: start + supervise the `ai/` sidecar (D-028). Killed on exit
                 // via `chroma::sidecar::shutdown()` in the `.run(...)` handler below.
-                // chroma-ai extraction (D-142): `spawn_and_supervise` never used its
+                // apelles-ai extraction (D-142): `spawn_and_supervise` never used its
                 // `AppHandle` parameter — dropped when the function moved into the
-                // `chroma-ai` crate, so no handle needs cloning for it here anymore.
+                // `apelles-ai` crate, so no handle needs cloning for it here anymore.
                 std::thread::spawn(chroma::sidecar::spawn_and_supervise);
-                // Chroma: and the `ai-media/` sidecar (D-189) — transcript +
+                // Apelles: and the `ai-media/` sidecar (D-189) — transcript +
                 // video understanding, MLX, a separate PROCESS because it is a
                 // separate dependency universe (`mlx-vlm` needs
                 // `transformers>=5.5`, `ai/` pins `<5`). One thread each; the
@@ -2427,7 +2427,7 @@ pub fn run() {
                 }
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     api.prevent_exit();
-                    chroma::sidecar::shutdown(); // Chroma (D-028): no orphan uvicorn
+                    chroma::sidecar::shutdown(); // Apelles (D-028): no orphan uvicorn
 
                     #[cfg(target_os = "macos")]
                     unsafe { libc::_exit(0); }
@@ -2436,7 +2436,7 @@ pub fn run() {
                     std::process::exit(0);
                 }
                 tauri::RunEvent::Exit => {
-                    chroma::sidecar::shutdown(); // Chroma (D-028): no orphan uvicorn
+                    chroma::sidecar::shutdown(); // Apelles (D-028): no orphan uvicorn
 
                     #[cfg(target_os = "macos")]
                     unsafe { libc::_exit(0); }

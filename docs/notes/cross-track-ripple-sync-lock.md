@@ -4,7 +4,7 @@ Roadmap item 11, priority #2 per `docs/notes/timeline-feature-audit.md` (D-105):
 single most-cited real gap against every reference checked. Today's ripple (`add_clip`'s
 insertion ripple, D-104's `move` ripple, D-105's `remove_gap`) only ever shifts clips on
 the ONE track being directly edited — confirmed again, precisely, while writing this doc
-(`crates/chroma-timeline/src/lib.rs::remove_gap`, line 822: `let t = self.track_mut(track)?;
+(`crates/apelles-timeline/src/lib.rs::remove_gap`, line 822: `let t = self.track_mut(track)?;
 ... for c in t.clips.iter_mut() { if c.start_frame >= gap_end { c.start_frame -= shift; }
 }` — one `Track`, one loop, no other track ever touched; the TS mirror in
 `packages/editor/src/timeline.ts` is field-for-field identical).
@@ -22,7 +22,7 @@ the ONE track being directly edited — confirmed again, precisely, while writin
   copying**: when a ripple would shift a sync-locked track and a clip on that track
   straddles the shift point, Resolve **automatically adds a cut point (splits the clip)**
   at that moment rather than rejecting the whole ripple — see "Open design question 2"
-  below, this is a real fork in the road for Chroma's own design, not an obvious default.
+  below, this is a real fork in the road for Apelles' own design, not an obvious default.
 - **Palmier Pro's `manage_tracks`** — a `syncLocked` field, on by default, described in
   its own tool surface (loaded directly, this repo's own stated feature bar per
   `CLAUDE.md`) as "whether ripple edits shift this track along." Same per-track,
@@ -33,9 +33,9 @@ the ONE track being directly edited — confirmed again, precisely, while writin
   concept distinct from the ordinary track-lock, but the practical effect — some tracks
   shift, some don't, controlled per track — is the same shape.
 
-**Conclusion for Chroma's design**: match Resolve/Palmier's shape exactly (a dedicated
+**Conclusion for Apelles' design**: match Resolve/Palmier's shape exactly (a dedicated
 per-track boolean, separate from the existing `Track.locked` edit-guard, default `true`)
-rather than Premiere's overload of the ordinary lock — Chroma already has a distinct
+rather than Premiere's overload of the ordinary lock — Apelles already has a distinct
 `Track.locked` (D-082, blocks *edits* to that track's own clips) that means something
 different from "does this track receive other tracks' ripple shifts." Reusing `locked`
 for both would conflate two real, independent concepts this codebase already keeps
@@ -44,12 +44,12 @@ fold two different concepts into one flag" discipline D-082's own doc comment ar
 
 ## Current state, verified against the actual code
 
-- **`Track` (`crates/chroma-timeline/src/lib.rs`, line 79) has `kind`, `clips`, `gain`,
+- **`Track` (`crates/apelles-timeline/src/lib.rs`, line 79) has `kind`, `clips`, `gain`,
   `locked`, `hidden`** — no sync-lock field or concept anywhere, not even a stub (matches
   the audit's "Don't have" finding exactly). The TS mirror (`packages/editor/src/
   timeline.ts`) has the identical field set.
 - **Correction (D-107, found while implementing this doc): no `Timeline::add_clip` Rust
-  method exists at all** — `grep -n "fn add_clip"` on `chroma-timeline/src/lib.rs` finds
+  method exists at all** — `grep -n "fn add_clip"` on `apelles-timeline/src/lib.rs` finds
   nothing. `add_clip` is a TypeScript/frontend-only op; `chroma_timeline_set` stores
   whatever the frontend computes verbatim (this crate's own module doc: "no
   server-side clamping"), so there's no Rust-side ripple call site for it to generalize.
@@ -58,10 +58,10 @@ fold two different concepts into one flag" discipline D-082's own doc comment ar
   written (with this correction) rather than silently edited, so the record of what was
   initially assumed — and caught — stays visible.
 - **Three real ripple call sites, all single-track, all needing the same generalization**:
-  1. ~~`Timeline::add_clip`'s insertion ripple (`chroma-timeline`)~~ — TS-only, see the
+  1. ~~`Timeline::add_clip`'s insertion ripple (`apelles-timeline`)~~ — TS-only, see the
      correction above. `applyOp`'s `'add_clip'`
      case with `ripple: true` (`timeline.ts`) — D-095/D-100.
-  2. `Timeline::move_clip`'s ripple (`chroma-timeline`) / `applyOp`'s `'move'` case with
+  2. `Timeline::move_clip`'s ripple (`apelles-timeline`) / `applyOp`'s `'move'` case with
      `ripple: true` (`timeline.ts`) — D-104, including its own straddle-rejection guard
      (a clip that straddles the landing point can't be cleared by a same-track ripple and
      is rejected rather than left overlapping — see "Open design question 2" below, the
@@ -110,7 +110,7 @@ suppress the edit's own ripple on its own track; it's irrelevant there. `Track.l
    real reference suggesting a reason to differ between them.
 2. **A clip on another sync-locked track straddles the shift point — split it (Resolve's
    real behavior) or reject the whole op (matching D-104's own existing same-track
-   straddle-rejection)?** This is the one place Chroma's existing precedent and the real
+   straddle-rejection)?** This is the one place Apelles' existing precedent and the real
    reference diverge, and it's a genuine product decision, not a technical one:
    auto-splitting is more powerful (never blocks a ripple) but silently creates a new
    clip boundary the user didn't explicitly ask for, on a track they may not have even
@@ -126,7 +126,7 @@ suppress the edit's own ripple on its own track; it's irrelevant there. `Track.l
    regardless — the whole point of sync-lock is that other tracks may have long,
    unrelated clips (a music bed, room tone) spanning straight through the edit point,
    and Resolve's answer is exactly the straddle-handling in question 2, not "only ripple
-   if there's a matching gap." Chroma's `remove_gap` specifically requires *finding* a
+   if there's a matching gap." Apelles' `remove_gap` specifically requires *finding* a
    real gap on the *edited* track (`gapAt`/`gap_at`) — that requirement stays exactly as
    is for the edited track; it's the *other* sync-locked tracks that need the shift
    applied unconditionally (modulo question 2's straddle handling), not gap-gated.

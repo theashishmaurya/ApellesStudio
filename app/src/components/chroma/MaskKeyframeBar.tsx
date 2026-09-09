@@ -1,4 +1,4 @@
-// Chroma — mask keyframes affordance + track (D-034).
+// Apelles — mask keyframes affordance + track (D-034).
 //
 // Shows only when a shape sub-mask (radial / linear / brush) is the active mask
 // on a video clip. A "◆ Keyframe" button snapshots the sub-mask's current

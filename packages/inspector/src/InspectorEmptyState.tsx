@@ -1,8 +1,8 @@
 /**
- * @chroma/inspector — the "nothing selected" message, shared between
- * `@chroma/motion`'s `InspectorPanel.tsx` and `@chroma/editor`'s
+ * @apelles/inspector — the "nothing selected" message, shared between
+ * `@apelles/motion`'s `InspectorPanel.tsx` and `@apelles/editor`'s
  * `ClipInspectorPanel.tsx` (D-103, Phase 4) — see this package's README for
- * why this is a separate package rather than living in `@chroma/ui`.
+ * why this is a separate package rather than living in `@apelles/ui`.
  */
 import type { ReactNode } from 'react';
 

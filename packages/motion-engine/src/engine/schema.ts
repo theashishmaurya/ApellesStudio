@@ -205,9 +205,9 @@ const layer = z
      * ("stable layer identity" — §1g's own finding: "identity is
      * positional... it breaks the moment the builder can reorder, insert, or
      * delete layers with a selection live"). Purely additive and optional:
-     * `@chroma/motion`'s `addLayer` (D-151) generates one for every layer it
+     * `@apelles/motion`'s `addLayer` (D-151) generates one for every layer it
      * creates from here on; a hand-written or pre-existing manifest simply
-     * has no `id`, and every consumer (`@chroma/motion`'s
+     * has no `id`, and every consumer (`@apelles/motion`'s
      * `resolveSelection`) falls back to the array index exactly as before
      * this field existed. Not used by the renderer at all — `Video.tsx`
      * never reads it — so its presence or absence has zero effect on a

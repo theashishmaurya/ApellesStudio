@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — unit coverage for the preview viewport's zoom/pan math
+ * @apelles/editor — unit coverage for the preview viewport's zoom/pan math
  * (D-218, `previewZoom.ts`).
  *
  * This is the tier where an off-by-one in the zoom would actually hide, the

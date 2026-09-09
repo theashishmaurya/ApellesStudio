@@ -1,7 +1,7 @@
-// Chroma — the project launcher (D-037).
+// Apelles — the project launcher (D-037).
 //
 // Replaces RapidRAW's inherited folder-browser + photo-grid Library view as the
-// default landing screen. A grid of saved Chroma projects (`~/Movies/Chroma/
+// default landing screen. A grid of saved Apelles projects (`~/Movies/Chroma/
 // *.chroma`), each a card with a cached thumbnail + name + relative timestamp;
 // click to open it in the editor. "＋ New Project" picks clips and scaffolds a
 // new `<name>.chroma`. D-043 (2026-09-02) removed RapidRAW's LibraryView /
@@ -334,7 +334,7 @@ export default function ProjectLauncher() {
     <div className="flex-1 h-full overflow-y-auto bg-bg-primary custom-scrollbar">
       <div className="max-w-5xl mx-auto px-8 py-10 flex flex-col gap-8">
         <div>
-          <h1 className="text-2xl font-semibold text-text-primary">Welcome to Chroma</h1>
+          <h1 className="text-2xl font-semibold text-text-primary">Welcome to Apelles</h1>
           <p className="text-sm text-text-secondary mt-1">Open a project to pick up where you left off, or start a new one.</p>
         </div>
 

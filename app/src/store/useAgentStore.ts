@@ -1,4 +1,4 @@
-// Chroma — agent activity feed + `request_human` handoff (D-032).
+// Apelles — agent activity feed + `request_human` handoff (D-032).
 //
 // A running, newest-first record of every grade change the grading agent made
 // through the MCP / control bridge (D-020), plus the single-slot `request_human`

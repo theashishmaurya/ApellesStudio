@@ -14,26 +14,26 @@
 //! `chroma::text`'s — one catalogue for titles, captions and the export, which
 //! is the whole D-212 contract), no compositing, no file parsing, no layout
 //! decisions. **Every number that decides where a line goes comes from
-//! `chroma_timeline::caption::CaptionLayout`**, which the ffmpeg export
+//! `apelles_timeline::caption::CaptionLayout`**, which the ffmpeg export
 //! compiler reads too; this module only turns those numbers into pixels.
 //!
 //! ## The one thing to understand here
 //!
-//! A caption is the first **multi-line** text Chroma draws, and D-211
+//! A caption is the first **multi-line** text Apelles draws, and D-211
 //! deliberately forbade multi-line titles because inter-line layout is the
 //! one thing `ab_glyph` and ffmpeg's `drawtext` genuinely disagree about.
 //! This module is allowed to draw multiple lines only because it never asks
 //! either engine to lay out a second line: each line is an independent,
 //! single-line glyph run at a `y` the shared layout computed. See
-//! `chroma_timeline::caption`'s module doc for the measured evidence behind
+//! `apelles_timeline::caption`'s module doc for the measured evidence behind
 //! that, and for why `ab_glyph`'s `ScaleFont::ascent()` /
 //! `height() + line_gap()` reproduce `drawtext`'s `y_align=font` box exactly.
 
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ab_glyph::{Font, GlyphId, ScaleFont, point};
-use chroma_timeline::caption::{CaptionAlign, CaptionCue, CaptionLayout, CaptionStyle};
-use chroma_timeline::caption_anim::{
+use apelles_timeline::caption::{CaptionAlign, CaptionCue, CaptionLayout, CaptionStyle};
+use apelles_timeline::caption_anim::{
     CaptionAnimation, CaptionWordState, caption_active_word, caption_word_rgb, caption_word_state,
     caption_words,
 };
@@ -92,7 +92,7 @@ fn caption_cache() -> &'static Mutex<Vec<(CaptionKey, Arc<RgbaImage>)>> {
 /// a title, whose `Clip::position_*` and `opacity` the compositor adds
 /// afterwards. A caption's geometry is entirely its style's, so this buffer is
 /// final and the compositor blends it at full opacity. See
-/// `chroma_timeline::Clip::caption`'s own doc for why that line is drawn there.
+/// `apelles_timeline::Clip::caption`'s own doc for why that line is drawn there.
 pub fn render_caption_layer(
     cue: &CaptionCue,
     style: &CaptionStyle,
@@ -203,7 +203,7 @@ fn rasterise_caption(
     let scale = freetype_equivalent_scale(&font, layout.font_px as f32);
     let scaled = font.as_scaled(scale);
     // The font's own line box, exactly as ffmpeg's `drawtext` derives it under
-    // `y_align=font` — see `chroma_timeline::caption`'s module doc for the
+    // `y_align=font` — see `apelles_timeline::caption`'s module doc for the
     // measurement that pins these two expressions to ffmpeg's.
     let ascent = scaled.ascent();
     let line_box_h = scaled.height() + scaled.line_gap();
@@ -654,7 +654,7 @@ fn fill_rect(canvas: &mut RgbaImage, x: f32, y: f32, w: f32, h: f32, rgba: [u8; 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chroma_timeline::caption_anim::CaptionAnimKind;
+    use apelles_timeline::caption_anim::CaptionAnimKind;
 
     fn style(overrides: impl FnOnce(&mut CaptionStyle)) -> CaptionStyle {
         let mut s = CaptionStyle::default();

@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — shared DOM measurement for a layer's tight screen rect
+ * @apelles/motion — shared DOM measurement for a layer's tight screen rect
  * (D-155 §3b's "union of `[data-motion-box]` descendants" technique).
  *
  * Factored out so `MotionCanvasOverlay.tsx`'s own selection-outline

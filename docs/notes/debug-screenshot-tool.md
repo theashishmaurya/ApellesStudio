@@ -1,6 +1,6 @@
 # Debug screenshot tool — the app photographs its own webview (D-210)
 
-**What it is.** A screenshot of the running Chroma window, taken from *inside*
+**What it is.** A screenshot of the running Apelles window, taken from *inside*
 the app's own process, saved as a PNG, reachable from an agent (MCP tool
 `debug_screenshot`), from a human (Cmd/Ctrl+Shift+D), and from the frontend
 (Tauri command `chroma_debug_screenshot`). Plus a small companion,
@@ -174,8 +174,8 @@ POST /op {"op":"debug_screenshot","args":{}}
 ```
 
 That PNG was then **read back and looked at**: a real, non-blank, correctly
-sized picture of the actual Chroma UI — the project launcher, with "Welcome to
-Chroma", the dashed New Project card, and three real project cards showing
+sized picture of the actual Apelles UI — the project launcher, with "Welcome to
+Apelles", the dashed New Project card, and three real project cards showing
 their real thumbnails. 2692×1800 is 1346×900 CSS at `scaleFactor` 2, i.e. the
 true window content size.
 

@@ -1,8 +1,8 @@
 /**
- * @chroma/motion — the Motion tab (D-039 roadmap "Motion tab MVP", D-046;
+ * @apelles/motion — the Motion tab (D-039 roadmap "Motion tab MVP", D-046;
  * layer list D-081; catalog D-151).
  *
- * Wires the already-functional `@chroma/motion-engine` Remotion engine into
+ * Wires the already-functional `@apelles/motion-engine` Remotion engine into
  * a real tab: a `@remotion/player` preview (`MotionPreview`) of whatever
  * manifest is loaded, a real scene/layer list (`LayerList`, D-081 — Phase 1
  * of `docs/notes/global-inspector.md`), a real property panel bound to that
@@ -20,12 +20,12 @@
  * resizable. Layers and Catalog share the sidebar pane as two tabs rather
  * than the Catalog taking a fifth column (D-151 — see the pane's own note).
  * Persistence and rendering are project-scoped
- * (`app/src-tauri/src/chroma/motion.rs`), so — same contract `@chroma/
+ * (`app/src-tauri/src/chroma/motion.rs`), so — same contract `@apelles/
  * editor`'s `EditorTab` already uses — a project must be open.
  *
  * `onRendered` (D-062, optional) fires with the rendered file's path after
  * a successful render — this package can't import it into the Sources pool
- * itself (`@chroma/bridge` is app/domain-layer, D-039 layer direction), so
+ * itself (`@apelles/bridge` is app/domain-layer, D-039 layer direction), so
  * the app-level composition (`app/src/main.tsx`) supplies this to do that.
  *
  * D-155/D-156 (Phase 0/1 of `docs/notes/motion-visual-builder-research.md`):
@@ -45,7 +45,7 @@
  * "per-row lanes"): the left `ResizablePanel` (the preview column) now
  * nests its OWN vertical `PanelGroup` — `<MotionPreview>` on top,
  * `<KeyframeTimeline>` below, a real `ResizableHandle` between them —
- * mirroring `@chroma/editor`'s own `EditorTab.tsx` (`PreviewPane` stacked
+ * mirroring `@apelles/editor`'s own `EditorTab.tsx` (`PreviewPane` stacked
  * over `TimelinePane`, full-width of their shared column, not nested inside
  * the preview). See `KeyframeTimeline.tsx`'s own module doc comment for the
  * full layout decision and why D-160's `KeyframeStrip` (squeezed inside
@@ -71,8 +71,8 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PlayerRef } from '@remotion/player';
-import { sceneStartFrame } from '@chroma/motion-engine/src/engine/build';
-import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
+import { sceneStartFrame } from '@apelles/motion-engine/src/engine/build';
+import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 
 import { Button } from './Button';
 import { MotionPreview, type MotionCanvasMeasureApi } from './MotionPreview';
@@ -124,7 +124,7 @@ export function MotionTab({
   /** D-062/D-260 — fires once per scene as its render finishes, with the
    *  scene's id and the file it landed at. The app layer imports/reconciles
    *  that file into Sources and refreshes any Edit clips already reading it;
-   *  this package cannot do either (`@chroma/bridge`/`@chroma/editor` are the
+   *  this package cannot do either (`@apelles/bridge`/`@apelles/editor` are the
    *  wrong side of D-039's layer direction for a tab). The `sceneId` is
    *  D-260's addition — the app layer needs it to stamp provenance, and the
    *  path alone could only be reverse-engineered back to a scene by
@@ -169,7 +169,7 @@ export function MotionTab({
   // own always-visible toolbar so they never disappear with the panel.
   const [showManifest, setShowManifest] = useState(false);
 
-  // Motion's half of the Chroma control server bridge (D-020's architecture,
+  // Motion's half of the Apelles control server bridge (D-020's architecture,
   // reused — docs/notes/motion-mcp-surface-research.md). Mounted here (not
   // conditionally on any loadState) so it registers its Tauri listener from
   // boot, same as `useChromaControl` does in App.tsx — B-007 already

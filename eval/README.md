@@ -1,4 +1,4 @@
-# eval/ — Chroma grading-agent eval harness
+# eval/ — Apelles grading-agent eval harness
 
 A regression + capability test for the **grading agent** (its MCP tools + the
 grading skill + its prompt): does it *grade by the numbers* — measure scopes,
@@ -33,7 +33,7 @@ node eval/fixtures/_gen.mjs      # regenerate the fixture frames
 
 ## Run the full closed loop (needs the running app + a live agent)
 
-See `eval/run.md`. Short version: per task, `open` the fixture in Chroma, hand
+See `eval/run.md`. Short version: per task, `open` the fixture in Apelles, hand
 the agent the task's `description` + goal, let it work, `save_grade` to
 `eval/results/<id>.grade.json`, then run the scorer.
 

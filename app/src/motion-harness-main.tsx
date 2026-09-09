@@ -1,9 +1,9 @@
 /**
- * Chroma — the isolated Motion-tab browser harness (D-165).
+ * Apelles — the isolated Motion-tab browser harness (D-165).
  *
  * **What it is.** The Motion-tab sibling of D-142's `app/harness.html` +
- * `app/src/harness-main.tsx` (which mounts `@chroma/editor`'s `TimelinePane`
- * standalone) — same shape, same reasons, applied to `@chroma/motion`'s
+ * `app/src/harness-main.tsx` (which mounts `@apelles/editor`'s `TimelinePane`
+ * standalone) — same shape, same reasons, applied to `@apelles/motion`'s
  * `MotionTab` instead: a real component, mounted standalone in a real
  * browser tab, against a stubbed `window.__TAURI_INTERNALS__.invoke` and a
  * hand-seeded manifest, driven with real `PointerEvent`s over CDP. Built
@@ -22,7 +22,7 @@
  * `window.__TAURI_INTERNALS__` to reach a real open project is a much
  * deeper rabbit hole than the Motion tab itself. `MotionTab` and
  * `useMotionProjectStore` are both real, intentional exports of
- * `@chroma/motion` (`index.ts`) specifically so this file can mount it
+ * `@apelles/motion` (`index.ts`) specifically so this file can mount it
  * without reaching past the package's public API.
  *
  * **The fixture.** `defaultFixture()` below is `packages/motion-engine/src/
@@ -46,7 +46,7 @@
  * {bubbles:true, cancelable:true, ...})` — with real `requestAnimationFrame`
  * waits between steps, the same non-negotiable rule `testUtils/
  * pointerHarness.ts` documents (this package has no vitest-side copy of that
- * module yet — `@chroma/motion` cannot depend on `@chroma/editor`'s, per the
+ * module yet — `@apelles/motion` cannot depend on `@apelles/editor`'s, per the
  * house rule D-160's own research pass confirmed — replicate the shape
  * directly in `evaluate_script`, or build `packages/motion/src/testUtils/
  * pointerHarness.ts` as a real follow-up if permanent jsdom regression
@@ -64,9 +64,9 @@
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { MotionTab, useMotionProjectStore } from '@chroma/motion';
-import { sample } from '@chroma/motion-engine/src/engine/sample';
-import type { Manifest } from '@chroma/motion-engine/src/engine/schema';
+import { MotionTab, useMotionProjectStore } from '@apelles/motion';
+import { sample } from '@apelles/motion-engine/src/engine/sample';
+import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 import '../src/styles.css';
 
 function setStatus(text: string): void {
@@ -109,7 +109,7 @@ function installInvokeStub(): void {
   };
 }
 
-/** `sample` (`@chroma/motion-engine`) plus three additions exercising every
+/** `sample` (`@apelles/motion-engine`) plus three additions exercising every
  *  piece of D-155–D-164 in one seed — see this file's own header for why
  *  each one is here. */
 function defaultFixture(): Manifest {

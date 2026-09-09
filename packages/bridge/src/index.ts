@@ -1,5 +1,5 @@
 /**
- * @chroma/bridge — the frontend↔backend seam (D-039).
+ * @apelles/bridge — the frontend↔backend seam (D-039).
  *
  * Will hold: typed `@tauri-apps/api` command bindings (one per
  * `#[tauri::command]`), the shared zustand stores, and the control-bridge hook

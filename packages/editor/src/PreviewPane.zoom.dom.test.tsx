@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — permanent real-DOM regression coverage for the preview
+ * @apelles/editor — permanent real-DOM regression coverage for the preview
  * viewport's zoom + pan (D-218), and specifically for the thing that made it
  * worth its own pass rather than a quick control: **canvas click-to-select
  * and the on-canvas transform handles have to stay correct at every zoom
@@ -653,7 +653,7 @@ describe('editor_set_preview_zoom — the AI half, through the real op dispatch'
 
   it('pushes NOTHING onto the shared undo stack — a look is not an edit (D-216’s rule)', async () => {
     await mountWith(timelineOf([{ kind: 'video', clips: [clip('solo')] }]));
-    const { useHistoryStore } = await import('@chroma/history');
+    const { useHistoryStore } = await import('@apelles/history');
     const before = useHistoryStore.getState().undoStack.length;
 
     await callOp('editor_set_preview_zoom', { zoom: 2 });

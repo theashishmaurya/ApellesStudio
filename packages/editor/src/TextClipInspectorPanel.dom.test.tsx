@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for the Title Inspector's Bold/Italic
+ * @apelles/editor — real-DOM coverage for the Title Inspector's Bold/Italic
  * toggle buttons (D-240, roadmap item 27).
  *
  * `textFonts.test.ts` proves `composeFontStyleKey`/`fontStyleOf` in

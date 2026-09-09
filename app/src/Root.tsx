@@ -1,21 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'react-toastify';
-import { Shell, useActiveTab, useShellStore } from '@chroma/shell';
+import { Shell, useActiveTab, useShellStore } from '@apelles/shell';
 import {
   EditLibraryPanel,
   EditLibraryRail,
   EditorExportDialog,
   EditorTab,
   useEditorTimelineStore,
-} from '@chroma/editor';
+} from '@apelles/editor';
 import {
   MotionTab,
   clipReadsItem,
   computeEditLinks,
   useMotionProjectStore,
   type SceneRenderResult,
-} from '@chroma/motion';
-import { useMediaPoolStore, trackEvent } from '@chroma/bridge';
+} from '@apelles/motion';
+import { useMediaPoolStore, trackEvent } from '@apelles/bridge';
 import App from './App';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
@@ -30,7 +30,7 @@ import { selectProjectKey, useSessionStore } from './store/useSessionStore';
  * (including one with *no* exports at all, which is what `main.tsx` was while
  * it also held this component) invalidates instead, and Vite answers an
  * invalidated boundary with a **full page reload of the whole app**. Because
- * every `@chroma/*` barrel (`packages/editor/src/index.ts` &c.) re-exports
+ * every `@apelles/*` barrel (`packages/editor/src/index.ts` &c.) re-exports
  * stores and plain functions alongside components, it is not a boundary
  * either, so an HMR update to any module behind a barrel propagates straight
  * up to whatever imports the barrel — this file. Keeping this file a valid
@@ -48,7 +48,7 @@ import { selectProjectKey, useSessionStore } from './store/useSessionStore';
  * actually opening — it would otherwise sit on the stale "no project" read it
  * took at startup until some unrelated window-focus event happened to fire.
  * This is the one place that legitimately spans both `app` (owns
- * `useSessionStore`, the real "project is open" signal) and `@chroma/editor`
+ * `useSessionStore`, the real "project is open" signal) and `@apelles/editor`
  * (owns the timeline fetch); this is the composition root, so it's the
  * right place to bridge them, not a cross-package import in either direction.
  * B-034/D-112 turned that bridge from "fire a fetch and hope" into handing the
@@ -73,8 +73,8 @@ export function Root() {
   const activeTab = useActiveTab();
 
   // D-093: tab switches are the cheapest, highest-signal "what is the owner
-  // actually doing right now" event, and `useShellStore` (`@chroma/shell`)
-  // must not depend on `@chroma/bridge` (see that store's own file-header
+  // actually doing right now" event, and `useShellStore` (`@apelles/shell`)
+  // must not depend on `@apelles/bridge` (see that store's own file-header
   // note) — so this is tracked here, at the composition root, same layering
   // reasoning as the B-007/D-062 bridges just above/below. Skips the very
   // first render (mounting on `edit` isn't a "switch").
@@ -162,7 +162,7 @@ export function Root() {
 
   // D-062: a Motion render used to just write a file and print its path as
   // plain text — nothing put it anywhere usable. `MotionTab` can't import
-  // it into the pool itself (`@chroma/bridge` is app/domain-layer, D-039
+  // it into the pool itself (`@apelles/bridge` is app/domain-layer, D-039
   // layer direction: a tab package must not depend on it), so this is the
   // composition root's job, same reasoning as the `useEditorTimelineStore`
   // bridge above. Imports at the pool root (no folder) — a rendered motion
@@ -239,10 +239,10 @@ export function Root() {
 
   // D-263 — the Edit tab's library rail is a tab-owned node that must sit to
   // the LEFT of the shell's own docked column, so it is injected through
-  // `@chroma/shell`'s per-tab `libraryRail` slot (D-251's pattern) rather than
+  // `@apelles/shell`'s per-tab `libraryRail` slot (D-251's pattern) rather than
   // rendered inside `EditorTab`. This is the one place that legitimately spans
   // both stores — the shell owns whether the column is OPEN
-  // (`sourcesPanelOpen`), `@chroma/editor` owns WHICH library it shows
+  // (`sourcesPanelOpen`), `@apelles/editor` owns WHICH library it shows
   // (`libraryMode`) — and the composition root is where they meet, exactly
   // like the `onRendered`/`editLinks` props below and the store bridges above.
   // Neither package imports the other for it.
@@ -254,7 +254,7 @@ export function Root() {
   // to both the per-scene "N in Edit" badge and the `motion_get_edit_links`
   // MCP tool, so a human and an agent are told the same thing from the same
   // value. Computed here because it spans the media pool and the Edit
-  // timeline, neither of which `@chroma/motion` may import (D-039) — the same
+  // timeline, neither of which `@apelles/motion` may import (D-039) — the same
   // reason `onRendered` above is a prop. `computeEditLinks` itself is pure and
   // takes plain arrays; see its own module doc for why its parameters are
   // structural rather than imported types.
@@ -276,12 +276,12 @@ export function Root() {
       tabs={[
         // D-251 — Export moved from the Edit tab's own top strip (D-249) to
         // the shell's chrome bar, beside the tab switcher, per the owner's
-        // live request. `headerAction` is `@chroma/shell`'s injection slot
+        // live request. `headerAction` is `@apelles/shell`'s injection slot
         // for exactly this: `Root` (the composition root) supplies the real
         // `EditorExportDialog`, `Shell` only renders whatever node the active
         // tab registered — same `app → shell`/`app → editor` dependency
         // direction as `element` below, `Shell` itself still never imports
-        // `@chroma/editor`. Motion/Colorist have no export action of their
+        // `@apelles/editor`. Motion/Colorist have no export action of their
         // own yet, so their entries omit it.
         {
           id: 'edit',
@@ -290,7 +290,7 @@ export function Root() {
           headerAction: <EditorExportDialog />,
           // D-263 — the icon rail, leftmost. It drives the shell's own
           // open/closed flag through these props rather than importing
-          // `@chroma/shell` itself (a tab package must not).
+          // `@apelles/shell` itself (a tab package must not).
           libraryRail: (
             <EditLibraryRail dockOpen={sourcesPanelOpen} onDockOpenChange={setSourcesPanelOpen} />
           ),

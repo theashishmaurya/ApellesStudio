@@ -1,5 +1,5 @@
 /**
- * @chroma/shell — window chrome (D-039).
+ * @apelles/shell — window chrome (D-039).
  *
  * The app runs with `decorations: false, transparent: true` (see
  * `tauri.conf.json`) and draws its own title bar. Before D-039 that was

@@ -247,7 +247,7 @@ pub async fn generate_full_image_normal_map(
         .await
         .map_err(|e| {
             let msg = format!(
-                "Chroma AI sidecar unreachable ({e}). The app auto-starts it (D-028) — check \
+                "Apelles AI sidecar unreachable ({e}). The app auto-starts it (D-028) — check \
                  the app log for '[sidecar]' lines (CHROMA_AI_NO_SPAWN=1 disables the \
                  auto-start; manual start: cd ai && ./run.sh). The first normal bake also \
                  lazy-downloads the MoGe-2 checkpoint (~140 MB) into ai/models/."

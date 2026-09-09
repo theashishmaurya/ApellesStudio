@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the active timeline's composition (output) pixel size,
+ * @apelles/editor — the active timeline's composition (output) pixel size,
  * with no clip selection required (D-199, `docs/notes/preview-canvas-boundary.md`).
  *
  * `chroma_timeline_composition_size` (Rust, `chroma::edit::composition_size_only`)

@@ -111,7 +111,7 @@ This is the single largest difference from `on-canvas-transform.md`'s subject, a
 half of that note's Phase 0 unnecessary here.
 
 `packages/motion/src/MotionPreview.tsx` embeds a real `@remotion/player` `<Player>` (4.0.519)
-running `@chroma/motion-engine`'s own `Video` component with the manifest as `inputProps`. The
+running `@apelles/motion-engine`'s own `Video` component with the manifest as `inputProps`. The
 Edit tab's preview is an `<img src="data:image/jpeg;base64,…">` produced by a Rust CPU
 compositor per frame (that note's "no cheap live re-render" finding). The Motion tab's preview
 is **the actual composition, live in the DOM, re-rendering at frame rate**. Consequences:
@@ -158,7 +158,7 @@ Two facts that become Phase 0 items:
 - **A round-trip through the text state costs a full re-serialize and a 300 ms debounce before
   the preview updates.** Fine for typing in a form field. Not fine as the per-pointermove path
   of a drag.
-- **The Motion tab has no undo.** `@chroma/history` (D-051) is used by the Edit tab's
+- **The Motion tab has no undo.** `@apelles/history` (D-051) is used by the Edit tab's
   `useEditorTimelineStore`; `useMotionManifest` holds the manifest text/parse/save/render state
   in plain component state with no history stack. So `on-canvas-transform.md`'s Phase 0b problem
   ("a drag must not push 60 undo entries per second") does not exist here — because there is
@@ -357,7 +357,7 @@ Why this is the right answer, point by point:
   included**, because the browser is applying the real transform, not a reconstruction of it.
 - **It is uniform across primitives.** Every 2D primitive is a descendant of the same world
   container, so one measurement serves all of them.
-- **It needs no new math in a package that shouldn't own it.** `@chroma/motion` never imports
+- **It needs no new math in a package that shouldn't own it.** `@apelles/motion` never imports
   `Camera.tsx`'s internals and never duplicates `design.ease`.
 
 The layer's own current position is then just: read `x`/`y` (or `box`) from the manifest — they
@@ -489,7 +489,7 @@ stated honestly; one of these is a major feature and is labelled as such.
 transformed container and on a camera-less scene's root; `data-motion-layer="<s>.<l>"` on a
 per-layer wrapper in `renderLayers`; `data-motion-box` on each primitive's tight visible
 element(s). Zero pixel change. Documented as a contract in `packages/motion-engine/README.md`,
-because `@chroma/motion` will depend on it.
+because `@apelles/motion` will depend on it.
 
 **0b. A commit path that isn't the 300 ms text round-trip (§1f).** A drag needs the preview to
 follow the pointer. Today every write is `JSON.stringify` → `setText` → debounce → `JSON.parse`
@@ -500,7 +500,7 @@ React, it just re-renders); on pointer-up, commit once through the existing
 `manifestEdit.ts` → `setText` path so the JSON stays the one serialized source of truth. One
 gesture, one text write.
 
-**0c. Undo.** `@chroma/history` (D-051) exists and the Motion tab does not use it. A visual
+**0c. Undo.** `@apelles/history` (D-051) exists and the Motion tab does not use it. A visual
 builder without undo is not shippable, and adding it after the fact means retrofitting every
 mutation site. Do it in Phase 0, with the Inspector's existing edits as the first customer —
 which also makes it independently useful before any drag exists. Scope it to the same
@@ -573,7 +573,7 @@ manifest renders byte-identically).
 > honestly" call below) all shipped together. One real deviation from this section's own wording:
 > the wrapper's `scale`/`rot` pivot at the wrapper's own origin (`transformOrigin: "0 0"`,
 > matching `Camera.tsx`'s own convention), not at "the layer's own position" — reaching the
-> primitive's own anchor would need this engine package to depend on `@chroma/motion`'s
+> primitive's own anchor would need this engine package to depend on `@apelles/motion`'s
 > `positionFields`, the wrong direction. One honest gap disclosed rather than fixed: a drag/resize
 > on a layer that ALSO carries a non-identity `transform` will be slightly off, since
 > `MotionCanvasOverlay.tsx`'s screen↔world map is still measured off `[data-motion-world]` alone.
@@ -701,7 +701,7 @@ is coupled to the player. That is what "visually edit the animation" ultimately 
 someone coming from After Effects, and there is no small version of it.
 
 Honest comparison from inside this repo: the Edit tab's timeline is
-`@xzdarcy/react-timeline-editor` plus a large amount of Chroma code — a track model, a drag
+`@xzdarcy/react-timeline-editor` plus a large amount of Apelles code — a track model, a drag
 system (dnd-kit, `dnd-kit-migration.md`), a ruler (`ruler.ts`), zoom levels (D-134), marquee
 (D-137), keyboard handling and a store — accumulated over many decisions. A keyframe timeline
 is a different shape (keys on a continuous axis, not clips in lanes) so most of that is not

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Inspector's **Caption** and **Subtitle Track Style**
+ * @apelles/editor — the Inspector's **Caption** and **Subtitle Track Style**
  * sections (D-229, `docs/notes/subtitles.md`).
  *
  * **Built from the real reference**, `scratch/resolve-reference/captioning.jpg`
@@ -17,11 +17,11 @@
  *   element and the one that makes a 400-cue import navigable at all, so it is
  *   reproduced rather than dropped.
  *
- * **Chroma's own idiom, not a Resolve reskin.** The reference splits
+ * **Apelles' own idiom, not a Resolve reskin.** The reference splits
  * Caption/Track Style across two TABS; this uses two stacked
  * `InspectorSection`s, which is how every other panel in this Inspector is
  * built (D-103/D-208) — the same information architecture in this app's own
- * vocabulary. Every control is a `@chroma/ui` component on the shared
+ * vocabulary. Every control is a `@apelles/ui` component on the shared
  * `--color-*` tokens; no magic colour literals.
  *
  * **Its own component, rendered above `EditorInspectorPanel`**, for exactly
@@ -48,8 +48,8 @@ import {
   SelectValue,
   Switch,
   Textarea,
-} from '@chroma/ui';
-import { InspectorSection } from '@chroma/inspector';
+} from '@apelles/ui';
+import { InspectorSection } from '@apelles/inspector';
 
 import {
   captionCps,

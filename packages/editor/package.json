@@ -1,20 +1,20 @@
 {
-  "name": "@chroma/editor",
+  "name": "@apelles/editor",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Chroma Editing tab (D-039 / D-041) \u2014 single-video-track timeline of the open project's shots, scrub + play preview, reorder / trim / split / remove, undo/redo (D-051).",
+  "description": "Apelles Editing tab (D-039 / D-041) \u2014 single-video-track timeline of the open project's shots, scrub + play preview, reorder / trim / split / remove, undo/redo (D-051).",
   "scripts": {
     "test": "vitest run"
   },
   "dependencies": {
-    "@chroma/bridge": "*",
-    "@chroma/history": "*",
-    "@chroma/inspector": "*",
-    "@chroma/player": "*",
-    "@chroma/ui": "*",
+    "@apelles/bridge": "*",
+    "@apelles/history": "*",
+    "@apelles/inspector": "*",
+    "@apelles/player": "*",
+    "@apelles/ui": "*",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@tauri-apps/api": "^2.11.1",

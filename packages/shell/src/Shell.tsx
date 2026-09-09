@@ -1,8 +1,8 @@
 /**
- * @chroma/shell — the 3-tab layout + window chrome (D-039).
+ * @apelles/shell — the 3-tab layout + window chrome (D-039).
  *
  * The top bar is the window title bar (the app runs `decorations: false`):
- * left = macOS traffic lights + the CHROMA wordmark; centre = the tabs
+ * left = macOS traffic lights + the APELLES wordmark; centre = the tabs
  * (Edit / Motion / Colorist), absolutely centred; right = Windows/Linux window
  * controls (a matching spacer on macOS so the centre stays true). The bar is a
  * `data-tauri-drag-region` except the buttons and tabs. See `WindowChrome.tsx`
@@ -29,7 +29,7 @@
  * already used Ctrl+Y — `app/src/utils/keyboardUtils.ts` — kept as the
  * primary redo combo for consistency; Cmd+Shift+Z accepted too since it's
  * the platform convention on macOS and costs nothing to also support). Both
- * pop `@chroma/history`'s shared stack regardless of which tab is active,
+ * pop `@apelles/history`'s shared stack regardless of which tab is active,
  * and — the real UX decision here, see D-051 — **switch the active tab** to
  * whichever tab the undone/redone entry belongs to, so the user always sees
  * the effect of the undo/redo they just triggered rather than it applying
@@ -48,7 +48,7 @@
  * D-116): same injection pattern as `launcher` — the shell renders whatever
  * `sourcesPanel` node is passed in (never imports the D-046 `SourcesPanel`
  * itself, for the same app → shell dependency-direction reason), as a real
- * resizable column (`@chroma/ui`'s `ResizablePanelGroup`, matching this
+ * resizable column (`@apelles/ui`'s `ResizablePanelGroup`, matching this
  * project's standing "every resizable-by-nature panel must actually be
  * resizable" rule) to the **left** of the tab content, toggled by a button
  * anchored to the content area's own top-left corner (D-120 — moved off the
@@ -74,7 +74,7 @@
  * the panel renders INSIDE that column in place of `sourcesPanel`, both only
  * while that tab is active. This is the same injection slot, with the same
  * reasoning, as `headerAction` below: the Edit tab's library rail
- * (`@chroma/editor`'s `EditLibraryRail`) is tab-local content that has to sit
+ * (`@apelles/editor`'s `EditLibraryRail`) is tab-local content that has to sit
  * at a specific position relative to a panel the SHELL owns, which reordering
  * anything inside `EditorTab.tsx` could never achieve — it was rendering to
  * the right of the very column it switches. `Shell` still imports nothing from
@@ -98,10 +98,10 @@
  * the tab **content** below is switched, `tabs.map` + `hidden` below), so
  * this is `Shell` finally acting on information it already held, for the
  * one case the owner explicitly asked to see there. The injected node itself
- * is still owned entirely by whichever package built it (`@chroma/editor`'s
+ * is still owned entirely by whichever package built it (`@apelles/editor`'s
  * `EditorExportDialog` today) and supplied by the composition root
  * (`Root.tsx`) exactly like `launcher`/`sourcesPanel` above — `Shell` never
- * imports `@chroma/editor` itself, so the "shell depends only on
+ * imports `@apelles/editor` itself, so the "shell depends only on
  * react + zustand + Tauri" boundary this package's own `package.json`
  * describes is unchanged; only the *behavioral* tab-agnostic rule narrows,
  * and only for this one slot. Colorist and Motion have no export action of
@@ -116,8 +116,8 @@
 
 import { useEffect, type ReactNode } from 'react';
 import { ChevronLeft, PanelLeft } from 'lucide-react';
-import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@chroma/ui';
-import { useHistoryStore } from '@chroma/history';
+import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
+import { useHistoryStore } from '@apelles/history';
 import { useShellStore, type ShellTabId } from './store';
 import { useWindowChrome, MacTrafficLights, WindowControls } from './WindowChrome';
 
@@ -129,7 +129,7 @@ export interface ShellTab {
   /** D-251 — rendered in the chrome bar's own right-hand cluster, beside the
    *  window controls, ONLY while this tab is active. See this file's own
    *  module doc ("Per-tab chrome-bar action") for why this exists and why it
-   *  doesn't reopen `@chroma/shell`'s "never imports the tab packages" rule.
+   *  doesn't reopen `@apelles/shell`'s "never imports the tab packages" rule.
    *  Omit for a tab with no such action (Motion/Colorist today). */
   headerAction?: ReactNode;
   /** D-263 — this tab's own icon rail, rendered as the LEFTMOST column of the
@@ -258,7 +258,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
         {/* left: traffic lights (mac) + wordmark */}
         <MacTrafficLights show={chrome.isMac && !chrome.isMobile} />
         <div className="flex items-center pr-2 text-[11px] font-semibold tracking-wide text-text-secondary/70 pointer-events-none">
-          CHROMA
+          APELLES
         </div>
 
         {/* left (project open): back to the launcher */}
@@ -278,7 +278,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
         {projectOpen && (
           <div
             role="tablist"
-            aria-label="Chroma tabs"
+            aria-label="Apelles tabs"
             className="absolute left-1/2 -translate-x-1/2 flex items-stretch h-full gap-1"
           >
             {tabs.map((tab) => {

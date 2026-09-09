@@ -1,4 +1,4 @@
-// @chroma/motion — unit tests for `KeyframeTimeline.tsx`'s own new zoom
+// @apelles/motion — unit tests for `KeyframeTimeline.tsx`'s own new zoom
 // mechanism (D-162, Phase 5b part 2 — "independent zoom", §4 of the parent
 // research doc). See `timelineZoom.ts`'s module doc comment for why these
 // bounds are new/local rather than reused from `packages/editor/src/

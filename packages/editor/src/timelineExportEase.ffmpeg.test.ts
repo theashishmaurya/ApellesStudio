@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution proof that an EASED keyframe segment
+// @apelles/editor — REAL ffmpeg-execution proof that an EASED keyframe segment
 // (D-233) exports the shape the live preview resolves.
 //
 // Why this exists as a real-pixel test rather than another argv assertion:
@@ -14,7 +14,7 @@
 //
 // So this measures real decoded PIXELS out of a real exported file and
 // compares them against `easeCurveEval` — the exact TS mirror of
-// `chroma_types::EaseCurve::eval` that the Rust preview evaluates per frame.
+// `apelles_types::EaseCurve::eval` that the Rust preview evaluates per frame.
 // Agreement here is agreement between the two renderers.
 //
 // The subject is a keyframed OPACITY on a white clip over the export canvas:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Speech-to-text — "what was said, and when" (D-189).
 
-**What it is:** the audio half of Chroma's media sidecar. Given an audio or
+**What it is:** the audio half of Apelles' media sidecar. Given an audio or
 video path, returns the full text plus segment- and word-level timings —
 everything an agent (or the Edit tab) needs to cut to an exact spoken word.
 
@@ -23,7 +23,7 @@ deliberate simplifications from that source, so this file has no unused
 surface (`CLAUDE.md`: no dead code):
   - Its `lightning-whisper-mlx` backend is dropped. It cannot produce
     word-level timings at all (segments only), which is the entire reason
-    Chroma wants a transcript; keeping it would mean a second model dependency
+    Apelles wants a transcript; keeping it would mean a second model dependency
     that no caller here can use.
   - Its `--quant` / `--batch-size` knobs went with that backend; `mlx-whisper`
     has neither.

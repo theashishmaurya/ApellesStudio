@@ -1,8 +1,8 @@
-// @chroma/editor — the TypeScript half of the caption-animation mirror
+// @apelles/editor — the TypeScript half of the caption-animation mirror
 // (D-243).
 //
 // **The point of this file.** `captionAnim.ts` and
-// `crates/chroma-timeline/src/caption_anim.rs` are the same model written
+// `crates/apelles-timeline/src/caption_anim.rs` are the same model written
 // twice, in two runtimes that must resolve identical numbers for an identical
 // cue. What keeps that honest is that both sides assert the SAME fixtures —
 // the Rust module's `state_numbers_are_the_documented_arithmetic` and this
@@ -185,7 +185,7 @@ describe('resolveCaptionAnimation', () => {
 
 describe('captionWordState matches the Rust fixture exactly', () => {
   // The SAME numbers `state_numbers_are_the_documented_arithmetic` asserts in
-  // `crates/chroma-timeline/src/caption_anim.rs`. Changing one side without
+  // `crates/apelles-timeline/src/caption_anim.rs`. Changing one side without
   // the other must fail here or there.
   it('reproduces the documented arithmetic, number for number', () => {
     const ws = captionWords(['Every great video'], 3);

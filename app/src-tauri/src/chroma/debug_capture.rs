@@ -3,7 +3,7 @@
 //! What it is: the ONE way an agent (or a human filing a bug) gets a real,
 //!   pixel-accurate picture of what this app's window is actually showing,
 //!   from inside the app's own process. It asks the WKWebView that renders
-//!   Chroma's whole UI to snapshot ITSELF
+//!   Apelles' whole UI to snapshot ITSELF
 //!   (`-[WKWebView takeSnapshotWithConfiguration:completionHandler:]`,
 //!   macOS 10.13+), converts the resulting `NSImage` to PNG bytes, and
 //!   writes them to disk. A second, much smaller entry point reads one pixel
@@ -26,7 +26,7 @@
 //!   window chrome/title bar, a native menu, a native file dialog, another
 //!   app, or a second display are all invisible to it (that IS system screen
 //!   capture, and it is exactly what we cannot do). It also does not diff two
-//!   screenshots, annotate one, or know anything about Chroma's UI: it hands
+//!   screenshots, annotate one, or know anything about Apelles' UI: it hands
 //!   back a PNG path and the caller looks at it.
 //!
 //! Platform: macOS only, deliberately. v1 is macOS ARM (`docs/02-scope.md`)

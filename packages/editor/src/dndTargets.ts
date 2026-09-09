@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the timeline's `@dnd-kit` payload contract (B-122).
+ * @apelles/editor — the timeline's `@dnd-kit` payload contract (B-122).
  *
  * **What it is.** The named types for every drag source and drop target that
  * shares `TimelinePane`'s one `DndContext`, and the four narrowing functions

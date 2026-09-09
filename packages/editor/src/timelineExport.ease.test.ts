@@ -137,7 +137,7 @@ describe('keyframeExprAt — easing', () => {
   it('tracks the preview\'s own resolved curve within a MEASURED bound', () => {
     // This is the assertion the feature lives or dies on. `easeCurveEval` is
     // what Rust evaluates per frame for the live preview (an exact mirror of
-    // `chroma_types::EaseCurve::eval`); the expression is what ffmpeg
+    // `apelles_types::EaseCurve::eval`); the expression is what ffmpeg
     // evaluates for the export. Their worst-case disagreement across every
     // preset, sampled far finer than the 20-step grid, must stay under the
     // documented bound.

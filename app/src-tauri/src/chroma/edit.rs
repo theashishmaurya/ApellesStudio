@@ -1,4 +1,4 @@
-//! Editor tab bridge (D-041, multi-timeline D-045) — the `chroma-timeline`
+//! Editor tab bridge (D-041, multi-timeline D-045) — the `apelles-timeline`
 //! model ⇄ the frontend.
 //!
 //! What it is: the Tauri command surface for the **Edit tab** — get / set the
@@ -9,12 +9,12 @@
 //!   a `data:image/jpeg;base64,…` string until then).
 //! What it does: `chroma_timeline_get` returns the active timeline (building a
 //!   fresh one from the project's shots the first time — probing each source
-//!   for a frame count here, `chroma-timeline` never touches media — and
+//!   for a frame count here, `apelles-timeline` never touches media — and
 //!   persisting it) or `chroma_timeline_set` replaces it; `chroma_timeline_list`
 //!   /`chroma_timeline_create`/`chroma_timeline_set_active` manage the
 //!   `timelines` list itself; `chroma_timeline_frame` resolves a timeline
 //!   position on the active timeline to `(clip, source frame)` via
-//!   [`chroma_timeline::Track::clip_at`] and decodes that source frame with the
+//!   [`apelles_timeline::Track::clip_at`] and decodes that source frame with the
 //!   lightweight [`super::decode_pipe`] path (ffmpeg → rgb → JPEG);
 //!   clips (including across tracks) on the active timeline;
 //!   `resolve_audio_track_positions` (D-057, Phase C) is the audio-track
@@ -27,7 +27,7 @@
 //!   **"No colour grade" is no longer true, as of D-256**, and the way it stopped
 //!   being true is the point: a clip's saved Colorist grade
 //!   (`<project>/grades/<clip.id>.grade.json`) reaches this compositor as a
-//!   baked `chroma_types::Lut3d` — 3×33³ numbers that `chroma::grade_lut`
+//!   baked `apelles_types::Lut3d` — 3×33³ numbers that `chroma::grade_lut`
 //!   produced by running an identity lattice through the Colorist's own wgpu
 //!   pipeline once, memoised on the grade file's (mtime, len). So the grade
 //!   maths still has exactly one implementation (the shader), this module still
@@ -39,7 +39,7 @@
 //!   the Colorist crop, relight) is not carried — stripped at bake time with a
 //!   logged warning, never silently.
 //!   **Transitions ARE here as of D-226** (roadmap item 27,
-//!   `docs/notes/transitions.md`): a `chroma_timeline::Transition` bridges a cut
+//!   `docs/notes/transitions.md`): a `apelles_timeline::Transition` bridges a cut
 //!   without the two clips ever overlapping, so
 //!   `Timeline::resolve_visible_video_layers_at` can now hand this module TWO
 //!   layers from one track (a cross dissolve's two clips, the incoming one
@@ -55,7 +55,7 @@
 //!   concerns, unchanged) resolves **N video tracks under opaque, top-wins
 //!   selection** (D-056, Phase B1) — video tracks in index order, first one
 //!   with a clip (not a gap) at the position wins, via
-//!   `chroma_timeline::Timeline::resolve_video_clip_at`. `chroma_timeline_frame`
+//!   `apelles_timeline::Timeline::resolve_video_clip_at`. `chroma_timeline_frame`
 //!   itself (D-088, Phase 2/B3) is a DIFFERENT, real story now: real CPU
 //!   pixel-level compositing IS here, for the multi-track preview
 //!   specifically — `Timeline::resolve_visible_video_layers_at` resolves
@@ -78,7 +78,7 @@
 //!   legacy singular `timeline` key (D-041's shape) into a one-element
 //!   `timelines` list — see the D-045 decision.
 //!
-//! Fork hygiene (D-003): all new code here + in `chroma-timeline`; the only
+//! Fork hygiene (D-003): all new code here + in `apelles-timeline`; the only
 //!   `project.rs` edit is the `timelines`/`active_timeline` fields. Upstream
 //!   footprint is `pub mod edit;` in `chroma/mod.rs` + the `generate_handler!`
 //!   lines in `lib.rs`. Divergence logged in `docs/09-engine-notes.md`.
@@ -90,27 +90,27 @@ use image::DynamicImage;
 use image::codecs::jpeg::JpegEncoder;
 use serde::Serialize;
 
-use chroma_timeline::{Clip, LayerRole, LayerSource, Timeline, TrackKind, VisibleLayer};
+use apelles_timeline::{Clip, LayerRole, LayerSource, Timeline, TrackKind, VisibleLayer};
 
 use super::state;
 use super::video::VideoInfo;
 use super::{caption_render, decode_pipe, grade_lut, project, text};
 
 // --------------------------------------------------------------------------- //
-// per-clip probe cache — moved out of this file into `chroma-media` (D-146,
+// per-clip probe cache — moved out of this file into `apelles-media` (D-146,
 // `docs/notes/crate-extraction-plan.md` §2.2). It was never an Edit-tab
 // concern: its consumers are `filmstrip`, `audio`, `project` and `load`, and
-// leaving it here would have made `chroma-media` depend on `app/src-tauri`, a
+// leaving it here would have made `apelles-media` depend on `app/src-tauri`, a
 // cycle. B-056 (the in-memory layer never invalidated, so a source file
 // replaced in place served a stale `VideoInfo` for the rest of the session)
-// was fixed in the same move — see `chroma_media::probe`'s module doc.
+// was fixed in the same move — see `apelles_media::probe`'s module doc.
 //
 // Re-exported at the old path so the ~15 `probe_cached(..)` call sites in this
 // file, and `super::edit::probe_cached` in `audio.rs`/`filmstrip.rs`/
 // `load.rs`/`project.rs`, did not change.
 // --------------------------------------------------------------------------- //
 
-pub(crate) use chroma_media::probe::probe_cached;
+pub(crate) use apelles_media::probe::probe_cached;
 
 // --------------------------------------------------------------------------- //
 // timeline load / build / persist
@@ -127,7 +127,7 @@ fn current_project_dir() -> Result<PathBuf, String> {
 }
 
 // --------------------------------------------------------------------------- //
-// timeline lifecycle — moved out of this file into `chroma-project` (D-148,
+// timeline lifecycle — moved out of this file into `apelles-project` (D-148,
 // `docs/notes/crate-extraction-plan.md` §2.3). `build_from_shots`,
 // `ensure_timeline`, `load_and_ensure_timeline`, `resolve_timeline` and
 // `resolve_timeline_and_settings` were never Edit-tab concerns: they read
@@ -146,16 +146,16 @@ fn current_project_dir() -> Result<PathBuf, String> {
 
 /// A pure pass-through, not a wrapper — the crate function already took the
 /// project directory explicitly. `chroma::project` calls it at this path too;
-/// see `chroma_project::timeline`'s module doc for why it is not an Edit-tab
+/// see `apelles_project::timeline`'s module doc for why it is not an Edit-tab
 /// concern despite having lived here since D-041.
-pub(crate) use chroma_project::timeline::ensure_timeline;
+pub(crate) use apelles_project::timeline::ensure_timeline;
 
 /// Load the **open** project's manifest with `timelines` guaranteed non-empty
 /// and `active_timeline` valid. Returns the directory alongside it because
 /// most callers here go on to `project::save_manifest(&dir, ..)`.
 fn load_and_ensure_timeline(persist: bool) -> Result<(PathBuf, project::ProjectManifest), String> {
     let dir = current_project_dir()?;
-    let manifest = chroma_project::timeline::load_and_ensure_timeline(&dir, persist)?;
+    let manifest = apelles_project::timeline::load_and_ensure_timeline(&dir, persist)?;
     Ok((dir, manifest))
 }
 
@@ -164,7 +164,7 @@ fn load_and_ensure_timeline(persist: bool) -> Result<(PathBuf, project::ProjectM
 /// `chroma::audio`'s mixer enumerates every genuine `TrackKind::Audio` track
 /// on the active timeline (`resolve_audio_track_positions`, below).
 pub(crate) fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
-    chroma_project::timeline::resolve_timeline(&current_project_dir()?, persist)
+    apelles_project::timeline::resolve_timeline(&current_project_dir()?, persist)
 }
 
 /// [`resolve_timeline`] plus the project's output spec (D-038) — the pair
@@ -173,7 +173,7 @@ pub(crate) fn resolve_timeline(persist: bool) -> Result<Timeline, String> {
 pub(crate) fn resolve_timeline_and_settings(
     persist: bool,
 ) -> Result<(Timeline, project::ProjectSettings), String> {
-    chroma_project::timeline::resolve_timeline_and_settings(&current_project_dir()?, persist)
+    apelles_project::timeline::resolve_timeline_and_settings(&current_project_dir()?, persist)
 }
 
 /// The **composition space** every clip's geometry is measured against
@@ -224,11 +224,11 @@ fn composition_size(
 ///
 /// The track-priority walk itself (video tracks in index order, first one
 /// with a clip — not a gap — at `pos` wins) is
-/// [`chroma_timeline::Timeline::resolve_video_clip_at`] — pure model logic,
-/// no media involved, unit-tested at the `chroma-timeline` crate level. This
+/// [`apelles_timeline::Timeline::resolve_video_clip_at`] — pure model logic,
+/// no media involved, unit-tested at the `apelles-timeline` crate level. This
 /// function is the thin media-layer wrapper around it: probe the winning
 /// clip's source so the caller gets pixel dimensions/frame-rate too, which
-/// `chroma-timeline` itself never touches.
+/// `apelles-timeline` itself never touches.
 ///
 /// `Ok(None)` when every video track has a gap at `pos` (or `pos` is
 /// negative / past everything) or the winning clip's source path is
@@ -271,7 +271,7 @@ pub(crate) fn resolve_video_position(
 /// its probed VideoInfo, that track's gain)` — the Phase C (D-056) counterpart
 /// of [`resolve_video_position`]'s single video-track lookup, feeding
 /// `chroma::audio`'s mixer the extra sources to sum in alongside the baseline
-/// video-embedded audio. Uses [`chroma_timeline::Track::clip_at`] exactly
+/// video-embedded audio. Uses [`apelles_timeline::Track::clip_at`] exactly
 /// like the video path — a track with nothing covering `pos` (a gap, or an
 /// empty track) contributes nothing, silently, the same "not an error"
 /// contract `resolve_video_position` already has. A clip whose source turns
@@ -345,7 +345,7 @@ pub(crate) fn resolve_audio_track_positions(pos: u64) -> Result<Vec<AudioTrackPo
     Ok(out)
 }
 
-/// B-079 — the active timeline's own timebase ([`chroma_timeline::Timeline::fps`]),
+/// B-079 — the active timeline's own timebase ([`apelles_timeline::Timeline::fps`]),
 /// for `chroma::audio`'s fps-aware per-clip out-point arithmetic
 /// (`chroma_audio_play`'s `end_frame_at(fps)` calls) — the one thing that
 /// module needs from the timeline beyond what [`resolve_video_position`]/
@@ -358,7 +358,7 @@ pub(crate) fn timeline_fps() -> Result<f64, String> {
 
 /// D-149 — one track's ducking configuration resolved against the active
 /// timeline at `pos`: the dB/attack/release numbers off `track_index`'s own
-/// `chroma_timeline::Track`, plus the **trigger** track's clip layout from
+/// `apelles_timeline::Track`, plus the **trigger** track's clip layout from
 /// `pos` onward, in timeline frames.
 ///
 /// `Ok(None)` — no ducking for this track — for every ordinary reason, none of
@@ -371,7 +371,7 @@ pub(crate) fn timeline_fps() -> Result<f64, String> {
 /// above the pair and shifting the indices.
 ///
 /// This is the timeline half of D-149 and is why it lives here rather than in
-/// `chroma-media`: "which frames does track N have clips on" is timeline
+/// `apelles-media`: "which frames does track N have clips on" is timeline
 /// resolution, and a media crate reaching for it would be reaching *up* a layer
 /// (D-039/D-146 — the same rule that kept `chroma_audio_play`'s body app-side).
 pub(crate) fn resolve_track_duck(
@@ -518,7 +518,7 @@ pub fn chroma_timeline_add_track(kind: TrackKind) -> Result<usize, String> {
 }
 
 /// Remove `track` (and every clip on it — see
-/// `chroma_timeline::Timeline::remove_track`'s doc) from the **active**
+/// `apelles_timeline::Timeline::remove_track`'s doc) from the **active**
 /// timeline and persist. Errors on an out-of-range index.
 #[tauri::command]
 pub fn chroma_timeline_remove_track(track: usize) -> Result<(), String> {
@@ -575,7 +575,7 @@ pub fn chroma_timeline_move_clip(
 /// Dissolve the **complete** A/V link group the clip at `(track, clip)` on
 /// the active timeline belongs to, and persist. A no-op for an already
 /// unlinked clip; errors for an out-of-range index or a locked track — see
-/// `chroma_timeline::Timeline::unlink`'s own doc for the full semantics
+/// `apelles_timeline::Timeline::unlink`'s own doc for the full semantics
 /// (Palmier's own `manage_clip_links` `unlink`, Premiere's `Clip > Unlink`,
 /// Resolve's "Unlink Clips").
 #[tauri::command]
@@ -594,7 +594,7 @@ pub fn chroma_timeline_unlink_clip(track: usize, clip: usize) -> Result<(), Stri
 /// persist. Returns the new group id. Errors if either clip is already
 /// linked, if the two clips are the same track kind (not one video + one
 /// audio), if either clip's own track is locked, or for an out-of-range
-/// track/clip index — see `chroma_timeline::Timeline::link`'s own doc for
+/// track/clip index — see `apelles_timeline::Timeline::link`'s own doc for
 /// the full validation and why this is deliberately narrower than Palmier's
 /// own group-merging `link`.
 #[tauri::command]
@@ -941,7 +941,7 @@ fn draw_captions_onto(
 
 /// D-226 — the decode-pipe slot a clip layer belongs in: the track's own slot
 /// for an ordinary layer, its transition-partner slot for the second clip of a
-/// cross dissolve. See `chroma_timeline::LayerRole` for why the two must not
+/// cross dissolve. See `apelles_timeline::LayerRole` for why the two must not
 /// share (B-040).
 fn pipe_slot(track: usize, role: LayerRole) -> decode_pipe::PipeSlot {
     match role {
@@ -1463,7 +1463,7 @@ fn composite_video_frame(
         /// D-230 — an **adjustment clip**: apply this colour operator to the
         /// canvas as it stands, which is precisely every layer below this one,
         /// since the paint walk runs back-to-front. Nothing is drawn.
-        Adjust(chroma_timeline::AdjustmentOps),
+        Adjust(apelles_timeline::AdjustmentOps),
     }
 
     let (comp_w, comp_h) = comp;
@@ -1622,7 +1622,10 @@ fn composite_video_frame(
 ///
 /// Alpha is untouched: the operator is a colour correction, and the canvas is
 /// opaque by construction (it starts as opaque black).
-fn apply_adjustment_to_canvas(canvas: &mut image::RgbaImage, ops: &chroma_timeline::AdjustmentOps) {
+fn apply_adjustment_to_canvas(
+    canvas: &mut image::RgbaImage,
+    ops: &apelles_timeline::AdjustmentOps,
+) {
     for px in canvas.pixels_mut() {
         let [r, g, b] = ops.apply_rgb8([px[0], px[1], px[2]]);
         px[0] = r;
@@ -2041,7 +2044,7 @@ mod composite_tests {
         // `EaseCurve::eval` itself rather than a hand-copied constant.
         for f in [10_i64, 25, 50, 75, 90] {
             let got = resolve_clip_transform(&eased, f).opacity;
-            let want = chroma_types::EaseCurve::EASE_IN.eval(f as f64 / 100.0);
+            let want = apelles_types::EaseCurve::EASE_IN.eval(f as f64 / 100.0);
             assert!(
                 (got - want).abs() < 1e-6,
                 "frame {f}: got {got}, want {want}"
@@ -3016,7 +3019,7 @@ mod composite_tests {
             name: "Title".into(),
             duration: 48,
             source_len: 48,
-            text: Some(chroma_timeline::TextLayer {
+            text: Some(apelles_timeline::TextLayer {
                 content: content.into(),
                 ..Default::default()
             }),
@@ -3097,7 +3100,7 @@ mod composite_tests {
         const H: u32 = 180;
         let mut canvas: image::RgbaImage = ImageBuffer::from_pixel(W, H, Rgba([0, 0, 0, 255]));
         let layer = super::text::render_text_layer(
-            &chroma_timeline::TextLayer {
+            &apelles_timeline::TextLayer {
                 content: "III".into(),
                 ..Default::default()
             },
@@ -3135,7 +3138,7 @@ mod composite_tests {
 /// the export" a checked claim rather than an assertion.
 #[cfg(test)]
 mod preview_text_tests {
-    use chroma_timeline::{Clip, TextLayer, Timeline, Track, TrackKind};
+    use apelles_timeline::{Clip, TextLayer, Timeline, Track, TrackKind};
 
     const W: u32 = 320;
     const H: u32 = 180;
@@ -3399,7 +3402,7 @@ mod preview_text_tests {
 /// content.
 #[cfg(test)]
 mod preview_transition_tests {
-    use chroma_timeline::{
+    use apelles_timeline::{
         Clip, Timeline, Track, TrackKind, Transition, TransitionAlignment, TransitionKind,
     };
 
@@ -3484,7 +3487,7 @@ mod preview_transition_tests {
             timelines: vec![Timeline {
                 id: "tl1".into(),
                 name: "Cut".into(),
-                rate: Some(chroma_types::Rational { num: 24, den: 1 }),
+                rate: Some(apelles_types::Rational { num: 24, den: 1 }),
                 tracks: vec![Track {
                     kind: TrackKind::Video,
                     clips: vec![clip("A", red, 0, 0), clip("B", blue, 24, 48)],
@@ -3652,8 +3655,8 @@ mod preview_transition_tests {
 mod preview_throughput_tests {
     use std::time::Instant;
 
+    use apelles_timeline::{Clip, Timeline, Track, TrackKind};
     use base64::Engine as _;
-    use chroma_timeline::{Clip, Timeline, Track, TrackKind};
 
     fn test_video() -> Option<String> {
         std::env::var("CHROMA_TEST_VIDEO")
@@ -3838,7 +3841,7 @@ mod preview_throughput_tests {
     /// the JPEG itself, not a ~4/3-inflated base64 transcription of it.
     ///
     /// Run it with the numbers visible:
-    /// `CHROMA_TEST_VIDEO=… cargo test -p RapidRAW preview_frame_phase_breakdown -- --nocapture`
+    /// `CHROMA_TEST_VIDEO=… cargo test -p apelles preview_frame_phase_breakdown -- --nocapture`
     #[test]
     fn preview_frame_phase_breakdown() {
         let Some(vid) = test_video() else {
@@ -3927,7 +3930,7 @@ mod preview_throughput_tests {
 /// question, and it is unanswerable against moving content.
 #[cfg(test)]
 mod preview_adjustment_tests {
-    use chroma_timeline::{AdjustmentLayer, AdjustmentOps, Clip, Timeline, Track, TrackKind};
+    use apelles_timeline::{AdjustmentLayer, AdjustmentOps, Clip, Timeline, Track, TrackKind};
 
     use super::super::PROJECT_STATE_LOCK;
 
@@ -4035,7 +4038,7 @@ mod preview_adjustment_tests {
             timelines: vec![Timeline {
                 id: "tl1".into(),
                 name: "Adjust".into(),
-                rate: Some(chroma_types::Rational { num: 24, den: 1 }),
+                rate: Some(apelles_types::Rational { num: 24, den: 1 }),
                 tracks,
                 markers: Vec::new(),
             }],
@@ -4278,7 +4281,7 @@ mod preview_adjustment_tests {
 /// bright is this pixel now" is unanswerable against moving content.
 #[cfg(test)]
 mod grade_bridge_tests {
-    use chroma_timeline::{Clip, Timeline, Track, TrackKind};
+    use apelles_timeline::{Clip, Timeline, Track, TrackKind};
 
     use super::super::PROJECT_STATE_LOCK;
     use super::grade_lut;
@@ -4326,7 +4329,7 @@ mod grade_bridge_tests {
     /// exactly the path D-256 had to teach to decline itself.
     fn open_one_clip_project(dir: &std::path::Path, clip_path: &std::path::Path) {
         let project_dir = dir.join("Graded.chroma");
-        std::fs::create_dir_all(chroma_project::grade_dir(&project_dir)).expect("mkdir project");
+        std::fs::create_dir_all(apelles_project::grade_dir(&project_dir)).expect("mkdir project");
 
         let settings = super::project::ProjectSettings {
             width: Some(W),
@@ -4345,7 +4348,7 @@ mod grade_bridge_tests {
             timelines: vec![Timeline {
                 id: "tl1".into(),
                 name: "Graded".into(),
-                rate: Some(chroma_types::Rational { num: 24, den: 1 }),
+                rate: Some(apelles_types::Rational { num: 24, den: 1 }),
                 tracks: vec![Track {
                     kind: TrackKind::Video,
                     clips: vec![Clip {
@@ -4595,7 +4598,7 @@ mod grade_bridge_tests {
             "the .cube path does not exist: {path}"
         );
         let parsed = crate::lut_processing::parse_lut_file(path).expect("ffmpeg-readable .cube");
-        assert_eq!(parsed.size, chroma_types::lut3d::DEFAULT_SIZE);
+        assert_eq!(parsed.size, apelles_types::lut3d::DEFAULT_SIZE);
 
         // 4. content-addressed: baking again is byte-identical and reuses the
         //    same filename, which is what lets a QUEUED export's frozen argv
@@ -4620,7 +4623,7 @@ mod grade_bridge_tests {
     /// That is the entire justification for D-256's baked-lattice design over
     /// the alternatives (a second CPU implementation of the grading stack, or
     /// preview-only with a documented export gap), so it is checked rather than
-    /// asserted. `chroma_types::adjustment`'s header called this parity
+    /// asserted. `apelles_types::adjustment`'s header called this parity
     /// structurally unreachable; this test is what says otherwise, in pixels.
     ///
     /// The tolerance absorbs one h264/yuv420p round trip plus the RGB↔YUV

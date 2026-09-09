@@ -1,5 +1,5 @@
 /**
- * @chroma/ui — typography variant table (D-039).
+ * @apelles/ui — typography variant table (D-039).
  *
  * The size / weight / colour tokens `<Text>` (and a few kit components) render
  * from. Copied verbatim from `app/src/types/typography.ts` when the kit was

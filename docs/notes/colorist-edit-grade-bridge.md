@@ -8,12 +8,12 @@ exact plumbing, the measurements, and what is deliberately still missing.
 
 ## 1. The gap, as it actually was
 
-Chroma had two independent render paths:
+Apelles had two independent render paths:
 
 | | Colorist | Edit |
 |---|---|---|
 | engine | RapidRAW's **wgpu** shader (`gpu_processing`, via `render_core::render`) | a **CPU** compositor (`chroma::edit::composite_video_frame`) |
-| input | `grade.json`'s `adjustments` blob | `chroma_timeline::Timeline` |
+| input | `grade.json`'s `adjustments` blob | `apelles_timeline::Timeline` |
 | export | `chroma::export::export_video` (GPU per frame) | an **ffmpeg filtergraph** compiled in TypeScript (`packages/editor/src/timelineExport.ts`) |
 
 They shared a project and, since D-070, a clip identity — and nothing else. A
@@ -28,9 +28,9 @@ question assumed:
 1. **Where does the grade pipeline live?** `app/src-tauri`: the shader plus
    `image_processing::get_all_adjustments_from_json` (untyped JSON → uniforms),
    reached headlessly through `render_core::render` (D-014's Tauri-free seam,
-   whose device init moved to `chroma-gpu` in D-144). It takes a `grade.json`
+   whose device init moved to `apelles-gpu` in D-144). It takes a `grade.json`
    `adjustments` object and produces **pixels**. There is no
-   `chroma-grade` crate yet — it is still "future" in `crates/README.md`.
+   `apelles-grade` crate yet — it is still "future" in `crates/README.md`.
 
 2. **Where would a grade plug into Edit?** Preview: per decoded layer in
    `composite_video_frame`, before geometry. Export: as a filter node inside
@@ -49,7 +49,7 @@ question assumed:
    redundant linkage next to a working one.
 
 4. **Is there a reusable way to invoke the grade maths from Edit?** ⚠️ **No —
-   and `chroma_types::adjustment`'s own header had already written down why, as
+   and `apelles_types::adjustment`'s own header had already written down why, as
    a structural impossibility:** the `adjustments` blob is deliberately untyped
    in Rust (D-020/D-025), it is applied *only* by the wgpu shader, "there is no
    CPU implementation of it anywhere in the workspace", the Edit compositor is
@@ -106,7 +106,7 @@ These are stripped before baking (they would also corrupt the lattice image
 itself — a crop applied to a 33×1089 lattice is meaningless) and every drop is
 reported: as a `warnings` entry on the bake, in the app log, in the Export
 dialog, and from `editor_get_grade_status`. **Never silently.** Carrying them
-would require a real shared compositor — `chroma-grade` + `chroma-compositor`,
+would require a real shared compositor — `apelles-grade` + `apelles-compositor`,
 still "future" in `crates/README.md` — and the ffmpeg exporter could not
 reproduce it anyway, which would reintroduce exactly the preview-vs-export
 divergence this design exists to avoid.
@@ -117,8 +117,8 @@ divergence this design exists to avoid.
 
 | layer | what | file |
 |---|---|---|
-| L0 | `Lut3d` — lattice, trilinear sampler, `.cube` writer, identity test. Pure, no GPU/fs/`image`. | `crates/chroma-types/src/lut3d.rs` |
-| L1 | `grade_dir(project_dir)` — the one `join("grades")` | `crates/chroma-project/src/manifest.rs` |
+| L0 | `Lut3d` — lattice, trilinear sampler, `.cube` writer, identity test. Pure, no GPU/fs/`image`. | `crates/apelles-types/src/lut3d.rs` |
+| L1 | `grade_dir(project_dir)` — the one `join("grades")` | `crates/apelles-project/src/manifest.rs` |
 | app | `BakeSession` (GPU device + caches), `bake_lut3d`, `resolve_clip_lut` (memoised), `bake_luts_for_clips` (→ `.cube` files), `apply_to_rgba`, `chroma_timeline_grade_luts` | `app/src-tauri/src/chroma/grade_lut.rs` |
 | app | the preview: apply per decoded layer; fast path declines itself when graded | `app/src-tauri/src/chroma/edit.rs` |
 | app | `bake_primary_lut` now delegates (one baker, two callers) | `app/src-tauri/src/chroma/export.rs` |
@@ -209,7 +209,7 @@ The 22 ms figure is why `apply_to_rgba` is parallel: a trilinear sample is eight
 scattered reads into a 431 kB `f32` lattice (past L1), and over half of a 24 fps
 frame's 41 ms budget spent on one graded layer is a visible stutter by
 CLAUDE.md's performance-first rule, not a rounding error. `rayon` stays in
-`app/src-tauri` (where it was already a dependency) rather than in `chroma-types`,
+`app/src-tauri` (where it was already a dependency) rather than in `apelles-types`,
 so that L0 crate keeps its zero-heavy-deps rule; only the walk over the buffer is
 parallel, the per-pixel maths is the same `Lut3d::apply_rgb8`.
 
@@ -218,7 +218,7 @@ An ungraded clip pays **none** of this: `lut_for_clip` returns `None` after one
 
 ## 7. Tests, and what each one is for
 
-- `crates/chroma-types/src/lut3d.rs` — 9 unit tests: exhaustive 8-bit identity
+- `crates/apelles-types/src/lut3d.rs` — 9 unit tests: exhaustive 8-bit identity
   round trip, exact sampling at lattice points, linearity between them, the
   `.cube` byte shape, clamping, determinism.
 - `chroma::grade_lut::tests` — an empty grade bakes to the identity; a real
@@ -248,7 +248,7 @@ headline assertion. The test measures the wiring, not itself.
 ## 8. Deliberately not done
 
 - **The spatial half of a grade** (masks/local layers, Colorist crop, relight) —
-  see §2. Warned about, never silent. Needs `chroma-grade` + `chroma-compositor`.
+  see §2. Warned about, never silent. Needs `apelles-grade` + `apelles-compositor`.
 - **A per-clip "bypass grade" toggle.** Resolve has one; this pass does not add
   it, because the capability being delivered is "the grade you set is the grade
   you see", and a toggle is a *different* feature (a viewer state, arguably
@@ -261,7 +261,7 @@ headline assertion. The test measures the wiring, not itself.
   as designed (and Resolve's default), but "copy the grade to both halves on
   split" is a reasonable future affordance. `editor_get_grade_status` is how you
   see the current state.
-- **A `chroma-grade` crate.** The bake lives in `app/src-tauri` because it links
+- **A `apelles-grade` crate.** The bake lives in `app/src-tauri` because it links
   the RapidRAW shader, which is precisely what `crates/README.md` says
-  `chroma-grade` will own when it exists. `grade_lut.rs` is written to move
+  `apelles-grade` will own when it exists. `grade_lut.rs` is written to move
   there whole.

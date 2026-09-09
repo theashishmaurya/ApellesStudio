@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the speed ramp: variable playback speed over one clip's
+ * @apelles/editor — the speed ramp: variable playback speed over one clip's
  * own length (D-236, roadmap item 27).
  *
  * **What it is.** The single, canonical implementation of a clip's *time
@@ -9,7 +9,7 @@
  * `setpts` expression, the export's audio `atempo` chain, every duration
  * calculation) goes through this module rather than re-spelling the
  * arithmetic, so the two renderers cannot drift apart. Its Rust mirror is
- * `chroma_timeline::speed_ramp` — the two are kept deliberately line-for-line
+ * `apelles_timeline::speed_ramp` — the two are kept deliberately line-for-line
  * comparable, and `speedRamp.test.ts` pins the shared cases.
  *
  * **What it does.** A ramp is a list of [`SpeedPoint`]s stored on the clip
@@ -316,7 +316,7 @@ export function rampOutputSourceFrames(segments: readonly SpeedSegment[]): numbe
  * `speedRamp.test.ts` asserts precisely that round trip.
  *
  * Positions outside the ramp EXTRAPOLATE at the first/last segment's own
- * speed rather than clamping, mirroring `chroma_timeline::Clip::
+ * speed rather than clamping, mirroring `apelles_timeline::Clip::
  * source_frame_at`'s own documented handle-media behaviour.
  */
 export function outputAtSourceFrame(segments: readonly SpeedSegment[], sourceFrame: number): number {
@@ -546,7 +546,7 @@ export function rampSetptsSecondsExpr(
 }
 
 /** One resolved run, restated in SECONDS relative to the clip's own in-point
- *  — the unit both ffmpeg `trim`/`atrim` and `chroma_media`'s live mixer take.
+ *  — the unit both ffmpeg `trim`/`atrim` and `apelles_media`'s live mixer take.
  *  `speed` carries its sign, so a negative entry is a reversed run. */
 export interface SpeedSegmentSeconds {
   startSec: number;

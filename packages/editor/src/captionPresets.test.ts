@@ -1,4 +1,4 @@
-// @chroma/editor — the caption preset library's own invariants (D-243/D-244).
+// @apelles/editor — the caption preset library's own invariants (D-243/D-244).
 //
 // A preset is pure data applied through `set_caption_style`, so what can go
 // wrong with one is: a duplicate id (two library tiles that overwrite each
@@ -105,7 +105,7 @@ describe('the caption preset library', () => {
       expect(p.description.length, `${p.id} description`).toBeGreaterThan(0);
       // D-244 — anything adapted from the HyperFrames catalogue must SAY so
       // and must carry its licence, since that is the whole attribution
-      // obligation. Presets whose id is not a catalogue slug are Chroma's own.
+      // obligation. Presets whose id is not a catalogue slug are Apelles' own.
       if (p.id.startsWith('caption-')) {
         expect(p.note, `${p.id} note`).toContain('HyperFrames');
         expect(p.note, `${p.id} note`).toContain('Apache-2.0');

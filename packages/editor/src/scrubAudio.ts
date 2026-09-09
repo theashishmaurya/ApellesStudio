@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the tape-scrub gesture driver (D-232, roadmap item 27).
+ * @apelles/editor — the tape-scrub gesture driver (D-232, roadmap item 27).
  *
  * What it is: three module-level functions that turn "the user is dragging the
  * playhead" into the Rust scrub transport. Two independent surfaces make that
@@ -16,7 +16,7 @@
  * pointer handler.
  *
  * What it does NOT do: decide what a scrub sounds like (that is
- * `chroma_media::scrub`), move the playhead (each surface's own drag handler
+ * `apelles_media::scrub`), move the playhead (each surface's own drag handler
  * already does, through `setPlayhead`), or produce sound while merely paused.
  * Scrub audio exists for the duration of a real pointer drag and no longer —
  * `end()` is called on pointer-up AND on unmount mid-drag, because a scrub that
@@ -79,7 +79,7 @@ export function beginScrub(frame: number): void {
  * a *blocking* command that does nothing but store into a mutex.
  *
  * No sequencing token: a position is a level, not an edge, and last-writer-wins
- * is exactly right (see `chroma_media::scrub::update`).
+ * is exactly right (see `apelles_media::scrub::update`).
  */
 export function updateScrub(frame: number): void {
   if (!scrubbing) return;

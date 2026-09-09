@@ -43,7 +43,7 @@ graph) keeps v1 small and keeps one source of truth — see **D-025**.
 `adjustments` is whatever `useEditorStore.getState().adjustments` holds: the
 primary grade, curves, colour wheels, HSL, effects, LUT ref, and
 `adjustments.masks[]` (each a `MaskContainer` with its own `MaskAdjustments` +
-`subMasks[]`). Chroma does **not** reinterpret it — the renderer already reads it.
+`subMasks[]`). Apelles does **not** reinterpret it — the renderer already reads it.
 
 ### Matte externalization
 

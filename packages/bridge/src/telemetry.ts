@@ -1,5 +1,5 @@
 /**
- * @chroma/bridge — local-only user-action telemetry (D-093).
+ * @apelles/bridge — local-only user-action telemetry (D-093).
  *
  * `trackEvent(name, props)` is the one function every package/tab reaches
  * for to record "a user did X." It does NOT call out to any network/
@@ -22,7 +22,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 // Mirrors `Invokes.FrontendLog` (`app/src/components/ui/AppProperties.tsx`)
 // by value rather than by import: that enum lives in `app`, which depends
-// on `@chroma/bridge` (D-039 layer direction), not the other way around.
+// on `@apelles/bridge` (D-039 layer direction), not the other way around.
 const FRONTEND_LOG_INVOKE = 'frontend_log';
 const TELEMETRY_PREFIX = '[telemetry]';
 

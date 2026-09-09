@@ -252,8 +252,8 @@ export const useKeyboardShortcuts = ({
         },
       },
       // D-051: undo/redo moved to the shell-level global keybinding
-      // (`@chroma/shell`'s `Shell.tsx`, Cmd/Ctrl+Z / Cmd/Ctrl+Y), which pops
-      // `@chroma/history`'s shared stack via the `useColoristHistoryBridge`
+      // (`@apelles/shell`'s `Shell.tsx`, Cmd/Ctrl+Z / Cmd/Ctrl+Y), which pops
+      // `@apelles/history`'s shared stack via the `useColoristHistoryBridge`
       // adapter — that stack's entries call `useEditorStore`'s
       // `goToHistoryIndex`/`setEditor`+`pushHistory` under the hood, so the
       // net effect on this store is identical. No handler here anymore: a

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM regression coverage for timeline markers (D-222),
+ * @apelles/editor — real-DOM regression coverage for timeline markers (D-222),
  * built on `testUtils/pointerHarness.ts` (D-142) and modelled on
  * `TimelinePane.fade.dom.test.tsx`.
  *

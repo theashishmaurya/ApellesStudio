@@ -55,8 +55,8 @@ Two structural facts drove the design more than any single look:
 pub animation: Option<CaptionAnimation>,   // absent = D-229's static caption
 ```
 
-`chroma_timeline::caption_anim` carries the rest, mirrored exactly by
-`@chroma/editor`'s `captionAnim.ts` (the same two-file mirror `caption.rs` /
+`apelles_timeline::caption_anim` carries the rest, mirrored exactly by
+`@apelles/editor`'s `captionAnim.ts` (the same two-file mirror `caption.rs` /
 `caption.ts` already is, and for the same reason — see either header).
 
 **A preset is nothing but a `CaptionStyle` carrying one of these.** There is no
@@ -202,11 +202,11 @@ animation knob alongside the static ones.
 
 ## 7. Verification
 
-- `chroma-timeline` — 238/238, of which 17 are new `caption_anim` tests: window tiling, the degradation
+- `apelles-timeline` — 238/238, of which 17 are new `caption_anim` tests: window tiling, the degradation
   cases (zero duration, empty text, out-of-range index), each kind's own
   invariants, and a fixture asserted number-for-number against the TypeScript
   mirror.
-- `@chroma/editor` — `captionAnim.test.ts` asserts **the same fixture numbers**,
+- `@apelles/editor` — `captionAnim.test.ts` asserts **the same fixture numbers**,
   so a drift in either language fails exactly one of the two;
   `captionPresets.test.ts` holds every preset to real colours, catalogue fonts,
   in-range values and (for adapted ones) a provenance note naming HyperFrames
@@ -238,7 +238,7 @@ extent rather than every word boundary.
 Both are named on the roadmap, and neither is hidden from the user:
 
 - **Typography.** The reference uses Montserrat, Anton, Poppins, Outfit, Space
-  Grotesk and Gabarito. Chroma's catalogue is system faces only, because both
+  Grotesk and Gabarito. Apelles' catalogue is system faces only, because both
   renderers must read the same single-face `.ttf` (D-212). Each preset names the
   nearest catalogue face and says so in its own note. All six are SIL OFL 1.1
   and freely bundleable — a mechanical follow-up.

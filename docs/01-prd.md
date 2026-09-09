@@ -4,7 +4,7 @@ Status: **draft**. Owner: Ashish. Last updated: 2026-09-08 (feature-status recon
 D-231 — see note below).
 
 > **2026-09-02 correction.** This PRD was written for a grading-only product. D-039
-> (`docs/08-decisions.md`) repointed Chroma at a 3-tab app — Edit / Motion / Colorist. The
+> (`docs/08-decisions.md`) repointed Apelles at a 3-tab app — Edit / Motion / Colorist. The
 > problem statement, goals, and non-goals below are updated for that; the **Colorist-specific
 > goals and success criteria are kept close to as-written** because they describe what's
 > actually built and shipping.
@@ -82,7 +82,7 @@ place that rule is currently unmet is named explicitly below.
   with drag-to-reorder and real per-layer thumbnails, a browsable primitive **Catalog** that
   creates layers, a typed property Inspector, **on-canvas select / drag / resize /
   marquee**, a per-row **keyframe timeline** with a bezier ease-curve editor, and a
-  `zod`-validated JSON manifest editor. Render goes through the `chroma-motion` crate to
+  `zod`-validated JSON manifest editor. Render goes through the `apelles-motion` crate to
   `npx remotion render` and auto-imports the output into Sources.
 
 **Agent reach, stated precisely** (the numbers are the real ones, counted from
@@ -146,7 +146,7 @@ explicitly out, by tab:
 - **Edit — the 2026-09-02 list here is obsolete.** Multi-track, audio, transitions and MCP
   tools were all listed as out of scope and have all since shipped (D-086/D-088, D-050,
   D-226/D-227, D-183). What is genuinely still out, as of 2026-09-08: **GPU compositing**
-  (today's compositor is CPU — `chroma-compositor` is still unbuilt), **grade-in-preview**
+  (today's compositor is CPU — `apelles-compositor` is still unbuilt), **grade-in-preview**
   (Edit and Colorist remain two passes), **OTIO export** (FCPXML 1.7 shipped instead, D-196),
   **adjustment clips** (subtitles/captions landed as D-229 mid-pass), a **timeline curve
   editor**, a
@@ -170,7 +170,7 @@ explicitly out, by tab:
 - **Rust-native, performance-first, small binary — hence Tauri** (D-039 owner constraint).
   This rejected WebCodecs/browser-based editing engines (Remotion-as-editor, Diffusion
   Studio, OpenCut-web) for the Edit tab specifically.
-- **AGPL-3.0** on the `app/` engine (inherited from RapidRAW). Chroma code license TBD
+- **AGPL-3.0** on the `app/` engine (inherited from RapidRAW). Apelles code license TBD
   (D-002) but must be AGPL-compatible.
 - **No cloud dependency** in the critical path. Optional cloud model calls allowed only as
   an explicit opt-in fallback, never default.
@@ -203,8 +203,8 @@ transcript existing without anything that cuts from it (E5).
 
 Tracked in `docs/08-decisions.md`. Headline ones, largely still open even after the pivot
 (`docs/notes/product-direction.md` §9 confirms none were re-decided by D-039 itself):
-- Chroma's own license? (D-002, leaning AGPL, not yet decided)
-- Working name "Chroma" — final? (D-010, provisional)
+- Apelles' own license? (D-002, leaning AGPL, not yet decided)
+- Working name "Apelles" — final? (D-010, provisional)
 - v1 headline feature — shot-match-to-reference vs. subject-isolation+haze, now also
   competing for attention against the Edit/Motion tabs? (D-007)
 - Does the Editor's eventual compositor replace the Colorist's grade path, or do they stay

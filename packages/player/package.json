@@ -1,13 +1,13 @@
 {
-  "name": "@chroma/player",
+  "name": "@apelles/player",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "description": "Chroma shared preview component (D-039 roadmap \"Next\" item 1) — canvas viewport + title strip + transport bar, fully controlled and presentational. Each tab supplies its own frame source via the `surface` slot and owns all frame-fetch / playback-loop / IPC logic itself; this package has none.",
+  "description": "Apelles shared preview component (D-039 roadmap \"Next\" item 1) — canvas viewport + title strip + transport bar, fully controlled and presentational. Each tab supplies its own frame source via the `surface` slot and owns all frame-fetch / playback-loop / IPC logic itself; this package has none.",
   "dependencies": {
-    "@chroma/ui": "*",
+    "@apelles/ui": "*",
     "lucide-react": "^1.33.0",
     "react": "^19.2.8"
   }

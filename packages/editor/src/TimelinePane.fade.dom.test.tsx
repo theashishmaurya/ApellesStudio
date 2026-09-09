@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM regression coverage for the timeline's on-clip
+ * @apelles/editor — real-DOM regression coverage for the timeline's on-clip
  * fade handles (D-207), built on `testUtils/pointerHarness.ts` (D-142) and
  * modelled on `TimelinePane.marquee.dom.test.tsx`.
  *

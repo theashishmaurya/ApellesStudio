@@ -80,7 +80,7 @@ shot open, and the destination of every "back" below. 21 props are threaded App 
 
 1. **No shot open.** `_hydrateOpenDto` (`useSessionStore.ts`) with every shot offline / an
    empty project → `setEditor({ selectedImage: null })` → App shows the LibraryView pane.
-   *This is the empty state that must become a Chroma message.*
+   *This is the empty state that must become a Apelles message.*
 2. **The "Home" button** — `handleGoHome` (`useAppNavigation.ts:44`): wipes
    `useLibraryStore` (`rootPaths`, `folderTrees`, `imageList`, …). Bound at
    `useKeyboardShortcuts.ts:576` (Escape ladder, library only) and passed as
@@ -155,7 +155,7 @@ irrelevant to the colourist flow. **Confirmed: the editor renders with no `Libra
 | `SettingsPanel.tsx:400` | `open('https://www.getrapidraw.com/cloud')` "Upgrade" | same `CloudDashboard` dead block. |
 | `tauri.conf.json:3` | `identifier: "io.github.CyberTimon.RapidRAW"` | **do NOT change** — bundle identifier is a Phase-4 packaging call. |
 | `tauri.conf.json:96` | `version: "1.6.2"` | leave — versioning is a packaging call. |
-| `Cargo.toml` package `RapidRAW` | crate name (see `cargo clean -p RapidRAW` in doc 09) | leave — packaging. |
+| `Cargo.toml` package `RapidRAW` | crate name (see `cargo clean -p apelles` in doc 09) | leave — packaging. |
 | comments referencing "RapidRAW" in `utils/*`, `hooks/useChromaControl.ts`, `hooks/useAiMasking.ts`, `AIPanel.tsx`, `SettingsPanel.tsx:2305`, `chroma/*.tsx` headers | explanatory | **keep** — accurate provenance notes, not branding. |
 
 ---
@@ -165,7 +165,7 @@ irrelevant to the colourist flow. **Confirmed: the editor renders with no `Libra
 Verified against every frontend `invoke` string (`Invokes` enum in
 `components/ui/AppProperties.tsx` + raw string literals).
 
-### Tier 1 — remove with this commit (nothing Chroma keeps references them)
+### Tier 1 — remove with this commit (nothing Apelles keeps references them)
 
 | command | impl | consumer (all deleted) |
 |---|---|---|
@@ -203,7 +203,7 @@ show_in_finder, delete_files_from_disk, delete_files_with_associated}`,
 clear_ai_tags, clear_all_tags}` (grid tag/rating — `set_rating_for_paths` /
 `set_color_label_for_paths` are also used by the editor `BottomBar` star rating, keep those).
 
-### Keep (editor / Chroma uses them)
+### Keep (editor / Apelles uses them)
 
 `load_metadata`, `load_presets`, `save_presets` (local grade presets — D-025-adjacent),
 `load_and_parse_lut` + all `lut_processing::*`, `read_exif_for_paths`,
@@ -216,7 +216,7 @@ clear_ai_tags, clear_all_tags}` (grid tag/rating — `set_rating_for_paths` /
 
 ---
 
-## 5. What must be KEPT (grading engine + Chroma additions)
+## 5. What must be KEPT (grading engine + Apelles additions)
 
 - **`components/views/EditorView.tsx`** and everything under it: `panel/Editor.tsx`, the
   canvas + wgpu render path (`gpu_processing.rs`, `render_core.rs`, `WgpuDisplay`),
@@ -293,12 +293,12 @@ Grep confirms no importer outside this set (`App.tsx` for `LibraryView`;
   `sortCriteria`, `filterCriteria`, `selectionAnchorPath`.
 - **`BottomBar.tsx`**: drop the `isLibraryView` prop + its branches (only `LibraryView`
   passed `true`).
-- **Branding**: `TitleBar.tsx:118` → `Chroma` (or remove the `<p>`); `SettingsPanel`
+- **Branding**: `TitleBar.tsx:118` → `Apelles` (or remove the `<p>`); `SettingsPanel`
   `CloudDashboard` → delete the `getrapidraw.com` links; `SettingsPanel` Thanks/About →
   keep the OSS credits, drop the "…of RapidRAW" framing + Ko-Fi; `tauri.conf.json:15`
-  `"title": "Chroma"`; `i18n/locales/*.json` — remove the `library.splash.*` block, fix
+  `"title": "Apelles"`; `i18n/locales/*.json` — remove the `library.splash.*` block, fix
   `settings.thanks.description` / `nativeTitlebarDesc` / the AI-connector blurbs to say
-  "Chroma", rename `*.rapidRawPreset` → "Preset".
+  "Apelles", rename `*.rapidRawPreset` → "Preset".
 
 ### The "Sources" `FolderTree` panel — decision point
 
@@ -334,7 +334,7 @@ FolderTree + Tier-2 removal as the immediate D-043 follow-up on the roadmap.
 ### The empty state
 
 `_hydrateOpenDto` already leaves `selectedImage: null` for an empty / all-offline project.
-`App.tsx`'s non-editor pane renders `<ColoristEmptyState>` — a centred Chroma message
+`App.tsx`'s non-editor pane renders `<ColoristEmptyState>` — a centred Apelles message
 ("Add or select a shot to start grading", pointing at the ShotStrip). No project at all is
 the shell launcher's job (`main.tsx`), unchanged.
 

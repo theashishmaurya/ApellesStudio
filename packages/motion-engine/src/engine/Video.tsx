@@ -18,7 +18,7 @@ import type { Manifest, Scene as SceneT } from "./schema";
 
 /**
  * `data-motion-layer="<sceneIndex>.<layerIndex>"` (D-155, `docs/notes/
- * motion-visual-builder-research.md` §3a/§4 Phase 0a) — the hook `@chroma/
+ * motion-visual-builder-research.md` §3a/§4 Phase 0a) — the hook `@apelles/
  * motion`'s canvas overlay walks up to from a click (`elementsFromPoint` →
  * `.closest('[data-motion-layer]')`) to resolve a screen point back to a
  * `Selection`. `display: "contents"` so the wrapper is invisible to layout
@@ -42,8 +42,8 @@ import type { Manifest, Scene as SceneT } from "./schema";
  * fixed under a scale/rotate is on the author (or a future tool), exactly
  * the same way a camera key must combine `x`/`y` with `zoom`. Getting this
  * wrapper to instead pivot around a primitive's own reported anchor would
- * need per-primitive position knowledge (`@chroma/motion`'s `positionFields`)
- * that this ENGINE package must not depend on (wrong direction, `@chroma/
+ * need per-primitive position knowledge (`@apelles/motion`'s `positionFields`)
+ * that this ENGINE package must not depend on (wrong direction, `@apelles/
  * motion` depends on this package, never the reverse) — a known, honest
  * scope call, not an oversight. When `l.transform` is absent, `node` below is
  * the exact same JSX this function always produced — zero pixel/visual

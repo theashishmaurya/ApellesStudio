@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — canvas-drawn amplitude waveform for a timeline clip
+ * @apelles/editor — canvas-drawn amplitude waveform for a timeline clip
  * (D-051, the mature timeline UI pass).
  *
  * `react-timeline-editor` has no built-in waveform rendering, and nothing

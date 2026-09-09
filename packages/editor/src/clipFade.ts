@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the pure geometry behind the timeline's on-clip fade
+ * @apelles/editor — the pure geometry behind the timeline's on-clip fade
  * handles (D-207).
  *
  * **What it is.** Frames↔pixels for a clip's `fade_in_frames`/
@@ -11,7 +11,7 @@
  * `TimelinePane.tsx` already use.
  *
  * **What it does NOT do.** It never evaluates a fade's *gain* — that is
- * `timelineExportAudio.ts`'s `fadeGainAt`, mirroring `chroma_types::fade_gain`,
+ * `timelineExportAudio.ts`'s `fadeGainAt`, mirroring `apelles_types::fade_gain`,
  * and there is exactly one such evaluator per side of the wire. Drawing a
  * ramp needs the curve's SHAPE, not sampled values, and an SVG cubic segment
  * IS that shape exactly (see [`fadeRampPaths`]), so nothing here approximates
@@ -19,7 +19,7 @@
  *
  * **Units.** `fade_in_frames`/`fade_out_frames` are in the clip's OWN SOURCE
  * frames — the same unit as `Clip.duration`, which is what
- * `chroma_timeline::Clip::fade_multiplier_at` compares them against and what
+ * `apelles_timeline::Clip::fade_multiplier_at` compares them against and what
  * `buildAudioSourceChain` divides by the clip's own `clipFps`. The timeline
  * draws in TIMELINE frames, so every conversion here routes through
  * `timeline.ts`'s existing `sourceFramesToTimeline`/`timelineFramesToSource`
@@ -147,7 +147,7 @@ function fmt(n: number): string {
  * *x*", which drawing never asks.
  *
  * `x` in the curve's own space is progress through the fade WINDOW and `y` is
- * the multiplier — and, per `chroma_timeline::Clip::fade_out_curve`'s own doc,
+ * the multiplier — and, per `apelles_timeline::Clip::fade_out_curve`'s own doc,
  * a fade-out's window is measured from the clip's OUT-point, so `x = 0` there
  * is the clip's very last frame. That is why the fade-out path is built
  * right-to-left rather than mirrored: an `ease-in` fade-out must be slow near

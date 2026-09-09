@@ -37,7 +37,7 @@
  *   `debug_set_editor_inspector`  — the Edit tab's Inspector column.
  *   `debug_set_inspector_tab`     — that Inspector's Video/Audio tab (D-246).
  *   `debug_set_popover_open`      — any registered Edit-tab popover/dialog by
- *                                   id (D-252, `@chroma/editor`'s
+ *                                   id (D-252, `@apelles/editor`'s
  *                                   `panelRegistry.ts`) — the canvas-size
  *                                   popover, the export dialog, and whatever
  *                                   the next one registers, through ONE op
@@ -47,7 +47,7 @@
  *                                   docked that library.)
  *   `debug_dom_tree`              — bounded DOM dump (see `domTree.ts`).
  *   `debug_frame_timing`          — the Edit-tab preview's real paint
- *                                   intervals (see `@chroma/editor`'s
+ *                                   intervals (see `@apelles/editor`'s
  *                                   `previewTiming.ts`).
  *
  * NOT here, deliberately: the Colorist tab's own panel/visibility/settings
@@ -57,7 +57,7 @@
  * piece-2 gap in `docs/notes/debug-tooling.md`.
  */
 
-import { useShellStore } from '@chroma/shell';
+import { useShellStore } from '@apelles/shell';
 import {
   useEditorTimelineStore,
   previewTimingReport,
@@ -67,7 +67,7 @@ import {
   PANEL_IDS,
   parsePanelId,
   EDIT_LIBRARY_MODES,
-} from '@chroma/editor';
+} from '@apelles/editor';
 
 import { describeOpenDialogs, serializeDomTree } from './domTree';
 import { isParseError, parseBool, parseShellTab, SHELL_TABS } from './uiState';

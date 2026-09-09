@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution pixel tests for D-226's transitions.
+// @apelles/editor — REAL ffmpeg-execution pixel tests for D-226's transitions.
 //
 // Its own file, mirroring `timelineExportText.ffmpeg.test.ts`'s precedent: the
 // fixtures here are two SOLID-COLOUR sources (not `testsrc`), because the whole

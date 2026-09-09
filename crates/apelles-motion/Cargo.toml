@@ -1,0 +1,13 @@
+[package]
+name = "apelles-motion"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apelles L2 — the manifest -> Remotion render bridge (D-046): thin process-orchestration around `npx remotion render` in packages/motion-engine. No GPU, no media I/O, no reimplemented render pipeline."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+apelles-types = { path = "../apelles-types" }

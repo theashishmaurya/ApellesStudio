@@ -12,10 +12,10 @@ use super::{decode_pipe, load, video};
 pub struct VideoInfoDto {
     pub is_video: bool,
     pub path: String,
-    /// `chroma_types::Resolution` (D-053) via `#[serde(flatten)]` — same
+    /// `apelles_types::Resolution` (D-053) via `#[serde(flatten)]` — same
     /// `width`/`height` JSON keys the frontend already reads, zero wire change.
     #[serde(flatten)]
-    pub resolution: chroma_types::Resolution,
+    pub resolution: apelles_types::Resolution,
     pub fps: f64,
     pub frame_count: u64,
     pub duration_secs: f64,
@@ -88,7 +88,7 @@ pub async fn seek_and_install(
     if let Ok(mut c) = state.full_transformed_cache.lock() {
         *c = None;
     }
-    // Chroma: the AI depth map is cached keyed by `hash(path + geometry)`
+    // Apelles: the AI depth map is cached keyed by `hash(path + geometry)`
     // (`ai_commands::generate_ai_depth_mask`). On a video the path + geometry are
     // constant across frames, so without this the depth-haze mask would keep
     // grading every seeked frame off frame 0's depth. Drop it so the next

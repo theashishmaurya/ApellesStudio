@@ -1,6 +1,6 @@
 /**
- * @chroma/editor — the per-clip parametric EQ's model and math (D-224), the
- * exact mirror of the Rust `chroma_types::eq` module.
+ * @apelles/editor — the per-clip parametric EQ's model and math (D-224), the
+ * exact mirror of the Rust `apelles_types::eq` module.
  *
  * **What it is:** the `EqBand` shape stored on `Clip.eq_bands`, the Resolve-
  * shaped four-band strip the Inspector authors, the stored-value clamps, and
@@ -18,7 +18,7 @@
  * TypeScript and runs with no app process at all, and its unit tests must be
  * able to compute what it should emit without a Tauri round trip. The two
  * copies are pinned to each other by a shared reference table asserted in BOTH
- * `chroma_types::eq`'s tests and `timelineExport.ffmpeg.test.ts` — measured,
+ * `apelles_types::eq`'s tests and `timelineExport.ffmpeg.test.ts` — measured,
  * in each engine, rather than eyeballed for sameness.
  *
  * **The one thing this file's numbers do that the others' do not:** they are
@@ -26,13 +26,13 @@
  * ffmpeg's generic `biquad` filter with the coefficients from `eqBandCoeffs`,
  * rather than to ffmpeg's own `equalizer`/`bass`/`treble` — because those
  * shelves measurably do NOT implement the cookbook's Q parameterisation (see
- * `chroma_types::eq`'s module doc for the identified numbers). So a drift
+ * `apelles_types::eq`'s module doc for the identified numbers). So a drift
  * between this file and the Rust would be a real preview-vs-render divergence,
  * which is exactly what the shared table is there to catch.
  */
 
 /** What one band does to the spectrum. The stored spelling is snake_case, so
- *  it round-trips through `chroma_types::EqBandKind`'s own serde untouched. */
+ *  it round-trips through `apelles_types::EqBandKind`'s own serde untouched. */
 export type EqBandKind = 'low_shelf' | 'peak' | 'high_shelf' | 'high_pass' | 'low_pass';
 
 /** Every kind, in the order the Inspector's shape dropdown lists them —
@@ -66,7 +66,7 @@ export function eqKindUsesGain(kind: EqBandKind): boolean {
   return kind === 'low_shelf' || kind === 'peak' || kind === 'high_shelf';
 }
 
-/** One band of a clip's EQ — mirrors `chroma_types::EqBand` field for field,
+/** One band of a clip's EQ — mirrors `apelles_types::EqBand` field for field,
  *  including the stored key names (this is what lands in `project.json`). */
 export interface EqBand {
   kind: EqBandKind;
@@ -81,7 +81,7 @@ export interface EqBand {
 }
 
 // --------------------------------------------------------------------------- //
-// bounds — mirror `chroma_types::eq`'s own constants exactly
+// bounds — mirror `apelles_types::eq`'s own constants exactly
 // --------------------------------------------------------------------------- //
 
 export const EQ_MIN_FREQ_HZ = 20;
@@ -95,7 +95,7 @@ export const EQ_MAX_GAIN_DB = 24;
 export const EQ_DEFAULT_Q = Math.SQRT1_2;
 
 /** The rate the EXPORT designs its coefficients at, pinned with an `aresample`
- *  in front of the band chain. Mirrors `chroma_types::EQ_DESIGN_SAMPLE_RATE`
+ *  in front of the band chain. Mirrors `apelles_types::EQ_DESIGN_SAMPLE_RATE`
  *  — see that module's doc for why the export has to pin one at all (ffmpeg's
  *  `biquad` takes literal coefficients, so they must be computed for a known
  *  rate) and for what it costs when the live device runs at 44.1 kHz. */
@@ -209,7 +209,7 @@ const NYQUIST_MARGIN = 0.995;
  * the band does nothing (`isEqBandActive`) or cannot be realised at that rate.
  *
  * The five forms are the Audio EQ Cookbook's, verbatim — an exact mirror of
- * `chroma_types::eq::EqBand::coefficients`, down to the clamping and the
+ * `apelles_types::eq::EqBand::coefficients`, down to the clamping and the
  * Nyquist margin. See that module's doc for the reference and for the measured
  * reason the export sends these numbers to ffmpeg rather than naming one of
  * ffmpeg's own EQ filters.
@@ -304,7 +304,7 @@ export function biquadResponseDb(c: BiquadCoeffs, freqHz: number, sampleRate: nu
 }
 
 /** The whole band set's combined response at `freqHz`, in dB — mirrors
- *  `chroma_types::eq::eq_response_db`. A **sum**, because a cascade multiplies
+ *  `apelles_types::eq::eq_response_db`. A **sum**, because a cascade multiplies
  *  magnitudes and that is addition in dB; an inactive band contributes exactly
  *  0. This is the function a response-curve renderer would draw from, and the
  *  one the export's own measurement test predicts against. */

@@ -1,10 +1,10 @@
 /**
- * @chroma/editor — the edit model, mirrored from the `chroma-timeline` Rust
+ * @apelles/editor — the edit model, mirrored from the `apelles-timeline` Rust
  * crate (D-041), plus pure edit ops for optimistic UI updates.
  *
  * The Rust `chroma_timeline_set` command stores whatever we send verbatim (no
  * server-side clamping), so these ops are authoritative for what lands on disk.
- * They mirror `chroma-timeline`'s clamp rules; a `chroma_timeline_get` refetch
+ * They mirror `apelles-timeline`'s clamp rules; a `chroma_timeline_get` refetch
  * after each save reconciles anything (e.g. a source frame count that only the
  * backend knows).
  *
@@ -16,11 +16,11 @@
  * whichever timeline is active. No timeline-switcher UI yet (pass 3).
  *
  * D-051: `labelForOp` turns an `EditOp` into the human-readable label
- * `useEditorTimelineStore.applyOp` puts on the `@chroma/history` entry it
+ * `useEditorTimelineStore.applyOp` puts on the `@apelles/history` entry it
  * pushes for every op — kept here (pure, testable) rather than inline in the
  * store.
  *
- * D-058: `Clip.start_frame` — mirrors `chroma-timeline::Clip::start_frame`
+ * D-058: `Clip.start_frame` — mirrors `apelles-timeline::Clip::start_frame`
  * (D-054). Before this, every op here still assumed the pre-D-054 world
  * (a clip's timeline position is *implicit*, the sum of every preceding
  * clip's duration — `chroma_timeline_set` stores what's sent, so this file,
@@ -34,7 +34,7 @@
  * same name field-for-field (`trim_start`'s neighbor clamp, `trim_end`'s
  * neighbor clamp, `split`'s `start_frame` on the right half, `add_clip`'s
  * append-at-track-end position) so what this file computes and what
- * `chroma-timeline::lib.rs` would compute for the same input agree.
+ * `apelles-timeline::lib.rs` would compute for the same input agree.
  *
  * D-070 (unified clip identity, `docs/notes/unified-clip-model.md`):
  * `Clip.media_id` mirrors the Rust crate's new field — `clipFromDraggedMedia`
@@ -54,7 +54,7 @@
  *
  * D-226 (transitions, roadmap item 27, `docs/notes/transitions.md`):
  * `Track.transitions` + `add_transition`/`remove_transition`/`set_transition`,
- * mirroring `chroma_timeline::Transition`. A transition bridges a CUT — the two
+ * mirroring `apelles_timeline::Transition`. A transition bridges a CUT — the two
  * clips stay abutting and never overlap, so nothing about this module's
  * placement/landing/gap rules (D-104's overlap rejection included) changes.
  * `transitionWindow`/`transitionHandles` are exact mirrors of the Rust methods
@@ -73,7 +73,7 @@
 // on the timeline at all, so the dependency runs `timeline.ts → eq.ts` and
 // never back. Re-exported because `Clip.eq_bands` is typed by it and a caller
 // working in the edit model should not have to know which file it came from —
-// exactly what `chroma-timeline` does with `chroma_types::eq` on the Rust side.
+// exactly what `apelles-timeline` does with `apelles_types::eq` on the Rust side.
 import { captionLines, type CaptionCue, type CaptionStyle } from './caption';
 // D-239 — the seven edit types' NAMES and display copy live in their own
 // module, which imports nothing back from here (see its own doc), so this stays
@@ -169,16 +169,16 @@ export interface ClipKeyframe {
   ease?: Record<string, EaseCurve>;
 }
 
-/** Mirrors `chroma_timeline::Clip` (serde snake_case). */
+/** Mirrors `apelles_timeline::Clip` (serde snake_case). */
 export interface Clip {
   id: string;
   shot_id?: string | null;
-  /** Pool-item back-link (D-070) — mirrors `chroma_timeline::Clip::media_id`.
+  /** Pool-item back-link (D-070) — mirrors `apelles_timeline::Clip::media_id`.
    *  Set by `clipFromDraggedMedia` for a clip dropped from the Sources
    *  panel; absent/`null` for a clip built before D-070 (`Timeline::
    *  from_shots`), which only ever set `shot_id`. */
   media_id?: string | null;
-  /** A/V link group (D-129) — mirrors `chroma_timeline::Clip::link_group`.
+  /** A/V link group (D-129) — mirrors `apelles_timeline::Clip::link_group`.
    *  The id of the group of clips this one is linked to; absent/`null` =
    *  unlinked, which is what every pre-D-129 clip deserializes to.
    *
@@ -210,10 +210,10 @@ export interface Clip {
    *  length, as a step function on the SOURCE axis. Absent/empty = flat 1x,
    *  which is every pre-D-236 clip.
    *
-   *  Mirrors `chroma_timeline::Clip::speed_points`. All the arithmetic —
+   *  Mirrors `apelles_timeline::Clip::speed_points`. All the arithmetic —
    *  resolution to concrete segments, the output-duration sum, and both
    *  directions of the time remap — lives in `speedRamp.ts` (and its Rust
-   *  twin `chroma_timeline::speed_ramp`); nothing in this file interprets
+   *  twin `apelles_timeline::speed_ramp`); nothing in this file interprets
    *  the raw points except through `endFrame`/`clipSourceFrameAt`, which is
    *  what keeps the preview and the exporter reading one definition.
    *
@@ -226,7 +226,7 @@ export interface Clip {
   /** Timeline-absolute start frame (D-054/D-058) — see the module doc. */
   start_frame: number;
   /** Compositing transform (D-086/D-088, Phase 1/2 of the full-NLE P0
-   *  effort) — mirrors `chroma_timeline::Clip`'s new fields exactly.
+   *  effort) — mirrors `apelles_timeline::Clip`'s new fields exactly.
    *  `opacity`/`scale` default to `1.0` server-side (NOT `0.0` — see the
    *  Rust field's own doc for why `Clip` moved off `#[derive(Default)]`),
    *  `position_x`/`position_y`/`rotation` to `0.0`. Optional here the same
@@ -250,7 +250,7 @@ export interface Clip {
   position_y?: number;
   scale?: number;
   /** Independent per-axis box-size override (D-193,
-   *  `docs/notes/independent-clip-size.md`) — mirrors `chroma_timeline::
+   *  `docs/notes/independent-clip-size.md`) — mirrors `apelles_timeline::
    *  Clip::box_width`/`box_height`. A fraction of the OUTPUT COMPOSITION's
    *  own width/height, the SAME per-axis convention `position_x`/
    *  `position_y` already use — NOT a multiplier of the clip's own source
@@ -268,7 +268,7 @@ export interface Clip {
   box_width?: number | null;
   box_height?: number | null;
   rotation?: number;
-  /** Crop (D-132) — mirrors `chroma_timeline::Clip::crop_left`/`crop_top`/
+  /** Crop (D-132) — mirrors `apelles_timeline::Clip::crop_left`/`crop_top`/
    *  `crop_right`/`crop_bottom`. Four **normalised (0–1) edge insets** into
    *  the clip's own SOURCE frame: the fraction of the picture trimmed off
    *  that edge, all four `0` = uncropped. Optional here for the same reason
@@ -305,7 +305,7 @@ export interface Clip {
    *  `chroma::keyframes::interpolate_param` for why the curve is owned by the
    *  segment's start key rather than split into per-key in/out handles. */
   chroma_keyframes?: ClipKeyframe[];
-  /** Fade in / out (D-147) — mirrors `chroma_timeline::Clip::fade_in_frames`
+  /** Fade in / out (D-147) — mirrors `apelles_timeline::Clip::fade_in_frames`
    *  / `fade_out_frames` / `fade_in_curve` / `fade_out_curve`.
    *
    *  How many frames at the head / tail of this clip its output ramps up /
@@ -324,7 +324,7 @@ export interface Clip {
   fade_out_frames?: number;
   fade_in_curve?: EaseCurve;
   fade_out_curve?: EaseCurve;
-  /** Per-clip audio level (D-223) — mirrors `chroma_timeline::Clip::volume` /
+  /** Per-clip audio level (D-223) — mirrors `apelles_timeline::Clip::volume` /
    *  `pan`, this clip's OWN contribution to the mix, independent of
    *  `Track.gain`'s whole-track fader.
    *
@@ -332,7 +332,7 @@ export interface Clip {
    *  unit as `Track.gain` rather than dB — two level controls in one signal
    *  chain that disagree about their unit is a trap. `pan` is normalised:
    *  `-1` hard left · `0` centre · `1` hard right, through the constant-power
-   *  (0 dB centre) law in `chroma_types::pan` / `panGains` here.
+   *  (0 dB centre) law in `apelles_types::pan` / `panGains` here.
    *
    *  Both apply ONLY to sound: on an audio-track clip that is the whole clip,
    *  on a video clip it is its embedded audio (and nothing at all once that
@@ -346,7 +346,7 @@ export interface Clip {
    *  on the next `chroma_timeline_get`. */
   volume?: number;
   pan?: number;
-  /** Per-clip parametric EQ (D-224) — mirrors `chroma_timeline::Clip::eq_bands`,
+  /** Per-clip parametric EQ (D-224) — mirrors `apelles_timeline::Clip::eq_bands`,
    *  the next stage in the same per-clip audio chain `volume`/`pan` opened, and
    *  what Resolve's Inspector calls the Clip Equalizer.
    *
@@ -354,7 +354,7 @@ export interface Clip {
    *  the Inspector authors exactly Resolve's four-band strip
    *  ([`EQ_BAND_COUNT`]/`defaultEqBands`): each band carries its own `kind`, so
    *  a fixed index→role mapping would be a second source of truth for the same
-   *  fact — see `chroma_timeline::Clip::eq_bands`' own doc for the full
+   *  fact — see `apelles_timeline::Clip::eq_bands`' own doc for the full
    *  argument and for why an empty list needs no migration default where
    *  `volume` did.
    *
@@ -365,7 +365,7 @@ export interface Clip {
    *
    *  Sound only, exactly like `volume`/`pan`. */
   eq_bands?: EqBand[];
-  /** Text/title layer (D-211) — mirrors `chroma_timeline::Clip::text`.
+  /** Text/title layer (D-211) — mirrors `apelles_timeline::Clip::text`.
    *  Present (non-null) = this clip is a GENERATED text layer: its picture is
    *  rasterised from these properties rather than decoded from `source_path`
    *  (which is empty on such a clip). Absent/`null` = an ordinary media clip,
@@ -385,7 +385,7 @@ export interface Clip {
    *  `docs/notes/text-title-clips.md`. */
   text?: TextLayer | null;
   /** D-229 — present = this clip is one CAPTION on a `'subtitle'` track.
-   *  Mirrors `chroma_timeline::Clip::caption`.
+   *  Mirrors `apelles_timeline::Clip::caption`.
    *
    *  The cue's timing is this clip's own `start_frame`/`duration`, which is
    *  what makes every existing edit op (move, trim, split, remove, ripple,
@@ -395,7 +395,7 @@ export interface Clip {
    *  and sized entirely by its resolved `CaptionStyle`. See the Rust field's
    *  own doc and D-229 for why that line is drawn there. */
   caption?: CaptionCue | null;
-  /** Adjustment layer (D-230) — mirrors `chroma_timeline::Clip::adjustment`.
+  /** Adjustment layer (D-230) — mirrors `apelles_timeline::Clip::adjustment`.
    *  Present (non-null) = this clip is an ADJUSTMENT CLIP: it contributes no
    *  picture of its own and instead applies a primary colour correction to
    *  everything composited BENEATH it, for the span it covers. `source_path`
@@ -420,7 +420,7 @@ export interface Clip {
 }
 
 /** The five-parameter primary correction an adjustment clip carries (D-230) —
- *  mirrors `chroma_types::adjustment::AdjustmentLayer` field for field.
+ *  mirrors `apelles_types::adjustment::AdjustmentLayer` field for field.
  *
  *  Named in the Colorist's own vocabulary on purpose: an adjustment clip is
  *  emphatically NOT a second, parallel effects language. It is also not the
@@ -529,7 +529,7 @@ export function newAdjustmentClipFields(
   };
 }
 
-/** A generated text/title layer (D-211) — mirrors `chroma_timeline::TextLayer`
+/** A generated text/title layer (D-211) — mirrors `apelles_timeline::TextLayer`
  *  field for field.
  *
  *  Phase 1 is Resolve's "basic title generator" (type your text, set
@@ -560,7 +560,7 @@ export interface TextLayer {
   color: string;
 }
 
-/** Mirrors `chroma_timeline::DEFAULT_TEXT_FONT`/`_SIZE`/`_COLOR` exactly — the
+/** Mirrors `apelles_timeline::DEFAULT_TEXT_FONT`/`_SIZE`/`_COLOR` exactly — the
  *  one source of truth for what a freshly-added title looks like, on both the
  *  GUI and MCP paths. A disagreement with the Rust constants would mean a clip
  *  created here and one deserialised there were different titles. */
@@ -583,7 +583,7 @@ export const DEFAULT_TEXT_COLOR = '#FFFFFF';
 export const DEFAULT_TITLE_SECONDS = 3;
 
 /** Whether `c` is a generated text/title clip rather than a media clip
- *  (D-211). Mirrors `chroma_timeline::Clip::is_text` — one predicate, asked
+ *  (D-211). Mirrors `apelles_timeline::Clip::is_text` — one predicate, asked
  *  the same way everywhere, rather than an `!= null` check at each site. */
 export function isTextClip(c: Pick<Clip, 'text'> | null | undefined): boolean {
   return c?.text != null;
@@ -784,7 +784,7 @@ export type ClipTransformParam =
 
 /** Each keyframeable transform field's rest value — the ONE source of truth
  *  for the `?? 1` / `?? 0` fallbacks scattered through the Inspector and for
- *  D-208's per-property reset button, and matching `chroma_timeline::Clip`'s
+ *  D-208's per-property reset button, and matching `apelles_timeline::Clip`'s
  *  own server-side defaults exactly (that type moved off `#[derive(Default)]`
  *  precisely so `opacity`/`scale` could default to `1.0` rather than `0.0` —
  *  see `Clip.opacity`'s doc above). A reset that disagreed with these would
@@ -804,7 +804,7 @@ export const CLIP_TRANSFORM_DEFAULTS: Readonly<Record<ClipTransformParam, number
 
 /** D-223 — the per-clip AUDIO properties, keyframeable and resettable exactly
  *  like the transform ones above, and named identically to their
- *  `chroma_timeline::Clip` fields (which is also the name their keyframes are
+ *  `apelles_timeline::Clip` fields (which is also the name their keyframes are
  *  stored under, so nothing has to translate).
  *
  *  Their own type rather than more members of [`ClipTransformParam`] for
@@ -817,7 +817,7 @@ export type ClipAudioParam = 'volume' | 'pan';
 
 /** Each per-clip audio property's rest value — unity gain, dead centre. The
  *  same one-source-of-truth role [`CLIP_TRANSFORM_DEFAULTS`] plays, matching
- *  `chroma_timeline::Clip`'s own server-side defaults (`default_volume()` /
+ *  `apelles_timeline::Clip`'s own server-side defaults (`default_volume()` /
  *  `0.0`) exactly. */
 export const CLIP_AUDIO_DEFAULTS: Readonly<Record<ClipAudioParam, number>> = {
   volume: 1,
@@ -853,7 +853,7 @@ export function isClipAudioParam(param: ClipKeyframeParam): param is ClipAudioPa
 }
 
 /** The stored-clamp for a clip's own linear volume (D-223) — mirrors
- *  `chroma_types::clip_volume`: floored at silence, no ceiling (a fader that
+ *  `apelles_types::clip_volume`: floored at silence, no ceiling (a fader that
  *  cannot boost is not one, and `Track.gain` has no ceiling either), and a
  *  cleared numeric `<input>`'s `NaN` becomes unity rather than reaching the
  *  timeline. */
@@ -862,7 +862,7 @@ export function clampClipVolume(v: number): number {
 }
 
 /** The stored-clamp for a clip's pan (D-223) — `[-1, 1]`, `NaN` → centre.
- *  Mirrors `chroma_types::pan_gains`' own clamp, applied here as well as
+ *  Mirrors `apelles_types::pan_gains`' own clamp, applied here as well as
  *  there for `clamp01`'s stated reason: the UI's own writes should be
  *  well-formed at rest, not merely survivable. */
 export function clampClipPan(v: number): number {
@@ -870,7 +870,7 @@ export function clampClipPan(v: number): number {
 }
 
 /** The left/right amplitude multipliers for a normalised `pan` — an exact
- *  mirror of `chroma_types::pan_gains` (constant power, normalised to unity at
+ *  mirror of `apelles_types::pan_gains` (constant power, normalised to unity at
  *  centre; see that module for why the centre, not the extremes, is the
  *  0 dB point here). Lives beside the model rather than in
  *  `timelineExportAudio.ts` because both the exporter and any future meter/UI
@@ -893,7 +893,7 @@ export function panGains(pan: number): [number, number] {
 }
 
 /** A `cubic-bezier(x1,y1,x2,y2)` easing curve (D-147, generalised by D-233) —
- *  mirrors `chroma_types::EaseCurve`. `P0 = (0,0)` and `P3 = (1,1)` are
+ *  mirrors `apelles_types::EaseCurve`. `P0 = (0,0)` and `P3 = (1,1)` are
  *  implicit; `x` is normalised progress through *something*, `y` is how far
  *  through the change you are at that progress.
  *
@@ -901,7 +901,7 @@ export function panGains(pan: number): [number, number] {
  *  a clip's `fade_in_curve`/`fade_out_curve` shape a fade window's gain ramp,
  *  and a keyframe entry's `ease` shapes the segment between two of one
  *  property's keyframes. The curve itself knows about neither — see
- *  `easeCurve.ts` for the evaluator and `chroma_types::ease` for the Rust
+ *  `easeCurve.ts` for the evaluator and `apelles_types::ease` for the Rust
  *  original.
  *
  *  **No preset name is stored** — the four control points are the only truth,
@@ -917,7 +917,7 @@ export interface EaseCurve {
 }
 
 /** The four curve presets the fade Inspector and the keyframe curve editor
- *  both offer, as real control points — mirroring `chroma_types::EaseCurve`'s
+ *  both offer, as real control points — mirroring `apelles_types::EaseCurve`'s
  *  own constants exactly.
  *
  *  `linear` is `(1/3, 2/3)` rather than CSS's `(0,0,1,1)`. Both trace the same
@@ -981,8 +981,8 @@ export function timelineFramesToSource(c: Pick<Clip, 'source_fps'>, timelineFram
   return Math.round((timelineFrames * srcFps) / fps);
 }
 
-/** A clip's exclusive timeline end frame — `chroma-timeline::Clip::end_frame`,
- *  fps-corrected (B-077): `chroma-timeline`'s own `Clip` doc is explicit that
+/** A clip's exclusive timeline end frame — `apelles-timeline::Clip::end_frame`,
+ *  fps-corrected (B-077): `apelles-timeline`'s own `Clip` doc is explicit that
  *  `duration` is in **source** frames while `start_frame` is a **timeline**
  *  frame, so the two can only be added after `duration` is converted via
  *  `sourceFramesToTimeline` — plain `start_frame + duration` (this function's
@@ -993,7 +993,7 @@ export function timelineFramesToSource(c: Pick<Clip, 'source_fps'>, timelineFram
  *  scope at once. */
 export function endFrame(c: Clip, fps: number): number {
   // D-236 — `Math.round` BEFORE the fps conversion, matching
-  // `chroma_timeline::Clip::end_frame_at` exactly (whose
+  // `apelles_timeline::Clip::end_frame_at` exactly (whose
   // `source_frames_to_timeline` takes an `i64`, so it must round first).
   // Rounding in a different ORDER than the preview does is a real divergence
   // on a mixed-native-fps ramped clip — e.g. 83.5 output source frames at
@@ -1015,7 +1015,7 @@ export function endFrame(c: Clip, fps: number): number {
  *  `Σ segment_length / segment_speed`: a 2x segment contributes half its own
  *  length to the output, a 0.5x segment twice.
  *
- *  Mirrors `chroma_timeline::Clip::output_source_frames`. */
+ *  Mirrors `apelles_timeline::Clip::output_source_frames`. */
 export function clipOutputSourceFrames(c: Pick<Clip, 'source_start' | 'duration' | 'speed_points'>): number {
   if (normalizeSpeedPoints(c.speed_points).length === 0) return c.duration;
   return rampOutputSourceFrames(resolveSpeedSegments(c));
@@ -1044,7 +1044,7 @@ function rampSegmentsOf(c: RampedClipRef) {
 }
 
 /** D-236 — the absolute SOURCE frame this clip shows at TIMELINE frame
- *  `timelineFrame`: the TS mirror of `chroma_timeline::Clip::source_frame_at`,
+ *  `timelineFrame`: the TS mirror of `apelles_timeline::Clip::source_frame_at`,
  *  which is what the live preview actually decodes with.
  *
  *  Un-ramped this is exactly the pre-D-236 `source_start +
@@ -1061,7 +1061,7 @@ function rampSegmentsOf(c: RampedClipRef) {
 export function clipSourceFrameAt(c: RampedClipRef, timelineFrame: number, fps: number): number {
   const outputPos = timelineFramesToSource(c, timelineFrame - c.start_frame, fps);
   if (normalizeSpeedPoints(c.speed_points).length === 0) return c.source_start + outputPos;
-  // FLOOR, not round — see `chroma_timeline::Clip::source_frame_at`'s own
+  // FLOOR, not round — see `apelles_timeline::Clip::source_frame_at`'s own
   // note: a frame owns the half-open source interval `[n, n+1)`, and the
   // export's `setpts` floors by construction, so rounding here would put the
   // preview half a frame ahead of the file. D-241 moved that rounding into
@@ -1085,7 +1085,7 @@ export function clipTimelineFrameAtSource(c: RampedClipRef, sourceFrame: number,
 }
 
 export interface Track {
-  /** D-229 added `'subtitle'` — mirrors `chroma_timeline::TrackKind`. A
+  /** D-229 added `'subtitle'` — mirrors `apelles_timeline::TrackKind`. A
    *  subtitle track's clips carry a `CaptionCue` and are drawn OVER the
    *  finished picture by their own resolver; it is neither composited in the
    *  video z-order nor mixed into the audio. Every existing
@@ -1093,13 +1093,13 @@ export interface Track {
    *  why the variant could be added without revisiting them. */
   kind: 'video' | 'audio' | 'subtitle';
   clips: Clip[];
-  /** Linear volume multiplier (D-057) — mirrors `chroma_timeline::Track::gain`.
+  /** Linear volume multiplier (D-057) — mirrors `apelles_timeline::Track::gain`.
    *  `1.0` unity, `0.0` full mute, `> 1.0` boosts. Absent on a pre-D-057
    *  timeline (defaults to `1.0` server-side); optional here for the same
    *  reason. Only meaningful for `kind === 'audio'` — a video track's own
    *  embedded audio stays hardcoded at unity (D-057's own scoping). */
   gain?: number;
-  /** D-086 — mirrors `chroma_timeline::Track::locked`/`hidden` (both default
+  /** D-086 — mirrors `apelles_timeline::Track::locked`/`hidden` (both default
    *  `false` server-side, optional here for the same reason as `gain`).
    *  `locked` blocks per-clip edits on this track (`reorder`/`trim_start`/
    *  `trim_end`/`split`/`remove`/`move` in `applyOp` below all refuse —
@@ -1112,7 +1112,7 @@ export interface Track {
   locked?: boolean;
   hidden?: boolean;
   /** Cross-track ripple sync (D-106/roadmap item 11) — mirrors
-   *  `chroma_timeline::Track::sync_locked`. Whether this track RECEIVES a
+   *  `apelles_timeline::Track::sync_locked`. Whether this track RECEIVES a
    *  ripple shift triggered by an edit on a DIFFERENT track; independent of
    *  whether THIS track's own edits ripple (always, unconditionally, same
    *  as before this field existed). Matches DaVinci Resolve's/Palmier Pro's
@@ -1124,7 +1124,7 @@ export interface Track {
    *  `true` (NOT the bare-optional "falsy" reading) wherever a `Track` is
    *  constructed or migrated — see `DEFAULT_SYNC_LOCKED`. */
   sync_locked?: boolean;
-  /** Ducking (D-149) — mirrors `chroma_timeline::Track::duck_from`: the index
+  /** Ducking (D-149) — mirrors `apelles_timeline::Track::duck_from`: the index
    *  of the track whose clips duck THIS one ("lower the music while the
    *  dialogue plays"). `null`/absent — the default and every pre-D-149 project
    *  — is no ducking at all. A relationship between two tracks, which is why it
@@ -1138,7 +1138,7 @@ export interface Track {
    *  default) is unity. Deliberately dB where `gain` above is linear: a fader
    *  level is naturally linear, a duck amount is the one audio number editors
    *  state in decibels. Rust converts once, at the point of use in
-   *  `chroma_media::audio`. */
+   *  `apelles_media::audio`. */
   duck_db?: number;
   /** D-149 — the one-pole attack/release time constants in milliseconds: the
    *  τ in `y(t) = target + (y₀ − target)·e^(−t/τ)`, i.e. the time to cover
@@ -1150,12 +1150,12 @@ export interface Track {
   duck_attack_ms?: number;
   duck_release_ms?: number;
   /** D-226 — transitions at THIS track's edit points. Mirrors
-   *  `chroma_timeline::Track::transitions`, whose `#[serde(default)]` is why
+   *  `apelles_timeline::Track::transitions`, whose `#[serde(default)]` is why
    *  this is optional here: a `project.json` written before transitions existed
    *  has no key at all, and every read below treats absent and `[]` the same. */
   transitions?: Transition[];
   /** D-229 — the style every caption on this track draws with. Mirrors
-   *  `chroma_timeline::Track::caption_style`. Only meaningful when
+   *  `apelles_timeline::Track::caption_style`. Only meaningful when
    *  `kind === 'subtitle'`; absent means the caption defaults (see
    *  `resolveCaptionStyle`). A whole imported `.srt` is styled once here, not
    *  cue by cue — the reference Inspector's "Track Style" tab. */
@@ -1163,7 +1163,7 @@ export interface Track {
 }
 
 /** D-226 — the two transition shapes v1 ships. Mirrors
- *  `chroma_timeline::TransitionKind` (serde `snake_case`).
+ *  `apelles_timeline::TransitionKind` (serde `snake_case`).
  *
  *  Two, not a library, and the pair is deliberate: `cross_dissolve` is the one
  *  that needs TWO clips visible at once plus handle media, `dip_to_color` is the
@@ -1175,7 +1175,7 @@ export type TransitionKind = 'cross_dissolve' | 'dip_to_color';
  *  own three, under its own names (Adobe's *Align and reposition transitions*
  *  help page): the choice decides WHICH clip has to supply handle media, which
  *  is why it is a real field and not cosmetic. Mirrors
- *  `chroma_timeline::TransitionAlignment`. */
+ *  `apelles_timeline::TransitionAlignment`. */
 export type TransitionAlignment = 'center_at_cut' | 'start_at_cut' | 'end_at_cut';
 
 export const TRANSITION_ALIGNMENTS: ReadonlyArray<{ value: TransitionAlignment; label: string }> = [
@@ -1214,7 +1214,7 @@ export const TRANSITION_KINDS: ReadonlyArray<{
 export const DEFAULT_TRANSITION_FRAMES = 24;
 
 /** One transition at one edit point (D-226, `docs/notes/transitions.md`).
- *  Mirrors `chroma_timeline::Transition` field-for-field.
+ *  Mirrors `apelles_timeline::Transition` field-for-field.
  *
  *  **The clips it joins stay abutting and non-overlapping** — see the Rust
  *  type's own doc and D-226 for the two real data-model options and why this
@@ -1236,7 +1236,7 @@ export interface Transition {
 }
 
 /** D-226 — a transition's `[start, end)` TIMELINE-frame window. **Exact mirror
- *  of `chroma_timeline::Transition::window`**, integer halving and all, so the
+ *  of `apelles_timeline::Transition::window`**, integer halving and all, so the
  *  live preview and this compiler can never disagree about which frames a
  *  transition covers. */
 export function transitionWindow(t: Transition): { start: number; end: number } {
@@ -1526,11 +1526,11 @@ function sortedTransitions(transitions: readonly Transition[]): Transition[] {
 }
 
 export const DEFAULT_TRACK_GAIN = 1.0;
-/** Mirrors Rust's `chroma_timeline::DEFAULT_DUCK_ATTACK_MS` — fast, so the duck
+/** Mirrors Rust's `apelles_timeline::DEFAULT_DUCK_ATTACK_MS` — fast, so the duck
  *  is already down when the first word lands. A bare falsy-absent read would
  *  give `0 ms`, which is a step function and therefore a click. */
 export const DEFAULT_DUCK_ATTACK_MS = 10;
-/** Mirrors Rust's `chroma_timeline::DEFAULT_DUCK_RELEASE_MS` — slow, so the bed
+/** Mirrors Rust's `apelles_timeline::DEFAULT_DUCK_RELEASE_MS` — slow, so the bed
  *  does not pump between words. Same non-falsy-default reasoning as the attack. */
 export const DEFAULT_DUCK_RELEASE_MS = 300;
 /** Mirrors Rust's `default_sync_locked()` — see `Track.sync_locked`'s own
@@ -1544,7 +1544,7 @@ export interface Timeline {
   rate?: Rational | null;
   tracks: Track[];
   /** D-222 — timeline-anchored annotations (roadmap item 27). Mirrors
-   *  `chroma_timeline::Timeline::markers`, whose `#[serde(default)]` is why
+   *  `apelles_timeline::Timeline::markers`, whose `#[serde(default)]` is why
    *  this is optional here: a `project.json` written before markers existed
    *  has no key at all, and every read below treats absent and `[]` the same.
    *  Kept **sorted by `frame`** by `applyOp` — see the `add_marker` op. */
@@ -1552,7 +1552,7 @@ export interface Timeline {
 }
 
 /** One timeline marker (D-222) — a colour-coded flag pinned to a TIMELINE
- *  frame, independent of any clip. Mirrors `chroma_timeline::Marker`
+ *  frame, independent of any clip. Mirrors `apelles_timeline::Marker`
  *  field-for-field (serde snake_case; the type has no multi-word field, so
  *  the two spellings coincide).
  *
@@ -1676,7 +1676,7 @@ export const DEFAULT_FPS = 24;
  * drag/drop crosses a package boundary the D-039 layer direction forbids a
  * shared `DndContext`/store from crossing (see `TimelinePane`'s doc).
  */
-export const CHROMA_MEDIA_DRAG_MIME = 'application/x-chroma-media';
+export const CHROMA_MEDIA_DRAG_MIME = 'application/x-apelles-media';
 
 /**
  * D-248 — the `dataTransfer` MIME type a **generator** drag carries: a clip
@@ -1736,7 +1736,7 @@ export interface DraggedMedia {
   frameCount?: number | null;
   /** D-129 — whether this source has a decodeable audio stream, so the drop
    *  knows whether to build a linked audio half at all. Mirrors
-   *  `MediaItem.video.hasAudio` (`@chroma/bridge`), which mirrors
+   *  `MediaItem.video.hasAudio` (`@apelles/bridge`), which mirrors
    *  `chroma::video::VideoInfo::has_audio`. Absent/`null` = **not known**
    *  (a pool item imported before D-129 that hasn't been re-probed), which is
    *  treated as "no audio half" — the same conservative reading
@@ -1823,7 +1823,7 @@ export function timelineFps(tl: Timeline | null): number {
 }
 
 /** Length of `tr` in frames — the furthest clip end, mirroring
- *  `chroma-timeline::Track::duration` (D-054): clips may leave a trailing
+ *  `apelles-timeline::Track::duration` (D-054): clips may leave a trailing
  *  gap, so this is a max over `endFrame`, not a sum of durations. `fps` —
  *  B-077 — is the project's own `timelineFps(tl)`, needed by `endFrame`. */
 export function trackDuration(tr: Track, fps: number): number {
@@ -1965,7 +1965,7 @@ export function resolveClipLanding(
 
 /** D-105 — the exclusive `[gapStart, gapEnd)` bounds of the REAL, closeable
  *  gap containing `frame` on `tr`, or `null` if there isn't one. Mirrors
- *  `chroma-timeline::Track::gap_at` field-for-field (same two "there isn't
+ *  `apelles-timeline::Track::gap_at` field-for-field (same two "there isn't
  *  one" cases: `frame` is inside a clip, or it's trailing empty space past
  *  the last clip — nothing after it to ripple, so not a real gap). Clips are
  *  walked by value, never assumed to be in position order (D-054). */
@@ -2005,7 +2005,7 @@ export function findClip(tl: Timeline | null, track: number, id: string): { clip
 
 /** The clip covering `frame` (by its real `start_frame`, D-054/D-058 — Vec
  *  order is bookkeeping only, never assumed to match position order) and
- *  the source frame inside it. Mirrors `chroma-timeline::Track::clip_at`. */
+ *  the source frame inside it. Mirrors `apelles-timeline::Track::clip_at`. */
 export function clipAt(
   tr: Track,
   frame: number,
@@ -2029,7 +2029,7 @@ export function clipAt(
 }
 
 /** Shift every clip on `tr` starting at/after `threshold` by `delta` frames
- *  (positive = later, negative = earlier) — mirrors `chroma-timeline::
+ *  (positive = later, negative = earlier) — mirrors `apelles-timeline::
  *  shift_clips_at_or_after` (D-106) exactly, the one real ripple-shift
  *  primitive shared by `add_clip`'s insertion ripple, `move`'s ripple, and
  *  `remove_gap` (a real, pre-existing triplication in this file this pass
@@ -2058,14 +2058,14 @@ function shiftClipsAtOrAfter(tr: Track, threshold: number, delta: number): void 
  *  caller (`timelineStore.ts::applyOp`) is responsible for remapping any
  *  *selection* state that held a track index across this call, the same
  *  class of index-shift the track-reorder drag's own `trackIndexAfterMove`
- *  already has to handle. Mirrors `chroma-timeline::Timeline::{remove,
+ *  already has to handle. Mirrors `apelles-timeline::Timeline::{remove,
  *  move_clip}`'s own end-of-function prune exactly. */
 function pruneIfEmptyTrack(tracks: Track[], trackIdx: number): void {
   if (tracks[trackIdx]?.clips.length === 0) tracks.splice(trackIdx, 1);
 }
 
 /** The sync-lock version of `shiftClipsAtOrAfter` (D-106) — mirrors
- *  `chroma-timeline::ripple_shift_with_auto_split` field-for-field. For a
+ *  `apelles-timeline::ripple_shift_with_auto_split` field-for-field. For a
  *  track receiving someone ELSE's ripple (never the track directly being
  *  edited, which keeps using the plain shift above and D-104's own
  *  reject-on-straddle contract unchanged). A clip straddling `threshold`
@@ -2175,7 +2175,7 @@ export function syncLinkedClipIdsAtPosition(tl: Timeline, track: number, thresho
 
 /** Propagate a ripple already applied to `editedTrack` (index into
  *  `tracks`) to every OTHER track whose `sync_locked` is on — mirrors
- *  `chroma-timeline::propagate_sync_lock_ripple`. A track that's BOTH
+ *  `apelles-timeline::propagate_sync_lock_ripple`. A track that's BOTH
  *  sync-locked AND individually `locked` is skipped, same real judgment
  *  call as the Rust side's own doc: `locked` already means "protect this
  *  track's clips from edits through the normal ops," and a foreign ripple
@@ -2197,7 +2197,7 @@ function propagateSyncLockRipple(tracks: Track[], editedTrack: number, threshold
 // --------------------------------------------------------------------------- //
 
 /** Every `[trackIndex, clipIndex]` whose clip belongs to `group`, ascending —
- *  mirrors `chroma-timeline::Timeline::link_group_members`. Index-based, so
+ *  mirrors `apelles-timeline::Timeline::link_group_members`. Index-based, so
  *  only valid until the next mutation. */
 export function linkGroupMembers(tl: Timeline, group: string): Array<[number, number]> {
   const out: Array<[number, number]> = [];
@@ -2262,7 +2262,7 @@ export interface LinkCheck {
  *  `TimelinePane`'s Link button, so the two can never disagree about when
  *  linking is allowed: the button enables/disables and shows `reason` from
  *  exactly the same logic that decides whether `applyOp` actually mutates
- *  anything. Mirrors `chroma_timeline::Timeline::link`'s own validation
+ *  anything. Mirrors `apelles_timeline::Timeline::link`'s own validation
  *  order (self-link → range → lock → already-linked → kind-mismatch) so the
  *  first reason surfaced here is the first one the Rust op would reject on
  *  too, if this were ever sent through `chroma_timeline_link_clips` instead
@@ -2291,14 +2291,14 @@ export function checkLink(tl: Timeline, a: LinkTarget, b: LinkTarget): LinkCheck
 }
 
 /** Where `startFrame` ends up once a pending ripple is applied — mirrors
- *  `chroma-timeline::start_after_ripple`. Lets a linked move be accepted or
+ *  `apelles-timeline::start_after_ripple`. Lets a linked move be accepted or
  *  rejected before anything is mutated. */
 function startAfterRipple(startFrame: number, rippled: boolean, threshold: number, delta: number): number {
   return rippled && startFrame >= threshold ? startFrame + delta : startFrame;
 }
 
 /** The clamped head-trim delta `trim_start` would really apply — mirrors
- *  `chroma-timeline::clamped_trim_start_delta`, extracted for the same D-129
+ *  `apelles-timeline::clamped_trim_start_delta`, extracted for the same D-129
  *  reason (asking every link-group member for its own clamp before mutating).
  *  Caller guarantees `clipIdx` is in range.
  *
@@ -2327,7 +2327,7 @@ function clampedTrimStartDelta(tr: Track, clipIdx: number, delta: number, fps: n
 }
 
 /** The clamped new `duration` `trim_end` would really apply — mirrors
- *  `chroma-timeline::clamped_trim_end_duration`. Returns a new `duration`
+ *  `apelles-timeline::clamped_trim_end_duration`. Returns a new `duration`
  *  (source frames, per the `Clip` doc — the caller applies it to that field
  *  directly, unlike `clampedTrimStartDelta` above). `delta` is a TIMELINE
  *  frame delta (B-077, same UI-drag convention as `trim_start`'s), converted
@@ -2468,7 +2468,7 @@ function hasOverlap(tr: Track, fps: number): boolean {
 /** First unlocked audio track with room for `[startFrame, startFrame +
  *  duration)` (both timeline frames — B-077, unlike `Clip.duration` this is
  *  already a footprint on the timeline, e.g. `sourceFramesToTimeline`'s
- *  output) — mirrors `chroma-timeline::Timeline::audio_track_with_room`. */
+ *  output) — mirrors `apelles-timeline::Timeline::audio_track_with_room`. */
 export function audioTrackWithRoom(tl: Timeline, startFrame: number, duration: number): number | null {
   const end = startFrame + duration;
   const fps = timelineFps(tl);
@@ -2482,7 +2482,7 @@ export function audioTrackWithRoom(tl: Timeline, startFrame: number, duration: n
 }
 
 /** [`audioTrackWithRoom`], appending a brand-new audio track when none has
- *  room — mirrors `chroma-timeline::Timeline::ensure_audio_track_with_room`.
+ *  room — mirrors `apelles-timeline::Timeline::ensure_audio_track_with_room`.
  *  Mutates `tracks` in place (callers already hold a `clone()`d timeline) and
  *  uses the SAME track shape `add_track` builds, rather than a second
  *  track-creation path (D-095/D-096/D-117's one real mechanism). A fresh
@@ -2757,7 +2757,7 @@ export type EditOp =
   /** D-058/D-080 — reposition a clip in time, and optionally onto a
    *  different track (`fromTrack !== toTrack`) — the drag handle / "move to
    *  another track" affordance in the panel. Mirrors
-   *  `chroma-timeline::Timeline::move_clip(from_track, from_idx, to_track,
+   *  `apelles-timeline::Timeline::move_clip(from_track, from_idx, to_track,
    *  to_start_frame)` field-for-field, extended with `ripple` (D-104).
    *
    *  D-104 — **overlap is rejected for every move now, same-track or
@@ -2778,12 +2778,12 @@ export type EditOp =
    *  set (a caller bug, not an expected path), the op is rejected (no-op)
    *  rather than corrupting the timeline. */
   | { kind: 'move'; fromTrack: number; toTrack: number; clip: number; startFrame: number; ripple?: boolean }
-  /** D-080 — append a new empty track. Mirrors `chroma_timeline::Timeline::
+  /** D-080 — append a new empty track. Mirrors `apelles_timeline::Timeline::
    *  add_track`: always succeeds, no validation to mirror. */
   | { kind: 'add_track'; trackKind: 'video' | 'audio' | 'subtitle' }
   /** D-080 — remove a track and every clip on it (no confirmation/undo
    *  special-casing here — same as the Rust op, recovery is the shared
-   *  undo stack's job like any other edit, D-051). Mirrors `chroma_timeline
+   *  undo stack's job like any other edit, D-051). Mirrors `apelles_timeline
    *  ::Timeline::remove_track`: no-op (rejected) for an out-of-range index. */
   | { kind: 'remove_track'; track: number }
   /** D-080 — set a track's linear volume multiplier (D-057's `Track.gain`).
@@ -2793,22 +2793,22 @@ export type EditOp =
    *  out of sync with the actual gain. No validation to mirror (the Rust
    *  field is a plain `f32` with no clamp of its own). */
   | { kind: 'set_track_gain'; track: number; gain: number }
-  /** D-086/D-089 — toggle a track's lock. Mirrors `chroma_timeline::Track::
+  /** D-086/D-089 — toggle a track's lock. Mirrors `apelles_timeline::Track::
    *  locked`: always succeeds (locking is itself a track-list-level op, not
    *  gated by its own lock — matches `add_track`/`remove_track`/`move_track`'s
    *  own unlocked status in `track_mut`'s doc). */
   | { kind: 'set_track_locked'; track: number; locked: boolean }
   /** D-086/D-089 — toggle a track's visibility in the compositor. Mirrors
-   *  `chroma_timeline::Track::hidden`. Always succeeds — same reasoning as
+   *  `apelles_timeline::Track::hidden`. Always succeeds — same reasoning as
    *  `set_track_locked`. */
   | { kind: 'set_track_hidden'; track: number; hidden: boolean }
   /** D-106 — toggle a track's cross-track ripple sync. Mirrors
-   *  `chroma_timeline::Track::sync_locked`. Always succeeds — same
+   *  `apelles_timeline::Track::sync_locked`. Always succeeds — same
    *  track-list-level reasoning as `set_track_locked`/`set_track_hidden`. */
   | { kind: 'set_track_sync_locked'; track: number; syncLocked: boolean }
   /** D-149 — set a track's ducking: which track triggers it (`duckFrom`, or
    *  `null` to turn ducking off) and the three real DSP numbers. Mirrors
-   *  `chroma_timeline::Track`'s `duck_from`/`duck_db`/`duck_attack_ms`/
+   *  `apelles_timeline::Track`'s `duck_from`/`duck_db`/`duck_attack_ms`/
    *  `duck_release_ms`.
    *
    *  Its **own** op, not folded into `set_track_gain`, for the same reason
@@ -2838,11 +2838,11 @@ export type EditOp =
    *  `Clip > Unlink` / Resolve's "Unlink Clips" both do. The escape hatch for
    *  an L-cut — unlink, slip one half, and (a later pass) relink. A no-op for
    *  an already-unlinked clip; refused if the clip's own track is locked.
-   *  Mirrors `chroma_timeline::Timeline::unlink`. */
+   *  Mirrors `apelles_timeline::Timeline::unlink`. */
   | { kind: 'unlink'; track: number; clip: number }
   /** D-138, `docs/notes/av-linking.md` "Deferred" list — link two
    *  ALREADY-INDEPENDENT clips (one video-track, one audio-track) into a new
-   *  A/V link group. Mirrors `chroma_timeline::Timeline::link` field-for-
+   *  A/V link group. Mirrors `apelles_timeline::Timeline::link` field-for-
    *  field, including its deliberately narrower scope vs. Palmier's own
    *  group-merging `link`: both clips must currently be unlinked, and the
    *  op is rejected whole (a no-op, same "reject rather than corrupt"
@@ -2855,7 +2855,7 @@ export type EditOp =
   | { kind: 'link'; trackA: number; clipA: number; trackB: number; clipB: number }
   /** D-086/D-089 — reorder the track list itself (compositing z-order,
    *  D-086's own doc: "track index order is compositing z-order, not
-   *  cosmetic"). Mirrors `chroma_timeline::Timeline::move_track(from, to)`
+   *  cosmetic"). Mirrors `apelles_timeline::Timeline::move_track(from, to)`
    *  exactly: bounds-checked, `from === to` a genuine no-op, NOT gated by
    *  either track's lock (same track-list-vs-track-clips split as
    *  `add_track`/`remove_track`). */
@@ -3320,7 +3320,7 @@ function transitionAtLabel(tl: Timeline, track: number, id: string): string {
 
 /** Human-readable one-liner for an `EditOp`, evaluated against the timeline
  *  it's about to be applied to (`before`) — used as the `label` on the
- *  `@chroma/history` entry `useEditorTimelineStore.applyOp` pushes for every
+ *  `@apelles/history` entry `useEditorTimelineStore.applyOp` pushes for every
  *  op (D-051). Pure and separately testable; not used by `applyOp` itself. */
 export function labelForOp(op: EditOp, before: Timeline): string {
   switch (op.kind) {
@@ -4044,7 +4044,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
   }
 
   if (op.kind === 'unlink') {
-    // Mirrors `chroma_timeline::Timeline::unlink` — dissolves the clip's
+    // Mirrors `apelles_timeline::Timeline::unlink` — dissolves the clip's
     // COMPLETE group, no-op when it isn't linked, refused on a locked track.
     const tr = tl.tracks[op.track];
     if (!tr || tr.locked) return tl;
@@ -4060,7 +4060,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
   }
 
   if (op.kind === 'link') {
-    // Mirrors `chroma_timeline::Timeline::link` — rejected whole (a no-op)
+    // Mirrors `apelles_timeline::Timeline::link` — rejected whole (a no-op)
     // rather than partially applied, same discipline every link-aware op
     // here uses. `checkLink` is the single source of truth for why.
     const a: LinkTarget = { track: op.trackA, clip: op.clipA };
@@ -4203,7 +4203,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
   // spans two tracks; `add_track`/`remove_track` mutate the list itself), so
   // they're handled before the generic `tr = tl.tracks[op.track]` guard.
   if (op.kind === 'add_track') {
-    // Mirrors `chroma_timeline::Timeline::add_track` — always succeeds.
+    // Mirrors `apelles_timeline::Timeline::add_track` — always succeeds.
     const next = clone(tl);
     next.tracks.push({ kind: op.trackKind, clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
     return next;
@@ -4641,7 +4641,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // Validated in full here, BEFORE any mutation, so a move that can't be
     // applied to every member is rejected whole rather than desyncing the
     // halves — the reject-rather-than-corrupt discipline B-033 established.
-    // Mirrors `chroma-timeline::Timeline::move_clip`'s own link block.
+    // Mirrors `apelles-timeline::Timeline::move_clip`'s own link block.
     const rippleFires = overlaps && !!op.ripple;
     const delta = op.startFrame - c.start_frame;
     // `[track, clip id, where it must end up]` captured by STABLE id before
@@ -4734,14 +4734,14 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     case 'remove': {
       // D-054/D-058: a "lift", not a ripple delete — every other clip's
       // `start_frame` is untouched, so this plain splice already matches
-      // `chroma-timeline::Timeline::remove` exactly; the gap it leaves is
+      // `apelles-timeline::Timeline::remove` exactly; the gap it leaves is
       // implicit (nothing occupies that `start_frame` range any more).
       if (op.clip < 0 || op.clip >= tr.clips.length) return tl;
       // D-129 — deleting one member of an A/V link group deletes every
       // member (Resolve's own "…or deleting… automatically applies to the
       // other"). Refused whole if any member's track is locked; each emptied
       // track prunes, highest index first so lower ones stay valid. Mirrors
-      // `chroma-timeline::Timeline::remove`.
+      // `apelles-timeline::Timeline::remove`.
       const link = linkTargets(tl, op.track, op.clip);
       if (link && link.members.some(([ti]) => tl.tracks[ti].locked)) return tl;
       const targets: Array<[number, number]> = link ? [...link.members] : [[op.track, op.clip]];
@@ -4753,7 +4753,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       return next;
     }
     case 'remove_gap': {
-      // D-105 — mirrors `chroma-timeline::Timeline::remove_gap` exactly:
+      // D-105 — mirrors `apelles-timeline::Timeline::remove_gap` exactly:
       // find the real gap `frame` is inside (`gapAt`), reject as a no-op if
       // there isn't one, otherwise shift every clip at/after the gap's end
       // earlier by its width.
@@ -4773,7 +4773,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       return next;
     }
     case 'trim_start': {
-      // Mirrors `chroma-timeline::Timeline::trim_start` field-for-field: the
+      // Mirrors `apelles-timeline::Timeline::trim_start` field-for-field: the
       // clip's *end* stays fixed — `source_start` and `start_frame` shift by
       // the same clamped delta, `duration` shrinks by it.
       //
@@ -4797,7 +4797,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // source runs out first, a neighbour blocks it) the whole op is
       // rejected rather than leaving the halves out of sync. Unlink first for
       // a deliberate L-cut — that's what unlink is for, in both references.
-      // Mirrors `chroma-timeline::Timeline::trim_start`. Compared in TIMELINE
+      // Mirrors `apelles-timeline::Timeline::trim_start`. Compared in TIMELINE
       // frames (`d`, the amount the user actually dragged) — every member
       // must be able to absorb the SAME on-screen delta, converted to ITS
       // OWN source frames.
@@ -4824,7 +4824,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       return next;
     }
     case 'trim_end': {
-      // Mirrors `chroma-timeline::Timeline::trim_end`: `start_frame` stays
+      // Mirrors `apelles-timeline::Timeline::trim_end`: `start_frame` stays
       // fixed, only `duration` changes, clamped by both the source media's
       // remaining length and the nearest following clip's `start_frame` (no
       // overlap with it). `clampedTrimEndDuration` already converts `op.delta`
@@ -5002,7 +5002,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       return next;
     }
     case 'split': {
-      // Mirrors `chroma-timeline::Timeline::split` — including giving the
+      // Mirrors `apelles-timeline::Timeline::split` — including giving the
       // right half its own `start_frame` (the D-058 bug: this used to copy
       // the left half's `start_frame` unchanged, leaving both halves
       // claiming the same timeline position).
@@ -5021,7 +5021,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // the group, right halves move to a derived one (`{group}·{frame}`,
       // matching the clip-id derivation already used here). Rejected whole if
       // the frame isn't strictly inside every member (an already-slipped
-      // L-cut). Mirrors `chroma-timeline::Timeline::split`.
+      // L-cut). Mirrors `apelles-timeline::Timeline::split`.
       const link = linkTargets(tl, op.track, op.clip);
       if (link) {
         for (const [ti, ci] of link.members) {

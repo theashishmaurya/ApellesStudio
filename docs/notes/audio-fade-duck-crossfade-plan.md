@@ -1,7 +1,7 @@
 # Practical sound control — fades, crossfade, ducking (scoping + Phase 1 & 2 builds, 2026-09-05)
 
 **Where this came from.** The owner asked for "sound engineer"-style control over audio in
-Chroma, and clarified the ask himself: *not* AI emotional understanding — D-139's research pass
+Apelles, and clarified the ask himself: *not* AI emotional understanding — D-139's research pass
 already found that is not real, and D-140's plan explicitly scopes it out — but **real, practical
 control, "enough for transitions etc."** Then, concretely: *build the fade in and fade out with
 bezier curve support.*
@@ -42,7 +42,7 @@ Every claim below was confirmed by reading the real files this pass, not assumed
 > plus a `Clip::pan`, and three time-varying envelopes in the mixer. Read §9
 > for the current shape.
 
-**Audio has exactly one level control, and it is a static scalar.** `chroma_timeline::Track::gain`
+**Audio has exactly one level control, and it is a static scalar.** `apelles_timeline::Track::gain`
 (D-057) — one `f32` per track, `1.0` unity. `chroma::audio::chroma_audio_play` resolves it once,
 at the moment Play is pressed, into an `AudioSourceSpec { path, start_secs, duration_secs, gain }`
 per active source. `run_session` then hands `mix_chunk` a `gains: &[f32]` that never changes for
@@ -55,7 +55,7 @@ There is a second, unrelated level: `MASTER_VOLUME_BITS` (D-126), a lock-free `A
 inside the live `cpal` callback. Its own doc is explicit that it is monitoring volume, not project
 data. It is not a candidate for any of this.
 
-**`Clip` had no fade fields at all.** Confirmed by reading `crates/chroma-timeline/src/lib.rs`'s
+**`Clip` had no fade fields at all.** Confirmed by reading `crates/apelles-timeline/src/lib.rs`'s
 `Clip` struct in full before this pass: `id`, `shot_id`, `media_id`, `link_group`, `name`,
 `source_path`, `source_start`, `duration`, `source_len`, `start_frame`, the D-082 transform
 (`opacity`, `position_*`, `scale`, `rotation`), the D-132 crop insets, `chroma_keyframes`. Nothing
@@ -115,7 +115,7 @@ top corner of a clip in the timeline — whose meaning depends on the clip: on a
 drives opacity, on an audio clip it drives volume. They are not two settings the user picks
 between; they are one setting whose effect follows what the clip actually contributes.
 
-Chroma's model already carries that structure. A clip on a `TrackKind::Audio` track contributes
+Apelles' model already carries that structure. A clip on a `TrackKind::Audio` track contributes
 only samples. A clip on a `TrackKind::Video` track contributes pixels and — unless D-129 has
 externalised its sound into a linked audio clip — its own embedded audio too. So:
 
@@ -270,14 +270,14 @@ re-resolution.
 ### 4c. What actually landed (D-149), and the two places the design moved
 
 **The primitive was reused, not re-invented.** `DuckEnvelope` sits beside `FadeEnvelope` in
-`crates/chroma-media/src/audio.rs` with the same `gain_at(session_secs) -> f32` shape, and the two
+`crates/apelles-media/src/audio.rs` with the same `gain_at(session_secs) -> f32` shape, and the two
 are applied in **one** per-sample-frame pass (`apply_envelopes`) that multiplies them together,
 rather than two passes over the buffer. Multiplication is the only composition under which neither
 silently overrides the other — the same argument `resolve_clip_transform` already makes for a fade
 against keyframed opacity. `mix_sources` is still completely untouched, so every D-057 headroom
 guarantee stands.
 
-**The fields landed exactly as §4b named them**, on `chroma_timeline::Track`: `duck_from:
+**The fields landed exactly as §4b named them**, on `apelles_timeline::Track`: `duck_from:
 Option<usize>`, `duck_db`, `duck_attack_ms`, `duck_release_ms`. One migration detail worth
 recording because it differs from `gain`'s: `duck_db` takes a **bare** `#[serde(default)]`, and
 that is genuinely correct rather than lazy — `f32::default() == 0.0` and **0 dB is unity**. The two
@@ -317,10 +317,10 @@ removing a track above the pair and shifting the indices, and it would attenuate
 that triggers it. Ignored at the point of use (`resolve_track_duck`) and rejected outright by the
 MCP tool, so an agent is told rather than left with a stored setting that silently does nothing.
 
-**Where the layer split fell**, following D-146/D-147's own line exactly: `chroma-media` owns the
+**Where the layer split fell**, following D-146/D-147's own line exactly: `apelles-media` owns the
 smoother, the dB conversion and the envelope; `app/src-tauri`'s `chroma::audio::duck_for_track`
 owns turning a trigger *track* into session-relative *seconds*, because that needs a `Timeline` and
-a media crate reaching for one would be reaching up a layer. `chroma-timeline` owns
+a media crate reaching for one would be reaching up a layer. `apelles-timeline` owns
 `clip_spans_from` and nothing else — it never reads the ducking fields, same boundary `gain` keeps.
 
 **Still Phase 2, still not built:** real RMS sidechain detection. The trigger is the clip layout,
@@ -355,16 +355,16 @@ rule is explicit — *"if two places need it, extract it"* — and `Clip::end_fr
 precedent for arithmetic that lives on the model because two `app/src-tauri` consumers were
 otherwise going to re-spell it.
 
-So: **`crates/chroma-types/src/fade.rs`**. Pure math, no I/O, no dependencies beyond `serde`.
+So: **`crates/apelles-types/src/fade.rs`**. Pure math, no I/O, no dependencies beyond `serde`.
 Easing the D-034 engine itself is a separate and much larger question (it would change how every
 existing mask and relight keyframe interpolates) and is untouched.
 
 > **Where this landed, vs. where this plan first put it.** This section was written against the
 > pre-D-146 tree, where both consumers were `app/src-tauri` modules and the crate that owns `Clip`
-> was the natural shared home. D-146 then moved the mixer out into **`chroma-media`, which is L1 —
-> *below* `chroma-timeline` (L2)** — so the two consumers no longer sit on one layer, and D-039's
+> was the natural shared home. D-146 then moved the mixer out into **`apelles-media`, which is L1 —
+> *below* `apelles-timeline` (L2)** — so the two consumers no longer sit on one layer, and D-039's
 > one-way dependency graph forbids the mixer reaching up for the solver. The module therefore lives
-> in **L0 `chroma-types`**, which both consumers can see, and `chroma-timeline` re-exports
+> in **L0 `apelles-types`**, which both consumers can see, and `apelles-timeline` re-exports
 > `FadeCurve`/`fade_gain` so every path this plan names still resolves. `Clip`'s fade *fields* and
 > `Clip::fade_multiplier_at` stay on the model, unchanged. Full argument in D-147's reconciliation
 > section.
@@ -467,7 +467,7 @@ sample rate is known, matching `AudioSourceSpec`'s own `start_secs`/`duration_se
 converts to sample-frames once per chunk, from the rate it is handed:
 
 ```rust
-pub struct FadeEnvelope {   // crates/chroma-media/src/audio.rs, beside AudioSourceSpec
+pub struct FadeEnvelope {   // crates/apelles-media/src/audio.rs, beside AudioSourceSpec
     pub offset_secs: f64,   // from the clip's start to this session's first sample
     pub len_secs: f64,      // the clip's full length
     pub fade_in_secs: f64,
@@ -525,7 +525,7 @@ together (§2), which an agent grading a shot needs to know before it sets one.
 
 **Which code path it takes.** `applyOp` through `useEditorTimelineStore`, per D-140 §6c's already-
 settled answer — not the Rust `chroma_timeline_*` commands. `applyOp` pushes a before/after pair
-onto the shared `@chroma/history` stack (D-051); the Rust commands do not. Going direct would
+onto the shared `@apelles/history` stack (D-051); the Rust commands do not. Going direct would
 produce an agent edit the user cannot undo, which breaks MCP design rule 7 and the vision doc's
 "reviewable and undoable, not a black box." This is the first mutating Edit-tab MCP tool, so it is
 the first time that answer is actually exercised rather than written down.
@@ -584,7 +584,7 @@ the first time that answer is actually exercised rather than written down.
 
 ### 9a. What landed
 
-Two new `chroma_timeline::Clip` fields, both keyframeable, both applying only
+Two new `apelles_timeline::Clip` fields, both keyframeable, both applying only
 to what a clip contributes to the MIX:
 
 | field | unit | default | migration |
@@ -600,10 +600,10 @@ is a trap; one number that is typed rather than dragged is not.
 
 ### 9b. The pan law, and the one thing it costs
 
-`chroma_types::pan_gains` — constant power (`gl ∝ cos θ`, `gr ∝ sin θ`,
+`apelles_types::pan_gains` — constant power (`gl ∝ cos θ`, `gr ∝ sin θ`,
 `θ = (pan+1)·π/4`), so a clip does not dip in level as it sweeps off centre.
 It lives in **L0**, beside §5b's `fade.rs`, for that section's exact reason: the
-mixer that consumes it is L1 `chroma-media` and cannot reach up to L2's `Clip`.
+mixer that consumes it is L1 `apelles-media` and cannot reach up to L2's `Clip`.
 
 Normalised so the **centre** is unity rather than the extremes: `pan` defaults
 to `0.0` on every clip ever authored, so a centre gain of `1/√2` (the textbook
@@ -731,7 +731,7 @@ to the law rather than to each other's current output.
 
 ### 10a. What landed
 
-One new `chroma_timeline::Clip` field, and it is the first per-clip audio
+One new `apelles_timeline::Clip` field, and it is the first per-clip audio
 control that is **not** a gain:
 
 | field | shape | default | migration |
@@ -763,8 +763,8 @@ negative gain at a high Q, which is what Resolve's own notch icon draws.
 
 ### 10b. The math is the Audio EQ Cookbook's, and it lives in L0
 
-`chroma_types::eq` — beside §5b's `fade.rs` and §9b's `pan.rs`, for those
-sections' exact reason: the mixer that runs the filters is L1 `chroma-media` and
+`apelles_types::eq` — beside §5b's `fade.rs` and §9b's `pan.rs`, for those
+sections' exact reason: the mixer that runs the filters is L1 `apelles-media` and
 cannot reach up to L2's `Clip`. It holds the band type, the five cookbook forms
 (peaking, low/high shelf, 2-pole low/high-pass) with
 `A = 10^(gain_db/40)`, `w0 = 2π·f0/fs`, `α = sin(w0)/(2Q)` normalised by `a0`,
@@ -789,7 +789,7 @@ fade has already time-varied is genuinely a different operation from fading a
 filtered one. Both engines implement the same order — `SourceEnvelopes::apply`
 runs the cascade at the top of its existing single per-sample-frame pass (not a
 second pass, for §4c's reason), and `buildAudioSourceChain` emits the band nodes
-before its `volume` node — and a `chroma-media` test computes the other order
+before its `volume` node — and a `apelles-media` test computes the other order
 and asserts the two differ, so the order is pinned rather than assumed.
 
 Three rules the mixer makes explicit, because they are choices:
@@ -836,7 +836,7 @@ and reading the response off it:
 
 So `timelineExportAudio.ts`'s `eqFilterChain` compiles every band to ffmpeg's
 **generic `biquad`** filter with the coefficients `eq.ts` computes (the exact
-mirror of `chroma_types::eq`) rather than naming one of ffmpeg's own EQ filters.
+mirror of `apelles_types::eq`) rather than naming one of ffmpeg's own EQ filters.
 Agreement between the two engines then becomes structural rather than hoped for,
 and nothing depends on one ffmpeg build's shelf conventions. Measured back:
 **< 0.0001 dB** of the analytic response, for all five kinds.
@@ -854,7 +854,7 @@ Standard for any biquad EQ, not a divergence between our two paths.
 ### 10f. How it was verified
 
 **A frequency response, measured in both engines against one shared table.**
-`chroma_types::eq::tests::REFERENCE_RESPONSE_DB` and
+`apelles_types::eq::tests::REFERENCE_RESPONSE_DB` and
 `timelineExport.ffmpeg.test.ts`'s own copy carry the same seven `(Hz, dB)` pairs
 for the same deliberately-awkward four-band set: a high-pass at 90 Hz, a −6.5 dB
 bell at 950 Hz, a +5.5 dB shelf at 6.2 kHz, and a **disabled** +18 dB low shelf
@@ -867,8 +867,8 @@ through real ffmpeg (a bell IS its gain at centre; a shelf is half-gain at its
 corner; a Butterworth pass filter is −3.01 dB at its corner), and two further
 tests prove the chain reaches a real encoded file.
 
-`cargo test`: `chroma-types` 46, `chroma-timeline` 155, `chroma-media` 114, all
-green. `npm test --workspace @chroma/editor` 859/859, including 25 new tests (8
+`cargo test`: `apelles-types` 46, `apelles-timeline` 155, `apelles-media` 114, all
+green. `npm test --workspace @apelles/editor` 859/859, including 25 new tests (8
 real-DOM Inspector, 12 model/reducer, 5 real-ffmpeg).
 
 ### 10g. Honest gaps
@@ -960,7 +960,7 @@ test for real, which is the same mechanism that caught B-102.
 
 ### 11b. What a grain is, and why the pitch does not change
 
-A real tape deck's scrub is *varispeed*: drag faster, the pitch rises. Chroma's
+A real tape deck's scrub is *varispeed*: drag faster, the pitch rises. Apelles'
 is **granular at constant pitch** — a 60 ms grain read from wherever the playhead
 is, with an 8 ms raised-cosine fade at each end, repeated ~17x/second. Stand
 still and the same 60 ms repeats (the tape "wow"); drag, and each grain starts
@@ -1016,7 +1016,7 @@ Two deliberate divergences from `chroma_audio_play`:
   `chroma_audio_waveform` has taken since D-051. The reason is cost —
   `resolve_video_position` re-reads and clones the whole active `Timeline` per
   call, and the caller here is a pointer drag — but the reason it is *correct* is
-  that `@chroma/editor`'s `clipAt` is already the pointwise mirror of
+  that `@apelles/editor`'s `clipAt` is already the pointwise mirror of
   `Track::clip_at` and is already what every other Edit-tab UI decision resolves
   through. `scrubSource.ts` is that one resolver, shared by the scrub engine and
   the waveform strip so the two can never disagree about what is under the
@@ -1071,13 +1071,13 @@ the agent the equivalent capability, not the same gesture.
 
 **Verified by test:**
 
-- The grain/window arithmetic, pure and unit-tested in `chroma-media::scrub`:
+- The grain/window arithmetic, pure and unit-tested in `apelles-media::scrub`:
   grain and fade sizing, the envelope's shape and per-channel equality,
   anchoring and the head-of-file clamp, window coverage including the EOF and
   different-source cases, and read offset / interleaving / silence-padding.
 - **A real window decoded from real media holds real, non-silent PCM**, and a
   grain cut from it survives the envelope — env-gated on
-  `CHROMA_TEST_AUDIO_VIDEO`, in `chroma-media`. Deliberately separate from the
+  `CHROMA_TEST_AUDIO_VIDEO`, in `apelles-media`. Deliberately separate from the
   end-to-end test below, because "the decode is wrong" and "the device path is
   wrong" are different faults that one silence assertion cannot tell apart —
   and on the first real run they genuinely were different faults.

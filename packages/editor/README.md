@@ -1,4 +1,4 @@
-# @chroma/editor
+# @apelles/editor
 
 **The Edit tab** (D-039 / D-041; timeline switcher + drag-to-track D-046). A
 single-video-track timeline of the open project's shots — scrub + play with a
@@ -9,9 +9,9 @@ dragging a pool item in from the shell's Sources panel.
   `@xzdarcy/react-timeline-editor` strip (bottom), or an empty state when no
   project is open. The transport (`SkipBack` / `Play`–`Pause` / `SkipForward`)
   uses `lucide-react` icons; the timeline toolbar (`Scissors` split, `Trash2`
-  remove) and the empty-state action are `@chroma/ui` `<Button>`s, the toolbar
-  buttons wrapped in `@chroma/ui` `<Tooltip>` (D-042).
-- `TimelineSwitcher` (D-046) — a `@chroma/ui` `<Select>` of the project's
+  remove) and the empty-state action are `@apelles/ui` `<Button>`s, the toolbar
+  buttons wrapped in `@apelles/ui` `<Tooltip>` (D-042).
+- `TimelineSwitcher` (D-046) — a `@apelles/ui` `<Select>` of the project's
   timelines (D-045's `chroma_timeline_list`) with the active one checked,
   switching via `chroma_timeline_set_active`, plus inline "+ New" →
   `chroma_timeline_create`. No rename/delete UI (no backing commands).
@@ -22,9 +22,9 @@ dragging a pool item in from the shell's Sources panel.
   `load()`, `applyOp()`, `restoreSnapshot()` (D-051),
   `setPlayhead()`, `loadList()`/`createTimeline()`/`setActiveTimeline()`
   (D-046). Optimistic ops → debounced `chroma_timeline_set` →
-  `chroma_timeline_get` refetch. Lives here for now; a `@chroma/bridge`
+  `chroma_timeline_get` refetch. Lives here for now; a `@apelles/bridge`
   extraction is a later task.
-- `timeline.ts` — the model mirrored from the `chroma-timeline` Rust crate,
+- `timeline.ts` — the model mirrored from the `apelles-timeline` Rust crate,
   the pure edit ops (including D-046's `add_clip`, purely client-side — no
   Rust op needed since `chroma_timeline_set` stores whatever is sent
   verbatim), `labelForOp` (D-051), and
@@ -57,7 +57,7 @@ dragging a pool item in from the shell's Sources panel.
   `sourceFramesToTimeline`/`timelineFramesToSource`, so a mixed-native-fps clip
   is right — B-077), the handle's drag clamp, and the SVG paths that draw each
   ramp at its real `FadeCurve` shape. It never evaluates a fade's *gain* —
-  that is `chroma_types::fade_gain` and its one mirror,
+  that is `apelles_types::fade_gain` and its one mirror,
   `timelineExportAudio.ts`'s `fadeGainAt`. `ClipFadeOverlay.tsx` is the
   DOM/pointer wiring around it. See **On-clip fade handles** below.
 - `speedRamp.ts` (D-236, roadmap item 27) — the speed ramp's whole model and
@@ -69,7 +69,7 @@ dragging a pool item in from the shell's Sources panel.
   from). Also the two ffmpeg compilations that follow from it: the nested
   `if(lt(T,…))` `setpts` body, and the per-segment windows
   `timelineExportAudio.ts` turns into `atrim`/`atempo`/`concat`. An exact
-  mirror of Rust's `chroma_timeline::speed_ramp`, and load-bearing in the way
+  mirror of Rust's `apelles_timeline::speed_ramp`, and load-bearing in the way
   `eq.ts` is: the two files ARE the preview/export agreement for this feature,
   so they are kept line-for-line comparable and pinned by `speedRamp.test.ts`
   plus a real-decoded-pixel test (`speedRamp.ffmpeg.test.ts`). A flat speed is
@@ -115,7 +115,7 @@ dragging a pool item in from the shell's Sources panel.
   four-band strip the Inspector authors (`defaultEqBands`), the stored-value
   clamps, and the Audio EQ Cookbook biquad coefficients + magnitude response
   (`eqBandCoeffs` / `eqResponseDb`). An exact mirror of the Rust
-  `chroma_types::eq` — mirrored here for `panGains`' own reason (the export
+  `apelles_types::eq` — mirrored here for `panGains`' own reason (the export
   compiler is TypeScript and its unit tests must be able to compute what it
   should emit with no app process at all), but load-bearing in a way that one
   is not: `timelineExportAudio.ts`'s `eqFilterChain` ships these very numbers
@@ -211,16 +211,16 @@ drag-derived fade really exports faded.
 
 **Undo/redo (D-051).** Every real (non-no-op) `applyOp` call pushes one
 `{tab:'edit', label: labelForOp(op, before), undo, redo}` entry onto
-`@chroma/history`'s shared stack — whole-`Timeline` snapshots (`before`/`after`),
+`@apelles/history`'s shared stack — whole-`Timeline` snapshots (`before`/`after`),
 not inverse deltas, since every op here already round-trips through a
 whole-document `chroma_timeline_set`. `undo()`/`redo()` call
 `restoreSnapshot()`, which sets state to the given snapshot, cancels any
 pending debounced save, and persists + refetches immediately (no debounce —
 undo/redo are discrete actions). Shell-level Cmd/Ctrl+Z / Cmd/Ctrl+Y
-(`@chroma/shell`) is the only way this fires; there's no Edit-tab-local
+(`@apelles/shell`) is the only way this fires; there's no Edit-tab-local
 undo keybinding. `src/timeline.test.ts` (vitest) covers `labelForOp`.
 
-Backed by the `chroma-timeline` crate and the `chroma::edit` Tauri commands
+Backed by the `apelles-timeline` crate and the `chroma::edit` Tauri commands
 (`chroma_timeline_get` / `_set` / `_frame` / `_list` / `_create` /
 `_set_active`). The preview is a standalone decode→jpeg (`chroma_timeline_frame`)
 — **not** the Colorist's graded wgpu path.
@@ -260,7 +260,7 @@ Two things changed here in the same pass as the owner's live Edit-tab review:
   Subtitles — and `EditLibraryPanel.tsx` is what the DOCKED column beside it
   shows for the three this package owns (the fourth, Sources, is the shell's
   shared media pool). Both are mounted by the composition root into
-  `@chroma/shell`'s per-tab `libraryRail`/`libraryPanel` slots (D-251's
+  `@apelles/shell`'s per-tab `libraryRail`/`libraryPanel` slots (D-251's
   injection pattern), never by `EditorTab` — the rail has to sit to the LEFT of
   a column `Shell` owns, and `Shell` must not import this package. Each library
   entry carries a draggable Title/Adjustment clip that puts
@@ -284,16 +284,16 @@ Two things changed here in the same pass as the owner's live Edit-tab review:
   the edit area, so "dropped somewhere else entirely" still cancels.
 
 - **Every numeric Inspector field is dragged, not spun (B-113 / D-253).**
-  `PropertyRow.tsx` and every other numeric field here render `@chroma/ui`'s
+  `PropertyRow.tsx` and every other numeric field here render `@apelles/ui`'s
   `ScrubbableNumberInput`: no native spin buttons anywhere (WebKit painted them
   over the digits, and B-113's `pr-5` reserve could never have cleared them —
   the widget is laid out inside the padding box), and horizontal drag on the
   field in their place — 8px per declared `step`, Shift ×10, Cmd ÷10, 4px
   before a press counts as a drag rather than a click. `numericField.ts` is now
   only the Inspector row's *geometry* (`NUM_FIELD`, the fit budget); the
-  display-rounding helpers it used to own are `@chroma/ui`'s, next to the
+  display-rounding helpers it used to own are `@apelles/ui`'s, next to the
   component that needs them. The gesture's behavioural tests live in this
-  package (`ScrubbableNumberInput.dom.test.tsx`) because `@chroma/ui` has no
+  package (`ScrubbableNumberInput.dom.test.tsx`) because `@apelles/ui` has no
   test tier and this one owns the real-`PointerEvent` harness.
 
 **Deferred** (later tracked steps): multi-track, audio, transitions, transcript

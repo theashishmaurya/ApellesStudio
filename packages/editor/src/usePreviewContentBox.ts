@@ -1,8 +1,8 @@
 /**
- * @chroma/editor — the ONE content box every Edit-tab preview overlay
+ * @apelles/editor — the ONE content box every Edit-tab preview overlay
  * measures itself against, once the viewport zoom is applied (D-218).
  *
- * **What it is.** `@chroma/player`'s `useContentBox` (the `object-contain`
+ * **What it is.** `@apelles/player`'s `useContentBox` (the `object-contain`
  * FIT rect of the picture inside its container) with `previewZoom.ts`'s
  * current `PreviewView` composed on top — the picture's REAL on-screen rect,
  * in the same container-local pixel space the fit box already lived in.
@@ -27,7 +27,7 @@
  * screen-pixel drag at 100%, and is correct in both cases.
  */
 import { useMemo } from 'react';
-import { useContentBox, type ContentSize } from '@chroma/player';
+import { useContentBox, type ContentSize } from '@apelles/player';
 
 import { zoomedContentBox } from './previewZoom';
 import { useEditorTimelineStore } from './timelineStore';

@@ -1,5 +1,5 @@
 /**
- * @chroma/ui — shared component kit (D-042).
+ * @apelles/ui — shared component kit (D-042).
  *
  * shadcn/ui components on Base UI primitives (`@base-ui/react`), themed onto the
  * app's existing `--app-*` / `--color-*` CSS-var token system (see
@@ -123,7 +123,7 @@ export { Input, NUMBER_INPUT_SPINNER_SUPPRESSION } from './components/ui/input';
 export { ScrubbableNumberInput } from './components/ui/scrubbable-number-input';
 export type { ScrubbableNumberInputProps } from './components/ui/scrubbable-number-input';
 // The scrub gesture and the numeric-display arithmetic (D-253). Also reachable
-// as the `@chroma/ui/number-scrub` subpath, which is how `@chroma/motion` —
+// as the `@apelles/ui/number-scrub` subpath, which is how `@apelles/motion` —
 // which cannot import this barrel at all — gets at it; see that module's doc.
 export {
   DISPLAY_DECIMALS_MAX,

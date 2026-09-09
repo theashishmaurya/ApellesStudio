@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM regression coverage for the transitions UI (D-226 /
+ * @apelles/editor — real-DOM regression coverage for the transitions UI (D-226 /
  * D-227), built on `testUtils/pointerHarness.ts` (D-142) and modelled on
  * `TimelinePane.markers.dom.test.tsx`.
  *

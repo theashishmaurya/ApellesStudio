@@ -1,7 +1,7 @@
 /**
- * @chroma/editor — the adjustment-clip colour operator (D-230).
+ * @apelles/editor — the adjustment-clip colour operator (D-230).
  *
- * **What it is:** the TypeScript mirror of `chroma_types::adjustment` — it
+ * **What it is:** the TypeScript mirror of `apelles_types::adjustment` — it
  * turns a `Clip.adjustment`'s five parameters into the same two-stage operator
  * the Rust live-preview compositor applies, and then into the two ffmpeg filter
  * nodes that run it in the export.
@@ -16,7 +16,7 @@
  * export happens outside the Rust engine entirely, in ffmpeg, so the
  * coefficients have to be computed in TypeScript. What keeps the two from
  * drifting is not hope — it is that both sides are pinned to the *same measured
- * ffmpeg output* by tests on both sides (`chroma_types`'
+ * ffmpeg output* by tests on both sides (`apelles_types`'
  * `matches_real_ffmpeg_output_within_one_code_value` and this package's own
  * real-ffmpeg pixel suite), so a change to one that is not mirrored in the
  * other fails a test rather than shipping as a silent preview/export
@@ -42,7 +42,7 @@
 import type { AdjustmentLayer } from './timeline';
 import { ADJUSTMENT_PARAMS, isIdentityAdjustment } from './timeline';
 
-/** Rec.709 luma weights — must match `chroma_types::adjustment`'s constants. */
+/** Rec.709 luma weights — must match `apelles_types::adjustment`'s constants. */
 export const LUMA_R = 0.2126;
 export const LUMA_G = 0.7152;
 export const LUMA_B = 0.0722;
@@ -52,7 +52,7 @@ export const LUMA_B = 0.0722;
 const WB_STRENGTH = 0.3;
 
 /** The resolved operator: stage 1 `clamp01(gain[c]·v + offset)`, then stage 2
- *  `clamp01(sat · v)`. Mirrors `chroma_types::adjustment::AdjustmentOps`. */
+ *  `clamp01(sat · v)`. Mirrors `apelles_types::adjustment::AdjustmentOps`. */
 export interface AdjustmentOps {
   /** Stage 1's per-channel multiplier, R/G/B. */
   gain: [number, number, number];

@@ -1463,7 +1463,7 @@ pub fn get_supported_file_types() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({
         "raw": raw_extensions,
         "nonRaw": non_raw_extensions,
-        "video": crate::chroma::video::VIDEO_EXTENSIONS, // Chroma
+        "video": crate::chroma::video::VIDEO_EXTENSIONS, // Apelles
     }))
 }
 
@@ -2818,7 +2818,7 @@ pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create
             return;
         }
         let skeleton = r#"<?xml version="1.0" encoding="UTF-8"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Chroma">
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Apelles">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
   <rdf:Description rdf:about=""
     xmlns:xmp="http://ns.adobe.com/xap/1.0/"

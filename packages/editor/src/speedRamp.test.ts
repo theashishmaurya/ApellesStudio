@@ -1,4 +1,4 @@
-// @chroma/editor — unit tests for `speedRamp.ts` (D-236).
+// @apelles/editor — unit tests for `speedRamp.ts` (D-236).
 //
 // Three things are pinned here, in order of how much they matter:
 //
@@ -343,7 +343,7 @@ describe('the timeline model reads the ramp through one definition', () => {
   });
 
   it('rounds the retimed length BEFORE the fps conversion, exactly as Rust does', () => {
-    // `chroma_timeline::Clip::end_frame_at` hands an `i64` to
+    // `apelles_timeline::Clip::end_frame_at` hands an `i64` to
     // `source_frames_to_timeline`, so it necessarily rounds first. Rounding in
     // the other order is more accurate and WRONG, because it makes the preview
     // and the model disagree by a frame on a mixed-native-fps ramped clip —

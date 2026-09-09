@@ -108,7 +108,7 @@ everything," a deliberate split:
 - **Same-track clip reposition and edge-trim** (`flexible`/`dragLine`, native to
   `@xzdarcy/react-timeline-editor` since D-051) — this is NOT what the owner is complaining
   about tonight (their exact words were about cross-track and track-reorder feeling slow;
-  same-track drag/trim has worked well since D-051 and B-027's regression was Chroma's own
+  same-track drag/trim has worked well since D-051 and B-027's regression was Apelles' own
   code accidentally breaking it, not the library's mechanism being at fault). Replacing a
   working, purpose-built mechanism with a hand-rolled dnd-kit equivalent would be a straight
   regression risk for zero real gain — `@xzdarcy/react-timeline-editor` was never going to be

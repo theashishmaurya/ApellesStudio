@@ -164,8 +164,8 @@ to be one.
 The bailout reasons above came from grepping dev-server logs. There is a faster
 loop now: `packages/editor/src/reactCompiler.test.ts` runs the *same*
 `reactCompilerPreset` `app/vite.config.mjs` uses over every source file in
-`@chroma/editor` and fails on any bailout, so `npm test --workspace
-@chroma/editor` is a real regression gate. The same few lines work standalone
+`@apelles/editor` and fails on any bailout, so `npm test --workspace
+@apelles/editor` is a real regression gate. The same few lines work standalone
 for any other file (`transformAsync` with `reactCompilerPreset({logger}).preset`
 and a `parserOpts: { plugins: ['typescript','jsx'] }`) if you need to check
 something outside that package.

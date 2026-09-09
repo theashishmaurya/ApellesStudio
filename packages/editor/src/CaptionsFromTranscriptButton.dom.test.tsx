@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for the "Captions from Transcript"
+ * @apelles/editor — real-DOM coverage for the "Captions from Transcript"
  * button (D-238).
  *
  * **Why a DOM test.** `captionsFromTranscript.test.ts` already proves the

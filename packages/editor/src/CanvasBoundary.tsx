@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit-tab preview's canvas/composition boundary
+ * @apelles/editor — the Edit-tab preview's canvas/composition boundary
  * overlay (D-199, `docs/notes/preview-canvas-boundary.md`).
  *
  * **The gap this closes.** The preview `<img>` is `object-contain`-fit
@@ -27,7 +27,7 @@
  * are computed from the exact same (width, height) pair by construction, so
  * they always agree pixel-for-pixel; this is not a second,
  * independently-derived rectangle that could drift from what the picture
- * actually shows. D-218 — that hook is `@chroma/player`'s `useContentBox`
+ * actually shows. D-218 — that hook is `@apelles/player`'s `useContentBox`
  * with the preview's viewport zoom/pan composed on top, so this rectangle
  * keeps tracking the picture's real edges at any zoom level, which is exactly
  * what makes it the reference frame it claims to be.

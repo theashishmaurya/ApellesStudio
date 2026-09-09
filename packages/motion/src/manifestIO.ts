@@ -1,11 +1,11 @@
 /**
- * @chroma/motion — manifest I/O (D-046).
+ * @apelles/motion — manifest I/O (D-046).
  *
  * Thin wrappers around the `chroma_motion_*` Tauri commands
  * (`app/src-tauri/src/chroma/motion.rs`): get/save the current project's
- * manifest sidecar, and run a real render via the `chroma-motion` crate.
+ * manifest sidecar, and run a real render via the `apelles-motion` crate.
  * Pure I/O — no manifest validation here. Validation is the engine's own
- * `zod` schema (`@chroma/motion-engine`'s `manifestSchema`), applied by
+ * `zod` schema (`@apelles/motion-engine`'s `manifestSchema`), applied by
  * `useMotionManifest` before a save/render is ever attempted.
  */
 import { invoke } from '@tauri-apps/api/core';

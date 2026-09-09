@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — `LayerThumbnail` (D-176, owner: "we need thumblain for
+ * @apelles/motion — `LayerThumbnail` (D-176, owner: "we need thumblain for
  * layers so we know what are we working with"), a small per-row preview of
  * a layer's REAL primitive for `LayerList.tsx`.
  *
@@ -141,9 +141,9 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Thumbnail } from '@remotion/player';
-import type { Layer, Manifest } from '@chroma/motion-engine/src/engine/schema';
-import { lookup } from '@chroma/motion-engine/src/engine/registry';
-import { design } from '@chroma/motion-engine/src/design';
+import type { Layer, Manifest } from '@apelles/motion-engine/src/engine/schema';
+import { lookup } from '@apelles/motion-engine/src/engine/registry';
+import { design } from '@apelles/motion-engine/src/design';
 import { catalogEntry, type PrimitiveUse } from './catalog';
 import { PrimitiveGlyph } from './PrimitiveGlyph';
 

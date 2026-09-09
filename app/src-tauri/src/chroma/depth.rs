@@ -1,11 +1,11 @@
-//! Tauri bridge for per-frame depth tracking via the Chroma AI sidecar (D-036).
+//! Tauri bridge for per-frame depth tracking via the Apelles AI sidecar (D-036).
 //!
-//! What it is: the app-side half of the D-142 `chroma-ai` extraction
+//! What it is: the app-side half of the D-142 `apelles-ai` extraction
 //! (`docs/notes/crate-extraction-plan.md` §2.5) — the two
 //! `#[tauri::command]`s, plus [`tracked_depth_map`], the one function
 //! `mask_generation.rs` calls directly (not a command). What it does NOT do:
 //! any of the actual `/depth_track` HTTP wire work or the tracked-PNG lookup
-//! — both are `chroma_ai::depth` now. This file used to be the whole
+//! — both are `apelles_ai::depth` now. This file used to be the whole
 //! 288-line implementation; see D-142 in `docs/08-decisions.md`.
 
 use crate::chroma::state;
@@ -30,7 +30,7 @@ pub async fn chroma_depth_track(
             return Err("no video loaded".into());
         }
     };
-    chroma_ai::depth::depth_track(
+    apelles_ai::depth::depth_track(
         &cv.path.to_string_lossy(),
         from_frame,
         to_frame,
@@ -44,19 +44,19 @@ pub async fn chroma_depth_track(
 /// Poll a `/depth_track` job.
 #[tauri::command]
 pub async fn chroma_depth_track_status(job_id: String) -> Result<serde_json::Value, String> {
-    chroma_ai::depth::depth_track_status(&job_id).await
+    apelles_ai::depth::depth_track_status(&job_id).await
 }
 
 /// The tracked depth map for the currently-decoded video frame, as a full-res
 /// `GrayImage`. Reads `params.chromaDepthDir` + `chroma::state::current_video().frame`
-/// and delegates the PNG lookup to `chroma_ai::depth::depth_map_at`. `None` when
+/// and delegates the PNG lookup to `apelles_ai::depth::depth_map_at`. `None` when
 /// the sub-mask has no `chromaDepthDir`, no video is loaded, or nothing is
 /// cached at that point yet — the caller then falls back to the static
 /// `mask_data_base64` bake.
 ///
 /// D-142: unchanged signature (`&serde_json::Value`), so `mask_generation.rs`'s
 /// two call sites (L932, L1366) needed no edits. Internally this now does the
-/// two state/params lookups and calls `chroma_ai::depth::depth_map_at(dir,
+/// two state/params lookups and calls `apelles_ai::depth::depth_map_at(dir,
 /// frame)`, which takes the frame index as a plain argument since the crate
 /// can't see `chroma::state` — the "strictly better signature" the extraction
 /// plan calls out, kept at the crate boundary rather than pushed up into this
@@ -67,5 +67,5 @@ pub fn tracked_depth_map(params: &serde_json::Value) -> Option<image::GrayImage>
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())?;
     let frame = state::current_video()?.frame;
-    chroma_ai::depth::depth_map_at(dir, frame)
+    apelles_ai::depth::depth_map_at(dir, frame)
 }

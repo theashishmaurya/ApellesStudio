@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — the clip Inspector tab bar's own CHROME: the deselected
+ * @apelles/editor — the clip Inspector tab bar's own CHROME: the deselected
  * panel actually stops painting (B-124), the selected tab has a visible
  * selected state (D-254), and adjacent sections are separated by a real rule
  * (D-254).
@@ -57,7 +57,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
-const { useHistoryStore } = await import('@chroma/history');
+const { useHistoryStore } = await import('@apelles/history');
 import type { Clip, Timeline } from './timeline';
 
 const CLIP_ID = 'clip-1';

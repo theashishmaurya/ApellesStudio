@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — permanent real-DOM coverage for `editor_set_selection`
+ * @apelles/editor — permanent real-DOM coverage for `editor_set_selection`
  * (D-216, roadmap item 26): the MCP op that gives an agent the one thing it
  * could not do before, PUT A CLIP IN THE SELECTED STATE.
  *
@@ -425,7 +425,7 @@ describe('editor_set_selection — gap selection (D-105)', () => {
 
 describe('editor_set_selection — it is UI state, not a document edit (D-216)', () => {
   it('pushes nothing onto the shared undo stack and never persists the timeline', async () => {
-    const { useHistoryStore } = await import('@chroma/history');
+    const { useHistoryStore } = await import('@apelles/history');
     await mountHarness();
     const before = useHistoryStore.getState().undoStack.length;
 

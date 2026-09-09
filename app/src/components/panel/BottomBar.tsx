@@ -119,7 +119,7 @@ const PanelToggleButton = ({ onClick, Icon, tooltip, disabled = false }: PanelTo
         union, which JSX's type-checking collapses to `never` props once
         `@react-three/fiber`'s global `JSX.IntrinsicElements` augmentation is
         in the same `tsc` program (via the Motion tab, D-046) — see B-008.
-        No behavior change, same as `@chroma/ui`'s `Text.tsx` fix. */}
+        No behavior change, same as `@apelles/ui`'s `Text.tsx` fix. */}
     {createElement(Icon, { size: 18 })}
   </button>
 );

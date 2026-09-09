@@ -1,4 +1,4 @@
-// @chroma/editor — REAL ffmpeg-execution, PIXEL-level tests for the ANIMATED
+// @apelles/editor — REAL ffmpeg-execution, PIXEL-level tests for the ANIMATED
 // caption export path (D-243, `docs/notes/caption-presets.md`).
 //
 // **Why this file exists at all.** `captionAnim.test.ts` proves the model's

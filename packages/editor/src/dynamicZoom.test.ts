@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — `dynamicZoom.ts`'s box→keyframe math (D-234).
+ * @apelles/editor — `dynamicZoom.ts`'s box→keyframe math (D-234).
  *
  * This is where a dynamic zoom can actually be wrong: the span it covers, the
  * keys it writes, what it does to keys that were already there, and whether

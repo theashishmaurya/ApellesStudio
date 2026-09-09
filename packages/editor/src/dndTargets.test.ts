@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the `@dnd-kit` payload contract (B-122).
+ * @apelles/editor — the `@dnd-kit` payload contract (B-122).
  *
  * **The case that matters most is test 1 of `laneDropTrack`:** the exact
  * payload a track HEADER puts on `over.data.current`, fed to the function that

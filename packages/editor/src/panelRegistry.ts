@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the registry of Edit-tab popovers/dialogs a debug op can
+ * @apelles/editor — the registry of Edit-tab popovers/dialogs a debug op can
  * open or close by name (D-252, `docs/notes/debug-tooling.md` piece 2).
  *
  * **What it is.** The small, closed set of panel ids `useEditorTimelineStore`'s
@@ -40,7 +40,7 @@
  * motivating case — no longer exists: the caption style library is docked
  * content now (`CaptionLibrary.tsx` inside `EditLibraryPanel.tsx`), reached by
  * selecting Subtitles on the library rail, so there is no open flag left to
- * drive. `@chroma/debug`'s real-DOM proof for `debug_set_popover_open` drives
+ * drive. `@apelles/debug`'s real-DOM proof for `debug_set_popover_open` drives
  * `CanvasSettingsPopover` instead. The same pass removed the rail's own
  * uncontrolled popovers noted below, for the same reason.
  *
@@ -61,7 +61,7 @@ export const PANEL_IDS = ['canvas-settings', 'export-dialog'] as const;
 export type PanelId = (typeof PANEL_IDS)[number];
 
 /** Parse an untyped panel id (the `debug_set_popover_open` op's argument), or
- *  say why it is not one. Kept here rather than in `@chroma/debug`'s
+ *  say why it is not one. Kept here rather than in `@apelles/debug`'s
  *  `uiState.ts` so the accepted set has exactly one definition — the same
  *  reason `parseClipInspectorTab` lives next to `CLIP_INSPECTOR_TABS`. */
 export function parsePanelId(raw: unknown): PanelId | null {

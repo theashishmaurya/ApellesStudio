@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's **Captions from Transcript** action (D-238,
+ * @apelles/editor — the Edit tab's **Captions from Transcript** action (D-238,
  * roadmap item 27's "Auto-captioning from the D-189 transcript" line).
  *
  * **What it does.** Runs the D-189 transcript sidecar over the SELECTED
@@ -25,7 +25,7 @@
  */
 import { useState } from 'react';
 import { Sparkles } from 'lucide-react';
-import { Button } from '@chroma/ui';
+import { Button } from '@apelles/ui';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';

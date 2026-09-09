@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — pure math for `EaseCurveEditor.tsx`'s bezier curve widget
+ * @apelles/motion — pure math for `EaseCurveEditor.tsx`'s bezier curve widget
  * (Phase 5b, part 4 — "a curve/easing editor," the last of the four pieces
  * `docs/notes/motion-keyframe-timeline-research.md` §4 named for Phase 5b:
  * "Every key already carries an optional `ease`... editable today only as
@@ -48,7 +48,7 @@
  * wrong `[x1,y1,x2,y2]` to the manifest would render a visibly different
  * animation than what the widget appeared to show.
  */
-import { design } from '@chroma/motion-engine/src/design';
+import { design } from '@apelles/motion-engine/src/design';
 
 /** The same 4-tuple shape as `schema.ts`'s own exported `EaseCurve`
  *  (`z.infer` of a `z.tuple` of four numbers, so MUTABLE there) — declared

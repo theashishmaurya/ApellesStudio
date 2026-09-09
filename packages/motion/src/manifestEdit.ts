@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — pure manifest read/write logic for the Inspector (D-099,
+ * @apelles/motion — pure manifest read/write logic for the Inspector (D-099,
  * Phase 2 of `docs/notes/global-inspector.md`).
  *
  * D-151 adds `addLayer`, the first op here that *creates* rather than
@@ -29,11 +29,11 @@
  * through `Record<string, unknown>`, the same cast `LayerList.tsx`'s
  * `layerLabel` already uses.
  */
-import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey, TransformKey } from '@chroma/motion-engine/src/engine/schema';
-import { interpolateKeys } from '@chroma/motion-engine/src/lib/interpolateKeys';
-import { design } from '@chroma/motion-engine/src/design';
-import { deviceBodyRect } from '@chroma/motion-engine/src/lib/device';
-import { sceneStartFrame, sceneDurationFrames } from '@chroma/motion-engine/src/engine/build';
+import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey, TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import { interpolateKeys } from '@apelles/motion-engine/src/lib/interpolateKeys';
+import { design } from '@apelles/motion-engine/src/design';
+import { deviceBodyRect } from '@apelles/motion-engine/src/lib/device';
+import { sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
 import type { Selection } from './LayerList';
 import { catalogEntry, defaultLayerFor, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
 import { positionFields, sizeFields } from './propCatalog';
@@ -1403,7 +1403,7 @@ export function setCamera3d(manifest: Manifest, sceneIndex: number, keys: Cam3dK
  *  already handles. Not cryptographic — there is no security property to
  *  uphold here, just enough entropy (8 base-36 characters, ~41 bits) that
  *  two layers in the same scene colliding is astronomically unlikely, the
- *  same bar `crates/chroma-timeline`'s own id-generation doc comment sets
+ *  same bar `crates/apelles-timeline`'s own id-generation doc comment sets
  *  for a similar "this just needs to not collide in practice" case. */
 function genLayerId(): string {
   return Math.random().toString(36).slice(2, 10);

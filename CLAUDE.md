@@ -1,4 +1,4 @@
-# Chroma — working rules
+# Apelles — working rules
 
 AI-native, local, open-source video tool — **3 tabs: Edit / Motion / Colorist**
 (D-039, 2026-09-02; supersedes the old "grading only, not an editor" framing —
@@ -90,7 +90,7 @@ this note now records what that pass found and what it deliberately left.
   tracker is dated 2026-09-04 — the roadmap's *"Shipped"* and per-item entries are current
   and were used as this pass's ground truth, but that one summary section was left alone to
   avoid conflicting with concurrent feature work editing the same file. `crates/README.md`
-  overstates `chroma-timeline` slightly (claims a "transcript→EDL" it does not contain), and
+  overstates `apelles-timeline` slightly (claims a "transcript→EDL" it does not contain), and
   the root `Cargo.toml` header comment still says "only 3 stub crates exist"; both are
   one-line fixes for whoever is next in those files.
 
@@ -140,13 +140,13 @@ in the same commit.
 - **We vendor RapidRAW at `app/`, we don't rewrite it.** Prefer extending it over
   reimplementing. When you must diverge from upstream, document the divergence in
   `docs/09-engine-notes.md` so we can still cherry-pick upstream fixes. (Over time the
-  Chroma `crates/` absorb more and the fork shrinks — D-039.)
+  Apelles `crates/` absorb more and the fork shrinks — D-039.)
 - **Every resizable-by-nature panel/pane/sidebar must actually be resizable** (owner,
   2026-09-03, said once so it's a standing rule, not a per-feature ask). Fixed-width
   panels, popovers, and dialogs that don't need to flex are fine as-is — this is about
   panes that hold real content a user will want more/less space for: the Sources
   sidebar, the track-header column, an Inspector, a properties popover, a preview vs.
-  timeline split, etc. `@chroma/ui`'s `resizable.tsx` (Base UI-backed) is already a real
+  timeline split, etc. `@apelles/ui`'s `resizable.tsx` (Base UI-backed) is already a real
   component in the library for exactly this — use it rather than a fixed `w-[Npx]`/
   `h-[Npx]` whenever you're building a new panel of this kind, and if an existing one was
   built fixed-width before this rule existed, that's a real, worthwhile fix when you're
@@ -188,13 +188,14 @@ chroma/
   package.json          ← npm workspaces — app, packages/*
   app/                  ← the vendored RapidRAW fork (AGPL-3.0)
     src/                ← React/TS frontend  (was engine/src)
-    src-tauri/          ← the Tauri Rust crate, still named `RapidRAW` (rename = later step)
-  crates/               ← Chroma's own layered Rust crates (thin-shell/fat-core, D-039)
+    src-tauri/          ← the Tauri Rust crate, Cargo package `apelles` (was `RapidRAW`
+                          until D-265 did the rename D-040 had deferred)
+  crates/               ← Apelles' own layered Rust crates (thin-shell/fat-core, D-039)
                           8 exist, 6 of them real+load-bearing (waves 1-3 landed 2026-09-05):
-                          chroma-{types,gpu,media,timeline,grade-model,project,motion,ai}.
-                          Still future: chroma-grade, chroma-compositor. Live table +
+                          apelles-{types,gpu,media,timeline,grade-model,project,motion,ai}.
+                          Still future: apelles-grade, apelles-compositor. Live table +
                           per-crate boundaries: crates/README.md
-  packages/             ← Chroma's frontend workspace — @chroma/{tokens,ui,bridge,shell,
+  packages/             ← Apelles' frontend workspace — @apelles/{tokens,ui,bridge,shell,
                           editor,motion,motion-engine,player,inspector,history,debug}
     motion-engine/      ← the Remotion motion engine, moved in from videoAgent/engine/motion/
   ai/  ai-media/  mcp/  eval/  docs/  scratch/
@@ -206,7 +207,7 @@ Rules for the fork at `app/`:
 - Do not scatter edits through `app/src-tauri` casually — new files/modules over
   in-place edits, and every divergence from upstream is logged in `docs/09-engine-notes.md`
   (what changed, why, the upstream commit we branched from).
-- Over time Chroma's `crates/` absorb more and the fork shrinks to "grade shader + mask
+- Over time Apelles' `crates/` absorb more and the fork shrinks to "grade shader + mask
   raster" (D-039).
 
 ## Running the app (post-D-039)

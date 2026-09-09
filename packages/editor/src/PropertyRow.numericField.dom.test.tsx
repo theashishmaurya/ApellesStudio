@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — B-113: a crop value is readable, and no spinner arrows sit
+ * @apelles/editor — B-113: a crop value is readable, and no spinner arrows sit
  * on top of it.
  *
  * **The defect.** The owner, working a real project, screenshotted the Crop
@@ -25,7 +25,7 @@
  * asserted: the value string the panel actually renders for a real crop value,
  * against the field's own declared geometry (`numericField.ts`, whose px
  * constants are the rendered Tailwind utilities' own values), including the
- * strip `@chroma/ui`'s Input reserves for the spinner. A value that fits that
+ * strip `@apelles/ui`'s Input reserves for the spinner. A value that fits that
  * budget cannot be under the arrows; a value that does not, is — which is
  * exactly what the pre-fix case below still demonstrates. The final visual
  * confirmation is the owner's own, against the running app.
@@ -54,7 +54,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 const { useEditorTimelineStore } = await import('./timelineStore');
 const { EditorInspectorPanel } = await import('./EditorInspectorPanel');
-import { NUMBER_INPUT_SPINNER_SUPPRESSION } from '@chroma/ui';
+import { NUMBER_INPUT_SPINNER_SUPPRESSION } from '@apelles/ui';
 import {
   NUM_FIELD,
   numericFieldCapacityChars,
@@ -156,7 +156,7 @@ describe('the Inspector’s numeric field clears its own spinner (B-113)', () =>
   it('suppresses the spinner on the rendered element, not just in theory', async () => {
     await render();
     const input = field('Left');
-    // The suppression comes from `@chroma/ui`'s Input for every
+    // The suppression comes from `@apelles/ui`'s Input for every
     // `type="number"`, which is where the defect actually lived — one class
     // set, applied once, rather than per call site.
     expect(input.type).toBe('number');

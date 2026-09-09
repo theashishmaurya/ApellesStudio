@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's font catalogue, as the frontend sees it
+ * @apelles/editor — the Edit tab's font catalogue, as the frontend sees it
  * (D-211/D-212, `docs/notes/text-title-clips.md`).
  *
  * **What it is:** a tiny module-level cache of `chroma_text_fonts` — the

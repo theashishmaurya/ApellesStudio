@@ -7,7 +7,7 @@
  * a combination the refresh runtime rejects
  * (`Could not Fast Refresh ("true" export is incompatible)`), so Vite
  * answered every HMR update that reached this module with a **full page
- * reload of the whole app**. Since no `@chroma/*` barrel is a refresh
+ * reload of the whole app**. Since no `@apelles/*` barrel is a refresh
  * boundary either (they re-export stores and plain functions next to
  * components), *every* edit behind one propagated here and full-reloaded the
  * app: state lost, project re-opened, every module re-fetched — and, because

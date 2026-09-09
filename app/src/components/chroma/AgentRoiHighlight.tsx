@@ -1,4 +1,4 @@
-// Chroma — the canvas ROI rectangle for a pending `request_human(reason, roi)`
+// Apelles — the canvas ROI rectangle for a pending `request_human(reason, roi)`
 // (D-032). Rendered inside ImageCanvas's absolute overlay layer, so it uses the
 // same coordinate space as the mask overlay (imageRenderSize offsets/size).
 import { useAgentStore } from '../../store/useAgentStore';

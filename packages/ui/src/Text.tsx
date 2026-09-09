@@ -25,7 +25,7 @@ const Text = forwardRef<HTMLElement, TextProps>(
     // non-DOM elements with an incompatible `children` shape — which is
     // exactly what happens once anything in the same `tsc` program pulls in
     // `@react-three/fiber`'s global `JSX.IntrinsicElements` augmentation
-    // (e.g. `@chroma/motion-engine`'s `Scene3D`, via `@chroma/motion`, D-046
+    // (e.g. `@apelles/motion-engine`'s `Scene3D`, via `@apelles/motion`, D-046
     // — see B-008). `createElement`'s signature doesn't distribute the same
     // way, so it type-checks correctly under both a plain-DOM and an
     // r3f-augmented `JSX.IntrinsicElements`. No behavior change — this is

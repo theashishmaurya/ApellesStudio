@@ -1,4 +1,4 @@
-// Chroma — interactive relight "Preset" tab (D-054, follow-up to D-048).
+// Apelles — interactive relight "Preset" tab (D-054, follow-up to D-048).
 //
 // D-048 shipped the Ambient / Light-N / +Add Light tabs but explicitly
 // trimmed the ClipDrop reference strip's leading "Preset" tab (saved/built-in

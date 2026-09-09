@@ -1,4 +1,4 @@
-# Timeline feature audit — what a real NLE has vs. what Chroma's Edit tab has (2026-09-04)
+# Timeline feature audit — what a real NLE has vs. what Apelles' Edit tab has (2026-09-04)
 
 Owner, after a night of one-off live-tested bug reports on the NLE timeline: "can you not
 do a Research and get all the cases for timeline instead of me telling you." Fair — this
@@ -45,7 +45,7 @@ as a "is X built" lookup rather than a build log.
 
 ## The actual code audited (not assumed)
 
-`crates/chroma-timeline/src/lib.rs`, `packages/editor/src/timeline.ts`,
+`crates/apelles-timeline/src/lib.rs`, `packages/editor/src/timeline.ts`,
 `packages/editor/src/TimelinePane.tsx` — every claim below is checked against what's
 actually there as of `D-105` (this pass's own gap-delete work), via direct reads and a
 few targeted `grep`s (e.g. confirming there is exactly one `onKeyDown` handler in the
@@ -79,7 +79,7 @@ exists anywhere in the model) rather than trusted from memory of earlier passes.
 | Undo/redo | D-051/D-052 | whole-`Timeline` snapshot based, shell-level (spans all 3 tabs) |
 | Waveform on clip | D-051 | Rust-computed (`chroma_audio_waveform`), plain `<canvas>` |
 | Zoom (scroll-wheel + toolbar), real-timecode adaptive ruler | D-051/D-058 | |
-| Global Inspector (typed property panel, both Motion + NLE halves) | D-081/D-099/D-102/D-103 | shared shell (`@chroma/inspector`) as of D-103 |
+| Global Inspector (typed property panel, both Motion + NLE halves) | D-081/D-099/D-102/D-103 | shared shell (`@apelles/inspector`) as of D-103 |
 | Click a clip to select; click empty space to deselect | D-080/D-100 | |
 | Click a real gap to select it; visual highlight | D-105 (this pass) | |
 
@@ -90,7 +90,7 @@ exists anywhere in the model) rather than trusted from memory of earlier passes.
   tracks. Every real reference has cross-track ripple: Premiere's "Ripple Edit, Trim, and
   Roll trailing clips in all unlocked tracks," Resolve's/Palmier's **Sync Lock**
   (`manage_tracks`'s `syncLocked` field: "whether ripple edits shift this track along" —
-  confirmed real, on by default in Palmier). Chroma has no equivalent flag or mechanism at
+  confirmed real, on by default in Palmier). Apelles has no equivalent flag or mechanism at
   all — a ripple-close gap on Video 1 does not shift anything on Video 2, Audio 1, etc.,
   even if they were meant to stay in sync with it. Real, load-bearing gap for any
   filler-word-style multi-track edit (Palmier's own `ripple_delete_ranges` is explicitly
@@ -99,19 +99,19 @@ exists anywhere in the model) rather than trusted from memory of earlier passes.
 - **Snapping exists but isn't a user toggle.** Edge-snap is hardcoded into the
   insert/move-drag math (`nearestEdge`/`computeInsertion`'s `snapFrames`) and the library's
   own trim drag (`dragLine`, always on). Premiere has a real Snap toggle (`S` key / a
-  Timeline-panel button) the user can turn off entirely. Chroma has no way to disable
+  Timeline-panel button) the user can turn off entirely. Apelles has no way to disable
   snapping — not wrong for v1, but a real, checkable difference from every reference.
-- **A/V linking is all-or-nothing, not a real relationship.** Chroma's model has exactly
+- **A/V linking is all-or-nothing, not a real relationship.** Apelles' model has exactly
   two states: audio embedded *inside* a video clip (D-050 — inseparable, always plays
   together, can't be independently trimmed) or a fully independent audio-track clip
   (D-057 — zero relationship to any video clip, moving one never moves the other).
   Premiere's Linked Selection and Palmier's `manage_clip_links` both have a real
   in-between: two *separate* clips that move/select together by default but can be
-  deliberately unlinked for an L-cut/J-cut, then relinked. Chroma can't represent an L-cut
+  deliberately unlinked for an L-cut/J-cut, then relinked. Apelles can't represent an L-cut
   or J-cut at all today.
 - **Keyframeable properties cover transform, not everything a real tool keyframes.**
-  Chroma: opacity/position/scale/rotation (D-086). Palmier's `set_keyframes` additionally
-  covers `volumeDb`, `crop`, and `blur` — Chroma has no volume/gain keyframing (`Track.gain`
+  Apelles: opacity/position/scale/rotation (D-086). Palmier's `set_keyframes` additionally
+  covers `volumeDb`, `crop`, and `blur` — Apelles has no volume/gain keyframing (`Track.gain`
   is a static per-track multiplier, D-057, never animated) and no crop/blur at all (no
   effects stack — see Don't Have). **Update (2026-09-04, D-127):** the missing *crop*
   half now has a real home — Phase 3 of `docs/notes/on-canvas-transform.md`, which also
@@ -128,7 +128,7 @@ exists anywhere in the model) rather than trusted from memory of earlier passes.
   gaps at once) is impossible today — confirmed by grep, there is exactly one `onKeyDown`
   handler in the whole file and it only ever reads a single `selected`/`selectedGap`.
 - **Copy / paste / duplicate a clip.** No clipboard concept, no duplicate op, in either
-  `EditOp` (TS) or `chroma-timeline`'s own op set (Rust).
+  `EditOp` (TS) or `apelles-timeline`'s own op set (Rust).
 - **Speed / time-remapping.** No `speed`/`rate`/`playback_rate` field anywhere on `Clip` —
   confirmed by grep across both the Rust crate and its TS mirror. Resolve has this as a
   first-class Retime Controls feature (`Cmd/Ctrl+R`); every reference checked has some
@@ -137,21 +137,21 @@ exists anywhere in the model) rather than trusted from memory of earlier passes.
   Transitions: not started" status, unchanged since that note was written. A cross-dissolve
   needs Phase B3's blend-mode compositor (which exists, D-088) but nothing consumes it for
   a transition yet.
-- **Timeline markers, native to Chroma.** Palmier has real persistent markers with a
+- **Timeline markers, native to Apelles.** Palmier has real persistent markers with a
   review-workflow status (`open`/`review`/`resolved`) via `manage_markers` — that's a
-  *different tool's* markers on footage before it ever reaches Chroma, not something
-  Chroma's own `chroma-timeline`/`TimelinePane.tsx` has any concept of. Premiere's markers
-  are native to its own timeline the same way. Chroma's Edit tab has nothing analogous.
+  *different tool's* markers on footage before it ever reaches Apelles, not something
+  Apelles' own `apelles-timeline`/`TimelinePane.tsx` has any concept of. Premiere's markers
+  are native to its own timeline the same way. Apelles' Edit tab has nothing analogous.
 - **Nested sequences / compound clips.** `Timeline` is single-level — no clip type that
   references another `Timeline`. (Motion's manifest *can* nest via `<Series>`/scenes, but
   that's a completely separate model in `packages/motion-engine`, not the NLE timeline.)
 - **Multicam.** Zero — Palmier's `manage_multicam` (sync camera angles from session audio,
-  switch angles) has no Chroma equivalent at all. Likely genuinely out of scope for this
+  switch angles) has no Apelles equivalent at all. Likely genuinely out of scope for this
   product's real use case (talking-head/explainer content, not multi-camera shoots) rather
   than an oversight worth prioritizing — flagged for completeness, not urgency.
 - **Non-color effects stack on Edit-tab clips.** Palmier's `apply_effect` (blur, sharpen,
   vignette, chroma key, film grain, etc. as a live merge-by-type stack) has no equivalent
-  on a `chroma-timeline::Clip` — the Edit tab's compositor (D-088) does transform only
+  on a `apelles-timeline::Clip` — the Edit tab's compositor (D-088) does transform only
   (position/scale/rotation/opacity). Worth noting this may be a deliberate architectural
   split rather than a gap: this app's Colorist tab already owns a real, separate grading
   pipeline (curves/wheels/LUT/masks) — whether non-color *filter* effects belong on Edit-
@@ -160,7 +160,7 @@ exists anywhere in the model) rather than trusted from memory of earlier passes.
 - **Cross-track ripple / sync-lock as a real toggle.** Listed under Partial above for the
   ripple-op gap itself; listed again here because the *toggle mechanism* (Palmier's
   `Track.syncLocked`, Resolve's Sync Lock) doesn't exist as a field or concept anywhere in
-  `chroma-timeline::Track` at all, not even a stub.
+  `apelles-timeline::Track` at all, not even a stub.
 - **Keyboard shortcuts beyond Delete/Backspace.** Confirmed by grep — one `onKeyDown`
   handler, two keys. No Snap toggle key, no ripple/rolling-edit-tool keys, no split-at-
   playhead key (only a toolbar button), no nudge-clip-by-frame keys. Every reference

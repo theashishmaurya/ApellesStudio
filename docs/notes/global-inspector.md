@@ -29,8 +29,8 @@ inline in the roadmap, no dedicated doc yet" placeholder, same role
   interface anywhere) — see the full extracted catalog below. No backend/schema
   blocker to building this — it's a real, mechanical, one-time transcription task, not
   new engineering.
-- **`chroma_timeline::Clip` has zero transform fields.** Confirmed against
-  `crates/chroma-timeline/src/lib.rs`'s `Clip` struct: `id`, `shot_id`, `media_id`,
+- **`apelles_timeline::Clip` has zero transform fields.** Confirmed against
+  `crates/apelles-timeline/src/lib.rs`'s `Clip` struct: `id`, `shot_id`, `media_id`,
   `name`, `source_path`, `source_start`, `duration`, `source_len`, `start_frame` — no
   `position`/`scale`/`rotation`/`opacity`/`fade_in`/`fade_out`. The NLE half of the
   Inspector needs these fields to exist before it can edit them, and *using* them
@@ -118,7 +118,7 @@ blocker."
 
 ### Phase 3 — NLE half (Edit-tab clip properties)
 
-**Blocked on Phase B3** (`multi-track-nle.md`) — needs `chroma_timeline::Clip` to
+**Blocked on Phase B3** (`multi-track-nle.md`) — needs `apelles_timeline::Clip` to
 actually grow `position`/`scale`/`rotation`/`opacity`/`fade_in`/`fade_out` fields
 *and* the real GPU compositing work to make them do anything when rendered, which is
 B3's own job, not a separate one. Scoping the exact field set is cheap and could be
@@ -176,16 +176,16 @@ shape and edit operations that forcing them through one component would mean
 rewriting two already-working, already-tested panels for no real user-facing
 benefit, exactly the risk this doc's own Phase 4 section flagged in advance
 ("don't force a deeper unification than is actually clean"). Instead: a new tiny
-package, **`@chroma/inspector`** (`packages/inspector/`), holding only the pieces
+package, **`@apelles/inspector`** (`packages/inspector/`), holding only the pieces
 `InspectorPanel.tsx` and `ClipInspectorPanel.tsx` had genuinely, independently
 converged on byte-identical — the "nothing selected" empty state and the
 section-heading typography — as `InspectorEmptyState`/`InspectorSection`. A
-separate package, not `@chroma/ui`, because `@chroma/motion` cannot depend on
-`@chroma/ui` at all (the `@react-three/fiber` JSX-typing conflict `Button.tsx`/
+separate package, not `@apelles/ui`, because `@apelles/motion` cannot depend on
+`@apelles/ui` at all (the `@react-three/fiber` JSX-typing conflict `Button.tsx`/
 `resizable.tsx` already documented) — putting shared chrome there would have made
 it unusable from Motion's side. The resizable-panel wrapping was deliberately
-**not** unified: `@chroma/editor` correctly uses `@chroma/ui`'s real
-`ResizablePanel` (no conflict on that side), `@chroma/motion` uses its own local
+**not** unified: `@apelles/editor` correctly uses `@apelles/ui`'s real
+`ResizablePanel` (no conflict on that side), `@apelles/motion` uses its own local
 motion-safe wrapper; a third shared wrapper would have meant either downgrading
 the editor away from the real component it already correctly uses, or
 reintroducing the JSX conflict into Motion — neither is an improvement.
@@ -202,10 +202,10 @@ consistent section headings. `tsc` clean across `packages/inspector`/`motion`/
 `editor`/`app`; 18/18 + 91/91 tests unchanged (a pure presentational extraction).
 
 **Post-Phase-4 layout follow-up, D-118 (2026-09-04) — the NLE half's own panel
-moved from a nested pane to a full-height sibling, within `@chroma/editor`
+moved from a nested pane to a full-height sibling, within `@apelles/editor`
 only.** Owner: "move the clip editor like source control full height instead
 of being in the timeline." Not a Phase 4 revision — this doesn't touch
-`@chroma/inspector`, the shared empty-state/heading pieces, or cross-tab
+`@apelles/inspector`, the shared empty-state/heading pieces, or cross-tab
 selection sharing (still correctly *not* lifted, per this doc's own Phase 4
 finding above). It's a narrower, tab-internal move: `ClipInspectorPanel`
 (unchanged) is now rendered by a new `EditorInspectorPanel.tsx` sibling of
@@ -214,7 +214,7 @@ spanning the Edit tab's real full height, instead of a third pane nested
 inside `TimelinePane`'s split (which was capped at the timeline row's 46%
 height — the real cause of "in the timeline"). `Selection`/`selectedGap`
 moved from `TimelinePane`'s local `useState` into `useEditorTimelineStore`
-— still within `@chroma/editor`, still per-tab, just no longer trapped
+— still within `@apelles/editor`, still per-tab, just no longer trapped
 inside one specific child component of that tab. See D-118's own decision
 entry for the real "stayed tab-local, not shell-level" call.
 

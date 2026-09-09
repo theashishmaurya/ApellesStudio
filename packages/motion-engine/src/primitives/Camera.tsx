@@ -78,7 +78,7 @@ export const Camera: React.FC<{
        *  §3a/§4 Phase 0a) — the ONE stable DOM hook a screen↔world coordinate
        *  map needs: `getBoundingClientRect()` here already composes the
        *  player's own fit-scale, this transform's zoom/translate, AND the
-       *  drift below, with no need for `@chroma/motion` to re-read `keys`,
+       *  drift below, with no need for `@apelles/motion` to re-read `keys`,
        *  re-sort them, or re-run this easing. A pure attribute add — zero
        *  pixel/visual change. See the engine README's "DOM contract" section. */}
       <AbsoluteFill

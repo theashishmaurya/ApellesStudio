@@ -1,14 +1,14 @@
 /**
- * @chroma/editor — the real audio half of the timeline→ffmpeg export
+ * @apelles/editor — the real audio half of the timeline→ffmpeg export
  * compiler (D-197, `docs/notes/audio-export-mixing.md`).
  *
  * What it is: the pure math `timelineExport.ts`'s `buildExportFfmpegArgs`
  * needs to mix gain (D-057), ducking (D-149) and fades (D-147) into the
  * export's ffmpeg filtergraph, replicating — not re-inventing — the exact
- * semantics `app/src-tauri/src/chroma/audio.rs` / `crates/chroma-media/src/
+ * semantics `app/src-tauri/src/chroma/audio.rs` / `crates/apelles-media/src/
  * audio.rs` already implement for live playback:
  *
- * - `fadeGainAt`/`fadeGainExpr` mirror `chroma_types::fade_gain`
+ * - `fadeGainAt`/`fadeGainExpr` mirror `apelles_types::fade_gain`
  *   field-for-field, over the curve solve `easeCurve.ts`'s `easeCurveEval`
  *   owns (D-233 moved it there — a fade is no longer its only caller; see
  *   that module's own doc). ffmpeg's own expression language has no bezier-root
@@ -18,14 +18,14 @@
  *   `fadeGainAt` itself is exact), with error bounded by the sample count
  *   (`FADE_SAMPLE_STEPS`) and imperceptible for any fade window a human would
  *   actually author.
- * - `buildDuckSegments`/`duckGainExpr` mirror `chroma_media::audio::
+ * - `buildDuckSegments`/`duckGainExpr` mirror `apelles_media::audio::
  *   DuckEnvelope` EXACTLY — no sampling needed here, because the one-pole
  *   smoother's closed form (`target + (entry-target)*exp(-(t-t0)/tau)`) is
  *   directly expressible in ffmpeg's own expression language (`exp` is a
  *   real supported function), so this is a precise reproduction, not an
  *   approximation.
  * - `resolveDuckForTrack` mirrors `chroma::edit::resolve_track_duck` +
- *   `chroma_timeline::Track::clip_spans_from` — **using the CORRECTED
+ *   `apelles_timeline::Track::clip_spans_from` — **using the CORRECTED
  *   fps-aware frame math this session's B-075/B-077/D-194 already established
  *   for video** (`endFrame`, timeline.ts), not the still-buggy conflation
  *   B-079 documents in the live Rust playback path today. This is a
@@ -33,8 +33,8 @@
  *   new interpretation of what ducking MEANS — see D-197's own decision entry
  *   for why replicating a known bug into new code would be the wrong call.
  *
- * - `clipAudioParam`/`panGainExprs` (D-223) mirror `chroma_media::audio::
- *   LevelEnvelope` + `chroma_types::pan_gains` — a clip's OWN volume and
+ * - `clipAudioParam`/`panGainExprs` (D-223) mirror `apelles_media::audio::
+ *   LevelEnvelope` + `apelles_types::pan_gains` — a clip's OWN volume and
  *   stereo pan. Neither is sampled: an automation curve IS piecewise-linear
  *   (so `piecewiseLinearExpr` reproduces it exactly), and ffmpeg's expression
  *   language has `cos`/`sin`/`PI`/`clip`, so the constant-power pan law is
@@ -48,7 +48,7 @@
  * - `eqFilterChain` (D-224) is the one stage that does NOT mirror a Rust
  *   implementation — it *consumes* one. A clip's EQ bands become ffmpeg's own
  *   generic `biquad` filter fed with the coefficients `eq.ts` computes, which
- *   are themselves the exact mirror of `chroma_types::eq`, so the exporter and
+ *   are themselves the exact mirror of `apelles_types::eq`, so the exporter and
  *   the live mixer run the same numbers rather than two parameterisations that
  *   have to be checked against each other. That is a measured choice, not a
  *   stylistic one: ffmpeg's `equalizer`/`highpass`/`lowpass` do reproduce the
@@ -97,7 +97,7 @@ import {
 // --------------------------------------------------------------------------- //
 
 /** The fade multiplier at `pos` for a clip of length `len`, fade windows
- *  `fadeIn`/`fadeOut` — mirrors `chroma_types::fade_gain` field-for-field,
+ *  `fadeIn`/`fadeOut` — mirrors `apelles_types::fade_gain` field-for-field,
  *  including its overlapping-windows-multiply and no-fade-configured
  *  short-circuit. All in the SAME unit (this module always calls it with
  *  seconds — see `fadeGainExpr`). */
@@ -192,11 +192,11 @@ export function fadeGainExpr(
 // makes the closed form directly expressible, no sampling needed)
 // --------------------------------------------------------------------------- //
 
-/** Mirrors `chroma_media::audio::MIN_DUCK_TAU_SECS`. */
+/** Mirrors `apelles_media::audio::MIN_DUCK_TAU_SECS`. */
 const MIN_DUCK_TAU_SECS = 1e-6;
 
 /** One piecewise segment of the smoothed duck-presence signal — mirrors
- *  `chroma_media::audio::DuckSegment` field-for-field. */
+ *  `apelles_media::audio::DuckSegment` field-for-field. */
 export interface DuckSegment {
   t0: number;
   target: number;
@@ -208,7 +208,7 @@ function decay(from: number, target: number, elapsed: number, tau: number): numb
   return target + (from - target) * Math.exp(-elapsed / tau);
 }
 
-/** Mirrors `chroma_media::audio::db_to_linear`. */
+/** Mirrors `apelles_media::audio::db_to_linear`. */
 export function dbToLinear(db: number): number {
   if (!Number.isFinite(db)) return 1;
   return Math.pow(10, db / 20);
@@ -222,7 +222,7 @@ export interface DuckResolution {
   duckedGain: number;
 }
 
-/** Build the duck envelope's segments — mirrors `chroma_media::audio::
+/** Build the duck envelope's segments — mirrors `apelles_media::audio::
  *  DuckEnvelope::new` field-for-field (same points construction, same
  *  entry-chaining continuity, same attack-vs-release-by-target selection,
  *  same `duck_db === 0` / empty-spans short-circuits to `null`).
@@ -268,7 +268,7 @@ export function buildDuckSegments(
 
 /**
  * The exact ffmpeg `volume` expression for `gain_at(t)` — mirrors
- * `chroma_media::audio::DuckEnvelope::{presence_at,gain_at}` composed into
+ * `apelles_media::audio::DuckEnvelope::{presence_at,gain_at}` composed into
  * one expression: `1 + presence(t)*(duckedGain-1)` per segment, nested the
  * same "last segment innermost" way `piecewiseLinearExpr` builds a linear
  * ramp (segments are inherently ordered/contiguous here — the LAST segment
@@ -293,7 +293,7 @@ export function duckGainExpr(segments: DuckSegment[], duckedGain: number, timeVa
 }
 
 /** `tr`'s own clips, as merged `[start, end)` TIMELINE-frame spans from frame
- *  0 — mirrors `chroma_timeline::Track::clip_spans_from(0)` field-for-field,
+ *  0 — mirrors `apelles_timeline::Track::clip_spans_from(0)` field-for-field,
  *  **except** it uses `endFrame` (this session's B-075/B-077/D-194-corrected,
  *  fps-aware conversion) instead of the Rust method's own still-uncorrected
  *  `Clip::end_frame` (`start_frame + duration`, no `source_fps` conversion —
@@ -372,7 +372,7 @@ export type ClipAudioParamValue =
  * clip time. Two different time bases, each correct for its own filter.)
  *
  * Interpolation is `piecewiseLinearExpr` — linear between keys, held flat
- * outside — which is exactly what `chroma_media::audio::LevelCurve::value_at`
+ * outside — which is exactly what `apelles_media::audio::LevelCurve::value_at`
  * does in the live mixer and what `interpolate_param` does for the Inspector's
  * own readout. No sampling and no approximation here, unlike a fade's bezier:
  * an automation curve IS piecewise-linear.
@@ -414,7 +414,7 @@ export function clipAudioParam(
 
 /**
  * The two per-channel gain expressions for a pan expression — the ffmpeg
- * mirror of `chroma_types::pan_gains`, written as the law itself rather than
+ * mirror of `apelles_types::pan_gains`, written as the law itself rather than
  * as sampled points: ffmpeg's own expression language has `cos`, `sin`, `PI`
  * and `clip`, so the constant-power curve is expressible EXACTLY, the same way
  * `duckGainExpr`'s `exp` is (and unlike the fade's bezier root-solve, which
@@ -479,7 +479,7 @@ export function ffmpegCoeff(v: number): string {
  * parametric filters for three kinds and something else for the other two would
  * make the export's fidelity depend on which band a user happened to pick;
  * feeding `biquad` the coefficients from `eq.ts` (the exact mirror of
- * `chroma_types::eq`, which is what the mixer runs) makes all five kinds agree
+ * `apelles_types::eq`, which is what the mixer runs) makes all five kinds agree
  * by construction, and measures back to < 0.0001 dB for every one of them.
  *
  * **Why the `aresample`.** `biquad` takes literal coefficients, so they have to
@@ -488,7 +488,7 @@ export function ffmpegCoeff(v: number): string {
  * every consumer source rate, so never a downsample) is what makes the export
  * deterministic for a given band set instead of source-dependent. It is emitted
  * only for a clip that actually has an active band, so nothing else in the
- * export changes. See `chroma_types::eq`'s module doc for the measured cost of
+ * export changes. See `apelles_types::eq`'s module doc for the measured cost of
  * the live mixer designing at a device rate of 44.1 kHz instead (≤ 0.036 dB).
  */
 export function eqFilterChain(
@@ -706,7 +706,7 @@ export interface AudioSourceChainArgs {
  * Build one audio source's real filter chain: `atempo` (if sped) → the EQ's
  * `biquad` cascade (D-224, if any band is active) → `volume`
  * (gain × fade × duck, whichever apply — folded into ONE expression/filter,
- * mirroring `chroma_media::audio::SourceEnvelopes::apply`'s own "they
+ * mirroring `apelles_media::audio::SourceEnvelopes::apply`'s own "they
  * multiply, and they share the pass" contract) → `adelay` (placing it at its
  * real position on the output timeline). Any step with nothing to do is
  * omitted entirely — the same "byte-identical when the feature isn't used"
@@ -813,7 +813,7 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
 
   const factors: string[] = [];
   if (staticGain !== 1) factors.push(String(staticGain));
-  // `max(…,0)` mirrors `chroma_types::clip_volume`'s floor — a negative
+  // `max(…,0)` mirrors `apelles_types::clip_volume`'s floor — a negative
   // authored key would otherwise invert the waveform's phase, which is never
   // what "quieter" means.
   if (volume.kind === 'keys') factors.push(`max(${volume.expr},0)`);
@@ -852,7 +852,7 @@ export function buildAudioSourceChain(args: AudioSourceChainArgs): { steps: stri
     // `aformat=channel_layouts=stereo` first because `channelsplit` on a MONO
     // source is an error, and a mono clip is exactly the case where panning is
     // most meaningful: the upmix duplicates the mono channel into both, which
-    // is precisely what `chroma_media::audio::adapt_channels` does before the
+    // is precisely what `apelles_media::audio::adapt_channels` does before the
     // live mixer's own pan, so a panned mono clip becomes stereo-positioned
     // mono in both paths rather than one of them.
     const [leftExpr, rightExpr] =

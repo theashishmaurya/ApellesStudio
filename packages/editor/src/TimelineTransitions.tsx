@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the transitions library: the browsable palette, the
+ * @apelles/editor — the transitions library: the browsable palette, the
  * drag-onto-a-cut source, the on-timeline badges, and the per-transition editor
  * popover (D-226, roadmap item 27).
  *
@@ -50,7 +50,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@chroma/ui';
+} from '@apelles/ui';
 
 import {
   DEFAULT_TRANSITION_FRAMES,

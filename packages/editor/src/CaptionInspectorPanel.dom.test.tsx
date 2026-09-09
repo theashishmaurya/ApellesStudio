@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @chroma/editor — real-DOM coverage for the Caption Inspector's Bold/Italic
+ * @apelles/editor — real-DOM coverage for the Caption Inspector's Bold/Italic
  * toggle buttons (D-240, roadmap item 27).
  *
  * The same rule `TextClipInspectorPanel.dom.test.tsx` proves for a title's

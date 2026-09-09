@@ -1508,7 +1508,7 @@
       "font": "Tipus de lletra",
       "fontDesc": "Canvia el tipus de lletra de l'aplicació.",
       "nativeTitlebar": "Barra de títol nativa",
-      "nativeTitlebarDesc": "Utilitzar la barra de títol de la finestra predeterminada del sistema en lloc de la personalitzada de Chroma.",
+      "nativeTitlebarDesc": "Utilitzar la barra de títol de la finestra predeterminada del sistema en lloc de la personalitzada de Apelles.",
       "poppins": "Poppins",
       "showImageCounts": "Mostrar recomptes d'imatges",
       "system": "Predeterminat del sistema",
@@ -1621,7 +1621,7 @@
         "connector": {
           "address": "Adreça de l'AI Connector",
           "addressDesc": "Introduïu l'adreça i el port de la vostra instància d'AI Connector en execució. Requerit per a les funcions d'IA generativa.",
-          "description": "Per a usuaris amb una GPU potent que vulguin el màxim control, connecteu Chroma al vostre propi servidor Connector. Això us dona un control total per als fluxos de treball tècnics.",
+          "description": "Per a usuaris amb una GPU potent que vulguin el màxim control, connecteu Apelles al vostre propi servidor Connector. Això us dona un control total per als fluxos de treball tècnics.",
           "failed": "La connexió ha fallat.",
           "feature1": "Utilitzeu la vostra pròpia instància de ComfyUI",
           "feature2": "Edicions generatives avançades gratuïtes",
@@ -1629,16 +1629,16 @@
           "success": "Connexió correcta!",
           "test": "Prova",
           "testing": "S'està provant...",
-          "title": "Autoallotjat (Chroma AI Connector)"
+          "title": "Autoallotjat (Apelles AI Connector)"
         },
         "cpu": {
-          "description": "Integrades directament a Chroma, aquestes funcions s'executen completament al vostre ordinador. Són ràpides, gratuïtes i no requereixen cap configuració, cosa que les fa ideals per accelerar el flux de treball diari.",
+          "description": "Integrades directament a Apelles, aquestes funcions s'executen completament al vostre ordinador. Són ràpides, gratuïtes i no requereixen cap configuració, cosa que les fa ideals per accelerar el flux de treball diari.",
           "feature1": "Emmascarament d'IA (Subjecte, Cel, Primer pla)",
           "feature2": "Etiquetatge automàtic d'imatges",
           "feature3": "Substitució generativa simple per CPU",
           "title": "IA integrada (CPU)"
         },
-        "description": "L'IA de Chroma està dissenyada per ser flexible. Trieu el vostre flux de treball ideal, des d'eines locals ràpides fins a un autoallotjament potent.",
+        "description": "L'IA de Apelles està dissenyada per ser flexible. Trieu el vostre flux de treball ideal, des d'eines locals ràpides fins a un autoallotjament potent.",
         "providers": {
           "aiConnector": "AI Connector",
           "cloud": "Núvol",
@@ -1757,7 +1757,7 @@
       "clearCustomTooltip": "Esborrar la llista d'etiquetes d'IA",
       "clearShortcutsTooltip": "Esborrar la llista d'etiquetes de drecera",
       "customList": "Llista d'etiquetes d'IA personalitzada",
-      "customListDesc": "Si s'especifica, la IA NOMÉS utilitzarà les etiquetes d'aquesta llista, ignorant la llista integrada a Chroma. L'etiquetatge només funciona en anglès.",
+      "customListDesc": "Si s'especifica, la IA NOMÉS utilitzarà les etiquetes d'aquesta llista, ignorant la llista integrada a Apelles. L'etiquetatge només funciona en anglès.",
       "maxAiTags": "Màxim d'etiquetes d'IA",
       "maxAiTagsDesc": "El nombre màxim d'etiquetes que es generaran per imatge.",
       "noCustomTags": "Cap etiqueta d'IA personalitzada (S'utilitza la llista integrada)",
@@ -1769,20 +1769,20 @@
       "title": "Etiquetatge"
     },
     "thanks": {
-      "description": "Un enorme agraïment als projectes següents que van ser molt importants per al desenvolupament de Chroma:",
+      "description": "Un enorme agraïment als projectes següents que van ser molt importants per al desenvolupament de Apelles:",
       "list": {
         "darktable": "Per algunes implementacions de referència que van guiar certes parts d'aquest treball.",
         "depth": "Per al potent model d'estimació de profunditat monocular que permet les capacitats d'emmascarament de profunditat d'IA.",
         "lama": "Per al potent i senzill model d'inpainting d'imatges, que permet el farciment i l'eliminació d'objectes segons el contingut.",
         "lensfun": "Per la seva inestimable biblioteca de codi obert i la completa base de dades per a la correcció automàtica d'objectius.",
-        "libgphoto2": "Per la completa biblioteca de comunicació amb càmeres que impulsa el sistema de tethering i captura remota de Chroma.",
+        "libgphoto2": "Per la completa biblioteca de comunicació amb càmeres que impulsa el sistema de tethering i captura remota de Apelles.",
         "negpy": "Per la inspiració que hi ha darrere de la lògica de conversió de negatius.",
-        "nind": "Per proporcionar els models d'IA que impulsen les capacitats de reducció de soroll per IA a Chroma.",
+        "nind": "Per proporcionar els models d'IA que impulsen les capacitats de reducció de soroll per IA a Apelles.",
         "rawler": "Per l'excel·lent component de Rust que proporciona la base per al processament de fitxers RAW en aquest projecte.",
         "sam2": "Per proporcionar el model de base utilitzat per a les capacitats de detecció de subjectes per IA.",
-        "spektrafilm": "Per les LUTs d'emulació de pel·lícula basades en espectres, d'Andrea Volpato, que impulsen les emulacions integrades de Chroma. Amb llicència CC BY-SA 4.0.",
+        "spektrafilm": "Per les LUTs d'emulació de pel·lícula basades en espectres, d'Andrea Volpato, que impulsen les emulacions integrades de Apelles. Amb llicència CC BY-SA 4.0.",
         "u2net": "Per proporcionar la robusta arquitectura utilitzada per a les capacitats de detecció de cel i primer pla per IA.",
-        "you": "A vosaltres, per utilitzar i donar suport a Chroma. El vostre interès manté aquest projecte viu i en evolució.",
+        "you": "A vosaltres, per utilitzar i donar suport a Apelles. El vostre interès manté aquest projecte viu i en evolució.",
         "youLabel": "Vosaltres"
       },
       "title": "Agraïments especials"

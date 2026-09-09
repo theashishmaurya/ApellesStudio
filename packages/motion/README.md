@@ -1,13 +1,13 @@
-# @chroma/motion
+# @apelles/motion
 
 **The Motion tab** (D-039, MVP shipped D-046; layer list D-081, Inspector
 D-099/D-103, Catalog D-151). A `@remotion/player` embed of
-`@chroma/motion-engine`'s `Video` composition (the same component the
+`@apelles/motion-engine`'s `Video` composition (the same component the
 `Animation` composition registers), a scene/layer list, a typed property
 Inspector, a browsable primitive Catalog that inserts new layers, and a JSON
 scene-manifest editor — all validated against the engine's own `zod` schema.
 Manifest persistence and rendering go through the `chroma_motion_*` Tauri
-commands (`app/src-tauri/src/chroma/motion.rs`) → the `chroma-motion` crate.
+commands (`app/src-tauri/src/chroma/motion.rs`) → the `apelles-motion` crate.
 
 ## Layout
 
@@ -15,7 +15,7 @@ Four resizable panes (`resizable.tsx`): **preview** · **sidebar** (Layers /
 Catalog, two tabs) · **Inspector** · **manifest editor**. As of D-162, the
 preview pane is itself a nested VERTICAL split — the `@remotion/player`
 preview on top, the per-row **keyframe timeline** full-width beneath it,
-independently resizable — mirroring `@chroma/editor`'s own
+independently resizable — mirroring `@apelles/editor`'s own
 `PreviewPane`/`TimelinePane` stack (see `KeyframeTimeline.tsx`'s own module
 doc comment for the full layout reasoning and why D-160's `KeyframeStrip`,
 squeezed inside the preview component itself, didn't survive becoming a
@@ -24,7 +24,7 @@ per-row lane timeline).
 ## Files
 
 - `MotionTab.tsx` — the tab: gates on a project being open (same contract
-  `@chroma/editor`'s `EditorTab` uses — manifest persistence is
+  `@apelles/editor`'s `EditorTab` uses — manifest persistence is
   project-scoped), then lays out the four panes and owns `selections:
   Selection[]` (D-158, Phase 3 of `docs/notes/motion-visual-builder-
   research.md` — was a single `Selection | null`) plus the Phase 0b transient
@@ -55,7 +55,7 @@ per-row lane timeline).
 - `useMotionManifest.ts` — the *editing* state: seeds the editor from whatever
   `motionProjectStore` last read (or the engine's sample, for a project with no
   saved manifest yet), live-parses every edit (debounced) against
-  `@chroma/motion-engine`'s `manifestSchema`, drives save/render. Component-local
+  `@apelles/motion-engine`'s `manifestSchema`, drives save/render. Component-local
   — nothing outside this tab needs it.
 - `MotionPreview.tsx` — the `@remotion/player` embed. `durationInFrames` /
   `fps` / `compositionWidth` / `compositionHeight` come from the engine's own
@@ -100,14 +100,14 @@ per-row lane timeline).
   content props, and an add/remove keyframe list (`KeyframeList`, D-099,
   generalized D-159 to also drive the per-layer `TransformKeysSection`
   alongside the original camera-only call sites). Shares its empty state +
-  section headings with the Edit tab via `@chroma/inspector` (D-103). For a
+  section headings with the Edit tab via `@apelles/inspector` (D-103). For a
   2+ multi-selection (D-158), renders `MultiLayerInspector` instead —
   align/distribute + lockstep Transform/field editing; see its own module
   doc comment for the full design reasoning. Since D-253 its `number` and
   `vec` fields have no native spin buttons and are dragged horizontally to
   change their value, the same gesture the Edit tab's Inspector uses — via
-  `useNumberField` from the **`@chroma/ui/number-scrub` subpath**, which is
-  this package's ONLY permitted reach into `@chroma/ui` (never the barrel; see
+  `useNumberField` from the **`@apelles/ui/number-scrub` subpath**, which is
+  this package's ONLY permitted reach into `@apelles/ui` (never the barrel; see
   `Button.tsx`'s doc comment for the `@react-three/fiber` JSX conflict that
   makes the barrel unusable here). They opt out of the Edit tab's display
   rounding, since `propCatalog.ts`'s `FieldSpec` declares no per-property
@@ -171,8 +171,8 @@ per-row lane timeline).
   pure numbers). No manifest mutation, no DOM (this file stays framework-
   agnostic; `KeyframeTimeline.tsx` owns the one DOM measurement the marquee
   needs — the scrollable content div's own rect).
-- `timelineRuler.ts` — D-162: a REIMPLEMENTATION (not an import — `@chroma/
-  motion` cannot depend on `@chroma/editor`) of `packages/editor/src/
+- `timelineRuler.ts` — D-162: a REIMPLEMENTATION (not an import — `@apelles/
+  motion` cannot depend on `@apelles/editor`) of `packages/editor/src/
   ruler.ts`'s "nice numbers" tick-density algorithm
   (`niceTickIntervalSeconds`/`formatTimecode`), plus `rulerTicks` (the
   ruler's own tick list for one render, given the total duration/fps/zoom).
@@ -188,27 +188,27 @@ per-row lane timeline).
   commands. Pure I/O, no validation (that's the schema, applied before ever
   calling save/render).
 - `resizable.tsx` — a local `react-resizable-panels` wrapper, not
-  `@chroma/ui`'s, for the same JSX-conflict reason as `Button.tsx` (D-099).
-- `Button.tsx` — a small local button, not `@chroma/ui`'s. See the comment at
-  the top of the file / B-008: `@chroma/ui`'s barrel also exports `Text`,
+  `@apelles/ui`'s, for the same JSX-conflict reason as `Button.tsx` (D-099).
+- `Button.tsx` — a small local button, not `@apelles/ui`'s. See the comment at
+  the top of the file / B-008: `@apelles/ui`'s barrel also exports `Text`,
   whose polymorphic typing breaks once `@react-three/fiber`'s global JSX
-  augmentation (pulled in transitively via `@chroma/motion-engine`) is in the
-  same `tsc` program, and `@chroma/ui`'s `exports` map has no subpath for
+  augmentation (pulled in transitively via `@apelles/motion-engine`) is in the
+  same `tsc` program, and `@apelles/ui`'s `exports` map has no subpath for
   `Button` alone to deep-import around it. Two buttons didn't warrant a
   shared-package edit.
 
-## Deep-importing `@chroma/motion-engine`
+## Deep-importing `@apelles/motion-engine`
 
-`@chroma/motion-engine`'s `package.json` has no `main`/`exports` field (it's
+`@apelles/motion-engine`'s `package.json` has no `main`/`exports` field (it's
 a Remotion CLI project, not built as a library, and is treated as read-only
 here) — imports go straight at its source, e.g.
-`@chroma/motion-engine/src/engine/Video`. This resolves fine because there's
+`@apelles/motion-engine/src/engine/Video`. This resolves fine because there's
 no `exports` map to sandbox subpath imports; it needs zero changes on the
 engine side.
 
 ## Tests
 
-`npm test --workspace @chroma/motion` (vitest, `node` environment — the
+`npm test --workspace @apelles/motion` (vitest, `node` environment — the
 testable logic here is deliberately kept out of the components, per the
 `canvasGeometry.ts`/`layerMeasure.ts` split above). 334 tests across
 `canvasGeometry.test.ts`, `manifestEdit.test.ts` (D-161 adds `moveKeyAt`/
@@ -238,7 +238,7 @@ manifest per project — plus, as of D-155–D-159 (2026-09-05,
 builder: click-select and drag a layer or a multi-selection on the canvas
 (world-space, camera-move-safe), resize handles, "snap to layer," a generic
 per-layer transform (scale/rotate/opacity/clip), marquee-select +
-shift-click, align/distribute actions, undo (`@chroma/history`) for every
+shift-click, align/distribute actions, undo (`@apelles/history`) for every
 Inspector edit and canvas gesture, and per-layer keyframes on the transform
 wrapper (`layer.transform.keys`, additive deltas, the same shared
 `interpolateKeys` the camera uses, auto-keyframed on a move-drag once a
@@ -291,7 +291,7 @@ inventory: `docs/notes/mcp-tool-coverage.md`.
 a clip already placed on the Edit timeline.~~ **Closed by D-260 (2026-09-09):
 re-rendering a scene refreshes the Edit clips placed from it.** This package's
 boundary is unchanged by that and worth restating, because it is what shapes the
-design: **`@chroma/motion` may not import `@chroma/bridge` or `@chroma/editor`**
+design: **`@apelles/motion` may not import `@apelles/bridge` or `@apelles/editor`**
 (D-039's app → tabs direction). So the composition root computes the link and
 passes it in — `onRendered` (D-062) and now `editLinks` — and `editLinks.ts`'s
 `computeEditLinks` declares only the *structural* shape of the pool items and

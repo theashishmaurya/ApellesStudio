@@ -1,5 +1,5 @@
 /**
- * @chroma/motion — Phase 5b part 2 ("per-row lanes", D-162 —
+ * @apelles/motion — Phase 5b part 2 ("per-row lanes", D-162 —
  * `docs/notes/motion-keyframe-timeline-research.md` §4/§2b).
  *
  * `KeyframeTimeline.tsx`'s shared time ruler needs an adaptive tick-density
@@ -10,10 +10,10 @@
  * "nice numbers" 1-2-5 progression), and the parent research doc's §2b
  * verdict — re-confirmed in D-160/D-161's own decision entries — is that
  * this ~15-line ALGORITHM is the one piece of the Edit tab's timeline stack
- * that transfers, but only as TECHNIQUE, never as an import: `@chroma/motion`
- * cannot depend on `@chroma/editor` (confirmed against both packages'
+ * that transfers, but only as TECHNIQUE, never as an import: `@apelles/motion`
+ * cannot depend on `@apelles/editor` (confirmed against both packages'
  * `package.json`s — neither tab package depends on the other, the same
- * house rule `@chroma/inspector`'s own description states outright).
+ * house rule `@apelles/inspector`'s own description states outright).
  * Inventing a third shared package for two small, pure functions with only
  * these two call sites would be over-engineering for what this phase needs
  * — so this file re-authors the algorithm locally instead, deliberately

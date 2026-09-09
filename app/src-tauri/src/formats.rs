@@ -112,7 +112,7 @@ pub fn is_supported_image_file<P: AsRef<Path>>(path: P) -> bool {
         return true;
     }
 
-    // Chroma: treat video files as loadable media (they load as a decoded frame).
+    // Apelles: treat video files as loadable media (they load as a decoded frame).
     if crate::chroma::video::is_video_file(path) {
         return true;
     }

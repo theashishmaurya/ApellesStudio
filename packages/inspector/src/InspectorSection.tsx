@@ -1,6 +1,6 @@
 /**
- * @chroma/inspector — a section heading, shared between `@chroma/motion`'s
- * `InspectorPanel.tsx` and `@chroma/editor`'s `ClipInspectorPanel.tsx`
+ * @apelles/inspector — a section heading, shared between `@apelles/motion`'s
+ * `InspectorPanel.tsx` and `@apelles/editor`'s `ClipInspectorPanel.tsx`
  * (D-103, Phase 4) — see this package's README. Both panels had converged
  * on the identical uppercase/tracking-wide treatment independently; this is
  * that treatment, factored out rather than left to drift.

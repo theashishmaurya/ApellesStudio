@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — the Edit tab's LIBRARY MODES (D-263).
+ * @apelles/editor — the Edit tab's LIBRARY MODES (D-263).
  *
  * **What it is.** The closed set of things the one docked left-hand library
  * column can be showing — `sources` (the shell's shared media pool),
@@ -13,7 +13,7 @@
  * contents — `EditLibraryRail.tsx` renders one button per mode and
  * `EditLibraryPanel.tsx` renders the content for the active one.
  *
- * **Why `sources` is in this list even though `@chroma/editor` does not own
+ * **Why `sources` is in this list even though `@apelles/editor` does not own
  * it.** The Sources panel is shell-level (`Shell.tsx`'s `sourcesPanel`, D-046/
  * D-116) and lives in `app/`, so this package cannot render it. But it IS one
  * of the four things the rail switches between, and leaving it out would mean

@@ -1,5 +1,5 @@
 /**
- * @chroma/editor — "what audio is under the playhead, and where in its own
+ * @apelles/editor — "what audio is under the playhead, and where in its own
  * source file" (D-232, roadmap item 27 — audio scrubbing + waveform toggle).
  *
  * What it is: the ONE pure resolver behind both halves of D-232 — the grain the
@@ -18,7 +18,7 @@
  * and the Rust path (`chroma::edit::resolve_video_position`) re-reads and clones
  * the whole active `Timeline` out of the project manifest per call. This side
  * already holds that `Timeline` in memory, and `clipAt` below is already the
- * pointwise mirror of `chroma_timeline::Track::clip_at` that every other Edit-tab
+ * pointwise mirror of `apelles_timeline::Track::clip_at` that every other Edit-tab
  * UI decision resolves through. The Rust command takes a bare source path plus
  * source seconds — exactly the shape `chroma_audio_waveform` has taken since
  * D-051, and for the same reason. See D-232.
@@ -34,7 +34,7 @@ import {
 } from './timeline';
 
 /** A resolved scrub/monitor source: a media file and a second inside it —
- *  mirrors `chroma_media::scrub::ScrubSource` field for field. */
+ *  mirrors `apelles_media::scrub::ScrubSource` field for field. */
 export interface ScrubSource {
   /** the clip's own `source_path`, verbatim */
   path: string;
@@ -58,7 +58,7 @@ export interface ScrubSource {
    *
    * Deliberately the static level only. A fade, a duck, a pan, an EQ band and
    * a KEYFRAMED `volume` are all envelope/DSP the scrub engine does not run
-   * (see `chroma_media::scrub`'s module doc) — this is the one scalar that
+   * (see `apelles_media::scrub`'s module doc) — this is the one scalar that
    * makes "the same clip" mean "at the same loudness".
    */
   gain: number;
