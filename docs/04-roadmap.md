@@ -2422,6 +2422,26 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   one — D-265 kept those for a different, harder reason (real user projects
   already exist on disk at `~/Movies/Chroma/*.chroma`) and that tradeoff
   hasn't changed.
+- **Filmstrip thumbnails: still slow and flaky, and the owner sees a full
+  recompute on every zoom change** — reported live 2026-09-09. Not
+  investigated against the live app yet (logged as a backlog item per the
+  owner's own ask, not fixed here), but worth recording what's already true
+  on paper vs. what's actually being observed: `Filmstrip.tsx`'s own module
+  doc describes D-128 as having already solved exactly this — a windowed
+  fetch quantised to a power-of-two rung ladder specifically so "a small
+  scroll or a sub-step zoom nudge resolves to the same request and costs
+  nothing," backed by a persistent on-disk cache. If a full recompute is
+  really happening on every zoom nudge, either that quantisation isn't
+  landing live the way the doc describes (a real regression) or what's
+  being observed is a genuine RUNG CROSSING read as "every zoom" (expected
+  by design, but still worth smoothing if it feels this rough). The flaky
+  half has at least one concrete instance already in tonight's own dev log,
+  not just a feeling: `chroma_clip_thumbnails` failed outright for
+  `A001_09091139_C028.MOV` (`ffmpeg`'s mjpeg encoder rejecting the clip's
+  own "Non full-range YUV" as non-standard, `2026-09-09 22:43:56`) — D-128's
+  own design evicts a failed fetch rather than caching it, so that clip's
+  filmstrip would visibly retry/flicker rather than just looking permanently
+  blank, which may be exactly what "flaky" is describing.
 
 ---
 
