@@ -1213,7 +1213,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   otherwise byte-identical, keeping the diff scoped to this change.
 
 
-- **2026-09-09 — D-259 (Motion→Edit "auto re-render, auto-replace").**
+- **2026-09-09 — D-260 (Motion→Edit "auto re-render, auto-replace").**
 
   **Upstream footprint: exactly one `generate_handler!` line in `lib.rs`**
   (`chroma::project::chroma_media_refresh`). Nothing else upstream is touched.
@@ -1226,7 +1226,7 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
     existing `chroma_media_*` family. Chroma-only file.
   - `crates/chroma-media/src/decode_pipe.rs` — a new
     `drop_pipes_for_path`; nothing existing changed.
-  - `crates/chroma-media/src/filmstrip.rs` — B-126: `KEYFRAME_MEM` now carries
+  - `crates/chroma-media/src/filmstrip.rs` — B-127: `KEYFRAME_MEM` now carries
     the `source_key` it was measured under. Behaviour change is strictly "a
     replaced file is re-measured instead of serving a stale answer."
   - `crates/chroma-project/src/manifest.rs` — an optional

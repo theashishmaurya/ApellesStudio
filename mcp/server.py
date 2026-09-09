@@ -5563,7 +5563,7 @@ def motion_save_manifest() -> str:
 @mcp.tool()
 def motion_get_edit_links() -> str:
     """What each Motion scene feeds in the Edit tab: its rendered file, and
-    every clip on the open Edit timeline reading it (D-259).
+    every clip on the open Edit timeline reading it (D-260).
 
     This is the read half of "re-render, auto-replace" — call it to see what a
     `motion_render` will refresh before you run one, or to confirm what it
@@ -5613,7 +5613,7 @@ def motion_render() -> str:
                        ->  editor_add_clip / editor_edit_in to place one
 
     **Re-rendering a scene REFRESHES the Edit clips already placed from it
-    (D-259).** This replaced the old "there is no live link" rule. A scene
+    (D-260).** This replaced the old "there is no live link" rule. A scene
     always renders to the same per-scene file, so a re-render replaces that
     file atomically and every Edit clip reading it picks the new content up by
     itself — in the preview and in the export — with its length and frame rate

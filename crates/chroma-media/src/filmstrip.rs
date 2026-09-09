@@ -347,14 +347,14 @@ static EXTRACT_SEMAPHORE: Lazy<tokio::sync::Semaphore> =
 /// source's identity ([`media_cache::source_key`]) at the moment it was
 /// measured, and revalidated on every hit.
 ///
-/// **B-126 (D-259): that pairing is the fix, not decoration.** This map used to
+/// **B-127 (D-260): that pairing is the fix, not decoration.** This map used to
 /// be `HashMap<PathBuf, f64>` — keyed on the path alone, insert-only — sitting
 /// directly in front of a disk layer keyed on `blake3(path ‖ mtime ‖ len)`
 /// precisely so a replaced file could never serve a stale answer. Two different
 /// keys for one question with the weaker one in front: byte-for-byte the defect
 /// [`crate::probe`]'s own module doc records as B-056, in the one cache in this
 /// module that D-146's sweep did not reach. Replace a source in place (a
-/// re-export over the same name, D-259's Motion re-render) and every filmstrip
+/// re-export over the same name, D-260's Motion re-render) and every filmstrip
 /// request kept using the OLD file's keyframe interval for the rest of the
 /// session — which decides `keyframe_only` extraction, i.e. whether tiles are
 /// taken from real frames or from the nearest keyframe. Costs one `HashMap`
@@ -375,7 +375,7 @@ const NS_KEYFRAME: &str = "keyframe-interval";
 /// the conservative value D-124 hardcoded for everyone — if the probe fails,
 /// so a probe failure costs speed, never correctness.
 fn keyframe_interval(path: &Path, source_key: Option<&str>) -> f64 {
-    // B-126 — a memory hit counts only while the file still has the identity it
+    // B-127 — a memory hit counts only while the file still has the identity it
     // had when the measurement was taken. `source_key: None` means the file
     // cannot be `stat`ed at all (offline media, a state this module treats as
     // supported): serve the remembered value unvalidated rather than re-probing
@@ -774,7 +774,7 @@ pub async fn clip_thumbnails(
 mod tests {
     use super::*;
 
-    /// B-126 (D-259) — the keyframe-interval memory cache honours the same
+    /// B-127 (D-260) — the keyframe-interval memory cache honours the same
     /// `(mtime, len)` staleness contract as the disk layer beneath it.
     ///
     /// Poked directly rather than driven through a real file: the property

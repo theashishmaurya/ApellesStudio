@@ -1,11 +1,11 @@
 /**
- * @chroma/motion — the Motion→Edit link, computed (D-259).
+ * @chroma/motion — the Motion→Edit link, computed (D-260).
  *
  * What it is: the one function that answers "which Edit-tab clips does each
  *   Motion scene feed?", from two plain arrays — the project's media pool and
  *   the open timeline's tracks.
  * What it does: reads each pool item's `motionSceneId` stamp (the provenance
- *   D-259 records at render time) and resolves it to every clip on the timeline
+ *   D-260 records at render time) and resolves it to every clip on the timeline
  *   reading that item.
  * What it does NOT do: no IO, no stores, no React, no path arithmetic. It never
  *   derives a scene's render path — the stamp is the link, precisely so that

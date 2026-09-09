@@ -4,7 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-09** — **D-259: re-rendering a Motion scene now refreshes the Edit
+- **2026-09-09** — **D-260: re-rendering a Motion scene now refreshes the Edit
   clips already placed from it** — previously a rendered file was frozen at
   render time and a placed clip kept showing it forever, with a manual re-import
   and `editor_swap_clip_media` as the only way out. Not a live embedded renderer
@@ -22,8 +22,8 @@ One or two lines per session. Detail lives in the decision it references.
   Motion tool, `motion_get_edit_links`. Proved by a frame-diff through the real
   preview compositor (red → blue with no re-import) **plus a negative control**
   that shows the same sequence leaving the clip red without the one call this
-  adds. Fixes **B-126** (B-056's defect, still unfixed in `filmstrip.rs`'s
-  keyframe cache) and **B-127** (a replaced source kept its old probe and
+  adds. Fixes **B-127** (B-056's defect, still unfixed in `filmstrip.rs`'s
+  keyframe cache) and **B-128** (a replaced source kept its old probe and
   thumbnail forever — and `Root.tsx`'s comment claimed the opposite).
 
 - **2026-09-09** — **D-255: the marketing website shipped, out of sequence** —

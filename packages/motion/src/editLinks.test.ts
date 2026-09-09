@@ -1,5 +1,5 @@
 /**
- * editLinks.test.ts — D-259's Motion→Edit link resolution.
+ * editLinks.test.ts — D-260's Motion→Edit link resolution.
  *
  * The one thing the badge, `motion_get_edit_links` and the composition root's
  * "refreshed N clips" toast all read, so getting it wrong is wrong in three

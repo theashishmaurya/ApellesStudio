@@ -163,8 +163,8 @@ export interface MotionOpsContext {
   setSelections: (next: Selection[]) => void;
   /** the mounted player, or `null` before it mounts. */
   player: () => MotionPlayer | null;
-  /** D-259 — where each scene's render has ended up in the Edit tab, keyed by
-   *  scene id, or `undefined` when nothing supplies it (the pre-D-259
+  /** D-260 — where each scene's render has ended up in the Edit tab, keyed by
+   *  scene id, or `undefined` when nothing supplies it (the pre-D-260
    *  behaviour, and what a test that does not care about links passes).
    *
    *  **An injected accessor, not an import**, for the same D-039 layer reason
@@ -177,7 +177,7 @@ export interface MotionOpsContext {
   editLinks?: () => MotionEditLinks;
 }
 
-/** D-259 — one Edit-tab clip fed by a Motion scene's rendered file. */
+/** D-260 — one Edit-tab clip fed by a Motion scene's rendered file. */
 export interface MotionEditLinkClip {
   /** index into the open timeline's `tracks` */
   track: number;
@@ -188,7 +188,7 @@ export interface MotionEditLinkClip {
   name: string;
 }
 
-/** D-259 — a Motion scene's footprint in the Edit tab. */
+/** D-260 — a Motion scene's footprint in the Edit tab. */
 export interface MotionEditLink {
   /** the pool item id for this scene's rendered file, or `null` when the
    *  render is not (or not yet) in Sources. */
@@ -201,7 +201,7 @@ export interface MotionEditLink {
   clips: MotionEditLinkClip[];
 }
 
-/** D-259 — scene id → its Edit-tab footprint. A scene with no entry has never
+/** D-260 — scene id → its Edit-tab footprint. A scene with no entry has never
  *  been rendered into this project's Sources. */
 export type MotionEditLinks = Record<string, MotionEditLink>;
 
@@ -460,7 +460,7 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
     },
 
     /**
-     * D-259 — what each scene feeds in the Edit tab: its rendered file's pool
+     * D-260 — what each scene feeds in the Edit tab: its rendered file's pool
      * item, and every clip on the open timeline reading it.
      *
      * The read half of "auto re-render, auto-replace". An agent about to

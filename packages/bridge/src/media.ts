@@ -63,7 +63,7 @@ export interface MediaItem {
    *  item predates D-059 and hasn't been re-imported) — the panel falls back
    *  to a placeholder icon. */
   thumb?: string | null;
-  /** D-259 — the id of the Motion scene whose render wrote this file; absent
+  /** D-260 — the id of the Motion scene whose render wrote this file; absent
    *  for every pool item that isn't a Motion render (nearly all of them).
    *  This is the entire Motion→Edit link: a clip's `mediaId`/`sourcePath`
    *  reaches the pool item, and the pool item names the scene. See the Rust
@@ -105,7 +105,7 @@ interface MediaPoolState {
     paths: string[],
     folder?: string,
   ) => Promise<{ ok: boolean; error?: string; added?: MediaItem[] }>;
-  /** D-259 — reconcile the pool with what is on disk for `paths`: add any not
+  /** D-260 — reconcile the pool with what is on disk for `paths`: add any not
    *  pooled yet, RE-READ (probe + thumbnail) any that already are, and stamp
    *  `motionSceneId` on every one of them when given. Resolves to every item
    *  touched, added and refreshed alike, merged into `items` **by id** (not
@@ -116,7 +116,7 @@ interface MediaPoolState {
    *  the pool. That is right for importing the same file twice and wrong for a
    *  file replaced in place — a Motion re-render writes the same per-scene path
    *  with new content, leaving the pool's probed `video` and cached thumbnail
-   *  describing the previous render (B-127). Cheap on an unchanged file: the
+   *  describing the previous render (B-128). Cheap on an unchanged file: the
    *  backend re-probes through an `(mtime, len)` memo and regenerates a
    *  thumbnail only when the source is newer than it. */
   refreshPaths: (

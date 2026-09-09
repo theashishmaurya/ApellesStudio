@@ -125,10 +125,10 @@ describe('the open project is the pool’s one input (B-083 / D-203)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// D-259 — refreshPaths: reconcile the pool with what is on disk
+// D-260 — refreshPaths: reconcile the pool with what is on disk
 // ---------------------------------------------------------------------------
 
-describe('refreshPaths (D-259)', () => {
+describe('refreshPaths (D-260)', () => {
   /** `chroma_media_refresh` echoing back whatever items it was asked about. */
   function installRefreshBackend(reply: MediaItem[]) {
     invokeMock.mockImplementation((cmd: string) => {

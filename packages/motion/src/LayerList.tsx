@@ -337,7 +337,7 @@ export function LayerList({
    *  gesture at all (D-160's own "still useful with nothing wired" floor) —
    *  rows fall back to their previous plain `onClick`-only behaviour. */
   onCommit?: (next: Manifest, label: string) => void;
-  /** D-259 — each scene's Edit-tab footprint, for the "N in Edit" badge on
+  /** D-260 — each scene's Edit-tab footprint, for the "N in Edit" badge on
    *  its scene row. Supplied by the app layer through `MotionTab` (this
    *  package may not import the media pool or the Edit timeline itself —
    *  D-039's layer direction); omitting it simply draws no badges. */
@@ -368,7 +368,7 @@ export function LayerList({
     label: string,
     indent = false,
     keyCount = 0,
-    /** D-259 — a scene row's Edit-tab footprint, when it has one. */
+    /** D-260 — a scene row's Edit-tab footprint, when it has one. */
     editLink?: MotionEditLink,
   ) => {
     const isSel = selections.some((s) => s.sceneIndex === sceneIndex && sameTarget(s.target, target));
@@ -381,12 +381,12 @@ export function LayerList({
         onClick={() => onSelect({ sceneIndex, target })}
       >
         <span className="truncate">{label}</span>
-        {/* D-259 — "Used in N Edit clips": the mechanism is visible, never a
+        {/* D-260 — "Used in N Edit clips": the mechanism is visible, never a
            silent side effect. Shown only on a scene whose render is actually
            PLACED on the Edit timeline (a scene rendered but only sitting in
            Sources has nothing that a re-render would refresh, and a badge
            reading "0" on every un-placed scene would be noise). Re-rendering
-           this scene refreshes exactly these clips — see D-259. */}
+           this scene refreshes exactly these clips — see D-260. */}
         {clipCount > 0 && (
           <span
             data-scene-edit-links={clipCount}

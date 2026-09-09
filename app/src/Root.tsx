@@ -166,12 +166,12 @@ export function Root() {
   // may want a specific track/position — dragging it in from Sources (like
   // any other clip) stays the one explicit action that actually places it.
   //
-  // **D-259 — "auto re-render, auto-replace."** This used to call
+  // **D-260 — "auto re-render, auto-replace."** This used to call
   // `importPaths`, which by design SKIPS a path already in the pool, and then
   // fall back to a plain `refresh()` on the strength of a comment claiming
   // that made "its thumbnail/video info reflect the new render." It did not:
   // `refresh()` re-reads the project manifest, and the manifest is exactly
-  // what held the stale probe and the stale thumbnail (B-127). It is now
+  // what held the stale probe and the stale thumbnail (B-128). It is now
   // `refreshPaths`, which reconciles the pool with what is actually on disk,
   // and it stamps the scene's id onto the item as provenance — the whole
   // Motion→Edit link (see `computeEditLinks`).
@@ -231,7 +231,7 @@ export function Root() {
     toast.success(`Rendered — refreshed ${linked} Edit clip${linked === 1 ? '' : 's'}`);
   }, []);
 
-  // D-259 — the Motion tab's view of what its scenes feed in Edit: the input
+  // D-260 — the Motion tab's view of what its scenes feed in Edit: the input
   // to both the per-scene "N in Edit" badge and the `motion_get_edit_links`
   // MCP tool, so a human and an agent are told the same thing from the same
   // value. Computed here because it spans the media pool and the Edit

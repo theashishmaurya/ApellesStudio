@@ -121,16 +121,16 @@ export function MotionTab({
   onRendered,
   editLinks,
 }: {
-  /** D-062/D-259 — fires once per scene as its render finishes, with the
+  /** D-062/D-260 — fires once per scene as its render finishes, with the
    *  scene's id and the file it landed at. The app layer imports/reconciles
    *  that file into Sources and refreshes any Edit clips already reading it;
    *  this package cannot do either (`@chroma/bridge`/`@chroma/editor` are the
    *  wrong side of D-039's layer direction for a tab). The `sceneId` is
-   *  D-259's addition — the app layer needs it to stamp provenance, and the
+   *  D-260's addition — the app layer needs it to stamp provenance, and the
    *  path alone could only be reverse-engineered back to a scene by
    *  duplicating the backend's own output-path math. */
   onRendered?: (r: SceneRenderResult) => void;
-  /** D-259 — where each scene's render has ended up in the Edit tab, supplied
+  /** D-260 — where each scene's render has ended up in the Edit tab, supplied
    *  by the app layer for the same layering reason. Drives BOTH the per-scene
    *  badge in the layer list and the `motion_get_edit_links` MCP tool, so the
    *  human and the agent can never be told different things. */

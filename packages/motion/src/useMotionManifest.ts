@@ -300,7 +300,7 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
         // which imports it into Sources — called once per scene now, so
         // every scene's own file lands there individually.
         //
-        // D-259 — it is handed the whole `SceneRenderResult`, not just the
+        // D-260 — it is handed the whole `SceneRenderResult`, not just the
         // path. The app layer needs the `sceneId` to stamp provenance on the
         // pool item, and deriving it back from the path would mean a second
         // copy of `motion.rs`'s `default_output_path` math in TypeScript —

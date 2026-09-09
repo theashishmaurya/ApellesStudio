@@ -276,7 +276,7 @@ break the human-AND-AI rule from the other side); both halves should land in
 one pass. See roadmap item 16.6.
 
 ~~**no MCP tools at all** — Motion is the one tab an agent cannot drive.~~
-**Closed by D-257 (2026-09-09): 32 `motion_*` tools**, plus D-259's
+**Closed by D-257 (2026-09-09): 32 `motion_*` tools**, plus D-260's
 `motion_get_edit_links` for 33. The op registry lives
 in `motionOps.ts` as a pure `createMotionOps(ctx)` factory (React-free,
 Tauri-free, so it is testable under this package's `node` vitest env);
@@ -288,7 +288,7 @@ an agent's edit lands on the same undo stack a human's does. Full tool
 inventory: `docs/notes/mcp-tool-coverage.md`.
 
 ~~**Motion→Edit is one-way and frozen** — re-editing a manifest does nothing to
-a clip already placed on the Edit timeline.~~ **Closed by D-259 (2026-09-09):
+a clip already placed on the Edit timeline.~~ **Closed by D-260 (2026-09-09):
 re-rendering a scene refreshes the Edit clips placed from it.** This package's
 boundary is unchanged by that and worth restating, because it is what shapes the
 design: **`@chroma/motion` may not import `@chroma/bridge` or `@chroma/editor`**

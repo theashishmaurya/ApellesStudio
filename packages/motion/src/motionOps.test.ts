@@ -117,7 +117,7 @@ function harness(initial: Manifest = sample) {
     getCurrentFrame: () => state.frame,
   };
 
-  // D-259 — the harness can supply the Edit-link map the app layer normally
+  // D-260 — the harness can supply the Edit-link map the app layer normally
   // computes. `undefined` (the default) is the "nothing supplies it" case
   // `motion_get_edit_links` reports as `available: false`.
   const links: { current: MotionEditLinks | undefined } = { current: undefined };
@@ -1145,7 +1145,7 @@ describe('the undo contract (D-140)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// D-259 — motion_get_edit_links
+// D-260 — motion_get_edit_links
 // ---------------------------------------------------------------------------
 
 describe('motion_get_edit_links', () => {

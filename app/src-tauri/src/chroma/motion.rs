@@ -13,7 +13,7 @@
 //!   `packages/motion-engine` relative to this crate's own source location
 //!   and calls `chroma_motion::run_render` on a blocking thread, returning
 //!   once the render finishes (no progress reporting this pass).
-//!   **D-259** — `chroma_motion_render` additionally makes the rest of the app
+//!   **D-260** — `chroma_motion_render` additionally makes the rest of the app
 //!   see the new file: it renders to a staging sibling and `rename`s it onto
 //!   the destination (atomic replace — nothing ever reads half a video, see
 //!   [`staging_path`]), then drops any live decode pipe still holding the old
@@ -106,14 +106,14 @@ pub struct MotionRenderResult {
     pub stdout_tail: String,
 }
 
-// NOTE (D-259): the `From<RenderOutcome>` conversion this type used to carry is
+// NOTE (D-260): the `From<RenderOutcome>` conversion this type used to carry is
 // gone on purpose. `RenderOutcome::output_path` is now the STAGING path — where
 // the render wrote — and this type's `output_path` is the destination it was
 // renamed onto. Those are two different files, so a blanket conversion between
 // them could only ever report the wrong one; the command builds the result
 // explicitly, after the rename, instead.
 
-/// D-259 — where a render actually writes before it becomes the real output:
+/// D-260 — where a render actually writes before it becomes the real output:
 /// a fixed sibling of the destination, `<name>.rendering.mp4`.
 ///
 /// **This is the whole answer to "is overwriting a file mid-project safe?"**
@@ -207,7 +207,7 @@ pub async fn chroma_motion_render(
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
-    // D-259 — render beside the destination, then rename onto it. See
+    // D-260 — render beside the destination, then rename onto it. See
     // `staging_path`'s own doc for why an in-place overwrite is not safe here
     // and a rename is.
     let staging = staging_path(&out);
@@ -231,7 +231,7 @@ pub async fn chroma_motion_render(
         )
     })?;
 
-    // D-259 — the one cache in this workspace that a replaced file does NOT
+    // D-260 — the one cache in this workspace that a replaced file does NOT
     // invalidate on its own: a decode pipe is a live `ffmpeg` process holding
     // the old (now unlinked) inode open, and it respawns on a change of path,
     // never of content. Everything else derived from this file — the probe, the
@@ -252,7 +252,7 @@ pub async fn chroma_motion_render(
     })
 }
 
-/// D-259 — the end-to-end claim, checked through the real preview compositor:
+/// D-260 — the end-to-end claim, checked through the real preview compositor:
 /// **re-rendering a Motion scene changes what an already-placed Edit clip
 /// shows.**
 ///

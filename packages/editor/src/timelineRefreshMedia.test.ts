@@ -1,5 +1,5 @@
 /**
- * timelineRefreshMedia.test.ts — D-259's `refresh_media` op.
+ * timelineRefreshMedia.test.ts — D-260's `refresh_media` op.
  *
  * The Edit-side half of "auto re-render, auto-replace": a source file was
  * replaced in place (a Motion scene re-rendered to its fixed per-scene path),
@@ -41,7 +41,7 @@ function tl(tracks: Clip[][]): Timeline {
 const refresh = (source_len: number, source_fps: number | undefined = 30) =>
   ({ kind: 'refresh_media', media_id: 'm1', source_path: RENDER, source_len, source_fps }) as const;
 
-describe('refresh_media (D-259)', () => {
+describe('refresh_media (D-260)', () => {
   it('is a no-op — same object reference — when the re-render is the same length', () => {
     // THE headline property. A Motion scene re-rendered without a duration
     // change must leave the timeline byte-identical and push no undo entry

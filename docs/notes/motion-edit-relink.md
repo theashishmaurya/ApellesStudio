@@ -1,6 +1,6 @@
-# Motion → Edit: "auto re-render, auto-replace" (D-259)
+# Motion → Edit: "auto re-render, auto-replace" (D-260)
 
-Worked design detail behind **D-259**. The decision entry has the options and the
+Worked design detail behind **D-260**. The decision entry has the options and the
 reasoning; this is the mechanism, the code-read findings it rests on, and the
 things a future reader will want checked rather than restated.
 
@@ -8,7 +8,7 @@ Related: **D-062** (a render auto-imports into Sources), **D-180** (one file per
 scene, at a fixed per-scene path), **D-243** (why a Remotion renderer inside Edit
 was rejected), **D-256** (the Colorist→Edit bridge, the precedent for
 "invalidated by mtime, consumed by both engines"), **D-257** (the Motion MCP
-surface), **B-126**, **B-127**.
+surface), **B-127**, **B-128**.
 
 ---
 
@@ -44,7 +44,7 @@ Provenance is net-new, and it went on `MediaItem`, not `Clip`:
 | cost to a non-Motion clip | a field on every clip | none — absent key |
 
 `motion_scene_id: Option<String>`, `#[serde(default, skip_serializing_if =
-"Option::is_none")]`. A pre-D-259 `project.json` deserializes unchanged; a
+"Option::is_none")]`. A pre-D-260 `project.json` deserializes unchanged; a
 non-Motion item re-serializes byte-identically. No migration.
 
 Which project's manifest is *implied*, not stored — the manifest is a sidecar of
@@ -74,11 +74,11 @@ not need mirroring because its equivalent already exists one layer down.**
 | the preview frame itself | nothing — `chroma_timeline_frame` per frame | no |
 | the ffmpeg export | reads the file at run time | no |
 | **`decode_pipe` playback pipes** | **a slot; respawns on path/scale/seek only** | **YES** |
-| **`MediaItem.video` + its thumbnail** | **the manifest / the item id** | **YES** (B-127) |
+| **`MediaItem.video` + its thumbnail** | **the manifest / the item id** | **YES** (B-128) |
 | **`Clip.source_len` / `source_fps`** | **frozen at drop time** | **YES** |
-| `filmstrip::KEYFRAME_MEM` | the path alone | **YES** (B-126) |
+| `filmstrip::KEYFRAME_MEM` | the path alone | **YES** (B-127) |
 
-The three "YES" rows in bold are what D-259 builds. The last is a pre-existing
+The three "YES" rows in bold are what D-260 builds. The last is a pre-existing
 defect the audit surfaced.
 
 **Why a pipe is the hard one.** It is not a cache — it is a live `ffmpeg`
@@ -89,7 +89,7 @@ inode, and serves the previous render indefinitely and without error.
 
 ### Q4 — the trigger
 
-Explicit, reusing the existing Render action. See D-259's finding 4 for the
+Explicit, reusing the existing Render action. See D-260's finding 4 for the
 argument (a save is debounced and constant; a render is `npx remotion render`;
 D-046 allows only one at a time). The cost is that a clip can be out of date
 until the next render — made visible by the badge and by

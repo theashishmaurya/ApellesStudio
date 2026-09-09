@@ -717,7 +717,7 @@ pub async fn chroma_media_import(
     Ok(added.iter().map(MediaItemDto::from).collect())
 }
 
-/// D-259 — **reconcile** the pool with what is on disk for `paths`: add any
+/// D-260 — **reconcile** the pool with what is on disk for `paths`: add any
 /// that are not pooled yet, re-read (probe + thumbnail) any that already are,
 /// optionally stamp every one of them with the Motion scene that produced it
 /// (`motion_scene_id`), persist if anything changed, and return every item
@@ -727,7 +727,7 @@ pub async fn chroma_media_import(
 /// answers "put these files in the pool" and deliberately *skips* a path
 /// already there. This answers "these files on disk have changed — make the
 /// pool agree", which is what a Motion re-render to a fixed per-scene path
-/// needs and what import structurally cannot do (B-127). Everything expensive
+/// needs and what import structurally cannot do (B-128). Everything expensive
 /// is conditional: an unchanged file re-probes from
 /// `chroma_media::probe`'s `(mtime, len)` memo and regenerates no thumbnail, so
 /// calling this on a path that did not move costs a couple of `stat`s and

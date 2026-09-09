@@ -484,7 +484,7 @@ pub struct MediaItem {
     /// `chroma_media_move`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
-    /// D-259 — **provenance: the id of the Motion scene whose render wrote
+    /// D-260 — **provenance: the id of the Motion scene whose render wrote
     /// this file.** `None` for every pool item that is not a Motion render,
     /// which is nearly all of them.
     ///
@@ -497,7 +497,7 @@ pub struct MediaItem {
     ///
     /// `Option` + `#[serde(default, skip_serializing_if = "Option::is_none")]`
     /// is the same "reference, don't require" shape `media_id`/`folder`/
-    /// `has_audio` already use: a pre-D-259 `project.json` deserializes with no
+    /// `has_audio` already use: a pre-D-260 `project.json` deserializes with no
     /// key at all, needs no migration, and a non-Motion item serializes
     /// byte-identically to before this field existed. Nothing reads it as a
     /// path — the render path is resolved the other way round, from this
@@ -528,7 +528,7 @@ pub struct MediaItemDto {
     /// the bin path this item is filed in; `None` = pool root (D-045)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
-    /// the Motion scene whose render wrote this file, if any (D-259)
+    /// the Motion scene whose render wrote this file, if any (D-260)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub motion_scene_id: Option<String>,
     /// `data:image/jpeg;base64,…` poster-frame thumbnail (D-059), read live
@@ -672,7 +672,7 @@ fn probe_media_item(path: &str, folder: Option<&str>) -> MediaItem {
     }
 }
 
-/// D-259 — is the cached thumbnail for this item older than the file it is a
+/// D-260 — is the cached thumbnail for this item older than the file it is a
 /// thumbnail *of*?
 ///
 /// `true` also when there is no cached thumbnail at all, or when either mtime
@@ -684,7 +684,7 @@ fn probe_media_item(path: &str, folder: Option<&str>) -> MediaItem {
 /// `<video_dir>/.chroma/thumbs/<media id>.jpg` (D-059) — the *item's* identity,
 /// which by design never changes — so unlike every `media_cache`-backed
 /// artefact in this workspace (`blake3(path ‖ mtime ‖ len)`, D-128) it has no
-/// staleness check of its own at all. That is B-127: a source replaced in place
+/// staleness check of its own at all. That is B-128: a source replaced in place
 /// kept its first thumbnail forever. Comparing the two mtimes is the smallest
 /// thing that gives this cache the identical contract the others already have,
 /// and costs two `stat`s on a path that already probes the file.
@@ -699,7 +699,7 @@ fn thumb_is_stale(source_path: &str, media_id: &str) -> bool {
     }
 }
 
-/// D-259 — reconcile the pool with what is actually on disk for `paths`: add
+/// D-260 — reconcile the pool with what is actually on disk for `paths`: add
 /// any that are not pooled yet, and **re-read any that are**, stamping
 /// `motion_scene_id` on every one of them. Returns every item touched (added
 /// and refreshed alike), in `paths` order. Pure model logic — no persistence;
@@ -711,7 +711,7 @@ fn thumb_is_stale(source_path: &str, media_id: &str) -> bool {
 /// the same file twice must not duplicate it) and exactly wrong for a file
 /// replaced in place, which is what a Motion re-render is: same path, new
 /// content, and a pool entry whose probed `video` (frame count, duration, fps)
-/// and cached thumbnail both still describe the previous render. That is B-127,
+/// and cached thumbnail both still describe the previous render. That is B-128,
 /// and `app/src/Root.tsx`'s own D-062 comment asserted the opposite ("refresh
 /// so its thumbnail/video info reflect the new render") for a year — a plain
 /// `chroma_media_list` re-reads the manifest, and the manifest is precisely

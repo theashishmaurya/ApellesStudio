@@ -462,7 +462,7 @@ pub fn reset() {
 /// Drop every pipe currently decoding `path`, and report how many were dropped.
 ///
 /// **Why this is needed at all, and why the other caches did not need it**
-/// (D-259). Every *derived* cache over a source file in this crate keys on
+/// (D-260). Every *derived* cache over a source file in this crate keys on
 /// [`crate::media_cache::source_key`] — `blake3(path ‖ mtime ‖ len)` — so a file
 /// replaced in place is a key miss and a stale answer is impossible
 /// ([`crate::probe`]'s own B-056 note is the history of getting that wrong).
@@ -470,7 +470,7 @@ pub fn reset() {
 /// open**, and [`FramePipe::frame_scaled`] only respawns on a change of path,
 /// scale, or seek distance — never on a change of the file's *content*. So when
 /// a file is atomically replaced underneath it (`chroma::motion`'s render →
-/// temp → `rename`, D-259), the process keeps its handle on the unlinked old
+/// temp → `rename`, D-260), the process keeps its handle on the unlinked old
 /// inode and keeps serving the OLD picture, correctly and indefinitely, while
 /// every other consumer has already moved to the new one.
 ///
@@ -501,7 +501,7 @@ mod tests {
             .filter(|p| p.exists())
     }
 
-    /// D-259 — `drop_pipes_for_path` drops exactly the pipes on that file and
+    /// D-260 — `drop_pipes_for_path` drops exactly the pipes on that file and
     /// leaves every other one running.
     ///
     /// The "leaves every other one running" half is the whole reason this is

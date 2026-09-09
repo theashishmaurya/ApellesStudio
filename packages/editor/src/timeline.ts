@@ -3016,7 +3016,7 @@ export type EditOp =
       source_len: number;
       source_fps?: number;
     }
-  /** D-259 — a source file was REPLACED IN PLACE (same path, new content:
+  /** D-260 — a source file was REPLACED IN PLACE (same path, new content:
    *  what a Motion re-render to its fixed per-scene output path is), so every
    *  clip already reading it re-reads the new file's real length and rate.
    *
@@ -3334,7 +3334,7 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Keyframe ${clipLabel(before, op.track, op.clip)}`;
     case 'swap_media':
       return `Swap media on ${clipLabel(before, op.track, op.clip)}`;
-    // D-259 — names the FILE, not a clip: this op has no single clip to name
+    // D-260 — names the FILE, not a clip: this op has no single clip to name
     // (it touches every clip reading that file), and the reason the user is
     // seeing an undo entry at all is that the file's length changed.
     case 'refresh_media':
@@ -3394,7 +3394,7 @@ function clampInt(v: number, lo: number, hi: number): number {
 /** Point `clip` at a source of `sourceLen` frames running at `sourceFps`,
  *  re-clamping its window to fit. Mutates and returns `clip`.
  *
- *  **D-195's re-clamp policy, extracted in D-259 so its two callers share it
+ *  **D-195's re-clamp policy, extracted in D-260 so its two callers share it
  *  rather than repeat it.** `source_start` is preserved exactly whenever the
  *  source is still long enough to contain it, and only pinned back to the
  *  source's own last frame when it isn't; `duration` is then shrunk (never

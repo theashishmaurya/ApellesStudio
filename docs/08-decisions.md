@@ -24352,7 +24352,7 @@ for a new tab's ops. The pre-existing 20 s `BRIDGE_TIMEOUT` still applies to a
 slow render and is documented on the tool as "inconclusive, not failed" rather
 than papered over.
 
-## D-259 — Motion→Edit is "auto re-render, auto-replace": the render replaces its own file atomically and the placed clip follows, with no live embedded renderer
+## D-260 — Motion→Edit is "auto re-render, auto-replace": the render replaces its own file atomically and the placed clip follows, with no live embedded renderer
 
 **Date:** 2026-09-09. **Full worked detail:** `docs/notes/motion-edit-relink.md`.
 
@@ -24420,12 +24420,12 @@ of the four answers changed the shape of the fix.**
      "just work", and the negative-control test below is the proof.
    - **The pool item goes stale** — its probed `video` and its cached thumbnail
      both still describe the first render, and `Root.tsx`'s comment claimed the
-     opposite. Filed as **B-127**.
+     opposite. Filed as **B-128**.
    - **`Clip::source_len`/`source_fps` are frozen at drop time**, so a scene
      whose duration changed leaves clips bounded against a length the file no
      longer has.
 
-   The same audit turned up **B-126** — B-056's exact defect, still unfixed, in
+   The same audit turned up **B-127** — B-056's exact defect, still unfixed, in
    `filmstrip.rs`'s `KEYFRAME_MEM`.
 
 4. **What should trigger the re-render?** Investigated both. The GUI already has
@@ -24482,7 +24482,7 @@ of the four answers changed the shape of the fix.**
   reconciles the pool with disk: adds what is missing, re-probes what is there,
   regenerates a thumbnail only when it is older than its source, and stamps the
   provenance. The complement of `chroma_media_import`, which by design skips a
-  path already pooled. Fixes B-127 generally, for any replaced source, not just
+  path already pooled. Fixes B-128 generally, for any replaced source, not just
   Motion's.
 - **`refresh_media`, a new Edit op** — every clip reading that file re-reads the
   new length and rate, re-clamped by D-195's own policy. **It is a no-op when
@@ -24582,7 +24582,7 @@ limit rather than assumed away.
 - **`drop_pipes_for_path_drops_only_that_file`**: three live `ffmpeg` pipes, two
   on the replaced file (including `PipeSlot::Current`) and one on another; the
   call drops exactly 2 and the third keeps running. Idempotent on a second call.
-- **B-126** pinned by a media-free test: a memory hit is served under the same
+- **B-127** pinned by a media-free test: a memory hit is served under the same
   `source_key`, refused under a different one, and served unvalidated when the
   file cannot be `stat`ed at all.
 - **Suites:** `chroma-media` 162/162 (2 new), `chroma-project` 56/56,

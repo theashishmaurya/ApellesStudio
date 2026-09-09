@@ -79,14 +79,14 @@
  * should treat a 504 from `motion_render` as "inconclusive, not failed" and
  * check the output on disk (or Sources — see below) rather than re-rendering.
  *
- * **What happens to a rendered file (verified, D-257; extended by D-259).**
+ * **What happens to a rendered file (verified, D-257; extended by D-260).**
  * Every scene's output is imported into the Edit tab's Sources pool
  * automatically, by `app/src/Root.tsx`'s `onMotionRendered` (D-062) — once per
  * scene, at the pool root. It is deliberately NOT spliced onto the Edit
  * timeline: the app cannot know the intended track or position, so placing it
  * stays one explicit action.
  *
- * **D-259 replaces this file's previous "there is NO live link" paragraph.**
+ * **D-260 replaces this file's previous "there is NO live link" paragraph.**
  * Re-rendering a scene now refreshes the clips already placed from it: the
  * render replaces its fixed per-scene file atomically, the app drops the live
  * decode pipe on it, the pool item is re-probed and re-thumbnailed, and every
@@ -133,7 +133,7 @@ export interface MotionControlRefs {
   measureApiRef: RefObject<MotionCanvasMeasureApi | null>;
   setSelections: (next: Selection[]) => void;
   selections: Selection[];
-  /** D-259 — the Edit-tab footprint of each scene, supplied by the app layer
+  /** D-260 — the Edit-tab footprint of each scene, supplied by the app layer
    *  (`app/src/Root.tsx`) because computing it needs the media pool and the
    *  Edit timeline, neither of which a tab package may import. Like
    *  `selections`, a plain value that changes every render, so it gets the
@@ -178,7 +178,7 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
   mRef.current = m;
   const selRef = useRef<Selection[]>(refs.selections);
   selRef.current = refs.selections;
-  // D-259 — same re-sync as `selections` above, for the same reason: a plain
+  // D-260 — same re-sync as `selections` above, for the same reason: a plain
   // value that changes every render, read at CALL time by the ops.
   const linksRef = useRef<MotionEditLinks | undefined>(refs.editLinks);
   linksRef.current = refs.editLinks;
