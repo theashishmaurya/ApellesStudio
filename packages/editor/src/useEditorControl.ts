@@ -59,12 +59,25 @@
  * neither answer is obvious from the raw fields. Every write runs the same
  * `checkTransition` the GUI does first, so an agent gets the real reason a
  * human would rather than a silent no-op from the reducer.
+ *
+ * **D-266 — the media pool's read/organise half, and audio monitoring.**
+ * `editor_list_media` / `_list_media_folders` / `_create_media_folder` /
+ * `_move_media` complete the pool surface `editor_import_media` (D-183) and
+ * `editor_remove_media` (roadmap item 23) started: each wraps the
+ * `useMediaPoolStore` action the Sources panel's own list, "New folder" button
+ * and drag-onto-a-bin already call, so there is one store action and one
+ * `chroma_media_*` command under both interfaces. `editor_list_media` reads
+ * through `refresh()` rather than off the cached `items` array, and names its
+ * unusable rows in words — that is B-073's own "which item is the broken one"
+ * question, previously answerable only by reading `project.json` by hand.
+ * `editor_set_audio_monitor` / `editor_get_audio_level` are the audio half;
+ * see their own comments below for why play/stop needed nothing new.
  */
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, emit } from '@tauri-apps/api/event';
 
-import { useMediaPoolStore } from '@chroma/bridge';
+import { useMediaPoolStore, type MediaItem } from '@chroma/bridge';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
 // D-243 — the caption preset library and the one action that applies it,
@@ -311,6 +324,66 @@ function resolveMediaPath(a: any): { path: string } | { error: string } {
     return { error: 'pass mediaId, sourcePath, or an absolute path' };
   }
   return { path };
+}
+
+/** D-266 — whether `editor_add_clip` would accept this pool item. It needs a
+ *  positive probed `frameCount` and nothing else: an item can be `offline`
+ *  (source missing right now) and still be placeable from its remembered
+ *  probe, and an item that is online but never probed successfully cannot.
+ *  Shares `editor_add_clip`'s own guard rather than restating it, so the two
+ *  can never disagree about what "usable" means. */
+function isPlaceable(m: MediaItem): boolean {
+  const frames = m.video?.frameCount;
+  return !!frames && frames > 0;
+}
+
+/** D-266 — one media-pool item as `editor_list_media`/`_move_media` report it.
+ *
+ *  Deliberately NOT the raw `MediaItem`: `thumb` is a base64 JPEG data URL,
+ *  which would swamp an agent's context with an unreadable blob for every row
+ *  (a 50-item pool is megabytes of it), so the presence of a thumbnail is
+ *  reported as a boolean and the bytes stay in the GUI where they mean
+ *  something.
+ *
+ *  `problem` is the B-073 field. That bug is a pool item stuck with no probed
+ *  metadata after a transient probe failure, and until this tool existed the
+ *  only way to find WHICH item it was was to read `project.json` by hand — so
+ *  every unusable row states in words what is wrong with it and what fixes it,
+ *  rather than leaving a caller to notice a missing `video` key. */
+function mediaItemDto(m: MediaItem) {
+  const placeable = isPlaceable(m);
+  return {
+    id: m.id,
+    name: m.name,
+    sourcePath: m.sourcePath,
+    // `null`, not undefined/absent: the pool ROOT is a real place an item can
+    // be, and a missing key reads as "unknown" rather than "at the root".
+    folder: m.folder && m.folder.trim() ? m.folder : null,
+    added: m.added,
+    offline: m.offline,
+    video: m.video
+      ? {
+          width: m.video.width,
+          height: m.video.height,
+          fps: m.video.fps,
+          frameCount: m.video.frameCount,
+          durationSecs: m.video.durationSecs,
+          // D-129 — `null`/absent genuinely means "not probed for this yet",
+          // NOT "silent"; passed through as-is rather than defaulted to false,
+          // which would turn "unknown" into a confident wrong answer.
+          hasAudio: m.video.hasAudio ?? null,
+        }
+      : null,
+    hasThumb: !!m.thumb,
+    // D-260 — set only on a Motion render's own output file.
+    motionSceneId: m.motionSceneId ?? null,
+    usable: placeable,
+    problem: placeable
+      ? undefined
+      : m.offline
+        ? 'source file is missing from disk right now, and no probed frame count is stored — editor_add_clip will refuse this item. Restore the file and re-import the same path.'
+        : 'no probed video metadata (frameCount) — editor_add_clip will refuse this item. This is B-073: the probe failed once and import dedup means re-importing the same path is a no-op. editor_remove_media this id, then editor_import_media the path again for a fresh probe.',
+  };
 }
 
 /** The D-189 transcript response, shared by the start op and its status op so
@@ -750,6 +823,13 @@ export function useEditorControl(): void {
           // ambiguous without it (the strip changes what the transport area
           // even contains).
           waveformView: s.waveformView,
+          // D-266 — the master monitoring volume + mute, the read half of
+          // `editor_set_audio_monitor`. Reported here for the same reason
+          // `previewZoom` is: it silently changes what `editor_set_playing`
+          // produces (a muted transport plays exactly the same timeline and
+          // makes no sound), so a caller reasoning about audio needs it in the
+          // one state call rather than by inference.
+          monitor: { volume: s.monitorVolume, muted: s.monitorMuted },
         };
       },
 
@@ -769,6 +849,87 @@ export function useEditorControl(): void {
       editor_set_playing: (a) => {
         useEditorTimelineStore.getState().setPlaying(!!a?.playing);
         return { ok: true, playing: useEditorTimelineStore.getState().playing };
+      },
+
+      // ---- D-266: audio monitoring ----------------------------------------
+      //
+      // **There is only ONE transport, and this is not it.** `editor_set_playing`
+      // already starts and stops the audio: `PreviewPane`'s own effect keys
+      // `chroma_audio_play`/`chroma_audio_stop` off the store's `playing` flag,
+      // so picture and sound are one play/pause and always have been. The
+      // tracking doc listed "audio playback transport" as a zero-coverage gap
+      // over four hypothetical command names; three of those four were already
+      // covered (`_play`/`_stop` by `editor_set_playing`, `_waveform` by
+      // D-232's `editor_get_waveform`). What genuinely had no tool is the pair
+      // below — the monitoring LEVEL a human sets by ear, and the output level
+      // an agent has no ear for. See D-266.
+      //
+      // The scrub commands (`chroma_audio_scrub_*`) deliberately still have no
+      // tool, on D-232's own reasoning: a tape-scrub's entire content is
+      // "audio, now, while my hand moves", which an agent cannot hear.
+
+      editor_set_audio_monitor: (a) => {
+        const wantsVolume = a?.volume !== undefined && a?.volume !== null;
+        const wantsMuted = a?.muted !== undefined && a?.muted !== null;
+        if (!wantsVolume && !wantsMuted) {
+          return { error: 'pass volume (0..1), muted (true/false), or both' };
+        }
+        const volume = wantsVolume ? Number(a.volume) : undefined;
+        if (volume !== undefined && !Number.isFinite(volume)) {
+          return { error: 'volume must be a finite number in 0..1' };
+        }
+        useEditorTimelineStore.getState().setAudioMonitor({
+          volume,
+          muted: wantsMuted ? !!a.muted : undefined,
+        });
+        const s = useEditorTimelineStore.getState();
+        return {
+          ok: true,
+          volume: s.monitorVolume,
+          muted: s.monitorMuted,
+          // Never a silent no-op (B-053's shape): an out-of-range request is
+          // honoured as the clamp `chroma_audio_set_volume` itself applies,
+          // and says so rather than reporting back a number the caller did not
+          // ask for with no explanation.
+          note:
+            volume !== undefined && volume !== s.monitorVolume
+              ? `volume ${volume} is outside 0..1 and was clamped to ${s.monitorVolume}`
+              : undefined,
+          // The one thing that makes this reading unambiguous: what the output
+          // callback is actually multiplying by right now.
+          effectiveVolume: s.monitorMuted ? 0 : s.monitorVolume,
+        };
+      },
+
+      // The agent's ears. A human verifies "is sound really coming out" by
+      // listening; nothing in the GUI shows it, because for a human nothing
+      // needs to. This is the same information, as a number — D-232's own
+      // reasoning for `editor_get_waveform` ("what an agent actually needs
+      // from the same capability is the *information* a human gets by ear"),
+      // applied to the live output rather than to the file.
+      editor_get_audio_level: async () => {
+        const [rms, peak] = await invoke<[number, number]>('chroma_audio_level');
+        const s = useEditorTimelineStore.getState();
+        return {
+          ok: true,
+          rms,
+          peak,
+          playing: s.playing,
+          muted: s.monitorMuted,
+          volume: s.monitorVolume,
+          // The measurement window is ~1 second of real output (see
+          // `build_typed` in `crates/chroma-media/src/audio.rs`), so this is a
+          // "did non-silent PCM reach the device recently" probe and NOT a
+          // meter: it lags a change by up to a second and is stale, not zero,
+          // for that long after a stop.
+          windowSecs: 1,
+          note:
+            !s.playing
+              ? 'nothing is playing — this is the last measured window, not a live reading. Call editor_set_playing first, wait ~1s, then read again.'
+              : rms === 0 && peak === 0
+                ? 'playing, but the last measured window was pure silence: either the first window has not completed yet (wait ~1s), or nothing audible is under the playhead, or the monitor is muted.'
+                : undefined,
+        };
       },
 
       // ---- D-232: the waveform strip, both halves --------------------------
@@ -1033,6 +1194,99 @@ export function useEditorControl(): void {
       },
 
       // ---- media pool -------------------------------------------------------
+      //
+      // D-266 — the pool's read + organise half. Every one of these four wraps
+      // a `useMediaPoolStore` action the Sources panel's own UI already calls
+      // (`refresh` behind its list, `createFolder` behind "New folder",
+      // `moveToFolder` behind its drag-onto-a-bin), so the agent and the human
+      // go through one store action into one `chroma_media_*` command, per
+      // CLAUDE.md's one-op-under-both-interfaces rule. No new backend, no new
+      // pool logic.
+      editor_list_media: async () => {
+        // Read from DISK, not from whatever this store happens to be holding.
+        // The pool store is populated by `importPaths` appending its own
+        // result or by an explicit `refresh()`, so an item seeded another way
+        // — `new_project`'s `media_paths`, another window, a hand-edited
+        // manifest — is simply absent from `items` until something refreshes.
+        // That divergence IS B-073/B-082's mechanism, and a list tool whose
+        // whole job is "tell me what is really in the pool" must not inherit
+        // it.
+        const res = await useMediaPoolStore.getState().refresh();
+        if (!res.ok) return { error: res.error ?? 'could not read the media pool' };
+        const s = useMediaPoolStore.getState();
+        return {
+          ok: true,
+          projectOpen: s.openProjectKey !== null,
+          openProject: s.openProjectKey,
+          count: s.items.length,
+          folders: s.folders,
+          items: s.items.map(mediaItemDto),
+          // B-073's own question, answered in the list rather than left for the
+          // caller to derive: WHICH item is the broken one. `editor_add_clip`
+          // refuses any item with no probed frame count, and that refusal is
+          // the symptom a session actually hits — so the list names the
+          // unusable items up front instead of handing back an opaque array.
+          unusable: s.items.filter((m) => !isPlaceable(m)).map((m) => m.id),
+        };
+      },
+
+      editor_list_media_folders: async () => {
+        const res = await useMediaPoolStore.getState().refresh();
+        if (!res.ok) return { error: res.error ?? 'could not read the media pool' };
+        const s = useMediaPoolStore.getState();
+        // Item counts alongside the bare paths: a folder list whose rows can't
+        // be told apart by how full they are answers half the question an
+        // agent asks it ("where did my imports go").
+        const counts = new Map<string, number>();
+        for (const m of s.items) {
+          const key = m.folder && m.folder.trim() ? m.folder : '';
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+        return {
+          ok: true,
+          // The pool ROOT is not a folder and never appears in `folders` — it
+          // is what `folder: null` means — but it does hold items, so it is
+          // reported separately rather than silently dropped.
+          root: { items: counts.get('') ?? 0 },
+          folders: s.folders.map((path) => ({ path, items: counts.get(path) ?? 0 })),
+        };
+      },
+
+      editor_create_media_folder: async (a) => {
+        const path = typeof a?.path === 'string' ? a.path.trim() : '';
+        if (!path) return { error: 'path must be a non-empty bin path, e.g. "b-roll" or "b-roll/day1"' };
+        const res = await useMediaPoolStore.getState().createFolder(path);
+        if (!res.ok) return { error: res.error ?? 'could not create the folder' };
+        // Idempotent on the Rust side (D-059) — creating an existing bin is a
+        // no-op that still returns the full list, so report whether this call
+        // actually added anything rather than implying it always does.
+        const folders = useMediaPoolStore.getState().folders;
+        return { ok: true, path, created: folders.includes(path), folders };
+      },
+
+      editor_move_media: async (a) => {
+        const id = typeof a?.id === 'string' ? a.id : '';
+        if (!id) return { error: 'id must be a media-pool item id (editor_list_media reports them)' };
+        // `folder: null` is a real, meaningful value here (move back to the
+        // pool root), so it cannot double as "unspecified" — an omitted
+        // `folder` is rejected rather than silently rooting the item.
+        if (a?.folder === undefined) {
+          return { error: 'pass folder: "<bin path>" to file the item, or folder: null to move it to the pool root' };
+        }
+        const folder =
+          a.folder === null || (typeof a.folder === 'string' && !a.folder.trim())
+            ? null
+            : String(a.folder);
+        const res = await useMediaPoolStore.getState().moveToFolder(id, folder);
+        if (!res.ok) return { error: res.error ?? 'could not move the item' };
+        const moved = useMediaPoolStore.getState().items.find((m) => m.id === id);
+        return {
+          ok: true,
+          item: moved ? mediaItemDto(moved) : null,
+          folders: useMediaPoolStore.getState().folders,
+        };
+      },
+
       editor_import_media: async (a) => {
         const paths: unknown = a?.paths;
         if (!Array.isArray(paths) || paths.some((p) => typeof p !== 'string') || paths.length === 0) {

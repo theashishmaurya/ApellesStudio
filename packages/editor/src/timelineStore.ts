@@ -253,6 +253,26 @@ interface EditorTimelineState {
    *  vertical space in the viewer, and a user who has not asked for it should
    *  get the picture. */
   waveformView: boolean;
+  /** D-266 — the viewer's MASTER MONITORING volume (`0..1`) and mute flag: the
+   *  `volume` multiplier `chroma_audio_set_volume` applies in the real `cpal`
+   *  output callback, and whether the transport's speaker button is currently
+   *  muting it. `volume` is the last non-zero level, remembered across a mute
+   *  toggle so unmuting restores it rather than resetting to unity.
+   *
+   *  **Monitoring, not project data** (D-126's original framing, unchanged by
+   *  the lift): it is entirely separate from any track's `gain` or any clip's
+   *  `volume`, changes nothing about what an export renders, and is not part of
+   *  `Timeline`. Session chrome under D-216's rule — never persisted, never
+   *  undoable, and not cleared by `setOpenProject`.
+   *
+   *  Here rather than in `PreviewPane`'s own `useState` (where D-126 put it)
+   *  for precisely the reason `waveformView` above is: something outside that
+   *  component now has to read and write it — `editor_set_audio_monitor` over
+   *  MCP, which runs outside React and must drive the SAME state the human's
+   *  speaker button and volume slider drive, rather than simulate a click on
+   *  them (CLAUDE.md's "one op/store action under both interfaces"). */
+  monitorVolume: number;
+  monitorMuted: boolean;
   /** D-234 — which clip's DYNAMIC ZOOM boxes the viewer is showing, and the
    *  ease the next bake will use. `null` (the default) = the ordinary
    *  single-box transform overlay.
@@ -375,6 +395,14 @@ interface EditorTimelineState {
    *  human's toggle button (`Player`, via `PreviewPane`) and
    *  `editor_set_waveform_view`. */
   setWaveformView: (open: boolean) => void;
+  /** D-266 — set the monitoring volume and/or the mute flag. Either half may
+   *  be omitted to leave it alone, so the speaker button and the slider each
+   *  write only what they own. A `volume` outside `0..1` is CLAMPED rather
+   *  than rejected, matching `chroma_audio_set_volume`'s own contract, and a
+   *  volume of exactly 0 is stored as 0 without implying `muted` — the two are
+   *  independent facts (a muted transport still remembers where the slider
+   *  was). */
+  setAudioMonitor: (next: { volume?: number; muted?: boolean }) => void;
   /** D-234 — arm/disarm the viewer's dynamic-zoom boxes, or change the ease
    *  the next bake uses. The one writer for both the human's Inspector toggle
    *  and `editor_set_dynamic_zoom`'s own arming. Writes no keyframes: a bake
@@ -468,6 +496,9 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   inspectorTab: DEFAULT_CLIP_INSPECTOR_TAB,
   // D-232 — off by default; see the field's own doc.
   waveformView: false,
+  // D-126/D-266 — unity and unmuted: monitoring starts at "what the mix says".
+  monitorVolume: 1,
+  monitorMuted: false,
   // D-234 — disarmed by default; the viewer shows the ordinary transform box.
   dynamicZoom: null,
   // D-252 — nothing open by default; see the field's own doc.
@@ -610,6 +641,15 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   setInspectorTab: (tab) => set({ inspectorTab: tab }),
 
   setWaveformView: (open) => set({ waveformView: open }),
+
+  setAudioMonitor: (next) =>
+    set((s) => ({
+      monitorVolume:
+        next.volume === undefined || !Number.isFinite(next.volume)
+          ? s.monitorVolume
+          : Math.min(1, Math.max(0, next.volume)),
+      monitorMuted: next.muted === undefined ? s.monitorMuted : next.muted,
+    })),
 
   setDynamicZoom: (mode) => set({ dynamicZoom: mode }),
 

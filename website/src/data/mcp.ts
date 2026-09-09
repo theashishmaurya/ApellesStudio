@@ -41,21 +41,27 @@ export interface ToolGroup {
  * whole 37-tool gap in the interval (D-257/D-259/D-260), which is why the
  * MOTION_GAP constant that used to live in this file is gone rather than
  * updated.
+ *
+ * 153 → 159 on 2026-09-09 (D-266): the media pool's four read/organise tools
+ * and the two audio-monitoring ones, which is also why both `GAPS` entries
+ * below were rewritten the same day rather than left standing.
  */
 export const TOOL_TOTALS = {
-  all: 153,
-  shipped: 144,
+  all: 159,
+  shipped: 150,
   debugOnly: 9,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 61,
+    count: 67,
     blurb:
-      'The whole multi-track NLE. Import media, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
+      'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [
       'editor_import_media',
+      'editor_list_media',
+      'editor_move_media',
       'editor_add_clip',
       'editor_edit_in',
       'editor_split_clip',
@@ -140,12 +146,21 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
  * D-255's version of this constant was MOTION_GAP — the Motion tab's zero,
  * printed next to the other counts rather than quietly omitted. That gap closed
  * (D-257/D-259/D-260), so the constant is replaced rather than deleted: a site
- * that prints only the closed gaps is back to marketing. These two are the real
- * remaining shortfalls, and neither is invented for modesty.
+ * that prints only the closed gaps is back to marketing.
+ *
+ * Rewritten again on 2026-09-09 (D-266), for the same reason and with the same
+ * discipline. The two entries that stood here — the media pool's missing list
+ * tools, and audio playback's supposed zero coverage — are both gone as stated:
+ * the pool's four read/organise tools shipped, and the audio one was partly
+ * wrong to begin with (play and stop were always `editor_set_playing`, and the
+ * waveform was D-232's). What replaces them is what is genuinely still short,
+ * which in both cases is narrower and more specific than what it replaces —
+ * that is what closing a gap honestly looks like, rather than deleting the
+ * line.
  */
 export const GAPS: readonly string[] = [
-  'The media pool is half-covered. An agent can import and remove items, but there is still no tool to list what is in the pool or organize it into folders, so it cannot inspect the pool before acting on it.',
-  'Audio playback transport has no tools at all — play, stop, level, waveform. It is the lowest-priority gap on the tracking list rather than an oversight, since an agent driving edits does not obviously need to press play.',
+  'A media-pool item whose first probe fails stays wrong for the life of the project. An agent can now list the pool, spot the broken item and repair it by removing and re-importing the path, but there is still no re-probe on demand and nothing expires a stale entry on its own.',
+  'Audio monitoring is a probe, not a meter. The output level refreshes about once per second, which is enough to confirm that real sound reached the device and not enough to watch a mix — and nothing in the app draws a meter for a human either.',
 ] as const;
 
 /** The real connection details, from mcp/server.py and mcp/README.md. */

@@ -4,6 +4,28 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-266: the last two MCP coverage gaps, one closed and one
+  found to have been mis-scoped.** The media pool's four missing tools shipped
+  (`editor_list_media` / `_list_media_folders` / `_create_media_folder` /
+  `_move_media`), each wrapping the `useMediaPoolStore` action the Sources
+  panel's own UI already calls — a "step 2 was never done" gap, with GUI parity
+  verified rather than assumed. `editor_list_media` reads through to disk, not
+  off the cached array whose staleness *is* B-073/B-082/B-084's mechanism, and
+  marks every entry `editor_add_clip` would refuse with the cause and the fix
+  in words: B-073's stuck item is now findable in one call instead of by
+  hand-reading `project.json` (the bug itself is untouched and still open).
+  Investigating the "audio playback — 0 tools" gap found it inferred four
+  missing tools from four Tauri command names, three of which were already
+  covered — there is only one transport (`editor_set_playing` drives picture
+  and sound together) and `_waveform` was D-232's. What was really missing was
+  the master monitor, a GUI-only control since D-126: `editor_set_audio_monitor`
+  now drives the same volume/mute the transport bar's speaker button does (the
+  same store lift `waveformView` got), and `editor_get_audio_level` reports what
+  actually reached the output device — the agent's ears, deliberately not paired
+  with a GUI meter because the measurement window is ~1 second. 159 MCP tools
+  (150 shipped); `@chroma/editor` 1625/1625 with 23 new, `website` 188/188 with
+  both published gap statements rewritten.
+
 - **2026-09-09** — **D-264: `website/` rebuilt end to end for the Apelles
   rebrand** — new visual identity, new information architecture, new copy. The
   palette is quarried from the Alexander Mosaic (Carrara marble, Iberian basalt,

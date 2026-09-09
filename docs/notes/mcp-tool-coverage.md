@@ -44,13 +44,14 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Edit tab / multi-track NLE — CLOSED, 61 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218; +4, D-222; +1, D-223; +1, D-224; +4, D-226; +5, D-229; +2, D-230; +2, D-232; +2, D-233; +1, D-234; +1, D-236; +1, D-238; +1, D-239; +2, D-243; +1, D-256)
+## Edit tab / multi-track NLE — CLOSED, 67 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218; +4, D-222; +1, D-223; +1, D-224; +4, D-226; +5, D-229; +2, D-230; +2, D-232; +2, D-233; +1, D-234; +1, D-236; +1, D-238; +1, D-239; +2, D-243; +1, D-256; +6, D-266)
 
-> **Re-counted 2026-09-09 against the same grep, after D-256 added
-> `editor_get_grade_status`**: it returns **65**, minus the 4
-> media-understanding tools below, is **61**. Counted, not incremented — per
-> this section's own standing instruction. The 2026-09-08 verification it
-> supersedes is kept below as provenance.
+> **Re-counted 2026-09-09 against the same grep, after D-266 added the media
+> pool's four read/organise tools and the two audio-monitoring ones**: it
+> returns **71**, minus the 4 media-understanding tools below, is **67**.
+> Counted, not incremented — per this section's own standing instruction. The
+> D-256 re-count it supersedes (65 → 61) and the 2026-09-08 verification below
+> it are kept as provenance.
 
 > **Count re-verified 2026-09-08, after merging D-238 (auto-captioning), D-239
 > (seven edit types) AND D-243 (caption preset library) into main, directly
@@ -311,35 +312,88 @@ product gap and both halves should land together. Also deferred: a
 read), and granular camera-key VALUE editing (no such write function exists;
 `motion_set_camera_2d`/`_3d` replace the array).
 
-## Gap: Media / Sources pool — 2 of 6 tools (D-183 added import; `_remove` closed 2026-09-07)
+## Media / Sources pool — CLOSED, 6 of 6 tools (D-183 import; `_remove` 2026-09-07; the remaining four, D-266, 2026-09-09)
 
-`editor_import_media` (D-183) covers `chroma_media_import`'s job — importing
-absolute paths into the pool. `editor_remove_media` (roadmap item 23,
-2026-09-07) now covers `chroma_media_remove` too — the pool's only
-correction mechanism today: an agent can delete a stuck/wrong item (a probe
-that failed once, B-073/B-089) and re-import the same path for a fresh probe.
-There is still no re-probe-on-demand/expiry (item 23's real architectural gap
-remains open — this closes the tool-exposure gap only, not the underlying
-"why did this go stale" problem).
+`editor_import_media` (D-183) covers `chroma_media_import`. `editor_remove_media`
+(roadmap item 23, 2026-09-07) covers `chroma_media_remove`. **D-266 closed the
+other four**, each a wrap of the `useMediaPoolStore` action the Sources panel's
+own UI already calls, so there is one store action and one `chroma_media_*`
+command under both interfaces:
 
-`chroma_media_list` / `_move` / `_create_folder` / `_folders` still have no
-MCP tool: an agent can't query what's already in the pool or organize it into
-folders, independent of Colorist's own `list_shots`/`add_shots`
-(project-timeline-scoped, not pool-scoped — a real, different thing). This
-gap has a real, live-witnessed cost, not just a theoretical one: B-073
-(`docs/BUGS.md`) is a media-pool item stuck with no `video` metadata after a
-transient probe failure — as of `editor_remove_media` it can at least be
-cleared and re-imported via MCP, but it still cannot be *inspected* via MCP
-(no `chroma_media_list`) to confirm which item is the bad one before removing
-it; the session that hit it had to read `project.json` by hand.
-`editor_get_capabilities` (D-191) documents this as a known landmine.
+| Tauri command | MCP tool | the GUI half it shares |
+|---|---|---|
+| `chroma_media_list` | `editor_list_media` | the Sources panel's own list |
+| `chroma_media_folders` | `editor_list_media_folders` | its bin tree |
+| `chroma_media_create_folder` | `editor_create_media_folder` | its "New folder" button |
+| `chroma_media_move` | `editor_move_media` | dragging an item onto a bin |
 
-## Gap: Audio playback — 0 tools, lowest priority
+This was a "step 2 was never done" gap, not a missing capability — GUI parity
+was already satisfied before the pass started, verified in
+`app/src/components/chroma/SourcesPanel.tsx` rather than assumed.
 
-`chroma_audio_play` / `_stop` / `_level` / `_waveform` — playback transport
-control. Lower value for an agent than the above (an agent driving edits doesn't
-obviously need to literally press play), but genuinely zero coverage; noted for
-completeness rather than urgency.
+Two things about `editor_list_media` are worth knowing before using it. It
+reads through `refresh()` rather than off the store's cached `items` array,
+because that array is populated only by an import appending its own result or
+by an explicit refresh — so an item seeded another way (`new_project`'s
+`media_paths`, another window) is absent from it, which *is* B-073/B-082/B-084's
+shared mechanism. And every row carries `usable`, with an unusable one naming
+its cause and its fix in words.
+
+**B-073 is now diagnosable and repairable over MCP; it is NOT fixed.** The
+live-witnessed cost this gap had was that a session which hit a stuck,
+never-successfully-probed pool item had to read `project.json` by hand to work
+out which item it was. `editor_list_media` answers that directly (`unusable`
+lists the ids; each row's `problem` names the recovery sequence), and
+`editor_remove_media` + a re-import repairs it. **The underlying staleness —
+no re-probe on demand, nothing expiring a stale entry — is untouched and
+remains open**, and is now the pool's only real gap. `editor_get_capabilities`
+(D-191) was updated to say exactly this instead of "there is no tool".
+
+## Audio playback — the gap as recorded was substantially wrong; what was real is closed (D-266, 2026-09-09)
+
+This section used to read *"`chroma_audio_play` / `_stop` / `_level` /
+`_waveform` — 0 tools, lowest priority."* Investigating it before building
+found that framing was **mis-scoped in our own favour** — it inferred four
+missing tools from four Tauri command names, and three of the four were already
+covered:
+
+- **`_play` / `_stop` — covered since D-183, by `editor_set_playing`.** There is
+  only ONE transport: `PreviewPane`'s own effect keys `chroma_audio_play`/
+  `chroma_audio_stop` off the timeline store's `playing` flag, so picture and
+  sound are one play/pause. A separate `editor_audio_play` would have been a
+  second, redundant way to start playback.
+- **`_waveform` — covered since D-232, by `editor_get_waveform`.** That is
+  audio *data* access, a different and already-solved problem.
+- **`_level` — genuinely uncovered**, and so was a control the doc never
+  mentioned: the master monitoring volume/mute, which D-126 had left in
+  `PreviewPane`'s own `useState` where nothing outside React could reach it —
+  a real GUI-only control, which is the human-AND-AI rule's own failure case.
+
+D-266 added the two that were real: `editor_set_audio_monitor` (volume + mute,
+driving the same store state the transport bar's speaker button and slider do
+after the same lift `waveformView` got in D-232; `editor_get_state` reports the
+pair as `monitor`) and `editor_get_audio_level` (the rms/peak of what actually
+reached the output device).
+
+**Still open, deliberately.** `editor_get_audio_level` is a probe, not a meter,
+and there is no GUI meter to pair it with: `build_typed` in
+`crates/chroma-media/src/audio.rs` accumulates its rms/peak over ~1 second of
+output, so the value refreshes at ~1 Hz — enough to confirm real, non-silent
+PCM reached the device, nowhere near enough to watch a mix. Drawing it as a
+meter would be worse than not drawing one; a meter needs the measurement window
+to shrink first. The tool is the agent-side equivalent of a human's ears (the
+argument D-232 already made for `editor_get_waveform`), and it reports
+`windowSecs` plus the transport state so a stale zero after a stop cannot be
+misread as silence. The scrub commands (`chroma_audio_scrub_*`) still get no
+tool, on D-232's own reasoning.
+
+> **Note on the D-266 pass's own verification, for whoever reads its test
+> evidence.** A sibling agent's in-flight `@chroma/*` → `@apelles/*` rename had
+> relinked the shared root `node_modules`, so *every* frontend test in a
+> worktree — the pre-existing ones included — failed to resolve its workspace
+> imports. The suites were run against a temporary, uncommitted alias config
+> pointing at the worktree's own `packages/*`. Nothing about the product code
+> depends on it; it is recorded so the numbers can be reproduced.
 
 ## Debug / UI verification — CLOSED, 9 tools (D-210 + D-219, 2026-09-08; +1, D-246)
 
