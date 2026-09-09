@@ -2404,6 +2404,24 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   remember a full stack is upside-down before selecting it. Not scoped further
   than "someone noticed this would help" — no proposal for how it would detect
   "upside down" from pixels alone without real per-camera provenance data.
+- **Finish the rename: `chroma_*`/`mcp__chroma__*` → `apelles_*`/`mcp__apelles__*`** —
+  D-265 (2026-09-08) deliberately drew the rename's line at the persistence
+  boundary: the Tauri command names (`chroma_project_new`, `chroma_media_list`,
+  …) and the MCP tool prefix built from them were kept as-is because they're an
+  internal IPC contract nobody but the app's own code and MCP clients ever
+  sees, not user-facing branding — everything a person or a website visitor
+  actually reads (product name, npm scope, crate names, app display name, the
+  website) is already Apelles. Owner asked (2026-09-09) to finish this too.
+  **Deliberately still not scoped or started** — this is a bigger, more
+  mechanical change than D-265's other renames: every Tauri command handler's
+  `#[tauri::command]` name, the MCP server's tool registration (`mcp/
+  server.py`), and every frontend call site in the Tauri bridge
+  (`useChromaControl.ts` and friends) would need to move together in one pass,
+  or the frontend and backend silently stop agreeing on a command name mid-
+  migration. `.chroma` project file paths/extension are explicitly OUT of this
+  one — D-265 kept those for a different, harder reason (real user projects
+  already exist on disk at `~/Movies/Chroma/*.chroma`) and that tradeoff
+  hasn't changed.
 
 ---
 
