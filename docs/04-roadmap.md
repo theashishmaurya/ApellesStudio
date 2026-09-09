@@ -2537,6 +2537,22 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   before a remappable settings surface can be built over them — the
   research-the-real-pattern step CLAUDE.md already asks for, not a guess at
   how many places currently own a shortcut binding.
+- **A preview PLAYBACK-RATE control (2x/3x/4x/custom, WITH audio) — not the
+  same thing as a clip's own Speed property** — owner request 2026-09-10,
+  with a reference screenshot of the preview transport bar (saved at
+  `scratch/preview-playback-speed-control-reference.png`, gitignored).
+  Checked, not assumed: no such control exists anywhere in `@apelles/player`
+  or `PreviewPane.tsx` today. This is deliberately distinct from the
+  Inspector's existing per-clip Speed field (`23–347%`, changes the actual
+  edit/export duration of that one clip) — the ask here is a TRANSPORT
+  control, for scrubbing/reviewing faster without touching the edit at all,
+  the way Resolve/Premiere's own playback-rate shuttle works, and the
+  owner's explicit "with audio" means pitch-corrected or at least
+  intelligible fast playback, not silence or noise at speed. Not scoped
+  further than that — real reference research (how the named tools actually
+  implement this: a dropdown next to the transport, J/K/L-style shuttling,
+  audio time-stretch vs. pitch-shift-and-skip) before building, per
+  CLAUDE.md's own standing rule.
 
 ---
 
