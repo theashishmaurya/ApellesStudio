@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-272: Project Settings docked in the Edit tab's
+  Inspector column** (roadmap's "same feature, better UX"), filling
+  `ClipInspectorPanel`'s own "nothing selected" empty state rather than a
+  third tab. Resolution/Frame Rate/Colour Space now render through one
+  shared, instant-apply `ProjectSettingsForm` (new, `packages/editor`) that
+  both the new docked `ProjectSettingsPanel` and the Colorist tab's existing
+  `ProjectSettingsModal.tsx` render — same underlying `chroma_project_get_
+  settings`/`_set_settings` commands and their `chroma://project-settings-
+  changed` broadcast, no forked state. The Colorist gear icon's modal stays
+  as an entry point, now instant-apply instead of staged Save/Cancel. New
+  tests: `ProjectSettingsForm.dom.test.tsx`,
+  `EditorInspectorPanel.projectSettings.dom.test.tsx` (incl. a live
+  single-source-of-truth proof). See D-272.
+
 - **2026-09-10** — **B-137 logged, not fixed:** a clip edge-trim drag's own
   preview appears to stay pinned at the clip's original position instead of
   tracking the cursor (screenshot: the selected-clip box near `00:00:00`,

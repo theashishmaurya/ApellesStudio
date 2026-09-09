@@ -2478,30 +2478,19 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   scoping (a new `TrackKind` variant alongside `subtitle`, migration for any
   adjustment clips already living on an ordinary video track in an existing
   project) before landing, but the DIRECTION is no longer an open question.
-- **Project Settings: same feature, better UX — a persistent side-tab panel
-  open by default, not a modal you have to summon** — owner request
-  2026-09-10, with a reference screenshot (a docked "Project Settings"
-  panel, a collapsible "Canvas" section holding Resolution/Frame Rate/
-  Aspect Ratio, open at rest rather than behind a trigger; saved at
-  `scratch/project-settings-sidepanel-reference.png`, gitignored but kept
-  for the next session). **The settings themselves already exist and are
-  not being re-scoped** — `ProjectSettingsModal.tsx` (D-038) is a real,
-  working modal covering resolution/frame rate/colour space for the whole
-  project, reached today from a gear icon on the Colorist tab's shot strip.
-  This is a pure presentation change: dock it as an always-visible panel
-  section instead of a dialog someone has to know to open. **Decided (owner,
-  2026-09-10): dock it where the clip Inspector already lives** — the Edit
-  tab's own right-side column (`ClipInspectorPanel`'s Video/Audio tabs today)
-  — not `EditLibraryRail`/`EditLibraryPanel` (D-263). Two real shapes this
-  could take, not yet chosen between: (a) Project Settings fills that
-  column's existing empty state (currently "Select a clip to edit its
-  properties.") when nothing is selected, or (b) a third tab alongside
-  Video/Audio, present regardless of selection. Needs a look at the real
-  component (`ClipInspectorPanel.tsx`, `EditorInspectorPanel.tsx`) before
-  picking between those two, and a decision on whether this is still reached
-  from the Colorist-tab gear icon too, given the settings themselves
-  (`ProjectSettingsModal.tsx`, D-038) currently live on that tab specifically
-  while this docks it into the EDIT tab's own column.
+- ~~**Project Settings: same feature, better UX**~~ — **Resolved by D-272**
+  (2026-09-10). Docked as the Edit tab Inspector column's "nothing selected"
+  state (`ProjectSettingsPanel.tsx`, new), filling `ClipInspectorPanel`'s own
+  former empty-state slot rather than a third Video/Audio tab. Resolution,
+  Frame Rate and Colour Space now render through one shared, instant-apply
+  `ProjectSettingsForm` (`packages/editor`) that BOTH this docked panel and
+  the Colorist tab's `ProjectSettingsModal.tsx` render — the modal's gear
+  icon stays, unchanged as an entry point, now opening a lighter dialog
+  around the same form. See D-272 for the full "why" (the D-039 layering
+  wrinkle this took to reuse `app`'s settings state from a `tabs`-layer
+  package, the "Aspect Ratio" → Colour Space field mapping, the modal's move
+  from staged Save/Cancel to instant-apply, and the known/deliberately-left
+  overlap with the Edit tab's own narrower `CanvasSettingsPopover`).
 - **B-136's remaining gap: the real cursor still shows once a scrub travels
   past the field's own ~80px box** — logged 2026-09-10, owner explicitly
   deferred rather than asked for a seventh attempt tonight. Confirmed live:

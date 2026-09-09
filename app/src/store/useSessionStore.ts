@@ -53,6 +53,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { trackEvent } from '@apelles/bridge';
+import type { ProjectSettingsValue } from '@apelles/editor';
 
 import { useEditorStore } from './useEditorStore';
 import { useChromaStore, ChromaVideoInfo } from './useChromaStore';
@@ -125,13 +126,15 @@ export interface ProjectShotDto {
  * Per-project output spec (D-038). Every field optional — absent/null =
  * clip-derived (exactly the pre-D-038 behaviour). `colorSpace` is stored +
  * surfaced only; a colour-managed pipeline is D-004.
+ *
+ * D-272 — a type ALIAS of `@apelles/editor`'s `ProjectSettingsValue`, not a
+ * second, hand-kept-in-sync copy: that package is where the shared
+ * `ProjectSettingsForm` (and its own merge-patch contract) is now defined,
+ * and `app` may import from a tab package (D-039's one-way layer rule) while
+ * the reverse can't. Keeping the name `ProjectSettings` here since every
+ * existing call site in this file already spells it that way.
  */
-export interface ProjectSettings {
-  width?: number | null;
-  height?: number | null;
-  fps?: number | null;
-  colorSpace?: string | null;
-}
+export type ProjectSettings = ProjectSettingsValue;
 /** Mirrors `chroma::project::ProjectOpenDto` (serde camelCase) — also what
  *  `chroma_project_add_shot`/`_add_shot_paths`/`_remove_clip` (D-070) return,
  *  consumed the same way via `_hydrateOpenDto`. */

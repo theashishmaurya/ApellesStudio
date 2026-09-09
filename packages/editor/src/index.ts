@@ -47,6 +47,14 @@ export { EditorInspectorPanel } from './EditorInspectorPanel';
 export { EditLibraryRail } from './EditLibraryRail';
 export type { EditLibraryRailProps } from './EditLibraryRail';
 export { EditLibraryPanel } from './EditLibraryPanel';
+/** D-272 — the project-level output-spec form (Resolution/Frame Rate/Colour
+ *  Space), shared between this package's own docked `ProjectSettingsPanel`
+ *  (`EditorInspectorPanel`'s "nothing selected" branch) and `app/src`'s
+ *  `ProjectSettingsModal.tsx`, which renders this same component inside its
+ *  dialog rather than keeping a second, duplicated copy of these controls.
+ *  See `ProjectSettingsForm.tsx`'s own module doc. */
+export { ProjectSettingsForm } from './ProjectSettingsForm';
+export type { ProjectSettingsValue } from './ProjectSettingsForm';
 /** D-263 — the library-mode model, exported for the same reason the clip
  *  Inspector's tab model below is: `Root.tsx` reads the active mode to decide
  *  whether the Edit tab is taking the shell's docked column over, and

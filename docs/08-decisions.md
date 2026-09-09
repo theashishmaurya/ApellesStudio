@@ -26476,3 +26476,148 @@ ghost in place of their static corner glyph — chosen because the ghost was
 already confirmed genuinely rendering and tracking correctly live, which is
 strictly more informative feedback than a fixed icon that doesn't move with
 the pointer.
+
+## D-272 — Project Settings docks in the Edit tab's Inspector column, as the "nothing selected" state, sharing one form with the Colorist modal
+
+**Date:** 2026-09-10. Resolves the roadmap's "Project Settings: same feature,
+better UX" entry (owner request 2026-09-10, reference screenshot at
+`scratch/project-settings-sidepanel-reference.png`) — a persistent, open-at-
+rest panel instead of a modal someone has to know exists. The owner had
+already decided WHERE (the Edit tab's own `ClipInspectorPanel`/
+`EditorInspectorPanel` column, not `EditLibraryRail`/`EditLibraryPanel` —
+D-263); this decision covers the three things that entry left open.
+
+**1. Shape: fills the empty state, not a third tab.** Read the real
+components before picking. `ClipInspectorPanel.tsx`'s existing `if (!clip)
+return <InspectorEmptyState>Select a clip to edit its properties.</
+InspectorEmptyState>` is exactly the slot the reference screenshot's panel
+sits in — a full-column replacement for "nothing to show," not one more tab
+alongside Video/Audio. A third tab was the other real option (D-246's own
+`clipInspectorTabs.ts` model generalises to N tabs easily), but it's the
+wrong fit here: D-246's Video/Audio split exists because BOTH tabs are about
+the SAME selected clip; Project Settings has nothing to do with clip
+selection at all; it's the *lack* of one. A tab that stays present
+"alongside Video/Audio" would either duplicate itself per clip selection
+(pointless) or sit oddly disabled/hidden whenever a clip IS selected, which
+is just the empty-state case with extra chrome. The empty state was already
+the "nothing to show" slot; Project Settings is what actually belongs there
+now.
+
+Concretely: `EditorInspectorPanel.tsx` (which already derives `selection`
+from `useEditorTimelineStore`) now branches on `selection.length === 0` and
+renders the new `ProjectSettingsPanel` instead of `ClipInspectorPanel` —
+deliberately narrower than "no `selectedClip`" in general, so a real
+multi-selection (`selection.length > 1`, Phase 1's documented fallback,
+`docs/notes/multi-select.md`) still falls through to `ClipInspectorPanel`'s
+own plain empty state rather than misreporting "nothing is selected."
+`ClipInspectorPanel.tsx` itself is untouched — its own empty-state branch
+still exists, for exactly that multi-select case.
+
+**2. The Colorist gear icon stays, reaching the SAME modal.** Default per
+CLAUDE.md ("don't remove a working entry point without being asked")
+applies cleanly here: nothing about docking Project Settings into the Edit
+tab makes the Colorist tab's own gear-icon entry point wrong or redundant —
+a session working entirely in Colorist (never opening Edit) still needs a
+way in, and `ProjectSettingsModal.tsx` already lives on that tab specifically
+(its own module doc: "Reached from the gear on the Colorist shot strip").
+Kept, unchanged in behaviour from the user's point of view (same gear icon,
+same dialog chrome) — what changed is what's INSIDE the dialog (below).
+
+**3. One shared form, not two copies — and the real layering wrinkle that
+shaped it.** `ProjectSettingsModal.tsx` lives in `app/src/components/chroma`
+(the `app` layer) and reads `app/src/store/useSessionStore.ts`'s
+`useSessionStore` directly. `ClipInspectorPanel`/`EditorInspectorPanel` live
+in `@apelles/editor` (a `tabs`-layer package, D-039) — which **cannot**
+import `app/src/store/useSessionStore` without inverting the one-way
+`app -> tabs` dependency rule. This is the exact gap `CanvasSettingsPopover.
+tsx`'s own module doc already named when it built the Edit tab's own
+narrower width/height-only surface: "`packages/editor` cannot import that
+modal... this is a genuinely separate, lighter surface for the SAME
+underlying `chroma_project_get_settings`/`chroma_project_set_settings`
+commands." D-272 generalises that same answer to the FULL settings surface
+(Resolution, Frame Rate, Colour Space) instead of stopping at width/height:
+
+- **`ProjectSettingsForm`** (`packages/editor/src/ProjectSettingsForm.tsx`,
+  new) is the one place Resolution/Frame Rate/Colour Space are defined — pure
+  presentation, `settings` in, a merge-patch `onChange` out, no IO. Both
+  `ProjectSettingsModal.tsx` (wrapping it in a `Dialog`-shaped div) and the
+  new `ProjectSettingsPanel.tsx` (no wrapper at all) render this SAME
+  component. `ProjectSettingsValue` (its own field shape) is canonical here,
+  in the lower layer; `useSessionStore.ts`'s own `ProjectSettings` is now a
+  type ALIAS of it (`export type ProjectSettings = ProjectSettingsValue`),
+  not a second hand-kept-in-sync copy — `app` may import a type from a tab
+  package (the allowed direction), so this is zero-cost and drift-proof.
+- **`useProjectSettings`** (`packages/editor/src/useProjectSettings.ts`, new)
+  is `@apelles/editor`'s own live view of the SAME backend manifest field —
+  mirroring `useCompositionSize.ts`'s exact B-086 pattern: fetch via
+  `chroma_project_get_settings`, write via `chroma_project_set_settings`,
+  and listen for the `chroma://project-settings-changed` broadcast that
+  command already emits on every successful write (from ANY caller — the
+  Colorist modal's `useSessionStore`, this hook, or the `set_project_
+  settings` MCP tool). This is NOT a forked copy of project settings: the
+  single source of truth stays the backend manifest; every surface (this
+  hook, `useSessionStore`, `useCompositionSize`) is a live cache of it, kept
+  in step by the same broadcast, with zero cross-store plumbing between any
+  of them. Verified live in `EditorInspectorPanel.projectSettings.dom.
+  test.tsx`'s "single source of truth" case: a `chroma_project_set_settings`
+  call made from OUTSIDE the docked panel (standing in for the modal or MCP)
+  is reflected in the panel's own on-screen field with no action from the
+  panel itself.
+
+**4. Instant-apply, in both places — a real, deliberate UX change to the
+modal.** `ProjectSettingsModal.tsx` used to stage edits locally and commit
+them on an explicit Save (Cancel discarded the draft). D-272 drops that: the
+shared `ProjectSettingsForm` fires `onChange` per edit, with no local draft
+and no Save button, because the ALWAYS-VISIBLE docked panel cannot sensibly
+carry a pending, unsaved Save button sitting in a column the user isn't
+otherwise interacting with — and a shared component must behave identically
+wherever it renders, per this same decision's whole premise. The dialog's
+own X button now simply closes it; every edit already landed the moment it
+was made, matching how every other Inspector control in this app already
+works (no other row on `ClipInspectorPanel` has a Save button either). This
+was a real, considered UX trade — not an oversight — and it is called out
+here rather than left to be discovered as a silent behaviour change.
+
+**5. "Aspect Ratio," from the reference screenshot, maps onto Colour Space,
+not a new field.** The reference screenshot's "Canvas" section shows three
+rows: Resolution, Frame Rate, Aspect Ratio. `ProjectSettings` (D-038) has no
+Aspect Ratio field, and the roadmap entry is explicit that "the settings
+themselves already exist and are not being re-scoped" — so this pass does
+NOT invent a new aspect-ratio concept (e.g. a ratio-lock derived from
+width/height, or a set of ratio presets) with no backing state or `set_
+project_settings` field to write. The one collapsible "Canvas" section
+(`@apelles/ui`'s existing `CollapsibleSection`, RapidRAW's own accordion —
+already used by Colorist's `ControlsPanel`/`MasksPanel`/`AIPanel`, not a
+hand-rolled chevron) holds all THREE of this app's real fields — Resolution,
+Frame Rate, and Colour Space — matching the reference's visual shape (one
+open-by-default collapsible group of short rows) with the third row mapped
+onto the nearest REAL setting rather than a fabricated one. Open by default
+(`useState(true)`, ephemeral/local — the same category `ClipInspectorPanel`'s
+own `ratioLocked` is) per "open at rest rather than behind a trigger."
+
+**6. Known, deliberately-left overlap: `CanvasSettingsPopover`.** While
+researching this, the Edit tab turned out to ALREADY have a narrower,
+width/height-only "Canvas size" popover (`CanvasSettingsPopover.tsx`, D-199,
+opened from a gear icon on `PreviewPane`'s own toolbar) built on exactly the
+same `chroma_project_get_settings`/`_set_settings` pair for exactly the
+reason stated above. With the new docked panel covering the same two fields
+(plus Frame Rate and Colour Space) permanently visible one column over,
+that popover is now a real, narrower duplicate of part of the docked panel —
+but retiring it (its trigger button, its `panelRegistry.ts` entry, its own
+debug/test coverage) is a separate, non-trivial cleanup this pass explicitly
+did not do: it wasn't part of what was asked, removing a working control
+without being asked cuts against this file's own stated default, and D-272's
+own scope is already the full "same feature, better UX" ask. Left here,
+named, as the next session's one-line-pointer rather than silently growing
+unaddressed drift (matching D-231's own "known drift to reconcile" pattern).
+
+**Tests.** `ProjectSettingsForm.dom.test.tsx` (new) proves the shared form's
+own patch shapes in isolation (every control emits the right merge-patch:
+width+height together, `null` for "match," fps independent of resolution).
+`EditorInspectorPanel.projectSettings.dom.test.tsx` (new) proves the real
+branch (`selection.length === 0` → `ProjectSettingsPanel`, a real selection →
+back to `ClipInspectorPanel`), a real write through `chroma_project_set_
+settings`, and the single-source-of-truth broadcast case above. `npx tsc
+--noEmit -p packages/editor` and `-p app` both clean of new errors; `npm test
+--workspace @apelles/editor` (1640/1640, unaffected) and `npm test --workspace
+app` (13/13) both green.

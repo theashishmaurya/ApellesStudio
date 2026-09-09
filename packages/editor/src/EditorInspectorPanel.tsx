@@ -58,6 +58,16 @@
  * `PropertyState`, no diamond and no place in `paramStates`. What it gets
  * instead is its own pair of handlers below (`applyEqBand`/`clearEq`) writing
  * its own `set_clip_eq` op, exactly as the level pair writes `set_clip_audio`.
+ *
+ * D-272 — when NOTHING is selected (`selection.length === 0`), this component
+ * renders `ProjectSettingsPanel` instead of `ClipInspectorPanel`, filling the
+ * column's own former "Select a clip to edit its properties" empty state with
+ * the project's own output spec. Deliberately scoped to the genuinely-empty
+ * case only, not `!selectedClip` in general: a multi-selection (`selection.
+ * length > 1`) still falls through to `ClipInspectorPanel`'s own empty state
+ * (Phase 1's documented multi-select fallback, `docs/notes/multi-select.md`)
+ * unchanged — showing Project Settings there would misreport "nothing is
+ * selected" when several clips actually are.
  */
 import {
   adjacentParamKeyframeFrame,
@@ -72,6 +82,7 @@ import {
   type ClipKeyframe,
 } from './clipKeyframes';
 import { ClipInspectorPanel, type FadePatch, type TransformPatch } from './ClipInspectorPanel';
+import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import {
   applyDynamicZoom,
   dynamicZoomFramings,
@@ -458,6 +469,14 @@ export function EditorInspectorPanel() {
     const span = dynamicZoomSpan(selectedClip);
     applyKeyframes(applyDynamicZoom(clipKeyframes, end, start, span.first, span.last, dynamicZoom.curve));
   };
+
+  // D-272 — nothing selected at all fills this column with Project Settings
+  // instead of the generic "Select a clip" message; see this file's own
+  // module doc for why a multi-selection deliberately does NOT take this
+  // branch.
+  if (selection.length === 0) {
+    return <ProjectSettingsPanel />;
+  }
 
   return (
     <ClipInspectorPanel
