@@ -56,6 +56,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { useEditorTimelineStore } from './timelineStore';
 import { TimelinePane } from './TimelinePane';
 import { EditLibraryRail } from './EditLibraryRail';
+import { EditLibraryPanel } from './EditLibraryPanel';
 import {
   CHROMA_GENERATOR_DRAG_MIME,
   CHROMA_MEDIA_DRAG_MIME,
@@ -152,6 +153,19 @@ function dragEvent(
     },
   });
   return e;
+}
+
+/** The rail plus the docked column it switches, mounted the way `Shell.tsx`
+ *  mounts them (D-263): rail first, then the column. The dock-open flag is
+ *  shell state in the real app, so it is a plain prop here — `true`, i.e. the
+ *  column is showing, which is the state a library drag starts from. */
+function LibraryHarness(): React.ReactElement {
+  return React.createElement(
+    'div',
+    null,
+    React.createElement(EditLibraryRail, { dockOpen: true, onDockOpenChange: () => {} }),
+    React.createElement(EditLibraryPanel),
+  );
 }
 
 function layout(): Array<{ kind: string; clips: string[] }> {
@@ -283,14 +297,19 @@ describe('B-117 / D-248 — a Title is a real drag source and a real drop', () =
         status: 'ready',
         playhead: 0,
         selection: [],
+        libraryMode: 'sources',
       }),
     );
-    ui = mount(React.createElement(EditLibraryRail), { strictMode: true });
+    // D-263 — the rail and the docked panel it switches, mounted the way the
+    // shell mounts them (rail, then the column beside it). Before D-263 the
+    // rail held the library inside its own popover and this test mounted only
+    // the rail.
+    ui = mount(React.createElement(LibraryHarness), { strictMode: true });
     await waitFrames(2);
 
-    // The rail's Titles button opens the library popover.
-    const trigger = document.querySelector<HTMLElement>('[aria-label="Titles"]');
-    expect(trigger, 'the rail has a Titles entry').not.toBeNull();
+    // The rail's Titles button switches the docked panel to the Titles library.
+    const trigger = document.querySelector<HTMLElement>('[data-chroma-rail-button="titles"]');
+    expect(trigger, 'the rail has a Titles button').not.toBeNull();
     actSync(() => trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
     await waitFrames(2);
 

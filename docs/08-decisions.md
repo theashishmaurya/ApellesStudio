@@ -25079,3 +25079,153 @@ Rate Stretch, Razor — Chroma's Split button already is the razor, Pen, Hand,
 Zoom); nested tool slots with the corner triangle (five buttons fit); and a
 per-tool custom cursor bitmap, still the thing neither D-250 nor this pass will
 ship (`trimModeCursor`'s standard keywords remain the compromise).
+
+## D-263 — The Edit tab's left library becomes a real activity bar: the icon rail moves to the far left, and its buttons switch the DOCKED column instead of opening popovers
+
+**Date:** 2026-09-09.
+
+### Context
+
+The owner, live, with two screenshots of the running app: *"as we open this and
+we have text, other things like effects, it should be opening in this panel
+only as we switch — and this panel [the icon rail] should be to the left of the
+open panel, not the other way around."*
+
+Two separate defects in one sentence, and the second one is why the first was
+never a one-file fix.
+
+1. **The rail's buttons opened floating popovers.** D-248 built the rail with a
+   `Popover` per button and gave two reasons: at these libraries' size a
+   permanent column would be mostly empty chrome, and *"a native HTML5 drag out
+   of a popover keeps the popover open for the whole gesture."* Both reasons
+   were about a STANDALONE floating popover — neither survives the owner's
+   actual ask, which is not a new column at all: it is the column that has been
+   docked, resizable and drag-capable since D-046/D-116.
+2. **The rail rendered to the RIGHT of the column it switches.** Real DOM order
+   was Sources (shell-level, leftmost) → rail (Edit-tab-level) → preview. And
+   this is a genuine cross-boundary problem, not a div reorder: the Sources
+   panel lives in `Shell.tsx` and is shared by all three tabs (D-046/D-116),
+   while `EditLibraryRail` is deliberately Edit-tab-local (D-248: "a shell-level
+   rail would need `Shell` to know which tab is active"). Nothing inside
+   `EditorTab.tsx` can put a node to the left of a panel that a different
+   package renders.
+
+### Reference — pulled first, per CLAUDE.md's "research the real pattern" rule
+
+`scratch/activity-bar-reference/notes.md`, with the quotes:
+
+- **VS Code's own docs** (code.visualstudio.com/docs/getstarted/userinterface):
+  the Activity Bar is on the far left and the Primary Side Bar sits
+  *immediately to its right*; the Activity Bar "lets you switch between views";
+  the side bar's visibility is a separate toggle (⌘B), and clicking the
+  already-active icon collapses it. That is the exact geometry and the exact
+  click semantics the owner described.
+- **Final Cut Pro's own help** (support.apple.com, "Add titles"): *"the Titles
+  and Generators button in the **top-left corner** of the Final Cut Pro
+  window"* swaps what the one browser column shows — the same column the
+  Libraries and Photos-and-Audio browsers use — and a title is then either
+  double-clicked in at the playhead or *"drag[ged] … from the browser to the
+  edit point."* This is the NLE proof for both halves: one column switched by
+  left-edge buttons, and BOTH gestures kept on every entry.
+- Resolve's Edit-page copy ("open the effects library at the top left of the
+  screen … drag it into the timeline"), already scraped for D-248, is unchanged
+  by this and still describes what the rail does.
+
+### Decision
+
+**One coherent left region: `[icon rail] → [docked library column] → [tab
+content]`, with the rail's four buttons — Sources / Titles / Effects /
+Subtitles — switching what the column shows.**
+
+- **The rail is injected into the shell through a per-tab slot, not imported by
+  it.** `ShellTab` gains `libraryRail` and `libraryPanel` alongside D-251's
+  `headerAction`, and `Root.tsx` supplies both — exactly the pattern this repo
+  already established for "a tab-owned node that must sit at a specific place
+  in the shell's chrome". `Shell.tsx` still imports nothing from
+  `@chroma/editor`; it renders the nodes it is handed, only while that tab is
+  active. This is the answer to the cross-boundary problem, and it is
+  deliberately the EXISTING answer rather than a new mechanism.
+- **`libraryPanel` present means "this tab is taking the column over".**
+  `undefined` means the shared `sourcesPanel` shows. The composition root is
+  the one place that holds both the shell's open/closed flag and the editor's
+  active mode, so it is where that choice is made — the shell never learns what
+  a tab's libraries are called, and the tab package never imports
+  `@chroma/shell` (the rail takes `dockOpen`/`onDockOpenChange` as props, the
+  same shape `MotionTab`'s `onRendered` already has).
+- **Activity-bar click semantics, from the reference:** a different library
+  switches to it and opens the column; the library already showing collapses
+  it. One button is both switcher and toggle, which is why `Shell`'s own
+  floating Sources chip (D-120) is not drawn on a tab that has a rail — two
+  openers for one panel, one step apart, is the exact complaint D-120 exists to
+  answer.
+- **State split, one owner each.** WHICH library: `libraryMode` in
+  `useEditorTimelineStore` (session chrome, not project data, never undoable —
+  D-216's rule, same treatment as `inspectorOpen`). WHETHER the column is open:
+  the shell's existing `sourcesPanelOpen`, whose meaning widens to "the docked
+  library column" without a rename — it is the name `debug_set_sources_panel`
+  and every existing doc and debug recipe already use, and the column keeps its
+  `data-chroma-panel="sources"` hook for the same reason.
+- **The caption library is docked too, not a popover inside a docked panel.**
+  `CaptionPanel.tsx` became `CaptionLibrary.tsx`: same content, no popover
+  wrapper, no `setOpen(false)` after a pick (staying open is what lets a second
+  look be tried straight after the first). Half-fixing this — docking Titles
+  and Effects while the biggest library still floated — would have left the
+  owner's own complaint in place one level down.
+- **Switching modes is a plain React conditional, and that is NOT B-124.**
+  B-124 was Base UI's `Tabs.Panel` deferring a deselected panel's hide to a
+  `requestAnimationFrame` that a non-frontmost window never fires. A React
+  conditional removes the old subtree in the same commit that renders the new
+  one — no frame, no animation, no `getAnimations()`. The one thing kept
+  MOUNTED and hidden is the shared Sources panel (its search text, open bin and
+  scroll survive a trip through the Titles library), hidden by the same
+  `hidden`-class swap on a wrapper with no other `display` utility that
+  `Shell`'s own tab panels use.
+
+### Why not the alternatives
+
+- **Move Sources itself into `@chroma/editor`.** It is shared by all three tabs
+  and lives in `app/` because it needs `useSessionStore` and the media pool
+  (its own module doc). Moving it would invert D-039's dependency direction to
+  fix a layout problem.
+- **Let `@chroma/editor` import `useShellStore`.** One import, and the "shell
+  never couples to a tab package, tab packages never couple to the shell"
+  boundary is gone — plus `@chroma/shell` already devDepends on
+  `@chroma/editor` for its own DOM tests, so it would be a real cycle. Two
+  props cost nothing.
+- **Keep the rail in `EditorTab.tsx` and move Sources to the right.** It would
+  put the media bin on the opposite side from every NLE reference D-116 cites
+  (Premiere, Resolve, Final Cut, Palmier Pro all dock it left) and fight every
+  tab's own right-hand Inspector.
+- **Render all four libraries and hide three.** Buys back the caption library's
+  Styles/Import tab position on a mode round-trip, and costs ~30 preset
+  thumbnails mounted at all times while showing a one-entry Titles list.
+  Sources is the one worth keeping mounted, and it is.
+
+### MCP parity — checked, and genuinely nothing to add
+
+CLAUDE.md's human-AND-AI rule is about a *capability*. Every capability this
+rail reaches already has its MCP surface, unchanged and untouched by this pass:
+`editor_add_text_clip`, `editor_add_adjustment_clip`, `editor_add_caption`,
+`editor_add_caption_preset`, `editor_generate_captions_from_transcript`,
+`editor_import_subtitles`. What D-263 changes is only *which pixels a human
+looks at while reaching them* — an agent calls those tools regardless of what
+is on screen, and a `set_library_mode` tool would be an agent politely
+rearranging the human's furniture. The one thing that DID need saying is that
+a screenshot of the left column no longer implies "media pool", so
+`debug_get_ui_state` reports `editor.libraryMode` (read-only, debug-only,
+compiled out of production like the rest of D-219's registry).
+
+### Consequences
+
+- `EditLibraryRail` is now a controlled component with props, exported and
+  mounted by `Root.tsx`; `EditorTab.tsx` renders no rail.
+- D-252's `caption-panel` panel id is **retired** — the popover it named no
+  longer exists. `PANEL_IDS` is `canvas-settings`, `export-dialog`, and
+  `@chroma/debug`'s real-DOM proof for `debug_set_popover_open` drives
+  `CanvasSettingsPopover` instead (same proof, different real popover).
+- Found while testing, deliberately NOT fixed here: **B-131** — "Add at
+  playhead" onto a frame already covered by a clip creates a same-track
+  overlap instead of the refusal its own code reports, because the `add_clip`
+  op splices in regardless. Pre-existing (D-248's code, moved verbatim), in the
+  op layer, and in territory a concurrent session is editing; written up rather
+  than patched from inside a layout change.

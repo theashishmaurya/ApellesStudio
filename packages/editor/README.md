@@ -33,7 +33,7 @@ dragging a pool item in from the shell's Sources panel.
   panel's drag source both implement — plus (D-248)
   `CHROMA_GENERATOR_DRAG_MIME`/`DraggedGenerator`/`clipFromDraggedGenerator`,
   the same contract for a *generated* clip (a title, an adjustment clip)
-  dragged out of the left library rail.
+  dragged out of the docked library panel (D-263).
 - `dndTargets.ts` (B-122) — the `@dnd-kit` payload contract: named types for
   every drag source and drop target sharing `TimelinePane`'s one `DndContext`,
   plus the four functions that narrow an untyped `data.current` into something
@@ -253,19 +253,27 @@ track.
 
 Two things changed here in the same pass as the owner's live Edit-tab review:
 
-- **A generated clip is a drag source too (D-248, fixing B-117).**
-  `EditLibraryRail.tsx` — a vertical icon rail down the left edge of the tab,
-  Resolve's own "effects library icon at the top left" — carries a draggable
-  Title and Adjustment clip that put `CHROMA_GENERATOR_DRAG_MIME` on the
-  `dataTransfer`. `TimelinePane`'s existing `onDragOver`/`onDrop` recognise it
-  alongside the media MIME and route it through the SAME
-  `placeDroppedClip` the Sources drop uses, so a dragged title snaps, ripples
-  and creates a track by exactly the media path's rules. Every entry is also
-  still a click-to-add-at-the-playhead button, which is what the Title/Adjust
-  toolbar buttons were before they moved here. The rail also hosts the two
-  caption/subtitle entry points. The transitions palette stays in the timeline
-  toolbar — its target is a *cut*, resolved through that pane's own
-  `DndContext` (D-226).
+- **A generated clip is a drag source too (D-248, fixing B-117; docked by
+  D-263).** The Edit tab's left library is an activity bar in the VS Code /
+  Final Cut sense (`scratch/activity-bar-reference/`): `EditLibraryRail.tsx` is
+  the leftmost column — four icon buttons, Sources / Titles / Effects /
+  Subtitles — and `EditLibraryPanel.tsx` is what the DOCKED column beside it
+  shows for the three this package owns (the fourth, Sources, is the shell's
+  shared media pool). Both are mounted by the composition root into
+  `@chroma/shell`'s per-tab `libraryRail`/`libraryPanel` slots (D-251's
+  injection pattern), never by `EditorTab` — the rail has to sit to the LEFT of
+  a column `Shell` owns, and `Shell` must not import this package. Each library
+  entry carries a draggable Title/Adjustment clip that puts
+  `CHROMA_GENERATOR_DRAG_MIME` on the `dataTransfer`; `TimelinePane`'s existing
+  `onDragOver`/`onDrop` recognise it alongside the media MIME and route it
+  through the SAME `placeDroppedClip` the Sources drop uses, so a dragged title
+  snaps, ripples and creates a track by exactly the media path's rules. Every
+  entry is also still a click-to-add-at-the-playhead button (Final Cut keeps
+  both gestures too). Which library is showing is `libraryMode` in the store;
+  whether the column is open at all is the shell's own `sourcesPanelOpen`,
+  which the rail drives through props rather than importing. The transitions
+  palette stays in the timeline toolbar — its target is a *cut*, resolved
+  through that pane's own `DndContext` (D-226).
 - **Above the top track is a real insertion boundary (B-115).**
   `trackInsertBoundary` used to refuse every `y < 0`, so "drop it above your
   video tracks" — the reference gesture for a title or an adjustment clip —

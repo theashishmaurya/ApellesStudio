@@ -4378,8 +4378,15 @@ def debug_set_active_tab(tab: str) -> str:
 
 @mcp.tool()
 def debug_set_sources_panel(open: bool) -> str:
-    """Show or hide the shell's docked Sources (media pool) column — the same
-    state the panel's own toggle button drives.
+    """Show or hide the shell's docked left library column — the same state the
+    panel's own toggle drives (on the Edit tab, that toggle is the library
+    rail's own buttons).
+
+    D-263: this column shows the shared media pool by default, but the Edit
+    tab's rail can switch it to that tab's Titles / Effects / Subtitles
+    libraries. `debug_ui_state`'s `editor.libraryMode` says which one is
+    showing, so a screenshot of this column can be read correctly; this tool
+    still only controls whether the column is open at all.
 
     Returns {ok, sourcesPanelOpen}."""
     import json

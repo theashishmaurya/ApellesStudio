@@ -4,6 +4,34 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-263: the Edit tab's left library becomes a real activity
+  bar — rail on the far left, its buttons switching the DOCKED column** — the
+  owner, live, with screenshots: *"as we open this and we have text, other
+  things like effects, it should be opening in this panel only as we switch —
+  and this panel should be to the left of the open panel, not the other way
+  around."* Both halves were real. The rail's Title/Effects/Subtitles buttons
+  opened floating popovers (D-248, whose "a drag out of a popover keeps it
+  open" reasoning stops applying once nothing is a popover — Sources has dragged
+  media out of this very column with a plain `draggable` div since D-046), and
+  the rail rendered to the RIGHT of the column it switches, which no reordering
+  inside `EditorTab.tsx` could fix: Sources is shell-level (D-046/D-116) and the
+  rail is tab-local (D-248). Solved with the pattern this repo already had for
+  exactly that — D-251's per-tab injected node: `ShellTab` gains `libraryRail`
+  and `libraryPanel`, `Root.tsx` supplies both, and `Shell.tsx` still imports
+  nothing from `@chroma/editor`. The rail is now four buttons (Sources / Titles
+  / Effects / Subtitles) with VS Code activity-bar semantics (switch, and
+  collapse when the shown library is clicked again), built from VS Code's and
+  Final Cut Pro's own docs (`scratch/activity-bar-reference/`). The caption
+  style library docked too (`CaptionPanel` → `CaptionLibrary`), so D-252's
+  `caption-panel` popover id retires. MCP parity checked, not assumed: every
+  capability here already has its `editor_*` tool and none of them care what is
+  on screen; `debug_get_ui_state` reports the new `libraryMode` so a screenshot
+  of the column can still be read. 11 new real-DOM tests (7 in `@chroma/editor`,
+  4 in `@chroma/shell`, the latter mounting the REAL rail + panel to pin
+  "rail before column" in document order); 1596/1596 editor, 32/32 debug, 7/7
+  shell green, `tsc` clean. Found and written up, not fixed here: **B-131**,
+  "Add at playhead" onto an occupied frame overlaps instead of refusing.
+
 - **2026-09-09** — **D-261: the smart trims get a real tool palette — five icons
   in the timeline toolbar, Alt kept underneath** — the owner, live: *"for roll
   slip etc, instead of alt lets have icons for all of them :) much better."*

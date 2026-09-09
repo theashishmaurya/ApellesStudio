@@ -20,7 +20,8 @@
  * only ever needed to name two pieces of Edit-tab chrome). A repo sweep for
  * this feature turned up FOUR independent popovers/dialogs already gated
  * behind local `useState` before this one landed —
- * `CaptionPanel` (`open_`), `CanvasSettingsPopover` (`open`),
+ * `CaptionPanel` (`open_`, itself retired by D-263 — see below),
+ * `CanvasSettingsPopover` (`open`),
  * `EditorExportDialog` (`open`), and `EditLibraryRail`'s per-rail-button
  * popovers (fully uncontrolled, no state at all yet) — with a fifth,
  * `MarkerStrip`'s per-marker editor, keyed by *which marker* rather than a
@@ -35,24 +36,27 @@
  * needing a GUI/MCP pair of their own, but the reachability problem itself
  * still deserves a real, reusable fix rather than a one-off).
  *
- * **Not migrated yet, deliberately** (real follow-on gaps, not silently
- * dropped): `EditLibraryRail`'s rail popovers are `<Popover>` with NO
- * `open`/`onOpenChange` at all — Base UI manages them internally because a
- * native HTML5 drag out of one must keep it open for the whole drag (see that
- * file's own comment), and lifting that to a controlled boolean risks
- * breaking the drag-open behaviour, which is out of scope for a debug-tooling
- * pass. `MarkerStrip`'s marker editor is keyed by `editingId: string | null`
+ * **D-263 retired the `caption-panel` id.** That popover — D-252's own
+ * motivating case — no longer exists: the caption style library is docked
+ * content now (`CaptionLibrary.tsx` inside `EditLibraryPanel.tsx`), reached by
+ * selecting Subtitles on the library rail, so there is no open flag left to
+ * drive. `@chroma/debug`'s real-DOM proof for `debug_set_popover_open` drives
+ * `CanvasSettingsPopover` instead. The same pass removed the rail's own
+ * uncontrolled popovers noted below, for the same reason.
+ *
+ * **Not migrated yet, deliberately** (a real follow-on gap, not silently
+ * dropped): `MarkerStrip`'s marker editor is keyed by `editingId: string | null`
  * (which marker, not just open/closed) — fits a *different* generic shape
  * (`Record<string, string | null>`) that would be its own small design, not
- * a one-line addition to this boolean map. Both are recorded here so the next
- * agent extending this doesn't have to rediscover them.
+ * a one-line addition to this boolean map. Recorded here so the next agent
+ * extending this doesn't have to rediscover it.
  */
 import { useEditorTimelineStore } from './timelineStore';
 
 /** Every popover/dialog this registry can open or close by name. Add a new
  *  panel here, plus one `useState(false)` → `usePanelOpen(id)` swap at its
  *  call site — no store field, no new debug op, no new arg parser needed. */
-export const PANEL_IDS = ['caption-panel', 'canvas-settings', 'export-dialog'] as const;
+export const PANEL_IDS = ['canvas-settings', 'export-dialog'] as const;
 
 export type PanelId = (typeof PANEL_IDS)[number];
 

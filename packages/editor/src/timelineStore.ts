@@ -77,6 +77,7 @@ import {
 } from './timeline';
 import { clampPreviewView, FIT_VIEW, type PreviewView } from './previewZoom';
 import { DEFAULT_CLIP_INSPECTOR_TAB, type ClipInspectorTab } from './clipInspectorTabs';
+import { DEFAULT_EDIT_LIBRARY_MODE, type EditLibraryMode } from './editLibrary';
 
 const SAVE_DEBOUNCE_MS = 400;
 
@@ -293,6 +294,29 @@ interface EditorTimelineState {
    *  be a surprise mid-edit, and none of today's registered panels hold data
    *  that belongs to one project over another. */
   openPanels: Record<string, boolean>;
+  /** D-263 — which library the Edit tab's docked left-hand column is showing:
+   *  the shared media pool (`sources`), or one of this tab's own libraries
+   *  (`titles` / `effects` / `subtitles`). The rail (`EditLibraryRail.tsx`)
+   *  writes it, the docked panel (`EditLibraryPanel.tsx`) renders off it, and
+   *  the composition root reads it to decide whether the Edit tab is taking
+   *  the shell's docked column over at all (`Root.tsx` → `Shell`'s
+   *  `libraryPanel`).
+   *
+   *  In the store rather than in the rail's own `useState` for the reason
+   *  `inspectorOpen` above is: more than one component needs it — the rail
+   *  that sets it, the panel that renders it, and `Root` — and it is also what
+   *  `debug_get_ui_state` reports so an agent looking at a screenshot can tell
+   *  which library is actually on screen.
+   *
+   *  Session chrome, not project data: never persisted, never undoable
+   *  (D-216's rule), and deliberately NOT cleared by `setOpenProject` — same
+   *  treatment `inspectorOpen`/`inspectorTab`/`openPanels` get, for the same
+   *  reason (which library is open belongs to this session, not to a project).
+   *
+   *  Whether that column is SHOWN at all is separate and shell-level
+   *  (`useShellStore.sourcesPanelOpen`) — this package must not depend on
+   *  `@chroma/shell`, so the rail takes that flag and its setter as props. */
+  libraryMode: EditLibraryMode;
   /** B-088 — a monotonic counter bumped **only** when the BACKEND's copy of
    *  the active timeline is known to have changed: a `chroma_timeline_set`
    *  that actually resolved, or a `chroma_timeline_get` that actually
@@ -359,6 +383,10 @@ interface EditorTimelineState {
   /** D-252 — open/close one registered popover/dialog by id. The one writer
    *  for both that popover's own trigger and `debug_set_popover_open`. */
   setPanelOpen: (id: string, open: boolean) => void;
+  /** D-263 — switch which library the docked left column shows. The one
+   *  writer for both the human's rail button (`EditLibraryRail.tsx`) and any
+   *  future op that needs to drive it. */
+  setLibraryMode: (mode: EditLibraryMode) => void;
   applyOp: (op: EditOp) => void;
   /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),
    *  bypassing the debounced save so it lands immediately. */
@@ -444,6 +472,9 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   dynamicZoom: null,
   // D-252 — nothing open by default; see the field's own doc.
   openPanels: {},
+  // D-263 — the shared media pool, which is what this column showed before
+  // the rail could switch it at all (D-046) and what an edit starts from.
+  libraryMode: DEFAULT_EDIT_LIBRARY_MODE,
   savedVersion: 0,
 
   setOpenProject: (key) => {
@@ -583,6 +614,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   setDynamicZoom: (mode) => set({ dynamicZoom: mode }),
 
   setPanelOpen: (id, open) => set((s) => ({ openPanels: { ...s.openPanels, [id]: open } })),
+
+  setLibraryMode: (mode) => set({ libraryMode: mode }),
 
   applyOp: (op) => {
     const before = get().timeline;

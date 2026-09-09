@@ -6,7 +6,7 @@
 //
 // **Why it is its own module rather than living in the panel.** CLAUDE.md's
 // standing rule: every feature is built for a human AND an AI, through the
-// same op underneath. `CaptionPanel.tsx` calls this when a library tile is
+// same op underneath. `CaptionLibrary.tsx` calls this when a library tile is
 // clicked; `editor_add_caption_preset` calls exactly the same function. There
 // is no second code path that could drift, and no behaviour the GUI has that
 // MCP does not.

@@ -78,9 +78,19 @@ several rounds of the owner's own screenshots before an agent could even confirm
    why. `debug_get_ui_state`'s `editor` section now also reports
    `openPanels` (the live map) and `panelIds` (`PANEL_IDS`, the reference
    list of what can appear there).
-   Registered today: `caption-panel`, `canvas-settings`, `export-dialog`. Add
-   a new one by adding its id to `PANEL_IDS` and swapping its component's
-   `useState(false)` for `usePanelOpen(id)` — no new op, no new store field.
+   Registered today: `canvas-settings`, `export-dialog`. Add a new one by
+   adding its id to `PANEL_IDS` and swapping its component's `useState(false)`
+   for `usePanelOpen(id)` — no new op, no new store field.
+   **D-263 retired `caption-panel`** — that popover no longer exists: the
+   caption style library is docked content now (`CaptionLibrary.tsx` inside the
+   Edit tab's library column), so there is no open flag to drive. The same pass
+   removed `EditLibraryRail`'s own uncontrolled rail popovers, for the same
+   reason, and `@chroma/debug`'s real-DOM proof for this op now drives
+   `CanvasSettingsPopover`. `debug_get_ui_state` gained `editor.libraryMode` /
+   `editor.libraryModes` in their place: which library the docked left column
+   is showing (`sources` = the shell's shared media pool), because a screenshot
+   of that column no longer implies "media pool". Read-only on purpose — see
+   D-263 on why there is no `debug_set_library_mode`.
    **Remaining gap, deliberately:** the **Colorist tab's** own panel/visibility/
    settings state (`app/src/store/useUIStore.ts` — `setPanel`, `uiVisibility`,
    `isSettingsOpen`). It lives in the vendored fork, i.e. the *app* layer, and
@@ -88,8 +98,8 @@ several rounds of the owner's own screenshots before an agent could even confirm
    direction. Closing it properly means either moving that UI state into a package or
    having the app register its own named ops into the registry — a real design call,
    not a line of code, so it is stated here rather than half-done. Also still open:
-   `EditLibraryRail`'s uncontrolled rail popovers and `MarkerStrip`'s
-   `editingId`-keyed marker editor (see D-252).
+   `MarkerStrip`'s `editingId`-keyed marker editor (see D-252; the rail popovers
+   that used to be listed here are gone, D-263).
 3. **Pixel/color inspection** — **DONE, in D-210** (it shipped alongside the
    screenshot tool, not after it). `debug_sample_pixel(path, x, y)` reads the exact
    RGBA + hex out of **any** saved PNG, including one written long before the app's
@@ -190,7 +200,7 @@ debug_ui_state()                             # what's open right now
 debug_set_active_tab("edit")                 # → useShellStore.setActiveTab
 debug_set_editor_inspector(open=True)        # → useEditorTimelineStore.setInspectorOpen
 debug_set_inspector_tab("audio")             # → useEditorTimelineStore.setInspectorTab
-debug_set_popover_open("caption-panel", True)  # → useEditorTimelineStore.setPanelOpen
+debug_set_popover_open("canvas-settings", True)  # → useEditorTimelineStore.setPanelOpen
 debug_screenshot()                           # → a real PNG path; Read it, look at it
 debug_dom_tree('[data-chroma-panel="editor-inspector"]', max_depth=3)
                                              # → its REAL rect + computed styles
@@ -304,7 +314,7 @@ checked is how B-100 happened in the first place.
   supposed to have.
   Re-run again 2026-09-08 for D-252's new op: `debug_set_popover_open` — **0**
   occurrences. Its own store action `setPanelOpen` — the function `usePanelOpen`
-  calls, which is what `CaptionPanel`'s/`CanvasSettingsPopover`'s/
+  calls, which is what `CanvasSettingsPopover`'s/
   `EditorExportDialog`'s own triggers now call instead of a local `useState`
   setter — is present (**2**), the same absent-op/present-action shape as
   every check above. Still one `index-*.js` chunk, no separate `debugOps` or
@@ -317,9 +327,10 @@ checked is how B-100 happened in the first place.
 
 Pieces 1–5 are all built as of 2026-09-08 (D-210 for 1 and 3; D-219 for 2, 4, 5; B-100
 for the gate; D-252 extending piece 2 with `debug_set_popover_open`). Stated remaining
-gaps: the **Colorist tab's** own panel/visibility/settings state, `EditLibraryRail`'s
-uncontrolled rail popovers, and `MarkerStrip`'s `editingId`-keyed marker editor — see
-piece 2 above for why each is a real design call rather than a missing line of code.
+gaps: the **Colorist tab's** own panel/visibility/settings state, and `MarkerStrip`'s
+`editingId`-keyed marker editor — see piece 2 above for why each is a real design call
+rather than a missing line of code. (`EditLibraryRail`'s uncontrolled rail popovers
+were listed here until D-263 docked those libraries and removed them.)
 
 Check `docs/CHANGELOG.md` (search "debug" or the date) for what has actually landed —
 this file is the scope/tracker, not a live status board.

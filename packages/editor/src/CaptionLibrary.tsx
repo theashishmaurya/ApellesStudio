@@ -1,8 +1,9 @@
 /**
- * @chroma/editor — the Edit tab's **Captions panel** (D-243,
- * `docs/notes/caption-presets.md`).
+ * @chroma/editor — the Edit tab's **caption library** (D-243, docked by
+ * D-263; `docs/notes/caption-presets.md`).
  *
- * **What it is:** what clicking "Captions" opens. Two tabs:
+ * **What it is:** the Subtitles library, rendered inside the docked left-hand
+ * library column (`EditLibraryPanel.tsx`). Two tabs:
  * - **Import** — the D-229 `.srt`/`.vtt` flow, unchanged, moved in here.
  * - **Styles** — a library of caption presets, each with a live thumbnail,
  *   that drop onto the timeline in one click.
@@ -13,11 +14,24 @@
  * caption is edited, the same split the reference NLEs use (a browser of
  * looks, and an Inspector for the selected thing).
  *
- * **Why a panel rather than the bare button it replaces.** D-229's "Subtitles"
- * button went straight to a file picker, so the only way to get a caption was
- * to already have an `.srt`. The owner's ask (roadmap 28) is the CapCut/HeyGen
- * shape: a library of styled looks you can drop directly, with import as one
- * option rather than the only one.
+ * **Why a library rather than the bare button it replaces.** D-229's
+ * "Subtitles" button went straight to a file picker, so the only way to get a
+ * caption was to already have an `.srt`. The owner's ask (roadmap 28) is the
+ * CapCut/HeyGen shape: a library of styled looks you can drop directly, with
+ * import as one option rather than the only one.
+ *
+ * **Docked, not a popover (D-263).** This was `CaptionPanel.tsx` until D-263:
+ * a "Captions ▾" button that opened this same content in a `Popover`, itself
+ * mounted inside the library rail's own popover. The owner asked for the
+ * libraries to open *in the docked panel* instead, and a browser of looks is
+ * exactly what a docked browser column is for — it is what Final Cut Pro's own
+ * Titles-and-Generators browser and Resolve's effects library both are
+ * (`scratch/activity-bar-reference/notes.md`). Nothing about the CONTENT
+ * changed in that move; what went away is the popover wrapper, its open flag
+ * (D-252's `caption-panel` panel id, retired with it) and the two
+ * `setOpen(false)` calls that closed it after a pick — a docked panel has
+ * nothing to close, and staying open is what lets a second preset be tried
+ * straight after the first.
  *
  * **The thumbnails are the real style, not pictures.** Each tile renders the
  * preset's own colours, weight, box and highlight in CSS at tile scale — so a
@@ -29,13 +43,9 @@
 import { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { Captions, ChevronDown, FileUp } from 'lucide-react';
+import { FileUp } from 'lucide-react';
 import {
   Button,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  ScrollArea,
   Tabs,
   TabsContent,
   TabsList,
@@ -49,7 +59,6 @@ import { resolveCaptionStyle } from './caption';
 import { captionAnimationOf } from './captionAnim';
 import { captionPresetGroups, type CaptionPreset } from './captionPresets';
 import { applyCaptionPreset } from './captionPresetAction';
-import { usePanelOpen } from './panelRegistry';
 import { useEditorTimelineStore } from './timelineStore';
 
 /** One cue as `chroma_import_subtitles` returns it — already parsed and on the
@@ -173,16 +182,10 @@ function fontWeightFor(key: string): number {
   return 400;
 }
 
-export function CaptionPanel() {
+export function CaptionLibrary() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   const playhead = useEditorTimelineStore((s) => s.playhead);
-  // D-252 — lifted out of local `useState` into the shared `openPanels` map
-  // so `debug_set_popover_open('caption-panel', ...)` can drive the SAME flag
-  // this trigger's own click drives, rather than simulate a click on it. See
-  // `panelRegistry.ts`'s module doc for why a shared map rather than a
-  // bespoke store field.
-  const [open_, setOpen] = usePanelOpen('caption-panel');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -227,7 +230,6 @@ export function CaptionPanel() {
     // ONE op for the whole file: a 400-cue `.srt` is one undo entry, not four
     // hundred. See the op's own doc in `timeline.ts`.
     applyOp({ kind: 'import_subtitles', cues: res.cues });
-    setOpen(false);
   };
 
   const pick = (preset: CaptionPreset) => {
@@ -235,125 +237,105 @@ export function CaptionPanel() {
     // The SAME action `editor_add_caption_preset` calls — one path for the
     // human and the agent (CLAUDE.md).
     const res = applyCaptionPreset({ presetId: preset.id, placeCaption: true });
-    if ('error' in res) {
-      setError(res.error);
-      return;
-    }
-    setOpen(false);
+    if ('error' in res) setError(res.error);
   };
 
   return (
-    <Popover open={open_} onOpenChange={setOpen}>
-      {/* B-121 — labelled "Captions", not "Subtitles", and it says it opens
-          something. D-243 replaced D-229's straight-to-a-file-picker
-          "Subtitles" button with this panel but kept that button's exact
-          label, icon and flat styling, so from the toolbar the styled preset
-          library was indistinguishable from the import button it had replaced
-          — the owner looked for the caption styles in a live session and
-          could not find them, having already learned that this control opens
-          a file picker. "Captions" is also what every other surface in this
-          feature calls it (`CaptionPanel`, `captionPresets`,
-          `editor_add_caption_preset`, `CaptionInspectorPanel`); "Subtitles"
-          now names only the `.srt`/`.vtt` tab inside, which is the one thing
-          it still accurately describes. */}
-      <PopoverTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="xs"
-            disabled={!timeline}
-            data-testid="caption-panel-trigger"
-            title="Caption styles, and subtitle import"
-          >
-            <Captions className="size-3.5" />
-            <span className="ml-1">Captions</span>
-            <ChevronDown className="ml-0.5 size-3 opacity-60" />
-          </Button>
-        }
-      />
-      <PopoverContent align="start" className="w-[380px] p-0" data-testid="caption-panel">
-        <Tabs defaultValue="styles">
-          <div className="border-b border-border-color px-2 pt-2">
-            <TabsList>
-              <TabsTrigger value="styles">Styles</TabsTrigger>
-              <TabsTrigger value="import">Import</TabsTrigger>
-            </TabsList>
-          </div>
+    // B-121 — the STYLES tab is what opens first, because the styled preset
+    // library is the thing D-243 built and the thing the owner went looking
+    // for and could not find when this content sat behind a button that used
+    // to open a file picker. "Subtitles" now names only the `.srt`/`.vtt` tab,
+    // which is the one thing it accurately describes.
+    <div
+      data-testid="caption-library"
+      className="flex h-full min-h-0 w-full flex-col"
+    >
+      <Tabs defaultValue="styles" className="flex min-h-0 flex-1 flex-col">
+        <div className="shrink-0 border-b border-border-color px-2 pt-2">
+          <TabsList>
+            <TabsTrigger value="styles">Styles</TabsTrigger>
+            <TabsTrigger value="import">Import</TabsTrigger>
+          </TabsList>
+        </div>
 
-          <TabsContent value="styles" className="m-0">
-            <ScrollArea className="h-[320px]">
-              <div className="space-y-3 p-2">
-                {captionPresetGroups().map(({ group, presets }) => (
-                  <div key={group}>
-                    <div className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-text-secondary">
-                      {group}
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {presets.map((preset) => (
-                        <Tooltip key={preset.id}>
-                          <TooltipTrigger
-                            render={
-                              <button
-                                type="button"
-                                onClick={() => pick(preset)}
-                                data-testid={`caption-preset-${preset.id}`}
-                                aria-label={`Apply the ${preset.label} caption style`}
-                                className="group flex flex-col gap-1 rounded-md border border-border-color p-1 text-left transition-colors hover:border-accent focus-visible:border-accent focus-visible:outline-none"
-                              >
-                                <PresetThumbnail preset={preset} />
-                                <span className="truncate px-0.5 text-[11px] text-text-primary">
-                                  {preset.label}
-                                </span>
-                              </button>
-                            }
-                          />
-                          <TooltipContent side="right" className="max-w-[260px]">
-                            <div className="text-[11px]">{preset.description}</div>
-                            {/* The provenance/divergence note, shown where the
-                                choice is made rather than buried in a doc. */}
-                            <div className="mt-1 text-[10px] opacity-70">{preset.note}</div>
-                          </TooltipContent>
-                        </Tooltip>
-                      ))}
-                    </div>
+        <TabsContent value="styles" className="m-0 min-h-0 flex-1">
+          {/* A plain overflow scroller rather than `@chroma/ui`'s `ScrollArea`
+              (which is what the popover used at a fixed `h-[320px]`): docked,
+              this fills whatever height the resizable column has, and a
+              height-driven flex child is the one thing Base UI's ScrollArea
+              viewport needs a fixed height for. */}
+          <div className="h-full overflow-y-auto">
+            <div className="space-y-3 p-2">
+              {captionPresetGroups().map(({ group, presets }) => (
+                <div key={group}>
+                  <div className="mb-1 px-1 text-[10px] font-medium uppercase tracking-wide text-text-secondary">
+                    {group}
                   </div>
-                ))}
-              </div>
-            </ScrollArea>
-          </TabsContent>
-
-          <TabsContent value="import" className="m-0">
-            <div className="space-y-2 p-3">
-              <p className="text-[11px] text-text-secondary">
-                Import a subtitle file as a new subtitle track. Cues land at the playhead and can
-                be moved, trimmed and split like any other clip.
-              </p>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={busy || !timeline}
-                onClick={importFile}
-                data-testid="caption-import"
-              >
-                <FileUp className="size-3.5" />
-                <span className="ml-1">{busy ? 'Importing…' : 'Choose .srt or .vtt…'}</span>
-              </Button>
-              <p className="text-[10px] text-text-secondary opacity-70">
-                TTML, XML and embedded MXF subtitles are not supported.
-              </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {presets.map((preset) => (
+                      <Tooltip key={preset.id}>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              type="button"
+                              onClick={() => pick(preset)}
+                              data-testid={`caption-preset-${preset.id}`}
+                              aria-label={`Apply the ${preset.label} caption style`}
+                              className="group flex flex-col gap-1 rounded-md border border-border-color p-1 text-left transition-colors hover:border-accent focus-visible:border-accent focus-visible:outline-none"
+                            >
+                              <PresetThumbnail preset={preset} />
+                              <span className="truncate px-0.5 text-[11px] text-text-primary">
+                                {preset.label}
+                              </span>
+                            </button>
+                          }
+                        />
+                        <TooltipContent side="right" className="max-w-[260px]">
+                          <div className="text-[11px]">{preset.description}</div>
+                          {/* The provenance/divergence note, shown where the
+                              choice is made rather than buried in a doc. */}
+                          <div className="mt-1 text-[10px] opacity-70">{preset.note}</div>
+                        </TooltipContent>
+                      </Tooltip>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
-          </TabsContent>
-        </Tabs>
-
-        {error && (
-          <div
-            className="border-t border-border-color px-3 py-2 text-[11px] text-red-400"
-            data-testid="caption-panel-error"
-          >
-            {error}
           </div>
-        )}
-      </PopoverContent>
-    </Popover>
+        </TabsContent>
+
+        <TabsContent value="import" className="m-0">
+          <div className="space-y-2 p-3">
+            <p className="text-[11px] text-text-secondary">
+              Import a subtitle file as a new subtitle track. Cues land at the playhead and can
+              be moved, trimmed and split like any other clip.
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy || !timeline}
+              onClick={importFile}
+              data-testid="caption-import"
+            >
+              <FileUp className="size-3.5" />
+              <span className="ml-1">{busy ? 'Importing…' : 'Choose .srt or .vtt…'}</span>
+            </Button>
+            <p className="text-[10px] text-text-secondary opacity-70">
+              TTML, XML and embedded MXF subtitles are not supported.
+            </p>
+          </div>
+        </TabsContent>
+      </Tabs>
+
+      {error && (
+        <div
+          className="shrink-0 border-t border-border-color px-3 py-2 text-[11px] text-red-400"
+          data-testid="caption-library-error"
+        >
+          {error}
+        </div>
+      )}
+    </div>
   );
 }
