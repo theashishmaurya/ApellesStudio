@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-258: Motion's first representational primitives — a Claude
+  chat UI and a phone frame, deliberately decoupled** — the catalog goes from 8
+  primitives to 10. `claudechat` draws the real Claude mobile app screen (header,
+  user bubbles, serif assistant prose, tool chips, task/document cards, input bar,
+  sunburst welcome), built from colours and structure sampled out of the owner's
+  own reference screenshot rather than recalled. `deviceframe` is the phone chrome
+  on its own, with a genuinely transparent glass cutout, so it frames anything —
+  the two compose by agreeing on a rect (`lib/device.ts`) instead of one containing
+  the other, per the owner's "separate, not attached". Multiple conversations
+  animate over one scene through the EXISTING `active` step schedule, not a new
+  mechanism; `registry.ts`'s `resolveActive` was redefined as a wrapper over the
+  new `resolveActiveStep` so there is one implementation. Both primitives reach
+  `motion_list_primitives`/`motion_add_layer` with no new MCP tool (asserted by a
+  test, not assumed). Verified with real `remotion still` renders at three states
+  against the reference — which caught a line-wrap over-estimate and a collapsed
+  `\n` — plus a byte-identical determinism re-render. 561 tests in `@chroma/motion`
+  (37 new), 2155 across all workspaces, `tsc` clean.
 - **2026-09-09** — **D-255: the marketing website shipped, out of sequence** —
   a new top-level `website/` (Astro, its own project, deliberately outside the
   npm workspace), reversing the standing "build the website LAST, right before

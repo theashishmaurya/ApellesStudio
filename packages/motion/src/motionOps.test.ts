@@ -319,6 +319,53 @@ describe('reads', () => {
     h2.state.loadState = 'no-project';
     expect((h2.run('motion_list_primitives').primitives as unknown[]).length).toBe(prims.length);
   });
+
+  /**
+   * D-258 — the load-bearing check behind "a new primitive gets its MCP
+   * surface for free": `motion_list_primitives` maps over `catalogEntries`
+   * and `fieldsForPrimitive`, and `motion_add_layer` takes any catalogued
+   * `use`, so registering a primitive in the engine's schema + the two
+   * catalogs is the WHOLE job — no new MCP tool, no per-primitive branch
+   * anywhere in `motionOps.ts`. This test would fail if either new primitive
+   * were reachable from the GUI Catalog panel but not from an agent.
+   */
+  it('exposes the D-258 device/chat pair to an agent with no new tool', () => {
+    const h = harness();
+    const prims = h.run('motion_list_primitives').primitives as Record<string, unknown>[];
+
+    const frame = prims.find((p) => p.use === 'deviceframe') as Record<string, unknown>;
+    expect(frame).toBeTruthy();
+    expect(frame.in3d).toBe(false);
+    expect(frame.container).toMatch(/scene\.layers/);
+    // its resize affordance is the `'scale'` SizeKind, not a px w/h
+    expect(frame.size).toMatchObject({ kind: 'scale', key: 'scale' });
+    expect(frame.position).toBe('xy');
+
+    const chat = prims.find((p) => p.use === 'claudechat') as Record<string, unknown>;
+    expect(chat).toBeTruthy();
+    expect(chat.in3d).toBe(false);
+    expect(chat.size).toMatchObject({ kind: 'wh', w: 'width', h: 'height' });
+
+    // the fields an agent needs to drive multiple conversations are all listed
+    const keys = (chat.fields as { key: string }[]).map((f) => f.key);
+    expect(keys).toContain('conversations');
+    // `active` is the shared timing field — THE control for which
+    // conversation shows when, not a claudechat-specific one (D-178/B-067)
+    expect(keys).toContain('active');
+    expect(keys).toContain('stagger');
+    expect(keys).toContain('reveal');
+
+    // and both are actually creatable through the generic add path
+    for (const use of ['deviceframe', 'claudechat']) {
+      const hh = harness();
+      const before = (hh.run('motion_list_layers', { scene_index: 0 }).layers as unknown[]).length;
+      const res = hh.run('motion_add_layer', { scene_index: 0, use });
+      expect(res.error).toBeUndefined();
+      expect((hh.run('motion_list_layers', { scene_index: 0 }).layers as unknown[]).length).toBe(
+        before + 1,
+      );
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -34,6 +34,8 @@ const ALL_USES: PrimitiveUse[] = [
   'matrix',
   'graph',
   'layers',
+  'deviceframe',
+  'claudechat',
   'particleflow',
   'labelbox',
   'layerstack',

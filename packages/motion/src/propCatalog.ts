@@ -138,6 +138,61 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'gap', label: 'Gap', kind: 'number', group: 'layout' },
     { key: 'tilt', label: 'Tilt', kind: 'number', group: 'layout' },
   ],
+  // D-258 — the device/app-UI pair. `deviceframe` is pure chrome; every field
+  // here is about the phone body, none about what is on the screen.
+  deviceframe: [
+    { key: 'model', label: 'Model', kind: 'select', options: ['iphone-15-pro', 'iphone-15-pro-max', 'iphone-se', 'pixel-8', 'generic'], group: 'source' },
+    { key: 'x', label: 'X', kind: 'number', group: 'layout' },
+    { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
+    { key: 'scale', label: 'Scale', kind: 'number', group: 'layout' },
+    { key: 'notch', label: 'Notch', kind: 'select', options: ['dynamic-island', 'notch', 'punch-hole', 'none'], group: 'source' },
+    { key: 'bodyColor', label: 'Body color', kind: 'color', group: 'fill' },
+    { key: 'rimColor', label: 'Rim color', kind: 'color', group: 'fill' },
+    { key: 'screenColor', label: 'Screen fill', kind: 'color', group: 'fill' },
+    { key: 'notchColor', label: 'Notch color', kind: 'color', group: 'fill' },
+    { key: 'homeIndicator', label: 'Home indicator', kind: 'boolean', group: 'source' },
+    { key: 'buttons', label: 'Side buttons', kind: 'boolean', group: 'source' },
+    { key: 'shadow', label: 'Shadow', kind: 'number', group: 'fill' },
+  ],
+  // `claudechat` is the content. `conversations` is `json` for the same
+  // reason `layers.items` is (see this file's header): it is the primitive's
+  // real CONTENT, a nested array of threads of messages, and deserves a
+  // purpose-built editor rather than a generic one guessed at speed. The
+  // shared `active` timing field above is THE control for which conversation
+  // shows when — deliberately not re-declared here, per D-178/B-067.
+  claudechat: [
+    { key: 'conversations', label: 'Conversations', kind: 'json', group: 'content' },
+    { key: 'messages', label: 'Messages (single thread)', kind: 'json', group: 'content' },
+    { key: 'title', label: 'Header title', kind: 'string', group: 'content' },
+    { key: 'model', label: 'Model chip', kind: 'string', group: 'content' },
+    { key: 'welcome', label: 'Welcome greeting', kind: 'string', group: 'content' },
+    { key: 'placeholder', label: 'Input placeholder', kind: 'string', group: 'content' },
+    { key: 'reveal', label: 'Reveal', kind: 'select', options: ['fade', 'slide', 'pop', 'type'], group: 'source' },
+    { key: 'stagger', label: 'Message stagger (s)', kind: 'number', group: 'timing' },
+    { key: 'revealDur', label: 'Reveal duration (s)', kind: 'number', group: 'timing' },
+    { key: 'switchDur', label: 'Conversation switch (s)', kind: 'number', group: 'timing' },
+    { key: 'typing', label: 'Typing indicator', kind: 'boolean', group: 'source' },
+    { key: 'typingDur', label: 'Typing lead-in (s)', kind: 'number', group: 'timing' },
+    { key: 'x', label: 'X', kind: 'number', group: 'layout' },
+    { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
+    { key: 'width', label: 'Width', kind: 'number', group: 'layout' },
+    { key: 'height', label: 'Height', kind: 'number', group: 'layout' },
+    { key: 'radius', label: 'Corner radius', kind: 'number', group: 'layout' },
+    { key: 'header', label: 'Show header', kind: 'boolean', group: 'source' },
+    { key: 'statusBar', label: 'Show status bar', kind: 'boolean', group: 'source' },
+    { key: 'inputBar', label: 'Show input bar', kind: 'boolean', group: 'source' },
+    { key: 'researchActive', label: 'Research toggle lit', kind: 'boolean', group: 'source' },
+    { key: 'bg', label: 'Background', kind: 'color', group: 'fill' },
+    { key: 'ink', label: 'Text color', kind: 'color', group: 'fill' },
+    { key: 'muted', label: 'Muted color', kind: 'color', group: 'fill' },
+    { key: 'accent', label: 'Accent color', kind: 'color', group: 'fill' },
+    { key: 'bubbleBg', label: 'User bubble', kind: 'color', group: 'fill' },
+    { key: 'cardBg', label: 'Card background', kind: 'color', group: 'fill' },
+    { key: 'border', label: 'Border color', kind: 'color', group: 'fill' },
+    { key: 'inputBg', label: 'Input bar color', kind: 'color', group: 'fill' },
+    { key: 'fontSerif', label: 'Serif font', kind: 'string', group: 'fill' },
+    { key: 'fontSans', label: 'Sans font', kind: 'string', group: 'fill' },
+  ],
   particleflow: [
     { key: 'preset', label: 'Preset', kind: 'select', options: ['stream', 'converge', 'disperse'], group: 'source' },
     { key: 'count', label: 'Count', kind: 'number', group: 'source' },
@@ -244,6 +299,13 @@ export type PositionKind = 'xy' | 'box-xy';
 
 export function positionFields(use: string): PositionKind | undefined {
   if (use === 'text' || use === 'matrix' || use === 'layers') return 'xy';
+  // D-258 — both new primitives carry plain world-px `x`/`y` fields, so they
+  // take the existing `'xy'` shape unchanged. (`deviceframe`'s pair is the
+  // body's CENTRE and `claudechat`'s is its screen rect's TOP-LEFT, which
+  // makes no difference here: a drag captures the layer's own base values and
+  // writes back absolute ones, so the anchor's meaning stays the
+  // primitive's own business — see `setLayerPosition` in `manifestEdit.ts`.)
+  if (use === 'deviceframe' || use === 'claudechat') return 'xy';
   if (use === 'emphasis') return 'box-xy';
   return undefined;
 }
@@ -268,17 +330,35 @@ export function positionFields(use: string): PositionKind | undefined {
  *   - `'w-only'`  — `text.maxWidth` (a wrap width; `Text.tsx` has no
  *                   comparable height knob — text height is intrinsic to
  *                   its content and font size, not a stored field).
+ *   - `'scale'`   — (D-258) the resized thing has a FIXED intrinsic size and
+ *                   one uniform multiplier on top of it (`deviceframe.scale`
+ *                   over its model's own body dimensions). Distinct from
+ *                   `'scalar'`, which looks like it would fit but does not:
+ *                   that branch is arithmetic specific to `matrix`
+ *                   (`(W+gap)/cols - gap`), and its `key` holds a value in
+ *                   PIXELS, whereas this one holds a unitless ratio. Mapping
+ *                   a phone onto `'scalar'` would write a pixel count into a
+ *                   multiplier — hence a real fourth shape rather than a
+ *                   near-enough reuse. `baseW`/`baseH` are the intrinsic size
+ *                   the multiplier applies to, resolved per-layer by the
+ *                   caller since it depends on the chosen `model`.
  *  `undefined` — no resizable field at all (every `in3d` primitive, and any
  *  future/unrecognized `use`). */
 export type SizeKind =
   | { kind: 'wh'; w: string; h: string }
   | { kind: 'box-wh' }
   | { kind: 'scalar'; key: string }
-  | { kind: 'w-only'; key: string };
+  | { kind: 'w-only'; key: string }
+  | { kind: 'scale'; key: string };
 
 export function sizeFields(use: string): SizeKind | undefined {
   if (use === 'layers') return { kind: 'wh', w: 'cardW', h: 'cardH' };
   if (use === 'graph') return { kind: 'wh', w: 'width', h: 'height' };
+  // D-258 — `claudechat` has real px `width`/`height` fields, so it takes the
+  // plain two-field shape; `deviceframe`'s only size knob is its uniform
+  // `scale` over a fixed model body, which is what `'scale'` exists for.
+  if (use === 'claudechat') return { kind: 'wh', w: 'width', h: 'height' };
+  if (use === 'deviceframe') return { kind: 'scale', key: 'scale' };
   if (use === 'emphasis') return { kind: 'box-wh' };
   if (use === 'matrix') return { kind: 'scalar', key: 'cell' };
   if (use === 'text') return { kind: 'w-only', key: 'maxWidth' };

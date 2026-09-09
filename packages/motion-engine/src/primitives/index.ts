@@ -14,3 +14,6 @@ export { FilmGrain, Vignette } from "./postfx";
 export { Layers } from "./Layers";
 export type { LayerItem } from "./Layers";
 export { ParticleFlow } from "./ParticleFlow";
+export { DeviceFrame } from "./DeviceFrame";
+export { ClaudeChat } from "./ClaudeChat";
+export type { RevealPreset } from "./ClaudeChat";

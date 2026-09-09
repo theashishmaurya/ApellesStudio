@@ -79,6 +79,26 @@ export function PrimitiveGlyph({ use }: { use: PrimitiveUse }) {
           <circle cx="20.5" cy="13.5" r="1.1" opacity="0.6" />
         </svg>
       );
+    // D-258 — a phone outline for the chrome, a speech thread for the app
+    // content: the pair reads as "frame" vs "what goes in one" at a glance,
+    // which is the whole decoupling the two primitives exist to express.
+    case 'deviceframe':
+      return (
+        <svg {...common}>
+          <rect x="6.5" y="2.5" width="11" height="19" rx="2.6" />
+          <path d="M10 4.6h4" opacity="0.8" />
+          <path d="M10.4 19.4h3.2" opacity="0.5" />
+        </svg>
+      );
+    case 'claudechat':
+      return (
+        <svg {...common}>
+          <rect x="4" y="4.5" width="16" height="15" rx="2.4" />
+          <path d="M7.2 9h6.4" />
+          <path d="M7.2 12.4h9.6" opacity="0.7" />
+          <path d="M7.2 15.8h5" opacity="0.45" />
+        </svg>
+      );
     case 'labelbox':
       return (
         <svg {...common}>
