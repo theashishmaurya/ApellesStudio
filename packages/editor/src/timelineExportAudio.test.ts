@@ -440,6 +440,67 @@ describe('buildAudioSourceChain — per-clip level (D-223)', () => {
     expect(r).toBe(0);
   });
 
+  /** **B-101/D-269 — the mono→stereo law.** The step above the `channelsplit`
+   *  is not cosmetic plumbing: it decides how much signal each channel starts
+   *  with, and the two available answers are 3.01 dB apart. `aformat` hands
+   *  the job to libswresample's power-preserving matrix (1/√2 per channel);
+   *  `pan=stereo|c0=c0|c1=c0` duplicates at unity, which is what the live
+   *  mixer's `adapt_channels` does and what this codebase's 0 dB-centre pan
+   *  law is normalised against. A source POSITIVELY known to be mono takes the
+   *  duplicate; everything else keeps `aformat`, because that same `pan`
+   *  expression on a real stereo source would copy its left channel over its
+   *  right. */
+  const stereoStepOf = (steps: string[]) => /\](.*?)\[s/.exec(steps[0])![1];
+
+  it('B-101: a panned MONO clip is upmixed by a UNITY duplicate, the live mixer’s own law', () => {
+    const { steps } = buildAudioSourceChain({
+      ...base,
+      clip: clip('a', { pan: -1 }),
+      sourceChannels: 1,
+    });
+    expect(stereoStepOf(steps)).toBe('pan=stereo|c0=c0|c1=c0');
+    // Everything downstream of the upmix is untouched by this fix.
+    expect(steps.slice(1)).toEqual(
+      buildAudioSourceChain({ ...base, clip: clip('a', { pan: -1 }) }).steps.slice(1),
+    );
+  });
+
+  it('B-101: a panned STEREO clip keeps aformat — the duplicate would destroy its right channel', () => {
+    const { steps } = buildAudioSourceChain({
+      ...base,
+      clip: clip('a', { pan: -1 }),
+      sourceChannels: 2,
+    });
+    expect(stereoStepOf(steps)).toBe('aformat=channel_layouts=stereo');
+  });
+
+  it('B-101: an UNPROBED channel count keeps the pre-fix upmix rather than guessing mono', () => {
+    // The sentinel discipline `MediaVideoInfo.audioChannels` requires: absent
+    // means "never probed", and turning that into a confident "mono" would
+    // mis-upmix a real stereo source, which is worse than a 3 dB error.
+    const { steps } = buildAudioSourceChain({ ...base, clip: clip('a', { pan: -1 }) });
+    expect(stereoStepOf(steps)).toBe('aformat=channel_layouts=stereo');
+    const multi = buildAudioSourceChain({
+      ...base,
+      clip: clip('a', { pan: -1 }),
+      sourceChannels: 6,
+    });
+    expect(stereoStepOf(multi.steps)).toBe('aformat=channel_layouts=stereo');
+  });
+
+  it('B-101: a MONO clip with NO pan still emits no channel plumbing at all', () => {
+    // The fix must not make an unpanned clip pay anything. With `pan === 0`
+    // the whole split/join branch is skipped, so a mono clip stays mono end to
+    // end and nothing rematrixes it in either direction.
+    const { steps, ref } = buildAudioSourceChain({
+      ...base,
+      clip: clip('a'),
+      sourceChannels: 1,
+    });
+    expect(steps).toEqual([]);
+    expect(ref).toEqual({ kind: 'raw', inputIdx: 3 });
+  });
+
   it('the track gain and clip volume multiply into BOTH channels of a panned clip', () => {
     const { steps } = buildAudioSourceChain({
       ...base,

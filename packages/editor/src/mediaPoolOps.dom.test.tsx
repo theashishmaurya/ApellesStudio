@@ -35,6 +35,10 @@ const backend = vi.hoisted(() => ({
   items: [] as Record<string, unknown>[],
   folders: [] as string[],
   calls: [] as { cmd: string; args: Record<string, unknown> | undefined }[],
+  /** B-073 — which source paths are readable *right now*. The whole bug is
+   *  about an item pooled while its file was unavailable, so the fixture needs
+   *  a file that is genuinely absent and can genuinely come back. */
+  availableOnDisk: new Set<string>(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -66,6 +70,32 @@ vi.mock('@tauri-apps/api/core', () => ({
         backend.folders = [...backend.folders, folder].sort();
       }
       return found;
+    },
+    // B-073 — the re-probe command. The fake backend models the real
+    // contract: a source that is available now gains real video metadata, one
+    // that is still unavailable comes back untouched, and an unknown id is
+    // skipped rather than failing the batch.
+    chroma_media_reprobe: (args) => {
+      backend.calls.push({ cmd: 'chroma_media_reprobe', args });
+      const ids = (args?.ids ?? []) as string[];
+      return ids
+        .map((id) => backend.items.find((m) => m.id === id))
+        .filter((m): m is Record<string, unknown> => !!m)
+        .map((m) => {
+          if (backend.availableOnDisk.has(String(m.sourcePath))) {
+            m.offline = false;
+            m.video = {
+              width: 1920,
+              height: 1080,
+              fps: 30,
+              frameCount: 900,
+              durationSecs: 30,
+              hasAudio: true,
+              audioChannels: 2,
+            };
+          }
+          return m;
+        });
     },
     chroma_text_fonts: () => [],
   }),
@@ -159,6 +189,7 @@ beforeEach(() => {
   backend.items = [];
   backend.folders = [];
   backend.calls.length = 0;
+  backend.availableOnDisk.clear();
   bus.emitted.length = 0;
   useMediaPoolStore.setState({ items: [], folders: [], openProjectKey: 'test-project' });
 });
@@ -224,9 +255,11 @@ describe('editor_list_media (D-266)', () => {
     const stuck = env.result.items.find((m: { id: string }) => m.id === 'stuck');
     expect(stuck.usable).toBe(false);
     expect(stuck.video).toBeNull();
-    // The recovery sequence, in the row itself — not left to be inferred.
+    // The recovery, in the row itself — not left to be inferred. It names
+    // `editor_reprobe_media` now that B-073 is fixed; before that it had to
+    // send the caller through remove-and-re-import, which minted a new id.
     expect(stuck.problem).toMatch(/B-073/);
-    expect(stuck.problem).toMatch(/editor_remove_media/);
+    expect(stuck.problem).toMatch(/editor_reprobe_media/);
     // …and the healthy row carries no `problem` at all.
     expect(env.result.items.find((m: { id: string }) => m.id === 'good').problem).toBeUndefined();
   });
@@ -265,6 +298,73 @@ describe('editor_list_media (D-266)', () => {
     expect(env.result.items[0].hasThumb).toBe(true);
     expect(env.result.items[1].hasThumb).toBe(false);
     expect(JSON.stringify(env.result)).not.toContain('base64');
+  });
+});
+
+/** **B-073.** `editor_list_media` could always say WHICH item was stuck; this
+ *  is the op that unsticks it. The sequence these tests walk is the real one:
+ *  the item is pooled unusable, a re-probe while the source is still gone
+ *  changes nothing and says so, and once the source is back the SAME item —
+ *  same id, so every reference to it survives — comes back placeable. */
+describe('editor_reprobe_media (B-073)', () => {
+  it('leaves an item unusable, and says so, while its source is still missing', async () => {
+    backend.items = [stuckItem()];
+    await mountHarness();
+
+    const env = await callOp('editor_reprobe_media', { ids: ['stuck'] });
+
+    expect(env.result.stillUnusable).toEqual(['stuck']);
+    expect(env.result.items[0].usable).toBe(false);
+    expect(env.result.items[0].video).toBeNull();
+    // Never a false success: the caller must not learn "re-probed" and then
+    // discover the truth at the next editor_add_clip.
+  });
+
+  it('repairs the item in place once the source is available again, keeping its id', async () => {
+    backend.items = [stuckItem()];
+    await mountHarness();
+    expect((await callOp('editor_list_media')).result.unusable).toEqual(['stuck']);
+
+    // The underlying file problem is resolved.
+    backend.availableOnDisk.add('/footage/b.mov');
+
+    const env = await callOp('editor_reprobe_media', { ids: ['stuck'] });
+
+    expect(env.result.stillUnusable).toEqual([]);
+    expect(env.result.items[0].id).toBe('stuck');
+    expect(env.result.items[0].usable).toBe(true);
+    expect(env.result.items[0].video.frameCount).toBe(900);
+    expect(env.result.items[0].problem).toBeUndefined();
+    // Through the SAME command the Sources panel's own "Re-probe" row action
+    // calls — one op under both interfaces.
+    expect(backend.calls.filter((c) => c.cmd === 'chroma_media_reprobe')).toEqual([
+      { cmd: 'chroma_media_reprobe', args: { ids: ['stuck'] } },
+    ]);
+    // …and the panel now renders the repaired item, exactly once (merged by
+    // id, not appended — a re-probed item is already in the list).
+    const items = useMediaPoolStore.getState().items;
+    expect(items).toHaveLength(1);
+    expect(items[0].video?.frameCount).toBe(900);
+  });
+
+  it('reports an id that is not in the pool instead of silently succeeding', async () => {
+    backend.items = [goodItem()];
+    await mountHarness();
+
+    const env = await callOp('editor_reprobe_media', { ids: ['good', 'never-existed'] });
+
+    expect(env.result.unknownIds).toEqual(['never-existed']);
+    expect(env.result.items.map((m: { id: string }) => m.id)).toEqual(['good']);
+  });
+
+  it('rejects a call with no ids rather than re-probing the whole pool', async () => {
+    backend.items = [goodItem()];
+    await mountHarness();
+
+    const env = await callOp('editor_reprobe_media', { ids: [] });
+
+    expect(env.result.error).toMatch(/non-empty array/);
+    expect(backend.calls.some((c) => c.cmd === 'chroma_media_reprobe')).toBe(false);
   });
 });
 

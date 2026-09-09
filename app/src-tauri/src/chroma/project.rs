@@ -674,10 +674,21 @@ fn require_open_project() -> Result<PathBuf, String> {
 /// Probe + append `paths` to the open project's media pool (referenced in
 /// place, never copied), filed into `folder` (D-045 — a bin path such as
 /// `"B-roll/Sunset"`, created implicitly; `None`/omitted = the pool root),
-/// persist, and return just the newly-added items — a path already in the
-/// pool is skipped, not duplicated (its folder is untouched even if a
-/// different `folder` was passed this time; use `chroma_media_move` to
-/// re-file it). The frontend wires this to a native multi-select file dialog
+/// persist, and return the items this call produced a usable answer for — a
+/// path already in the pool is skipped, not duplicated (its folder is
+/// untouched even if a different `folder` was passed this time; use
+/// `chroma_media_move` to re-file it).
+///
+/// **B-073 — the one already-pooled path this does NOT skip** is one whose
+/// entry has no probed `video` metadata at all, i.e. an import whose probe
+/// failed transiently and left a half-finished, unusable row. That entry is
+/// re-probed and, if it now succeeds, comes back in this result alongside the
+/// genuinely new items. So callers merge the result **by id**, never append
+/// blindly — see `apelles_project::add_media`'s own doc for the full argument.
+/// Use `chroma_media_reprobe` to repair such an item by id without naming its
+/// path.
+///
+/// The frontend wires this to a native multi-select file dialog
 /// (`@tauri-apps/plugin-dialog`'s `open({ multiple: true })`, same pattern as
 /// the project launcher's `pickClips`).
 ///
@@ -755,6 +766,48 @@ pub async fn chroma_media_refresh(
     })
     .await
     .map_err(|e| format!("media refresh task panicked: {e}"))??;
+    Ok(touched.iter().map(MediaItemDto::from).collect())
+}
+
+/// B-073 — **re-probe** the pool items named by `ids` and return them as they
+/// now stand (an id no longer in the pool is skipped silently).
+///
+/// The repair action for a pool item whose *first* probe failed — an offline
+/// drive, a file still being written, a transient `ffprobe` error. Such an item
+/// is pooled with `id`/`sourcePath`/`name` and no `video` block at all, which
+/// makes it unusable (`editor_add_clip` has no frame count to place a clip
+/// with) and, before this command, unrepairable: re-importing the same path
+/// deduped to a no-op and nothing else ever re-read it, so the only recovery
+/// was removing the item and importing it again, or hand-editing
+/// `project.json`. `editor_list_media` (D-266) reports exactly these items as
+/// `usable: false`; this is the action that answers that report.
+///
+/// **On demand, never on every list.** A re-probe is an `ffprobe` (plus, if the
+/// source really changed, a thumbnail regeneration), so it is a thing a person
+/// or an agent asks for about specific rows — not something a listing does for
+/// the whole pool behind their back. An unchanged file is still cheap
+/// (`apelles_media::probe::probe_cached` is `(mtime, len)`-memoised), but
+/// "cheap per item" is not a licence to do it N times unasked.
+///
+/// `async` + `spawn_blocking` for exactly [`chroma_media_import`]'s reason —
+/// see its doc.
+#[tauri::command]
+pub async fn chroma_media_reprobe(ids: Vec<String>) -> Result<Vec<MediaItemDto>, String> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dir = require_open_project()?;
+    let touched = tokio::task::spawn_blocking(move || -> Result<Vec<MediaItem>, String> {
+        let mut manifest = load_manifest(&dir)?;
+        let (touched, changed) = reprobe_media(&mut manifest, &ids);
+        if changed {
+            manifest.modified = now_rfc3339();
+            save_manifest(&dir, &manifest)?;
+        }
+        Ok(touched)
+    })
+    .await
+    .map_err(|e| format!("media reprobe task panicked: {e}"))??;
     Ok(touched.iter().map(MediaItemDto::from).collect())
 }
 
@@ -877,10 +930,12 @@ pub async fn chroma_media_folders() -> Result<Vec<String>, String> {
 /// plus [`chroma_media_folders`] — no separate bin-hierarchy API. `async`
 /// (D-059/B-014) — see [`chroma_media_import`]'s doc.
 ///
-/// D-129 — also the one-time home of [`backfill_has_audio`]: any pool item
-/// imported before `MediaVideoInfo::has_audio` existed gets probed once here
-/// and the answer persisted, so an existing project's media starts producing
-/// linked audio halves on drop without needing a manual re-import. Runs on
+/// D-129/B-101 — also the one-time home of [`backfill_audio_facts`]: any pool
+/// item imported before `MediaVideoInfo::has_audio` (D-129) or
+/// `::audio_channels` (B-101) existed gets probed once here and the answer
+/// persisted, so an existing project's media starts producing linked audio
+/// halves on drop, and exporting a panned mono clip at the level the preview
+/// plays it, without needing a manual re-import. Runs on
 /// `spawn_blocking` (probing is a subprocess spawn) for the same reason
 /// [`chroma_media_import`]'s own doc gives, and writes the manifest only when
 /// something actually changed — a project whose items are all resolved
@@ -890,7 +945,7 @@ pub async fn chroma_media_list() -> Result<Vec<MediaItemDto>, String> {
     let dir = require_open_project()?;
     let items = tokio::task::spawn_blocking(move || -> Result<Vec<MediaItem>, String> {
         let mut manifest = load_manifest(&dir)?;
-        if backfill_has_audio(&mut manifest) {
+        if backfill_audio_facts(&mut manifest) {
             manifest.modified = now_rfc3339();
             save_manifest(&dir, &manifest)?;
         }

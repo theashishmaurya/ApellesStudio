@@ -4,6 +4,32 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **three open bugs fixed: B-073, B-097, B-101.**
+  **B-073 (D-270)** — a media-pool item whose first probe failed is repairable
+  again: `chroma_media_reprobe` re-probes **by id** (address translation onto
+  D-260's one `refresh_media`, not a second implementation), reached from both
+  the Sources panel's new "Re-probe" row action + unusable-card warning badge
+  and the `editor_reprobe_media` MCP tool; `add_media` additionally heals an
+  already-pooled path that never got `video` metadata, which is the recovery
+  the bug was found by. Both surfaces report the outcome, never a false
+  success.
+  **B-097** — root cause was NOT the suspected off-by-one in `Track::clip_at`,
+  which is correct: every timeline-creation site left `Timeline::rate` unset
+  while `infer_settings_from_clip` had already recorded the media's real rate
+  in `settings.fps`, so a project seeded from 25fps footage resolved its whole
+  edit at `DEFAULT_FPS` 24. `infer_timeline_rate` now seeds the exact rational
+  at both creation sites (new timelines only — no migration). The entry's own
+  wrong diagnosis is corrected in place rather than dropped.
+  **B-101 (D-269)** — a panned MONO clip exported 3.01 dB below what it played,
+  because the exporter's `aformat` upmix is power-preserving while the live
+  mixer duplicates at unity. The live mixer is the source of truth (the
+  power-preserving law would have made a CENTRED mono clip diverge instead, and
+  contradicts this codebase's 0 dB-centre pan law), so the probed
+  `audio_channels` now rides through to the export compiler, which emits a
+  unity duplicate for a source known to be mono. Verified by measuring both
+  engines against each other, not by comparing formulae — including a
+  measurement of the pre-fix chain proving the test can see the bug.
+
 - **2026-09-09** — **D-267: a new photographic brand mark, converted into a
   real, properly-generated asset set** — the owner's own AI-generated medallion
   (an "A" + a marble bust profile, the same terracotta/ochre/marble palette

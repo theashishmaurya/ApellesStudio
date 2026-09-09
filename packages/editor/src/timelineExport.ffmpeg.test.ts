@@ -478,12 +478,17 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
   let dir: string;
   let toneA: string; // 440Hz sine, 4s — a plain audio-track fixture
   let toneB: string; // 880Hz sine, 4s — a second, distinguishable source for mixing/duck tests
+  // B-101 — a genuinely MONO fixture. Every other audio fixture here is
+  // stereo, which is exactly why the mono adaptation law went unmeasured for
+  // as long as it did: a stereo source never reaches the upmix at all.
+  let toneMono: string; // 440Hz sine, 4s, ONE channel
   let videoWithAudio: string; // testsrc + an embedded 440Hz tone, 4s
 
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'chroma-audio-export-test-'));
     toneA = join(dir, 'toneA.wav');
     toneB = join(dir, 'toneB.wav');
+    toneMono = join(dir, 'toneMono.wav');
     videoWithAudio = join(dir, 'video_with_audio.mp4');
     execFileSync('ffmpeg', [
       '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4:sample_rate=48000',
@@ -492,6 +497,10 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
     execFileSync('ffmpeg', [
       '-y', '-f', 'lavfi', '-i', 'sine=frequency=880:duration=4:sample_rate=48000',
       '-ac', '2', toneB,
+    ]);
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4:sample_rate=48000',
+      '-ac', '1', toneMono,
     ]);
     execFileSync('ffmpeg', [
       '-y',
@@ -730,6 +739,77 @@ describe.skipIf(!FFMPEG_AVAILABLE)('buildExportFfmpegArgs — real audio mixing 
     // down would leave the left unchanged, which this window excludes.
     expect(left - source).toBeGreaterThan(2);
     expect(left - source).toBeLessThan(4);
+  });
+
+  // ---- B-101/D-269: a panned MONO clip exports at the level it PLAYS ----- //
+  //
+  // The bug: the exporter adapted mono to stereo through
+  // `aformat=channel_layouts=stereo` — libswresample's power-preserving matrix,
+  // 1/√2 per channel — while the live mixer's `adapt_channels` duplicates the
+  // sample at unity. 3.01 dB apart, on the same clip, silently.
+  //
+  // What makes these tests real rather than a formula check: the reference is
+  // the SOURCE FILE's own measured level, not a number recomputed from the
+  // same law the code under test uses. `apelles_media`'s own
+  // `b101_export_mono_upmix_matches_the_live_mixer` measures the live mixer
+  // side against real ffmpeg the same way, so both ends of the claim are
+  // measurements.
+
+  it('B-101: a hard-LEFT panned MONO clip lands at +3.01dB of the SOURCE level, exactly as the live mixer plays it', () => {
+    const panned = clip('pm', { source_path: toneMono, duration: 96, source_fps: 24, pan: -1 });
+    const out = join(dir, 'pan_left_mono.mp4');
+    execFileSync(
+      'ffmpeg',
+      ['-y', ...buildExportFfmpegArgs(timeline([track('audio', [panned])]), out, {
+        fps: 30,
+        width: 320,
+        height: 240,
+        // What the media pool's own probe reports for this file.
+        audioChannelsOverrides: { pm: 1 },
+      })],
+      { stdio: 'pipe' },
+    );
+
+    const source = volumeStats(toneMono).mean;
+    const left = channelVolumeStats(out, 0).mean;
+    const right = channelVolumeStats(out, 1).mean;
+
+    expect(right).toBeLessThan(-60); // hard left really silences the right
+    // The live mixer's answer: duplicate at unity, then the 0dB-centre pan
+    // law's √2 boost at the extreme — +3.01dB over the mono source's own
+    // level. The pre-fix `aformat` upmix landed at 0.0dB here (the 1/√2 and
+    // the √2 cancelling), which this window excludes on the LOW side.
+    expect(left - source).toBeGreaterThan(2);
+    expect(left - source).toBeLessThan(4);
+  });
+
+  it('B-101: the pre-fix upmix really was 3dB lower — measured against the fixed one on the same clip', () => {
+    // Not a re-derivation: the same clip, exported twice, differing only in
+    // whether the compiler was told the source is mono. If the two ever
+    // measure the same, this fix has silently stopped doing anything.
+    const c = clip('pm2', { source_path: toneMono, duration: 96, source_fps: 24, pan: -1 });
+    const tl = timeline([track('audio', [c])]);
+    const opts = { fps: 30, width: 320, height: 240 };
+    const fixed = join(dir, 'mono_known.mp4');
+    const unknown = join(dir, 'mono_unknown.mp4');
+
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(tl, fixed, { ...opts, audioChannelsOverrides: { pm2: 1 } })], { stdio: 'pipe' });
+    execFileSync('ffmpeg', ['-y', ...buildExportFfmpegArgs(tl, unknown, opts)], { stdio: 'pipe' });
+
+    const gap = channelVolumeStats(fixed, 0).mean - channelVolumeStats(unknown, 0).mean;
+    expect(gap).toBeGreaterThan(2.5);
+    expect(gap).toBeLessThan(3.5); // 20*log10(sqrt(2)) = 3.01dB
+  });
+
+  it('B-101: a panned STEREO clip is byte-identical to before the fix — the normal case never moves', () => {
+    // The channel count is threaded for every clip now, so the guarantee worth
+    // pinning is that knowing a source is stereo changes NOTHING.
+    const c = clip('ps', { source_path: toneA, duration: 96, source_fps: 24, pan: -0.5 });
+    const tl = timeline([track('audio', [c])]);
+    const opts = { fps: 30, width: 320, height: 240 };
+    expect(buildExportFfmpegArgs(tl, '/out.mp4', { ...opts, audioChannelsOverrides: { ps: 2 } })).toEqual(
+      buildExportFfmpegArgs(tl, '/out.mp4', opts),
+    );
   });
 
   it('D-223: a hard-RIGHT pan is the exact mirror image', () => {

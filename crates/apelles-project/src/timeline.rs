@@ -50,6 +50,13 @@ fn build_from_shots(manifest: &ProjectManifest) -> Timeline {
     let mut tl = Timeline::from_shots(&tuples);
     tl.id = uuid::Uuid::new_v4().to_string();
     tl.name = manifest.name.clone();
+    // B-097 — the other timeline-creation site, and it had the same gap
+    // `new_project_in` had: `Timeline::from_shots` leaves `rate: None`, so a
+    // lazily-built timeline resolved at `DEFAULT_FPS` (24) no matter what the
+    // shots' own media actually is. Seeded from the first shot's source, the
+    // same one `infer_settings_from_clip` derives the project's output spec
+    // from — see `crate::infer_timeline_rate`.
+    tl.rate = crate::infer_timeline_rate(tuples.first().map(|(_, path, _, _)| path.as_str()));
     tl
 }
 

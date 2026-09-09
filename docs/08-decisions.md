@@ -9432,7 +9432,7 @@ obvious next namespace.
 
 **Creating the pair.** `linkedClipsFromDraggedMedia` builds two `Clip`s from one dragged item; `add_clip` takes the audio half as `linkedAudio` and places it itself — **one op, not two chained ones**, so it is one history entry, one undo, and never a half-linked timeline in between. Track selection reuses the existing `add_track` shape (D-095/096/117) rather than a second creation mechanism: `ensureAudioTrackWithRoom` takes the first unlocked audio track free at the landing frame and appends a new one only when none is. A fresh track is always free, so **there is no failure branch** — the audio half always lands somewhere valid. Where a video insert ripples, the audio track (sync-locked by default, D-106) has already been rippled by the same amount, so the existing track is normally reused instead of empty tracks piling up. `chroma::project::append_media_clip` (Colorist's "add to grading", the ShotStrip "+") got the same pairing, so which entry point created a clip never changes whether it has an audio half.
 
-**The signal that was missing.** D-097 flagged that `MediaItem`/`DraggedMedia` carried no audio-vs-video information at all and that fixing it needed "a real backend model change." Done here: `MediaVideoInfo::has_audio`, set at import, carried through `MediaItemDto` → `@apelles/bridge` → the drag payload. `Option<bool>`, not `bool`: `None` is a real *"never probed"* sentinel, because a bare `bool` would read every pre-D-129 pool item as **silent** — indistinguishable from a genuinely silent source and permanently wrong for every existing project. `backfill_has_audio` resolves it once on the next `chroma_media_list` (via the memoised `probe_cached`, on `spawn_blocking`, persisted only if something changed), so an existing project's media starts producing audio halves with no manual re-import.
+**The signal that was missing.** D-097 flagged that `MediaItem`/`DraggedMedia` carried no audio-vs-video information at all and that fixing it needed "a real backend model change." Done here: `MediaVideoInfo::has_audio`, set at import, carried through `MediaItemDto` → `@apelles/bridge` → the drag payload. `Option<bool>`, not `bool`: `None` is a real *"never probed"* sentinel, because a bare `bool` would read every pre-D-129 pool item as **silent** — indistinguishable from a genuinely silent source and permanently wrong for every existing project. `backfill_has_audio` resolves it once on the next `chroma_media_list` (via the memoised `probe_cached`, on `spawn_blocking`, persisted only if something changed), so an existing project's media starts producing audio halves with no manual re-import. *(2026-09-09: that function is now `backfill_audio_facts` — D-269 added a second audio fact off the same probe, `audio_channels`, with the identical sentinel.)*
 
 **Link-aware ops: lockstep, or reject whole.** `move_clip` / `trim_start` / `trim_end` / `split` / `remove` now apply to every member of a clip's group or to none of it, mirrored field-for-field in Rust and TS: move shifts every member by the same delta *staying on its own track* (the pair keeps sync, it does not follow the video half onto V2); trims apply the identical clamped delta; a razor cuts every member at the same frame and leaves **two intact pairs** (left halves keep the group, right halves take `{group}·{frame}`, matching the existing clip-id derivation); delete removes the whole group and prunes each track it empties. When an op cannot be applied identically to every member — a trim that clamps differently on one half, a landing that would overlap something on a sibling's track, a split frame not inside every member — **the whole op is rejected** (`TimelineError::LinkDesync`, a no-op on the TS side) rather than partially applied. That is deliberately B-033's own reject-rather-than-corrupt discipline, adopted after auto-split silently fragmented the owner's real project: `unlink` first if divergence is actually what's wanted, which is precisely what unlink exists for in both references. Validation runs **before any mutation**, using a pure `start_after_ripple` prediction of where a pending ripple will leave each clip, so there is no rollback and no whole-timeline clone; siblings are then repositioned by stable `Clip::id`, never by an index the mutation has already invalidated.
 
@@ -25857,3 +25857,168 @@ also vectorise the new mark for contexts that want true SVG scaling — the
 raster-master approach covers every real size this app currently needs;
 revisit only if a genuinely vector-only context (large-format print, a
 laser-cut sign) ever comes up.
+
+---
+
+## D-269 — The mono→stereo law: the LIVE MIXER is the source of truth, and the exporter was the one that was wrong (B-101)
+
+**Date:** 2026-09-09.
+
+### Context
+
+D-223 gave a clip its own `volume` and `pan`, and measured — before writing
+the export half, precisely because this is where a divergence would hide —
+that a panned **mono** clip exported 3.01 dB below what the preview played
+(B-101). Stereo sources, the normal case, were bit-for-bit unaffected.
+
+The cause was never the pan law. It was the step *before* it. A mono source
+has to become stereo before it can be panned at all, and the two engines were
+adapting it by different, individually defensible laws:
+
+- `apelles_media::audio::adapt_channels` (live) **duplicates at unity** — each
+  output channel gets the sample unchanged, so total power doubles (+3 dB).
+- `aformat=channel_layouts=stereo` (export) hands the job to libswresample,
+  whose default mono→stereo matrix **preserves power** — each channel at 1/√2.
+
+Measured, not assumed: a 440 Hz mono sine reads `mean_volume: -21.1 dB`; through
+`aformat` each channel reads `-24.1 dB`; through a unity duplicate,
+`-21.1 dB`.
+
+B-101's own entry called the exporter's law "arguably right", on the reasoning
+that a hard-panned mono clip then lands in its destination channel at exactly
+the source's own level. That reasoning is sound in isolation and wrong for
+this codebase, for a reason the entry did not consider — below.
+
+### The real options
+
+1. **Make `adapt_channels` power-preserving** (`* FRAC_1_SQRT_2`), matching the
+   exporter.
+2. **Make the exporter duplicate at unity** for a source known to be mono,
+   matching the live mixer.
+3. Leave them divergent and document it (the status quo B-101 filed).
+
+### Decision: option 2 — the exporter changes
+
+Two reasons, and the first is decisive:
+
+**(a) Option 1 does not actually fix the divergence — it moves it, and creates
+a second one.** The exporter only inserts a stereo stage *when a pan is set*;
+with no pan a mono clip stays mono end to end and nothing rematrixes. So under
+option 1 a **centred** mono clip would play 3 dB below what it exports, which is
+the same bug with the sign flipped and a wider blast radius (every mono clip in
+live playback, panned or not, gets quieter).
+
+**(b) This codebase already chose a 0 dB-centre pan law, and that choice only
+means what it says on top of a unity duplicate.** `apelles_types::pan_gains` is
+deliberately normalised so `pan_gains(0.0) == (1.0, 1.0)` bit-exactly, with
+`gl² + gr² == 2` — the "0 dB centre" law real DAWs offer as an explicit option
+(see that module's own doc, which states the +3 dB at the extremes as a known,
+accepted cost). On a power-preserving upmix, `pan = 0` would quietly be −3 dB,
+so a mono clip's level would jump the moment it was nudged off centre — a
+discontinuity in a control that is supposed to be continuous. The unity
+duplicate is the assumption the existing law is built on; the exporter was the
+half that had not been told.
+
+### How the exporter knows
+
+`buildAudioSourceChain` emits `pan=stereo|c0=c0|c1=c0` — an explicit unity
+duplicate — instead of `aformat=channel_layouts=stereo`, but **only for a
+source positively known to be mono**. That same expression on a real stereo
+source would copy its left channel over its right, which is far worse than a
+3 dB error, so the knowledge has to be real:
+`apelles_media::video::VideoInfo::audio_channels` (already probed, never
+surfaced) now rides through `MediaVideoInfo::audio_channels` → the media-pool
+DTO → `TimelineExportOptions.audioChannelsOverrides`, the same
+"the compiler stays pure, the caller supplies what only it can know" split
+`hasAudioOverrides` (D-197) established.
+
+`Option<u16>` with the same migration sentinel as `has_audio` (D-129): absent
+means **never probed**, not "zero channels", and the exporter reads absence as
+unknown and keeps its pre-fix `aformat` rather than guessing. `backfill_audio_facts`
+(the renamed `backfill_has_audio` — both facts come off one probe, so resolving
+them separately would mean two passes) fills it in once on the next
+`chroma_media_list`.
+
+### Verification
+
+`apelles_media`'s `b101_export_mono_upmix_matches_the_live_mixer` measures both
+sides rather than comparing formulae: the live level is the real
+`adapt_channels` output with the real `pan_gains` applied, the export level is a
+real `ffmpeg` run of the chain the TS compiler emits, and the two agree within
+0.05 dB. The same test measures the **pre-fix** chain in the same run and
+asserts it sits 3.01 dB low — a test that only checked the fixed path could not
+show it was ever able to see the bug. On the TS side,
+`timelineExport.ffmpeg.test.ts` exports a real panned mono clip and measures its
+channels against the source file's own measured level, and
+`timelineExportAudio.test.ts` pins the emitted chain string so the Rust test's
+copy of it cannot drift.
+
+---
+
+## D-270 — Repairing a media-pool item is a re-probe **by id**, on demand, under both interfaces (B-073)
+
+**Date:** 2026-09-09.
+
+### Context
+
+B-073: an item whose *first* probe failed (an offline drive, a file still being
+written, a transient `ffprobe` error) is pooled with `id`/`sourcePath`/`name`
+and no `video` block. `editor_add_clip` refuses it — there is no frame count to
+place a clip with — and re-importing the identical path, the obvious recovery,
+deduped to a silent no-op. D-266 made the item **visible** (`editor_list_media`
+marks it `usable: false` with a `problem` string) but nothing could re-probe it,
+so the documented recovery was remove-and-re-import, which mints a **new id** and
+strands every reference to the old one.
+
+D-260 had already built the re-probe machinery for a different caller: a Motion
+re-render writes the same per-scene path with new content, and `refresh_media`
+reconciles the pool with what is on disk for a list of **paths**.
+
+### The real options
+
+1. Have `editor_list_media` re-probe everything it lists (self-healing, no new
+   surface).
+2. A new, separate re-probe implementation addressed by pool-item id.
+3. Reuse `refresh_media`, addressed by id, plus a narrow self-heal in `add_media`.
+
+### Decision: option 3
+
+**Not option 1.** A re-probe is a real `ffprobe` (plus a thumbnail regeneration
+when the source genuinely changed). Doing it for every row on every listing is
+work nobody asked for, on a call whose whole job is to be the cheap way to see
+what is in the pool — and this repo's priority order puts performance first.
+"Cheap per item" is not a licence to do it N times unasked.
+
+**Not option 2.** Two re-probe implementations would drift. `reprobe_media` is
+address translation and nothing else: ids → source paths → the one
+`refresh_media`. The two entry points exist because the two callers genuinely
+hold different handles — a Motion render knows the file it just wrote and not
+which pool item (if any) points at it; a person or an agent looking at one bad
+row knows the id and nothing else.
+
+**By id, not path**, because the item keeps its identity: every clip and
+reference that already points at it stays valid, which is exactly what
+remove-and-re-import could not offer.
+
+`add_media` additionally heals an already-pooled path that has **no `video`
+metadata at all**, because that is the case B-073 was found by ("I called
+`editor_import_media` on the exact path again and it reported success with
+nothing new"). A pool entry with no `video` is not "already imported", it is a
+half-finished import, and finishing it is what an import of that path is asking
+for. Deliberately narrower than `refresh_media`'s full reconcile: import must
+not silently become a re-probe of files the caller believes it is only adding.
+A fully-probed entry is still skipped, unchanged.
+
+### Both interfaces, same op
+
+Per CLAUDE.md's standing human-AND-AI rule: `chroma_media_reprobe` (Tauri) ←
+`useMediaPoolStore.reprobeMedia` ← both the Sources panel's own **Re-probe**
+row action (plus a real warning badge on an unusable card, which previously
+looked identical to a healthy one unless it also happened to be offline) and the
+`editor_reprobe_media` MCP tool. One store action, one command, two front doors.
+
+Both report the **outcome**, not the attempt: a source that is still unavailable
+comes back honestly unusable (`stillUnusable` over MCP, a warning toast in the
+GUI) rather than as a success the caller only discovers is false at the next
+`editor_add_clip`. That false-success shape is what made B-073 hard to see in
+the first place.

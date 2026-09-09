@@ -922,6 +922,28 @@ export interface TimelineExportOptions {
    *  genuinely silent screen-recording footage), not out of an arbitrary
    *  preference. */
   hasAudioOverrides?: Record<string, boolean>;
+  /** B-101/D-269 — each clip's source **audio channel count**, keyed by
+   *  `Clip.id`, resolved by the caller from the media pool's own probed
+   *  `MediaVideoInfo.audioChannels` (the same "the compiler stays pure, the
+   *  caller supplies what only it can know" split `hasAudioOverrides` above
+   *  established).
+   *
+   *  Read for exactly one decision, and only on a clip that is actually
+   *  panned: **is this source mono?** A mono source has to be adapted to
+   *  stereo before it can be panned, and the two adaptations that exist are
+   *  3.01 dB apart — duplicate-at-unity (what the live mixer's
+   *  `apelles_media::audio::adapt_channels` does, and what this codebase's
+   *  0 dB-centre pan law assumes) versus libswresample's power-preserving
+   *  matrix (each channel at 1/√2, what a bare `aformat=channel_layouts=stereo`
+   *  gets you). Exporting with the second while the preview plays the first is
+   *  B-101; see D-269 for why the live mixer is the source of truth.
+   *
+   *  Absent/unset for a clip means **unknown**, not mono: the pre-B-101
+   *  `aformat` upmix is kept rather than guessing a channel count, exactly as
+   *  `MediaVideoInfo.audioChannels`' own sentinel requires. Stereo and
+   *  multichannel sources take the same `aformat` path they always did, so
+   *  this option changes nothing for them. */
+  audioChannelsOverrides?: Record<string, number>;
   /** D-211/D-212 — absolute font-file paths keyed by `TextLayer.font`'s
    *  catalogue key, for every text clip on the timeline.
    *
@@ -2300,6 +2322,9 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       startSec: p.naturalStartSec,
       duck: duckForTrack(p.trackIndex),
       idLabel,
+      // B-101 — the source's channel count, so a panned MONO clip is adapted
+      // to stereo the same way the live mixer adapts it.
+      sourceChannels: opts.audioChannelsOverrides?.[p.clip.id],
     });
     filterSteps.push(...steps);
     audioRefs.push(ref);
@@ -2336,6 +2361,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
         startSec,
         duck: duckForTrack(trackIndex),
         idLabel: `au${audioLabelSeq++}`,
+        sourceChannels: opts.audioChannelsOverrides?.[clip.id],
       });
       filterSteps.push(...steps);
       audioRefs.push(ref);
