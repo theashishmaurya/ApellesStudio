@@ -933,32 +933,52 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       selection) had shipped with no op to wrap either — so 14 of the 32 are new
       ops, not wrappers. Also split the registry into a pure
       `motionOps.ts`/`createMotionOps` factory so it could be tested at all (78
-      new tests; the whole prior surface had zero), which caught B-125. Still
+      new tests; the whole prior surface had zero), which caught B-125. ~~Still
       open, deliberately: **no delete-a-layer / delete-a-scene tool**, because
-      neither `manifestEdit.ts` nor the GUI has one — see item 6 below, where
-      that now belongs as a both-halves-together build.
-    - **4. Undo/redo for Motion** — D-052 deferred it for a real reason ("no
+      neither `manifestEdit.ts` nor the GUI has one~~ — **closed by D-259
+      (2026-09-09)**, which built all three layers at once and took the surface
+      to **36 tools**; see item 6 below.
+    - ~~**4. Undo/redo for Motion** — D-052 deferred it for a real reason ("no
       natural edit-history unit"); with `addLayer`/`setLayerField` as discrete
       named immutable ops that unit now exists. Push before/after `Manifest`
-      snapshots into `@chroma/history`, as `useEditorTimelineStore.applyOp` does.
+      snapshots into `@chroma/history`, as `useEditorTimelineStore.applyOp` does.~~
+      **DONE — D-155 (2026-09-06); this entry was stale, corrected 2026-09-09 by
+      D-259.** `useMotionManifest`'s `commit(next, label)` is exactly the
+      before/after-snapshot push described here, and `Shell.tsx`'s global
+      Cmd/Ctrl+Z binding (D-051) already reaches it, so Motion undo/redo has been
+      live since D-155 — every Inspector edit, canvas drag, keyframe move,
+      reorder and (now, D-259) delete/duplicate goes through it. The one real
+      remaining gap is coverage, not the mechanism: `MotionTab.tsx`'s
+      `onCatalogAdd` still writes through the plain `setText` path, so a Catalog
+      insert is the one mutation in this tab that is not undoable (D-151/D-155
+      both disclose this deliberately).
     - **5. A scene/layer timeline UI** — the biggest visible gap vs. both After
       Effects and this repo's own Edit tab, and the largest build. After #2, so it
       can reuse those drag mechanics rather than inventing a second set.
     - **6. Lower-urgency, mutually independent** — ~~multi-select~~ (done,
-      D-158), **delete/duplicate**, multi-manifest per project (D-046's
-      deliberate one-per-project limit; wait for a real need), and **B-059**'s
-      camera easing, which is nearly free.
-      - **delete/duplicate is now the top Motion gap**, promoted by D-257:
+      D-158), ~~delete/duplicate~~ (done, D-259), multi-manifest per project
+      (D-046's deliberate one-per-project limit; wait for a real need), and
+      **B-059**'s camera easing, which is nearly free.
+      - ~~**delete/duplicate is now the top Motion gap**, promoted by D-257:
         `manifestEdit.ts` has **no delete function at all** and the GUI has no
         delete gesture, so there is no way — by hand OR by agent — to remove a
-        layer or a scene once added. D-257 deliberately did NOT add an MCP-only
-        deletion, since that would break the human-AND-AI rule from the other
-        side. Build both halves together: a `deleteLayer`/`deleteScene` in
-        `manifestEdit.ts` (with the `resolveSelections` re-resolve every other
-        shape-changing op already does), a GUI affordance in `LayerList.tsx`
-        beside its "+ Scene" button, and `motion_delete_layer`/
-        `motion_delete_scene` wrapping the same functions. Duplicate is the same
-        shape and worth doing in the same pass.
+        layer or a scene once added.~~ **DONE — D-259, 2026-09-09**, built as the
+        both-halves-together pass this entry asked for, in one commit:
+        `deleteLayer`/`deleteScene`/`duplicateLayer`/`duplicateScene` in
+        `manifestEdit.ts`, hover-revealed duplicate+delete actions on every layer
+        AND scene row in `LayerList.tsx`, and `motion_delete_layer`/
+        `motion_delete_scene`/`motion_duplicate_layer`/`motion_duplicate_scene`
+        (Motion's MCP surface 32 → **36 tools**). Duplicate DID make it into the
+        same pass — the id-uniqueness worry turned out not to exist (nothing in
+        `schema.ts` references a layer by id), so a duplicate is a deep clone plus
+        fresh ids and nothing more. Two findings worth carrying forward: (a) the
+        existing `resolveSelections` re-resolve is **not** sufficient for a
+        delete — it cannot see that a scene delete RENUMBERS every later scene
+        (`resolveSelection` only checks that *some* scene still exists at that
+        index), so all four functions return the selection to install next;
+        (b) only the SCENE delete confirms (a two-step arm-then-confirm on the
+        button, no dialog), because it cascades into contained content, which is
+        the same line Premiere draws — see D-259 for the references.
 17. **Show the export's real start/end bound in the Edit-tab timeline UI** — owner,
     2026-09-07, live, after B-076 (D-187): `editor_export` renders the WHOLE
     timeline only up to the furthest clip's own end (`-t <that>` — the `color=[base]`

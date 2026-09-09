@@ -202,15 +202,23 @@ inclusion, no longer a silent video).
 > preserve. Results are cached, so a repeat ask returns `state: "done"`
 > immediately; `force=True` re-runs.
 
-## Motion tab — CLOSED, 32 tools (D-257, 2026-09-09)
+## Motion tab — CLOSED, 36 tools (D-257, 2026-09-09; +4, D-259)
 
 > **This section used to be headed "Gap: Motion tab — 0 tools" and called it
 > "arguably the highest-value gap to close… the one place 'an agent driving this
 > app' and 'the manifest-authoring workflow this app is *for*' directly meet."**
 > It is closed. Count:
-> `grep -c '^def motion_' mcp/server.py` returns **32**, and a cross-language
-> check confirms those 32 Python wire names and the 32 op keys in
+> `grep -c '^def motion_' mcp/server.py` returns **36**, and a cross-language
+> check confirms those 36 Python wire names and the 36 op keys in
 > `packages/motion/src/motionOps.ts` agree exactly.
+>
+> **D-259 (+4) closed the one gap D-257 left open on purpose**:
+> `motion_delete_layer`, `motion_delete_scene`, `motion_duplicate_layer`,
+> `motion_duplicate_scene`. D-257 declined to ship these MCP-only — neither
+> `manifestEdit.ts` nor the layer list had any delete at all, so an agent-only
+> deletion would have been the `editor_slip_clip` gap (below) inverted: the AI
+> half landing first, with no human affordance. D-259 built all three layers in
+> one pass instead, which is what the human-AND-AI rule actually asks for.
 >
 > 18 of the 32 wrap ops that already existed on the bridge (D-167→D-170) and were
 > simply never exposed — the "Step 2 was never done for that tab" case
@@ -227,9 +235,13 @@ inclusion, no longer a silent video).
 | `motion_list_layers` (new) | The addressing INDEX — every layer flattened, each with the exact `target` a mutating tool wants, its `use`, the same `label` the GUI's layer list shows, world-space `position`/`size`, and key counts. What `editor_get_timeline` is for clips. |
 | `motion_list_primitives` (new) | Static reference, no app round trip — the Motion counterpart of `editor_get_capabilities`. Every primitive's `use` string, what it is for, whether it is 2D or a 3D child (and which target kind addresses it), the editable fields per primitive, plus scene/transform/camera-key field lists. Without it, a legal `use` or field key was only discoverable by reading the app's source. |
 | `motion_add_scene` (new) | The layer panel's "+ Scene" button (D-178) — a new 4s scene after the given index. Each scene renders to its OWN video file, so a scene is the unit of "one shot". |
+| `motion_delete_scene` (new, D-259) | The scene row's own delete button. Takes every layer, the camera and the `scene3d` block with it, and shifts every later scene's index down by one. **Refused for the last remaining scene** (`scenes.min(1)` — a zero-scene manifest does not parse), naming the constraint rather than silently producing a broken document. Moves the live GUI selection to the scene that took its place, since `resolveSelection` alone cannot tell that a scene index now means a *different* scene. |
+| `motion_duplicate_scene` (new, D-259) | The scene row's duplicate button — the whole scene copied in directly after itself, with a fresh scene id and fresh `id`s on every layer inside. The practical way to build "the same shot again, with one thing changed" in a manifest where each scene renders to its own file. |
 | `motion_set_scene_field` | One field on the scene itself — most often `dur`, the length in SECONDS that every keyframe in it is clamped to. |
 | `motion_set_camera_2d` / `_3d` | Replace a scene's camera animation WHOLESALE. The only way to change a camera key's VALUES — `manifestEdit.ts` has no granular per-key camera write, stated on both tools rather than worked around. |
 | `motion_add_layer` | The Catalog panel's insert (D-151) — a schema-valid default instance of a primitive, placed into `scene.layers` or `scene.scene3d.children` automatically by its own `in3d` flag. |
+| `motion_delete_layer` (new, D-259) | The layer row's own delete button. **Address it by `id`** for anything beyond a single delete — removing a layer shifts every index after it, so a multi-delete plan written against bare indices deletes the wrong layers after the first. Selection moves to the layer that slid into the slot, or to the parent scene when it was the last one. |
+| `motion_duplicate_layer` (new, D-259) | The layer row's duplicate button — a deep copy inserted directly ABOVE the original in paint order, with a fresh `id` and every other field (transform, keyframes, a `layers` primitive's cards) carried over. Returns the `selection` addressing the copy: duplicate-then-change is usually two calls where rebuilding from `motion_add_layer` is five or six. |
 | `motion_reorder_layers` (new) | The layer list's drag-to-reorder (D-177). **Array order IS paint order**, so this is the only tool that changes what covers what. |
 | `motion_set_layer_field` | A layer's own content/look fields. Writes an unknown key anyway (a hand-authored manifest may carry one) but returns a `warning` — the usual explanation for "I set it and nothing happened". |
 | `motion_set_field_on_layers` (new) | The Inspector's multi-select lockstep edit. **One undo entry**, unlike N single calls — which is the whole point. `transform=True` writes the nested transform group instead. |

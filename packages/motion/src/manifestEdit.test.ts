@@ -43,6 +43,11 @@ import {
   setLayerActiveSchedule,
   moveLayerActiveKeyAt,
   addScene,
+  canDeleteScene,
+  deleteLayer,
+  deleteScene,
+  duplicateLayer,
+  duplicateScene,
   selectedLayerItem,
   setLayerItemOffset,
   setLayerItemField,
@@ -1758,5 +1763,259 @@ describe('resolveSelection — layer-item (D-182)', () => {
   it('is null when the scene no longer exists', () => {
     const bad: Selection = { sceneIndex: 99, target: { kind: 'layer-item', index: 1, itemIndex: 0 } };
     expect(resolveSelection(sample, bad)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-259 — delete / duplicate
+// ---------------------------------------------------------------------------
+
+describe('deleteLayer (D-259)', () => {
+  it('removes the addressed layer and leaves every other one untouched', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+    const { manifest } = deleteLayer(sample, sel);
+    expect(manifest.scenes[0].layers).toHaveLength(1);
+    expect(manifest.scenes[0].layers?.[0]).toEqual(sample.scenes[0].layers?.[1]);
+    // nothing else in the document moved
+    expect(manifest.scenes[1]).toEqual(sample.scenes[1]);
+    expect(manifest.scenes[2]).toEqual(sample.scenes[2]);
+    expect(manifest.scenes[0].camera).toEqual(sample.scenes[0].camera);
+  });
+
+  it('selects the layer that slid into the deleted slot', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 0 } };
+    const { selection } = deleteLayer(sample, sel);
+    expect(selection).toEqual({ sceneIndex: 0, target: { kind: 'layer', index: 0, id: undefined } });
+  });
+
+  it('deleting the LAST layer selects the new last one, never an out-of-range index', () => {
+    const sel: Selection = { sceneIndex: 0, target: { kind: 'layer', index: 1 } };
+    const { manifest, selection } = deleteLayer(sample, sel);
+    expect(manifest.scenes[0].layers).toHaveLength(1);
+    expect(selection?.target).toMatchObject({ kind: 'layer', index: 0 });
+    // and it really resolves against the manifest it came back with
+    expect(resolveSelection(manifest, selection as Selection)).not.toBeNull();
+  });
+
+  it('emptying scene.layers removes the key entirely, and selection falls back to the scene', () => {
+    const first = deleteLayer(sample, { sceneIndex: 0, target: { kind: 'layer', index: 0 } });
+    const second = deleteLayer(first.manifest, { sceneIndex: 0, target: { kind: 'layer', index: 0 } });
+    expect(second.manifest.scenes[0].layers).toBeUndefined();
+    expect(second.selection).toEqual({ sceneIndex: 0, target: { kind: 'scene' } });
+    expect(resolveSelection(second.manifest, second.selection as Selection)).not.toBeNull();
+  });
+
+  it('deletes a scene3d child, and KEEPS a childless scene3d block (its camera survives)', () => {
+    const a = deleteLayer(sample, { sceneIndex: 2, target: { kind: 'scene3d-child', index: 0 } });
+    expect(a.manifest.scenes[2].scene3d?.children).toHaveLength(1);
+    const b = deleteLayer(a.manifest, { sceneIndex: 2, target: { kind: 'scene3d-child', index: 0 } });
+    expect(b.manifest.scenes[2].scene3d).toBeDefined();
+    expect(b.manifest.scenes[2].scene3d?.children).toEqual([]);
+    expect(b.manifest.scenes[2].scene3d?.camera).toEqual(sample.scenes[2].scene3d?.camera);
+    expect(b.selection).toEqual({ sceneIndex: 2, target: { kind: 'scene' } });
+  });
+
+  it('resolves by id first — a stale index with a live id deletes the id\'s layer', () => {
+    // give the sample's two scene-0 layers real ids, then address the SECOND
+    // one by id while carrying a wrong index (the exact drift D-158 exists for)
+    const withIds: Manifest = JSON.parse(JSON.stringify(sample));
+    withIds.scenes[0].layers![0].id = 'aaa';
+    withIds.scenes[0].layers![1].id = 'bbb';
+    const { manifest } = deleteLayer(withIds, { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'bbb' } });
+    expect(manifest.scenes[0].layers).toHaveLength(1);
+    expect(manifest.scenes[0].layers?.[0].id).toBe('aaa');
+  });
+
+  it('carries the surviving neighbour\'s own id into the next selection', () => {
+    const withIds: Manifest = JSON.parse(JSON.stringify(sample));
+    withIds.scenes[0].layers![0].id = 'aaa';
+    withIds.scenes[0].layers![1].id = 'bbb';
+    const { selection } = deleteLayer(withIds, { sceneIndex: 0, target: { kind: 'layer', index: 0 } });
+    expect(selection).toEqual({ sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'bbb' } });
+  });
+
+  it('is a no-op (SAME reference, null selection) for a non-layer target', () => {
+    for (const target of [{ kind: 'scene' as const }, { kind: 'camera' as const }]) {
+      const r = deleteLayer(sample, { sceneIndex: 0, target });
+      expect(r.manifest).toBe(sample);
+      expect(r.selection).toBeNull();
+    }
+  });
+
+  it('is a no-op for an out-of-range index, a missing scene, and an unknown id', () => {
+    expect(deleteLayer(sample, { sceneIndex: 0, target: { kind: 'layer', index: 99 } }).manifest).toBe(sample);
+    expect(deleteLayer(sample, { sceneIndex: 99, target: { kind: 'layer', index: 0 } }).manifest).toBe(sample);
+    expect(deleteLayer(sample, { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'nope' } }).manifest).toBe(sample);
+    // a scene with no scene3d at all
+    expect(deleteLayer(sample, { sceneIndex: 0, target: { kind: 'scene3d-child', index: 0 } }).manifest).toBe(sample);
+  });
+
+  it('does not mutate the manifest it was given', () => {
+    const snapshot = JSON.stringify(sample);
+    deleteLayer(sample, { sceneIndex: 0, target: { kind: 'layer', index: 0 } });
+    expect(JSON.stringify(sample)).toBe(snapshot);
+  });
+});
+
+describe('canDeleteScene / deleteScene (D-259)', () => {
+  it('canDeleteScene is false for a one-scene manifest (schema.ts: scenes.min(1))', () => {
+    expect(canDeleteScene(sample)).toBe(true);
+    const one: Manifest = { ...sample, scenes: [sample.scenes[0]] };
+    expect(canDeleteScene(one)).toBe(false);
+  });
+
+  it('removes the scene and shifts every later one down by one', () => {
+    const { manifest } = deleteScene(sample, 0);
+    expect(manifest.scenes).toHaveLength(2);
+    expect(manifest.scenes[0]).toEqual(sample.scenes[1]);
+    expect(manifest.scenes[1]).toEqual(sample.scenes[2]);
+    expect(manifest.title).toBe(sample.title);
+  });
+
+  it('selects the scene that slid into the deleted index', () => {
+    expect(deleteScene(sample, 0).selection).toEqual({ sceneIndex: 0, target: { kind: 'scene' } });
+    expect(deleteScene(sample, 1).selection).toEqual({ sceneIndex: 1, target: { kind: 'scene' } });
+  });
+
+  it('deleting the LAST scene selects the new last one, not an out-of-range index', () => {
+    const { manifest, selection } = deleteScene(sample, 2);
+    expect(manifest.scenes).toHaveLength(2);
+    expect(selection).toEqual({ sceneIndex: 1, target: { kind: 'scene' } });
+    expect(resolveSelection(manifest, selection as Selection)).not.toBeNull();
+  });
+
+  it('REFUSES to delete the only remaining scene — same reference, null selection', () => {
+    const one: Manifest = { ...sample, scenes: [sample.scenes[0]] };
+    const r = deleteScene(one, 0);
+    expect(r.manifest).toBe(one);
+    expect(r.manifest.scenes).toHaveLength(1);
+    expect(r.selection).toBeNull();
+  });
+
+  it('is a no-op for an out-of-range scene index', () => {
+    expect(deleteScene(sample, 99).manifest).toBe(sample);
+    expect(deleteScene(sample, -1).manifest).toBe(sample);
+  });
+
+  it('does not mutate the manifest it was given', () => {
+    const snapshot = JSON.stringify(sample);
+    deleteScene(sample, 1);
+    expect(JSON.stringify(sample)).toBe(snapshot);
+  });
+});
+
+describe('duplicateLayer (D-259)', () => {
+  it('inserts the copy DIRECTLY AFTER the original, not at the end', () => {
+    const { manifest, selection } = duplicateLayer(sample, { sceneIndex: 0, target: { kind: 'layer', index: 0 } });
+    expect(manifest.scenes[0].layers).toHaveLength(3);
+    expect(manifest.scenes[0].layers?.[0].use).toBe('text');
+    expect(manifest.scenes[0].layers?.[1].use).toBe('text'); // the copy
+    expect(manifest.scenes[0].layers?.[2].use).toBe('emphasis'); // the old neighbour, shifted
+    expect(selection).toMatchObject({ sceneIndex: 0, target: { kind: 'layer', index: 1 } });
+  });
+
+  it('copies every field deeply, but never the id — and the copy is independent', () => {
+    const withIds: Manifest = JSON.parse(JSON.stringify(sample));
+    withIds.scenes[1].layers![1].id = 'orig';
+    const { manifest, selection } = duplicateLayer(withIds, { sceneIndex: 1, target: { kind: 'layer', index: 1 } });
+    const original = manifest.scenes[1].layers![1] as unknown as Record<string, unknown>;
+    const copy = manifest.scenes[1].layers![2] as unknown as Record<string, unknown>;
+
+    expect(copy.id).not.toBe('orig');
+    expect(typeof copy.id).toBe('string');
+    expect(selection?.target).toMatchObject({ kind: 'layer', index: 2, id: copy.id });
+    // everything except the id is identical…
+    expect({ ...copy, id: 'orig' }).toEqual(original);
+    // …and the nested `items` array is a real clone, not a shared reference
+    expect(copy.items).not.toBe(original.items);
+    (copy.items as unknown[])[0] = 'changed';
+    expect((original.items as unknown[])[0]).not.toBe('changed');
+  });
+
+  it('duplicates a scene3d child into scene3d.children', () => {
+    const { manifest, selection } = duplicateLayer(sample, {
+      sceneIndex: 2,
+      target: { kind: 'scene3d-child', index: 0 },
+    });
+    expect(manifest.scenes[2].scene3d?.children).toHaveLength(3);
+    expect(manifest.scenes[2].scene3d?.children[1].use).toBe('particleflow');
+    expect(selection?.target).toMatchObject({ kind: 'scene3d-child', index: 1 });
+    expect(manifest.scenes[2].layers).toBeUndefined(); // never leaked into the 2D array
+  });
+
+  it('resolves by id first, exactly as deleteLayer does', () => {
+    const withIds: Manifest = JSON.parse(JSON.stringify(sample));
+    withIds.scenes[0].layers![0].id = 'aaa';
+    withIds.scenes[0].layers![1].id = 'bbb';
+    const { manifest } = duplicateLayer(withIds, { sceneIndex: 0, target: { kind: 'layer', index: 0, id: 'bbb' } });
+    // 'bbb' is at index 1, so its copy lands at index 2 — not next to 'aaa'
+    expect(manifest.scenes[0].layers?.map((l) => l.use)).toEqual(['text', 'emphasis', 'emphasis']);
+  });
+
+  it('is a no-op for a non-layer target, a bad index and a missing scene', () => {
+    expect(duplicateLayer(sample, { sceneIndex: 0, target: { kind: 'scene' } }).manifest).toBe(sample);
+    expect(duplicateLayer(sample, { sceneIndex: 0, target: { kind: 'layer', index: 99 } }).manifest).toBe(sample);
+    expect(duplicateLayer(sample, { sceneIndex: 99, target: { kind: 'layer', index: 0 } }).manifest).toBe(sample);
+  });
+
+  it('does not mutate the manifest it was given', () => {
+    const snapshot = JSON.stringify(sample);
+    duplicateLayer(sample, { sceneIndex: 0, target: { kind: 'layer', index: 0 } });
+    expect(JSON.stringify(sample)).toBe(snapshot);
+  });
+});
+
+describe('duplicateScene (D-259)', () => {
+  it('inserts the copy directly after the original and selects it', () => {
+    const { manifest, selection } = duplicateScene(sample, 0);
+    expect(manifest.scenes).toHaveLength(4);
+    expect(manifest.scenes[0].id).toBe('hook');
+    expect(manifest.scenes[2].id).toBe('stack'); // the old scene 1, shifted
+    expect(selection).toEqual({ sceneIndex: 1, target: { kind: 'scene' } });
+  });
+
+  it('gives the copy a fresh scene id and fresh ids for every layer inside it', () => {
+    const withIds: Manifest = JSON.parse(JSON.stringify(sample));
+    withIds.scenes[0].layers![0].id = 'aaa';
+    withIds.scenes[0].layers![1].id = 'bbb';
+    const { manifest } = duplicateScene(withIds, 0);
+    const copy = manifest.scenes[1];
+
+    expect(copy.id).not.toBe('hook');
+    expect(copy.id.length).toBeGreaterThan(0);
+    const ids = copy.layers!.map((l) => l.id);
+    expect(ids).not.toContain('aaa');
+    expect(ids).not.toContain('bbb');
+    expect(new Set(ids).size).toBe(ids.length); // unique within the copy
+    // everything else about the layers survived
+    expect(copy.layers!.map((l) => l.use)).toEqual(['text', 'emphasis']);
+    expect(copy.camera).toEqual(sample.scenes[0].camera);
+    expect(copy.dur).toBe(sample.scenes[0].dur);
+  });
+
+  it('re-ids a 3D scene\'s children too, and keeps its camera', () => {
+    const withIds: Manifest = JSON.parse(JSON.stringify(sample));
+    withIds.scenes[2].scene3d!.children[0].id = 'ccc';
+    const { manifest } = duplicateScene(withIds, 2);
+    const copy = manifest.scenes[3];
+    expect(copy.scene3d?.children.map((c) => c.id)).not.toContain('ccc');
+    expect(copy.scene3d?.camera).toEqual(sample.scenes[2].scene3d?.camera);
+  });
+
+  it('the copy is fully independent of the original', () => {
+    const { manifest } = duplicateScene(sample, 1);
+    manifest.scenes[2].dur = 99;
+    expect(manifest.scenes[1].dur).toBe(sample.scenes[1].dur);
+  });
+
+  it('is a no-op for an out-of-range scene index', () => {
+    expect(duplicateScene(sample, 99).manifest).toBe(sample);
+    expect(duplicateScene(sample, 99).selection).toBeNull();
+  });
+
+  it('does not mutate the manifest it was given', () => {
+    const snapshot = JSON.stringify(sample);
+    duplicateScene(sample, 0);
+    expect(JSON.stringify(sample)).toBe(snapshot);
   });
 });
