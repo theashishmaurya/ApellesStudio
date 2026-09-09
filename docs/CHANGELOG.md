@@ -21,6 +21,39 @@ One or two lines per session. Detail lives in the decision it references.
   against the reference — which caught a line-wrap over-estimate and a collapsed
   `\n` — plus a byte-identical determinism re-render. 561 tests in `@chroma/motion`
   (37 new), 2155 across all workspaces, `tsc` clean.
+
+- **2026-09-09** — **B-061 + B-062 fixed — Motion Inspector camera-time
+  label and a schema validation gap** — B-061: the camera-keyframe `at`
+  field was labelled "At (frame)" while the manifest stores seconds;
+  relabelled `'At (s)'` on both `CAM2D_KEY_FIELDS` and `CAM3D_KEY_FIELDS`
+  (`packages/motion/src/propCatalog.ts`), paired with a new `FieldSpec.step`
+  (`step: 0.1`) so a keyboard/scrub nudge no longer jumps a whole second.
+  B-062: an `ease` curve's `x1`/`x2` had no validation against
+  `Easing.bezier`'s own hard `[0,1]` requirement, so a hand-edited
+  out-of-range value parsed fine and only crashed at render time;
+  `schema.ts`'s `easeCurve` now `.refine()`s that at PARSE time (`y1`/`y2`
+  stay unconstrained — `design.ease.anticipate`'s own legitimate overshoot).
+  Both already fully diagnosed with a proposed fix in `docs/BUGS.md`; applied
+  verbatim. New tests: `propCatalog.test.ts` (4 tests), a new `B-062` block
+  in `schema.test.ts` (6 tests).
+
+- **2026-09-09** — **B-060 fixed — ambient drift now scales with the real
+  render fps, not a fixed 30 token** — both ambient-drift implementations
+  (`draw.ts`'s `ambientDrift`, `Camera.tsx`'s inline camera drift) divided
+  frame-by-`design.fps` (a fixed authoring-default token, `30`) instead of
+  the composition's REAL fps, so the same manifest drifted at a visibly
+  different perceived speed at 60fps vs 24fps than at the default 30fps.
+  `ambientDrift` now takes `fps` as a parameter (the same shape as its
+  neighbour `pop(frame, fps, delay)`); `Camera.tsx`'s inline expression
+  became an exported, unit-tested `cameraDrift(frame, fps)` reading
+  `useVideoConfig().fps`. Own commit (changes rendered pixels for any
+  non-30fps manifest) with a before/after: at the same 1-second wall-clock
+  instant, the old formula gave `cameraDrift`'s 24fps-render and 60fps-render
+  DIFFERENT values (`{dx:1.385,dy:2.670}` vs `{dx:2.796,dy:1.648}`); the
+  fixed function gives both the SAME value (`{dx:1.694,dy:2.543}`). New test:
+  `ambientDrift.test.ts` (7 tests) — 536 total in `@chroma/motion`, `tsc`
+  clean on both packages.
+
 - **2026-09-09** — **D-255: the marketing website shipped, out of sequence** —
   a new top-level `website/` (Astro, its own project, deliberately outside the
   npm workspace), reversing the standing "build the website LAST, right before

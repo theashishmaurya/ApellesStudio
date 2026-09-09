@@ -123,7 +123,7 @@ export const Graph: React.FC<{
 
   const at = (id: string, drift = true) => {
     const p = layout[id];
-    const d = drift ? ambientDrift(frame, nodeIndex[id] + 1) : { x: 0, y: 0 };
+    const d = drift ? ambientDrift(frame, fps, nodeIndex[id] + 1) : { x: 0, y: 0 };
     return { x: p.x + d.x, y: p.y + d.y };
   };
 

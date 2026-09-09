@@ -55,6 +55,15 @@ export interface FieldSpec {
    *  for a `[x,y,w,h]` box. Length fixes the tuple's length: a commit always
    *  writes back an array of exactly `components.length` numbers. */
   components?: string[];
+  /** for `kind: 'number'` — the field's own step/precision, the same idea as
+   *  `@chroma/editor`'s `ClipInspectorPanel.tsx` per-field step tables
+   *  (`CROP_STEP`, etc). Omitted fields keep `MotionNumberField`'s own
+   *  default step of `1`, which is correct for most manifest numbers (pixel
+   *  positions, counts) but wrong for a field measured in seconds — a whole-
+   *  second jump per keystroke/scrub-notch. Added for B-061's camera
+   *  keyframe `at` fields (`docs/BUGS.md`), the same class of defect D-136
+   *  fixed on `ClipInspectorPanel`'s Position X/Y. */
+  step?: number;
   /** grouping, purely cosmetic — mirrors the rejected Editor Starter's
    *  section shape as a *reference* per the scoping doc, not copied */
   group: 'source' | 'layout' | 'fill' | 'timing' | 'content';
@@ -248,21 +257,25 @@ export const SCENE_FIELDS: FieldSpec[] = [
 
 /** a 2D camera keyframe's own fields (`cam2dKey` in `schema.ts`) — used by
  *  the Camera/3D-Camera keyframe-list editor, not the generic field form.
- *  `at` is labelled "(frame)" here even though the manifest stores SECONDS
- *  (B-061, `docs/BUGS.md` — open, NOT fixed by this pass; out of this
- *  phase's own scope, which is B-059 specifically) — left as-is deliberately
- *  rather than smuggling in an unrelated one-word fix under a different
- *  D-number. `ease` (D-159/B-059 — the field is now real and typed in
- *  `schema.ts`, no longer silently stripped by the zod schema) got a real
- *  bezier-curve-with-draggable-handles widget at Phase 5b part 4
- *  (`kind: 'ease'`, `EaseCurveEditor.tsx`'s `EaseFieldControl`) — the raw
- *  `[x1,y1,x2,y2]` JSON textarea `pos`/`look` below still use WAS `ease`'s
- *  own original, deliberately lighter-touch B-059 fix, now superseded for
- *  `ease` specifically per that phase's own scope (see
- *  `easeCurve.ts`'s module doc comment for the full "why a real widget, not
- *  the JSON fallback" reasoning). */
+ *  `at` is labelled "At (s)" (B-061, `docs/BUGS.md` — fixed 2026-09-09):
+ *  it used to read "At (frame)" even though the manifest stores SECONDS
+ *  (`schema.ts`'s own header, `Video.tsx`'s `Math.round(k.at * fps)`
+ *  conversion) — a value typed as an intended frame number landed dozens of
+ *  seconds too late, often past the end of the scene. `step: 0.1` alongside
+ *  it is the paired precision fix the bug entry asked for: the field's
+ *  default step of `1` (unset) made every arrow-key press / scrub-notch a
+ *  whole SECOND, the same class of defect D-136 fixed on
+ *  `ClipInspectorPanel`'s Position X/Y. `ease` (D-159/B-059 — the field is
+ *  now real and typed in `schema.ts`, no longer silently stripped by the
+ *  zod schema) got a real bezier-curve-with-draggable-handles widget at
+ *  Phase 5b part 4 (`kind: 'ease'`, `EaseCurveEditor.tsx`'s
+ *  `EaseFieldControl`) — the raw `[x1,y1,x2,y2]` JSON textarea `pos`/`look`
+ *  below still use WAS `ease`'s own original, deliberately lighter-touch
+ *  B-059 fix, now superseded for `ease` specifically per that phase's own
+ *  scope (see `easeCurve.ts`'s module doc comment for the full "why a real
+ *  widget, not the JSON fallback" reasoning). */
 export const CAM2D_KEY_FIELDS: FieldSpec[] = [
-  { key: 'at', label: 'At (frame)', kind: 'number', group: 'timing' },
+  { key: 'at', label: 'At (s)', kind: 'number', step: 0.1, group: 'timing' },
   { key: 'x', label: 'X', kind: 'number', group: 'layout' },
   { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
   { key: 'zoom', label: 'Zoom', kind: 'number', group: 'layout' },
@@ -270,7 +283,7 @@ export const CAM2D_KEY_FIELDS: FieldSpec[] = [
 ];
 
 export const CAM3D_KEY_FIELDS: FieldSpec[] = [
-  { key: 'at', label: 'At (frame)', kind: 'number', group: 'timing' },
+  { key: 'at', label: 'At (s)', kind: 'number', step: 0.1, group: 'timing' },
   { key: 'pos', label: 'Position [x,y,z]', kind: 'json', group: 'layout' },
   { key: 'look', label: 'Look at [x,y,z]', kind: 'json', group: 'layout' },
   { key: 'ease', label: 'Ease', kind: 'ease', group: 'timing' },
@@ -389,10 +402,14 @@ export const LAYER_TRANSFORM_FIELDS: FieldSpec[] = [
  *  `InspectorPanel.tsx` renders these through the SAME generalized
  *  `KeyframeList` component the camera keyframe editor already uses (add/
  *  remove/edit rows for a small flat shape), not a third bespoke editor —
- *  see that file's own doc comment. Labelled "At (s)" (not "(frame)",
- *  unlike `CAM2D_KEY_FIELDS` — B-061 is a pre-existing, separately-tracked
- *  mislabel on the camera fields this pass deliberately doesn't touch; this
- *  is a NEW field group and gets the correct unit label from the start).
+ *  see that file's own doc comment. Labelled "At (s)" from the start — this
+ *  field group was added after `CAM2D_KEY_FIELDS`/`CAM3D_KEY_FIELDS` first
+ *  shipped their own "(frame)" mislabel (B-061, `docs/BUGS.md` — fixed
+ *  2026-09-09, now also "At (s)" there) and never repeated it. Its own `at`
+ *  step is left at the default (unset, `1`) rather than getting B-061's
+ *  paired `step: 0.1` precision fix — out of that bug's stated scope
+ *  (camera keyframe fields specifically), not re-filed here since a whole-
+ *  second step is a real but separate precision nit, not a wrong-unit bug.
  *  Every numeric field here is a DELTA on top of the static
  *  `LAYER_TRANSFORM_FIELDS` field of the same name (see `schema.ts`'s
  *  `layerTransform` doc comment for the full "why additive, uniformly

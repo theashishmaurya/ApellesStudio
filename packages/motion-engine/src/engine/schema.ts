@@ -33,8 +33,29 @@ const activeSchema = z.union([z.number(), z.array(timed)]);
  *  points — the SAME shape `design.ease.*`'s presets already are. Shared by
  *  `cam2dKey`, `cam3dKey`, and `transformKey` below (all three interpolate
  *  through `motion-engine/src/lib/interpolateKeys.ts`'s one shared
- *  `interpolateKeys`, D-159/B-059). */
-const easeCurve = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+ *  `interpolateKeys`, D-159/B-059).
+ *
+ * B-062 fix (`docs/BUGS.md`) — `remotion`'s own `Easing.bezier(mX1,mY1,mX2,
+ * mY2)` (`node_modules/remotion/dist/cjs/bezier.js`) THROWS
+ * `'bezier x values must be in [0, 1] range'` unless `0 <= mX1,mX2 <= 1`;
+ * `y1`/`y2` carry no such constraint (`design.ease.anticipate` legitimately
+ * overshoots to `y1:-0.55`/`y2:1.55` for its anticipation curve). Before this
+ * fix the tuple's shape was declared (four numbers) but not this one real
+ * semantic constraint the consuming function enforces at its own call
+ * boundary, so an out-of-range `x1`/`x2` (only reachable by hand-editing the
+ * manifest text or an external tool — the Inspector's own curve widget,
+ * D-164's `pixelToCurve`, clamps `x` to `[0,1]` by construction) validated
+ * fine and only threw later, at whatever frame the render/playback actually
+ * reached that key — a late, confusing failure that looked like an engine
+ * crash rather than a data problem. The `.refine()` below makes it a clear,
+ * parse-time rejection instead, at the one place already responsible for
+ * this field's shape. */
+const easeCurve = z
+  .tuple([z.number(), z.number(), z.number(), z.number()])
+  .refine(
+    ([x1, , x2]) => x1 >= 0 && x1 <= 1 && x2 >= 0 && x2 <= 1,
+    'ease x1/x2 must be within [0,1]',
+  );
 
 /**
  * B-059 fix (`docs/BUGS.md`) — `ease` was genuinely supported by `Camera.tsx`
