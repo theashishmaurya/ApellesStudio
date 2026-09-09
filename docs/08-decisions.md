@@ -26264,14 +26264,29 @@ second half doesn't fix this bug by itself, but it is what would have made
 the first rebuild's silent failure loud instead of a second round-trip of "it
 still doesn't work" with no clue why.
 
+### Corrected again, same session: the grant was necessary but not sufficient — WebKit re-asserts its own cursor on every move
+
+Rebuilt with the capability granted (confirmed no `console.error` from the
+new logging — the call was genuinely succeeding, not failing), and the owner
+reported it still made no visible difference. The remaining cause: WKWebView
+owns real AppKit cursor-rect tracking over its own bounds and re-asserts
+**its own** cursor — frozen per bug 53341, whatever it was before the mouse
+went down — on every native mouse-moved event the drag generates. A single
+`setCursorIcon` call at the moment `scrubbing` flips `true` wins for exactly
+one frame before the next native move immediately overwrites it back.
+**Fixed by fighting on the same terms:** a `window` `pointermove` listener,
+live only while `scrubbing` is true, re-asserts `ewResize` on every move —
+matching WebKit's own re-assertion cadence instead of trying to win with one
+call up front.
+
 ### Verification
 
 `ScrubbableNumberInput.dom.test.tsx` and `PropertyRow.numericField.dom.test.tsx`
-(26 tests) pass unchanged with the dependency added and the error handling
-tightened — the `hasTauriRuntime` guard is what keeps a jsdom render (no
-`window.__TAURI_INTERNALS__`) from logging noise on every test, not a
-try/catch swallowing a real error the way the first pass did. The actual
-cursor icon change during a real drag needs the owner's own trackpad against
-a rebuilt app (capability changes are read at Tauri's own startup, so this
-needs a real relaunch, not just a Vite HMR reload) to fully confirm; jsdom has
-no OS cursor to assert against.
+(26 tests) pass unchanged through all three rounds of this fix. The actual
+cursor icon change during a real drag needs the owner's own trackpad to fully
+confirm; jsdom has no OS cursor to assert against, and no amount of unit
+testing would have caught either of the two live-only failure modes this bug
+actually had (a missing capability grant, a per-frame cursor re-assertion
+race) — both were found only by shipping, watching it still fail, and
+investigating further rather than declaring victory after the first
+plausible-looking fix.

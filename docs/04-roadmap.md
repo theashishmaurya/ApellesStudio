@@ -2442,6 +2442,15 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   own design evicts a failed fetch rather than caching it, so that clip's
   filmstrip would visibly retry/flicker rather than just looking permanently
   blank, which may be exactly what "flaky" is describing.
+- **Track header Lock/Unlock icons are hard to tell apart** — reported live
+  2026-09-09. Both come from `lucide-react` (`TimelinePane.tsx`'s track
+  header row); at the `size-3` (12px) they're rendered at, the only visual
+  difference between the two is the small gap at the padlock's shackle,
+  which barely reads at that size against a dark toolbar row. Not
+  investigated further than confirming the library and the size — a real
+  fix wants a real look at the options (a bigger icon just for this pair, a
+  colour/fill difference for the locked state, a different icon pair
+  entirely) rather than a guess.
 
 ---
 

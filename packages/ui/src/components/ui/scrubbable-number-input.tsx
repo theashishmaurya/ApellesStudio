@@ -111,12 +111,23 @@ function ScrubbableNumberInput({
 
   // See this file's own module doc (D-271): the CSS `cursor` write in
   // `useNumberScrub` cannot repaint the visible pointer mid-drag under
-  // WebKit, so the native OS cursor is set directly instead, in step with
-  // the same `scrubbing` flag that already drives the CSS fallback.
+  // WebKit, so the native OS cursor is set directly instead.
+  //
+  // A ONE-TIME call at the moment `scrubbing` flips true is not enough: the
+  // WKWebView itself owns real AppKit cursor-rect tracking for its own
+  // bounds, and re-asserts ITS OWN (frozen-per-bug-53341) cursor on every
+  // native mouse-moved event the drag generates — which immediately
+  // clobbers a single native `setCursorIcon` call the instant the pointer
+  // moves again. Re-asserting ours on every `pointermove` while scrubbing,
+  // not just once at the transition, is what actually wins that fight.
   React.useEffect(() => {
-    setNativeCursor(scrubbing ? 'ewResize' : 'default');
+    if (!scrubbing) return;
+    setNativeCursor('ewResize');
+    const onMove = () => setNativeCursor('ewResize');
+    window.addEventListener('pointermove', onMove);
     return () => {
-      if (scrubbing) setNativeCursor('default');
+      window.removeEventListener('pointermove', onMove);
+      setNativeCursor('default');
     };
   }, [scrubbing]);
 
