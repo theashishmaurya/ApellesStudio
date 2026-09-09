@@ -413,6 +413,7 @@ import {
   gapAt,
   newTransition,
   linkedClipIds,
+  linkedDragGhosts,
   linkedClipsFromDraggedMedia,
   newMarker,
   resolveClipLanding,
@@ -1782,6 +1783,56 @@ export function TimelinePane() {
     });
     return ghosts;
   }, [timeline, clipDragPreview, tracks, fps]);
+
+  /** B-134 — the live drag ghost for a dragged clip's A/V-linked partner(s).
+   *  Owner, live: dragging a clip on Video 1 left its linked audio clip on
+   *  Audio 1 visually inert for the whole gesture, only snapping to its real
+   *  new position on drop. Root cause: `ClipBody`'s live drag transform comes
+   *  from dnd-kit's own `useDraggable`, which only ever animates the exact
+   *  node whose `id` matches `event.active.id` — the linked partner is a
+   *  wholly separate `ClipBody` instance, with a different `clipId`, on a
+   *  different track's row, so nothing hands it a matching live transform.
+   *
+   *  Same SHAPE of fix as `dragSyncGhosts` just above (a synthesized overlay
+   *  standing in for a live transform dnd-kit will never give this element),
+   *  but keyed off the dragged clip's own `link_group` (`linkGroupMembers`,
+   *  D-129) rather than `syncLinkedClipIdsAtPosition`, and — unlike
+   *  `dragSyncGhosts` — NOT gated on `clipDragPreview.ripple`: an A/V link
+   *  moves with its primary on EVERY move, ripple or not (`timeline.ts`'s
+   *  `move` op unconditionally computes and applies `delta` to every other
+   *  link-group member before it even asks whether a ripple fired).
+   *
+   *  Investigated (B-134's own "not investigated yet" list):
+   *   - **Does a cross-track drag need the ghost to jump tracks?** No.
+   *     `timeline.ts`'s `move` op (D-129) moves every other link-group member
+   *     by the same frame DELTA while leaving it on its OWN track — "a linked
+   *     pair keeps sync, it does not follow the video half onto the video
+   *     half's new track" (that op's own comment, mirroring Resolve's
+   *     documented behaviour). So `g.track` below is always the partner's own
+   *     unchanged track, never `clipDragPreview.toTrack`.
+   *   - **Does `onDndDragEnd`'s commit path already have the position math
+   *     this ghost needs?** Yes, exactly: `onDndDragMove`/`onDndDragEnd` both
+   *     resolve the primary's landing via the same `resolveClipLanding` call
+   *     and pass the same resulting `startFrame` to `applyOp({kind:'move',
+   *     ...})`; `timeline.ts`'s `move` case then derives
+   *     `delta = op.startFrame - c.start_frame` and applies it to every
+   *     linked sibling. Reusing that exact delta here (from
+   *     `clipDragPreview.startFrame`, itself already `resolveClipLanding`'s
+   *     output) means this preview can never disagree with what actually
+   *     commits — no separate math to keep in sync.
+   *
+   *  The actual position math is `timeline.ts`'s own `linkedDragGhosts` —
+   *  pulled out to a pure function (unlike `dragSyncGhosts` above, which
+   *  stays inline) specifically so it has a real unit test:
+   *  `TimelinePane`'s `<DndContext>` cannot be driven to a resolved drop
+   *  target under jsdom at all, confirmed directly while building this fix
+   *  (`linkedDragGhosts`'s own doc has the detail), so a DOM test cannot
+   *  observe this overlay's rendered output the way it can for a gesture
+   *  that never needs `event.over` to resolve. */
+  const linkDragGhosts = useMemo(() => {
+    if (!timeline || !clipDragPreview) return [];
+    return linkedDragGhosts(timeline, clipDragPreview.fromTrack, clipDragPreview.clipId, clipDragPreview.startFrame, fps);
+  }, [timeline, clipDragPreview, fps]);
 
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
@@ -4317,6 +4368,29 @@ export function TimelinePane() {
               <div
                 key={`sync-ghost-${g.id}`}
                 className="pointer-events-none absolute z-30 rounded border-2 border-dashed border-text-secondary/70 bg-text-secondary/10"
+                style={{
+                  left: START_LEFT_PX + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
+                  width: (g.duration / fps) * pxPerSec,
+                  top: RULER_AND_MARGIN_PX + g.track * ROW_HEIGHT - scrollTop,
+                  height: ROW_HEIGHT,
+                }}
+              />
+            ))}
+            {/* B-134 — the dragged clip's A/V-linked partner(s), tracking the
+                drag live. `border-accent`-toned (not `dragSyncGhosts`'s
+                `text-secondary`) to match `avLinkedIds`'s own accent-ring
+                convention above: an A/V link is a stronger, more specific
+                relationship than a sync-lock ripple, and must not read as the
+                same thing on screen (D-128). */}
+            {linkDragGhosts.map((g) => (
+              <div
+                key={`link-drag-ghost-${g.id}`}
+                // B-134 — a stable hook for a test to find this ghost, the
+                // same convention `ClipBody`'s own `data-chroma-*` attributes
+                // already use, since a `key` prop is not queryable from the
+                // DOM.
+                data-chroma-link-drag-ghost={g.id}
+                className="pointer-events-none absolute z-30 rounded border-2 border-dashed border-accent/70 bg-accent/10"
                 style={{
                   left: START_LEFT_PX + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
                   width: (g.duration / fps) * pxPerSec,

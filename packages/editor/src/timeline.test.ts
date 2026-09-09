@@ -32,6 +32,7 @@ import {
   labelForOp,
   linkedClipIds,
   linkedClipsFromDraggedMedia,
+  linkedDragGhosts,
   MARKER_COLORS,
   markersOf,
   newMarker,
@@ -2325,6 +2326,98 @@ describe('linkedClipIds (D-129)', () => {
 
   it('is empty for an unlinked selection', () => {
     expect(linkedClipIds(tl(backToBack()), [{ track: 0, id: 'a' }]).size).toBe(0);
+  });
+});
+
+/**
+ * B-134 — the owner dragged a clip on Video 1 and its linked audio clip on
+ * Audio 1 sat visually still for the whole gesture, only snapping to its real
+ * new position on drop. `TimelinePane.tsx`'s `linkDragGhosts` `useMemo` is a
+ * thin wrapper over this function; its own doc explains why the real proof
+ * lives here rather than in a DOM test: this package's `<DndContext>` cannot
+ * be driven to a resolved drop target under jsdom at all (confirmed directly
+ * while building this fix — `linkedDragGhosts`'s own doc comment in
+ * `timeline.ts` has the detail), so a DOM-level assertion on the rendered
+ * ghost is not possible here. This math — where the fix actually lives — is.
+ */
+describe('linkedDragGhosts (B-134)', () => {
+  const FPS = 24;
+
+  it('shifts every OTHER member of the link group by the SAME delta the drag would land at, staying on its own track', () => {
+    const t = linkedPair(); // v [0,100) video track 0, a [0,100) audio track 1, link_group 'g1'
+    // Dragging 'v' so it would land at frame 24 (a +24 delta).
+    expect(linkedDragGhosts(t, 0, 'v', 24, FPS)).toEqual([{ id: 'a', track: 1, shiftedStart: 24, duration: 100 }]);
+  });
+
+  it('is empty for an unlinked clip', () => {
+    const t = tl(backToBack());
+    expect(linkedDragGhosts(t, 0, 'a', 50, FPS)).toEqual([]);
+  });
+
+  it('is empty when the landing frame is the clip\'s own current position — nothing has moved yet', () => {
+    const t = linkedPair();
+    expect(linkedDragGhosts(t, 0, 'v', 0, FPS)).toEqual([]);
+  });
+
+  it('never moves the partner to a different track — an A/V link keeps sync, it does not follow the dragged half onto a new track', () => {
+    // This function is never even told which track the primary is landing
+    // ON (`toTrack` is not one of its parameters) — the ghost's `track` can
+    // only ever be the partner's own, by construction, which is itself the
+    // fix for B-134's "does a cross-track drag need the ghost to jump
+    // tracks?" question: no.
+    const t = linkedPair();
+    const ghosts = linkedDragGhosts(t, 0, 'v', 40, FPS);
+    expect(ghosts).toHaveLength(1);
+    expect(ghosts[0].track).toBe(1);
+  });
+
+  it('converts each sibling\'s ghost width through ITS OWN source_fps (B-077 discipline, not the dragged clip\'s)', () => {
+    const t: Timeline = {
+      id: 't',
+      name: 't',
+      tracks: [
+        { kind: 'video', clips: [clip('v', 'Shot', { link_group: 'g1', duration: 100 })] },
+        // 48fps source: 100 source frames = 50 timeline frames at 24fps.
+        { kind: 'audio', clips: [clip('a', 'Shot', { link_group: 'g1', duration: 100, source_fps: 48 })] },
+      ],
+    };
+    expect(linkedDragGhosts(t, 0, 'v', 10, FPS)).toEqual([{ id: 'a', track: 1, shiftedStart: 10, duration: 50 }]);
+  });
+
+  it('gives every OTHER member of a THREE-way link group its own ghost', () => {
+    const t: Timeline = {
+      id: 't',
+      name: 't',
+      tracks: [
+        { kind: 'video', clips: [clip('v', 'Shot', { link_group: 'g1' })] },
+        { kind: 'audio', clips: [clip('a1', 'Shot', { link_group: 'g1' })] },
+        { kind: 'audio', clips: [clip('a2', 'Shot', { link_group: 'g1' })] },
+      ],
+    };
+    const ghosts = linkedDragGhosts(t, 0, 'v', 12, FPS);
+    expect(ghosts.map((g) => g.id).sort()).toEqual(['a1', 'a2']);
+    expect(ghosts.every((g) => g.shiftedStart === 12)).toBe(true);
+  });
+
+  it('the previewed shift matches EXACTLY what the real move op commits for the same siblings — no separate math to drift out of sync', () => {
+    const t = linkedPair();
+    const landing = 24;
+    const preview = linkedDragGhosts(t, 0, 'v', landing, FPS);
+    const committed = applyOp(t, {
+      kind: 'move',
+      fromTrack: 0,
+      toTrack: 0,
+      clip: 0,
+      startFrame: landing,
+      ripple: false,
+    });
+    expect(preview[0].shiftedStart).toBe(committed.tracks[1].clips[0].start_frame);
+  });
+
+  it('is empty for a track/clip that does not exist — defensive, should never happen from real drag state', () => {
+    const t = linkedPair();
+    expect(linkedDragGhosts(t, 5, 'v', 24, FPS)).toEqual([]);
+    expect(linkedDragGhosts(t, 0, 'nope', 24, FPS)).toEqual([]);
   });
 });
 
