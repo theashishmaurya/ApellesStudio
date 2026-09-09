@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **B-129 + B-130 fixed (D-262): "Add Title" now makes its own
+  video track, and a title's on-canvas box is its real ink** — both live-reported
+  by the owner from one screenshot and both confirmed against their real project
+  first. B-129: the track-kind rule existed only in `TimelinePane`'s drop handler,
+  so every other caller walked past it — a title had landed on an AUDIO track, and
+  another in a gap between two shots on the footage track, where it renders over
+  black. The rule moved into the op (`checkAddClip`, shaped like the existing
+  `checkTransition`/`checkEditIn`), and `add_clip` gained `onNewVideoTrack` —
+  a new video track at index 0, placed in ONE op so one Undo removes both. The GUI
+  button and `editor_add_text_clip`/`editor_add_adjustment_clip` both default to
+  it; `track` is optional now, deleting the three-call add-track/move-track dance
+  the old docstring taught. B-130: `clip_geometry` reported a title's footprint as
+  the whole frame — inherited from D-211's "the layer buffer is composition-sized",
+  never actually decided — so a 12%-tall title got a full-frame selection box and
+  swallowed every canvas click meant for the footage beneath it. It now reports the
+  measured ink box, from the same glyph walk that rasterises the text
+  (`text_layer_ink_fraction`); no frontend change was needed. 1564 tests in
+  `@chroma/editor` (+6), 4 new Rust tests, `tsc` clean, `fmt`/`clippy` clean.
+
 - **2026-09-09** — **D-258: Motion's first representational primitives — a Claude
   chat UI and a phone frame, deliberately decoupled** — the catalog goes from 8
   primitives to 10. `claudechat` draws the real Claude mobile app screen (header,

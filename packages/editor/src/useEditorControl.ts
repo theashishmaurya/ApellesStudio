@@ -84,6 +84,7 @@ import {
 // here: one write path for the human and the agent, per CLAUDE.md.
 import { animatedParams, paramKeyframeFrames, setClipKeyframeEase } from './clipKeyframes';
 import {
+  checkAddClip,
   clipOutputSourceFrames,
   timelineDuration,
   CLIP_KEYFRAME_DEFAULTS,
@@ -1323,8 +1324,20 @@ export function useEditorControl(): void {
           return { error: `no font file for "${layer.font}" on this machine — one of ${usable} (see editor_text_fonts)` };
         }
 
-        const track = Math.round(Number(a?.track));
-        if (!Number.isFinite(track) || track < 0) return { error: 'track must be a track index (0 = topmost)' };
+        // B-129/D-262 — `track` is OPTIONAL now, and omitting it is the
+        // recommended call: the title goes on a brand-new video track above
+        // the picture, in one op, exactly as the GUI's own Titles button does
+        // (CLAUDE.md's "the same op/store action underneath both"). It used to
+        // be mandatory, and the tool's docstring had to teach a three-call
+        // `editor_add_track` → `editor_move_track` → `editor_add_text_clip`
+        // dance to get a title above existing footage; an agent that skipped
+        // it dropped the title onto whatever track that index happened to be —
+        // which in the owner's real project was an AUDIO track.
+        const onNewVideoTrack = a?.track === undefined || a.track === null;
+        const track = onNewVideoTrack ? 0 : Math.round(Number(a.track));
+        if (!Number.isFinite(track) || track < 0) {
+          return { error: 'track must be a track index (0 = topmost), or omitted for a new video track above the picture' };
+        }
         const fps = timelineFps(tl);
         const duration =
           a?.duration !== undefined
@@ -1335,22 +1348,37 @@ export function useEditorControl(): void {
         }
 
         const clip: NewClipFields = newTextClipFields(layer, duration, a?.name);
+        // The same `checkAddClip` the reducer refuses on, asked here so the
+        // refusal is a real sentence rather than a silent no-op — the posture
+        // `editor_add_transition`/`editor_edit_in` already take.
+        if (!onNewVideoTrack) {
+          const check = checkAddClip(tl, track, clip);
+          if (!check.ok) return { error: check.reason ?? 'that track cannot hold a title' };
+        }
         useEditorTimelineStore.getState().applyOp({
           kind: 'add_clip',
           track,
           clip,
           startFrame: a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined,
           ripple: !!a?.ripple,
+          onNewVideoTrack,
         });
 
         const after = useEditorTimelineStore.getState().timeline;
         const placed = after?.tracks[track]?.clips.find((c) => c.id === clip.id);
         if (!placed) {
-          return { error: 'add_clip did not place the title — check the track index (and that it is a video track)' };
+          return { error: 'add_clip did not place the title — the space at that startFrame on that track is occupied (pass ripple=true, or a different startFrame)' };
         }
         return {
           ok: true,
+          // The track it REALLY landed on, and whether this call created it —
+          // an agent that assumed its own index came back would address the
+          // wrong track on the very next call, since a new track at 0
+          // renumbers every existing one. Same disclosure `editor_edit_in`
+          // makes for `place_on_top`.
           track,
+          createdTrack: onNewVideoTrack,
+          trackCount: after?.tracks.length ?? 0,
           clip: after?.tracks[track]?.clips.findIndex((c) => c.id === clip.id) ?? -1,
           clipId: placed.id,
           startFrame: placed.start_frame,
@@ -1745,9 +1773,14 @@ export function useEditorControl(): void {
         });
         if ('error' in layer) return layer;
 
-        const track = Math.round(Number(a?.track));
+        // B-129/D-262 — optional `track`, same contract and same underlying
+        // op as `editor_add_text_clip` above: omitted means a brand-new video
+        // track at the top of the stack, which for an adjustment clip is also
+        // the position that grades the whole edit.
+        const onNewVideoTrack = a?.track === undefined || a.track === null;
+        const track = onNewVideoTrack ? 0 : Math.round(Number(a.track));
         if (!Number.isFinite(track) || track < 0) {
-          return { error: 'track must be a track index (0 = topmost). An adjustment clip affects the tracks BELOW it, so 0 grades the whole edit' };
+          return { error: 'track must be a track index (0 = topmost), or omitted for a new video track above the picture. An adjustment clip affects the tracks BELOW it, so the topmost track grades the whole edit' };
         }
         const fps = timelineFps(tl);
         const duration =
@@ -1759,22 +1792,29 @@ export function useEditorControl(): void {
         }
 
         const clip: NewClipFields = newAdjustmentClipFields(layer, duration, a?.name);
+        if (!onNewVideoTrack) {
+          const check = checkAddClip(tl, track, clip);
+          if (!check.ok) return { error: check.reason ?? 'that track cannot hold an adjustment clip' };
+        }
         useEditorTimelineStore.getState().applyOp({
           kind: 'add_clip',
           track,
           clip,
           startFrame: a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined,
           ripple: !!a?.ripple,
+          onNewVideoTrack,
         });
 
         const after = useEditorTimelineStore.getState().timeline;
         const placed = after?.tracks[track]?.clips.find((c) => c.id === clip.id);
         if (!placed) {
-          return { error: 'add_clip did not place the adjustment clip — check the track index (and that it is a video track)' };
+          return { error: 'add_clip did not place the adjustment clip — the space at that startFrame on that track is occupied (pass ripple=true, or a different startFrame)' };
         }
         return {
           ok: true,
           track,
+          createdTrack: onNewVideoTrack,
+          trackCount: after?.tracks.length ?? 0,
           clip: after?.tracks[track]?.clips.findIndex((c) => c.id === clip.id) ?? -1,
           clipId: placed.id,
           startFrame: placed.start_frame,

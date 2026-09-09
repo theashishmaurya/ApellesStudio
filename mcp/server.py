@@ -703,7 +703,13 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "clip on an ORDINARY video track — there is no text track kind. "
             "It composites over the video by the same track-index z-order as "
             "everything else, so put the title on a LOWER track index than "
-            "the footage it labels (track 0 over track 1). Every ordinary "
+            "the footage it labels. B-129/D-262: OMIT `track` and it gets a "
+            "brand-new video track at index 0 (above everything) in one op — "
+            "do that rather than reusing a footage track, where a title lands "
+            "in a GAP and renders over black instead of over the shot. An "
+            "explicit non-video `track` is refused now, not silently placed, "
+            "and a new track at 0 renumbers every existing track (the result "
+            "reports `track`, `createdTrack` and `trackCount`). Every ordinary "
             "clip tool works on it: move, trim, split, remove, fade, "
             "editor_set_clip_transform's opacity/position_x/position_y, and "
             "editor_set_clip_keyframes on those. But `scale`, `rotation`, "
@@ -1570,8 +1576,8 @@ def editor_text_fonts() -> str:
 
 @mcp.tool()
 def editor_add_text_clip(
-    track: int,
     content: str,
+    track: int | None = None,
     start_frame: int | None = None,
     duration: int | None = None,
     font: str | None = None,
@@ -1587,21 +1593,33 @@ def editor_add_text_clip(
     label, a lower third, an intro card or a "BEFORE"/"AFTER" tag; you never
     need to drop to raw `ffmpeg drawtext` for it.
 
-    **A title is an ordinary clip on an ordinary VIDEO track**, not a special
-    track type — the same shape Resolve and Premiere use. Track index order
-    is compositing z-order (lower index = on top), so put the title on a
-    LOWER track index than the footage you want it to sit over: `track=0`
-    with the video on track 1 is the normal case when building a timeline
-    from empty. **Adding a title to a project that already has footage on
-    track 0 (the normal real-world case) is different: `editor_add_track`
-    only ever APPENDS at the highest index, i.e. the BOTTOM of the stack —
-    it does NOT put the new track above your existing footage.** Call
-    `editor_add_track`, then `editor_move_track` to move that new (now
-    highest-index) track down to index 0 (or wherever above your footage you
-    want it) BEFORE adding the title clip to it — see `editor_move_track`'s
-    own docstring. Every ordinary clip tool then works on the title unchanged
-    — `editor_move_clip`, `editor_trim_clip`, `editor_split_clip`,
-    `editor_remove_clip`, `editor_set_clip_fade`.
+    **Leave `track` out.** Omitted (the recommended call), the title lands on
+    a BRAND-NEW video track inserted at index 0 — the top of the compositing
+    stack, above everything you already have — in one atomic operation, which
+    is exactly what the Edit tab's own Titles button does. A title is an
+    OVERLAY: it has to sit on its own layer over the picture, not share a
+    track with it. Sharing a track puts the title in a GAP in your footage,
+    where it renders over BLACK instead of over the shot (B-129 — this is a
+    real bug that shipped in a real project, caused by this parameter having
+    been mandatory and this docstring having taught the dance below).
+
+    Pass an explicit `track` only when you specifically want the title on an
+    existing video track. It MUST be a video track: a title is picture, and
+    putting one on an audio or subtitle track composites into nothing. That
+    is now refused with a real message rather than silently accepted.
+
+    **A title is otherwise an ordinary clip on an ordinary VIDEO track**, not
+    a special track type — the same shape Resolve and Premiere use. Track
+    index order is compositing z-order (lower index = on top). Every ordinary
+    clip tool works on the title unchanged — `editor_move_clip`,
+    `editor_trim_clip`, `editor_split_clip`, `editor_remove_clip`,
+    `editor_set_clip_fade`.
+
+    **The result reports the track it really landed on, `createdTrack` (did
+    this call make a new one) and the new `trackCount`.** A new track at index
+    0 renumbers every existing track by one, so re-read indices from the
+    result — or from `editor_get_state` — before your next call rather than
+    reusing indices you held from before.
 
     `content` is a SINGLE line — multi-line titles are not supported yet and
     a `\\n` is refused rather than silently flattened. Add a second title
@@ -1640,8 +1658,11 @@ def editor_add_text_clip(
     store a value that would render nothing."""
     import json
 
-    args: dict = {"track": track, "content": content, "ripple": ripple}
+    # `track` omitted is meaningful (a new video track on top), so it is only
+    # sent when the caller actually named one.
+    args: dict = {"content": content, "ripple": ripple}
     for key, val in (
+        ("track", track),
         ("startFrame", start_frame),
         ("duration", duration),
         ("font", font),
@@ -2159,7 +2180,7 @@ def editor_set_caption_style(
 
 @mcp.tool()
 def editor_add_adjustment_clip(
-    track: int,
+    track: int | None = None,
     start_frame: int | None = None,
     duration: int | None = None,
     exposure: float | None = None,
@@ -2184,12 +2205,19 @@ def editor_add_adjustment_clip(
     the one thing to get right.** Track index order is z-order: lower index =
     higher priority = on top. An adjustment clip affects every visible video
     track with a HIGHER index than its own — i.e. everything below it. So
-    `track=0` grades the whole edit; an adjustment clip on the bottom track
-    affects nothing and is the single most common way to be surprised by this
-    tool. Note `editor_add_track` only ever APPENDS at the highest index (the
-    BOTTOM of the stack) — to get a track above existing footage, call
-    `editor_add_track` then `editor_move_track` to move it to index 0 first.
-    The result of this call reports exactly what the placed clip affects.
+    the topmost track grades the whole edit; an adjustment clip on the bottom
+    track affects nothing and is the single most common way to be surprised by
+    this tool.
+
+    **So leave `track` out.** Omitted (the recommended call), the clip lands
+    on a BRAND-NEW video track inserted at index 0 — the top of the stack, so
+    it grades everything — in one atomic operation, which is what the Edit
+    tab's own Effects button does. Pass an explicit `track` only to target an
+    existing video track; it MUST be a video track, and an audio or subtitle
+    one is now refused with a real message rather than silently accepted
+    (B-129). The result reports the track it really landed on, `createdTrack`
+    and the new `trackCount` — a new track at index 0 renumbers every existing
+    track, so re-read indices from the result before your next call.
 
     **The five parameters**, each `-1.0..1.0` and `0` = no change. They are
     the Edit tab's own primary correction, not the Colorist's full grading
@@ -2223,8 +2251,11 @@ def editor_add_adjustment_clip(
     ffmpeg to within 1/255."""
     import json
 
-    args: dict = {"track": track, "ripple": ripple}
+    # As in `editor_add_text_clip`: an omitted `track` is meaningful (a new
+    # video track on top), so it is only sent when the caller named one.
+    args: dict = {"ripple": ripple}
     for key, val in (
+        ("track", track),
         ("startFrame", start_frame),
         ("duration", duration),
         ("exposure", exposure),
