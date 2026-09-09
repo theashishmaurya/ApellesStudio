@@ -2512,6 +2512,31 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   toggle re-introduces the exact "script changes it mid-hold" shape already
   proven broken, twice, in this same investigation). Not attempted without
   the owner's own read on that tradeoff first.
+- **B-134 addendum: "every time it's resetting"** — owner's own words,
+  2026-09-10, raised alongside a fresh repro of B-134 (linked A/V clip drag
+  preview). Logged as-is, not diagnosed further tonight — genuinely
+  under-specified (what resets: the drag preview snapping back, a
+  selection, a zoom level, something else) and needs the owner's own
+  clarification or a live repro pass before it can be root-caused as its
+  own item rather than folded into B-134.
+- **A full keyboard-shortcut audit: every shortcut actually registered and
+  working, "Play" included** — owner request 2026-09-10 ("play should play
+  the preview and all the other shortcut registration"). Not scoped in
+  detail — this wants a real pass over every documented/intended shortcut
+  in the app (Play/Space being the one named explicitly) confirming each
+  one is genuinely wired up, not a guess at which ones might be broken.
+- **A real Keyboard Shortcuts settings window — view AND edit/remap any
+  shortcut** — owner request 2026-09-10, with a reference screenshot (macOS
+  System Settings' own "Keyboard Shortcuts" pane — categorised list,
+  checkboxes, a way to change the key combo per action; saved at
+  `scratch/keyboard-shortcuts-settings-reference.png`, gitignored but kept
+  for the next session). A real, standalone feature, not a quick fix:
+  needs an inventory of every shortcut currently hardcoded across the app
+  (`Shell.tsx`'s global handler, `TimelinePane.tsx`'s own keydown handling,
+  `TrimToolbar`'s single-key tool shortcuts, and wherever else one lives)
+  before a remappable settings surface can be built over them — the
+  research-the-real-pattern step CLAUDE.md already asks for, not a guess at
+  how many places currently own a shortcut binding.
 
 ---
 
