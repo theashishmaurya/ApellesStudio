@@ -1,7 +1,12 @@
 /**
- * website/src/styles/global.css — reset, base type, and the handful of shared
- * primitives (D-255). Section-specific styling lives in each .astro component's
- * own scoped <style>, per Astro's canonical pattern.
+ * website/src/styles/global.css — reset, base type, and the few shared
+ * primitives (D-264). Everything section-specific lives in its own component's
+ * scoped <style>, per Astro's canonical pattern.
+ *
+ * The page is a gallery wall: a warm marble ground, quiet ochre hairlines, and
+ * the product hung on it as a dark framed object. That is the whole layout
+ * idea, and it is why there is no dark "app-like" chrome anywhere except inside
+ * a .frame.
  */
 
 @import './tokens.css';
@@ -32,12 +37,13 @@ html {
 
 body {
   margin: 0;
-  background: var(--color-bg-primary);
-  color: var(--color-text-primary);
-  font-family: var(--font-sans);
+  background: var(--pigment-marble);
+  color: var(--pigment-basalt);
+  font-family: var(--font-display);
   font-size: var(--step-0);
-  line-height: 1.6;
-  font-weight: 300;
+  line-height: 1.62;
+  font-weight: 400;
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -56,14 +62,21 @@ a {
 
 h1,
 h2,
-h3,
-h4 {
+h3 {
   font-family: var(--font-display);
+  font-weight: 400;
   margin: 0;
-  line-height: 1.04;
-  letter-spacing: -0.03em;
-  font-weight: 500;
+  line-height: 1.08;
+  letter-spacing: -0.018em;
   text-wrap: balance;
+}
+
+/* The display sizes want the serif's large optical cut and a tighter fit than
+   its reading cut; the axis is what the family is for. */
+h1,
+.display {
+  font-variation-settings: 'opsz' 72;
+  letter-spacing: -0.026em;
 }
 
 p {
@@ -72,8 +85,15 @@ p {
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--pigment-terracotta);
   outline-offset: 3px;
+}
+
+/* Ochre, not rose. The signature colour is spent on one element per page and a
+   selection highlight is not that element — see .signature below. */
+::selection {
+  background: var(--pigment-ochre);
+  color: var(--pigment-basalt);
 }
 
 /* ---- shared primitives ------------------------------------------------ */
@@ -85,24 +105,23 @@ p {
   padding-inline: var(--gutter);
 }
 
-/* The site's one recurring label form: a small mono, letterspaced, secondary
-   eyebrow. Borrowed from the app's own section headers (TRANSFORM / CROP /
-   DYNAMIC ZOOM in the Inspector), which are exactly this. */
+/* The site's one recurring label form. Interface face, not the serif — this is
+   a signpost, not prose, and the two jobs should not look alike. */
 .eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--step--1);
-  letter-spacing: 0.16em;
+  font-family: var(--font-ui);
+  font-size: var(--step--2);
+  letter-spacing: 0.15em;
   text-transform: uppercase;
-  color: var(--color-text-secondary);
-  font-weight: 400;
+  color: var(--pigment-basalt-soft);
+  font-weight: 500;
   margin: 0;
 }
 
 .lede {
   font-size: var(--step-1);
-  color: var(--color-text-secondary);
+  line-height: 1.5;
+  color: var(--pigment-basalt-soft);
   max-width: var(--measure);
-  font-weight: 300;
 }
 
 .mono {
@@ -110,10 +129,9 @@ p {
   font-variant-numeric: tabular-nums;
 }
 
-/* A rule that matches the app's own 1px panel divider, not a decorative bar. */
 .rule {
   height: 1px;
-  background: var(--color-border-color);
+  background: var(--edge);
   border: 0;
   margin: 0;
 }
@@ -129,8 +147,88 @@ p {
   white-space: nowrap;
 }
 
-/* Section rhythm. Deliberately varied by the sections themselves; this is
-   only the default vertical beat. */
 .section {
-  padding-block: clamp(5rem, 3rem + 8vw, 9rem);
+  padding-block: clamp(4.5rem, 3rem + 7vw, 8rem);
+}
+
+/* A prose link: terracotta, on a hairline that thickens rather than a colour
+   that changes. 5.3:1 on marble, so it is legible as body text. */
+.link {
+  color: var(--pigment-terracotta);
+  border-bottom: 1px solid color-mix(in srgb, var(--pigment-terracotta) 35%, transparent);
+  padding-bottom: 1px;
+  transition: border-color var(--dur-slow) var(--ease-out);
+}
+.link:hover {
+  border-bottom-color: var(--pigment-terracotta);
+}
+
+/* An onward link at the end of a band. Interface face, since it is a control. */
+.onward {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-family: var(--font-ui);
+  font-size: var(--step--1);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--pigment-terracotta);
+}
+.onward .arrow {
+  transition: transform var(--dur-slow) var(--ease-out);
+}
+.onward:hover .arrow {
+  transform: translateX(4px);
+}
+
+/**
+ * THE SIGNATURE — the only place `--pigment-rose` is used anywhere in this
+ * codebase, and rendered at most once per page by <Signature />.
+ *
+ * This is the Portugal pink: in the mosaic it was spent on one face out of
+ * roughly two million tesserae, and here it is spent on the one action a page
+ * exists for. If a second one ever appears on a page, tests/palette.test.ts
+ * fails, because at that point the colour has stopped meaning anything.
+ */
+.signature {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: var(--pigment-rose);
+  color: var(--pigment-basalt);
+  font-family: var(--font-ui);
+  font-size: var(--step-0);
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1.4rem;
+  cursor: pointer;
+  transition:
+    filter var(--dur-slow) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+.signature:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+.signature:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.signature:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/**
+ * A product frame. The one context on the site that is allowed to be dark: it
+ * is the application's own window colour, so a screenshot bleeds into its
+ * surround instead of floating on a rectangle someone chose.
+ */
+.frame {
+  background: var(--app-bg-primary);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow:
+    0 1px 0 var(--edge),
+    0 32px 70px -34px color-mix(in srgb, var(--pigment-basalt) 55%, transparent);
 }

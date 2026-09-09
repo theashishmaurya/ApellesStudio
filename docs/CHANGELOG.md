@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-264: `website/` rebuilt end to end for the Apelles
+  rebrand** — new visual identity, new information architecture, new copy. The
+  palette is quarried from the Alexander Mosaic (Carrara marble, Iberian basalt,
+  iron-oxide red and yellow) per the 2025 PLOS ONE analysis of its tesserae, and
+  its one imported-from-Portugal pink becomes a hard, tested design rule: the
+  signature colour is spent on exactly one element per page, as the mosaicists
+  spent it on one face out of roughly two million tiles. Newsreader +
+  Instrument Sans + IBM Plex Mono; Inter and Space Grotesk banned in a constant
+  and asserted absent. One page became four (`/`, `/who-its-for/`, `/inside/`,
+  `/docs/mcp/`), and the copy now argues who the product is for — non-editors,
+  against Resolve's and Premiere's built-by-editors-for-editors assumption —
+  rather than listing what it has. D-255's "site palette IS the app palette"
+  rule is superseded but its coverage moved, not dropped. **The anti-fabrication
+  suite earned its keep on the first run**: the site was publishing 106 MCP
+  tools against a server with 144, having missed the Motion room's 37-tool gap
+  closing (D-257/D-259/D-260); `MOTION_GAP` is replaced by the two real
+  remaining gaps. Screenshots predate the rename and still show the old wordmark
+  — disclosed in the caption, never retouched (`TODO-RECAPTURE-SHOTS.md`).
+  `npm run verify` clean, 186 tests, all four pages checked in a real browser.
 - **2026-09-09** — **D-263: the Edit tab's left library becomes a real activity
   bar — rail on the far left, its buttons switching the DOCKED column** — the
   owner, live, with screenshots: *"as we open this and we have text, other

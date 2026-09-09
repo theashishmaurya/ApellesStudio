@@ -1,0 +1,158 @@
+---
+/**
+ * Machine.astro — how it is built, and why that is your problem too (D-264).
+ *
+ * What it is: the four structural commitments, each written as what it means
+ * for the person using the app rather than as an architecture note, with the
+ * checkable fact printed underneath it.
+ * What it does NOT do: put them in a 2×2 card grid. Four boxes of equal weight
+ * is the shape that makes generated pages look generated; a flowing list under
+ * one heading lets the eye read them in order and stop at the one it cares
+ * about.
+ */
+import { PILLARS } from '../data/product.ts';
+import { TOOL_TOTALS } from '../data/mcp.ts';
+---
+
+<section class="machine section" id="machine">
+  <div class="shell wrap">
+    <div class="lead">
+      <p class="eyebrow">How it is built</p>
+      <h2>It runs on your machine, and it hands the agent the real controls.</h2>
+      <p class="lede">
+        Four commitments, each of them checkable in the source rather than a promise on a marketing
+        page.
+      </p>
+      <p class="more">
+        <a class="onward" href="/docs/mcp/">
+          Connect an agent to it <span class="arrow" aria-hidden="true">&rarr;</span>
+        </a>
+      </p>
+    </div>
+
+    <dl class="pillars">
+      {
+        PILLARS.map((p) => (
+          <div class="pillar">
+            <dt>{p.title}</dt>
+            <dd>
+              <p>{p.body}</p>
+              <p class="proof">{p.proof}</p>
+            </dd>
+          </div>
+        ))
+      }
+    </dl>
+  </div>
+
+  <p class="shell count">
+    <span class="big mono">{TOOL_TOTALS.shipped}</span>
+    <span class="cap">
+      tools an MCP client can call, counted from <span class="mono">mcp/server.py</span> rather than
+      estimated. The {TOOL_TOTALS.debugOnly} development-only tools are excluded, because they are
+      compiled out of a production build.
+    </span>
+  </p>
+</section>
+
+<style>
+  .machine {
+    background: var(--pigment-marble-deep);
+    border-block: 1px solid var(--edge);
+  }
+
+  .wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: clamp(2rem, 1rem + 5vw, 5.5rem);
+    align-items: start;
+  }
+
+  h2 {
+    font-size: var(--step-3);
+    margin-top: 1rem;
+    max-width: 18ch;
+    font-weight: 300;
+  }
+
+  .lead .lede {
+    margin-top: 1.25rem;
+    font-size: var(--step-0);
+    max-width: 40ch;
+  }
+
+  .more {
+    margin-top: 1.75rem;
+  }
+
+  .pillars {
+    margin: 0;
+  }
+
+  .pillar {
+    padding-block: 1.4rem;
+    border-top: 1px solid var(--edge);
+  }
+  .pillar:last-child {
+    border-bottom: 1px solid var(--edge);
+  }
+
+  dt {
+    font-family: var(--font-display);
+    font-size: var(--step-1);
+    line-height: 1.25;
+  }
+
+  dd {
+    margin: 0.55rem 0 0;
+    max-width: 58ch;
+  }
+
+  dd p {
+    color: var(--pigment-basalt-soft);
+  }
+
+  /* The checkable fact. Interface face, one size down — it is a citation, not
+     a second paragraph of prose. */
+  .proof {
+    margin-top: 0.7rem;
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    line-height: 1.6;
+    color: var(--pigment-basalt-soft);
+    padding-left: 0.9rem;
+    border-left: 1px solid var(--edge-strong);
+  }
+
+  .count {
+    display: flex;
+    align-items: baseline;
+    gap: 1.1rem;
+    flex-wrap: wrap;
+    margin-top: clamp(2.5rem, 1.5rem + 3vw, 4rem);
+  }
+
+  .big {
+    font-size: var(--step-4);
+    line-height: 1;
+    color: var(--pigment-terracotta);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .count .cap {
+    flex: 1 1 32ch;
+    font-size: var(--step--1);
+    line-height: 1.65;
+    color: var(--pigment-basalt-soft);
+    max-width: 62ch;
+  }
+
+  @media (max-width: 880px) {
+    .wrap {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    h2 {
+      max-width: 22ch;
+    }
+  }
+</style>

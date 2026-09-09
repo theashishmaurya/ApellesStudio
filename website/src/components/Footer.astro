@@ -1,25 +1,32 @@
 ---
 /**
- * Footer.astro — licence, source, and the honest state of the project (D-255).
+ * Footer.astro — the name, the licence, and the honest state of the project
+ * (D-264).
  *
- * The AGPL notice and source link are required regardless of how Chroma's own
- * licensing question resolves, since the vendored engine is AGPL either way
- * (D-002 / D-003, and docs/notes/pre-launch-plan.md item 4).
+ * The AGPL notice and source link are required however Apelles's own licensing
+ * question resolves, since the vendored engine is AGPL either way (D-002 /
+ * D-003). The colophon line is not decoration: this site's palette makes a
+ * factual claim about a real artifact, so it cites the analysis it rests on,
+ * the same way any other claim on the site traces to a real source.
  */
+import { STATUS, NAMESAKE } from '../data/product.ts';
+import { SOURCE } from '../data/palette.ts';
+
 const year = new Date().getFullYear();
 ---
 
 <footer class="ft">
   <div class="shell inner">
     <div class="brand">
-      <span class="mark">Chroma</span>
-      <p>An AI-native, local, open-source video tool. Edit, Motion and Colorist in one window.</p>
+      <p class="name">Apelles</p>
+      <p class="who">{NAMESAKE.who}</p>
+      <p class="who">{NAMESAKE.loss}</p>
     </div>
 
     <nav aria-label="Footer">
       <h2>Site</h2>
-      <a href="/#tabs">Product</a>
-      <a href="/#mcp">MCP</a>
+      <a href="/inside/">Inside Apelles</a>
+      <a href="/who-its-for/">Who it’s for</a>
       <a href="/docs/mcp/">Connect an agent</a>
       <a href="/#beta">Beta access</a>
     </nav>
@@ -27,54 +34,62 @@ const year = new Date().getFullYear();
     <div class="legal">
       <h2>Licence</h2>
       <p>
-        Chroma is free software released under the <span class="mono">AGPL-3.0</span>, and is a
-        fork of <a href="https://github.com/CyberTimon/RapidRAW">RapidRAW</a>, which is licensed
-        the same way.
+        Apelles is free software under the <span class="mono">{STATUS.licence}</span>, and is a fork
+        of <a class="link" href="https://github.com/CyberTimon/RapidRAW">RapidRAW</a>, which is
+        licensed the same way.
       </p>
     </div>
   </div>
 
   <div class="shell bot">
-    <span class="mono">&copy; {year} Chroma</span>
-    <span class="mono dim">Pre-release &middot; macOS (Apple Silicon)</span>
+    <span>&copy; {year} Apelles</span>
+    <span class="dim">{STATUS.stage} &middot; {STATUS.platform}</span>
   </div>
+
+  <p class="shell colophon">
+    Colours on this site are taken from the Alexander Mosaic — Carrara marble, Iberian basalt,
+    iron-oxide red and yellow, and the pink imported from Portugal for one face — as identified in
+    <a class="link" href={SOURCE.url}>{SOURCE.publication}, {SOURCE.year}</a>. Set in Newsreader and
+    Instrument Sans.
+  </p>
 </footer>
 
 <style>
   .ft {
-    border-top: 1px solid var(--color-border-color);
+    border-top: 1px solid var(--edge);
+    background: var(--pigment-marble-deep);
     padding-top: clamp(3rem, 2rem + 3vw, 4.5rem);
     padding-bottom: 2rem;
   }
 
   .inner {
     display: grid;
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.8fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.7fr) minmax(0, 1fr);
     gap: clamp(2rem, 1rem + 4vw, 5rem);
     padding-bottom: 2.5rem;
   }
 
-  .mark {
-    font-size: var(--step--1);
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    font-weight: 500;
+  .name {
+    font-family: var(--font-display);
+    font-size: var(--step-2);
+    line-height: 1;
   }
 
-  .brand p {
-    margin-top: 0.9rem;
-    color: var(--color-text-secondary);
+  .who {
+    margin-top: 0.8rem;
+    color: var(--pigment-basalt-soft);
     font-size: var(--step--1);
-    max-width: 38ch;
+    line-height: 1.65;
+    max-width: 42ch;
   }
 
   h2 {
-    font-family: var(--font-mono);
-    font-size: 0.6875rem;
-    letter-spacing: 0.16em;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: var(--color-text-secondary);
-    font-weight: 400;
+    color: var(--pigment-basalt-soft);
+    font-weight: 500;
     margin-bottom: 0.9rem;
   }
 
@@ -86,26 +101,20 @@ const year = new Date().getFullYear();
   }
 
   nav a {
+    font-family: var(--font-ui);
     font-size: var(--step--1);
-    color: var(--color-text-secondary);
+    color: var(--pigment-basalt-soft);
     transition: color var(--dur-fast) var(--ease-out);
   }
   nav a:hover {
-    color: var(--color-text-primary);
+    color: var(--pigment-terracotta);
   }
 
   .legal p {
     font-size: var(--step--1);
-    color: var(--color-text-secondary);
+    line-height: 1.65;
+    color: var(--pigment-basalt-soft);
     max-width: 40ch;
-  }
-  .legal a {
-    color: var(--color-text-primary);
-    border-bottom: 1px solid var(--color-border-color);
-    transition: border-color var(--dur-slow) var(--ease-out);
-  }
-  .legal a:hover {
-    border-color: var(--color-accent);
   }
 
   .bot {
@@ -113,15 +122,24 @@ const year = new Date().getFullYear();
     justify-content: space-between;
     gap: 1rem;
     flex-wrap: wrap;
-    border-top: 1px solid var(--color-border-color);
+    border-top: 1px solid var(--edge);
     padding-top: 1.25rem;
-    font-size: 0.6875rem;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
   }
   .dim {
-    color: var(--color-text-secondary);
+    color: var(--pigment-basalt-soft);
   }
 
-  @media (max-width: 800px) {
+  .colophon {
+    margin-top: 1.25rem;
+    font-size: var(--step--2);
+    line-height: 1.7;
+    color: var(--pigment-basalt-soft);
+    max-width: 78ch;
+  }
+
+  @media (max-width: 880px) {
     .inner {
       grid-template-columns: minmax(0, 1fr);
     }

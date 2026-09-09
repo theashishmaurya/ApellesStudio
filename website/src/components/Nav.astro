@@ -1,27 +1,46 @@
 ---
 /**
- * Nav.astro — the top bar (D-255).
+ * Nav.astro — the top bar (D-264).
  *
- * Deliberately modelled on the app's own chrome bar: the CHROMA wordmark hard
- * left in wide-tracked caps, the section links centred the way the app centres
- * Edit / Motion / Colorist, and one action hard right where the app puts Export.
- * It is not a generic sticky SaaS header with a pill CTA.
+ * What it is: a wordmark, three destinations, and one quiet action. The mark is
+ * four tesserae — the smallest possible piece of the mosaic the brand is drawn
+ * from — set beside the name in the display serif.
+ * What it does NOT do: carry the signature colour. The rose belongs to the one
+ * action a page exists for, and a persistent header button is not that; the
+ * nav's beta link is deliberately the quietest control on the page.
  */
 const links = [
-  { href: '/#tabs', label: 'Product' },
-  { href: '/#mcp', label: 'MCP' },
-  { href: '/docs/mcp/', label: 'Docs' },
-  { href: '/#local', label: 'Local-first' },
+  { href: '/inside/', label: 'Inside Apelles' },
+  { href: '/who-its-for/', label: 'Who it’s for' },
+  { href: '/docs/mcp/', label: 'Connect an agent' },
 ];
+
+const path = Astro.url.pathname;
 ---
 
 <header class="bar">
   <div class="inner">
-    <a class="mark" href="/">Chroma</a>
+    <a class="mark" href="/" aria-label="Apelles — home">
+      <svg class="tess" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+        <rect x="0" y="0" width="9" height="9" rx="1.2" fill="var(--pigment-basalt)"></rect>
+        <rect x="11" y="0" width="9" height="9" rx="1.2" fill="var(--pigment-terracotta)"></rect>
+        <rect x="0" y="11" width="9" height="9" rx="1.2" fill="var(--pigment-ochre)"></rect>
+        <rect x="11" y="11" width="9" height="9" rx="1.2" fill="var(--edge-strong)"></rect>
+      </svg>
+      <span class="word">Apelles</span>
+    </a>
+
     <nav class="mid" aria-label="Sections">
-      {links.map((l) => <a href={l.href}>{l.label}</a>)}
+      {
+        links.map((l) => (
+          <a href={l.href} aria-current={path.startsWith(l.href) ? 'page' : undefined}>
+            {l.label}
+          </a>
+        ))
+      }
     </nav>
-    <a class="cta" href="/#beta">Request beta access</a>
+
+    <a class="quiet" href="/#beta">Request beta access</a>
   </div>
 </header>
 
@@ -30,72 +49,87 @@ const links = [
     position: sticky;
     top: 0;
     z-index: 50;
-    background: color-mix(in srgb, var(--color-bg-primary) 88%, transparent);
+    background: color-mix(in srgb, var(--pigment-marble) 86%, transparent);
     backdrop-filter: blur(14px);
-    border-bottom: 1px solid var(--color-border-color);
+    border-bottom: 1px solid var(--edge);
   }
 
   .inner {
     max-width: var(--shell-max);
     margin-inline: auto;
     padding: 0 var(--gutter);
-    height: 56px;
+    height: 62px;
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;
     gap: 1rem;
   }
 
-  /* The app's own wordmark treatment: uppercase, tracked out, quiet weight. */
   .mark {
-    font-size: var(--step--1);
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
     justify-self: start;
+  }
+
+  .word {
+    font-family: var(--font-display);
+    font-size: var(--step-1);
+    letter-spacing: -0.01em;
+    line-height: 1;
+  }
+
+  .tess {
+    flex: none;
+    opacity: 0.9;
   }
 
   .mid {
     display: flex;
-    gap: 1.75rem;
+    gap: 1.9rem;
     justify-self: center;
   }
 
   .mid a {
+    font-family: var(--font-ui);
     font-size: var(--step--1);
-    color: var(--color-text-secondary);
+    color: var(--pigment-basalt-soft);
     position: relative;
-    padding-block: 4px;
+    padding-block: 5px;
     transition: color var(--dur-fast) var(--ease-out);
   }
 
-  /* The app's tab language: a 2px accent bar under the label (Shell.tsx,
-     TimelineSwitcher.tsx), grown from the centre rather than snapped on. */
+  /* An ochre hairline that grows under the label — the same kind of rule that
+     separates the sections below, not a pill or a background swap. */
   .mid a::after {
     content: '';
     position: absolute;
     left: 0;
     right: 0;
-    bottom: -2px;
-    height: 2px;
-    background: var(--color-accent);
+    bottom: 0;
+    height: 1px;
+    background: var(--pigment-ochre);
     transform: scaleX(0);
+    transform-origin: left;
     transition: transform var(--dur-slow) var(--ease-out);
   }
 
-  .mid a:hover {
-    color: var(--color-text-primary);
+  .mid a:hover,
+  .mid a[aria-current='page'] {
+    color: var(--pigment-basalt);
   }
 
-  .mid a:hover::after {
+  .mid a:hover::after,
+  .mid a[aria-current='page']::after {
     transform: scaleX(1);
   }
 
-  .cta {
+  .quiet {
     justify-self: end;
+    font-family: var(--font-ui);
     font-size: var(--step--1);
-    color: var(--color-text-primary);
-    border: 1px solid var(--color-border-color);
+    color: var(--pigment-basalt);
+    border: 1px solid var(--edge-strong);
     padding: 0.45rem 0.9rem;
     border-radius: var(--radius-md);
     transition:
@@ -103,12 +137,12 @@ const links = [
       background-color var(--dur-slow) var(--ease-out);
   }
 
-  .cta:hover {
-    border-color: var(--color-accent);
-    background: var(--color-card-active);
+  .quiet:hover {
+    border-color: var(--pigment-basalt);
+    background: var(--wash);
   }
 
-  @media (max-width: 800px) {
+  @media (max-width: 880px) {
     .mid {
       display: none;
     }

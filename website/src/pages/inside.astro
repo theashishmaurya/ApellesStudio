@@ -1,0 +1,201 @@
+---
+/**
+ * inside.astro — what each of the three rooms actually does (D-264).
+ *
+ * What it is: the shipped-capability page. Every line comes from
+ * src/data/product.ts, which carries only items marked ✅ in docs/02-scope.md.
+ * What it does NOT do: show a mockup where a real screenshot does not exist.
+ * Only the Edit room has been captured; the other two say so plainly and list
+ * their real capabilities instead, which is the same handling D-255 chose and
+ * for the same reason — a video tool that fakes its own imagery has already
+ * lost the argument.
+ */
+import Base from '../layouts/Base.astro';
+import PageHead from '../components/PageHead.astro';
+import Signature from '../components/Signature.astro';
+import { TABS, STATUS } from '../data/product.ts';
+---
+
+<Base
+  title="Inside Apelles — the Edit, Motion and Colorist rooms"
+  description="What each of the three rooms really does today: a full multi-track editor, a Remotion motion-graphics authoring surface, and a GPU colour pipeline with AI masks, depth and real scopes. Shipped features only."
+>
+  <PageHead
+    eyebrow="Inside Apelles"
+    title="Three rooms, one window."
+    lede="Cutting, motion graphics and colour normally mean three applications and three round trips through an export. Here they are three parts of the same project, and everything below is shipped and working today — nothing on this page is a plan."
+  />
+
+  {
+    TABS.map((tab, i) => (
+      <section class:list={['room section', { band: i % 2 === 1 }]} id={tab.id}>
+        <div class="shell">
+          <div class="intro">
+            <p class="eyebrow">
+              {String(i + 1).padStart(2, '0')} &mdash; {tab.line}
+            </p>
+            <h2>{tab.name}</h2>
+            <p class="lede">{tab.plain}</p>
+          </div>
+
+          {tab.shot ? (
+            <figure class="shotwrap">
+              <div class="frame">
+                <img
+                  src={tab.shot.src}
+                  alt={tab.shot.alt}
+                  width={tab.shot.width}
+                  height={tab.shot.height}
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+              <figcaption>
+                A real capture of the running application. The captures on this site predate the
+                rename, so the title bar still reads <span class="mono">CHROMA</span> — they will be
+                retaken rather than retouched.
+              </figcaption>
+            </figure>
+          ) : (
+            <p class="gap">{tab.shotNote}</p>
+          )}
+
+          <ul class="shipped">
+            {tab.shipped.map((s) => (
+              <li>{s}</li>
+            ))}
+          </ul>
+        </div>
+      </section>
+    ))
+  }
+
+  <section class="section state">
+    <div class="shell">
+      <h2>Where the project actually is.</h2>
+      <dl class="facts">
+        <div><dt>Stage</dt><dd>{STATUS.stage}</dd></div>
+        <div><dt>Platform</dt><dd>{STATUS.platform}</dd></div>
+        <div><dt>Licence</dt><dd>{STATUS.licence}</dd></div>
+        <div><dt>Windows</dt><dd>{STATUS.windows}</dd></div>
+      </dl>
+      <p class="closing">
+        No downloads, no user numbers and no testimonials on this page, because there are none of
+        those things yet. There is a list.
+      </p>
+      <Signature href="/#beta" label="Request beta access" />
+    </div>
+  </section>
+</Base>
+
+<style>
+  .band {
+    background: var(--pigment-marble-deep);
+    border-block: 1px solid var(--edge);
+  }
+
+  h2 {
+    font-size: var(--step-4);
+    margin-top: 0.75rem;
+    font-weight: 300;
+  }
+
+  .intro .lede {
+    margin-top: 1.25rem;
+  }
+
+  .shotwrap {
+    margin: clamp(2rem, 1.25rem + 2.5vw, 3.25rem) 0 0;
+  }
+
+  .shotwrap figcaption {
+    margin-top: 0.85rem;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    color: var(--pigment-basalt-soft);
+  }
+
+  /* The honest absence. Marked with the working colour so it reads as a
+     deliberate statement rather than an empty slot the layout forgot. */
+  .gap {
+    margin-top: clamp(1.75rem, 1.25rem + 1.5vw, 2.5rem);
+    border-left: 2px solid var(--pigment-ochre);
+    padding-left: 1rem;
+    max-width: 58ch;
+    color: var(--pigment-basalt-soft);
+    font-size: var(--step--1);
+    line-height: 1.7;
+    font-family: var(--font-ui);
+  }
+
+  .shipped {
+    list-style: none;
+    margin: clamp(2rem, 1.25rem + 2vw, 3rem) 0 0;
+    padding: 0;
+    columns: 2;
+    column-gap: clamp(2rem, 1rem + 4vw, 4.5rem);
+    max-width: 100ch;
+  }
+
+  .shipped li {
+    break-inside: avoid;
+    margin-bottom: 0.85rem;
+    padding-left: 1.15rem;
+    position: relative;
+    font-size: var(--step--1);
+    line-height: 1.65;
+    color: var(--pigment-basalt-soft);
+  }
+  .shipped li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.6em;
+    width: 5px;
+    height: 5px;
+    border-radius: 1px;
+    background: var(--pigment-ochre);
+  }
+
+  /* ---- state ----------------------------------------------------------- */
+
+  .state h2 {
+    font-size: var(--step-3);
+    margin-top: 0;
+  }
+
+  .facts {
+    margin: 2rem 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 1.5rem;
+    border-top: 1px solid var(--edge);
+    padding-top: 1.5rem;
+    max-width: 78ch;
+  }
+
+  .facts dt {
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pigment-basalt-soft);
+  }
+
+  .facts dd {
+    margin: 0.45rem 0 0;
+    font-size: var(--step-0);
+  }
+
+  .closing {
+    margin: 2.25rem 0 2rem;
+    max-width: 52ch;
+    color: var(--pigment-basalt-soft);
+  }
+
+  @media (max-width: 720px) {
+    .shipped {
+      columns: 1;
+    }
+  }
+</style>

@@ -1,0 +1,46 @@
+---
+/**
+ * PageHead.astro — the opening block every page but the home page uses (D-264).
+ *
+ * What it is: eyebrow, the page's single h1, and a lede, on a rule that closes
+ * the block. One component so the three pages open identically — consistency
+ * held as a real system rather than re-typed per page and drifting.
+ * What it does NOT do: carry an action. The action belongs at the end of the
+ * argument, not before it.
+ */
+interface Props {
+  eyebrow: string;
+  title: string;
+  lede: string;
+}
+
+const { eyebrow, title, lede } = Astro.props;
+---
+
+<header class="head">
+  <div class="shell">
+    <p class="eyebrow">{eyebrow}</p>
+    <h1>{title}</h1>
+    <p class="lede">{lede}</p>
+  </div>
+</header>
+
+<style>
+  .head {
+    padding-top: clamp(3rem, 2rem + 4.5vw, 6rem);
+    padding-bottom: clamp(2.25rem, 1.5rem + 2.5vw, 3.5rem);
+    border-bottom: 1px solid var(--edge);
+  }
+
+  h1 {
+    font-size: var(--step-4);
+    margin: 1.25rem 0 0;
+    max-width: 20ch;
+    font-weight: 300;
+  }
+
+  .lede {
+    margin-top: 1.5rem;
+    max-width: 58ch;
+  }
+</style>

@@ -1,0 +1,87 @@
+---
+/**
+ * Difference.astro — the short version of the argument (D-264).
+ *
+ * What it is: the one paragraph of positioning the home page owes a visitor,
+ * naming the professional tools directly and respectfully, then saying plainly
+ * what Apelles assumes instead.
+ * What it does NOT do: claim to be better, faster or easier than Resolve or
+ * Premiere, or draw a comparison table. The claim is about a starting
+ * assumption, which is a fact about how each tool was designed rather than a
+ * competitive boast — and the full argument lives on its own page so this one
+ * does not have to cram it.
+ */
+---
+
+<section class="diff section">
+  <div class="shell wrap">
+    <div class="lead">
+      <p class="eyebrow">Why this exists</p>
+      <h2>Resolve and Premiere are magnificent. They were built for somebody else.</h2>
+    </div>
+
+    <div class="body">
+      <p>
+        DaVinci Resolve and Premiere Pro were made by editors, for editors. Every timeline, node
+        graph and keyframe panel in them assumes you already have the craft &mdash; years of it.
+        That assumption is a fair one, and it is exactly why those tools are so good at what they
+        do. It is also the reason most people never make the video they had in mind.
+      </p>
+      <p>
+        Apelles starts from the opposite assumption: that you know what you want and not how to
+        build it, and that building it is the machine&rsquo;s job. You describe the result. An agent
+        does the cutting, the colour and the graphics &mdash; through the same controls you would
+        have used yourself, on the same undo stack, so you can always take one step back and do it
+        your own way.
+      </p>
+      <p class="more">
+        <a class="onward" href="/who-its-for/">
+          The longer version <span class="arrow" aria-hidden="true">&rarr;</span>
+        </a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .diff {
+    background: var(--pigment-marble-deep);
+    border-block: 1px solid var(--edge);
+  }
+
+  .wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: clamp(2rem, 1rem + 5vw, 5.5rem);
+    align-items: start;
+  }
+
+  h2 {
+    font-size: var(--step-3);
+    margin-top: 1rem;
+    max-width: 17ch;
+    font-weight: 300;
+  }
+
+  .body p + p {
+    margin-top: 1.25rem;
+  }
+
+  .body p {
+    max-width: 54ch;
+    color: var(--pigment-basalt-soft);
+  }
+
+  .more {
+    margin-top: 2rem;
+  }
+
+  @media (max-width: 880px) {
+    .wrap {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    h2 {
+      max-width: 22ch;
+    }
+  }
+</style>

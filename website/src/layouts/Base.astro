@@ -1,17 +1,20 @@
 ---
 /**
- * Base.astro — the site's single document shell (D-255).
+ * Base.astro — the site's single document shell (D-264).
  *
  * What it is: <head>, fonts, global CSS, nav and footer around a slot.
- * What it does NOT do: any per-page logic — pages compose sections themselves.
+ * What it does NOT do: any per-page logic — pages compose their own sections.
  *
- * The font loading mirrors app/index.html's own preconnect + css2 pattern
- * verbatim, so the site renders in the product's real typeface rather than an
- * approximation of it.
+ * Three families load, each with one job (src/data/palette.ts says why each was
+ * chosen): Newsreader carries display and prose, Instrument Sans carries the
+ * interface, IBM Plex Mono carries technical material. Newsreader is requested
+ * with its optical-size axis so the display cut and the reading cut are the
+ * same family behaving correctly at both ends, rather than two fonts.
  */
 import '../styles/global.css';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
+import { PIGMENTS } from '../data/palette.ts';
 
 interface Props {
   title: string;
@@ -19,7 +22,13 @@ interface Props {
 }
 
 const { title, description } = Astro.props;
-const canonical = new URL(Astro.url.pathname, Astro.site ?? 'https://chroma.video').href;
+const origin = Astro.site ?? new URL('https://apelles.video');
+const canonical = new URL(Astro.url.pathname, origin).href;
+const ogImage = new URL('/shots/edit-transform.png', origin).href;
+
+/** `theme-color` needs a literal, not a CSS variable — so it is read from the
+ *  palette rather than typed a second time and left to drift. */
+const themeColor = PIGMENTS.find((p) => p.token === 'pigment-marble')?.hex;
 ---
 
 <!doctype html>
@@ -35,16 +44,16 @@ const canonical = new URL(Astro.url.pathname, Astro.site ?? 'https://chroma.vide
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
     <meta property="og:url" content={canonical} />
-    <meta property="og:image" content={new URL('/shots/edit-inspector.png', Astro.site ?? 'https://chroma.video').href} />
+    <meta property="og:image" content={ogImage} />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <meta name="theme-color" content="#181818" />
+    <meta name="theme-color" content={themeColor} />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Poppins:wght@200;300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&family=Instrument+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
   </head>
@@ -64,8 +73,9 @@ const canonical = new URL(Astro.url.pathname, Astro.site ?? 'https://chroma.vide
         top: 0;
         left: 0;
         z-index: 100;
-        background: var(--color-accent);
-        color: var(--color-button-text);
+        background: var(--pigment-basalt);
+        color: var(--pigment-marble);
+        font-family: var(--font-ui);
         padding: 0.6rem 1rem;
         font-size: var(--step--1);
         transform: translateY(-120%);

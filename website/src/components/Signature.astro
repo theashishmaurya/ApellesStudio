@@ -1,0 +1,51 @@
+---
+/**
+ * Signature.astro — the one rose element on a page (D-264).
+ *
+ * What it is: the site's single primary action, rendered as either the link
+ * that carries you to the signup or the signup's own submit button.
+ * What it does NOT do: appear twice on a page, or get used for a secondary
+ * action. `--pigment-rose` is defined once, used by one CSS rule (`.signature`
+ * in global.css), and rendered by this component alone.
+ *
+ * Why the ceremony: in the Alexander Mosaic the pink was imported from Portugal
+ * and spent on Alexander's face alone, out of roughly two million tesserae.
+ * A signature colour used twice is not a signature. `tests/palette.test.ts`
+ * asserts at most one `.signature` per built page, so the rule is enforced
+ * rather than remembered.
+ */
+interface Props {
+  /** Where it goes. Omit to render a form submit button instead. */
+  href?: string;
+  /** The label. Written as the visitor's own next move, not as a command. */
+  label: string;
+  /** Only for the submit form of the button. */
+  id?: string;
+}
+
+const { href, label, id } = Astro.props;
+---
+
+{
+  href ? (
+    <a class="signature" href={href}>
+      {label}
+      <span class="arrow" aria-hidden="true">
+        &rarr;
+      </span>
+    </a>
+  ) : (
+    <button class="signature" type="submit" id={id} data-submit>
+      <span data-label>{label}</span>
+    </button>
+  )
+}
+
+<style>
+  .arrow {
+    transition: transform var(--dur-slow) var(--ease-out);
+  }
+  .signature:hover .arrow {
+    transform: translateX(4px);
+  }
+</style>

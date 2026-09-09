@@ -1,0 +1,133 @@
+---
+/**
+ * Rooms.astro — the three surfaces, named for what a person comes to them to do
+ * (D-264).
+ *
+ * What it is: a list, not a card grid. Three equal cards side by side is the
+ * templated pattern this site is explicitly avoiding — it flattens three
+ * genuinely different jobs into one shape and gives the eye nowhere to land.
+ * A vertical list with real rules between the rows lets each room be read in
+ * order, which is also the order you would use them in.
+ * What it does NOT do: list capabilities. That is /inside/'s job; here each room
+ * gets one sentence and one example of what you would actually say to it.
+ */
+import { TABS } from '../data/product.ts';
+
+/** What a person would say out loud to get each room to do its work. Every one
+ *  maps to a shipped capability listed in src/data/product.ts. */
+const ASKS: Record<string, string> = {
+  edit: '“Trim the dead air at the front and cut to the second angle when he stands up.”',
+  motion: '“Put his name in the bottom corner for four seconds and slide it in.”',
+  colorist: '“Warm it up, lift the shadows a little, and keep her skin where it is.”',
+};
+---
+
+<section class="rooms section" id="rooms">
+  <div class="shell head">
+    <p class="eyebrow">Three rooms, one window</p>
+    <h2>Everything a video needs, without opening a second app.</h2>
+  </div>
+
+  <ol class="shell list">
+    {
+      TABS.map((tab, i) => (
+        <li class="room">
+          <span class="num mono">{String(i + 1).padStart(2, '0')}</span>
+          <div class="text">
+            <h3>
+              {tab.name} <span class="what">&mdash; {tab.line}</span>
+            </h3>
+            <p class="plain">{tab.plain}</p>
+            <p class="ask">{ASKS[tab.id]}</p>
+          </div>
+        </li>
+      ))
+    }
+  </ol>
+
+  <div class="shell more">
+    <a class="onward" href="/inside/">
+      What each room actually does <span class="arrow" aria-hidden="true">&rarr;</span>
+    </a>
+  </div>
+</section>
+
+<style>
+  .head {
+    margin-bottom: clamp(2rem, 1.25rem + 2.5vw, 3rem);
+  }
+
+  h2 {
+    font-size: var(--step-3);
+    margin-top: 1rem;
+    max-width: 24ch;
+    font-weight: 300;
+  }
+
+  .list {
+    list-style: none;
+    margin: 0;
+    padding-inline: var(--gutter);
+  }
+
+  .room {
+    display: grid;
+    grid-template-columns: 3.5rem minmax(0, 1fr);
+    gap: 1rem;
+    padding-block: clamp(1.75rem, 1.25rem + 1.5vw, 2.5rem);
+    border-top: 1px solid var(--edge);
+  }
+  .room:last-child {
+    border-bottom: 1px solid var(--edge);
+  }
+
+  .num {
+    font-size: var(--step--2);
+    color: var(--pigment-ochre);
+    padding-top: 0.55rem;
+    letter-spacing: 0.08em;
+  }
+
+  h3 {
+    font-size: var(--step-2);
+    font-weight: 400;
+  }
+
+  .what {
+    color: var(--pigment-basalt-soft);
+    font-style: italic;
+  }
+
+  .plain {
+    margin-top: 0.75rem;
+    max-width: 58ch;
+    color: var(--pigment-basalt-soft);
+  }
+
+  /* What you would say to it. Set in the interface face, because it is an
+     instruction to the software rather than prose about it. */
+  .ask {
+    margin-top: 1rem;
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    line-height: 1.6;
+    color: var(--pigment-basalt);
+    border-left: 2px solid var(--pigment-ochre);
+    padding-left: 0.9rem;
+    max-width: 52ch;
+  }
+
+  .more {
+    margin-top: 2.25rem;
+  }
+
+  @media (max-width: 620px) {
+    .room {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.4rem;
+    }
+    .num {
+      padding-top: 0;
+    }
+  }
+</style>

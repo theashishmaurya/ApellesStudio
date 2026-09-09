@@ -1,611 +1,136 @@
 ---
 /**
- * Hero.astro — the page's one maximalist moment (D-255).
+ * Hero.astro — the home page's single focal point (D-264).
  *
- * What it is: a working miniature of Chroma's Edit tab. The playhead really
- * scrubs, the timecode really counts frames, the preview really cuts between
- * real screenshots of the running app at real edit points, and the Scale and
- * Opacity fields implement the app's own drag-to-scrub numeric interaction
- * (D-253: 8px per declared step, Shift x10, Cmd/Ctrl /10, 4px drag threshold)
- * against the live preview.
+ * What it is: one benefit-led headline that carries the whole value proposition
+ * on its own, because most visitors read the headline and nothing else. It is
+ * written from the visitor's side of the screen — what they already have (a
+ * picture in their head) and what they do not (the craft) — rather than from
+ * the architecture's side.
+ * What it does NOT do: list features, carry a product shot, or compete with
+ * itself. There is exactly one thing to read here and one place to go next; the
+ * demonstration is the section below, and the ask is at the bottom of the page.
  *
- * What it does NOT do: play video (no demo video exists yet — see
- * website/TODO-DEMO-VIDEO.md), or pretend to be the real application. It is a
- * scrubbable filmstrip of genuine screenshots, and it says so in its caption.
- *
- * Why this rather than a parallax scroll: the distinctive physical sensation of
- * using this app is dragging — a playhead across a timeline, a number to change
- * it. That is the motion worth reproducing. Everything below this section is
- * deliberately quiet.
+ * The one typographic move on this site is in the h1: a roman first sentence
+ * and an italic second one, at different sizes, doing real hierarchy work —
+ * setup, then turn. Nothing else on the page is allowed a flourish.
  */
 import { TOOL_TOTALS } from '../data/mcp.ts';
+import { STATUS } from '../data/product.ts';
 
-/** The real screenshots, in cut order, with the frame each cuts in on.
- *  30 fps, so `at` is directly readable as a timecode.
- *
- *  Every image here was opened and confirmed to be what its caption says
- *  before it was used. All four are 2692x1800, so the stage never reflows.
- *  The order is the app's own narrative: open a project, cut, stack, refine. */
-const FRAMES = [
-  {
-    at: 0,
-    src: '/shots/edit-timeline.png',
-    label: 'before-1.09.51pm.mov',
-    alt: 'The Edit tab with a vertical 1080×1920 preview, the Split / Marker / Transitions toolbar, and a video track showing a real filmstrip of the clip’s own frames with a marker pinned above it.',
-  },
-  {
-    at: 700,
-    src: '/shots/edit-composite.png',
-    label: 'after-1.08.16pm.mov',
-    alt: 'Two video tracks composited into one vertical frame at once, with four audio tracks carrying separate sound effects beneath them.',
-  },
-  {
-    at: 1400,
-    src: '/shots/edit-inspector.png',
-    label: 'before-1.09.51pm.mov',
-    alt: 'The clip Inspector open on Transform, Crop, Dynamic Zoom and Speed, with a keyframe diamond on every animatable row and an on-canvas transform box in the preview.',
-  },
-];
-
-const TOTAL = 2100;
-
-/** Real marker colours, used exactly as the app uses them — as flags on the
- *  timeline. Values are MARKER_COLORS from packages/editor/src/timeline.ts. */
-const MARKS = [
-  { at: 700, tone: 'var(--marker-blue)' },
-  { at: 1400, tone: 'var(--marker-green)' },
+/** Three facts, each checkable elsewhere on this site. Not a feature list. */
+const FACTS = [
+  `Free and open source, ${STATUS.licence}`,
+  'Runs on your machine, not a server',
+  `${TOOL_TOTALS.shipped} real controls an agent can reach`,
 ];
 ---
 
 <section class="hero">
-  <div class="shell lead-in">
-    <p class="eyebrow">Edit &middot; Motion &middot; Colorist &mdash; one local app</p>
-    <h1>
-      The video editor<br />an agent can<span class="ital"> actually</span> drive.
-    </h1>
-    <p class="lede">
-      Chroma is an open-source, local-first video tool where cutting, motion graphics and real
-      colour grading live in one window &mdash; and where every one of those surfaces is reachable
-      by an AI agent through {TOOL_TOTALS.shipped} verified MCP tools, not a scripting API that
-      stops at the interesting part.
-    </p>
-  </div>
-
-  <!-- The stage. Modelled on the app's own chrome: wordmark left, tabs centred,
-       action right, then preview / transport / timeline top to bottom. -->
   <div class="shell">
-    <figure class="stage" data-stage>
-      <!-- Deliberately NOT a fake window chrome: the screenshots below already
-           contain the real application's own title bar and tabs, and drawing a
-           second set around them would be both redundant and a lie about what
-           you are looking at. This is a caption strip. -->
-      <div class="chrome">
-        <span class="strip-label mono">Preview</span>
-        <span class="chip mono" data-clip>{FRAMES[0].label}</span>
-      </div>
+    <p class="eyebrow">A video app for people who never learned to edit</p>
 
-      <div class="body">
-        <div class="viewer">
-          <div class="canvas" data-canvas>
-            {
-              FRAMES.map((f, i) => (
-                <img
-                  src={f.src}
-                  alt={i === 0 ? f.alt : ''}
-                  aria-hidden={i === 0 ? 'false' : 'true'}
-                  width="2692"
-                  height="1800"
-                  loading={i === 0 ? 'eager' : 'lazy'}
-                  decoding="async"
-                  data-frame={f.at}
-                  class:list={['shot', { on: i === 0 }]}
-                />
-              ))
-            }
-          </div>
+    <h1>
+      You already know what your video should look like.
+      <span class="turn">Apelles is the part you were missing.</span>
+    </h1>
 
-          <div class="transport">
-            <span class="tc mono" data-tc>00:00:00:00</span>
-            <div
-              class="track"
-              data-track
-              role="slider"
-              tabindex="0"
-              aria-label="Scrub the preview"
-              aria-valuemin="0"
-              aria-valuemax={TOTAL}
-              aria-valuenow="0"
-              aria-valuetext="00:00:00:00"
-            >
-              <span class="fill" data-fill></span>
-              {
-                MARKS.map((m) => (
-                  <span class="mark" style={`left:${(m.at / TOTAL) * 100}%;--tone:${m.tone}`} />
-                ))
-              }
-              <span class="playhead" data-head></span>
-            </div>
-            <span class="tc mono dim">{`00:01:10:00`}</span>
-          </div>
-        </div>
+    <p class="lede">
+      Tell it what you are going for, in ordinary words. A real AI agent does the cutting, the
+      colour and the motion graphics &mdash; the parts that normally take years to learn &mdash;
+      right there on your own machine, in an app you can pick up and drive by hand whenever you
+      would rather.
+    </p>
 
-        <!-- A miniature Inspector. The two fields below are the real D-253
-             interaction, not a decoration: drag them. -->
-        <aside class="insp">
-          <p class="eyebrow ins-h">Transform</p>
+    <ul class="facts">
+      {FACTS.map((f) => <li>{f}</li>)}
+    </ul>
 
-          <label class="field">
-            <span>Scale</span>
-            <input
-              type="number"
-              data-num="scale"
-              value="1"
-              min="0.4"
-              max="1"
-              step="0.01"
-              aria-label="Scale — drag horizontally to change"
-            />
-          </label>
-
-          <label class="field">
-            <span>Opacity</span>
-            <input
-              type="number"
-              data-num="opacity"
-              value="1"
-              min="0.2"
-              max="1"
-              step="0.01"
-              aria-label="Opacity — drag horizontally to change"
-            />
-          </label>
-
-          <p class="hint">
-            Drag a value sideways to change it &mdash; the same virtual-slider gesture the app
-            itself uses. Hold <kbd>&#8679;</kbd> for coarse, <kbd>&#8984;</kbd> for fine.
-          </p>
-        </aside>
-      </div>
-
-      <figcaption class="cap">
-        Real screenshots of the running application, scrubbable. Chroma has no recorded product
-        demo yet.
-      </figcaption>
-    </figure>
+    <p class="next">
+      <a class="onward" href="#demo">
+        See it mid-edit <span class="arrow" aria-hidden="true">&darr;</span>
+      </a>
+    </p>
   </div>
 </section>
 
 <style>
   .hero {
-    padding-top: clamp(2.5rem, 1.5rem + 3.5vw, 4.25rem);
-    padding-bottom: clamp(3rem, 2rem + 4vw, 5rem);
-    /* One soft vertical lift out of the page ground — no colour gradient, just
-       the surface token easing into the primary ground. */
-    background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-bg-primary) 62%);
-  }
-
-  .lead-in {
-    margin-bottom: clamp(2rem, 1.25rem + 3vw, 3.25rem);
+    padding-top: clamp(3.5rem, 2rem + 6vw, 7.5rem);
+    /* Deliberately small: the section below brings its own generous top
+       padding, and stacking both left a dead band the eye had to cross. */
+    padding-bottom: clamp(1rem, 0.5rem + 1vw, 1.75rem);
   }
 
   h1 {
     font-size: var(--step-5);
-    font-weight: 200;
-    margin: 1.25rem 0 1.75rem;
-    letter-spacing: -0.045em;
+    margin: 1.5rem 0 0;
+    max-width: 19ch;
+    font-weight: 300;
   }
 
-  /* The single typographic flourish on the page — one italic word, at the
-     weight the rest of the headline is not. */
-  .ital {
+  /* The turn. Italic, one step down, and in the softened ink — so the eye reads
+     the claim first and the promise second, in that order, without a rule or a
+     colour or a box making it happen. */
+  .turn {
+    display: block;
+    margin-top: 0.24em;
     font-style: italic;
-    font-weight: 500;
+    font-size: 0.62em;
+    color: var(--pigment-basalt-soft);
+    letter-spacing: -0.012em;
+    max-width: 26ch;
   }
 
-  /* ---- stage ---------------------------------------------------------- */
-
-  .stage {
-    margin: 0;
-    border: 1px solid var(--color-border-color);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    background: var(--color-surface);
-    box-shadow: 0 40px 120px -40px rgb(0 0 0 / 0.9);
+  .lede {
+    margin-top: 2rem;
+    max-width: 56ch;
   }
 
-  .chrome {
+  .facts {
+    list-style: none;
+    margin: 2.25rem 0 0;
+    padding: 0;
     display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.6rem;
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    color: var(--pigment-basalt-soft);
+  }
+
+  /* An ochre tessera before each fact — the mosaic's own unit, used as a list
+     mark. This is the only ornament on the page and it is 4px wide. */
+  .facts li {
+    display: inline-flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0 0.95rem;
-    height: 38px;
-    border-bottom: 1px solid var(--color-border-color);
-    background: var(--color-bg-primary);
-  }
-
-  .strip-label {
-    font-size: 0.6875rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--color-text-secondary);
-  }
-
-  .chip {
-    font-size: 0.6875rem;
-    color: var(--color-text-secondary);
-    max-width: 22ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .body {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 224px;
-  }
-
-  .viewer {
-    min-width: 0;
-    border-right: 1px solid var(--color-border-color);
-  }
-
-  .canvas {
-    position: relative;
-    aspect-ratio: 2692 / 1800;
-    background: #000;
-    overflow: hidden;
-  }
-
-  .shot {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    opacity: 0;
-    /* Set by script; declared here so the first paint is correct. */
-    transform: scale(var(--z, 1));
-    transform-origin: center;
-    transition: opacity 220ms var(--ease-out);
-    will-change: opacity;
-  }
-  .shot.on {
-    opacity: var(--a, 1);
-  }
-
-  .transport {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-    padding: 0.7rem 0.9rem;
-    border-top: 1px solid var(--color-border-color);
-    background: var(--color-bg-primary);
-  }
-
-  .tc {
-    font-size: 0.75rem;
-    color: var(--color-text-primary);
-    letter-spacing: 0.02em;
-  }
-  .tc.dim {
-    color: var(--color-text-secondary);
-  }
-
-  .track {
-    position: relative;
-    flex: 1;
-    height: 22px;
-    cursor: ew-resize;
-    touch-action: none;
-    display: flex;
-    align-items: center;
-  }
-  .track::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: var(--color-border-color);
-    border-radius: 2px;
-  }
-
-  .fill {
-    position: absolute;
-    left: 0;
-    height: 3px;
-    width: 0;
-    background: var(--color-text-secondary);
-    border-radius: 2px;
-  }
-
-  /* A marker is the app's flag shape: a small square pinned to a frame. */
-  .mark {
-    position: absolute;
-    top: 1px;
-    width: 6px;
-    height: 6px;
-    margin-left: -3px;
-    background: var(--tone);
-    border-radius: 1px;
-  }
-
-  .playhead {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    margin-left: -1px;
-    background: var(--color-accent);
-    left: 0;
-  }
-  .playhead::after {
-    content: '';
-    position: absolute;
-    top: -1px;
-    left: -4px;
-    width: 10px;
-    height: 8px;
-    background: var(--color-accent);
-    border-radius: 1px;
-  }
-
-  /* ---- inspector ------------------------------------------------------ */
-
-  .insp {
-    padding: 1rem 0.95rem;
-    background: var(--color-surface);
-    display: flex;
-    flex-direction: column;
     gap: 0.55rem;
   }
-
-  .ins-h {
-    font-size: 0.6875rem;
-    margin-bottom: 0.35rem;
+  .facts li::before {
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 1px;
+    background: var(--pigment-ochre);
+    flex: none;
   }
 
-  .field {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    font-size: var(--step--1);
-    color: var(--color-text-secondary);
+  .next {
+    margin-top: 2.75rem;
+  }
+  .next .arrow {
+    transition: transform var(--dur-slow) var(--ease-out);
+  }
+  .next .onward:hover .arrow {
+    transform: translateY(3px);
   }
 
-  /* D-253: the native spinner is suppressed and the field itself is dragged. */
-  .field input {
-    inline-size: 84px;
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border-color);
-    border-radius: 6px;
-    color: var(--color-text-primary);
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    font-size: 0.75rem;
-    padding: 0.3rem 0.5rem;
-    text-align: right;
-    cursor: ew-resize;
-    touch-action: none;
-    transition: border-color var(--dur-fast) var(--ease-out);
-  }
-  .field input::-webkit-outer-spin-button,
-  .field input::-webkit-inner-spin-button {
-    appearance: none;
-    margin: 0;
-  }
-  .field input[type='number'] {
-    -moz-appearance: textfield;
-    appearance: textfield;
-  }
-  .field input:hover,
-  .field input:focus {
-    border-color: var(--color-text-secondary);
-  }
-  .field input[data-dragging] {
-    border-color: var(--color-accent);
-  }
-
-  .hint {
-    margin-top: auto;
-    padding-top: 1rem;
-    font-size: 0.6875rem;
-    line-height: 1.55;
-    color: var(--color-text-secondary);
-  }
-  kbd {
-    font-family: var(--font-mono);
-    border: 1px solid var(--color-border-color);
-    border-radius: 4px;
-    padding: 0 4px;
-    font-size: 0.6875rem;
-  }
-
-  /* Sits inside the figure, so it reads as the frame's own caption strip. */
-  .cap {
-    padding: 0.7rem 0.95rem;
-    border-top: 1px solid var(--color-border-color);
-    background: var(--color-bg-primary);
-    font-size: 0.75rem;
-    color: var(--color-text-secondary);
-  }
-
-  @media (max-width: 860px) {
-    .body {
-      grid-template-columns: minmax(0, 1fr);
+  @media (max-width: 720px) {
+    h1 {
+      max-width: none;
     }
-    .viewer {
-      border-right: 0;
-    }
-    .insp {
-      border-top: 1px solid var(--color-border-color);
+    .turn {
+      font-size: 0.7em;
     }
   }
 </style>
-
-<script>
-  /**
-   * The hero's behaviour. Two interactions, both real:
-   *   1. the playhead scrubs the filmstrip and drives the timecode readout;
-   *   2. the numeric fields use the app's own drag-to-scrub gesture (D-253).
-   * Both are pointer-, keyboard- and touch-driven, and both no-op safely if the
-   * markup is absent.
-   */
-  const FPS = 30;
-  const TOTAL_FRAMES = 2100;
-
-  /** Frames -> HH:MM:SS:FF, the app's own non-drop timecode form. */
-  function timecode(frame: number): string {
-    const f = Math.max(0, Math.round(frame));
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${pad(Math.floor(f / (FPS * 3600)))}:${pad(Math.floor(f / (FPS * 60)) % 60)}:${pad(
-      Math.floor(f / FPS) % 60,
-    )}:${pad(f % FPS)}`;
-  }
-
-  const stage = document.querySelector<HTMLElement>('[data-stage]');
-  if (stage) {
-    const track = stage.querySelector<HTMLElement>('[data-track]');
-    const head = stage.querySelector<HTMLElement>('[data-head]');
-    const fill = stage.querySelector<HTMLElement>('[data-fill]');
-    const tc = stage.querySelector<HTMLElement>('[data-tc]');
-    const chip = stage.querySelector<HTMLElement>('[data-clip]');
-    const shots = Array.from(stage.querySelectorAll<HTMLImageElement>('.shot'));
-    const cuts = shots.map((s) => Number(s.dataset.frame ?? 0));
-    const labels = ['before-1.09.51pm.mov', 'after-1.08.16pm.mov', 'before-1.09.51pm.mov'];
-
-    let frame = 0;
-
-    const render = () => {
-      const pct = (frame / TOTAL_FRAMES) * 100;
-      if (head) head.style.left = `${pct}%`;
-      if (fill) fill.style.width = `${pct}%`;
-      const t = timecode(frame);
-      if (tc) tc.textContent = t;
-      if (track) {
-        track.setAttribute('aria-valuenow', String(Math.round(frame)));
-        track.setAttribute('aria-valuetext', t);
-      }
-
-      // Which clip is under the playhead: the last cut at or before it.
-      let idx = 0;
-      for (let i = 0; i < cuts.length; i++) if (frame >= cuts[i]) idx = i;
-      shots.forEach((s, i) => s.classList.toggle('on', i === idx));
-      if (chip) chip.textContent = labels[idx] ?? '';
-    };
-
-    const seekTo = (clientX: number) => {
-      if (!track) return;
-      const r = track.getBoundingClientRect();
-      const ratio = r.width > 0 ? (clientX - r.left) / r.width : 0;
-      frame = Math.min(TOTAL_FRAMES, Math.max(0, ratio * TOTAL_FRAMES));
-      render();
-    };
-
-    if (track) {
-      let scrubbing = false;
-      track.addEventListener('pointerdown', (e: PointerEvent) => {
-        scrubbing = true;
-        track.setPointerCapture(e.pointerId);
-        seekTo(e.clientX);
-      });
-      track.addEventListener('pointermove', (e: PointerEvent) => {
-        if (scrubbing) seekTo(e.clientX);
-      });
-      const stop = (e: PointerEvent) => {
-        scrubbing = false;
-        if (track.hasPointerCapture(e.pointerId)) track.releasePointerCapture(e.pointerId);
-      };
-      track.addEventListener('pointerup', stop);
-      track.addEventListener('pointercancel', stop);
-
-      // Keyboard: a frame at a time, a second with Shift, ends with Home/End.
-      track.addEventListener('keydown', (e: KeyboardEvent) => {
-        const step = e.shiftKey ? FPS : 1;
-        let next = frame;
-        if (e.key === 'ArrowRight') next = frame + step;
-        else if (e.key === 'ArrowLeft') next = frame - step;
-        else if (e.key === 'Home') next = 0;
-        else if (e.key === 'End') next = TOTAL_FRAMES;
-        else return;
-        e.preventDefault();
-        frame = Math.min(TOTAL_FRAMES, Math.max(0, next));
-        render();
-      });
-    }
-
-    render();
-
-    /**
-     * D-253's virtual slider, reproduced: 8px of horizontal travel per declared
-     * `step`, Shift multiplies the step by 10, Cmd/Ctrl divides it by 10, and a
-     * 4px threshold separates a click (which focuses, to type a value) from a
-     * drag. Applied here to the preview's own scale and opacity.
-     */
-    const PX_PER_STEP = 8;
-    const THRESHOLD = 4;
-    const canvas = stage.querySelector<HTMLElement>('[data-canvas]');
-
-    const applyToCanvas = () => {
-      if (!canvas) return;
-      const get = (k: string) =>
-        Number(stage.querySelector<HTMLInputElement>(`[data-num="${k}"]`)?.value ?? 1);
-      canvas.style.setProperty('--z', String(get('scale')));
-      canvas.style.setProperty('--a', String(get('opacity')));
-    };
-
-    const decimalsOf = (step: number) => {
-      const s = String(step);
-      const dot = s.indexOf('.');
-      return dot === -1 ? 0 : s.length - dot - 1;
-    };
-
-    stage.querySelectorAll<HTMLInputElement>('[data-num]').forEach((input) => {
-      const step = Number(input.step) || 1;
-      const min = Number(input.min);
-      const max = Number(input.max);
-      const dp = decimalsOf(step);
-      let startX = 0;
-      let startVal = 0;
-      let active = false;
-      let passed = false;
-
-      input.addEventListener('pointerdown', (e: PointerEvent) => {
-        active = true;
-        passed = false;
-        startX = e.clientX;
-        startVal = Number(input.value) || 0;
-        input.setPointerCapture(e.pointerId);
-      });
-
-      input.addEventListener('pointermove', (e: PointerEvent) => {
-        if (!active) return;
-        const dx = e.clientX - startX;
-        if (!passed) {
-          if (Math.abs(dx) < THRESHOLD) return;
-          passed = true;
-          input.dataset.dragging = 'true';
-        }
-        e.preventDefault();
-        const mult = e.shiftKey ? 10 : e.metaKey || e.ctrlKey ? 0.1 : 1;
-        const next = startVal + (dx / PX_PER_STEP) * step * mult;
-        input.value = Math.min(max, Math.max(min, next)).toFixed(dp);
-        applyToCanvas();
-      });
-
-      const end = (e: PointerEvent) => {
-        if (!active) return;
-        active = false;
-        delete input.dataset.dragging;
-        if (input.hasPointerCapture(e.pointerId)) input.releasePointerCapture(e.pointerId);
-      };
-      input.addEventListener('pointerup', end);
-      input.addEventListener('pointercancel', end);
-      input.addEventListener('input', applyToCanvas);
-    });
-
-    applyToCanvas();
-  }
-</script>

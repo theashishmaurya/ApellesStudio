@@ -1,94 +1,97 @@
 /**
- * website/src/styles/tokens.css — the site's ONLY colour + type source (D-255).
+ * website/src/styles/tokens.css — the site's only colour and type source (D-264).
  *
- * What it is: a verbatim transcription of the desktop app's own Dark theme, so the
- * site cannot drift from the product it advertises.
- * What it does NOT do: define a second, "marketing" palette. Every value below is
- * copied from real app source, and each block names the file it came from.
+ * What it is: two token layers, each with a real, checkable source.
+ *   1. THE BRAND (`--pigment-*`) — quarried from the Alexander Mosaic. Transcribed
+ *      verbatim from `src/data/palette.ts`, which carries the provenance of every
+ *      value and the 2025 PLOS ONE analysis they come from.
+ *   2. THE PRODUCT (`--app-*`) — the desktop app's own Dark theme, verbatim from
+ *      `app/src/utils/themes.ts`. Used ONLY where the site draws the application
+ *      itself, so a product frame is the app's real colour and not an impression
+ *      of it.
  *
- * If the app's theme changes, change it HERE too — that is the whole point of the
- * one-token-source rule in CLAUDE.md.
+ * What it does NOT do: hold a third palette, a decorative gradient, or a single
+ * colour literal that is not in one of those two sources. `tests/palette.test.ts`
+ * reads both real files and fails on any drift or any undocumented literal.
+ *
+ * The governing rule, and the reason there is a whole file about it: the mosaic's
+ * makers imported one pink from Portugal and spent it on Alexander's face alone,
+ * out of roughly two million tesserae. `--pigment-rose` is spent the same way —
+ * one element per page, the single action that page exists for. That constraint
+ * is what makes the rest of the palette read as considered rather than decorated.
  */
 
 :root {
   /* ------------------------------------------------------------------
-   * Surfaces + text — verbatim from app/src/utils/themes.ts, Theme.Dark.
-   * These are the `--app-*` vars the running app sets on :root at boot.
+   * THE BRAND — verbatim from src/data/palette.ts. Do not edit here alone.
+   * ------------------------------------------------------------------ */
+
+  /* Carrara marble. The page ground: warm bone, never clinical white. */
+  --pigment-marble: #f4efe6;
+  /* The same marble in shade. The second ground. */
+  --pigment-marble-deep: #eae2d4;
+  /* Iberian basalt / Greek serpentinite. Ink, and the ground behind product
+     imagery. A warm black — #000 appears nowhere on this site. */
+  --pigment-basalt: #1c1a17;
+  /* The darks thinned. Secondary prose, 8.5:1 on marble. */
+  --pigment-basalt-soft: #4a443c;
+  /* Iron-oxide red. First working colour: links, emphasis, active state. */
+  --pigment-terracotta: #a6432c;
+  /* Iron-oxide yellow. Second working colour: rules, marks, large display type.
+     3.0:1 on marble, so it is never used for body text. */
+  --pigment-ochre: #b4823a;
+  /* THE SIGNATURE. One element per page. A fill, under basalt text (6.4:1). */
+  --pigment-rose: #c98c86;
+
+  /* Tints of the above, mixed rather than hand-picked, so no new literal enters
+     the palette by the back door. */
+  --edge: color-mix(in srgb, var(--pigment-basalt) 14%, transparent);
+  --edge-strong: color-mix(in srgb, var(--pigment-basalt) 28%, transparent);
+  --wash: color-mix(in srgb, var(--pigment-ochre) 9%, transparent);
+
+  /* ------------------------------------------------------------------
+   * THE PRODUCT — verbatim from app/src/utils/themes.ts, Theme.Dark. Only the
+   * six the site actually draws with; adding an unused one would be dead code.
    * ------------------------------------------------------------------ */
   --app-bg-primary: rgb(24, 24, 24);
-  --app-bg-secondary: rgb(35, 35, 35);
   --app-surface: rgb(28, 28, 28);
-  --app-card-active: rgb(43, 43, 43);
-  --app-button-text: rgb(0, 0, 0);
+  --app-border-color: rgb(45, 45, 45);
   --app-text-primary: rgb(232, 234, 237);
   --app-text-secondary: rgb(158, 158, 158);
   --app-accent: rgb(255, 255, 255);
-  --app-border-color: rgb(45, 45, 45);
-  --app-hover-color: rgb(255, 255, 255);
-
-  /* The same aliasing app/src/styles.css performs in its own @theme block. */
-  --color-bg-primary: var(--app-bg-primary);
-  --color-bg-secondary: var(--app-bg-secondary);
-  --color-surface: var(--app-surface);
-  --color-card-active: var(--app-card-active);
-  --color-button-text: var(--app-button-text);
-  --color-text-primary: var(--app-text-primary);
-  --color-text-secondary: var(--app-text-secondary);
-  --color-accent: var(--app-accent);
-  --color-border-color: var(--app-border-color);
-  --color-hover-color: var(--app-hover-color);
 
   /* ------------------------------------------------------------------
-   * Signal colours — verbatim from packages/editor/src/timeline.ts's
-   * MARKER_COLORS, the shipped 16-swatch timeline-marker palette (D-222).
-   *
-   * These are the ONLY chromatic values on this site. They are used the way
-   * the app uses them: as categorical signals against a neutral ground, never
-   * as a decorative gradient and never as a "brand" colour. The app's actual
-   * brand accent is white (--app-accent above).
+   * Type. Three families, each with one job — see src/data/palette.ts for why
+   * each was chosen. Deliberately none of the "safe" default faces a generated
+   * interface reaches for; palette.ts names the banned ones in one place and a
+   * test asserts none of them appears anywhere under src/.
    * ------------------------------------------------------------------ */
-  --marker-blue: #3b8fe3;
-  --marker-cyan: #3fc7d4;
-  --marker-green: #4caf50;
-  --marker-yellow: #e5a93b;
-  --marker-red: #d9434e;
-  --marker-purple: #8a5cd6;
-  --marker-sand: #a9793f;
-  --marker-cream: #efe9dc;
-
-  /* ------------------------------------------------------------------
-   * Type — Poppins is the app's own default face (app/src/hooks/
-   * useAppInitialization.ts sets `'Poppins', system-ui, sans-serif`).
-   * The mono face carries every technical artefact: timecode, tool names,
-   * frame counts, shell commands — the material an NLE actually shows in a
-   * tabular figure.
-   * ------------------------------------------------------------------ */
-  --font-display: 'Poppins', system-ui, -apple-system, sans-serif;
-  --font-sans: 'Poppins', system-ui, -apple-system, sans-serif;
+  --font-display: 'Newsreader', 'Iowan Old Style', Georgia, serif;
+  --font-ui: 'Instrument Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* A real scale, not ad-hoc sizes. Ratio 1.26 at the body end, opening out
-     hard at the display end so the hero can carry the page's one loud moment. */
+  /* A real scale — 1.25 through the reading sizes, opening out hard at the top
+     so one display line per page can carry the whole page. */
+  --step--2: 0.75rem;
   --step--1: 0.8125rem;
-  --step-0: 1rem;
-  --step-1: 1.1875rem;
+  --step-0: 1.0625rem;
+  --step-1: 1.25rem;
   --step-2: 1.5rem;
   --step-3: 2rem;
-  --step-4: clamp(2.5rem, 1.6rem + 3.6vw, 4rem);
-  --step-5: clamp(3.25rem, 1.2rem + 8.2vw, 7.5rem);
+  --step-4: clamp(2.25rem, 1.5rem + 3.1vw, 3.75rem);
+  --step-5: clamp(2.75rem, 1.15rem + 6.6vw, 6rem);
 
-  /* Radii — the app's own two values (app/src/styles.css @theme), no third. */
+  /* Corners. Two values, and they are the app's own (app/src/styles.css). */
   --radius-md: 8px;
   --radius-lg: 15px;
 
-  /* Motion. 150ms/400ms are the app's own slider-thumb transition durations
-     (app/src/styles.css .slider-input); the easing is a single considered
-     curve used everywhere rather than a per-element guess. */
+  /* Motion. 150ms/400ms are the app's own slider transitions; one easing curve
+     everywhere rather than a per-element guess. */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-fast: 150ms;
   --dur-slow: 400ms;
 
-  --measure: 62ch;
+  --measure: 60ch;
   --gutter: clamp(1.25rem, 0.6rem + 2.6vw, 3.5rem);
-  --shell-max: 1320px;
+  --shell-max: 1240px;
 }

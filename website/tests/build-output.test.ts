@@ -1,17 +1,23 @@
 /**
- * build-output.test.ts — a real broken-link check over the real build (D-255).
+ * build-output.test.ts — a real check over the real build (D-255, extended by
+ * D-264).
  *
  * Runs against `dist/`, so it verifies what actually ships rather than what a
  * component renders in isolation: every internal href resolves to a page that
- * was emitted, every in-page anchor target exists, and every referenced asset
- * is on disk. Requires `astro build` first — `npm run verify` does that in
- * order, and this test says so plainly rather than silently passing on nothing.
+ * was emitted, every in-page anchor target exists, every referenced asset is on
+ * disk, and — new in D-264 — the design system's one hard rule holds on every
+ * built page: at most one signature-coloured element, because a signature used
+ * twice is not a signature.
+ *
+ * Requires `astro build` first — `npm run verify` does that in order, and this
+ * test says so plainly rather than silently passing on nothing.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHTML } from 'linkedom';
+import { BANNED_TYPEFACES } from '../src/data/palette.ts';
 
 const DIST = fileURLToPath(new URL('../dist', import.meta.url));
 
@@ -46,10 +52,11 @@ beforeAll(() => {
 });
 
 describe('the build emits the expected pages', () => {
-  it('built at least the home page and the MCP docs page', () => {
+  it('built every route the site is structured around', () => {
     const routes = pages.map((p) => p.route);
-    expect(routes).toContain('/');
-    expect(routes).toContain('/docs/mcp/');
+    for (const route of ['/', '/inside/', '/who-its-for/', '/docs/mcp/']) {
+      expect(routes, `${route} was not built`).toContain(route);
+    }
   });
 
   it('every page has a title and a meta description', () => {
@@ -75,6 +82,76 @@ describe('the build emits the expected pages', () => {
       const n = parseHTML(p.html).document.querySelectorAll('h1').length;
       expect(n, `${p.file} should have exactly one h1, found ${n}`).toBe(1);
     }
+  });
+});
+
+describe('the design system’s one hard rule holds on every built page', () => {
+  /**
+   * The Portugal pink was spent on Alexander's face alone, out of roughly two
+   * million tesserae. If a page ever carries two of these, the colour has
+   * stopped meaning anything and the rule needs re-arguing, not relaxing.
+   */
+  it('no page carries more than one signature element', () => {
+    for (const p of pages) {
+      const n = parseHTML(p.html).document.querySelectorAll('.signature').length;
+      expect(n, `${p.file} has ${n} signature elements`).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('every page that asks for something has exactly one', () => {
+    // The 404 asks for nothing and correctly has none; the three real pages do.
+    for (const route of ['/', '/inside/', '/who-its-for/']) {
+      const page = pages.find((p) => p.route === route);
+      const n = parseHTML(page?.html ?? '').document.querySelectorAll('.signature').length;
+      expect(n, `${route} should have exactly one primary action`).toBe(1);
+    }
+  });
+
+  it('ships none of the banned typefaces', () => {
+    for (const p of pages) {
+      for (const face of BANNED_TYPEFACES) {
+        expect(p.html, `${p.file} ships ${face}`).not.toMatch(new RegExp(`\\b${face}\\b`));
+      }
+    }
+  });
+});
+
+describe('the rebrand is complete in the shipped output', () => {
+  /**
+   * Three kinds of occurrence are legitimate, and each is something the site
+   * prints on purpose rather than a leftover:
+   *   - `app/src-tauri/src/chroma/control.rs`, a real source path on the docs page;
+   *   - `CHROMA_CONTROL_PORT`, the environment variable the server really reads
+   *     (tests/mcp-data.test.ts reads that name out of mcp/server.py, so when
+   *     the rename reaches the server this allowance stops matching anything);
+   *   - the screenshot captions, which disclose that the images predate the
+   *     rename rather than retouching them (TODO-RECAPTURE-SHOTS.md).
+   */
+  it('no page still carries the old product name', () => {
+    for (const p of pages) {
+      const stray = [...p.html.matchAll(/chroma/gi)].filter((m) => {
+        const around = p.html.slice(Math.max(0, m.index - 140), m.index + 140);
+        return !/title bar|src-tauri|_CONTROL_PORT/i.test(around);
+      });
+      expect(stray.map((m) => m[0]), `${p.file} still says the old brand`).toEqual([]);
+    }
+  });
+
+  it('discloses the pre-rename screenshots wherever one is shown', () => {
+    for (const p of pages) {
+      const d = parseHTML(p.html).document;
+      if (d.querySelectorAll('img[src^="/shots/"]').length === 0) continue;
+      // Collapse source line-wrapping before matching the sentence.
+      const flat = (d.body?.textContent ?? '').replace(/\s+/g, ' ');
+      expect(flat, `${p.file} shows a screenshot without the disclosure`).toContain(
+        'predate the rename',
+      );
+      expect(flat, `${p.file}`).toContain('retaken rather than retouched');
+    }
+  });
+
+  it('the home page names the new one', () => {
+    expect(pages.find((p) => p.route === '/')?.html).toContain('Apelles');
   });
 });
 
@@ -109,7 +186,8 @@ describe('no broken internal links', () => {
         const [path, hash] = href.split('#');
         if (!hash) continue;
         if (path && !path.startsWith('/')) continue;
-        const targetRoute = path === '' || path === undefined ? p.route : path.endsWith('/') ? path : `${path}/`;
+        const targetRoute =
+          path === '' || path === undefined ? p.route : path.endsWith('/') ? path : `${path}/`;
         const targetHtml = byRoute.get(targetRoute);
         if (targetHtml === undefined) {
           broken.push(`${p.file} → ${href} (no such page)`);

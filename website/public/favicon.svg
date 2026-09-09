@@ -1,10 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <!-- Chroma's playhead: the app's own timeline marker, on the app's own ground.
-       Colours are the real theme tokens (bg rgb(24,24,24), accent white) and the
-       real MARKER_COLORS blue. -->
-  <rect width="32" height="32" rx="7" fill="#181818"/>
-  <rect x="6" y="21" width="20" height="2" rx="1" fill="#2d2d2d"/>
-  <rect x="6" y="21" width="9" height="2" rx="1" fill="#3b8fe3"/>
-  <rect x="14" y="7" width="2" height="18" rx="1" fill="#ffffff"/>
-  <rect x="11" y="7" width="8" height="5" rx="1" fill="#ffffff"/>
+  <!--
+    Apelles: nine tesserae, one of them the Portugal pink.
+
+    The whole brand argument at 32px. Colours are the real mosaic palette from
+    website/src/data/palette.ts — marble ground, basalt, terracotta, ochre, and
+    the rose spent exactly once, as it was on Alexander's face.
+  -->
+  <rect width="32" height="32" rx="7" fill="#f4efe6"/>
+  <g>
+    <rect x="6"  y="6"  width="6" height="6" rx="1.2" fill="#1c1a17"/>
+    <rect x="13" y="6"  width="6" height="6" rx="1.2" fill="#4a443c"/>
+    <rect x="20" y="6"  width="6" height="6" rx="1.2" fill="#a6432c"/>
+    <rect x="6"  y="13" width="6" height="6" rx="1.2" fill="#b4823a"/>
+    <rect x="13" y="13" width="6" height="6" rx="1.2" fill="#c98c86"/>
+    <rect x="20" y="13" width="6" height="6" rx="1.2" fill="#1c1a17"/>
+    <rect x="6"  y="20" width="6" height="6" rx="1.2" fill="#a6432c"/>
+    <rect x="13" y="20" width="6" height="6" rx="1.2" fill="#1c1a17"/>
+    <rect x="20" y="20" width="6" height="6" rx="1.2" fill="#4a443c"/>
+  </g>
 </svg>

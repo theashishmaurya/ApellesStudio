@@ -1,26 +1,32 @@
 ---
 /**
- * index.astro — the home page (D-255).
+ * index.astro — the home page (D-264).
  *
- * Section order is a deliberate argument: what it is (hero) -> what it does
- * (tabs) -> how an agent reaches it (MCP) -> why it is built this way
- * (local-first) -> ask (beta).
+ * The section order is an argument, and it is deliberately short: the promise
+ * (hero) → the proof that a real application exists behind it (demo) → who it
+ * is for and who it is not (difference) → what is in it (rooms) → why it is
+ * built this way (machine) → the one ask (beta).
+ *
+ * Five bands and one action. Anything else a visitor might want has its own
+ * page, so this one keeps a single focal point.
  */
 import Base from '../layouts/Base.astro';
 import Hero from '../components/Hero.astro';
-import Tabs from '../components/Tabs.astro';
-import Mcp from '../components/Mcp.astro';
-import LocalFirst from '../components/LocalFirst.astro';
+import Demo from '../components/Demo.astro';
+import Difference from '../components/Difference.astro';
+import Rooms from '../components/Rooms.astro';
+import Machine from '../components/Machine.astro';
 import Beta from '../components/Beta.astro';
 ---
 
 <Base
-  title="Chroma — the local, open-source video editor an agent can drive"
-  description="An AI-native, local-first video tool. Multi-track editing, motion graphics and real colour grading in one window, with 106 verified MCP tools an agent can drive. Free, open source, no cloud in the render path."
+  title="Apelles — the video app for people who never learned to edit"
+  description="You already know what your video should look like. Apelles is the part you were missing: describe what you want, and a real AI agent does the cutting, the colour and the motion graphics — free, open source, and running on your own machine."
 >
   <Hero />
-  <Tabs />
-  <Mcp />
-  <LocalFirst />
+  <Demo />
+  <Difference />
+  <Rooms />
+  <Machine />
   <Beta />
 </Base>
