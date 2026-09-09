@@ -24917,3 +24917,165 @@ limit rather than assumed away.
   editing it here would collide with them. (Since resolved: D-259 filed
   **B-126** for exactly this, and corrected `mcp/README.md`'s own heading —
   the website's own marketing copy is left to that entry.)
+
+---
+
+## D-261 — The four smart trims get a real tool palette: five icon buttons in the timeline toolbar, with the Alt heuristic kept underneath
+
+**Date:** 2026-09-09.
+
+### Context
+
+The owner, editing live, on the feature D-235 built and D-250 tried to make
+discoverable: *"for roll slip etc, instead of alt lets have icons for all of
+them :) much better."*
+
+This is the third pass on the same defect, which is itself the argument for
+changing shape rather than polishing again. D-235 shipped four real edits
+(ripple, roll, slip, slide) behind a held Alt/Option plus a pointer-position
+heuristic — which vertical half of the clip, whether the edge is a shared edit
+point, whether Shift is down. D-250 added a badge, a cursor and a tooltip hint
+to explain it. Every one of those affordances is invisible until Alt is already
+held, so the whole feature's discoverability stayed circular: you learn the key
+exists by pressing the key. `resolveTrimMode` was correct, pure and exhaustively
+tested the entire time; the problem was never the rule, it was that the rule was
+the ONLY entrance.
+
+### Reference — pulled first, per CLAUDE.md's "research the real pattern" rule
+
+Adobe's own Premiere Pro help, scraped into
+`scratch/premiere-tools-reference/premiere-tools-panel.json` together with
+Adobe's own labelled screenshot of the real Tools panel
+(`premiere-tools-panel.jpg`) — the same method D-239 used on Resolve's Edit page
+for the seven edit types, and read alongside the Resolve reference this repo
+already keeps (`scratch/resolve-reference/trim.jpg`, literally the four cursors
+Resolve swaps between). Pages used: the Tools panel overview, and Adobe's
+individual pages for ripple, rolling, slip and slide edits, plus "Select clips"
+for the Selection tool's own shortcut. (helpx.adobe.com 403s both WebFetch and
+curl at the edge, so the pages were read out of a real browser via the Chrome
+MCP — the scrape, not a summary, is in the JSON.)
+
+Four findings actually shaped the build:
+
+1. **Premiere separates these edits by TOOL, not by pointer position.** Ripple
+   and Rolling are *both* edge drags; Slip and Slide are *both* body drags.
+   Which one fires is decided by the button you pressed, full stop. Chroma's
+   `bodyYRatio` top/bottom-half split and its `atEditPoint`+Shift disambiguation
+   are both heuristics that exist only because there was no tool to ask.
+2. **Selection is a real tool, not an empty slot.** Adobe: *"The Selection tool
+   is the default tool… If the program isn't responding as you expect, make sure
+   that the Selection tool is selected."* That is the answer to "what is the
+   toolbar's off state".
+3. **Icon-only buttons; the name and key live in the tooltip.** Adobe: *"Let the
+   cursor hover over a tool to see its name and keyboard shortcut."* The active
+   tool is the one *filled* chip in an otherwise flat strip.
+4. **A tool palette and a modifier path coexist in the reference itself.**
+   Adobe's own rolling-edit page: *"Ctrl-click (Windows) or command-click
+   (macOS) on the edit point with the Ripple Edit tool to bring up the Rolling
+   Edit tool."* Resolve's entire smart trim tool is a position-driven path
+   sitting inside a tool-palette NLE. Neither treats the two as exclusive.
+
+### Decision
+
+**A five-button icon palette in the timeline toolbar — Select, Ripple, Roll,
+Slip, Slide — is now the primary way to reach these edits, and the Alt heuristic
+is KEPT, strictly layered underneath it.**
+
+- **Where it lives.** In `TimelinePane`'s existing toolbar row, between
+  separators, immediately after Split. Not a new floating panel: every other
+  timeline action (Split, Close Gap, Link/Unlink, Move to) is already a button
+  in that one row, which is this app's own convention. Adobe's panel is a
+  vertical strip at the timeline's edge, but Adobe's own page notes the panel
+  can be oriented either way, so the divergence costs nothing. The separators
+  are load-bearing: this group is **modal** (it changes what the next drag
+  means) while everything else in the row is a one-shot action, and five icon
+  buttons dropped in unseparated would read as five more one-shot actions.
+- **What "Select" is.** Adobe's Selection tool, exactly: a real member of
+  `TrimTool` with its own button and its own pressed state, meaning the
+  pre-D-261 surface — body drags move, edge drags trim, and Alt still arms
+  D-235's heuristic. It is a genuine default, not "the four special modes are
+  all off".
+- **How a tool interacts with the zones.** Each tool declares the zones it
+  *owns* (`TrimToolInfo.zones`), as data rather than a branch. Ripple and Roll
+  own the two edge bands only — both are edits *on a cut*, neither reference
+  makes one out of a clip's middle, and repositioning a clip must not stop
+  working because a trim tool is selected, so a body drag under them stays a
+  plain `move`. Slip and Slide own the whole clip, edge bands included: Adobe's
+  instruction for both is to "drag the clip", the edge handles are part of the
+  clip, and grabbing one with Slip chosen has to slip rather than surprise the
+  user with a destructive plain trim.
+- **Adobe's shortcuts, unchanged:** V/B/N/Y/U, so anyone arriving from Premiere
+  finds them already bound. Guarded exactly like the existing `M` marker key —
+  no modifier (so no system chord is shadowed) and not while a text field has
+  focus.
+- **Captured at press, with the modifiers.** The active tool is stamped onto
+  `trimPressRef` at pointer-down, for the reason D-235 already states for the
+  modifiers: the edit a gesture commits must be the one the user aimed at, so a
+  shortcut typed mid-drag cannot retarget a drag already in flight.
+
+### Keep the Alt heuristic, or remove it?
+
+The owner said *"instead of alt"*, which reads as replace, and that was
+considered seriously. **Kept, layered** — for four reasons:
+
+1. **The owner's ask is satisfied by the palette being PRIMARY**, which it now
+   is: visible at all times, on screen, with names, blurbs and shortcuts in
+   every tooltip. Nobody has to know Alt exists to reach any of these five
+   edits.
+2. **Both references keep a modifier path alongside their tool palette** —
+   finding 4 above. Removing ours would diverge from both.
+3. **It is a working, shipped, exhaustively-tested feature** with muscle memory
+   possibly already attached. Deleting it would delete D-235's and D-250's real
+   coverage and buy nothing.
+4. **The risk it posed — two rules fighting over one drag — is designed out
+   rather than tolerated.** The layering is strict and one-way: **Alt does
+   something only while the Selection tool is active.** Choose any other tool
+   and that tool decides alone; `altKey`, `shiftKey`, `bodyYRatio` and
+   `atEditPoint` are all ignored. So the palette is deterministic — the same
+   drag on the same pixel always commits the same edit, which is the owner's
+   actual ask — and Alt survives as what it should have been all along: a
+   power-user shortcut, not a feature's only entrance.
+
+`TRIM_ARM_HINT` was reworded to point at the toolbar, since it is no longer
+carrying the feature's discoverability on its own.
+
+### Human-AND-AI parity: this one is correctly GUI-only, and that was checked
+
+CLAUDE.md's standing rule is that a GUI affordance and an MCP surface land
+together. Verified in `mcp/server.py` rather than assumed: **all five behaviours
+are already directly nameable per call** — `editor_trim_clip(..., ripple=…)`
+covers both the plain trim and the ripple, `editor_roll_edit`,
+`editor_slip_clip`, `editor_slide_clip` and `editor_move_clip` cover the rest.
+An agent never needed a palette, because a palette is a *mode that persists
+between gestures*, and an agent has no gestures — it names the operation it
+wants on every call. Adding an `editor_set_trim_tool` would be adding hidden
+session state to the MCP surface for no capability gain, which is the opposite
+of what that rule is for. So the parity this feature needs already exists on the
+AI side; D-261 closes the gap from the human side only.
+
+### Verification
+
+- `trimMode.test.ts` — 65 pure tests (was 50). The new ones pin the catalog, the
+  zone ownership, the shortcut mapping, and — the part that matters — that a
+  tool ignores *every* input the Alt heuristic reads, asserted across the whole
+  cross-product of `altKey`/`shiftKey`/`bodyYRatio`/`atEditPoint`.
+- `TimelinePane.trimTools.dom.test.tsx` — 14 new real-DOM tests. The central two
+  run the identical drag twice against the identical fixture, once via Alt in
+  the matching vertical band and once via the icon at the row's MIDDLE (the
+  height the heuristic reads as the *other* mode), and compare the two resulting
+  timelines field for field. That is the equivalence claim itself under test,
+  not a button highlight.
+- The two edge modes still cannot be driven by pointer events in jsdom — the
+  timeline library's resize is interact.js-driven, a limit D-235 established by
+  probe — so ripple/roll equivalence is pinned at the pure level on
+  `resizeEndOp`, where the decision actually lives.
+- D-235's and D-250's own 68 tests pass **unchanged**, which is the concrete
+  evidence that the Selection tool's surface is bit-for-bit what it was.
+
+### Deferred, deliberately
+
+Premiere's other Tools-panel members that Chroma has no edit for (Track Select,
+Rate Stretch, Razor — Chroma's Split button already is the razor, Pen, Hand,
+Zoom); nested tool slots with the corner triangle (five buttons fit); and a
+per-tool custom cursor bitmap, still the thing neither D-250 nor this pass will
+ship (`trimModeCursor`'s standard keywords remain the compromise).

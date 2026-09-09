@@ -40,6 +40,46 @@
  * is `move` (D-100) and an edge drag is a plain, gap-leaving `trim` (D-058).
  * A held key is a transient arm, not a mode: nothing is remembered between
  * gestures, which is the property the roadmap item is actually asking for.
+ *
+ * ---------------------------------------------------------------------------
+ * D-261 — AND THE TOOL PALETTE, WHICH IS NOW THE PRIMARY PATH.
+ *
+ * The sentence above — "Chroma has no tool palette" — is what D-261 changed,
+ * on the owner's own report from live use: *"for roll slip etc, instead of alt
+ * lets have icons for all of them :) much better."* D-235's arm and D-250's
+ * badge are both invisible until Alt is already held, so the four edits were
+ * reachable only by someone who already knew they existed.
+ *
+ * [`TRIM_TOOLS`] is that palette, and [`TrimGesture.tool`] is what the pointer
+ * now consults FIRST. The reference is Adobe's own Tools panel, scraped for
+ * this pass into `scratch/premiere-tools-reference/` (`premiere-tools-panel
+ * .json` + Adobe's own labelled screenshot) exactly as D-239 scraped Resolve's
+ * Edit page — not a guess at what a trim icon might look like. Two findings
+ * from it shape the rule below:
+ *
+ *   - **Premiere separates these edits by TOOL, not by pointer position.**
+ *     Ripple and Rolling are both edge drags; Slip and Slide are both body
+ *     drags. Which one you get is decided by the button you pressed, full stop.
+ *     So when a tool is chosen, the tool wins outright: `atEditPoint`, the
+ *     vertical band and the modifiers are all ignored, and the same drag on the
+ *     same pixel always commits the same kind of edit. That determinism is the
+ *     owner's actual ask.
+ *   - **Selection is a real tool, not the absence of one.** Adobe: "The
+ *     Selection tool is the default tool… If the program isn't responding as
+ *     you expect, make sure that the Selection tool is selected." So `'select'`
+ *     is a genuine member of [`TrimTool`] with its own button and its own
+ *     highlight, and it means precisely the pre-D-261 surface: body drags move,
+ *     edge drags trim, and Alt still arms D-235's heuristic.
+ *
+ * **The Alt heuristic is KEPT, layered under the palette** (see D-261 for the
+ * full reasoning). Both references keep a modifier path alongside their tool
+ * palette — Adobe's own rolling-edit page says "Ctrl-click (Windows) or
+ * command-click (macOS) on the edit point with the Ripple Edit tool to bring up
+ * the Rolling Edit tool", and Resolve's whole smart trim tool IS a
+ * position-driven path. Neither treats the two as exclusive. What would be
+ * wrong is two rules competing for one drag, so the layering is strict and
+ * one-way: **Alt does something only while the Selection tool is active.**
+ * Choose any other tool and that tool is the only thing that decides.
  */
 
 import type { EditOp, Timeline } from './timeline';
@@ -56,8 +96,111 @@ export type TrimMode = 'move' | 'trim' | 'ripple' | 'roll' | 'slip' | 'slide';
  *  claimed. */
 export type TrimZone = 'edge-start' | 'edge-end' | 'body';
 
+/** The active tool in the timeline's trim palette (D-261) — Premiere's own
+ *  Tools-panel set, minus the tools Chroma has no edit for.
+ *
+ *  `'select'` is Adobe's Selection tool: a real, selectable, highlightable
+ *  default, not an empty slot (see the module doc). The other four are named
+ *  for the [`TrimMode`] each one forces, which is what lets
+ *  [`resolveTrimMode`] hand the tool straight back as the mode. */
+export type TrimTool = 'select' | 'ripple' | 'roll' | 'slip' | 'slide';
+
+/** The four tools that name an edit outright. Deliberately a subset of
+ *  [`TrimMode`] — the compiler holds that correspondence, so a tool can never
+ *  be added here without a mode to resolve it to. */
+export type TrimEditTool = Exclude<TrimTool, 'select'>;
+
+/** One button in the palette. The GUI renders this list left to right and
+ *  reads every string on it; nothing about a tool is written twice. */
+export interface TrimToolInfo {
+  tool: TrimTool;
+  label: string;
+  /** The single-key shortcut, Adobe's own for all five (V/B/N/Y/U — see
+   *  `scratch/premiere-tools-reference/premiere-tools-panel.json`). Shown in
+   *  the tooltip, the way Adobe's own panel does it: "Let the cursor hover over
+   *  a tool to see its name and keyboard shortcut." */
+  shortcut: string;
+  /** What the tool does, condensed from Adobe's own page copy for that tool —
+   *  the same "the human and the agent read the same definition" rule
+   *  `editTypes.ts` follows for the seven edit types. */
+  blurb: string;
+  /** Which press zones this tool OWNS. In a zone it does not own, the gesture
+   *  falls back to what the Selection tool would do there, unarmed.
+   *
+   *  Ripple and Roll own the two edges only: both are edits ON a cut, and
+   *  neither reference makes one out of a clip's middle — so a body drag stays
+   *  a plain `move`, because repositioning a clip must not stop working just
+   *  because a trim tool is selected. Slip and Slide own the whole clip, edge
+   *  bands included: Adobe's instruction for both is to "drag the clip", the
+   *  edge handles are part of the clip, and grabbing one with Slip selected has
+   *  to slip rather than surprise the user with a destructive plain trim. */
+  zones: readonly TrimZone[];
+}
+
+const EDGES: readonly TrimZone[] = ['edge-start', 'edge-end'];
+const WHOLE_CLIP: readonly TrimZone[] = ['edge-start', 'edge-end', 'body'];
+
+/** The palette, in Adobe's own Tools-panel order: the Selection tool first,
+ *  then the edge edits, then the body edits. Every blurb below is condensed
+ *  from Adobe's own help copy for that tool, quoted in the scrape. */
+export const TRIM_TOOLS: readonly TrimToolInfo[] = [
+  {
+    tool: 'select',
+    label: 'Select',
+    shortcut: 'V',
+    blurb: 'Move clips and trim their edges — the default tool. Hold ⌥ Option for a smart trim.',
+    zones: [],
+  },
+  {
+    tool: 'ripple',
+    label: 'Ripple',
+    shortcut: 'B',
+    blurb: 'Drag a clip edge to trim it and push everything after it along, leaving no gap.',
+    zones: EDGES,
+  },
+  {
+    tool: 'roll',
+    label: 'Roll',
+    shortcut: 'N',
+    blurb: 'Drag a cut to move it, without changing the combined length of the two clips.',
+    zones: EDGES,
+  },
+  {
+    tool: 'slip',
+    label: 'Slip',
+    shortcut: 'Y',
+    blurb: 'Drag a clip to change which part of the source it shows, keeping its length and position.',
+    zones: WHOLE_CLIP,
+  },
+  {
+    tool: 'slide',
+    label: 'Slide',
+    shortcut: 'U',
+    blurb: 'Drag a clip to move it in time; its neighbours are trimmed to absorb the move.',
+    zones: WHOLE_CLIP,
+  },
+];
+
+/** The tool a keystroke selects, or `null` for a key that is not a tool
+ *  shortcut. Case-insensitive, because the palette's keys are plain letters
+ *  and Caps Lock must not silently disable the whole palette. */
+export function trimToolForKey(key: string): TrimTool | null {
+  const k = key.toUpperCase();
+  return TRIM_TOOLS.find((t) => t.shortcut === k)?.tool ?? null;
+}
+
+/** Does `tool` own presses in `zone` — i.e. does choosing it change what a
+ *  drag there commits? Always `false` for `'select'`, which owns no zone
+ *  precisely because it is the fallback every other tool falls back TO. */
+export function trimToolOwns(tool: TrimTool, zone: TrimZone): boolean {
+  return TRIM_TOOLS.find((t) => t.tool === tool)?.zones.includes(zone) ?? false;
+}
+
 export interface TrimGesture {
   zone: TrimZone;
+  /** The palette's active tool (D-261). Consulted FIRST and, when it is not
+   *  `'select'` and it owns this zone, consulted ALONE — see the module doc. */
+  tool: TrimTool;
   /** The smart-trim arm. Alt/Option is the one modifier this surface had left:
    *  Cmd/Ctrl-click already toggles a clip in the selection and Shift-click
    *  extends a range (`TimelinePane.tsx`), so either of those would collide
@@ -89,11 +232,28 @@ export const SLIP_BAND_RATIO = 0.5;
 /** Which edit a press really is. Total (every input combination names a mode)
  *  and pure — see the module doc for the rule's provenance.
  *
- *  Unarmed (no Alt) is always the pre-D-235 behaviour, unchanged: the body
+ *  Read in three steps, in this order:
+ *
+ *    1. **The palette's tool, if it owns this zone** (D-261). Deterministic and
+ *       unconditional: no modifier and no pointer position can change it.
+ *    2. **Otherwise the Selection tool's meaning**, which for a tool that does
+ *       not own this zone is the plain unarmed gesture — a Ripple tool must not
+ *       stop you dragging a clip somewhere else.
+ *    3. **Alt's D-235 heuristic, only under the Selection tool.**
+ *
+ *  Unarmed under Select is always the pre-D-235 behaviour, unchanged: the body
  *  moves the clip, an edge trims it and leaves the gap. That is the property
  *  that makes this feature additive rather than a re-mapping of gestures the
  *  owner already has in their fingers. */
 export function resolveTrimMode(g: TrimGesture): TrimMode {
+  if (g.tool !== 'select') {
+    // The tool wins where it owns the zone; everywhere else it is transparent,
+    // and the gesture means what it means with no tool selected at all. Note
+    // this branch never consults `altKey`/`shiftKey`/`bodyYRatio`/`atEditPoint`
+    // — that is the whole point of an explicit tool.
+    if (trimToolOwns(g.tool, g.zone)) return g.tool;
+    return g.zone === 'body' ? 'move' : 'trim';
+  }
   if (g.zone === 'body') {
     if (!g.altKey) return 'move';
     return g.bodyYRatio < SLIP_BAND_RATIO ? 'slip' : 'slide';
@@ -189,8 +349,12 @@ export function trimOpFor(
  *  the clip's head). `startFrame`/`endFrame` are where that drag left the
  *  clip's two edges, in timeline frames; the delta is derived against the
  *  clip's real current position, so a drag that ended where it began commits
- *  nothing. `press` is the captured modifier state, `null` meaning "unknown",
- *  which resolves to unarmed — the pre-D-235 behaviour, never a surprise. */
+ *  nothing. `press` is the captured modifier state AND the tool that was active
+ *  when the drag began (D-261 — captured at press for the same reason the
+ *  modifiers are: the mode a gesture commits must be the one the user aimed
+ *  at, so a shortcut pressed mid-drag cannot change it). `null` means
+ *  "unknown", which resolves to the Selection tool, unarmed — the pre-D-235
+ *  behaviour, never a surprise. */
 export function resizeEndOp(args: {
   tl: Timeline;
   track: number;
@@ -198,7 +362,7 @@ export function resizeEndOp(args: {
   dir: 'left' | 'right';
   startFrame: number;
   endFrame: number;
-  press: { altKey: boolean; shiftKey: boolean } | null;
+  press: { altKey: boolean; shiftKey: boolean; tool?: TrimTool } | null;
 }): EditOp | null {
   const { tl, track, clip, dir, press } = args;
   const c = tl.tracks[track]?.clips[clip];
@@ -208,6 +372,7 @@ export function resizeEndOp(args: {
   if (delta === 0) return null;
   const mode = resolveTrimMode({
     zone: dir === 'left' ? 'edge-start' : 'edge-end',
+    tool: press?.tool ?? 'select',
     altKey: press?.altKey ?? false,
     shiftKey: press?.shiftKey ?? false,
     atEditPoint: edgeIsEditPoint(tl, track, clip, edge),
@@ -217,28 +382,36 @@ export function resizeEndOp(args: {
   return trimOpFor(mode, { tl, track, clip, edge, delta });
 }
 
-/** The body-drag counterpart of [`resizeEndOp`]: what an armed clip-body drag
- *  commits. Returns `null` when the gesture is not armed at all, which is the
- *  caller's signal to fall through to its own (unchanged) `move` path — the
- *  one gesture whose op this module deliberately does not build, because only
- *  the caller knows which track the drag landed on. */
+/** The body-drag counterpart of [`resizeEndOp`]: what a clip-body drag commits
+ *  when the palette's tool or the Alt arm makes it something other than a move.
+ *  Returns `null` when the gesture resolves to a plain `move`, which is the
+ *  caller's signal to fall through to its own (unchanged) move path — the one
+ *  gesture whose op this module deliberately does not build, because only the
+ *  caller knows which track the drag landed on.
+ *
+ *  D-261 — the `move` test replaced an `altKey` test here. Under the Selection
+ *  tool the two are identical (no Alt ⇒ `move`), so the pre-D-261 behaviour is
+ *  bit-for-bit unchanged; what it adds is the Slip/Slide tools reaching this
+ *  path with no modifier held at all. */
 export function bodyDragOp(args: {
   tl: Timeline;
   track: number;
   clip: number;
   delta: number;
-  press: { altKey: boolean; shiftKey: boolean; bodyYRatio: number } | null;
+  press: { altKey: boolean; shiftKey: boolean; bodyYRatio: number; tool?: TrimTool } | null;
 }): EditOp | null {
   const { tl, track, clip, delta, press } = args;
-  if (!press?.altKey) return null;
-  if (delta === 0) return null;
+  if (!press) return null;
   const mode = resolveTrimMode({
     zone: 'body',
-    altKey: true,
+    tool: press.tool ?? 'select',
+    altKey: press.altKey,
     shiftKey: press.shiftKey,
     atEditPoint: false,
     bodyYRatio: press.bodyYRatio,
   });
+  if (mode === 'move') return null;
+  if (delta === 0) return null;
   return trimOpFor(mode, { tl, track, clip, edge: 'end', delta });
 }
 
@@ -343,9 +516,12 @@ export function trimModeCursor(mode: TrimMode): string {
  *  its readout appears only once the key is already down. Resolve does not
  *  have this problem because its trim tool is a visible button in a visible
  *  toolbar ("Select the trim icon in the toolbar, then click anywhere inside a
- *  clip"); Chroma has no tool palette, so the key itself has to be announced.
- *  This goes on every clip's own tooltip — visible on dwell, invisible the
- *  rest of the time, which is the right cost for a hint you need exactly once.
+ *  clip"). D-261 gave Chroma that toolbar ([`TRIM_TOOLS`]), so this string is
+ *  no longer the feature's only discoverability — it is now what it should
+ *  always have been: the shortcut hint for people who would rather hold a key
+ *  than click a button. It goes on every clip's own tooltip — visible on dwell,
+ *  invisible the rest of the time, which is the right cost for a hint you need
+ *  exactly once.
  */
 export const TRIM_ARM_HINT =
-  'Hold ⌥ Option and drag: an edge rolls or ripples, the top half slips, the bottom half slides.';
+  'Hold ⌥ Option and drag: an edge rolls or ripples, the top half slips, the bottom half slides. Or pick a trim tool in the toolbar.';

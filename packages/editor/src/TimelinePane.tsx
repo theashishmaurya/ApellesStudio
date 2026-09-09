@@ -214,6 +214,17 @@
  * does not run under jsdom at all, so the edge decision is only testable as a
  * pure function — see `TimelinePane.trim.dom.test.tsx`'s header).
  *
+ * D-261 — that trim tool now has a real, visible PALETTE, and it is the primary
+ * way in: a Select/Ripple/Roll/Slip/Slide icon group in this toolbar
+ * (`TrimToolbar.tsx`), from Adobe's own Premiere Tools panel
+ * (`scratch/premiere-tools-reference/`). The owner's own words after living
+ * with the Alt-only version: *"for roll slip etc, instead of alt lets have
+ * icons for all of them :) much better."* The gesture plumbing here is
+ * unchanged — the active tool is simply captured onto `trimPressRef` alongside
+ * the modifiers, and `resolveTrimMode` consults it first. The Alt heuristic is
+ * kept and strictly layered under it (Alt acts only while Select is active), so
+ * the two rules can never both claim one drag.
+ *
  * D-248 (the left library rail) — this pane's native-HTML5 drop now accepts a
  * SECOND payload: `CHROMA_GENERATOR_DRAG_MIME`, a title or an adjustment clip
  * dragged out of `EditLibraryRail.tsx`. It is not a second drop path — both
@@ -333,6 +344,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Separator,
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -427,10 +439,14 @@ import {
   trimModeCursor,
   trimModeHint,
   trimModeLabel,
+  trimToolForKey,
+  trimToolOwns,
   TRIM_ARM_HINT,
   type TrimMode,
+  type TrimTool,
   type TrimZone,
 } from './trimMode';
+import { TrimToolbar } from './TrimToolbar';
 import { adjustmentSummary } from './adjustment';
 import {
   canStartMarquee,
@@ -1426,10 +1442,36 @@ export function TimelinePane() {
   // change halfway through a drag would mean the op committed was not the one
   // the user aimed at.
   const [trimArmed, setTrimArmed] = useState(false);
-  const trimPressRef = useRef<{ altKey: boolean; shiftKey: boolean; bodyYRatio: number } | null>(null);
+  const trimPressRef = useRef<{ altKey: boolean; shiftKey: boolean; bodyYRatio: number; tool: TrimTool } | null>(null);
 
   // Declared beside `trimArmed` because disarming has to clear it (see below).
   const [hoverTrimMode, setHoverTrimMode] = useState<TrimMode | null>(null);
+
+  // D-261 — the trim palette's active tool: the primary, visible way to reach
+  // the four smart trims, replacing "hold Alt and hope you are at the right
+  // height" as the path a user is expected to find. `'select'` is a real tool
+  // (Adobe's own default), not an off state — see `trimMode.ts`.
+  //
+  // Held BOTH as state and as a ref, deliberately. The state renders the
+  // toolbar's filled/ghost buttons; the ref is what the capture-phase
+  // pointerdown below stamps onto `trimPressRef`, and it exists so that
+  // listener does not have to re-bind (and so `useEffect` does not have to
+  // carry a dependency) every time the tool changes. `selectTrimTool` is the
+  // only writer, so the two can never drift.
+  const [trimTool, setTrimToolState] = useState<TrimTool>('select');
+  const trimToolRef = useRef<TrimTool>('select');
+  const selectTrimTool = (tool: TrimTool) => {
+    trimToolRef.current = tool;
+    setTrimToolState((prev) => (prev === tool ? prev : tool));
+  };
+
+  /** Whether ANY non-default trim behaviour is live right now — a tool chosen
+   *  in the palette, or Alt held. The hover affordance (badge + cursor) keys
+   *  off this rather than off `trimArmed` alone, because a chosen tool is
+   *  exactly as much "you are about to do something other than a move" as a
+   *  held key is, and Adobe's own panel says the same: "When you select a tool,
+   *  the pointer changes shape according to the selection." */
+  const trimActive = trimArmed || trimTool !== 'select';
 
   useEffect(() => {
     // `e.altKey` rather than `e.key === 'Alt'`: the same read works for
@@ -1478,6 +1520,12 @@ export function TimelinePane() {
         altKey: e.altKey,
         shiftKey: e.shiftKey,
         bodyYRatio: rect && rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0,
+        // D-261 — the active tool is captured with the modifiers, and for the
+        // same stated reason (see this ref's doc): the edit a gesture commits
+        // must be the one the user aimed at when they pressed, so a tool
+        // shortcut typed mid-drag cannot retarget a drag already in flight.
+        // Read from the ref, not the state, so this listener never re-binds.
+        tool: trimToolRef.current,
       };
     };
     el.addEventListener('pointerdown', onPointerDown, true);
@@ -1491,10 +1539,18 @@ export function TimelinePane() {
   }, [editArea]);
 
   /** D-235 — which mode a press at this pointer position would commit, or
-   *  `null` when it is not over a clip at all. The hover affordance's whole
-   *  job, and deliberately built on the SAME `resolveTrimMode` call the two
-   *  commit paths use — a hint that could disagree with the op that actually
-   *  fires would be worse than no hint. */
+   *  `null` when there is nothing worth announcing. The hover affordance's
+   *  whole job, and deliberately built on the SAME `resolveTrimMode` call the
+   *  two commit paths use — a hint that could disagree with the op that
+   *  actually fires would be worse than no hint.
+   *
+   *  `null` covers two cases: not over a clip at all, and over one where the
+   *  gesture is still just a plain move/trim. D-261 made the second case
+   *  reachable — a tool that does not own this zone (Ripple over a clip's
+   *  BODY) leaves the drag exactly as it was, and announcing an unnamed mode
+   *  there would put an empty badge under the pointer. `trimModeLabel` is the
+   *  authority on which modes have something to say, so it is asked rather
+   *  than the two unarmed modes being re-listed here. */
   const trimModeAtPointer = (e: PointerEvent): TrimMode | null => {
     if (!timeline) return null;
     const target = e.target instanceof Element ? e.target : null;
@@ -1512,13 +1568,22 @@ export function TimelinePane() {
         ? 'edge-end'
         : 'body';
     const rect = action.getBoundingClientRect();
-    return resolveTrimMode({
+    const mode = resolveTrimMode({
       zone,
-      altKey: true,
+      // D-261 — the palette's tool, and the arm as it REALLY is. Both had to
+      // become real reads here: this used to be called only while Alt was
+      // held, so `altKey: true` was a safe constant; now a chosen tool brings
+      // the pointer here with no modifier down at all, and hard-coding the arm
+      // would make the badge promise a slip/slide the commit path would not
+      // perform. Same `resolveTrimMode` call as both commit paths, which is
+      // what keeps hint and op from ever disagreeing.
+      tool: trimTool,
+      altKey: trimArmed,
       shiftKey: e.shiftKey,
       atEditPoint: zone !== 'body' && edgeIsEditPoint(timeline, ti, i, zone === 'edge-start' ? 'start' : 'end'),
       bodyYRatio: rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0,
     });
+    return trimModeLabel(mode) === null ? null : mode;
   };
 
   // D-235 — the hover affordance. Resolve swaps between four custom cursors
@@ -1571,7 +1636,12 @@ export function TimelinePane() {
   };
 
   const onTrimHoverMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!trimArmed) return;
+    // D-261 — `trimActive`, not `trimArmed`: a tool chosen in the palette gets
+    // the same hover affordance a held Alt does. Still an early boolean return
+    // before touching the DOM, so D-083's per-pointer-move discipline is
+    // unchanged for the default (Select, no Alt) case, which is most of the
+    // time the pointer is over this pane.
+    if (!trimActive) return;
     const next = trimModeAtPointer(e.nativeEvent);
     setHoverTrimMode((prev) => (prev === next ? prev : next));
     if (next) placeTrimBadge(e);
@@ -3294,6 +3364,9 @@ export function TimelinePane() {
         altKey: activator?.altKey ?? captured.altKey,
         shiftKey: activator?.shiftKey ?? captured.shiftKey,
         bodyYRatio: captured.bodyYRatio,
+        // D-261 — the palette's tool as it was at press. Only `trimPressRef`
+        // has this; dnd-kit's activator event knows nothing about it.
+        tool: captured.tool,
       };
       if (timeline) {
         const op = bodyDragOp({
@@ -3303,8 +3376,15 @@ export function TimelinePane() {
           delta: Math.round((event.delta.x / pxPerSec) * fps),
           press,
         });
-        // `null` means "not armed" — fall through to the unchanged move path.
-        if (op || press?.altKey) {
+        // A `null` op means either "this drag was never a slip/slide" or "it
+        // was, but it moved no whole frame / the model refused it". Only the
+        // first may fall through to the move path — otherwise a Slip that
+        // clamped would silently become a MOVE, which is a different edit
+        // entirely. So the question asked here is whether the gesture was
+        // CLAIMED, not whether it produced an op: claimed by the Alt arm, or
+        // (D-261) by a palette tool that owns body drags.
+        const claimed = press !== null && (press.altKey || trimToolOwns(press.tool, 'body'));
+        if (op || claimed) {
           if (op) applyOp(op);
           // Same "a drag also selects what it edited" rule the move path below
           // ends with — a slip/slide is still a pick.
@@ -3552,6 +3632,25 @@ export function TimelinePane() {
               return;
             }
           }
+          // D-261 — the trim palette's single-key shortcuts: V/B/N/Y/U, which
+          // are Adobe's own for these five tools (Selection, Ripple Edit,
+          // Rolling Edit, Slip, Slide — see `scratch/premiere-tools-reference/
+          // premiere-tools-panel.json`), so anyone arriving from Premiere finds
+          // them already bound to what they expect. Guarded exactly like `M`
+          // above and for the same two reasons: no modifier, so a system or
+          // browser chord can never be shadowed, and not while a text field has
+          // focus, because this pane's toolbar and popovers contain real
+          // `<input>`s where "v" must type a "v".
+          if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+            const tool = trimToolForKey(e.key);
+            const el = e.target as HTMLElement | null;
+            const tag = el?.tagName;
+            if (tool && tag !== 'INPUT' && tag !== 'TEXTAREA' && el?.isContentEditable !== true) {
+              e.preventDefault();
+              selectTrimTool(tool);
+              return;
+            }
+          }
           if (e.key === 'Delete' || e.key === 'Backspace') {
             // D-105 — a selected gap takes the same Delete/Backspace as a
             // selected clip; the two are mutually exclusive (see
@@ -3585,6 +3684,22 @@ export function TimelinePane() {
             />
             <TooltipContent>Split every selected clip at the playhead</TooltipContent>
           </Tooltip>
+          {/* D-261 — the trim palette. It sits here, first among the actions
+              that operate on the clips already in the timeline, because unlike
+              every other button in this row it is MODAL: it changes what the
+              next drag means rather than doing something once. A separator
+              keeps that distinction visible instead of letting five icon
+              buttons read as five more one-shot actions.
+
+              Adobe's own panel is a vertical strip docked to the timeline's
+              edge; this is the same set of buttons in this app's existing
+              toolbar row, which is where every other timeline action already
+              lives (CLAUDE.md: match the app's convention, and Adobe's own page
+              notes the panel can be oriented either way). See
+              `TrimToolbar.tsx` for the icon choices and their provenance. */}
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <TrimToolbar active={trimTool} onSelect={selectTrimTool} />
+          <Separator orientation="vertical" className="mx-1 h-5" />
           {/* D-248 — the Title (D-211) and Adjust (D-230) buttons stood here.
               They are library items, not timeline actions, and both references
               describe them as things you DRAG out of the effects library — so

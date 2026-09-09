@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-261: the smart trims get a real tool palette — five icons
+  in the timeline toolbar, Alt kept underneath** — the owner, live: *"for roll
+  slip etc, instead of alt lets have icons for all of them :) much better."*
+  Ripple/roll/slip/slide were reachable only by holding Alt and aiming at the
+  right part of a clip (D-235), with every explanatory affordance appearing only
+  once the key was already down (D-250) — a discoverability defect three passes
+  deep. There is now a Select/Ripple/Roll/Slip/Slide icon group in
+  `TimelinePane`'s toolbar (`TrimToolbar.tsx`), taken from a fresh scrape of
+  Adobe's own Premiere Tools-panel help into `scratch/premiere-tools-reference/`
+  — Adobe's tool set, its filled-active-chip convention, its icon-only +
+  tooltip labelling, and its V/B/N/Y/U shortcuts. A chosen tool decides alone,
+  ignoring position and modifiers, so a drag is deterministic; Select is a real
+  default tool (Adobe's own), not an off state. The Alt heuristic is **kept**
+  and strictly layered — it acts only while Select is active — so the two rules
+  can never fight over one drag. MCP parity checked, not assumed: all five
+  behaviours are already directly nameable per call, so this is correctly
+  GUI-only. 15 new unit + 14 new real-DOM tests; the central pair proves the
+  icon path and the Alt path commit the identical timeline, and D-235/D-250's
+  68 tests pass unchanged.
 - **2026-09-09** — **D-258: Motion's first representational primitives — a Claude
   chat UI and a phone frame, deliberately decoupled** — the catalog goes from 8
   primitives to 10. `claudechat` draws the real Claude mobile app screen (header,
