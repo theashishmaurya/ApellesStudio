@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-267 correction, same session: the app icon looked
+  broken next to every other Dock icon, and the nav mark was still the old
+  design.** The desktop icon set was regenerated from `apelles-mark-opaque.png`
+  (the original render, black square intact) instead of the transparent file
+  — every other app icon on the system fills its whole tile with an opaque
+  background (Chrome's is white), so a transparent-cornered icon looked like
+  a floating circle the moment it sat in the Dock next to one. `Nav.astro`'s
+  four-tesserae SVG mark is replaced with the same `icon-192.png` the
+  favicon uses — one mark image now, not two designs on the same page.
+  `brand/` holds both source variants, named for which job each is for.
+
 - **2026-09-09** — **D-267: a new photographic brand mark, converted into a
   real, properly-generated asset set** — the owner's own AI-generated medallion
   (an "A" + a marble bust profile, the same terracotta/ochre/marble palette

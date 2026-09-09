@@ -25850,10 +25850,55 @@ clean (5 pages), `astro check` clean (0/0/0), `npm test` 190/190 (net +2:
 2 removed, 4 added). Transparency proved three ways (see above), not
 assumed from the flood-fill running without error.
 
-### Left as-is, deliberately
+### Corrected, same session: two real gaps the owner caught by actually looking
 
-`Nav.astro`'s inline mark, per the owner's own scoped request. No attempt to
-also vectorise the new mark for contexts that want true SVG scaling — the
-raster-master approach covers every real size this app currently needs;
-revisit only if a genuinely vector-only context (large-format print, a
-laser-cut sign) ever comes up.
+**The app icon looked broken sitting next to every other Dock icon — twice,
+for two different reasons, both only visible once actually placed in the
+Dock.** First: every real macOS/Windows app icon fills its whole square tile
+with an opaque background — the OS applies its own rounded-corner mask over
+that square; Chrome's tile is solid white behind its circular mark, for
+exactly this reason. `apelles-mark-transparent.png` (this decision's own
+master, renamed from its first draft `apelles-mark-master.png` for symmetry
+with what follows) has nothing outside the circle, so the generated app icon
+rendered as a circle floating on the Dock's own background. A plain opaque
+fill (`apelles-mark-opaque.png`, the original render's own black square)
+fixed the transparency but exposed the second problem: macOS has not
+auto-rounded a plain square app icon since Big Sur — an app icon is expected
+to already be shaped like the OS's own "continuous corner" squircle in the
+source file, corners pre-cut, or it renders with hard square corners next to
+every properly-shaped icon around it. Neither defect was one a file-level
+check could have caught; both were only visible once actually seen in the
+Dock next to Chrome's icon.
+
+Fixed with `apelles-mark-squircle.png` (`brand/generate-app-icon-bg.py`,
+committed rather than left as a one-off shell command): the transparent
+medallion composited over a real background, clipped to a squircle mask at
+~22.5% corner radius (the standard approximation for macOS's own shape).
+The background itself went through a live, iterated design pass, not a
+single guess: a flat fill read as flat once actually seen at Dock size, not
+premium; a radial glow was tried next and rejected twice — first too subtle
+to register as a gradient at all, then too strong once made visible enough
+to see; a linear top-to-bottom lift (the standard "light from above" icon
+convention) is what stuck, tuned down once more after its first pass ran
+the dark end all the way to pure black and read as too much contrast. The
+confirmed values (top: basalt lifted 22% toward marble; bottom: plain
+basalt, not black) are in the script, not memorised. The transparent file
+stays correct for every context that already has its own background (the
+website favicon, the nav mark below) — three files now live in `brand/`,
+each named for which job it is for, so this is not a mistake to make twice.
+
+**`Nav.astro`'s inline tesserae mark was left unchanged in this decision's
+first pass, then changed once the owner pointed at it directly** — a header
+showing the old abstract mark next to a favicon and app icon both showing
+the new photographic one reads as an oversight, not a deliberate two-mark
+system, the moment two logos are visible on the same screen. Replaced
+`Nav.astro`'s four-tesserae SVG with an `<img>` of `icon-192.png` (the
+transparent file, since the nav sits on the page's own marble background) —
+now exactly one mark image exists in this codebase, reused everywhere
+instead of redrawn per surface.
+
+No attempt was made to also vectorise the new mark for contexts that want
+true SVG scaling — the raster-master approach (two source files, one
+opaque one transparent) covers every real size and context this app
+currently needs; revisit only if a genuinely vector-only context
+(large-format print, a laser-cut sign) ever comes up.

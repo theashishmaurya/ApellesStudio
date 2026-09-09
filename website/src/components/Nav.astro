@@ -1,10 +1,12 @@
 ---
 /**
- * Nav.astro — the top bar (D-264).
+ * Nav.astro — the top bar (D-264; mark updated D-267).
  *
- * What it is: a wordmark, three destinations, and one quiet action. The mark is
- * four tesserae — the smallest possible piece of the mosaic the brand is drawn
- * from — set beside the name in the display serif.
+ * What it is: a wordmark, three destinations, and one quiet action. The mark
+ * is the real brand medallion (`icon-192.png`, D-267's transparent master,
+ * downscaled) set beside the name in the display serif — the same asset the
+ * favicon and the desktop app icon are built from, so there is exactly one
+ * mark image in this codebase, not three.
  * What it does NOT do: carry the signature colour. The rose belongs to the one
  * action a page exists for, and a persistent header button is not that; the
  * nav's beta link is deliberately the quietest control on the page.
@@ -21,12 +23,7 @@ const path = Astro.url.pathname;
 <header class="bar">
   <div class="inner">
     <a class="mark" href="/" aria-label="Apelles — home">
-      <svg class="tess" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-        <rect x="0" y="0" width="9" height="9" rx="1.2" fill="var(--pigment-basalt)"></rect>
-        <rect x="11" y="0" width="9" height="9" rx="1.2" fill="var(--pigment-terracotta)"></rect>
-        <rect x="0" y="11" width="9" height="9" rx="1.2" fill="var(--pigment-ochre)"></rect>
-        <rect x="11" y="11" width="9" height="9" rx="1.2" fill="var(--edge-strong)"></rect>
-      </svg>
+      <img class="seal" src="/icon-192.png" width="32" height="32" alt="" />
       <span class="word">Apelles</span>
     </a>
 
@@ -79,9 +76,9 @@ const path = Astro.url.pathname;
     line-height: 1;
   }
 
-  .tess {
+  .seal {
     flex: none;
-    opacity: 0.9;
+    display: block;
   }
 
   .mid {
