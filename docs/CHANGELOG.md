@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-274: Project Settings docked in the Edit tab's
+  Inspector column** (roadmap's "same feature, better UX"), filling
+  `ClipInspectorPanel`'s own "nothing selected" empty state rather than a
+  third tab. Resolution/Frame Rate/Colour Space now render through one
+  shared, instant-apply `ProjectSettingsForm` (new, `packages/editor`) that
+  both the new docked `ProjectSettingsPanel` and the Colorist tab's existing
+  `ProjectSettingsModal.tsx` render — same underlying `chroma_project_get_
+  settings`/`_set_settings` commands and their `chroma://project-settings-
+  changed` broadcast, no forked state. The Colorist gear icon's modal stays
+  as an entry point, now instant-apply instead of staged Save/Cancel. New
+  tests: `ProjectSettingsForm.dom.test.tsx`,
+  `EditorInspectorPanel.projectSettings.dom.test.tsx` (incl. a live
+  single-source-of-truth proof). See D-274.
+
 - **2026-09-10** — **D-273: one keyboard-shortcut registry for the whole app,
   plus a real Keyboard Shortcuts window.** The audit came first and found five
   independent keydown listeners and three defects: **Play/Space was bound to
