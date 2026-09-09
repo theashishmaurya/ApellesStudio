@@ -25597,3 +25597,159 @@ exact pre-existing baseline) before making the declaration change.
 path references were updated (`@apelles/*`, `crates/apelles-*`) because those
 paths literally moved, but the vendoring policy itself is the owner's call, not
 a rename's side effect.
+
+---
+
+## D-266 — The last two MCP coverage gaps: the media pool gets its read/organise half, and "audio playback" turns out to have been three-quarters covered already
+
+**Date:** 2026-09-09.
+
+### Context
+
+`docs/notes/mcp-tool-coverage.md` carried exactly two open gaps for a
+capability the GUI already has. Both had been sitting there long enough that
+the marketing site started quoting them verbatim (D-264's `GAPS` constant), so
+they were being published as shortfalls as well as tracked as ones.
+
+1. **Media / Sources pool — 2 of 6.** `editor_import_media` (D-183) and
+   `editor_remove_media` (roadmap item 23) exist. `chroma_media_list` /
+   `_folders` / `_create_folder` / `_move` — all four real, all four already
+   driving the Sources panel's own list, "New folder" button and drag-onto-a-
+   bin — had no MCP tool at all. This is a "step 2 was never done" gap, not a
+   missing capability, and it has a live-witnessed cost: **B-073** is a pool
+   item stuck with no probed metadata after a transient probe failure, and the
+   session that hit it could not *inspect* the pool over MCP to find out which
+   item was the bad one. It read `project.json` by hand.
+2. **Audio playback — "0 tools, lowest priority."** Listed over four
+   hypothetical command names (`chroma_audio_play`/`_stop`/`_level`/
+   `_waveform`) and explicitly flagged as noted-for-completeness.
+
+### What the investigation actually found
+
+The pool gap was exactly as recorded. The audio gap was **substantially
+mis-scoped, in our own favour**, and the honest thing was to say so rather than
+build four tools to match a four-name list:
+
+- **There is only one transport, and it already had a tool.** `PreviewPane`'s
+  own effect keys `chroma_audio_play`/`chroma_audio_stop` off the timeline
+  store's `playing` flag (`useEffect([playing, hasTimeline])`), so picture and
+  sound are one play/pause and always have been. `editor_set_playing` has
+  covered `_play` and `_stop` since D-183 — the doc listed two Tauri command
+  names and inferred two missing tools from them.
+- **`_waveform` was closed by D-232.** `editor_get_waveform` reads the same
+  envelope the strip draws. That is audio *data* access, a separate and solved
+  problem.
+- **What was genuinely uncovered is narrower and different**: the master
+  monitoring volume/mute (a real GUI-only control — D-126 put `muted`/`volume`
+  in `PreviewPane`'s own `useState`, where nothing outside React could reach
+  them), and `chroma_audio_level`, a registered command wired to no UI at all.
+
+### The options
+
+1. **Wrap all four `chroma_audio_*` names as the doc listed them.** Would have
+   produced a second, redundant play/stop transport next to
+   `editor_set_playing` — two ways to start playback, no single source of
+   truth, and the exact "invent a new pattern when a standard one exists"
+   failure CLAUDE.md forbids. Rejected on investigation, not on effort.
+2. **Close the pool gap, declare the audio one already-covered, build nothing.**
+   Defensible for play/stop, wrong for the monitor: a GUI-only volume control
+   is precisely the half-a-feature the human-AND-AI rule exists to catch.
+3. **Close the pool gap in full; close the audio gap as it really is** — the
+   monitor and the level — and rewrite the doc's own framing. Chosen.
+
+### The choice
+
+#### Six tools, every one a wrap of a store action the GUI already calls
+
+`editor_list_media`, `editor_list_media_folders`, `editor_create_media_folder`,
+`editor_move_media`, `editor_set_audio_monitor`, `editor_get_audio_level`. No
+new Tauri command, no new pool or audio logic. Each pool tool goes through the
+`useMediaPoolStore` action the Sources panel already uses, so there is one store
+action and one `chroma_media_*` command under both interfaces.
+
+Three details are decisions rather than plumbing:
+
+- **`editor_list_media` reads through `refresh()`, never off the cached
+  `items` array.** That array is populated only by `importPaths` appending its
+  own result or by an explicit refresh, so an item seeded another way
+  (`new_project`'s `media_paths`, another window) is simply absent from it —
+  which *is* B-073/B-082/B-084's shared mechanism. A listing tool that
+  inherited that would be worse than none.
+- **Every row carries `usable`, and an unusable one explains itself.**
+  B-073's real question is "which item is the broken one", and an opaque array
+  does not answer it. An unusable row names the cause (failed probe vs. missing
+  source — same refusal from `editor_add_clip`, different fix) and the recovery
+  sequence. `unusable` collects the ids. The underlying bug is **still open**;
+  what changed is that it is now diagnosable and repairable over MCP instead of
+  by hand-reading `project.json`. The thumbnail is reported as `hasThumb`, a
+  boolean — the real value is a base64 JPEG data URL that would swamp the
+  response with something an agent cannot read anyway.
+- **`editor_move_media` requires `folder`, which may be `null`.** `null` is a
+  real destination (the pool root), so it cannot double as "unspecified"; an
+  omitted `folder` is rejected rather than silently un-filing an item.
+
+#### `muted`/`volume` lift out of `PreviewPane` into `timelineStore`
+
+The same lift `waveformView` got in D-232, for the same reason and with the
+same meaning: monitoring state, not project data, never persisted, never
+undoable, unrelated to any track gain or clip volume and to what an export
+renders. It moves only so that the op and the human's speaker button write the
+same two values instead of parallel copies. `editor_get_state` reports the pair
+as `monitor`, because a muted transport plays the identical timeline and makes
+no sound — a caller reasoning about audio needs that in the state call.
+
+#### `editor_get_audio_level` is the agent's ears, not a meter UI we skipped
+
+This is the one tool here with no GUI counterpart, and that is deliberate under
+the human-AND-AI rule rather than an exception to it: the human affordance for
+"is sound really coming out" is *hearing it*. D-232 made this exact argument
+for `editor_get_waveform` ("what an agent actually needs from the same
+capability is the *information* a human gets by ear"), applied there to the
+file and here to the live output.
+
+**No GUI meter was built, and that is a measurement fact, not a shortcut.**
+`build_typed` in `crates/chroma-media/src/audio.rs` accumulates rms/peak over a
+window of `out_rate * channels` samples — about one second — so the value
+refreshes at ~1 Hz. That is a sound "did non-silent PCM reach the device"
+probe and it is not a meter: a real meter needs tens of updates a second, and
+drawing a 1 Hz value as one would be a worse UI than none. The tool therefore
+reports `windowSecs`, the current `playing`/`muted`/`volume`, and a `note`
+naming which of them explains a zero — because a stopped transport returns the
+*last measured window*, stale rather than zeroed, which is the one reading that
+would otherwise be misread as "no audio".
+
+The scrub commands (`chroma_audio_scrub_*`) still get no tool, on D-232's own
+reasoning: a tape-scrub's entire content is "audio, now, while my hand moves".
+
+### Verification
+
+`@chroma/editor` **1625/1625** across 85 files, including 23 new: 14 in
+`mediaPoolOps.dom.test.tsx` (the four pool ops through the real
+`chroma://request` dispatch path, asserting the same `chroma_media_*` invokes
+with the same arguments the panel's own store actions make, plus B-073's stuck
+item, the offline-vs-unprobed distinction, and that no base64 blob reaches the
+response) and 9 in `PreviewPane.monitor.dom.test.tsx` (the op moves the mute
+button the human sees, the human's click is what `editor_get_state` reports,
+both paths end at the same `chroma_audio_set_volume` number, the clamp says it
+clamped, and a zero level explains itself). `website` 188/188 with its
+anti-fabrication counts recounted (159 tools, 150 shipped, Edit 67) and both
+`GAPS` entries rewritten. `python3 -m py_compile mcp/server.py` clean.
+`npx tsc --noEmit -p packages/editor` clean.
+
+**Not live-verified against a running app.** The isolated worktree has no built
+`target/`, and a sibling agent's in-flight `@chroma/*` → `@apelles/*` rename had
+relinked the shared `node_modules`, so the frontend suites needed a temporary
+alias config (uncommitted) to resolve workspace imports to this worktree at all
+— see the note in `docs/notes/mcp-tool-coverage.md`. The tests drive the real
+ops through the real dispatch path against a mocked `invoke`, which covers the
+boundary both interfaces converge at but not the end-to-end round trip; one
+real check is worth doing next time the app is running (`editor_list_media` on
+a project with a known pool, then `editor_set_audio_monitor` while watching the
+transport bar).
+
+### Still open
+
+B-073's underlying staleness — no re-probe on demand, nothing expires a stale
+pool entry — is untouched by this pass and remains the media pool's real
+architectural gap. The audio side has no GUI level meter, for the ~1 Hz reason
+above; if a meter is ever wanted, the measurement window has to shrink first.

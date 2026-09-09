@@ -62,10 +62,15 @@
  * which the open-loop audio clock then carried as a permanent offset. The
  * dominant cause was on the Rust side (`chroma/decode_pipe.rs`); see D-125.
  *
- * Mute/volume + fullscreen (D-126): `muted`/`volume` are local UI state, not
- * project data — real-time monitoring volume, applied in `audio.rs`'s output
- * callback via `chroma_audio_set_volume`, entirely separate from any track's
- * actual `gain`. Fullscreen uses the real browser Fullscreen API on a local
+ * Mute/volume + fullscreen (D-126): `muted`/`volume` are UI state, not project
+ * data — real-time monitoring volume, applied in `audio.rs`'s output callback
+ * via `chroma_audio_set_volume`, entirely separate from any track's actual
+ * `gain`. **They moved out of this component's `useState` and into
+ * `timelineStore` in D-266**, unchanged in meaning, so that
+ * `editor_set_audio_monitor` drives the same two values the speaker button and
+ * the slider do instead of a parallel copy — the same lift, for the same
+ * reason, `waveformView` got in D-232. Fullscreen uses the real browser
+ * Fullscreen API on a local
  * wrapper `<div>` around `<Player>` (not a ref forwarded through `Player`
  * itself, which stays presentational-only) — a `fullscreenchange` listener
  * keeps `isFullscreen` in sync with reality, since the browser's own Esc
@@ -229,11 +234,14 @@ export function PreviewPane() {
   // React's docs prescribe for exactly this. See `useContentBox`'s own note.
   const [surfaceEl, setSurfaceEl] = useState<HTMLDivElement | null>(null);
 
-  // D-126 — mute/volume: local monitoring state, not project data (see the
+  // D-126/D-266 — mute/volume: monitoring state, not project data (see the
   // module doc). `volume` is the last non-zero level, remembered across a
-  // mute toggle so unmuting restores it instead of resetting to unity.
-  const [muted, setMuted] = useState(false);
-  const [volume, setVolume] = useState(1);
+  // mute toggle so unmuting restores it instead of resetting to unity. In the
+  // store rather than in `useState` so `editor_set_audio_monitor` writes the
+  // very same values this reads — see the fields' own docs in `timelineStore`.
+  const muted = useEditorTimelineStore((s) => s.monitorMuted);
+  const volume = useEditorTimelineStore((s) => s.monitorVolume);
+  const setAudioMonitor = useEditorTimelineStore((s) => s.setAudioMonitor);
   useEffect(() => {
     invoke('chroma_audio_set_volume', { volume: muted ? 0 : volume }).catch(() => {});
   }, [muted, volume]);
@@ -636,9 +644,9 @@ export function PreviewPane() {
       <Player
         title="Timeline"
         muted={muted}
-        onMuteToggle={() => setMuted((m) => !m)}
+        onMuteToggle={() => setAudioMonitor({ muted: !muted })}
         volume={volume}
-        onVolumeChange={setVolume}
+        onVolumeChange={(v) => setAudioMonitor({ volume: v })}
         onFullscreen={toggleFullscreen}
         isFullscreen={isFullscreen}
         // D-218 — the zoom cluster, mirroring the timeline toolbar's own. A

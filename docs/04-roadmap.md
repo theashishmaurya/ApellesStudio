@@ -1205,6 +1205,20 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     re-probe-on-demand for a stuck/wrong item) is still OPEN**; the fix today
     is "remove the bad id, then re-import the same path," a two-call manual
     correction, not automatic detection/recovery. That remains future work.
+
+    **Detection slice DONE, 2026-09-09 (D-266):** the two-call correction above
+    was only usable if you already knew WHICH id was bad, and nothing over MCP
+    could tell you — the trail of dead pool entries "no one can see or clean up"
+    named in this item was literally unlistable. `editor_list_media` (plus
+    `_list_media_folders` / `_create_media_folder` / `_move_media`) closes the
+    `docs/notes/mcp-tool-coverage.md` gap this item quotes: it reads the pool
+    through to disk, marks every entry `editor_add_clip` would refuse as
+    `usable: false` with a `problem` string naming the cause and the fix, and
+    collects their ids in `unusable`. So the trail is now visible and
+    clearable, and the format-agnostic-probe audit named above is still worth
+    its own pass. **The architectural gap is STILL OPEN and unchanged**: no
+    expiry, no re-probe-on-demand, still a manual two-call correction — this
+    slice makes it diagnosable, not self-healing.
 24. ~~**No text/title clip primitive in the Edit tab at all**~~ — **BUILT,
     2026-09-08 (D-211/D-212/D-213, `docs/notes/text-title-clips.md`).** The
     original entry: owner, 2026-09-07, asking for real "AFTER"/"BEFORE" labels

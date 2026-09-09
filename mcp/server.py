@@ -978,13 +978,16 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "file-access race) never gets re-probed and is invisible to "
             "editor_add_clip after the project is reopened — even though "
             "editor_import_media on the identical path reports success. "
-            "There is no chroma_media_list / _remove MCP tool to inspect or "
-            "clear it (a tracked gap, docs/notes/mcp-tool-coverage.md). See "
-            "docs/BUGS.md B-073 (status: open). If editor_add_clip keeps "
-            "refusing a path you just imported, don't just retry the same "
-            "call — recreate the project, or read project.json by hand to "
-            "confirm the pool entry actually has a `video` block with real "
-            "metadata."
+            "The underlying bug is still open (docs/BUGS.md B-073 — there is "
+            "no re-probe-on-demand or expiry), but it is now fully "
+            "DIAGNOSABLE and RECOVERABLE over MCP, so never recreate a "
+            "project or hand-read project.json for it again: "
+            "editor_list_media names the bad item (usable: false, plus a "
+            "`problem` string, and the response's `unusable` array is just "
+            "the ids), and editor_remove_media that id then "
+            "editor_import_media the same path forces the fresh probe. If "
+            "editor_add_clip refuses a path you just imported, that is the "
+            "sequence — don't just retry the same call."
         ),
         "control_server_wedge_B069": (
             "FIXED (docs/BUGS.md B-069, a Rules-of-Hooks violation in "
@@ -1143,10 +1146,74 @@ def editor_set_playhead(frame: int) -> str:
 
 @mcp.tool()
 def editor_set_playing(playing: bool) -> str:
-    """Start (`True`) or stop (`False`) Edit-tab playback."""
+    """Start (`True`) or stop (`False`) Edit-tab playback.
+
+    **This is the whole transport — picture AND sound.** There is not a
+    separate audio play/stop: the viewer keys `chroma_audio_play`/
+    `chroma_audio_stop` off this same flag, so starting playback here starts
+    the real mixed audio session too. Whether anything is audible also depends
+    on the monitor (`editor_set_audio_monitor`); `editor_get_audio_level` is
+    how you check that sound actually reached the output device."""
     import json
 
     return json.dumps(_op("editor_set_playing", playing=playing), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_audio_monitor(
+    volume: float | None = None, muted: bool | None = None
+) -> str:
+    """Set the Edit tab's **master monitoring volume** (`0..1`) and/or its mute
+    flag — the same speaker button and volume slider in the viewer's transport
+    bar the human uses, driving the same `chroma_audio_set_volume` multiplier
+    applied in the real audio output callback.
+
+    **Monitoring only.** This is what the room hears while previewing. It is
+    not a track's `gain` (`editor_set_track_gain`), not a clip's `volume`
+    (`editor_set_clip_audio`), and it changes NOTHING about what
+    `editor_export` renders — an export at monitor-muted comes out with
+    exactly the audio it would have anyway.
+
+    Pass either argument alone to leave the other as it is. `volume` is
+    clamped to `0..1` rather than rejected (the backend clamps too), and the
+    response says so when it clamped. Volume and mute are independent: muting
+    remembers where the slider was, so unmuting restores it.
+
+    `editor_get_state` reports the current pair as `monitor`. (D-266.)"""
+    import json
+
+    args: dict = {}
+    if volume is not None:
+        args["volume"] = volume
+    if muted is not None:
+        args["muted"] = muted
+    return json.dumps(_op("editor_set_audio_monitor", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_get_audio_level() -> str:
+    """Read the **last measured RMS and peak of the audio actually written to
+    the output device** — the concrete answer to "is sound really coming out
+    right now", which you have no ears for and a human does not need a tool
+    for.
+
+    Use it to verify a playback claim rather than asserting one: start
+    playback (`editor_set_playing`), wait about a second, then read this. A
+    non-zero `rms`/`peak` is real, non-silent PCM having reached the real
+    device through the whole mixer.
+
+    **Read the window before trusting a zero.** The measurement refreshes only
+    once per ~1 second of playback, so it lags a change by up to that long and
+    stays STALE (not zeroed) after a stop — the response carries `windowSecs`,
+    the current `playing`/`muted`/`volume`, and a `note` naming which of those
+    explains what you are seeing. Zeroes right after pressing play usually mean
+    the first window has not completed yet.
+
+    This is not a meter and cannot be polled as one; a level for a FILE, at any
+    resolution you like, is `editor_get_waveform` instead. (D-266.)"""
+    import json
+
+    return json.dumps(_op("editor_get_audio_level"), indent=2, default=str)
 
 
 @mcp.tool()
@@ -1421,6 +1488,100 @@ def editor_remove_media(ids: list[str]) -> str:
     import json
 
     return json.dumps(_op("editor_remove_media", ids=ids), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_list_media() -> str:
+    """List everything in the project's shared media pool — every item's `id`,
+    `name`, `sourcePath`, the bin it is filed in, its probed video metadata,
+    and whether its source file is on disk right now.
+
+    Call this before `editor_add_clip` whenever you did not import the item
+    yourself in this session: `editor_add_clip` resolves a pool item by `id` or
+    `sourcePath`, and this is the only way to learn either for media a human
+    imported, a `new_project` seeded, or a Motion render produced.
+
+    Reads through to disk (the same `chroma_media_list` the GUI's Sources panel
+    lists from), not off a cached array — so it is also the way to check what
+    an import actually did.
+
+    **Every row carries `usable`, and an unusable one explains itself in
+    `problem`.** `editor_add_clip` refuses any item with no probed frame count,
+    and that refusal — not the pool state itself — is the symptom you would
+    otherwise hit (see `docs/BUGS.md` B-073). The response's `unusable` array
+    is the ids of exactly those items, so "which one is the broken one" is one
+    call rather than a hand-read of `project.json`. `video.hasAudio: null`
+    means "never probed for that", NOT "silent".
+
+    `hasThumb` is a boolean, deliberately: the real thumbnail is a base64 JPEG
+    data URL that would swamp this response and means nothing to you anyway.
+
+    (D-266.)"""
+    import json
+
+    return json.dumps(_op("editor_list_media"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_list_media_folders() -> str:
+    """List the media pool's bins (D-045/D-059) with how many items each one
+    holds, plus the count sitting at the pool `root`.
+
+    A bin is a plain path string on an item (`"b-roll"`, `"b-roll/day1"`), not
+    a separate entity — `folders` is the union of explicitly-created bins and
+    bins implied by an item's own `folder`. The pool root is not a folder and
+    never appears in the list; it is what `folder: null` means, and its item
+    count is reported separately.
+
+    `editor_list_media` returns the same `folders` list alongside the items, so
+    this tool is for when you want the shape of the pool without its
+    contents."""
+    import json
+
+    return json.dumps(_op("editor_list_media_folders"), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_create_media_folder(path: str) -> str:
+    """Create a bin in the media pool — the same "New folder" action the GUI's
+    Sources panel offers, wrapping the same `chroma_media_create_folder`
+    command.
+
+    `path` is the whole bin path, `/`-separated for a nested bin
+    (`"b-roll/day1"`), and the bin may stay empty: that is exactly what this
+    command exists for, since a bin implied only by an item's `folder` string
+    needs no creating at all (pass `folder` to `editor_import_media` or
+    `editor_move_media` instead, and it is registered for you).
+
+    Idempotent — creating a bin that already exists is a no-op, not an error.
+    The response's `created` says which of the two happened, and `folders` is
+    the full refreshed list."""
+    import json
+
+    return json.dumps(_op("editor_create_media_folder", path=path), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_move_media(id: str, folder: str | None) -> str:
+    """Re-file one media-pool item into a different bin — the same move the
+    GUI's Sources panel performs when a human drags an item onto a bin.
+
+    `id` is a pool item's own id (`editor_list_media` reports them, as does
+    `editor_import_media`'s result); a source path is not accepted, since the
+    same path can only ever be in the pool once but the id is what the backend
+    keys on.
+
+    `folder` is REQUIRED and may be `None`, which means the pool root — the
+    argument has no "leave it alone" value on purpose, because `None` already
+    means something specific and a caller who omitted it would silently root
+    the item. A bin named here that does not exist yet is registered on the
+    way, so `editor_create_media_folder` first is optional.
+
+    Filing is pure organisation: it changes nothing about the item's source
+    path, its probe, any clip already placed from it, or any render."""
+    import json
+
+    return json.dumps(_op("editor_move_media", id=id, folder=folder), indent=2, default=str)
 
 
 @mcp.tool()

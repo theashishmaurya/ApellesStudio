@@ -136,13 +136,27 @@ describe('the gaps are stated, not hidden', () => {
     expect(motion.length).toBeGreaterThan(0);
   });
 
-  it('names the media-pool gap the tracking doc really records', () => {
-    // `chroma_media_list` has no MCP tool: an agent cannot enumerate the pool.
-    expect(TOOLS.some((t) => /media_list|list_media/.test(t))).toBe(false);
+  /**
+   * D-266 closed both gaps this block used to assert the shape of, so the
+   * assertions are inverted rather than dropped: the site must not still claim
+   * a shortfall the server has since covered, which is the identical failure
+   * the Motion check above guards against.
+   */
+  it('does not still claim the pool cannot be listed — it can', () => {
+    expect(TOOLS).toContain('editor_list_media');
+    expect(TOOLS).toContain('editor_move_media');
+    const joined = GAPS.join(' ').toLowerCase();
+    expect(joined, 'editor_list_media exists — the pool CAN be enumerated').not.toContain(
+      'no tool to list',
+    );
   });
 
-  it('names the audio-playback gap the tracking doc really records', () => {
-    expect(TOOLS.filter((t) => /^(editor_)?audio_/.test(t))).toHaveLength(0);
+  it('does not still claim audio playback has no tools — it has a transport and a level', () => {
+    expect(TOOLS).toContain('editor_set_playing');
+    expect(TOOLS).toContain('editor_set_audio_monitor');
+    expect(TOOLS).toContain('editor_get_audio_level');
+    const joined = GAPS.join(' ').toLowerCase();
+    expect(joined, 'playback transport is editor_set_playing').not.toContain('no tools at all');
   });
 });
 
