@@ -2447,10 +2447,16 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   header row); at the `size-3` (12px) they're rendered at, the only visual
   difference between the two is the small gap at the padlock's shackle,
   which barely reads at that size against a dark toolbar row. Not
-  investigated further than confirming the library and the size — a real
-  fix wants a real look at the options (a bigger icon just for this pair, a
-  colour/fill difference for the locked state, a different icon pair
-  entirely) rather than a guess.
+  investigated further than confirming the library and the size. **Decided
+  (owner, 2026-09-10): not a resize or a colour tweak on the current pair —
+  look into a genuinely different, more premium icon SET** for this and
+  possibly other toolbar icons, not just Lock/Unlock in isolation. Needs the
+  same real-reference research CLAUDE.md already asks for (what icon sets
+  the reference NLEs/design tools this app already looks to actually use —
+  Resolve, Premiere, Figma's own icon language — before picking a
+  replacement) rather than a guess at "premium," and a decision on whether
+  this touches only Lock/Unlock or opens a broader icon-set audit across
+  `TimelinePane.tsx`'s whole toolbar.
 - **Give Adjustment clips their own dedicated track kind, like Captions
   already have** — owner request 2026-09-10, with a reference screenshot
   (a CapCut-style editor showing separate `CAPTIONS`/`ADJUSTMENT` lanes
@@ -2465,10 +2471,13 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   own convention of placing an adjustment clip on an ordinary video track
   above what it affects (track z-order already means "beneath"). The
   reference image is a different, also-real, also-established tool doing it
-  the other way — this is a genuine "two real NLEs disagree" design
-  question, not a bug, and needs the same real-pattern research CLAUDE.md
-  already asks for before landing a UI change, not a re-guess of D-230's own
-  reasoning.
+  the other way. **Decided (owner, 2026-09-10): give it its own dedicated
+  track kind** — a deliberate departure from D-230's Resolve precedent, not
+  a re-guess of it; write this up as a real follow-up `D-NNN` when built,
+  citing this decision and D-230 both. Still needs real implementation
+  scoping (a new `TrackKind` variant alongside `subtitle`, migration for any
+  adjustment clips already living on an ordinary video track in an existing
+  project) before landing, but the DIRECTION is no longer an open question.
 - **Project Settings: same feature, better UX — a persistent side-tab panel
   open by default, not a modal you have to summon** — owner request
   2026-09-10, with a reference screenshot (a docked "Project Settings"
@@ -2480,15 +2489,19 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   working modal covering resolution/frame rate/colour space for the whole
   project, reached today from a gear icon on the Colorist tab's shot strip.
   This is a pure presentation change: dock it as an always-visible panel
-  section instead of a dialog someone has to know to open. **Not scoped
-  further than that** — which existing side-tab/panel surface it should
-  actually dock into is a real open question this note deliberately leaves
-  unanswered rather than guesses: `EditLibraryRail`/`EditLibraryPanel`
-  (D-263) is the Edit tab's own docked-panel-switching mechanism and may or
-  may not be the right home for a Colorist-tab-only settings surface: needs
-  a real look at where in the app this setting is actually reached from
-  today and where a user would expect to find it living permanently, not an
-  assumption.
+  section instead of a dialog someone has to know to open. **Decided (owner,
+  2026-09-10): dock it where the clip Inspector already lives** — the Edit
+  tab's own right-side column (`ClipInspectorPanel`'s Video/Audio tabs today)
+  — not `EditLibraryRail`/`EditLibraryPanel` (D-263). Two real shapes this
+  could take, not yet chosen between: (a) Project Settings fills that
+  column's existing empty state (currently "Select a clip to edit its
+  properties.") when nothing is selected, or (b) a third tab alongside
+  Video/Audio, present regardless of selection. Needs a look at the real
+  component (`ClipInspectorPanel.tsx`, `EditorInspectorPanel.tsx`) before
+  picking between those two, and a decision on whether this is still reached
+  from the Colorist-tab gear icon too, given the settings themselves
+  (`ProjectSettingsModal.tsx`, D-038) currently live on that tab specifically
+  while this docks it into the EDIT tab's own column.
 - **B-136's remaining gap: the real cursor still shows once a scrub travels
   past the field's own ~80px box** — logged 2026-09-10, owner explicitly
   deferred rather than asked for a seventh attempt tonight. Confirmed live:
@@ -2510,8 +2523,11 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   cursor at every other time, not just mid-scrub, since the value can no
   longer be conditional on a live "am I scrubbing" state (any conditional
   toggle re-introduces the exact "script changes it mid-hold" shape already
-  proven broken, twice, in this same investigation). Not attempted without
-  the owner's own read on that tradeoff first.
+  proven broken, twice, in this same investigation). **Decided (owner,
+  2026-09-10): leave as-is.** Widening was explicitly declined — the current
+  behaviour (hidden directly over each field, real arrow back once a scrub
+  travels past it) stands as the final state for B-136. Not to be
+  re-opened without a fresh, explicit ask.
 - **B-134 addendum: "every time it's resetting"** — owner's own words,
   2026-09-10, raised alongside a fresh repro of B-134 (linked A/V clip drag
   preview). Logged as-is, not diagnosed further tonight — genuinely
