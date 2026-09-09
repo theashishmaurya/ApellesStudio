@@ -979,6 +979,27 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         (b) only the SCENE delete confirms (a two-step arm-then-confirm on the
         button, no dialog), because it cascades into contained content, which is
         the same line Premiere draws — see D-259 for the references.
+    - ~~**7. Motion→Edit is one-way and frozen** — a rendered scene lands in
+      Sources (D-062) but placing it is manual, and re-editing the manifest does
+      nothing to a clip already on the Edit timeline; the only way back was a
+      manual re-import plus `editor_swap_clip_media`.~~ **DONE — D-260,
+      2026-09-09: "auto re-render, auto-replace".** Re-rendering a scene now
+      refreshes every Edit clip already placed from it, without a live embedded
+      renderer (D-243's rejection of Remotion-inside-Edit stands and was not
+      reopened). The render replaces its own fixed per-scene file atomically
+      (`rename`), the one cache that a replaced file does not invalidate on its
+      own — a live decode pipe — is dropped by path, the pool item is re-probed
+      and re-thumbnailed, and a new `refresh_media` op re-reads length and rate
+      into the clips (a no-op when the length is unchanged). Provenance is a new
+      optional `MediaItem.motion_scene_id`. Both halves: an "N in Edit" badge on
+      the scene row, and `motion_get_edit_links`. Fixed B-127 and B-128 on the
+      way. **Still open, deliberately:** automatic PLACEMENT (D-062's reasoning
+      is unchanged — the app cannot know the intended track/position, and
+      `motion_get_edit_links` now makes "rendered but never placed" visible), a
+      per-scene re-render action (the Render action is whole-manifest, D-180 —
+      and the MCP side has the same granularity gap, so both halves land
+      together), and auto-render on manifest save (investigated and rejected in
+      D-260's own finding 4, not skipped).
 17. **Show the export's real start/end bound in the Edit-tab timeline UI** — owner,
     2026-09-07, live, after B-076 (D-187): `editor_export` renders the WHOLE
     timeline only up to the furthest clip's own end (`-t <that>` — the `color=[base]`

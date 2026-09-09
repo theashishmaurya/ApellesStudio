@@ -69,6 +69,30 @@ One or two lines per session. Detail lives in the decision it references.
   roadmap item: Motion undo/redo has been live since D-155. 560 tests green
   (+41), `py_compile` clean, 36 Python names diffed identical to the 36 op keys.
 
+- **2026-09-09** — **D-260: re-rendering a Motion scene now refreshes the Edit
+  clips already placed from it** — previously a rendered file was frozen at
+  render time and a placed clip kept showing it forever, with a manual re-import
+  and `editor_swap_clip_media` as the only way out. Not a live embedded renderer
+  (D-243's rejection of Remotion-inside-Edit stands, and the owner chose the
+  lighter option explicitly): the render now writes beside its destination and
+  finishes with an atomic `rename`, so nothing — the preview's live `ffmpeg`
+  decoder, an export mid-read — can ever see half a video; the one thing in this
+  workspace that a replaced file does *not* invalidate on its own, a live decode
+  pipe, is dropped by path. Provenance is a new optional `MediaItem
+  .motion_scene_id`, so the pool item (not N copies on N clips) records which
+  scene made the file. A new `chroma_media_refresh` reconciles the pool with disk
+  and a new `refresh_media` timeline op re-reads length and rate into every clip
+  — a **no-op** when the re-render is the same length, which is the common case.
+  Both interfaces: an "N in Edit" badge on the Motion scene row, and a new
+  Motion tool, `motion_get_edit_links` — landing on top of D-259's delete/
+  duplicate batch, the 37th `motion_*` tool overall. Proved by a frame-diff
+  through the real preview compositor (red → blue with no re-import) **plus a
+  negative control** that shows the same sequence leaving the clip red
+  without the one call this adds. Fixes **B-127** (B-056's defect, still
+  unfixed in `filmstrip.rs`'s keyframe cache) and **B-128** (a replaced
+  source kept its old probe and thumbnail forever — and `Root.tsx`'s comment
+  claimed the opposite).
+
 - **2026-09-09** — **D-255: the marketing website shipped, out of sequence** —
   a new top-level `website/` (Astro, its own project, deliberately outside the
   npm workspace), reversing the standing "build the website LAST, right before

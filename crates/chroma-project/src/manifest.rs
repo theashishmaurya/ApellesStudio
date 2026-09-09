@@ -484,6 +484,31 @@ pub struct MediaItem {
     /// `chroma_media_move`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
+    /// D-260 — **provenance: the id of the Motion scene whose render wrote
+    /// this file.** `None` for every pool item that is not a Motion render,
+    /// which is nearly all of them.
+    ///
+    /// This is the whole link between the Motion tab and the Edit timeline, and
+    /// it is deliberately here rather than on [`chroma_timeline::Clip`]: one
+    /// rendered file can be placed as many clips (and re-placed later), so
+    /// per-clip provenance would be N copies of one fact, each able to drift.
+    /// The pool item **is** the file, so it is where the file's origin belongs;
+    /// a clip's existing `media_id`/`source_path` already reaches it.
+    ///
+    /// `Option` + `#[serde(default, skip_serializing_if = "Option::is_none")]`
+    /// is the same "reference, don't require" shape `media_id`/`folder`/
+    /// `has_audio` already use: a pre-D-260 `project.json` deserializes with no
+    /// key at all, needs no migration, and a non-Motion item serializes
+    /// byte-identically to before this field existed. Nothing reads it as a
+    /// path — the render path is resolved the other way round, from this
+    /// stamp to `source_path` — so a project moved on disk keeps its links.
+    ///
+    /// Which *project's* Motion manifest is implied, not stored: the manifest
+    /// is a sidecar of the same project this pool belongs to
+    /// (`<project>.chroma/motion/manifest.json`, D-046), so there is exactly
+    /// one, and a second field naming it could only ever go stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_scene_id: Option<String>,
 }
 
 /// [`MediaItem`] + a live-checked `offline` flag — what `chroma_media_import`
@@ -503,6 +528,9 @@ pub struct MediaItemDto {
     /// the bin path this item is filed in; `None` = pool root (D-045)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<String>,
+    /// the Motion scene whose render wrote this file, if any (D-260)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub motion_scene_id: Option<String>,
     /// `data:image/jpeg;base64,…` poster-frame thumbnail (D-059), read live
     /// from `<video_dir>/.chroma/thumbs/<id>.jpg` — same "computed live, not
     /// stored on the model" discipline `offline` uses. `None` when nothing has
@@ -530,6 +558,7 @@ impl From<&MediaItem> for MediaItemDto {
             video: m.video.clone(),
             offline: !media_item_is_online(&m.source_path),
             folder: m.folder.clone(),
+            motion_scene_id: m.motion_scene_id.clone(),
             thumb: read_cached_thumb(&m.source_path, &m.id),
         }
     }
@@ -639,7 +668,99 @@ fn probe_media_item(path: &str, folder: Option<&str>) -> MediaItem {
         added: now_rfc3339(),
         video,
         folder: normalize_folder(folder),
+        motion_scene_id: None,
     }
+}
+
+/// D-260 — is the cached thumbnail for this item older than the file it is a
+/// thumbnail *of*?
+///
+/// `true` also when there is no cached thumbnail at all, or when either mtime
+/// cannot be read: in every one of those cases "regenerate it" is the answer
+/// that cannot be wrong, and generation is already best-effort
+/// ([`generate_media_thumb`] logs and gives up rather than failing a caller).
+///
+/// **Why mtime and not the item id.** The thumbnail cache is keyed on
+/// `<video_dir>/.chroma/thumbs/<media id>.jpg` (D-059) — the *item's* identity,
+/// which by design never changes — so unlike every `media_cache`-backed
+/// artefact in this workspace (`blake3(path ‖ mtime ‖ len)`, D-128) it has no
+/// staleness check of its own at all. That is B-128: a source replaced in place
+/// kept its first thumbnail forever. Comparing the two mtimes is the smallest
+/// thing that gives this cache the identical contract the others already have,
+/// and costs two `stat`s on a path that already probes the file.
+fn thumb_is_stale(source_path: &str, media_id: &str) -> bool {
+    let Some(cache_path) = thumb_cache_path(source_path, media_id) else {
+        return false; // nowhere to cache one — nothing to regenerate
+    };
+    let mtime = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    match (mtime(&cache_path), mtime(Path::new(source_path))) {
+        (Some(thumb), Some(source)) => thumb < source,
+        _ => true,
+    }
+}
+
+/// D-260 — reconcile the pool with what is actually on disk for `paths`: add
+/// any that are not pooled yet, and **re-read any that are**, stamping
+/// `motion_scene_id` on every one of them. Returns every item touched (added
+/// and refreshed alike), in `paths` order. Pure model logic — no persistence;
+/// the caller `save_manifest`s. `changed` reports whether anything at all was
+/// written, so a caller can skip the disk write entirely.
+///
+/// **Why this is not just [`add_media`].** `add_media` matches on source path
+/// and *skips* a path already in the pool — correct for its own job (importing
+/// the same file twice must not duplicate it) and exactly wrong for a file
+/// replaced in place, which is what a Motion re-render is: same path, new
+/// content, and a pool entry whose probed `video` (frame count, duration, fps)
+/// and cached thumbnail both still describe the previous render. That is B-128,
+/// and `app/src/Root.tsx`'s own D-062 comment asserted the opposite ("refresh
+/// so its thumbnail/video info reflect the new render") for a year — a plain
+/// `chroma_media_list` re-reads the manifest, and the manifest is precisely
+/// what was stale.
+///
+/// Each already-pooled item is re-probed through
+/// [`chroma_media::probe::probe_cached`], which is itself `(mtime, len)`-keyed
+/// (B-056), so an *unchanged* file costs one `stat` and writes nothing; only a
+/// genuinely changed file pays a real `ffprobe`. The thumbnail is regenerated
+/// only when [`thumb_is_stale`] says so, for the same reason — this is a
+/// reconcile, not an invalidate-everything.
+pub fn refresh_media(
+    manifest: &mut ProjectManifest,
+    paths: &[String],
+    motion_scene_id: Option<&str>,
+) -> (Vec<MediaItem>, bool) {
+    let mut touched = Vec::new();
+    let mut changed = false;
+    for path in paths {
+        let Some(item) = manifest.media.iter_mut().find(|m| &m.source_path == path) else {
+            let item = probe_media_item(path, None);
+            let mut item = item;
+            if motion_scene_id.is_some() {
+                item.motion_scene_id = motion_scene_id.map(str::to_string);
+            }
+            manifest.media.push(item.clone());
+            touched.push(item);
+            changed = true;
+            continue;
+        };
+        if motion_scene_id.is_some() && item.motion_scene_id.as_deref() != motion_scene_id {
+            item.motion_scene_id = motion_scene_id.map(str::to_string);
+            changed = true;
+        }
+        if media_item_is_online(path)
+            && let Ok(info) = chroma_media::probe::probe_cached(Path::new(path))
+        {
+            let fresh = MediaVideoInfo::from(&info);
+            if item.video.as_ref() != Some(&fresh) {
+                item.video = Some(fresh);
+                changed = true;
+            }
+            if thumb_is_stale(path, &item.id) {
+                generate_media_thumb(path, &info, &item.id);
+            }
+        }
+        touched.push(item.clone());
+    }
+    (touched, changed)
 }
 
 /// Probe + append the entries of `paths` not already in `manifest.media`
@@ -2424,6 +2545,7 @@ mod tests {
             added: now_rfc3339(),
             video: None,
             folder: None,
+            motion_scene_id: None,
         };
         let offline = MediaItem {
             id: "b".into(),
@@ -2432,6 +2554,7 @@ mod tests {
             added: now_rfc3339(),
             video: None,
             folder: Some("B-roll/Sunset".into()),
+            motion_scene_id: None,
         };
         assert!(!MediaItemDto::from(&online).offline);
         assert!(
@@ -2581,6 +2704,7 @@ mod tests {
             added: now_rfc3339(),
             video: Some(info(Some(true))),
             folder: None,
+            motion_scene_id: None,
         });
         manifest.media.push(MediaItem {
             id: "unprobeable".into(),
@@ -2592,6 +2716,7 @@ mod tests {
             added: now_rfc3339(),
             video: Some(info(None)),
             folder: None,
+            motion_scene_id: None,
         });
         // An item that never probed at all (`video: None`) is skipped
         // outright — there are no video facts to attach an answer to.
@@ -2602,6 +2727,7 @@ mod tests {
             added: now_rfc3339(),
             video: None,
             folder: None,
+            motion_scene_id: None,
         });
 
         assert!(
@@ -3170,6 +3296,7 @@ mod tests {
             added: String::new(),
             video: None,
             folder: None,
+            motion_scene_id: None,
         });
         // a clip built after D-070 (drag-from-Sources): its own fresh id,
         // linked to the same pool item via media_id — not shot_id.
@@ -3224,6 +3351,7 @@ mod tests {
             added: String::new(),
             video: None,
             folder: None,
+            motion_scene_id: None,
         });
         manifest.timelines.push(Timeline {
             id: "t1".into(),
@@ -3267,6 +3395,7 @@ mod tests {
             added: String::new(),
             video: None,
             folder: None,
+            motion_scene_id: None,
         });
         let clip = |id: &str| Clip {
             id: id.into(),
@@ -3321,6 +3450,7 @@ mod tests {
             added: String::new(),
             video: None,
             folder: None,
+            motion_scene_id: None,
         });
         manifest.timelines.push(Timeline {
             id: "t1".into(),
@@ -3378,6 +3508,7 @@ mod tests {
             added: String::new(),
             video: None,
             folder: None,
+            motion_scene_id: None,
         });
         let tuples = vec![(
             "shot-1".to_string(),

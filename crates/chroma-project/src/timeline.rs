@@ -160,6 +160,7 @@ mod tests {
             added: String::new(),
             video: None,
             folder: None,
+            motion_scene_id: None,
         });
         manifest.shots.push(crate::ProjectShot {
             id: "s1".into(),
@@ -211,6 +212,7 @@ mod tests {
             added: String::new(),
             video: None,
             folder: None,
+            motion_scene_id: None,
         });
         manifest.shots.push(crate::ProjectShot {
             id: "s1".into(),

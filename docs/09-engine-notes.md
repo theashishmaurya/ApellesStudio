@@ -1213,5 +1213,35 @@ Engine is on branch **`chroma`** (branched from `4f6a365`). Our commits live the
   otherwise byte-identical, keeping the diff scoped to this change.
 
 
+- **2026-09-09 — D-260 (Motion→Edit "auto re-render, auto-replace").**
+
+  **Upstream footprint: exactly one `generate_handler!` line in `lib.rs`**
+  (`chroma::project::chroma_media_refresh`). Nothing else upstream is touched.
+
+  Everything else is inside our own `src/chroma/` or in the `crates/`:
+  - `chroma/motion.rs` — the render now writes to a staging sibling and
+    `rename`s it onto the destination, then drops any live decode pipe on that
+    path. Chroma-only file (created by D-046); no upstream code involved.
+  - `chroma/project.rs` — a new `chroma_media_refresh` command beside the
+    existing `chroma_media_*` family. Chroma-only file.
+  - `crates/chroma-media/src/decode_pipe.rs` — a new
+    `drop_pipes_for_path`; nothing existing changed.
+  - `crates/chroma-media/src/filmstrip.rs` — B-127: `KEYFRAME_MEM` now carries
+    the `source_key` it was measured under. Behaviour change is strictly "a
+    replaced file is re-measured instead of serving a stale answer."
+  - `crates/chroma-project/src/manifest.rs` — an optional
+    `MediaItem::motion_scene_id`, a `refresh_media` model function, and
+    `thumb_is_stale`.
+
+  **No new dependency.** `Cargo.toml` and the lock are untouched.
+
+  **Formatting:** as with D-256, no file was whole-file `cargo fmt`-normalised.
+  The tree is still not rustfmt-clean at HEAD under the current toolchain, so a
+  blanket format would have reformatted unrelated pre-existing code in a dozen
+  files (`export.rs`, `state.rs`, `video.rs`, …). `cargo fmt` was run and then
+  reverted on every file this change does not otherwise touch, keeping the diff
+  scoped; the new code is rustfmt's own output shape.
+
+
 When we change `engine/`: keep new code under `src/chroma/`, keep upstream-file edits to
 the minimum, log them here so upstream fixes still cherry-pick (per CLAUDE.md / D-003).

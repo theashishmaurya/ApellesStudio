@@ -276,7 +276,8 @@ break the human-AND-AI rule from the other side); both halves should land in
 one pass. See roadmap item 16.6.
 
 ~~**no MCP tools at all** — Motion is the one tab an agent cannot drive.~~
-**Closed by D-257 (2026-09-09): 32 `motion_*` tools.** The op registry lives
+**Closed by D-257 (2026-09-09): 32 `motion_*` tools**, plus D-260's
+`motion_get_edit_links` for 33. The op registry lives
 in `motionOps.ts` as a pure `createMotionOps(ctx)` factory (React-free,
 Tauri-free, so it is testable under this package's `node` vitest env);
 `useMotionControl.ts` is the thin shell owning the `chroma://request`
@@ -285,6 +286,20 @@ op wraps a real `manifestEdit.ts` function — the same one the equivalent GUI
 gesture calls — and commits through the same `useMotionManifest().commit`, so
 an agent's edit lands on the same undo stack a human's does. Full tool
 inventory: `docs/notes/mcp-tool-coverage.md`.
+
+~~**Motion→Edit is one-way and frozen** — re-editing a manifest does nothing to
+a clip already placed on the Edit timeline.~~ **Closed by D-260 (2026-09-09):
+re-rendering a scene refreshes the Edit clips placed from it.** This package's
+boundary is unchanged by that and worth restating, because it is what shapes the
+design: **`@chroma/motion` may not import `@chroma/bridge` or `@chroma/editor`**
+(D-039's app → tabs direction). So the composition root computes the link and
+passes it in — `onRendered` (D-062) and now `editLinks` — and `editLinks.ts`'s
+`computeEditLinks` declares only the *structural* shape of the pool items and
+tracks it reads, so it stays pure and cross-layer-import-free while the real
+`MediaItem[]`/`Track[]` still type-check at the call site. The same one value
+drives the scene row's "N in Edit" badge and the `motion_get_edit_links` op, so
+a human and an agent cannot be told different things. See
+`docs/notes/motion-edit-relink.md`.
 
 The Catalog (D-151) closed the largest
 GUI-creation gap; D-155–D-159 closed the largest on-canvas-manipulation

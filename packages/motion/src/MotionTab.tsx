@@ -83,8 +83,9 @@ import { CatalogPanel } from './CatalogPanel';
 import { ManifestEditor } from './ManifestEditor';
 import { addLayer, snapEmphasisToRect, resolveSelections, sceneIndexAtFrame, layerVisibleFrameRange } from './manifestEdit';
 import type { PrimitiveUse } from './catalog';
-import { useMotionManifest } from './useMotionManifest';
+import { useMotionManifest, type SceneRenderResult } from './useMotionManifest';
 import { useMotionControl } from './useMotionControl';
+import type { MotionEditLinks } from './motionOps';
 import { PanelGroup, ResizablePanel, ResizableHandle } from './resizable';
 
 /** the two views the left sidebar pane switches between (D-151) */
@@ -116,7 +117,25 @@ function labelForSelections(selections: Selection[]): string {
   }
 }
 
-export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) => void }) {
+export function MotionTab({
+  onRendered,
+  editLinks,
+}: {
+  /** D-062/D-260 — fires once per scene as its render finishes, with the
+   *  scene's id and the file it landed at. The app layer imports/reconciles
+   *  that file into Sources and refreshes any Edit clips already reading it;
+   *  this package cannot do either (`@chroma/bridge`/`@chroma/editor` are the
+   *  wrong side of D-039's layer direction for a tab). The `sceneId` is
+   *  D-260's addition — the app layer needs it to stamp provenance, and the
+   *  path alone could only be reverse-engineered back to a scene by
+   *  duplicating the backend's own output-path math. */
+  onRendered?: (r: SceneRenderResult) => void;
+  /** D-260 — where each scene's render has ended up in the Edit tab, supplied
+   *  by the app layer for the same layering reason. Drives BOTH the per-scene
+   *  badge in the layer list and the `motion_get_edit_links` MCP tool, so the
+   *  human and the agent can never be told different things. */
+  editLinks?: MotionEditLinks;
+}) {
   const m = useMotionManifest(onRendered);
   const playerRef = useRef<PlayerRef>(null);
   // D-157 — the preview's imperative measurement escape hatch (see
@@ -170,7 +189,7 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
   // `editor_get_state`/`editor_set_selection` pair. It changes every render,
   // so the hook re-syncs it into a ref exactly the way it already does for
   // `m`; the other three are stable identities and need no re-sync.
-  useMotionControl(m, { playerRef, measureApiRef, setSelections, selections });
+  useMotionControl(m, { playerRef, measureApiRef, setSelections, selections, editLinks });
 
   // D-158 — keeps `selections` pointing at the right layers as the STABLE
   // manifest changes underneath it (a commit, a catalog insert, a hand-edit
@@ -508,7 +527,13 @@ export function MotionTab({ onRendered }: { onRendered?: (outputPath: string) =>
             <div className="flex-1 min-h-0">
               {sidebarTab === 'layers'
                 ? m.manifest && (
-                    <LayerList manifest={m.manifest} selections={selections} onSelect={onSelect} onCommit={m.commit} />
+                    <LayerList
+                      manifest={m.manifest}
+                      selections={selections}
+                      onSelect={onSelect}
+                      onCommit={m.commit}
+                      editLinks={editLinks}
+                    />
                   )
                 : <CatalogPanel targetSceneId={targetSceneId} onAdd={onCatalogAdd} />}
             </div>

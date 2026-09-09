@@ -5662,6 +5662,36 @@ def motion_save_manifest() -> str:
 
 
 @mcp.tool()
+def motion_get_edit_links() -> str:
+    """What each Motion scene feeds in the Edit tab: its rendered file, and
+    every clip on the open Edit timeline reading it (D-260).
+
+    This is the read half of "re-render, auto-replace" — call it to see what a
+    `motion_render` will refresh before you run one, or to confirm what it
+    refreshed after. The Motion tab shows a human the identical fact as an
+    "N in Edit" badge on the scene row, off the identical value.
+
+    Per scene: `index`, `sceneId`, `rendered` (has this scene ever been
+    rendered into this project's Sources?), `mediaId` / `sourcePath` (its pool
+    item and file, null when not), `clipCount`, and `clips` — each with the
+    `track`/`clip` indices `editor_*` tools address by, plus the clip's id and
+    name.
+
+    `rendered: false` and a top-level `available: false` are different
+    answers. The first means that scene has no render in the pool yet. The
+    second means no link data reached the tab at all (no project open) — do
+    not read the per-scene rows as "nothing is linked" in that case.
+
+    A scene that is `rendered: true` with `clipCount: 0` has been rendered and
+    is sitting in Sources, but has never been placed — re-rendering it changes
+    nothing on the timeline. Use `editor_add_clip` with its `mediaId` to place
+    it."""
+    import json
+
+    return json.dumps(_op("motion_get_edit_links"), indent=2, default=str)
+
+
+@mcp.tool()
 def motion_render() -> str:
     """Render the Motion manifest to REAL video files, via Remotion — the one
     Motion tool that produces something outside the app. Saves first if dirty.
@@ -5683,12 +5713,20 @@ def motion_render() -> str:
         motion_render  ->  (files auto-appear in Sources)
                        ->  editor_add_clip / editor_edit_in to place one
 
-    **There is no live link.** A rendered file is a flat video, frozen at
-    render time. Editing the manifest afterwards changes nothing already
-    imported or placed in Edit — you must re-render, and a clip already on the
-    timeline keeps showing the old content until you swap it
-    (`editor_swap_clip_media`) or re-add it. Treat "build a motion graphic and
-    put it in my edit" as two separate stages, not one live pipeline.
+    **Re-rendering a scene REFRESHES the Edit clips already placed from it
+    (D-260).** This replaced the old "there is no live link" rule. A scene
+    always renders to the same per-scene file, so a re-render replaces that
+    file atomically and every Edit clip reading it picks the new content up by
+    itself — in the preview and in the export — with its length and frame rate
+    re-read from the new render. You do NOT re-import, and you do NOT call
+    `editor_swap_clip_media`. Call `motion_get_edit_links` to see what a
+    re-render will refresh (or did).
+
+    It is still not a live embed, and the difference matters: nothing
+    re-renders on its own. Editing the manifest changes nothing downstream
+    until you call this tool again — the render is the explicit trigger, by
+    design, because a render is expensive and a surprise one mid-edit is
+    worse than an out-of-date clip you chose not to refresh yet.
 
     **A slow render can look like a failure and is not.** The control bridge
     gives up after 20 seconds while the render keeps running to completion on

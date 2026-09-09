@@ -200,7 +200,10 @@ impl FramePipe {
             // byte-identical on both this project's HEVC and H.264 sources.
             cmd.args(["-hwaccel", "videotoolbox"]);
         }
-        cmd.args(&grid.input_args).arg("-i").arg(path).args(["-an", "-sn"]);
+        cmd.args(&grid.input_args)
+            .arg("-i")
+            .arg(path)
+            .args(["-an", "-sn"]);
         if let Some(vf) = grid.vf(own_scale.as_deref()) {
             cmd.args(["-vf", &vf]);
         }
@@ -456,6 +459,36 @@ pub fn reset() {
     PIPES.lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
+/// Drop every pipe currently decoding `path`, and report how many were dropped.
+///
+/// **Why this is needed at all, and why the other caches did not need it**
+/// (D-260). Every *derived* cache over a source file in this crate keys on
+/// [`crate::media_cache::source_key`] — `blake3(path ‖ mtime ‖ len)` — so a file
+/// replaced in place is a key miss and a stale answer is impossible
+/// ([`crate::probe`]'s own B-056 note is the history of getting that wrong).
+/// A pipe is not a cache: it is a **live `ffmpeg` process with the file already
+/// open**, and [`FramePipe::frame_scaled`] only respawns on a change of path,
+/// scale, or seek distance — never on a change of the file's *content*. So when
+/// a file is atomically replaced underneath it (`chroma::motion`'s render →
+/// temp → `rename`, D-260), the process keeps its handle on the unlinked old
+/// inode and keeps serving the OLD picture, correctly and indefinitely, while
+/// every other consumer has already moved to the new one.
+///
+/// Deliberately by path and not [`reset`]: a Motion re-render replaces one
+/// file, and dropping the whole pool would respawn an `ffmpeg` process for every
+/// other visible layer and for the Colorist's own [`PipeSlot::Current`] — a
+/// visible stall (B-040's measured failure mode) charged to clips that did not
+/// change. [`PipeSlot::Current`] IS dropped when it is the pipe on this path,
+/// unlike in [`retain_pipe_slots`]: there the caller is the Edit tab's
+/// per-frame release, which has no business judging the Colorist's session; here
+/// the file it is reading has genuinely been replaced.
+pub fn drop_pipes_for_path(path: &Path) -> usize {
+    let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
+    let before = pool.len();
+    pool.retain(|_, pipe| pipe.path != path);
+    before - pool.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,6 +499,78 @@ mod tests {
             .ok()
             .map(PathBuf::from)
             .filter(|p| p.exists())
+    }
+
+    /// D-260 — `drop_pipes_for_path` drops exactly the pipes on that file and
+    /// leaves every other one running.
+    ///
+    /// The "leaves every other one running" half is the whole reason this is
+    /// not a [`reset`]: a Motion re-render replaces ONE file, and dropping the
+    /// pool would respawn an `ffmpeg` process for every other visible layer and
+    /// for the Colorist's own [`PipeSlot::Current`] — a stall charged to clips
+    /// that did not change (B-040's measured failure mode).
+    ///
+    /// Uses `ffmpeg` directly to make two tiny fixtures rather than the
+    /// env-gated real footage its siblings need: the property is about which
+    /// entries leave the map, so any two decodable files will do.
+    #[test]
+    fn drop_pipes_for_path_drops_only_that_file() {
+        let ffmpeg_ok = std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ffmpeg_ok {
+            eprintln!("skip: ffmpeg not on PATH");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let make = |name: &str| {
+            let p = tmp.path().join(name);
+            let ok = std::process::Command::new("ffmpeg")
+                .args([
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=black:size=64x64:rate=24:duration=1",
+                    "-pix_fmt",
+                    "yuv420p",
+                ])
+                .arg(&p)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .expect("spawn ffmpeg");
+            assert!(ok.success());
+            p
+        };
+        let a = make("a.mp4");
+        let b = make("b.mp4");
+
+        reset();
+        let info_a = crate::video::probe(&a).expect("probe a");
+        let info_b = crate::video::probe(&b).expect("probe b");
+        // Three live pipes: two on `a` (one of them the Colorist's own slot,
+        // which this call MUST drop and `retain_pipe_slots` never would), one
+        // on `b`.
+        playback_frame(PipeSlot::Track(0), &a, &info_a, 0).expect("a on track 0");
+        playback_frame(PipeSlot::Current, &a, &info_a, 0).expect("a on Current");
+        playback_frame(PipeSlot::Track(1), &b, &info_b, 0).expect("b on track 1");
+        assert_eq!(open_pipe_count(), 3);
+
+        assert_eq!(
+            drop_pipes_for_path(&a),
+            2,
+            "both pipes on `a`, and only those"
+        );
+        assert_eq!(open_pipe_count(), 1, "`b`'s pipe keeps running");
+
+        // Idempotent, and never touches an unrelated file.
+        assert_eq!(drop_pipes_for_path(&a), 0);
+        assert_eq!(open_pipe_count(), 1);
+        reset();
     }
 
     #[test]

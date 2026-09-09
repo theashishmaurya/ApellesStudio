@@ -128,6 +128,7 @@ import {
   reorderLayers,
 } from './manifestEdit';
 import { LayerThumbnail } from './LayerThumbnail';
+import type { MotionEditLink, MotionEditLinks } from './motionOps';
 
 /**
  * `id` on the two layer-shaped target kinds is D-158 (Phase 3 of
@@ -398,6 +399,7 @@ export function LayerList({
   selections,
   onSelect,
   onCommit,
+  editLinks,
 }: {
   manifest: Manifest;
   selections: Selection[];
@@ -409,6 +411,11 @@ export function LayerList({
    *  gesture at all (D-160's own "still useful with nothing wired" floor) —
    *  rows fall back to their previous plain `onClick`-only behaviour. */
   onCommit?: (next: Manifest, label: string) => void;
+  /** D-260 — each scene's Edit-tab footprint, for the "N in Edit" badge on
+   *  its scene row. Supplied by the app layer through `MotionTab` (this
+   *  package may not import the media pool or the Edit timeline itself —
+   *  D-039's layer direction); omitting it simply draws no badges. */
+  editLinks?: MotionEditLinks;
 }) {
   const draggable = Boolean(onCommit);
   const dragRef = useRef<LayerDragState | null>(null);
@@ -555,8 +562,11 @@ export function LayerList({
     indent = false,
     keyCount = 0,
     actions?: ReactNode,
+    /** D-260 — a scene row's Edit-tab footprint, when it has one. */
+    editLink?: MotionEditLink,
   ) => {
     const isSel = selections.some((s) => s.sceneIndex === sceneIndex && sameTarget(s.target, target));
+    const clipCount = editLink?.clips.length ?? 0;
     const key = `${target.kind}-${'index' in target ? target.index : ''}`;
     const button = (
       <button
@@ -571,6 +581,24 @@ export function LayerList({
         onClick={() => onSelect({ sceneIndex, target })}
       >
         <span className="truncate">{label}</span>
+        {/* D-260 — "Used in N Edit clips": the mechanism is visible, never a
+           silent side effect. Shown only on a scene whose render is actually
+           PLACED on the Edit timeline (a scene rendered but only sitting in
+           Sources has nothing that a re-render would refresh, and a badge
+           reading "0" on every un-placed scene would be noise). Re-rendering
+           this scene refreshes exactly these clips — see D-260. */}
+        {clipCount > 0 && (
+          <span
+            data-scene-edit-links={clipCount}
+            className={[
+              'shrink-0 rounded-full px-1.5 text-[9px] leading-4',
+              isSel ? 'bg-button-text/20 text-button-text' : 'bg-accent/15 text-accent',
+            ].join(' ')}
+            title={`Used in ${clipCount} Edit clip${clipCount === 1 ? '' : 's'} — re-rendering this scene refreshes ${clipCount === 1 ? 'it' : 'them'}`}
+          >
+            {`${clipCount} in Edit`}
+          </span>
+        )}
         {/* D-160 — a key-count badge, only when there's something to count
            (0 keys shows nothing rather than a "0" that would clutter every
            un-keyed row, the common case for most manifests today). */}
@@ -771,7 +799,7 @@ export function LayerList({
     <div data-layer-list-scroll className="h-full w-full overflow-y-auto text-[11px] px-2 py-2 flex flex-col gap-2">
       {manifest.scenes.map((scene, si) => (
         <div key={scene.id} className="flex flex-col gap-0.5">
-          {row(si, { kind: 'scene' }, scene.id, false, 0, sceneActions(si))}
+          {row(si, { kind: 'scene' }, scene.id, false, 0, sceneActions(si), editLinks?.[scene.id])}
           {scene.camera && row(si, { kind: 'camera' }, 'Camera', true, cameraKeyCount(scene))}
           {scene.layers?.map((layer, li) => layerRow(si, 'layer', li, layer, layerKeyCount(layer)))}
           {/* the drop-line for "append after the last layer" — there is no

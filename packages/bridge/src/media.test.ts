@@ -123,3 +123,86 @@ describe('the open project is the pool’s one input (B-083 / D-203)', () => {
     expect(useMediaPoolStore.getState().items[0]?.name).toBe('B');
   });
 });
+
+// ---------------------------------------------------------------------------
+// D-260 — refreshPaths: reconcile the pool with what is on disk
+// ---------------------------------------------------------------------------
+
+describe('refreshPaths (D-260)', () => {
+  /** `chroma_media_refresh` echoing back whatever items it was asked about. */
+  function installRefreshBackend(reply: MediaItem[]) {
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'chroma_media_list') return Promise.resolve([itemNamed('A')]);
+      if (cmd === 'chroma_media_folders') return Promise.resolve([]);
+      if (cmd === 'chroma_media_refresh') return Promise.resolve(reply);
+      return Promise.resolve(undefined);
+    });
+  }
+
+  it('MERGES a refreshed item by id rather than appending it', async () => {
+    // The bug this exists to prevent: `importPaths` appends, and a Motion
+    // re-render refreshes an item that is ALREADY in `items` — appending it
+    // would show the same render twice in the Sources panel, and give
+    // `editor_add_clip` two rows to resolve one media id against.
+    const refreshed: MediaItem = { ...itemNamed('A'), name: 'A (re-rendered)', motionSceneId: 'hook' };
+    installRefreshBackend([refreshed]);
+    useMediaPoolStore.getState().setOpenProject(PROJECT_A);
+    await vi.waitFor(() => expect(useMediaPoolStore.getState().items).toHaveLength(1));
+
+    const res = await useMediaPoolStore.getState().refreshPaths(['/media/A.mov'], 'hook');
+    expect(res.ok).toBe(true);
+    const items = useMediaPoolStore.getState().items;
+    expect(items).toHaveLength(1);
+    expect(items[0].name).toBe('A (re-rendered)');
+    expect(items[0].motionSceneId).toBe('hook');
+  });
+
+  it('appends an item the pool did not have yet (a first render)', async () => {
+    const added: MediaItem = { ...itemNamed('hook'), motionSceneId: 'hook' };
+    installRefreshBackend([added]);
+    useMediaPoolStore.getState().setOpenProject(PROJECT_A);
+    await vi.waitFor(() => expect(useMediaPoolStore.getState().items).toHaveLength(1));
+
+    await useMediaPoolStore.getState().refreshPaths(['/media/hook.mov'], 'hook');
+    const items = useMediaPoolStore.getState().items;
+    expect(items.map((i) => i.id)).toEqual(['id-A', 'id-hook']);
+  });
+
+  it('passes the scene id through, and null when there is none', async () => {
+    installRefreshBackend([]);
+    useMediaPoolStore.getState().setOpenProject(PROJECT_A);
+    await flush();
+    await useMediaPoolStore.getState().refreshPaths(['/x.mp4'], 'hook');
+    expect(invokeMock).toHaveBeenCalledWith('chroma_media_refresh', {
+      paths: ['/x.mp4'],
+      motionSceneId: 'hook',
+    });
+    await useMediaPoolStore.getState().refreshPaths(['/x.mp4']);
+    expect(invokeMock).toHaveBeenLastCalledWith('chroma_media_refresh', {
+      paths: ['/x.mp4'],
+      motionSceneId: null,
+    });
+  });
+
+  it('never calls the backend for an empty path list', async () => {
+    installRefreshBackend([]);
+    useMediaPoolStore.getState().setOpenProject(PROJECT_A);
+    await flush();
+    invokeMock.mockClear();
+    await expect(useMediaPoolStore.getState().refreshPaths([])).resolves.toEqual({ ok: true, items: [] });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('reports a backend failure without touching the pool', async () => {
+    useMediaPoolStore.getState().setOpenProject(PROJECT_A);
+    await vi.waitFor(() => expect(useMediaPoolStore.getState().items).toHaveLength(1));
+    const before = useMediaPoolStore.getState().items;
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === 'chroma_media_refresh' ? Promise.reject(new Error('no project open')) : Promise.resolve([]),
+    );
+    const res = await useMediaPoolStore.getState().refreshPaths(['/x.mp4']);
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('no project open');
+    expect(useMediaPoolStore.getState().items).toBe(before);
+  });
+});

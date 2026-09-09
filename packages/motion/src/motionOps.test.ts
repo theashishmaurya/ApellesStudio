@@ -62,7 +62,13 @@ import {
   setTransformFieldOnSelections,
   upsertLayerTransformKeyXY,
 } from './manifestEdit';
-import { createMotionOps, type MotionOps, type MotionOpsApi, type MotionPlayer } from './motionOps';
+import {
+  createMotionOps,
+  type MotionEditLinks,
+  type MotionOps,
+  type MotionOpsApi,
+  type MotionPlayer,
+} from './motionOps';
 import type { Selection } from './LayerList';
 
 // ---------------------------------------------------------------------------
@@ -115,6 +121,11 @@ function harness(initial: Manifest = sample) {
     getCurrentFrame: () => state.frame,
   };
 
+  // D-260 — the harness can supply the Edit-link map the app layer normally
+  // computes. `undefined` (the default) is the "nothing supplies it" case
+  // `motion_get_edit_links` reports as `available: false`.
+  const links: { current: MotionEditLinks | undefined } = { current: undefined };
+
   const ops: MotionOps = createMotionOps({
     api: () => api,
     selections: () => state.selections,
@@ -122,11 +133,13 @@ function harness(initial: Manifest = sample) {
       state.selections = next;
     },
     player: () => player,
+    editLinks: () => links.current as MotionEditLinks,
   });
 
   return {
     ops,
     state,
+    links,
     commits,
     seeks,
     save,
@@ -156,6 +169,7 @@ const sel = (s: Selection) => ({ scene_index: s.sceneIndex, target: s.target });
 const ALL_OPS = [
   'motion_get_manifest',
   'motion_get_state',
+  'motion_get_edit_links',
   'motion_list_layers',
   'motion_list_primitives',
   'motion_add_scene',
@@ -195,11 +209,11 @@ const ALL_OPS = [
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 36 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 37 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(36);
+    expect(names).toHaveLength(37);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 
@@ -1318,5 +1332,78 @@ describe('the undo contract (D-140)', () => {
     }
     expect(h.commits).toHaveLength(0);
     expect(h.current()).toBe(sample);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-260 — motion_get_edit_links
+// ---------------------------------------------------------------------------
+
+describe('motion_get_edit_links', () => {
+  it('reports every scene, with the clips each one feeds', () => {
+    const h = harness();
+    const sceneId = sample.scenes[0].id;
+    h.links.current = {
+      [sceneId]: {
+        mediaId: 'm1',
+        sourcePath: '/p/.chroma/motion/renders/hook.mp4',
+        clips: [
+          { track: 0, clip: 2, clipId: 'c9', name: 'hook.mp4' },
+          { track: 1, clip: 0, clipId: 'c10', name: 'hook.mp4' },
+        ],
+      },
+    };
+    const r = h.run('motion_get_edit_links');
+    expect(r.error).toBeUndefined();
+    expect(r.available).toBe(true);
+    const rows = r.scenes as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(sample.scenes.length);
+    const first = rows[0];
+    expect(first.sceneId).toBe(sceneId);
+    expect(first.rendered).toBe(true);
+    expect(first.mediaId).toBe('m1');
+    expect(first.sourcePath).toBe('/p/.chroma/motion/renders/hook.mp4');
+    expect(first.clipCount).toBe(2);
+    // The addressing an agent needs to act on the answer, not just read it.
+    expect((first.clips as Array<Record<string, unknown>>)[0]).toEqual({
+      track: 0,
+      clip: 2,
+      clipId: 'c9',
+      name: 'hook.mp4',
+    });
+  });
+
+  it('distinguishes "never rendered" from "no link data at all"', () => {
+    // Two different "no": `rendered: false` is a real answer about a scene,
+    // `available: false` means nothing supplied any link data — collapsing
+    // them would tell an agent a rendered scene is unrendered.
+    const unlinked = harness();
+    const a = unlinked.run('motion_get_edit_links');
+    expect(a.available).toBe(false);
+    expect((a.scenes as Array<Record<string, unknown>>).every((s) => s.rendered === false)).toBe(true);
+
+    const linked = harness();
+    linked.links.current = {};
+    const b = linked.run('motion_get_edit_links');
+    expect(b.available).toBe(true);
+    expect((b.scenes as Array<Record<string, unknown>>).every((s) => s.rendered === false)).toBe(true);
+  });
+
+  it('a rendered-but-unplaced scene is rendered with zero clips', () => {
+    const h = harness();
+    const sceneId = sample.scenes[0].id;
+    h.links.current = { [sceneId]: { mediaId: 'm1', sourcePath: '/hook.mp4', clips: [] } };
+    const row = (h.run('motion_get_edit_links').scenes as Array<Record<string, unknown>>)[0];
+    expect(row.rendered).toBe(true);
+    expect(row.clipCount).toBe(0);
+  });
+
+  it("commits nothing — it is a pure read (D-216/D-218's view-state discipline)", () => {
+    const h = harness();
+    h.links.current = {};
+    h.run('motion_get_edit_links');
+    expect(h.commits).toHaveLength(0);
+    expect(h.save).not.toHaveBeenCalled();
+    expect(h.render).not.toHaveBeenCalled();
   });
 });

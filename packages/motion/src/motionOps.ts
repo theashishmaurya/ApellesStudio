@@ -187,7 +187,47 @@ export interface MotionOpsContext {
   setSelections: (next: Selection[]) => void;
   /** the mounted player, or `null` before it mounts. */
   player: () => MotionPlayer | null;
+  /** D-260 — where each scene's render has ended up in the Edit tab, keyed by
+   *  scene id, or `undefined` when nothing supplies it (the pre-D-260
+   *  behaviour, and what a test that does not care about links passes).
+   *
+   *  **An injected accessor, not an import**, for the same D-039 layer reason
+   *  `onRendered` (D-062) is a prop: answering "which Edit clips does this
+   *  scene feed" needs the media pool (`@chroma/bridge`) and the Edit timeline
+   *  (`@chroma/editor`), and a tab package must not depend on either. The
+   *  composition root owns both and computes this; this package only reads it.
+   *  Same one value drives the GUI's per-scene badge and the
+   *  `motion_get_edit_links` MCP tool, so the two can never disagree. */
+  editLinks?: () => MotionEditLinks;
 }
+
+/** D-260 — one Edit-tab clip fed by a Motion scene's rendered file. */
+export interface MotionEditLinkClip {
+  /** index into the open timeline's `tracks` */
+  track: number;
+  /** index into that track's `clips` */
+  clip: number;
+  /** the clip's own stable id */
+  clipId: string;
+  name: string;
+}
+
+/** D-260 — a Motion scene's footprint in the Edit tab. */
+export interface MotionEditLink {
+  /** the pool item id for this scene's rendered file, or `null` when the
+   *  render is not (or not yet) in Sources. */
+  mediaId: string | null;
+  /** the rendered file's absolute path, when it is known — i.e. when the pool
+   *  has an item for it. `null` before a scene has ever been rendered. */
+  sourcePath: string | null;
+  /** every clip on the OPEN timeline reading that file. Empty when the scene
+   *  has been rendered and imported but never placed. */
+  clips: MotionEditLinkClip[];
+}
+
+/** D-260 — scene id → its Edit-tab footprint. A scene with no entry has never
+ *  been rendered into this project's Sources. */
+export type MotionEditLinks = Record<string, MotionEditLink>;
 
 /** An op's return value: anything, plus the `error` convention the shell
  *  turns into `{ok:false}`. Kept loose on purpose — each op returns its own
@@ -440,6 +480,43 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
               camera3dKeys: scene.scene3d?.camera?.length ?? 0,
             }))
           : [],
+      };
+    },
+
+    /**
+     * D-260 — what each scene feeds in the Edit tab: its rendered file's pool
+     * item, and every clip on the open timeline reading it.
+     *
+     * The read half of "auto re-render, auto-replace". An agent about to
+     * `motion_render` can see, first, whether anything downstream will be
+     * refreshed by it; an agent that has just rendered can confirm what was.
+     * The GUI shows the identical fact as a per-scene badge in the layer list,
+     * off the identical value (see `MotionOpsContext.editLinks`).
+     *
+     * `linked: false` on every scene means the composition root supplied no
+     * link data at all — no project open, or a build with nothing wired — as
+     * distinct from a scene that genuinely has no render yet, which is
+     * `rendered: false`. Two different "no", never collapsed into one.
+     */
+    motion_get_edit_links: () => {
+      const cur = ctx.api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      const links = ctx.editLinks?.();
+      return {
+        available: links !== undefined,
+        scenes: guard.manifest.scenes.map((scene, index) => {
+          const link = links?.[scene.id];
+          return {
+            index,
+            sceneId: scene.id,
+            rendered: link !== undefined,
+            mediaId: link?.mediaId ?? null,
+            sourcePath: link?.sourcePath ?? null,
+            clipCount: link?.clips.length ?? 0,
+            clips: link?.clips ?? [],
+          };
+        }),
       };
     },
 

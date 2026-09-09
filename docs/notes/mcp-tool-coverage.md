@@ -202,15 +202,16 @@ inclusion, no longer a silent video).
 > preserve. Results are cached, so a repeat ask returns `state: "done"`
 > immediately; `force=True` re-runs.
 
-## Motion tab — CLOSED, 36 tools (D-257, 2026-09-09; +4, D-259)
+## Motion tab — CLOSED, 37 tools (D-257, 2026-09-09; +4 D-259; +1 D-260)
 
 > **This section used to be headed "Gap: Motion tab — 0 tools" and called it
 > "arguably the highest-value gap to close… the one place 'an agent driving this
 > app' and 'the manifest-authoring workflow this app is *for*' directly meet."**
 > It is closed. Count:
-> `grep -c '^def motion_' mcp/server.py` returns **36**, and a cross-language
-> check confirms those 36 Python wire names and the 36 op keys in
-> `packages/motion/src/motionOps.ts` agree exactly.
+> `grep -c '^def motion_' mcp/server.py` returns **37** (D-257's 32, D-259's
+> +4 delete/duplicate tools, D-260's `motion_get_edit_links`), and a
+> cross-language check confirms those 37 Python wire names and the 37 op keys
+> in `packages/motion/src/motionOps.ts` agree exactly.
 >
 > **D-259 (+4) closed the one gap D-257 left open on purpose**:
 > `motion_delete_layer`, `motion_delete_scene`, `motion_duplicate_layer`,
@@ -262,7 +263,8 @@ inclusion, no longer a silent video).
 | `motion_set_layer_active_schedule` (new) | A `layers`/`layerstack` primitive's `active` STEP schedule (D-178/B-067) — which child shows, from when. A step, not an interpolation, hence no ease anywhere on it. |
 | `motion_seek` | Move the playhead — an absolute `frame`, or `{scene_index, at}` in the same seconds space every keyframe uses. Clamped with a warning, never refused. Do this before a `debug_screenshot` of a specific moment. |
 | `motion_save_manifest` | Write the sidecar now. Returns the real path or the real error, never a silent success. |
-| `motion_render` | The real Remotion render — **one video file PER SCENE** (D-180), never one combined video. See the note below on what actually happens to those files. |
+| `motion_render` | The real Remotion render — **one video file PER SCENE** (D-180), never one combined video. Since D-260 it also REFRESHES any Edit clips already placed from that scene. See the note below on what actually happens to those files. |
+| `motion_get_edit_links` (new, D-260) | What each scene feeds in the Edit tab: `rendered`, its pool item's `mediaId`/`sourcePath`, `clipCount`, and each clip's `track`/`clip`/`clipId`/`name` — the addressing the `editor_*` tools take, so the answer is actionable rather than merely readable. Call it to see what a `motion_render` will refresh, or to confirm what it did. `rendered: false` (this scene has no render in the pool) and a top-level `available: false` (no link data reached the tab at all — no project open) are deliberately different answers. |
 
 > **Every mutating op goes through `useMotionManifest().commit`**, the same path
 > an Inspector edit takes, so an agent's edit lands on the same
@@ -273,15 +275,24 @@ inclusion, no longer a silent video).
 > part of the manifest, nothing persists them, and the GUI's own click pushes
 > nothing either.
 >
-> **The Motion→Edit boundary, since it is easy to assume wrongly** (this pass
+> **The Motion→Edit boundary, since it is easy to assume wrongly** (D-257's pass
 > began with the wrong assumption and corrected it against `app/src/Root.tsx`):
 > a rendered scene is imported into the Edit tab's Sources pool **automatically**,
-> per scene, by `onMotionRendered` → `useMediaPoolStore.importPaths` (D-062).
-> **You do not call `editor_import_media` on these paths** — it has already
-> happened. What is not automatic is PLACEMENT on the timeline, left as one
-> explicit action deliberately. And there is **no live link**: a rendered file is
-> a flat video frozen at render time, so re-editing the manifest changes nothing
-> already imported or placed.
+> per scene, by `onMotionRendered` (D-062). **You do not call
+> `editor_import_media` on these paths** — it has already happened. What is not
+> automatic is PLACEMENT on the timeline, left as one explicit action
+> deliberately; `motion_get_edit_links` reports a scene that is `rendered: true`
+> with `clipCount: 0` for exactly that case.
+>
+> **D-260 replaced this note's previous "there is no live link" paragraph.**
+> Re-rendering a scene now refreshes the Edit clips already placed from it: the
+> scene always renders to the same per-scene file, the render replaces that file
+> atomically, and every clip reading it picks up the new content in the preview
+> and the export, with its length and rate re-read. **Do not
+> `editor_swap_clip_media` after a re-render** — that would be the pre-D-260
+> workaround and is now wrong. It is still not a live embed: nothing re-renders
+> on its own, so a clip shows the last render until you call `motion_render`
+> again. That explicit trigger is deliberate (a render is expensive; see D-260).
 >
 > **Structural note.** The op registry now lives in
 > `packages/motion/src/motionOps.ts` as a pure `createMotionOps(ctx)` factory;

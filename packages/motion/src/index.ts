@@ -30,3 +30,15 @@ export { MotionTab } from './MotionTab';
 // shape `@chroma/editor` exports its timeline store for): app → tabs, never the
 // other way round (D-039).
 export { useMotionProjectStore } from './motionProjectStore';
+// D-260 — the Motion→Edit link, computed BY the app layer (it needs the media
+// pool and the Edit timeline, which a tab package must not import) and handed
+// down to `MotionTab`. Exported as types only: this package defines the shape,
+// the composition root fills it in. Same app → tabs direction as everything
+// above.
+export type {
+  MotionEditLink,
+  MotionEditLinkClip,
+  MotionEditLinks,
+} from './motionOps';
+export type { SceneRenderResult } from './useMotionManifest';
+export { computeEditLinks, clipReadsItem } from './editLinks';
