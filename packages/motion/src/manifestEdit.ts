@@ -7,6 +7,15 @@
  * (`CatalogPanel.tsx`), scoped off `docs/notes/motion-tab-audit.md`'s
  * finding that this package could edit everything and create nothing.
  *
+ * D-259 adds the ops that REMOVE and COPY — `deleteLayer`/`deleteScene`/
+ * `duplicateLayer`/`duplicateScene`. Until then this file could create
+ * (D-151/D-179) and rearrange (D-177) but never delete anything, so there
+ * was no way — by hand OR by agent — to take a layer or a scene back out of
+ * a manifest once added. They share one contract (they return the selection
+ * to install afterwards, because a delete can invalidate or RENUMBER a live
+ * one in ways `resolveSelections` alone cannot see); it is stated once, on
+ * the family's own doc comment down beside them.
+ *
  * Kept separate from `InspectorPanel.tsx` so the actual editing logic is
  * testable without rendering React. Every `set*` function returns a NEW
  * `Manifest` (immutable, `structuredClone`-based) — the caller
@@ -1540,6 +1549,279 @@ export function reorderLayers(
   if (kind === 'layer') nScene.layers = nextList;
   else nScene.scene3d!.children = nextList;
   return next;
+}
+
+/**
+ * D-259 — the delete/duplicate family: `deleteLayer`, `deleteScene`,
+ * `duplicateLayer`, `duplicateScene`, all four sharing one contract stated
+ * once here rather than four times below.
+ *
+ * **Why they return `{manifest, selection}` and not a bare `Manifest`.**
+ * `reorderLayers` above states that "selection survival is NOT this
+ * function's job" — a caller re-resolves through `resolveSelections`
+ * (`MotionTab.tsx`'s own effect) after every shape change. That is correct
+ * for a REORDER, where the thing you had selected still exists and only
+ * moved, and where `resolveSelection`'s id search finds it again. It is NOT
+ * sufficient for a delete, for two reasons this family has to answer itself:
+ *
+ * 1. **The selected thing can stop existing.** `resolveSelections` drops it
+ *    (right), but then NOTHING is selected — the Inspector empties and the
+ *    canvas has no target, which is a worse outcome than the neighbour every
+ *    real layer panel leaves you on. So these functions say what to select
+ *    NEXT, mirroring `addLayer`/`addScene`'s own "here is your new thing,
+ *    edit it" contract in reverse: "here is what to look at now that yours is
+ *    gone."
+ * 2. **A scene delete RENUMBERS every later scene, and `resolveSelection`
+ *    cannot see that.** Every `Selection` is addressed by `sceneIndex`, and
+ *    `resolveSelection`'s only check on it is "does a scene still exist at
+ *    that index" — which is TRUE, and points at the wrong scene, for every
+ *    selection after the deleted one. That is a genuine dangling reference
+ *    the existing re-resolve path would silently pass through, so
+ *    `deleteScene` returns the corrected selection and its two callers (the
+ *    GUI button, `motion_delete_scene`) both install it.
+ *
+ * **Duplicate regenerates every `id` in the copy** (`withFreshLayerIds`).
+ * Cross-scene id collision is technically harmless — `resolveSelection` is
+ * deliberately same-scene-only (see its own doc comment) precisely because
+ * `genLayerId` ids are not universally unique — but a manifest where two
+ * layers claim the same id is confusing to read for a human AND for an agent
+ * addressing layers by `id` off `motion_list_layers`, so the copy gets fresh
+ * ones. Nothing else in the schema references a layer by id (a `layers`
+ * primitive's `active` schedule indexes its own `items[]` array, `emphasis`
+ * stores a resolved `box` rather than a pointer at what it circles), so a
+ * deep clone plus fresh ids is the WHOLE of what duplication has to get
+ * right — there is no reference-fixup pass hiding behind this.
+ */
+
+/** The two `Selection` kinds that address a real, deletable/duplicable layer
+ *  — exactly the pair `reorderLayers` takes as its own `kind`, aliased here
+ *  so the four functions below agree on one word for it. */
+type LayerKind = 'layer' | 'scene3d-child';
+
+/** Reads the array a `LayerKind` lives in, off a scene — `undefined` when
+ *  that scene has no such array at all (no `layers`, or no `scene3d`). */
+function layerListOf(scene: Scene, kind: LayerKind): Layer[] | undefined {
+  return kind === 'layer' ? scene.layers : scene.scene3d?.children;
+}
+
+/** Deep-clones a layer and gives it (and any nested layer-shaped thing) a
+ *  brand-new `id` — the one thing a duplicate must not inherit. Only ever
+ *  touches `id`: every other field, including per-primitive props
+ *  `layer.passthrough()` doesn't statically type, survives by construction
+ *  through `structuredClone`, not because this function remembered to copy
+ *  it (the same "a real move/copy, never a field-by-field rebuild" property
+ *  `reorderLayers`'s own doc comment already claims for its splice). */
+function withFreshLayerId(layer: Layer): Layer {
+  return { ...clone(layer), id: genLayerId() };
+}
+
+/**
+ * Delete ONE layer (`{kind:'layer'}`) or 3D scene child
+ * (`{kind:'scene3d-child'}`), and say what to select afterwards.
+ *
+ * Resolves through `resolveSelection` FIRST, so an id-addressed selection
+ * deletes the layer that id actually names rather than whatever currently
+ * sits at its stale `index` — the same id-preference every MCP-facing path
+ * gets via `resolveOrError` (`motionOps.ts`), applied here so the GUI and an
+ * agent cannot disagree about which layer "the one with id X" is.
+ *
+ * **The next selection** is the layer that slides INTO the deleted one's
+ * slot, or the new last layer when you deleted the last one — the
+ * neighbour-selection behaviour of every layer panel this was checked
+ * against (`scratch/motion-delete-reference/NOTES.md`), so a "delete, delete,
+ * delete" run keeps working without a click in between. When the array is
+ * left EMPTY there is no neighbour, so it falls back to the parent scene:
+ * still something coherent for the Inspector to show, never `null`.
+ *
+ * **An emptied `scene.layers` is removed entirely; an emptied
+ * `scene3d.children` is NOT.** Deliberate asymmetry, not an oversight:
+ * `layers` carries nothing but the array itself, and "a scene with no 2D
+ * layers" is already spelled as an ABSENT key everywhere else in this file
+ * (`addScene` creates exactly that shape, and `addLayer` recreates the array
+ * on demand), so leaving `"layers": []` behind would be textual noise in the
+ * saved manifest — the same reasoning `setLayerTransformKeys`/
+ * `setLayerActiveSchedule` already apply to an emptied `keys`/`active`.
+ * `scene3d` is different: it also holds the 3D CAMERA, which the user may
+ * have keyframed by hand. Dropping the block because its last child went
+ * away would silently destroy that camera, so a childless `scene3d` stays
+ * (an empty `children` array is schema-valid — `z.array(layer)` with no
+ * `.min`).
+ *
+ * No-op — the SAME `Manifest` reference back, `selection: null` — for a
+ * selection that doesn't resolve, or one whose kind isn't a layer at all
+ * (`scene`/`camera`/`scene3d-camera`/`layer-item`): the same "genuinely
+ * nothing changed ⇒ hand back the identical reference" convention every
+ * no-op branch in this file holds, which is also what `motionOps.ts` keys
+ * its "no change" error off.
+ */
+export function deleteLayer(
+  manifest: Manifest,
+  selection: Selection,
+): { manifest: Manifest; selection: Selection | null } {
+  const resolved = resolveSelection(manifest, selection);
+  if (!resolved) return { manifest, selection: null };
+  const { target } = resolved;
+  if (target.kind !== 'layer' && target.kind !== 'scene3d-child') return { manifest, selection: null };
+  const kind: LayerKind = target.kind;
+
+  const scene = manifest.scenes[resolved.sceneIndex];
+  if (!scene) return { manifest, selection: null };
+  const list = layerListOf(scene, kind);
+  if (!list || !list[target.index]) return { manifest, selection: null };
+
+  const next = clone(manifest);
+  const nScene = next.scenes[resolved.sceneIndex];
+  const nList = layerListOf(nScene, kind);
+  if (!nList) return { manifest, selection: null }; // unreachable — `list` above proves it exists
+  nList.splice(target.index, 1);
+
+  if (nList.length === 0 && kind === 'layer') delete nScene.layers;
+
+  const remaining = nList.length;
+  const nextIndex = Math.min(target.index, remaining - 1);
+  const nextSelection: Selection =
+    remaining > 0
+      ? { sceneIndex: resolved.sceneIndex, target: { kind, index: nextIndex, id: nList[nextIndex].id } }
+      : { sceneIndex: resolved.sceneIndex, target: { kind: 'scene' } };
+
+  return { manifest: next, selection: nextSelection };
+}
+
+/**
+ * Whether `deleteScene` would be allowed to run at all — `false` for a
+ * manifest with exactly one scene left.
+ *
+ * Its own exported predicate rather than an inline `scenes.length > 1` in
+ * each of the three places that need it (this file's `deleteScene`,
+ * `LayerList.tsx`'s button, `motionOps.ts`'s `motion_delete_scene` error
+ * message), because the load-bearing part is not the comparison — it is
+ * WHY: `schema.ts` declares `scenes: z.array(scene).min(1)`, so a
+ * zero-scene manifest does not parse. Deleting the last scene would not
+ * produce an empty composition, it would produce a document
+ * `useMotionManifest`'s own `applyParse` rejects outright, blanking the
+ * preview and the whole Inspector with a schema error — strictly worse than
+ * refusing. One documented home for that fact, per CLAUDE.md's "if two
+ * places need it, extract it."
+ */
+export function canDeleteScene(manifest: Manifest): boolean {
+  return manifest.scenes.length > 1;
+}
+
+/**
+ * Delete a whole scene — its layers, its camera, its `scene3d` block, all of
+ * it — and say which scene to select afterwards (the one that slides into
+ * its index, or the new last scene when you deleted the last one).
+ *
+ * **Refuses to delete the only remaining scene** (`canDeleteScene` above for
+ * the full reasoning): same `Manifest` reference back, `selection: null`,
+ * the identical no-op signature an out-of-range `sceneIndex` gets. Both
+ * callers check `canDeleteScene` themselves first so they can say WHY —
+ * `LayerList.tsx` hides the button, `motion_delete_scene` returns a real
+ * error message — and this refusal is the floor underneath both, not the
+ * only guard.
+ *
+ * The returned selection is always a `{kind:'scene'}` target, never an
+ * attempt to preserve "you had layer 3 selected" into the neighbouring
+ * scene: layer 3 of the scene you just deleted has no counterpart in a
+ * DIFFERENT scene, and pointing at that scene's own layer 3 would be a
+ * silent lie about what is selected.
+ */
+export function deleteScene(
+  manifest: Manifest,
+  sceneIndex: number,
+): { manifest: Manifest; selection: Selection | null } {
+  if (!manifest.scenes[sceneIndex]) return { manifest, selection: null };
+  if (!canDeleteScene(manifest)) return { manifest, selection: null };
+
+  const next = clone(manifest);
+  next.scenes.splice(sceneIndex, 1);
+  const nextIndex = Math.min(sceneIndex, next.scenes.length - 1);
+  return { manifest: next, selection: { sceneIndex: nextIndex, target: { kind: 'scene' } } };
+}
+
+/**
+ * Duplicate ONE layer or 3D scene child, inserting the copy DIRECTLY AFTER
+ * the original, and return the `Selection` addressing the copy (so the
+ * caller can select it immediately — `addLayer`'s own contract, for the same
+ * reason: a duplicate you cannot see selected is just "something appeared
+ * somewhere").
+ *
+ * **Directly after, not appended at the end** — the opposite of `addLayer`'s
+ * own append, and deliberately so. `addLayer` appends because a brand-new
+ * primitive has no opinion about where it belongs in paint order (its own
+ * doc comment says exactly that). A duplicate does: it is a copy of THAT
+ * layer, and the slot immediately above it in paint order is both where
+ * every layer panel puts one and the position where "duplicate, then nudge
+ * it" behaves the way you meant. `addScene(afterSceneIndex)` already
+ * established insert-adjacent as this file's shape for "next to the thing
+ * you were working on."
+ *
+ * The copy carries a FRESH `id` (`withFreshLayerId`) and is otherwise a deep
+ * clone — every keyframe, every card in an `items[]`, every per-primitive
+ * field. No-op (same reference, `selection: null`) for anything that isn't a
+ * resolvable layer target.
+ */
+export function duplicateLayer(
+  manifest: Manifest,
+  selection: Selection,
+): { manifest: Manifest; selection: Selection | null } {
+  const resolved = resolveSelection(manifest, selection);
+  if (!resolved) return { manifest, selection: null };
+  const { target } = resolved;
+  if (target.kind !== 'layer' && target.kind !== 'scene3d-child') return { manifest, selection: null };
+  const kind: LayerKind = target.kind;
+
+  const scene = manifest.scenes[resolved.sceneIndex];
+  if (!scene) return { manifest, selection: null };
+  const source = layerListOf(scene, kind)?.[target.index];
+  if (!source) return { manifest, selection: null };
+
+  const next = clone(manifest);
+  const nList = layerListOf(next.scenes[resolved.sceneIndex], kind);
+  if (!nList) return { manifest, selection: null }; // unreachable — `source` above proves it exists
+  const copy = withFreshLayerId(source);
+  const insertAt = target.index + 1;
+  nList.splice(insertAt, 0, copy);
+
+  return {
+    manifest: next,
+    selection: { sceneIndex: resolved.sceneIndex, target: { kind, index: insertAt, id: copy.id } },
+  };
+}
+
+/**
+ * Duplicate a whole scene — every layer, the camera, the `scene3d` block —
+ * inserting the copy directly after the original and returning the
+ * `Selection` addressing it. `addScene(afterSceneIndex)`'s placement, with
+ * real content instead of an empty 4s shell: the practical way to build "the
+ * same shot again, with one thing changed," which is what a scene-per-shot
+ * manifest (D-180: one rendered file per scene) is actually edited like.
+ *
+ * The copy gets a fresh scene id (`genSceneId`, the same generator
+ * `addScene` uses — a duplicate must not share the original's display
+ * identity, which `LayerList`/`KeyframeTimeline`/`motion_get_state` all show
+ * as the scene's name) AND a fresh `id` on every layer and 3D child inside
+ * it, per this family's doc comment above.
+ *
+ * No-op (same reference, `selection: null`) for an out-of-range
+ * `sceneIndex`. There is no `canDeleteScene`-style refusal here — adding a
+ * scene can never make a manifest invalid the way removing the last one can.
+ */
+export function duplicateScene(
+  manifest: Manifest,
+  sceneIndex: number,
+): { manifest: Manifest; selection: Selection | null } {
+  if (!manifest.scenes[sceneIndex]) return { manifest, selection: null };
+
+  const copy = clone(manifest.scenes[sceneIndex]);
+  copy.id = genSceneId();
+  if (copy.layers) copy.layers = copy.layers.map(withFreshLayerId);
+  if (copy.scene3d) copy.scene3d.children = copy.scene3d.children.map(withFreshLayerId);
+
+  const next = clone(manifest);
+  const insertAt = sceneIndex + 1;
+  next.scenes.splice(insertAt, 0, copy);
+  return { manifest: next, selection: { sceneIndex: insertAt, target: { kind: 'scene' } } };
 }
 
 /** parses a `kind:'json'` field's textarea content back into a value.

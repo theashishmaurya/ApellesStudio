@@ -4690,6 +4690,52 @@ def motion_add_scene(after_scene_index: int | None = None) -> str:
 
 
 @mcp.tool()
+def motion_delete_scene(scene_index: int) -> str:
+    """Delete a whole scene — every layer in it, its camera and its 3D block go
+    with it. The same action the layer panel's own per-scene delete button
+    performs (which asks for a confirming second click; this tool does not).
+
+    **Refused for the last remaining scene**: a manifest must have at least one
+    (the schema enforces it), so there is no "empty composition" state to reach
+    this way. Delete the layers instead, or add another scene first.
+
+    Every LATER scene's index shifts down by one, so any `scene_index` you were
+    holding is stale afterwards — re-read `motion_get_state`. The live GUI
+    selection is moved to the scene that took the deleted one's place, since the
+    old one no longer exists.
+
+    Undoable in the app (Cmd/Ctrl+Z), like any other Motion edit.
+
+    Args:
+        scene_index: which scene to delete."""
+    import json
+
+    return json.dumps(_op("motion_delete_scene", scene_index=scene_index), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_duplicate_scene(scene_index: int) -> str:
+    """Copy a whole scene — layers, camera, 3D block — in directly after itself.
+    The layer panel's own per-scene duplicate button.
+
+    This is the tool for "the same shot again, with one thing changed": each
+    scene renders to its OWN video file (`motion_render`), so duplicating one is
+    how you get a variant without rebuilding it layer by layer.
+
+    The copy gets a NEW scene id and a new `id` on every layer inside it, so
+    nothing you address by `id` afterwards is ambiguous. Every later scene's
+    index shifts up by one — re-read `motion_get_state`.
+
+    Returns the copy's `sceneIndex`/`sceneId` and a `selection` addressing it.
+
+    Args:
+        scene_index: the scene to copy."""
+    import json
+
+    return json.dumps(_op("motion_duplicate_scene", scene_index=scene_index), indent=2, default=str)
+
+
+@mcp.tool()
 def motion_set_scene_field(scene_index: int, key: str, value: Any = None) -> str:
     """Set one field on a SCENE itself (not on a layer) — most often `dur`, the
     scene's length in SECONDS, which decides how long its shot runs and is the
@@ -4794,6 +4840,61 @@ def motion_add_layer(scene_index: int, use: str) -> str:
 
     return json.dumps(
         _op("motion_add_layer", scene_index=scene_index, use=use), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def motion_delete_layer(scene_index: int, target: dict) -> str:
+    """Remove one layer (or one 3D scene child) — the delete button on that row
+    in the layer list.
+
+    **Address it by `id` when you can.** Deleting a layer shifts every index
+    after it, so a plan that deletes several layers by bare `index` deletes the
+    wrong ones after the first. `motion_list_layers` gives you each layer's
+    `target` including its `id`, and an `id` keeps naming the same layer no
+    matter what moves. (A hand-authored manifest's layers may have no `id` at
+    all — then delete from the HIGHEST index downwards.)
+
+    The GUI selection moves to the layer that slid into the deleted slot, or to
+    the parent scene when that was the last one. Emptying `scene.layers`
+    removes the key rather than leaving an empty array; an emptied
+    `scene3d.children` stays, because the 3D camera lives in that same block.
+
+    Undoable in the app (Cmd/Ctrl+Z). Returns what was removed and how many
+    layers remain.
+
+    Args:
+        scene_index: which scene the layer is in.
+        target: {kind, index?, id?} — kind is "layer" or "scene3d-child"."""
+    import json
+
+    return json.dumps(
+        _op("motion_delete_layer", scene_index=scene_index, target=target), indent=2, default=str
+    )
+
+
+@mcp.tool()
+def motion_duplicate_layer(scene_index: int, target: dict) -> str:
+    """Copy one layer (or 3D scene child) in directly ABOVE itself in paint
+    order — the duplicate button on that row in the layer list.
+
+    Every field is deep-copied — position, size, transform, keyframes, a
+    `layers` primitive's cards — except the `id`, which is regenerated. The
+    copy lands at `index + 1`, so it draws on top of the original; everything
+    above it shifts up one.
+
+    Returns the `selection` addressing the copy — hand it straight to
+    `motion_set_layer_position` / `motion_set_layer_field` to make it differ
+    from what it was copied from. This is usually two calls instead of the five
+    or six that rebuilding a similar layer from `motion_add_layer` would take.
+
+    Args:
+        scene_index: which scene the layer is in.
+        target: {kind, index?, id?} — kind is "layer" or "scene3d-child"."""
+    import json
+
+    return json.dumps(
+        _op("motion_duplicate_layer", scene_index=scene_index, target=target), indent=2, default=str
     )
 
 

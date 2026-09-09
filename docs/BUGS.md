@@ -2251,3 +2251,42 @@ logic rather than calling a single shared function — `onSelect` closes over
 so extracting it is a real refactor of the tab, not a rename. The test that
 compares the two behaviours is what keeps them honest until then; extracting the
 shared seek decision is the proper follow-up.
+
+## B-126 — the marketing site publishes an MCP tool count that is 37 tools stale, and its own anti-fabrication test cannot currently fail loudly enough to stop it
+
+status: open · severity: medium · area: website / docs-accuracy
+
+**Repro.** `grep -c '^@mcp.tool()' mcp/server.py` returns **152**.
+`website/src/data/mcp.ts` declares `TOOL_TOTALS = { all: 115, shipped: 106,
+debugOnly: 9 }`, and `website/tests/mcp-data.test.ts` asserts
+`TOOL_TOTALS.all === TOOLS.length` against that same file. Those cannot both be
+true, so that test fails as things stand.
+
+**Expected.** The site's published numbers track `mcp/server.py`, which is
+exactly what D-255 built that test for ("if someone adds a tool, this test fails
+until the site's own count is updated — which is the point").
+
+**Actual.** The site says 115 definitions / 106 shipped. It also still prints
+"the Motion tab's 0 MCP tools" as a stated gap, and
+`website/tests/mcp-data.test.ts` asserts
+`TOOLS.filter((t) => t.startsWith('motion_'))` has length **0** — there are now
+**36** of them.
+
+**Cause.** Ordering, not a coding error. D-255 (the website) landed on
+2026-09-09 with numbers correct as of that moment; **D-257** added the 32
+`motion_*` tools later the same day and did not update `website/`, and
+**D-259** (this pass) added 4 more. `website/` is deliberately outside the npm
+workspace (D-255), so `npm test` at the repo root never runs its suite and the
+guard test's failure is invisible from the normal test command — which is the
+part that makes this a real defect rather than routine staleness. It also has no
+`node_modules` in a fresh worktree, so it cannot be run without an install
+first.
+
+**Fix (not done here — deliberately out of D-259's scope, and flagged rather
+than widened).** Update `website/src/data/mcp.ts`'s totals and per-group
+breakdown from a fresh count, rewrite the `MOTION_GAP` copy (the Motion tab is
+no longer a zero — it has 36 tools), and change the `motion_` assertion in
+`website/tests/mcp-data.test.ts` from "must be 0" to a real count. The deeper
+fix is making that suite reachable from the repo-root test command so the next
+tool addition cannot silently re-stale it; that is the part worth a decision of
+its own.

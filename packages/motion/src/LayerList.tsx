@@ -94,13 +94,39 @@
  * `onCommit` is optional (this list stays a read-only navigator with nothing
  * wired, D-160's own floor) — when absent, rows fall back to their previous
  * plain `onClick`-only behaviour.
+ *
+ * **D-259 — delete and duplicate, the human half.** Every row now carries
+ * hover-revealed trailing actions: duplicate + delete on a layer/3D-child
+ * row, duplicate + delete on a scene row (beside the existing "+ Scene"
+ * button, which was the only shape-changing affordance this list had).
+ * Until this, nothing anywhere — GUI or MCP — could take a layer or a scene
+ * back out of a manifest once it was in. Each action calls the SAME
+ * `manifestEdit.ts` function its `motion_*` op calls (D-259's other half,
+ * `motionOps.ts`), commits through the same undo-wired `onCommit`, and
+ * installs the selection that function returns.
+ *
+ * Only the SCENE delete confirms (a two-step arm-then-confirm on the button
+ * itself, no dialog) — `sceneActions` below carries the full reasoning and
+ * the real-tool references it was built from. Because these are real
+ * `<button>`s, a row with actions is now a wrapper `<div>` holding the row
+ * button beside them (a button cannot contain a button); `data-layer-row`
+ * moved onto that wrapper, which also widens the reorder drop target to the
+ * full row.
  */
 import { useEffect, useRef, useState } from 'react';
-import type { PointerEvent as ReactPointerEvent } from 'react';
-import { Plus } from 'lucide-react';
+import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
+import { Copy, Plus, Trash2 } from 'lucide-react';
 import type { Manifest, Layer } from '@chroma/motion-engine/src/engine/schema';
 import { layerKeyCount, cameraKeyCount, scene3dCameraKeyCount } from './keyframeVisibility';
-import { reorderLayers, addScene } from './manifestEdit';
+import {
+  addScene,
+  canDeleteScene,
+  deleteLayer,
+  deleteScene,
+  duplicateLayer,
+  duplicateScene,
+  reorderLayers,
+} from './manifestEdit';
 import { LayerThumbnail } from './LayerThumbnail';
 
 /**
@@ -209,9 +235,57 @@ export function layerLabel(layer: Layer): string {
   return layer.use;
 }
 
-const rowBase =
-  'w-full text-left px-2 py-1 rounded truncate transition-colors hover:bg-hover-color';
+/** the row button's own look, WITHOUT a width — `rowBase` (a row with
+ *  nothing beside it) pins it to the full width; a row that also carries
+ *  trailing actions (D-259) uses `flex-1 min-w-0` instead, so the label
+ *  truncates and the buttons keep their space rather than the two fighting
+ *  over `w-full`. */
+const rowLook = 'text-left px-2 py-1 rounded truncate transition-colors hover:bg-hover-color';
+const rowBase = `w-full ${rowLook}`;
 const rowSelected = 'bg-accent text-button-text hover:bg-accent';
+
+/**
+ * D-259 — one trailing action on a row (duplicate, delete). Hover-revealed
+ * on the row, always visible once focused, so the gutter stays quiet while
+ * you are reading the list but the actions are still fully keyboard
+ * reachable — the layer-panel convention this was checked against
+ * (`scratch/motion-delete-reference/NOTES.md`: Figma's own row actions).
+ * `group-hover` keys off the row WRAPPER, which is why these live outside
+ * the row `<button>` rather than inside it: a `<button>` inside a `<button>`
+ * is invalid HTML and browsers do not nest it the way the markup reads.
+ */
+function RowAction({
+  label,
+  onClick,
+  danger,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={[
+        'shrink-0 h-5 px-1 flex items-center gap-1 rounded transition-colors',
+        'opacity-0 group-hover:opacity-100 focus-visible:opacity-100',
+        danger
+          ? 'text-red-400 hover:bg-red-500/15 hover:text-red-400'
+          : 'text-text-secondary hover:bg-hover-color hover:text-text-primary',
+      ].join(' ')}
+    >
+      {children}
+    </button>
+  );
+}
 
 /** Same physical-distance bar `MotionCanvasOverlay.tsx`'s `MARQUEE_MIN_DRAG_PX`
  *  and `KeyframeTimeline.tsx`'s `KEY_DRAG_MIN_PX` already use — reused, not
@@ -340,13 +414,22 @@ export function LayerList({
   const dragRef = useRef<LayerDragState | null>(null);
   const [draggingRow, setDraggingRow] = useState<{ sceneIndex: number; kind: ReorderKind; index: number } | null>(null);
   const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(null);
+  /** D-259 — which scene's delete button is currently ARMED (clicked once,
+   *  waiting for the confirming second click), or `null`. See
+   *  `deleteSceneAction` below for why a scene delete is guarded this way and
+   *  a layer delete deliberately is not. */
+  const [armedSceneDelete, setArmedSceneDelete] = useState<number | null>(null);
 
   // Escape cancels an in-flight drag with no mutation — the same key,
   // same "just drop the ref and clear the visual state" shape
-  // `KeyframeTimeline.tsx`'s own drag-cancel effect already uses.
+  // `KeyframeTimeline.tsx`'s own drag-cancel effect already uses. D-259 —
+  // it also disarms a pending scene delete, so the same key backs out of
+  // either half-finished gesture in this list.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || !dragRef.current) return;
+      if (e.key !== 'Escape') return;
+      setArmedSceneDelete(null);
+      if (!dragRef.current) return;
       dragRef.current = null;
       setDraggingRow(null);
       setDropIndicator(null);
@@ -355,13 +438,136 @@ export function LayerList({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const row = (sceneIndex: number, target: SelectionTarget, label: string, indent = false, keyCount = 0) => {
-    const isSel = selections.some((s) => s.sceneIndex === sceneIndex && sameTarget(s.target, target));
+  // ---- D-259 mutations ----------------------------------------------------
+  // Each is the SAME `manifestEdit.ts` function its `motion_*` op calls
+  // (`motionOps.ts`), committed through the same undo-wired `onCommit`
+  // (`m.commit`) every other gesture in this file uses, and each installs the
+  // selection that function hands back — which for a delete is the whole
+  // point (the thing you had selected is gone, or its scene index moved).
+
+  const doDeleteLayer = (sceneIndex: number, kind: ReorderKind, index: number, id?: string) => {
+    if (!onCommit) return;
+    const { manifest: next, selection } = deleteLayer(manifest, { sceneIndex, target: { kind, index, id } });
+    if (next === manifest) return;
+    onCommit(next, kind === 'layer' ? 'Delete layer' : 'Delete 3D layer');
+    if (selection) onSelect(selection);
+  };
+
+  const doDuplicateLayer = (sceneIndex: number, kind: ReorderKind, index: number, id?: string) => {
+    if (!onCommit) return;
+    const { manifest: next, selection } = duplicateLayer(manifest, { sceneIndex, target: { kind, index, id } });
+    if (next === manifest) return;
+    onCommit(next, kind === 'layer' ? 'Duplicate layer' : 'Duplicate 3D layer');
+    if (selection) onSelect(selection);
+  };
+
+  const doDeleteScene = (sceneIndex: number) => {
+    setArmedSceneDelete(null);
+    if (!onCommit) return;
+    const { manifest: next, selection } = deleteScene(manifest, sceneIndex);
+    if (next === manifest) return;
+    onCommit(next, 'Delete scene');
+    if (selection) onSelect(selection);
+  };
+
+  const doDuplicateScene = (sceneIndex: number) => {
+    if (!onCommit) return;
+    const { manifest: next, selection } = duplicateScene(manifest, sceneIndex);
+    if (next === manifest) return;
+    onCommit(next, 'Duplicate scene');
+    if (selection) onSelect(selection);
+  };
+
+  /**
+   * D-259 — the scene row's trailing actions, and the one place in this list
+   * with a confirm step.
+   *
+   * **Why a scene delete is guarded and a layer delete is not.** Both are
+   * undoable (`onCommit` → `m.commit` → `@chroma/history`, D-155, reachable
+   * on Cmd/Ctrl+Z from `Shell.tsx`), so this is not about recoverability —
+   * it is about proportionality, and it follows what real tools do rather
+   * than a guess (`scratch/motion-delete-reference/NOTES.md`): Figma,
+   * Premiere and every layer panel delete ONE object with no prompt, and the
+   * one case Premiere does prompt for is a delete that CASCADES into
+   * contained content ("the selection you are deleting contains clip
+   * references… do you want to continue?"). Deleting a Chroma scene is
+   * exactly that case — it takes every layer, the camera and the whole
+   * `scene3d` block with it, and renumbers every scene after it — while
+   * deleting one layer is the routine, high-frequency edit a prompt would
+   * just make tedious.
+   *
+   * **A two-step arm-then-confirm button, not a modal dialog.** This package
+   * cannot use `@chroma/ui`'s barrel (a real `@react-three/fiber` JSX-typing
+   * conflict — see `Button.tsx`), so there is no shared dialog component
+   * available to it, and the app has no `window.confirm` anywhere to follow
+   * either. Arming the button in place is the lightest thing that is still a
+   * deliberate second action: click once, the button says "Delete?"; click
+   * again to commit; Escape, or arming a different scene, backs out. No new
+   * dependency, no focus trap, and it stays inside this package's own
+   * plain-elements convention.
+   */
+  const sceneActions = (sceneIndex: number) => {
+    if (!onCommit) return null;
+    const armed = armedSceneDelete === sceneIndex;
     return (
+      <>
+        <RowAction label="Duplicate scene" onClick={() => doDuplicateScene(sceneIndex)}>
+          <Copy size={11} />
+        </RowAction>
+        {/* Hidden, not disabled, for the last remaining scene: the schema
+           requires at least one (`scenes.min(1)`), so there is no state in
+           which this action becomes available for it — a permanently greyed
+           button would just be a question with no answer. */}
+        {canDeleteScene(manifest) && (
+          <button
+            type="button"
+            title={
+              armed
+                ? 'Click again to delete this scene and everything in it'
+                : 'Delete scene (and every layer in it)'
+            }
+            aria-label={armed ? 'Confirm delete scene' : 'Delete scene'}
+            onBlur={() => armed && setArmedSceneDelete(null)}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (armed) doDeleteScene(sceneIndex);
+              else setArmedSceneDelete(sceneIndex);
+            }}
+            className={[
+              'shrink-0 h-5 px-1 flex items-center gap-1 rounded text-red-400 transition-colors',
+              armed
+                ? 'opacity-100 bg-red-500/15 text-[10px]'
+                : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-red-500/15',
+            ].join(' ')}
+          >
+            <Trash2 size={11} />
+            {armed && <span>Delete?</span>}
+          </button>
+        )}
+      </>
+    );
+  };
+
+  const row = (
+    sceneIndex: number,
+    target: SelectionTarget,
+    label: string,
+    indent = false,
+    keyCount = 0,
+    actions?: ReactNode,
+  ) => {
+    const isSel = selections.some((s) => s.sceneIndex === sceneIndex && sameTarget(s.target, target));
+    const key = `${target.kind}-${'index' in target ? target.index : ''}`;
+    const button = (
       <button
         type="button"
-        key={`${target.kind}-${'index' in target ? target.index : ''}`}
-        className={[rowBase, 'flex items-center justify-between gap-1', isSel ? rowSelected : 'text-text-secondary', indent ? 'pl-4' : ''].join(' ')}
+        key={key}
+        className={[
+          actions ? `flex-1 min-w-0 ${rowLook}` : rowBase,
+          'flex items-center justify-between gap-1',
+          isSel ? rowSelected : 'text-text-secondary',
+          indent ? 'pl-4' : '',
+        ].join(' ')}
         onClick={() => onSelect({ sceneIndex, target })}
       >
         <span className="truncate">{label}</span>
@@ -380,6 +586,15 @@ export function LayerList({
           </span>
         )}
       </button>
+    );
+    // A row with no actions stays exactly the element it was before D-259 —
+    // no wrapper, no layout change, nothing to re-verify for the camera rows.
+    if (!actions) return button;
+    return (
+      <div key={key} className="group flex items-center gap-0.5">
+        {button}
+        {actions}
+      </div>
     );
   };
 
@@ -400,6 +615,10 @@ export function LayerList({
   const layerRow = (sceneIndex: number, kind: ReorderKind, index: number, layer: Layer, keyCount: number) => {
     const id = layer.id;
     const label = layerLabel(layer);
+    /** what the D-259 row actions call this row in their tooltip — the same
+     *  2D/3D wording the undo labels use ("Delete layer" / "Delete 3D
+     *  layer"), so the tooltip and the resulting history entry agree. */
+    const noun = kind === 'layer' ? 'layer' : '3D layer';
     const target: SelectionTarget = { kind, index, id };
     const isSel = selections.some((s) => s.sceneIndex === sceneIndex && sameTarget(s.target, target));
     const isDragging = draggable && draggingRow?.sceneIndex === sceneIndex && draggingRow.kind === kind && draggingRow.index === index;
@@ -476,50 +695,75 @@ export function LayerList({
       if (next !== manifest) onCommit(next, drag.kind === 'layer' ? 'Reorder layers' : 'Reorder 3D layers');
     };
 
+    // D-259 — the row is now a WRAPPER holding the row button plus its
+    // trailing actions, because a `<button>` cannot legally contain another
+    // one. `data-layer-row` moved onto the wrapper deliberately: it is what
+    // `findDropRow` measures, and the wrapper's rect is the whole row, so a
+    // reorder drop-target now covers the action gutter too instead of going
+    // dead over the last few pixels of the row. `.closest()` still finds it
+    // from anything inside, so the drag gesture itself is unchanged.
     return (
-      <button
-        type="button"
+      <div
         key={`${kind}-${index}`}
         data-layer-row={`${sceneIndex}:${kind}:${index}`}
-        className={[
-          rowBase,
-          'flex items-center gap-1.5 pl-4',
-          isSel ? rowSelected : 'text-text-secondary',
-          draggable ? 'cursor-grab active:cursor-grabbing' : '',
-          isDragging ? 'opacity-40' : '',
-          dropBefore ? 'border-t-2 border-accent' : '',
-        ].join(' ')}
-        onClick={() => {
-          // The native `click` that still fires after a completed drag's
-          // `pointerup` (neither handler calls `preventDefault`) — when
-          // `draggable`, selection is already handled by `onPointerUp`
-          // above (both the plain-click and the real-drag cases), so this
-          // must be a no-op. When NOT draggable (`onCommit` absent), this is
-          // the ONLY selection path, unchanged from before this pass.
-          if (!draggable) onSelect({ sceneIndex, target });
-        }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
+        className={['group flex items-center gap-0.5', dropBefore ? 'border-t-2 border-accent' : ''].join(' ')}
       >
-        {/* D-176 — a real live (or, for the 3D three, static-glyph) preview
-           of what this specific layer actually is, "so we know what we're
-           working with" (the owner's own words) — see `LayerThumbnail.tsx`'s
-           own doc comment for the full approach/performance reasoning. */}
-        <LayerThumbnail layer={layer} manifest={manifest} />
-        <span className="truncate flex-1 min-w-0 text-left">{label}</span>
-        {keyCount > 0 && (
-          <span
-            className={[
-              'shrink-0 rounded-full px-1.5 text-[9px] leading-4',
-              isSel ? 'bg-button-text/20 text-button-text' : 'bg-bg-primary text-text-secondary',
-            ].join(' ')}
-            title={`${keyCount} keyframe${keyCount === 1 ? '' : 's'}`}
-          >
-            {keyCount}
-          </span>
+        <button
+          type="button"
+          className={[
+            `flex-1 min-w-0 ${rowLook}`,
+            'flex items-center gap-1.5 pl-4',
+            isSel ? rowSelected : 'text-text-secondary',
+            draggable ? 'cursor-grab active:cursor-grabbing' : '',
+            isDragging ? 'opacity-40' : '',
+          ].join(' ')}
+          onClick={() => {
+            // The native `click` that still fires after a completed drag's
+            // `pointerup` (neither handler calls `preventDefault`) — when
+            // `draggable`, selection is already handled by `onPointerUp`
+            // above (both the plain-click and the real-drag cases), so this
+            // must be a no-op. When NOT draggable (`onCommit` absent), this is
+            // the ONLY selection path, unchanged from before this pass.
+            if (!draggable) onSelect({ sceneIndex, target });
+          }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        >
+          {/* D-176 — a real live (or, for the 3D three, static-glyph) preview
+             of what this specific layer actually is, "so we know what we're
+             working with" (the owner's own words) — see `LayerThumbnail.tsx`'s
+             own doc comment for the full approach/performance reasoning. */}
+          <LayerThumbnail layer={layer} manifest={manifest} />
+          <span className="truncate flex-1 min-w-0 text-left">{label}</span>
+          {keyCount > 0 && (
+            <span
+              className={[
+                'shrink-0 rounded-full px-1.5 text-[9px] leading-4',
+                isSel ? 'bg-button-text/20 text-button-text' : 'bg-bg-primary text-text-secondary',
+              ].join(' ')}
+              title={`${keyCount} keyframe${keyCount === 1 ? '' : 's'}`}
+            >
+              {keyCount}
+            </span>
+          )}
+        </button>
+        {/* D-259 — duplicate and delete, hover-revealed. No confirm on
+           either: one layer is the routine edit, and both are undoable
+           (Cmd/Ctrl+Z, `Shell.tsx` → `@chroma/history`) — see
+           `sceneActions` above for the full proportionality reasoning and
+           why a SCENE delete is the one thing here that does confirm. */}
+        {onCommit && (
+          <>
+            <RowAction label={`Duplicate ${noun}`} onClick={() => doDuplicateLayer(sceneIndex, kind, index, id)}>
+              <Copy size={11} />
+            </RowAction>
+            <RowAction label={`Delete ${noun}`} danger onClick={() => doDeleteLayer(sceneIndex, kind, index, id)}>
+              <Trash2 size={11} />
+            </RowAction>
+          </>
         )}
-      </button>
+      </div>
     );
   };
 
@@ -527,7 +771,7 @@ export function LayerList({
     <div data-layer-list-scroll className="h-full w-full overflow-y-auto text-[11px] px-2 py-2 flex flex-col gap-2">
       {manifest.scenes.map((scene, si) => (
         <div key={scene.id} className="flex flex-col gap-0.5">
-          {row(si, { kind: 'scene' }, scene.id)}
+          {row(si, { kind: 'scene' }, scene.id, false, 0, sceneActions(si))}
           {scene.camera && row(si, { kind: 'camera' }, 'Camera', true, cameraKeyCount(scene))}
           {scene.layers?.map((layer, li) => layerRow(si, 'layer', li, layer, layerKeyCount(layer)))}
           {/* the drop-line for "append after the last layer" — there is no

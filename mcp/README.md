@@ -41,23 +41,30 @@ claude mcp add chroma -- /ABS/PATH/chroma/mcp/.venv/bin/python /ABS/PATH/chroma/
 Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 (default `19788`).
 
-## Tools — 106 shipped (plus 9 debug-build-only; 115 definitions total)
+## Tools — 143 shipped (plus 9 debug-build-only; 152 definitions total)
 
-> **Re-counted 2026-09-09 (D-255)** directly against this file's own server —
-> `grep -c '^@mcp.tool()' server.py` = **115**, of which 9 are `debug_*`
-> (dev-build only, never shipped), leaving **106**. The heading previously said
-> "94 (plus 8)" and the paragraph below said 48 Edit tools; both had gone stale
-> as tools landed. Split by prefix: 60 Edit (`editor_*` plus the four unprefixed
-> `get_timeline` / `set_clip_fade` / `set_clip_speed` / `set_track_duck`),
-> 42 Colorist, 4 media-understanding, 0 Motion.
+> **Re-counted 2026-09-09 (D-259)** directly against this file's own server —
+> `grep -c '^@mcp.tool()' server.py` = **152**, of which 9 are `debug_*`
+> (dev-build only, never shipped), leaving **143**. Split by prefix: **65 Edit**
+> (`editor_*` plus the four unprefixed `get_timeline` / `set_clip_fade` /
+> `set_clip_speed` / `set_track_duck`, and including the 4 media-understanding
+> ones), **42 Colorist**, **36 Motion** (`motion_*` — D-257's 32, plus D-259's
+> four delete/duplicate tools). 65 + 42 + 36 + 9 = 152.
 >
-> These numbers are now **asserted by a test** — `website/tests/mcp-data.test.ts`
-> re-counts this file on every website test run and fails if the site's published
-> figures drift from it. If you add a tool and that suite goes red, update
-> `website/src/data/mcp.ts` and this heading together.
+> The previous heading said "106 shipped … 115 total, 0 Motion", correct when
+> D-255 wrote it that morning and stale by that afternoon: **D-257** added the
+> 32 `motion_*` tools and **D-259** four more. That is now **B-126** — the
+> website (`website/src/data/mcp.ts`) still publishes the old 115/106/0 figures,
+> and its own guard test (`website/tests/mcp-data.test.ts`, which re-counts THIS
+> file) fails as a result. `website/` sits outside the npm workspace by D-255's
+> own design, so a repo-root `npm test` never runs that suite and the failure is
+> invisible from the normal test command — see B-126 for the real fix.
+>
+> If you add a tool: update this heading, `../docs/notes/mcp-tool-coverage.md`
+> (the authoritative per-tab inventory), and `website/src/data/mcp.ts` together.
 
 The table below is the **Colorist** surface (grading, masks, relight, scopes,
-export). The Edit tab's own 60 `editor_*` tools — read/seek/**selection**
+export). The Edit tab's own 65 `editor_*` tools — read/seek/**selection**
 (D-216), preview zoom (D-218), media import/removal, clip placement/split/trim/
 slip/swap/move/remove, gap removal, text/title clips (D-211), **adjustment
 clips (D-230)**, track management

@@ -30,7 +30,11 @@ import {
   addLayer,
   addScene,
   alignSelections,
+  deleteLayer,
+  deleteScene,
   distributeSelections,
+  duplicateLayer,
+  resolveSelection,
   layerActiveSchedule,
   layerDragBase,
   layerTransformKeys,
@@ -155,10 +159,14 @@ const ALL_OPS = [
   'motion_list_layers',
   'motion_list_primitives',
   'motion_add_scene',
+  'motion_delete_scene',
+  'motion_duplicate_scene',
   'motion_set_scene_field',
   'motion_set_camera_2d',
   'motion_set_camera_3d',
   'motion_add_layer',
+  'motion_delete_layer',
+  'motion_duplicate_layer',
   'motion_reorder_layers',
   'motion_set_layer_field',
   'motion_set_field_on_layers',
@@ -187,11 +195,11 @@ const ALL_OPS = [
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 32 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 36 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(32);
+    expect(names).toHaveLength(36);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 
@@ -418,6 +426,138 @@ describe('layers', () => {
     const h = harness();
     expect(h.run('motion_add_layer', { scene_index: 0, use: 'sparkles' }).error).toMatch(/use must be one of/);
     expect(h.run('motion_add_layer', { scene_index: 9, use: 'text' }).error).toMatch(/no scene at index 9/);
+    expect(h.commits).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // D-259 — delete / duplicate
+  // -------------------------------------------------------------------------
+
+  it('motion_delete_layer === deleteLayer (the layer row\'s own delete button)', () => {
+    const h = harness();
+    const r = h.run('motion_delete_layer', sel(TEXT_L0));
+    expect(h.current()).toEqual(deleteLayer(sample, TEXT_L0).manifest);
+    expect(h.current().scenes[0].layers).toHaveLength(1);
+    expect(h.current().scenes[0].layers?.[0].use).toBe('emphasis');
+    expect(h.commits[0].label).toBe('Delete layer');
+    expect(r.deletedUse).toBe('text');
+    expect(r.remaining).toBe(1);
+  });
+
+  it('motion_delete_layer installs the next selection, so nothing is left dangling', () => {
+    const h = harness();
+    h.run('motion_delete_layer', sel(TEXT_L0));
+    expect(h.state.selections).toEqual([deleteLayer(sample, TEXT_L0).selection]);
+    // and it really resolves against the manifest that came back
+    expect(resolveSelection(h.current(), h.state.selections[0])).not.toBeNull();
+  });
+
+  it('motion_delete_layer empties a scene down to its parent-scene selection', () => {
+    const h = harness();
+    h.run('motion_delete_layer', sel(TEXT_L0));
+    h.run('motion_delete_layer', { scene_index: 0, target: { kind: 'layer', index: 0 } });
+    expect(h.current().scenes[0].layers).toBeUndefined();
+    expect(h.state.selections).toEqual([{ sceneIndex: 0, target: { kind: 'scene' } }]);
+  });
+
+  it('motion_delete_layer works on a 3D child and rejects a non-layer target', () => {
+    const h = harness();
+    h.run('motion_delete_layer', sel(CHILD_3D));
+    expect(h.current()).toEqual(deleteLayer(sample, CHILD_3D).manifest);
+    expect(h.commits[0].label).toBe('Delete 3D layer');
+
+    const h2 = harness();
+    expect(h2.run('motion_delete_layer', { scene_index: 0, target: { kind: 'scene' } }).error).toMatch(
+      /delete_layer targets/,
+    );
+    expect(h2.run('motion_delete_layer', { scene_index: 0, target: { kind: 'layer', index: 9 } }).error).toMatch(
+      /does not resolve/,
+    );
+    expect(h2.commits).toHaveLength(0);
+  });
+
+  it('motion_delete_scene === deleteScene, and installs the shifted selection', () => {
+    const h = harness();
+    const r = h.run('motion_delete_scene', { scene_index: 0 });
+    expect(h.current()).toEqual(deleteScene(sample, 0).manifest);
+    expect(h.current().scenes.map((s) => s.id)).toEqual(['stack', 'space']);
+    expect(h.commits[0].label).toBe('Delete scene');
+    expect(r.deletedSceneId).toBe('hook');
+    expect(r.sceneCount).toBe(2);
+    expect(h.state.selections).toEqual([{ sceneIndex: 0, target: { kind: 'scene' } }]);
+  });
+
+  it('motion_delete_scene refuses the LAST scene with a real message, not an invalid manifest', () => {
+    const one: Manifest = { ...sample, scenes: [sample.scenes[0]] };
+    const h = harness(one);
+    const r = h.run('motion_delete_scene', { scene_index: 0 });
+    expect(r.error).toMatch(/only remaining scene/);
+    expect(h.current().scenes).toHaveLength(1);
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('motion_delete_scene validates its index', () => {
+    const h = harness();
+    expect(h.run('motion_delete_scene', { scene_index: 9 }).error).toMatch(/no scene at index 9/);
+    expect(h.run('motion_delete_scene', {}).error).toMatch(/scene_index \(integer\) required/);
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('motion_duplicate_layer === duplicateLayer, inserting directly after the original', () => {
+    const h = harness();
+    const r = h.run('motion_duplicate_layer', sel(TEXT_L0));
+    const expected = duplicateLayer(sample, TEXT_L0);
+    expect(h.current().scenes[0].layers).toHaveLength(3);
+    expect(h.current().scenes[0].layers?.map((l) => l.use)).toEqual(
+      expected.manifest.scenes[0].layers?.map((l) => l.use),
+    );
+    // ids are generated, so compare everything else field by field
+    const copy = h.current().scenes[0].layers![1] as unknown as Record<string, unknown>;
+    const original = h.current().scenes[0].layers![0] as unknown as Record<string, unknown>;
+    expect({ ...copy, id: undefined }).toEqual({ ...original, id: undefined });
+    expect(copy.id).not.toBe(original.id);
+    expect(h.commits[0].label).toBe('Duplicate layer');
+    expect(r.selection).toMatchObject({ sceneIndex: 0, target: { kind: 'layer', index: 1 } });
+  });
+
+  it('motion_duplicate_layer leaves the live selection alone (unlike the delete ops)', () => {
+    const h = harness();
+    h.run('motion_select', sel(TEXT_L0));
+    const before = h.state.selections;
+    h.run('motion_duplicate_layer', sel(TEXT_L0));
+    expect(h.state.selections).toBe(before);
+  });
+
+  it('motion_duplicate_layer works on a 3D child and rejects a non-layer target', () => {
+    const h = harness();
+    h.run('motion_duplicate_layer', sel(CHILD_3D));
+    expect(h.current().scenes[2].scene3d?.children).toHaveLength(3);
+    expect(h.commits[0].label).toBe('Duplicate 3D layer');
+    expect(h.run('motion_duplicate_layer', { scene_index: 0, target: { kind: 'camera' } }).error).toMatch(
+      /duplicate_layer targets/,
+    );
+  });
+
+  it('motion_duplicate_scene === duplicateScene, with fresh ids throughout', () => {
+    const h = harness();
+    const r = h.run('motion_duplicate_scene', { scene_index: 1 });
+    expect(h.current().scenes).toHaveLength(4);
+    expect(h.current().scenes.map((s) => s.id).slice(0, 1)).toEqual(['hook']);
+    expect(h.current().scenes[2].id).not.toBe('stack'); // the copy has its own id
+    expect(h.current().scenes[3].id).toBe('space'); // the old scene 2, shifted
+    // the copy's layers match the source's in everything but their ids
+    const src = sample.scenes[1].layers!.map((l) => ({ ...l, id: undefined }));
+    const copy = h.current().scenes[2].layers!.map((l) => ({ ...l, id: undefined }));
+    expect(copy).toEqual(src);
+    expect(h.commits[0].label).toBe('Duplicate scene');
+    expect(r.selection).toEqual({ sceneIndex: 2, target: { kind: 'scene' } });
+    expect(r.sceneCount).toBe(4);
+  });
+
+  it('motion_duplicate_scene validates its index', () => {
+    const h = harness();
+    expect(h.run('motion_duplicate_scene', { scene_index: 9 }).error).toMatch(/no scene at index 9/);
+    expect(h.run('motion_duplicate_scene', {}).error).toMatch(/scene_index \(integer\) required/);
     expect(h.commits).toHaveLength(0);
   });
 
@@ -1120,6 +1260,10 @@ describe('the undo contract (D-140)', () => {
       ['motion_reorder_layers', { scene_index: 0, from_index: 0, to_index: 9 }],
       ['motion_set_layer_active_schedule', { ...sel(STACK_LAYERS), schedule: [{ at: 0 }] }],
       ['motion_delete_layer_keyframe', { ...sel(TEXT_L0), key_index: 0 }],
+      ['motion_delete_layer', { scene_index: 0, target: { kind: 'layer', index: 9 } }],
+      ['motion_delete_scene', { scene_index: 9 }],
+      ['motion_duplicate_layer', { scene_index: 0, target: { kind: 'scene' } }],
+      ['motion_duplicate_scene', { scene_index: 9 }],
     ];
     for (const [op, args] of refusals) {
       const r = h.run(op, args);

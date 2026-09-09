@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-09** — **D-259: Motion can finally delete and duplicate — human and
+  agent halves in one commit.** `manifestEdit.ts` gains `deleteLayer`/
+  `deleteScene`/`duplicateLayer`/`duplicateScene`; `LayerList.tsx` gains
+  hover-revealed duplicate+delete actions on every layer AND scene row; the MCP
+  surface goes **32 → 36 `motion_*` tools**. Until now nothing anywhere could
+  remove a layer or a scene once added (roadmap item 6, "the top Motion gap").
+  Two real findings: the existing `resolveSelections` re-resolve is **not**
+  enough for a delete (it cannot see that a scene delete renumbers every later
+  scene), so all four ops return the selection to install next; and only the
+  SCENE delete confirms — a two-step arm-then-confirm on the button, no dialog —
+  because it cascades into contained content, the same line Premiere draws.
+  Deleting the last scene is refused (`scenes.min(1)`). Also corrected a stale
+  roadmap item: Motion undo/redo has been live since D-155. 560 tests green
+  (+41), `py_compile` clean, 36 Python names diffed identical to the 36 op keys.
 - **2026-09-09** — **D-255: the marketing website shipped, out of sequence** —
   a new top-level `website/` (Astro, its own project, deliberately outside the
   npm workspace), reversing the standing "build the website LAST, right before

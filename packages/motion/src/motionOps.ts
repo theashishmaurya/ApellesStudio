@@ -29,9 +29,28 @@
  * surface shipped with **zero** tests. Splitting the registry out as a pure
  * factory makes every op directly callable — `createMotionOps(ctx).motion_
  * add_layer({...})` — against a hand-built context, which is what
- * `motionOps.test.ts` does for all 32 of them, asserting each produces the
+ * `motionOps.test.ts` does for all 36 of them, asserting each produces the
  * IDENTICAL manifest the GUI's own `manifestEdit.ts` call produces. Same
  * thin-shell/fat-core direction D-039 already sets for the Rust side.
+ *
+ * **D-259 took the count 32 → 36**, adding `motion_delete_layer`/
+ * `motion_delete_scene`/`motion_duplicate_layer`/`motion_duplicate_scene`
+ * alongside the GUI affordances for the same four actions, in one pass.
+ * D-257 had deliberately shipped without them because `manifestEdit.ts` had
+ * no delete function at all and the layer list had no delete gesture —
+ * adding the agent half alone would have broken CLAUDE.md's human-AND-AI
+ * rule from the AI side, the mirror image of the `editor_slip_clip` gap
+ * `mcp-tool-coverage.md` records.
+ *
+ * **Two of the four touch `ctx.setSelections`, and no other mutating op
+ * does.** A delete is the one kind of change that can leave the live
+ * selection pointing at something that no longer exists, or — for a scene —
+ * at a DIFFERENT scene that merely inherited its index, which
+ * `MotionTab.tsx`'s `resolveSelections` effect cannot detect. So the two
+ * delete ops install the corrected selection `manifestEdit.ts` hands them.
+ * The two duplicate ops deliberately do NOT: they mirror `motion_add_layer`/
+ * `motion_add_scene`, which return a `selection` for the caller to use next
+ * without yanking the human's own selection around.
  *
  * **The context (`MotionOpsContext`).** Everything an op needs that lives
  * outside this file, as accessor FUNCTIONS rather than values — the ops are
@@ -71,7 +90,12 @@ import {
   addLayer,
   addScene,
   alignSelections,
+  canDeleteScene,
+  deleteLayer,
+  deleteScene,
   distributeSelections,
+  duplicateLayer,
+  duplicateScene,
   layerActiveSchedule,
   layerDragBase,
   layerTransformKeys,
@@ -517,6 +541,76 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       return { selection, sceneIndex: selection.sceneIndex, sceneCount: next.scenes.length };
     },
 
+    /**
+     * D-259 — delete a whole scene (its layers, its camera, its `scene3d`
+     * block), `deleteScene`: the exact function the layer panel's own
+     * per-scene delete button calls. Refuses the LAST remaining scene
+     * (`canDeleteScene` — `schema.ts` declares `scenes.min(1)`, so a
+     * zero-scene manifest does not parse at all), which is the same reason
+     * the GUI hides its button in that case rather than offering one that
+     * would break the document.
+     *
+     * Every later scene's index shifts down by one, so this ALSO installs
+     * the corrected selection (the scene that slid into the deleted index) —
+     * `motion_add_scene` deliberately does not touch the selection, but a
+     * delete must: `resolveSelection` only checks that SOME scene still
+     * exists at a selection's `sceneIndex`, which stays true while silently
+     * pointing at a different scene. See `deleteScene`'s own doc comment.
+     */
+    motion_delete_scene: (a) => {
+      const cur = ctx.api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      const manifest = guard.manifest;
+
+      const sceneIndex = Math.round(Number(arg(a, 'scene_index', 'sceneIndex')));
+      if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+      const scene = manifest.scenes[sceneIndex];
+      if (!scene) return { error: `no scene at index ${sceneIndex} (0..${manifest.scenes.length - 1})` };
+      if (!canDeleteScene(manifest)) {
+        return {
+          error:
+            'cannot delete the only remaining scene — a manifest needs at least one (schema: scenes.min(1)). Add another scene first, or clear this one\'s layers instead.',
+        };
+      }
+
+      const { manifest: next, selection } = deleteScene(manifest, sceneIndex);
+      if (next === manifest) return { error: 'no change' };
+      cur.commit(next, 'Delete scene');
+      if (selection) ctx.setSelections([selection]);
+      return { deletedSceneIndex: sceneIndex, deletedSceneId: scene.id, sceneCount: next.scenes.length, selection };
+    },
+
+    /** D-259 — copy a scene (every layer, the camera, the `scene3d` block)
+     *  in directly after itself, `duplicateScene`: the layer panel's own
+     *  per-scene duplicate button. The copy gets a fresh scene id and fresh
+     *  ids on every layer inside it, so nothing addressed by `id` is
+     *  ambiguous afterwards. Every later scene's index shifts by one —
+     *  re-read `motion_get_state`. */
+    motion_duplicate_scene: (a) => {
+      const cur = ctx.api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      const manifest = guard.manifest;
+
+      const sceneIndex = Math.round(Number(arg(a, 'scene_index', 'sceneIndex')));
+      if (!Number.isFinite(sceneIndex)) return { error: 'scene_index (integer) required' };
+      if (!manifest.scenes[sceneIndex]) {
+        return { error: `no scene at index ${sceneIndex} (0..${manifest.scenes.length - 1})` };
+      }
+
+      const { manifest: next, selection } = duplicateScene(manifest, sceneIndex);
+      if (next === manifest) return { error: 'no change' };
+      cur.commit(next, 'Duplicate scene');
+      return {
+        sourceSceneIndex: sceneIndex,
+        selection,
+        sceneIndex: selection?.sceneIndex,
+        sceneId: selection ? next.scenes[selection.sceneIndex].id : undefined,
+        sceneCount: next.scenes.length,
+      };
+    },
+
     /** set (or delete, `value: null`) one field on the scene itself. */
     motion_set_scene_field: (a) => {
       const cur = ctx.api();
@@ -721,6 +815,70 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       if (next === manifest) return { error: 'no change' };
       cur.commit(next, 'Reorder layers');
       return { sceneIndex, kind, fromIndex, toIndex, count: length };
+    },
+
+    /**
+     * D-259 — remove one layer (or one 3D scene child), `deleteLayer`: the
+     * exact function the layer list's own per-row delete button calls.
+     * Addressable by `target.id`, which is what makes it safe to plan a
+     * multi-delete: an `id` names the same layer no matter how the indices
+     * around it shift, while a bare `index` does not (delete index 0 and
+     * every other index moves).
+     *
+     * Installs the selection `deleteLayer` hands back (the layer that slid
+     * into the deleted slot, or the parent scene when none are left) for the
+     * same reason `motion_delete_scene` does: the thing that WAS selected no
+     * longer exists, and leaving the tab with an empty Inspector and no
+     * canvas target is a worse answer than the neighbour.
+     */
+    motion_delete_layer: (a) => {
+      const cur = ctx.api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      const manifest = guard.manifest;
+
+      const resolved = resolveLayerTarget(manifest, a, 'delete_layer');
+      if (isErr(resolved)) return resolved;
+      const kind = resolved.target.kind;
+      const removed = selectedLayer(manifest, resolved);
+
+      const { manifest: next, selection } = deleteLayer(manifest, resolved);
+      if (next === manifest) return { error: 'no change' };
+      cur.commit(next, kind === 'layer' ? 'Delete layer' : 'Delete 3D layer');
+      if (selection) ctx.setSelections([selection]);
+      return {
+        sceneIndex: resolved.sceneIndex,
+        kind,
+        deletedIndex: 'index' in resolved.target ? resolved.target.index : undefined,
+        deletedUse: removed?.use,
+        selection,
+        remaining:
+          kind === 'layer'
+            ? (next.scenes[resolved.sceneIndex].layers?.length ?? 0)
+            : (next.scenes[resolved.sceneIndex].scene3d?.children.length ?? 0),
+      };
+    },
+
+    /** D-259 — copy one layer (or 3D scene child) in directly ABOVE itself
+     *  in paint order, `duplicateLayer`: the layer list's own per-row
+     *  duplicate button. Every field is deep-copied except `id`, which is
+     *  freshly generated. Returns the `selection` addressing the copy — hand
+     *  it straight to the next call (e.g. `motion_set_layer_position`) to
+     *  make the duplicate differ from its original. */
+    motion_duplicate_layer: (a) => {
+      const cur = ctx.api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      const manifest = guard.manifest;
+
+      const resolved = resolveLayerTarget(manifest, a, 'duplicate_layer');
+      if (isErr(resolved)) return resolved;
+      const kind = resolved.target.kind;
+
+      const { manifest: next, selection } = duplicateLayer(manifest, resolved);
+      if (next === manifest) return { error: 'no change' };
+      cur.commit(next, kind === 'layer' ? 'Duplicate layer' : 'Duplicate 3D layer');
+      return { sceneIndex: resolved.sceneIndex, kind, selection };
     },
 
     /** set (or delete, `value: null`) one top-level field on a layer or

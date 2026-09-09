@@ -24351,3 +24351,158 @@ dispatcher that forwards `{op, args}` blind and has never needed a code change
 for a new tab's ops. The pre-existing 20 s `BRIDGE_TIMEOUT` still applies to a
 slow render and is documented on the tool as "inconclusive, not failed" rather
 than papered over.
+
+---
+
+## D-259 — Motion delete/duplicate, both halves in one pass: 4 `manifestEdit.ts` ops, a real layer-list affordance, 4 `motion_*` tools
+
+**Context.** `manifestEdit.ts` could create (`addLayer`, D-151; `addScene`,
+D-179) and rearrange (`reorderLayers`, D-177) but had **no delete function of
+any kind**, and `LayerList.tsx` had no delete gesture. There was no way — by
+hand OR by agent — to take a layer or a scene back out of a manifest once it
+was in; the raw-JSON textarea was the only route. `docs/04-roadmap.md` item 6
+called this "the top Motion gap," promoted there by D-257, which had
+deliberately declined to ship an MCP-only deletion (its own option 3, rejected)
+precisely so the AI half would not land first and break CLAUDE.md's
+human-AND-AI rule from the other side — the mirror of the `editor_slip_clip`
+gap `mcp-tool-coverage.md` records from the AI side. So this is one pass with
+all three layers, not a tool and a follow-up.
+
+**Decision — four pure functions, four GUI affordances, four MCP tools, one
+shared core each.** `deleteLayer` / `deleteScene` / `duplicateLayer` /
+`duplicateScene` in `manifestEdit.ts`; hover-revealed duplicate+delete actions
+on every layer row and every scene row in `LayerList.tsx`; and
+`motion_delete_layer` / `motion_delete_scene` / `motion_duplicate_layer` /
+`motion_duplicate_scene` in `motionOps.ts` + `mcp/server.py`, each a thin
+adapter over the same function the button calls. Motion's MCP surface goes
+**32 → 36 tools**; a cross-language check confirms the 36 Python wire names and
+the 36 `motionOps.ts` keys are identical.
+
+**Duplicate shipped in the same pass rather than deferred**, after actually
+checking the id-uniqueness question the roadmap flagged as the reason it might
+not be: nothing in `schema.ts` references a layer BY id. A `layers` primitive's
+`active` schedule indexes its own `items[]`; `emphasis` stores a resolved `box`
+rather than a pointer at what it circles. So duplication is a deep clone plus
+fresh ids and nothing else — there is no reference-fixup pass hiding behind it.
+The copy lands directly AFTER the original (not appended like `addLayer`, whose
+own doc comment says a brand-new primitive has no opinion about paint order — a
+copy does), matching `addScene(afterSceneIndex)`'s existing insert-adjacent
+shape. `duplicateScene` also re-ids every layer inside the copy: cross-scene id
+collision is technically harmless (`resolveSelection` is deliberately
+same-scene-only), but a manifest where two layers claim one id reads as a bug to
+a human and to an agent addressing layers by `id` off `motion_list_layers`.
+
+### Selection: why these four return `{manifest, selection}` and `resolveSelections` alone is not enough
+
+`reorderLayers`'s doc comment states that "selection survival is NOT this
+function's job" — `MotionTab.tsx`'s effect re-resolves through
+`resolveSelections` (D-158) after every shape change. That is right for a
+reorder. It is **not sufficient for a delete**, for two reasons found by reading
+`resolveSelection` rather than assumed:
+
+1. **A deleted thing resolves to nothing, and then nothing is selected.**
+   Correct, but the Inspector empties and the canvas loses its target — worse
+   than the neighbour-selection every real layer panel leaves you on, and it
+   breaks a "delete, delete, delete" run.
+2. **A scene delete RENUMBERS every later scene, and `resolveSelection` cannot
+   see it.** Its only check on `sceneIndex` is "does a scene still exist there,"
+   which stays TRUE while silently pointing at a *different* scene. That is a
+   real dangling reference the existing re-resolve path would pass straight
+   through.
+
+So each of the four returns the `Selection` to install next — the neighbour
+layer, the parent scene when a list empties, the scene that slid into a deleted
+index — mirroring `addLayer`/`addScene`'s "here is your new thing, edit it"
+contract in reverse. The GUI installs it via `onSelect`; the two DELETE ops
+install it via `ctx.setSelections` (the only mutating ops that touch the live
+selection at all). The two duplicate ops deliberately do not — they mirror
+`motion_add_layer`/`motion_add_scene`, returning a selection for the caller to
+use without yanking a human's selection around.
+
+Both delete functions also resolve through `resolveSelection` FIRST, so an
+id-addressed call deletes the layer that id names rather than whatever sits at
+its stale index — the GUI and an agent cannot disagree about which layer "the
+one with id X" is.
+
+### Refusing to delete the last scene
+
+`schema.ts` declares `scenes: z.array(scene).min(1)`. Deleting the only scene
+would not produce an empty composition, it would produce a document
+`useMotionManifest`'s `applyParse` rejects outright — blanking the preview and
+the Inspector behind a schema error. `canDeleteScene(manifest)` is its own
+exported predicate rather than an inline `length > 1` in three places, because
+the load-bearing part is that reason, not the comparison. `LayerList` hides the
+button (hidden, not disabled — there is no state in which it becomes available
+for the last scene, so a permanently greyed control would be a question with no
+answer); `motion_delete_scene` returns a real message naming the constraint;
+`deleteScene` itself refuses as the floor under both.
+
+### Confirm-before-destroy: scene yes, layer no
+
+Researched, not guessed, per CLAUDE.md's own rule — references kept in
+`scratch/motion-delete-reference/NOTES.md`. Figma deletes a layer from its
+layers panel with no dialog, undo-backed; Premiere deletes a clip the same way,
+and deletes a whole *sequence* — the container, our scene's analogue — with no
+prompt either, which its own users complain about (a Creative COW thread is
+titled "Prevent a sequence from being deleted"). The one case Premiere *does*
+prompt for is a delete that **cascades** into contained/referenced content:
+"the selection you are deleting contains clip references in one or more
+sequences… do you want to continue?"
+
+That is the line we drew. A Chroma scene delete cascades exactly that way — it
+takes every layer, the camera and the whole `scene3d` block with it and
+renumbers everything after it — so it confirms. A layer delete is the routine,
+high-frequency edit; a prompt on it would be friction with no payoff.
+
+This is a proportionality call, **not** a recoverability one, because Motion
+undo is real: `m.commit` → `@chroma/history` (D-155), reachable on Cmd/Ctrl+Z
+through `Shell.tsx`'s global binding. (`docs/04-roadmap.md` item 4 still listed
+"Undo/redo for Motion" as unbuilt — stale since D-155; corrected in this pass
+since the confirm decision rests on it.)
+
+**The confirm is a two-step arm-then-confirm on the button itself, not a
+dialog.** `@chroma/motion` cannot use `@chroma/ui`'s barrel (the real
+`@react-three/fiber` JSX-typing conflict documented in its `Button.tsx`), so no
+shared dialog component is available to it, and the app has no `window.confirm`
+anywhere to follow. Arming in place is the lightest thing that is still a
+deliberate second action — click once, the button reads "Delete?", click again
+to commit; Escape (the same key that already cancels an in-flight reorder drag
+in this list) or arming a different scene backs out. No new dependency, no focus
+trap, and it stays inside this package's plain-elements convention.
+
+### One structural change to the layer rows
+
+A `<button>` cannot legally contain another `<button>`, so a row with actions is
+now a wrapper `<div>` holding the row button beside them. `data-layer-row` moved
+onto that wrapper deliberately: `findDropRow` measures that element's rect, so
+the reorder drop target now covers the action gutter too instead of going dead
+over the last few pixels of a row. `.closest()` still finds it from anything
+inside, so the drag gesture is otherwise untouched, and a row with no actions
+(the camera rows) renders the exact same element it did before.
+
+**Verification.** 560 tests green in `@chroma/motion` (up from 519): 29 new in
+`manifestEdit.test.ts` covering ordinary delete/duplicate, the currently-selected
+item, id-vs-index addressing, the emptied-array cases, the last-scene refusal,
+deep-copy independence and no-input-mutation for all four; 12 new in
+`motionOps.test.ts` in D-257's own shape — each op asserted to produce the
+IDENTICAL manifest the GUI's own `manifestEdit.ts` call produces, plus the
+selection-installation and refusal paths. `python3 -m py_compile mcp/server.py`
+clean, `grep -c '^def motion_'` = 36 = the op count, names diffed identical
+across the two languages. `npx tsc --noEmit` on `packages/motion` introduces
+zero new errors (two pre-existing ones in `catalog.ts` — missing `deviceframe`/
+`claudechat` catalogue entries — are untouched by this pass and left for whoever
+owns that file). **Not verified in the real Tauri window** (sandboxed worktree)
+— the same honest gap D-151 discloses for the Catalog.
+
+**One thing this pass found and did NOT fix: B-126.** Counting the surface for
+`mcp/README.md` turned up that `website/src/data/mcp.ts` still publishes
+115 definitions / 106 shipped / **0 Motion tools**, and its own anti-fabrication
+test (`website/tests/mcp-data.test.ts`, which re-counts `mcp/server.py`) asserts
+there are zero `motion_*` tools. The real numbers are 152 / 143 / 36. That drift
+is D-257's, not this pass's — but `website/` is deliberately outside the npm
+workspace (D-255), so a repo-root `npm test` never runs that guard suite and its
+failure is invisible from the normal test command, which is what makes it a
+defect rather than routine staleness. `mcp/README.md`'s own heading is corrected
+here (152/143, 65 Edit / 42 Colorist / 36 Motion / 9 debug); the website's copy
+is a marketing surface and a separate project, left to B-126 rather than widened
+silently.
