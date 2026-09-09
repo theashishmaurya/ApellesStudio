@@ -26439,3 +26439,40 @@ duration, released only where it always correctly was, in `stop.current()`
 at the gesture's natural end. Caught before it reached a live report only
 because the owner asked for real research rather than accepting "two
 cursors is the final state" at face value.
+
+### A sixth attempt, prompted by more owner research — and the one that finally sticks: STATIC `cursor: none`, not a change to it
+
+The owner pushed back on accepting the two-cursors state and asked for
+further research rather than another guess. Two things came out of it:
+
+1. **A real, published, working precedent** — `camwebby/shadcn-react-
+   number-scrubber`, a community shadcn registry component explicitly
+   "inspired by Resolve," fetched and read directly (not assumed from a
+   description). Its own solution: `active:cursor-none` — Tailwind's
+   `:active` PSEUDO-CLASS, resolved natively by the browser as part of
+   mousedown handling itself, not a scripted class/style toggle reacting to
+   a state update on a later tick. Every one of this session's five earlier
+   attempts was the latter shape (a React-state-driven class list, a
+   `document.body.style.cursor` write, a Tauri IPC call) — none had tried a
+   value that isn't *changed* by script at all.
+2. **The bug's own exact wording, taken literally for the first time.**
+   WebKit bug 53341 is titled "Changing CSS cursor style doesn't have any
+   effect while the mouse is down" — CHANGING. A value that was never
+   changed, because it was already what it needed to be before the mouse
+   ever went down, was the one shape not yet tried.
+
+**The fix:** `ScrubbableNumberInput`'s `cursor` class is now `cursor-none`,
+unconditionally, from the very first render — not toggled by focus, hover,
+or `scrubbing` state at all. There is no press-time transition for
+WebKit's freeze to catch, because nothing ever transitions. `ScrubCursorGhost`
+now activates on HOVER as well as during an active scrub (previously
+`scrubbing`-only), so the field never has a moment where its own cursor is
+invisible with no affordance at all — the ghost is the field's only visible
+pointer indicator now, at rest and mid-drag alike.
+
+This is a stricter version of the shadcn scrubber's own proven pattern
+(permanently absent rather than conditionally-on-`:active`), plus a moving
+ghost in place of their static corner glyph — chosen because the ghost was
+already confirmed genuinely rendering and tracking correctly live, which is
+strictly more informative feedback than a fixed icon that doesn't move with
+the pointer.

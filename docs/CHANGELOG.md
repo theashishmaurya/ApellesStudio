@@ -4,6 +4,22 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-136, sixth and (hopefully) final attempt: static
+  `cursor: none`, never changed at all.** Owner-driven research surfaced a
+  real published shadcn scrubber component using `active:cursor-none` — a
+  native `:active` pseudo-class, not a scripted toggle like every one of
+  this bug's five prior attempts — and pointed at WebKit bug 53341's own
+  title: "Changing CSS cursor style doesn't have any effect while the mouse
+  is down." A value that's never changed at all, because it was already
+  correct before the mouse went down, is what this landed on: the field's
+  cursor is now `cursor-none` unconditionally from first render, and
+  `ScrubCursorGhost` activates on hover as well as mid-scrub so there's
+  never a moment with no affordance. Same research pass also caught a real,
+  unrelated latent regression: an early `releasePointerCapture()` call left
+  over from an abandoned cursor theory would have silently broken tracking
+  for any scrub exiting the app window's actual bounds — reverted, capture
+  now correctly holds for the whole gesture.
+
 - **2026-09-10** — **B-136, finally fixed: the scrub-cursor rabbit hole, five
   rounds live with the owner.** A `document.body.style.cursor` write
   (defeated by WebKit bug 53341, which freezes the visible cursor for the

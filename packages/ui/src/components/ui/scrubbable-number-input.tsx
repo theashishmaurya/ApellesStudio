@@ -34,28 +34,30 @@
  * typing it is not, since clamping mid-keystroke makes a field with a floor
  * impossible to type into.
  *
- * **The scrub cursor (B-136, three dead ends before this one).** A drag
- * leaves the field's own ~80px box almost immediately, so neither its static
- * `cursor-ew-resize` class nor a `document.body.style.cursor` write stays
- * visible: WebKit (this app's WKWebView) freezes the VISIBLE system cursor
- * for the whole duration of an actively-held mouse button, a documented
- * platform bug (bugs.webkit.org/show_bug.cgi?id=53341). Tauri's own NATIVE
- * `getCurrentWindow().setCursorIcon(...)` looked like the fix specifically
- * because it bypasses CSS — confirmed, by direct log evidence, to genuinely
- * bypass CSS and succeed on every call — but WKWebView's own AppKit
- * cursor-rect tracking re-asserts ITS OWN frozen cursor over even a
- * natively-set one, on every native mouse-moved event, faster than a JS
- * `pointermove` handler can win back. Three attempts (CSS write, one native
- * call, native call re-asserted every move) all failed live, confirmed by
- * the owner each time.
+ * **The scrub cursor (B-136/D-271 — five dead ends, then this one).**
+ * WebKit (this app's WKWebView) freezes the VISIBLE system cursor for the
+ * whole duration of an actively-held mouse button, ignoring any CHANGE to
+ * the `cursor` property or a native `setCursorIcon` call made once the
+ * button is already down — a documented platform bug
+ * (bugs.webkit.org/show_bug.cgi?id=53341). Five attempts at changing the
+ * cursor mid-drag (a CSS write, a native call once, the native call
+ * re-asserted every move, `cursor: none` at `pointerdown` — reverted as a
+ * global-state regression — and confirming Pointer Lock's own mandatory
+ * "cursor hidden" banner makes it unusable for a per-field gesture) all
+ * failed or made things worse, each confirmed live by the owner.
  *
- * **The actual fix doesn't use a cursor API at all.** [`ScrubCursorGhost`]
- * below renders a small icon that FOLLOWS the pointer as an ordinary
- * portaled DOM element, positioned via a direct `style.transform` write on
- * every `pointermove` — the same per-frame-write-not-React-state discipline
- * `TimelinePane.tsx`'s `placeTrimBadge` (D-250) already uses for exactly
- * this reason. Nothing here is a cursor property WebKit's own tracking can
- * fight over, so nothing here CAN be frozen or overridden.
+ * **The one thing never tried: not changing it at all.** The bug is about
+ * *changing* the cursor while the mouse is down — so this field's own
+ * `cursor: none` is now STATIC, set unconditionally from the very first
+ * render, on hover, on focus, mid-drag, always. There is no press-time
+ * transition for WebKit's freeze to ignore, because nothing transitions.
+ * [`ScrubCursorGhost`] supplies the actual visual affordance instead — a
+ * small icon that FOLLOWS the pointer as an ordinary portaled DOM element,
+ * positioned via a direct `style.transform` write on every `pointermove`
+ * (the same per-frame-write-not-React-state discipline `TimelinePane.tsx`'s
+ * `placeTrimBadge`, D-250, already uses) — now shown on hover as well as
+ * mid-scrub, so the real cursor being permanently invisible over this field
+ * is never a moment with no affordance at all.
  */
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
@@ -65,11 +67,13 @@ import { cn } from '../../lib/utils';
 import { useNumberField } from '../../hooks/use-number-scrub';
 import { Input } from './input';
 
-/** The ghost cursor: a small pill that tracks the real pointer while a scrub
- *  is in progress. Portaled to `document.body` so it paints above every
- *  panel regardless of this field's own stacking context. Off-screen
- *  (`translate(-9999px, -9999px)`) until the first real coordinate arrives,
- *  rather than at `0,0`, so it never flashes in the corner for one frame. */
+/** The ghost cursor: a small pill that tracks the real pointer whenever it's
+ *  needed — hovering this field (whose own OS cursor is permanently `none`,
+ *  see the module doc) or actively scrubbing it. Portaled to `document.body`
+ *  so it paints above every panel regardless of this field's own stacking
+ *  context. Off-screen (`translate(-9999px, -9999px)`) until the first real
+ *  coordinate arrives, rather than at `0,0`, so it never flashes in the
+ *  corner for one frame. */
 function ScrubCursorGhost({ active }: { active: boolean }) {
   const ref = React.useRef<HTMLDivElement>(null);
 
@@ -134,9 +138,11 @@ function ScrubbableNumberInput({
   onFocus,
   onBlur,
   onPointerDown,
+  onPointerEnter,
+  onPointerLeave,
   ...props
 }: ScrubbableNumberInputProps) {
-  const { scrubbing, focused, inputProps } = useNumberField({
+  const { scrubbing, inputProps } = useNumberField({
     value,
     step,
     min,
@@ -145,6 +151,10 @@ function ScrubbableNumberInput({
     onValueChange,
     onClear,
   });
+  // Hover, not focus: this drives the ghost's visibility, and the ghost
+  // follows the real mouse position, which focus (reachable by Tab, with no
+  // pointer involved at all) says nothing about.
+  const [hovering, setHovering] = React.useState(false);
 
   return (
     <>
@@ -154,23 +164,28 @@ function ScrubbableNumberInput({
         {...props}
         {...inputProps}
         className={cn(
-          // The affordance itself: Resolve's own "hover… until you see the
-          // virtual slider cursor". Swapped for a caret while the field is
-          // focused, because at that point it really is a text box. The real
-          // cursor may or may not actually hide during the drag (WebKit's own
-          // freeze, see the module doc) — `ScrubCursorGhost` below is what
-          // guarantees visible feedback regardless.
-          'cursor-ew-resize',
-          focused && 'cursor-text',
+          // Permanently hidden — see the module doc for why STATIC beats
+          // every conditional/toggled variant tried before this one.
+          // `ScrubCursorGhost` is the field's only real cursor affordance now,
+          // on hover and mid-scrub alike.
+          'cursor-none',
           scrubbing && 'select-none',
           className,
         )}
         // Composed, not overridden: a caller may legitimately want to know about
-        // focus or a press (a panel that opens a section when a field is
+        // focus, hover or a press (a panel that opens a section when a field is
         // entered), and it must not cost the field its own handler.
         onPointerDown={(e) => {
           inputProps.onPointerDown(e);
           onPointerDown?.(e);
+        }}
+        onPointerEnter={(e) => {
+          setHovering(true);
+          onPointerEnter?.(e);
+        }}
+        onPointerLeave={(e) => {
+          setHovering(false);
+          onPointerLeave?.(e);
         }}
         onFocus={(e) => {
           inputProps.onFocus(e);
@@ -181,7 +196,7 @@ function ScrubbableNumberInput({
           onBlur?.(e);
         }}
       />
-      <ScrubCursorGhost active={scrubbing} />
+      <ScrubCursorGhost active={hovering || scrubbing} />
     </>
   );
 }
