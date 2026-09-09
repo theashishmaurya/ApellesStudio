@@ -16,10 +16,13 @@ import {
   type SceneRenderResult,
 } from '@apelles/motion';
 import { useMediaPoolStore, trackEvent } from '@apelles/bridge';
+import { useKeymapStore } from '@apelles/keymap';
+import { useTranslation } from 'react-i18next';
 import App from './App';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
 import { selectProjectKey, useSessionStore } from './store/useSessionStore';
+import { useSettingsStore } from './store/useSettingsStore';
 
 /**
  * `Root` — the app's composition root component (D-039), and *only* that.
@@ -71,6 +74,13 @@ export function Root() {
   // above cannot see at all.
   const projectKey = useSessionStore(selectProjectKey);
   const activeTab = useActiveTab();
+  // D-272 — handed to `Shell` for the Keyboard Shortcuts window; see the
+  // `translate` prop below. `as (key: string) => string` because i18next types
+  // `t` against its own generated key union, and the keymap registry holds the
+  // Colorist keys as plain strings (it cannot import those types — it is a
+  // `packages/*` package and they live in `app/src/@types`).
+  const { t } = useTranslation();
+  const translate = t as unknown as (key: string) => string;
 
   // D-093: tab switches are the cheapest, highest-signal "what is the owner
   // actually doing right now" event, and `useShellStore` (`@apelles/shell`)
@@ -258,6 +268,36 @@ export function Root() {
   // reason `onRendered` above is a prop. `computeEditLinks` itself is pure and
   // takes plain arrays; see its own module doc for why its parameters are
   // structural rather than imported types.
+  // D-272 — the keymap's bridge to the app's own settings. `@apelles/keymap`
+  // must not depend on Tauri (no `packages/*` does), so it stores nothing
+  // itself: it is handed the persisted overrides on the way in, and a sink to
+  // call on the way out. The store on the other end is `appSettings.keybinds`
+  // — the `HashMap<String, Vec<String>>` `app_settings.rs` has persisted since
+  // RapidRAW, which needed no Rust change to carry Apelles' new action ids.
+  // This is the composition root, so it is the right place to bridge the two,
+  // same reasoning as the B-007/B-083 bridges above.
+  const keybinds = useSettingsStore((s) => s.appSettings?.keybinds);
+  const osPlatform = useSettingsStore((s) => s.osPlatform);
+
+  useEffect(() => {
+    useKeymapStore.getState().hydrate(keybinds);
+  }, [keybinds]);
+
+  useEffect(() => {
+    useKeymapStore.getState().setOsPlatform(osPlatform);
+  }, [osPlatform]);
+
+  useEffect(() => {
+    useKeymapStore.getState().setPersist((overrides) => {
+      const settings = useSettingsStore.getState().appSettings;
+      // No settings loaded yet means nothing to merge into; the remap UI is
+      // unreachable in that state anyway (it lives behind an open project).
+      if (!settings) return;
+      void useSettingsStore.getState().handleSettingsChange({ ...settings, keybinds: overrides });
+    });
+    return () => useKeymapStore.getState().setPersist(null);
+  }, []);
+
   const mediaItems = useMediaPoolStore((s) => s.items);
   const editTracks = useEditorTimelineStore((s) => s.timeline?.tracks);
   const motionEditLinks = useMemo(
@@ -270,6 +310,12 @@ export function Root() {
       projectOpen={projectOpen}
       launcher={<ProjectLauncher />}
       sourcesPanel={<SourcesPanel />}
+      // D-272 — i18next's `t`, so the Keyboard Shortcuts window renders the
+      // fork's already-translated Colorist rows in the user's language.
+      // Injected rather than imported: neither `@apelles/shell` nor
+      // `@apelles/keymap` may depend on i18next, same app → shell direction as
+      // `launcher` and `sourcesPanel` above.
+      translate={translate}
       onCloseProject={() => {
         void useSessionStore.getState().closeProject();
       }}

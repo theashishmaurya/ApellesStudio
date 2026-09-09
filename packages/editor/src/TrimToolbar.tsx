@@ -44,6 +44,7 @@
 import { GalleryHorizontal, MousePointer2, MoveHorizontal, SeparatorVertical, UnfoldHorizontal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@apelles/ui';
+import { effectiveCombo, formatCombo, shortcutById, useKeymapStore } from '@apelles/keymap';
 
 import { TRIM_TOOLS, type TrimTool } from './trimMode';
 
@@ -92,11 +93,23 @@ export interface TrimToolbarProps {
  *  what the WAI-ARIA toolbar pattern uses, and it keeps each one reachable by
  *  its own accessible name (which is how the DOM tests drive them). */
 export function TrimToolbar({ active, onSelect }: TrimToolbarProps) {
+  // D-272 — the key shown in each tooltip is whatever the registry currently
+  // resolves that tool's action to, so a rebind in the Keyboard Shortcuts
+  // window is reflected here immediately. Subscribed (not `getState`) for
+  // exactly that reason.
+  const overrides = useKeymapStore((s) => s.overrides);
+  const osPlatform = useKeymapStore((s) => s.osPlatform);
+
   return (
     <div role="group" aria-label="Trim tool" className="flex items-center gap-0.5" data-chroma-trim-toolbar="">
-      {TRIM_TOOLS.map(({ tool, label, shortcut, blurb }) => {
+      {TRIM_TOOLS.map(({ tool, label, shortcutId, blurb }) => {
         const Icon = TRIM_TOOL_ICONS[tool];
         const isActive = tool === active;
+        const def = shortcutById(shortcutId);
+        const combo = def ? effectiveCombo(def, overrides) : null;
+        // An unassigned tool still gets a button and a tooltip — it just has
+        // no key to teach.
+        const shortcut = combo ? formatCombo(combo, osPlatform) : null;
         return (
           <Tooltip key={tool}>
             <TooltipTrigger
@@ -107,7 +120,7 @@ export function TrimToolbar({ active, onSelect }: TrimToolbarProps) {
                   variant={isActive ? 'secondary' : 'ghost'}
                   size="icon-sm"
                   aria-pressed={isActive}
-                  aria-label={`${label} tool (${shortcut})`}
+                  aria-label={shortcut ? `${label} tool (${shortcut})` : `${label} tool`}
                   data-chroma-trim-tool={tool}
                   onClick={() => onSelect(tool)}
                 >
@@ -116,9 +129,7 @@ export function TrimToolbar({ active, onSelect }: TrimToolbarProps) {
               }
             />
             <TooltipContent>
-              <span className="font-medium">
-                {label} ({shortcut})
-              </span>
+              <span className="font-medium">{shortcut ? `${label} (${shortcut})` : label}</span>
               <span className="ml-1.5 text-text-secondary">{blurb}</span>
             </TooltipContent>
           </Tooltip>

@@ -118,8 +118,16 @@ export interface TrimToolInfo {
   /** The single-key shortcut, Adobe's own for all five (V/B/N/Y/U — see
    *  `scratch/premiere-tools-reference/premiere-tools-panel.json`). Shown in
    *  the tooltip, the way Adobe's own panel does it: "Let the cursor hover over
-   *  a tool to see its name and keyboard shortcut." */
-  shortcut: string;
+   *  a tool to see its name and keyboard shortcut."
+   *
+   *  D-272 — this is the `@apelles/keymap` ACTION ID, not a letter. The letter
+   *  used to be written here as well as in `TimelinePane`'s own key handler,
+   *  which is exactly the duplication the registry exists to remove: the
+   *  binding lives in `SHORTCUT_DEFINITIONS` (still Adobe's V/B/N/Y/U by
+   *  default) and `TrimToolbar` formats whatever it currently is, so a tooltip
+   *  can never disagree with the key that actually fires — including after the
+   *  user rebinds it in the Keyboard Shortcuts window. */
+  shortcutId: string;
   /** What the tool does, condensed from Adobe's own page copy for that tool —
    *  the same "the human and the agent read the same definition" rule
    *  `editTypes.ts` follows for the seven edit types. */
@@ -147,47 +155,39 @@ export const TRIM_TOOLS: readonly TrimToolInfo[] = [
   {
     tool: 'select',
     label: 'Select',
-    shortcut: 'V',
+    shortcutId: 'edit.tool_select',
     blurb: 'Move clips and trim their edges — the default tool. Hold ⌥ Option for a smart trim.',
     zones: [],
   },
   {
     tool: 'ripple',
     label: 'Ripple',
-    shortcut: 'B',
+    shortcutId: 'edit.tool_ripple',
     blurb: 'Drag a clip edge to trim it and push everything after it along, leaving no gap.',
     zones: EDGES,
   },
   {
     tool: 'roll',
     label: 'Roll',
-    shortcut: 'N',
+    shortcutId: 'edit.tool_roll',
     blurb: 'Drag a cut to move it, without changing the combined length of the two clips.',
     zones: EDGES,
   },
   {
     tool: 'slip',
     label: 'Slip',
-    shortcut: 'Y',
+    shortcutId: 'edit.tool_slip',
     blurb: 'Drag a clip to change which part of the source it shows, keeping its length and position.',
     zones: WHOLE_CLIP,
   },
   {
     tool: 'slide',
     label: 'Slide',
-    shortcut: 'U',
+    shortcutId: 'edit.tool_slide',
     blurb: 'Drag a clip to move it in time; its neighbours are trimmed to absorb the move.',
     zones: WHOLE_CLIP,
   },
 ];
-
-/** The tool a keystroke selects, or `null` for a key that is not a tool
- *  shortcut. Case-insensitive, because the palette's keys are plain letters
- *  and Caps Lock must not silently disable the whole palette. */
-export function trimToolForKey(key: string): TrimTool | null {
-  const k = key.toUpperCase();
-  return TRIM_TOOLS.find((t) => t.shortcut === k)?.tool ?? null;
-}
 
 /** Does `tool` own presses in `zone` — i.e. does choosing it change what a
  *  drag there commits? Always `false` for `'select'`, which owns no zone

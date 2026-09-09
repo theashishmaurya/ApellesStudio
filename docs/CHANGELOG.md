@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-272: one keyboard-shortcut registry for the whole app,
+  plus a real Keyboard Shortcuts window.** The audit came first and found five
+  independent keydown listeners and three defects: **Play/Space was bound to
+  nothing at all** (B-139 — the preview's transport was click-only), Colorist's
+  45 shortcuts fired in **every** tab (B-138), and the Edit tab's own keys only
+  worked once the timeline had been clicked. New `@apelles/keymap` package —
+  one registry, one window-level tab-scoped dispatcher, remaps persisted
+  through the existing `appSettings.keybinds` (zero Rust change), and a
+  shell-level settings window reachable from all three tabs. RapidRAW's own
+  `keyboardUtils.ts` half-registry is absorbed, not duplicated: deleted, its 45
+  rows now the `colorist`-scoped rows of the one list with ids and defaults
+  unchanged so existing remaps survive. Audit + design:
+  `docs/notes/keyboard-shortcuts.md`.
+
 - **2026-09-10** — **B-137 logged, not fixed:** a clip edge-trim drag's own
   preview appears to stay pinned at the clip's original position instead of
   tracking the cursor (screenshot: the selected-clip box near `00:00:00`,

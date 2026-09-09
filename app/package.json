@@ -24,6 +24,7 @@
     "@apelles/debug": "*",
     "@apelles/editor": "*",
     "@apelles/history": "*",
+    "@apelles/keymap": "*",
     "@apelles/motion": "*",
     "@apelles/shell": "*",
     "@apelles/ui": "*",

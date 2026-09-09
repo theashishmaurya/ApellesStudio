@@ -13,6 +13,7 @@
     "@apelles/bridge": "*",
     "@apelles/history": "*",
     "@apelles/inspector": "*",
+    "@apelles/keymap": "*",
     "@apelles/player": "*",
     "@apelles/ui": "*",
     "@dnd-kit/core": "^6.3.1",

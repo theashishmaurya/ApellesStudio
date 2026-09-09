@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { ImageFile, Panel } from '../components/ui/AppProperties';
-import { KEYBIND_DEFINITIONS, normalizeCombo } from '../utils/keyboardUtils';
+import { useShortcuts } from '@apelles/keymap';
 import { useEditorStore } from '../store/useEditorStore';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { useSettingsStore } from '../store/useSettingsStore';
@@ -46,7 +46,7 @@ export const useKeyboardShortcuts = ({
     }
   }, []);
 
-  useEffect(() => {
+  const { actions, builtinShortcuts } = useMemo(() => {
     const getStoreState = () => ({
       editor: useEditorStore.getState(),
       library: useLibraryStore.getState(),
@@ -54,17 +54,6 @@ export const useKeyboardShortcuts = ({
       settings: useSettingsStore.getState(),
       process: useProcessStore.getState(),
     });
-
-    const comboMap = new Map<string, string>();
-    const keybinds = useSettingsStore.getState().appSettings?.keybinds;
-
-    for (const def of KEYBIND_DEFINITIONS) {
-      const userCombo = keybinds?.[def.action];
-      const effective = userCombo && userCombo.length > 0 ? userCombo : def.defaultCombo;
-      if (effective) {
-        comboMap.set(effective.join('+'), def.action);
-      }
-    }
 
     const getImagePathsForCopy = (s: any): Array<string> => {
       if (s.editor.selectedImage) {
@@ -543,55 +532,7 @@ export const useKeyboardShortcuts = ({
       },
     ];
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const state = getStoreState();
-
-      const isModalOpen =
-        state.ui.isRenameFileModalOpen ||
-        state.ui.isCopyPasteSettingsModalOpen ||
-        state.ui.confirmModalState.isOpen ||
-        state.ui.panoramaModalState.isOpen ||
-        state.ui.collageModalState.isOpen ||
-        state.ui.denoiseModalState.isOpen ||
-        state.ui.negativeModalState.isOpen;
-
-      if (isModalOpen) return;
-
-      if (state.ui.isSettingsOpen) {
-        if (event.code === 'Escape') {
-          event.preventDefault();
-          state.ui.setUI({ isSettingsOpen: false });
-        }
-        return;
-      }
-
-      const isInputFocused =
-        document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA';
-      if (isInputFocused) return;
-
-      for (const builtin of builtinShortcuts) {
-        if (builtin.match(event, state)) {
-          builtin.execute(event, state);
-          return;
-        }
-      }
-
-      const normalized = normalizeCombo(event, state.settings.osPlatform);
-      const action = comboMap.get(normalized.join('+'));
-
-      if (action) {
-        const handler = actions[action];
-        if (handler && (!handler.shouldFire || handler.shouldFire(state))) {
-          handler.execute(event, state);
-          return;
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
+    return { actions, builtinShortcuts };
   }, [
     handleDeleteSelected,
     handleImageSelect,
@@ -605,4 +546,105 @@ export const useKeyboardShortcuts = ({
     handleSetColorLabel,
     toggleShowOriginal,
   ]);
+
+  // D-272 — the Colorist actions above are now claimed from the shared
+  // registry (`@apelles/keymap`) instead of this hook owning its own `window`
+  // listener and its own copy of the keybind table.
+  //
+  // Two things this fixes, both real:
+  //
+  //   1. **B-138.** This hook is mounted by `App.tsx`, which stays mounted
+  //      under every tab (B-007), and a `window` listener has no idea which
+  //      tab is on screen — so `toggle_masks`, `toggle_export`, the rating
+  //      keys and the rest (all `shouldFire: () => true`) fired while the user
+  //      was in the Edit or Motion tab, silently rearranging Colorist behind
+  //      them. Every row is `scope: 'colorist'` in the registry, so the
+  //      dispatcher will not even consider them unless Colorist is frontmost.
+  //   2. **The keybind table was duplicated.** `KEYBIND_DEFINITIONS` lived in
+  //      `app/src/utils/keyboardUtils.ts`, which `packages/*` could never
+  //      import (dependency direction), so the Edit tab grew its own hardcoded
+  //      keys. That file is gone; its contents are the `colorist`-scoped rows
+  //      of the one registry, ids and defaults unchanged so existing user
+  //      remaps in `appSettings.keybinds` keep working.
+  //
+  // `shouldFire` is checked here rather than by the dispatcher: it is a
+  // per-action precondition about Colorist's own state ("is an image open"),
+  // which the registry deliberately knows nothing about. An action whose
+  // precondition is false simply does nothing, exactly as before.
+  const blocked = () => {
+    const ui = useUIStore.getState();
+    return (
+      ui.isRenameFileModalOpen ||
+      ui.isCopyPasteSettingsModalOpen ||
+      ui.confirmModalState.isOpen ||
+      ui.panoramaModalState.isOpen ||
+      ui.collageModalState.isOpen ||
+      ui.denoiseModalState.isOpen ||
+      ui.negativeModalState.isOpen ||
+      ui.isSettingsOpen
+    );
+  };
+
+  const handlerMap = useMemo(() => {
+    const map: Record<string, (event: KeyboardEvent) => void> = {};
+    for (const [action, handler] of Object.entries(actions)) {
+      map[action] = (event: KeyboardEvent) => {
+        if (blocked()) return;
+        const state = {
+          editor: useEditorStore.getState(),
+          library: useLibraryStore.getState(),
+          ui: useUIStore.getState(),
+          settings: useSettingsStore.getState(),
+          process: useProcessStore.getState(),
+        };
+        if (handler.shouldFire && !handler.shouldFire(state)) return;
+        handler.execute(event, state);
+      };
+    }
+    return map;
+  }, [actions]);
+
+  useShortcuts(handlerMap);
+
+  // The two BUILT-IN gestures stay a listener of their own, deliberately, and
+  // are not registry rows: "Escape backs out of whatever is innermost" and
+  // "Delete removes the mask container you are currently inside" are modal,
+  // contextual behaviours whose meaning depends entirely on what is open —
+  // not shortcuts a user could meaningfully rebind, and macOS's own Keyboard
+  // Shortcuts pane lists no equivalent either (see `@apelles/keymap`'s README,
+  // "Not covered, deliberately"). They keep the settings-modal Escape path
+  // this hook has always had.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const state = {
+        editor: useEditorStore.getState(),
+        library: useLibraryStore.getState(),
+        ui: useUIStore.getState(),
+        settings: useSettingsStore.getState(),
+        process: useProcessStore.getState(),
+      };
+
+      if (state.ui.isSettingsOpen) {
+        if (event.code === 'Escape') {
+          event.preventDefault();
+          state.ui.setUI({ isSettingsOpen: false });
+        }
+        return;
+      }
+      if (blocked()) return;
+
+      const isInputFocused =
+        document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA';
+      if (isInputFocused) return;
+
+      for (const builtin of builtinShortcuts) {
+        if (builtin.match(event, state)) {
+          builtin.execute(event, state);
+          return;
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [builtinShortcuts]);
 };
