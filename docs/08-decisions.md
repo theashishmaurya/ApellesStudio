@@ -26237,11 +26237,41 @@ the shared hook stays as that context's own fallback.
 version every other package in this monorepo that already depends on it
 pins.
 
+### Corrected, same session: the call was wired correctly and still did nothing — a missing capability grant, not a code bug
+
+The owner rebuilt, retested, and reported "the cursor does not works at all"
+— the native call, freshly live, changed nothing. **Tauri v2's own permission
+system was the reason, not the fix's design.** `getCurrentWindow().
+setCursorIcon(...)` is gated behind `core:window:allow-set-cursor-icon`
+(confirmed against this app's own generated `gen/schemas/desktop-schema.json`
+and `acl-manifests.json`), and `app/src-tauri/capabilities/default.json` never
+granted it — the file already lists several OTHER specific `core:window:
+allow-*` permissions (`allow-start-dragging`, `allow-minimize`, `allow-close`,
+`allow-set-fullscreen`, `allow-set-decorations`, …) one at a time, but this
+one had simply never been needed before this feature. An ungranted Tauri v2
+command is refused at the IPC layer with a rejected promise, not a thrown
+exception the caller can't miss — and `setNativeCursor`'s own `.catch(() =>
+{})` swallowed that rejection identically to "no Tauri runtime present" (the
+genuinely inert case a test/Storybook render needs). The fix looked correct,
+ran without error, and did nothing, for two compounding reasons at once.
+
+**Fixed two ways, not one:** `core:window:allow-set-cursor-icon` added to
+`default.json` (the actual fix), and `setNativeCursor` no longer swallows a
+real failure — it now checks for `'__TAURI_INTERNALS__' in window` FIRST (the
+one legitimate silent case) and `console.error`s anything that fails past
+that check, naming the capability grant as the first thing to look at. The
+second half doesn't fix this bug by itself, but it is what would have made
+the first rebuild's silent failure loud instead of a second round-trip of "it
+still doesn't work" with no clue why.
+
 ### Verification
 
 `ScrubbableNumberInput.dom.test.tsx` and `PropertyRow.numericField.dom.test.tsx`
-(26 tests) pass unchanged with the dependency added — `setNativeCursor`'s own
-try/catch is what keeps a jsdom render (no `window.__TAURI_INTERNALS__`) from
-throwing. The actual cursor icon change during a real drag needs the owner's
-own trackpad against the live app to fully confirm; jsdom has no OS cursor to
-assert against.
+(26 tests) pass unchanged with the dependency added and the error handling
+tightened — the `hasTauriRuntime` guard is what keeps a jsdom render (no
+`window.__TAURI_INTERNALS__`) from logging noise on every test, not a
+try/catch swallowing a real error the way the first pass did. The actual
+cursor icon change during a real drag needs the owner's own trackpad against
+a rebuilt app (capability changes are read at Tauri's own startup, so this
+needs a real relaunch, not just a Vite HMR reload) to fully confirm; jsdom has
+no OS cursor to assert against.

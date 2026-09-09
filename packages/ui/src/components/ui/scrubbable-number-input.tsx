@@ -41,16 +41,24 @@ import { cn } from '../../lib/utils';
 import { useNumberField } from '../../hooks/use-number-scrub';
 import { Input } from './input';
 
-/** Best-effort: a test/Storybook/non-Tauri render of this component must not
- *  throw just because there is no real native window to talk to. */
+/** A test/Storybook/non-Tauri render of this component must not throw just
+ *  because there is no real native window to talk to — but a genuine Tauri
+ *  context where the call still fails (a missing capability grant, the exact
+ *  shape D-271 itself was, silently, until caught live) must NOT go quiet the
+ *  same way. Swallowing that error is what let this exact bug ship once
+ *  already — see D-271's own "honest limit" note, corrected in the same
+ *  entry once this was found. */
 function setNativeCursor(icon: 'ewResize' | 'default') {
+  const hasTauriRuntime = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  if (!hasTauriRuntime) return;
   try {
     void getCurrentWindow()
       .setCursorIcon(icon)
-      .catch(() => {});
-  } catch {
-    // No Tauri runtime present (a plain browser/jsdom render) — the CSS
-    // fallback in `useNumberScrub` is what such a context gets instead.
+      .catch((err) => {
+        console.error('[ScrubbableNumberInput] setCursorIcon failed — check the window capability grant', err);
+      });
+  } catch (err) {
+    console.error('[ScrubbableNumberInput] setCursorIcon threw synchronously', err);
   }
 }
 
