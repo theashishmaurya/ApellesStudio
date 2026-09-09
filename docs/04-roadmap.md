@@ -2489,6 +2489,29 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   a real look at where in the app this setting is actually reached from
   today and where a user would expect to find it living permanently, not an
   assumption.
+- **B-136's remaining gap: the real cursor still shows once a scrub travels
+  past the field's own ~80px box** — logged 2026-09-10, owner explicitly
+  deferred rather than asked for a seventh attempt tonight. Confirmed live:
+  `ScrubbableNumberInput`'s static `cursor-none` (D-271) genuinely hides the
+  real arrow while the pointer is directly over the input, and the ghost
+  cursor is the only thing visible there — but a real scrub gesture
+  routinely travels far beyond that box (that is the whole point of a
+  horizontal drag-to-scrub), and everything outside the input's own bounds
+  still shows its normal cursor, which flickers the real arrow back the
+  moment the drag crosses the edge. This also refined this session's own
+  model of the underlying WebKit bug: it is not a blunt "cursor frozen for
+  the whole gesture" — normal per-element hit-test cursor resolution keeps
+  running live during a drag (that is WHY it flips back outside the box);
+  what specifically breaks is a SCRIPT changing a cursor value while a
+  button is held, not a static difference between two elements the pointer
+  crosses between. **The only lever left** is making a BIGGER region
+  permanently `cursor: none` too (the whole Inspector row, or the whole
+  panel) — which fixes the flicker but costs that region's normal hover
+  cursor at every other time, not just mid-scrub, since the value can no
+  longer be conditional on a live "am I scrubbing" state (any conditional
+  toggle re-introduces the exact "script changes it mid-hold" shape already
+  proven broken, twice, in this same investigation). Not attempted without
+  the owner's own read on that tradeoff first.
 
 ---
 
