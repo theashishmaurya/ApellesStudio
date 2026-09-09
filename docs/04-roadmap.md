@@ -2451,6 +2451,24 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   fix wants a real look at the options (a bigger icon just for this pair, a
   colour/fill difference for the locked state, a different icon pair
   entirely) rather than a guess.
+- **Give Adjustment clips their own dedicated track kind, like Captions
+  already have** — owner request 2026-09-10, with a reference screenshot
+  (a CapCut-style editor showing separate `CAPTIONS`/`ADJUSTMENT` lanes
+  above named `VIDEO 1`/`VIDEO 2`/`AUDIO 1` tracks; saved at `scratch/
+  track-kind-reference/captions-adjustment-dedicated-tracks.png`, gitignored
+  but kept for this and the next session per CLAUDE.md). **Half of this may
+  already be done — verify before building:** `apelles_timeline::TrackKind`
+  already has a dedicated `subtitle` kind (D-229) for exactly this reason,
+  mirrored in `packages/editor/src/timeline.ts`'s own `kind: 'video' |
+  'audio' | 'subtitle'`. **Adjustment clips are the real open question:**
+  D-230 deliberately did NOT give them their own track kind, citing Resolve's
+  own convention of placing an adjustment clip on an ordinary video track
+  above what it affects (track z-order already means "beneath"). The
+  reference image is a different, also-real, also-established tool doing it
+  the other way — this is a genuine "two real NLEs disagree" design
+  question, not a bug, and needs the same real-pattern research CLAUDE.md
+  already asks for before landing a UI change, not a re-guess of D-230's own
+  reasoning.
 
 ---
 
