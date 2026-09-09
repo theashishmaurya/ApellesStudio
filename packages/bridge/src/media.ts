@@ -63,6 +63,13 @@ export interface MediaItem {
    *  item predates D-059 and hasn't been re-imported) — the panel falls back
    *  to a placeholder icon. */
   thumb?: string | null;
+  /** D-259 — the id of the Motion scene whose render wrote this file; absent
+   *  for every pool item that isn't a Motion render (nearly all of them).
+   *  This is the entire Motion→Edit link: a clip's `mediaId`/`sourcePath`
+   *  reaches the pool item, and the pool item names the scene. See the Rust
+   *  field's own doc (`chroma_project::manifest::MediaItem::motion_scene_id`)
+   *  for why provenance lives on the pool item and not on the clip. */
+  motionSceneId?: string | null;
 }
 
 interface MediaPoolState {
@@ -98,6 +105,24 @@ interface MediaPoolState {
     paths: string[],
     folder?: string,
   ) => Promise<{ ok: boolean; error?: string; added?: MediaItem[] }>;
+  /** D-259 — reconcile the pool with what is on disk for `paths`: add any not
+   *  pooled yet, RE-READ (probe + thumbnail) any that already are, and stamp
+   *  `motionSceneId` on every one of them when given. Resolves to every item
+   *  touched, added and refreshed alike, merged into `items` **by id** (not
+   *  appended — a refreshed item is already in the array, and appending it
+   *  would duplicate the row in the Sources panel).
+   *
+   *  The complement of `importPaths`, which by design SKIPS a path already in
+   *  the pool. That is right for importing the same file twice and wrong for a
+   *  file replaced in place — a Motion re-render writes the same per-scene path
+   *  with new content, leaving the pool's probed `video` and cached thumbnail
+   *  describing the previous render (B-127). Cheap on an unchanged file: the
+   *  backend re-probes through an `(mtime, len)` memo and regenerates a
+   *  thumbnail only when the source is newer than it. */
+  refreshPaths: (
+    paths: string[],
+    motionSceneId?: string,
+  ) => Promise<{ ok: boolean; error?: string; items?: MediaItem[] }>;
   /** re-file an existing pool item into a different bin (D-045); pass
    *  `folder: null` to move it back to the pool root. Updates `items` in
    *  place on success. */
@@ -176,6 +201,30 @@ export const useMediaPoolStore = create<MediaPoolState>((set, get) => ({
         set((s) => ({ items: [...s.items, ...added] }));
       }
       return { ok: true, added };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  },
+
+  refreshPaths: async (paths, motionSceneId) => {
+    if (paths.length === 0) return { ok: true, items: [] };
+    try {
+      const items = await invoke<MediaItem[]>('chroma_media_refresh', {
+        paths,
+        motionSceneId: motionSceneId ?? null,
+      });
+      if (items.length > 0) {
+        // Merge by id, never append: a refreshed item is already in `items`,
+        // and an added one is not. One pass, order preserved for the existing
+        // rows so the Sources panel doesn't reshuffle under the cursor.
+        set((s) => {
+          const byId = new Map(items.map((it) => [it.id, it]));
+          const merged = s.items.map((it) => byId.get(it.id) ?? it);
+          const known = new Set(s.items.map((it) => it.id));
+          return { items: [...merged, ...items.filter((it) => !known.has(it.id))] };
+        });
+      }
+      return { ok: true, items };
     } catch (e) {
       return { ok: false, error: String(e) };
     }

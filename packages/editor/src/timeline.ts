@@ -3016,6 +3016,42 @@ export type EditOp =
       source_len: number;
       source_fps?: number;
     }
+  /** D-259 — a source file was REPLACED IN PLACE (same path, new content:
+   *  what a Motion re-render to its fixed per-scene output path is), so every
+   *  clip already reading it re-reads the new file's real length and rate.
+   *
+   *  **Not `swap_media` in a loop, for three reasons.** (1) `swap_media`
+   *  addresses ONE clip by `(track, clip)` index; a replaced file can be on any
+   *  number of clips across any number of tracks, and the caller — the
+   *  composition root, reacting to a render that just finished — does not know
+   *  where they are, only which media changed. (2) N `swap_media` ops is N undo
+   *  entries for one action, which is the same argument `import_subtitles`
+   *  already makes for being one op. (3) `swap_media`'s own name is a lie here:
+   *  nothing is being swapped, the clip keeps the exact `media_id` and
+   *  `source_path` it had. What it shares with `swap_media` is only the
+   *  re-clamp, and that is shared as real code ([`reclampToSource`]), not
+   *  copied.
+   *
+   *  Matches by `media_id` when given, falling back to `source_path` for a clip
+   *  that predates the pool link (`Clip.media_id` is nullable by design) —
+   *  the same two-key resolution `editor_add_clip` already does in the other
+   *  direction. Every matched clip's `source_len`/`source_fps` are overwritten
+   *  with the new file's own probed values and its window re-clamped exactly as
+   *  a swap would; nothing else is touched.
+   *
+   *  **A no-op when nothing actually changed**, and that is the common case:
+   *  a re-render whose scene is the same length leaves every clip
+   *  byte-identical, so this returns the original timeline, `applyOp` writes
+   *  nothing and no undo entry is pushed. The picture still updates — the file
+   *  on disk changed, and the preview reads the file. Locked tracks are
+   *  skipped, same as every other per-clip op. */
+  | {
+      kind: 'refresh_media';
+      media_id: string | null;
+      source_path: string;
+      source_len: number;
+      source_fps?: number;
+    }
   /** D-211 — edit a TEXT clip's own text properties (content/font/size/
    *  colour). Refused (no-op) if the clip's track is locked, and refused if
    *  the target clip is not a text clip at all — a media clip has no text
@@ -3298,6 +3334,11 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Keyframe ${clipLabel(before, op.track, op.clip)}`;
     case 'swap_media':
       return `Swap media on ${clipLabel(before, op.track, op.clip)}`;
+    // D-259 — names the FILE, not a clip: this op has no single clip to name
+    // (it touches every clip reading that file), and the reason the user is
+    // seeing an undo entry at all is that the file's length changed.
+    case 'refresh_media':
+      return `Refresh ${op.source_path.replace(/^.*[/\\]/, '')}`;
     case 'set_text_clip':
       // The content is the one patch field worth naming in an undo label —
       // "Edit title" tells you nothing when you have three of them.
@@ -3348,6 +3389,35 @@ export function labelForOp(op: EditOp, before: Timeline): string {
 /** Clamp `v` into `[lo, hi]` — used throughout to mirror Rust's `i64::clamp`. */
 function clampInt(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), hi);
+}
+
+/** Point `clip` at a source of `sourceLen` frames running at `sourceFps`,
+ *  re-clamping its window to fit. Mutates and returns `clip`.
+ *
+ *  **D-195's re-clamp policy, extracted in D-259 so its two callers share it
+ *  rather than repeat it.** `source_start` is preserved exactly whenever the
+ *  source is still long enough to contain it, and only pinned back to the
+ *  source's own last frame when it isn't; `duration` is then shrunk (never
+ *  grown) to whatever remains from there. The clip's timeline footprint can
+ *  therefore shrink — `start_frame` never moves, so that can open a gap after
+ *  it, exactly as `trim_end` already can — rather than the whole op being
+ *  refused. See `swap_media`'s own doc for why that shape was chosen.
+ *
+ *  `sourceFps` is ALWAYS overwritten, including to `undefined`: an un-probed
+ *  source's rate is unknown, not "whatever the file used to be", and keeping a
+ *  stale rate is precisely the B-075/B-077 class of silent wrongness. Both
+ *  callers are write paths for "this clip's file is not the file it was."
+ *
+ *  Deliberately does NOT touch `media_id`/`source_path`: `swap_media` sets
+ *  those itself (they change), `refresh_media` must not (they don't). */
+function reclampToSource(clip: Clip, sourceLen: number, sourceFps: number | undefined): Clip {
+  const ceiling = Math.max(sourceLen, 0);
+  const clampedStart = clampInt(clip.source_start, 0, Math.max(ceiling - 1, 0));
+  clip.source_len = sourceLen;
+  clip.source_fps = sourceFps;
+  clip.source_start = clampedStart;
+  clip.duration = clampInt(clip.duration, 1, Math.max(ceiling - clampedStart, 1));
+  return clip;
 }
 
 /** Clamp a normalised 0–1 value (D-132's crop insets), mirroring the Rust
@@ -4262,25 +4332,49 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (!c) return tl;
     const next = clone(tl);
     const nc = next.tracks[op.track].clips[op.clip];
-    // D-195 — preserve `source_start` exactly whenever the new source is
-    // long enough to still contain it; only pinned back to the new source's
-    // own last frame when it isn't. `duration` is then shrunk (never grown)
-    // to fit what remains — see the op's own doc for the full re-clamp
-    // policy and why this shape (preserve first, shrink duration second)
-    // was chosen over refusing the swap outright.
-    const ceiling = Math.max(op.source_len, 0);
-    const clampedStart = clampInt(nc.source_start, 0, Math.max(ceiling - 1, 0));
-    const clampedDuration = clampInt(nc.duration, 1, Math.max(ceiling - clampedStart, 1));
     nc.media_id = op.media_id;
     nc.source_path = op.source_path;
-    nc.source_len = op.source_len;
-    // Always overwritten, including to `undefined` — an un-probed new
-    // source's rate is unknown, not "same as the old file's," see the op's
-    // own doc.
-    nc.source_fps = op.source_fps;
-    nc.source_start = clampedStart;
-    nc.duration = clampedDuration;
+    reclampToSource(nc, op.source_len, op.source_fps);
     return next;
+  }
+  if (op.kind === 'refresh_media') {
+    // A non-positive length is "we could not probe the new file", never a real
+    // answer, and acting on it would clamp every affected clip to a single
+    // frame — strictly worse than leaving the trim ceiling as it was, since the
+    // picture updates from the file either way. The caller already declines to
+    // send one (`Root.tsx`); refusing here too means no future caller can make
+    // that mistake silently.
+    if (!(op.source_len > 0)) return tl;
+    // Which clips read the file that changed. `media_id` is the strong link
+    // when both sides have one; `source_path` is the fallback for a clip that
+    // predates the pool link (`Clip.media_id` is nullable by design) — the same
+    // two-key resolution `editor_add_clip` does in the other direction.
+    const matches = (c: Clip) =>
+      op.media_id !== null && c.media_id ? c.media_id === op.media_id : c.source_path === op.source_path;
+    let next: Timeline | null = null;
+    tl.tracks.forEach((tr, ti) => {
+      if (tr.locked) return;
+      tr.clips.forEach((c, ci) => {
+        if (!matches(c)) return;
+        // Clone at most once, and only if some clip genuinely changes — a
+        // same-length re-render must leave the timeline (and the undo stack)
+        // completely untouched. See the op's own doc. `reclampToSource` on a
+        // throwaway copy is the honest test for "would this change anything",
+        // and the only one that cannot drift from what the write actually does.
+        const probe = reclampToSource({ ...c }, op.source_len, op.source_fps);
+        if (
+          probe.source_len === c.source_len &&
+          probe.source_fps === c.source_fps &&
+          probe.source_start === c.source_start &&
+          probe.duration === c.duration
+        ) {
+          return;
+        }
+        next ??= clone(tl);
+        reclampToSource(next.tracks[ti].clips[ci], op.source_len, op.source_fps);
+      });
+    });
+    return next ?? tl;
   }
   if (op.kind === 'set_text_clip') {
     const tr = tl.tracks[op.track];

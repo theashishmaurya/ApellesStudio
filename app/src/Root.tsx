@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { Shell, useActiveTab } from '@chroma/shell';
 import { EditorExportDialog, EditorTab, useEditorTimelineStore } from '@chroma/editor';
-import { MotionTab, useMotionProjectStore } from '@chroma/motion';
+import {
+  MotionTab,
+  clipReadsItem,
+  computeEditLinks,
+  useMotionProjectStore,
+  type SceneRenderResult,
+} from '@chroma/motion';
 import { useMediaPoolStore, trackEvent } from '@chroma/bridge';
 import App from './App';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
@@ -159,23 +165,86 @@ export function Root() {
   // the Edit tab's active timeline: the owner may not want it there yet, or
   // may want a specific track/position — dragging it in from Sources (like
   // any other clip) stays the one explicit action that actually places it.
-  const onMotionRendered = useCallback((outputPath: string) => {
-    void useMediaPoolStore
-      .getState()
-      .importPaths([outputPath])
-      .then((res) => {
-        if (!res.ok) toast.error(`Rendered, but couldn't add to Sources: ${res.error}`);
-        else if (res.added && res.added.length === 0) {
-          // already in the pool from an earlier render at the same path
-          // (the default output path is fixed per-project, D-062) — refresh
-          // so its thumbnail/video info reflect the new render, not silently
-          // leave a stale entry.
-          void useMediaPoolStore.getState().refresh();
-        } else {
-          toast.success('Rendered — added to Sources');
-        }
-      });
+  //
+  // **D-259 — "auto re-render, auto-replace."** This used to call
+  // `importPaths`, which by design SKIPS a path already in the pool, and then
+  // fall back to a plain `refresh()` on the strength of a comment claiming
+  // that made "its thumbnail/video info reflect the new render." It did not:
+  // `refresh()` re-reads the project manifest, and the manifest is exactly
+  // what held the stale probe and the stale thumbnail (B-127). It is now
+  // `refreshPaths`, which reconciles the pool with what is actually on disk,
+  // and it stamps the scene's id onto the item as provenance — the whole
+  // Motion→Edit link (see `computeEditLinks`).
+  //
+  // Then the second half, the one that makes a re-render land by itself: the
+  // refreshed item's real length/rate are pushed into every Edit clip already
+  // reading that file (`refresh_media`). Nothing else is needed for the
+  // picture — the file at that path has genuinely changed, both Edit engines
+  // read the file, and every cache over it is `(mtime, len)`-keyed — but a
+  // scene whose DURATION changed leaves those clips with a `source_len` from
+  // the previous render, which is what bounds a trim. `applyOp` short-circuits
+  // a no-op, so the common same-length re-render writes nothing and pushes no
+  // undo entry.
+  const onMotionRendered = useCallback(async (r: SceneRenderResult) => {
+    const res = await useMediaPoolStore.getState().refreshPaths([r.outputPath], r.sceneId);
+    if (!res.ok) {
+      toast.error(`Rendered, but couldn't add to Sources: ${res.error}`);
+      return;
+    }
+    const item = res.items?.find((it) => it.sourcePath === r.outputPath);
+    // An item that failed to probe carries no `video` at all, and its length is
+    // therefore UNKNOWN — not zero. Refreshing clips against a zero-length
+    // source would clamp every one of them to a single frame, which is far
+    // worse than leaving them pointing at a file whose new length we could not
+    // read: the picture still updates either way (both Edit engines read the
+    // file), only the trim ceiling stays as it was. Same "an absent value is
+    // not the value" discipline `MediaItem::has_audio` and `Clip::source_fps`
+    // already keep.
+    const video = item?.video;
+    if (!item || !video) {
+      toast.success('Rendered — added to Sources');
+      return;
+    }
+    const store = useEditorTimelineStore.getState();
+    // `clipReadsItem` rather than a hand-written matcher here: it is the same
+    // rule `computeEditLinks` counts the badge with and `refresh_media`
+    // selects clips with, and three copies of it is how they would drift.
+    const linked =
+      store.timeline?.tracks.reduce(
+        (n, t) => n + t.clips.filter((c) => clipReadsItem(c, item)).length,
+        0,
+      ) ?? 0;
+    if (linked === 0) {
+      toast.success('Rendered — added to Sources');
+      return;
+    }
+    // A no-op when the re-render is the same length (the common case):
+    // `applyOp` short-circuits it and pushes no undo entry. The toast still
+    // reports the clips, because they DID get the new picture.
+    store.applyOp({
+      kind: 'refresh_media',
+      media_id: item.id,
+      source_path: item.sourcePath,
+      source_len: video.frameCount,
+      source_fps: video.fps,
+    });
+    toast.success(`Rendered — refreshed ${linked} Edit clip${linked === 1 ? '' : 's'}`);
   }, []);
+
+  // D-259 — the Motion tab's view of what its scenes feed in Edit: the input
+  // to both the per-scene "N in Edit" badge and the `motion_get_edit_links`
+  // MCP tool, so a human and an agent are told the same thing from the same
+  // value. Computed here because it spans the media pool and the Edit
+  // timeline, neither of which `@chroma/motion` may import (D-039) — the same
+  // reason `onRendered` above is a prop. `computeEditLinks` itself is pure and
+  // takes plain arrays; see its own module doc for why its parameters are
+  // structural rather than imported types.
+  const mediaItems = useMediaPoolStore((s) => s.items);
+  const editTracks = useEditorTimelineStore((s) => s.timeline?.tracks);
+  const motionEditLinks = useMemo(
+    () => computeEditLinks(mediaItems, editTracks ?? []),
+    [mediaItems, editTracks],
+  );
 
   return (
     <Shell
@@ -196,7 +265,11 @@ export function Root() {
         // `@chroma/editor`. Motion/Colorist have no export action of their
         // own yet, so their entries omit it.
         { id: 'edit', label: 'Edit', element: <EditorTab />, headerAction: <EditorExportDialog /> },
-        { id: 'motion', label: 'Motion', element: <MotionTab onRendered={onMotionRendered} /> },
+        {
+          id: 'motion',
+          label: 'Motion',
+          element: <MotionTab onRendered={onMotionRendered} editLinks={motionEditLinks} />,
+        },
         { id: 'colorist', label: 'Colorist', element: <App /> },
       ]}
     />

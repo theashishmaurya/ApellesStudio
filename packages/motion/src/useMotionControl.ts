@@ -79,20 +79,30 @@
  * should treat a 504 from `motion_render` as "inconclusive, not failed" and
  * check the output on disk (or Sources — see below) rather than re-rendering.
  *
- * **What happens to a rendered file (verified, D-257).** Every scene's output
- * is imported into the Edit tab's Sources pool automatically, by
- * `app/src/Root.tsx`'s `onMotionRendered` → `useMediaPoolStore.importPaths`
- * (D-062) — once per scene, at the pool root. It is deliberately NOT spliced
- * onto the Edit timeline (that stays one explicit action), and there is NO
- * live link: re-editing the manifest afterwards changes nothing already
- * imported or placed. `motion_render`'s own MCP docstring states this chain.
+ * **What happens to a rendered file (verified, D-257; extended by D-259).**
+ * Every scene's output is imported into the Edit tab's Sources pool
+ * automatically, by `app/src/Root.tsx`'s `onMotionRendered` (D-062) — once per
+ * scene, at the pool root. It is deliberately NOT spliced onto the Edit
+ * timeline: the app cannot know the intended track or position, so placing it
+ * stays one explicit action.
+ *
+ * **D-259 replaces this file's previous "there is NO live link" paragraph.**
+ * Re-rendering a scene now refreshes the clips already placed from it: the
+ * render replaces its fixed per-scene file atomically, the app drops the live
+ * decode pipe on it, the pool item is re-probed and re-thumbnailed, and every
+ * Edit clip reading that file re-reads its new length and rate
+ * (`refresh_media`). It is not a live embed — nothing re-renders on a manifest
+ * edit, and a clip keeps showing the last render until the next one — but from
+ * the Edit timeline's point of view a re-render lands by itself, with no
+ * re-import and no manual swap. `motion_get_edit_links` reports what a render
+ * will refresh; `motion_render`'s own MCP docstring states the whole chain.
  */
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
 import type { PlayerRef } from '@remotion/player';
 
-import { createMotionOps, type MotionOpsApi } from './motionOps';
+import { createMotionOps, type MotionOpsApi, type MotionEditLinks } from './motionOps';
 import type { Selection } from './LayerList';
 import type { MotionCanvasMeasureApi } from './MotionPreview';
 import type { useMotionManifest } from './useMotionManifest';
@@ -123,6 +133,13 @@ export interface MotionControlRefs {
   measureApiRef: RefObject<MotionCanvasMeasureApi | null>;
   setSelections: (next: Selection[]) => void;
   selections: Selection[];
+  /** D-259 — the Edit-tab footprint of each scene, supplied by the app layer
+   *  (`app/src/Root.tsx`) because computing it needs the media pool and the
+   *  Edit timeline, neither of which a tab package may import. Like
+   *  `selections`, a plain value that changes every render, so it gets the
+   *  same ref re-sync. `undefined` when nothing supplies it — see
+   *  `MotionOpsContext.editLinks`. */
+  editLinks?: MotionEditLinks;
 }
 
 const MOTION_OP_PREFIX = 'motion_';
@@ -161,6 +178,10 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
   mRef.current = m;
   const selRef = useRef<Selection[]>(refs.selections);
   selRef.current = refs.selections;
+  // D-259 — same re-sync as `selections` above, for the same reason: a plain
+  // value that changes every render, read at CALL time by the ops.
+  const linksRef = useRef<MotionEditLinks | undefined>(refs.editLinks);
+  linksRef.current = refs.editLinks;
   // No wrapper needed for these three — see `MotionControlRefs`'s own doc
   // comment for why a `useRef` object's identity and a `useState` setter's
   // identity are already stable across renders.
@@ -180,6 +201,7 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       selections: () => selRef.current,
       setSelections,
       player: () => playerRef.current,
+      editLinks: () => linksRef.current ?? {},
     });
 
     const unlistenP = listen('chroma://request', async (ev: { payload?: unknown }) => {

@@ -24351,3 +24351,271 @@ dispatcher that forwards `{op, args}` blind and has never needed a code change
 for a new tab's ops. The pre-existing 20 s `BRIDGE_TIMEOUT` still applies to a
 slow render and is documented on the tool as "inconclusive, not failed" rather
 than papered over.
+
+## D-259 — Motion→Edit is "auto re-render, auto-replace": the render replaces its own file atomically and the placed clip follows, with no live embedded renderer
+
+**Date:** 2026-09-09. **Full worked detail:** `docs/notes/motion-edit-relink.md`.
+
+### Context — what the gap actually was, established by reading the code
+
+D-257 established, and this pass re-confirmed, that Motion→Edit went:
+`chroma_motion_render` writes a real MP4 → `Root.tsx`'s `onMotionRendered`
+imports it into Sources (D-062) → **placing it on the timeline is manual**, and
+after that there is **no link at all**: editing the manifest changes nothing
+already placed. Both `motion_render`'s docstring and `useMotionControl.ts`'s
+module comment said so in as many words.
+
+The owner chose the lighter of two ways to close that, explicitly: **not** a live
+embed. That would mean running a headless-Chromium Remotion renderer inside
+Edit's interactive preview AND its export, which D-243 already investigated and
+rejected on real grounds — no `@remotion/renderer` dependency exists in this
+repo, both Edit engines are non-browser (a CPU compositor and an ffmpeg
+filtergraph), and it would put this repo's own stated top priority (preview
+responsiveness) directly at risk. That choice is not reopened here.
+
+**Four things had to be established before any of this could be designed. Three
+of the four answers changed the shape of the fix.**
+
+1. **How does a `Clip` reference its media, and is there any provenance
+   concept?** A clip carries `source_path` (ground truth) plus a nullable
+   `media_id` back-link to the pool item, and `Track.clips` is addressed
+   positionally. There is **no provenance concept anywhere** — nothing records
+   that a file came from anything. So it is net-new, and the question became
+   *where*. Not on `Clip`: one rendered file can be placed as many clips, so
+   per-clip provenance is N copies of one fact, each able to drift. It went on
+   **`MediaItem`** — the pool item *is* the file — as
+   `motion_scene_id: Option<String>`, `skip_serializing_if = "Option::is_none"`,
+   the same "reference, don't require" shape `media_id`/`folder`/`has_audio`
+   already use. A non-Motion item's JSON is byte-identical to before, and there
+   is no migration to run.
+
+2. **Does `onMotionRendered` carry enough to build a link from?** No — it took a
+   bare `outputPath: string`. It now takes the whole `SceneRenderResult`,
+   `sceneId` included. Deriving the scene back from the path was rejected
+   outright: it would put a second copy of `motion.rs`'s `default_output_path`
+   in TypeScript, against that function's own doc comment naming itself the ONE
+   place project-relative render paths are computed — and it would be simply
+   wrong for any render that named its own output path.
+
+3. **How does Edit pick up a changed file on disk — and can D-256's mtime
+   mechanism be reused?** This is where the premise was wrong in the most useful
+   way. **Almost everything already worked.** Every derived cache over a source
+   in this workspace is keyed on `media_cache::source_key` =
+   `blake3(path ‖ mtime ‖ len)` (D-128): the probe (B-056 fixed the one memory
+   layer that wasn't), filmstrip chunks, waveform peaks. There is no frontend
+   frame cache — `PreviewPane` invokes `chroma_timeline_frame` fresh per frame.
+   And because a scene renders to a **fixed per-scene path** (D-180), a
+   re-render is already a same-path replace. So the brief's own suggestion —
+   prefer re-rendering to the same path over inventing a "swap the clip's source
+   path" mechanism — was already the status quo, and D-256's `lut_for_clip`
+   memo did not need mirroring, because the equivalent already exists one layer
+   down and is what makes this work at all.
+
+   **Three things did not work, and they are what this decision builds.**
+   - **A decode pipe is not a cache.** `chroma_media::decode_pipe` holds a live
+     `ffmpeg` process per pipe slot with the file already open, and respawns on
+     a change of path, scale, or seek distance — **never on a change of
+     content**. Replace the file and it keeps serving the old picture,
+     correctly and indefinitely. This is the single reason the feature did not
+     "just work", and the negative-control test below is the proof.
+   - **The pool item goes stale** — its probed `video` and its cached thumbnail
+     both still describe the first render, and `Root.tsx`'s comment claimed the
+     opposite. Filed as **B-127**.
+   - **`Clip::source_len`/`source_fps` are frozen at drop time**, so a scene
+     whose duration changed leaves clips bounded against a length the file no
+     longer has.
+
+   The same audit turned up **B-126** — B-056's exact defect, still unfixed, in
+   `filmstrip.rs`'s `KEYFRAME_MEM`.
+
+4. **What should trigger the re-render?** Investigated both. The GUI already has
+   a real Render action (`MotionTab.tsx`'s toolbar → `render()`, which loops
+   every scene), and `motion_render` is its MCP twin. **Chosen: that existing
+   render action, explicitly, now also refreshing linked clips.** Not auto-firing
+   on manifest save, for reasons specific rather than generically cautious: a
+   save is debounced and fires constantly during authoring, and a render is
+   `npx remotion render` — seconds to minutes of CPU/GPU. Auto-rendering on save
+   would start a heavy background job mid-edit, repeatedly, and D-046's "one
+   render at a time" means the second would queue behind the first. It is also
+   the reading that keeps CLAUDE.md's "no surprise background work" honest. The
+   cost of choosing explicit is exactly one thing: a clip can be out of date
+   until you render again — which is now visible (the badge names what a render
+   will refresh) rather than silent.
+
+### Options
+
+1. **A live embedded Remotion renderer in Edit's preview and export.** Ruled out
+   by the owner and by D-243 before that. Not built, not partially built.
+2. **Re-render to a NEW path each time, then swap the clip's source**
+   (`swap_media`, D-195, already exists). Rejected: it invents a second link
+   mechanism beside the one the fixed per-scene path already gives for free, it
+   leaves a growing pile of orphaned renders on disk, and it makes the pool item
+   — and therefore the provenance stamp, and every clip's `media_id` — change
+   identity on every render, so everything holding a reference has to be
+   rewritten each time.
+3. **Re-render to the SAME path, and make the rest of the app notice.** ←
+   chosen. Everything already agrees on the file; the work is confined to the
+   three places that genuinely do not.
+4. **Same, plus auto-render on manifest save.** Rejected — see finding 4.
+
+### Decision
+
+**Re-render replaces the file; the app is told; the clip follows.** Concretely:
+
+- **`chroma_motion_render` renders to `<name>.rendering.mp4` beside the
+  destination and finishes with `std::fs::rename` onto it.** `rename(2)` within
+  one directory is atomic, so a reader either holds the complete old file (its
+  handle keeps the unlinked inode intact to EOF) or opens the complete new one.
+  **This is the whole answer to "is overwriting a file mid-project safe?"** — it
+  covers both hazards: the preview's live decoder, and an export whose argv was
+  frozen at enqueue time (D-198) and may be reading that file right now. A fixed
+  staging name, not a timestamped or random one, because CLAUDE.md's render-path
+  invariant forbids wall-clock inputs and this names a real file; concurrent
+  renders are already excluded by D-046.
+- **`decode_pipe::drop_pipes_for_path(out)`** after the rename — by path, not
+  `reset()`, so the other visible layers and the Colorist's own pipe are not
+  respawned for a file that did not change (B-040's measured failure mode).
+  `PipeSlot::Current` *is* dropped when it is on this path, unlike in
+  `retain_pipe_slots`: there the caller has no business judging the Colorist's
+  session, here the file it is reading has genuinely been replaced.
+- **`chroma_media_refresh(paths, motionSceneId)`** — a new command that
+  reconciles the pool with disk: adds what is missing, re-probes what is there,
+  regenerates a thumbnail only when it is older than its source, and stamps the
+  provenance. The complement of `chroma_media_import`, which by design skips a
+  path already pooled. Fixes B-127 generally, for any replaced source, not just
+  Motion's.
+- **`refresh_media`, a new Edit op** — every clip reading that file re-reads the
+  new length and rate, re-clamped by D-195's own policy. **It is a no-op when
+  nothing changed**, which is the common case (a same-length re-render), so
+  `applyOp` short-circuits and no undo entry is pushed. The picture still
+  updates: the file changed, and both engines read the file. It also **refuses a
+  non-positive length outright**: that means "the new file could not be probed",
+  never "zero frames", and acting on it would clamp every affected clip to a
+  single frame — strictly worse than leaving a stale trim ceiling, since the
+  picture updates from the file regardless. Both the caller and the reducer
+  decline it, so no future caller can make that mistake silently.
+
+### Notable details
+
+- **The re-clamp is shared code, not a repeated rule.** `swap_media` (D-195) and
+  `refresh_media` both call `reclampToSource`, extracted from the former. They
+  are genuinely different ops — one changes `media_id`/`source_path`, the other
+  must not; one addresses a clip by index, the other every clip reading a file —
+  and only the clamp is common.
+- **One matcher, three call sites.** "Does this clip read that pool item?"
+  (`media_id` when present, else `source_path` — `editor_add_clip`'s own two-key
+  resolution, run backwards) is `clipReadsItem`, used by the badge count, the
+  refresh op's selection, and the toast. Three hand-written copies is how the
+  badge and the refresh would come to disagree about what is affected.
+- **`computeEditLinks` is built from the MEDIA POOL, not the manifest.** The
+  stamp on a pool item *is* the record that a scene was rendered, so the link
+  map needs no scene list and cannot go stale against an unsaved manifest edit.
+- **Its parameters are structural types, not imported ones.** Answering "which
+  Edit clips does this scene feed" spans `@chroma/bridge` and `@chroma/editor`,
+  which D-039 forbids a tab package importing — the same constraint that makes
+  `onRendered` a prop (D-062). Declaring the minimum shape it reads keeps the
+  dependency at zero and is exactly as type-checked at the call site; a second
+  copy of the types would have been the copy-paste this repo forbids.
+- **`onRendered` is now awaited**, where it was fire-and-forget. The app layer's
+  reconcile re-probes and writes the manifest; letting scene N+1's render start
+  on top of that would race two manifest writes. A failure there is caught and
+  must not fail a render that already succeeded.
+- **The `From<RenderOutcome> for MotionRenderResult` impl was deleted, not
+  updated.** `RenderOutcome::output_path` is now the staging path and
+  `MotionRenderResult::output_path` is the destination; a blanket conversion
+  between them could only ever report the wrong one.
+
+### Both interfaces (CLAUDE.md's standing rule)
+
+The capability is "re-render and the placed clip follows", and the mechanism must
+be visible rather than a silent side effect:
+
+- **Human**: a scene row in the Motion layer list carries an **"N in Edit"**
+  badge when its render is placed on the Edit timeline, whose tooltip says
+  re-rendering refreshes exactly those clips; the render toast then reports
+  "Rendered — refreshed N Edit clips". Shown only for a scene actually *placed*
+  — a badge reading "0" on every unrendered scene would be noise.
+- **AI**: **`motion_get_edit_links`** (the 33rd Motion tool) returns, per scene,
+  `rendered`, `mediaId`/`sourcePath`, `clipCount` and each clip's
+  `track`/`clip`/`clipId`/`name` — the addressing the `editor_*` tools take, so
+  the answer is actionable and not merely readable. `motion_render`'s docstring
+  is rewritten: its "there is no live link" paragraph is replaced by the real
+  behaviour, including the part that is still true — nothing re-renders on its
+  own.
+
+Both read the **same value**: the app layer computes it once and hands it to the
+tab, which feeds it to the badge and to the op. They cannot disagree.
+
+### Determinism (CLAUDE.md's render-path invariant)
+
+Nothing here reads a clock or a random number. The staging filename is a pure
+function of the output path (asserted). The provenance stamp is an id the caller
+supplied. `refresh_media` is a pure reducer whose output depends only on the
+probed length and rate. The one wall-clock-adjacent input,
+`thumb_is_stale`'s mtime comparison, is a **staleness check and never an input to
+any result** — exactly the discipline D-256 states for its own `(mtime, len)`
+cache key. The render itself is Remotion's and unchanged by this pass; this pass
+did **not** re-verify Remotion's internal determinism, which is stated here as a
+limit rather than assumed away.
+
+### Verification
+
+- **The headline claim, end to end, through the REAL preview compositor**
+  (`a_motion_re_render_changes_an_already_placed_edit_clip`): a red render is
+  placed as a clip, `timeline_frame(0)` shows red, the scene is "re-rendered"
+  blue through the exact staging→`rename`→drop-pipes sequence the command runs,
+  and `timeline_frame(1)` shows **blue** — no re-import, no swap.
+- **The negative control**, in D-256's style
+  (`without_the_pipe_invalidation_the_clip_keeps_showing_the_old_render`): the
+  identical sequence with `drop_pipes_for_path` removed leaves the clip showing
+  **red**. That is what makes the headline test a measurement of this decision's
+  wiring rather than of an incidental respawn — and it doubles as the
+  demonstration that the atomic replace works, since the live process reads the
+  unlinked old inode through to a complete, untorn frame.
+  **Frame 1 is read after frame 0 deliberately**: a backward seek respawns the
+  pipe by itself, and the test would then pass with none of this built.
+- **The pool half** (`the_pool_item_is_re_probed_and_keeps_its_scene_stamp`): a
+  2 s render re-rendered at 4 s takes the item from 48 to 96 frames, in place —
+  same item id, stamp intact, `media.len() == 1` (never duplicated) — and
+  reconciling an unchanged file reports no change at all, so it never dirties
+  the manifest.
+- **`drop_pipes_for_path_drops_only_that_file`**: three live `ffmpeg` pipes, two
+  on the replaced file (including `PipeSlot::Current`) and one on another; the
+  call drops exactly 2 and the third keeps running. Idempotent on a second call.
+- **B-126** pinned by a media-free test: a memory hit is served under the same
+  `source_key`, refused under a different one, and served unvalidated when the
+  file cannot be `stat`ed at all.
+- **Suites:** `chroma-media` 162/162 (2 new), `chroma-project` 56/56,
+  `RapidRAW` lib 259 passing + the **same 1 pre-existing failure D-256 recorded
+  tonight** (`track_resolution_opaque_top_wins_across_two_video_tracks`, which
+  that decision confirmed failing on the clean baseline), `@chroma/motion`
+  532/532 (13 new), `@chroma/editor` 1558/1558 (15 new), `@chroma/bridge` 10/10
+  (5 new). `cargo fmt`/`clippy` clean on the new code; `tsc --noEmit` clean on
+  `packages/{motion,editor,bridge}` and unchanged at 64 pre-existing errors in
+  `app` (`Root.tsx` itself clean); `python3 -m py_compile mcp/server.py` clean.
+
+### Deliberately deferred, with reasons
+
+- **Auto-render on manifest save.** Investigated and rejected on the merits, not
+  skipped — see finding 4. Nothing here forecloses it; it would be a flag on the
+  same link record.
+- **Placement.** A rendered scene still does not put itself on the timeline.
+  D-062's reasoning stands unchanged: the app cannot know the intended track or
+  position. `motion_get_edit_links` now makes "rendered but never placed"
+  directly visible (`rendered: true, clipCount: 0`), which is what an agent
+  needs in order to decide to place it.
+- **A per-scene "re-render this scene" action.** The Render action is
+  whole-manifest (D-180 loops every scene). A per-scene render is a real product
+  improvement and a separate one — the MCP side has the same granularity gap, so
+  both halves land together, per the human-AND-AI rule.
+- **Notifying an in-flight export.** A queued export keeps the file it was frozen
+  with (D-198), which the atomic rename makes *safe* — it reads a complete old
+  render rather than a torn one. Whether it should instead be re-queued against
+  the new render is a policy question about the export queue, not about this
+  link, and is left where D-198 put it.
+- **The website's MCP tool counts** (`website/src/data/mcp.ts`) are stale — they
+  claim 115 tools and "the Motion tab has no MCP tools yet". That drift is
+  D-257's, not this pass's: it was already 148 vs. 115 at this branch's base
+  commit, before any change here. Flagged rather than fixed, because rewriting
+  `MOTION_GAP`'s prose belongs to whoever reconciles D-257's own docs, and
+  editing it here would collide with them.

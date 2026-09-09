@@ -2246,6 +2246,7 @@ pub fn run() {
             chroma::project::chroma_project_set_settings,
             chroma::project::chroma_project_get_settings,
             chroma::project::chroma_media_import,
+            chroma::project::chroma_media_refresh,
             chroma::project::chroma_media_list,
             chroma::project::chroma_media_move,
             chroma::project::chroma_media_remove,

@@ -343,8 +343,29 @@ impl Drop for ChunkLockGuard {
 static EXTRACT_SEMAPHORE: Lazy<tokio::sync::Semaphore> =
     Lazy::new(|| tokio::sync::Semaphore::new(3));
 
-/// Measured keyframe interval per source path, in-process.
-static KEYFRAME_MEM: Lazy<Mutex<HashMap<PathBuf, f64>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+/// Measured keyframe interval per source path, in-process — paired with the
+/// source's identity ([`media_cache::source_key`]) at the moment it was
+/// measured, and revalidated on every hit.
+///
+/// **B-126 (D-259): that pairing is the fix, not decoration.** This map used to
+/// be `HashMap<PathBuf, f64>` — keyed on the path alone, insert-only — sitting
+/// directly in front of a disk layer keyed on `blake3(path ‖ mtime ‖ len)`
+/// precisely so a replaced file could never serve a stale answer. Two different
+/// keys for one question with the weaker one in front: byte-for-byte the defect
+/// [`crate::probe`]'s own module doc records as B-056, in the one cache in this
+/// module that D-146's sweep did not reach. Replace a source in place (a
+/// re-export over the same name, D-259's Motion re-render) and every filmstrip
+/// request kept using the OLD file's keyframe interval for the rest of the
+/// session — which decides `keyframe_only` extraction, i.e. whether tiles are
+/// taken from real frames or from the nearest keyframe. Costs one `HashMap`
+/// probe more than before; the `source_key` itself is already computed by the
+/// caller, so there is no extra `stat`.
+/// The source's identity when the interval was measured (`None` = it could not
+/// be `stat`ed), and the interval in seconds.
+type KeyframeMemo = (Option<String>, f64);
+
+static KEYFRAME_MEM: Lazy<Mutex<HashMap<PathBuf, KeyframeMemo>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 const NS_CHUNK: &str = "filmstrip";
 const NS_KEYFRAME: &str = "keyframe-interval";
@@ -354,12 +375,18 @@ const NS_KEYFRAME: &str = "keyframe-interval";
 /// the conservative value D-124 hardcoded for everyone — if the probe fails,
 /// so a probe failure costs speed, never correctness.
 fn keyframe_interval(path: &Path, source_key: Option<&str>) -> f64 {
-    if let Some(hit) = KEYFRAME_MEM
+    // B-126 — a memory hit counts only while the file still has the identity it
+    // had when the measurement was taken. `source_key: None` means the file
+    // cannot be `stat`ed at all (offline media, a state this module treats as
+    // supported): serve the remembered value unvalidated rather than re-probing
+    // a file that cannot be read, exactly `probe::probe_cached`'s own call.
+    if let Some((cached_key, secs)) = KEYFRAME_MEM
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(path)
+        && (source_key.is_none() || source_key == cached_key.as_deref())
     {
-        return *hit;
+        return *secs;
     }
     if let Some(key) = source_key
         && let Some(secs) = media_cache::read_json::<f64>(NS_KEYFRAME, key)
@@ -369,7 +396,7 @@ fn keyframe_interval(path: &Path, source_key: Option<&str>) -> f64 {
         KEYFRAME_MEM
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(path.to_path_buf(), secs);
+            .insert(path.to_path_buf(), (source_key.map(str::to_string), secs));
         return secs;
     }
     let secs = video::probe_keyframe_interval(path).unwrap_or_else(|e| {
@@ -386,7 +413,7 @@ fn keyframe_interval(path: &Path, source_key: Option<&str>) -> f64 {
     KEYFRAME_MEM
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(path.to_path_buf(), secs);
+        .insert(path.to_path_buf(), (source_key.map(str::to_string), secs));
     secs
 }
 
@@ -747,6 +774,51 @@ pub async fn clip_thumbnails(
 mod tests {
     use super::*;
 
+    /// B-126 (D-259) — the keyframe-interval memory cache honours the same
+    /// `(mtime, len)` staleness contract as the disk layer beneath it.
+    ///
+    /// Poked directly rather than driven through a real file: the property
+    /// under test is purely which key a hit is accepted under, and going
+    /// through `probe_keyframe_interval` would need two genuinely different
+    /// real encodings just to observe it. Needs no media, so it runs
+    /// everywhere, unlike this module's env-gated siblings.
+    #[test]
+    fn keyframe_interval_rejects_a_memory_hit_from_a_replaced_file() {
+        let path = std::path::Path::new("/nonexistent/b126-fixture.mp4");
+        KEYFRAME_MEM
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(path.to_path_buf(), (Some("key-before".to_string()), 9.0));
+
+        // Same identity: a hit.
+        assert_eq!(keyframe_interval(path, Some("key-before")), 9.0);
+
+        // The file was replaced in place — the remembered answer describes the
+        // old bytes and must NOT be served. (The path does not exist, so the
+        // fall-through probe fails and returns the documented conservative
+        // default; what matters is that it is not the stale 9.0.)
+        let after = keyframe_interval(path, Some("key-after"));
+        assert_ne!(
+            after, 9.0,
+            "a replaced file must not serve the old interval"
+        );
+        assert_eq!(after, video::DEFAULT_KEYFRAME_INTERVAL_SECS);
+
+        // Offline (unstattable, so no key at all): serve what we have rather
+        // than re-probing a file that cannot be read — `probe_cached`'s own
+        // call, for the same reason.
+        KEYFRAME_MEM
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(path.to_path_buf(), (Some("key-before".to_string()), 9.0));
+        assert_eq!(keyframe_interval(path, None), 9.0);
+
+        KEYFRAME_MEM
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(path);
+    }
+
     /// Drop the process-local caches, leaving only what is on disk — the
     /// state a real app restart produces. The point of the whole decision, so
     /// there has to be a way to actually measure it.
@@ -874,12 +946,7 @@ mod tests {
         let call = |step: f64| {
             let t = std::time::Instant::now();
             let out = rt
-                .block_on(clip_thumbnails(
-                    p.clone(),
-                    window_start,
-                    window_secs,
-                    step,
-                ))
+                .block_on(clip_thumbnails(p.clone(), window_start, window_secs, step))
                 .expect("clip_thumbnails");
             (out, t.elapsed().as_secs_f64())
         };

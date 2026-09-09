@@ -717,6 +717,47 @@ pub async fn chroma_media_import(
     Ok(added.iter().map(MediaItemDto::from).collect())
 }
 
+/// D-259 — **reconcile** the pool with what is on disk for `paths`: add any
+/// that are not pooled yet, re-read (probe + thumbnail) any that already are,
+/// optionally stamp every one of them with the Motion scene that produced it
+/// (`motion_scene_id`), persist if anything changed, and return every item
+/// touched.
+///
+/// The complement of [`chroma_media_import`], not a replacement for it. Import
+/// answers "put these files in the pool" and deliberately *skips* a path
+/// already there. This answers "these files on disk have changed — make the
+/// pool agree", which is what a Motion re-render to a fixed per-scene path
+/// needs and what import structurally cannot do (B-127). Everything expensive
+/// is conditional: an unchanged file re-probes from
+/// `chroma_media::probe`'s `(mtime, len)` memo and regenerates no thumbnail, so
+/// calling this on a path that did not move costs a couple of `stat`s and
+/// writes nothing to disk.
+///
+/// `async` + `spawn_blocking` for exactly [`chroma_media_import`]'s reason —
+/// see its doc; the worst case here is the same `ffprobe` + `ffmpeg` pair.
+#[tauri::command]
+pub async fn chroma_media_refresh(
+    paths: Vec<String>,
+    motion_scene_id: Option<String>,
+) -> Result<Vec<MediaItemDto>, String> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dir = require_open_project()?;
+    let touched = tokio::task::spawn_blocking(move || -> Result<Vec<MediaItem>, String> {
+        let mut manifest = load_manifest(&dir)?;
+        let (touched, changed) = refresh_media(&mut manifest, &paths, motion_scene_id.as_deref());
+        if changed {
+            manifest.modified = now_rfc3339();
+            save_manifest(&dir, &manifest)?;
+        }
+        Ok(touched)
+    })
+    .await
+    .map_err(|e| format!("media refresh task panicked: {e}"))??;
+    Ok(touched.iter().map(MediaItemDto::from).collect())
+}
+
 /// Re-file an existing pool item into a different bin path (D-045) — pass
 /// `folder: None` (or an empty/blank string) to move it back to the pool
 /// root. Naming a not-yet-used path here creates/registers it implicitly,
@@ -1470,15 +1511,24 @@ mod tests {
         // against whatever timeline is active, not a bare in-memory one.
         let group = super::super::edit::chroma_timeline_link_clips(0, 0, 1, 0).unwrap();
         let after_link = super::super::edit::chroma_timeline_get().unwrap();
-        assert_eq!(after_link.tracks[0].clips[0].link_group.as_deref(), Some(group.as_str()));
-        assert_eq!(after_link.tracks[1].clips[0].link_group.as_deref(), Some(group.as_str()));
+        assert_eq!(
+            after_link.tracks[0].clips[0].link_group.as_deref(),
+            Some(group.as_str())
+        );
+        assert_eq!(
+            after_link.tracks[1].clips[0].link_group.as_deref(),
+            Some(group.as_str())
+        );
 
         // a rejected link (already linked) leaves the persisted file
         // untouched — not merged, not partially applied.
         let err = super::super::edit::chroma_timeline_link_clips(0, 0, 1, 0).unwrap_err();
         assert!(err.contains("already linked"), "unexpected error: {err}");
         let unchanged = super::super::edit::chroma_timeline_get().unwrap();
-        assert_eq!(unchanged.tracks[0].clips[0].link_group.as_deref(), Some(group.as_str()));
+        assert_eq!(
+            unchanged.tracks[0].clips[0].link_group.as_deref(),
+            Some(group.as_str())
+        );
 
         // an out-of-range link errors and leaves the file untouched
         assert!(super::super::edit::chroma_timeline_link_clips(9, 0, 1, 0).is_err());
@@ -1490,10 +1540,16 @@ mod tests {
         let after_unlink = super::super::edit::chroma_timeline_get().unwrap();
         assert_eq!(after_unlink.tracks[0].clips[0].link_group, None);
         assert_eq!(after_unlink.tracks[1].clips[0].link_group, None);
-        assert_eq!(after_unlink.tracks[0].clips[0].id, video_id, "identity preserved");
+        assert_eq!(
+            after_unlink.tracks[0].clips[0].id, video_id,
+            "identity preserved"
+        );
 
         // unlink on an already-unlinked clip is a real no-op, not an error
-        assert_eq!(super::super::edit::chroma_timeline_unlink_clip(0, 0), Ok(()));
+        assert_eq!(
+            super::super::edit::chroma_timeline_unlink_clip(0, 0),
+            Ok(())
+        );
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);

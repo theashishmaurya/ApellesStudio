@@ -99,7 +99,7 @@ export interface RenderOutcome {
   result?: SceneRenderResult[];
 }
 
-export function useMotionManifest(onRendered?: (outputPath: string) => void) {
+export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | Promise<void>) {
   const projectOpen = useMotionProjectStore((s) => s.openProjectPath !== null);
   const status = useMotionProjectStore((s) => s.status);
   const loadError = useMotionProjectStore((s) => s.error);
@@ -299,7 +299,23 @@ export function useMotionManifest(onRendered?: (outputPath: string) => void) {
         // not reach into `@chroma/bridge`'s media pool store directly),
         // which imports it into Sources — called once per scene now, so
         // every scene's own file lands there individually.
-        onRendered?.(result.outputPath);
+        //
+        // D-259 — it is handed the whole `SceneRenderResult`, not just the
+        // path. The app layer needs the `sceneId` to stamp provenance on the
+        // pool item, and deriving it back from the path would mean a second
+        // copy of `motion.rs`'s `default_output_path` math in TypeScript —
+        // which would then be wrong for any render that named its own output
+        // path. Awaited, unlike the fire-and-forget call it replaces: the
+        // app layer's reconcile re-probes the file and refreshes linked Edit
+        // clips, and letting scene N+1's render start on top of that would
+        // race two manifest writes against each other. A failure there is
+        // reported by the app layer's own toast and must not fail the render
+        // that already succeeded.
+        try {
+          await onRendered?.({ ...result, sceneId: scene.id });
+        } catch {
+          /* reconciling Sources is the app layer's to report — see above */
+        }
       }
       setRenderResult(results);
       return { ok: true, result: results };
