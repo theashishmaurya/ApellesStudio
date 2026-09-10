@@ -302,6 +302,16 @@ next one, not for the repo), and cite it in the resulting `D-NNN`.
 - Every new crate/dependency: a `D-NNN` (what it's for, what else was considered, its
   license, its maintenance status).
 - Prefer boring, well-maintained deps. This is a long project.
+- **Before hand-rolling something a well-maintained package already does — a diff/patch
+  algorithm, a color-space conversion, a bezier/easing curve, a video-container parser,
+  a drag-and-drop primitive — check for an existing crate/package first** (owner,
+  2026-09-10). Hand-building it burns real time and tokens re-deriving something solved
+  correctly years ago, and it's ours to maintain and debug forever after. This is the
+  same judgment as "prefer boring, well-maintained deps" above, just called out on its
+  own for the specific failure mode of building instead of reaching for the library —
+  still needs its own `D-NNN` per the crate/dependency rule above, still needs to clear
+  the license/maintenance bar, and still loses to a genuinely small, stable need (a
+  20-line pure function has no business pulling in a dependency).
 
 ## Commits
 
