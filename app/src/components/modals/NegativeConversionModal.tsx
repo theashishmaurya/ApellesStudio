@@ -3,7 +3,17 @@ import { useTranslation, Trans } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { safeUnlisten } from '../../utils/tauriListeners';
-import { RotateCcw, ZoomIn, ZoomOut, Maximize, Save, Loader2, Eye, EyeOff, Info } from 'lucide-react';
+import {
+  ArrowCounterClockwiseIcon,
+  MagnifyingGlassPlusIcon,
+  MagnifyingGlassMinusIcon,
+  CornersOutIcon,
+  FloppyDiskIcon,
+  CircleNotchIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  InfoIcon,
+} from '@phosphor-icons/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Button from '../ui/Button';
 import Slider from '../ui/Slider';
@@ -211,7 +221,7 @@ export default function NegativeConversionModal({
           data-tooltip={t('modals.negativeConversion.resetTooltip')}
           className="p-2 rounded-full hover:bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <RotateCcw size={18} />
+          <ArrowCounterClockwiseIcon size={18} />
         </button>
       </div>
 
@@ -291,7 +301,7 @@ export default function NegativeConversionModal({
             variant={TextVariants.small}
             className="p-3 bg-surface rounded-md border border-surface flex items-center gap-3"
           >
-            <Info size={16} className="shrink-0" />
+            <InfoIcon size={16} className="shrink-0" />
             <div className="text-xs text-text-tertiary leading-tight space-y-1">
               <Trans i18nKey="modals.negativeConversion.noticeText">
                 Inversion logic inspired by{' '}
@@ -337,7 +347,7 @@ export default function NegativeConversionModal({
 
           {isLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/20 z-30">
-              <Loader2 className="w-12 h-12 text-accent animate-spin" />
+              <CircleNotchIcon className="w-12 h-12 text-accent animate-spin" />
             </div>
           )}
 
@@ -376,7 +386,7 @@ export default function NegativeConversionModal({
               className="p-2 text-white/60 hover:bg-white/10 hover:text-white rounded-full transition-colors"
               data-tooltip={t('modals.negativeConversion.zoomOutTooltip')}
             >
-              <ZoomOut size={18} />
+              <MagnifyingGlassMinusIcon size={18} />
             </button>
             <span className="text-xs font-mono text-white/90 w-12 text-center select-none pointer-events-none">
               {Math.round(zoom * 100)}%
@@ -386,7 +396,7 @@ export default function NegativeConversionModal({
               className="p-2 text-white/60 hover:bg-white/10 hover:text-white rounded-full transition-colors"
               data-tooltip={t('modals.negativeConversion.zoomInTooltip')}
             >
-              <ZoomIn size={18} />
+              <MagnifyingGlassPlusIcon size={18} />
             </button>
             <button
               onClick={() => {
@@ -396,7 +406,7 @@ export default function NegativeConversionModal({
               className="p-2 text-white/60 hover:bg-white/10 hover:text-white rounded-full transition-colors"
               data-tooltip={t('modals.negativeConversion.resetViewTooltip')}
             >
-              <Maximize size={16} />
+              <CornersOutIcon size={16} />
             </button>
             <div className="w-px h-5 bg-white/20 mx-1"></div>
             <button
@@ -409,7 +419,7 @@ export default function NegativeConversionModal({
               )}
               data-tooltip={t('modals.negativeConversion.compareTooltip')}
             >
-              {isCompareActive ? <Eye size={18} /> : <EyeOff size={18} />}
+              {isCompareActive ? <EyeIcon size={18} /> : <EyeSlashIcon size={18} />}
             </button>
           </div>
         </div>
@@ -451,7 +461,7 @@ export default function NegativeConversionModal({
               <Button onClick={handleSave} disabled={isSaving || isLoading || !previewUrl}>
                 {isSaving ? (
                   <>
-                    <Loader2 className="animate-spin mr-2" size={16} />
+                    <CircleNotchIcon className="animate-spin mr-2" size={16} />
                     {progress && progress.total > 1
                       ? t('modals.negativeConversion.convertingProgress', {
                           current: progress.current,
@@ -461,7 +471,7 @@ export default function NegativeConversionModal({
                   </>
                 ) : (
                   <>
-                    <Save className="mr-2" size={16} />
+                    <FloppyDiskIcon className="mr-2" size={16} />
                     {targetPaths.length > 1
                       ? t('modals.negativeConversion.convertAndSaveAll', { count: targetPaths.length })
                       : t('modals.negativeConversion.convertAndSave')}

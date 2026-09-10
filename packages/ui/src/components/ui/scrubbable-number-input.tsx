@@ -61,7 +61,7 @@
  */
 import * as React from 'react';
 import * as ReactDOM from 'react-dom';
-import { MoveHorizontal } from 'lucide-react';
+import { ArrowsHorizontalIcon } from '@phosphor-icons/react';
 
 import { cn } from '../../lib/utils';
 import { useNumberField } from '../../hooks/use-number-scrub';
@@ -97,7 +97,7 @@ function ScrubCursorGhost({ active }: { active: boolean }) {
       className="pointer-events-none fixed left-0 top-0 z-50 flex size-6 items-center justify-center rounded-full border border-border-color bg-surface text-text-primary shadow-md"
       style={{ transform: 'translate(-9999px, -9999px)' }}
     >
-      <MoveHorizontal className="size-3.5" />
+      <ArrowsHorizontalIcon className="size-3.5" />
     </div>,
     document.body,
   );

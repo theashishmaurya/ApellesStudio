@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, ChevronDown } from 'lucide-react';
+import { CheckIcon, CaretDownIcon } from '@phosphor-icons/react';
 import Input from './Input';
 import Text from './Text';
 import { TEXT_COLOR_KEYS, TextColors, TextVariants, TextWeights } from '../../types/typography';
@@ -118,7 +118,7 @@ const Dropdown = <T extends React.Key>({
         <Text as="span" variant={TextVariants.label} color={TextColors.primary}>
           {selectedOption ? selectedOption.label : placeholder}
         </Text>
-        <ChevronDown
+        <CaretDownIcon
           className={`${TEXT_COLOR_KEYS[TextColors.secondary]} transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
           size={20}
         />
@@ -168,7 +168,7 @@ const Dropdown = <T extends React.Key>({
                     <Text color={TextColors.primary} weight={isSelected ? TextWeights.semibold : TextWeights.normal}>
                       {option.label}
                     </Text>
-                    {isSelected && <Check size={16} className={TEXT_COLOR_KEYS[TextColors.primary]} />}
+                    {isSelected && <CheckIcon size={16} className={TEXT_COLOR_KEYS[TextColors.primary]} />}
                   </button>
                 );
               })}

@@ -1,4 +1,4 @@
-import { Check, Loader } from 'lucide-react';
+import { CheckIcon, CircleNotchIcon } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 
 import Button from './Button';
@@ -22,7 +22,7 @@ export default function ExternalEditBar({ session, isFinishing, errorMessage, on
       </span>
       {errorMessage && <span className="text-sm text-red-400 max-w-xs truncate">{errorMessage}</span>}
       <Button onClick={onDone} disabled={isFinishing} className="py-1.5">
-        {isFinishing ? <Loader size={16} className="animate-spin" /> : <Check size={16} />}
+        {isFinishing ? <CircleNotchIcon size={16} className="animate-spin" /> : <CheckIcon size={16} />}
         {isFinishing ? t('editor.externalEdit.exporting') : t('editor.externalEdit.done')}
       </Button>
     </div>

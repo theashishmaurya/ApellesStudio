@@ -75,7 +75,7 @@
  * its number field, a `<`/`>` pair that walks the playhead to that property's
  * OWN previous/next keyframe, a diamond that toggles keyframing for that one
  * property (After Effects' stopwatch: filled = animated, hollow = static),
- * and a `RotateCcw` reset to that field's default — the same icon and
+ * and an `ArrowCounterClockwise` reset to that field's default — the same icon and
  * meaning Colorist's `ControlsPanel` already uses for its own reset actions,
  * reused rather than invented. The value shown is the property's value AT THE
  * PLAYHEAD (`EditorInspectorPanel` resolves it through `paramValueAt`), not
@@ -186,7 +186,7 @@
  * `ClipInspectorPanel.tabChrome.dom.test.tsx`'s header.
  */
 import { useState } from 'react';
-import { Diamond, Lock, RotateCcw, Unlock, X } from 'lucide-react';
+import { DiamondIcon, LockIcon, ArrowCounterClockwiseIcon, LockOpenIcon, XIcon } from '@phosphor-icons/react';
 import {
   Button,
   ScrubbableNumberInput,
@@ -744,7 +744,7 @@ export function ClipInspectorPanel({
                     onClick={() => setRatioLocked((v) => !v)}
                     title={ratioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
                   >
-                    {ratioLocked ? <Lock size={12} /> : <Unlock size={12} />}
+                    {ratioLocked ? <LockIcon size={12} /> : <LockOpenIcon size={12} />}
                   </Button>
                 </div>
                 <label className={row}>
@@ -1024,7 +1024,8 @@ export function ClipInspectorPanel({
                 onClick={onUpsertKeyframe}
                 title="Keyframe every transform and crop property at the current frame"
               >
-                <Diamond size={11} fill={keyedHere ? 'currentColor' : 'none'} />
+                {/* D-294 — solid = Phosphor's `fill` weight. */}
+                <DiamondIcon size={11} weight={keyedHere ? 'fill' : 'regular'} />
                 Key all properties
               </Button>
               {clipKeyframes.length > 0 && (
@@ -1040,7 +1041,7 @@ export function ClipInspectorPanel({
                       onClick={onRemoveKeyframeHere}
                       title="Delete every property's keyframe at this frame"
                     >
-                      <X size={12} />
+                      <XIcon size={12} />
                     </Button>
                   )}
                   <Button variant="ghost" size="xs" disabled={trackLocked} onClick={onClearKeyframes} title="Remove all keyframes">
@@ -1208,7 +1209,7 @@ export function ClipInspectorPanel({
                 title="Remove this clip's EQ entirely"
                 aria-label="Reset EQ"
               >
-                <RotateCcw size={11} />
+                <ArrowCounterClockwiseIcon size={11} />
               </Button>
             </div>
           </InspectorSection>

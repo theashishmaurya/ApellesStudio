@@ -78,7 +78,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import { Play, Pause } from 'lucide-react';
+import { PlayIcon, PauseIcon } from '@phosphor-icons/react';
 import { Player, type PlayerRef } from '@remotion/player';
 import { Video } from '@apelles/motion-engine/src/engine/Video';
 import { totalFrames, sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
@@ -322,7 +322,7 @@ export function MotionPreview({
               className="shrink-0 h-5 w-5 flex items-center justify-center"
               aria-label={playing ? 'Pause' : 'Play'}
             >
-              {playing ? <Pause size={14} /> : <Play size={14} />}
+              {playing ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
             </button>
             <span className="tabular-nums shrink-0">
               {formatSeconds(Math.max(0, frame - soloWindow.start) / shown.fps)} /{' '}

@@ -9,7 +9,7 @@ caller (see `@apelles/editor`'s `PreviewPane.tsx` for the reference pattern:
 the `chroma_timeline_frame` invoke, the scrub-refetch effect, the wall-clock
 `requestAnimationFrame` play loop with frame-dropping).
 
-Deps: `react`, `lucide-react`, `@apelles/ui` (Button/Slider from the shadcn kit,
+Deps: `react`, `@phosphor-icons/react` (D-294), `@apelles/ui` (Button/Slider from the shadcn kit,
 D-042). **No `@tauri-apps/api`, no zustand, no video/decode logic** — if this
 package ever grows a `useEffect` that calls `invoke(...)`, that's a bug; move
 it to the caller.
@@ -96,9 +96,10 @@ without the Editor's choices constraining them. Exceptions, by design:
   ±1 step buttons and play/pause are always shown; there is no "not a
   playable surface" tab in the current design.
 
-Icons (all `lucide-react`): skip-to-start/end use `SkipBack`/`SkipForward`;
-the ±1 step buttons use the distinct `StepBack`/`StepForward` so the two
-concepts never look the same control. Nav uses `ChevronLeft`/`ChevronRight`.
+Icons (all `@phosphor-icons/react`, D-294): skip-to-start/end use
+`SkipBack`/`SkipForward`; the ±1 step buttons use the distinct
+`CaretLineLeft`/`CaretLineRight` so the two concepts never look the same
+control. Nav uses `CaretLeft`/`CaretRight`.
 Snapshot `Camera`, fullscreen `Maximize`, playback rate `Gauge`, zoom `ZoomOut`/`ZoomIn` (the same
 pair `TimelinePane`'s own timeline-zoom cluster uses — one tab, one zoom
 idiom).

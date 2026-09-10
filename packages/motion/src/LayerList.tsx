@@ -115,7 +115,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { Copy, Plus, Trash2 } from 'lucide-react';
+import { CopyIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
 import type { Manifest, Layer } from '@apelles/motion-engine/src/engine/schema';
 import { layerKeyCount, cameraKeyCount, scene3dCameraKeyCount } from './keyframeVisibility';
 import {
@@ -519,7 +519,7 @@ export function LayerList({
     return (
       <>
         <RowAction label="Duplicate scene" onClick={() => doDuplicateScene(sceneIndex)}>
-          <Copy size={11} />
+          <CopyIcon size={11} />
         </RowAction>
         {/* Hidden, not disabled, for the last remaining scene: the schema
            requires at least one (`scenes.min(1)`), so there is no state in
@@ -547,7 +547,7 @@ export function LayerList({
                 : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-red-500/15',
             ].join(' ')}
           >
-            <Trash2 size={11} />
+            <TrashIcon size={11} />
             {armed && <span>Delete?</span>}
           </button>
         )}
@@ -784,10 +784,10 @@ export function LayerList({
         {onCommit && (
           <>
             <RowAction label={`Duplicate ${noun}`} onClick={() => doDuplicateLayer(sceneIndex, kind, index, id)}>
-              <Copy size={11} />
+              <CopyIcon size={11} />
             </RowAction>
             <RowAction label={`Delete ${noun}`} danger onClick={() => doDeleteLayer(sceneIndex, kind, index, id)}>
-              <Trash2 size={11} />
+              <TrashIcon size={11} />
             </RowAction>
           </>
         )}
@@ -838,7 +838,7 @@ export function LayerList({
           }}
           className="shrink-0 h-6 flex items-center justify-center gap-1 rounded-md border border-dashed border-border-color text-text-secondary hover:text-text-primary hover:border-accent hover:bg-hover-color transition-colors"
         >
-          <Plus size={12} />
+          <PlusIcon size={12} />
           Add scene
         </button>
       )}

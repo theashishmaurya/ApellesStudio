@@ -96,7 +96,7 @@ of truth.
 
 ## Deps
 
-`react` + `zustand` + `lucide-react` + `@tauri-apps/api` + `@tauri-apps/plugin-os`
+`react` + `zustand` + `@phosphor-icons/react` + `@tauri-apps/api` + `@tauri-apps/plugin-os`
 + `@apelles/ui` (D-042 — the "‹ Projects" chrome button is a `@apelles/ui`
 `<Button variant="ghost">`) + `@apelles/history` (D-051 — the shared undo/redo
 stack; a generic leaf package, not a tab package, so this doesn't violate "the

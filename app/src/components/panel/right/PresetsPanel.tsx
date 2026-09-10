@@ -14,25 +14,24 @@ import { useTranslation } from 'react-i18next';
 import { PresetImportFailure, PresetListType, usePresets, UserPreset } from '../../../hooks/usePresets';
 import { useContextMenu } from '../../../context/ContextMenuContext';
 import {
-  CopyPlus,
-  Edit,
-  FileDown,
-  FileUp,
-  Folder as FolderIcon,
-  FolderOpen,
-  FolderPlus,
-  Loader2,
-  Plus,
-  SortAsc,
-  Trash2,
-  Users,
-  Layers,
-  Crop,
-  Save,
-  Wrench,
-  Palette,
-  Settings2,
-} from 'lucide-react';
+  CopySimpleIcon,
+  PencilSimpleIcon,
+  FileArrowDownIcon,
+  FileArrowUpIcon,
+  FolderIcon,
+  FolderOpenIcon,
+  FolderPlusIcon,
+  CircleNotchIcon,
+  PlusIcon,
+  SortAscendingIcon,
+  TrashIcon,
+  StackSimpleIcon,
+  CropIcon,
+  FloppyDiskIcon,
+  WrenchIcon,
+  PaletteIcon,
+  FadersHorizontalIcon,
+} from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ConfigurePresetModal from '../../modals/ConfigurePresetModal';
 import CreateFolderModal from '../../modals/CreateFolderModal';
@@ -289,7 +288,7 @@ function PresetItemDisplay({
           {previewUrl ? (
             <PreviewImage src={previewUrl} alt={`${preset.name} preview`} />
           ) : (
-            <Loader2 size={20} className="animate-spin text-text-secondary" />
+            <CircleNotchIcon size={20} className="animate-spin text-text-secondary" />
           )}
 
           {(supportsMasks || supportsGeometry) && (
@@ -297,8 +296,8 @@ function PresetItemDisplay({
               <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-linear-to-bl from-black/30 via-black/0 to-transparent pointer-events-none z-0" />
 
               <div className="absolute top-1 right-1 bg-primary rounded-full px-1.5 py-0.5 flex items-center gap-1.5 backdrop-blur-xs shadow-xs z-10 pointer-events-none">
-                {supportsMasks && <Layers size={11} className="text-white" />}
-                {supportsGeometry && <Crop size={11} className="text-white" />}
+                {supportsMasks && <StackSimpleIcon size={11} className="text-white" />}
+                {supportsGeometry && <CropIcon size={11} className="text-white" />}
               </div>
             </>
           )}
@@ -310,9 +309,9 @@ function PresetItemDisplay({
           </Text>
           <div className="flex items-center gap-1.5 mt-0.5">
             {isTool ? (
-              <Wrench size={12} className="text-text-secondary" />
+              <WrenchIcon size={12} className="text-text-secondary" />
             ) : (
-              <Palette size={12} className="text-text-secondary" />
+              <PaletteIcon size={12} className="text-text-secondary" />
             )}
             <Text
               variant={TextVariants.small}
@@ -476,7 +475,7 @@ function DroppableFolderItem({ folder, onContextMenu, children, onToggle, isExpa
       >
         <div className="p-1 cursor-grab" ref={setDraggableNodeRef} {...listeners} {...attributes}>
           {isExpanded ? (
-            <FolderOpen
+            <FolderOpenIcon
               className="text-primary"
               onClick={(e: any) => {
                 e.stopPropagation();
@@ -1114,18 +1113,18 @@ export default function PresetsPanel() {
     if (isFolder) {
       options = [
         {
-          icon: Edit,
+          icon: PencilSimpleIcon,
           label: t('editor.presets.menu.renameFolder'),
           onClick: () => setRenameFolderState({ isOpen: true, folder: data }),
         },
         {
-          icon: FileDown,
+          icon: FileArrowDownIcon,
           label: t('editor.presets.menu.exportFolder'),
           onClick: () => handleExport(item),
         },
         { type: OPTION_SEPARATOR },
         {
-          icon: Trash2,
+          icon: TrashIcon,
           isDestructive: true,
           label: t('editor.presets.menu.deleteFolder'),
           onClick: () => handleDeleteItem(data?.id ?? null, true),
@@ -1134,7 +1133,7 @@ export default function PresetsPanel() {
     } else {
       options = [
         {
-          icon: Save,
+          icon: FloppyDiskIcon,
           label: t('editor.presets.menu.overwrite'),
           onClick: async () => {
             const updated = overwritePreset(data?.id ?? null);
@@ -1144,13 +1143,13 @@ export default function PresetsPanel() {
           },
         },
         {
-          icon: Settings2,
+          icon: FadersHorizontalIcon,
           label: t('editor.presets.menu.configurePreset'),
           onClick: () => setConfigureModalState({ isOpen: true, preset: data as Preset }),
         },
         { type: OPTION_SEPARATOR },
         {
-          icon: CopyPlus,
+          icon: CopySimpleIcon,
           label: t('editor.presets.menu.duplicatePreset'),
           onClick: async () => {
             const duplicated = duplicatePreset(data?.id ?? null);
@@ -1160,13 +1159,13 @@ export default function PresetsPanel() {
           },
         },
         {
-          icon: FileDown,
+          icon: FileArrowDownIcon,
           label: t('editor.presets.menu.exportPreset'),
           onClick: () => handleExport(item),
         },
         { type: OPTION_SEPARATOR },
         {
-          icon: Trash2,
+          icon: TrashIcon,
           isDestructive: true,
           label: t('editor.presets.menu.deletePreset'),
           onClick: () => handleDeleteItem(data?.id ?? null, false),
@@ -1184,19 +1183,19 @@ export default function PresetsPanel() {
     event.preventDefault();
     const options = [
       {
-        icon: Plus,
+        icon: PlusIcon,
         label: t('editor.presets.menu.newPreset'),
         onClick: () => setConfigureModalState({ isOpen: true, preset: null }),
       },
       {
-        icon: FolderPlus,
+        icon: FolderPlusIcon,
         label: t('editor.presets.menu.newFolder'),
         onClick: () => setIsAddFolderModalOpen(true),
       },
       { type: OPTION_SEPARATOR },
       {
         disabled: presets.length === 0,
-        icon: SortAsc,
+        icon: SortAscendingIcon,
         label: t('editor.presets.menu.sortAll'),
         onClick: sortAllPresetsAlphabetically,
       },
@@ -1220,7 +1219,7 @@ export default function PresetsPanel() {
               onClick={handleImportPresets}
               data-tooltip={t('editor.presets.tooltips.import')}
             >
-              <FileUp size={18} />
+              <FileArrowUpIcon size={18} />
             </button>
             <button
               className="p-2 rounded-full hover:bg-surface transition-colors"
@@ -1228,7 +1227,7 @@ export default function PresetsPanel() {
               onClick={handleExportAllPresets}
               data-tooltip={t('editor.presets.tooltips.export')}
             >
-              <FileDown size={18} />
+              <FileArrowDownIcon size={18} />
             </button>
             <button
               className="p-2 rounded-full hover:bg-surface transition-colors"
@@ -1236,7 +1235,7 @@ export default function PresetsPanel() {
               onClick={() => setConfigureModalState({ isOpen: true, preset: null })}
               data-tooltip={t('editor.presets.tooltips.saveNew')}
             >
-              <Plus size={18} />
+              <PlusIcon size={18} />
             </button>
           </div>
         </div>
@@ -1261,7 +1260,7 @@ export default function PresetsPanel() {
               weight={TextWeights.normal}
               className="text-center mt-4"
             >
-              <Loader2 size={14} className="animate-spin inline-block mr-2" /> {t('editor.presets.status.loading')}
+              <CircleNotchIcon size={14} className="animate-spin inline-block mr-2" /> {t('editor.presets.status.loading')}
             </Text>
           ) : !isLoading && presets.length === 0 ? (
             <div className="text-center text-text-secondary flex flex-col items-center gap-4 pt-4">

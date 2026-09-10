@@ -1,6 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle, XCircle, Loader2, Save, Layers, Map } from 'lucide-react';
+import {
+  CheckCircleIcon,
+  XCircleIcon,
+  CircleNotchIcon,
+  FloppyDiskIcon,
+  StackSimpleIcon,
+  MapTrifoldIcon,
+} from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import Button from '../ui/Button';
@@ -102,7 +109,7 @@ export default function FocusStackModal({
       return (
         <div className="flex flex-col items-center justify-center py-10 h-[460px]">
           <div className="flex items-center justify-center mb-6">
-            <XCircle className="w-12 h-12 text-red-500" />
+            <XCircleIcon className="w-12 h-12 text-red-500" />
           </div>
           <Text variant={TextVariants.title} className="mb-2 text-center">
             {t('modals.focusStack.failed')}
@@ -140,7 +147,7 @@ export default function FocusStackModal({
                     !showDepthMap ? 'bg-accent text-button-text' : 'text-white/60 hover:bg-white/10 hover:text-white',
                   )}
                 >
-                  <Layers size={14} />
+                  <StackSimpleIcon size={14} />
                   <span>{t('modals.focusStack.result')}</span>
                 </button>
 
@@ -152,7 +159,7 @@ export default function FocusStackModal({
                     showDepthMap ? 'bg-accent text-button-text' : 'text-white/60 hover:bg-white/10 hover:text-white',
                   )}
                 >
-                  <Map size={14} />
+                  <MapTrifoldIcon size={14} />
                   <span>{t('modals.focusStack.depthMap')}</span>
                 </button>
               </div>
@@ -167,7 +174,7 @@ export default function FocusStackModal({
                 color={TextColors.success}
                 className="flex items-center justify-center gap-2 mt-4"
               >
-                <CheckCircle className="w-5 h-5" />
+                <CheckCircleIcon className="w-5 h-5" />
                 <span>{t('modals.focusStack.savedSuccess')}</span>
               </Text>
             </motion.div>
@@ -218,7 +225,7 @@ export default function FocusStackModal({
     return (
       <div className="flex flex-col items-center justify-center h-[460px]">
         <div className="flex items-center justify-center mb-6">
-          <Layers className="w-12 h-12 text-accent" />
+          <StackSimpleIcon className="w-12 h-12 text-accent" />
         </div>
         <Text variant={TextVariants.title} className="mb-3 text-center">
           {t('modals.focusStack.title')}
@@ -268,14 +275,14 @@ export default function FocusStackModal({
 
         {!finalImageBase64 && (
           <Button onClick={onMerge} disabled={isProcessing} variant="primary">
-            {isProcessing ? <Loader2 className="animate-spin mr-2" size={16} /> : <Layers className="mr-2" size={16} />}
+            {isProcessing ? <CircleNotchIcon className="animate-spin mr-2" size={16} /> : <StackSimpleIcon className="mr-2" size={16} />}
             {t('modals.focusStack.start')}
           </Button>
         )}
 
         {finalImageBase64 && (
           <Button onClick={handleSave} disabled={isSaving || isProcessing}>
-            {isSaving ? <Loader2 className="animate-spin mr-2" size={16} /> : <Save className="mr-2" size={16} />}
+            {isSaving ? <CircleNotchIcon className="animate-spin mr-2" size={16} /> : <FloppyDiskIcon className="mr-2" size={16} />}
             {t('modals.focusStack.save')}
           </Button>
         )}

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { Menu as MenuPrimitive } from '@base-ui/react/menu';
-import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react';
+import { CheckIcon, CaretRightIcon, CircleIcon } from '@phosphor-icons/react';
 
 import { cn } from '../../lib/utils';
 
@@ -137,7 +137,10 @@ function DropdownMenuRadioItem({ className, children, ...props }: MenuPrimitive.
     >
       <span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
         <MenuPrimitive.RadioItemIndicator>
-          <CircleIcon className="size-2 fill-current" />
+          {/* D-294 — a solid radio dot is Phosphor's `fill` WEIGHT. A CSS
+              `fill` cannot solidify a Phosphor glyph: the svg is already
+              `fill="currentColor"` and the ring is drawn as filled paths. */}
+          <CircleIcon className="size-2" weight="fill" />
         </MenuPrimitive.RadioItemIndicator>
       </span>
       {children}
@@ -186,7 +189,7 @@ function DropdownMenuSubTrigger({
       {...props}
     >
       {children}
-      <ChevronRightIcon className="ml-auto size-4" />
+      <CaretRightIcon className="ml-auto size-4" />
     </MenuPrimitive.SubmenuTrigger>
   );
 }

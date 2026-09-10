@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { ContextMenu as ContextMenuPrimitive } from '@base-ui/react/context-menu';
-import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react';
+import { CheckIcon, CaretRightIcon, CircleIcon } from '@phosphor-icons/react';
 
 import { cn } from '../../lib/utils';
 
@@ -140,7 +140,10 @@ function ContextMenuRadioItem({ className, children, ...props }: ContextMenuPrim
     >
       <span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
         <ContextMenuPrimitive.RadioItemIndicator>
-          <CircleIcon className="size-2 fill-current" />
+          {/* D-294 — a solid radio dot is Phosphor's `fill` WEIGHT. A CSS
+              `fill` cannot solidify a Phosphor glyph: the svg is already
+              `fill="currentColor"` and the ring is drawn as filled paths. */}
+          <CircleIcon className="size-2" weight="fill" />
         </ContextMenuPrimitive.RadioItemIndicator>
       </span>
       {children}
@@ -189,7 +192,7 @@ function ContextMenuSubTrigger({
       {...props}
     >
       {children}
-      <ChevronRightIcon className="ml-auto size-4" />
+      <CaretRightIcon className="ml-auto size-4" />
     </ContextMenuPrimitive.SubmenuTrigger>
   );
 }

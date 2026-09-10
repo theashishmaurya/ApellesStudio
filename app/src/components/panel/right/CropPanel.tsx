@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Aperture,
-  FlipHorizontal,
-  FlipVertical,
-  Grid3x3,
-  RectangleHorizontal,
-  RectangleVertical,
-  RotateCcw,
-  RotateCw,
-  Ruler,
-  Scan,
-  X,
-} from 'lucide-react';
+  ApertureIcon,
+  FlipHorizontalIcon,
+  FlipVerticalIcon,
+  GridNineIcon,
+  RectangleIcon,
+  ArrowCounterClockwiseIcon,
+  ArrowClockwiseIcon,
+  RulerIcon,
+  ScanIcon,
+  XIcon,
+} from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 import { Adjustments, INITIAL_ADJUSTMENTS } from '../../../utils/adjustments';
 import clsx from 'clsx';
@@ -458,7 +457,7 @@ export default function CropPanel() {
           onClick={handleReset}
           data-tooltip={t('editor.crop.resetTooltip')}
         >
-          <RotateCcw size={18} />
+          <ArrowCounterClockwiseIcon size={18} />
         </button>
       </div>
 
@@ -474,7 +473,7 @@ export default function CropPanel() {
                     onClick={handleOverlayCycle}
                     data-tooltip={getOverlayTooltip()}
                   >
-                    <Grid3x3 size={16} />
+                    <GridNineIcon size={16} />
                   </button>
                   <button
                     className="p-1.5 rounded-md hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed"
@@ -482,10 +481,12 @@ export default function CropPanel() {
                     onClick={handleOrientationToggle}
                     data-tooltip={getOrientationTooltip()}
                   >
+                    {/* D-294 — Phosphor ships one `Rectangle`; the portrait
+                        variant is the same glyph quarter-turned. */}
                     {orientation === Orientation.Vertical ? (
-                      <RectangleVertical size={16} />
+                      <RectangleIcon size={16} className="rotate-90" />
                     ) : (
-                      <RectangleHorizontal size={16} />
+                      <RectangleIcon size={16} />
                     )}
                   </button>
                 </div>
@@ -549,7 +550,7 @@ export default function CropPanel() {
                       type="number"
                       value={customW}
                     />
-                    <X size={16} className={`shrink-0 ${TEXT_COLOR_KEYS[TextColors.secondary]}`} />
+                    <XIcon size={16} className={`shrink-0 ${TEXT_COLOR_KEYS[TextColors.secondary]}`} />
                     <input
                       className="w-full bg-bg-primary text-center rounded-md p-1 border border-surface focus:border-accent focus:ring-accent text-text-secondary focus:text-text-primary"
                       min="0"
@@ -590,7 +591,7 @@ export default function CropPanel() {
                         )}
                         data-tooltip={t('editor.crop.tooltips.straighten')}
                       >
-                        <Ruler size={14} />
+                        <RulerIcon size={14} />
                       </button>
                       <button
                         className="p-1.5 rounded-md text-text-secondary transition-colors cursor-pointer hover:bg-card-active hover:text-text-primary"
@@ -598,7 +599,7 @@ export default function CropPanel() {
                         data-tooltip={t('editor.crop.tooltips.resetFineRotation')}
                         disabled={displayRotation === 0}
                       >
-                        <RotateCcw size={14} />
+                        <ArrowCounterClockwiseIcon size={14} />
                       </button>
                     </div>
                   }
@@ -626,7 +627,7 @@ export default function CropPanel() {
                   whileTap={{ scale: 0.98 }}
                   transition={{ type: 'spring', stiffness: 400, damping: 17 }}
                 >
-                  <RotateCcw size={20} className="transition-none" />
+                  <ArrowCounterClockwiseIcon size={20} className="transition-none" />
                   <span className="text-xs mt-2 transition-none">{t('editor.crop.labels.rotateLeft')}</span>
                 </motion.div>
                 <motion.div
@@ -636,7 +637,7 @@ export default function CropPanel() {
                   whileTap={{ scale: 0.98 }}
                   transition={{ type: 'spring', stiffness: 400, damping: 17 }}
                 >
-                  <RotateCw size={20} className="transition-none" />
+                  <ArrowClockwiseIcon size={20} className="transition-none" />
                   <span className="text-xs mt-2 transition-none">{t('editor.crop.labels.rotateRight')}</span>
                 </motion.div>
                 <motion.div
@@ -656,7 +657,7 @@ export default function CropPanel() {
                   whileTap={{ scale: 0.98 }}
                   transition={{ type: 'spring', stiffness: 400, damping: 17 }}
                 >
-                  <FlipHorizontal size={20} className="transition-none" />
+                  <FlipHorizontalIcon size={20} className="transition-none" />
                   <span className="text-xs mt-2 transition-none">{t('editor.crop.labels.flipHoriz')}</span>
                 </motion.div>
                 <motion.div
@@ -671,7 +672,7 @@ export default function CropPanel() {
                   whileTap={{ scale: 0.98 }}
                   transition={{ type: 'spring', stiffness: 400, damping: 17 }}
                 >
-                  <FlipVertical size={20} className="transition-none" />
+                  <FlipVerticalIcon size={20} className="transition-none" />
                   <span className="text-xs mt-2 transition-none">{t('editor.crop.labels.flipVert')}</span>
                 </motion.div>
               </div>
@@ -689,7 +690,7 @@ export default function CropPanel() {
                   whileTap={{ scale: 0.98 }}
                   transition={{ type: 'spring', stiffness: 400, damping: 17 }}
                 >
-                  <Scan size={20} className="transition-none" />
+                  <ScanIcon size={20} className="transition-none" />
                   <span className="text-xs mt-2 transition-none">{t('editor.crop.labels.transform')}</span>
                 </motion.div>
                 <motion.div
@@ -699,7 +700,7 @@ export default function CropPanel() {
                   whileTap={{ scale: 0.98 }}
                   transition={{ type: 'spring', stiffness: 400, damping: 17 }}
                 >
-                  <Aperture size={20} className="transition-none" />
+                  <ApertureIcon size={20} className="transition-none" />
                   <span className="text-xs mt-2 transition-none">{t('editor.crop.labels.lens')}</span>
                 </motion.div>
               </div>

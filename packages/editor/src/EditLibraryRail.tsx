@@ -47,7 +47,13 @@
  * timeline pane's own `DndContext`, so it stays in the timeline toolbar where
  * that context is (D-248).
  */
-import { Captions, Film, Type, Wand2, type LucideIcon } from 'lucide-react';
+import {
+  ClosedCaptioningIcon,
+  FilmStripIcon,
+  TextTIcon,
+  MagicWandIcon,
+  type Icon as PhosphorIcon,
+} from '@phosphor-icons/react';
 import {
   Button,
   Tooltip,
@@ -70,13 +76,13 @@ import { useEditorTimelineStore } from './timelineStore';
  *  it switches is the resizable one (`Shell.tsx`'s `ResizablePanel`). */
 const RAIL_WIDTH_PX = 44;
 
-const RAIL_ICONS: Record<EditLibraryMode, LucideIcon> = {
-  // `Film` is what the Sources panel labels its own "All media" row with, so
+const RAIL_ICONS: Record<EditLibraryMode, PhosphorIcon> = {
+  // `FilmStrip` is what the Sources panel labels its own "All media" row with, so
   // the rail button and the thing it opens carry the same mark.
-  sources: Film,
-  titles: Type,
-  effects: Wand2,
-  subtitles: Captions,
+  sources: FilmStripIcon,
+  titles: TextTIcon,
+  effects: MagicWandIcon,
+  subtitles: ClosedCaptioningIcon,
 };
 
 const RAIL_TIPS: Record<EditLibraryMode, string> = {

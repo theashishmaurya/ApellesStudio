@@ -3,7 +3,7 @@
 // to seek. Lives in the BottomBar.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Pause, Play, SkipBack, SkipForward } from 'lucide-react';
+import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon } from '@phosphor-icons/react';
 import { useChromaStore } from '../../../store/useChromaStore';
 import { useEditorStore } from '../../../store/useEditorStore';
 import MaskKeyframeBar from '../../chroma/MaskKeyframeBar';
@@ -190,13 +190,13 @@ export default function ChromaTimeline() {
       {/* controls row */}
       <div className="flex items-center gap-2 text-text-primary">
         <button className="p-1 rounded hover:bg-surface" onClick={() => goToFrame(currentFrame - 1)} title="Previous frame">
-          <SkipBack size={15} />
+          <SkipBackIcon size={15} />
         </button>
         <button className="p-1 rounded hover:bg-surface" onClick={() => setPlaying((p) => !p)} title={playing ? 'Pause' : 'Play'}>
-          {playing ? <Pause size={15} /> : <Play size={15} />}
+          {playing ? <PauseIcon size={15} /> : <PlayIcon size={15} />}
         </button>
         <button className="p-1 rounded hover:bg-surface" onClick={() => goToFrame(currentFrame + 1)} title="Next frame">
-          <SkipForward size={15} />
+          <SkipForwardIcon size={15} />
         </button>
         <div className="flex-1" />
         <span className="text-[11px] tabular-nums text-text-secondary">

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useId } from 'react';
 import Slider from './Slider';
 import Wheel from '@uiw/react-color-wheel';
 import { ColorResult, HsvaColor, hsvaToHex } from '@uiw/color-convert';
-import { Sun } from 'lucide-react';
+import { SunIcon } from '@phosphor-icons/react';
 import { HueSatLum } from '../../utils/adjustments';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
@@ -300,7 +300,7 @@ const ColorWheel = ({
       <div className="w-full" style={lumWrapperStyle}>
         <Slider
           defaultValue={defaultValue.luminance}
-          label={isExpanded ? t('ui.colorWheel.luminance') : <Sun size={16} className="text-text-secondary" />}
+          label={isExpanded ? t('ui.colorWheel.luminance') : <SunIcon size={16} className="text-text-secondary" />}
           max={100}
           min={-100}
           onChange={handleLumChange}

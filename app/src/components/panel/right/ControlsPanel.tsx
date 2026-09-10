@@ -1,5 +1,11 @@
 import React, { useCallback } from 'react';
-import { RotateCcw, Copy, ClipboardPaste, Aperture, ChartArea } from 'lucide-react';
+import {
+  ArrowCounterClockwiseIcon,
+  CopyIcon,
+  ClipboardTextIcon,
+  ApertureIcon,
+  ChartLineIcon,
+} from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
@@ -192,14 +198,14 @@ export default function Controls() {
     const options: any = [
       {
         label: t('editor.adjustments.actions.copySectionSettings', { section: translatedSection }),
-        icon: Copy,
+        icon: CopyIcon,
         onClick: handleCopy,
       },
-      { label: pasteLabel, icon: ClipboardPaste, onClick: handlePaste, disabled: !isPasteAllowed },
+      { label: pasteLabel, icon: ClipboardTextIcon, onClick: handlePaste, disabled: !isPasteAllowed },
       { type: OPTION_SEPARATOR },
       {
         label: t('editor.adjustments.actions.resetSectionSettings', { section: translatedSection }),
-        icon: RotateCcw,
+        icon: ArrowCounterClockwiseIcon,
         onClick: handleReset,
       },
     ];
@@ -218,7 +224,7 @@ export default function Controls() {
             onClick={handleAutoAdjustments}
             data-tooltip={t('editor.adjustments.tooltips.autoAdjust')}
           >
-            <Aperture size={18} />
+            <ApertureIcon size={18} />
           </button>
           <button
             className={clsx(
@@ -228,7 +234,7 @@ export default function Controls() {
             onClick={onToggleWaveform}
             data-tooltip={t('editor.adjustments.tooltips.toggleAnalytics')}
           >
-            <ChartArea size={18} />
+            <ChartLineIcon size={18} />
           </button>
           <button
             className="p-2 rounded-full hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -236,7 +242,7 @@ export default function Controls() {
             onClick={handleResetAdjustments}
             data-tooltip={t('editor.adjustments.tooltips.resetAdjustments')}
           >
-            <RotateCcw size={18} />
+            <ArrowCounterClockwiseIcon size={18} />
           </button>
         </div>
       </div>

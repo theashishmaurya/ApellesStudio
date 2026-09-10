@@ -43,7 +43,7 @@
 import { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { FileUp } from 'lucide-react';
+import { FileArrowUpIcon } from '@phosphor-icons/react';
 import {
   Button,
   Tabs,
@@ -318,7 +318,7 @@ export function CaptionLibrary() {
               onClick={importFile}
               data-testid="caption-import"
             >
-              <FileUp className="size-3.5" />
+              <FileArrowUpIcon className="size-3.5" />
               <span className="ml-1">{busy ? 'Importing…' : 'Choose .srt or .vtt…'}</span>
             </Button>
             <p className="text-[10px] text-text-secondary opacity-70">

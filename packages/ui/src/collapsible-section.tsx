@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ChevronDown, Eye, EyeOff } from 'lucide-react';
+import { CaretDownIcon, EyeIcon, EyeSlashIcon } from '@phosphor-icons/react';
 import clsx from 'clsx';
 import Text from './Text';
 import { TextVariants, TextWeights } from './typography';
@@ -89,12 +89,12 @@ export default function CollapsibleSection({
                 onClick={handleVisibilityClick}
                 data-tooltip={isContentVisible ? 'Disable Section' : 'Enable Section'}
               >
-                {isContentVisible ? <Eye size={16} /> : <EyeOff size={16} />}
+                {isContentVisible ? <EyeIcon size={16} /> : <EyeSlashIcon size={16} />}
               </button>
             </div>
           )}
         </div>
-        <ChevronDown
+        <CaretDownIcon
           className={clsx('text-accent transition-transform duration-300', { 'rotate-180': isOpen })}
           size={20}
         />

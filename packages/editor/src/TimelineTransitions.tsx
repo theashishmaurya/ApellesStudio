@@ -35,7 +35,7 @@
  */
 import { useMemo, useState } from 'react';
 import { useDraggable } from '@dnd-kit/core';
-import { Blend, Trash2, Wand2 } from 'lucide-react';
+import { IntersectIcon, TrashIcon, MagicWandIcon } from '@phosphor-icons/react';
 import {
   Button,
   Input,
@@ -103,7 +103,7 @@ function PaletteEntry({ kind, label, blurb }: { kind: TransitionKind; label: str
       }`}
     >
       <div className="flex items-center gap-2 text-xs font-medium text-text-primary">
-        <Blend className="size-3.5 shrink-0" />
+        <IntersectIcon className="size-3.5 shrink-0" />
         {label}
       </div>
       <p className="mt-1 text-[10px] leading-snug text-text-secondary">{blurb}</p>
@@ -125,7 +125,7 @@ export function TransitionsPaletteButton() {
             <PopoverTrigger
               render={
                 <Button variant="ghost" size="icon-sm" aria-label="Transitions">
-                  <Wand2 />
+                  <MagicWandIcon />
                 </Button>
               }
             />
@@ -357,7 +357,7 @@ function TransitionEditor({
       )}
 
       <Button variant="ghost" size="sm" className="w-full justify-start" onClick={onRemove}>
-        <Trash2 />
+        <TrashIcon />
         Remove transition
       </Button>
     </div>

@@ -19,7 +19,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { Plus, X, ArrowRight, Loader2, Link2, Save, Settings2 } from 'lucide-react';
+import {
+  PlusIcon,
+  XIcon,
+  ArrowRightIcon,
+  CircleNotchIcon,
+  LinkSimpleHorizontalIcon,
+  FloppyDiskIcon,
+  FadersHorizontalIcon,
+} from '@phosphor-icons/react';
 import { toast } from 'react-toastify';
 
 import { useSessionStore, isNonNeutralGrade } from '../../store/useSessionStore';
@@ -124,7 +132,7 @@ export default function ShotStrip() {
           title="This session isn't saved as a project yet"
           className="shrink-0 self-center flex items-center gap-1.5 px-2 py-1 rounded-md border border-dashed border-accent/60 text-[11px] text-accent hover:bg-accent/10"
         >
-          <Save size={12} /> Save project
+          <FloppyDiskIcon size={12} /> FloppyDiskIcon project
         </button>
       )}
       {hasProject && (
@@ -133,7 +141,7 @@ export default function ShotStrip() {
           title="Project settings — output resolution, frame rate, colour space"
           className="shrink-0 self-center flex items-center gap-1.5 px-2 py-1 rounded-md border border-surface text-[11px] text-text-secondary hover:text-text-primary hover:border-text-secondary"
         >
-          <Settings2 size={12} /> Settings
+          <FadersHorizontalIcon size={12} /> Settings
         </button>
       )}
       {showSettings && <ProjectSettingsModal onClose={() => setShowSettings(false)} />}
@@ -156,7 +164,7 @@ export default function ShotStrip() {
                 <img src={thumbs[shot.id]} draggable={false} className="w-full h-full object-cover pointer-events-none" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
-                  <Loader2 size={14} className="animate-spin text-text-secondary" />
+                  <CircleNotchIcon size={14} className="animate-spin text-text-secondary" />
                 </div>
               )}
               {hasGrade && (
@@ -174,7 +182,7 @@ export default function ShotStrip() {
                   title="Remove shot from session"
                   className="absolute top-0.5 right-0.5 p-0.5 rounded bg-black/50 text-white opacity-0 group-hover:opacity-100 hover:bg-black/80"
                 >
-                  <X size={11} />
+                  <XIcon size={11} />
                 </button>
               )}
               {active && i < shots.length - 1 && (
@@ -187,7 +195,7 @@ export default function ShotStrip() {
                   title="Copy this grade to the next shot"
                   className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/50 text-white opacity-0 group-hover:opacity-100 hover:bg-black/80"
                 >
-                  <ArrowRight size={11} />
+                  <ArrowRightIcon size={11} />
                 </button>
               )}
             </div>
@@ -216,7 +224,7 @@ export default function ShotStrip() {
               title="Relink to a new file"
               className="absolute bottom-0.5 right-0.5 p-0.5 rounded bg-black/50 text-white opacity-0 group-hover:opacity-100 hover:bg-black/80"
             >
-              <Link2 size={11} />
+              <LinkSimpleHorizontalIcon size={11} />
             </button>
           </div>
           <div className="px-1.5 py-1 text-[10px] truncate text-text-secondary bg-bg-secondary">{o.name}</div>
@@ -229,7 +237,7 @@ export default function ShotStrip() {
         title="Add shots to the session"
         className="shrink-0 w-12 rounded-md border border-dashed border-surface hover:border-text-secondary text-text-secondary hover:text-text-primary flex items-center justify-center disabled:opacity-40"
       >
-        {busy ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+        {busy ? <CircleNotchIcon size={16} className="animate-spin" /> : <PlusIcon size={16} />}
       </button>
     </div>
   );

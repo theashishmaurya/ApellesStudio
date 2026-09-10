@@ -15,23 +15,23 @@ import {
   pointerWithin,
 } from '@dnd-kit/core';
 import {
-  Circle,
-  ClipboardPaste,
-  Copy,
-  Eye,
-  EyeOff,
-  FileEdit,
-  Loader2,
-  Minus,
-  Plus,
-  PlusSquare,
-  RotateCcw,
-  Trash2,
-  Wand2,
-  Send,
-  FolderOpen,
-  SquaresIntersect,
-} from 'lucide-react';
+  CircleIcon,
+  ClipboardTextIcon,
+  CopyIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  NotePencilIcon,
+  CircleNotchIcon,
+  MinusIcon,
+  PlusIcon,
+  PlusSquareIcon,
+  ArrowCounterClockwiseIcon,
+  TrashIcon,
+  MagicWandIcon,
+  PaperPlaneTiltIcon,
+  FolderOpenIcon,
+  IntersectSquareIcon,
+} from '@phosphor-icons/react';
 
 import CollapsibleSection from '../../ui/CollapsibleSection';
 import Switch from '../../ui/Switch';
@@ -702,12 +702,12 @@ export default function AIPanel() {
           { type: OPTION_SEPARATOR },
           {
             label: t('editor.ai.actions.subtractFromEdit'),
-            icon: Minus,
+            icon: MinusIcon,
             submenu: buildMenu(AI_SUB_MASK_COMPONENT_TYPES, SubMaskMode.Subtractive),
           },
           {
             label: t('editor.ai.actions.intersectEditWith'),
-            icon: SquaresIntersect,
+            icon: IntersectSquareIcon,
             submenu: buildMenu(AI_SUB_MASK_COMPONENT_TYPES, SubMaskMode.Intersect),
           },
         );
@@ -914,13 +914,13 @@ export default function AIPanel() {
     showContextMenu(e.clientX, e.clientY, [
       {
         label: t('editor.ai.actions.pasteEdit'),
-        icon: ClipboardPaste,
+        icon: ClipboardTextIcon,
         disabled: !copiedPatch,
         onClick: () => handlePastePatch(),
       },
       {
         label: t('editor.ai.addNewEdit'),
-        icon: Plus,
+        icon: PlusIcon,
         submenu: newEditSubMenu,
       },
     ]);
@@ -1098,7 +1098,7 @@ export default function AIPanel() {
             onClick={handleResetAllAiEdits}
             data-tooltip={t('editor.ai.resetInpaintingTooltip')}
           >
-            <RotateCcw size={18} />
+            <ArrowCounterClockwiseIcon size={18} />
           </button>
         </div>
 
@@ -1246,7 +1246,7 @@ export default function AIPanel() {
                       onClick={(e) => handleAddAiContextMenu(e, null)}
                     >
                       <div className="p-0.5">
-                        <Plus size={18} />
+                        <PlusIcon size={18} />
                       </div>
                       <span>{t('editor.ai.addNewEdit')}</span>
                     </Text>
@@ -1305,7 +1305,7 @@ export default function AIPanel() {
                 {(() => {
                   const item = activeDragItem.item as AiPatch;
                   const isStandalone = isStandaloneContainer(item);
-                  const Icon = isStandalone ? MASK_ICON_MAP[item.subMasks[0].type] || Circle : Wand2;
+                  const Icon = isStandalone ? MASK_ICON_MAP[item.subMasks[0].type] || CircleIcon : MagicWandIcon;
                   return <Icon size={18} className={TEXT_COLOR_KEYS[TextColors.secondary]} />;
                 })()}
                 <span className="flex-1 truncate">{(activeDragItem.item as AiPatch).name}</span>
@@ -1320,7 +1320,7 @@ export default function AIPanel() {
               >
                 {(() => {
                   const sm = activeDragItem.item as SubMask;
-                  const Icon = MASK_ICON_MAP[sm.type] || Circle;
+                  const Icon = MASK_ICON_MAP[sm.type] || CircleIcon;
                   return <Icon size={16} className={`shrink-0 ml-1 ${TEXT_COLOR_KEYS[TextColors.secondary]}`} />;
                 })()}
                 <span className="flex-1 truncate">{getSubMaskName(activeDragItem.item as SubMask)}</span>
@@ -1335,7 +1335,7 @@ export default function AIPanel() {
               >
                 {(() => {
                   const maskType = AI_SUB_MASK_COMPONENT_TYPES.find((m) => m.type === activeDragItem.maskType);
-                  const Icon = maskType?.icon || Circle;
+                  const Icon = maskType?.icon || CircleIcon;
                   return (
                     <>
                       <Icon size={24} />
@@ -1464,22 +1464,22 @@ function ContainerRow({
     const menuOptions: any[] = [
       {
         label: t('editor.ai.actions.rename'),
-        icon: FileEdit,
+        icon: NotePencilIcon,
         onClick: () => {
           setRenamingId(container.id);
           setTempName(container.name);
         },
       },
-      { label: t('editor.ai.actions.duplicateEdit'), icon: PlusSquare, onClick: () => handleDuplicate(container) },
+      { label: t('editor.ai.actions.duplicateEdit'), icon: PlusSquareIcon, onClick: () => handleDuplicate(container) },
       {
         label: t('editor.ai.actions.duplicateAndInvertEdit'),
-        icon: RotateCcw,
+        icon: ArrowCounterClockwiseIcon,
         onClick: () => handleDuplicateAndInvert(container),
       },
-      { label: t('editor.ai.actions.copyEdit'), icon: Copy, onClick: () => copyPatchToClipboard(container) },
+      { label: t('editor.ai.actions.copyEdit'), icon: CopyIcon, onClick: () => copyPatchToClipboard(container) },
       {
         label: t('editor.ai.actions.pasteEdit'),
-        icon: ClipboardPaste,
+        icon: ClipboardTextIcon,
         disabled: !copiedPatch,
         onClick: () => handlePastePatch(container.id),
       },
@@ -1489,14 +1489,14 @@ function ContainerRow({
     if (!isStandalone) {
       menuOptions.push({
         label: t('editor.ai.actions.resetSelection'),
-        icon: RotateCcw,
+        icon: ArrowCounterClockwiseIcon,
         onClick: () => updateContainer(container.id, { subMasks: [] }),
       });
     }
 
     menuOptions.push({
       label: t('editor.ai.actions.deleteEdit'),
-      icon: Trash2,
+      icon: TrashIcon,
       isDestructive: true,
       onClick: () => handleDelete(container.id),
     });
@@ -1562,13 +1562,13 @@ function ContainerRow({
         >
           {isStandalone ? (
             (() => {
-              const StandaloneIcon = MASK_ICON_MAP[firstSubMask.type] || Circle;
+              const StandaloneIcon = MASK_ICON_MAP[firstSubMask.type] || CircleIcon;
               return <StandaloneIcon size={18} />;
             })()
           ) : isExpanded ? (
-            <FolderOpen size={18} />
+            <FolderOpenIcon size={18} />
           ) : (
-            <Wand2 size={18} />
+            <MagicWandIcon size={18} />
           )}
         </Text>
         <div
@@ -1605,7 +1605,7 @@ function ContainerRow({
               updateContainer(container.id, { visible: !container.visible });
             }}
           >
-            {container.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+            {container.visible ? <EyeIcon size={16} /> : <EyeSlashIcon size={16} />}
           </button>
           <button
             className="p-1 hover:text-red-500 text-text-secondary"
@@ -1615,7 +1615,7 @@ function ContainerRow({
               handleDelete(container.id);
             }}
           >
-            <Trash2 size={16} />
+            <TrashIcon size={16} />
           </button>
         </div>
       </div>
@@ -1681,7 +1681,7 @@ function ContainerRow({
                     }}
                   >
                     <div className="relative w-4 h-4 ml-1 shrink-0 flex items-center justify-center">
-                      <Plus size={16} />
+                      <PlusIcon size={16} />
                     </div>
                     <span className="select-none">{t('editor.ai.actions.addNewComponent')}</span>
                   </Text>
@@ -1731,7 +1731,7 @@ function SubMaskRow({
     setNodeRef(node);
     setDroppableRef(node);
   };
-  const MaskIcon = MASK_ICON_MAP[subMask.type] || Circle;
+  const MaskIcon = MASK_ICON_MAP[subMask.type] || CircleIcon;
   const { showContextMenu } = useContextMenu();
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1768,23 +1768,23 @@ function SubMaskRow({
     showContextMenu(e.clientX, e.clientY, [
       {
         label: t('editor.ai.actions.rename'),
-        icon: FileEdit,
+        icon: NotePencilIcon,
         onClick: () => {
           setRenamingId(subMask.id);
           setTempName(getSubMaskName(subMask));
         },
       },
-      { label: t('editor.ai.actions.duplicateComponent'), icon: PlusSquare, onClick: handleDuplicate },
-      { label: t('editor.ai.actions.duplicateAndInvertComponent'), icon: RotateCcw, onClick: handleDuplicateAndInvert },
-      { label: t('editor.ai.actions.copyComponent'), icon: Copy, onClick: handleCopy },
+      { label: t('editor.ai.actions.duplicateComponent'), icon: PlusSquareIcon, onClick: handleDuplicate },
+      { label: t('editor.ai.actions.duplicateAndInvertComponent'), icon: ArrowCounterClockwiseIcon, onClick: handleDuplicateAndInvert },
+      { label: t('editor.ai.actions.copyComponent'), icon: CopyIcon, onClick: handleCopy },
       {
         label: t('editor.ai.actions.pasteComponent'),
-        icon: ClipboardPaste,
+        icon: ClipboardTextIcon,
         disabled: !hasCopiedSubMask,
         onClick: handlePaste,
       },
       { type: OPTION_SEPARATOR },
-      { label: t('editor.ai.actions.deleteComponent'), icon: Trash2, isDestructive: true, onClick: handleDelete },
+      { label: t('editor.ai.actions.deleteComponent'), icon: TrashIcon, isDestructive: true, onClick: handleDelete },
     ]);
   };
   const showNumber = isHovered && totalCount > 1;
@@ -1829,7 +1829,7 @@ function SubMaskRow({
               transition={{ duration: 0.15 }}
               className="absolute"
             >
-              <Loader2 size={16} className="animate-spin" />
+              <CircleNotchIcon size={16} className="animate-spin" />
             </motion.div>
           ) : showNumber ? (
             <motion.span
@@ -1895,11 +1895,11 @@ function SubMaskRow({
             }}
           >
             {subMask.mode === SubMaskMode.Additive ? (
-              <Plus size={16} />
+              <PlusIcon size={16} />
             ) : subMask.mode === SubMaskMode.Subtractive ? (
-              <Minus size={16} />
+              <MinusIcon size={16} />
             ) : (
-              <SquaresIntersect size={16} />
+              <IntersectSquareIcon size={16} />
             )}
           </button>
         )}
@@ -1911,7 +1911,7 @@ function SubMaskRow({
             handleDelete();
           }}
         >
-          <Trash2 size={16} />
+          <TrashIcon size={16} />
         </button>
       </div>
     </motion.div>
@@ -2001,7 +2001,7 @@ function SettingsPanel({
                 weight={TextWeights.medium}
                 className="p-3 bg-card-active rounded-md border border-surface flex items-center gap-3"
               >
-                <Loader2 size={16} className="animate-spin shrink-0" />
+                <CircleNotchIcon size={16} className="animate-spin shrink-0" />
                 <div className="leading-relaxed">
                   <Text variant={TextVariants.small}>{t('editor.ai.settings.downloading')}</Text>
                   <span>{aiModelDownloadStatus}</span>
@@ -2066,9 +2066,9 @@ function SettingsPanel({
               onClick={handleGenerateClick}
             >
               {isGeneratingAi || displayContainer.isLoading ? (
-                <Loader2 size={16} className="animate-spin" />
+                <CircleNotchIcon size={16} className="animate-spin" />
               ) : (
-                <Send size={16} />
+                <PaperPlaneTiltIcon size={16} />
               )}
               <span className="ml-2">
                 {isGeneratingAi || displayContainer.isLoading
@@ -2122,7 +2122,7 @@ function SettingsPanel({
                   weight={TextWeights.medium}
                   className="p-3 bg-card-active rounded-md border border-surface flex items-center gap-3"
                 >
-                  <Loader2 size={16} className="animate-spin shrink-0" />
+                  <CircleNotchIcon size={16} className="animate-spin shrink-0" />
                   <div className="leading-relaxed">
                     <Text variant={TextVariants.small}>{t('editor.ai.settings.aiModelDownloading')}</Text>
                     <span>{aiModelDownloadStatus}</span>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { Image as ImageIcon, Star, SlidersHorizontal } from 'lucide-react';
+import { ImageIcon, StarIcon, FadersHorizontalIcon } from '@phosphor-icons/react';
 import clsx from 'clsx';
 import { Grid, useGridCallbackRef } from 'react-window';
 import { useTranslation } from 'react-i18next';
@@ -246,7 +246,7 @@ const FilmstripThumbnail = memo(
                 hasEditIcon ? 'max-w-3 opacity-100 scale-100' : 'max-w-0 opacity-0 scale-75 pointer-events-none',
               )}
             >
-              <SlidersHorizontal size={12} />
+              <FadersHorizontalIcon size={12} />
             </div>
 
             <div
@@ -272,7 +272,8 @@ const FilmstripThumbnail = memo(
               <Text variant={TextVariants.small} color={TextColors.white}>
                 {rating}
               </Text>
-              <Star size={12} className="text-white fill-white" />
+              {/* D-294 — filled = Phosphor's `fill` weight. */}
+              <StarIcon size={12} weight="fill" className="text-white" />
             </div>
           </div>
         </div>

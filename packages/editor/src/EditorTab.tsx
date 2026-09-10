@@ -45,7 +45,7 @@
 
 import { useEffect } from 'react';
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
-import { PanelRight } from 'lucide-react';
+import { SidebarSimpleIcon } from '@phosphor-icons/react';
 
 import { EditorInspectorPanel } from './EditorInspectorPanel';
 import { PreviewPane } from './PreviewPane';
@@ -184,7 +184,9 @@ export function EditorTab() {
                   (inspectorOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
                 }
               >
-                <PanelRight className="size-3.5" />
+                {/* D-294 — this toggles the RIGHT-hand Inspector; Phosphor's
+                    one sidebar glyph is left-handed, so mirror it. */}
+                <SidebarSimpleIcon className="size-3.5" mirrored />
               </Button>
             </div>
           </ResizablePanel>

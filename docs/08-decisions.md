@@ -1798,7 +1798,9 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
     craft-specific, not worth replacing.
   - Deps `@apelles/ui` may now use: `@base-ui-components/react`, `class-variance-authority`,
     `clsx`, `tailwind-merge`, `lucide-react`, `cmdk`, `react-resizable-panels`. (Relaxes
-    D-039's "react + clsx + lucide only" — that constraint was premature.)
+    D-039's "react + clsx + lucide only" — that constraint was premature.) *[D-294,
+    2026-09-10: the icon library is now `@phosphor-icons/react`; `lucide-react` is gone
+    from every package.]*
   - The 5 already-extracted components get rebuilt on shadcn (Button, Switch, Input,
     Text→Typography, Collapsible via Base UI) — the re-export shims in
     `app/src/components/ui/*` stay, so app call sites don't change.
@@ -1822,7 +1824,8 @@ Incremental execution of D-039. Each step is its own commit; the app builds at e
   → **`@base-ui/react`** (pinned `1.7.0`). Deps added to `packages/ui/package.json`:
   `@base-ui/react` 1.7.0, `class-variance-authority` 0.7.1, `clsx` 2.1.1,
   `tailwind-merge` 3.6.0, `cmdk` 1.1.1, `react-resizable-panels` 4.12.3 (v4 API:
-  `Group`/`Panel`/`Separator`), `sonner` 2.0.8, `lucide-react` ^1.33.0.
+  `Group`/`Panel`/`Separator`), `sonner` 2.0.8, `lucide-react` ^1.33.0 *(→
+  `@phosphor-icons/react` ^2.1.10 as of D-294)*.
 - **Components landed (18):** `button`, `dialog`, `dropdown-menu`, `context-menu`,
   `tooltip`, `popover`, `tabs`, `select`, `command`, `resizable`, `sheet`,
   `slider`, `switch`, `scroll-area`, `separator`, `input`, `label`, `sonner`.
@@ -28701,3 +28704,80 @@ nothing: a hard `ffmpeg` failure rather than silence.
   as a reminder that "no analytics" is a claim about the infra host too, not just this
   codebase, and needs the same "found live, not assumed" discipline this file's other
   entries already apply to first-party code.
+
+## D-294 — Phosphor Icons replaces lucide-react as the app's single icon library
+
+**decided (2026-09-10)**
+
+- **Context:** the owner disliked lucide-react's visual style, and the roadmap already
+  carried a concrete symptom of it — *"Track header Lock/Unlock icons are hard to tell
+  apart"* (reported live 2026-09-09; at `size-3`/12px the only difference between
+  lucide's `Lock` and `Unlock` is the small gap in the padlock shackle). The owner's own
+  call on that item (2026-09-10) was explicitly **not** a resize or a colour tweak on the
+  pair but *"look into a genuinely different, more premium icon SET"* for the whole
+  toolbar. lucide-react was in **7 workspace packages** (`app`, `@apelles/ui`,
+  `@apelles/editor`, `@apelles/motion`, `@apelles/player`, `@apelles/shell`,
+  `@apelles/keymap`) across **82 source files** and ~180 distinct glyphs.
+- **Options considered** (owner reviewed a comparison and chose): **Phosphor Icons**,
+  **Tabler Icons**, **Heroicons**, **Radix Icons**. Tabler and Heroicons are, like
+  lucide, single-stroke families — swapping to one would change the drawing but not the
+  expressive range, and would not have answered the Lock/Unlock complaint structurally.
+  Radix Icons is small (~300 glyphs, fixed 15px grid) and would not cover this app's
+  surface. **Phosphor won on its six weights** — `thin` / `light` / `regular` / `bold` /
+  `fill` / `duotone` — which is a real capability, not a style preference: a filled state,
+  a heavier small glyph, and a subtle inline glyph become *the same icon at a different
+  weight* rather than three unrelated glyphs. It also has ~1,500 icons (vs. lucide's
+  ~1,600), so nothing had to be dropped.
+- **Package:** `@phosphor-icons/react` `^2.1.10`, **MIT**, by Phosphor/Tobias Fried
+  (`phosphor-icons/react`, `phosphoricons.com`) — the family's own official React
+  binding, actively maintained, ~7M weekly downloads, no runtime dependencies.
+- **Import style — the `*Icon` names, not the bare ones.** Phosphor v2.1 ships each glyph
+  twice: `Aperture` (marked `@deprecated`) and `ApertureIcon`. Everything here uses the
+  suffixed, non-deprecated form, per CLAUDE.md's "use the framework's canonical patterns."
+  A pleasant side effect: the suffix removes the name collisions the bare form would have
+  had with local identifiers (`react-konva`'s `Circle`/`Line`, `react-image-crop`'s
+  `Crop`, `Mask.Brush`). The `LucideIcon` type becomes `type Icon as PhosphorIcon`.
+- **Weight policy — `regular` everywhere by default, with three deliberate exceptions.**
+  This was examined, not assumed. Phosphor's `regular` stroke is 16/256 units ≈ 1.5 at a
+  24px grid; lucide's default is 2.0 and its own `strokeWidth={1.5}` is *exactly*
+  Phosphor `regular`. So `regular` keeps the swap a change of icon family rather than a
+  silent re-weighting of the whole UI. The exceptions:
+  1. **`weight="fill"` replaces the `fill` trick** on rating stars (`BottomBar`,
+     `MetadataPanel`, `Filmstrip`) and keyframe diamonds (`MaskKeyframeBar`,
+     `RelightPanel`, `PropertyRow`, `ClipInspectorPanel`). This is a correctness fix, not
+     taste: Phosphor draws every glyph as filled paths on an `fill="currentColor"` `<svg>`,
+     so lucide's `fill="currentColor"` / `fill-accent` idiom would have *recoloured the
+     outline* instead of solidifying the glyph. `fill` is the purpose-drawn solid variant.
+  2. **`weight="bold"`** for `Effects.tsx`'s bokeh-shape buttons, which were already
+     deliberately heavier than their surroundings (`strokeWidth={2}`).
+  3. **`strokeWidth={1.5}` dropped** (`ColoristEmptyState`) — that value *is* `regular`.
+- **Glyphs that needed a judgment call** (Phosphor's vocabulary differs from lucide's):
+  `Layers`→`StackSimple`, `Save`→`FloppyDisk`, `Settings`→`Gear`, `Sliders`/`Settings2`→
+  `Faders`/`FadersHorizontal`, `Spline`→`BezierCurve`, `Pipette`→`Eyedropper`,
+  `Loader`/`Loader2`→`CircleNotch`, `Type`→`TextT`, `Ban`→`Prohibit`,
+  `Clapperboard`→`FilmSlate`, `Touchpad`→`HandTap`, `Server`→`HardDrives`,
+  `Activity`→`Pulse`, `Blend`→`Intersect` (transitions), `TriangleRight`→**`Gradient`**
+  (the Linear mask — Phosphor has a literal gradient glyph, a straight upgrade),
+  `BringToFront`→`Perspective` (the Depth mask), `BrushCleaning`→`Broom`,
+  `Bandage`→`Bandaids`, `FileInput`→`Export`. Two have no single-glyph equivalent and are
+  handled the way Phosphor itself intends: **`RectangleVertical`** is `Rectangle` with a
+  `rotate-90` class (Crop panel, Collage modal), and **`PanelRight`** is `SidebarSimple`
+  with Phosphor's own **`mirrored`** prop (`BottomBar`'s `RightPanelIcon` wrapper,
+  `EditorTab`'s Inspector toggle). `TrimToolbar`'s reference-derived glyph rationale
+  (D-261, from Adobe's own Tools panel) was re-checked glyph by glyph and re-written, not
+  just find-replaced — Roll is now `SquareSplitHorizontal`, Slip `FilmStrip`.
+- **The Lock/Unlock complaint is answered by the swap itself:** Phosphor's `LockOpen`
+  swings the shackle clear of the body rather than opening a hairline gap, so the pair
+  separates at 12px in a way lucide's did not.
+- **`simple-icons` removed in the same pass.** `app/package.json` also carried
+  `simple-icons ^16.28.0` (brand logos) with **zero** references anywhere in the repo —
+  no import, no dynamic/string reference. Dead dependency, deleted per CLAUDE.md's "no
+  dead code." Phosphor ships brand marks (`*Logo`) if one is ever genuinely needed.
+- **Scope note.** The brief scoped this to `app/src` (48 files), but `@apelles/ui`,
+  `editor`, `motion`, `player`, `shell` and `keymap` render *inside the same windows* —
+  stopping at `app/src` would have put a lucide `X` and a Phosphor `X` in one dialog. The
+  swap is therefore whole-repo (82 files), which is also what "one icon library" in
+  CLAUDE.md now requires. `lucide-react` is gone from every `package.json`.
+- **Not covered:** `app/packaging/node-sources.json` is a generated offline-npm manifest
+  and was already stale before this pass (it pins `lucide-react@0.515.0` against a
+  `^1.33.0` dependency); regenerating it is its own task, not this one.

@@ -27,7 +27,7 @@
  * come from `TimelinePane`, which is the one place that math lives.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Flag, Trash2 } from 'lucide-react';
+import { CheckIcon, FlagIcon, TrashIcon } from '@phosphor-icons/react';
 import {
   Button,
   DropdownMenu,
@@ -308,7 +308,7 @@ function MarkerEditor({ marker, fps, onPatch, onRemove, onDone }: MarkerEditorPr
             onClick={() => onPatch({ color: c.hex })}
           >
             {c.hex.toUpperCase() === marker.color.toUpperCase() && (
-              <Check className="absolute inset-0 m-auto size-3 text-black/70" />
+              <CheckIcon className="absolute inset-0 m-auto size-3 text-black/70" />
             )}
           </button>
         ))}
@@ -316,7 +316,7 @@ function MarkerEditor({ marker, fps, onPatch, onRemove, onDone }: MarkerEditorPr
 
       <div className="flex items-center justify-between gap-2 pt-1">
         <Button variant="ghost" size="xs" className="h-6 px-2 text-[11px] text-red-400" onClick={onRemove}>
-          <Trash2 className="size-3" />
+          <TrashIcon className="size-3" />
           Delete
         </Button>
         <Button
@@ -356,7 +356,7 @@ export interface MarkerListMenuProps {
  * Unlink button made.
  *
  * **B-114 — each row carries its own Delete.** D-222 did ship a real delete
- * (the strip popover's `Trash2`), but the ONLY way to reach it was a
+ * (the strip popover's `Trash`), but the ONLY way to reach it was a
  * double-click or right-click on the flag itself — a 9×12px glyph on a 16px
  * strip. The owner, testing live with a marker placed, reported "no way to
  * remove a marker once placed": they had found this list (it is the visible,
@@ -376,7 +376,7 @@ export function MarkerListMenu({ timeline, fps, onJump, onRemove }: MarkerListMe
       <DropdownMenuTrigger
         render={
           <Button variant="ghost" size="sm" aria-label="Markers">
-            <Flag />
+            <FlagIcon />
             {markers.length}
           </Button>
         }
@@ -414,7 +414,7 @@ export function MarkerListMenu({ timeline, fps, onJump, onRemove }: MarkerListMe
                 onRemove(m.id);
               }}
             >
-              <Trash2 className="size-3" />
+              <TrashIcon className="size-3" />
             </span>
           </DropdownMenuItem>
         ))}
@@ -438,7 +438,7 @@ export function AddMarkerButton({ onAdd, shortcut }: AddMarkerButtonProps) {
       <TooltipTrigger
         render={
           <Button variant="ghost" size="icon-sm" onClick={onAdd} aria-label="Add marker">
-            <Flag />
+            <FlagIcon />
           </Button>
         }
       />

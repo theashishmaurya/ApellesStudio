@@ -1,6 +1,15 @@
 import { useState, useMemo, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Check, ChevronDown, ChevronRight, Plus, Star, Tag, X, User } from 'lucide-react';
+import {
+  CheckIcon,
+  CaretDownIcon,
+  CaretRightIcon,
+  PlusIcon,
+  StarIcon,
+  TagIcon,
+  XIcon,
+  UserIcon,
+} from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
@@ -524,10 +533,10 @@ export default function MetadataPanel() {
                     color={TextColors.primary}
                     className="flex items-center gap-2"
                   >
-                    <User size={16} /> {t('editor.metadata.author.creatorDetails')}
+                    <UserIcon size={16} /> {t('editor.metadata.author.creatorDetails')}
                   </Text>
                   <Text color={TextColors.secondary}>
-                    {isAuthorExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                    {isAuthorExpanded ? <CaretDownIcon size={16} /> : <CaretRightIcon size={16} />}
                   </Text>
                 </button>
 
@@ -578,10 +587,10 @@ export default function MetadataPanel() {
                     color={TextColors.primary}
                     className="flex items-center gap-2"
                   >
-                    <Tag size={16} /> {t('editor.metadata.organization.ratingLabels')}
+                    <TagIcon size={16} /> {t('editor.metadata.organization.ratingLabels')}
                   </Text>
                   <Text color={TextColors.secondary}>
-                    {isOrganizationExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                    {isOrganizationExpanded ? <CaretDownIcon size={16} /> : <CaretRightIcon size={16} />}
                   </Text>
                 </button>
 
@@ -611,13 +620,15 @@ export default function MetadataPanel() {
                                 onClick={() => handleRate(star, targetPaths)}
                                 className="focus:outline-hidden transition-transform active:scale-95 hover:scale-110"
                               >
-                                <Star
+                                {/* D-294 — filled = Phosphor's `fill` weight. */}
+                                <StarIcon
                                   size={20}
+                                  weight={star <= rating ? 'fill' : 'regular'}
                                   className={clsx(
                                     'transition-colors duration-200',
                                     star <= rating
-                                      ? 'fill-accent text-accent'
-                                      : 'fill-transparent text-text-secondary hover:text-text-primary',
+                                      ? 'text-accent'
+                                      : 'text-text-secondary hover:text-text-primary',
                                   )}
                                 />
                               </button>
@@ -644,7 +655,7 @@ export default function MetadataPanel() {
                               )}
                               data-tooltip={t('editor.metadata.organization.none')}
                             >
-                              <X size={12} className="text-text-tertiary" />
+                              <XIcon size={12} className="text-text-tertiary" />
                             </button>
                             {COLOR_LABELS.map((color: Color) => (
                               <button
@@ -659,7 +670,7 @@ export default function MetadataPanel() {
                                 style={{ backgroundColor: color.color }}
                                 data-tooltip={color.name}
                               >
-                                {currentColor === color.name && <Check size={12} className="text-black/50 mx-auto" />}
+                                {currentColor === color.name && <CheckIcon size={12} className="text-black/50 mx-auto" />}
                               </button>
                             ))}
                           </div>
@@ -694,7 +705,7 @@ export default function MetadataPanel() {
                                     >
                                       {tagItem.tag}
                                     </Text>
-                                    <X size={10} className="opacity-50 group-hover:opacity-100" />
+                                    <XIcon size={10} className="opacity-50 group-hover:opacity-100" />
                                   </motion.div>
                                 ))
                               ) : (
@@ -726,7 +737,7 @@ export default function MetadataPanel() {
                               disabled={!tagInputValue.trim()}
                               className="text-text-secondary hover:text-accent disabled:opacity-30 transition-colors"
                             >
-                              <Plus size={14} />
+                              <PlusIcon size={14} />
                             </button>
                           </div>
                           {appSettings?.taggingShortcuts && appSettings.taggingShortcuts.length > 0 && (

@@ -4,30 +4,30 @@ import { useTranslation } from 'react-i18next';
 import clsx from 'clsx';
 import { useDraggable, useDroppable, useDndMonitor } from '@dnd-kit/core';
 import {
-  SlidersHorizontal,
-  Info,
-  Crop,
-  Layers,
-  Paintbrush,
-  SwatchBook,
-  FileInput,
-  Camera,
-  Lightbulb,
-  type LucideIcon,
-} from 'lucide-react';
+  FadersHorizontalIcon,
+  InfoIcon,
+  CropIcon,
+  StackSimpleIcon,
+  PaintBrushIcon,
+  SwatchesIcon,
+  ExportIcon,
+  CameraIcon,
+  LightbulbIcon,
+  type Icon as PhosphorIcon,
+} from '@phosphor-icons/react';
 import { Panel, PanelRegion } from '../ui/AppProperties';
 import { SwitcherPlacement, useUIStore } from '../../store/useUIStore';
 
-export const PANEL_ICONS: Record<Panel, LucideIcon> = {
-  [Panel.Metadata]: Info,
-  [Panel.Adjustments]: SlidersHorizontal,
-  [Panel.Crop]: Crop,
-  [Panel.Masks]: Layers,
-  [Panel.Ai]: Paintbrush,
-  [Panel.Presets]: SwatchBook,
-  [Panel.Export]: FileInput,
-  [Panel.Relight]: Lightbulb, // D-046
-  [Panel.Tethering]: Camera,
+export const PANEL_ICONS: Record<Panel, PhosphorIcon> = {
+  [Panel.Metadata]: InfoIcon,
+  [Panel.Adjustments]: FadersHorizontalIcon,
+  [Panel.Crop]: CropIcon,
+  [Panel.Masks]: StackSimpleIcon,
+  [Panel.Ai]: PaintBrushIcon,
+  [Panel.Presets]: SwatchesIcon,
+  [Panel.Export]: ExportIcon,
+  [Panel.Relight]: LightbulbIcon, // D-046
+  [Panel.Tethering]: CameraIcon,
 };
 
 const PANEL_TITLES: Record<Panel, string> = {

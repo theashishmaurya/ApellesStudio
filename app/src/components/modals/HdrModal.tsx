@@ -1,6 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle, XCircle, Loader2, Save, RefreshCw, Images } from 'lucide-react';
+import {
+  CheckCircleIcon,
+  XCircleIcon,
+  CircleNotchIcon,
+  FloppyDiskIcon,
+  ArrowsClockwiseIcon,
+  ImagesIcon,
+} from '@phosphor-icons/react';
 import { motion } from 'framer-motion';
 import Button from '../ui/Button';
 import Text from '../ui/Text';
@@ -97,7 +104,7 @@ export default function HdrModal({
       return (
         <div className="flex flex-col items-center justify-center py-10 h-[460px]">
           <div className="flex items-center justify-center mb-6">
-            <XCircle className="w-12 h-12 text-red-500" />
+            <XCircleIcon className="w-12 h-12 text-red-500" />
           </div>
           <Text variant={TextVariants.title} className="mb-2 text-center">
             {t('modals.hdr.failed')}
@@ -123,7 +130,7 @@ export default function HdrModal({
                 color={TextColors.success}
                 className="flex items-center justify-center gap-2 mt-4"
               >
-                <CheckCircle className="w-5 h-5" />
+                <CheckCircleIcon className="w-5 h-5" />
                 <span>{t('modals.hdr.savedSuccess')}</span>
               </Text>
             </motion.div>
@@ -185,7 +192,7 @@ export default function HdrModal({
     return (
       <div className="flex flex-col items-center justify-center h-[460px]">
         <div className="flex items-center justify-center mb-6">
-          <Images className="w-12 h-12 text-accent" />
+          <ImagesIcon className="w-12 h-12 text-accent" />
         </div>
         <Text variant={TextVariants.title} className="mb-3 text-center">
           {t('modals.hdr.title')}
@@ -233,18 +240,18 @@ export default function HdrModal({
 
         <Button onClick={onMerge} disabled={isProcessing} variant={finalImageBase64 ? 'secondary' : 'primary'}>
           {isProcessing ? (
-            <Loader2 className="animate-spin mr-2" size={16} />
+            <CircleNotchIcon className="animate-spin mr-2" size={16} />
           ) : finalImageBase64 ? (
-            <RefreshCw className="mr-2" size={16} />
+            <ArrowsClockwiseIcon className="mr-2" size={16} />
           ) : (
-            <Images className="mr-2" size={16} />
+            <ImagesIcon className="mr-2" size={16} />
           )}
           {finalImageBase64 ? t('modals.hdr.retry') : t('modals.hdr.start')}
         </Button>
 
         {finalImageBase64 && (
           <Button onClick={handleSave} disabled={isSaving || isProcessing}>
-            {isSaving ? <Loader2 className="animate-spin mr-2" size={16} /> : <Save className="mr-2" size={16} />}
+            {isSaving ? <CircleNotchIcon className="animate-spin mr-2" size={16} /> : <FloppyDiskIcon className="mr-2" size={16} />}
             {t('modals.hdr.save')}
           </Button>
         )}

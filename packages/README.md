@@ -36,8 +36,9 @@ code lives today — the packages below are extracted from it incrementally.
 - **Step 6b (2026-09-02):** window chrome moved into `@apelles/shell`
   (`WindowChrome.tsx`); `@apelles/ui` made real with the safe subset (`Button`,
   `Input`, `Text`, `Switch`, `CollapsibleSection`) + app-side re-export shims;
-  `@apelles/editor` transport/toolbar switched to `lucide-react` icons +
-  `@apelles/ui`.
+  `@apelles/editor` transport/toolbar switched to a real icon library +
+  `@apelles/ui`. (That library was `lucide-react` until D-294 moved the whole
+  repo to `@phosphor-icons/react`.)
 - **D-042 (2026-09-02):** `@apelles/ui` moved onto **shadcn/ui + Base UI**
   (`@base-ui/react`). Canonical shadcn structure (`components.json`, `lib/utils`,
   `components/ui/*`), ~18 structural components added, the 5 hand-extracted

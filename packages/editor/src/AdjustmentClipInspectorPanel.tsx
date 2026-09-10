@@ -37,7 +37,7 @@
 import { useState } from 'react';
 import { Button, ScrubbableNumberInput } from '@apelles/ui';
 import { InspectorSection } from '@apelles/inspector';
-import { RotateCcw } from 'lucide-react';
+import { ArrowCounterClockwiseIcon } from '@phosphor-icons/react';
 
 import {
   ADJUSTMENT_PARAMS,
@@ -134,7 +134,7 @@ export function AdjustmentClipInspectorPanel() {
                       disabled={trackLocked || value === 0}
                       onClick={() => patch({ [key]: 0 } as Partial<AdjustmentLayer>)}
                     >
-                      <RotateCcw className="size-3" />
+                      <ArrowCounterClockwiseIcon className="size-3" />
                     </Button>
                   </span>
                 </div>

@@ -13,7 +13,7 @@
 // — tracked wins — so the bar hides for those.
 import { useCallback, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Diamond, X } from 'lucide-react';
+import { DiamondIcon, XIcon } from '@phosphor-icons/react';
 
 import { useEditorStore } from '../../store/useEditorStore';
 import { useChromaStore } from '../../store/useChromaStore';
@@ -94,7 +94,9 @@ export default function MaskKeyframeBar() {
         onClick={addOrUpdate}
         title={keyedHere ? 'Update this mask keyframe' : 'Keyframe this mask at the current frame'}
       >
-        <Diamond size={11} fill={keyedHere ? 'currentColor' : 'none'} />
+        {/* D-294 — a solid keyframe diamond is Phosphor's `fill` WEIGHT; a CSS
+            `fill` would recolour the outline, not solidify the glyph. */}
+        <DiamondIcon size={11} weight={keyedHere ? 'fill' : 'regular'} />
         {keyframes.length === 0 ? 'Keyframe mask' : keyedHere ? 'Update key' : 'Add key'}
       </button>
 
@@ -110,10 +112,10 @@ export default function MaskKeyframeBar() {
               onClick={() => seek(k.frame)}
               title={`Seek to keyframe · frame ${k.frame}`}
             >
-              <Diamond
+              <DiamondIcon
                 size={10}
+                weight="fill"
                 className={active ? 'text-accent' : 'text-text-secondary'}
-                fill="currentColor"
               />
             </button>
           );
@@ -136,7 +138,7 @@ export default function MaskKeyframeBar() {
               onClick={() => writeParams(removeKeyframe(sub.parameters || {}, currentFrame))}
               title="Delete the keyframe at this frame"
             >
-              <X size={12} />
+              <XIcon size={12} />
             </button>
           )}
           <button

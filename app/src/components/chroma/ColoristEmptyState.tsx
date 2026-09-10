@@ -2,14 +2,16 @@
 // shot is selected (or every shot is offline). Replaces RapidRAW's inherited
 // "Welcome back / Continue Session / Add Folder" library splash. No project at
 // all is handled one level up by the shell launcher (`main.tsx`).
-import { Clapperboard } from 'lucide-react';
+import { FilmSlateIcon } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 
 export default function ColoristEmptyState() {
   const { t } = useTranslation();
   return (
     <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-bg-primary rounded-lg select-none text-center px-8">
-      <Clapperboard size={48} className="text-text-secondary opacity-40" strokeWidth={1.5} />
+      {/* D-294 — the old `strokeWidth={1.5}` IS Phosphor's `regular` weight
+          (16/256 units), so the default needs no prop. */}
+      <FilmSlateIcon size={48} className="text-text-secondary opacity-40" />
       <p className="text-lg font-medium text-text-secondary">
         {t('colorist.emptyState.title', 'Add or select a shot to start grading')}
       </p>

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, FC } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronRight } from 'lucide-react';
+import { CaretRightIcon } from '@phosphor-icons/react';
 import { Option as AppOption, OPTION_SEPARATOR } from '../components/ui/AppProperties';
 import clsx from 'clsx';
 
@@ -229,7 +229,7 @@ function MenuItem({ option, path, hideContextMenu }: MenuItemProps) {
           {option.icon && <option.icon size={16} />}
           <span>{option.label}</span>
         </div>
-        {option.submenu && <ChevronRight size={16} />}
+        {option.submenu && <CaretRightIcon size={16} />}
       </button>
 
       <AnimatePresence>

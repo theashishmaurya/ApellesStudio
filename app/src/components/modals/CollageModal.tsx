@@ -3,18 +3,17 @@ import { invoke } from '@tauri-apps/api/core';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import {
-  CheckCircle,
-  XCircle,
-  Loader2,
-  Save,
-  Crop,
-  Proportions,
-  LayoutTemplate,
-  Shuffle,
-  RectangleHorizontal,
-  RectangleVertical,
-  Palette,
-} from 'lucide-react';
+  CheckCircleIcon,
+  XCircleIcon,
+  CircleNotchIcon,
+  FloppyDiskIcon,
+  CropIcon,
+  ResizeIcon,
+  LayoutIcon,
+  ShuffleIcon,
+  RectangleIcon,
+  PaletteIcon,
+} from '@phosphor-icons/react';
 import { ImageFile, Invokes } from '../ui/AppProperties';
 import Button from '../ui/Button';
 import Slider from '../ui/Slider';
@@ -606,14 +605,14 @@ export default function CollageModal({ isOpen, onClose, onSave, sourceImages }: 
         <div>
           <Text variant={TextVariants.heading} className="mb-2 flex items-center justify-between">
             <span className="flex items-center gap-2">
-              <LayoutTemplate size={16} /> {t('modals.collage.layout')}
+              <LayoutIcon size={16} /> {t('modals.collage.layout')}
             </span>
             <button
               onClick={handleShuffleImages}
               data-tooltip={t('modals.collage.shuffleTooltip')}
               className="p-1.5 rounded-md hover:bg-surface"
             >
-              <Shuffle size={16} />
+              <ShuffleIcon size={16} />
             </button>
           </Text>
           <div className="grid grid-cols-3 gap-2">
@@ -640,17 +639,19 @@ export default function CollageModal({ isOpen, onClose, onSave, sourceImages }: 
       <div>
         <Text variant={TextVariants.heading} className="mb-2 flex items-center justify-between">
           <span className="flex items-center gap-2">
-            <Crop size={16} /> {t('modals.collage.aspectRatio')}
+            <CropIcon size={16} /> {t('modals.collage.aspectRatio')}
           </span>
           <button
             className="p-1.5 rounded-md hover:bg-surface disabled:text-text-tertiary disabled:cursor-not-allowed"
             disabled={!activeAspectRatio.value || activeAspectRatio.value === 1}
             onClick={handleOrientationToggle}
           >
+            {/* D-294 — Phosphor ships one `Rectangle`; the portrait variant is
+                the same glyph quarter-turned. */}
             {activeAspectRatio.value && activeAspectRatio.value < 1 ? (
-              <RectangleVertical size={16} />
+              <RectangleIcon size={16} className="rotate-90" />
             ) : (
-              <RectangleHorizontal size={16} />
+              <RectangleIcon size={16} />
             )}
           </button>
         </Text>
@@ -712,7 +713,7 @@ export default function CollageModal({ isOpen, onClose, onSave, sourceImages }: 
 
       <div>
         <Text variant={TextVariants.heading} className="mb-2 flex items-center gap-2">
-          <Palette size={16} /> {t('modals.collage.background')}
+          <PaletteIcon size={16} /> {t('modals.collage.background')}
         </Text>
         <div className="flex items-center gap-2 bg-surface p-2 rounded-md">
           <input
@@ -732,7 +733,7 @@ export default function CollageModal({ isOpen, onClose, onSave, sourceImages }: 
 
       <div>
         <Text variant={TextVariants.heading} className="mb-2 flex items-center gap-2">
-          <Proportions size={16} /> {t('modals.collage.exportSize')}
+          <ResizeIcon size={16} /> {t('modals.collage.exportSize')}
         </Text>
         <div className="flex items-center gap-2">
           <input
@@ -759,7 +760,7 @@ export default function CollageModal({ isOpen, onClose, onSave, sourceImages }: 
     if (savedPath) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-center">
-          <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
+          <CheckCircleIcon className="w-16 h-16 text-green-500 mx-auto mb-4" />
           <Text variant={TextVariants.heading} className="mb-2">
             {t('modals.collage.saved')}
           </Text>
@@ -769,7 +770,7 @@ export default function CollageModal({ isOpen, onClose, onSave, sourceImages }: 
     if (error) {
       return (
         <div className="flex flex-col items-center justify-center h-full text-center">
-          <XCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+          <XCircleIcon className="w-16 h-16 text-red-500 mx-auto mb-4" />
           <Text variant={TextVariants.heading} className="mb-2">
             {t('modals.collage.errorTitle')}
           </Text>
@@ -805,7 +806,7 @@ export default function CollageModal({ isOpen, onClose, onSave, sourceImages }: 
           <div ref={previewContainerRef} className="grow flex items-center justify-center p-4 relative min-h-0">
             {isLoading && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/20 z-10">
-                <Loader2 className="w-12 h-12 text-accent animate-spin" />
+                <CircleNotchIcon className="w-12 h-12 text-accent animate-spin" />
               </div>
             )}
 
@@ -917,7 +918,7 @@ export default function CollageModal({ isOpen, onClose, onSave, sourceImages }: 
               </button>
               {!savedPath && !error && (
                 <Button onClick={handleSave} disabled={isSaving || isLoading || !activeLayout}>
-                  {isSaving ? <Loader2 className="animate-spin mr-2" /> : <Save size={16} className="mr-2" />}
+                  {isSaving ? <CircleNotchIcon className="animate-spin mr-2" /> : <FloppyDiskIcon size={16} className="mr-2" />}
                   {isSaving ? t('modals.collage.saving') : t('modals.collage.saveButton')}
                 </Button>
               )}

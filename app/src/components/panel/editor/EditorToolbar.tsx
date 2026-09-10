@@ -1,5 +1,12 @@
 import { memo, useState, useEffect, useRef, useMemo } from 'react';
-import { Eye, EyeOff, Maximize, Loader2, Undo, Redo } from 'lucide-react';
+import {
+  EyeIcon,
+  EyeSlashIcon,
+  CornersOutIcon,
+  CircleNotchIcon,
+  ArrowUUpLeftIcon,
+  ArrowUUpRightIcon,
+} from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
 import { useTranslation } from 'react-i18next';
@@ -364,16 +371,16 @@ const EditorToolbar = memo(
               own benchmark tooling, outside D-043's scope). */}
           <div className="hidden 2xl:flex items-center gap-2" aria-hidden="true">
             <div className="p-2 invisible pointer-events-none">
-              <Undo size={20} />
+              <ArrowUUpLeftIcon size={20} />
             </div>
             <div className="p-2 invisible pointer-events-none">
-              <Undo size={20} />
+              <ArrowUUpLeftIcon size={20} />
             </div>
             <div className="p-2 invisible pointer-events-none">
-              <Undo size={20} />
+              <ArrowUUpLeftIcon size={20} />
             </div>
             <div className="p-2 invisible pointer-events-none">
-              <Undo size={20} />
+              <ArrowUUpLeftIcon size={20} />
             </div>
           </div>
         </div>
@@ -481,7 +488,7 @@ const EditorToolbar = memo(
                   }
                 }}
               >
-                {isLoaderMounted && <Loader2 size={12} className="text-text-secondary animate-spin" />}
+                {isLoaderMounted && <CircleNotchIcon size={12} className="text-text-secondary animate-spin" />}
               </div>
             </div>
 
@@ -586,7 +593,7 @@ const EditorToolbar = memo(
               data-tooltip={t('editor.toolbar.tooltips.undo')}
               data-bench-id="undo"
             >
-              <Undo size={20} />
+              <ArrowUUpLeftIcon size={20} />
             </button>
             <button
               className="bg-surface text-text-primary p-2 rounded-full hover:bg-card-active transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -599,7 +606,7 @@ const EditorToolbar = memo(
               }}
               data-tooltip={t('editor.toolbar.tooltips.redo')}
             >
-              <Redo size={20} />
+              <ArrowUUpRightIcon size={20} />
             </button>
 
             <AnimatePresence>
@@ -673,7 +680,7 @@ const EditorToolbar = memo(
               showOriginal ? t('editor.toolbar.tooltips.showEdited') : t('editor.toolbar.tooltips.showOriginal')
             }
           >
-            {showOriginal ? <EyeOff size={20} /> : <Eye size={20} />}
+            {showOriginal ? <EyeSlashIcon size={20} /> : <EyeIcon size={20} />}
           </button>
           <button
             className="bg-surface text-text-primary p-2 rounded-full hover:bg-card-active transition-colors disabled:opacity-50 disabled:cursor-not-allowed relative"
@@ -682,7 +689,7 @@ const EditorToolbar = memo(
             data-tooltip={t('editor.toolbar.tooltips.fullscreen')}
           >
             <div className="relative w-5 h-5 flex items-center justify-center">
-              <Maximize size={20} />
+              <CornersOutIcon size={20} />
             </div>
           </button>
 

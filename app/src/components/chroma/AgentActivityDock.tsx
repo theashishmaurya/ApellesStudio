@@ -10,7 +10,14 @@
 // follows the sibling ChromaTimeline (plain elements + the app's colour tokens).
 // See docs/notes/agent-activity-feed.md.
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Undo2, Trash2, UserRound, X } from 'lucide-react';
+import {
+  CaretDownIcon,
+  CaretRightIcon,
+  ArrowUUpLeftIcon,
+  TrashIcon,
+  UserCircleIcon,
+  XIcon,
+} from '@phosphor-icons/react';
 
 import { useAgentStore, AgentActivityEntry } from '../../store/useAgentStore';
 import { restoreEditorHistorySnapshot } from '../../utils/editorHistorySnapshot';
@@ -48,7 +55,7 @@ function RequestHumanBanner() {
   return (
     <div className="rounded-lg border border-amber-500/60 bg-amber-500/10 shadow-2xl p-3 flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <UserRound size={14} className="text-amber-400 shrink-0" />
+        <UserCircleIcon size={14} className="text-amber-400 shrink-0" />
         <span className="text-xs font-semibold text-text-primary">The agent is asking for you</span>
       </div>
       <p className="text-xs text-text-secondary leading-snug">{req.reason}</p>
@@ -101,7 +108,7 @@ function ActivityRow({ entry }: { entry: AgentActivityEntry }) {
           className="mt-0.5 text-text-secondary hover:text-text-primary shrink-0"
           title={open ? 'Collapse' : 'Show diff'}
         >
-          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          {open ? <CaretDownIcon size={13} /> : <CaretRightIcon size={13} />}
         </button>
         <div className="min-w-0 flex-1">
           <span
@@ -121,7 +128,7 @@ function ActivityRow({ entry }: { entry: AgentActivityEntry }) {
           className="shrink-0 flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-text-secondary hover:text-text-primary hover:bg-surface disabled:opacity-40 disabled:cursor-not-allowed"
           title="Revert to before this change (drops newer feed entries)"
         >
-          <Undo2 size={11} />
+          <ArrowUUpLeftIcon size={11} />
           Undo
         </button>
       </div>
@@ -151,7 +158,7 @@ export default function AgentActivityDock() {
               onClick={() => setFeedOpen(!feedOpen)}
               className="flex items-center gap-1.5 text-text-primary hover:text-accent"
             >
-              {feedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              {feedOpen ? <CaretDownIcon size={14} /> : <CaretRightIcon size={14} />}
               <span className="text-xs font-semibold">Agent activity</span>
             </button>
             <span className="text-[10px] text-text-secondary tabular-nums">{activity.length}</span>
@@ -161,14 +168,14 @@ export default function AgentActivityDock() {
               className="text-text-secondary hover:text-text-primary p-0.5"
               title="Clear the feed (does not revert any grade)"
             >
-              <Trash2 size={12} />
+              <TrashIcon size={12} />
             </button>
             <button
               onClick={() => setFeedOpen(false)}
               className="text-text-secondary hover:text-text-primary p-0.5"
               title="Hide"
             >
-              <X size={12} />
+              <XIcon size={12} />
             </button>
           </div>
 

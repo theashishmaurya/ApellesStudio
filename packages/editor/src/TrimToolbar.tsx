@@ -41,8 +41,14 @@
  * one row, and Adobe's own page notes the panel can be oriented either way.
  */
 
-import { GalleryHorizontal, MousePointer2, MoveHorizontal, SeparatorVertical, UnfoldHorizontal } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import {
+  FilmStripIcon,
+  CursorIcon,
+  ArrowsHorizontalIcon,
+  SquareSplitHorizontalIcon,
+  ArrowsOutLineHorizontalIcon,
+} from '@phosphor-icons/react';
+import type { Icon as PhosphorIcon } from '@phosphor-icons/react';
 import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@apelles/ui';
 import { effectiveCombo, formatCombo, shortcutById, useKeymapStore } from '@apelles/keymap';
 
@@ -56,31 +62,35 @@ import { TRIM_TOOLS, type TrimTool } from './trimMode';
  * looks like. Apelles cannot use either product's artwork, so each is the
  * closest glyph in the icon set this app already uses:
  *
- *   - **Select → `MousePointer2`.** Adobe's Selection tool is an arrow pointer;
+ * (Glyph names are Phosphor's as of D-294; the reasoning below is unchanged
+ * from the lucide-react set these replaced.)
+ *
+ *   - **Select → `Cursor`.** Adobe's Selection tool is an arrow pointer;
  *     so is this. Exact match.
- *   - **Ripple → `UnfoldHorizontal`.** Adobe's Ripple Edit glyph is arrows
- *     pushing outward from a centre bar, which is what a ripple does: trim this
- *     edge, push everything after it along. It is also the exact complement of
- *     `FoldHorizontal`, which this same toolbar already uses for Close Gap (a
- *     ripple inward) — so the pair reads as one idea in two directions.
- *   - **Roll → `SeparatorVertical`.** A single vertical line with a chevron on
- *     each side: the cut in the middle, movable both ways. That is Adobe's
- *     Rolling Edit glyph and Resolve's roll cursor, near enough to identical.
- *   - **Slip → `GalleryHorizontal`.** Two fixed outer rails with a card sliding
- *     between them — Adobe's own `|↔|` slip glyph, and a literal picture of the
- *     edit: the clip's boundaries stay put while what is inside them moves.
- *   - **Slide → `MoveHorizontal`.** A plain horizontal double arrow: the clip
+ *   - **Ripple → `ArrowsOutLineHorizontal`.** Adobe's Ripple Edit glyph is
+ *     arrows pushing outward from a centre bar, which is what a ripple does:
+ *     trim this edge, push everything after it along. It is also the exact
+ *     complement of `ArrowsInLineHorizontal`, which this same toolbar already
+ *     uses for Close Gap (a ripple inward) — so the pair reads as one idea in
+ *     two directions.
+ *   - **Roll → `SquareSplitHorizontal`.** One frame divided by a single movable
+ *     line: the cut in the middle, draggable both ways. That is Adobe's Rolling
+ *     Edit glyph and Resolve's roll cursor, near enough to identical.
+ *   - **Slip → `FilmStrip`.** A literal picture of the edit: the clip's
+ *     boundaries stay put while the film running through them moves — Adobe's
+ *     own `|↔|` slip glyph says the same thing more abstractly.
+ *   - **Slide → `ArrowsHorizontal`.** A plain horizontal double arrow: the clip
  *     itself travels. Adobe: "a slide edit shifts a clip in time."
  *
  * Keyed by tool so the compiler requires an icon for every member of
  * [`TrimTool`] — a new tool cannot be added without one.
  */
-export const TRIM_TOOL_ICONS: Record<TrimTool, LucideIcon> = {
-  select: MousePointer2,
-  ripple: UnfoldHorizontal,
-  roll: SeparatorVertical,
-  slip: GalleryHorizontal,
-  slide: MoveHorizontal,
+export const TRIM_TOOL_ICONS: Record<TrimTool, PhosphorIcon> = {
+  select: CursorIcon,
+  ripple: ArrowsOutLineHorizontalIcon,
+  roll: SquareSplitHorizontalIcon,
+  slip: FilmStripIcon,
+  slide: ArrowsHorizontalIcon,
 };
 
 export interface TrimToolbarProps {

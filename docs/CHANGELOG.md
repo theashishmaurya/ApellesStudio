@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-294: the whole app moved off `lucide-react` onto Phosphor
+  Icons** (`@phosphor-icons/react` ^2.1.10, MIT) — 82 files and ~180 glyphs across
+  all 7 packages that used it (`app`, `ui`, `editor`, `motion`, `player`, `shell`,
+  `keymap`), chosen over Tabler/Heroicons/Radix for its six weights. Standardized
+  on `regular`, with `fill` deliberately replacing the old `fill="currentColor"`
+  idiom on rating stars and keyframe diamonds (Phosphor draws filled paths, so a
+  CSS `fill` recoloured the outline instead of solidifying it). Closes the
+  roadmap's "Lock/Unlock icons are hard to tell apart" item. Also deleted
+  `simple-icons`, an unreferenced dependency in `app/package.json`.
 - **2026-09-10** — website image weight + SEO/social-card follow-ups from the
   same Lighthouse pass as B-149: converted the three `Demo.astro` screenshots
   from PNG to WebP (77-81% smaller, same pixel dimensions) and the hero

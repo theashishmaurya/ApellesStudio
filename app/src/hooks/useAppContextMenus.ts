@@ -1,31 +1,31 @@
 import { useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
-  Aperture,
-  Check,
-  ClipboardPaste,
-  Copy,
-  CopyPlus,
-  Edit,
-  FileEdit,
-  FileInput,
-  Folder,
-  Images,
-  LayoutTemplate,
-  Redo,
-  RotateCcw,
-  Star,
-  SquaresUnite,
-  Palette,
-  Tag,
-  Trash2,
-  Undo,
-  X,
-  Gauge,
-  Layers,
-  Grip,
-  Film,
-} from 'lucide-react';
+  ApertureIcon,
+  CheckIcon,
+  ClipboardTextIcon,
+  CopyIcon,
+  CopySimpleIcon,
+  PencilSimpleIcon,
+  NotePencilIcon,
+  ExportIcon,
+  FolderIcon,
+  ImagesIcon,
+  LayoutIcon,
+  ArrowUUpRightIcon,
+  ArrowCounterClockwiseIcon,
+  StarIcon,
+  UniteSquareIcon,
+  PaletteIcon,
+  TagIcon,
+  TrashIcon,
+  ArrowUUpLeftIcon,
+  XIcon,
+  GaugeIcon,
+  StackSimpleIcon,
+  DotsSixIcon,
+  FilmStripIcon,
+} from '@phosphor-icons/react';
 import { toast } from 'react-toastify';
 import { useTranslation } from 'react-i18next';
 import { useContextMenu } from '../context/ContextMenuContext';
@@ -105,37 +105,37 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
       const options: Array<Option> = [
         {
           label: t('contextMenus.editor.exportImage'),
-          icon: FileInput,
+          icon: ExportIcon,
           onClick: () => setPanel(Panel.Export),
         },
         { type: OPTION_SEPARATOR },
-        { label: t('contextMenus.editor.undo'), icon: Undo, onClick: undo, disabled: !canUndo },
-        { label: t('contextMenus.editor.redo'), icon: Redo, onClick: redo, disabled: !canRedo },
+        { label: t('contextMenus.editor.undo'), icon: ArrowUUpLeftIcon, onClick: undo, disabled: !canUndo },
+        { label: t('contextMenus.editor.redo'), icon: ArrowUUpRightIcon, onClick: redo, disabled: !canRedo },
         { type: OPTION_SEPARATOR },
         {
           label: t('contextMenus.editor.copyAdjustments'),
-          icon: Copy,
+          icon: CopyIcon,
           onClick: () => handleCopyAdjustments(),
         },
         {
           label: t('contextMenus.editor.pasteAdjustments'),
-          icon: ClipboardPaste,
+          icon: ClipboardTextIcon,
           onClick: () => handlePasteAdjustments(),
           disabled: copiedAdjustments === null,
         },
         {
           label: t('contextMenus.editor.productivity'),
-          icon: Gauge,
+          icon: GaugeIcon,
           submenu: [
             {
               label: t('contextMenus.editor.autoAdjust'),
-              icon: Aperture,
+              icon: ApertureIcon,
               onClick: handleAutoAdjustments,
               disabled: !selectedImage?.isReady,
             },
             {
               label: t('contextMenus.editor.denoise'),
-              icon: Grip,
+              icon: DotsSixIcon,
               onClick: () => {
                 setUI({
                   denoiseModalState: {
@@ -152,7 +152,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
             },
             {
               label: t('contextMenus.editor.convertNegative'),
-              icon: Film,
+              icon: FilmStripIcon,
               onClick: () => {
                 if (selectedImage) {
                   setUI({ negativeModalState: { isOpen: true, targetPaths: [selectedImage.path] } });
@@ -160,7 +160,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
               },
             },
             {
-              icon: LayoutTemplate,
+              icon: LayoutIcon,
               label: t('contextMenus.editor.frameImage'),
               onClick: () => {
                 setUI({ collageModalState: { isOpen: true, sourceImages: [selectedImage] } });
@@ -170,17 +170,17 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         },
         {
           label: t('contextMenus.merge.title'),
-          icon: Layers,
+          icon: StackSimpleIcon,
           submenu: [
-            { disabled: true, icon: SquaresUnite, label: t('contextMenus.editor.stitchPanorama') },
-            { disabled: true, icon: Images, label: t('contextMenus.editor.mergeHdr') },
-            { disabled: true, icon: Layers, label: t('contextMenus.merge.focusStack') },
+            { disabled: true, icon: UniteSquareIcon, label: t('contextMenus.editor.stitchPanorama') },
+            { disabled: true, icon: ImagesIcon, label: t('contextMenus.editor.mergeHdr') },
+            { disabled: true, icon: StackSimpleIcon, label: t('contextMenus.merge.focusStack') },
           ],
         },
         { type: OPTION_SEPARATOR },
         {
           label: t('contextMenus.editor.rating'),
-          icon: Star,
+          icon: StarIcon,
           submenu: [0, 1, 2, 3, 4, 5].map((rating: number) => ({
             label:
               rating === 0
@@ -191,7 +191,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         },
         {
           label: t('contextMenus.editor.colorLabel'),
-          icon: Palette,
+          icon: PaletteIcon,
           submenu: [
             { label: t('contextMenus.editor.noLabel'), onClick: () => handleSetColorLabel(null) },
             ...COLOR_LABELS.map((label: Color) => ({
@@ -203,7 +203,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         },
         {
           label: t('contextMenus.editor.tagging'),
-          icon: Tag,
+          icon: TagIcon,
           submenu: [
             {
               customComponent: TaggingSubMenu,
@@ -219,12 +219,12 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         { type: OPTION_SEPARATOR },
         {
           label: t('contextMenus.editor.resetAdjustments'),
-          icon: RotateCcw,
+          icon: ArrowCounterClockwiseIcon,
           submenu: [
-            { label: t('contextMenus.editor.cancel'), icon: X, onClick: () => {} },
+            { label: t('contextMenus.editor.cancel'), icon: XIcon, onClick: () => {} },
             {
               label: t('contextMenus.editor.confirmReset'),
-              icon: Check,
+              icon: CheckIcon,
               isDestructive: true,
               onClick: () => {
                 const originalAspectRatio =
@@ -312,36 +312,36 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
       let deleteSubmenu;
       if (selectionHasVirtualCopies) {
         deleteSubmenu = [
-          { label: t('contextMenus.editor.cancel'), icon: X, onClick: () => {} },
+          { label: t('contextMenus.editor.cancel'), icon: XIcon, onClick: () => {} },
           {
             label: t('contextMenus.thumbnail.confirmDeleteVc'),
-            icon: Check,
+            icon: CheckIcon,
             isDestructive: true,
             onClick: () => props.executeDelete(finalSelection, { includeAssociated: false }),
           },
         ];
       } else if (hasAssociatedFiles) {
         deleteSubmenu = [
-          { label: t('contextMenus.editor.cancel'), icon: X, onClick: () => {} },
+          { label: t('contextMenus.editor.cancel'), icon: XIcon, onClick: () => {} },
           {
             label: t('contextMenus.thumbnail.deleteSelected'),
-            icon: Check,
+            icon: CheckIcon,
             isDestructive: true,
             onClick: () => props.executeDelete(finalSelection, { includeAssociated: false }),
           },
           {
             label: t('contextMenus.thumbnail.deleteAssociated'),
-            icon: Check,
+            icon: CheckIcon,
             isDestructive: true,
             onClick: () => props.executeDelete(finalSelection, { includeAssociated: true }),
           },
         ];
       } else {
         deleteSubmenu = [
-          { label: t('contextMenus.editor.cancel'), icon: X, onClick: () => {} },
+          { label: t('contextMenus.editor.cancel'), icon: XIcon, onClick: () => {} },
           {
             label: t('contextMenus.thumbnail.confirmDelete'),
-            icon: Check,
+            icon: CheckIcon,
             isDestructive: true,
             onClick: () => props.executeDelete(finalSelection, { includeAssociated: false }),
           },
@@ -409,34 +409,34 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
           ? [
               {
                 disabled: !isSingleSelection,
-                icon: Edit,
+                icon: PencilSimpleIcon,
                 label: t('contextMenus.editor.editImage'),
                 onClick: () => props.handleImageSelect(finalSelection[0]),
               },
-              { icon: FileInput, label: exportLabel, onClick: onExportClick },
+              { icon: ExportIcon, label: exportLabel, onClick: onExportClick },
               { type: OPTION_SEPARATOR },
             ]
-          : [{ icon: FileInput, label: exportLabel, onClick: onExportClick }, { type: OPTION_SEPARATOR }]),
+          : [{ icon: ExportIcon, label: exportLabel, onClick: onExportClick }, { type: OPTION_SEPARATOR }]),
         {
           disabled: !isSingleSelection,
-          icon: Copy,
+          icon: CopyIcon,
           label: t('contextMenus.editor.copyAdjustments'),
           onClick: () => handleCopyAdjustments(finalSelection[0]),
         },
         {
           disabled: copiedAdjustments === null,
-          icon: ClipboardPaste,
+          icon: ClipboardTextIcon,
           label: pasteLabel,
           onClick: () => handlePasteAdjustments(finalSelection),
         },
         {
           label: t('contextMenus.editor.productivity'),
-          icon: Gauge,
+          icon: GaugeIcon,
           submenu: [
-            { label: autoAdjustLabel, icon: Aperture, onClick: handleApplyAutoAdjustmentsToSelection },
+            { label: autoAdjustLabel, icon: ApertureIcon, onClick: handleApplyAutoAdjustmentsToSelection },
             {
               label: denoiseLabel,
-              icon: Grip,
+              icon: DotsSixIcon,
               disabled: finalSelection.length === 0,
               onClick: () => {
                 setUI({
@@ -454,14 +454,14 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
             },
             {
               label: conversionLabel,
-              icon: Film,
+              icon: FilmStripIcon,
               disabled: selectionCount === 0,
               onClick: () => {
                 setUI({ negativeModalState: { isOpen: true, targetPaths: finalSelection } });
               },
             },
             {
-              icon: LayoutTemplate,
+              icon: LayoutIcon,
               label: collageLabel,
               onClick: () => {
                 const imagesForCollage = imageList.filter((img) => finalSelection.includes(img.path));
@@ -473,11 +473,11 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         },
         {
           label: t('contextMenus.merge.title'),
-          icon: Layers,
+          icon: StackSimpleIcon,
           submenu: [
             {
               disabled: selectionCount < 2 || selectionCount > 30,
-              icon: SquaresUnite,
+              icon: UniteSquareIcon,
               label: stitchLabel,
               onClick: () => {
                 setUI({
@@ -494,7 +494,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
             },
             {
               disabled: selectionCount < 2 || selectionCount > 9,
-              icon: Images,
+              icon: ImagesIcon,
               label: mergeLabel,
               onClick: () => {
                 setUI({
@@ -511,7 +511,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
             },
             {
               disabled: selectionCount < 2,
-              icon: Layers,
+              icon: StackSimpleIcon,
               label: t('contextMenus.merge.focusStack'),
               onClick: () => {
                 setUI({
@@ -532,18 +532,18 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         { type: OPTION_SEPARATOR },
         {
           label: copyLabel,
-          icon: Copy,
+          icon: CopyIcon,
           onClick: () => {
             setProcess({ copiedFilePaths: finalSelection, isCopied: true });
           },
         },
         {
-          icon: CopyPlus,
+          icon: CopySimpleIcon,
           label: t('contextMenus.thumbnail.duplicateImage'),
           submenu: [
             {
               label: t('contextMenus.thumbnail.physicalCopy'),
-              icon: Copy,
+              icon: CopyIcon,
               disabled: !isSingleSelection,
               onClick: async () => {
                 try {
@@ -557,16 +557,16 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
             },
             {
               label: t('contextMenus.thumbnail.virtualCopy'),
-              icon: CopyPlus,
+              icon: CopySimpleIcon,
               disabled: !isSingleSelection,
               onClick: () => handleCreateVirtualCopy(finalSelection[0]),
             },
           ],
         },
-        { icon: FileEdit, label: renameLabel, onClick: () => props.handleRenameFiles(finalSelection) },
+        { icon: NotePencilIcon, label: renameLabel, onClick: () => props.handleRenameFiles(finalSelection) },
         { type: OPTION_SEPARATOR },
         {
-          icon: Star,
+          icon: StarIcon,
           label: t('contextMenus.editor.rating'),
           submenu: [0, 1, 2, 3, 4, 5].map((rating: number) => ({
             label:
@@ -578,7 +578,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         },
         {
           label: t('contextMenus.editor.colorLabel'),
-          icon: Palette,
+          icon: PaletteIcon,
           submenu: [
             { label: t('contextMenus.editor.noLabel'), onClick: () => handleSetColorLabel(null, finalSelection) },
             ...COLOR_LABELS.map((label: Color) => ({
@@ -590,7 +590,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         },
         {
           label: t('contextMenus.editor.tagging'),
-          icon: Tag,
+          icon: TagIcon,
           submenu: [
             {
               customComponent: TaggingSubMenu,
@@ -606,7 +606,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         { type: OPTION_SEPARATOR },
         {
           disabled: !isSingleSelection,
-          icon: Folder,
+          icon: FolderIcon,
           label: t('contextMenus.thumbnail.showExplorer'),
           onClick: () => {
             invoke(Invokes.ShowInFinder, { path: finalSelection[0] }).catch((err) =>
@@ -616,12 +616,12 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         },
         {
           label: resetLabel,
-          icon: RotateCcw,
+          icon: ArrowCounterClockwiseIcon,
           submenu: [
-            { label: t('contextMenus.editor.cancel'), icon: X, onClick: () => {} },
+            { label: t('contextMenus.editor.cancel'), icon: XIcon, onClick: () => {} },
             {
               label: t('contextMenus.editor.confirmReset'),
-              icon: Check,
+              icon: CheckIcon,
               isDestructive: true,
               onClick: () => handleResetAdjustments(finalSelection),
             },
@@ -629,7 +629,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         },
         {
           label: deleteLabel,
-          icon: Trash2,
+          icon: TrashIcon,
           isDestructive: true,
           submenu: deleteSubmenu,
         },

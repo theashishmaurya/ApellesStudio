@@ -40,7 +40,18 @@
 // every light control, visually separated and labeled as the deliberate
 // "finalize for the whole video" action it actually is.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Diamond, Info, Loader2, Plus, RotateCw, Trash2, Eye, EyeOff, Video, X } from 'lucide-react';
+import {
+  DiamondIcon,
+  InfoIcon,
+  CircleNotchIcon,
+  PlusIcon,
+  ArrowClockwiseIcon,
+  TrashIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  VideoCameraIcon,
+  XIcon,
+} from '@phosphor-icons/react';
 import { Button, Slider, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@apelles/ui';
 import { trackEvent } from '@apelles/bridge';
 
@@ -221,7 +232,7 @@ export default function RelightPanel() {
         <div className="flex items-center gap-1.5 text-xs text-text-secondary">
           {isBakingRelightDepth ? (
             <>
-              <Loader2 size={12} className="animate-spin shrink-0" />
+              <CircleNotchIcon size={12} className="animate-spin shrink-0" />
               <span>Generating a quick depth preview…</span>
             </>
           ) : relightDepthDir ? (
@@ -236,7 +247,7 @@ export default function RelightPanel() {
                   onClick={handleBakeRelightDepth}
                   title="Re-bake the depth preview at the current frame"
                 >
-                  <RotateCw size={12} />
+                  <ArrowClockwiseIcon size={12} />
                 </Button>
               )}
             </>
@@ -260,7 +271,7 @@ export default function RelightPanel() {
         <div className="flex items-center gap-1.5 text-xs text-text-secondary">
           {isBakingRelightNormals ? (
             <>
-              <Loader2 size={12} className="animate-spin shrink-0" />
+              <CircleNotchIcon size={12} className="animate-spin shrink-0" />
               <span>Computing real surface shape (first run downloads a model, ~15s)…</span>
             </>
           ) : relightNormalsBake ? (
@@ -275,7 +286,7 @@ export default function RelightPanel() {
                         size="icon-xs"
                         onClick={handleBakeRelightNormals}
                       >
-                        <RotateCw size={12} />
+                        <ArrowClockwiseIcon size={12} />
                       </Button>
                     }
                   />
@@ -345,7 +356,7 @@ export default function RelightPanel() {
           </Button>
         ))}
         <Button variant="secondary" size="xs" className="gap-1" onClick={addPositionalLight} title="Add a positional light">
-          <Plus size={12} /> Add Light
+          <PlusIcon size={12} /> Add Light
         </Button>
       </div>
 
@@ -380,7 +391,7 @@ export default function RelightPanel() {
                 onClick={() => updateActiveLight({ visible: !activeLight.visible })}
                 title={activeLight.visible ? 'Hide this light' : 'Show this light'}
               >
-                {activeLight.visible ? <Eye size={14} /> : <EyeOff size={14} />}
+                {activeLight.visible ? <EyeIcon size={14} /> : <EyeSlashIcon size={14} />}
               </Button>
               <Button
                 variant="ghost"
@@ -389,7 +400,7 @@ export default function RelightPanel() {
                 onClick={() => deleteLight(activeLight.id)}
                 title="Delete this light"
               >
-                <Trash2 size={14} />
+                <TrashIcon size={14} />
               </Button>
             </div>
           </div>
@@ -489,7 +500,8 @@ export default function RelightPanel() {
                     }
                     title={keyedHere ? 'Update this light keyframe' : 'Keyframe this light at the current frame'}
                   >
-                    <Diamond size={11} fill={keyedHere ? 'currentColor' : 'none'} />
+                    {/* D-294 — solid = Phosphor's `fill` weight. */}
+                    <DiamondIcon size={11} weight={keyedHere ? 'fill' : 'regular'} />
                     {keyframes.length === 0 ? 'Keyframe light' : keyedHere ? 'Update key' : 'Add key'}
                   </Button>
                   {keyframes.length > 0 && (
@@ -504,7 +516,7 @@ export default function RelightPanel() {
                           onClick={() => writeLightParams(removeKeyframe(activeLight, currentFrame))}
                           title="Delete the keyframe at this frame"
                         >
-                          <X size={12} />
+                          <XIcon size={12} />
                         </Button>
                       )}
                       <Button
@@ -547,7 +559,7 @@ export default function RelightPanel() {
               <TooltipTrigger
                 render={
                   <span className="text-text-secondary/50 hover:text-text-secondary cursor-help">
-                    <Info size={13} />
+                    <InfoIcon size={13} />
                   </span>
                 }
               />
@@ -567,7 +579,7 @@ export default function RelightPanel() {
                   disabled={!!depthTrackProgress}
                   aria-label={relightDepthDir ? 'Re-track depth (full video)' : 'Track Depth (full video)'}
                 >
-                  {depthTrackProgress ? <Loader2 size={14} className="animate-spin" /> : <Video size={14} />}
+                  {depthTrackProgress ? <CircleNotchIcon size={14} className="animate-spin" /> : <VideoCameraIcon size={14} />}
                 </Button>
               }
             />

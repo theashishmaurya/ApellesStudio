@@ -1,7 +1,16 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
-import { FileInput, CheckCircle, XCircle, Loader, Ban, ChevronDown, ChevronRight, Settings, X } from 'lucide-react';
+import {
+  ExportIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  CircleNotchIcon,
+  ProhibitIcon,
+  CaretDownIcon,
+  CaretRightIcon,
+  GearIcon,
+} from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import debounce from 'lodash.debounce';
@@ -808,10 +817,10 @@ export default function ExportPanel({
                     color={TextColors.primary}
                     className="flex items-center gap-2"
                   >
-                    <Settings size={16} /> {t('export.advanced.title')}
+                    <GearIcon size={16} /> {t('export.advanced.title')}
                   </Text>
                   <Text color={TextColors.secondary}>
-                    {isAdvancedExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                    {isAdvancedExpanded ? <CaretDownIcon size={16} /> : <CaretRightIcon size={16} />}
                   </Text>
                 </button>
                 <AnimatePresence initial={false}>
@@ -905,35 +914,35 @@ export default function ExportPanel({
           {status === Status.Exporting ? (
             <>
               <span className="flex items-center group-hover:hidden">
-                <Loader size={18} className="animate-spin mr-2" />
+                <CircleNotchIcon size={18} className="animate-spin mr-2" />
                 {progress.total > 1
                   ? t('export.status.exportingProgress', { current: progress.current, total: progress.total })
                   : t('export.status.exporting')}
               </span>
               <span className="hidden items-center group-hover:flex">
-                <Ban size={18} className="mr-2" />
+                <ProhibitIcon size={18} className="mr-2" />
                 {t('export.status.cancelExport')}
               </span>
             </>
           ) : status === Status.Cancelling ? (
             <>
-              <Loader size={18} className="animate-spin mr-2" /> {t('export.status.cancelling')}
+              <CircleNotchIcon size={18} className="animate-spin mr-2" /> {t('export.status.cancelling')}
             </>
           ) : status === Status.Success ? (
             <>
-              <CheckCircle size={18} className="mr-2" /> {t('export.status.success')}
+              <CheckCircleIcon size={18} className="mr-2" /> {t('export.status.success')}
             </>
           ) : status === Status.Error ? (
             <>
-              <XCircle size={18} className="mr-2" /> {errorMessage || t('export.status.failed')}
+              <XCircleIcon size={18} className="mr-2" /> {errorMessage || t('export.status.failed')}
             </>
           ) : status === Status.Cancelled ? (
             <>
-              <Ban size={18} className="mr-2" /> {t('export.status.cancelled')}
+              <ProhibitIcon size={18} className="mr-2" /> {t('export.status.cancelled')}
             </>
           ) : (
             <>
-              <FileInput size={18} className="mr-2" />{' '}
+              <ExportIcon size={18} className="mr-2" />{' '}
               {numImages > 1
                 ? t('export.status.exportMultiple', { count: numImages, label: itemLabelPlural })
                 : t('export.status.exportSingle', { label: itemLabel })}

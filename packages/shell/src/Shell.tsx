@@ -125,7 +125,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronLeft, Keyboard, PanelLeft } from 'lucide-react';
+import { CaretLeftIcon, KeyboardIcon, SidebarSimpleIcon } from '@phosphor-icons/react';
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
 import { useHistoryStore, type HistoryEntry } from '@apelles/history';
 import { KeyboardShortcutsDialog, useKeymapStore, useShortcut } from '@apelles/keymap';
@@ -274,7 +274,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
             title="Close project — back to all projects"
             className="h-6 gap-1 text-text-secondary hover:text-text-primary"
           >
-            <ChevronLeft className="size-3" /> Projects
+            <CaretLeftIcon className="size-3" /> Projects
           </Button>
         )}
 
@@ -339,7 +339,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
               aria-label="Keyboard shortcuts"
               className="h-6 w-6 p-0 text-text-secondary hover:text-text-primary"
             >
-              <Keyboard className="size-3.5" />
+              <KeyboardIcon className="size-3.5" />
             </Button>
           )}
           <WindowControls chrome={chrome} />
@@ -437,7 +437,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
                 (sourcesPanelOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
               }
             >
-              <PanelLeft className="size-3.5" />
+              <SidebarSimpleIcon className="size-3.5" />
             </Button>
           )}
           {/* tab panels — always mounted (state + the Colorist MCP bridge persist);

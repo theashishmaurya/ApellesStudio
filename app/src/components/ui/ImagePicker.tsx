@@ -1,5 +1,5 @@
 import { open } from '@tauri-apps/plugin-dialog';
-import { X } from 'lucide-react';
+import { XIcon } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 import Text from './Text';
 import { TextVariants } from '../../types/typography';
@@ -57,7 +57,7 @@ export default function ImagePicker({ imageName, onImageSelect, onClear, label }
                          transition-all duration-200 ease-in-out"
               data-tooltip={t('ui.imagePicker.clearImage')}
             >
-              <X size={14} />
+              <XIcon size={14} />
             </button>
           )}
         </div>

@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@apelles/ui": "*",
-    "lucide-react": "^1.33.0",
+    "@phosphor-icons/react": "^2.1.10",
     "react": "^19.2.8"
   },
   "devDependencies": {

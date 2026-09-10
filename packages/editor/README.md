@@ -8,8 +8,8 @@ dragging a pool item in from the shell's Sources panel.
 - `EditorTab` — the tab: preview pane (top) + `TimelineSwitcher` +
   `@xzdarcy/react-timeline-editor` strip (bottom), or an empty state when no
   project is open. The transport (`SkipBack` / `Play`–`Pause` / `SkipForward`)
-  uses `lucide-react` icons; the timeline toolbar (`Scissors` split, `Trash2`
-  remove) and the empty-state action are `@apelles/ui` `<Button>`s, the toolbar
+  uses `@phosphor-icons/react` icons (D-294); the timeline toolbar (`Scissors`
+  split, `Trash` remove) and the empty-state action are `@apelles/ui` `<Button>`s, the toolbar
   buttons wrapped in `@apelles/ui` `<Tooltip>` (D-042).
 - `TimelineSwitcher` (D-046) — a `@apelles/ui` `<Select>` of the project's
   timelines (D-045's `chroma_timeline_list`) with the active one checked,

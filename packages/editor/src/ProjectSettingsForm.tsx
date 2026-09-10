@@ -35,7 +35,7 @@
  * than the rare staleness.
  */
 import { useState } from 'react';
-import { Lock, Unlock } from 'lucide-react';
+import { LockIcon, LockOpenIcon } from '@phosphor-icons/react';
 import { Button, ScrubbableNumberInput, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@apelles/ui';
 
 /** Mirrors `crate::apelles_project::ProjectSettings` (`crates/apelles-project/
@@ -231,7 +231,7 @@ export function ProjectSettingsForm({
               onClick={() => setRatioLocked((v) => !v)}
               title={ratioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
             >
-              {ratioLocked ? <Lock size={12} /> : <Unlock size={12} />}
+              {ratioLocked ? <LockIcon size={12} /> : <LockOpenIcon size={12} />}
             </Button>
           </div>
         )}

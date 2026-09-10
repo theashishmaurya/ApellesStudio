@@ -1534,7 +1534,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       control, top-left of the timeline viewer. **What shipped**, and the one
       place it deliberately diverges from that reference:
       - A `−  100%  +` cluster at the right of the preview's transport bar,
-        shaped exactly like `TimelinePane`'s own (same lucide icons, same ghost
+        shaped exactly like `TimelinePane`'s own (same icons, same ghost
         buttons, same `1.2` step, same percentage readout) — the primary
         reference for the WIDGET is this codebase's own already-shipped control,
         not a re-derivation, per CLAUDE.md's "don't guess, and don't reinvent
@@ -2498,21 +2498,19 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   own design evicts a failed fetch rather than caching it, so that clip's
   filmstrip would visibly retry/flicker rather than just looking permanently
   blank, which may be exactly what "flaky" is describing.
-- **Track header Lock/Unlock icons are hard to tell apart** — reported live
-  2026-09-09. Both come from `lucide-react` (`TimelinePane.tsx`'s track
+- [x] **Track header Lock/Unlock icons are hard to tell apart** — reported live
+  2026-09-09. Both came from `lucide-react` (`TimelinePane.tsx`'s track
   header row); at the `size-3` (12px) they're rendered at, the only visual
-  difference between the two is the small gap at the padlock's shackle,
-  which barely reads at that size against a dark toolbar row. Not
-  investigated further than confirming the library and the size. **Decided
+  difference between the two was the small gap at the padlock's shackle,
+  which barely read at that size against a dark toolbar row. **Decided
   (owner, 2026-09-10): not a resize or a colour tweak on the current pair —
   look into a genuinely different, more premium icon SET** for this and
-  possibly other toolbar icons, not just Lock/Unlock in isolation. Needs the
-  same real-reference research CLAUDE.md already asks for (what icon sets
-  the reference NLEs/design tools this app already looks to actually use —
-  Resolve, Premiere, Figma's own icon language — before picking a
-  replacement) rather than a guess at "premium," and a decision on whether
-  this touches only Lock/Unlock or opens a broader icon-set audit across
-  `TimelinePane.tsx`'s whole toolbar.
+  possibly other toolbar icons, not just Lock/Unlock in isolation. **Done
+  2026-09-10 by D-294**, and as the broader audit rather than a Lock/Unlock
+  patch: the whole repo moved off `lucide-react` onto **Phosphor Icons**
+  (`@phosphor-icons/react`), 82 files across all 7 packages that used it.
+  Phosphor's `LockOpen` swings the shackle clear of the body instead of
+  opening a hairline gap, so the pair now separates at 12px.
 - **Give Adjustment clips their own dedicated track kind, like Captions
   already have** — owner request 2026-09-10, with a reference screenshot
   (a CapCut-style editor showing separate `CAPTIONS`/`ADJUSTMENT` lanes

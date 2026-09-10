@@ -55,7 +55,7 @@
  * drag that ends where it began, and Escape cancels.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { CaretLeftIcon, CaretRightIcon, XIcon } from '@phosphor-icons/react';
 import { Button } from '@apelles/ui';
 
 import {
@@ -391,7 +391,7 @@ export function ClipCurveEditor({
             title={`Go to the previous ${label} keyframe`}
             aria-label={`Previous ${label} keyframe`}
           >
-            <ChevronLeft size={12} />
+            <CaretLeftIcon size={12} />
           </Button>
           <Button
             variant="ghost"
@@ -401,10 +401,10 @@ export function ClipCurveEditor({
             title={`Go to the next ${label} keyframe`}
             aria-label={`Next ${label} keyframe`}
           >
-            <ChevronRight size={12} />
+            <CaretRightIcon size={12} />
           </Button>
           <Button variant="ghost" size="icon-xs" onClick={onClose} title="Close the curve editor" aria-label="Close the curve editor">
-            <X size={12} />
+            <XIcon size={12} />
           </Button>
         </div>
       </div>

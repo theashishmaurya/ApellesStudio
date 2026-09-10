@@ -17,7 +17,7 @@ compares a key to a literal any more.
 
 ## Boundary
 
-Depends on `react`, `zustand`, `lucide-react` and `@apelles/ui` — **nothing
+Depends on `react`, `zustand`, `@phosphor-icons/react` and `@apelles/ui` — **nothing
 else**. No Tauri, no `@apelles/bridge`, no tab package, and never anything from
 `app/src`. It sits below the tabs, so `@apelles/shell`, `@apelles/editor`,
 `@apelles/motion` and the vendored Colorist app can all import it.

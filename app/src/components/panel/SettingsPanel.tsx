@@ -1,25 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowLeft,
-  AlertTriangle,
-  Cloud,
-  Cpu,
-  ExternalLink as ExternalLinkIcon,
-  Server,
-  Info,
-  Trash2,
-  Wifi,
-  WifiOff,
-  Plus,
-  X,
-  SlidersHorizontal,
-  Keyboard,
-  Bookmark,
-  Scaling,
-  Image as ImageIcon,
-  Mouse,
-  Touchpad,
-} from 'lucide-react';
+  ArrowLeftIcon,
+  WarningIcon,
+  CloudIcon,
+  CpuIcon,
+  ArrowSquareOutIcon,
+  HardDrivesIcon,
+  InfoIcon,
+  TrashIcon,
+  WifiHighIcon,
+  WifiSlashIcon,
+  PlusIcon,
+  XIcon,
+  FadersHorizontalIcon,
+  KeyboardIcon,
+  BookmarkIcon,
+  ResizeIcon,
+  ImageIcon,
+  MouseIcon,
+  HandTapIcon,
+} from '@phosphor-icons/react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { relaunch } from '@tauri-apps/plugin-process';
@@ -38,7 +38,7 @@ import Text from '../ui/Text';
 import { TextColors, TextVariants, TextWeights } from '../../types/typography';
 import { useOsPlatform } from '../../hooks/useOsPlatform';
 import { open } from '@tauri-apps/plugin-shell';
-import { RotateCcw } from 'lucide-react';
+import { ArrowCounterClockwiseIcon } from '@phosphor-icons/react';
 import { useUIStore } from '../../store/useUIStore';
 
 /** Mirrors `chroma::sidecar::SidecarStatus` (D-101, `camelCase` on the wire —
@@ -110,11 +110,11 @@ function SidecarStatusCard({ spec, status }: { spec: SidecarCardSpec; status: Si
           {status.stale ? (
             // amber = the same "degraded, not fully broken" precedent
             // ShotStrip.tsx/SourcesPanel.tsx already use for "media offline"
-            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+            <WarningIcon size={18} className="mt-0.5 shrink-0 text-amber-400" />
           ) : status.healthy ? (
-            <Wifi size={18} className="mt-0.5 shrink-0 text-green-400" />
+            <WifiHighIcon size={18} className="mt-0.5 shrink-0 text-green-400" />
           ) : (
-            <WifiOff size={18} className="mt-0.5 shrink-0 text-red-400" />
+            <WifiSlashIcon size={18} className="mt-0.5 shrink-0 text-red-400" />
           )}
           <div>
             <Text>
@@ -305,9 +305,9 @@ const AiProviderSwitch = ({ selectedProvider, onProviderChange }: AiProviderSwit
 
   const aiProviders = useMemo(
     () => [
-      { id: 'cpu', label: t('settings.processing.ai.providers.cpu'), icon: Cpu },
-      { id: 'ai-connector', label: t('settings.processing.ai.providers.aiConnector'), icon: Server },
-      //{ id: 'cloud', label: t('settings.processing.ai.providers.cloud'), icon: Cloud },
+      { id: 'cpu', label: t('settings.processing.ai.providers.cpu'), icon: CpuIcon },
+      { id: 'ai-connector', label: t('settings.processing.ai.providers.aiConnector'), icon: HardDrivesIcon },
+      //{ id: 'cloud', label: t('settings.processing.ai.providers.cloud'), icon: CloudIcon },
     ],
     [t],
   );
@@ -434,8 +434,8 @@ const CanvasInputModeSwitch = ({ mode, onModeChange }: CanvasInputModeSwitchProp
 
   const canvasInputModes = useMemo(
     () => [
-      { id: 'mouse', label: t('settings.controls.modes.mouse'), icon: Mouse },
-      { id: 'trackpad', label: t('settings.controls.modes.trackpad'), icon: Touchpad },
+      { id: 'mouse', label: t('settings.controls.modes.mouse'), icon: MouseIcon },
+      { id: 'trackpad', label: t('settings.controls.modes.trackpad'), icon: HandTapIcon },
     ],
     [t],
   );
@@ -484,7 +484,7 @@ const PreviewModeSwitch = ({ mode, onModeChange }: PreviewModeSwitchProps) => {
   const previewModes = useMemo(
     () => [
       { id: 'static', label: t('settings.processing.modes.static'), icon: ImageIcon },
-      { id: 'dynamic', label: t('settings.processing.modes.dynamic'), icon: Scaling },
+      { id: 'dynamic', label: t('settings.processing.modes.dynamic'), icon: ResizeIcon },
     ],
     [t],
   );
@@ -584,9 +584,9 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
 
   const settingCategories = useMemo(
     () => [
-      { id: 'general', label: t('settings.categories.general'), icon: SlidersHorizontal },
-      { id: 'processing', label: t('settings.categories.processing'), icon: Cpu },
-      { id: 'shortcuts', label: t('settings.categories.shortcuts'), icon: Keyboard },
+      { id: 'general', label: t('settings.categories.general'), icon: FadersHorizontalIcon },
+      { id: 'processing', label: t('settings.categories.processing'), icon: CpuIcon },
+      { id: 'shortcuts', label: t('settings.categories.shortcuts'), icon: KeyboardIcon },
     ],
     [t],
   );
@@ -964,7 +964,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                 variant="ghost"
                 data-tooltip={t('settings.tooltips.goHome')}
               >
-                <ArrowLeft />
+                <ArrowLeftIcon />
               </Button>
               <Text variant={TextVariants.display} color={TextColors.accent} className="whitespace-nowrap">
                 {t('settings.title')}
@@ -1244,7 +1244,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                             disabled={!tempLensMaker || !tempLensModel}
                             className="w-full"
                           >
-                            <Plus size={16} className="mr-1" />
+                            <PlusIcon size={16} className="mr-1" />
                             {t('settings.lenses.addButton')}
                           </Button>
                         </div>
@@ -1265,7 +1265,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                             >
                               <div className="flex items-center gap-3">
                                 <div className="p-2 bg-surface rounded-md text-accent">
-                                  <Bookmark size={16} />
+                                  <BookmarkIcon size={16} />
                                 </div>
                                 <div>
                                   <Text color={TextColors.primary} weight={TextWeights.medium}>
@@ -1279,7 +1279,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                                 className="p-2 text-text-secondary hover:text-red-400 hover:bg-bg-primary rounded-md transition-colors"
                                 data-tooltip={t('settings.lenses.removeTooltip')}
                               >
-                                <Trash2 size={16} />
+                                <TrashIcon size={16} />
                               </button>
                             </div>
                           ))}
@@ -1357,7 +1357,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                                                 {tag}
                                               </Text>
                                               <span className="rounded-full group-hover:bg-black/20 p-0.5 transition-colors">
-                                                <X size={14} />
+                                                <XIcon size={14} />
                                               </span>
                                             </motion.div>
                                           ))
@@ -1392,7 +1392,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                                           className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface"
                                           data-tooltip={t('settings.tagging.addCustomTooltip')}
                                         >
-                                          <Plus size={18} />
+                                          <PlusIcon size={18} />
                                         </button>
                                       </div>
                                       <button
@@ -1401,7 +1401,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                                         className="p-2 text-text-secondary hover:text-red-400 hover:bg-surface rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-text-secondary disabled:hover:bg-transparent"
                                         data-tooltip={t('settings.tagging.clearCustomTooltip')}
                                       >
-                                        <Trash2 size={18} />
+                                        <TrashIcon size={18} />
                                       </button>
                                     </div>
                                   </div>
@@ -1436,7 +1436,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                                       {shortcut}
                                     </Text>
                                     <span className="rounded-full group-hover:bg-black/20 p-0.5 transition-colors">
-                                      <X size={14} />
+                                      <XIcon size={14} />
                                     </span>
                                   </motion.div>
                                 ))
@@ -1470,7 +1470,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                                 className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface"
                                 data-tooltip={t('settings.tagging.addShortcutTooltip')}
                               >
-                                <Plus size={18} />
+                                <PlusIcon size={18} />
                               </button>
                             </div>
                             <button
@@ -1479,7 +1479,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                               className="p-2 text-text-secondary hover:text-red-400 hover:bg-surface rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-text-secondary disabled:hover:bg-transparent"
                               data-tooltip={t('settings.tagging.clearShortcutsTooltip')}
                             >
-                              <Trash2 size={18} />
+                              <TrashIcon size={18} />
                             </button>
                           </div>
                         </div>
@@ -1915,7 +1915,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                             color={TextColors.info}
                             className="p-3 bg-blue-900/10 border border-blue-500/50 rounded-lg flex items-center gap-3"
                           >
-                            <Info size={18} />
+                            <InfoIcon size={18} />
                             <p>{t('settings.processing.restartRequired')}</p>
                           </Text>
                           <div className="flex justify-end">
@@ -2149,8 +2149,8 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                                     color={testStatus.success ? TextColors.success : TextColors.error}
                                     className="mt-2 flex items-center gap-2"
                                   >
-                                    {testStatus.success === true && <Wifi size={16} />}
-                                    {testStatus.success === false && <WifiOff size={16} />}
+                                    {testStatus.success === true && <WifiHighIcon size={16} />}
+                                    {testStatus.success === false && <WifiSlashIcon size={16} />}
                                     {testStatus.message}
                                   </Text>
                                 )}
@@ -2210,7 +2210,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                         buttonAction={handleResetLayout}
                         buttonText={t('settings.data.resetLayoutButton')}
                         description={t('settings.data.resetLayoutDesc')}
-                        icon={<RotateCcw size={16} className="mr-2" />}
+                        icon={<ArrowCounterClockwiseIcon size={16} className="mr-2" />}
                         isProcessing={isResettingLayout}
                         message={layoutResetMessage}
                         title={t('settings.data.resetLayoutTitle')}
@@ -2220,7 +2220,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                         buttonAction={handleClearCache}
                         buttonText={t('settings.data.clearThumbnailButton')}
                         description={t('settings.data.clearThumbnailDesc')}
-                        icon={<Trash2 size={16} className="mr-2" />}
+                        icon={<TrashIcon size={16} className="mr-2" />}
                         isProcessing={isClearingCache}
                         message={cacheClearMessage}
                         title={t('settings.data.clearThumbnail')}
@@ -2246,7 +2246,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                           </Text>
                         }
                         disabled={logPathLoading || logPathError || !logPath}
-                        icon={<ExternalLinkIcon size={16} className="mr-2" />}
+                        icon={<ArrowSquareOutIcon size={16} className="mr-2" />}
                         isProcessing={false}
                         message=""
                         title={t('settings.data.logs')}

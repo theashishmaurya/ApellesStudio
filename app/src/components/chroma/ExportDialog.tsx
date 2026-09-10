@@ -27,7 +27,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, Download, Loader2, XCircle } from 'lucide-react';
+import { CheckCircleIcon, DownloadSimpleIcon, CircleNotchIcon, XCircleIcon } from '@phosphor-icons/react';
 import { toast } from 'react-toastify';
 import {
   Button,
@@ -276,7 +276,7 @@ export default function ExportDialog() {
         disabled={!canOpen}
         data-tooltip={canOpen ? 'Export video' : 'Load a clip to export'}
       >
-        <Download size={20} />
+        <DownloadSimpleIcon size={20} />
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -458,17 +458,17 @@ export default function ExportDialog() {
                   )}
                   {phase === 'baking' && (
                     <span className="text-xs text-text-secondary flex items-center gap-1.5">
-                      <Loader2 size={12} className="animate-spin" /> Baking .cube LUT…
+                      <CircleNotchIcon size={12} className="animate-spin" /> Baking .cube LUT…
                     </span>
                   )}
                   {phase === 'success' && (
                     <span className="text-xs text-green-400 flex items-center gap-1.5">
-                      <CheckCircle2 size={12} /> Export complete.
+                      <CheckCircleIcon size={12} /> Export complete.
                     </span>
                   )}
                   {phase === 'error' && (
                     <span className="text-xs text-red-400 flex items-center gap-1.5">
-                      <XCircle size={12} /> {errorMessage || 'Export failed.'}
+                      <XCircleIcon size={12} /> {errorMessage || 'Export failed.'}
                     </span>
                   )}
                 </div>
@@ -483,7 +483,7 @@ export default function ExportDialog() {
             <Button onClick={handleExport} disabled={isBusy || !videoInfo}>
               {isBusy ? (
                 <>
-                  <Loader2 size={14} className="animate-spin mr-1.5" />
+                  <CircleNotchIcon size={14} className="animate-spin mr-1.5" />
                   {phase === 'baking' ? 'Baking…' : 'Exporting…'}
                 </>
               ) : (
