@@ -2902,6 +2902,41 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      merges (still-image-import, then this Colorist-consolidation branch) so
      it starts from a settled `main`, not a moving target — see this file's
      own D-number-collision lessons from this same session.
+- **Make Colorist's MCP tool surface AI-first, not just AI-present** — owner asked
+  live, 2026-09-10, after a real color-matching session hit a principled ceiling
+  (`match_to_reference` plateaued at gap 16.02 matching an unrelated reference
+  photo — expected per real colorist practice: shot-matching is normally done
+  between two clips of the *same scene*, not against a wholly different image).
+  Research pass (this session, trained-knowledge-based — **WebSearch was down for
+  the whole pass, retried and still down as of 2026-09-10; re-run with live
+  sources before treating any citation-needing claim here as verified**) framed
+  the gap as: a GUI tool optimizes for continuous visual feedback a human
+  re-checks by eye; an agent needs the opposite — every call returning the
+  measurement that proves the edit worked, fully queryable state, and
+  task-shaped (not UI-shaped) operations. Concrete, prioritized gaps found in
+  today's actual tool surface:
+  1. **`inspect_color` returns scope summaries, not a real parade/vectorscope.**
+     Per-channel-per-zone data an agent can reason over directly, not just
+     zone-mean/cast rollups — today's shape is "roughly how it looks," not "the
+     actual curve."
+  2. **No `match_to_shot(clip A, clip B)`.** `match_to_reference` only takes a
+     still image; real shot-matching between two clips of the same scene is
+     exhaustive numeric pattern-matching an agent should be *more* consistent
+     at than a human at hour six — and it's exactly the case that hit this
+     session's ceiling, because no such tool exists yet to do it properly.
+  3. **No dry-run/candidate mode.** Every grading call is a live mutation; an
+     agent can't propose several corrections and read back their scopes to pick
+     the best before committing one to the shot.
+  4. **Mask coverage isn't independently verifiable.** No way to confirm "did
+     that mask actually cover what I intended" without a screenshot.
+  5. **The active-shot/timeline-drift + source-path-vs-per-clip grading gap
+     (B-147) underlies all four above** — none of them matter if the tool might
+     be grading the wrong shot. D-294's `colorist_view` bridge (just merged) is
+     the fix; re-verify it holds under real multi-clip-same-source use before
+     building anything on top of it.
+  Not scoped into a D-NNN yet — needs the WebSearch re-run first, then sizing
+  each of the 5 as its own tool/change before committing to an implementation
+  order.
 
 ---
 
