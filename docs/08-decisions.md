@@ -29647,3 +29647,50 @@ from either component's source — it took following `WGPU_RENDER` from
   holds the tab strip inert for that span and shows the refusal in words; no spinner, since
   the normal case is far too fast to warrant one.
 
+---
+
+## D-309 — The control server waits for a real frontend handshake before forwarding an op
+
+**decided (2026-09-10)** — fixes B-071.
+
+- **Context.** `chroma::control::serve` is spawned from `lib.rs`'s `.setup()`, so the HTTP
+  port is bound while the Rust process is still starting — before the webview loads, before
+  React mounts, and before any of the four `chroma://request` registries has subscribed.
+  Tauri does not buffer events, so an op emitted in that window is dropped outright. The
+  request then sat out its whole 20s budget and returned a timeout blaming a closed or busy
+  window; the immediate retry succeeded because the app had finished starting meanwhile.
+  Neither of B-071's original observations disproved this: the port is bound in `.setup()`
+  too, and `GET /health` answers 200 either way, telling the truth only in its `bridge`
+  field. (D-307 independently fixed the *reporting* half — `mcp/server.py` no longer raises
+  a 504 into FastMCP's bare "Error executing tool" — which is why this entry's symptom
+  matched B-153's exactly.)
+- **Options considered.**
+  1. *Retry once on the client.* Rejected: it hides a real readiness gap behind a retry
+     loop and still charges the caller a full budget of latency first, and CLAUDE.md's own
+     "fix the tool, don't route around it" rule points the other way.
+  2. *Wait for Tauri's page-load event.* Rejected: "the page loaded" is not "the registry
+     subscribed" — React still has to mount and `listen()` still has to round-trip — and
+     `@apelles/debug`'s registry additionally waits on a dynamic `import()`.
+  3. *Hardcode the four registries in `control.rs` and wait for all of them.* Rejected: it
+     puts a second copy of a frontend-owned fact in the server, against D-020's whole
+     point, and would block Colorist ops on the Edit tab's registry for no reason.
+  4. **Chosen: each registry announces itself on `chroma://bridge-ready`** once its own
+     `listen()` promise has resolved, declaring the op prefix it claims and the prefixes it
+     defers. `dispatch` blocks (up to `BRIDGE_READY_TIMEOUT`, 30s) until a checked-in
+     registry that would really serve *this* op exists, then emits as before.
+- **`defers` is the load-bearing detail.** `useChromaControl.ts` is the one opt-OUT
+  registry — it claims the empty prefix, i.e. everything — so a naive "some claimed prefix
+  matches" rule would call `editor_add_clip` servable the instant Colorist subscribed, and
+  emit it into a window where the Edit registry still is not listening. Each registry
+  already keeps that skip list in its own handler; the handshake just reports it. The server
+  therefore still learns **no op names**, only prefixes, at runtime, from the code that owns
+  them.
+- **Consequences.** Giving up is a new, distinct HTTP **503** ("still starting up; nothing
+  was applied") rather than a 504 — nothing was emitted, so unlike a timeout the op cannot
+  have half-run, and `mcp/server.py` returns it as a normal `{ok,error}` envelope the same
+  way D-307 made it return 504s. A dispatch that *does* time out forgets the claim that
+  served it, so a mid-session webview reload self-heals to the cold-start path instead of
+  burning a full budget every call. `GET /health` waits zero — reporting `bridge: false`
+  fast is its entire job. The readiness wait sits **on top of** the caller's `timeout_ms`
+  rather than eating into it (an AI matte asking for 180s should get 180s of work), which is
+  why `mcp/server.py` gained a matching `READY_GRACE_S`; the two constants are a pair.

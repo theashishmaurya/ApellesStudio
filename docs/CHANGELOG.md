@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **fixed B-071 (D-309): the control server waits for a real frontend
+  handshake before forwarding an op.** It binds its HTTP port in Tauri's `.setup()`, long
+  before the webview loads and any `chroma://request` registry has subscribed, and Tauri
+  does not buffer — so the first op after an app start was emitted to nobody, burned the
+  full 20s budget and came back blaming a closed window; the retry worked because the app
+  had finished starting meanwhile. Each registry now announces itself on
+  `chroma://bridge-ready` (the prefix it claims, the prefixes it defers) and `dispatch`
+  waits for one that really serves the op; giving up is a distinct, accurate 503.
+  **B-071's filed cause was wrong** — `httpx.post` opens a fresh client per call, so there
+  was never a connection pool to hold a dead socket — and the entry now records the real
+  mechanism. 8 new `chroma::control` unit tests; `cargo fmt`/`clippy` clean. **Not
+  live-verified against a real cold app start.**
 - **2026-09-10** — **fixed B-080 (D-308): a pending debounced save is flushed before any
   switch that would misaddress it.** `chroma_timeline_set` lands on whichever timeline is
   ACTIVE when it arrives, so a save still on the 400ms debounce when the active timeline or

@@ -51,6 +51,25 @@ it can never shadow a real frontend one. See
     keeps running after the server stops waiting, so a timed-out op may still *complete*.
     The message says so, and the MCP client returns it as a normal answer rather than
     raising — same rule as `native_op`'s failures below.
+  - **Readiness handshake, before anything is emitted (D-309, B-071).** This server binds
+    in `.setup()`, i.e. before the webview loads and before any frontend registry has
+    subscribed — and Tauri does not buffer events, so an op emitted in that window is
+    lost, and the request then burns its whole budget on a timeout that blames the wrong
+    thing. Each frontend registry therefore emits `chroma://bridge-ready` once its own
+    `listen()` has resolved, with `{prefix, defers}`: the op prefix it claims, and the
+    prefixes it hands to another registry. `dispatch` blocks until a checked-in registry
+    that really serves *this* op exists (≤30s, `BRIDGE_READY_TIMEOUT`), then emits as
+    before. Giving up is **503** — "still starting up; nothing was applied", which unlike
+    a 504 genuinely rules out a half-run op — and the MCP client returns it as a normal
+    answer, same as a 504. A dispatch that times out forgets the claim that served it, so
+    a mid-session webview reload re-handshakes instead of failing the same way every call.
+    `defers` exists because `useChromaControl.ts` is the one catch-all registry (prefix
+    `""`): without it, its arrival would make `editor_*`/`motion_*`/`debug_*` look
+    answerable before those registries are up. **This does not weaken the "no op registry
+    in Rust" rule either** — the server is told prefixes, at runtime, by the frontend that
+    owns them; it still knows no op names. `GET /health` waits zero and reports the truth
+    in its `bridge` field (it has always answered 200 regardless, which is why it never
+    disproved this bug).
   - Every `/op` response body: `{ ok, error?, result, adjustments, image_b64?, histogram? }`
     — mutating ops include the post-render frame + histogram (the agent's eyes).
 

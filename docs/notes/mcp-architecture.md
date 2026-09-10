@@ -124,6 +124,31 @@ Colorist, Motion, or Editor) should opt IN with its own prefix like Motion/Edito
 do, not grow Colorist's skip-list or its catch-all OPS map — and should add itself
 to that skip-list so Colorist doesn't shadow it.
 
+**Every registry must also ANNOUNCE its prefix (D-309, B-071).** Owning a prefix
+is not enough — `control.rs` binds its HTTP port in Tauri's `.setup()`, long
+before the webview loads and any of these hooks runs, and Tauri does not buffer
+events, so a `chroma://request` emitted before your `listen()` has resolved is
+lost outright and the caller gets a full-budget timeout blaming a closed window.
+So, right after `listen()` resolves, emit your claim:
+
+```ts
+const BRIDGE_CLAIM = { prefix: EDITOR_OP_PREFIX, defers: [] as string[] };
+// …
+let subscribed = true;
+void unlistenP.then(() => {
+  if (subscribed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
+});
+return () => { subscribed = false; safeUnlisten(unlistenP); };
+```
+
+`control.rs` waits for a claim that really serves an op before emitting it.
+`defers` is empty for every opt-in registry; only Colorist's catch-all fills it
+(with the same skip-list its handler uses), because its `prefix: ''` would
+otherwise make every other tab's ops look answerable the moment IT subscribed.
+**So a new tab now has two pieces of manual bookkeeping, not one**: add your
+prefix to Colorist's skip-list, *and* to the `defers` array right above it —
+they are the same fact stated to two audiences, and they must not drift apart.
+
 **Where the hook gets its state without prop-drilling**: if the tab's data lives
 in a real module-level store (Zustand, reachable via `useXStore.getState()` from
 anywhere), the hook takes **no arguments** and is mounted unconditionally
@@ -142,7 +167,9 @@ does not. Check which shape your tab's own state is in before copying either.
    `useXControl.ts`: pick a prefix (`x_`), copy the dispatch-loop shape from
    `useEditorControl.ts` (opt-in prefix, `OPS` map, try/catch around each op,
    `safeUnlisten` for the HMR-teardown race — see that file's own doc comment for
-   why `safeUnlisten` exists, B-032/B-034/D-112). Each op reads/writes the tab's
+   why `safeUnlisten` exists, B-032/B-034/D-112; and the `chroma://bridge-ready`
+   announcement, B-071/D-309, without which your very first op after an app start
+   is silently dropped). Each op reads/writes the tab's
    real store action, never a parallel implementation. Mount the hook once, from
    the tab's own root component (`EditorTab.tsx`, `MotionTab.tsx`) or app-level
    (`App.tsx`, for a tab with no single root) — not from a component that only

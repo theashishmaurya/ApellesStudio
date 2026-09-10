@@ -231,6 +231,23 @@ import {
 
 const EDITOR_OP_PREFIX = 'editor_';
 
+/** B-071 — this registry's own cold-start handshake, announced on
+ *  `chroma://bridge-ready` once `listen()` below has actually resolved.
+ *
+ *  `control.rs` binds its HTTP port in the Tauri `.setup()` hook, long before
+ *  the webview loads and this effect runs, and a `chroma://request` emitted
+ *  before this subscription exists is lost outright (Tauri does not buffer
+ *  events). The first `editor_*` call after an app restart therefore used to
+ *  sit out the whole 20s budget and come back a timeout, then succeed on the
+ *  retry — the app had finished starting in the meantime. The control server now
+ *  waits for this announcement before forwarding an `editor_*` op to anyone.
+ *
+ *  `defers: []` — this registry claims its prefix and nothing else; the catch-all
+ *  in `app/src/hooks/useChromaControl.ts` is the only one with anything to
+ *  defer. The event name is spelled out here rather than imported, matching how
+ *  `chroma://request`/`chroma://response/` already are in all four registries. */
+const BRIDGE_CLAIM = { prefix: EDITOR_OP_PREFIX, defers: [] as string[] };
+
 /** B-032/B-034/D-112's own fix, copied verbatim from `useMotionControl.ts` —
  *  `listen()`'s cleanup is `unlistenPromise.then((f) => f())`, and Tauri's
  *  own `_unlisten` is itself `async`, so a dev-mode HMR race can make that
@@ -3794,7 +3811,15 @@ export function useEditorControl(): void {
       }
     });
 
+    // B-071 — announce only once the subscription has genuinely landed (the
+    // promise resolving is that fact), and only if this effect is still live.
+    let subscribed = true;
+    void unlistenP.then(() => {
+      if (subscribed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
+    });
+
     return () => {
+      subscribed = false;
       safeUnlisten(unlistenP);
     };
     // D-201 — `[]` is honest, and the suppression that used to sit here is

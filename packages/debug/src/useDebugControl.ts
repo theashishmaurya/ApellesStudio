@@ -29,6 +29,19 @@ import { listen, emit } from '@tauri-apps/api/event';
 
 const DEBUG_OP_PREFIX = 'debug_';
 
+/** B-071 — this registry's own cold-start handshake, announced on
+ *  `chroma://bridge-ready` once `listen()` below has actually resolved.
+ *
+ *  Same reason as the other three registries (a `chroma://request` emitted
+ *  before the subscription exists is lost, and Tauri does not buffer), with one
+ *  wrinkle worth naming: this registry ALSO waits on a dynamic `import()` of its
+ *  op table, so its window is the widest of the four — and it is DEV-only, so a
+ *  release build announces nothing at all and a `debug_*` op correctly reports
+ *  that no handler exists rather than pretending one is coming.
+ *  `debug_screenshot`/`debug_sample_pixel` are unaffected either way: those are
+ *  answered natively in `control.rs` and never reach a frontend registry. */
+const BRIDGE_CLAIM = { prefix: DEBUG_OP_PREFIX, defers: [] as string[] };
+
 /** B-032/D-112's `listen()` teardown race, copied verbatim from
  *  `useEditorControl.ts` / `useMotionControl.ts`: the unlisten function Tauri
  *  hands back is itself async, so an HMR teardown can surface as an unhandled
@@ -80,6 +93,11 @@ export function useDebugControl(): void {
         } catch (e) {
           void respond({ ok: false, error: String((e as Error)?.message ?? e), result: null });
         }
+      });
+      // B-071 — announce only once the subscription has genuinely landed (the
+      // promise resolving is that fact), and only if this effect is still live.
+      void unlisten.then(() => {
+        if (!disposed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
       });
     });
 
