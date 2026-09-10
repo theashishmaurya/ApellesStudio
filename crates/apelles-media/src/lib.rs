@@ -29,6 +29,9 @@
 //!   stream (D-280), the DSP behind the Edit tab's playback-RATE control. Used
 //!   only by [`audio`]'s live mixer; it is not a clip property and no render
 //!   path can reach it.
+//! - [`still`] — still images as timeline sources (D-292): the extension gate,
+//!   the header-only dimension probe, the memoised decode and the thumbnail.
+//!   [`video`]'s counterpart for a source that has one frame and no clock.
 //! - [`scrub`] — tape-style audio scrubbing (D-232): the **position-driven**
 //!   playback mode that sits beside [`audio`]'s time-driven one, sharing its
 //!   single transport, its `cpal` output stream and its `DecodedSource` decode
@@ -56,5 +59,6 @@ pub mod filmstrip;
 pub mod media_cache;
 pub mod probe;
 pub mod scrub;
+pub mod still;
 pub mod timestretch;
 pub mod video;

@@ -116,6 +116,23 @@ shipped (D-048/D-077/D-078/D-079, see the GUI section above and
   palette; a transition *bridges* the cut and reads handle media, clips never overlap (D-226/D-227)
 - ✅ multiple named timelines per project + a `TimelineSwitcher` (D-045/D-046)
 
+### Source kinds the Edit tab accepts
+The Colorist section above scopes v1 to **one footage type**, and that line is still
+its own. The Edit tab's media pool has always held more than that, and **D-292
+(2026-09-10) added a fourth kind, deliberately widening this part of v1** — see that
+decision for why now rather than v2:
+- ✅ **video** — the ordinary case
+- ✅ **audio-only** files (SFX/music, B-089), on their own tracks
+- ✅ **generated clips** with no source file at all — titles (D-211) and adjustment
+  clips (D-230)
+- ✅ **still images** (D-292) — `.png`/`.jpg`/`.jpeg`/`.webp`/`.tif`/`.tiff`/`.bmp`, as
+  ordinary video-track clips with a *synthesized* duration (a still has no length of
+  its own). Video tracks only; a still has no audio stream.
+  🔨 **not** animated GIF (not one frame) and **not** camera RAW (decodes above the
+  media layer, and `ffmpeg` cannot open it) — either is a real feature, not a list entry
+- Colorist's own **shot list** is unchanged by all of this: it takes video, and the
+  project-creation picker still offers video only.
+
 ### Compositing + animation
 - ✅ per-clip transform: position, uniform `scale`, **independent width/height** (D-193),
   rotation, opacity, **crop** (D-132) — all as fractions of the output composition

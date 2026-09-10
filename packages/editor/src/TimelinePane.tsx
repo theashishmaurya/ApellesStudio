@@ -2497,7 +2497,9 @@ export function TimelinePane() {
     // ask, and both reference NLEs' default). `audio` is `null` for a silent
     // source, or one whose audio status isn't known yet — that drop behaves
     // exactly as it did before this feature.
-    const pair = linkedClipsFromDraggedMedia(media);
+    // D-292 — the project's own rate, because a STILL has no length of its own
+    // and its synthesized span is measured in seconds (`mediaSourceFacts`).
+    const pair = linkedClipsFromDraggedMedia(media, fps);
     if (!pair) return; // unprobed / offline media has no known length — nothing to place
     const { video: clip, audio } = pair;
     placeDroppedClip(e, clip, audio ?? undefined, null);

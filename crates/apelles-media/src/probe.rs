@@ -101,6 +101,28 @@ pub fn probe_cached(path: &Path) -> Result<VideoInfo, String> {
     Ok(info)
 }
 
+/// D-292 — the pixel dimensions of **any** placeable source: a still through
+/// [`crate::still::probe`] (a header read, no subprocess), anything else
+/// through [`probe_cached`].
+///
+/// The one call for "how big is this source" now that a source can be a still.
+/// It exists so the two consumers that genuinely need that number for a still —
+/// the compositor's composition size and the on-canvas transform overlay's
+/// clip geometry — ask one question instead of each re-spelling the branch, and
+/// so neither of them pays an `ffprobe` spawn for a PNG. Everything else about
+/// a source (frame count, rate, audio) is meaningless for a still and stays on
+/// [`probe_cached`]'s video-only [`VideoInfo`], deliberately: synthesising a
+/// frame rate for a file that has none is how a still starts being treated as a
+/// one-frame video, which is the bug D-292 is fixing.
+pub fn source_resolution(path: &Path) -> Result<apelles_types::Resolution, String> {
+    if crate::still::is_image_file(path) {
+        return crate::still::probe(path)
+            .map(|i| i.resolution)
+            .map_err(|e| e.to_string());
+    }
+    probe_cached(path).map(|i| i.resolution)
+}
+
 fn remember(path: &Path, key: &str, info: &VideoInfo) {
     PROBE_CACHE
         .lock()

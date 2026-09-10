@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-292: still images are first-class Edit-tab sources.**
+  Importing a PNG used to come back `offline: true, video: null` and could
+  never be placed — the extension gate rejected it before any probe ran. Now:
+  a second probed kind on the pool item (`MediaItem.image`, additive on the
+  wire), an ordinary media clip with a *synthesized* length (3s placed,
+  reusing `DEFAULT_TITLE_SECONDS`; one hour of trim headroom) rather than a
+  new clip kind, a memoised `apelles_media::still` decode that never touches
+  `decode_pipe`, and a `-loop 1` export input — pinned by a real ffmpeg render
+  that was mutation-checked. GUI and MCP in the same pass. **An honest
+  widening of v1's "one footage type"**; D-292 says why that is right now, and
+  `docs/02-scope.md`'s Edit-tab section is updated (Colorist's own scope line
+  is not). Drafted as D-281, renumbered on the way in — `main` had meanwhile
+  landed a different D-281 (RapidRAW ownership).
 - **2026-09-10** — D-291: `website/` now has real hosting — Cloudflare Pages
   project `apelles-studio` on the `ashish.1999vns@gmail.com` account, custom
   domains `apelles.studio` (live, SSL verified) and `www.apelles.studio`

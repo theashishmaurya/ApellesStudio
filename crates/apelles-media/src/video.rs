@@ -117,9 +117,20 @@ pub fn is_video_file<P: AsRef<Path>>(path: P) -> bool {
 /// `probe_media_item`) should use instead of [`is_video_file`] alone, so a
 /// pure-audio SFX/music file is treated as a normal online pool item rather
 /// than permanently offline before `probe`/`probe_audio_only` ever runs.
+///
+/// **D-292 — video OR audio OR STILL.** A still image failed this gate for
+/// exactly B-089's reason one kind further out: `probe_media_item` never even
+/// reached a probe for it, so an imported PNG came back `offline: true,
+/// video: null` and `editor_add_clip` could never place it. This is the whole
+/// "is it importable at all" question and a still is importable, so it belongs
+/// here — and, as with the audio list, [`is_video_file`] itself stays
+/// video-only, since its other callers (`formats.rs`, `image_loader.rs`,
+/// `session.rs`) use it to pick a DECODE path and a still is not decoded by
+/// `ffmpeg` at all (see [`crate::still`]).
 pub fn is_media_file<P: AsRef<Path>>(path: P) -> bool {
     let path = path.as_ref();
     is_video_file(path)
+        || crate::still::is_image_file(path)
         || path
             .extension()
             .and_then(|e| e.to_str())
@@ -804,11 +815,27 @@ mod tests {
         assert!(is_media_file("sfx/click.mp3"));
         assert!(is_media_file("music/bed.flac"));
         assert!(is_media_file("a/b/C019.MOV"), "still accepts real video");
-        assert!(!is_media_file("x.png"), "an image is neither");
         assert!(
             !is_video_file("sfx/click.mp3"),
             "is_video_file itself must stay video-only"
         );
+    }
+
+    /// **D-292, the extension-gate half.** A still is importable media too —
+    /// this is the gate that used to make an imported PNG permanently
+    /// `offline: true, video: null`. `is_video_file` must stay video-only for
+    /// the same reason B-089 gives above: its other callers use it to pick a
+    /// decode path, and a still is not decoded by `ffmpeg`.
+    #[test]
+    fn is_media_file_accepts_stills_is_video_file_rejects_d281() {
+        assert!(is_media_file("ref/color.png"));
+        assert!(is_media_file("ref/PLATE.JPG"));
+        assert!(is_media_file("ref/scan.tiff"));
+        assert!(
+            !is_video_file("ref/color.png"),
+            "is_video_file itself must stay video-only"
+        );
+        assert!(!is_media_file("notes.txt"), "not every file is importable");
     }
 
     #[test]

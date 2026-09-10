@@ -2683,28 +2683,49 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   should honour whatever transform/grade is showing), a place to write the
   resulting file, and `SourcesPanel.tsx`'s own real import path reused rather
   than a bespoke "fake source" entry.
-- **Still-image import for the Edit tab** — owner request 2026-09-10, found
+- ✅ **Still-image import for the Edit tab** — owner request 2026-09-10, found
   while trying to import a PNG reference for Colorist's `match_to_reference`:
   `editor_import_media` accepted the file but came back `offline: true,
-  video: null`, and it never appeared in Colorist's own shot list either.
-  Root-caused before logging, not guessed: `probe_media_item`
-  (`crates/apelles-project/src/manifest.rs`) unconditionally calls
-  `video::probe()` (ffprobe) on every import; a still image always fails
-  that probe, so `MediaItem.video` stays `None`, which the whole pool
-  already treats as "offline" (`resolve_shot`'s own doc: "an empty
-  `source_path` as offline"). This is `v1`'s deliberately tiny scope
-  (`docs/02-scope.md`: one footage type) showing up as a real gap now that
-  the owner wants a still (a color reference, a freeze-frame grab — see the
-  camera/snapshot item just above, which depends on this) as a first-class
-  Edit-tab source. Real scope: a second probed media kind alongside video
-  (`MediaItem.image: Option<ImageInfo>` or equivalent), `editor_add_clip`
-  accepting an image source with a synthesized default duration (mirroring
-  `newTitleClip`'s `DEFAULT_TITLE_SECONDS` pattern for text clips — a still
-  has no natural length either), and the Rust decode/composite path
-  rendering a static image for a clip's whole duration instead of
-  frame-stepping through a codec. **In progress** — dispatched to an agent,
-  2026-09-10; update this entry with the actual decision once it lands
-  rather than leaving this as a stale plan.
+  video: null`. **Shipped as D-292**, 2026-09-10. What actually landed, which
+  is smaller than this entry's original plan in one place and larger in
+  another:
+
+  - *Smaller:* **no new clip kind.** A still is an ordinary media clip; "is
+    this a still" is derived from the source path's extension, so every
+    existing `apelles-timeline` op (trim, slip, split, roll, transitions,
+    transform, keyframes, fades, the D-256 grade) applies to it unchanged and
+    the crate needed no edit at all. The plan's `MediaItem.image:
+    Option<ImageInfo>` was taken as written — as a second `Option` beside
+    `video`, additive on the wire, with `MediaItem::is_probed()` replacing the
+    scattered `video.is_some()` reasoning.
+  - *Larger:* the offline symptom's real first cause was one step earlier than
+    the entry said — `media_item_is_online`'s extension gate
+    (`apelles_media::video::is_media_file`, B-089's own function) rejected a
+    `.png` **before any probe ran at all**, so `video::probe` was never even
+    reached. That gate is widened; `probe_media_item` then branches through
+    one shared `MediaItem::reprobe_source`, used by import, the D-260/B-128
+    reconcile and `chroma_swap_clip_media` alike.
+  - Duration: `DEFAULT_TITLE_SECONDS` **reused**, not re-declared (its own
+    D-211 doc already read "the standard default duration a still/generator
+    gets in every reference NLE"), plus `STILL_SOURCE_SECONDS = 3600` as the
+    trim ceiling, since `source_len` cannot be 0 or `Infinity`. Both behind one
+    `mediaSourceFacts`, replacing five inline `media.video?.frameCount` reaches.
+  - Render: `apelles_media::still` (header-only probe, `(path, source_key,
+    target)`-memoised `decode_scaled`, thumbnail), a still never touches
+    `decode_pipe` or claims a `PipeSlot`, the compositor takes its pixels
+    straight off the cache's `Arc` with no copy, and the export opens it
+    `-loop 1 -framerate … -t …` with no `-ss`.
+  - Both interfaces in the same pass: the Sources picker takes images, a still
+    gets a real thumbnail, and `editor_add_clip` / `editor_list_media` /
+    `editor_import_media` / `editor_get_capabilities` all describe it.
+  - **This is an honest widening of `v1`'s "one footage type"** — see D-292 for
+    why it is the right call now. `docs/02-scope.md`'s Edit-tab section is
+    updated; the Colorist section's own scope line is deliberately untouched
+    (Colorist's shot list still takes video only, and was never in scope here).
+
+  Still open, deliberately: animated GIF and camera RAW are **not** importable
+  (a GIF is not one frame; RAW decodes above the media layer and `ffmpeg`
+  cannot open it) — widening to either is a real feature, not a list entry.
 - **Colorist-tab consolidation — a batch of RapidRAW-inherited chrome
   removed or unified with the real Apelles-native equivalent** — owner
   request, 2026-09-10, unblocked by **D-281** (`app/` is owned code now,
