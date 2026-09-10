@@ -53,7 +53,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { trackEvent } from '@apelles/bridge';
-import type { ProjectSettingsValue } from '@apelles/editor';
+import { useEditorTimelineStore, type ProjectSettingsValue } from '@apelles/editor';
 
 import { useEditorStore } from './useEditorStore';
 import { useChromaStore, ChromaVideoInfo } from './useChromaStore';
@@ -311,6 +311,41 @@ function lockSlot(set: SessionSet, get: () => SessionState): LockSlot {
  *  `finally { held.lock.release() }`. */
 function acquire(set: SessionSet, get: () => SessionState, op: string): AcquireResult {
   return acquireSessionLock(lockSlot(set, get), op);
+}
+
+/**
+ * B-080 — settle the Edit tab's pending debounced timeline save **before**
+ * issuing any command that changes which project the backend is pointing at.
+ *
+ * `chroma_timeline_set` writes onto whichever timeline is ACTIVE when it
+ * arrives; it does not carry the id of the timeline it was built from. So an
+ * edit still sitting on `@apelles/editor`'s 400ms save debounce when a project
+ * switch goes through is not merely late — it is addressed to a document the
+ * backend has already moved off, and `useEditorTimelineStore`'s own
+ * `setOpenProject` has by then overwritten the only in-memory copy of it. That
+ * edit existed nowhere afterwards: not on disk, not in memory, with no error
+ * shown (B-083/D-203 made the cancel deterministic, which stopped it landing in
+ * the WRONG project but still dropped it).
+ *
+ * This is the app layer's job specifically because it is the last point that
+ * still runs while the OUTGOING project is the active one — the Edit store only
+ * hears about a project switch after `chroma_project_open`/`_new` has already
+ * happened, so from there a flush would write into the incoming project. Both
+ * interfaces funnel through these same actions (the GUI launcher directly, MCP
+ * via `useChromaControl.ts`), so one flush here covers both.
+ *
+ * A refusal, not a warning: the edit is still in memory at this point, and
+ * declining the switch is the only outcome that keeps it reachable.
+ */
+async function flushEditTimeline(): Promise<{ ok: boolean; error?: string }> {
+  const ok = await useEditorTimelineStore.getState().flushPendingSave();
+  if (ok) return { ok: true };
+  return {
+    ok: false,
+    error:
+      'could not save the Edit tab’s timeline first, so the project switch was cancelled to avoid ' +
+      `losing that edit: ${useEditorTimelineStore.getState().error ?? 'chroma_timeline_set failed'}`,
+  };
 }
 
 /** persist one shot's grade file if a real (non-Untitled) project is loaded. */
@@ -788,6 +823,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const held = acquire(set, get, 'openProject');
     if (!held.ok) return { ok: false, error: held.error };
     try {
+      const flushed = await flushEditTimeline();
+      if (!flushed.ok) return flushed;
       const dto = await invoke<ProjectOpenDto>('chroma_project_open', { path });
       await get()._hydrateOpenDto(dto, held.lock);
       trackEvent('project_open', { shotCount: get().shots.length });
@@ -802,6 +839,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   closeProject: async () => {
     const { projectPath, projectName, dirty } = get();
     trackEvent('project_close', { hadUnsavedChanges: dirty });
+    // B-080 — the Edit tab's own debounced timeline save, settled while this
+    // project is still the active one. Best-effort here rather than a refusal
+    // (unlike `openProject` above): "‹ Projects" is also the human's escape
+    // hatch from a wedged session (B-132/D-268), so it must never become
+    // un-clickable because a save is failing. A failure leaves its reason in
+    // the Edit tab's own `error`.
+    await flushEditTimeline();
     // best-effort final flush for a dirty, named project (Untitled autosave is
     // already skipped, so an Untitled session is just discarded)
     if (projectPath && projectName !== 'Untitled' && dirty) {
@@ -843,6 +887,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const held = acquire(set, get, 'newProject');
     if (!held.ok) return { ok: false, error: held.error };
     try {
+      const flushed = await flushEditTimeline();
+      if (!flushed.ok) return flushed;
       const dto = await invoke<ProjectOpenDto>('chroma_project_new', { name, mediaPaths });
       await get()._hydrateOpenDto(dto, held.lock);
       trackEvent('project_new', { mediaCount: mediaPaths.length });
@@ -862,6 +908,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const held = acquire(set, get, 'saveUntitledAs');
     if (!held.ok) return { ok: false, error: held.error };
     try {
+      const flushed = await flushEditTimeline();
+      if (!flushed.ok) return flushed;
       const dto = await invoke<ProjectOpenDto>('chroma_project_new', { name, mediaPaths: paths });
       await get()._hydrateOpenDto(dto, held.lock);
       void get().saveProject({ force: true });

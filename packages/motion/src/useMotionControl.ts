@@ -145,6 +145,18 @@ export interface MotionControlRefs {
 
 const MOTION_OP_PREFIX = 'motion_';
 
+/** B-071 — this registry's own cold-start handshake, announced on
+ *  `chroma://bridge-ready` once `listen()` below has actually resolved.
+ *
+ *  `control.rs` binds its port in Tauri's `.setup()` hook, long before the
+ *  webview loads and this effect runs, and a `chroma://request` emitted before
+ *  this subscription exists is lost outright (Tauri does not buffer events) —
+ *  the request then burned its whole budget and came back a misleading timeout.
+ *  The control server now waits for this announcement before forwarding a
+ *  `motion_*` op. `defers: []`: this registry claims its prefix and nothing
+ *  else, so it has nothing to hand back to another. */
+const BRIDGE_CLAIM = { prefix: MOTION_OP_PREFIX, defers: [] as string[] };
+
 /**
  * `safeUnlisten` duplicated (not imported) from `app/src/utils/
  * tauriListeners.ts`: that file lives under `app/src`, and a tab package
@@ -236,7 +248,15 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       }
     });
 
+    // B-071 — announce only once the subscription has genuinely landed (the
+    // promise resolving is that fact), and only if this effect is still live.
+    let subscribed = true;
+    void unlistenP.then(() => {
+      if (subscribed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
+    });
+
     return () => {
+      subscribed = false;
       safeUnlisten(unlistenP);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

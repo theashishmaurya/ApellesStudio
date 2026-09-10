@@ -198,6 +198,25 @@ function nonDefault(obj: Record<string, any> | undefined): Record<string, any> {
   return out;
 }
 
+/** B-071 — the Colorist registry's cold-start handshake, announced on
+ *  `chroma://bridge-ready` once its `listen()` has actually resolved.
+ *
+ *  `control.rs` binds its port in Tauri's `.setup()` hook, long before the
+ *  webview loads and this effect runs; a `chroma://request` emitted before this
+ *  subscription exists is lost outright (Tauri does not buffer events), which is
+ *  why the first control-server call after an app restart used to burn its whole
+ *  budget and come back a timeout. The control server now waits for this before
+ *  forwarding anything.
+ *
+ *  **`defers` is the load-bearing half here specifically.** This registry is the
+ *  only opt-OUT one — it claims the empty prefix, i.e. every op — so without
+ *  naming the prefixes it skips, its own arrival would make `editor_*` /
+ *  `motion_*` / `debug_*` look answerable the instant IT subscribed, and those
+ *  requests would be emitted into a window where their real registry is not
+ *  listening yet. This list must therefore stay identical to the early-return
+ *  skip in the handler below; they are the same fact stated to two audiences. */
+const BRIDGE_CLAIM = { prefix: '', defers: ['motion_', 'editor_', 'debug_'] };
+
 export function useChromaControl() {
   const { setAdjustments } = useEditorActions();
   const ai = useAiMasking();
@@ -1580,7 +1599,15 @@ export function useChromaControl() {
       }
     });
 
+    // B-071 — announce only once the subscription has genuinely landed (the
+    // promise resolving is that fact), and only if this effect is still live.
+    let subscribed = true;
+    void unlistenP.then(() => {
+      if (subscribed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
+    });
+
     return () => {
+      subscribed = false;
       safeUnlisten(unlistenP);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

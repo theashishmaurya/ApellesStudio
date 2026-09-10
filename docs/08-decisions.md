@@ -29598,3 +29598,99 @@ from either component's source — it took following `WGPU_RENDER` from
   propagation finishes, which on a long clip exceeds even the 300s ceiling. Raising the
   budget is not the fix — it should return a job id and be polled, the way `depth_track`
   already does. Noted in B-153 rather than half-solved here.
+
+---
+
+## D-308 — A pending debounced save is flushed before any switch that would misaddress it
+
+**decided (2026-09-10)** — fixes B-080.
+
+- **Context.** `@apelles/editor`'s timeline store persists every edit through a single
+  module-level 400ms debounce (`SAVE_DEBOUNCE_MS`, a deliberate perf choice), and
+  `chroma_timeline_set` writes onto whichever timeline is **ACTIVE when it arrives** — it
+  carries no timeline id and matches on none. So a save still on the timer when the active
+  timeline (or the open project) changes is not merely late: it is addressed to a document
+  the backend has moved off, while `load()` has already overwritten the only in-memory copy
+  of the edit it carried. The edit then existed nowhere — not on disk, not in memory — with
+  no error of any kind. `restoreSnapshot` (undo/redo) already knew to cancel that timer
+  before restoring; `createTimeline`/`setActiveTimeline` had no handling at all, and
+  B-083/D-203's project-axis fix only made the loss *deterministic* rather than misfiled.
+- **Options considered.**
+  1. *Cancel the timer on a switch, as `setOpenProject` already does.* Rejected as the
+     whole answer: it is the correct behaviour at that one call site (by then the backend
+     already points at the incoming project, so flushing would write A into B), but it is
+     the safe half of a bad trade — the edit is still silently dropped.
+  2. *Make `chroma_timeline_set` take the timeline's id and refuse a mismatch.* Rejected
+     for this pass: it turns silent loss into a visible error, which is better, but it is a
+     Rust command-contract change with every call site to migrate, and it still loses the
+     edit. Worth revisiting on its own merits as defence in depth.
+  3. *Warn the user and let the switch proceed.* Rejected: a dialog on a 400ms race the
+     user cannot perceive, for a save that could simply have been completed instead.
+  4. **Chosen: settle the debt before changing where it would land.** `flushPendingSave()`
+     cancels the timer, runs its save immediately, and resolves only once
+     `chroma_timeline_set` has actually returned — including a save already *in flight*,
+     which a timer-only cancel raced straight through (`trackSave`/`inFlightSave`), and
+     including `restoreSnapshot`'s own immediate save, which has the identical hazard.
+     `createTimeline`/`setActiveTimeline` await it before issuing their command; the
+     project axis awaits it one layer up, in `app/src/store/useSessionStore.ts`'s
+     `openProject`/`newProject`/`saveUntitledAs`/`closeProject`, which is the last point
+     that still runs while the OUTGOING project is the active one. Both interfaces (GUI
+     launcher and MCP, via `useChromaControl.ts`) already funnel through those actions, so
+     one flush covers both.
+- **A failed flush REFUSES the switch** rather than proceeding. The edit exists only in
+  `timeline` at that moment, and `load()` is about to overwrite it — proceeding would be
+  the very bug, just with a broken backend instead of a pending timer as the cause. The one
+  exception is `closeProject`, which is also the human's escape hatch from a wedged session
+  (B-132/D-268) and so flushes best-effort rather than becoming un-clickable.
+- **Cost.** A timeline switch is now one already-scheduled IPC round trip slower in the
+  worst case (and unchanged when nothing is pending — asserted by a test). `TimelineSwitcher`
+  holds the tab strip inert for that span and shows the refusal in words; no spinner, since
+  the normal case is far too fast to warrant one.
+
+---
+
+## D-309 — The control server waits for a real frontend handshake before forwarding an op
+
+**decided (2026-09-10)** — fixes B-071.
+
+- **Context.** `chroma::control::serve` is spawned from `lib.rs`'s `.setup()`, so the HTTP
+  port is bound while the Rust process is still starting — before the webview loads, before
+  React mounts, and before any of the four `chroma://request` registries has subscribed.
+  Tauri does not buffer events, so an op emitted in that window is dropped outright. The
+  request then sat out its whole 20s budget and returned a timeout blaming a closed or busy
+  window; the immediate retry succeeded because the app had finished starting meanwhile.
+  Neither of B-071's original observations disproved this: the port is bound in `.setup()`
+  too, and `GET /health` answers 200 either way, telling the truth only in its `bridge`
+  field. (D-307 independently fixed the *reporting* half — `mcp/server.py` no longer raises
+  a 504 into FastMCP's bare "Error executing tool" — which is why this entry's symptom
+  matched B-153's exactly.)
+- **Options considered.**
+  1. *Retry once on the client.* Rejected: it hides a real readiness gap behind a retry
+     loop and still charges the caller a full budget of latency first, and CLAUDE.md's own
+     "fix the tool, don't route around it" rule points the other way.
+  2. *Wait for Tauri's page-load event.* Rejected: "the page loaded" is not "the registry
+     subscribed" — React still has to mount and `listen()` still has to round-trip — and
+     `@apelles/debug`'s registry additionally waits on a dynamic `import()`.
+  3. *Hardcode the four registries in `control.rs` and wait for all of them.* Rejected: it
+     puts a second copy of a frontend-owned fact in the server, against D-020's whole
+     point, and would block Colorist ops on the Edit tab's registry for no reason.
+  4. **Chosen: each registry announces itself on `chroma://bridge-ready`** once its own
+     `listen()` promise has resolved, declaring the op prefix it claims and the prefixes it
+     defers. `dispatch` blocks (up to `BRIDGE_READY_TIMEOUT`, 30s) until a checked-in
+     registry that would really serve *this* op exists, then emits as before.
+- **`defers` is the load-bearing detail.** `useChromaControl.ts` is the one opt-OUT
+  registry — it claims the empty prefix, i.e. everything — so a naive "some claimed prefix
+  matches" rule would call `editor_add_clip` servable the instant Colorist subscribed, and
+  emit it into a window where the Edit registry still is not listening. Each registry
+  already keeps that skip list in its own handler; the handshake just reports it. The server
+  therefore still learns **no op names**, only prefixes, at runtime, from the code that owns
+  them.
+- **Consequences.** Giving up is a new, distinct HTTP **503** ("still starting up; nothing
+  was applied") rather than a 504 — nothing was emitted, so unlike a timeout the op cannot
+  have half-run, and `mcp/server.py` returns it as a normal `{ok,error}` envelope the same
+  way D-307 made it return 504s. A dispatch that *does* time out forgets the claim that
+  served it, so a mid-session webview reload self-heals to the cold-start path instead of
+  burning a full budget every call. `GET /health` waits zero — reporting `bridge: false`
+  fast is its entire job. The readiness wait sits **on top of** the caller's `timeout_ms`
+  rather than eating into it (an AI matte asking for 180s should get 180s of work), which is
+  why `mcp/server.py` gained a matching `READY_GRACE_S`; the two constants are a pair.

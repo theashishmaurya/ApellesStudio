@@ -87,6 +87,13 @@ DEFAULT_OP_TIMEOUT_MS = 20_000
 #: tens of seconds on a cold model, which is exactly how a *successful*
 #: `add_subject_mask` came back to the caller as a bare tool error (B-153).
 AI_MASK_TIMEOUT_MS = 180_000
+#: B-071 — extra client-side slack covering the control server's own cold-start
+#: readiness wait (`control.rs`'s `BRIDGE_READY_TIMEOUT`), which sits on TOP of
+#: the per-op budget below rather than eating into it. The two are a pair: if
+#: this is smaller, a real cold start comes back as a bare httpx read timeout
+#: instead of the server's own "still starting up, nothing was applied" answer,
+#: which is the whole point of having that answer.
+READY_GRACE_S = 30.0
 
 
 def _op(op: str, timeout_ms: int = DEFAULT_OP_TIMEOUT_MS, **args: Any) -> dict:
@@ -105,13 +112,23 @@ def _op(op: str, timeout_ms: int = DEFAULT_OP_TIMEOUT_MS, **args: Any) -> dict:
             # Always outlive the app-side budget, so a real frontend timeout
             # comes back as the control server's own explanatory 504 envelope
             # rather than as an httpx read timeout with nothing in it.
-            timeout=timeout_ms / 1000 + 15.0,
+            # `READY_GRACE_S` covers the readiness wait the server may add on
+            # top of that budget on a cold start (B-071).
+            timeout=timeout_ms / 1000 + READY_GRACE_S + 15.0,
         )
     except httpx.ConnectError as e:
         raise RuntimeError(
             f"Cannot reach the Apelles control server at {BASE_URL}. "
             "Is the Apelles desktop app running?"
         ) from e
+    if r.status_code == 503:
+        # B-071: the app is up but its frontend has not finished subscribing —
+        # nothing was emitted, so nothing can have half-run. Returned as a normal
+        # `{ok: false, error}` envelope for the same reason 504 is below: the
+        # reason is the useful part, and raising here would hand the caller a
+        # bare "Error executing tool <name>" with the explanation thrown away —
+        # which is exactly how this bug presented in the first place.
+        return r.json()
     if r.status_code == 504:
         # B-153: NOT an exception. The control server's own contract is that a
         # failure is a normal `{ok, error}` answer with a reason in it — the

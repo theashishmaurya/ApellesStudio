@@ -21,8 +21,14 @@ dragging a pool item in from the shell's Sources panel.
   B-083/D-203 — a changed key is a real project switch and reloads everything),
   `load()`, `applyOp()`, `restoreSnapshot()` (D-051),
   `setPlayhead()`, `loadList()`/`createTimeline()`/`setActiveTimeline()`
-  (D-046). Optimistic ops → debounced `chroma_timeline_set` →
-  `chroma_timeline_get` refetch. Lives here for now; a `@apelles/bridge`
+  (D-046), `flushPendingSave()` (B-080/D-308). Optimistic ops → debounced
+  `chroma_timeline_set` → `chroma_timeline_get` refetch. **`chroma_timeline_set`
+  lands on whichever timeline is ACTIVE when it arrives**, so anything that
+  changes which timeline or project that is must `await flushPendingSave()`
+  first — it settles the debounce timer *and* any save already in flight, and
+  resolves only once the write has really returned. `createTimeline`/
+  `setActiveTimeline` do that themselves; the project axis does it one layer up
+  in `app/src/store/useSessionStore.ts`. Lives here for now; a `@apelles/bridge`
   extraction is a later task.
 - `timeline.ts` — the model mirrored from the `apelles-timeline` Rust crate,
   the pure edit ops (including D-046's `add_clip`, purely client-side — no
