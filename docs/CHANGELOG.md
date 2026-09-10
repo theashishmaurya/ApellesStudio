@@ -4,6 +4,11 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — fixed `website/`'s own stale MCP tool counts (`161` total /
+  `152` shipped / Edit `69`, was `160`/`151`/`68`) after this session added
+  new tools (D-280's `editor_set_playback_rate` among them) — caught by
+  `mcp-data.test.ts`'s own anti-fabrication guard, not missed silently.
+
 - **2026-09-10** — **B-146 logged, investigating:** general preview playback
   lag and janky frame-jumping at 4× — dispatched to an Opus agent to profile
   before fixing; a real repeating seek-error warning in the live audio log
