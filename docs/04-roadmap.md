@@ -2907,9 +2907,10 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   (`match_to_reference` plateaued at gap 16.02 matching an unrelated reference
   photo — expected per real colorist practice: shot-matching is normally done
   between two clips of the *same scene*, not against a wholly different image).
-  Research pass (this session, trained-knowledge-based — **WebSearch was down for
-  the whole pass, retried and still down as of 2026-09-10; re-run with live
-  sources before treating any citation-needing claim here as verified**) framed
+  Research pass (this session; WebSearch was down for this specific pass — the
+  agentic-tool-design section above is trained-knowledge, not live-sourced —
+  but came back later the same session and was used successfully for the
+  cinematic/vlog-editing research below, so it's not a standing outage) framed
   the gap as: a GUI tool optimizes for continuous visual feedback a human
   re-checks by eye; an agent needs the opposite — every call returning the
   measurement that proves the edit worked, fully queryable state, and
@@ -2942,9 +2943,24 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      be grading the wrong shot. D-294's `colorist_view` bridge (just merged) is
      the fix; re-verify it holds under real multi-clip-same-source use before
      building anything on top of it.
-  Not scoped into a D-NNN yet — needs the WebSearch re-run first, then sizing
-  each of the 5 as its own tool/change before committing to an implementation
-  order.
+  6. **Grading tools operate on the live, shared playhead — not a pinned frame
+     reference — so concurrent human+agent use of the same app collides.**
+     Owner's own observation, live, 2026-09-10, immediately after hitting it:
+     mid-grading-sequence, the owner scrubbed the Colorist timeline by hand for
+     their own reasons; the next `set_primary` call silently rendered and
+     measured a completely different frame (500 → 1631) than the one being
+     graded, with no signal *why* beyond the returned `frame` field not
+     matching expectation. Not a bug — both the owner and an agent are
+     legitimately allowed to drive the same live app — but the tool surface
+     gives an agent no way to say "keep working against *this exact frame*
+     regardless of what the human does to the shared playhead," the way
+     `sample_region`/`inspect_color` already let you name a *spatial* region
+     precisely. A frame-pinned/snapshot working mode (grade against a
+     specific, named frame reference rather than "whatever's live now") would
+     let an agent's multi-step before/after sequence survive concurrent human
+     scrubbing instead of silently measuring the wrong frame.
+  Not scoped into a D-NNN yet — sizing each of the 6 as its own tool/change
+  before committing to an implementation order.
 - **Redundant "Apelles" label in the custom titlebar** — owner flagged live with a
   screenshot (macOS menu bar already shows the app name at the very top; the
   custom titlebar repeats it right below, immediately after the traffic-light
