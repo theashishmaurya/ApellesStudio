@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — website image weight + SEO/social-card follow-ups from the
+  same Lighthouse pass as B-149: converted the three `Demo.astro` screenshots
+  from PNG to WebP (77-81% smaller, same pixel dimensions) and the hero
+  painting to WebP-with-JPG-fallback via `<picture>` (35% smaller); built a
+  real 1200×630 (1.91:1) dedicated OG/social-card image with the headline and
+  a CTA baked in as pixels, replacing the bare 1568×1003 hero crop that most
+  platforms were cropping or letterboxing; shortened every page's
+  meta/og/twitter description to under ~155 characters (all five were over,
+  the homepage at 239). **D-293:** also found and fixed a real drift —
+  Cloudflare auto-enabled Web Analytics on the zone, silently making
+  `privacy.astro`'s "no analytics anywhere" claim false; owner chose to keep
+  the (cookieless) analytics and disclose it accurately instead of disabling
+  it, so the privacy page now names it specifically.
 - **2026-09-10** — **D-292: still images are first-class Edit-tab sources.**
   Importing a PNG used to come back `offline: true, video: null` and could
   never be placed — the extension gate rejected it before any probe ran. Now:

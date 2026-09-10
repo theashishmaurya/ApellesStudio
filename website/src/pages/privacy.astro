@@ -1,22 +1,27 @@
 ---
 /**
- * privacy.astro — the privacy policy (D-289).
+ * privacy.astro — the privacy policy (D-289; updated 2026-09-10 for
+ * Cloudflare Web Analytics, D-293).
  *
- * What it is: an honest description of the one real thing this site does
- * with personal data — the beta signup form — written to match what the
- * code actually does, not a generic template. Cross-checked against
- * src/data/beta.ts and BETA_SIGNUP_SETUP.md before writing a word of it.
- * What it does NOT do: claim a cookie policy, an analytics policy, or a
- * GDPR/CCPA compliance certification this site hasn't earned. There are no
- * cookies and no analytics anywhere on this site (true today, checked
- * against the actual source, not assumed) — this page says exactly that
- * instead of describing a cookie-consent mechanism for cookies that do not
- * exist, which would be exactly the kind of fabricated-for-appearances
- * content this whole site's own discipline (docs/08-decisions.md, D-264)
- * argues against.
+ * What it is: an honest description of the two real things this site does
+ * with visitor data — the beta signup form, and Cloudflare's own cookieless
+ * Web Analytics beacon — written to match what actually runs, not a generic
+ * template. Cross-checked against src/data/beta.ts, BETA_SIGNUP_SETUP.md, and
+ * (as of D-293) Base.astro's own third-party script tag before writing a word
+ * of it.
+ * What it does NOT do: claim a cookie policy or a GDPR/CCPA compliance
+ * certification this site hasn't earned, or describe a cookie-consent banner
+ * for cookies that do not exist (Web Analytics is cookieless by design — see
+ * the "Cookies and tracking" section for what that does and does not mean).
+ * This page originally said "no analytics anywhere" — true when D-289 wrote
+ * it, false once Cloudflare auto-enabled Web Analytics on this zone; found
+ * live via a Lighthouse trace, and fixed here rather than left to drift, per
+ * this whole site's own discipline (docs/08-decisions.md, D-264) against
+ * fabricated-for-appearances content — including a claim that quietly stops
+ * being true.
  * This is a good-faith, factually-grounded draft, not legal advice — see
  * the note at the bottom of the page and in this repo's own decision log
- * (D-289) for what a real legal review should still check.
+ * (D-289, D-293) for what a real legal review should still check.
  */
 import Base from '../layouts/Base.astro';
 import PageHead from '../components/PageHead.astro';
@@ -26,12 +31,12 @@ const updated = 'September 10, 2026';
 
 <Base
   title="Privacy Policy — Apelles"
-  description="What Apelles's website collects, why, and who it goes to. In short: an email address, only if you ask for beta access, sent to one inbox, never sold, no cookies, no analytics."
+  description="What Apelles's website collects: an email, only if you request beta access, plus cookieless aggregate visit stats. Never sold, no cookies."
 >
   <PageHead
     eyebrow="Legal"
     title="Privacy Policy"
-    lede={`Last updated ${updated}. Short version: this site collects one thing — an email address, only if you give it — and nothing else.`}
+    lede={`Last updated ${updated}. Short version: the only thing you give us is an email address, only if you ask for beta access — plus cookieless, anonymous visit stats every page load sends automatically.`}
   />
 
   <section class="section">
@@ -63,13 +68,23 @@ const updated = 'September 10, 2026';
 
       <h2>Cookies and tracking</h2>
       <p>
-        This site sets no cookies and loads no analytics or tracking script of any kind — not a
-        stray one, not a "just for basic stats" one. That is a real, checked fact about the code,
-        not a policy promise made separately from it. Because there is nothing here that requires
-        consent under cookie-consent law, this page does not have a cookie banner; a banner asking
-        you to consent to tracking that does not exist would be exactly the kind of decoration this
-        site tries not to ship. If that ever changes, this page and the site's own behaviour will
-        change together, in the same commit.
+        This site sets no cookies of its own, and runs one analytics script:
+        <a class="link" href="https://www.cloudflare.com/web-analytics/">Cloudflare Web
+        Analytics</a>, which the site's own infrastructure host enables automatically for any site
+        it hosts. It is built specifically to avoid the things a cookie banner exists to gate: no
+        cookies, no browser storage, and — per Cloudflare's own design for this product — no
+        fingerprinting or persistent identifier used to recognise you across visits or other sites.
+        What it does send, on every page load, is aggregate, anonymous traffic data (which pages get
+        visited, roughly how fast they load, in what country and browser) that cannot be tied back
+        to you individually. Read
+        <a class="link" href="https://www.cloudflare.com/privacypolicy/">Cloudflare's own privacy
+        policy</a> for exactly what it collects and how. Because none of this identifies you or
+        persists across visits, it doesn't trigger a cookie-consent requirement, so this page still
+        has no cookie banner — a banner gating consent for tracking that isn't the identifying kind
+        would be exactly the kind of decoration this site tries not to ship. This is the one thing
+        that changed since this page was first written (found live, via a Lighthouse trace, not
+        assumed); if the site's own behaviour changes again, this page changes with it, in the same
+        commit.
       </p>
       <p>
         One narrow exception, for transparency: a development-only tool used while building this

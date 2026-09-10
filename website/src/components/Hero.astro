@@ -63,16 +63,24 @@ const placeholder = isPlaceholderEndpoint(endpoint);
 ---
 
 <section class="hero">
-  <img
-    class="art"
-    src="/hero/painter.jpg"
-    alt=""
-    width="1568"
-    height="1003"
-    loading="eager"
-    fetchpriority="high"
-    decoding="async"
-  />
+  <!-- WebP (35% smaller than the source JPG at equal visual quality) with a
+       JPG fallback for browsers/tools that don't decode WebP — the JPG at
+       /hero/painter.jpg stays as the one og:image/twitter:image reference
+       (Base.astro), since some social-card crawlers still don't render
+       WebP. -->
+  <picture>
+    <source srcset="/hero/painter.webp" type="image/webp" />
+    <img
+      class="art"
+      src="/hero/painter.jpg"
+      alt=""
+      width="1568"
+      height="1003"
+      loading="eager"
+      fetchpriority="high"
+      decoding="async"
+    />
+  </picture>
   <div class="scrim" aria-hidden="true"></div>
 
   <!-- Roughly over the painting's own golden disc — measured, not eyeballed:

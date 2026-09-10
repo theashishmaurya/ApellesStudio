@@ -36,7 +36,14 @@ interface Props {
 const { title, description } = Astro.props;
 const origin = Astro.site ?? new URL('https://apelles.studio');
 const canonical = new URL(Astro.url.pathname, origin).href;
-const ogImage = new URL('/hero/painter.jpg', origin).href;
+/** A dedicated 1200×630 (the standard 1.91:1 social-card ratio) render of the
+ *  hero painting with the headline and a CTA baked in as real pixels — the
+ *  bare 1568×1003 hero crop it replaced had neither, and most platforms
+ *  either crop or letterbox a non-1.91:1 image. Built once via a real browser
+ *  render (not a raster tool) so the CTA's soft, fully-opaque white glow
+ *  behind its circle came out pixel-accurate. Baked into a static JPG, not
+ *  live CSS, so it carries no token/literal obligation of its own. */
+const ogImage = new URL('/og/card.jpg', origin).href;
 
 /** `theme-color` needs a literal, not a CSS variable — so it is read from the
  *  palette rather than typed a second time and left to drift. */
@@ -81,9 +88,12 @@ const jsonLd = {
     <meta property="og:site_name" content="Apelles" />
     <meta property="og:url" content={canonical} />
     <meta property="og:image" content={ogImage} />
-    <meta property="og:image:width" content="1568" />
-    <meta property="og:image:height" content="1003" />
-    <meta property="og:image:alt" content="Apelles, brush in hand, painting a filmstrip into the Greek landscape." />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Apelles — the video app for people who never learned to edit. The painter, brush in hand, reaching for a filmstrip in the Greek landscape."
+    />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />

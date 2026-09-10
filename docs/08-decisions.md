@@ -28670,3 +28670,34 @@ the GUI drop and `editor_add_clip` pass through. Unlike a video clip (whose
 embedded audio makes it a legal, if unusual, audio source), a still has no
 audio stream at all, so the export would compile a `[N:a]` reference to
 nothing: a hard `ffmpeg` failure rather than silence.
+
+## D-293 — website: keep Cloudflare Web Analytics, disclose it accurately instead of disabling it
+
+**decided (2026-09-10)**
+
+- **Context:** a Lighthouse trace against production (run while investigating B-149's
+  performance findings) surfaced `static.cloudflareinsights.com/beacon.min.js` —
+  Cloudflare's own Web Analytics beacon, auto-enabled on the `apelles.studio` zone
+  without any code in this repo requesting it. `website/src/pages/privacy.astro`
+  (D-289) categorically states "no analytics anywhere on this site... a real, checked
+  fact about the code" — true when D-289 wrote it, false the moment Cloudflare turned
+  this on. A real discrepancy between a stated privacy promise and actual behaviour.
+- **Options:** (a) disable Web Analytics in the Cloudflare dashboard, making the
+  existing "no analytics" claim true again; (b) keep it and rewrite the privacy page
+  to disclose it accurately.
+- **Decision:** (b) — owner, asked directly, chose to keep the free, cookieless
+  visitor analytics (useful signal for a pre-launch marketing site) over disabling it.
+  `privacy.astro`'s "Cookies and tracking" section now names Cloudflare Web Analytics
+  specifically, describes what it does and does not collect (no cookies, no
+  fingerprinting or persistent identifier, aggregate/anonymous traffic data only), and
+  links to Cloudflare's own privacy policy — the same disclosure pattern already used
+  for FormSubmit.co in the section above it, rather than a new pattern invented for
+  this one case. The page's `description`/lede and `Base.astro` description on every
+  page were also swept for the same now-false "no analytics" claim.
+- **Why this matters as its own D-NNN, not just a copy edit:** the interesting part
+  is not the wording change, it's that a factual claim on a live public page silently
+  went false because of a THIRD PARTY's own default (Cloudflare enabling Web
+  Analytics on a zone by default), not a code change in this repo — worth recording
+  as a reminder that "no analytics" is a claim about the infra host too, not just this
+  codebase, and needs the same "found live, not assumed" discipline this file's other
+  entries already apply to first-party code.
