@@ -240,7 +240,10 @@ pub async fn generate_full_image_normal_map(
     .map_err(|e| e.to_string())??;
 
     let response = reqwest::Client::new()
-        .post(format!("{}/generate_normal_map", relight_sidecar_base_url()))
+        .post(format!(
+            "{}/generate_normal_map",
+            relight_sidecar_base_url()
+        ))
         .json(&serde_json::json!({ "image_b64": image_b64 }))
         .timeout(std::time::Duration::from_secs(60))
         .send()
@@ -258,11 +261,15 @@ pub async fn generate_full_image_normal_map(
 
     let status = response.status();
     let text = response.text().await.map_err(|e| {
-        log::error!("[relight] generate_full_image_normal_map: couldn't read sidecar response body: {e}");
+        log::error!(
+            "[relight] generate_full_image_normal_map: couldn't read sidecar response body: {e}"
+        );
         e.to_string()
     })?;
     if !status.is_success() {
-        log::error!("[relight] generate_full_image_normal_map: sidecar returned HTTP {status}: {text}");
+        log::error!(
+            "[relight] generate_full_image_normal_map: sidecar returned HTTP {status}: {text}"
+        );
         return Err(format!("sidecar returned HTTP {status}: {text}"));
     }
     let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {

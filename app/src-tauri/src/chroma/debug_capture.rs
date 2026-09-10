@@ -29,6 +29,19 @@
 //!   screenshots, annotate one, or know anything about Apelles' UI: it hands
 //!   back a PNG path and the caller looks at it.
 //!
+//! One deliberate exception to "just the webview" (B-151, 2026-09-10): the
+//! Colorist tab's picture is not webview content at all — it is a native
+//! wgpu surface painted directly onto the window BEHIND the webview
+//! (`gpu_processing::WgpuDisplay`, `packages/shell/src/store.ts`'s
+//! `wgpuSurfaceActive`), so `takeSnapshotWithConfiguration:` alone always
+//! returned whatever static, deliberately-transparent DOM sat in the "hole"
+//! that surface shows through — a blank frame, byte-identical no matter what
+//! the grade did. `screenshot_to_file` now also reads back that surface's
+//! current texture on demand (`gpu_processing::read_display_frame` — never on
+//! the interactive render path, only here) and composites it into the
+//! webview PNG at its own on-screen rect before writing the file, so the
+//! result matches what a human actually sees. See `composite_wgpu_overlay`.
+//!
 //! Platform: macOS only, deliberately. v1 is macOS ARM (`docs/02-scope.md`)
 //!   and the equivalent Windows/Linux calls are different APIs with different
 //!   async shapes; the non-macOS build returns a real "not supported here"
@@ -180,7 +193,8 @@ pub fn screenshot_to_file<R: Runtime>(
     }
 
     let scale_factor = window.scale_factor().unwrap_or(1.0);
-    let frame = capture_webview_png(&window)?;
+    let mut frame = capture_webview_png(&window)?;
+    composite_wgpu_overlay(app, &mut frame);
 
     let path = match out_path {
         Some(p) if !p.trim().is_empty() => PathBuf::from(p),
@@ -203,6 +217,164 @@ pub fn screenshot_to_file<R: Runtime>(
         scale_factor,
         bytes: frame.png.len(),
     })
+}
+
+/// Where (and at what size) to paste the wgpu overlay onto a screenshot, in
+/// the screenshot's own pixel grid — pure geometry, no image data, so this is
+/// unit-testable without a GPU or a running app (see the `tests` module).
+///
+/// Mirrors `shaders/display.wgsl`'s own placement exactly: the source image
+/// is stretched to fill `rect`, then only the part of `rect` that falls
+/// inside `clip` is actually visible (the shader's fragment stage returns the
+/// background colour outside `clip`, never the texture). All of `rect`,
+/// `clip` and `window` are in the SAME device-pixel grid the on-screen
+/// `syncWgpu` (`Editor.tsx`) last posted them in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OverlayPlacement {
+    /// Size to resize the whole (unclipped) source image to before cropping.
+    resize_w: u32,
+    resize_h: u32,
+    /// Crop of the resized image that is actually visible (post-clip).
+    crop_x: u32,
+    crop_y: u32,
+    crop_w: u32,
+    crop_h: u32,
+    /// Where that crop lands on the destination canvas.
+    dst_x: i64,
+    dst_y: i64,
+}
+
+/// `frame_w`/`frame_h` is the actual screenshot's pixel size, which can
+/// differ slightly from `window` if the window was resized between the last
+/// `syncWgpu` layout post and this screenshot — `sx`/`sy` correct for that.
+/// Returns `None` when there is nothing visible to paste (the rect and clip
+/// don't overlap, or either has a non-positive extent).
+fn compute_overlay_placement(
+    rect: [f32; 4],
+    clip: [f32; 4],
+    window: [f32; 2],
+    frame_w: u32,
+    frame_h: u32,
+) -> Option<OverlayPlacement> {
+    let win_w = window[0].max(1.0);
+    let win_h = window[1].max(1.0);
+    let sx = frame_w as f32 / win_w;
+    let sy = frame_h as f32 / win_h;
+
+    let clip_x0 = (clip[0] * sx).max(0.0);
+    let clip_y0 = (clip[1] * sy).max(0.0);
+    let clip_x1 = ((clip[0] + clip[2]) * sx).min(frame_w as f32);
+    let clip_y1 = ((clip[1] + clip[3]) * sy).min(frame_h as f32);
+
+    let rect_x0 = rect[0] * sx;
+    let rect_y0 = rect[1] * sy;
+    let rect_w = (rect[2] * sx).max(1.0);
+    let rect_h = (rect[3] * sy).max(1.0);
+
+    // The visible slice: the shader clips `rect` to `clip` (its own
+    // scrollable/cropped viewport) before ever reaching the screen, so a
+    // screenshot must intersect the same two rects rather than pasting the
+    // whole (possibly larger) `rect` and overrunning neighbouring UI.
+    let dst_x0 = rect_x0.max(clip_x0).max(0.0);
+    let dst_y0 = rect_y0.max(clip_y0).max(0.0);
+    let dst_x1 = (rect_x0 + rect_w).min(clip_x1);
+    let dst_y1 = (rect_y0 + rect_h).min(clip_y1);
+    if dst_x1 <= dst_x0 || dst_y1 <= dst_y0 {
+        return None;
+    }
+
+    let resize_w = rect_w.round() as u32;
+    let resize_h = rect_h.round() as u32;
+
+    // Offset into the resized (whole-`rect`-sized) image by however much the
+    // clip cut off its own top-left corner.
+    let crop_x = (dst_x0 - rect_x0).round().max(0.0) as u32;
+    let crop_y = (dst_y0 - rect_y0).round().max(0.0) as u32;
+    let crop_w =
+        ((dst_x1 - dst_x0).round().max(1.0) as u32).min(resize_w.saturating_sub(crop_x).max(1));
+    let crop_h =
+        ((dst_y1 - dst_y0).round().max(1.0) as u32).min(resize_h.saturating_sub(crop_y).max(1));
+
+    Some(OverlayPlacement {
+        resize_w,
+        resize_h,
+        crop_x,
+        crop_y,
+        crop_w,
+        crop_h,
+        dst_x: dst_x0.round() as i64,
+        dst_y: dst_y0.round() as i64,
+    })
+}
+
+/// Paste Colorist's native wgpu-rendered picture into a webview screenshot,
+/// in place, if (and only if) that surface currently has something on screen
+/// — see the module doc and `gpu_processing::read_display_frame` for why this
+/// is necessary at all.
+///
+/// Failure here (a bad PNG decode, a texture readback that timed out) is
+/// deliberately swallowed rather than turning the whole screenshot call into
+/// an error: the webview frame captured just above is still a real, valid
+/// screenshot on its own for every OTHER tab, and even for Colorist a
+/// same-as-before blank is a strictly less useful failure mode than losing
+/// the screenshot outright over a best-effort overlay. A warning is logged
+/// either way so the gap is visible rather than silently swallowed.
+fn composite_wgpu_overlay<R: Runtime>(app: &tauri::AppHandle<R>, frame: &mut CapturedFrame) {
+    let state = app.state::<crate::AppState>();
+    let Some((overlay, transform)) = crate::gpu_processing::read_display_frame(&state) else {
+        return;
+    };
+
+    let mut canvas = match image::load_from_memory(&frame.png) {
+        Ok(img) => img.to_rgba8(),
+        Err(e) => {
+            log::warn!(
+                "[chroma::debug_capture] could not decode the webview snapshot to composite \
+                 the Colorist wgpu overlay onto it: {e}"
+            );
+            return;
+        }
+    };
+
+    let Some(placement) = compute_overlay_placement(
+        transform.rect,
+        transform.clip,
+        transform.window,
+        frame.width,
+        frame.height,
+    ) else {
+        return;
+    };
+
+    let resized = image::imageops::resize(
+        &overlay.to_rgba8(),
+        placement.resize_w,
+        placement.resize_h,
+        image::imageops::FilterType::Triangle,
+    );
+    let visible = image::imageops::crop_imm(
+        &resized,
+        placement.crop_x,
+        placement.crop_y,
+        placement.crop_w,
+        placement.crop_h,
+    )
+    .to_image();
+
+    image::imageops::overlay(&mut canvas, &visible, placement.dst_x, placement.dst_y);
+
+    let mut png_bytes = Vec::new();
+    if let Err(e) = image::DynamicImage::ImageRgba8(canvas).write_to(
+        &mut std::io::Cursor::new(&mut png_bytes),
+        image::ImageFormat::Png,
+    ) {
+        log::warn!(
+            "[chroma::debug_capture] could not re-encode the screenshot after compositing the \
+             Colorist wgpu overlay: {e}"
+        );
+        return;
+    }
+    frame.png = png_bytes;
 }
 
 fn write_png(path: &Path, png: &[u8]) -> Result<(), String> {
@@ -402,6 +574,95 @@ pub async fn chroma_debug_sample_pixel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- compute_overlay_placement (B-151) -------------------------------
+
+    #[test]
+    fn full_window_rect_with_no_clipping_maps_one_to_one() {
+        // The common "Colorist fills the whole preview pane, no scroll/crop"
+        // case: rect == clip == the whole window, screenshot pixels == the
+        // transform's own recorded window size. Nothing should be cropped.
+        let p = compute_overlay_placement(
+            [0.0, 0.0, 1000.0, 800.0],
+            [0.0, 0.0, 1000.0, 800.0],
+            [1000.0, 800.0],
+            1000,
+            800,
+        )
+        .expect("a full-window rect must be visible");
+        assert_eq!(p.resize_w, 1000);
+        assert_eq!(p.resize_h, 800);
+        assert_eq!((p.crop_x, p.crop_y), (0, 0));
+        assert_eq!((p.crop_w, p.crop_h), (1000, 800));
+        assert_eq!((p.dst_x, p.dst_y), (0, 0));
+    }
+
+    #[test]
+    fn a_clip_smaller_than_rect_crops_to_just_the_clip() {
+        // The overlay is bigger than its visible viewport (e.g. zoomed in) —
+        // only the clip's own window should end up on the screenshot, not
+        // the whole (partially off-panel) rect.
+        let p = compute_overlay_placement(
+            [0.0, 0.0, 2000.0, 2000.0],
+            [100.0, 200.0, 300.0, 400.0],
+            [2000.0, 2000.0],
+            2000,
+            2000,
+        )
+        .expect("overlapping rect/clip must be visible");
+        assert_eq!((p.crop_w, p.crop_h), (300, 400));
+        assert_eq!((p.dst_x, p.dst_y), (100, 200));
+        // crop offset into the resized (rect-sized) image is exactly where
+        // the clip starts, since rect's own origin is (0,0).
+        assert_eq!((p.crop_x, p.crop_y), (100, 200));
+    }
+
+    #[test]
+    fn the_shells_hidden_sentinel_position_still_yields_no_visible_placement() {
+        // `Editor.tsx`'s `syncWgpu` parks the rect off-window at -999999 when
+        // nothing should be drawn — `read_display_frame` already short-circuits
+        // on this before it ever reaches this function, but the geometry
+        // itself must also treat it as "nothing to show" defensively (an
+        // off-window rect can never intersect an on-window clip).
+        let p = compute_overlay_placement(
+            [-999_999.0, -999_999.0, 1.0, 1.0],
+            [0.0, 0.0, 1000.0, 800.0],
+            [1000.0, 800.0],
+            1000,
+            800,
+        );
+        assert!(p.is_none());
+    }
+
+    #[test]
+    fn a_resized_window_scales_the_transform_to_the_real_screenshot_size() {
+        // The screenshot came out at 2x the window size the last `syncWgpu`
+        // transform was posted at (e.g. the window grew right before this
+        // screenshot ran) — rect/clip must scale up by the same factor so the
+        // overlay still lands in the right place on the LARGER screenshot.
+        let p = compute_overlay_placement(
+            [0.0, 0.0, 500.0, 400.0],
+            [0.0, 0.0, 500.0, 400.0],
+            [500.0, 400.0],
+            1000,
+            800,
+        )
+        .expect("must still be visible after scaling");
+        assert_eq!((p.resize_w, p.resize_h), (1000, 800));
+        assert_eq!((p.dst_x, p.dst_y), (0, 0));
+    }
+
+    #[test]
+    fn a_rect_entirely_outside_the_clip_has_no_visible_placement() {
+        let p = compute_overlay_placement(
+            [900.0, 900.0, 100.0, 100.0],
+            [0.0, 0.0, 500.0, 500.0],
+            [1000.0, 1000.0],
+            1000,
+            1000,
+        );
+        assert!(p.is_none());
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(

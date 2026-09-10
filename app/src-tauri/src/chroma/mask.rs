@@ -73,7 +73,9 @@ pub async fn chroma_subject_mask(
     // sidecar (None if `bbox` was None, or was a tiny drag collapsed into an
     // include-point) — not the raw `bbox` parameter this command received.
     // Matches the pre-D-142 behaviour exactly.
-    let (sx, sy, ex, ey) = seg.send_box.unwrap_or((0.0, 0.0, frame_w as f64, frame_h as f64));
+    let (sx, sy, ex, ey) = seg
+        .send_box
+        .unwrap_or((0.0, 0.0, frame_w as f64, frame_h as f64));
     Ok(AiSubjectMaskParameters {
         start_x: sx,
         start_y: sy,

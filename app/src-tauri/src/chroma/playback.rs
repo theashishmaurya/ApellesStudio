@@ -57,7 +57,8 @@ pub async fn chroma_play_frame(
     //    CurrentVideo.frame at `frame` so tracked mattes (D-019) stay in lockstep).
     let source_long_edge = {
         let cv = super::state::current_video();
-        cv.map(|c| c.info.resolution.width.max(c.info.resolution.height)).unwrap_or(0)
+        cv.map(|c| c.info.resolution.width.max(c.info.resolution.height))
+            .unwrap_or(0)
     };
     let dim = playback_dim(target_resolution, source_long_edge);
     super::commands::seek_and_install(frame, Some(dim), &state).await?;
@@ -108,7 +109,7 @@ mod tests {
 
     use crate::gpu_processing::RenderRequest;
     use crate::image_processing::get_all_adjustments_from_json;
-    use crate::mask_generation::{generate_mask_bitmap, MaskDefinition};
+    use crate::mask_generation::{MaskDefinition, generate_mask_bitmap};
     use crate::render_core::{self, OwnedRenderCaches};
 
     fn test_video() -> Option<PathBuf> {
@@ -170,7 +171,11 @@ mod tests {
             .and_then(|m| serde_json::from_value(m.clone()).ok())
             .unwrap_or_default();
 
-        let scale = crate::chroma::decode_pipe::scale_target(info.resolution.width, info.resolution.height, long_edge);
+        let scale = crate::chroma::decode_pipe::scale_target(
+            info.resolution.width,
+            info.resolution.height,
+            long_edge,
+        );
 
         let ctx = render_core::init_gpu_context().expect("gpu ctx");
         let caches = OwnedRenderCaches::default();
@@ -207,7 +212,7 @@ mod tests {
             start_frame,
             scale,
         )
-            .expect("warm decode");
+        .expect("warm decode");
         let _ = render_once(&warm, 1, "playback_bench_warm");
 
         let mut t_decode = std::time::Duration::ZERO;
@@ -218,15 +223,14 @@ mod tests {
             let f = start_frame + 1 + i;
 
             let d0 = Instant::now();
-            let frame =
-                crate::chroma::decode_pipe::playback_frame_scaled(
-                    crate::chroma::decode_pipe::PipeSlot::Current,
-                    &vid,
-                    &info,
-                    f,
-                    scale,
-                )
-                    .expect("decode");
+            let frame = crate::chroma::decode_pipe::playback_frame_scaled(
+                crate::chroma::decode_pipe::PipeSlot::Current,
+                &vid,
+                &info,
+                f,
+                scale,
+            )
+            .expect("decode");
             t_decode += d0.elapsed();
 
             let g0 = Instant::now();
@@ -238,7 +242,11 @@ mod tests {
         let per = total.as_secs_f64() / n_frames as f64;
         eprintln!(
             "\n=== D-031 playback throughput — C019 {}x{} @ {} fps, grade @ {} px long edge, {} frames ===",
-            info.resolution.width, info.resolution.height, info.fps(), long_edge, n_frames
+            info.resolution.width,
+            info.resolution.height,
+            info.fps(),
+            long_edge,
+            n_frames
         );
         eprintln!(
             "  scaled decode (ffmpeg): {:.2} ms/frame   grade: {:.2} ms/frame",

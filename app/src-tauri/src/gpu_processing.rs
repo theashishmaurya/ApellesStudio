@@ -135,6 +135,148 @@ impl WgpuDisplay {
     }
 }
 
+/// Read back the exact picture [`WgpuDisplay::render`] last presented onto
+/// the native surface — the SAME `GpuProcessor::output_texture` that
+/// render's bind group points at (`gpu_processing.rs`'s
+/// `process_and_get_dynamic_image_with_analytics`, the `output_to_display`
+/// branch, keeps that texture warm on every Colorist render).
+///
+/// This exists for exactly one caller: `chroma::debug_capture`'s
+/// `debug_screenshot` (B-151). That tool's only capture mechanism,
+/// `-[WKWebView takeSnapshotWithConfiguration:]`, snapshots WebKit's own
+/// compositing tree — it cannot see this surface at all, because the surface
+/// is a native layer painted directly onto the window BEHIND the webview,
+/// outside WebKit's knowledge entirely (`packages/shell/src/store.ts`'s
+/// `wgpuSurfaceActive` doc: the shell goes `bg-transparent` there so this
+/// layer shows through a deliberate "hole" in the DOM). A plain webview
+/// snapshot therefore always shows whatever that hole's static background
+/// is — never this picture, and never changing, no matter what the grade
+/// does. Reading this texture on demand and compositing it into the
+/// screenshot at its own on-screen `rect` (below) is the fix.
+///
+/// Deliberately a one-off, on-demand GPU->CPU copy, done ONLY when a
+/// screenshot is actually requested — never on the interactive render path,
+/// where a permanent readback would cost real frame time for no reason a
+/// human or the grading pipeline would ever see (CLAUDE.md: performance
+/// first). `output_texture` already carries `COPY_SRC`, so this adds no new
+/// texture usage and touches nothing on the hot path.
+///
+/// Returns `None` when there is nothing for a screenshot to add: no wgpu
+/// surface at all (headless/Linux/Android, or `use_wgpu_renderer` off), no
+/// processor yet, an empty image, or — the common case whenever the
+/// Colorist tab isn't the one on screen — the shell has parked the overlay
+/// off-window at its hidden sentinel position (`Editor.tsx`'s `syncWgpu`:
+/// `x/y = -999999` while nothing should be drawn). In every `None` case the
+/// plain webview screenshot is already the complete, correct picture.
+pub fn read_display_frame(state: &AppState) -> Option<(DynamicImage, DisplayTransform)> {
+    let context = {
+        let guard = state.gpu_context.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref()?.clone()
+    };
+    let transform = {
+        let guard = context.display.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref()?.latest_transform
+    };
+
+    let img_w = transform.image_size[0].round().max(0.0) as u32;
+    let img_h = transform.image_size[1].round().max(0.0) as u32;
+    if img_w == 0 || img_h == 0 {
+        return None;
+    }
+    // The shell's own off-screen sentinel (see doc above) — nothing is
+    // actually drawn on screen right now, regardless of what's in the
+    // texture.
+    if transform.rect[0] <= -100_000.0 || transform.rect[1] <= -100_000.0 {
+        return None;
+    }
+
+    let processor_guard = state
+        .gpu_processor
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let processor_state = processor_guard.as_ref()?;
+    let texture = &processor_state.processor.output_texture;
+    if img_w > processor_state.width || img_h > processor_state.height {
+        // Stale transform from a since-shrunk processor (a project/resolution
+        // change mid-flight) — safer to skip the overlay than to issue a copy
+        // that reads past the texture's real extent.
+        return None;
+    }
+
+    let device = &context.device;
+    let queue = &context.queue;
+
+    let unpadded_bytes_per_row = 4 * img_w;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) & !(align - 1);
+    let buffer_size = (padded_bytes_per_row * img_h) as u64;
+
+    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Debug Screenshot Readback Buffer"),
+        size: buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("Debug Screenshot Readback Encoder"),
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &output_buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(img_h),
+            },
+        },
+        wgpu::Extent3d {
+            width: img_w,
+            height: img_h,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit(Some(encoder.finish()));
+
+    let buffer_slice = output_buffer.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel::<Result<(), wgpu::BufferAsyncError>>();
+    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = tx.send(result);
+    });
+    let polled = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: Some(std::time::Duration::from_secs(5)),
+    });
+    if polled.is_err() {
+        return None;
+    }
+    if !matches!(rx.recv(), Ok(Ok(()))) {
+        return None;
+    }
+
+    let padded_data = buffer_slice.get_mapped_range().to_vec();
+    output_buffer.unmap();
+
+    let unpadded_data = if padded_bytes_per_row == unpadded_bytes_per_row {
+        padded_data
+    } else {
+        let mut unpadded = Vec::with_capacity((unpadded_bytes_per_row * img_h) as usize);
+        for chunk in padded_data.chunks(padded_bytes_per_row as usize) {
+            unpadded.extend_from_slice(&chunk[..unpadded_bytes_per_row as usize]);
+        }
+        unpadded
+    };
+
+    let img_buf = ImageBuffer::<Rgba<u8>, _>::from_raw(img_w, img_h, unpadded_data)?;
+    Some((DynamicImage::ImageRgba8(img_buf), transform))
+}
+
 pub fn get_or_init_gpu_context(
     state: &tauri::State<AppState>,
     _app_handle: &tauri::AppHandle,

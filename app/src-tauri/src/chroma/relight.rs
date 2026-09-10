@@ -655,9 +655,14 @@ mod tests {
         // shading) is a near subject (high depth). Both halves individually
         // flat, so any shading difference there is purely from `distance`,
         // not from an in-region depth gradient.
-        let two_region_depth = GrayImage::from_fn(W, H, |x, _y| {
-            if x < W / 2 { Luma([40]) } else { Luma([220]) }
-        });
+        let two_region_depth =
+            GrayImage::from_fn(
+                W,
+                H,
+                |x, _y| {
+                    if x < W / 2 { Luma([40]) } else { Luma([220]) }
+                },
+            );
 
         let render_with = |light_json: Value| -> Vec<u8> {
             let js = json!({ "relightLights": [light_json] });
@@ -703,7 +708,9 @@ mod tests {
         // over) — the left half legitimately differs too, that's not what
         // this test is checking.
         let rgba = |buf: &[u8]| -> Vec<[u8; 4]> {
-            buf.chunks_exact(4).map(|p| [p[0], p[1], p[2], p[3]]).collect()
+            buf.chunks_exact(4)
+                .map(|p| [p[0], p[1], p[2], p[3]])
+                .collect()
         };
         let lit_px = rgba(&lit);
         let unlit_px = rgba(&unlit);

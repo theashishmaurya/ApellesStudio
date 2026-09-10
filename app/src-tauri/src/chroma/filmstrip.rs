@@ -29,5 +29,6 @@ pub async fn chroma_clip_thumbnails(
     duration_secs: f64,
     step_secs: f64,
 ) -> Result<Vec<ClipThumbDto>, String> {
-    apelles_media::filmstrip::clip_thumbnails(source_path, start_secs, duration_secs, step_secs).await
+    apelles_media::filmstrip::clip_thumbnails(source_path, start_secs, duration_secs, step_secs)
+        .await
 }
