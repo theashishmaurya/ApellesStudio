@@ -220,7 +220,7 @@ clear_ai_tags, clear_all_tags}` (grid tag/rating — `set_rating_for_paths` /
 
 - **`components/views/EditorView.tsx`** and everything under it: `panel/Editor.tsx`, the
   canvas + wgpu render path (`gpu_processing.rs`, `render_core.rs`, `WgpuDisplay`),
-  `panel/editor/*` (toolbar, `ChromaTimeline`).
+  `panel/editor/*` (toolbar, `ColoristTransport` — was `ChromaTimeline` until D-292).
 - **`panel/right/*`** — every adjustment panel: `ControlsPanel`, `MetadataPanel`,
   `CropPanel`, `MasksPanel`, `AIPanel`, `PresetsPanel` (**local** presets — keep
   `load_presets`/`save_presets`, the folder tree, import/export; drop only

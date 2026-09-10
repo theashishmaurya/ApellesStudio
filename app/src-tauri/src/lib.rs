@@ -2228,7 +2228,6 @@ pub fn run() {
             chroma::commands::chroma_video_info,
             chroma::commands::chroma_seek,
             chroma::playback::chroma_play_frame,
-            chroma::commands::chroma_frame_thumbnails,
             chroma::session::chroma_session_list,
             chroma::session::chroma_session_add,
             chroma::session::chroma_session_set_active,

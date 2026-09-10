@@ -315,8 +315,17 @@ def set_color_grade(
 # --------------------------------------------------------------------------- #
 @mcp.tool()
 def seek(frame: int) -> list:
-    """Move the video playhead to `frame` (0-based). Decodes that frame and
-    re-renders it with the current grade. No-op if the loaded item is a still."""
+    """Move the video playhead to `frame` and re-render it with the current
+    grade. No-op if the loaded item is a still.
+
+    **`frame` is CLIP-LOCAL (D-291).** 0 is the active clip's own in-point on
+    the Edit timeline, not frame 0 of the source file, and the last valid frame
+    is `get_state().shot.frameCount - 1` — the CLIP's length, not the file's.
+    The picture you get back also carries that clip's real transform (crop,
+    scale, rotation, position), so what you measure with `inspect_color` /
+    `sample` is what the Edit preview and the export actually show. A loose clip
+    opened outside a project (an "Untitled" session) has no clip, so there
+    `frame` is just the source frame, as before."""
     return _result(_op("seek", frame=frame))
 
 

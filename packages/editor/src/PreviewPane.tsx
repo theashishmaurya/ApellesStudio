@@ -6,7 +6,7 @@
  * backend decode→jpeg — no grade, no compositing). Play is a wall-clock
  * `requestAnimationFrame` loop that advances the playhead and refetches,
  * dropping frames to stay real-time (same pattern as the Colorist tab's
- * `ChromaTimeline.tsx`). This frame-fetch + play-loop logic is tab-owned and
+ * `ColoristTransport.tsx`). This frame-fetch + play-loop logic is tab-owned and
  * stays here — only the rendered transport JSX (the hand-rolled button row)
  * moved to `<Player>`, which is purely presentational.
  *

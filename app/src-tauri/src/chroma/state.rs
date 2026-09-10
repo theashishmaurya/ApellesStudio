@@ -53,7 +53,7 @@ impl Session {
     /// Upsert `shot` by path: an existing shot with the same path is replaced in
     /// place and made active; a new path is appended and made active. Returns
     /// `true` if the *active clip path* changed as a result (the caller then
-    /// resets the thumb cache + decode pipe, both bound to one clip).
+    /// resets the decode pipe, which is bound to one clip).
     pub fn upsert(&mut self, shot: Shot) -> bool {
         let before = self.active_path();
         match self.shots.iter().position(|s| s.path == shot.path) {
@@ -160,8 +160,8 @@ pub fn current_project() -> Option<ProjectRef> {
 /// path (a fresh open of a new clip appends a shot; a seek / re-open of a clip
 /// already in the session updates it in place). `None` clears the whole session.
 ///
-/// A change of *active clip path* invalidates the thumbnail strip and the
-/// persistent playback decode pipe (D-030) — both are bound to one clip.
+/// A change of *active clip path* invalidates the persistent playback decode
+/// pipe (D-030), which is bound to one clip.
 pub fn set_current_video(v: Option<CurrentVideo>) {
     let mut s = lock();
     let path_changed = match v {
@@ -176,7 +176,6 @@ pub fn set_current_video(v: Option<CurrentVideo>) {
         Some(shot) => s.upsert(shot),
     };
     if path_changed {
-        *THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
         super::decode_pipe::reset();
     }
 }
@@ -228,7 +227,7 @@ pub fn resolve_session_index_for_path(shots: &[Shot], want: &Path) -> Option<usi
 
 /// D-071: drop every session shot whose path isn't in `keep` — see
 /// `Session::prune_except`'s doc for why this exists at all. Resets the
-/// thumb cache + decode pipe only if the *active* shot was one of the ones
+/// decode pipe only if the *active* shot was one of the ones
 /// dropped (mirrors `session_set_active`'s own invalidation rule — an
 /// unrelated shot disappearing from the list doesn't invalidate anything
 /// bound to the still-active one).
@@ -239,13 +238,12 @@ pub fn prune_session_except(keep: &std::collections::HashSet<PathBuf>) -> Vec<Pa
     let changed = s.active_path() != before;
     drop(s);
     if changed {
-        *THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
         super::decode_pipe::reset();
     }
     dropped
 }
 
-/// Make shot `index` active. Resets the thumb cache + decode pipe if the active
+/// Make shot `index` active. Resets the decode pipe if the active
 /// clip path changed. Returns the now-active shot.
 pub fn session_set_active(index: usize) -> Result<Shot, String> {
     let mut s = lock();
@@ -255,14 +253,13 @@ pub fn session_set_active(index: usize) -> Result<Shot, String> {
     let changed = before.as_deref() != Some(shot.path.as_path());
     drop(s);
     if changed {
-        *THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
         super::decode_pipe::reset();
     }
     Ok(shot)
 }
 
 /// Remove shot `index`. Returns the new active shot (`None` if the session is
-/// now empty). Resets the thumb cache + decode pipe if the active clip changed.
+/// now empty). Resets the decode pipe if the active clip changed.
 pub fn session_remove(index: usize) -> Result<Option<Shot>, String> {
     let mut s = lock();
     let before = s.active_path();
@@ -270,26 +267,9 @@ pub fn session_remove(index: usize) -> Result<Option<Shot>, String> {
     let after = s.active_path();
     drop(s);
     if before != after {
-        *THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = None;
         super::decode_pipe::reset();
     }
     Ok(now_active)
-}
-
-/// `(video path, requested count, data-url strings)` — the timeline strip, decoded once.
-type ThumbStrip = (PathBuf, u32, Vec<(u64, String)>);
-static THUMB_CACHE: Lazy<Mutex<Option<ThumbStrip>>> = Lazy::new(|| Mutex::new(None));
-
-pub fn cached_thumbs(path: &PathBuf, count: u32) -> Option<Vec<(u64, String)>> {
-    let t = THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    match &*t {
-        Some((p, c, v)) if p == path && *c == count => Some(v.clone()),
-        _ => None,
-    }
-}
-
-pub fn store_thumbs(path: PathBuf, count: u32, thumbs: Vec<(u64, String)>) {
-    *THUMB_CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some((path, count, thumbs));
 }
 
 // Tracked-matte lookup is now stateless: the sub-mask stores its `/track` cache
@@ -323,7 +303,11 @@ mod tests {
     }
 
     fn shot(name: &str, frame: u64) -> Shot {
-        Shot { path: PathBuf::from(format!("/clips/{name}.mov")), info: info(), frame }
+        Shot {
+            path: PathBuf::from(format!("/clips/{name}.mov")),
+            info: info(),
+            frame,
+        }
     }
 
     #[test]
@@ -381,43 +365,6 @@ mod tests {
         assert!(s.upsert(shot("B", 30)));
         assert_eq!(s.active, 1);
         assert_eq!(s.active_shot().unwrap().frame, 30);
-    }
-
-    #[test]
-    fn active_shot_change_busts_the_thumb_cache() {
-        // exercises the module-global wrapper (not just the pure model): a
-        // path-changing upsert must drop the thumb strip, which is bound to one
-        // clip. Paths are unique to this test so a parallel export test (also a
-        // `set_current_video` caller) can only ever *also* bust the cache, never
-        // repopulate it (nothing but `chroma_frame_thumbnails` calls store_thumbs).
-        //
-        // **B-105 — takes `PROJECT_STATE_LOCK` and CLEARS the current video on
-        // the way out.** It used to do neither, and `current_video()` is read
-        // far outside this module: `chroma::keyframes::interpolated_parameters`
-        // consults it to decide whether to resolve a keyframed parameter, so
-        // leaving a video set here made
-        // `chroma::relight::tests::keyframed_light_without_a_loaded_video_falls_back_to_raw_fields`
-        // — whose whole premise is that no video is loaded — pass or fail purely
-        // on which of the two ran first. Latent for as long as both have
-        // existed; surfaced deterministically by D-230's slower preview tests
-        // shifting the schedule. See B-105.
-        let _guard = super::super::PROJECT_STATE_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let a = PathBuf::from("/thumbtest/A-unique.mov");
-        let b = PathBuf::from("/thumbtest/B-unique.mov");
-        set_current_video(Some(Shot { path: a.clone(), info: info(), frame: 0 }));
-        store_thumbs(a.clone(), 48, vec![(0, "data:,x".into())]);
-        assert!(cached_thumbs(&a, 48).is_some());
-
-        set_current_video(Some(Shot { path: b.clone(), info: info(), frame: 0 }));
-        assert!(cached_thumbs(&a, 48).is_none(), "switching shots must bust the thumb cache");
-
-        // Restore the process-wide baseline every other test is entitled to
-        // assume. Done last rather than in a guard type because the assertions
-        // above are infallible-by-construction on a fresh cache; a panic here
-        // poisons the lock, which the `unwrap_or_else` above already handles.
-        set_current_video(None);
     }
 
     #[test]
@@ -489,7 +436,11 @@ mod tests {
         s.upsert(shot("A", 0)); // raw index 0, session index 0
         s.upsert(shot("A", 5)); // same path as above — collapses, still session index 0
         s.upsert(shot("C", 0)); // raw index 2 in a hypothetical unde-duped list, session index 1
-        assert_eq!(s.shots.len(), 2, "A's repeat should not have appended a second shot");
+        assert_eq!(
+            s.shots.len(),
+            2,
+            "A's repeat should not have appended a second shot"
+        );
 
         let want = PathBuf::from("/clips/C.mov");
         assert_eq!(resolve_session_index_for_path(&s.shots, &want), Some(1));
@@ -501,7 +452,10 @@ mod tests {
 
         // a path that was never loaded at all resolves to None, not a stale
         // guess — the caller (open_manifest) already `.unwrap_or(0)`s this.
-        assert_eq!(resolve_session_index_for_path(&s.shots, Path::new("/clips/nope.mov")), None);
+        assert_eq!(
+            resolve_session_index_for_path(&s.shots, Path::new("/clips/nope.mov")),
+            None
+        );
     }
 
     // `prune_session_except` itself (the module-level wrapper around the

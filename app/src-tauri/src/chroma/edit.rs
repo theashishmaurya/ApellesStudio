@@ -191,7 +191,7 @@ pub(crate) fn resolve_timeline_and_settings(
 /// for the whole timeline, for the preview and for
 /// [`chroma_timeline_clip_geometry`] alike, so the overlay and the picture
 /// cannot disagree.
-fn composition_size(
+pub(super) fn composition_size(
     settings: &project::ProjectSettings,
     timeline: &Timeline,
 ) -> Result<(u32, u32), String> {
@@ -1133,7 +1133,7 @@ fn composition_size_only() -> Result<ClipGeometry, String> {
 
 /// A clip's transform, resolved for one specific `source_frame` — the
 /// static fields, or their keyframe-interpolated values.
-struct ClipTransform {
+pub(super) struct ClipTransform {
     opacity: f64,
     position_x: f64,
     position_y: f64,
@@ -1171,7 +1171,7 @@ impl ClipTransform {
     /// [`composite_layer_onto`] itself acts on. A **negative** crop inset
     /// counts as no crop, matching [`crop_pixel_rect`]'s own clamp — the
     /// predicate has to agree with what would actually be painted.
-    fn is_identity(&self) -> bool {
+    pub(super) fn is_identity(&self) -> bool {
         self.opacity >= 1.0
             && self.position_x == 0.0
             && self.position_y == 0.0
@@ -1192,6 +1192,18 @@ impl ClipTransform {
             && self.crop_top <= 0.0
             && self.crop_right <= 0.0
             && self.crop_bottom <= 0.0
+    }
+
+    /// D-291 — the same geometry with the **blend** neutralised: opacity back
+    /// to fully opaque. For a consumer that places one clip on a canvas with
+    /// nothing beneath it, where opacity/fade have nothing to blend *against*
+    /// — today that is the Colorist's own preview (`super::colorist_view`).
+    /// A method rather than a `pub` field so the struct's invariant stays
+    /// "every field here is already resolved for one frame", and so the one
+    /// place this neutralising happens is named.
+    pub(super) fn without_blend(mut self) -> Self {
+        self.opacity = 1.0;
+        self
     }
 
     /// This layer's placement box size, in `canvas`-pixel space (D-193).
@@ -1293,7 +1305,7 @@ fn resolve_text_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform 
 /// static-or-keyframed resolution on its own. Split out purely so the fade can
 /// be applied at one place after every one of this function's three return
 /// paths, rather than repeated at each.
-fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransform {
+pub(super) fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> ClipTransform {
     let base = ClipTransform {
         opacity: clip.opacity,
         position_x: clip.position_x,
@@ -1689,7 +1701,7 @@ fn crop_pixel_rect(w: u32, h: u32, t: &ClipTransform) -> Option<(u32, u32, u32, 
 /// 960-px cap isn't downscaled at all, so it was two thirds of a 4K-derived
 /// canvas at one quality and the entire canvas at another). The decoded
 /// buffer's size now only affects sharpness.
-fn composite_layer_onto(
+pub(super) fn composite_layer_onto(
     canvas: &mut image::RgbaImage,
     layer: &image::RgbaImage,
     t: &ClipTransform,

@@ -7,7 +7,7 @@
 //   and a jump-to-here "Undo".
 //
 // Hidden entirely when there's no activity and no pending request. Styling
-// follows the sibling ChromaTimeline (plain elements + the app's colour tokens).
+// follows the sibling ColoristTransport (plain elements + the app's colour tokens).
 // See docs/notes/agent-activity-feed.md.
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Undo2, Trash2, UserRound, X } from 'lucide-react';

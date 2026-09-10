@@ -13,7 +13,7 @@
 // appends a new clip, "×" removes one from the timeline. Same visual shape
 // as before this decision.
 //
-// Styling: plain elements + app colour tokens, same as ChromaTimeline /
+// Styling: plain elements + app colour tokens, same as ColoristTransport /
 // AgentActivityDock. Deferred (D-033 follow-ups): drag-drop reorder, a
 // copy-to-any-shot picker, session-file persistence.
 import { useCallback, useEffect, useRef, useState } from 'react';

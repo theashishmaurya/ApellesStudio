@@ -17,7 +17,7 @@ are not keyframed.
 | interpolation (pure, 14 unit tests) | `app/src-tauri/src/chroma/keyframes.rs` |
 | the one render hook | `app/src-tauri/src/mask_generation.rs` — `generate_sub_mask_bitmap`, top |
 | frontend mirror (overlay + button share it) | `app/src/utils/maskKeyframes.ts` |
-| keyframe button + diamond track | `app/src/components/chroma/MaskKeyframeBar.tsx` (in `ChromaTimeline`) |
+| keyframe button + diamond track | `app/src/components/chroma/MaskKeyframeBar.tsx` (in `ColoristTransport`) |
 | interpolated overlay + drag-writes-key | `app/src/components/panel/editor/ImageCanvas.tsx` |
 | bridge ops | `app/src/hooks/useChromaControl.ts` — `add_mask_keyframe` / `list_mask_keyframes` / `clear_mask_keyframe` / `clear_mask_keyframes` |
 | MCP tools | `mcp/server.py` — same 4 names (27 → 31 tools) |
@@ -174,5 +174,5 @@ Via the MCP server against an open clip:
 - easing / bezier interpolation handles — linear only for v1.
 - keyframing `mode` / `invert` / `opacity`.
 - a full dope-sheet timeline — the diamond track is deliberately minimal
-  (matches `ChromaTimeline` / `ShotStrip` styling).
+  (matches `ColoristTransport` / `ShotStrip` styling).
 - brush strokes that change point count between keys snap instead of morphing.

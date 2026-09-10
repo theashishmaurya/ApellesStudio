@@ -145,5 +145,6 @@ IPC hop or the native wgpu surface. In a `tauri dev`:
 - `app/src-tauri/src/chroma/commands.rs` — `chroma_seek` body extracted to
   `pub async fn seek_and_install(frame, scale_long_edge, state)`.
 - `app/src-tauri/src/chroma/mod.rs` +2, `lib.rs` +1 `generate_handler!` line.
-- `app/src/components/panel/editor/ChromaTimeline.tsx` — rAF wall-clock
+- `app/src/components/panel/editor/ColoristTransport.tsx` (was
+  `ChromaTimeline.tsx` until D-292) — rAF wall-clock
   playback loop calling `chroma_play_frame`; pause → full-res settle.

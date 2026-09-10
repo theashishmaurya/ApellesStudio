@@ -40,7 +40,7 @@ HEVC `A001_08302215_C019.MOV` on separate tracks, one dangling).
 | 9 | `PreviewPane` → `chroma_timeline_frame(playhead, maxLongEdge)` | `edit.rs` | ~0.3s | `decode_pipe` (memory); **already downscales** |
 | 10 | **`chroma_clip_thumbnails` per visible video clip** | `edit.rs`→`video.rs` | **9.5s** per distinct (clip, count) | `THUMB_CACHE`, **memory only** (D-119/121/124) |
 | 11 | **`chroma_audio_waveform` per visible clip with audio** | `audio.rs` | full `symphonia` decode of the clip's whole range, **on the main thread** | **no cache at all, at either end of the IPC that mattered** |
-| 12 | Colorist shot strip: `chroma_frame_thumbnails` / `chroma_session_thumbnail` | `commands.rs`/`session.rs` | one `ffmpeg` pass | `state::THUMB_CACHE`, memory only, **wiped on every shot switch** (D-033) |
+| 12 | Colorist shot strip: `chroma_session_thumbnail` | `session.rs` | one `ffmpeg` pass | none — the sibling `chroma_frame_thumbnails` and `state::THUMB_CACHE` this row also listed were deleted with the Colorist frame strip (D-292) |
 
 **The headline.** Every cache in that table was a module-level
 `Lazy<Mutex<HashMap<..>>>` static. Not one of them survived a process restart. So

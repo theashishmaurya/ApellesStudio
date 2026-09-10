@@ -8,7 +8,7 @@
 // all (back to a static mask). Dragging the mask on the canvas at a frame also
 // writes/updates the key there (ImageCanvas, D-034).
 //
-// Styling: plain elements + app tokens, matching ChromaTimeline / ShotStrip /
+// Styling: plain elements + app tokens, matching ColoristTransport / ShotStrip /
 // AgentActivityDock. An AI-tracked sub-mask (chromaTrackDir) can't be keyframed
 // — tracked wins — so the bar hides for those.
 import { useCallback, useMemo } from 'react';

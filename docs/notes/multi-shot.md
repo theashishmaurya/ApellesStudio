@@ -85,7 +85,7 @@ is mostly for the MCP agent and the strip's "+" button.
   filename + an accent dot when the shot has a non-neutral grade; click to
   switch, `×` to remove (only shown when >1 shot), `→` on the active card to copy
   its grade to the next shot, `+` to add clips (file dialog → `addShots`). Plain
-  elements + app tokens, like `ChromaTimeline`. Rendered by `BottomBar` above the
+  elements + app tokens, like `ColoristTransport`. Rendered by `BottomBar` above the
   filmstrip whenever the session is non-empty.
 - **`hooks/useChromaControl.ts`** — ops `list_shots` (READ_ONLY), `set_active_shot`
   / `add_shots` (NAV — not logged to the feed, a switch restores that shot's own

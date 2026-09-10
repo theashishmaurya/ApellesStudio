@@ -1,19 +1,33 @@
-// Apelles — the video UI. Replaces the filmstrip when a clip is loaded: a frame-
-// thumbnail strip with a playhead, plus play/step controls. Click/drag the strip
-// to seek. Lives in the BottomBar.
+// Apelles — the Colorist tab's transport (D-292; was `ChromaTimeline.tsx`,
+// D-031's frame-thumbnail strip).
+//
+// What it is: play / pause / step, a **scrub bar** over the clip currently
+// being graded, the mask-keyframe track (D-034), and a timecode readout. It
+// lives in the BottomBar, in place of RapidRAW's photo `Filmstrip` whenever
+// the loaded item is a video.
+//
+// What it does NOT do — and this is the point of D-292: it is not a timeline.
+// It shows no thumbnails, no clips, no tracks, and no other shot. The Edit tab
+// owns the one real timeline in this app; a second, frame-thumbnail one in
+// Colorist duplicated it (the owner: "no point of having a timeline" here) and
+// after D-291 it was also actively misleading — the strip was built from the
+// whole SOURCE file while the transport it sat under counts the CLIP's own
+// frames. What is genuinely lost with the thumbnails is visual "where am I in
+// this shot" scanning; the scrub bar keeps the capability that mattered
+// (scrubbing within the shot you are grading) and the Edit tab's own filmstrip
+// keeps the one that was duplicated.
+//
+// **Frames here are CLIP-LOCAL (D-291/B-147).** `videoInfo.frameCount` is the
+// clip's length on the Edit timeline, frame 0 is the clip's in-point, and the
+// backend maps both through the clip's own trim. Nothing in this file knows
+// that — it just counts the frames the backend reports, which is exactly why
+// the fix belonged in `chroma::colorist_view` and not here.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 import { useChromaStore } from '../../../store/useChromaStore';
 import { useEditorStore } from '../../../store/useEditorStore';
 import MaskKeyframeBar from '../../chroma/MaskKeyframeBar';
-
-interface FrameThumb {
-  frame: number;
-  dataUrl: string;
-}
-
-const THUMB_COUNT = 48;
 
 // D-031: grade at a reduced long edge during playback (ffmpeg downscales the
 // decode, the WGSL grade runs at this size). Full-res is restored on pause.
@@ -28,40 +42,26 @@ function fmtTime(secs: number): string {
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
-export default function ChromaTimeline() {
+export default function ColoristTransport() {
   const videoInfo = useChromaStore((s) => s.videoInfo);
   const currentFrame = useChromaStore((s) => s.currentFrame);
   const setCurrentFrame = useChromaStore((s) => s.setCurrentFrame);
   const bumpFrameNonce = useChromaStore((s) => s.bumpFrameNonce);
 
-  const [thumbs, setThumbs] = useState<FrameThumb[]>([]);
-  const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
 
-  const stripRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
   const seekInFlight = useRef(false);
   const pending = useRef<number | null>(null);
   const draggingRef = useRef(false);
   const rafRef = useRef<number | null>(null);
   const playedRef = useRef(false);
 
+  // Switching to another shot (or another clip) must not leave the transport
+  // running against the previous one's length.
   useEffect(() => {
-    if (!videoInfo?.isVideo) {
-      setThumbs([]);
-      return;
-    }
-    let cancelled = false;
     setPlaying(false);
-    setThumbs([]);
-    setLoading(true);
-    invoke<FrameThumb[]>('chroma_frame_thumbnails', { count: THUMB_COUNT })
-      .then((t) => !cancelled && setThumbs(t))
-      .catch((e) => console.error('chroma_frame_thumbnails failed', e))
-      .finally(() => !cancelled && setLoading(false));
-    return () => {
-      cancelled = true;
-    };
-  }, [videoInfo?.path, videoInfo?.isVideo]);
+  }, [videoInfo?.path, videoInfo?.frameCount]);
 
   const doSeek = useCallback(
     async (frame: number) => {
@@ -99,7 +99,7 @@ export default function ChromaTimeline() {
 
   const seekFromClientX = useCallback(
     (clientX: number) => {
-      const el = stripRef.current;
+      const el = barRef.current;
       if (!el || !videoInfo) return;
       const rect = el.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
@@ -177,13 +177,14 @@ export default function ChromaTimeline() {
 
   if (!videoInfo?.isVideo) return null;
 
-  const playheadPct =
-    videoInfo.frameCount > 1 ? (currentFrame / (videoInfo.frameCount - 1)) * 100 : 0;
+  const lastFrame = Math.max(0, videoInfo.frameCount - 1);
+  const playheadPct = lastFrame > 0 ? (currentFrame / lastFrame) * 100 : 0;
   const t = videoInfo.fps > 0 ? currentFrame / videoInfo.fps : 0;
 
   return (
     <div
-      className="w-full h-full flex flex-col gap-1.5 select-none"
+      className="w-full flex flex-col gap-1.5 select-none"
+      data-chroma-panel="colorist-transport"
       onClick={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
     >
@@ -200,17 +201,34 @@ export default function ChromaTimeline() {
         </button>
         <div className="flex-1" />
         <span className="text-[11px] tabular-nums text-text-secondary">
-          {fmtTime(t)} / {fmtTime(videoInfo.durationSecs)} · f{currentFrame} / {videoInfo.frameCount - 1}
+          {fmtTime(t)} / {fmtTime(videoInfo.durationSecs)} · f{currentFrame} / {lastFrame}
         </span>
       </div>
 
       {/* mask keyframe track (D-034) — only visible with a shape mask active */}
       <MaskKeyframeBar />
 
-      {/* thumbnail strip + playhead */}
+      {/* scrub bar — a jog track with a played-portion fill and a handle, the
+          shape Resolve's own Color-page viewer uses (scratch/resolve-reference).
+          A plain div rather than an `<input type=range>`: the playhead has to
+          be draggable *and* click-to-seek anywhere on the track while a
+          `pointerdown` on it must not also reach the canvas underneath, which
+          the native control's own capture behaviour fights. */}
       <div
-        ref={stripRef}
-        className="relative flex-1 min-h-0 rounded-md overflow-hidden bg-bg-primary cursor-pointer"
+        ref={barRef}
+        role="slider"
+        aria-label="Scrub"
+        aria-valuemin={0}
+        aria-valuemax={lastFrame}
+        aria-valuenow={currentFrame}
+        tabIndex={0}
+        className="relative h-4 flex items-center cursor-pointer touch-none"
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft') goToFrame(currentFrame - 1);
+          else if (e.key === 'ArrowRight') goToFrame(currentFrame + 1);
+          else return;
+          e.preventDefault();
+        }}
         onPointerDown={(e) => {
           e.stopPropagation(); // keep the editor canvas from also panning/zooming
           draggingRef.current = true;
@@ -224,31 +242,15 @@ export default function ChromaTimeline() {
           draggingRef.current = false;
         }}
       >
-        <div className="absolute inset-0 flex">
-          {thumbs.map((th) => (
-            <img
-              key={th.frame}
-              src={th.dataUrl}
-              draggable={false}
-              className="h-full flex-1 object-cover pointer-events-none border-r border-black/20"
-              style={{ minWidth: 0 }}
-            />
-          ))}
-          {thumbs.length === 0 && (
-            <div className="w-full h-full flex items-center justify-center text-xs text-text-secondary">
-              {loading ? 'building timeline…' : 'no frames'}
-            </div>
-          )}
-        </div>
+        <div className="absolute left-0 right-0 h-1.5 rounded-full bg-bg-primary" />
         <div
-          className="absolute top-0 bottom-0 w-[3px] bg-white pointer-events-none"
-          style={{
-            left: `calc(${playheadPct}% - 1.5px)`,
-            boxShadow: '0 0 0 1px rgba(0,0,0,0.7), 0 0 8px rgba(0,0,0,0.6)',
-          }}
-        >
-          <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-3 h-3 rounded-sm bg-white shadow" />
-        </div>
+          className="absolute left-0 h-1.5 rounded-full bg-accent/70 pointer-events-none"
+          style={{ width: `${playheadPct}%` }}
+        />
+        <div
+          className="absolute w-3 h-3 rounded-full bg-text-primary shadow pointer-events-none"
+          style={{ left: `calc(${playheadPct}% - 6px)` }}
+        />
       </div>
     </div>
   );

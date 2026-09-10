@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-147 fixed (D-291): the Colorist grades the Edit
+  timeline's clip, not the raw source file.** A new one-way bridge,
+  `chroma::colorist_view`, resolves the active shot to its
+  `apelles_timeline::Clip` and gives Colorist the clip's real trim (the
+  transport counts clip-local frames now, not the source file's 2990) and its
+  real geometry (crop/scale/rotation/position, applied through the Edit
+  compositor itself). No grade, no opacity/fade, no other layers — the
+  geometry counterpart of `grade_lut`'s colour bridge. Identity fast path
+  keeps an untransformed clip byte-identical. **D-292:** Colorist's
+  frame-thumbnail strip retired for a real scrub bar (`ColoristTransport`),
+  answering "a proper timeline or none" with "a transport, not a second
+  timeline"; `chroma_frame_thumbnails`, `extract_thumb_strip` and
+  `state::THUMB_CACHE` deleted whole.
+
 - **2026-09-10** — fixed `website/`'s own stale MCP tool counts (`161` total /
   `152` shipped / Edit `69`, was `160`/`151`/`68`) after this session added
   new tools (D-280's `editor_set_playback_rate` among them) — caught by

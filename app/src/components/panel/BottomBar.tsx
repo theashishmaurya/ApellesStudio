@@ -6,7 +6,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useTranslation } from 'react-i18next';
 
 import Filmstrip from './Filmstrip';
-import ChromaTimeline from './editor/ChromaTimeline';
+import ColoristTransport from './editor/ColoristTransport';
 import ShotStrip from '../chroma/ShotStrip';
 import { useChromaStore } from '../../store/useChromaStore';
 import { useSessionStore } from '../../store/useSessionStore';
@@ -342,7 +342,17 @@ export default function BottomBar({
   return (
     <div className="shrink-0 bg-bg-secondary rounded-lg flex flex-col">
       <ShotStrip />
-      {showFilmstrip && (
+      {/* D-292 — the Colorist transport is a control strip, not a browsable
+          filmstrip, so it hugs its own content instead of taking the
+          resizable filmstrip height (which existed to show thumbnails, and
+          after D-292 there are none). Still behind the same collapse toggle,
+          so the bottom-panel button keeps meaning something on a video. */}
+      {showFilmstrip && isChromaVideo && isFilmstripVisible && (
+        <div className="w-full p-2 shrink-0">
+          <ColoristTransport />
+        </div>
+      )}
+      {showFilmstrip && !isChromaVideo && (
         <div
           className={clsx(
             'overflow-hidden shrink-0 relative',
@@ -358,23 +368,19 @@ export default function BottomBar({
             )}
             style={{ height: `${currentHeight}px` }}
           >
-            {isChromaVideo ? (
-              <ChromaTimeline />
-            ) : (
-              <Filmstrip
-                imageList={imageList}
-                imageRatings={imageRatings}
-                isLoading={isLoading}
-                multiSelectedPaths={multiSelectedPaths}
-                onClearSelection={onClearSelection}
-                onContextMenu={onContextMenu}
-                onEmptyAreaContextMenu={onEmptyAreaContextMenu}
-                onImageSelect={onImageSelect}
-                onRequestThumbnails={onRequestThumbnails}
-                selectedImage={selectedImage}
-                thumbnailAspectRatio={thumbnailAspectRatio}
-              />
-            )}
+            <Filmstrip
+              imageList={imageList}
+              imageRatings={imageRatings}
+              isLoading={isLoading}
+              multiSelectedPaths={multiSelectedPaths}
+              onClearSelection={onClearSelection}
+              onContextMenu={onContextMenu}
+              onEmptyAreaContextMenu={onEmptyAreaContextMenu}
+              onImageSelect={onImageSelect}
+              onRequestThumbnails={onRequestThumbnails}
+              selectedImage={selectedImage}
+              thumbnailAspectRatio={thumbnailAspectRatio}
+            />
           </div>
         </div>
       )}

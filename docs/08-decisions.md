@@ -28421,3 +28421,158 @@ logged **B-146** itself in the meantime, as `investigating`, naming this
 worktree; that entry is the one kept and updated, rather than the duplicate the
 interrupted session had appended — its "found"/"expected" wording and its
 screenshot reference are the original report and are preserved verbatim.
+
+---
+
+## D-291 — the Colorist grades the Edit timeline's CLIP, not the raw source file (B-147)
+
+**Context.** The Colorist tab's preview showed the owner's footage upside down
+while the Edit tab showed it the right way up: every clip in that project
+carries `rotation: 180` (deliberately, to correct genuinely upside-down-at-
+capture footage), and Colorist knew nothing about it. Owner, live: *"see in
+colorist even though we have transformed the clip its taking from source with
+0 :D we need to get it from the timeline :) right the length etc.."*
+(`scratch/colorist-ignores-timeline-transform-and-trim.png`). The transport also
+counted the whole source file — `f405 / 2990` on a clip trimmed to a few hundred
+frames — so scrubbing ran straight past the clip's out-point into footage
+nothing else in the app ever shows.
+
+Root cause, and it is architectural rather than a missed field: the Colorist's
+whole pipeline operates on the **source file path**. `chroma::state`'s decode
+session holds `(path, VideoInfo, frame)`; `chroma::commands::seek_and_install`
+decodes source frame N of that path straight into `AppState.original_image`;
+the wgpu grade renders that. There was no read path from the Colorist into
+`apelles_timeline::Clip` at all — no `rotation`, no `source_start`, no
+`duration`. B-141 had already found the identical disconnect in the project
+launcher's thumbnail; this was the same gap in the one place it matters most,
+because it means every colour decision was being judged against the wrong
+picture.
+
+**Options.**
+
+1. *Show the Edit tab's composited frame in Colorist* — point the Colorist
+   preview at `chroma_timeline_frame`. Rejected: that frame already has the
+   clip's saved grade baked into it (D-256's `Lut3d`), so the live wgpu grade
+   would apply on top of itself and every adjustment would compound. It also
+   carries other layers, other tracks, captions and transitions, none of which
+   belong in a single clip's grading view.
+2. *Move the Colorist onto clip identity* — retire the path-keyed decode session
+   in favour of `Clip` ids end to end. The right long-term shape, and explicitly
+   deferred by D-070 for its size; doing it here would have made a critical bug
+   fix wait on a session-model rewrite.
+3. **Chosen: a narrow, one-way bridge — `chroma::colorist_view`.** A new module
+   that resolves the active shot's *path* to the clip the open project's active
+   timeline holds for it, and exposes exactly two things: the clip-local →
+   source frame mapping (`Clip::clamped_source_frame_at`, the same function the
+   Edit preview and the exporter use), and a geometry pass that places the
+   decoded frame into composition space with `edit::composite_layer_onto` — the
+   compositor itself, not a second copy of it.
+
+**Why.** It is the geometry counterpart of `grade_lut`, which is already the
+colour half of the same Colorist ⇄ Edit bridge in the other direction, so the
+app gains one symmetric pair of bridges rather than a special case. It carries
+**no grade** (the Colorist produces that), **no opacity/fade/transition alpha**
+(those blend against layers this canvas does not have), and **no other layers**.
+It reads the manifest per frame, so an Inspector transform edit or a trim on the
+Edit tab reaches Colorist on the next frame with nothing to keep in sync. And it
+resolves **by path**, which inherits D-070's already-documented "two clips
+sharing a source path collapse onto one Colorist shot" limit instead of
+inventing a second identity that could go stale against the timeline — the exact
+failure mode B-034 and B-083 both were.
+
+**What actually changed.**
+- `chroma::colorist_view` (new): `resolve(path) -> Option<ClipView>`,
+  `ClipView::frame_count/source_frame/apply_geometry`.
+- `chroma::commands::seek_and_install`: `frame` is **clip-local** now, the
+  decoded source frame comes from the clip's trim, and the geometry pass runs on
+  the same blocking thread as the decode. Both the scrub path (`chroma_seek`)
+  and the playback path (`chroma_play_frame`, which shares this body) inherit it.
+- `chroma_video_info`: reports the clip's length and the project's composition
+  size. `fps` deliberately stays the source's — the transport's wall-clock loop
+  steps source frames at source rate.
+- `chroma::edit`: five items widened to `pub(super)` and one new
+  `ClipTransform::without_blend()`, so the bridge calls the real compositor
+  rather than reimplementing crop → scale → rotate → position.
+
+**The identity fast path is not an optimisation, it is the contract.** An
+untransformed clip whose source already fills the composition gets its decoded
+buffer handed straight back — byte-identical to pre-D-291, no allocation, no
+resample. That is the overwhelmingly common case and it runs on every scrub and
+every playback frame; this is the same two-part guard `timeline_frame` takes
+(D-132/D-136), for the same reason.
+
+**Everything frame-keyed on the Colorist side moves with it, consistently.**
+Tracked mattes (D-019), mask keyframes (D-034) and the depth track (D-036) are
+all indexed by `current_video().frame`, which is now the clip-local frame — so
+they stay in lockstep with what is on screen. One real consequence, stated
+plainly: a depth track or mask keyframes authored **before** this change are
+indexed in source-frame space and will land on the wrong frames for a trimmed
+clip. Re-tracking is the fix; there is no migration, because the old indices
+carry no record of which clip they were authored against.
+
+**Still on raw source, deliberately, and closed by D-294:** Colorist's own
+`chroma_export_video` decodes the source file directly with its own ffmpeg
+pipeline and knows nothing of this bridge, so after D-291 it exports a different
+picture than its own preview. Rather than teach a second engine the same
+geometry, D-294 retires that export path in favour of the Edit tab's real
+exporter, which already composites clips correctly.
+
+**Verified:** `cargo test -p apelles --lib chroma::colorist_view` (5 new cases —
+clip length vs source length, in-point mapping, out-point clamp, opacity dropped
+while rotation survives, identity preserved), `chroma::state` (8), `cargo clippy
+-p apelles --lib` clean on the new code, `tsc --noEmit` on `app` at 66 errors —
+the same 66 `main` has.
+
+---
+
+## D-292 — Colorist's frame-thumbnail strip becomes a scrub bar: a transport, not a second timeline
+
+**Context.** Owner, offering both options against
+`scratch/colorist-filmstrip-timeline-question.png`: *"have a proper timeline or
+remove this timeline from the Colorist no point of having a timeline."* The
+thing in that screenshot is `ChromaTimeline.tsx` (D-031) — 48 evenly-spaced
+frame thumbnails across the loaded clip, with a playhead, transport buttons and
+a timecode readout. (`docs/04-roadmap.md`'s own entry named
+`panel/Filmstrip.tsx` for this; that file is RapidRAW's photo-library thumbnail
+grid, a different component, and it is untouched.)
+
+D-291 forced the question rather than merely raising it: the strip was built
+from the whole **source file** (`chroma_frame_thumbnails` →
+`extract_thumb_strip`), while the transport under it now counts the **clip's**
+frames. Leaving it would have meant a picture strip whose thumbnails address
+frames the playhead can no longer reach.
+
+**Options.** (a) Make the strip clip-ranged — keep two filmstrips in the app.
+(b) Delete the whole bottom bar for a video — lose Colorist's only transport.
+(c) **Chosen:** keep the transport, drop the thumbnails.
+
+**Why.** The capability that is genuinely Colorist's — scrubbing within the shot
+you are grading, stepping a frame, playing it back — is real and has no other
+home; Colorist has no other transport at all. The capability that was
+*duplicated* is the picture strip, and the Edit tab's own filmstrip
+(`chroma_clip_thumbnails`, D-128) is the real one. A scrub bar is not a
+timeline, which is what makes this answer both of the owner's options at once:
+there is no second timeline, and what remains is a proper control rather than a
+half-timeline.
+
+Shape taken from Resolve's own Color-page viewer (`scratch/resolve-reference/`,
+the same reference D-193's Inspector pass used): transport cluster, timecode,
+and a jog track with a played-portion fill and a handle. The mask-keyframe
+diamond track (D-034) stays exactly where it was, above the bar.
+
+**What is lost, named rather than glossed:** visual "where am I in this shot"
+scanning from the thumbnails. Judged worth it — that is precisely the thing the
+Edit tab's timeline does better and at project scale, and it was the duplication
+the owner was pointing at.
+
+**Removed, whole, not hidden** (D-281's standard):
+`ChromaTimeline.tsx`, `chroma_frame_thumbnails` and its `generate_handler!`
+line, `apelles_media::video::extract_thumb_strip`, and
+`chroma::state::THUMB_CACHE` with its four invalidation sites and its test —
+nothing else called any of them. `BottomBar` now renders the transport at its
+own natural height instead of the resizable filmstrip height, which existed to
+show thumbnails.
+
+**Verified:** `cargo check -p apelles --lib --tests` clean, `tsc --noEmit` on
+`app` unchanged at 66 pre-existing errors, no remaining reference to any removed
+symbol anywhere in `app/src`, `app/src-tauri`, `crates/` or `mcp/`.

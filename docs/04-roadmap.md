@@ -2691,7 +2691,11 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   request, 2026-09-10, unblocked by **D-281** (`app/` is owned code now,
   not a tracked-upstream drop — a redundant inherited panel can be deleted
   outright). Each item below came with its own reference screenshot,
-  gitignored but kept in `scratch/` for this session and the next:
+  gitignored but kept in `scratch/` for this session and the next.
+  **Foundational, done first: B-147 (D-291)** — Colorist now reads the Edit
+  timeline's clip (its real trim and transform) instead of the raw source
+  file, via the new `chroma::colorist_view` bridge. Items 1, 6 and 7 all
+  turn on that read path existing at all.
   1. **Duplicate Crop & Transform.** Colorist's own `CropPanel.tsx` (RapidRAW's
      single-image crop/rotate/orientation tool) duplicates the Edit tab's
      real per-clip transform (`ClipInspectorPanel`'s Transform section,
@@ -2747,19 +2751,21 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      done safely in one pass, a scoped first step (B-147's fix, without full
      component unification) is an acceptable, honestly-reported partial
      result — say so plainly rather than forcing a bad merge to claim done.
-  7. **The Colorist filmstrip: build a proper one, or remove it.**
-     Screenshot: `scratch/colorist-filmstrip-timeline-question.png`. Owner,
-     offering both options: *"have a proper timeline or remove this
-     timeline from the Colorist no point of having a timeline."* Default,
-     absent a stronger reason found during investigation: **remove it**
-     (`app/src/components/panel/Filmstrip.tsx`) — a real per-clip timeline
-     inside Colorist would duplicate the Edit tab's own timeline (the same
-     "two sources of truth" problem every other item in this batch is
-     resolving), and the owner's own framing ("no point of having this")
-     already leans that way. Investigate what, if anything, Filmstrip
-     uniquely provides (e.g. scrubbing within a single shot's own frame
-     range while grading) before removing — if something real is lost, name
-     it in the D-NNN rather than silently dropping a capability.
+  7. **[x] The Colorist filmstrip: build a proper one, or remove it** —
+     **done 2026-09-10, D-292.** Screenshot:
+     `scratch/colorist-filmstrip-timeline-question.png`. Owner, offering both
+     options: *"have a proper timeline or remove this timeline from the
+     Colorist no point of having a timeline."* Two corrections the
+     investigation turned up, recorded because this entry got both wrong:
+     the component in that screenshot is **`ChromaTimeline.tsx`** (D-031's
+     48-thumbnail frame strip), not `panel/Filmstrip.tsx` (RapidRAW's photo
+     library grid, untouched); and it does carry one real capability with no
+     other home — Colorist's only transport (play/step/scrub within the shot
+     being graded). So: thumbnails removed, transport kept and rebuilt as a
+     scrub bar (`ColoristTransport.tsx`), against Resolve's own Color-page
+     viewer. `chroma_frame_thumbnails`, `extract_thumb_strip` and
+     `state::THUMB_CACHE` deleted whole. What is lost — visual "where am I in
+     this shot" scanning — is named in D-292 rather than glossed.
   - **Not requested — a compliment, not a task:** the player's eye
     (visibility toggle) button was called out as liked
     (`scratch/colorist-eye-button-liked.png`) — no action, keep it as-is.
