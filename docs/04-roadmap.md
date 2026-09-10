@@ -1979,6 +1979,25 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       what is on screen. Found and filed, not fixed: **B-131** (the `add_clip`
       op has no occupancy check; its GUI repro closed the same night with
       D-262's new-track placement, the MCP one is still open).
+    - **Selected-clip border: dashed outline reads as too heavy/generic** —
+      owner, live, with a screenshot shown in-session (a selected clip on the
+      Edit timeline, `A001_09091123_C024.MOV`, with a thick white dashed
+      outline) but not saved to `scratch/` — this session's image-attachment
+      path had no file the agent could read/copy from, unlike the earlier
+      screenshots in this same backlog that DID save (a tooling gap worth
+      fixing, not a rule change): *"please add it to backlog :) do not like
+      this dotted line, make it more suttle with reference."* A selected
+      clip's outline is still a plain dashed border —
+      the same generic treatment this session already moved away from for the
+      empty-gap placeholder earlier in this backlog (`border-2 border-dashed`
+      → a glassy accent treatment, since dashed reads as "placeholder/empty").
+      Per this file's own "research the real pattern first" rule: before
+      touching it, pull the real reference for how Premiere/Resolve/Final Cut
+      indicate a selected clip on their own timelines (typically a subtle
+      solid accent-colour border/glow plus a slightly lighter clip fill, not a
+      dashed outline) and match that vocabulary rather than guessing. Not yet
+      investigated against the live app or fixed — logged only, per the
+      owner's own explicit "add it to backlog" (not "fix it now").
     - Explicitly **out of scope** (owner's own cut): hardware control
       surfaces, multi-user real-time collaboration.
 
