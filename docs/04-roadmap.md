@@ -1122,17 +1122,23 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     3. ~~**`TimelinePane.tsx`'s drag-gesture performance** — unverified either
        way: does its drag code already bypass React state during the gesture
        itself, or does it re-render through React state every pointer-move
-       frame?~~ — **verified (D-201, 2026-09-07): it already defers**, for every
-       gesture in the pane. `onDndDragMove` writes only local, change-gated
-       `clipDragPreview`/`insertPreview` state (a drag that doesn't change the
-       resolved landing produces zero re-renders); `applyOp` is called exactly
-       once, in `onDndDragEnd`. A trim reaches `applyOp` only in
-       `onActionResizeEndCb` (resize END); a marquee commits `setSelection` on
-       pointerup; `TransformOverlay` keeps a local `draft` and commits one
-       `set_clip_transform` on release. **No change made** — the direct-DOM
-       `style.transform` technique would buy nothing here and would mean pulling
-       `@dnd-kit`'s own `DragOverlay` out of the drag's real machinery. See
-       D-201 Part 3.
+       frame?~~ — D-201 (2026-09-07) answered "it already defers, no change
+       made", and **that answer was wrong for the clip drag** — corrected by
+       **B-160 / D-304 (2026-09-10)**, which measured it instead of reasoning
+       about it: the `clipDragPreview`/`insertPreview` change-gating is real but
+       almost never fires (at any ordinary zoom a few pixels of movement IS a
+       different landing frame), so the state, living on `TimelinePane` itself,
+       re-rendered the app's largest component ~2× per pointer-move — frame
+       intervals p90 24.3ms against a 16.7ms idle, which is the owner's own
+       "drag and drop... is still not smooth and animations are shakky". Fixed
+       by moving that state and its four overlays into
+       `TimelineDragPreview.tsx` behind an imperative handle: 4 renders per
+       41-move drag (from 88), p90 back to 17.0ms. The REST of D-201's audit
+       still holds and was re-checked: `applyOp` is called exactly once, in
+       `onDndDragEnd`; a trim reaches `applyOp` only in `onActionResizeEndCb`
+       (resize END); a marquee commits `setSelection` on pointerup;
+       `TransformOverlay` keeps a local `draft` and commits one
+       `set_clip_transform` on release.
     Done (D-201) — all three root-caused; 1 and 2 fixed, 3 verified as already
     correct. Remaining open: the rest of the React Compiler bailout list
     (`docs/notes/react-compiler-coverage.md` marks what is fixed vs. still open).
@@ -2935,7 +2941,7 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      average pixel stats (`sample_region`'s mean/min/max) can confirm a mask
      edit's *direction* is real and confined to the masked area, but cannot
      verify a *texture*-level claim like "blemishes are smoothed" — that needs
-     a frequency/variance analysis this tool doesn't expose. Also hit **B-153**
+     a frequency/variance analysis this tool doesn't expose. Also hit **B-160**
      in the same attempt: `add_subject_mask` reported a tool error on a call
      that had actually succeeded server-side.
   5. **The active-shot/timeline-drift + source-path-vs-per-clip grading gap
