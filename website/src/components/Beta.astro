@@ -1,22 +1,31 @@
 ---
 /**
- * Beta.astro — pre-launch signup (D-255's mechanism, D-264's presentation).
+ * Beta.astro — pre-launch signup (D-255's mechanism, D-264's presentation,
+ * pointed at a real FormSubmit.co endpoint 2026-09-10).
  *
  * What it is: a real form with real client-side validation and real
- * submitting/success/error states, posting to Formspree's JSON endpoint. The
- * submit button is <Signature />, which makes it the one rose element on the
- * home page — this is the single action the page exists for.
- * What it does NOT do: post anywhere until the owner drops a real endpoint into
- * `src/data/beta.ts`. Until then it validates, then tells the visitor plainly
- * that signup is not open yet rather than silently swallowing an address.
+ * submitting/success/error states, posting to FormSubmit.co's JSON/AJAX
+ * endpoint, which emails each submission straight to the owner's inbox. The
+ * fuller ask on the page, further explained, with the role dropdown the
+ * compact hero form (Hero.astro) leaves out.
+ * What it does NOT do: use <Signature/> any more (D-283) — the signature
+ * treatment moved up to Hero.astro's own copy of this same form, which is
+ * now the page's one primary action, and a page carries only one (D-264's
+ * own rule, ink now rather than a scarce colour since D-284, but the
+ * one-per-page discipline itself unchanged). This section's button is
+ * deliberately plain instead, not a second primary action.
+ * It also does not post anywhere until a real endpoint is set in
+ * `src/data/beta.ts` — one is now set, but the guard stays, since a fresh
+ * clone or a different owner starts from the placeholder again.
  *
- * The submit logic below is deliberately unchanged by the rebrand: it worked,
- * and rewriting working infrastructure to match a new palette is churn.
+ * The submit logic below is deliberately unchanged from D-255/D-264: it
+ * worked, and rewriting working infrastructure to swap providers is churn.
+ * Only the endpoint URL shape and the honeypot field name changed, because
+ * FormSubmit's own conventions differ from Formspree's — see beta.ts.
  *
  * Setup: website/BETA_SIGNUP_SETUP.md.
  */
 import { BETA_FORM_ENDPOINT, isPlaceholderEndpoint, ROLES } from '../data/beta.ts';
-import Signature from './Signature.astro';
 
 const endpoint = BETA_FORM_ENDPOINT;
 const placeholder = isPlaceholderEndpoint(endpoint);
@@ -30,10 +39,6 @@ const placeholder = isPlaceholderEndpoint(endpoint);
       <p class="lede">
         There is no public build yet. Leave an address and you will hear from us once there is one
         worth installing &mdash; that message, and nothing else.
-      </p>
-      <p class="fine">
-        We keep your address to send you that one email. It is not sold, and there is no analytics
-        or tracking script anywhere on this site.
       </p>
     </div>
 
@@ -69,13 +74,21 @@ const placeholder = isPlaceholderEndpoint(endpoint);
         </select>
       </div>
 
-      <!-- Honeypot: a real bot trap, visually and semantically hidden from people. -->
+      <!-- A plain email subject, so a real signup doesn't land as an unlabelled
+           "New submission!" — FormSubmit's own _subject convention. -->
+      <input type="hidden" name="_subject" value="New Apelles beta signup" />
+
+      <!-- Honeypot: a real bot trap, visually and semantically hidden from people.
+           `_honey` is FormSubmit's own honeypot field name — a submission with
+           this filled in is silently discarded rather than emailed. -->
       <div class="hp" aria-hidden="true">
         <label for="beta-company">Company</label>
-        <input id="beta-company" name="_gotcha" type="text" tabindex="-1" autocomplete="off" />
+        <input id="beta-company" name="_honey" type="text" tabindex="-1" autocomplete="off" />
       </div>
 
-      <Signature label="Request beta access" />
+      <button class="submit" type="submit" data-submit>
+        <span data-label>Request beta access</span>
+      </button>
 
       <p class="status" data-status role="status" aria-live="polite"></p>
     </form>
@@ -96,22 +109,17 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     font-weight: 300;
   }
 
-  .fine {
-    margin-top: 1.5rem;
-    font-family: var(--font-ui);
-    font-size: var(--step--2);
-    line-height: 1.7;
-    color: var(--pigment-basalt-soft);
-    max-width: 46ch;
-  }
-
+  /* A basalt card (D-282): the form is its own inverse-toned island on the
+     marble page, same pairing as a full basalt section — see tokens.css's
+     --ink-inverse comment. The inputs stay marble (below), so only the label/
+     error/status text directly on the card needs the inverse ink. */
   .form {
     display: flex;
     flex-direction: column;
     gap: 1.1rem;
-    border: 1px solid var(--edge-strong);
+    border: 1px solid var(--edge-inverse-strong);
     border-radius: var(--radius-lg);
-    background: var(--pigment-marble-deep);
+    background: var(--pigment-basalt);
     padding: clamp(1.25rem, 0.8rem + 1.6vw, 2rem);
   }
 
@@ -124,7 +132,7 @@ const placeholder = isPlaceholderEndpoint(endpoint);
   label {
     font-family: var(--font-ui);
     font-size: var(--step--1);
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
   }
 
   .opt {
@@ -161,7 +169,35 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     margin: 0;
     font-family: var(--font-ui);
     font-size: var(--step--2);
-    color: var(--pigment-terracotta);
+    color: var(--danger-inverse);
+  }
+
+  /* Deliberately not rose (see this file's own header comment): a marble
+     pill on the dark card, the same non-signature treatment Hero.astro's own
+     input already carries, so the two forms still read as one family. */
+  .submit {
+    background: var(--pigment-marble);
+    color: var(--pigment-basalt);
+    font-family: var(--font-ui);
+    font-size: var(--step-0);
+    font-weight: 500;
+    border: 0;
+    border-radius: var(--radius-md);
+    padding: 0.85rem 1.4rem;
+    cursor: pointer;
+    transition:
+      filter var(--dur-slow) var(--ease-out),
+      transform var(--dur-fast) var(--ease-out);
+  }
+  .submit:hover:not(:disabled) {
+    filter: brightness(0.96);
+  }
+  .submit:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .submit:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 
   .hp {
@@ -177,14 +213,14 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     font-family: var(--font-ui);
     font-size: var(--step--2);
     line-height: 1.6;
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
     min-height: 1.2em;
   }
   .status[data-tone='ok'] {
-    color: var(--pigment-basalt);
+    color: var(--ink-inverse);
   }
   .status[data-tone='bad'] {
-    color: var(--pigment-terracotta);
+    color: var(--danger-inverse);
   }
 
   @media (max-width: 880px) {
@@ -196,14 +232,21 @@ const placeholder = isPlaceholderEndpoint(endpoint);
 
 <script>
   /**
-   * Real submit handling. Validates, disables while in flight, reports the
-   * outcome, and refuses to post at all while the endpoint is the placeholder
-   * shipped in src/data/beta.ts.
+   * Real submit handling, shared by every `[data-beta-form]` on the page —
+   * this is Hero.astro's compact inline form as well as this section's own
+   * full one (D-283). One handler, found generically per form rather than by
+   * a hardcoded input id, so a second instance needs no script of its own:
+   * `document.querySelectorAll` runs against the whole rendered page, not
+   * just this component's own markup, and the email input is found by its
+   * `name` rather than an id two instances could never both hold at once.
+   * Validates, disables while in flight, reports the outcome, and refuses to
+   * post at all while the endpoint is the placeholder shipped in
+   * src/data/beta.ts.
    */
   const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
   document.querySelectorAll<HTMLFormElement>('[data-beta-form]').forEach((form) => {
-    const email = form.querySelector<HTMLInputElement>('#beta-email');
+    const email = form.querySelector<HTMLInputElement>('[name="email"]');
     const err = form.querySelector<HTMLElement>('[data-err]');
     const status = form.querySelector<HTMLElement>('[data-status]');
     const button = form.querySelector<HTMLButtonElement>('[data-submit]');

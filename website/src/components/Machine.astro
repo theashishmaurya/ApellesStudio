@@ -1,6 +1,7 @@
 ---
 /**
- * Machine.astro — how it is built, and why that is your problem too (D-264).
+ * Machine.astro — how it is built, and why that is your problem too (D-264,
+ * the tool-count line cut by D-288).
  *
  * What it is: the four structural commitments, each written as what it means
  * for the person using the app rather than as an architecture note, with the
@@ -8,10 +9,12 @@
  * What it does NOT do: put them in a 2×2 card grid. Four boxes of equal weight
  * is the shape that makes generated pages look generated; a flowing list under
  * one heading lets the eye read them in order and stop at the one it cares
- * about.
+ * about. It also no longer prints the shipped-MCP-tool total or the
+ * "Connect an agent" link (D-288, the owner's own trim — `/docs/mcp/` is
+ * hidden from routing for now, see src/pages/docs/_mcp.astro) — the tool
+ * total still lives, verified against `mcp/server.py`, in `src/data/mcp.ts`.
  */
 import { PILLARS } from '../data/product.ts';
-import { TOOL_TOTALS } from '../data/mcp.ts';
 ---
 
 <section class="machine section" id="machine">
@@ -22,11 +25,6 @@ import { TOOL_TOTALS } from '../data/mcp.ts';
       <p class="lede">
         Four commitments, each of them checkable in the source rather than a promise on a marketing
         page.
-      </p>
-      <p class="more">
-        <a class="onward" href="/docs/mcp/">
-          Connect an agent to it <span class="arrow" aria-hidden="true">&rarr;</span>
-        </a>
       </p>
     </div>
 
@@ -44,21 +42,14 @@ import { TOOL_TOTALS } from '../data/mcp.ts';
       }
     </dl>
   </div>
-
-  <p class="shell count">
-    <span class="big mono">{TOOL_TOTALS.shipped}</span>
-    <span class="cap">
-      tools an MCP client can call, counted from <span class="mono">mcp/server.py</span> rather than
-      estimated. The {TOOL_TOTALS.debugOnly} development-only tools are excluded, because they are
-      compiled out of a production build.
-    </span>
-  </p>
 </section>
 
 <style>
+  /* A basalt section (D-282): see tokens.css's --ink-inverse comment — same two
+     neutrals mirrored, ochre standing in for terracotta as the working colour. */
   .machine {
-    background: var(--pigment-marble-deep);
-    border-block: 1px solid var(--edge);
+    background: var(--pigment-basalt);
+    border-block: 1px solid var(--edge-inverse);
   }
 
   .wrap {
@@ -68,21 +59,31 @@ import { TOOL_TOTALS } from '../data/mcp.ts';
     align-items: start;
   }
 
+  .eyebrow {
+    color: var(--ink-inverse-soft);
+  }
+
   h2 {
     font-size: var(--step-3);
     margin-top: 1rem;
     max-width: 18ch;
     font-weight: 300;
+    color: var(--ink-inverse);
   }
 
   .lead .lede {
     margin-top: 1.25rem;
     font-size: var(--step-0);
     max-width: 40ch;
+    color: var(--ink-inverse-soft);
   }
 
   .more {
     margin-top: 1.75rem;
+  }
+
+  .onward {
+    color: var(--pigment-ochre);
   }
 
   .pillars {
@@ -91,16 +92,17 @@ import { TOOL_TOTALS } from '../data/mcp.ts';
 
   .pillar {
     padding-block: 1.4rem;
-    border-top: 1px solid var(--edge);
+    border-top: 1px solid var(--edge-inverse);
   }
   .pillar:last-child {
-    border-bottom: 1px solid var(--edge);
+    border-bottom: 1px solid var(--edge-inverse);
   }
 
   dt {
     font-family: var(--font-display);
     font-size: var(--step-1);
     line-height: 1.25;
+    color: var(--ink-inverse);
   }
 
   dd {
@@ -109,7 +111,7 @@ import { TOOL_TOTALS } from '../data/mcp.ts';
   }
 
   dd p {
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
   }
 
   /* The checkable fact. Interface face, one size down — it is a citation, not
@@ -119,32 +121,9 @@ import { TOOL_TOTALS } from '../data/mcp.ts';
     font-family: var(--font-ui);
     font-size: var(--step--1);
     line-height: 1.6;
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
     padding-left: 0.9rem;
-    border-left: 1px solid var(--edge-strong);
-  }
-
-  .count {
-    display: flex;
-    align-items: baseline;
-    gap: 1.1rem;
-    flex-wrap: wrap;
-    margin-top: clamp(2.5rem, 1.5rem + 3vw, 4rem);
-  }
-
-  .big {
-    font-size: var(--step-4);
-    line-height: 1;
-    color: var(--pigment-terracotta);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .count .cap {
-    flex: 1 1 32ch;
-    font-size: var(--step--1);
-    line-height: 1.65;
-    color: var(--pigment-basalt-soft);
-    max-width: 62ch;
+    border-left: 1px solid var(--edge-inverse-strong);
   }
 
   @media (max-width: 880px) {

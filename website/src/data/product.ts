@@ -59,12 +59,12 @@ export const TABS: readonly Tab[] = [
       'Frame-anchored timeline markers on Resolve’s own sixteen-colour palette',
       'Export the whole timeline to video with real mixed audio, or to DTD-verified FCPXML 1.7',
     ],
-    shot: {
-      src: '/shots/edit-transform.png',
-      alt: 'The Edit room: a preview with an on-canvas transform box and its corner handles, a timeline showing the clip’s own filmstrip below it, and the clip Inspector open on the right with Transform, Crop and Fade sections.',
-      width: 2560,
-      height: 1440,
-    },
+    // D-288: hidden for now, same as Motion/Colorist below — the captures
+    // predate the rename and are being retaken (TODO-RECAPTURE-SHOTS.md);
+    // the owner's own call rather than show stand-in imagery in the meantime.
+    shot: null,
+    shotNote:
+      'A capture of the Edit room existed here, but predates the rename and is being retaken rather than shown stale. The capabilities below are all shipped and documented today.',
   },
   {
     id: 'motion',
@@ -233,15 +233,3 @@ export const STATUS = {
   windows: 'Surveyed and scoped, not yet built',
 } as const;
 
-/**
- * Who Apelles was, and why the product carries his name. Kept short, kept true:
- * he really was court painter to Alexander, his work really is entirely lost,
- * and the Alexander Mosaic really is thought to copy a Hellenistic painting of
- * that circle. Nothing here overstates the attribution — "possibly" is doing
- * real work in that sentence and stays in.
- */
-export const NAMESAKE = {
-  who: 'Apelles of Kos, court painter to Alexander the Great and, by the reckoning of every ancient writer who mentions him, the greatest painter of antiquity.',
-  loss: 'Not one of his paintings survives. What survives is the description of them, and a mosaic floor from Pompeii that may copy a lost Hellenistic original from his circle.',
-  why: 'He is the patron of the thing this tool is for: a picture in someone’s head, and the craft to get it out. We are trying to hand people the second part.',
-} as const;

@@ -1,6 +1,7 @@
 # TODO — retake the screenshots after the rename
 
-**Status: open. Created by D-264 (the Apelles rebrand of `website/`).**
+**Status: open, and now hidden rather than shown-with-disclosure (D-288).**
+Created by D-264 (the Apelles rebrand of `website/`).
 
 Every image in `public/shots/` is a genuine capture of the running application,
 taken with the repo's own `debug_screenshot` tooling before the product was
@@ -9,15 +10,22 @@ renamed. So the application's own title bar in each of them still reads
 
 ## What the site does about it right now
 
-It says so, in two places, in the caption directly beneath the image:
+D-264 through D-287 showed them anyway, disclosed: a caption under each image
+said the captures predated the rename and would be retaken rather than
+retouched. D-288 changed that — the owner's own call — to simply not showing
+them for now:
 
-- the home page's scrubbable demonstration (`src/components/Demo.astro`)
-- the Edit room on `/inside/` (`src/pages/inside.astro`)
+- the home page's scrubbable demonstration (`src/components/Demo.astro`) is
+  not rendered on `index.astro` at all right now (the component itself is
+  untouched and real, just not imported)
+- the Edit room on `/inside/` (`src/data/product.ts`'s `TABS[0].shot`) is
+  `null`, with a `shotNote` explaining why — the same honest "not shown"
+  treatment the Motion and Colorist rooms already used
 
-Both say the captures predate the rename and that they **will be retaken rather
-than retouched**. `tests/render.test.ts` and `tests/build-output.test.ts` assert
-that disclosure survives, so it cannot be quietly deleted while the images are
-still the old ones.
+The four image files stay in `public/shots/`, because `Demo.astro`'s own
+tests (`tests/render.test.ts`) check they exist on disk for when it comes
+back — `tests/build-output.test.ts`'s orphan-asset check knows about this
+specific, named exception rather than being weakened generally.
 
 ## Why they were not simply edited
 
@@ -44,8 +52,10 @@ capture it does have would be the same failure in a more deniable form.
    mismatch; the layout will just shift.
 3. Open each one and confirm it is really what its alt text claims before it is
    used. That check is the site's convention, not a formality.
-4. Delete the two disclosure sentences and the tests that assert them, and
-   delete this file.
+4. Re-enable `Demo.astro` on `index.astro` (re-add the import and the
+   `<Demo />` line — D-288 removed both, but the component itself is
+   untouched) and restore `product.ts`'s `TABS[0].shot` for the Edit room,
+   then delete this file.
 
 ## Still open alongside this
 

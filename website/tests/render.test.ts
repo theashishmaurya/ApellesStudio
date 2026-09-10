@@ -23,7 +23,6 @@ import Beta from '../src/components/Beta.astro';
 import Nav from '../src/components/Nav.astro';
 import Footer from '../src/components/Footer.astro';
 
-import { TOOL_TOTALS } from '../src/data/mcp.ts';
 import { TABS, STATUS } from '../src/data/product.ts';
 
 let container: AstroContainer;
@@ -90,12 +89,11 @@ describe('the headline carries the whole proposition on its own', () => {
     }
   });
 
-  it('names the objection a non-editor actually has', () => {
-    expect(text('hero').toLowerCase()).toContain('never learned to edit');
-  });
-
-  it('offers exactly one next step', () => {
-    expect(doc('hero').querySelectorAll('a').length).toBe(1);
+  it('offers exactly one next step — a real action, not a link (D-283)', () => {
+    // The hero carries no anchor at all any more: the one next step is the
+    // inline signup itself, which is why it's the .signature, checked below.
+    expect(doc('hero').querySelectorAll('a').length).toBe(0);
+    expect(doc('hero').querySelectorAll('form[data-beta-form]').length).toBe(1);
   });
 });
 
@@ -205,21 +203,6 @@ describe('the three rooms are named for what a person does in them', () => {
   });
 });
 
-describe('the "how it is built" section publishes only verified numbers', () => {
-  it('prints the shipped total', () => {
-    expect(html.machine).toContain(String(TOOL_TOTALS.shipped));
-  });
-
-  it('discloses the debug-only tools rather than folding them into the total', () => {
-    expect(html.machine).toContain(String(TOOL_TOTALS.debugOnly));
-    expect(text('machine')).toContain('compiled out of a production build');
-  });
-
-  it('says where the number came from, rather than asserting it', () => {
-    expect(html.machine).toContain('mcp/server.py');
-  });
-});
-
 describe('the beta form is real', () => {
   it('requires a valid email and describes its own error region', () => {
     const input = doc('beta').querySelector('#beta-email');
@@ -234,16 +217,17 @@ describe('the beta form is real', () => {
     expect(status?.getAttribute('aria-live')).toBe('polite');
   });
 
-  it('carries a honeypot that is hidden from assistive tech', () => {
-    const hp = doc('beta').querySelector('input[name="_gotcha"]');
+  it('carries a honeypot that is hidden from assistive tech, named for FormSubmit', () => {
+    const hp = doc('beta').querySelector('input[name="_honey"]');
     expect(hp).not.toBeNull();
     expect(hp?.getAttribute('tabindex')).toBe('-1');
+    expect(doc('beta').querySelector('input[name="_gotcha"]'), 'a different provider’s honeypot name is still around').toBeNull();
   });
 
-  it('is marked as still using the placeholder endpoint', () => {
+  it('is marked as using a real endpoint, not the placeholder', () => {
     const form = doc('beta').querySelector('[data-beta-form]');
-    expect(form?.getAttribute('data-placeholder')).toBe('true');
-    expect(form?.getAttribute('data-endpoint')).toContain('YOUR_FORM_ID');
+    expect(form?.getAttribute('data-placeholder')).toBe('false');
+    expect(form?.getAttribute('data-endpoint')).toMatch(/^https:\/\/formsubmit\.co\/ajax\//);
   });
 
   it('every field has a label', () => {
@@ -254,14 +238,25 @@ describe('the beta form is real', () => {
   });
 
   /**
-   * The submit button is the signature — the single rose element on the home
-   * page. The script that drives the form finds it by [data-submit] and
-   * [data-label], so this also pins the contract between the two.
+   * D-283: the signature moved up to Hero.astro's own copy of this form —
+   * that is the page's one primary action now, found first. This section's
+   * own button is deliberately plain (checked in the next describe block),
+   * so a signature colour is never spent twice on one page.
    */
-  it('the submit button is the signature, and the script can still find it', () => {
-    const button = doc('beta').querySelector('button[data-submit]');
+  it('the hero submit button is the signature, and the script can still find it', () => {
+    const button = doc('hero').querySelector('button[data-submit]');
     expect(button).not.toBeNull();
     expect(button?.getAttribute('class')).toContain('signature');
+    expect(button?.getAttribute('type')).toBe('submit');
+    expect(doc('hero').querySelector('[data-label]')).not.toBeNull();
+  });
+});
+
+describe('the beta section’s own button is deliberately not the signature (D-283)', () => {
+  it('has a real, findable submit button that does not carry the signature class', () => {
+    const button = doc('beta').querySelector('button[data-submit]');
+    expect(button).not.toBeNull();
+    expect(button?.getAttribute('class')).not.toContain('signature');
     expect(button?.getAttribute('type')).toBe('submit');
     expect(doc('beta').querySelector('[data-label]')).not.toBeNull();
   });

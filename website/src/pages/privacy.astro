@@ -1,0 +1,167 @@
+---
+/**
+ * privacy.astro — the privacy policy (D-289).
+ *
+ * What it is: an honest description of the one real thing this site does
+ * with personal data — the beta signup form — written to match what the
+ * code actually does, not a generic template. Cross-checked against
+ * src/data/beta.ts and BETA_SIGNUP_SETUP.md before writing a word of it.
+ * What it does NOT do: claim a cookie policy, an analytics policy, or a
+ * GDPR/CCPA compliance certification this site hasn't earned. There are no
+ * cookies and no analytics anywhere on this site (true today, checked
+ * against the actual source, not assumed) — this page says exactly that
+ * instead of describing a cookie-consent mechanism for cookies that do not
+ * exist, which would be exactly the kind of fabricated-for-appearances
+ * content this whole site's own discipline (docs/08-decisions.md, D-264)
+ * argues against.
+ * This is a good-faith, factually-grounded draft, not legal advice — see
+ * the note at the bottom of the page and in this repo's own decision log
+ * (D-289) for what a real legal review should still check.
+ */
+import Base from '../layouts/Base.astro';
+import PageHead from '../components/PageHead.astro';
+
+const updated = 'September 10, 2026';
+---
+
+<Base
+  title="Privacy Policy — Apelles"
+  description="What Apelles's website collects, why, and who it goes to. In short: an email address, only if you ask for beta access, sent to one inbox, never sold, no cookies, no analytics."
+>
+  <PageHead
+    eyebrow="Legal"
+    title="Privacy Policy"
+    lede={`Last updated ${updated}. Short version: this site collects one thing — an email address, only if you give it — and nothing else.`}
+  />
+
+  <section class="section">
+    <div class="shell prose">
+      <h2>What this site collects</h2>
+      <p>
+        If you use the "Request beta access" form (on the home page, or the one in the hero), we
+        collect the email address you type in, and — only if you choose to answer it — what you
+        make, from a fixed list of options. Nothing else on this site asks you for anything.
+      </p>
+
+      <h2>What we do with it</h2>
+      <p>
+        We use your email address for exactly one purpose: to tell you when there is a build of
+        Apelles worth installing. That is the one email the signup copy promises, and it is the
+        only one you will get from us. We do not sell it, rent it, or share it with anyone for
+        marketing. We do not build a mailing list beyond this one purpose.
+      </p>
+
+      <h2>Who actually receives it</h2>
+      <p>
+        The form posts directly to <a class="link" href="https://formsubmit.co">FormSubmit.co</a>,
+        a third-party form-processing service, which forwards the submission by email to the
+        project owner's inbox. FormSubmit is the only third party your email address passes
+        through — read <a class="link" href="https://formsubmit.co/privacy-policy">FormSubmit's
+        own privacy policy</a> for how they handle it on their end before it reaches us. We do not
+        use a mailing-list platform, a CRM, or any analytics tool to process it further.
+      </p>
+
+      <h2>Cookies and tracking</h2>
+      <p>
+        This site sets no cookies and loads no analytics or tracking script of any kind — not a
+        stray one, not a "just for basic stats" one. That is a real, checked fact about the code,
+        not a policy promise made separately from it. Because there is nothing here that requires
+        consent under cookie-consent law, this page does not have a cookie banner; a banner asking
+        you to consent to tracking that does not exist would be exactly the kind of decoration this
+        site tries not to ship. If that ever changes, this page and the site's own behaviour will
+        change together, in the same commit.
+      </p>
+      <p>
+        One narrow exception, for transparency: a development-only tool used while building this
+        site (a position-tuning panel for the home page's hero image) writes a few numeric values
+        to your browser's own <code class="mono">localStorage</code> if you happen to load the site
+        while it is running in development mode. That tool is compiled out of the production build
+        entirely — it does not exist in the site you are reading this on.
+      </p>
+
+      <h2>How long we keep it</h2>
+      <p>
+        Until we send you the one email the signup promises, or until you ask us to delete your
+        address sooner, whichever comes first. We do not have an automated deletion schedule beyond
+        that; if you want your address removed at any time, contact us (below) and we will remove it.
+      </p>
+
+      <h2>Your choices</h2>
+      <ul class="plain">
+        <li>Don't want to be contacted? Don't use the form. Nothing else on this site asks for anything.</li>
+        <li>Want your address deleted? Email us and we will remove it.</li>
+        <li>Want to know exactly what we hold? Ask — it is one email address and, optionally, one word describing what you make.</li>
+      </ul>
+
+      <h2>Contact</h2>
+      <p>
+        For anything on this page — a deletion request, a question about what we hold — email
+        <a class="link" href="mailto:ashish.1999vns@gmail.com">ashish.1999vns@gmail.com</a>, the
+        same inbox the beta signup form already delivers to.
+      </p>
+
+      <h2>Changes to this page</h2>
+      <p>
+        If what this site actually collects or does with it changes, this page changes in the same
+        commit — that is a standing rule for this whole codebase (see this repo's own
+        <code class="mono">CLAUDE.md</code>), not a promise made separately from the code.
+      </p>
+
+      <p class="fine">
+        This page is a good-faith, factually accurate description of what this site's own code
+        does, written and checked against that code rather than assumed — it is not a substitute
+        for legal advice, and has not been reviewed by a lawyer. Before relying on it for a real
+        public launch, especially for visitors in the EU (GDPR) or California (CCPA), have it
+        reviewed by one.
+      </p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .prose {
+    max-width: 68ch;
+  }
+
+  .prose h2 {
+    font-size: var(--step-2);
+    font-weight: 400;
+    margin-top: 2.5rem;
+  }
+  .prose h2:first-child {
+    margin-top: 0;
+  }
+
+  .prose p {
+    margin-top: 1rem;
+    color: var(--pigment-basalt-soft);
+    line-height: 1.7;
+  }
+
+  .prose .link {
+    color: var(--pigment-terracotta);
+    border-bottom: 1px solid color-mix(in srgb, var(--pigment-terracotta) 35%, transparent);
+  }
+  .prose .link:hover {
+    border-bottom-color: var(--pigment-terracotta);
+  }
+
+  .plain {
+    margin: 1rem 0 0;
+    padding-left: 1.2rem;
+    color: var(--pigment-basalt-soft);
+    line-height: 1.7;
+  }
+  .plain li + li {
+    margin-top: 0.4rem;
+  }
+
+  .fine {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--edge);
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    color: var(--pigment-basalt-soft);
+  }
+</style>

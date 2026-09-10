@@ -1,16 +1,26 @@
 ---
 /**
- * Footer.astro — the name, the licence, and the honest state of the project
- * (D-264).
+ * Footer.astro — the name and the honest state of the project (D-264,
+ * trimmed to product copy and the state line only by D-287, a real Legal
+ * nav column added back by D-289).
  *
- * The AGPL notice and source link are required however Apelles's own licensing
- * question resolves, since the vendored engine is AGPL either way (D-002 /
- * D-003). The colophon line is not decoration: this site's palette makes a
- * factual claim about a real artifact, so it cites the analysis it rests on,
- * the same way any other claim on the site traces to a real source.
+ * D-287 removed two things on the owner's explicit call, each confirmed
+ * separately: the licence/RapidRAW attribution paragraph (flagged in this
+ * file's own prior header comment as tied to D-002/D-003's AGPL vendoring —
+ * confirmed as a deliberate removal from THIS page specifically, not a
+ * change to the actual licence obligations, which live with the app itself)
+ * and the palette's colophon citation (see palette.test.ts's own citation
+ * check, relaxed accordingly rather than left failing). What replaced the
+ * old "who Apelles was" historical bio under the wordmark is a line about
+ * the product instead — the owner's own direction — reusing claims already
+ * made and tested elsewhere on the site (Machine.astro's own pillars)
+ * rather than inventing new ones.
+ *
+ * D-289 added a third nav column back — not the old licence paragraph, but
+ * real links to `/privacy/` and `/terms/`, the two legal pages that pass
+ * launch-prep needed to exist somewhere findable.
  */
-import { STATUS, NAMESAKE } from '../data/product.ts';
-import { SOURCE } from '../data/palette.ts';
+import { STATUS } from '../data/product.ts';
 
 const year = new Date().getFullYear();
 ---
@@ -19,52 +29,48 @@ const year = new Date().getFullYear();
   <div class="shell inner">
     <div class="brand">
       <p class="name">Apelles</p>
-      <p class="who">{NAMESAKE.who}</p>
-      <p class="who">{NAMESAKE.loss}</p>
+      <p class="who">
+        A local, AI-native video editor. An agent handles the cutting, the colour and the motion
+        graphics — through the same real controls, on your own machine.
+      </p>
+      <p class="who">Free and open source, with nothing held back. Your footage never leaves the room.</p>
     </div>
 
     <nav aria-label="Footer">
       <h2>Site</h2>
       <a href="/inside/">Inside Apelles</a>
       <a href="/who-its-for/">Who it’s for</a>
-      <a href="/docs/mcp/">Connect an agent</a>
       <a href="/#beta">Beta access</a>
     </nav>
 
-    <div class="legal">
-      <h2>Licence</h2>
-      <p>
-        Apelles is free software under the <span class="mono">{STATUS.licence}</span>, and is a fork
-        of <a class="link" href="https://github.com/CyberTimon/RapidRAW">RapidRAW</a>, which is
-        licensed the same way.
-      </p>
-    </div>
+    <nav aria-label="Legal">
+      <h2>Legal</h2>
+      <a href="/privacy/">Privacy Policy</a>
+      <a href="/terms/">Terms</a>
+    </nav>
   </div>
 
   <div class="shell bot">
     <span>&copy; {year} Apelles</span>
     <span class="dim">{STATUS.stage} &middot; {STATUS.platform}</span>
   </div>
-
-  <p class="shell colophon">
-    Colours on this site are taken from the Alexander Mosaic — Carrara marble, Iberian basalt,
-    iron-oxide red and yellow, and the pink imported from Portugal for one face — as identified in
-    <a class="link" href={SOURCE.url}>{SOURCE.publication}, {SOURCE.year}</a>. Set in Newsreader and
-    Instrument Sans.
-  </p>
 </footer>
 
 <style>
+  /* A basalt section (D-282): the tonal inverse of the page — see tokens.css's
+     --ink-inverse comment. Ochre replaces terracotta as the footer's working
+     link colour throughout, since terracotta's contrast on basalt is too low. */
   .ft {
-    border-top: 1px solid var(--edge);
-    background: var(--pigment-marble-deep);
+    border-top: 1px solid var(--edge-inverse);
+    background: var(--pigment-basalt);
     padding-top: clamp(3rem, 2rem + 3vw, 4.5rem);
     padding-bottom: 2rem;
+    color: var(--ink-inverse-soft);
   }
 
   .inner {
     display: grid;
-    grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.7fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr);
     gap: clamp(2rem, 1rem + 4vw, 5rem);
     padding-bottom: 2.5rem;
   }
@@ -73,11 +79,12 @@ const year = new Date().getFullYear();
     font-family: var(--font-display);
     font-size: var(--step-2);
     line-height: 1;
+    color: var(--ink-inverse);
   }
 
   .who {
     margin-top: 0.8rem;
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
     font-size: var(--step--1);
     line-height: 1.65;
     max-width: 42ch;
@@ -88,7 +95,7 @@ const year = new Date().getFullYear();
     font-size: var(--step--2);
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
     font-weight: 500;
     margin-bottom: 0.9rem;
   }
@@ -103,18 +110,11 @@ const year = new Date().getFullYear();
   nav a {
     font-family: var(--font-ui);
     font-size: var(--step--1);
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
     transition: color var(--dur-fast) var(--ease-out);
   }
   nav a:hover {
-    color: var(--pigment-terracotta);
-  }
-
-  .legal p {
-    font-size: var(--step--1);
-    line-height: 1.65;
-    color: var(--pigment-basalt-soft);
-    max-width: 40ch;
+    color: var(--pigment-ochre);
   }
 
   .bot {
@@ -122,21 +122,13 @@ const year = new Date().getFullYear();
     justify-content: space-between;
     gap: 1rem;
     flex-wrap: wrap;
-    border-top: 1px solid var(--edge);
+    border-top: 1px solid var(--edge-inverse);
     padding-top: 1.25rem;
     font-family: var(--font-ui);
     font-size: var(--step--2);
   }
   .dim {
-    color: var(--pigment-basalt-soft);
-  }
-
-  .colophon {
-    margin-top: 1.25rem;
-    font-size: var(--step--2);
-    line-height: 1.7;
-    color: var(--pigment-basalt-soft);
-    max-width: 78ch;
+    color: var(--ink-inverse-soft);
   }
 
   @media (max-width: 880px) {

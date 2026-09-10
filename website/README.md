@@ -105,21 +105,24 @@ twice has stopped being a signature.
 the repo's own `debug_screenshot` tooling. Every one was opened and confirmed to
 be what its alt text says before use.
 
-**There are no Motion-room or Colorist-room screenshots**, because none have been
-captured. Those sections say so on the page and list their real capabilities
-instead of showing a mockup. There is also **no demo video** — see
+**No Edit, Motion, or Colorist room screenshot is shown on any page right
+now** (D-288) — the Edit captures that do exist predate the rename
+(`TODO-RECAPTURE-SHOTS.md`), and rather than keep showing them disclosed as
+stale, the owner's own call was to hide them the same honest way the
+Motion/Colorist rooms already handled having none: say so, and list real
+capabilities instead of a screenshot. The home page's scrubbable
+demonstration (`src/components/Demo.astro`) is similarly not rendered right
+now for the same reason — the component itself is untouched, just not
+currently imported on `index.astro`. There is also **no demo video** — see
 `TODO-DEMO-VIDEO.md`.
-
-The captures that do exist predate the rename, so the app's own title bar in
-them still reads `CHROMA`. The site says so in the caption under each one rather
-than retouching the image, and tests assert that disclosure survives — see
-`TODO-RECAPTURE-SHOTS.md`.
 
 ## Beta signup
 
-The form is real and working; the endpoint is a marked placeholder. Three steps
-to make it live: **`BETA_SIGNUP_SETUP.md`**. D-264 left that mechanism alone on
-purpose and only restyled it.
+The form is real, working and live: it posts to a real FormSubmit.co endpoint
+that emails every submission to the owner. See **`BETA_SIGNUP_SETUP.md`** for
+the provider's own conventions and how to change the destination or provider.
+D-264 left the mechanism alone and only restyled it; the endpoint itself moved
+from Formspree to FormSubmit.co on 2026-09-10.
 
 ## Structure
 
@@ -162,7 +165,10 @@ running `npm run test` alone on a clean checkout will tell you to build.
 
 ## Deployment
 
-Not set up yet, deliberately — there is no domain. The build is a plain static
-directory, so any static host serves it. `astro.config.mjs`'s `site` is a
-placeholder (`https://apelles.video`) used for canonical and Open Graph URLs; it
-is not a claim that the domain is registered. Change it when a real one exists.
+Hosting is not set up yet, but the domain is real: `astro.config.mjs`'s `site`
+is `https://apelles.studio`, the domain D-265 records the owner actually
+buying — used for canonical/OG URLs and the sitemap (`@astrojs/sitemap`,
+added D-288) that `astro build` emits at `/sitemap-index.xml`. (An earlier
+placeholder, `apelles.video`, was left in this config after the real domain
+was bought — D-288 caught and fixed the drift.) The build itself is a plain
+static directory, so any static host serves it once one is chosen.

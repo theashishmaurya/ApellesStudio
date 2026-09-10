@@ -27,7 +27,8 @@ const { eyebrow, title, lede } = Astro.props;
 
 <style>
   .head {
-    padding-top: clamp(3rem, 2rem + 4.5vw, 6rem);
+    /* Minimum clears the fixed island nav (D-283) at any viewport width. */
+    padding-top: clamp(4.5rem, 3.5rem + 4.5vw, 7.5rem);
     padding-bottom: clamp(2.25rem, 1.5rem + 2.5vw, 3.5rem);
     border-bottom: 1px solid var(--edge);
   }

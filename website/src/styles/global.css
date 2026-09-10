@@ -89,13 +89,6 @@ p {
   outline-offset: 3px;
 }
 
-/* Ochre, not rose. The signature colour is spent on one element per page and a
-   selection highlight is not that element — see .signature below. */
-::selection {
-  background: var(--pigment-ochre);
-  color: var(--pigment-basalt);
-}
-
 /* ---- shared primitives ------------------------------------------------ */
 
 .shell {
@@ -182,20 +175,30 @@ p {
 }
 
 /**
- * THE SIGNATURE — the only place `--pigment-rose` is used anywhere in this
- * codebase, and rendered at most once per page by <Signature />.
+ * THE SIGNATURE — the site's one primary-action treatment, rendered by
+ * <Signature /> and nowhere else (D-264; ink instead of a scarce rose since
+ * D-284 — see src/data/palette.ts's own header comment for why).
  *
- * This is the Portugal pink: in the mosaic it was spent on one face out of
- * roughly two million tesserae, and here it is spent on the one action a page
- * exists for. If a second one ever appears on a page, tests/palette.test.ts
- * fails, because at that point the colour has stopped meaning anything.
+ * A solid basalt-ink fill with marble text: not scarce, just consistent — the
+ * one thing every primary action on the site shares. Rendered at most once
+ * per page, still (tests/build-output.test.ts), because the DISCIPLINE that
+ * made the old rose narrative worth having — one clear primary action, not
+ * several competing for the same weight — was never about the colour being
+ * rare, and outlived the pigment that used to carry it.
+ *
+ * This default (dark fill, light text) is for a light — marble — ground,
+ * which is where <Signature/> sits on `/inside/` and `/who-its-for/`'s own
+ * closing sections. Hero.astro's own copy sits on a dark ground instead (the
+ * hero painting's own basalt scrim) and flips the fill via a scoped
+ * `:global(.signature)` override there, the same inverse-context pattern
+ * D-282 already established for text and hairlines on a basalt section.
  */
 .signature {
   display: inline-flex;
   align-items: center;
   gap: 0.6rem;
-  background: var(--pigment-rose);
-  color: var(--pigment-basalt);
+  background: var(--pigment-basalt);
+  color: var(--pigment-marble);
   font-family: var(--font-ui);
   font-size: var(--step-0);
   font-weight: 500;
@@ -209,7 +212,7 @@ p {
     transform var(--dur-fast) var(--ease-out);
 }
 .signature:hover:not(:disabled) {
-  filter: brightness(1.05);
+  filter: brightness(1.35);
 }
 .signature:active:not(:disabled) {
   transform: translateY(1px);
