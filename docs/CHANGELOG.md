@@ -4,6 +4,13 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — Colorist-tab consolidation agent (`af18c5eb8c0b19df9`)
+  finished: B-147 fixed, Metadata panel + rating widget removed, Filmstrip
+  replaced with a scrub bar, Agent Activity moved to a shell overlay with
+  real `source: 'user'|'agent'` attribution, Export consolidated to one
+  button (two backends kept underneath — see roadmap item 8). Crop-panel
+  dedup and player unification explicitly not forced through — logged as
+  roadmap items 8 and 9 for follow-up instead. Not yet merged to `main`.
 - **2026-09-10** — fixed a real bug in D-291's own
   `.github/workflows/website-deploy.yml`: it ran `npm run test` before
   `npm run build`, but `tests/build-output.test.ts` requires `dist/` to

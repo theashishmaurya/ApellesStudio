@@ -2782,6 +2782,57 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   - **Not requested — a compliment, not a task:** the player's eye
     (visibility toggle) button was called out as liked
     (`scratch/colorist-eye-button-liked.png`) — no action, keep it as-is.
+  8. **Export: consolidate the underlying state, not just the button** —
+     owner follow-up, 2026-09-10, after the consolidation agent's report on
+     item 3. What landed (on the not-yet-merged
+     `worktree-agent-af18c5eb8c0b19df9` branch, its own D-294): Colorist's
+     `ExportDialog` was deleted and `EditorExportDialog` moved to a
+     shell-level `headerAction` slot so there is one Export *button* on every
+     tab — but the agent's own investigation found Colorist's export
+     *backend* still does real work the Edit exporter's LUT bake drops
+     (masks/relight/crop applied **spatially**, not baked into a 1D/3D LUT),
+     so that second backend was kept and made clip-aware rather than deleted.
+     One button, two export pipelines underneath. Owner: *"create a backlog
+     for consolidating on export :) if we need to uplift the state to common
+     one please do it if we need to change the whole thing it's fine."* Scope:
+     a real design pass on whether `EditorExportDialog`'s own state/pipeline
+     can be uplifted to cover the spatial case too (masks/relight/crop as a
+     real compositing stage before or instead of the LUT bake), rather than
+     living with two backends behind one dialog — owner has explicitly
+     authorized a full rework of the export pipeline if that is what a
+     correct single state model requires, not just a UI-level fix. Needs a
+     real D-NNN once scoped; start from the agent's own final report (the
+     completed `af18c5eb8c0b19df9` task) for what each backend actually does
+     today before proposing the merged shape.
+  9. **Player unification: research first — real NLEs already solve
+     GPU-surface-vs-DOM the same way** — owner follow-up, 2026-09-10, pushing
+     back on item 6's "can't be done" framing: *"why not player unification
+     can't we have a player which can handle whole that's how NLE has as well
+     right? but atleast the features and shell UI should be same even if the
+     logic is not."* The owner's instinct matches this file's own "research
+     the real pattern first" rule and is very likely correct: DaVinci
+     Resolve, Premiere and Final Cut all render their own preview through a
+     native GPU surface (Metal/DirectX/OpenGL), not a plain DOM/web canvas —
+     exactly Colorist's own situation here (`WGPU_RENDER`, a native wgpu
+     surface painted behind the webview) — and none of them ship two
+     different-looking, differently-controlled players for "the timeline
+     preview" vs. "the color preview." They ship ONE player shell (same
+     transport, same scrub bar, same fullscreen/zoom/overlay chrome, same
+     keyboard shortcuts) with a pluggable surface underneath. That is a
+     different, smaller claim than item 6's "merge `ImageCanvas.tsx` into
+     `@apelles/player`'s React tree" — the real fix is likely: define what
+     `@apelles/player` actually promises as a *shell* (transport, scrub,
+     zoom/pan chrome, overlay slot contract) independent of what paints the
+     pixels, give Colorist's native-surface preview that SAME shell (even if
+     the pixels underneath come from wgpu instead of a decoded-frame
+     `<canvas>`), and only then ask whether the pixel-painting layer itself
+     can ever converge. Do the reference research this file's own rule
+     requires (how Resolve/Premiere/Final Cut structure their own
+     preview-shell-vs-render-surface split — a real scrape, not a guess)
+     before scoping the D-NNN. Investigation queued behind the two in-flight
+     merges (still-image-import, then this Colorist-consolidation branch) so
+     it starts from a settled `main`, not a moving target — see this file's
+     own D-number-collision lessons from this same session.
 
 ---
 
