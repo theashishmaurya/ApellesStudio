@@ -10,7 +10,7 @@
  */
 
 export { useMediaPoolStore } from './media';
-export type { MediaItem, MediaVideoInfo } from './media';
+export type { MediaItem, MediaVideoInfo, MediaImageInfo } from './media';
 
 export { trackEvent } from './telemetry';
 export type { TelemetryEvent } from './telemetry';

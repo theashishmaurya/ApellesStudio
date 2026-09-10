@@ -304,6 +304,7 @@ dependencies = [
  "apelles-types",
  "base64 0.23.1",
  "chrono",
+ "image",
  "log",
  "once_cell",
  "serde",

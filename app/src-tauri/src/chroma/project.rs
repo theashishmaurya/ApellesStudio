@@ -577,11 +577,23 @@ pub async fn chroma_project_relink(
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| new_path.clone());
-            m.video = media_item_is_online(&new_path)
-                .then(|| video::probe(Path::new(&new_path)).ok())
-                .flatten()
-                .as_ref()
-                .map(MediaVideoInfo::from);
+            // D-281 — one shared video-vs-still probe branch (`reprobe_source`)
+            // rather than a `video::probe` spelled inline here: relinking a
+            // clip to a still is exactly as real as relinking it to another
+            // clip, and this call site is the one that would otherwise have
+            // kept the video-only assumption after import and reconcile lost
+            // it. It clears whichever of `video`/`image` no longer applies, so
+            // swapping a video for a still (or back) leaves no stale facts.
+            //
+            // Cleared FIRST because this item's `source_path` has just been
+            // pointed at a different file: `reprobe_source` deliberately leaves
+            // an offline source's remembered facts alone (B-073 — a transient
+            // failure must stay recoverable), which is right for a re-probe of
+            // the SAME file and wrong here, where the facts describe the file
+            // we just stopped pointing at.
+            m.video = None;
+            m.image = None;
+            m.reprobe_source();
             manifest.media[pos].id.clone()
         }
         None => find_or_create_media(&mut manifest, &new_path, None),

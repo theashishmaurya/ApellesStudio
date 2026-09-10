@@ -33,7 +33,13 @@ dragging a pool item in from the shell's Sources panel.
   panel's drag source both implement — plus (D-248)
   `CHROMA_GENERATOR_DRAG_MIME`/`DraggedGenerator`/`clipFromDraggedGenerator`,
   the same contract for a *generated* clip (a title, an adjustment clip)
-  dragged out of the docked library panel (D-263).
+  dragged out of the docked library panel (D-263). D-281 adds
+  `isStillSource`/`mediaSourceFacts`/`STILL_SOURCE_SECONDS` here: a STILL IMAGE
+  is an ordinary media clip (no new kind, nothing stored on the `Clip` — the
+  fact is derived from its `source_path`), but it has no length of its own, so
+  `mediaSourceFacts` is the one place its `source_len`/`source_fps`/default
+  `duration` are synthesized, shared by the drop and by every `editor_*`
+  placement op.
 - `dndTargets.ts` (B-122) — the `@dnd-kit` payload contract: named types for
   every drag source and drop target sharing `TimelinePane`'s one `DndContext`,
   plus the four functions that narrow an untyped `data.current` into something

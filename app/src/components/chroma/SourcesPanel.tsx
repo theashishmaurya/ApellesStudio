@@ -49,6 +49,7 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
+  Image as ImageIcon,
   Plus,
   RefreshCw,
   Search,
@@ -364,7 +365,10 @@ export function SourcesPanel() {
   }, [items, activeFolder, search]);
 
   const doImport = async () => {
-    const paths = await pickClips();
+    // D-281 — the media pool takes stills as first-class sources, so its picker
+    // offers them; the project-creation picker on the launcher screen does not
+    // (its paths become Colorist shots). See `pickClips`.
+    const paths = await pickClips({ stills: true });
     if (!paths.length) return;
     setImporting(true);
     const res = await importPaths(paths, activeFolder ?? undefined);
@@ -410,7 +414,8 @@ export function SourcesPanel() {
       return;
     }
     const item = res.items?.find((m) => m.id === id);
-    if (item?.video?.frameCount) toast.success(`Re-probed ${label}`);
+    // D-281 — a still re-probes into `image`, not `video`; either is a success.
+    if (item?.video?.frameCount || item?.image) toast.success(`Re-probed ${label}`);
     else toast.warning(`${label} still can't be read — check the file is where the pool expects it`);
   };
 
@@ -612,7 +617,13 @@ export function SourcesPanel() {
               // zero-length clip). It used to look identical to a healthy one
               // unless it also happened to be offline, so the card says so and
               // offers the repair.
-              const unusable = !it.video?.frameCount;
+              //
+              // D-281 — a STILL IMAGE is placeable with no frame count at all:
+              // it has no length of its own, and the drop synthesizes one
+              // (`mediaSourceFacts`). Asking `it.image` here rather than
+              // widening the frame-count test is what keeps "usable" meaning
+              // the same thing the backend's own `MediaItem::is_probed` means.
+              const unusable = !it.video?.frameCount && !it.image;
               return (
                 <ContextMenu key={it.id}>
                   <ContextMenuTrigger>
@@ -637,6 +648,10 @@ export function SourcesPanel() {
                             // dropped clip's `source_start`/`duration` convert
                             // to real seconds at export time instead of being
                             // silently misread at the project/export fps.
+                            // D-281 — absent for a still, which has no native
+                            // rate; the drop reads that off the source path
+                            // (`isStillSource`) and synthesizes a span at the
+                            // project's own rate instead.
                             fps: it.video?.fps ?? null,
                           }),
                         );
@@ -658,6 +673,11 @@ export function SourcesPanel() {
                             draggable={false}
                             className="absolute inset-0 h-full w-full object-cover"
                           />
+                        ) : it.image ? (
+                          // D-281 — a still that has no cached thumbnail yet
+                          // says so honestly: the film icon would claim it is
+                          // footage.
+                          <ImageIcon className="size-4 text-text-secondary/50" />
                         ) : (
                           <Film className="size-4 text-text-secondary/50" />
                         )}

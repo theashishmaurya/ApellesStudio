@@ -17,8 +17,19 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
     single-frame `ffmpeg` decode (`decode_frame`), thumbnail/filmstrip
     extraction (`extract_thumb`, `extract_thumb_strip`, `extract_thumb_chunk`)
     and the packet-level keyframe scan (`probe_keyframe_interval`, D-128).
+  - `still` — **still images as timeline sources (D-281)**: `video`'s
+    counterpart for a source that has one frame and no clock. The extension
+    gate (`is_image_file`, mirrored on the TS side), a header-only dimension
+    `probe` (no subprocess), `decode_scaled` (the still counterpart of
+    `decode_pipe::playback_frame_scaled`, memoised on `(path, source_key,
+    target)` so a still held for three seconds is decoded once, not 72 times)
+    and a `thumbnail` in the same wire shape `video::extract_thumb` produces.
+    Deliberately reports **no** rate/duration/frame count — a still has none,
+    and synthesising one belongs to the timeline, not here. Does not decode RAW
+    (that is the fork's `image_loader`, above this layer) or animate a GIF.
   - `decode_pipe` — the long-lived sequential-decode `ffmpeg` pipe pool, one
-    slot per playback stream, with the D-125 hardware-decode fallback.
+    slot per playback stream, with the D-125 hardware-decode fallback. A still
+    never uses it: there is no stream to step and no process to hold (D-281).
   - `media_cache` — the persistent, source-keyed disk cache for derived
     artefacts (D-128): `blake3(path ‖ mtime ‖ len)` identity, atomic
     `write_blob`, LRU `prune_to_budget`.

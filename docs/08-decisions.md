@@ -27352,3 +27352,180 @@ packages: all green. `cargo fmt` + `cargo clippy` clean on the new code.
 the algorithm preserves frequency and the `cpal` rms/peak proxy proves real
 audio reaches the device at 3×; neither can say a voice at 4× is pleasant.
 That needs the owner's ears.
+
+## D-281 — Still images as first-class Edit-tab sources
+
+**Date:** 2026-09-10. Owner request, found live: importing a PNG colour
+reference for Colorist's `match_to_reference` came back `offline: true,
+video: null` and could never be placed on a timeline. Root-caused before this
+entry, not guessed — see the (now-closed) roadmap item **"Still-image import
+for the Edit tab"**.
+
+### This widens v1's scope, deliberately, and says so
+
+`CLAUDE.md`'s standing invariant is *"v1 scope is deliberately tiny (one
+footage type, macOS ARM, Rec709, adjustment stack not nodes)"*, and
+`docs/02-scope.md` spells "one footage type" out. **A still image is a second
+kind of source, so this is a real widening of that line, not a bug fix
+wearing a feature's clothes.** Naming that honestly is the point of this
+paragraph.
+
+Why it is the right call now rather than a v2 proposal:
+
+- **The invariant is the COLORIST tab's.** `02-scope.md` has said so since the
+  D-039 correction: "one footage type (talking head / explainer)" scopes what
+  the grading thesis is proved against. This changes nothing there — a still
+  is not a graded shot, Colorist's shot list is untouched, and the
+  project-creation picker still takes video only.
+- **The Edit tab already has three source kinds that are not "footage"**:
+  audio-only files (B-089), generated title clips (D-211) and generated
+  adjustment clips (D-230). A still is the fourth, and the cheapest of the
+  four — it needed no new clip kind at all (below).
+- **It is a prerequisite, not a nice-to-have.** The roadmap's camera/snapshot
+  item depends on it (a freeze-frame grab is a still), and so does the very
+  workflow the owner hit it on: getting a reference image in front of the app
+  at all.
+- **`DEFAULT_TITLE_SECONDS`' own doc, written in D-211, already reads "the
+  standard default duration a still/generator gets in every reference NLE".**
+  The number this feature needs was chosen for it a month before it existed.
+
+`docs/02-scope.md`'s Edit-tab section is updated in this commit; the Colorist
+section's "one footage type" is left exactly as it stands.
+
+### The three shape decisions
+
+**1. `MediaItem.image: Option<MediaImageInfo>` beside `video`, not a
+`MediaKind` enum, and not a synthesized `MediaVideoInfo`.**
+
+- *A synthesized `video`* (frame count 1 or 0, fps = the project's) was the
+  tempting zero-call-site-changes option and is rejected outright: it is a lie
+  the model tells about the file, `frame_count: 0` is already the exact
+  signature of a **failed** probe, and the decode/export paths genuinely need
+  to know a still is a still. Every consumer reading `frameCount` as "is this
+  usable" would have been right about a real still and wrong about a broken
+  video, or vice versa.
+- *An enum replacing `video`* is the tidier model and was rejected on cost:
+  `video` is a persisted `project.json` key, so an enum is a wire migration for
+  every existing project, for a distinction two `Option`s already express.
+- The second `Option` is additive on the wire (`skip_serializing_if`), needs no
+  migration, and — the deciding fact — the pool's "is this offline" reasoning
+  never asked `video.is_some()` in the first place. It asks
+  `media_item_is_online(path)`, an extension-and-existence gate. So widening
+  that gate (`apelles_media::video::is_media_file`, B-089's own function, one
+  kind further out) fixes `offline: true` on its own, and the handful of real
+  `video.is_some()` call sites became one named predicate,
+  `MediaItem::is_probed()`.
+
+**2. A still clip is an ORDINARY media clip. No new `Clip` field, no new kind.**
+
+"Is this a still" is derived from the clip's `source_path` extension
+(`apelles_media::still::is_image_file` / `@apelles/editor`'s `isStillSource`),
+not stored. Because:
+
+- Every existing op then applies unchanged — trim, slip, split, roll,
+  transitions, transform, keyframes, fades, the D-256 grade. Nothing was
+  special-cased in `apelles-timeline` at all.
+- A stored flag would be derived state copied onto every clip, free to drift
+  the moment `swap_media` points one at a different file.
+- The contrast with text/adjustment clips is the *reason* they are their own
+  kinds: those carry data that exists nowhere else (the text layer, the
+  adjustment ops) and have **no `source_path`**. A still has a real file.
+
+**3. The synthesized length: `DEFAULT_TITLE_SECONDS` placed, `STILL_SOURCE_
+SECONDS = 3600` as the trim ceiling.**
+
+A still has no duration, so both numbers are policy. The placed default
+**reuses** `DEFAULT_TITLE_SECONDS` rather than declaring a fourth constant with
+the same value and the same justification — the same call D-230 made for
+adjustment clips. `source_len` cannot be 0 (it is what every trim/slip/roll
+clamp bounds against, and 0 forbids extending by a single frame) and cannot be
+`Infinity` (not representable in the `i64` the model persists, and it would
+poison the clamps), so it is one hour: far past anything short-form work asks
+for, and it makes extending a still behave the way it does in every reference
+NLE. `source_fps` is left **absent**, exactly as `newTextClipFields` leaves it
+and for the identical documented reason — the 1:1 fallback makes a still's
+`duration` its timeline footprint.
+
+All three live behind one function, `mediaSourceFacts` (`timeline.ts`), which
+replaced five inline copies of `media.video?.frameCount` — the reach that
+rejected every still in the first place, at `editor_add_clip`, `editor_edit_in`,
+`editor_swap_clip_media`, `isPlaceable` and the Sources-panel drop.
+
+### The render path: decoded, cached, never frame-stepped
+
+- **Preview.** A still never touches `decode_pipe` — there is no stream to step
+  and no `ffmpeg` process to hold, so it also never claims a `PipeSlot`
+  (`layer_pipe_slot` returns `None` for it, as it already did for the three
+  generated kinds). `apelles_media::still::decode_scaled` is the still
+  counterpart of `playback_frame_scaled`, down to the same
+  `Option<(u32, u32)>` target, and it **memoises on `(path, source_key,
+  target)`** — a 6000×4000 PNG held for three seconds is decoded once, not 72
+  times. That cache carries `media_cache::source_key` for the same reason
+  B-056/B-128 gave the probe and thumbnail caches theirs: a file replaced in
+  place must not serve a stale decode. `clip_source_size` /
+  `probe::source_resolution` is the same idea for "how big is this source",
+  used by the composition size and the transform overlay's geometry too.
+
+  There are deliberately **two** decoders in `chroma::edit`, not one:
+  `decode_clip_rgba` (the compositor's — a still's pixels come back as the
+  decode cache's own `Arc` with **no copy at all**, the same zero-copy path a
+  rasterised text layer already takes) and `decode_clip_picture` (the
+  single-layer fast path's — returns the picture as it decodes, so a video
+  frame is not converted through RGBA only to be JPEG-encoded straight back).
+  Each pays one copy where the other pays none; one shared function would have
+  added a full-buffer copy per frame to whichever caller lost. The grade then
+  applies through `Arc::make_mut`, which copies exactly when the buffer is
+  shared — so a still is copied only when it is actually graded, and a video
+  frame is still graded in place, byte-identically to pre-D-281.
+- **Export.** `-loop 1 -framerate <clip rate> -t <length> -i <path>`, no `-ss`
+  (a still has no timeline to seek within). Measured, not assumed: the
+  pre-existing generic `-ss`/`-t` input *appears* to work for a simple still,
+  because `overlay`'s default `eof_action=repeat` holds a one-frame input — but
+  a clip **fade** compiles to a `geq` over the frame's own timestamp `T`, and a
+  one-frame input gives it only `T = 0`, where a fade-in's alpha is zero, so
+  `overlay` then repeats a fully transparent frame and the still never appears
+  at all. `stillClipExport.ffmpeg.test.ts` pins that case with a real render,
+  and was mutation-checked (deleting the branch turns exactly that test red).
+
+### The format list — narrower than RapidRAW's on purpose
+
+`apelles_media::still::IMAGE_EXTENSIONS` is `png jpg jpeg webp tif tiff bmp`: a
+strict subset of `app/src-tauri/src/formats.rs`'s `NON_RAW_EXTENSIONS` (the
+Colorist still path's own list), derived from it rather than invented. Two
+constraints narrow it. **Both engines must read every entry** — the `image`
+crate for the preview and `ffmpeg` for the export — or a still would preview
+correctly and fail to render, the exact preview/export divergence D-256/D-236
+keep this codebase's two engines away from. And **a still is one frame**, which
+is why `gif` is out (an animated GIF would show frame 1 and silently drop the
+rest — a wrong answer, not a limitation). RAW is out because its decode lives
+*above* this layer (RapidRAW's `image_loader`, in `app/src-tauri`) and `ffmpeg`
+cannot open it either; widening to RAW is a real feature, not a list entry.
+
+The new `apelles_media::still` module exists rather than reusing that image
+loader for the same layering reason: `app/src-tauri` sits above
+`apelles-media`, so calling into it would be a cycle (D-039). What is shared is
+the thing that matters — the `image` crate, already a dependency of
+`apelles-media`. `image` is also added as a **dev**-dependency of
+`apelles-project` (its tests need to *write* a PNG); same version, already in
+the tree, test-only.
+
+### Both interfaces, same op (CLAUDE.md's human-AND-AI rule)
+
+GUI: the Sources panel's picker offers images (`pickClips({ stills: true })` —
+the project-creation picker on the launcher stays video-only, since its paths
+become Colorist shots), a still gets a real thumbnail (itself, downscaled,
+through the same cache slot and the same JPEG data-URL shape a poster frame
+uses, so nothing downstream needed a branch), and it drags onto the timeline
+like anything else. MCP: `editor_add_clip` places it — the docstring states the
+synthesized default and that `duration` overrides it — `editor_list_media`
+reports an `image` key where footage has `video`, `editor_import_media` names
+the accepted extensions, and `editor_get_capabilities` gains a `still_images`
+section. Both paths go through `mediaSourceFacts` and the same `add_clip` op.
+
+### Refused, and where
+
+A still on an **audio track** is rejected by `checkAddClip` — the one gate both
+the GUI drop and `editor_add_clip` pass through. Unlike a video clip (whose
+embedded audio makes it a legal, if unusual, audio source), a still has no
+audio stream at all, so the export would compile a `[N:a]` reference to
+nothing: a hard `ffmpeg` failure rather than silence.

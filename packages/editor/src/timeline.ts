@@ -579,8 +579,102 @@ export const DEFAULT_TEXT_COLOR = '#FFFFFF';
  *  sharing this constant rather than declaring a second one: both are
  *  generator clips with no source media to take a length from, which is
  *  exactly the case this number was chosen for (see "still/generator" above).
- *  The name is historical — it predates there being a second generator kind. */
+ *  The name is historical — it predates there being a second generator kind.
+ *
+ *  **And the default span of a STILL IMAGE clip (D-281)**, which is the case
+ *  the parenthetical above was literally written about: a still has no natural
+ *  length either, and the reference NLEs' own "default still duration" setting
+ *  is precisely this number. Declaring a fourth constant with the same value
+ *  and the same justification would be the drift this comment exists to
+ *  prevent. */
 export const DEFAULT_TITLE_SECONDS = 3;
+
+/** D-281 — the still-image extensions the Edit tab accepts as a clip source.
+ *
+ *  **Mirrors `apelles_media::still::IMAGE_EXTENSIONS` exactly** — that constant
+ *  is the source of truth (it is what actually gates the import probe and the
+ *  compositor's decode branch), and a disagreement between the two lists would
+ *  mean a file the GUI happily offers to place and the backend then reports as
+ *  offline. See the Rust constant's own doc for why the list is narrower than
+ *  RapidRAW's `NON_RAW_EXTENSIONS`: both engines (the `image` crate for the
+ *  preview, `ffmpeg` for the export) must read every entry, and an animated GIF
+ *  is not a still. */
+export const STILL_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff', 'bmp'] as const;
+
+/** D-281 — whether `sourcePath` names a still image.
+ *
+ *  **Derived from the path, deliberately, rather than stored on the `Clip`.**
+ *  A still clip is an ordinary media clip — it has a real `source_path`, a real
+ *  `media_id`, and every existing op (trim, slip, split, roll, transition,
+ *  transform, keyframes, grade) applies to it unchanged — so "is this a still"
+ *  is a fact about its *source*, not extra state on the clip. Storing it would
+ *  be a derived value duplicated onto every clip, free to drift the moment
+ *  `swap_media` points one at a different file. Mirrors
+ *  `apelles_media::still::is_image_file`. */
+export function isStillSource(sourcePath: string | null | undefined): boolean {
+  if (!sourcePath) return false;
+  const dot = sourcePath.lastIndexOf('.');
+  if (dot < 0) return false;
+  const ext = sourcePath.slice(dot + 1).toLowerCase();
+  return (STILL_EXTENSIONS as readonly string[]).includes(ext);
+}
+
+/** D-281 — the synthesized SOURCE extent of a still, in seconds: the ceiling a
+ *  still clip may be trimmed/extended out to.
+ *
+ *  A still genuinely has no length, but `source_len` is not optional — it is
+ *  what every trim/slip/roll clamp in this file bounds against, and `0` would
+ *  mean "cannot be extended by even one frame". So this is a **policy** number,
+ *  not a probed one, and it is deliberately far larger than the default span
+ *  (`DEFAULT_TITLE_SECONDS`) so that extending a still behaves the way it does
+ *  in every reference NLE: you drag it out as far as you want. One hour is
+ *  orders of magnitude past anything the short-form work this editor targets
+ *  will ask for, while staying a finite integer — `Infinity` is not
+ *  representable in the `i64` `source_len` the Rust model persists, and would
+ *  poison every clamp it touched. */
+export const STILL_SOURCE_SECONDS = 3600;
+
+/** D-281 — the `source_len`/`source_fps`/default `duration` a clip built from a
+ *  pool item gets, for a still and for moving footage alike.
+ *
+ *  **The one place that arithmetic lives.** Before D-281 it was spelled inline
+ *  at five call sites (`linkedClipsFromDraggedMedia`, and `editor_add_clip` /
+ *  `editor_edit_in` / `editor_swap_clip_media` / `isPlaceable` in
+ *  `useEditorControl`), each of them `media.video?.frameCount` — which is
+ *  exactly why a still (which has no `video` at all) was rejected by every one
+ *  of them. Answering it here means the GUI drop and the MCP call cannot
+ *  disagree about how long a placed still is, per CLAUDE.md's "the same
+ *  op/store action underneath both".
+ *
+ *  `null` when the source has no usable extent at all — unprobed, or a probe
+ *  that never produced a frame count — which is the same rejection
+ *  `clipFromDraggedMedia` has always made, just now asked of both kinds. */
+export function mediaSourceFacts(
+  media: DraggedMedia,
+  fps: number,
+): { still: boolean; sourceLen: number; sourceFps: number | undefined; defaultDuration: number } | null {
+  if (isStillSource(media.sourcePath)) {
+    return {
+      still: true,
+      sourceLen: Math.max(1, Math.round(STILL_SOURCE_SECONDS * fps)),
+      // Deliberately absent, exactly as `newTextClipFields` leaves it and for
+      // the identical reason: a source with no native rate takes
+      // `sourceFramesToTimeline`'s documented 1:1 fallback, so a still clip's
+      // `duration` really IS its timeline footprint.
+      sourceFps: undefined,
+      defaultDuration: Math.max(1, Math.round(DEFAULT_TITLE_SECONDS * fps)),
+    };
+  }
+  const frames = media.frameCount ?? 0;
+  if (!frames || frames <= 0) return null;
+  return {
+    still: false,
+    sourceLen: frames,
+    sourceFps: media.fps ?? undefined,
+    // Moving footage is placed at its full length, unchanged from pre-D-281.
+    defaultDuration: frames,
+  };
+}
 
 /** Whether `c` is a generated text/title clip rather than a media clip
  *  (D-211). Mirrors `apelles_timeline::Clip::is_text` — one predicate, asked
@@ -1352,7 +1446,7 @@ export interface TransitionCheck {
 export function checkAddClip(
   tl: Timeline,
   track: number,
-  clip: Pick<Clip, 'text' | 'adjustment' | 'duration' | 'source_fps'>,
+  clip: Pick<Clip, 'text' | 'adjustment' | 'duration' | 'source_fps' | 'source_path'>,
   fps?: number,
   startFrame?: number,
   ripple?: boolean,
@@ -1364,6 +1458,18 @@ export function checkAddClip(
     return {
       ok: false,
       reason: `${what} is picture — it cannot go on the ${tr.kind} track ${track}. Put it on a video track, or add it without naming one to get a new video track above the picture.`,
+    };
+  }
+  // D-281 — a STILL is picture too, for the same reason and with one extra
+  // consequence: unlike a video clip (whose embedded audio makes it a legal, if
+  // unusual, audio-track source), a still has NO audio stream at all, so the
+  // export's `[N:a]` reference to it would be a filtergraph reference to
+  // nothing — a hard ffmpeg failure rather than silence. Refused here, at the
+  // one gate both the GUI drop and `editor_add_clip` go through.
+  if (isStillSource(clip.source_path) && tr.kind !== 'video') {
+    return {
+      ok: false,
+      reason: `A still image is picture with no audio stream — it cannot go on the ${tr.kind} track ${track}. Put it on a video track.`,
     };
   }
   if (fps !== undefined && startFrame !== undefined && !ripple) {
@@ -1794,9 +1900,14 @@ export type NewClipFields = Omit<Clip, 'start_frame'>;
 
 /** Build a full-length clip (minus `start_frame` — see `NewClipFields`)
  *  referencing a dropped pool item, or `null` if it has no known frame count
- *  (unprobed / offline — nothing to place). */
-export function clipFromDraggedMedia(media: DraggedMedia): NewClipFields | null {
-  const pair = linkedClipsFromDraggedMedia(media);
+ *  (unprobed / offline — nothing to place).
+ *
+ *  D-281 — `fps` is the PROJECT's own rate (`timelineFps(tl)`), needed because
+ *  a still image has no length of its own and its synthesized span is measured
+ *  in seconds; see `mediaSourceFacts`. It is unused for moving footage, which
+ *  is still placed at its own full frame count. */
+export function clipFromDraggedMedia(media: DraggedMedia, fps: number): NewClipFields | null {
+  const pair = linkedClipsFromDraggedMedia(media, fps);
   return pair && pair.video;
 }
 
@@ -1819,11 +1930,17 @@ export function clipFromDraggedMedia(media: DraggedMedia): NewClipFields | null 
  *  `null` overall for media with no usable frame count, same as before. */
 export function linkedClipsFromDraggedMedia(
   media: DraggedMedia,
+  fps: number,
 ): { video: NewClipFields; audio: NewClipFields | null } | null {
-  const frames = media.frameCount ?? 0;
-  if (!frames || frames <= 0) return null;
+  const facts = mediaSourceFacts(media, fps);
+  if (!facts) return null;
   const stamp = Date.now().toString(36);
-  const linkGroup = media.hasAudio ? `lg-${media.id}-${stamp}` : null;
+  // D-281 — a still has no audio stream to link a half from, and
+  // `mediaSourceFacts` already told us which kind this is. (`hasAudio` is
+  // absent for a still anyway, so this is belt-and-braces rather than the
+  // load-bearing check — but stating it here is what makes the intent legible
+  // at the one place a linked pair is built.)
+  const linkGroup = media.hasAudio && !facts.still ? `lg-${media.id}-${stamp}` : null;
   const common = {
     shot_id: null,
     // D-070: the pool-item link — this is the one real place a Clip gets
@@ -1833,9 +1950,9 @@ export function linkedClipsFromDraggedMedia(
     name: media.name,
     source_path: media.sourcePath,
     source_start: 0,
-    duration: frames,
-    source_len: frames,
-    source_fps: media.fps ?? undefined,
+    duration: facts.defaultDuration,
+    source_len: facts.sourceLen,
+    source_fps: facts.sourceFps,
   };
   const video: NewClipFields = { id: `${media.id}-${stamp}`, link_group: linkGroup, ...common };
   if (!linkGroup) return { video, audio: null };

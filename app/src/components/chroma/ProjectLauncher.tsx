@@ -22,6 +22,18 @@ import ConfirmModal from '../modals/ConfirmModal';
 
 const VIDEO_EXTS = ['mov', 'mp4', 'm4v', 'mkv', 'webm', 'avi', 'mts', 'm2ts', 'mxf', 'braw', 'r3d'];
 
+/** D-281 — the still-image extensions the Edit tab's media pool accepts.
+ *
+ *  **Mirrors `apelles_media::still::IMAGE_EXTENSIONS` / `@apelles/editor`'s
+ *  `STILL_EXTENSIONS` exactly** — the Rust constant is the source of truth (it
+ *  gates the import probe and the compositor's decode branch), and a picker
+ *  offering a format the backend then reports as offline is the exact
+ *  half-imported state D-281 exists to remove.
+ *
+ *  Deliberately a SEPARATE list from `VIDEO_EXTS`, not merged into it: the two
+ *  callers of the picker below want different sets — see `pickClips`. */
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'tif', 'tiff', 'bmp'];
+
 interface ProjectSummary {
   name: string;
   path: string;
@@ -47,14 +59,33 @@ function relTime(ms: number): string {
   return `${y} year${y === 1 ? '' : 's'} ago`;
 }
 
-/** Native multi-select clip picker — also reused by `SourcesPanel` (D-046
- *  pass 3) for the Sources panel's Import action, same dialog/filter. */
-export async function pickClips(): Promise<string[]> {
+/** Native multi-select source picker — also reused by `SourcesPanel` (D-046
+ *  pass 3) for the Sources panel's Import action, same dialog.
+ *
+ *  **D-281 — `stills` is why this takes an option at all.** The Sources panel
+ *  imports into the Edit tab's MEDIA POOL, where a still image is now a
+ *  first-class source, so its picker offers images too. This screen's own use
+ *  (creating a project from a set of clips) turns each path into a Colorist
+ *  `ProjectShot` — a graded shot with a timeline position — which a still is
+ *  not and which D-281 deliberately did not widen. One dialog, two filter sets,
+ *  rather than two near-identical pickers that could drift.
+ *
+ *  The extension list is upper-cased as well as lower-cased because the Tauri
+ *  dialog plugin's filter is case-sensitive on macOS (a `.PNG` off a camera
+ *  would otherwise be un-pickable) — the same reason the video list already
+ *  does it. */
+export async function pickClips({ stills = false }: { stills?: boolean } = {}): Promise<string[]> {
+  const exts = stills ? [...VIDEO_EXTS, ...IMAGE_EXTS] : VIDEO_EXTS;
   try {
     const sel = await openDialog({
       multiple: true,
-      title: 'Pick clips for the project',
-      filters: [{ name: 'Video', extensions: [...VIDEO_EXTS, ...VIDEO_EXTS.map((e) => e.toUpperCase())] }],
+      title: stills ? 'Pick media for the project' : 'Pick clips for the project',
+      filters: [
+        {
+          name: stills ? 'Video & images' : 'Video',
+          extensions: [...exts, ...exts.map((e) => e.toUpperCase())],
+        },
+      ],
     });
     return Array.isArray(sel) ? sel : sel ? [sel] : [];
   } catch {

@@ -109,6 +109,7 @@ import {
   DEFAULT_CAPTION_FONT,
   DEFAULT_DUCK_ATTACK_MS,
   DEFAULT_DUCK_RELEASE_MS,
+  DEFAULT_FPS,
   DEFAULT_TEXT_FONT,
   DEFAULT_TITLE_SECONDS,
   EQ_BAND_KINDS,
@@ -132,6 +133,7 @@ import {
   newCaptionClipFields,
   MARKER_COLORS,
   markersOf,
+  mediaSourceFacts,
   newAdjustmentClipFields,
   newAdjustmentLayer,
   newMarker,
@@ -154,6 +156,7 @@ import {
   type ClipKeyframeParam,
   type EaseCurve,
   type Clip,
+  type DraggedMedia,
   type EqBand,
   type EqBandKind,
   type Marker,
@@ -336,8 +339,51 @@ function resolveMediaPath(a: any): { path: string } | { error: string } {
  *  Shares `editor_add_clip`'s own guard rather than restating it, so the two
  *  can never disagree about what "usable" means. */
 function isPlaceable(m: MediaItem): boolean {
-  const frames = m.video?.frameCount;
-  return !!frames && frames > 0;
+  // D-281 — the rate is irrelevant to the null-vs-not answer this asks: a still
+  // is always placeable (its span is synthesized, whatever the rate), and
+  // footage is placeable exactly when it has a positive probed frame count.
+  // `DEFAULT_FPS` is a stand-in here, never a length.
+  return mediaSourceFacts(draggedMediaOf(m), DEFAULT_FPS) !== null;
+}
+
+/** D-281 — a pool item as the timeline model's own `DraggedMedia` payload.
+ *
+ *  **The one adapter between `@apelles/bridge`'s `MediaItem` (what the pool
+ *  holds) and `@apelles/editor`'s `DraggedMedia` (what a clip is built from).**
+ *  Every `editor_*` tool that places or relinks a clip used to reach into
+ *  `media.video?.frameCount` / `media.video?.fps` itself — four copies of the
+ *  same reach, all four of which silently rejected a still image, since a still
+ *  has no `video` at all. Funnelling them through this one mapper is what makes
+ *  the GUI drop (which already goes through `DraggedMedia`) and the MCP call
+ *  place *the same clip*, per CLAUDE.md's "the same op/store action underneath
+ *  both".
+ *
+ *  `timeline.ts` deliberately does not import `@apelles/bridge` (it is the pure
+ *  model), which is why the adapter lives here rather than there. */
+function draggedMediaOf(m: MediaItem): DraggedMedia {
+  return {
+    id: m.id,
+    sourcePath: m.sourcePath,
+    name: m.name,
+    frameCount: m.video?.frameCount ?? null,
+    hasAudio: m.video?.hasAudio ?? null,
+    fps: m.video?.fps ?? null,
+  };
+}
+
+/** D-281 — `mediaSourceFacts` for a pool item, with the refusal message every
+ *  `editor_*` placement tool reports when a source has no usable extent. One
+ *  message, one condition, four call sites. */
+function placementFacts(
+  m: MediaItem,
+  fps: number,
+): NonNullable<ReturnType<typeof mediaSourceFacts>> | { error: string } {
+  const facts = mediaSourceFacts(draggedMediaOf(m), fps);
+  return (
+    facts ?? {
+      error: `${m.name} has no known frame count (offline, or not a probeable video or still image)`,
+    }
+  );
 }
 
 /** D-266 — one media-pool item as `editor_list_media`/`_move_media` report it.
@@ -377,6 +423,12 @@ function mediaItemDto(m: MediaItem) {
           hasAudio: m.video.hasAudio ?? null,
         }
       : null,
+    // D-281 — a STILL IMAGE source. Mutually exclusive with `video`: a row has
+    // one or the other, never both, and an agent reads which key is present to
+    // know what kind of source it is looking at. A still has no fps, duration
+    // or frame count to report — see `MediaImageInfo` in Rust for why those are
+    // absent rather than zeroed.
+    image: m.image ? { width: m.image.width, height: m.image.height } : null,
     hasThumb: !!m.thumb,
     // D-260 — set only on a Motion render's own output file.
     motionSceneId: m.motionSceneId ?? null,
@@ -384,8 +436,8 @@ function mediaItemDto(m: MediaItem) {
     problem: placeable
       ? undefined
       : m.offline
-        ? 'source file is missing from disk right now, and no probed frame count is stored — editor_add_clip will refuse this item. Restore the file, then editor_reprobe_media this id.'
-        : 'no probed video metadata (frameCount) — editor_add_clip will refuse this item. This is B-073: the first probe failed. Call editor_reprobe_media with this id to re-probe it in place.',
+        ? 'source file is missing from disk right now, and nothing probed is stored — editor_add_clip will refuse this item. Restore the file, then editor_reprobe_media this id.'
+        : 'no probed source metadata (no video frameCount, and not a still image) — editor_add_clip will refuse this item. This is B-073: the first probe failed. Call editor_reprobe_media with this id to re-probe it in place.',
   };
 }
 
@@ -1462,12 +1514,27 @@ export function useEditorControl(): void {
         const items = useMediaPoolStore.getState().items;
         const media = items.find((m) => m.id === a?.mediaId || m.sourcePath === a?.sourcePath);
         if (!media) return { error: `no pool item matching mediaId/sourcePath — call editor_import_media first` };
-        const frames = media.video?.frameCount;
-        if (!frames || frames <= 0) return { error: `${media.name} has no known frame count (offline, or not a probeable video)` };
+        // D-281 — the source's extent, for a still image as well as for
+        // footage. A still has no `video` at all, so the old
+        // `media.video?.frameCount` reach rejected every one of them here.
+        const facts = placementFacts(media, timelineFps(useEditorTimelineStore.getState().timeline));
+        if ('error' in facts) return facts;
+        const frames = facts.sourceLen;
 
         const track = Math.round(Number(a?.track));
         const sourceStart = a?.sourceStart !== undefined ? Math.round(Number(a.sourceStart)) : 0;
-        const duration = a?.duration !== undefined ? Math.round(Number(a.duration)) : frames - sourceStart;
+        // D-281 — a still's default is its SYNTHESIZED span
+        // (`DEFAULT_TITLE_SECONDS`), not "all of it": `sourceLen` for a still is
+        // a one-hour trim ceiling, and placing an hour-long clip because the
+        // caller omitted `duration` would be absurd. Footage keeps its
+        // pre-D-281 "the rest of the file" default exactly. An explicit
+        // `duration` always wins, for both.
+        const duration =
+          a?.duration !== undefined
+            ? Math.round(Number(a.duration))
+            : facts.still
+              ? facts.defaultDuration
+              : frames - sourceStart;
         if (!Number.isFinite(sourceStart) || sourceStart < 0 || sourceStart >= frames) {
           return { error: `sourceStart must be within [0, ${frames}) frames of the source` };
         }
@@ -1485,7 +1552,7 @@ export function useEditorControl(): void {
           source_start: sourceStart,
           duration,
           source_len: frames,
-          source_fps: media.video?.fps ?? undefined,
+          source_fps: facts.sourceFps,
         };
 
         const startFrame = a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined;
@@ -1539,17 +1606,24 @@ export function useEditorControl(): void {
         const items = useMediaPoolStore.getState().items;
         const media = items.find((m) => m.id === a?.mediaId || m.sourcePath === a?.sourcePath);
         if (!media) return { error: `no pool item matching mediaId/sourcePath — call editor_import_media first` };
-        const frames = media.video?.frameCount;
-        if (!frames || frames <= 0) {
-          return { error: `${media.name} has no known frame count (offline, or not a probeable video)` };
-        }
 
         const store = useEditorTimelineStore.getState();
         const timeline = store.timeline;
         if (!timeline) return { error: 'no timeline is open' };
 
+        // D-281 — `editor_add_clip`'s own source-extent resolution, verbatim in
+        // shape (see there for the still-vs-footage default-duration rule).
+        const facts = placementFacts(media, timelineFps(timeline));
+        if ('error' in facts) return facts;
+        const frames = facts.sourceLen;
+
         const sourceStart = a?.sourceStart !== undefined ? Math.round(Number(a.sourceStart)) : 0;
-        const duration = a?.duration !== undefined ? Math.round(Number(a.duration)) : frames - sourceStart;
+        const duration =
+          a?.duration !== undefined
+            ? Math.round(Number(a.duration))
+            : facts.still
+              ? facts.defaultDuration
+              : frames - sourceStart;
         if (!Number.isFinite(sourceStart) || sourceStart < 0 || sourceStart >= frames) {
           return { error: `sourceStart must be within [0, ${frames}) frames of the source` };
         }
@@ -1574,7 +1648,7 @@ export function useEditorControl(): void {
           source_start: sourceStart,
           duration,
           source_len: frames,
-          source_fps: media.video?.fps ?? undefined,
+          source_fps: facts.sourceFps,
         };
         const op = { kind: 'edit_in' as const, editType: a.editType, track, clip, atFrame };
 
@@ -2383,8 +2457,15 @@ export function useEditorControl(): void {
         const items = useMediaPoolStore.getState().items;
         const media = items.find((m) => m.id === a?.mediaId || m.sourcePath === a?.sourcePath);
         if (!media) return { error: `no pool item matching mediaId/sourcePath — call editor_import_media first` };
-        const frames = media.video?.frameCount;
-        if (!frames || frames <= 0) return { error: `${media.name} has no known frame count (offline, or not a probeable video)` };
+        // D-281 — relinking a clip to a STILL is as real as relinking it to
+        // another clip; same shared extent resolution as `editor_add_clip`.
+        // `swap_media`'s own re-clamp policy then holds the clip's existing
+        // window inside the new source's extent, which for a still is the
+        // one-hour ceiling — i.e. relinking footage to a still never shortens
+        // the clip.
+        const facts = placementFacts(media, timelineFps(tl));
+        if ('error' in facts) return facts;
+        const frames = facts.sourceLen;
 
         useEditorTimelineStore.getState().applyOp({
           kind: 'swap_media',
@@ -2393,7 +2474,7 @@ export function useEditorControl(): void {
           media_id: media.id,
           source_path: media.sourcePath,
           source_len: frames,
-          source_fps: media.video?.fps ?? undefined,
+          source_fps: facts.sourceFps,
         });
 
         const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];

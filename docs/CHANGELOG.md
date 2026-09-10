@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-281: still images are first-class Edit-tab sources.**
+  Importing a PNG used to come back `offline: true, video: null` and could
+  never be placed — the extension gate rejected it before any probe ran. Now:
+  a second probed kind on the pool item (`MediaItem.image`, additive on the
+  wire), an ordinary media clip with a *synthesized* length (3s placed,
+  reusing `DEFAULT_TITLE_SECONDS`; one hour of trim headroom) rather than a
+  new clip kind, a memoised `apelles_media::still` decode that never touches
+  `decode_pipe`, and a `-loop 1` export input — pinned by a real ffmpeg render
+  that was mutation-checked. GUI and MCP in the same pass. **An honest
+  widening of v1's "one footage type"**; D-281 says why that is right now, and
+  `docs/02-scope.md`'s Edit-tab section is updated (Colorist's own scope line
+  is not).
 - **2026-09-10** — **B-146 logged, investigating:** general preview playback
   lag and janky frame-jumping at 4× — dispatched to an Opus agent to profile
   before fixing; a real repeating seek-error warning in the live audio log

@@ -113,6 +113,101 @@ use super::{caption_render, decode_pipe, grade_lut, project, text};
 pub(crate) use apelles_media::probe::probe_cached;
 
 // --------------------------------------------------------------------------- //
+// D-281 — a clip's source may be a STILL IMAGE, not just moving footage.
+//
+// The two questions the preview asks of every picture layer — "how big is this
+// source?" and "give me its picture at this frame" — each get one answer here
+// that covers both kinds, so the compositor, the single-layer fast path, the
+// composition-size derivation and the transform overlay's geometry all branch
+// in exactly one place instead of four.
+//
+// A still deliberately does NOT go through `decode_pipe`: there is no stream to
+// step through, no keyframe to seek to and no `ffmpeg` process to hold open. It
+// also never holds a `PipeSlot` (see `layer_pipe_slot`), so a still layer costs
+// the pipe pool nothing at all.
+// --------------------------------------------------------------------------- //
+
+/// The pixel dimensions of `clip`'s source — a still through
+/// `apelles_media::still`, moving footage through [`probe_cached`].
+fn clip_source_size(source_path: &str) -> Result<(u32, u32), String> {
+    let res = apelles_media::probe::source_resolution(Path::new(source_path))?;
+    if res.width == 0 || res.height == 0 {
+        return Err(format!("{source_path} has no usable resolution"));
+    }
+    Ok((res.width, res.height))
+}
+
+/// The decoded size a layer of `source_size` should be asked for at this
+/// preview quality — [`decode_pipe::scale_target`], shared by the two decoders
+/// below so a still and a video layer of the same source size always arrive at
+/// the same pixel dimensions.
+fn decode_scale(source_size: (u32, u32), max_long_edge: Option<u32>) -> Option<(u32, u32)> {
+    max_long_edge.and_then(|le| decode_pipe::scale_target(source_size.0, source_size.1, le))
+}
+
+/// **A still ignores `source_frame` entirely, and that is the whole feature:**
+/// every frame of a still clip's on-timeline duration is the same picture, so
+/// the resolved source frame — which the timeline computes for a still exactly
+/// as it does for footage, since nothing downstream should have to care — is
+/// simply not consulted. That is what makes a still hold for its full length
+/// instead of the compositor trying to frame-step a codec stream that has one
+/// frame in it. (Stated once here; it is equally true of
+/// [`decode_clip_picture`] below.)
+///
+/// **The compositor's variant: RGBA, shared where it can be.** A still's
+/// buffer comes straight back from `apelles_media::still`'s decode cache as the
+/// `Arc` that cache holds, with no copy at all — which is the point of the
+/// `Arc` in `Step::Paint`, and the same zero-copy path a rasterised text layer
+/// already takes. A video frame is converted once, exactly as it was before
+/// D-281.
+fn decode_clip_rgba(
+    source_path: &str,
+    source_size: (u32, u32),
+    slot: decode_pipe::PipeSlot,
+    source_frame: u64,
+    max_long_edge: Option<u32>,
+) -> Result<std::sync::Arc<image::RgbaImage>, String> {
+    let path = PathBuf::from(source_path);
+    let scale = decode_scale(source_size, max_long_edge);
+    if apelles_media::still::is_image_file(&path) {
+        return apelles_media::still::decode_scaled(&path, scale)
+            .map_err(|e| format!("decode still {source_path}: {e}"));
+    }
+    let info = probe_cached(&path)?;
+    decode_pipe::playback_frame_scaled(slot, &path, &info, source_frame, scale)
+        .map(|img| std::sync::Arc::new(img.to_rgba8()))
+        .map_err(|e| format!("decode {source_path} @ src frame {source_frame}: {e}"))
+}
+
+/// **The single-layer fast path's variant: the picture as it decodes.**
+///
+/// A separate function from [`decode_clip_rgba`] rather than a wrapper over it,
+/// deliberately: this frame goes straight to `encode_preview_jpeg`, so forcing
+/// a decoded video frame through RGBA on the way would add a full-buffer
+/// conversion per frame to the path that exists precisely to avoid work. The
+/// still arm pays one copy here (its cached buffer is shared and a
+/// `DynamicImage` must own its pixels) — the trade the other way round, and the
+/// right one for each caller.
+fn decode_clip_picture(
+    source_path: &str,
+    source_size: (u32, u32),
+    slot: decode_pipe::PipeSlot,
+    source_frame: u64,
+    max_long_edge: Option<u32>,
+) -> Result<DynamicImage, String> {
+    let path = PathBuf::from(source_path);
+    let scale = decode_scale(source_size, max_long_edge);
+    if apelles_media::still::is_image_file(&path) {
+        return apelles_media::still::decode_scaled(&path, scale)
+            .map(|img| DynamicImage::ImageRgba8(img.as_ref().clone()))
+            .map_err(|e| format!("decode still {source_path}: {e}"));
+    }
+    let info = probe_cached(&path)?;
+    decode_pipe::playback_frame_scaled(slot, &path, &info, source_frame, scale)
+        .map_err(|e| format!("decode {source_path} @ src frame {source_frame}: {e}"))
+}
+
+// --------------------------------------------------------------------------- //
 // timeline load / build / persist
 // --------------------------------------------------------------------------- //
 
@@ -207,11 +302,10 @@ fn composition_size(
         .filter(|t| t.kind == TrackKind::Video)
         .find_map(|t| t.clips.iter().find(|c| !c.source_path.is_empty()))
         .ok_or_else(|| "no clip to derive a composition size from".to_string())?;
-    let info = probe_cached(&PathBuf::from(&first.source_path))?;
-    if info.resolution.width == 0 || info.resolution.height == 0 {
-        return Err(format!("{} has no usable resolution", first.source_path));
-    }
-    Ok((info.resolution.width, info.resolution.height))
+    // D-281 — `clip_source_size`, not `probe_cached`: the first clip on the
+    // timeline may be a still, and a project whose only source is a still must
+    // still be able to say how big its composition is.
+    clip_source_size(&first.source_path)
 }
 
 /// Resolve timeline position `pos` on the **active** timeline to the single
@@ -255,6 +349,14 @@ pub(crate) fn resolve_video_position(
         return Ok(None);
     };
     if clip.source_path.is_empty() {
+        return Ok(None);
+    }
+    // D-281 — a STILL is not a source of samples. This function's only consumer
+    // is `chroma::audio`'s embedded-audio baseline, and a still has no audio
+    // stream to probe; `Ok(None)` is precisely the "play nothing here" case
+    // that consumer already handles for a gap or an offline source, so it needs
+    // no still-specific branch of its own.
+    if apelles_media::still::is_image_file(&clip.source_path) {
         return Ok(None);
     }
     let info = probe_cached(Path::new(&clip.source_path))?;
@@ -328,6 +430,12 @@ pub(crate) fn resolve_audio_track_positions(pos: u64) -> Result<Vec<AudioTrackPo
             continue;
         };
         if clip.source_path.is_empty() {
+            continue;
+        }
+        // D-281 — a still contributes no samples, the same way a video clip with
+        // no audio stream doesn't. Skipped before the probe rather than after,
+        // since there is no audio stream to probe for.
+        if apelles_media::still::is_image_file(&clip.source_path) {
             continue;
         }
         let info = probe_cached(Path::new(&clip.source_path))?;
@@ -819,9 +927,13 @@ pub(crate) fn timeline_frame_image(
                 ..
             },
         ] => {
-            let info = probe_cached(&PathBuf::from(&clip.source_path))?;
+            // D-281 — `clip_source_size` covers a still here too: a lone still
+            // that really is the whole composition takes the plain-decode fast
+            // path exactly like a lone video clip does, which for a still is
+            // one cache hit per frame.
+            let size = clip_source_size(&clip.source_path)?;
             resolve_clip_transform(clip, *source_frame).is_identity()
-                && (info.resolution.width, info.resolution.height) == comp
+                && size == comp
                 // D-256 — a clip carrying a real Colorist grade never takes the
                 // plain-decode fast path either, for exactly D-132/B-053's
                 // reason: the grade is a real transform of this clip's pixels
@@ -865,14 +977,15 @@ pub(crate) fn timeline_frame_image(
             // that appeared to do nothing. A clip that really has no
             // transform still takes this path, so the overwhelmingly common
             // case is byte-identical and no slower than before.
-            let path = PathBuf::from(&clip.source_path);
-            let info = probe_cached(&path)?;
-            let frame = (*source_frame).max(0) as u64;
-            let scale = max_long_edge.and_then(|le| {
-                decode_pipe::scale_target(info.resolution.width, info.resolution.height, le)
-            });
-            decode_pipe::playback_frame_scaled(pipe_slot(*track, *role), &path, &info, frame, scale)
-                .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?
+            // `comp` IS this clip's source size — that is exactly what
+            // `single_plain` just checked — so no second probe is needed here.
+            decode_clip_picture(
+                &clip.source_path,
+                comp,
+                pipe_slot(*track, *role),
+                (*source_frame).max(0) as u64,
+                max_long_edge,
+            )?
         }
         _ => composite_video_frame(&layers, max_long_edge, comp)?,
     };
@@ -954,9 +1067,20 @@ fn pipe_slot(track: usize, role: LayerRole) -> decode_pipe::PipeSlot {
 /// nothing (a generated text clip, a dip-to-colour plate, or — D-230 — an
 /// adjustment clip). Drives the per-frame `retain_pipe_slots` release so a slot
 /// whose layer went away frees its `ffmpeg` process the same frame.
+///
+/// **D-281 — a STILL layer is `None` too.** It has a real `source_path`, unlike
+/// the three generated cases above, but it is decoded by `apelles_media::still`
+/// and never touches `decode_pipe`, so claiming a slot for it would pin an
+/// `ffmpeg` process that nothing is going to use — and, worse, would keep a slot
+/// alive that `retain_pipe_slots` would otherwise have released to the video
+/// layer that actually needs it.
 fn layer_pipe_slot(layer: &VisibleLayer<'_>) -> Option<decode_pipe::PipeSlot> {
     match &layer.source {
-        LayerSource::Clip { clip, role, .. } if !clip.is_text() && !clip.is_adjustment() => {
+        LayerSource::Clip { clip, role, .. }
+            if !clip.is_text()
+                && !clip.is_adjustment()
+                && !apelles_media::still::is_image_file(&clip.source_path) =>
+        {
             Some(pipe_slot(layer.track, *role))
         }
         _ => None,
@@ -1074,12 +1198,14 @@ pub(crate) fn clip_geometry(track: usize, clip: usize) -> Result<ClipGeometry, S
     if c.source_path.is_empty() {
         return Err("clip has no source".to_string());
     }
-    let info = probe_cached(&PathBuf::from(&c.source_path))?;
+    // D-281 — a still has a real footprint on the canvas exactly like footage
+    // does, so the on-canvas transform overlay must be able to box one.
+    let (sw, sh) = clip_source_size(&c.source_path)?;
     Ok(ClipGeometry {
         comp_width: comp_w,
         comp_height: comp_h,
-        natural_width: info.resolution.width as f64 / comp_w as f64,
-        natural_height: info.resolution.height as f64 / comp_h as f64,
+        natural_width: sw as f64 / comp_w as f64,
+        natural_height: sh as f64 / comp_h as f64,
     })
 }
 
@@ -1540,21 +1666,22 @@ fn composite_video_frame(
             });
             continue;
         }
-        let path = PathBuf::from(&clip.source_path);
-        let info = probe_cached(&path)?;
-        let frame = (*source_frame).max(0) as u64;
-        let scale = max_long_edge.and_then(|le| {
-            decode_pipe::scale_target(info.resolution.width, info.resolution.height, le)
-        });
+        let source_size = clip_source_size(&clip.source_path)?;
         // One decode pipe per track (D-125/B-040) — sharing a single global
         // pipe across layers made every layer after the first respawn ffmpeg
         // (different path, or the same path stepping backwards), which is what
         // reduced this whole path to ~0.85 fps. D-226 — and one more per track
         // while a cross dissolve is running there, for that same reason applied
-        // within a single track; see `pipe_slot`.
-        let img =
-            decode_pipe::playback_frame_scaled(pipe_slot(track, *role), &path, &info, frame, scale)
-                .map_err(|e| format!("decode {} @ src frame {frame}: {e}", path.display()))?;
+        // within a single track; see `pipe_slot`. D-281 — a STILL layer takes
+        // no slot at all and never reaches `decode_pipe`; see
+        // `decode_clip_rgba`.
+        let mut rgba = decode_clip_rgba(
+            &clip.source_path,
+            source_size,
+            pipe_slot(track, *role),
+            (*source_frame).max(0) as u64,
+            max_long_edge,
+        )?;
         // D-256 — **the Colorist grade, applied here.** On this clip's own
         // decoded pixels, before any geometry, because that is what a grade is:
         // a property of the clip's picture, not of where it sits in the
@@ -1569,12 +1696,19 @@ fn composite_video_frame(
         // an ungraded clip, and nothing else — `lut_for_clip` returns `None`
         // before touching the GPU when there is no grade file, which is every
         // clip in every project that has never been near the Colorist tab.
-        let mut rgba = img.to_rgba8();
+        //
+        // D-281 — `Arc::make_mut` rather than a plain `&mut`: a STILL's buffer
+        // is the decode cache's own, shared with whatever other frame is
+        // showing the same still, so grading it in place would corrupt the
+        // cache. `make_mut` copies exactly when the buffer is shared and not
+        // otherwise — so a still pays one copy only when it is actually graded,
+        // and a freshly decoded video frame (refcount 1) is still graded in
+        // place, byte-identically to before.
         if let Some(lut) = grade_lut::lut_for_clip(&clip.id) {
-            grade_lut::apply_to_rgba(&mut rgba, &lut);
+            grade_lut::apply_to_rgba(std::sync::Arc::make_mut(&mut rgba), &lut);
         }
         decoded.push(Step::Paint {
-            img: std::sync::Arc::new(rgba),
+            img: rgba,
             transform: with_transition_alpha(
                 resolve_clip_transform(clip, *source_frame),
                 layer.alpha,
@@ -1583,8 +1717,8 @@ fn composite_video_frame(
             // whole point: the decoded size follows the preview quality, the
             // source size does not.
             natural: (
-                info.resolution.width as f64 * render_scale,
-                info.resolution.height as f64 * render_scale,
+                source_size.0 as f64 * render_scale,
+                source_size.1 as f64 * render_scale,
             ),
         });
     }

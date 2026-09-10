@@ -132,7 +132,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use apelles_media::video;
+use apelles_media::{still, video};
 use apelles_timeline::{Clip, Timeline, TrackKind};
 use base64::Engine as _;
 use once_cell::sync::Lazy;
@@ -449,6 +449,34 @@ impl From<&video::VideoInfo> for MediaVideoInfo {
     }
 }
 
+/// D-281 — the still-image counterpart of [`MediaVideoInfo`]: everything the
+/// pool knows about a PNG/JPEG/TIFF/WebP/BMP source.
+///
+/// **Just the resolution, and that is the point.** A still has no frame rate,
+/// no duration, no frame count and no audio; the reason this is a second
+/// struct rather than a `MediaVideoInfo` with zeroes in those fields is that
+/// zeroes there are indistinguishable from a *failed* probe (`frame_count: 0`
+/// is exactly what an unprobeable source gets), and every consumer downstream
+/// reads `frameCount` as "is this usable". A separate, deliberately narrow
+/// type makes "this item is a still" a fact the model states rather than one a
+/// caller infers from a suspicious-looking video info.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaImageInfo {
+    /// `#[serde(flatten)]` for exactly [`MediaVideoInfo::resolution`]'s reason:
+    /// plain `width`/`height` keys on the wire, no nested object.
+    #[serde(flatten)]
+    pub resolution: apelles_types::Resolution,
+}
+
+impl From<&still::StillInfo> for MediaImageInfo {
+    fn from(info: &still::StillInfo) -> Self {
+        MediaImageInfo {
+            resolution: info.resolution,
+        }
+    }
+}
+
 /// D-129/B-101 — resolve the migration sentinels on [`MediaVideoInfo`]'s audio
 /// facts (`has_audio`, D-129; `audio_channels`, B-101/D-269) for every pool
 /// item that predates the field in question, by re-probing its source once.
@@ -502,6 +530,20 @@ pub struct MediaItem {
     /// list/import time, not stored here — see [`MediaItemDto`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub video: Option<MediaVideoInfo>,
+    /// D-281 — probed at import time when the source is a **still image**
+    /// ([`apelles_media::still::is_image_file`]). Mutually exclusive with
+    /// [`Self::video`] by construction ([`probe_media_item`] takes one branch
+    /// or the other), so `video.is_none() && image.is_none()` is still exactly
+    /// "this item probed as nothing usable" — which is what the pool's
+    /// offline/unusable reasoning has always meant and why this is a second
+    /// `Option` field rather than a `MediaKind` enum replacing `video`. An
+    /// enum would be a wire-format migration for every existing
+    /// `project.json`; this key is simply absent on every pre-D-281 item and
+    /// on every video item, byte-identically to before it existed — the same
+    /// "reference, don't require" discipline `folder`/`media_id`/
+    /// `motion_scene_id` already use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<MediaImageInfo>,
     /// The bin this item is filed in (D-045 pass 2) — a plain path string
     /// ("B-roll/Sunset"), `None`/empty = the pool root. No separate bin
     /// entity: a folder exists exactly when some item's `folder` names it,
@@ -549,7 +591,12 @@ pub struct MediaItemDto {
     pub added: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub video: Option<MediaVideoInfo>,
-    /// the source path does not exist right now (or is not a video file)
+    /// D-281 — the still's own probed facts, when this item is a still image.
+    /// Mutually exclusive with `video`; see [`MediaItem::image`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<MediaImageInfo>,
+    /// the source path does not exist right now (or is not importable media —
+    /// video, audio (B-089) or a still (D-281))
     pub offline: bool,
     /// the bin path this item is filed in; `None` = pool root (D-045)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -566,12 +613,94 @@ pub struct MediaItemDto {
     pub thumb: Option<String>,
 }
 
-/// `true` if `path` is a readable video OR audio file right now (B-089 — the
-/// media POOL, unlike a Colorist `shot_is_online`'s own video-only check,
-/// also holds real SFX/music sources with no video track at all).
+/// `true` if `path` is a readable video, audio or still-image file right now.
+///
+/// B-089 — the media POOL, unlike a Colorist `shot_is_online`'s own video-only
+/// check, also holds real SFX/music sources with no video track at all.
+/// D-281 — and still images, which are first-class Edit-tab sources; this gate
+/// rejecting them is what made an imported PNG permanently `offline: true`,
+/// before any probe ever ran. Both widenings live in
+/// [`apelles_media::video::is_media_file`].
 pub fn media_item_is_online(path: &str) -> bool {
     let p = Path::new(path);
     p.is_file() && video::is_media_file(p)
+}
+
+impl MediaItem {
+    /// D-281 — has this item ever produced a usable answer from a probe?
+    ///
+    /// **The one predicate for "is this a real, placeable source"**, replacing
+    /// the bare `video.is_some()` every consumer used to ask when video was the
+    /// only kind of source there was. Asking it in one place is what keeps the
+    /// self-heal (`add_media`'s B-073 pass) and the re-probe reconcile
+    /// (`refresh_media`) from disagreeing about whether a freshly-imported
+    /// still counts as imported: it does, it just has no `video`.
+    ///
+    /// Note this is NOT the same question as `!offline` on the DTO — that is a
+    /// live "does the file exist right now" check, this is "did we ever read
+    /// it". A source can be probed and currently offline (moved after import),
+    /// or online and unprobed (a transient `ffprobe` failure — B-073).
+    pub fn is_probed(&self) -> bool {
+        self.video.is_some() || self.image.is_some()
+    }
+
+    /// D-281 — is this pool item a **still image** rather than moving footage?
+    /// Answered from the probe result, not the extension, so it is the model's
+    /// own statement about the item rather than a re-derivation at each caller.
+    pub fn is_still(&self) -> bool {
+        self.image.is_some()
+    }
+
+    /// D-281 — re-read this item's source and refresh whichever probed-facts
+    /// field its kind belongs in, clearing the other. Returns `true` when
+    /// something actually changed, so a caller can skip persisting.
+    ///
+    /// **The ONE place the video-vs-still probe branch is written.** Three
+    /// callers need it — [`probe_media_item`] (import), [`refresh_media`]
+    /// (the D-260/B-128 reconcile and B-073's self-heal) and
+    /// `chroma_swap_clip_media` (relink a clip to a new file) — and before
+    /// D-281 each of them spelled `video::probe(..)` inline, which is precisely
+    /// how the third one would have kept the video-only assumption after the
+    /// first two lost it.
+    ///
+    /// Branches on the *extension* ([`still::is_image_file`]), never on "did
+    /// the video probe fail": a failed video probe genuinely means
+    /// offline/undecodable and must keep meaning that, or every corrupt `.mov`
+    /// would silently become a still.
+    ///
+    /// An offline or unprobeable source is left exactly as it was — never
+    /// falsely recorded as probed, and never *cleared*, which is the same
+    /// "offline is flagged, not fatal" discipline the rest of this module keeps
+    /// (B-073 depends on a transient failure being recoverable).
+    pub fn reprobe_source(&mut self) -> bool {
+        let path = Path::new(&self.source_path);
+        if !media_item_is_online(&self.source_path) {
+            return false;
+        }
+        if still::is_image_file(path) {
+            let Ok(info) = still::probe(path) else {
+                return false;
+            };
+            let fresh = MediaImageInfo::from(&info);
+            if self.image == Some(fresh) && self.video.is_none() {
+                return false;
+            }
+            self.image = Some(fresh);
+            self.video = None;
+            true
+        } else {
+            let Ok(info) = apelles_media::probe::probe_cached(path) else {
+                return false;
+            };
+            let fresh = MediaVideoInfo::from(&info);
+            if self.video.as_ref() == Some(&fresh) && self.image.is_none() {
+                return false;
+            }
+            self.video = Some(fresh);
+            self.image = None;
+            true
+        }
+    }
 }
 
 impl From<&MediaItem> for MediaItemDto {
@@ -582,6 +711,7 @@ impl From<&MediaItem> for MediaItemDto {
             name: m.name.clone(),
             added: m.added.clone(),
             video: m.video.clone(),
+            image: m.image,
             offline: !media_item_is_online(&m.source_path),
             folder: m.folder.clone(),
             motion_scene_id: m.motion_scene_id.clone(),
@@ -623,40 +753,88 @@ pub fn thumb_cache_path(source_path: &str, media_id: &str) -> Option<PathBuf> {
     )
 }
 
-/// Extract a mid-clip frame (not frame 0 — often a black/fade-in frame) via
-/// `video::extract_thumb`, decode its data-URL payload back to raw bytes (same
-/// `rsplit_once(',')` + base64-decode `regen_thumb` uses), and cache it.
-/// Best-effort: a probe/decode failure just leaves the item without a cached
-/// thumbnail, same "offline is flagged, not fatal" discipline as the rest of
-/// this module — the Sources panel falls back to its placeholder icon.
-fn generate_media_thumb(source_path: &str, info: &video::VideoInfo, media_id: &str) {
+/// Height, in pixels, of a media-pool thumbnail. One named constant shared by
+/// the video and still producers below so the Sources panel's grid cannot end
+/// up with two thumbnail sizes depending on what kind of source an item is.
+const MEDIA_THUMB_HEIGHT: u32 = 150;
+
+/// Decode a `data:image/jpeg;base64,…` payload (same `rsplit_once(',')` +
+/// base64-decode `regen_thumb` uses) and write it to this item's slot in the
+/// thumbnail cache.
+///
+/// D-281 — factored out of `generate_media_thumb` when a second producer
+/// appeared: a still's thumbnail differs from a video's only in how the bytes
+/// are made, never in where they go or what a failure means, and duplicating
+/// the caching half is how the two would eventually disagree about the path.
+///
+/// Best-effort throughout: a decode/write failure just leaves the item without
+/// a cached thumbnail, same "offline is flagged, not fatal" discipline as the
+/// rest of this module — the Sources panel falls back to its placeholder icon.
+fn cache_thumb_data_url(source_path: &str, media_id: &str, data_url: &str) {
     let Some(cache_path) = thumb_cache_path(source_path, media_id) else {
         return;
     };
-    let frame = info.frame_count / 2;
-    match video::extract_thumb(Path::new(source_path), info, frame, 150) {
-        Ok(data_url) => {
-            let b64 = data_url
-                .rsplit_once(',')
-                .map(|(_, b)| b)
-                .unwrap_or(&data_url);
-            match base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
-                Ok(bytes) => {
-                    if let Some(dir) = cache_path.parent() {
-                        let _ = std::fs::create_dir_all(dir);
-                    }
-                    if let Err(e) = std::fs::write(&cache_path, bytes) {
-                        log::warn!("[chroma::project] writing media thumb for {source_path}: {e}");
-                    }
-                }
-                Err(e) => {
-                    log::warn!("[chroma::project] decoding media thumb for {source_path}: {e}")
-                }
+    let b64 = data_url
+        .rsplit_once(',')
+        .map(|(_, b)| b)
+        .unwrap_or(data_url);
+    match base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
+        Ok(bytes) => {
+            if let Some(dir) = cache_path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(e) = std::fs::write(&cache_path, bytes) {
+                log::warn!("[chroma::project] writing media thumb for {source_path}: {e}");
             }
         }
+        Err(e) => log::warn!("[chroma::project] decoding media thumb for {source_path}: {e}"),
+    }
+}
+
+/// Extract a mid-clip frame (not frame 0 — often a black/fade-in frame) via
+/// `video::extract_thumb` and cache it. Best-effort — see
+/// [`cache_thumb_data_url`].
+fn generate_media_thumb(source_path: &str, info: &video::VideoInfo, media_id: &str) {
+    if thumb_cache_path(source_path, media_id).is_none() {
+        return;
+    }
+    let frame = info.frame_count / 2;
+    match video::extract_thumb(Path::new(source_path), info, frame, MEDIA_THUMB_HEIGHT) {
+        Ok(data_url) => cache_thumb_data_url(source_path, media_id, &data_url),
         Err(e) => {
             log::warn!("[chroma::project] media thumb generation failed for {source_path}: {e}")
         }
+    }
+}
+
+/// D-281 — [`generate_media_thumb`]'s still counterpart: the image itself,
+/// downscaled. Deliberately the same cache slot and the same JPEG data-URL
+/// shape a video's poster frame produces, so a still needs no thumbnail branch
+/// anywhere downstream — [`read_cached_thumb`], the DTO and the Sources panel
+/// are all untouched by this feature.
+fn generate_still_thumb(source_path: &str, media_id: &str) {
+    if thumb_cache_path(source_path, media_id).is_none() {
+        return;
+    }
+    match still::thumbnail(Path::new(source_path), MEDIA_THUMB_HEIGHT) {
+        Ok(data_url) => cache_thumb_data_url(source_path, media_id, &data_url),
+        Err(e) => {
+            log::warn!("[chroma::project] still thumb generation failed for {source_path}: {e}")
+        }
+    }
+}
+
+/// D-281 — generate this source's pool thumbnail, whichever kind of source it
+/// is. The counterpart of [`MediaItem::reprobe_source`]: one branch, written
+/// once, so an import and a reconcile cannot end up producing a thumbnail for
+/// different kinds of file. The video arm's probe is
+/// [`apelles_media::probe::probe_cached`], so a source probed a moment ago in
+/// the same pass costs a `stat` here, not a second `ffprobe`.
+fn generate_thumb_for(source_path: &str, media_id: &str) {
+    if still::is_image_file(source_path) {
+        generate_still_thumb(source_path, media_id);
+    } else if let Ok(info) = apelles_media::probe::probe_cached(Path::new(source_path)) {
+        generate_media_thumb(source_path, &info, media_id);
     }
 }
 
@@ -672,30 +850,37 @@ fn read_cached_thumb(source_path: &str, media_id: &str) -> Option<String> {
 
 /// Probe `path` and build a [`MediaItem`] for it, filed into `folder` (a bin
 /// path, created implicitly by being named here — D-045). Never fails
-/// outright — a probe failure (offline / not decodable) just leaves
-/// `video: None` and no cached thumbnail.
+/// outright — a probe failure (offline / not decodable) just leaves both
+/// `video` and `image` `None` and no cached thumbnail.
+///
+/// **D-281 — two probes, one per kind of source.** This used to call
+/// `video::probe` unconditionally on every import, which is why a still image
+/// came back `offline: true, video: null` and could never be placed: a PNG has
+/// no video stream to probe, and even where `ffprobe` nominally succeeds on
+/// one it reports `frame_count: 0`, which every consumer downstream reads as
+/// "unusable". The branch itself lives in [`MediaItem::reprobe_source`] —
+/// see its doc for why it keys off the extension — so import, reconcile and
+/// clip-relink all take the identical one.
 fn probe_media_item(path: &str, folder: Option<&str>) -> MediaItem {
     let name = Path::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string());
     let id = uuid::Uuid::new_v4().to_string();
-    let probed = media_item_is_online(path)
-        .then(|| video::probe(Path::new(path)).ok())
-        .flatten();
-    if let Some(info) = &probed {
-        generate_media_thumb(path, info, &id);
-    }
-    let video = probed.as_ref().map(MediaVideoInfo::from);
-    MediaItem {
+    let mut item = MediaItem {
         id,
         source_path: path.to_string(),
         name,
         added: now_rfc3339(),
-        video,
+        video: None,
+        image: None,
         folder: normalize_folder(folder),
         motion_scene_id: None,
+    };
+    if item.reprobe_source() {
+        generate_thumb_for(path, &item.id);
     }
+    item
 }
 
 /// D-260 — is the cached thumbnail for this item older than the file it is a
@@ -772,17 +957,13 @@ pub fn refresh_media(
             item.motion_scene_id = motion_scene_id.map(str::to_string);
             changed = true;
         }
-        if media_item_is_online(path)
-            && let Ok(info) = apelles_media::probe::probe_cached(Path::new(path))
-        {
-            let fresh = MediaVideoInfo::from(&info);
-            if item.video.as_ref() != Some(&fresh) {
-                item.video = Some(fresh);
-                changed = true;
-            }
-            if thumb_is_stale(path, &item.id) {
-                generate_media_thumb(path, &info, &item.id);
-            }
+        // D-281 — the video-vs-still branch is `reprobe_source`'s, not spelled
+        // again here. This function's own reconcile discipline is unchanged:
+        // write only when the answer actually changed, and regenerate the
+        // thumbnail only when `thumb_is_stale` says so.
+        changed |= item.reprobe_source();
+        if media_item_is_online(path) && thumb_is_stale(path, &item.id) {
+            generate_thumb_for(path, &item.id);
         }
         touched.push(item.clone());
     }
@@ -865,7 +1046,7 @@ pub fn add_media(
             manifest
                 .media
                 .iter()
-                .any(|m| &&m.source_path == p && m.video.is_none())
+                .any(|m| &&m.source_path == p && !m.is_probed())
         })
         .cloned()
         .collect();
@@ -887,7 +1068,7 @@ pub fn add_media(
     // be the same false signal the original bug was made of.
     added
         .into_iter()
-        .chain(healed.into_iter().filter(|m| m.video.is_some()))
+        .chain(healed.into_iter().filter(MediaItem::is_probed))
         .collect()
 }
 
@@ -2662,6 +2843,113 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// **D-281, end to end at the pool layer — the owner's actual bug.**
+    ///
+    /// Importing a real PNG used to come back `offline: true, video: null`,
+    /// because `media_item_is_online`'s extension gate rejected it before
+    /// `probe_media_item` ever ran, and `probe_media_item` would then have
+    /// called `video::probe` on it anyway. All four facts a still needs are
+    /// asserted here: it is ONLINE, it is PROBED (so `add_media`'s B-073
+    /// self-heal and `editor_add_clip` both accept it), its real DIMENSIONS are
+    /// recorded, and it carries no invented `video` facts.
+    #[test]
+    fn a_still_image_imports_as_a_real_probed_pool_item_d281() {
+        let root = tmp("still_import");
+        let (_dir, mut manifest) = new_project_in(&root, "still-test", &[]).unwrap();
+
+        let png = root.join("reference.png");
+        image::RgbImage::from_fn(96, 64, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 200])
+        })
+        .save(&png)
+        .unwrap();
+        let path = png.to_string_lossy().to_string();
+
+        assert!(
+            media_item_is_online(&path),
+            "a still on disk is ONLINE — this gate is what the bug was"
+        );
+
+        let added = add_media(&mut manifest, std::slice::from_ref(&path), None);
+        assert_eq!(added.len(), 1);
+        let item = &manifest.media[0];
+        assert!(item.is_probed(), "a still is a real, placeable source");
+        assert!(item.is_still());
+        assert_eq!(
+            item.image
+                .map(|i| (i.resolution.width, i.resolution.height)),
+            Some((96, 64)),
+            "the still's real dimensions are recorded"
+        );
+        assert!(
+            item.video.is_none(),
+            "and NO video facts are invented for it — a zero frame count would be \
+             indistinguishable from a failed probe"
+        );
+
+        // The DTO the frontend and MCP actually see.
+        let dto = MediaItemDto::from(item);
+        assert!(!dto.offline, "the bug's own symptom, asserted directly");
+        assert!(dto.video.is_none());
+        assert_eq!(dto.image.map(|i| i.resolution.width), Some(96));
+        assert!(
+            dto.thumb.is_some(),
+            "a still gets a real thumbnail — the image itself, downscaled — so it \
+             does not look broken next to video items"
+        );
+
+        // Re-importing the same path is still a no-op, not a duplicate and not a
+        // spurious "healed" row: the item is fully probed.
+        assert!(add_media(&mut manifest, std::slice::from_ref(&path), None).is_empty());
+        assert_eq!(manifest.media.len(), 1);
+
+        // And the reconcile path agrees with the import path (they share
+        // `reprobe_source`): nothing changed, so nothing is written.
+        let (touched, changed) = refresh_media(&mut manifest, &[path], None);
+        assert_eq!(touched.len(), 1);
+        assert!(!changed, "an unchanged still re-probes to the same facts");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// D-281 — a still whose `project.json` predates the `image` key, and a
+    /// still item's own round trip. The wire shape must stay additive: a
+    /// pre-D-281 item deserializes with `image: None` and no migration, and a
+    /// video item serializes byte-identically to before the key existed.
+    #[test]
+    fn the_image_key_is_additive_on_the_wire_d281() {
+        let legacy = r#"{"id":"a","sourcePath":"/a.mov","name":"a.mov","added":"",
+            "video":{"width":1920,"height":1080,"fps":24.0,"frameCount":100,"durationSecs":4.0}}"#;
+        let item: MediaItem = serde_json::from_str(legacy).unwrap();
+        assert!(item.image.is_none(), "no key ⇒ None, not an error");
+        assert!(item.is_probed());
+        assert!(!item.is_still());
+        assert!(
+            !serde_json::to_string(&item).unwrap().contains("\"image\""),
+            "a video item's JSON is unchanged by this field existing"
+        );
+
+        let still = MediaItem {
+            id: "b".into(),
+            source_path: "/ref.png".into(),
+            name: "ref.png".into(),
+            added: String::new(),
+            video: None,
+            image: Some(MediaImageInfo {
+                resolution: apelles_types::Resolution::new(800, 600),
+            }),
+            folder: None,
+            motion_scene_id: None,
+        };
+        let json = serde_json::to_string(&still).unwrap();
+        assert!(
+            json.contains("\"image\":{\"width\":800,\"height\":600}"),
+            "flattened width/height, same shape MediaVideoInfo uses: {json}"
+        );
+        let back: MediaItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, still);
+    }
+
     #[test]
     fn sanitize_name_is_dir_safe() {
         assert_eq!(sanitize_name("  a/b:c  "), "a-b-c");
@@ -2859,6 +3147,7 @@ mod tests {
             name: "present.mov".into(),
             added: now_rfc3339(),
             video: None,
+            image: None,
             folder: None,
             motion_scene_id: None,
         };
@@ -2868,6 +3157,7 @@ mod tests {
             name: "gone.mov".into(),
             added: now_rfc3339(),
             video: None,
+            image: None,
             folder: Some("B-roll/Sunset".into()),
             motion_scene_id: None,
         };
@@ -3033,6 +3323,7 @@ mod tests {
             name: "resolved".into(),
             added: now_rfc3339(),
             video: Some(info(Some(true))),
+            image: None,
             folder: None,
             motion_scene_id: None,
         });
@@ -3045,6 +3336,7 @@ mod tests {
             name: "unprobeable".into(),
             added: now_rfc3339(),
             video: Some(info(None)),
+            image: None,
             folder: None,
             motion_scene_id: None,
         });
@@ -3056,6 +3348,7 @@ mod tests {
             name: "offline".into(),
             added: now_rfc3339(),
             video: None,
+            image: None,
             folder: None,
             motion_scene_id: None,
         });
@@ -3635,6 +3928,7 @@ mod tests {
             name: "a.mov".into(),
             added: String::new(),
             video: None,
+            image: None,
             folder: None,
             motion_scene_id: None,
         });
@@ -3690,6 +3984,7 @@ mod tests {
             name: "a.mov".into(),
             added: String::new(),
             video: None,
+            image: None,
             folder: None,
             motion_scene_id: None,
         });
@@ -3734,6 +4029,7 @@ mod tests {
             name: "a.mov".into(),
             added: String::new(),
             video: None,
+            image: None,
             folder: None,
             motion_scene_id: None,
         });
@@ -3789,6 +4085,7 @@ mod tests {
             name: "a.mov".into(),
             added: String::new(),
             video: None,
+            image: None,
             folder: None,
             motion_scene_id: None,
         });
@@ -3847,6 +4144,7 @@ mod tests {
             name: "a.mov".into(),
             added: String::new(),
             video: None,
+            image: None,
             folder: None,
             motion_scene_id: None,
         });

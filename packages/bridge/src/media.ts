@@ -56,6 +56,19 @@ export interface MediaVideoInfo {
   audioChannels?: number | null;
 }
 
+/** Mirrors `apelles_project::manifest::MediaImageInfo` (serde camelCase) —
+ *  D-281.
+ *
+ *  **Just the resolution, deliberately.** A still has no frame rate, no
+ *  duration, no frame count and no audio; see the Rust struct's own doc for why
+ *  those are absent here rather than reported as zeroes (a zero `frameCount` is
+ *  indistinguishable from a *failed* probe, which is exactly what every
+ *  consumer downstream reads it as). */
+export interface MediaImageInfo {
+  width: number;
+  height: number;
+}
+
 /** Mirrors `chroma::project::MediaItemDto` (serde camelCase). */
 export interface MediaItem {
   id: string;
@@ -63,9 +76,18 @@ export interface MediaItem {
   name: string;
   /** RFC-3339 import time */
   added: string;
-  /** absent when the source failed to probe at import time */
+  /** absent when the source failed to probe at import time, and always absent
+   *  for a still image (which has `image` instead — D-281) */
   video?: MediaVideoInfo | null;
-  /** the source path is missing (or not a video) right now */
+  /** D-281 — the still's own probed facts, when this item is a still image
+   *  (PNG/JPEG/TIFF/WebP/BMP). **Mutually exclusive with `video`**: an item has
+   *  one or the other, and `!video && !image` is exactly "this never probed
+   *  successfully". Placing a still on the timeline goes through
+   *  `@apelles/editor`'s `mediaSourceFacts`, which synthesizes the length a
+   *  still does not have. */
+  image?: MediaImageInfo | null;
+  /** the source path is missing (or is not importable media — video, audio or
+   *  a still) right now */
   offline: boolean;
   /** the bin this item is filed in (D-045); `null`/absent = the pool root */
   folder?: string | null;

@@ -61,6 +61,7 @@ import type { Clip, EaseCurve, Timeline, Track, Transition } from './timeline';
 import {
   DEFAULT_EASE_CURVE,
   endFrame,
+  isStillSource,
   timelineFramesToSource,
   transitionHandles,
   transitionWindow,
@@ -1947,14 +1948,43 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       // byte-identical to pre-D-226 for it. `checkTransition` has already
       // refused any transition whose handles do not exist, so this never asks
       // ffmpeg for media outside the file.
-      inputs.push(
-        '-ss',
-        String((clip.source_start - adjust.headSrcFrames) / clipFps),
-        '-t',
-        String((clip.duration + adjust.headSrcFrames + adjust.tailSrcFrames) / clipFps),
-        '-i',
-        clip.source_path,
-      );
+      // D-281 — a STILL IMAGE is opened as a LOOPED single-frame source, not
+      // seeked into like a stream.
+      //
+      // `-loop 1 -framerate <rate>` makes ffmpeg's image demuxer emit that one
+      // picture forever at `<rate>`; `-t` then cuts it to exactly the clip's
+      // own length, so the still is present at EVERY output frame of its
+      // duration rather than at one. There is deliberately no `-ss`: a still
+      // has no timeline to seek within (`source_start` is meaningless on it,
+      // and the compositor ignores the resolved source frame for the same
+      // reason — see `decode_clip_picture` in `chroma::edit`), and an `-ss`
+      // into a looped image would just discard whole copies of the same frame.
+      //
+      // The transition handles ARE folded into the length, exactly as they are
+      // for footage: a still under a cross dissolve has to keep being emitted
+      // through the dissolve window. It never runs out of media doing so,
+      // which is the one way a still is easier than footage here.
+      if (isStillSource(clip.source_path)) {
+        inputs.push(
+          '-loop',
+          '1',
+          '-framerate',
+          String(clipFps),
+          '-t',
+          String((clip.duration + adjust.headSrcFrames + adjust.tailSrcFrames) / clipFps),
+          '-i',
+          clip.source_path,
+        );
+      } else {
+        inputs.push(
+          '-ss',
+          String((clip.source_start - adjust.headSrcFrames) / clipFps),
+          '-t',
+          String((clip.duration + adjust.headSrcFrames + adjust.tailSrcFrames) / clipFps),
+          '-i',
+          clip.source_path,
+        );
+      }
 
       // `start_frame` is a TIMELINE frame (project/export rate) — `opts.fps`
       // is correct here. `duration` is a SOURCE frame count — `clipFps` is

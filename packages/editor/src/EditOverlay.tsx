@@ -57,6 +57,7 @@ import {
   checkEditTarget,
   editTargetIndexAt,
   linkedClipsFromDraggedMedia,
+  timelineFps,
   videoTrackIndex,
   type DraggedMedia,
   type DropEditType,
@@ -187,7 +188,9 @@ export function EditOverlay() {
     } catch {
       return;
     }
-    const pair = linkedClipsFromDraggedMedia(media);
+    // D-281 — the project's own rate: a STILL has no length of its own, so its
+    // synthesized span is measured in seconds (`mediaSourceFacts`).
+    const pair = linkedClipsFromDraggedMedia(media, timelineFps(useEditorTimelineStore.getState().timeline));
     if (!pair) {
       showError(`${media.name} has no known length yet — it is offline or still being probed`);
       return;
