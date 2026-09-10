@@ -2967,16 +2967,12 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      scrubbing instead of silently measuring the wrong frame.
   Not scoped into a D-NNN yet — sizing each of the 6 as its own tool/change
   before committing to an implementation order.
-- **Redundant "Apelles" label in the custom titlebar** — owner flagged live with a
-  screenshot (macOS menu bar already shows the app name at the very top; the
-  custom titlebar repeats it right below, immediately after the traffic-light
-  buttons): *"add this to backlock lets remove the apelles from here my project
-  as on the very top it's aleady there."* Location: `app/src/window/
-  TitleBar.tsx:116` — `<p className="text-sm font-semibold text-text-secondary
-  pointer-events-none">Apelles</p>`. Trivial removal (delete the element,
-  verify the surrounding flex layout doesn't leave a visible gap where it sat)
-  but not yet done — logged here rather than fixed inline since it was raised
-  as a backlog item, not an immediate ask.
+- ~~**Redundant "Apelles" label in the custom titlebar**~~ — **done, 2026-09-10.**
+  Owner flagged live with a screenshot (macOS menu bar already shows the app name
+  at the very top; the custom titlebar repeated it right below, immediately after
+  the traffic-light buttons), then asked directly to remove it. Removed the `<p>`
+  label from `app/src/window/TitleBar.tsx`, kept the surrounding
+  `data-tauri-drag-region` div itself so that strip is still draggable.
 - **`chroma_export_video` has no queue — a second call while one is running is
   refused outright.** Confirmed live, 2026-09-10: owner asked to queue a second
   full-length export while the first was still rendering; the code
