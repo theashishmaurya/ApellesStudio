@@ -174,19 +174,24 @@ const placeholder = isPlaceholderEndpoint(endpoint);
   .fade {
     position: absolute;
     inset: 0;
-    /* Eased stops (front-loaded, easing in a curve rather than a flat
-       ramp) plus oklab interpolation, which blends colour perceptually
-       instead of in raw sRGB — both genuinely cut banding on a fade into
-       this near-black. (A noise-dither overlay was also tried; it read as
-       visible static rather than a fix and was reverted.) */
+    /* An ease-IN curve here (slow start, fast finish near the bottom) reads
+       as a long flat plod that then rushes to black right at the seam —
+       reported live: "light to dark --> dark --> ink dark... this is what
+       we want[:] continuous flow", i.e. an even, monotonic descent, not a
+       last-second dash. This is an ease-IN-OUT cubic instead (slow, fast
+       through the middle, slow again as it lands exactly on ink), confined
+       to the bottom 60% of the hero so it doesn't also darken the top
+       (the flat `.scrim` above already handles that) — still oklab
+       interpolation + intermediate stops to avoid banding on the way down. */
     background: linear-gradient(
       in oklab to bottom,
-      transparent 0%,
-      color-mix(in oklab, var(--pigment-basalt) 4%, transparent) 20%,
-      color-mix(in oklab, var(--pigment-basalt) 15%, transparent) 35%,
-      color-mix(in oklab, var(--pigment-basalt) 35%, transparent) 50%,
-      color-mix(in oklab, var(--pigment-basalt) 60%, transparent) 65%,
-      color-mix(in oklab, var(--pigment-basalt) 85%, transparent) 80%,
+      transparent 40%,
+      color-mix(in oklab, var(--pigment-basalt) 3%, transparent) 50%,
+      color-mix(in oklab, var(--pigment-basalt) 12%, transparent) 58%,
+      color-mix(in oklab, var(--pigment-basalt) 30%, transparent) 66%,
+      color-mix(in oklab, var(--pigment-basalt) 58%, transparent) 74%,
+      color-mix(in oklab, var(--pigment-basalt) 82%, transparent) 82%,
+      color-mix(in oklab, var(--pigment-basalt) 96%, transparent) 90%,
       var(--pigment-basalt) 100%
     );
   }
