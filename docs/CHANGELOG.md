@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-142, the real fix:** the previous fix (a WebKit-quirk
+  theory, merging two divs) shipped and was confirmed live still broken.
+  Real cause: `app/src/styles.css`'s Tailwind `@source` list never included
+  `packages/keymap/src` at all — added when D-273 created the whole
+  package, so `columns-1`/`sm:columns-2`/`lg:columns-3` were inert class
+  names, never real CSS. Same gap found and fixed for `packages/inspector/
+  src`, not yet visibly broken there only by coincidence. Every future
+  package with real UI needs its own `@source` line — nothing else
+  enforces this.
 - **2026-09-10** — **B-142 fixed:** D-278's new multi-column Keyboard
   Shortcuts layout never actually balanced in the real app — a WebKit-only
   quirk (this app's real renderer) where `columns-*` fails to balance when

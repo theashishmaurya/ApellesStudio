@@ -9,6 +9,8 @@
 @source "../../packages/editor/src";
 @source "../../packages/motion/src";
 @source "../../packages/player/src";
+@source "../../packages/inspector/src";
+@source "../../packages/keymap/src";
 
 @theme {
   --color-bg-primary: var(--app-bg-primary);
