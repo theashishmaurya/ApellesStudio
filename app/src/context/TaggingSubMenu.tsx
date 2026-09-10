@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { X, Plus } from 'lucide-react';
+import { XIcon, PlusIcon } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { Invokes } from '../components/ui/AppProperties';
@@ -113,7 +113,7 @@ export default function TaggingSubMenu({
                 >
                   <span>{tagItem.tag}</span>
                   <span className="rounded-full group-hover:bg-black/20 p-0.5 transition-colors">
-                    <X size={12} />
+                    <XIcon size={12} />
                   </span>
                 </motion.div>
               ))
@@ -150,7 +150,7 @@ export default function TaggingSubMenu({
           className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface"
           data-tooltip={t('menus.tagging.addTagTooltip')}
         >
-          <Plus size={16} />
+          <PlusIcon size={16} />
         </button>
       </div>
 

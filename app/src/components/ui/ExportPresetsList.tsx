@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useTranslation } from 'react-i18next';
-import { Plus, Trash2, Save, X, Check } from 'lucide-react';
+import { PlusIcon, TrashIcon, FloppyDiskIcon, XIcon, CheckIcon } from '@phosphor-icons/react';
 import { ExportPreset } from './ExportImportProperties';
 import { AppSettings } from './AppProperties';
 import Dropdown from './Dropdown';
@@ -117,7 +117,7 @@ export default function ExportPresetsList({
             className="p-2 bg-surface hover:bg-card-active rounded-md text-text-primary transition-colors"
             data-tooltip={t('ui.exportPresets.saveAsNewTooltip')}
           >
-            <Plus size={18} />
+            <PlusIcon size={18} />
           </button>
 
           {selectedPresetId && !isDefault && (
@@ -130,14 +130,14 @@ export default function ExportPresetsList({
                 }`}
                 data-tooltip={isSaved ? t('ui.exportPresets.savedTooltip') : t('ui.exportPresets.overwriteTooltip')}
               >
-                {isSaved ? <Check size={18} /> : <Save size={18} />}
+                {isSaved ? <CheckIcon size={18} /> : <FloppyDiskIcon size={18} />}
               </button>
               <button
                 onClick={handleDeletePreset}
                 className="p-2 bg-surface hover:bg-red-500/20 hover:text-red-500 rounded-md text-text-secondary transition-colors"
                 data-tooltip={t('ui.exportPresets.deleteTooltip')}
               >
-                <Trash2 size={18} />
+                <TrashIcon size={18} />
               </button>
             </>
           )}
@@ -158,13 +158,13 @@ export default function ExportPresetsList({
             disabled={!newPresetName.trim()}
             className="p-2 bg-accent text-button-text rounded-md hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Save size={18} />
+            <FloppyDiskIcon size={18} />
           </button>
           <button
             onClick={() => setIsCreating(false)}
             className="p-2 bg-surface text-text-secondary rounded-md hover:bg-card-active"
           >
-            <X size={18} />
+            <XIcon size={18} />
           </button>
         </div>
       )}

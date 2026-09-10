@@ -173,7 +173,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Loader2 } from 'lucide-react';
+import { CircleNotchIcon } from '@phosphor-icons/react';
 import { Player, useContentBox } from '@apelles/player';
 import { useShortcut } from '@apelles/keymap';
 
@@ -909,7 +909,7 @@ export function PreviewPane() {
             </div>
           ) : timeline ? (
             <div className="flex flex-col items-center gap-2 text-text-secondary">
-              <Loader2 className="size-5 animate-spin" />
+              <CircleNotchIcon className="size-5 animate-spin" />
               <span className="text-xs">Loading preview…</span>
             </div>
           ) : (

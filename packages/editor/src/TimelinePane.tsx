@@ -48,7 +48,7 @@
  *     the library's own action-drag path. D-080 shipped a "Move to ▾"
  *     toolbar dropdown instead (kept below as a fallback affordance — see
  *     D-094). **D-094 adds the real drag gesture**: each clip's rendered
- *     content (`getActionRender`) gets a small `GripVertical` handle at its
+ *     content (`getActionRender`) gets a small `DotsSixVertical` handle at its
  *     top-left, inset past the 10px left-edge resize zone so it doesn't
  *     shadow `flexible`'s resize hit-testing (same B-013 concern the label
  *     overlay already had to solve). That handle is plain HTML5
@@ -289,44 +289,45 @@ import {
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS as DndCSS } from '@dnd-kit/utilities';
 import {
-  AudioLines,
-  ArrowRightLeft,
+  WaveformIcon,
+  ArrowsLeftRightIcon,
   // D-149 — the track-header ducking control's icon: "push this track down."
-  ChevronsDown,
-  Eye,
-  EyeOff,
-  Film,
-  FoldHorizontal,
-  GripVertical,
-  // D-138 — the A/V-link action's own icon. Deliberately `Link`, not `Link2`
-  // below: that one is already the track header's sync-lock-ON icon, and
-  // sync-lock and an A/V link are different relationships (see
-  // `avLinkedIds`), so — same reasoning as `Unlink`/`Unlink2` just below —
-  // they must not share an icon.
-  Link,
-  Link2,
-  Lock,
-  Scissors,
-  Trash2,
-  // D-230 — the badge on an adjustment clip's own body. `Wand2` is the
+  CaretDoubleDownIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  FilmStripIcon,
+  ArrowsInLineHorizontalIcon,
+  DotsSixVerticalIcon,
+  // D-138 — the A/V-link action's own icon. Deliberately `Link`, not
+  // `LinkSimpleHorizontal` below: that one is already the track header's
+  // sync-lock-ON icon, and sync-lock and an A/V link are different
+  // relationships (see `avLinkedIds`), so — same reasoning as
+  // `LinkBreak`/`LinkSimpleHorizontalBreak` just below — they must not share
+  // an icon.
+  LinkIcon,
+  LinkSimpleHorizontalIcon,
+  LockIcon,
+  ScissorsIcon,
+  TrashIcon,
+  // D-230 — the badge on an adjustment clip's own body. `MagicWand` is the
   // closest match to the wand Resolve itself puts on its Effects tab
   // (`scratch/resolve-reference/adjustments.jpg`). D-248: it is no longer
-  // ALSO this toolbar's Add-adjustment icon — that action, and `Type` with
+  // ALSO this toolbar's Add-adjustment icon — that action, and `TextT` with
   // it, moved to `EditLibraryRail.tsx`.
-  Wand2,
-  // D-128 — the A/V-unlink action. Deliberately `Unlink`, not the `Unlink2`
-  // below: that one is already the track header's sync-lock toggle, and
-  // sync-lock and an A/V link are different relationships (see
-  // `avLinkedIds`), so they must not share an icon.
-  Unlink,
-  Unlink2,
-  Unlock,
-  Volume2,
-  Spline,
-  VolumeX,
-  ZoomIn,
-  ZoomOut,
-} from 'lucide-react';
+  MagicWandIcon,
+  // D-128 — the A/V-unlink action. Deliberately `LinkBreak`, not the
+  // `LinkSimpleHorizontalBreak` below: that one is already the track header's
+  // sync-lock toggle, and sync-lock and an A/V link are different
+  // relationships (see `avLinkedIds`), so they must not share an icon.
+  LinkBreakIcon,
+  LinkSimpleHorizontalBreakIcon,
+  LockOpenIcon,
+  SpeakerHighIcon,
+  BezierCurveIcon,
+  SpeakerSlashIcon,
+  MagnifyingGlassPlusIcon,
+  MagnifyingGlassMinusIcon,
+} from '@phosphor-icons/react';
 import {
   Button,
   DropdownMenu,
@@ -741,7 +742,7 @@ function TrackDuckControl({
                 : 'Ducking — lower this track while another one plays'
             }
           >
-            <ChevronsDown className="size-3" />
+            <CaretDoubleDownIcon className="size-3" />
           </Button>
         }
       />
@@ -917,9 +918,9 @@ function SortableTrackHeader({
           title="Drag to reorder track"
           aria-label="Drag to reorder track"
         >
-          <GripVertical className="size-3" />
+          <DotsSixVerticalIcon className="size-3" />
         </div>
-        {isVideo ? <Film className="size-3 shrink-0" /> : <AudioLines className="size-3 shrink-0" />}
+        {isVideo ? <FilmStripIcon className="size-3 shrink-0" /> : <WaveformIcon className="size-3 shrink-0" />}
         <span className="text-[10px] font-medium truncate flex-1">{label}</span>
       </div>
       <div className="flex items-center gap-1">
@@ -930,7 +931,7 @@ function SortableTrackHeader({
           aria-label={locked ? 'Unlock track' : 'Lock track'}
           title={locked ? 'Unlock track' : 'Lock track'}
         >
-          {locked ? <Lock className="size-3" /> : <Unlock className="size-3" />}
+          {locked ? <LockIcon className="size-3" /> : <LockOpenIcon className="size-3" />}
         </Button>
         {/* D-106 — cross-track ripple sync toggle, a real per-track concept
             distinct from `locked` above (see `Track.sync_locked`'s own
@@ -947,7 +948,7 @@ function SortableTrackHeader({
               : 'Sync lock off — ripples on other tracks skip this one'
           }
         >
-          {syncLocked ? <Link2 className="size-3" /> : <Unlink2 className="size-3" />}
+          {syncLocked ? <LinkSimpleHorizontalIcon className="size-3" /> : <LinkSimpleHorizontalBreakIcon className="size-3" />}
         </Button>
         {isVideo && (
           <Button
@@ -957,7 +958,7 @@ function SortableTrackHeader({
             aria-label={hidden ? 'Show track' : 'Hide track'}
             title={hidden ? 'Show track (excluded from compositing)' : 'Hide track'}
           >
-            {hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+            {hidden ? <EyeSlashIcon className="size-3" /> : <EyeIcon className="size-3" />}
           </Button>
         )}
         {!isVideo && (
@@ -968,7 +969,7 @@ function SortableTrackHeader({
             aria-label={muted ? 'Unmute track' : 'Mute track'}
             title={muted ? 'Unmute track' : 'Mute track'}
           >
-            {muted ? <VolumeX className="size-3" /> : <Volume2 className="size-3" />}
+            {muted ? <SpeakerSlashIcon className="size-3" /> : <SpeakerHighIcon className="size-3" />}
           </Button>
         )}
         {/* D-149 — ducking, right beside mute: both are this track's mix
@@ -993,7 +994,7 @@ function SortableTrackHeader({
           aria-label="Remove track"
           title="Remove track"
         >
-          <Trash2 className="size-3" />
+          <TrashIcon className="size-3" />
         </Button>
       </div>
     </div>
@@ -2668,7 +2669,7 @@ export function TimelinePane() {
               className="absolute inset-0 flex items-center gap-1.5 overflow-hidden px-2"
               style={{ background: 'rgba(70,110,205,0.72)' }}
             >
-              <Wand2 className="size-3 shrink-0 text-button-text/90" aria-hidden />
+              <MagicWandIcon className="size-3 shrink-0 text-button-text/90" aria-hidden />
               <span className="truncate text-[11px] font-semibold tracking-wide text-button-text/90">
                 {clip.name || 'Adjustment Clip'}
               </span>
@@ -2821,7 +2822,7 @@ export function TimelinePane() {
                 setCurveEditor(curveOpenHere ? null : { track: ti, id: action.id, param: curveParam });
               }}
             >
-              <Spline size={11} />
+              <BezierCurveIcon size={11} />
             </button>
           )}
           <div className="relative z-10 flex h-full items-center px-2 text-[11px] font-medium truncate pointer-events-none text-button-text">
@@ -3193,7 +3194,7 @@ export function TimelinePane() {
   };
 
   // D-094 — track reorder is now a real drag handle on each header row
-  // (`GripVertical`, plain HTML5 drag/drop — same mechanism as the
+  // (`DotsSixVertical`, plain HTML5 drag/drop — same mechanism as the
   // Sources-panel clip drop, just scoped to the header sidebar's own DOM,
   // entirely separate from the library's action-drag), replacing D-090's
   // up/down buttons. `move_track(from, to)` mirrors `apelles_timeline::
@@ -3762,7 +3763,7 @@ export function TimelinePane() {
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        <Film className="size-6 text-text-secondary/50" />
+        <FilmStripIcon className="size-6 text-text-secondary/50" />
         <p className="text-xs text-text-secondary">
           Empty timeline — drag a clip from Sources to get started.
         </p>
@@ -3804,7 +3805,7 @@ export function TimelinePane() {
                   disabled={selection.length === 0}
                   aria-label="Split at playhead"
                 >
-                  <Scissors />
+                  <ScissorsIcon />
                 </Button>
               }
             />
@@ -3893,7 +3894,7 @@ export function TimelinePane() {
                   disabled={selection.length === 0}
                   aria-label="Remove clip"
                 >
-                  <Trash2 />
+                  <TrashIcon />
                 </Button>
               }
             />
@@ -3915,7 +3916,7 @@ export function TimelinePane() {
               <TooltipTrigger
                 render={
                   <Button variant="ghost" size="icon-sm" onClick={doUnlink} aria-label="Unlink audio and video">
-                    <Unlink />
+                    <LinkBreakIcon />
                   </Button>
                 }
               />
@@ -3948,7 +3949,7 @@ export function TimelinePane() {
                     disabled={!linkCheck.result.ok}
                     aria-label="Link audio and video"
                   >
-                    <Link />
+                    <LinkIcon />
                   </Button>
                 }
               />
@@ -3968,8 +3969,8 @@ export function TimelinePane() {
               after it earlier. A separate button rather than overloading
               "Remove" itself — the two selections are mutually exclusive, so
               at most one of these two buttons is ever enabled/relevant at
-              once, but a distinct label/icon ("Close Gap"/`FoldHorizontal`
-              vs. "Remove"/`Trash2`) makes clear this closes the space rather
+              once, but a distinct label/icon ("Close Gap"/`ArrowsInLineHorizontal`
+              vs. "Remove"/`Trash`) makes clear this closes the space rather
               than just deleting something, matching the real, different
               underlying operation (D-105's `remove_gap` ripples; `remove`
               deliberately doesn't). Same Delete/Backspace keybinding covers
@@ -3979,7 +3980,7 @@ export function TimelinePane() {
               <TooltipTrigger
                 render={
                   <Button variant="ghost" size="icon-sm" onClick={doRemoveGap} aria-label="Close gap">
-                    <FoldHorizontal />
+                    <ArrowsInLineHorizontalIcon />
                   </Button>
                 }
               />
@@ -4002,7 +4003,7 @@ export function TimelinePane() {
                     <DropdownMenuTrigger
                       render={
                         <Button variant="ghost" size="icon-sm" aria-label="Move to another track">
-                          <ArrowRightLeft />
+                          <ArrowsLeftRightIcon />
                         </Button>
                       }
                     />
@@ -4041,7 +4042,7 @@ export function TimelinePane() {
               <TooltipTrigger
                 render={
                   <Button variant="ghost" size="sm" onClick={zoomOut} aria-label="Zoom out">
-                    <ZoomOut />
+                    <MagnifyingGlassMinusIcon />
                   </Button>
                 }
               />
@@ -4052,7 +4053,7 @@ export function TimelinePane() {
               <TooltipTrigger
                 render={
                   <Button variant="ghost" size="sm" onClick={zoomIn} aria-label="Zoom in">
-                    <ZoomIn />
+                    <MagnifyingGlassPlusIcon />
                   </Button>
                 }
               />

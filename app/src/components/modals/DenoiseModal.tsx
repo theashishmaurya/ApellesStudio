@@ -1,6 +1,16 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle, XCircle, Loader2, Save, RefreshCw, ZoomIn, ZoomOut, Move, Grip } from 'lucide-react';
+import {
+  CheckCircleIcon,
+  XCircleIcon,
+  CircleNotchIcon,
+  FloppyDiskIcon,
+  ArrowsClockwiseIcon,
+  MagnifyingGlassPlusIcon,
+  MagnifyingGlassMinusIcon,
+  ArrowsOutCardinalIcon,
+  DotsSixIcon,
+} from '@phosphor-icons/react';
 import { motion } from 'framer-motion';
 import Button from '../ui/Button';
 import Dropdown from '../ui/Dropdown';
@@ -118,15 +128,15 @@ const ImageCompare = ({ original, denoised }: { original: string; denoised: stri
     <div className="flex flex-col h-full bg-[#111] rounded-lg overflow-hidden border border-surface">
       <div className="h-9 bg-bg-primary border-b border-surface flex items-center justify-between px-3">
         <Text as="div" variant={TextVariants.small} className="flex items-center gap-2">
-          <Move size={14} /> <span>{t('modals.denoise.panZoomEnabled')}</span>
+          <ArrowsOutCardinalIcon size={14} /> <span>{t('modals.denoise.panZoomEnabled')}</span>
         </Text>
         <Text as="div" variant={TextVariants.small} className="flex items-center gap-2">
           <button onClick={() => setZoom((z) => Math.max(0.5, z - 0.5))} className="hover:text-text-primary">
-            <ZoomOut size={16} />
+            <MagnifyingGlassMinusIcon size={16} />
           </button>
           <span className="w-10 text-center">{(zoom * 100).toFixed(0)}%</span>
           <button onClick={() => setZoom((z) => Math.min(4, z + 0.5))} className="hover:text-text-primary">
-            <ZoomIn size={16} />
+            <MagnifyingGlassPlusIcon size={16} />
           </button>
           <button
             onClick={() => {
@@ -337,7 +347,7 @@ export default function DenoiseModal({
       return (
         <div className="flex flex-col items-center justify-center py-10 h-[460px]">
           <div className="flex items-center justify-center mb-6">
-            <XCircle className="w-12 h-12 text-red-500" />
+            <XCircleIcon className="w-12 h-12 text-red-500" />
           </div>
           <Text variant={TextVariants.title} className="mb-2 text-center">
             {t('modals.denoise.processingFailed')}
@@ -361,7 +371,7 @@ export default function DenoiseModal({
                 color={TextColors.success}
                 className="flex items-center justify-center gap-2 mt-4"
               >
-                <CheckCircle className="w-5 h-5" />
+                <CheckCircleIcon className="w-5 h-5" />
                 <span>{t('modals.denoise.saveSuccess')}</span>
               </Text>
             </motion.div>
@@ -425,7 +435,7 @@ export default function DenoiseModal({
     return (
       <div className="flex flex-col items-center justify-center h-[460px]">
         <div className="flex items-center justify-center mb-6">
-          <Grip className="w-12 h-12 text-accent" />
+          <DotsSixIcon className="w-12 h-12 text-accent" />
         </div>
         <Text variant={TextVariants.title} className="mb-3 text-center">
           {isBatch ? t('modals.denoise.titleBatch') : t('modals.denoise.titleSingle')}
@@ -507,11 +517,11 @@ export default function DenoiseModal({
             variant={previewBase64 && !isBatch ? 'secondary' : 'primary'}
           >
             {isProcessing || (isBatch && isSaving) ? (
-              <Loader2 className="animate-spin mr-2" size={16} />
+              <CircleNotchIcon className="animate-spin mr-2" size={16} />
             ) : previewBase64 && !isBatch ? (
-              <RefreshCw className="mr-2" size={16} />
+              <ArrowsClockwiseIcon className="mr-2" size={16} />
             ) : (
-              <Grip className="mr-2" size={16} />
+              <DotsSixIcon className="mr-2" size={16} />
             )}
             {isBatch
               ? t('modals.denoise.btnBatchDenoise')
@@ -522,7 +532,7 @@ export default function DenoiseModal({
 
           {previewBase64 && !isBatch && (
             <Button onClick={handleSave} disabled={isSaving || isProcessing}>
-              {isSaving ? <Loader2 className="animate-spin mr-2" size={16} /> : <Save className="mr-2" size={16} />}
+              {isSaving ? <CircleNotchIcon className="animate-spin mr-2" size={16} /> : <FloppyDiskIcon className="mr-2" size={16} />}
               {t('modals.denoise.btnSave')}
             </Button>
           )}

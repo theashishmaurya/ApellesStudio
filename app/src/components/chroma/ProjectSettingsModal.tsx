@@ -23,7 +23,7 @@
 // behave the same wherever it renders. Closing this dialog therefore just
 // closes it — every edit already landed the moment it was made, same as
 // every other control in this app.
-import { X } from 'lucide-react';
+import { XIcon } from '@phosphor-icons/react';
 import { toast } from 'react-toastify';
 import { ProjectSettingsForm, type ProjectSettingsValue } from '@apelles/editor';
 
@@ -47,7 +47,7 @@ export default function ProjectSettingsModal({ onClose }: { onClose: () => void 
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text-primary">Project settings</h2>
           <button onClick={onClose} className="text-text-secondary hover:text-text-primary">
-            <X size={16} />
+            <XIcon size={16} />
           </button>
         </div>
 

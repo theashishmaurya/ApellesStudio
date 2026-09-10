@@ -1,6 +1,12 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RotateCcw, Copy, ClipboardPaste, Spline, Settings2 } from 'lucide-react';
+import {
+  ArrowCounterClockwiseIcon,
+  CopyIcon,
+  ClipboardTextIcon,
+  BezierCurveIcon,
+  FadersHorizontalIcon,
+} from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 import {
   ActiveChannel,
@@ -608,19 +614,19 @@ export default function CurveGraph({
       const options = [
         {
           label: t('adjustments.curves.copyParametric', { channel: channelLabel }),
-          icon: Copy,
+          icon: CopyIcon,
           onClick: handleCopyParametric,
         },
         {
           label: t('adjustments.curves.pasteParametric'),
-          icon: ClipboardPaste,
+          icon: ClipboardTextIcon,
           onClick: handlePasteParametric,
           disabled: !parametricClipboard,
         },
         { type: OPTION_SEPARATOR },
         {
           label: t('adjustments.curves.resetParametric', { channel: channelLabel }),
-          icon: RotateCcw,
+          icon: ArrowCounterClockwiseIcon,
           onClick: handleResetParametric,
         },
       ];
@@ -628,7 +634,7 @@ export default function CurveGraph({
       if (areOtherParametricCurvesDirty) {
         options.push({
           label: t('adjustments.curves.resetAllParametric'),
-          icon: RotateCcw,
+          icon: ArrowCounterClockwiseIcon,
           onClick: handleResetAllParametric,
         });
       }
@@ -695,25 +701,25 @@ export default function CurveGraph({
     const options = [
       {
         label: t('adjustments.curves.copyPoint', { channel: channelLabel }),
-        icon: Copy,
+        icon: CopyIcon,
         onClick: handleCopy,
       },
       {
         label: t('adjustments.curves.pastePoint'),
-        icon: ClipboardPaste,
+        icon: ClipboardTextIcon,
         onClick: handlePaste,
         disabled: !curveClipboard,
       },
       {
         label: t('adjustments.curves.pasteFromParametric'),
-        icon: ClipboardPaste,
+        icon: ClipboardTextIcon,
         onClick: handlePasteFromParametric,
         disabled: !parametricClipboard,
       },
       { type: OPTION_SEPARATOR },
       {
         label: t('adjustments.curves.resetPoint', { channel: channelLabel }),
-        icon: RotateCcw,
+        icon: ArrowCounterClockwiseIcon,
         onClick: handleReset,
       },
     ];
@@ -721,7 +727,7 @@ export default function CurveGraph({
     if (areOtherPointCurvesDirty) {
       options.push({
         label: t('adjustments.curves.resetAllPoint'),
-        icon: RotateCcw,
+        icon: ArrowCounterClockwiseIcon,
         onClick: handleResetAllPoint,
       });
     }
@@ -762,7 +768,7 @@ export default function CurveGraph({
             data-tooltip={t('adjustments.curves.pointCurve')}
             type="button"
           >
-            <Spline size={16} />
+            <BezierCurveIcon size={16} />
           </button>
           <button
             className={`w-8 h-8 rounded-md flex items-center justify-center transition-all ${
@@ -772,7 +778,7 @@ export default function CurveGraph({
             data-tooltip={t('adjustments.curves.parametricCurve')}
             type="button"
           >
-            <Settings2 size={16} />
+            <FadersHorizontalIcon size={16} />
           </button>
         </div>
 

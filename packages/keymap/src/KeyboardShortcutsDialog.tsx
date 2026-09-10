@@ -66,7 +66,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { RotateCcw } from 'lucide-react';
+import { ArrowCounterClockwiseIcon } from '@phosphor-icons/react';
 import {
   Button,
   Dialog,
@@ -249,7 +249,7 @@ function ShortcutRow({
             title="Reset to default"
             onClick={onReset}
           >
-            <RotateCcw className="size-3" />
+            <ArrowCounterClockwiseIcon className="size-3" />
           </Button>
         )}
         <button

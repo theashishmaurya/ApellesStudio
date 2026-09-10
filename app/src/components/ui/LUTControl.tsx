@@ -1,7 +1,7 @@
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ImageOff, Upload, X, Trash2 } from 'lucide-react';
+import { CaretDownIcon, ImageBrokenIcon, UploadSimpleIcon, XIcon, TrashIcon } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useContextMenu } from '../../context/ContextMenuContext';
@@ -65,7 +65,7 @@ export default function LUTControl({
     showContextMenu(event.clientX, event.clientY, [
       {
         label: t('ui.lut.removeLut'),
-        icon: Trash2,
+        icon: TrashIcon,
         isDestructive: true,
         onClick: async () => {
           try {
@@ -229,7 +229,7 @@ export default function LUTControl({
           <img src={thumb} alt={entry.name} className="w-full h-full object-cover" draggable={false} />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-text-secondary">
-            <ImageOff size={18} />
+            <ImageBrokenIcon size={18} />
           </div>
         )}
         <span className="absolute inset-x-0 bottom-0 px-1 py-0.5 text-[10px] text-white bg-black/60 truncate text-left backdrop-blur-xs">
@@ -250,7 +250,7 @@ export default function LUTControl({
               className="flex items-center justify-center p-0.5 rounded-full bg-bg-tertiary hover:bg-surface text-text-secondary hover:text-text-primary transition-colors"
               data-tooltip={t('ui.lut.clearLut')}
             >
-              <X size={14} />
+              <XIcon size={14} />
             </button>
           )}
           <button
@@ -259,7 +259,7 @@ export default function LUTControl({
             data-tooltip={lutName || t('ui.lut.selectLutFile')}
           >
             <span className="truncate max-w-35 text-right">{lutName || t('ui.lut.select')}</span>
-            <ChevronDown size={16} className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+            <CaretDownIcon size={16} className={`transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
           </button>
         </div>
       </div>
@@ -318,7 +318,7 @@ export default function LUTControl({
                       className="text-xs text-text-secondary hover:text-accent flex items-center gap-1 transition-colors"
                       data-tooltip={t('ui.lut.import')}
                     >
-                      <Upload size={12} />
+                      <UploadSimpleIcon size={12} />
                       {t('ui.lut.import')}
                     </button>
                   )}
@@ -329,7 +329,7 @@ export default function LUTControl({
                     onClick={handleImport}
                     className="w-full flex items-center justify-center gap-1.5 py-4 rounded-md bg-bg-tertiary hover:bg-surface border-2 border-dashed border-text-secondary/20 hover:border-text-secondary/40 text-sm text-text-primary transition-colors cursor-pointer"
                   >
-                    <Upload size={16} />
+                    <UploadSimpleIcon size={16} />
                     {t('ui.lut.import')}
                   </button>
                 ) : (
@@ -341,7 +341,7 @@ export default function LUTControl({
                       className="aspect-square rounded-md bg-bg-tertiary border-2 border-dashed border-text-secondary/25 hover:border-accent flex items-center justify-center text-text-secondary hover:text-text-primary transition-all duration-150 cursor-pointer"
                       data-tooltip={t('ui.lut.import')}
                     >
-                      <Upload size={18} />
+                      <UploadSimpleIcon size={18} />
                     </button>
                   </div>
                 )}

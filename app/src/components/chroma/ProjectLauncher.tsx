@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { homeDir } from '@tauri-apps/api/path';
-import { FolderOpen, Plus, Film, Loader2, X, Trash2 } from 'lucide-react';
+import { FolderOpenIcon, PlusIcon, FilmStripIcon, CircleNotchIcon, XIcon, TrashIcon } from '@phosphor-icons/react';
 import { toast } from 'react-toastify';
 
 import { useSessionStore } from '../../store/useSessionStore';
@@ -123,7 +123,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text-primary">New project</h2>
           <button onClick={onClose} className="text-text-secondary hover:text-text-primary">
-            <X size={16} />
+            <XIcon size={16} />
           </button>
         </div>
 
@@ -145,7 +145,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
             onClick={async () => setPaths(await pickClips())}
             className="self-start px-2.5 py-1.5 rounded-md bg-bg-primary border border-border-color text-xs text-text-primary hover:border-accent flex items-center gap-1.5"
           >
-            <Film size={13} /> {paths.length ? 'Change clips' : 'Pick clips'}
+            <FilmStripIcon size={13} /> {paths.length ? 'Change clips' : 'Pick clips'}
           </button>
           {paths.length > 0 && (
             <div className="max-h-24 overflow-y-auto text-[11px] text-text-secondary flex flex-col gap-0.5">
@@ -170,7 +170,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
             disabled={creating}
             className="px-3 py-1.5 rounded-md text-xs font-semibold bg-accent text-button-text hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5"
           >
-            {creating && <Loader2 size={13} className="animate-spin" />} Create
+            {creating && <CircleNotchIcon size={13} className="animate-spin" />} Create
           </button>
         </div>
       </div>
@@ -190,7 +190,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
 // a scary, confusing symptom that read as a real failure. `opening` disables
 // every card (not just the clicked one — a second project shouldn't be
 // openable while the first is mid-open either) and shows a spinner + "Opening…"
-// on the one actually being opened, the same `Loader2` affordance this file's
+// on the one actually being opened, the same `CircleNotch` affordance this file's
 // own "Create" button already uses.
 // The hover-revealed delete button (below) is a real `<button>` nested
 // inside this card, so the card itself can no longer BE a `<button>` — a
@@ -233,11 +233,11 @@ function ProjectCard({
         {p.thumb ? (
           <img src={p.thumb} draggable={false} className="w-full h-full object-cover" />
         ) : (
-          <Film size={22} className="text-text-secondary/50" />
+          <FilmStripIcon size={22} className="text-text-secondary/50" />
         )}
         {opening && (
           <div className="absolute inset-0 bg-bg-primary/70 flex items-center justify-center gap-1.5 text-text-primary text-xs font-medium">
-            <Loader2 size={14} className="animate-spin" /> Opening…
+            <CircleNotchIcon size={14} className="animate-spin" /> Opening…
           </div>
         )}
         {/* Same hover-reveal + destructive-token convention as `SourcesPanel.
@@ -252,7 +252,7 @@ function ProjectCard({
             aria-label={`Delete ${p.name}`}
             className="absolute top-1.5 right-1.5 size-6 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:border-destructive hover:text-destructive"
           >
-            <Trash2 size={13} />
+            <TrashIcon size={13} />
           </button>
         )}
       </div>
@@ -376,14 +376,14 @@ export default function ProjectLauncher() {
             title="Change where projects are stored"
             className="flex items-center gap-1.5 text-[11px] text-text-secondary hover:text-text-primary"
           >
-            <FolderOpen size={13} />
+            <FolderOpenIcon size={13} />
             <span className="truncate max-w-[340px]">{dir || '~/Movies/Chroma'}</span>
           </button>
         </div>
 
         {projects === null ? (
           <div className="flex items-center gap-2 text-text-secondary text-sm">
-            <Loader2 size={14} className="animate-spin" /> Loading…
+            <CircleNotchIcon size={14} className="animate-spin" /> Loading…
           </div>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
@@ -391,7 +391,7 @@ export default function ProjectLauncher() {
               onClick={() => setShowNew(true)}
               className="aspect-video rounded-lg border border-dashed border-border-color bg-surface/40 flex flex-col items-center justify-center gap-2 text-text-secondary hover:text-text-primary hover:border-accent transition-colors"
             >
-              <Plus size={22} />
+              <PlusIcon size={22} />
               <span className="text-xs font-medium">New Project</span>
             </button>
             {projects.map((p) => (

@@ -12,10 +12,10 @@
   "dependencies": {
     "@apelles/history": "*",
     "@apelles/keymap": "*",
+    "@phosphor-icons/react": "^2.1.10",
     "@apelles/ui": "*",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-os": "^2.3.2",
-    "lucide-react": "^1.33.0",
     "react": "^19.2.8",
     "zustand": "^5.0.15"
   },

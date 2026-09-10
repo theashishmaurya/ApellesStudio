@@ -41,23 +41,23 @@ import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
 import {
-  AlertTriangle,
-  Check,
-  CheckSquare,
-  ChevronRight,
-  Film,
-  Folder,
-  FolderOpen,
-  FolderPlus,
-  Image as ImageIcon,
-  Plus,
-  RefreshCw,
-  Search,
-  Square,
-  Trash2,
-  WifiOff,
-  X,
-} from 'lucide-react';
+  WarningIcon,
+  CheckIcon,
+  CheckSquareIcon,
+  CaretRightIcon,
+  FilmStripIcon,
+  FolderIcon,
+  FolderOpenIcon,
+  FolderPlusIcon,
+  ImageIcon,
+  PlusIcon,
+  ArrowsClockwiseIcon,
+  MagnifyingGlassIcon,
+  SquareIcon,
+  TrashIcon,
+  WifiSlashIcon,
+  XIcon,
+} from '@phosphor-icons/react';
 import {
   Button,
   ContextMenu,
@@ -262,19 +262,19 @@ function FolderRow({
               }}
               className={cn('shrink-0', !hasChildren && 'opacity-0')}
             >
-              <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
+              <CaretRightIcon className={cn('size-3 transition-transform', open && 'rotate-90')} />
             </span>
             {activeFolder === node.path ? (
-              <FolderOpen className="size-3 shrink-0" />
+              <FolderOpenIcon className="size-3 shrink-0" />
             ) : (
-              <Folder className="size-3 shrink-0" />
+              <FolderIcon className="size-3 shrink-0" />
             )}
             <span className="truncate">{node.name}</span>
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onClick={() => onNewFolder(node.path)}>
-            <FolderPlus className="size-3.5" /> New folder
+            <FolderPlusIcon className="size-3.5" /> New folder
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -484,10 +484,10 @@ export function SourcesPanel() {
           disabled={items.length === 0}
           className="h-6 gap-1"
         >
-          <CheckSquare className="size-3" /> Select
+          <CheckSquareIcon className="size-3" /> Select
         </Button>
         <Button variant="ghost" size="xs" onClick={doImport} disabled={importing} className="h-6 gap-1">
-          <Plus className="size-3" /> Import
+          <PlusIcon className="size-3" /> Import
         </Button>
       </div>
 
@@ -504,9 +504,9 @@ export function SourcesPanel() {
             className="flex items-center gap-1.5 text-[11px] text-text-secondary hover:text-text-primary"
           >
             {allVisibleSelected ? (
-              <CheckSquare className="size-3.5 text-accent" />
+              <CheckSquareIcon className="size-3.5 text-accent" />
             ) : (
-              <Square className="size-3.5" />
+              <SquareIcon className="size-3.5" />
             )}
             Select all
           </button>
@@ -520,7 +520,7 @@ export function SourcesPanel() {
             disabled={selectedIds.size === 0}
             className="h-6 gap-1"
           >
-            <Trash2 className="size-3" /> Delete{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+            <TrashIcon className="size-3" /> Delete{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
           </Button>
           <button
             onClick={toggleSelecting}
@@ -528,13 +528,13 @@ export function SourcesPanel() {
             aria-label="Cancel selection"
             className="shrink-0 size-5 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
           >
-            <X className="size-3.5" />
+            <XIcon className="size-3.5" />
           </button>
         </div>
       ) : (
         <div className="shrink-0 px-2.5 py-1.5 border-b border-border-color">
           <div className="relative">
-            <Search className="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-text-secondary/60" />
+            <MagnifyingGlassIcon className="size-3 absolute left-2 top-1/2 -translate-y-1/2 text-text-secondary/60" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -560,7 +560,7 @@ export function SourcesPanel() {
                     : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover',
                 )}
               >
-                <Film className="size-3" /> All media
+                <FilmStripIcon className="size-3" /> All media
               </div>
               <button
                 onClick={() => setNewFolderParent(null)}
@@ -568,7 +568,7 @@ export function SourcesPanel() {
                 aria-label="New folder"
                 className="shrink-0 size-5 mr-1 rounded flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-surface-hover"
               >
-                <FolderPlus className="size-3" />
+                <FolderPlusIcon className="size-3" />
               </button>
             </div>
             {tree.map((n) => (
@@ -586,7 +586,7 @@ export function SourcesPanel() {
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem onClick={() => setNewFolderParent(null)}>
-            <FolderPlus className="size-3.5" /> New folder
+            <FolderPlusIcon className="size-3.5" /> New folder
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -679,11 +679,11 @@ export function SourcesPanel() {
                           // footage.
                           <ImageIcon className="size-4 text-text-secondary/50" />
                         ) : (
-                          <Film className="size-4 text-text-secondary/50" />
+                          <FilmStripIcon className="size-4 text-text-secondary/50" />
                         )}
                         {it.offline ? (
                           <div className="absolute top-1 right-1 text-amber-400" title="Media offline">
-                            <WifiOff className="size-3" />
+                            <WifiSlashIcon className="size-3" />
                           </div>
                         ) : (
                           unusable && (
@@ -691,7 +691,7 @@ export function SourcesPanel() {
                               className="absolute top-1 right-1 text-amber-400"
                               title="Not probed — this clip can't be placed on the timeline yet. Right-click › Re-probe."
                             >
-                              <AlertTriangle className="size-3" />
+                              <WarningIcon className="size-3" />
                             </div>
                           )
                         )}
@@ -712,7 +712,7 @@ export function SourcesPanel() {
                               : 'bg-bg-primary/90 border-border-color text-transparent',
                           )}
                         >
-                          <Check className="size-3" />
+                          <CheckIcon className="size-3" />
                         </div>
                       ) : (
                         <>
@@ -725,7 +725,7 @@ export function SourcesPanel() {
                             aria-label={`Remove ${it.name} from the pool`}
                             className="absolute top-1 left-1 size-5 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:border-destructive hover:text-destructive"
                           >
-                            <Trash2 className="size-3" />
+                            <TrashIcon className="size-3" />
                           </button>
                           <button
                             onClick={(e) => {
@@ -737,7 +737,7 @@ export function SourcesPanel() {
                             aria-label={`Add ${it.name} to grading`}
                             className="absolute top-1 right-1 size-5 rounded-full bg-bg-primary/90 border border-border-color flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-40 hover:border-accent"
                           >
-                            <Plus className="size-3" />
+                            <PlusIcon className="size-3" />
                           </button>
                         </>
                       )}
@@ -748,11 +748,11 @@ export function SourcesPanel() {
                       onClick={() => void doReprobe(it.id, it.name)}
                       disabled={reprobingId === it.id}
                     >
-                      <RefreshCw className={cn('size-3.5', reprobingId === it.id && 'animate-spin')} />{' '}
+                      <ArrowsClockwiseIcon className={cn('size-3.5', reprobingId === it.id && 'animate-spin')} />{' '}
                       {reprobingId === it.id ? 'Re-probing…' : 'Re-probe'}
                     </ContextMenuItem>
                     <ContextMenuItem onClick={() => void doRemove([it.id], it.name)} variant="destructive">
-                      <Trash2 className="size-3.5" /> Remove from pool
+                      <TrashIcon className="size-3.5" /> Remove from pool
                     </ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>

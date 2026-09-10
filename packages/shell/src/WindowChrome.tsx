@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { platform } from '@tauri-apps/plugin-os';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { Minus, Square, X } from 'lucide-react';
+import { MinusIcon, SquareIcon, XIcon } from '@phosphor-icons/react';
 
 type OsName = '' | 'macos' | 'windows' | 'linux' | 'android' | 'ios';
 
@@ -168,7 +168,7 @@ export function WindowControls({ chrome }: { chrome: WindowChromeState }) {
           className="w-7 h-7 rounded-full inline-flex justify-center items-center hover:bg-white/10 transition-colors duration-150"
           onClick={() => win.minimize()}
         >
-          <Minus size={16} className="text-text-secondary" />
+          <MinusIcon size={16} className="text-text-secondary" />
         </button>
         <button
           aria-label="Maximize window"
@@ -178,7 +178,7 @@ export function WindowControls({ chrome }: { chrome: WindowChromeState }) {
           {isMaximized ? (
             <RestoreDownIcon size={13} className="text-text-secondary" />
           ) : (
-            <Square size={13} className="text-text-secondary" />
+            <SquareIcon size={13} className="text-text-secondary" />
           )}
         </button>
         <button
@@ -186,7 +186,7 @@ export function WindowControls({ chrome }: { chrome: WindowChromeState }) {
           className="w-7 h-7 rounded-full inline-flex justify-center items-center hover:bg-red-500 hover:text-white transition-colors duration-150"
           onClick={() => win.close()}
         >
-          <X size={16} className="text-text-secondary hover:text-white" />
+          <XIcon size={16} className="text-text-secondary hover:text-white" />
         </button>
       </div>
     );
@@ -200,7 +200,7 @@ export function WindowControls({ chrome }: { chrome: WindowChromeState }) {
           className="w-12 flex justify-center items-center hover:bg-white/10 active:bg-white/20 transition-colors duration-150"
           onClick={() => win.minimize()}
         >
-          <Minus size={16} className="text-text-secondary" />
+          <MinusIcon size={16} className="text-text-secondary" />
         </button>
         <button
           aria-label="Maximize window"
@@ -210,7 +210,7 @@ export function WindowControls({ chrome }: { chrome: WindowChromeState }) {
           {isMaximized ? (
             <RestoreDownIcon size={12} className="text-text-secondary" />
           ) : (
-            <Square size={12} className="text-text-secondary" />
+            <SquareIcon size={12} className="text-text-secondary" />
           )}
         </button>
         <button
@@ -218,7 +218,7 @@ export function WindowControls({ chrome }: { chrome: WindowChromeState }) {
           className="w-12 flex justify-center items-center hover:bg-red-500 active:bg-red-600 group transition-colors duration-150"
           onClick={() => win.close()}
         >
-          <X size={16} className="text-text-secondary group-hover:text-white transition-colors duration-150" />
+          <XIcon size={16} className="text-text-secondary group-hover:text-white transition-colors duration-150" />
         </button>
       </div>
     );

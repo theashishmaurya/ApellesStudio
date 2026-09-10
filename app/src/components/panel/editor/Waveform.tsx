@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
-import { AlertOctagon } from 'lucide-react';
+import { WarningOctagonIcon } from '@phosphor-icons/react';
 import { useTranslation } from 'react-i18next';
 import { WaveformData } from '../../ui/AppProperties';
 import { DisplayMode } from '../../../utils/adjustments';
@@ -614,7 +614,7 @@ export default function Waveform({
                       showClipping ? 'bg-accent text-button-text' : 'text-text-primary hover:bg-bg-tertiary'
                     }`}
                   >
-                    <AlertOctagon size={14} />
+                    <WarningOctagonIcon size={14} />
                   </button>
                   <div className="w-px h-5 bg-white/20 mx-1 shrink-0"></div>
                 </>

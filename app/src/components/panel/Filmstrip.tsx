@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { Image as ImageIcon, SlidersHorizontal } from 'lucide-react';
+import { ImageIcon, FadersHorizontalIcon } from '@phosphor-icons/react';
 import clsx from 'clsx';
 import { Grid, useGridCallbackRef } from 'react-window';
 import { useTranslation } from 'react-i18next';
@@ -241,7 +241,7 @@ const FilmstripThumbnail = memo(
                 hasEditIcon ? 'max-w-3 opacity-100 scale-100' : 'max-w-0 opacity-0 scale-75 pointer-events-none',
               )}
             >
-              <SlidersHorizontal size={12} />
+              <FadersHorizontalIcon size={12} />
             </div>
 
             <div
@@ -256,7 +256,6 @@ const FilmstripThumbnail = memo(
                 style={{ backgroundColor: colorLabel ? colorLabel.color : 'transparent' }}
               />
             </div>
-
           </div>
         </div>
 

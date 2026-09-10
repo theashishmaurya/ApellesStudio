@@ -163,7 +163,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ZoomIn, ZoomOut } from 'lucide-react';
+import { MagnifyingGlassPlusIcon, MagnifyingGlassMinusIcon } from '@phosphor-icons/react';
 import type { PlayerRef } from '@remotion/player';
 import { totalFrames, sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
 import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
@@ -716,7 +716,7 @@ export function KeyframeTimeline({
             disabled={pxPerSecond <= MIN_PX_PER_SEC}
             onClick={() => setPxPerSecond((v) => zoomStep(v, -1))}
           >
-            <ZoomOut size={12} />
+            <MagnifyingGlassMinusIcon size={12} />
           </button>
           {/* D-175 — a percentage relative to `DEFAULT_PX_PER_SEC`, matching
               `@apelles/editor`'s own `TimelinePane.tsx` zoom readout exactly
@@ -738,7 +738,7 @@ export function KeyframeTimeline({
             disabled={pxPerSecond >= MAX_PX_PER_SEC}
             onClick={() => setPxPerSecond((v) => zoomStep(v, 1))}
           >
-            <ZoomIn size={12} />
+            <MagnifyingGlassPlusIcon size={12} />
           </button>
         </div>
       </div>

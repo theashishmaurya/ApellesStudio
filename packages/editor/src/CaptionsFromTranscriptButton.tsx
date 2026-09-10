@@ -24,7 +24,7 @@
  * rule, one undo entry, whichever interface asked.
  */
 import { useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { SparkleIcon } from '@phosphor-icons/react';
 import { Button } from '@apelles/ui';
 
 import { useEditorTimelineStore } from './timelineStore';
@@ -98,7 +98,7 @@ export function CaptionsFromTranscriptButton() {
         onClick={generate}
         title="Generate captions from the selected clip's transcript (D-189)"
       >
-        <Sparkles className="size-3.5" />
+        <SparkleIcon className="size-3.5" />
         <span className="ml-1">{busy ? 'Transcribing…' : 'Captions from Transcript'}</span>
       </Button>
       {error && (

@@ -40,7 +40,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
-import { AlertTriangle, CheckCircle2, Download, Loader2, XCircle } from 'lucide-react';
+import { WarningIcon, CheckCircleIcon, DownloadSimpleIcon, CircleNotchIcon, XCircleIcon } from '@phosphor-icons/react';
 import {
   Button,
   Dialog,
@@ -138,9 +138,9 @@ const statusLabel: Record<ExportJobStatus, string> = {
 };
 
 function StatusIcon({ status }: { status: ExportJobStatus }) {
-  if (status === 'running') return <Loader2 className="size-3.5 animate-spin text-accent" />;
-  if (status === 'done') return <CheckCircle2 className="size-3.5 text-green-400" />;
-  if (status === 'failed') return <XCircle className="size-3.5 text-red-400" />;
+  if (status === 'running') return <CircleNotchIcon className="size-3.5 animate-spin text-accent" />;
+  if (status === 'done') return <CheckCircleIcon className="size-3.5 text-green-400" />;
+  if (status === 'failed') return <XCircleIcon className="size-3.5 text-red-400" />;
   return <span className="size-3.5 rounded-full border border-border-color inline-block" />;
 }
 
@@ -290,7 +290,7 @@ export function EditorExportDialog() {
         <TooltipTrigger
           render={
             <Button variant="ghost" size="sm" onClick={() => setOpen(true)} aria-label="Export">
-              <Download />
+              <DownloadSimpleIcon />
               Export
             </Button>
           }
@@ -403,7 +403,7 @@ export function EditorExportDialog() {
 
             {validationError && (
               <span className="flex items-center gap-1.5 text-xs text-red-400">
-                <XCircle size={12} /> {validationError}
+                <XCircleIcon size={12} /> {validationError}
               </span>
             )}
 
@@ -415,7 +415,7 @@ export function EditorExportDialog() {
               <div className="flex flex-col gap-1">
                 {gradeNotes.map((note) => (
                   <span key={note} className="flex items-start gap-1.5 text-xs text-text-secondary">
-                    <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {note}
+                    <WarningIcon size={12} className="mt-0.5 shrink-0" /> {note}
                   </span>
                 ))}
               </div>

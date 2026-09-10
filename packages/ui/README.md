@@ -46,7 +46,7 @@ Pinned in `package.json`:
 | `cmdk` | `1.1.1` | `Command` |
 | `react-resizable-panels` | `4.12.3` | `Resizable` (v4 API: `Group` / `Panel` / `Separator`) |
 | `sonner` | `2.0.8` | `Toaster` |
-| `lucide-react` | `^1.33.0` | icons (matches `app/`) |
+| `@phosphor-icons/react` | `^2.1.10` | icons (matches `app/`; D-300) |
 
 (`react` is a peer in practice — the app owns the single copy.)
 

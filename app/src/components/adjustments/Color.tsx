@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Pipette, Sliders } from 'lucide-react';
+import { EyedropperIcon, FadersIcon } from '@phosphor-icons/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import Slider from '../ui/Slider';
@@ -187,7 +187,7 @@ const ColorGradingPanel = ({ adjustments, setAdjustments, onDragStateChange }: C
             }`}
           data-tooltip={t('adjustments.color.toggleSliders')}
         >
-          <Sliders size={14} />
+          <FadersIcon size={14} />
         </button>
       </div>
 
@@ -483,7 +483,7 @@ export default function ColorPanel({
               }`}
               data-tooltip={t('adjustments.color.wbPickerTooltip')}
             >
-              <Pipette size={16} />
+              <EyedropperIcon size={16} />
             </button>
           )}
         </div>

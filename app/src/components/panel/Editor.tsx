@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, useImperativeHandle } from 'react';
 import { Crop, PercentCrop } from 'react-image-crop';
-import { Loader2, X } from 'lucide-react';
+import { CircleNotchIcon, XIcon } from '@phosphor-icons/react';
 import clsx from 'clsx';
 import { invoke } from '@tauri-apps/api/core';
 import debounce from 'lodash.debounce';
@@ -2105,7 +2105,7 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
           aria-label="Exit fullscreen"
           className="fixed top-3 right-3 z-50 size-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 backdrop-blur-sm"
         >
-          <X size={16} />
+          <XIcon size={16} />
         </button>
       )}
       <div
@@ -2159,7 +2159,7 @@ export default function Editor({ onContextMenu, onImageSelect, transformWrapperR
               isLoaderVisible ? 'opacity-100' : 'opacity-0 pointer-events-none',
             )}
           >
-            <Loader2 size={48} className="animate-spin text-accent" />
+            <CircleNotchIcon size={48} className="animate-spin text-accent" />
           </div>
         )}
 

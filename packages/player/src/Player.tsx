@@ -26,25 +26,25 @@
 
 import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import {
-  AudioWaveform,
-  Camera,
-  ChevronLeft,
-  ChevronRight,
-  Gauge,
-  Maximize,
-  Minimize,
-  Pause,
-  Play,
-  SkipBack,
-  SkipForward,
-  StepBack,
-  StepForward,
-  Volume1,
-  Volume2,
-  VolumeX,
-  ZoomIn,
-  ZoomOut,
-} from 'lucide-react';
+  WaveformIcon,
+  CameraIcon,
+  CaretLeftIcon,
+  CaretRightIcon,
+  GaugeIcon,
+  CornersOutIcon,
+  CornersInIcon,
+  PauseIcon,
+  PlayIcon,
+  SkipBackIcon,
+  SkipForwardIcon,
+  CaretLineLeftIcon,
+  CaretLineRightIcon,
+  SpeakerLowIcon,
+  SpeakerHighIcon,
+  SpeakerSlashIcon,
+  MagnifyingGlassPlusIcon,
+  MagnifyingGlassMinusIcon,
+} from '@phosphor-icons/react';
 import {
   Button,
   Popover,
@@ -173,8 +173,8 @@ export interface PlayerProps {
    * every other optional control here.
    *
    * Shape mirrors `TimelinePane.tsx`'s own already-shipped timeline zoom
-   * control exactly — a ghost `ZoomOut` button, a `{pct}%` readout, a ghost
-   * `ZoomIn` button — so the two zooms in one tab read as the same kind of
+   * control exactly — a ghost `MagnifyingGlassMinus` button, a `{pct}%` readout, a ghost
+   * `MagnifyingGlassPlus` button — so the two zooms in one tab read as the same
    * control. `onZoomReset` additionally makes the readout itself clickable
    * (the timeline's is a plain `<span>`, having no pan to get lost in).
    */
@@ -262,7 +262,7 @@ function RateControl({
             }
             aria-label="Playback rate"
           >
-            <Gauge className="size-3.5" />
+            <GaugeIcon className="size-3.5" />
             {label}
           </Button>
         }
@@ -399,7 +399,7 @@ export function Player({
   );
 
   const showMute = Boolean(onMuteToggle);
-  const VolumeIcon = muted ? VolumeX : (volume ?? 1) < 0.5 ? Volume1 : Volume2;
+  const VolumeIcon = muted ? SpeakerSlashIcon : (volume ?? 1) < 0.5 ? SpeakerLowIcon : SpeakerHighIcon;
 
   return (
     <div className={cn('flex flex-col min-h-0 flex-1 bg-bg-primary', className)}>
@@ -438,13 +438,13 @@ export function Player({
           <div className="flex items-center gap-1 min-w-0">
             {onPrev && (
               <Button variant="ghost" size="icon-xs" onClick={onPrev} title="Previous" aria-label="Previous">
-                <ChevronLeft />
+                <CaretLeftIcon />
               </Button>
             )}
             <span className="min-w-0 truncate text-xs font-medium text-text-secondary">{title}</span>
             {onNext && (
               <Button variant="ghost" size="icon-xs" onClick={onNext} title="Next" aria-label="Next">
-                <ChevronRight />
+                <CaretRightIcon />
               </Button>
             )}
           </div>
@@ -493,11 +493,11 @@ export function Player({
         <div className="flex items-center gap-1 px-3 py-2">
           {onSkipStart && (
             <Button variant="ghost" size="icon-sm" onClick={onSkipStart} title="Skip to start" aria-label="Skip to start">
-              <SkipBack />
+              <SkipBackIcon />
             </Button>
           )}
           <Button variant="ghost" size="icon-sm" onClick={() => onStep(-1)} title="Step back one frame" aria-label="Step back one frame">
-            <StepBack />
+            <CaretLineLeftIcon />
           </Button>
           <Button
             variant="ghost"
@@ -506,14 +506,14 @@ export function Player({
             title={playing ? 'Pause' : 'Play'}
             aria-label={playing ? 'Pause' : 'Play'}
           >
-            {playing ? <Pause /> : <Play />}
+            {playing ? <PauseIcon /> : <PlayIcon />}
           </Button>
           <Button variant="ghost" size="icon-sm" onClick={() => onStep(1)} title="Step forward one frame" aria-label="Step forward one frame">
-            <StepForward />
+            <CaretLineRightIcon />
           </Button>
           {onSkipEnd && (
             <Button variant="ghost" size="icon-sm" onClick={onSkipEnd} title="Skip to end" aria-label="Skip to end">
-              <SkipForward />
+              <SkipForwardIcon />
             </Button>
           )}
 
@@ -577,12 +577,12 @@ export function Player({
               aria-pressed={!!waveformOn}
               className={waveformOn ? 'text-accent' : undefined}
             >
-              <AudioWaveform />
+              <WaveformIcon />
             </Button>
           )}
           {onSnapshot && (
             <Button variant="ghost" size="icon-sm" onClick={onSnapshot} title="Snapshot" aria-label="Snapshot">
-              <Camera />
+              <CameraIcon />
             </Button>
           )}
           {onFullscreen && (
@@ -594,13 +594,13 @@ export function Player({
               aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
               aria-pressed={isFullscreen}
             >
-              {isFullscreen ? <Minimize /> : <Maximize />}
+              {isFullscreen ? <CornersInIcon /> : <CornersOutIcon />}
             </Button>
           )}
 
           {/* D-218 — the preview's own zoom cluster, shaped exactly like the
               one `TimelinePane.tsx`'s toolbar already ships for the timeline
-              (ghost ZoomOut / `{pct}%` / ghost ZoomIn, same lucide icons,
+              (ghost zoom-out / `{pct}%` / ghost zoom-in, same icons,
               same `w-10 tabular-nums` readout), so the two controls in this
               tab read as the same kind of control rather than two inventions.
               All the math is the caller's — see `PlayerProps.zoom`. */}
@@ -614,7 +614,7 @@ export function Player({
                 title="Zoom out (or ctrl/pinch-scroll over the preview)"
                 aria-label="Zoom out"
               >
-                <ZoomOut />
+                <MagnifyingGlassMinusIcon />
               </Button>
               {onZoomReset ? (
                 <Button
@@ -640,7 +640,7 @@ export function Player({
                 title="Zoom in (or ctrl/pinch-scroll over the preview)"
                 aria-label="Zoom in"
               >
-                <ZoomIn />
+                <MagnifyingGlassPlusIcon />
               </Button>
             </div>
           )}

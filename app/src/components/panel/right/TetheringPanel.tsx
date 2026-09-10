@@ -1,26 +1,25 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
 import {
-  Camera,
-  RefreshCw,
-  Image as ImageIcon,
-  Grid3x3,
-  RotateCw,
-  FlipHorizontal,
-  Layers,
-  Loader,
-  Power,
-  Battery,
-  BatteryCharging,
-  BatteryLow,
-  BatteryMedium,
-  BatteryFull,
-  BatteryWarning,
-  Focus,
-  Gauge,
-  Sliders,
-  Folder as FolderIcon,
-  X,
-} from 'lucide-react';
+  CameraIcon,
+  ArrowsClockwiseIcon,
+  ImageIcon,
+  GridNineIcon,
+  ArrowClockwiseIcon,
+  FlipHorizontalIcon,
+  StackSimpleIcon,
+  CircleNotchIcon,
+  PowerIcon,
+  BatteryEmptyIcon,
+  BatteryChargingIcon,
+  BatteryLowIcon,
+  BatteryMediumIcon,
+  BatteryFullIcon,
+  BatteryWarningIcon,
+  CrosshairSimpleIcon,
+  GaugeIcon,
+  FolderIcon,
+  XIcon,
+} from '@phosphor-icons/react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { homeDir } from '@tauri-apps/api/path';
@@ -157,30 +156,30 @@ function BatteryIndicator({ value }: { value: string }) {
   const cleanVal = value.replace('%', '').trim().toLowerCase();
   const num = parseInt(cleanVal, 10);
 
-  let Icon = Battery;
+  let Icon = BatteryEmptyIcon;
   let color = 'text-text-secondary';
   let displayText = value;
 
   if (!isNaN(num)) {
     displayText = `${num}%`;
     if (num > 80) {
-      Icon = BatteryFull;
+      Icon = BatteryFullIcon;
       color = 'text-green-500';
     } else if (num > 40) {
-      Icon = BatteryMedium;
+      Icon = BatteryMediumIcon;
       color = 'text-yellow-500';
     } else if (num > 15) {
-      Icon = BatteryLow;
+      Icon = BatteryLowIcon;
       color = 'text-orange-500';
     } else {
-      Icon = BatteryWarning;
+      Icon = BatteryWarningIcon;
       color = 'text-red-500';
     }
   } else if (cleanVal.includes('charge')) {
-    Icon = BatteryCharging;
+    Icon = BatteryChargingIcon;
     color = 'text-green-400';
   } else if (cleanVal.includes('good') || cleanVal.includes('ok') || cleanVal.includes('full')) {
-    Icon = BatteryFull;
+    Icon = BatteryFullIcon;
     color = 'text-green-500';
     displayText = '100%';
   }
@@ -629,7 +628,7 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
             onClick={() => detectCameras(false)}
             data-tooltip={t('tethering.scanTooltip')}
           >
-            <RefreshCw size={18} />
+            <ArrowsClockwiseIcon size={18} />
           </button>
         </div>
       </div>
@@ -712,7 +711,7 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
                     className="p-1.5 text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors shrink-0"
                     data-tooltip={t('tethering.stopLiveView')}
                   >
-                    <Power size={14} />
+                    <PowerIcon size={14} />
                   </button>
 
                   <div className="w-px h-5 bg-white/20 mx-0.5 shrink-0"></div>
@@ -740,7 +739,7 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
                         : 'text-white/60 hover:text-white hover:bg-white/10',
                     )}
                   >
-                    <Grid3x3 size={13} className="shrink-0" />
+                    <GridNineIcon size={13} className="shrink-0" />
                   </button>
 
                   <div className="w-px h-5 bg-white/20 mx-0.5 shrink-0"></div>
@@ -750,7 +749,7 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
                     className="p-1.5 text-white/60 hover:bg-white/10 hover:text-white rounded-full transition-colors shrink-0"
                     data-tooltip={t('tethering.rotate90')}
                   >
-                    <RotateCw size={14} />
+                    <ArrowClockwiseIcon size={14} />
                   </button>
 
                   <button
@@ -763,7 +762,7 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
                     )}
                     data-tooltip={t('tethering.flipHorizontal')}
                   >
-                    <FlipHorizontal size={14} />
+                    <FlipHorizontalIcon size={14} />
                   </button>
 
                   <button
@@ -777,7 +776,7 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
                     )}
                     data-tooltip={t('tethering.overlayLastShot')}
                   >
-                    <Layers size={14} />
+                    <StackSimpleIcon size={14} />
                   </button>
                 </div>
               </div>
@@ -820,7 +819,7 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
                 {renderDropdown(
                   'meteringmode',
                   t('tethering.metering'),
-                  <Gauge size={14} className="text-text-secondary" />,
+                  <GaugeIcon size={14} className="text-text-secondary" />,
                 )}
                 {renderInputSetting(
                   'shutterspeed',
@@ -884,7 +883,7 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
                       className="p-1 hover:text-red-500 text-text-secondary transition-colors"
                       data-tooltip={t('tethering.clearPreset')}
                     >
-                      <X size={13} />
+                      <XIcon size={13} />
                     </button>
                   </div>
                 )}
@@ -912,7 +911,7 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
           onClick={triggerAutoFocus}
           data-tooltip={t('tethering.triggerAutofocus')}
         >
-          {isFocusing ? <Loader size={18} className="animate-spin" /> : <Focus size={18} />}
+          {isFocusing ? <CircleNotchIcon size={18} className="animate-spin" /> : <CrosshairSimpleIcon size={18} />}
         </Button>
 
         <Button
@@ -923,12 +922,12 @@ export default function TetheringPanel({ onLibraryRefresh, onImageSelect }: Teth
         >
           {isCapturing ? (
             <>
-              <Loader size={18} className="animate-spin mr-2" />
+              <CircleNotchIcon size={18} className="animate-spin mr-2" />
               {t('tethering.capturing')}
             </>
           ) : (
             <>
-              <Camera size={18} className="mr-2" />
+              <CameraIcon size={18} className="mr-2" />
               {t('tethering.triggerCapture')}
             </>
           )}

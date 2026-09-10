@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'react-toastify';
-import { Loader2, Circle, Hexagon, Octagon, Aperture } from 'lucide-react';
+import { CircleNotchIcon, CircleIcon, HexagonIcon, OctagonIcon, ApertureIcon } from '@phosphor-icons/react';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
 import Slider from '../ui/Slider';
@@ -38,10 +38,10 @@ const BokehShapeSwitch = ({ selectedShape, onShapeChange }: BokehShapeSwitchProp
 
   const shapeOptions = useMemo(
     () => [
-      { id: 'circle', icon: Circle, title: t('adjustments.effects.bokehCircular') },
-      { id: 'hexagon', icon: Hexagon, title: t('adjustments.effects.bokehHexagonal') },
-      { id: 'octagon', icon: Octagon, title: t('adjustments.effects.bokehOctagonal') },
-      { id: 'ring', icon: Aperture, title: t('adjustments.effects.bokehRing') },
+      { id: 'circle', icon: CircleIcon, title: t('adjustments.effects.bokehCircular') },
+      { id: 'hexagon', icon: HexagonIcon, title: t('adjustments.effects.bokehHexagonal') },
+      { id: 'octagon', icon: OctagonIcon, title: t('adjustments.effects.bokehOctagonal') },
+      { id: 'ring', icon: ApertureIcon, title: t('adjustments.effects.bokehRing') },
     ],
     [t],
   );
@@ -125,7 +125,10 @@ const BokehShapeSwitch = ({ selectedShape, onShapeChange }: BokehShapeSwitchProp
                 style={{ WebkitTapHighlightColor: 'transparent' }}
               >
                 <span className="relative z-10 flex items-center">
-                  <Icon size={16} strokeWidth={2} />
+                  {/* D-300 — these bokeh-shape glyphs were deliberately heavier
+                      than the surrounding UI (`strokeWidth={2}`); Phosphor's
+                      `bold` weight is the equivalent. */}
+                  <Icon size={16} weight="bold" />
                 </span>
               </button>
             );
@@ -258,7 +261,7 @@ export default function EffectsPanel({
                   {isGeneratingDepth ? (
                     <div className="flex flex-col items-center justify-center gap-1 p-4 text-text-secondary text-center">
                       <div className="flex items-center gap-2">
-                        <Loader2 size={16} className="animate-spin shrink-0" />
+                        <CircleNotchIcon size={16} className="animate-spin shrink-0" />
                         <Text variant={TextVariants.label}>
                           {aiModelDownloadStatus
                             ? t('editor.masks.settings.aiModelDownloading')

@@ -44,7 +44,7 @@
  * B-124's own `[&[inert]]:hidden` fix in `@apelles/ui`.
  */
 import { useState } from 'react';
-import { Type, Wand2 } from 'lucide-react';
+import { TextTIcon, MagicWandIcon } from '@phosphor-icons/react';
 import { Button, TooltipProvider } from '@apelles/ui';
 
 import { CaptionLibrary } from './CaptionLibrary';
@@ -107,7 +107,7 @@ function LibraryEntry({
       className="cursor-grab select-none rounded-md border border-border-color bg-bg-primary p-2 text-left transition-colors hover:border-accent active:cursor-grabbing"
     >
       <div className="flex items-center gap-2 text-xs font-medium text-text-primary">
-        {entry.kind === 'title' ? <Type className="size-3.5 shrink-0" /> : <Wand2 className="size-3.5 shrink-0" />}
+        {entry.kind === 'title' ? <TextTIcon className="size-3.5 shrink-0" /> : <MagicWandIcon className="size-3.5 shrink-0" />}
         {label}
       </div>
       <p className="mt-1 text-[10px] leading-snug text-text-secondary">{entry.blurb}</p>

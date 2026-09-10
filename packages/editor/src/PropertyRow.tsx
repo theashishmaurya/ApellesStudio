@@ -50,7 +50,13 @@
  * Pure presentation, like the panel it came from: no store access, no
  * `Clip` knowledge, nothing beyond the props below.
  */
-import { ChevronLeft, ChevronRight, Diamond, RotateCcw, Spline } from 'lucide-react';
+import {
+  CaretLeftIcon,
+  CaretRightIcon,
+  DiamondIcon,
+  ArrowCounterClockwiseIcon,
+  BezierCurveIcon,
+} from '@phosphor-icons/react';
 import { Button, ScrubbableNumberInput, displayNumber } from '@apelles/ui';
 
 import { NUM_FIELD } from './numericField';
@@ -194,7 +200,7 @@ export function PropertyRow<TParam extends string>({
               title={`Go to the previous ${label} keyframe`}
               aria-label={`Previous ${label} keyframe`}
             >
-              <ChevronLeft size={12} />
+              <CaretLeftIcon size={12} />
             </Button>
             <Button
               variant="ghost"
@@ -221,7 +227,8 @@ export function PropertyRow<TParam extends string>({
               {/* Filled = this property is animated, hollow = static — the same
                   Diamond-plus-fill convention `RelightPanel.tsx` and this
                   panel's own Keyframes section already use. */}
-              <Diamond size={11} fill={state.animated ? 'currentColor' : 'none'} />
+              {/* D-300 — solid = Phosphor's `fill` weight. */}
+              <DiamondIcon size={11} weight={state.animated ? 'fill' : 'regular'} />
             </Button>
             <Button
               variant="ghost"
@@ -231,7 +238,7 @@ export function PropertyRow<TParam extends string>({
               title={`Go to the next ${label} keyframe`}
               aria-label={`Next ${label} keyframe`}
             >
-              <ChevronRight size={12} />
+              <CaretRightIcon size={12} />
             </Button>
           </>
         )}
@@ -255,7 +262,7 @@ export function PropertyRow<TParam extends string>({
             aria-label={`Edit ${label} ease curve`}
             aria-pressed={curveOpen}
           >
-            <Spline size={11} />
+            <BezierCurveIcon size={11} />
           </Button>
         )}
         <Button
@@ -266,7 +273,7 @@ export function PropertyRow<TParam extends string>({
           title={`Reset ${label} to its default`}
           aria-label={`Reset ${label}`}
         >
-          <RotateCcw size={11} />
+          <ArrowCounterClockwiseIcon size={11} />
         </Button>
       </div>
     </div>

@@ -1,7 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { Check, RotateCcw, Grid3X3, Eye, EyeOff, Info, LineChart, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
+import {
+  CheckIcon,
+  ArrowCounterClockwiseIcon,
+  GridNineIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  InfoIcon,
+  ChartLineIcon,
+  MagnifyingGlassPlusIcon,
+  MagnifyingGlassMinusIcon,
+  CornersOutIcon,
+} from '@phosphor-icons/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Button from '../ui/Button';
 import Slider from '../ui/Slider';
@@ -334,7 +345,7 @@ export default function TransformModal({ isOpen, onClose, onApply, currentAdjust
           data-tooltip={t('modals.transform.resetTooltip')}
           className="p-2 rounded-full hover:bg-surface transition-colors"
         >
-          <RotateCcw size={18} />
+          <ArrowCounterClockwiseIcon size={18} />
         </button>
       </div>
 
@@ -450,7 +461,7 @@ export default function TransformModal({ isOpen, onClose, onApply, currentAdjust
               variant={TextVariants.small}
               className="p-3 bg-surface rounded-md border border-surface flex items-center gap-3"
             >
-              <Info size={16} className="shrink-0" />
+              <InfoIcon size={16} className="shrink-0" />
               <p className="leading-relaxed">{t('modals.transform.maskWarning')}</p>
             </Text>
           )}
@@ -530,7 +541,7 @@ export default function TransformModal({ isOpen, onClose, onApply, currentAdjust
               )}
               data-tooltip={t('modals.transform.toggleGridTooltip')}
             >
-              <Grid3X3 size={18} />
+              <GridNineIcon size={18} />
             </button>
             <button
               onClick={handleShowLinesToggle}
@@ -540,7 +551,7 @@ export default function TransformModal({ isOpen, onClose, onApply, currentAdjust
               )}
               data-tooltip={t('modals.transform.toggleHelperLinesTooltip')}
             >
-              <LineChart size={18} />
+              <ChartLineIcon size={18} />
             </button>
 
             <div className="w-px h-5 bg-white/20 mx-1"></div>
@@ -550,7 +561,7 @@ export default function TransformModal({ isOpen, onClose, onApply, currentAdjust
               className="p-2 text-white/60 hover:bg-white/10 hover:text-white rounded-full transition-colors"
               data-tooltip={t('modals.transform.zoomOutTooltip')}
             >
-              <ZoomOut size={18} />
+              <MagnifyingGlassMinusIcon size={18} />
             </button>
 
             <span className="text-xs font-mono text-white/90 w-12 text-center select-none pointer-events-none">
@@ -562,7 +573,7 @@ export default function TransformModal({ isOpen, onClose, onApply, currentAdjust
               className="p-2 text-white/60 hover:bg-white/10 hover:text-white rounded-full transition-colors"
               data-tooltip={t('modals.transform.zoomInTooltip')}
             >
-              <ZoomIn size={18} />
+              <MagnifyingGlassPlusIcon size={18} />
             </button>
 
             <button
@@ -570,7 +581,7 @@ export default function TransformModal({ isOpen, onClose, onApply, currentAdjust
               className="p-2 text-white/60 hover:bg-white/10 hover:text-white rounded-full transition-colors"
               data-tooltip={t('modals.transform.resetZoomTooltip')}
             >
-              <Maximize size={16} />
+              <CornersOutIcon size={16} />
             </button>
 
             <div className="w-px h-5 bg-white/20 mx-1"></div>
@@ -585,7 +596,7 @@ export default function TransformModal({ isOpen, onClose, onApply, currentAdjust
               )}
               data-tooltip={t('modals.transform.compareTooltip')}
             >
-              {isCompareActive ? <Eye size={18} /> : <EyeOff size={18} />}
+              {isCompareActive ? <EyeIcon size={18} /> : <EyeSlashIcon size={18} />}
             </button>
           </div>
         </div>
@@ -622,7 +633,7 @@ export default function TransformModal({ isOpen, onClose, onApply, currentAdjust
                 {t('modals.transform.cancel')}
               </button>
               <Button onClick={handleApply} disabled={isApplying || !previewUrl}>
-                <Check className="mr-2" size={16} />
+                <CheckIcon className="mr-2" size={16} />
                 {t('modals.transform.apply')}
               </Button>
             </div>

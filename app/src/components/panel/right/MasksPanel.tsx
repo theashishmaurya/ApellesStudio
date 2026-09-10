@@ -24,25 +24,25 @@ import {
   pointerWithin,
 } from '@dnd-kit/core';
 import {
-  BringToFront,
-  ChartArea,
-  Circle,
-  ClipboardPaste,
-  Copy,
-  Eye,
-  EyeOff,
-  FileEdit,
-  FolderOpen,
-  Folder as FolderIcon,
-  Loader2,
-  Minus,
-  Plus,
-  PlusSquare,
-  RotateCcw,
-  Trash2,
-  SwatchBook,
-  SquaresIntersect,
-} from 'lucide-react';
+  PerspectiveIcon,
+  ChartLineIcon,
+  CircleIcon,
+  ClipboardTextIcon,
+  CopyIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  NotePencilIcon,
+  FolderOpenIcon,
+  FolderIcon,
+  CircleNotchIcon,
+  MinusIcon,
+  PlusIcon,
+  PlusSquareIcon,
+  ArrowCounterClockwiseIcon,
+  TrashIcon,
+  SwatchesIcon,
+  IntersectSquareIcon,
+} from '@phosphor-icons/react';
 
 import CollapsibleSection from '../../ui/CollapsibleSection';
 import Switch from '../../ui/Switch';
@@ -621,12 +621,12 @@ export default function MasksPanel() {
           { type: OPTION_SEPARATOR },
           {
             label: t('editor.masks.actions.subtractFromMask'),
-            icon: Minus,
+            icon: MinusIcon,
             submenu: buildFlatMenu(SubMaskMode.Subtractive),
           },
           {
             label: t('editor.masks.actions.intersectMaskWith'),
-            icon: SquaresIntersect,
+            icon: IntersectSquareIcon,
             submenu: buildFlatMenu(SubMaskMode.Intersect),
           },
         );
@@ -969,11 +969,11 @@ export default function MasksPanel() {
     showContextMenu(e.clientX, e.clientY, [
       {
         label: t('editor.masks.actions.pasteMask'),
-        icon: ClipboardPaste,
+        icon: ClipboardTextIcon,
         disabled: !copiedMask,
         onClick: () => handlePasteMask(),
       },
-      { label: t('editor.masks.addNewMask'), icon: Plus, submenu: newMaskSubMenu },
+      { label: t('editor.masks.addNewMask'), icon: PlusIcon, submenu: newMaskSubMenu },
     ]);
   };
 
@@ -1006,14 +1006,14 @@ export default function MasksPanel() {
                   : t('editor.masks.toggleAnalyticsTooltip')
               }
             >
-              <ChartArea size={18} />
+              <ChartLineIcon size={18} />
             </button>
             <button
               className="p-2 rounded-full hover:bg-surface transition-colors"
               onClick={handleResetAllMasks}
               data-tooltip={t('editor.masks.resetMaskingTooltip')}
             >
-              <RotateCcw size={18} />
+              <ArrowCounterClockwiseIcon size={18} />
             </button>
           </div>
         </div>
@@ -1083,7 +1083,7 @@ export default function MasksPanel() {
                       }}
                       className="w-full mb-6 px-3 py-2 rounded-md text-sm bg-card-active/60 hover:bg-card-active text-text-secondary hover:text-text-primary transition-colors flex items-center justify-center gap-2"
                     >
-                      <BringToFront size={15} />
+                      <PerspectiveIcon size={15} />
                       {t('editor.masks.addDepthHaze', 'Add depth haze')}
                     </button>
                     <Text variant={TextVariants.heading} className="mb-2">
@@ -1187,7 +1187,7 @@ export default function MasksPanel() {
                       onClick={(e) => handleAddMaskContextMenu(e, null)}
                     >
                       <div className="p-0.5">
-                        <Plus size={18} />
+                        <PlusIcon size={18} />
                       </div>
                       <span>{t('editor.masks.addNewMask')}</span>
                     </Text>
@@ -1280,7 +1280,7 @@ export default function MasksPanel() {
               >
                 {(() => {
                   const sm = activeDragItem.item as SubMask;
-                  const Icon = MASK_ICON_MAP[sm.type] || Circle;
+                  const Icon = MASK_ICON_MAP[sm.type] || CircleIcon;
                   return <Icon size={16} className={`shrink-0 ml-1 ${TEXT_COLOR_KEYS[TextColors.secondary]}`} />;
                 })()}
                 <span className="flex-1 truncate">{getSubMaskName(activeDragItem.item as SubMask)}</span>
@@ -1296,7 +1296,7 @@ export default function MasksPanel() {
               >
                 {(() => {
                   const maskType = ALL_MASK_TYPES.find((m) => m.type === activeDragItem.maskType);
-                  const Icon = maskType?.icon || Circle;
+                  const Icon = maskType?.icon || CircleIcon;
                   return (
                     <>
                       <Icon size={24} />
@@ -1451,28 +1451,28 @@ function ContainerRow({
     showContextMenu(e.clientX, e.clientY, [
       {
         label: t('editor.masks.actions.rename'),
-        icon: FileEdit,
+        icon: NotePencilIcon,
         onClick: () => {
           setRenamingId(container.id);
           setTempName(container.name);
         },
       },
-      { label: t('editor.masks.actions.duplicateMask'), icon: PlusSquare, onClick: () => handleDuplicate(container) },
+      { label: t('editor.masks.actions.duplicateMask'), icon: PlusSquareIcon, onClick: () => handleDuplicate(container) },
       {
         label: t('editor.masks.actions.duplicateAndInvertMask'),
-        icon: RotateCcw,
+        icon: ArrowCounterClockwiseIcon,
         onClick: () => handleDuplicateAndInvert(container),
       },
-      { label: t('editor.masks.actions.copyMask'), icon: Copy, onClick: () => copyMaskToClipboard(container) },
+      { label: t('editor.masks.actions.copyMask'), icon: CopyIcon, onClick: () => copyMaskToClipboard(container) },
       {
         label: t('editor.masks.actions.pasteMask'),
-        icon: ClipboardPaste,
+        icon: ClipboardTextIcon,
         disabled: !copiedMask,
         onClick: () => handlePasteMask(container.id),
       },
       {
         label: t('editor.masks.actions.pasteMaskAdjustments'),
-        icon: ClipboardPaste,
+        icon: ClipboardTextIcon,
         disabled: !copiedMask,
         onClick: () => {
           if (copiedMask) {
@@ -1482,7 +1482,7 @@ function ContainerRow({
       },
       {
         label: t('editor.masks.actions.applyPreset'),
-        icon: SwatchBook,
+        icon: SwatchesIcon,
         submenu: generatePresetSubmenu(presets).length
           ? generatePresetSubmenu(presets)
           : [{ label: t('editor.masks.actions.noPresets'), disabled: true }],
@@ -1490,13 +1490,13 @@ function ContainerRow({
       { type: OPTION_SEPARATOR },
       {
         label: t('editor.masks.actions.resetMaskAdjustments'),
-        icon: RotateCcw,
+        icon: ArrowCounterClockwiseIcon,
         onClick: () =>
           updateContainer(container.id, { adjustments: JSON.parse(JSON.stringify(INITIAL_MASK_ADJUSTMENTS)) }),
       },
       {
         label: t('editor.masks.actions.deleteMask'),
-        icon: Trash2,
+        icon: TrashIcon,
         isDestructive: true,
         onClick: () => handleDelete(container.id),
       },
@@ -1547,7 +1547,7 @@ function ContainerRow({
           }}
           className="p-0.5 rounded transition-colors cursor-pointer"
         >
-          {isExpanded ? <FolderOpen size={18} /> : <FolderIcon size={18} />}
+          {isExpanded ? <FolderOpenIcon size={18} /> : <FolderIcon size={18} />}
         </Text>
         <div
           className="flex-1 min-w-0 cursor-pointer"
@@ -1583,7 +1583,7 @@ function ContainerRow({
               updateContainer(container.id, { visible: !container.visible });
             }}
           >
-            {container.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+            {container.visible ? <EyeIcon size={16} /> : <EyeSlashIcon size={16} />}
           </button>
           <button
             className="p-1 hover:text-red-500 text-text-secondary"
@@ -1592,7 +1592,7 @@ function ContainerRow({
               handleDelete(container.id);
             }}
           >
-            <Trash2 size={16} />
+            <TrashIcon size={16} />
           </button>
         </div>
       </div>
@@ -1658,7 +1658,7 @@ function ContainerRow({
                     }}
                   >
                     <div className="relative w-4 h-4 ml-1 shrink-0 flex items-center justify-center">
-                      <Plus size={16} />
+                      <PlusIcon size={16} />
                     </div>
                     <span className="select-none">{t('editor.masks.actions.addNewComponent')}</span>
                   </Text>
@@ -1708,7 +1708,7 @@ function SubMaskRow({
     setNodeRef(node);
     setDroppableRef(node);
   };
-  const MaskIcon = MASK_ICON_MAP[subMask.type] || Circle;
+  const MaskIcon = MASK_ICON_MAP[subMask.type] || CircleIcon;
   const { showContextMenu } = useContextMenu();
   const [isHovered, setIsHovered] = useState(false);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1750,27 +1750,27 @@ function SubMaskRow({
     showContextMenu(e.clientX, e.clientY, [
       {
         label: t('editor.masks.actions.rename'),
-        icon: FileEdit,
+        icon: NotePencilIcon,
         onClick: () => {
           setRenamingId(subMask.id);
           setTempName(getSubMaskName(subMask));
         },
       },
-      { label: t('editor.masks.actions.duplicateComponent'), icon: PlusSquare, onClick: handleDuplicate },
+      { label: t('editor.masks.actions.duplicateComponent'), icon: PlusSquareIcon, onClick: handleDuplicate },
       {
         label: t('editor.masks.actions.duplicateAndInvertComponent'),
-        icon: RotateCcw,
+        icon: ArrowCounterClockwiseIcon,
         onClick: handleDuplicateAndInvert,
       },
-      { label: t('editor.masks.actions.copyComponent'), icon: Copy, onClick: handleCopy },
+      { label: t('editor.masks.actions.copyComponent'), icon: CopyIcon, onClick: handleCopy },
       {
         label: t('editor.masks.actions.pasteComponent'),
-        icon: ClipboardPaste,
+        icon: ClipboardTextIcon,
         disabled: !hasCopiedSubMask,
         onClick: handlePaste,
       },
       { type: OPTION_SEPARATOR },
-      { label: t('editor.masks.actions.deleteComponent'), icon: Trash2, isDestructive: true, onClick: handleDelete },
+      { label: t('editor.masks.actions.deleteComponent'), icon: TrashIcon, isDestructive: true, onClick: handleDelete },
     ]);
   };
 
@@ -1816,7 +1816,7 @@ function SubMaskRow({
               transition={{ duration: 0.15 }}
               className="absolute"
             >
-              <Loader2 size={16} className="animate-spin" />
+              <CircleNotchIcon size={16} className="animate-spin" />
             </motion.div>
           ) : showNumber ? (
             <motion.span
@@ -1882,11 +1882,11 @@ function SubMaskRow({
             }}
           >
             {subMask.mode === SubMaskMode.Additive ? (
-              <Plus size={16} />
+              <PlusIcon size={16} />
             ) : subMask.mode === SubMaskMode.Subtractive ? (
-              <Minus size={16} />
+              <MinusIcon size={16} />
             ) : (
-              <SquaresIntersect size={16} />
+              <IntersectSquareIcon size={16} />
             )}
           </button>
         )}
@@ -1902,7 +1902,7 @@ function SubMaskRow({
             updateSubMask(subMask.id, { visible: !subMask.visible });
           }}
         >
-          {subMask.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+          {subMask.visible ? <EyeIcon size={16} /> : <EyeSlashIcon size={16} />}
         </button>
         <button
           className="p-1 hover:text-red-500 text-text-secondary"
@@ -1912,7 +1912,7 @@ function SubMaskRow({
             handleDelete();
           }}
         >
-          <Trash2 size={16} />
+          <TrashIcon size={16} />
         </button>
       </div>
     </motion.div>
@@ -2121,14 +2121,14 @@ function SettingsPanel({
 
     showContextMenu(event.clientX, event.clientY, [
       {
-        icon: Copy,
+        icon: CopyIcon,
         label: t('editor.masks.settings.copySectionSettings', { section: sectionTitle }),
         onClick: handleCopy,
       },
-      { label: pasteLabel, icon: ClipboardPaste, onClick: handlePaste, disabled: !isPasteAllowed },
+      { label: pasteLabel, icon: ClipboardTextIcon, onClick: handlePaste, disabled: !isPasteAllowed },
       { type: OPTION_SEPARATOR },
       {
-        icon: RotateCcw,
+        icon: ArrowCounterClockwiseIcon,
         label: t('editor.masks.settings.resetSectionSettings', { section: sectionTitle }),
         onClick: handleReset,
       },
@@ -2217,7 +2217,7 @@ function SettingsPanel({
                   weight={TextWeights.medium}
                   className="p-3 bg-card-active rounded-md border border-surface flex items-center gap-3"
                 >
-                  <Loader2 size={16} className="animate-spin shrink-0" />
+                  <CircleNotchIcon size={16} className="animate-spin shrink-0" />
                   <div className="leading-relaxed">
                     <Text variant={TextVariants.small}>{t('editor.masks.settings.aiModelDownloading')}</Text>
                     <span>{aiModelDownloadStatus}</span>

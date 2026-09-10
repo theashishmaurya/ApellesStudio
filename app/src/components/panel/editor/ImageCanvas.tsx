@@ -3,7 +3,7 @@ import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { Stage, Layer, Ellipse, Line, Transformer, Group, Circle, Rect, Arrow } from 'react-konva';
 import { PercentCrop, Crop } from 'react-image-crop';
-import { Stamp, Bandage, Spline, BrushCleaning } from 'lucide-react';
+import { StampIcon, BandaidsIcon, BezierCurveIcon, BroomIcon } from '@phosphor-icons/react';
 import { Adjustments, AiPatch, Coord, MaskContainer } from '../../../utils/adjustments';
 import { Mask, SubMask, SubMaskMode, ToolType } from '../right/Masks';
 import { AppSettings, BrushSettings, SelectedImage } from '../../ui/AppProperties';
@@ -2958,13 +2958,13 @@ const ImageCanvas = memo(
                     >
                       <div className="p-1.5 rounded-full shadow-md transition-transform hover:scale-110 bg-surface/70 text-text-primary shadow-black/20">
                         {m.type === Mask.Clone ? (
-                          <Stamp size={16} />
+                          <StampIcon size={16} />
                         ) : m.type === Mask.Heal ? (
-                          <Bandage size={16} />
+                          <BandaidsIcon size={16} />
                         ) : m.type === Mask.Liquify ? (
-                          <Spline size={16} />
+                          <BezierCurveIcon size={16} />
                         ) : (
-                          <BrushCleaning size={16} />
+                          <BroomIcon size={16} />
                         )}
                       </div>
                     </div>

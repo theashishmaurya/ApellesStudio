@@ -40,15 +40,15 @@
 
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from 'react';
 import {
-  ChevronLast,
-  Gauge,
-  Layers,
-  MoveHorizontal,
-  Replace as ReplaceIcon,
-  SeparatorVertical,
-  SquareStack,
-  type LucideIcon,
-} from 'lucide-react';
+  CaretLineRightIcon,
+  GaugeIcon,
+  StackSimpleIcon,
+  ArrowsHorizontalIcon,
+  SwapIcon,
+  SquareSplitHorizontalIcon,
+  StackIcon,
+  type Icon as PhosphorIcon,
+} from '@phosphor-icons/react';
 
 import {
   CHROMA_MEDIA_DRAG_MIME,
@@ -65,16 +65,16 @@ import {
 import { useEditorTimelineStore } from './timelineStore';
 
 /** Per-type icon. Lives here, not in `editTypes.ts`, because it is presentation
- *  — that module stays free of any React/lucide dependency so `timeline.ts` can
+ *  — that module stays free of any React/icon-set dependency so `timeline.ts` can
  *  import from it. */
-const EDIT_TYPE_ICONS: Record<DropEditType, LucideIcon> = {
-  insert: SeparatorVertical,
-  overwrite: SquareStack,
-  replace: ReplaceIcon,
-  fit_to_fill: Gauge,
-  place_on_top: Layers,
-  append: ChevronLast,
-  ripple_overwrite: MoveHorizontal,
+const EDIT_TYPE_ICONS: Record<DropEditType, PhosphorIcon> = {
+  insert: SquareSplitHorizontalIcon,
+  overwrite: StackIcon,
+  replace: SwapIcon,
+  fit_to_fill: GaugeIcon,
+  place_on_top: StackSimpleIcon,
+  append: CaretLineRightIcon,
+  ripple_overwrite: ArrowsHorizontalIcon,
 };
 
 /** How long a refused drop's reason stays on screen. Long enough to read a

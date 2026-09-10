@@ -24,7 +24,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { PlusIcon } from '@phosphor-icons/react';
 import { Input, Tabs, TabsList, TabsTrigger } from '@apelles/ui';
 
 import { useEditorTimelineStore } from './timelineStore';
@@ -128,7 +128,7 @@ export function TimelineSwitcher() {
               title="New timeline"
               className="h-8 w-8 shrink-0 grow-0 basis-auto justify-center rounded-t-md rounded-b-none px-0 text-text-secondary hover:text-text-primary"
             >
-              <Plus className="size-3.5" />
+              <PlusIcon className="size-3.5" />
             </TabsTrigger>
           )}
         </TabsList>

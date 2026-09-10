@@ -1,21 +1,21 @@
 import {
-  Brush,
-  BringToFront,
-  Circle,
-  Cloud,
-  Droplet,
-  Droplets,
-  Eraser,
-  SquareMousePointer,
-  RectangleHorizontal,
-  TriangleRight,
-  User,
-  Sun,
-  Stamp,
-  Bandage,
-  Spline,
-  BrushCleaning,
-} from 'lucide-react';
+  PaintBrushIcon,
+  PerspectiveIcon,
+  CircleIcon,
+  CloudIcon,
+  DropIcon,
+  WavesIcon,
+  EraserIcon,
+  CursorClickIcon,
+  RectangleIcon,
+  GradientIcon,
+  UserIcon,
+  SunIcon,
+  StampIcon,
+  BandaidsIcon,
+  BezierCurveIcon,
+  BroomIcon,
+} from '@phosphor-icons/react';
 import { motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import Text from '../../ui/Text';
@@ -107,42 +107,42 @@ export function getSubMaskName(subMask: Pick<SubMask, 'name' | 'type'>) {
 }
 
 export const MASK_ICON_MAP: Record<Mask, any> = {
-  [Mask.AiDepth]: BringToFront,
-  [Mask.AiForeground]: User,
-  [Mask.AiSky]: Cloud,
-  [Mask.AiSubject]: SquareMousePointer,
-  [Mask.All]: RectangleHorizontal,
-  [Mask.Brush]: Brush,
-  [Mask.Flow]: Droplets,
-  [Mask.Color]: Droplet,
-  [Mask.Linear]: TriangleRight,
-  [Mask.Luminance]: Sun,
-  [Mask.QuickEraser]: Eraser,
-  [Mask.Radial]: Circle,
-  [Mask.Clone]: Stamp,
-  [Mask.Heal]: Bandage,
-  [Mask.Liquify]: Spline,
-  [Mask.Retouch]: BrushCleaning,
+  [Mask.AiDepth]: PerspectiveIcon,
+  [Mask.AiForeground]: UserIcon,
+  [Mask.AiSky]: CloudIcon,
+  [Mask.AiSubject]: CursorClickIcon,
+  [Mask.All]: RectangleIcon,
+  [Mask.Brush]: PaintBrushIcon,
+  [Mask.Flow]: WavesIcon,
+  [Mask.Color]: DropIcon,
+  [Mask.Linear]: GradientIcon,
+  [Mask.Luminance]: SunIcon,
+  [Mask.QuickEraser]: EraserIcon,
+  [Mask.Radial]: CircleIcon,
+  [Mask.Clone]: StampIcon,
+  [Mask.Heal]: BandaidsIcon,
+  [Mask.Liquify]: BezierCurveIcon,
+  [Mask.Retouch]: BroomIcon,
 };
 
 export const MASK_AI_TYPES: Array<MaskType> = [
-  { disabled: false, icon: SquareMousePointer, name: 'Subject', type: Mask.AiSubject },
-  { disabled: false, icon: Cloud, name: 'Sky', type: Mask.AiSky },
-  { disabled: false, icon: User, name: 'Foreground', type: Mask.AiForeground },
-  { disabled: false, icon: BringToFront, name: 'Depth', type: Mask.AiDepth },
+  { disabled: false, icon: CursorClickIcon, name: 'Subject', type: Mask.AiSubject },
+  { disabled: false, icon: CloudIcon, name: 'Sky', type: Mask.AiSky },
+  { disabled: false, icon: UserIcon, name: 'Foreground', type: Mask.AiForeground },
+  { disabled: false, icon: PerspectiveIcon, name: 'Depth', type: Mask.AiDepth },
 ];
 
 export const MASK_BASIC_TYPES: Array<MaskType> = [
-  { disabled: false, icon: Brush, name: 'Brush', type: Mask.Brush },
-  { disabled: false, icon: TriangleRight, name: 'Linear', type: Mask.Linear },
-  { disabled: false, icon: Circle, name: 'Radial', type: Mask.Radial },
-  { disabled: false, icon: Droplets, name: 'Flow', type: Mask.Flow },
+  { disabled: false, icon: PaintBrushIcon, name: 'Brush', type: Mask.Brush },
+  { disabled: false, icon: GradientIcon, name: 'Linear', type: Mask.Linear },
+  { disabled: false, icon: CircleIcon, name: 'Radial', type: Mask.Radial },
+  { disabled: false, icon: WavesIcon, name: 'Flow', type: Mask.Flow },
 ];
 
 export const MASK_RANGE_TYPES: Array<MaskType> = [
-  { disabled: false, icon: Droplet, name: 'Color', type: Mask.Color },
-  { disabled: false, icon: Sun, name: 'Luminance', type: Mask.Luminance },
-  { disabled: false, icon: RectangleHorizontal, name: 'Whole Image', type: Mask.All },
+  { disabled: false, icon: DropIcon, name: 'Color', type: Mask.Color },
+  { disabled: false, icon: SunIcon, name: 'Luminance', type: Mask.Luminance },
+  { disabled: false, icon: RectangleIcon, name: 'Whole Image', type: Mask.All },
 ];
 
 export const ALL_MASK_TYPES = [...MASK_AI_TYPES, ...MASK_BASIC_TYPES, ...MASK_RANGE_TYPES];
@@ -150,13 +150,13 @@ export const ALL_MASK_TYPES = [...MASK_AI_TYPES, ...MASK_BASIC_TYPES, ...MASK_RA
 export const AI_DIRECT_PATCH_TYPES: Array<MaskType> = [
   {
     disabled: false,
-    icon: Stamp,
+    icon: StampIcon,
     name: 'Clone',
     type: Mask.Clone,
   },
   {
     disabled: false,
-    icon: Bandage,
+    icon: BandaidsIcon,
     name: 'Heal',
     type: Mask.Heal,
   },
@@ -165,13 +165,13 @@ export const AI_DIRECT_PATCH_TYPES: Array<MaskType> = [
 export const AI_TOUCH_UP_TYPES: Array<MaskType> = [
   {
     disabled: false,
-    icon: Spline,
+    icon: BezierCurveIcon,
     name: 'Liquify',
     type: Mask.Liquify,
   },
   {
     disabled: false,
-    icon: BrushCleaning,
+    icon: BroomIcon,
     name: 'Retouch',
     type: Mask.Retouch,
   },
@@ -180,37 +180,37 @@ export const AI_TOUCH_UP_TYPES: Array<MaskType> = [
 export const AI_GENERATIVE_CREATION_TYPES: Array<MaskType> = [
   {
     disabled: false,
-    icon: Eraser,
+    icon: EraserIcon,
     name: 'Quick Erase',
     type: Mask.QuickEraser,
   },
   {
     disabled: false,
-    icon: SquareMousePointer,
+    icon: CursorClickIcon,
     name: 'Subject',
     type: Mask.AiSubject,
   },
   {
     disabled: false,
-    icon: User,
+    icon: UserIcon,
     name: 'Foreground',
     type: Mask.AiForeground,
   },
   {
     disabled: false,
-    icon: Brush,
+    icon: PaintBrushIcon,
     name: 'Brush',
     type: Mask.Brush,
   },
   {
     disabled: false,
-    icon: TriangleRight,
+    icon: GradientIcon,
     name: 'Linear',
     type: Mask.Linear,
   },
   {
     disabled: false,
-    icon: Circle,
+    icon: CircleIcon,
     name: 'Radial',
     type: Mask.Radial,
   },
@@ -219,37 +219,37 @@ export const AI_GENERATIVE_CREATION_TYPES: Array<MaskType> = [
 export const OTHERS_MASK_TYPES: Array<MaskType> = [
   {
     disabled: false,
-    icon: BringToFront,
+    icon: PerspectiveIcon,
     name: 'Depth',
     type: Mask.AiDepth,
   },
   {
     disabled: false,
-    icon: Droplet,
+    icon: DropIcon,
     name: 'Color',
     type: Mask.Color,
   },
   {
     disabled: false,
-    icon: Sun,
+    icon: SunIcon,
     name: 'Luminance',
     type: Mask.Luminance,
   },
   {
     disabled: false,
-    icon: Brush,
+    icon: PaintBrushIcon,
     name: 'Brush',
     type: Mask.Brush,
   },
   {
     disabled: false,
-    icon: Droplets,
+    icon: WavesIcon,
     name: 'Flow',
     type: Mask.Flow,
   },
   {
     disabled: false,
-    icon: RectangleHorizontal,
+    icon: RectangleIcon,
     name: 'Whole Image',
     type: Mask.All,
   },

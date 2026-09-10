@@ -2,20 +2,20 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation, Trans } from 'react-i18next';
 import {
-  RotateCcw,
-  Search,
-  Check,
-  Info,
-  Loader,
-  Eye,
-  EyeOff,
-  ZoomIn,
-  ZoomOut,
-  Maximize,
-  SquareDashed,
-  CircleDashed,
-  Activity,
-} from 'lucide-react';
+  ArrowCounterClockwiseIcon,
+  MagnifyingGlassIcon,
+  CheckIcon,
+  InfoIcon,
+  CircleNotchIcon,
+  EyeIcon,
+  EyeSlashIcon,
+  MagnifyingGlassPlusIcon,
+  MagnifyingGlassMinusIcon,
+  CornersOutIcon,
+  RectangleDashedIcon,
+  CircleDashedIcon,
+  PulseIcon,
+} from '@phosphor-icons/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Button from '../ui/Button';
 import Slider from '../ui/Slider';
@@ -555,7 +555,7 @@ export default function LensCorrectionModal({
       case 'detecting':
         return (
           <>
-            <Loader size={16} className="animate-spin" /> {t('modals.lensCorrection.detecting')}
+            <CircleNotchIcon size={16} className="animate-spin" /> {t('modals.lensCorrection.detecting')}
           </>
         );
       case 'not_found':
@@ -563,13 +563,13 @@ export default function LensCorrectionModal({
       case 'success':
         return (
           <>
-            <Check size={16} /> {t('modals.lensCorrection.lensFound')}
+            <CheckIcon size={16} /> {t('modals.lensCorrection.lensFound')}
           </>
         );
       default:
         return (
           <>
-            <Search size={16} /> {t('modals.lensCorrection.autoDetectLens')}
+            <MagnifyingGlassIcon size={16} /> {t('modals.lensCorrection.autoDetectLens')}
           </>
         );
     }
@@ -595,7 +595,7 @@ export default function LensCorrectionModal({
           data-tooltip={t('modals.lensCorrection.resetTooltip')}
           className="p-2 rounded-full hover:bg-surface transition-colors"
         >
-          <RotateCcw size={18} />
+          <ArrowCounterClockwiseIcon size={18} />
         </button>
       </div>
       <div className="grow overflow-y-auto p-4 flex flex-col gap-6 text-text-secondary">
@@ -648,13 +648,13 @@ export default function LensCorrectionModal({
               >
                 {detectionStatus === 'detecting' ? (
                   <>
-                    <Loader size={16} className="animate-spin" /> {t('modals.lensCorrection.detectingExif')}
+                    <CircleNotchIcon size={16} className="animate-spin" /> {t('modals.lensCorrection.detectingExif')}
                   </>
                 ) : detectionStatus === 'not_found' ? (
                   t('modals.lensCorrection.lensProfileNotFound')
                 ) : params.lensMaker && params.lensModel ? (
                   <>
-                    <Check size={16} /> {params.lensMaker} - {params.lensModel}
+                    <CheckIcon size={16} /> {params.lensMaker} - {params.lensModel}
                   </>
                 ) : (
                   t('modals.lensCorrection.waitingAutoDetect')
@@ -706,7 +706,7 @@ export default function LensCorrectionModal({
                 )}
               >
                 <Text as="div" className="p-1.5 bg-bg-primary rounded-sm">
-                  <SquareDashed size={16} />
+                  <RectangleDashedIcon size={16} />
                 </Text>
                 <Switch
                   className="grow"
@@ -747,7 +747,7 @@ export default function LensCorrectionModal({
                 )}
               >
                 <Text as="div" className="p-1.5 bg-bg-primary rounded-sm">
-                  <Activity size={16} />
+                  <PulseIcon size={16} />
                 </Text>
                 <Switch
                   className="grow"
@@ -788,7 +788,7 @@ export default function LensCorrectionModal({
                 )}
               >
                 <Text as="div" className="p-1.5 bg-bg-primary rounded-sm">
-                  <CircleDashed size={16} />
+                  <CircleDashedIcon size={16} />
                 </Text>
                 <Switch
                   className="grow"
@@ -830,7 +830,7 @@ export default function LensCorrectionModal({
               variant={TextVariants.small}
               className="p-3 bg-surface rounded-md border border-surface flex items-center gap-3"
             >
-              <Info size={16} className="shrink-0" />
+              <InfoIcon size={16} className="shrink-0" />
               <p className="leading-relaxed">{t('modals.lensCorrection.maskWarning')}</p>
             </Text>
           )}
@@ -839,7 +839,7 @@ export default function LensCorrectionModal({
             variant={TextVariants.small}
             className="p-3 bg-surface rounded-md border border-surface flex items-center gap-3"
           >
-            <Info size={16} className="shrink-0" />
+            <InfoIcon size={16} className="shrink-0" />
             <div className="leading-tight space-y-1">
               <Trans
                 i18nKey="modals.lensCorrection.databaseNotice"
@@ -916,7 +916,7 @@ export default function LensCorrectionModal({
               className="p-2 text-white/60 hover:bg-white/10 hover:text-white rounded-full transition-colors"
               data-tooltip={t('modals.lensCorrection.zoomOutTooltip')}
             >
-              <ZoomOut size={18} />
+              <MagnifyingGlassMinusIcon size={18} />
             </button>
             <span className="text-xs font-mono text-white/90 w-12 text-center select-none pointer-events-none">
               {Math.round(zoom * 100)}%
@@ -926,14 +926,14 @@ export default function LensCorrectionModal({
               className="p-2 text-white/60 hover:bg-white/10 hover:text-white rounded-full transition-colors"
               data-tooltip={t('modals.lensCorrection.zoomInTooltip')}
             >
-              <ZoomIn size={18} />
+              <MagnifyingGlassPlusIcon size={18} />
             </button>
             <button
               onClick={handleResetZoom}
               className="p-2 text-white/60 hover:bg-white/10 hover:text-white rounded-full transition-colors"
               data-tooltip={t('modals.lensCorrection.resetZoomTooltip')}
             >
-              <Maximize size={16} />
+              <CornersOutIcon size={16} />
             </button>
             <div className="w-px h-5 bg-white/20 mx-1"></div>
             <button
@@ -946,7 +946,7 @@ export default function LensCorrectionModal({
               )}
               data-tooltip={t('modals.lensCorrection.compareTooltip')}
             >
-              {isCompareActive ? <Eye size={18} /> : <EyeOff size={18} />}
+              {isCompareActive ? <EyeIcon size={18} /> : <EyeSlashIcon size={18} />}
             </button>
           </div>
         </div>
@@ -986,7 +986,7 @@ export default function LensCorrectionModal({
                 {t('modals.lensCorrection.cancel')}
               </button>
               <Button onClick={handleApply} disabled={isApplying || !previewUrl}>
-                <Check className="mr-2" size={16} /> {t('modals.lensCorrection.apply')}
+                <CheckIcon className="mr-2" size={16} /> {t('modals.lensCorrection.apply')}
               </Button>
             </div>
           </motion.div>

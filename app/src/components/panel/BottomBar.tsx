@@ -1,5 +1,14 @@
 import { createElement, useState, useEffect, useRef } from 'react';
-import { Copy, ClipboardPaste, Check, Settings, Filter, PanelLeft, PanelBottom, PanelRight } from 'lucide-react';
+import {
+  CopyIcon,
+  ClipboardTextIcon,
+  CheckIcon,
+  GearIcon,
+  FunnelIcon,
+  SidebarSimpleIcon,
+  SquareSplitVerticalIcon,
+  type IconProps,
+} from '@phosphor-icons/react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useShallow } from 'zustand/react/shallow';
@@ -76,6 +85,11 @@ const PanelToggleButton = ({ onClick, Icon, tooltip, disabled = false }: PanelTo
     {createElement(Icon, { size: 18 })}
   </button>
 );
+
+/* D-300 — Phosphor ships a single sidebar glyph, left-handed. The right-hand
+   panel toggle is that same glyph mirrored, which is exactly what Phosphor's
+   own `mirrored` prop is for; a second, right-handed icon does not exist. */
+const RightPanelIcon = (props: IconProps) => <SidebarSimpleIcon {...props} mirrored />;
 
 export default function BottomBar({
   filmstripHeight,
@@ -358,7 +372,7 @@ export default function BottomBar({
                     transition={{ duration: 0.15 }}
                     className="absolute"
                   >
-                    <Check size={18} className="text-green-500" />
+                    <CheckIcon size={18} className="text-green-500" />
                   </motion.div>
                 ) : (
                   <motion.div
@@ -369,7 +383,7 @@ export default function BottomBar({
                     transition={{ duration: 0.15 }}
                     className="absolute"
                   >
-                    <Copy size={18} />
+                    <CopyIcon size={18} />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -391,7 +405,7 @@ export default function BottomBar({
                     transition={{ duration: 0.15 }}
                     className="absolute"
                   >
-                    <Check size={18} className="text-green-500" />
+                    <CheckIcon size={18} className="text-green-500" />
                   </motion.div>
                 ) : (
                   <motion.div
@@ -402,7 +416,7 @@ export default function BottomBar({
                     transition={{ duration: 0.15 }}
                     className="absolute"
                   >
-                    <ClipboardPaste size={18} />
+                    <ClipboardTextIcon size={18} />
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -413,7 +427,7 @@ export default function BottomBar({
               onClick={onOpenCopyPasteSettings}
               data-tooltip={t('ui.bottomBar.tooltips.copyPasteSettings')}
             >
-              <Settings size={18} />
+              <GearIcon size={18} />
             </button>
           </div>
 
@@ -433,7 +447,7 @@ export default function BottomBar({
               onClick={() => setIsFilterExpanded(!isFilterExpanded)}
               data-tooltip={t('ui.bottomBar.tooltips.quickFilter', 'Quick Filter')}
             >
-              <Filter size={18} />
+              <FunnelIcon size={18} />
             </button>
 
             <div
@@ -471,7 +485,7 @@ export default function BottomBar({
                         style={{ backgroundColor: color.color }}
                         data-tooltip={tooltipTitle}
                       >
-                        {isSelected && <Check size={10} className="text-white drop-shadow-md" />}
+                        {isSelected && <CheckIcon size={10} className="text-white drop-shadow-md" />}
                       </button>
                     );
                   })}
@@ -566,7 +580,7 @@ export default function BottomBar({
                 {showLeftPanelToggle && (
                   <PanelToggleButton
                     onClick={toggleLeft}
-                    Icon={PanelLeft}
+                    Icon={SidebarSimpleIcon}
                     tooltip={
                       isLeftOpen ? t('ui.bottomBar.tooltips.collapseLeft') : t('ui.bottomBar.tooltips.expandLeft')
                     }
@@ -576,7 +590,7 @@ export default function BottomBar({
                 {showBottomPanelToggle && showFilmstrip && (
                   <PanelToggleButton
                     onClick={toggleBottom}
-                    Icon={PanelBottom}
+                    Icon={SquareSplitVerticalIcon}
                     tooltip={
                       isBottomOpen
                         ? t('ui.bottomBar.tooltips.collapseFilmstrip')
@@ -588,7 +602,7 @@ export default function BottomBar({
                 {showRightPanelToggle && (
                   <PanelToggleButton
                     onClick={toggleRight}
-                    Icon={PanelRight}
+                    Icon={RightPanelIcon}
                     tooltip={
                       isRightOpen ? t('ui.bottomBar.tooltips.collapseRight') : t('ui.bottomBar.tooltips.expandRight')
                     }
