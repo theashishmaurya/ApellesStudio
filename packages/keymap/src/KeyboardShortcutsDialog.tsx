@@ -138,39 +138,49 @@ export function KeyboardShortcutsDialog({ open, onOpenChange, translate }: Keybo
           </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[75vh] overflow-y-auto pr-1" data-chroma-panel="keyboard-shortcuts">
-          <div className="columns-1 gap-x-8 sm:columns-2 lg:columns-3">
-            {SHORTCUT_CATEGORIES.map((category) => {
-              const defs = SHORTCUT_DEFINITIONS.filter((d) => d.category === category.id);
-              if (defs.length === 0) return null;
-              return (
-                <section key={category.id} className="mb-4 break-inside-avoid">
-                  <header className="mb-1 flex items-baseline gap-2 border-b border-border-color/60 pb-1">
-                    <h3 className="text-[11px] font-semibold uppercase tracking-wide text-text-primary">
-                      {category.labelKey && translate ? translate(category.labelKey) : category.label}
-                    </h3>
-                    <span className="text-[10px] text-text-secondary">{SCOPE_TAGS[category.scope]}</span>
-                  </header>
-                  <ul>
-                    {defs.map((def) => (
-                      <ShortcutRow
-                        key={def.id}
-                        def={def}
-                        label={label(def)}
-                        combo={effectiveCombo(def, overrides)}
-                        modified={def.id in overrides}
-                        conflicting={conflicts.has(def.id)}
-                        recording={recording === def.id}
-                        osPlatform={osPlatform}
-                        onRecord={() => setRecording(def.id)}
-                        onReset={() => resetBinding(def.id)}
-                      />
-                    ))}
-                  </ul>
-                </section>
-              );
-            })}
-          </div>
+        {/* WebKit (this app's real renderer, via WKWebView) fails to balance
+            `columns-*` when the multi-column element is a plain-height CHILD
+            of a separate `overflow-y-auto` ancestor — it collapses to one
+            long column instead, a real, live-confirmed WebKit quirk jsdom's
+            no-layout tier can never catch (it doesn't compute CSS layout at
+            all). Scroll and columns now live on the SAME element, which
+            gives WebKit's balance algorithm a concrete height to work from
+            instead of an unbounded auto-height column inside an unrelated
+            scroll box. */}
+        <div
+          className="max-h-[75vh] columns-1 gap-x-8 overflow-y-auto pr-1 sm:columns-2 lg:columns-3"
+          data-chroma-panel="keyboard-shortcuts"
+        >
+          {SHORTCUT_CATEGORIES.map((category) => {
+            const defs = SHORTCUT_DEFINITIONS.filter((d) => d.category === category.id);
+            if (defs.length === 0) return null;
+            return (
+              <section key={category.id} className="mb-4 break-inside-avoid">
+                <header className="mb-1 flex items-baseline gap-2 border-b border-border-color/60 pb-1">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-wide text-text-primary">
+                    {category.labelKey && translate ? translate(category.labelKey) : category.label}
+                  </h3>
+                  <span className="text-[10px] text-text-secondary">{SCOPE_TAGS[category.scope]}</span>
+                </header>
+                <ul>
+                  {defs.map((def) => (
+                    <ShortcutRow
+                      key={def.id}
+                      def={def}
+                      label={label(def)}
+                      combo={effectiveCombo(def, overrides)}
+                      modified={def.id in overrides}
+                      conflicting={conflicts.has(def.id)}
+                      recording={recording === def.id}
+                      osPlatform={osPlatform}
+                      onRecord={() => setRecording(def.id)}
+                      onReset={() => resetBinding(def.id)}
+                    />
+                  ))}
+                </ul>
+              </section>
+            );
+          })}
         </div>
 
         <DialogFooter>

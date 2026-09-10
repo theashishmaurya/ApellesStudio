@@ -4,6 +4,12 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-142 fixed:** D-278's new multi-column Keyboard
+  Shortcuts layout never actually balanced in the real app — a WebKit-only
+  quirk (this app's real renderer) where `columns-*` fails to balance when
+  nested inside a separate `overflow-y-auto` ancestor, invisible to D-278's
+  own jsdom tests since jsdom computes no real CSS layout at all. Fixed by
+  merging the scroll and columns containers into one element.
 - **2026-09-10** — **D-278: Keyboard Shortcuts window, layout redesign** —
   against the owner's Figma "Keyboard Shortcuts Collection" reference
   (`scratch/keyboard-shortcuts-figma-reference.png`), not a functionality
