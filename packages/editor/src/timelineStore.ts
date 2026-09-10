@@ -51,6 +51,21 @@
  * short bounded retry ladder (superseding D-085's unexplained 500ms one-shot)
  * that gives up into a real, honest error state rather than a lie.
  *
+ * B-080 — **a pending debounced save is state this store OWES the backend, and
+ * every action that changes where that save would land has to settle it
+ * first.** `chroma_timeline_set` writes onto whichever timeline is ACTIVE when
+ * it arrives — it does not carry, or match on, the id of the timeline it was
+ * built from. So a save still sitting on the {@link SAVE_DEBOUNCE_MS} timer
+ * when the active timeline (or the open project) changes is not merely late:
+ * it is addressed to a document that is no longer there, and `load()` has
+ * already overwritten the only in-memory copy of the edit it carried. The edit
+ * was silently gone, from disk and from memory both. `flushPendingSave()` is
+ * the fix and the rule — `createTimeline`/`setActiveTimeline` await it before
+ * issuing their own command, and the project axis awaits it one layer up, in
+ * `app/src/store/useSessionStore.ts`'s open/new/close (this store only hears
+ * about a project switch after the backend has already made it, so it can only
+ * cancel — see `setOpenProject`).
+ *
  * B-083/D-203 — **that one input carries the project's identity, not just a
  * boolean.** It used to be `setProjectOpen(open: boolean)`, which cannot tell
  * "no project → project A" apart from "project A → project B" — and the
@@ -453,7 +468,29 @@ interface EditorTimelineState {
   /** D-051 — restore a full `Timeline` snapshot (an undo/redo target),
    *  bypassing the debounced save so it lands immediately. */
   restoreSnapshot: (timeline: Timeline) => void;
-  _flushSave: () => void;
+  /** Persist `timeline` now. Resolves `true` once `chroma_timeline_set` has
+   *  actually returned, `false` if it rejected (with the reason already in
+   *  `error`) — the *resolution* is what {@link flushPendingSave} needs, so
+   *  this is awaitable rather than fire-and-forget. */
+  _flushSave: () => Promise<boolean>;
+  /** B-080 — settle every save this store still owes the backend, and resolve
+   *  only once the last one has actually landed.
+   *
+   *  Cancels the {@link SAVE_DEBOUNCE_MS} timer and runs its save immediately,
+   *  then waits out any `chroma_timeline_set` already in flight. Resolves
+   *  `true` when the backend demonstrably holds the current `timeline`,
+   *  `false` if a save failed (the reason is in `error`, and the edit is still
+   *  in memory to retry).
+   *
+   *  **Call this before ANY action that changes which timeline or project
+   *  `chroma_timeline_set` would write into** — that command writes onto
+   *  whichever timeline is ACTIVE at the moment it arrives, so a save left
+   *  pending across a switch is not merely late, it is addressed to the wrong
+   *  document and gets dropped. See `createTimeline`/`setActiveTimeline`
+   *  below, and `useSessionStore`'s project open/new/close for the other
+   *  axis. A no-op (resolving `true`) when nothing is pending, so calling it
+   *  defensively costs nothing. */
+  flushPendingSave: () => Promise<boolean>;
 
   /** re-read the project's timeline list (id/name/duration/active per one) */
   loadList: () => Promise<void>;
@@ -465,6 +502,33 @@ interface EditorTimelineState {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** B-080 — the `chroma_timeline_set` currently in flight, or `null`.
+ *
+ *  A cleared {@link saveTimer} is NOT the same fact as "the backend holds this
+ *  edit": between the timer firing and the invoke resolving there is a real
+ *  window in which the save is neither pending-as-a-timer nor done. A switch
+ *  that only cancelled the timer would race straight through that window, and
+ *  `chroma_timeline_set` writes onto whichever timeline is ACTIVE when it
+ *  arrives — so the in-flight save must be waited out too, not just the
+ *  scheduled one. Self-clearing: every flush replaces this with its own
+ *  promise and drops it again on settle (identity-checked, so a later flush's
+ *  promise is never cleared by an earlier one finishing). */
+let inFlightSave: Promise<boolean> | null = null;
+
+/** B-080 — register one `chroma_timeline_set` round trip as {@link
+ *  inFlightSave} for as long as it is unresolved, so {@link
+ *  EditorTimelineState.flushPendingSave} can wait it out. Used by BOTH write
+ *  paths (`_flushSave` and `restoreSnapshot`) — an undo's immediate save is
+ *  addressed to the active timeline exactly like a debounced one is, so a
+ *  switch racing it has the identical failure mode. */
+function trackSave(p: Promise<boolean>): Promise<boolean> {
+  const tracked = p.finally(() => {
+    if (inFlightSave === tracked) inFlightSave = null;
+  });
+  inFlightSave = tracked;
+  return tracked;
+}
 
 /** B-034/D-112 — monotonic request token. `load()` is called from several
  *  independent places (the tab's own mount, every OS window `focus`, the
@@ -509,6 +573,22 @@ function invokeWithTimeout<T>(cmd: string, timeoutMs: number): Promise<T> {
       },
     );
   });
+}
+
+/** B-080 — why a timeline switch REFUSES rather than proceeds when the flush
+ *  it forced could not be persisted.
+ *
+ *  The edit is still in `timeline` at that point, so declining the switch is
+ *  the only outcome that keeps it reachable: `setActiveTimeline`'s own `load()`
+ *  overwrites `timeline` with the incoming timeline's content, and once that
+ *  has happened the unsaved edit exists nowhere — not on disk, not in memory.
+ *  That is exactly the silent loss this bug was, just with a failed backend
+ *  instead of a pending timer as the cause. A refusal is visible, and the user
+ *  can retry the switch once whatever broke the save is fixed. */
+function unflushedError(error: string | null): string {
+  return `could not save the current timeline first, so the switch was cancelled to avoid losing that edit: ${
+    error ?? 'chroma_timeline_set failed'
+  }`;
 }
 
 export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => ({
@@ -560,11 +640,19 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     // includes the pending debounced save: `_flushSave` reads `timeline` at
     // FIRE time, and the backend already points at the incoming project by
     // the time we hear about the switch, so letting it fire would write A's
-    // timeline into B. Cancelling it means an edit made in the last
-    // `SAVE_DEBOUNCE_MS` before a project switch is dropped — the same race
-    // B-080 already tracks for a *timeline* switch; dropping it is the safe
-    // half of that trade, and closing it properly (flush before the switch
-    // proceeds) is B-080's own scoped fix, not this one's.
+    // timeline into B. Cancelling it is therefore still the right thing to do
+    // HERE — but it is no longer the whole answer.
+    //
+    // B-080 — the flush that keeps the edit now happens one layer up, at the
+    // only place that still runs while the OUTGOING project is the active one:
+    // `useSessionStore`'s `openProject`/`newProject`/`saveUntitledAs`/
+    // `closeProject` each `await useEditorTimelineStore.getState()
+    // .flushPendingSave()` before invoking the Rust command that switches. By
+    // the time this setter is called the switch has already happened, so a
+    // flush from here would write into the wrong project — the cancel below is
+    // the correct behaviour at this point, not a compromise. It is the second
+    // line of defence: if some future caller switches projects without
+    // flushing first, that edit is dropped rather than misfiled.
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
@@ -763,7 +851,10 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       saveTimer = null;
-      get()._flushSave();
+      // Fire-and-forget on this path by design — `_flushSave` records its own
+      // failure in `error` and never rejects. The promise exists for
+      // `flushPendingSave`'s benefit (B-080), not this call site's.
+      void get()._flushSave();
     }, SAVE_DEBOUNCE_MS);
 
     // D-051 — one shared-history entry per applied op, snapshot-based (see
@@ -785,9 +876,20 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     }
     const dur = timelineDuration(timeline);
     set((s) => ({ timeline, playhead: Math.min(s.playhead, Math.max(0, dur - 1)) }));
-    invoke('chroma_timeline_set', { timeline })
-      .then(() => get().load())
-      .catch((e) => set({ error: String(e) }));
+    // B-080 — tracked, like every other write to the active timeline: an undo
+    // followed straight away by a timeline switch is the same race a debounced
+    // edit is, and `flushPendingSave` has to be able to wait this one out too.
+    void trackSave(
+      invoke('chroma_timeline_set', { timeline })
+        .then(() => {
+          void get().load();
+          return true;
+        })
+        .catch((e) => {
+          set({ error: String(e) });
+          return false;
+        }),
+    );
   },
 
   // Perf finding, 2026-09-04: this used to `.then(() => get().load())` — a
@@ -806,12 +908,43 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   // rendering this edit rather than the one before it. Bumping on `.then`
   // rather than optimistically alongside the `set` above is the whole point
   // — an optimistic bump would reintroduce exactly the race it closes.
+  //
+  // B-080 — this returns a promise now (it used to be `void`). Nothing on the
+  // debounced path awaits it; `flushPendingSave` below does, which is the
+  // whole reason the save's resolution had to become reachable at all.
   _flushSave: () => {
     const timeline = get().timeline;
-    if (!timeline) return;
-    invoke('chroma_timeline_set', { timeline })
-      .then(() => set((s) => ({ savedVersion: s.savedVersion + 1 })))
-      .catch((e) => set({ error: String(e) }));
+    if (!timeline) return Promise.resolve(true);
+    return trackSave(
+      invoke('chroma_timeline_set', { timeline })
+        .then(() => {
+          set((s) => ({ savedVersion: s.savedVersion + 1 }));
+          return true;
+        })
+        .catch((e) => {
+          set({ error: String(e) });
+          return false;
+        }),
+    );
+  },
+
+  flushPendingSave: async () => {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      void get()._flushSave();
+    }
+    // Loop rather than a single `await`: a save could already have been in
+    // flight when the timer above fired, in which case there are two to wait
+    // out. `_flushSave`'s own `finally` clears `inFlightSave` when the promise
+    // it settles is still the current one, so this terminates as soon as the
+    // last save resolves — it cannot spin.
+    let ok = true;
+    while (inFlightSave) {
+      const settled = await inFlightSave;
+      ok = ok && settled;
+    }
+    return ok;
   },
 
   loadList: async () => {
@@ -824,6 +957,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   },
 
   createTimeline: async (name) => {
+    const flushed = await get().flushPendingSave();
+    if (!flushed) return { ok: false, error: unflushedError(get().error) };
     try {
       await invoke<Timeline>('chroma_timeline_create', { name });
       await Promise.all([get().load(), get().loadList()]);
@@ -835,6 +970,12 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   },
 
   setActiveTimeline: async (id) => {
+    // B-080 — the flush must COMPLETE before `chroma_timeline_set_active` is
+    // even issued, not merely be started alongside it: `chroma_timeline_set`
+    // writes onto whichever timeline is active when it arrives, so the two
+    // commands are order-dependent, not independent.
+    const flushed = await get().flushPendingSave();
+    if (!flushed) return { ok: false, error: unflushedError(get().error) };
     try {
       await invoke('chroma_timeline_set_active', { id });
       await Promise.all([get().load(), get().loadList()]);

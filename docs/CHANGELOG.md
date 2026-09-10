@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **fixed B-080 (D-308): a pending debounced save is flushed before any
+  switch that would misaddress it.** `chroma_timeline_set` lands on whichever timeline is
+  ACTIVE when it arrives, so a save still on the 400ms debounce when the active timeline or
+  the open project changed was addressed to a document the backend had moved off — while
+  `load()` had already overwritten the only in-memory copy. The edit then existed nowhere,
+  with no error at all. `flushPendingSave()` settles that debt (the timer *and* any save
+  already in flight, `restoreSnapshot`'s immediate save included) before
+  `createTimeline`/`setActiveTimeline` issue their command, and before `useSessionStore`'s
+  project open/new/close issue theirs; a flush that fails refuses the switch rather than
+  destroying the edit. 6 new regression tests, all confirmed failing pre-fix; `tsc`
+  unchanged at its 65-error baseline. **Not live-verified against the real Rust backend.**
 - **2026-09-10** — **D-306 (fixes B-150) + D-307 (fixes B-153), and two real causes
   found for B-155.** D-306: a Colorist shot's identity is now its Edit-timeline clip
   (`chroma::state::ShotId`), not its source file — two clips of one file are two

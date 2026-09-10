@@ -29598,3 +29598,52 @@ from either component's source — it took following `WGPU_RENDER` from
   propagation finishes, which on a long clip exceeds even the 300s ceiling. Raising the
   budget is not the fix — it should return a job id and be polled, the way `depth_track`
   already does. Noted in B-153 rather than half-solved here.
+
+---
+
+## D-308 — A pending debounced save is flushed before any switch that would misaddress it
+
+**decided (2026-09-10)** — fixes B-080.
+
+- **Context.** `@apelles/editor`'s timeline store persists every edit through a single
+  module-level 400ms debounce (`SAVE_DEBOUNCE_MS`, a deliberate perf choice), and
+  `chroma_timeline_set` writes onto whichever timeline is **ACTIVE when it arrives** — it
+  carries no timeline id and matches on none. So a save still on the timer when the active
+  timeline (or the open project) changes is not merely late: it is addressed to a document
+  the backend has moved off, while `load()` has already overwritten the only in-memory copy
+  of the edit it carried. The edit then existed nowhere — not on disk, not in memory — with
+  no error of any kind. `restoreSnapshot` (undo/redo) already knew to cancel that timer
+  before restoring; `createTimeline`/`setActiveTimeline` had no handling at all, and
+  B-083/D-203's project-axis fix only made the loss *deterministic* rather than misfiled.
+- **Options considered.**
+  1. *Cancel the timer on a switch, as `setOpenProject` already does.* Rejected as the
+     whole answer: it is the correct behaviour at that one call site (by then the backend
+     already points at the incoming project, so flushing would write A into B), but it is
+     the safe half of a bad trade — the edit is still silently dropped.
+  2. *Make `chroma_timeline_set` take the timeline's id and refuse a mismatch.* Rejected
+     for this pass: it turns silent loss into a visible error, which is better, but it is a
+     Rust command-contract change with every call site to migrate, and it still loses the
+     edit. Worth revisiting on its own merits as defence in depth.
+  3. *Warn the user and let the switch proceed.* Rejected: a dialog on a 400ms race the
+     user cannot perceive, for a save that could simply have been completed instead.
+  4. **Chosen: settle the debt before changing where it would land.** `flushPendingSave()`
+     cancels the timer, runs its save immediately, and resolves only once
+     `chroma_timeline_set` has actually returned — including a save already *in flight*,
+     which a timer-only cancel raced straight through (`trackSave`/`inFlightSave`), and
+     including `restoreSnapshot`'s own immediate save, which has the identical hazard.
+     `createTimeline`/`setActiveTimeline` await it before issuing their command; the
+     project axis awaits it one layer up, in `app/src/store/useSessionStore.ts`'s
+     `openProject`/`newProject`/`saveUntitledAs`/`closeProject`, which is the last point
+     that still runs while the OUTGOING project is the active one. Both interfaces (GUI
+     launcher and MCP, via `useChromaControl.ts`) already funnel through those actions, so
+     one flush covers both.
+- **A failed flush REFUSES the switch** rather than proceeding. The edit exists only in
+  `timeline` at that moment, and `load()` is about to overwrite it — proceeding would be
+  the very bug, just with a broken backend instead of a pending timer as the cause. The one
+  exception is `closeProject`, which is also the human's escape hatch from a wedged session
+  (B-132/D-268) and so flushes best-effort rather than becoming un-clickable.
+- **Cost.** A timeline switch is now one already-scheduled IPC round trip slower in the
+  worst case (and unchanged when nothing is pending — asserted by a test). `TimelineSwitcher`
+  holds the tab strip inert for that span and shows the refusal in words; no spinner, since
+  the normal case is far too fast to warrant one.
+

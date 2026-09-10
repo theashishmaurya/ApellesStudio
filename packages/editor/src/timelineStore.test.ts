@@ -182,6 +182,200 @@ describe('switching projects (B-083 / D-203)', () => {
   });
 });
 
+// B-080 — the live repro, reproduced here against a fake backend that mirrors
+// the real `chroma_timeline_set`'s one load-bearing property: it writes onto
+// whichever timeline is ACTIVE when it arrives, never onto the timeline the
+// posted document came from. That is why a save left pending across a switch is
+// not merely late — it is addressed to a document that is no longer there, and
+// `setActiveTimeline`'s own `load()` has by then overwritten the only in-memory
+// copy of the edit. The edit existed nowhere afterwards, with no error shown.
+describe('a switch never outruns a pending save (B-080)', () => {
+  /** The backend: one document per timeline id, plus which one is active.
+   *  `chroma_timeline_set` writes into `active`, exactly like the real one. */
+  let docs: Record<string, Timeline>;
+  let active: string;
+  /** every `chroma_timeline_set` that arrived, in order, as `[activeAtArrival,
+   *  trackCountPosted]` — the ordering evidence the assertions rest on. */
+  let writes: Array<[string, number]>;
+
+  function timelineWithTracks(id: string, tracks: number): Timeline {
+    return {
+      id,
+      name: id,
+      rate: null,
+      tracks: Array.from({ length: tracks }, () => ({ kind: 'video', clips: [] })),
+    } as unknown as Timeline;
+  }
+
+  function installBackend() {
+    docs = { A: timelineWithTracks('A', 1), B: timelineWithTracks('B', 1) };
+    active = 'A';
+    writes = [];
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      switch (cmd) {
+        case 'chroma_timeline_get':
+          return Promise.resolve(docs[active]);
+        case 'chroma_timeline_set': {
+          const posted = args?.timeline as Timeline;
+          writes.push([active, posted.tracks.length]);
+          docs[active] = posted;
+          return Promise.resolve(undefined);
+        }
+        case 'chroma_timeline_set_active':
+          active = String(args?.id);
+          return Promise.resolve(undefined);
+        case 'chroma_timeline_create':
+          docs.C = timelineWithTracks('C', 0);
+          active = 'C';
+          return Promise.resolve(docs.C);
+        case 'chroma_timeline_list':
+          return Promise.resolve(
+            Object.keys(docs).map((id) => ({ id, name: id, duration: 0, active: id === active })),
+          );
+        default:
+          return Promise.resolve(undefined);
+      }
+    });
+  }
+
+  beforeEach(async () => {
+    installBackend();
+    useEditorTimelineStore.getState().setOpenProject(PROJECT_A);
+    await vi.waitFor(() => expect(useEditorTimelineStore.getState().timeline?.id).toBe('A'));
+  });
+
+  it('an edit made just before switching timelines reaches disk, on the timeline it was made on', async () => {
+    // The exact live repro: edit, then switch WITHOUT waiting out the 400ms
+    // debounce. Before the fix, the timer was left running, fired ~400ms later
+    // against B's content, and A's added track was gone from both disk and
+    // memory.
+    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'video' });
+    expect(useEditorTimelineStore.getState().timeline?.tracks).toHaveLength(2);
+
+    const res = await useEditorTimelineStore.getState().setActiveTimeline('B');
+    expect(res.ok).toBe(true);
+
+    // The save landed, on A, BEFORE the switch — a two-track A is on "disk".
+    expect(docs.A.tracks).toHaveLength(2);
+    expect(writes).toEqual([['A', 2]]);
+    // …and B is untouched by it.
+    expect(docs.B.tracks).toHaveLength(1);
+    expect(useEditorTimelineStore.getState().timeline?.id).toBe('B');
+  });
+
+  it('the flush is ordered BEFORE the switch command, not merely started alongside it', async () => {
+    // `chroma_timeline_set` has no timeline id in it, so "both were sent" is
+    // not good enough — the write has to arrive while A is still the active
+    // document. This asserts the order of the two commands directly.
+    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'video' });
+    await useEditorTimelineStore.getState().setActiveTimeline('B');
+
+    const order = invokeMock.mock.calls.map((c) => c[0] as string);
+    expect(order.indexOf('chroma_timeline_set')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('chroma_timeline_set')).toBeLessThan(order.indexOf('chroma_timeline_set_active'));
+  });
+
+  it('creating a timeline flushes the outgoing one too', async () => {
+    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'video' });
+    const res = await useEditorTimelineStore.getState().createTimeline('C');
+
+    expect(res.ok).toBe(true);
+    expect(docs.A.tracks).toHaveLength(2); // A's edit persisted, on A
+    expect(writes).toEqual([['A', 2]]);
+    expect(useEditorTimelineStore.getState().timeline?.id).toBe('C');
+  });
+
+  it('no pending save means no extra write — the happy path is unchanged', async () => {
+    vi.useFakeTimers();
+    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'video' });
+    await vi.advanceTimersByTimeAsync(1000); // let the ordinary debounce land
+    expect(writes).toEqual([['A', 2]]);
+
+    await useEditorTimelineStore.getState().setActiveTimeline('B');
+    expect(writes).toEqual([['A', 2]]); // no second, redundant save
+  });
+
+  it('a switch is REFUSED — not silently completed — when the forced save fails', async () => {
+    // The edit only exists in `timeline` at this point; letting the switch
+    // proceed would overwrite it via `load()` and lose it for good, which is
+    // the very bug. Refusing keeps it on screen and retryable.
+    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'video' });
+    const realImpl = invokeMock.getMockImplementation();
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'chroma_timeline_set'
+        ? Promise.reject('disk full')
+        : (realImpl as (c: string, a?: Record<string, unknown>) => Promise<unknown>)(cmd, args),
+    );
+
+    const res = await useEditorTimelineStore.getState().setActiveTimeline('B');
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('disk full');
+    // Never issued the switch, and the edit is still in memory.
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain('chroma_timeline_set_active');
+    expect(useEditorTimelineStore.getState().timeline?.id).toBe('A');
+    expect(useEditorTimelineStore.getState().timeline?.tracks).toHaveLength(2);
+  });
+
+  it('waits out a save that is already in flight, not just one still on the timer', async () => {
+    // The window a timer-only cancel would race straight through: the debounce
+    // has fired, the invoke is out, nothing is "pending" any more — and the
+    // write has still not reached disk.
+    const gate = deferred<undefined>();
+    const realImpl = invokeMock.getMockImplementation() as (
+      c: string,
+      a?: Record<string, unknown>,
+    ) => Promise<unknown>;
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'chroma_timeline_set'
+        ? gate.promise.then(() => realImpl(cmd, args))
+        : realImpl(cmd, args),
+    );
+
+    vi.useFakeTimers();
+    useEditorTimelineStore.getState().applyOp({ kind: 'add_track', trackKind: 'video' });
+    // Let the ordinary 400ms debounce fire for real, so the save is genuinely
+    // in flight (and `saveTimer` genuinely null) when the switch arrives.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(writes).toEqual([]); // out, but gated — nothing on "disk" yet
+
+    const switching = useEditorTimelineStore.getState().setActiveTimeline('B');
+    await vi.advanceTimersByTimeAsync(1);
+    // The switch has NOT run ahead while the write is stuck in flight.
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain('chroma_timeline_set_active');
+
+    gate.resolve(undefined);
+    expect(await switching).toEqual({ ok: true });
+    expect(writes).toEqual([['A', 2]]);
+    expect(docs.A.tracks).toHaveLength(2);
+  });
+
+  it('an undo’s immediate save is waited out by a switch too', async () => {
+    // `restoreSnapshot` bypasses the debounce and posts straight away — same
+    // "addressed to whichever timeline is active" hazard, so it is tracked as
+    // an in-flight save exactly like a debounced one.
+    const gate = deferred<undefined>();
+    const realImpl = invokeMock.getMockImplementation() as (
+      c: string,
+      a?: Record<string, unknown>,
+    ) => Promise<unknown>;
+    invokeMock.mockImplementation((cmd: string, args?: Record<string, unknown>) =>
+      cmd === 'chroma_timeline_set'
+        ? gate.promise.then(() => realImpl(cmd, args))
+        : realImpl(cmd, args),
+    );
+
+    useEditorTimelineStore.getState().restoreSnapshot(timelineWithTracks('A', 3));
+    const switching = useEditorTimelineStore.getState().setActiveTimeline('B');
+    await flush();
+    expect(invokeMock.mock.calls.map((c) => c[0])).not.toContain('chroma_timeline_set_active');
+
+    gate.resolve(undefined);
+    expect(await switching).toEqual({ ok: true });
+    expect(writes).toEqual([['A', 3]]);
+  });
+});
+
 describe('concurrent load ordering (B-034 / D-112)', () => {
   it('a slow stale FAILURE cannot overwrite a newer success', async () => {
     // The exact live shape: a `load()` already in flight (from the tab's own

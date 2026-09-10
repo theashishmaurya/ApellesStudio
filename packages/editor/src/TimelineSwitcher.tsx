@@ -21,6 +21,18 @@
  *
  * Deliberately not elaborate — no rename/delete UI yet (not asked for this
  * pass; `chroma_timeline_*` has no rename/delete commands to back it).
+ *
+ * B-080 — a switch is no longer instantaneous: `setActiveTimeline`/
+ * `createTimeline` now flush the Edit tab's pending debounced save to disk
+ * first and only then issue their own command, because `chroma_timeline_set`
+ * writes onto whichever timeline is ACTIVE when it arrives (see
+ * `timelineStore.ts`'s own B-080 note). That flush is one already-scheduled IPC
+ * round trip in the normal case — far too fast for a spinner, which is why
+ * there isn't one — but it CAN fail, and it can refuse the switch when it does.
+ * The strip therefore has two states it did not need before: `pending` (the tab
+ * strip is inert while the flush is in flight, so a second click cannot start a
+ * second switch behind the first) and `error` (the refusal, in words, instead
+ * of a click that visibly does nothing).
  */
 
 import { useEffect, useState } from 'react';
@@ -40,6 +52,10 @@ export function TimelineSwitcher() {
   const setActiveTimeline = useEditorTimelineStore((s) => s.setActiveTimeline);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  // B-080 — see this file's module doc: a switch now awaits a real flush, so
+  // it has an in-flight state and a way to fail.
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     loadList();
@@ -47,13 +63,30 @@ export function TimelineSwitcher() {
 
   const active = timelines.find((t) => t.active);
 
+  /** Run one switch/create, holding the strip inert for its duration and
+   *  surfacing a refusal rather than swallowing it. */
+  const runSwitch = async (action: () => Promise<{ ok: boolean; error?: string }>) => {
+    if (pending) return;
+    setPending(true);
+    setError(null);
+    // No `try`/`finally` here deliberately, twice over: neither store action
+    // can reject (both catch internally and report through `{ok, error}`), so
+    // there is nothing to catch — and D-201's React Compiler coverage test
+    // rejects this file outright for a `try` without a `catch`
+    // ("BuildHIR::lowerStatement"), which would switch the compiler off for
+    // the whole module.
+    const res = await action();
+    setPending(false);
+    if (!res.ok) setError(res.error ?? 'the timeline switch failed');
+  };
+
   const submitCreate = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
       setCreating(false);
       return;
     }
-    await createTimeline(trimmed);
+    await runSwitch(() => createTimeline(trimmed));
     setName('');
     setCreating(false);
   };
@@ -67,6 +100,14 @@ export function TimelineSwitcher() {
     // below it) — capped to half the pane's width per the owner's ask, with
     // a `min-w` floor so a long timeline name still has room before eliding.
     <div className="shrink-0 w-1/2 min-w-[220px] border-b border-border-color bg-surface px-1.5">
+      {error && (
+        // B-080 — the refusal, in words. Not a toast: the reason belongs next
+        // to the control that refused, and it stays until the next attempt
+        // (which clears it) rather than timing out while the user reads it.
+        <div role="alert" className="px-1 py-0.5 text-[10px] leading-tight text-red-400">
+          {error}
+        </div>
+      )}
       <Tabs
         value={active?.id ?? ''}
         onValueChange={(value) => {
@@ -75,10 +116,20 @@ export function TimelineSwitcher() {
             setCreating(true);
             return;
           }
-          if (id && id !== active?.id) void setActiveTimeline(id);
+          if (id && id !== active?.id) void runSwitch(() => setActiveTimeline(id));
         }}
       >
-        <TabsList variant="line" className="h-8 w-full justify-start gap-0 rounded-none bg-transparent p-0">
+        <TabsList
+          variant="line"
+          // B-080 — inert (and visibly so) for the length of the flush + switch.
+          // `runSwitch` already refuses a re-entrant call, so this is the
+          // matching visual fact rather than the guard itself.
+          aria-busy={pending}
+          className={
+            'h-8 w-full justify-start gap-0 rounded-none bg-transparent p-0 ' +
+            (pending ? 'pointer-events-none opacity-60' : '')
+          }
+        >
           {timelines.map((t) => (
             <TabsTrigger
               key={t.id}
