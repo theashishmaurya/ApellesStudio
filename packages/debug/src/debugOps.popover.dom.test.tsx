@@ -18,9 +18,13 @@
  * hits with no Accessibility/Screen-Recording permission on the native window.
  * **D-263 docked that library** (`CaptionLibrary` inside the Edit tab's
  * library column), so that popover and its `caption-panel` panel id no longer
- * exist and this proof drives `CanvasSettingsPopover` instead: a different
- * real registered popover, mounted for real, with the same point — the op
- * opens the actual thing, through the actual store action, not a stand-in.
+ * exist and this proof moved to driving `CanvasSettingsPopover` instead.
+ * **D-275 retired that popover too** (D-274's docked Project Settings panel
+ * covers the same fields permanently, making the popover's own trigger a
+ * confirmed-live duplicate), so this proof now drives `EditorExportDialog`
+ * (`'export-dialog'`) — the one real registered popover left, mounted for
+ * real, with the same point — the op opens the actual thing, through the
+ * actual store action, not a stand-in.
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import React, { act } from 'react';
@@ -33,7 +37,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: async () => null,
 }));
 
-const { useEditorTimelineStore, CanvasSettingsPopover } = await import('@apelles/editor');
+const { useEditorTimelineStore, EditorExportDialog } = await import('@apelles/editor');
 const { DEBUG_OPS } = await import('./debugOps');
 
 if (typeof globalThis !== 'undefined') {
@@ -155,53 +159,53 @@ afterEach(() => {
 });
 
 function popoverInDom(): boolean {
-  return document.querySelector('[data-testid="canvas-settings"]') !== null;
+  return document.querySelector('[role="dialog"]') !== null;
 }
 
 describe('debug_set_popover_open', () => {
-  it('opens the real CanvasSettingsPopover through the op, not a synthesised click', async () => {
-    mounted = mount(React.createElement(CanvasSettingsPopover));
+  it('opens the real EditorExportDialog through the op, not a synthesised click', async () => {
+    mounted = mount(React.createElement(EditorExportDialog));
     await waitFrames(2);
     expect(popoverInDom(), 'closed before the op runs').toBe(false);
 
-    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'canvas-settings', open: true });
+    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'export-dialog', open: true });
     await waitFrames(2);
 
-    expect(result).toEqual({ ok: true, id: 'canvas-settings', open: true });
+    expect(result).toEqual({ ok: true, id: 'export-dialog', open: true });
     expect(popoverInDom(), 'the op must actually open the real popover').toBe(true);
-    // Not a stand-in: the popover's own real content is what rendered, not an
+    // Not a stand-in: the dialog's own real content is what rendered, not an
     // empty shell.
-    expect(document.body.textContent).toContain('Canvas size');
+    expect(document.body.textContent).toContain('Export timeline');
   });
 
   it('closes it again the same way', async () => {
-    mounted = mount(React.createElement(CanvasSettingsPopover));
+    mounted = mount(React.createElement(EditorExportDialog));
     await waitFrames(2);
-    await DEBUG_OPS.debug_set_popover_open({ id: 'canvas-settings', open: true });
+    await DEBUG_OPS.debug_set_popover_open({ id: 'export-dialog', open: true });
     await waitFrames(2);
     expect(popoverInDom()).toBe(true);
 
-    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'canvas-settings', open: false });
+    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'export-dialog', open: false });
     await waitFrames(2);
 
-    expect(result).toEqual({ ok: true, id: 'canvas-settings', open: false });
+    expect(result).toEqual({ ok: true, id: 'export-dialog', open: false });
     expect(popoverInDom()).toBe(false);
   });
 
   it('refuses an unknown panel id by name, per D-216, rather than silently no-op-ing', async () => {
-    mounted = mount(React.createElement(CanvasSettingsPopover));
+    mounted = mount(React.createElement(EditorExportDialog));
     await waitFrames(2);
 
     const result = await DEBUG_OPS.debug_set_popover_open({ id: 'no-such-panel', open: true });
 
     expect(result).toEqual({
-      error: `unknown panel "no-such-panel" — expected one of canvas-settings, export-dialog`,
+      error: `unknown panel "no-such-panel" — expected one of export-dialog`,
     });
     expect(popoverInDom(), 'a refused op must not have opened anything').toBe(false);
   });
 
   it('refuses a missing `open` argument', async () => {
-    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'canvas-settings' });
+    const result = await DEBUG_OPS.debug_set_popover_open({ id: 'export-dialog' });
     expect(result).toEqual({ error: "'open' is required (true or false)" });
   });
 });

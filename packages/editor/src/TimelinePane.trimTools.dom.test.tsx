@@ -162,7 +162,7 @@ async function pickTool(tool: TrimTool) {
 }
 
 /** Press a bare letter at the WINDOW, the way the shortcut really arrives
- *  since D-272 — `@apelles/keymap`'s single dispatcher listens there, not on
+ *  since D-273 — `@apelles/keymap`'s single dispatcher listens there, not on
  *  the pane, which is why these keys now work without clicking the timeline
  *  first. `code` is what `normalizeCombo` reads. */
 async function pressKey(code: string, key: string) {
@@ -321,7 +321,7 @@ describe('the icon path commits exactly what the Alt path commits (D-261)', () =
 
   it('6. a keyboard shortcut selects the same tool the icon does, and edits the same way', async () => {
     // Adobe's own keys, so anyone arriving from Premiere finds them bound —
-    // and since D-272 they come from the registry, not a literal in this pane.
+    // and since D-273 they come from the registry, not a literal in this pane.
     await pressKey('KeyY', 'y');
     expect(toolButton('slip').getAttribute('aria-pressed')).toBe('true');
 
@@ -335,7 +335,7 @@ describe('the icon path commits exactly what the Alt path commits (D-261)', () =
     expect(toolButton('select').getAttribute('aria-pressed')).toBe('true');
   });
 
-  it('7. D-272 — the palette reads its keys from the registry, not from a literal', async () => {
+  it('7. D-273 — the palette reads its keys from the registry, not from a literal', async () => {
     // The point of the registry: rebind the action and the SAME call-site
     // starts answering to the new key, with nothing in `TimelinePane` or
     // `TrimToolbar` changed. This is the regression test for "some call-sites

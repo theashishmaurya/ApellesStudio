@@ -47,7 +47,7 @@ export { EditorInspectorPanel } from './EditorInspectorPanel';
 export { EditLibraryRail } from './EditLibraryRail';
 export type { EditLibraryRailProps } from './EditLibraryRail';
 export { EditLibraryPanel } from './EditLibraryPanel';
-/** D-272 — the project-level output-spec form (Resolution/Frame Rate/Colour
+/** D-274 — the project-level output-spec form (Resolution/Frame Rate/Colour
  *  Space), shared between this package's own docked `ProjectSettingsPanel`
  *  (`EditorInspectorPanel`'s "nothing selected" branch) and `app/src`'s
  *  `ProjectSettingsModal.tsx`, which renders this same component inside its
@@ -92,9 +92,11 @@ export type { PanelId } from './panelRegistry';
 /** D-252 exported `CaptionPanel` here for `@apelles/debug`'s DOM proof that
  *  `debug_set_popover_open` opens a REAL popover. D-263 docked that content
  *  (`CaptionLibrary.tsx`), so the popover — and its `caption-panel` panel id —
- *  are gone; that proof test now drives `CanvasSettingsPopover`, which is
- *  exported for exactly the same reason and nothing else. */
-export { CanvasSettingsPopover } from './CanvasSettingsPopover';
+ *  are gone; that proof test then drove `CanvasSettingsPopover` instead.
+ *  D-275 retired THAT popover too (D-274's docked Project Settings panel
+ *  covers the same fields), so the same proof now drives
+ *  `EditorExportDialog`/`'export-dialog'` instead — the other real
+ *  registered popover, already exported below for its own real GUI use. */
 /** D-219 (debug tooling piece 5) — the preview's own frame-timing ring
  *  buffers. Exported for `@apelles/debug`'s `debug_frame_timing` op, which
  *  reads them; `PreviewPane` writes them. Both writes and the reader are

@@ -1,5 +1,5 @@
 /**
- * @apelles/keymap — registry + remap tests (D-272).
+ * @apelles/keymap — registry + remap tests (D-273).
  *
  * These cover the three things the settings window promises and the two rules
  * the dispatcher depends on: a remap sticks and persists, reset-to-default
@@ -50,7 +50,7 @@ describe('the registry itself', () => {
 
   it('still carries the fork keybind ids verbatim, so existing remaps survive', () => {
     // A sample of ids that `app/src/utils/keyboardUtils.ts` persisted before
-    // D-272 folded it in here. Renaming any of these silently drops a user's
+    // D-273 folded it in here. Renaming any of these silently drops a user's
     // saved remap, which is why this is pinned.
     for (const id of ['copy_files', 'zoom_100', 'toggle_masks', 'rate_3', 'brush_size_up']) {
       expect(shortcutById(id)).toBeDefined();
@@ -160,7 +160,7 @@ describe('resolution is tab-scoped and deterministic', () => {
 
   it('lets a global action win over a tab-scoped one on the same combo (B-138)', () => {
     // ⌘1 is both "go to the Edit tab" and Colorist's zoom-to-100%. Before
-    // D-272 both fired; now exactly one does, and it is the global one.
+    // D-273 both fired; now exactly one does, and it is the global one.
     expect(resolveShortcut(['ctrl', 'Digit1'], {}, 'colorist')?.id).toBe('app.tab_edit');
   });
 

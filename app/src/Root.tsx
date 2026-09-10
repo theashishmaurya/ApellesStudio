@@ -74,7 +74,7 @@ export function Root() {
   // above cannot see at all.
   const projectKey = useSessionStore(selectProjectKey);
   const activeTab = useActiveTab();
-  // D-272 — handed to `Shell` for the Keyboard Shortcuts window; see the
+  // D-273 — handed to `Shell` for the Keyboard Shortcuts window; see the
   // `translate` prop below. `as (key: string) => string` because i18next types
   // `t` against its own generated key union, and the keymap registry holds the
   // Colorist keys as plain strings (it cannot import those types — it is a
@@ -268,7 +268,7 @@ export function Root() {
   // reason `onRendered` above is a prop. `computeEditLinks` itself is pure and
   // takes plain arrays; see its own module doc for why its parameters are
   // structural rather than imported types.
-  // D-272 — the keymap's bridge to the app's own settings. `@apelles/keymap`
+  // D-273 — the keymap's bridge to the app's own settings. `@apelles/keymap`
   // must not depend on Tauri (no `packages/*` does), so it stores nothing
   // itself: it is handed the persisted overrides on the way in, and a sink to
   // call on the way out. The store on the other end is `appSettings.keybinds`
@@ -310,7 +310,7 @@ export function Root() {
       projectOpen={projectOpen}
       launcher={<ProjectLauncher />}
       sourcesPanel={<SourcesPanel />}
-      // D-272 — i18next's `t`, so the Keyboard Shortcuts window renders the
+      // D-273 — i18next's `t`, so the Keyboard Shortcuts window renders the
       // fork's already-translated Colorist rows in the user's language.
       // Injected rather than imported: neither `@apelles/shell` nor
       // `@apelles/keymap` may depend on i18next, same app → shell direction as

@@ -547,7 +547,7 @@ export const useKeyboardShortcuts = ({
     toggleShowOriginal,
   ]);
 
-  // D-272 — the Colorist actions above are now claimed from the shared
+  // D-273 — the Colorist actions above are now claimed from the shared
   // registry (`@apelles/keymap`) instead of this hook owning its own `window`
   // listener and its own copy of the keybind table.
   //

@@ -1,7 +1,7 @@
 /**
  * @apelles/editor — the project-level output-spec controls: Resolution,
  * Frame Rate, Colour Space (D-038's `ProjectSettings`), factored out as one
- * pure, controlled form (D-272).
+ * pure, controlled form (D-274).
  *
  * **Why this exists.** The Colorist tab's `ProjectSettingsModal.tsx`
  * (`app/src/components/chroma`) and the Edit tab's docked
@@ -18,7 +18,7 @@
  * `onChange` immediately — instant-apply, like every other Inspector row in
  * this package — so there is no local draft and no Save button. That is
  * what lets the identical component sit permanently docked with nothing
- * pending to lose on navigate-away; see D-272 for why the modal moved from
+ * pending to lose on navigate-away; see D-274 for why the modal moved from
  * its previous staged Save/Cancel to this shape too, rather than the docked
  * panel growing an out-of-place Save button instead.
  *
@@ -28,29 +28,22 @@
  * "was Custom selected" carries no information a future session needs back.
  * Deriving it purely from the numbers would also make "Custom" unreachable
  * once the typed values happen to equal a preset exactly. Seeded once from
- * the incoming `settings` (`ProjectSettingsModal`'s own pre-D-272 behaviour,
+ * the incoming `settings` (`ProjectSettingsModal`'s own pre-D-274 behaviour,
  * unchanged by this pass) rather than kept in sync with every later external
  * change — snapping the mode selector out from under a user mid-interaction
  * because another surface (or MCP) wrote in the background would be worse
  * than the rare staleness.
  */
 import { useState } from 'react';
-import {
-  Button,
-  ScrubbableNumberInput,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@apelles/ui';
+import { Lock, Unlock } from 'lucide-react';
+import { Button, ScrubbableNumberInput, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@apelles/ui';
 
 /** Mirrors `crate::apelles_project::ProjectSettings` (`crates/apelles-project/
  *  src/manifest.rs`) and its own `merge_patch` contract exactly: every field
  *  optional, `null`/absent meaning "derive from the project's first clip".
  *  Canonical HERE (this package, D-039's lower layer) — `app/src/store/
  *  useSessionStore.ts`'s own `ProjectSettings` is a type alias of this one
- *  rather than a second, hand-kept-in-sync copy (see D-272). */
+ *  rather than a second, hand-kept-in-sync copy (see D-274). */
 export interface ProjectSettingsValue {
   width?: number | null;
   height?: number | null;
@@ -130,6 +123,31 @@ export function ProjectSettingsForm({
   const customHeight = settings.height ?? 1080;
   const customFps = settings.fps ?? 24;
 
+  // Same lock/mirror-the-other-field contract `ClipInspectorPanel`'s own
+  // Width/Height ratio lock (D-193) uses, not a new pattern: local UI state
+  // (which way the user last left the lock has nothing a future session
+  // needs back), locked by default — matching that most resolution pickers
+  // preserve aspect ratio while dragging one dimension unless told not to.
+  const [ratioLocked, setRatioLocked] = useState(true);
+
+  const handleCustomWidthChange = (w: number) => {
+    const rounded = Math.round(w);
+    if (ratioLocked && customWidth > 0) {
+      onChange({ width: rounded, height: Math.round((rounded * customHeight) / customWidth) });
+    } else {
+      onChange({ width: rounded, height: settings.height ?? customHeight });
+    }
+  };
+
+  const handleCustomHeightChange = (h: number) => {
+    const rounded = Math.round(h);
+    if (ratioLocked && customHeight > 0) {
+      onChange({ width: Math.round((rounded * customWidth) / customHeight), height: rounded });
+    } else {
+      onChange({ width: settings.width ?? customWidth, height: rounded });
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4 text-xs">
       <div className="flex flex-col gap-1.5">
@@ -154,41 +172,67 @@ export function ProjectSettingsForm({
           ))}
         </div>
         {resMode === 'preset' && (
-          <div className="flex flex-wrap gap-1.5">
-            {RES_PRESETS.map((p) => (
-              <Button
-                key={p.label}
-                type="button"
-                variant={settings.width === p.w && settings.height === p.h ? 'default' : 'outline'}
-                size="xs"
-                disabled={disabled}
-                className="h-6 px-2 text-[11px]"
-                onClick={() => onChange({ width: p.w, height: p.h })}
-              >
-                {p.label}
-              </Button>
-            ))}
-          </div>
+          <Select
+            value={
+              matchesResPreset(settings.width, settings.height) >= 0
+                ? `${settings.width}x${settings.height}`
+                : undefined
+            }
+            onValueChange={(v) => {
+              if (!v) return;
+              const [w, h] = v.split('x').map(Number);
+              onChange({ width: w, height: h });
+            }}
+            disabled={disabled}
+          >
+            <SelectTrigger className="mt-1 h-7 w-full text-xs" data-chroma-field="resolution-preset">
+              <SelectValue placeholder="Resolution" />
+            </SelectTrigger>
+            <SelectContent>
+              {RES_PRESETS.map((p) => (
+                <SelectItem key={p.label} value={`${p.w}x${p.h}`}>
+                  {p.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
         {resMode === 'custom' && (
-          <div className="flex items-center gap-2">
-            <ScrubbableNumberInput
-              step={1}
-              min={1}
+          <div className="mt-1 flex w-full items-end gap-2">
+            <label className="flex min-w-0 flex-1 flex-col gap-1">
+              <span className="text-text-secondary/70 text-[10px]">Width</span>
+              <ScrubbableNumberInput
+                step={1}
+                min={1}
+                disabled={disabled}
+                className="h-7 w-full"
+                value={settings.width ?? null}
+                onValueChange={handleCustomWidthChange}
+              />
+            </label>
+            <span className="text-text-secondary pb-1.5">×</span>
+            <label className="flex min-w-0 flex-1 flex-col gap-1">
+              <span className="text-text-secondary/70 text-[10px]">Height</span>
+              <ScrubbableNumberInput
+                step={1}
+                min={1}
+                disabled={disabled}
+                className="h-7 w-full"
+                value={settings.height ?? null}
+                onValueChange={handleCustomHeightChange}
+              />
+            </label>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
               disabled={disabled}
-              className="h-7 w-20"
-              value={settings.width ?? null}
-              onValueChange={(w) => onChange({ width: Math.round(w), height: settings.height ?? customHeight })}
-            />
-            <span className="text-text-secondary">×</span>
-            <ScrubbableNumberInput
-              step={1}
-              min={1}
-              disabled={disabled}
-              className="h-7 w-20"
-              value={settings.height ?? null}
-              onValueChange={(h) => onChange({ width: settings.width ?? customWidth, height: Math.round(h) })}
-            />
+              className="mb-0.5"
+              onClick={() => setRatioLocked((v) => !v)}
+              title={ratioLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
+            >
+              {ratioLocked ? <Lock size={12} /> : <Unlock size={12} />}
+            </Button>
           </div>
         )}
       </div>
@@ -218,7 +262,7 @@ export function ProjectSettingsForm({
             onValueChange={(v) => onChange({ fps: Number(v) })}
             disabled={disabled}
           >
-            <SelectTrigger className="h-7 w-32 text-xs">
+            <SelectTrigger className="mt-1 h-7 w-full text-xs">
               <SelectValue placeholder="fps" />
             </SelectTrigger>
             <SelectContent>
@@ -235,7 +279,7 @@ export function ProjectSettingsForm({
             step={0.001}
             min={1}
             disabled={disabled}
-            className="h-7 w-24"
+            className="mt-1 h-7 w-full"
             value={settings.fps ?? null}
             onValueChange={(f) => onChange({ fps: f })}
           />

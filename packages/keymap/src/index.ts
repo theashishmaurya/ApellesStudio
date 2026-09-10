@@ -1,6 +1,6 @@
 /**
  * @apelles/keymap — Apelles' single source of truth for keyboard shortcuts
- * (D-272). See `shortcuts.ts` for the registry, `store.ts` for the user's
+ * (D-273). See `shortcuts.ts` for the registry, `store.ts` for the user's
  * remaps and the resolution rules, `useShortcut.ts` for the one dispatcher,
  * and `KeyboardShortcutsDialog.tsx` for the settings window. README has the
  * boundary and the call-site map.

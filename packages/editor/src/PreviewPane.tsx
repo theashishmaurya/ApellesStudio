@@ -86,14 +86,17 @@
  * needed: it reads the same `useEditorTimelineStore` selection this file
  * does, independently.
  *
- * Canvas/composition boundary + settings (D-199,
+ * Canvas/composition boundary (D-199,
  * `docs/notes/preview-canvas-boundary.md`): `<CanvasBoundary>` is a THIRD
  * sibling in that same stack — always drawn (selection-independent, unlike
- * `TransformOverlay`), under it in z-order. `<CanvasSettingsPopover>` sits in
- * the toolbar next to the Inspector toggle. `useCompositionSize` refetches
+ * `TransformOverlay`), under it in z-order. `useCompositionSize` refetches
  * itself on the backend's own `chroma://project-settings-changed` broadcast
- * (B-086) — this file no longer needs to plumb a refresh token through
- * `CanvasSettingsPopover`'s `onSaved` for that; see that hook's own doc.
+ * (B-086), so this file needs no local refresh-token plumbing to stay in
+ * sync with wherever a save actually happens. That used to be this file's
+ * own `<CanvasSettingsPopover>` trigger; D-275 retired it now that D-274's
+ * docked Project Settings panel (`packages/editor/src/ProjectSettingsPanel.
+ * tsx`) covers the same fields permanently visible one column over — this
+ * file only ever rendered the trigger, never owned the setting itself.
  *
  * Canvas click-to-select (D-204, fixing B-085): `useCanvasClipPick` is a
  * BEHAVIOUR, not a fifth thing in the overlay stack — it listens on
@@ -141,7 +144,6 @@ import { TransformOverlay } from './TransformOverlay';
 import { DynamicZoomOverlay } from './DynamicZoomOverlay';
 import { CanvasBoundary } from './CanvasBoundary';
 import { useCanvasClipPick } from './useCanvasClipPick';
-import { CanvasSettingsPopover } from './CanvasSettingsPopover';
 import { EditOverlay } from './EditOverlay';
 import { useCompositionSize } from './useCompositionSize';
 import {
@@ -621,7 +623,7 @@ export function PreviewPane() {
     setPlayhead(playhead + d);
   };
 
-  // D-272 — the Edit tab's transport shortcuts. Space/←/→ were bound to
+  // D-273 — the Edit tab's transport shortcuts. Space/←/→ were bound to
   // NOTHING before this pass: the preview had click-only transport buttons and
   // not one key anywhere in the app reached them, which is the owner's own
   // report ("play should play the preview"). Verified by audit, not assumed —
@@ -648,13 +650,6 @@ export function PreviewPane() {
     // outside the player's own content on displays with a different aspect
     // ratio than the video.
     <div ref={fullscreenRef} className="relative flex min-h-0 flex-1 flex-col bg-bg-primary">
-      {/* D-199 — the canvas-size popover's own trigger button is
-          self-positioned (`absolute top-2 right-10`, see that component's
-          doc) against this div's own `relative`, the same pattern
-          `EditorTab.tsx`'s Inspector toggle uses against ITS `relative`
-          wrapper one level up. Rendered here (not `EditorTab.tsx`) because
-          only this component owns `useCompositionSize`. */}
-      <CanvasSettingsPopover />
       {/* D-239 — the seven edit types' drop overlay. Mounted here, over the
           WHOLE pane rather than inside `surface` below, deliberately: it has to
           be reachable while the preview is still showing its spinner or "no

@@ -1,5 +1,5 @@
 /**
- * @apelles/editor — the Edit tab's docked Project Settings panel (D-272,
+ * @apelles/editor — the Edit tab's docked Project Settings panel (D-274,
  * `docs/04-roadmap.md`'s "Project Settings: same feature, better UX").
  *
  * **What it is.** Fills the clip Inspector column's own "nothing selected"
@@ -19,19 +19,16 @@
  * view of that field — see that hook's own doc for why it cannot instead
  * read `app/src`'s `useSessionStore`).
  *
- * **The "Canvas" collapsible** is `@apelles/ui`'s existing `CollapsibleSection`
- * (RapidRAW's own accordion, already used by Colorist's `ControlsPanel` and
- * friends) — the canonical component for exactly this shape, not a
- * hand-rolled chevron. Open by default (`useState(true)`), matching "open at
- * rest rather than behind a trigger"; `canToggleVisibility={false}` because
- * this section's own "disable it" affordance has no meaning for project
- * settings. The open/closed flag is local, ephemeral UI state (not
- * persisted) — the same category `ClipInspectorPanel`'s own `ratioLocked`
- * is, for the same reason: which way the user last left one accordion open
- * carries no information a future session needs back.
+ * **No "Canvas" collapsible.** The first cut wrapped the form in
+ * `@apelles/ui`'s `CollapsibleSection` (matching the reference screenshot's
+ * own section title), but with exactly one section, `canToggleVisibility={
+ * false}`, and this panel's own "Project Settings" header already sitting
+ * right above it, the section title/chevron said nothing the header didn't
+ * already say — pure chrome around content that can't usefully collapse.
+ * Flagged live (owner, 2026-09-10) as part of the docked panel reading as
+ * busier than it needed to, with dead space below it once removed. The form
+ * now renders directly under the panel's own header, no wrapper.
  */
-import { useState } from 'react';
-import { CollapsibleSection } from '@apelles/ui';
 import { InspectorEmptyState } from '@apelles/inspector';
 
 import { ProjectSettingsForm } from './ProjectSettingsForm';
@@ -39,7 +36,6 @@ import { useProjectSettings } from './useProjectSettings';
 
 export function ProjectSettingsPanel() {
   const { settings, error, saving, save } = useProjectSettings();
-  const [canvasOpen, setCanvasOpen] = useState(true);
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-0 text-xs" data-chroma-panel="project-settings">
@@ -56,16 +52,7 @@ export function ProjectSettingsPanel() {
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {settings === null && !error && <InspectorEmptyState>Loading project settings…</InspectorEmptyState>}
         {error && <p className="pb-2 text-[11px] text-red-400">Could not load project settings: {error}</p>}
-        {settings !== null && (
-          <CollapsibleSection
-            title="Canvas"
-            isOpen={canvasOpen}
-            onToggle={() => setCanvasOpen((v) => !v)}
-            canToggleVisibility={false}
-          >
-            <ProjectSettingsForm settings={settings} onChange={save} disabled={saving} />
-          </CollapsibleSection>
-        )}
+        {settings !== null && <ProjectSettingsForm settings={settings} onChange={save} disabled={saving} />}
       </div>
     </div>
   );

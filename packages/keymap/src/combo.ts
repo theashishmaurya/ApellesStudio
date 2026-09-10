@@ -1,5 +1,5 @@
 /**
- * @apelles/keymap — key-combo normalisation and display (D-272).
+ * @apelles/keymap — key-combo normalisation and display (D-273).
  *
  * **What it is.** The one place that turns a real `KeyboardEvent` into a
  * canonical combo (`['ctrl', 'shift', 'KeyC']`) and a combo back into
@@ -8,7 +8,7 @@
  * literal any more.
  *
  * **Where it came from.** This is RapidRAW's `app/src/utils/keyboardUtils.ts`,
- * moved here verbatim in behaviour (D-272) so the Edit/Motion tabs and the
+ * moved here verbatim in behaviour (D-273) so the Edit/Motion tabs and the
  * shell can use it too — `packages/*` must never import from `app/src`
  * (dependency direction is `app → tabs → services → domain`). The fork's copy
  * is deleted, not duplicated: there is exactly one of these. See

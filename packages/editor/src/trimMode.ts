@@ -120,7 +120,7 @@ export interface TrimToolInfo {
    *  the tooltip, the way Adobe's own panel does it: "Let the cursor hover over
    *  a tool to see its name and keyboard shortcut."
    *
-   *  D-272 — this is the `@apelles/keymap` ACTION ID, not a letter. The letter
+   *  D-273 — this is the `@apelles/keymap` ACTION ID, not a letter. The letter
    *  used to be written here as well as in `TimelinePane`'s own key handler,
    *  which is exactly the duplication the registry exists to remove: the
    *  binding lives in `SHORTCUT_DEFINITIONS` (still Adobe's V/B/N/Y/U by

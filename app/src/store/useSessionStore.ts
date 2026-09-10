@@ -127,7 +127,7 @@ export interface ProjectShotDto {
  * clip-derived (exactly the pre-D-038 behaviour). `colorSpace` is stored +
  * surfaced only; a colour-managed pipeline is D-004.
  *
- * D-272 — a type ALIAS of `@apelles/editor`'s `ProjectSettingsValue`, not a
+ * D-274 — a type ALIAS of `@apelles/editor`'s `ProjectSettingsValue`, not a
  * second, hand-kept-in-sync copy: that package is where the shared
  * `ProjectSettingsForm` (and its own merge-patch contract) is now defined,
  * and `app` may import from a tab package (D-039's one-way layer rule) while

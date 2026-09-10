@@ -22,7 +22,7 @@
  * rounded corners + clip) — before D-039 that class was on the Colorist app
  * root; the whole window is the shell's now.
  *
- * Keyboard (D-272): the shell owns four registry actions — `app.tab_edit` /
+ * Keyboard (D-273): the shell owns four registry actions — `app.tab_edit` /
  * `app.tab_motion` / `app.tab_colorist` (Cmd/Ctrl+1/2/3, only while a project
  * is open) and `app.undo` / `app.redo`. It compares no keys itself: every
  * binding comes from `@apelles/keymap`'s registry, so all five are listed and
@@ -175,7 +175,7 @@ export interface ShellProps {
    *  only, same reasoning as `launcher`). Docked to the right of the tab
    *  content, toggled via a chrome-bar button; omit to run without one. */
   sourcesPanel?: ReactNode;
-  /** D-272 — i18next's `t`, injected for the Keyboard Shortcuts window so the
+  /** D-273 — i18next's `t`, injected for the Keyboard Shortcuts window so the
    *  fork's 13 translated locales keep rendering translated Colorist rows.
    *  Same app → shell direction as `launcher`: neither `@apelles/shell` nor
    *  `@apelles/keymap` depends on i18next. Omit to render English labels. */
@@ -211,7 +211,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
   const activeLibraryRail = activeTabEntry?.libraryRail;
   const activeLibraryPanel = activeTabEntry?.libraryPanel;
 
-  // D-272 — which tab is frontmost gates which shortcuts can fire at all.
+  // D-273 — which tab is frontmost gates which shortcuts can fire at all.
   // Before this, every keydown handler in the app was a bare `window`
   // listener with no idea what the user was looking at, so Colorist's panel
   // toggles fired while the Edit tab was on screen (B-138). `Shell` is the one
@@ -230,7 +230,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
 
   // D-051 — global undo/redo, see the module doc comment above. The
   // don't-hijack-an-in-progress-edit guard (including its "a number input is
-  // not prose" refinement) moved into the shared dispatcher in D-272, where it
+  // not prose" refinement) moved into the shared dispatcher in D-273, where it
   // now protects every shortcut in the app rather than only these two.
   const applyHistoryEntry = (entry: HistoryEntry | null) => {
     if (entry && tabs.some((t) => t.id === entry.tab) && entry.tab !== active) {
@@ -324,7 +324,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
             Inspector's own toggle (opposite corner, same idea). */}
         <div className="ml-auto flex items-center h-full gap-1">
           {activeHeaderAction}
-          {/* D-272 — the Keyboard Shortcuts window's opener. Genuinely
+          {/* D-273 — the Keyboard Shortcuts window's opener. Genuinely
               shell-level (all three tabs share one registry), which is why it
               lives here and not in a tab, on the same reasoning D-120 used to
               keep Sources' own opener in `Shell` rather than duplicating it

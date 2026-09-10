@@ -1,5 +1,5 @@
 /**
- * @apelles/keymap — THE shortcut registry (D-272).
+ * @apelles/keymap — THE shortcut registry (D-273).
  *
  * **What it is.** One flat list of every keyboard shortcut in Apelles: its
  * stable `id`, a human `label`, the `category` it groups under, the `scope`
@@ -19,7 +19,7 @@
  * **`id` is a persistence key — never rename one.** User remaps are stored
  * against these ids in `appSettings.keybinds` (see `store.ts`), so the 45
  * Colorist ids below are byte-for-byte the ones RapidRAW's
- * `app/src/utils/keyboardUtils.ts` used before D-272 folded that file in here.
+ * `app/src/utils/keyboardUtils.ts` used before D-273 folded that file in here.
  * Anyone's existing remaps keep working.
  *
  * **`labelKey`** is the fork's i18n key, kept so Colorist's 13 translated
@@ -118,7 +118,7 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   },
 
   // ── Playback (Edit tab preview transport) ────────────────────────────────
-  // D-272: all three were UNBOUND before this pass — the preview had click-only
+  // D-273: all three were UNBOUND before this pass — the preview had click-only
   // transport buttons and no key at all, which is the owner's own report
   // ("play should play the preview").
   { id: 'edit.play_pause', label: 'Play / Pause', category: 'playback', scope: 'edit', defaultCombo: ['Space'] },

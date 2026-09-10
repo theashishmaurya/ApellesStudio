@@ -4,6 +4,33 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-140/D-275: retired the Edit tab's `CanvasSettingsPopover`**
+  — confirmed live, minutes after D-274 shipped, as a real duplicate of the
+  new docked Project Settings panel (both showing Resolution/Frame Rate at
+  once), not just a hypothetical overlap. The popover, its preview-toolbar
+  trigger, and its `panelRegistry.ts` panel id are gone; `@apelles/debug`'s
+  real-DOM popover proof moved to `EditorExportDialog` instead.
+- **2026-09-10** — **D-276: Export dialog cleanup** — dropped the per-clip
+  SPEED override row (D-236's real, persisted, keyframeable Speed/Retime
+  section on the clip's own Inspector is now the better, single place to set
+  this — export already preferred it over the flat override anyway) and
+  fixed the FPS field showing a raw, many-decimal float instead of the app's
+  usual 3-decimal display. `fit`/Freeze per-clip rows are unchanged — no
+  persisted equivalent exists for either yet.
+- **2026-09-10** — **D-277: Project Settings form polish** — Resolution's
+  preset pills are now a `Select` (matching Frame Rate/Colour Space's own
+  shape), every dropdown/field in the form is consistently full-width, a
+  real aspect-ratio lock (mirroring `ClipInspectorPanel`'s D-193 lock) now
+  keeps Width/Height proportional while editing Custom resolution, and the
+  redundant "Canvas" `CollapsibleSection` wrapper around the whole form is
+  gone (the panel's own header already said the same thing).
+- **2026-09-10** — **B-141 logged, not fixed:** a project's own launcher-card
+  thumbnail shows the raw, un-rotated source frame rather than what the
+  timeline actually composites — root-caused to `regen_thumb`'s raw
+  `extract_thumb` call bypassing every clip transform and the Colorist
+  grade entirely. Real fix routes it through the same composited decode the
+  live preview uses; out of scope to rush alongside this session's other
+  work.
 - **2026-09-10** — **D-274: Project Settings docked in the Edit tab's
   Inspector column** (roadmap's "same feature, better UX"), filling
   `ClipInspectorPanel`'s own "nothing selected" empty state rather than a

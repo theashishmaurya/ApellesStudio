@@ -141,7 +141,7 @@ describe('TRIM_TOOLS — the palette itself', () => {
   });
 
   it('links each tool to its registry action, all distinct', () => {
-    // D-272 — the LETTER is no longer stored here; the palette points at
+    // D-273 — the LETTER is no longer stored here; the palette points at
     // `@apelles/keymap` action ids and the registry owns the binding, so the
     // toolbar tooltip and the key that actually fires cannot drift apart (and
     // a user rebind shows up in both).
@@ -185,7 +185,7 @@ describe('TRIM_TOOLS — the palette itself', () => {
   });
 
   it('does not collide with the pane’s other shortcuts', () => {
-    // D-272 — `trimToolForKey` is gone (the dispatcher resolves the key), so
+    // D-273 — `trimToolForKey` is gone (the dispatcher resolves the key), so
     // what is worth pinning is that the palette has not quietly taken a combo
     // another Edit-tab action already owns. `M` is this pane's marker key.
     const toolCombos = new Set(

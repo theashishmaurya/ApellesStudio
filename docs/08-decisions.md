@@ -26817,3 +26817,180 @@ settings`, and the single-source-of-truth broadcast case above. `npx tsc
 --noEmit -p packages/editor` and `-p app` both clean of new errors; `npm test
 --workspace @apelles/editor` (1640/1640, unaffected) and `npm test --workspace
 app` (13/13) both green.
+
+---
+
+## D-275 — retire `CanvasSettingsPopover`, the Edit tab's now-duplicate Canvas trigger
+
+**Date:** 2026-09-10. Caught live minutes after D-274 shipped: opening the
+preview toolbar's "Canvas size" popover (D-199) while the newly-docked
+Project Settings panel was also on screen showed the same Canvas
+Resolution/Frame Rate fields TWICE at once — the exact "known, deliberately-
+left overlap" D-274's own decision entry had already flagged and deferred,
+now confirmed as a real, confusing defect rather than a hypothetical one.
+
+### The options
+
+1. **Leave both, since D-274 explicitly deferred this cleanup.** Rejected
+   once confirmed live — a defect flagged as "probably a problem" and then
+   actually observed stops being a deferred nice-to-have.
+2. **Keep the popover but drop its own Resolution/Frame Rate rows, leaving
+   only whatever the docked panel doesn't cover.** Rejected: the popover's
+   whole content (width/height, D-199) is now a strict subset of the docked
+   panel's (width/height/fps/colour space) — there is nothing left for it to
+   own once the overlap is removed, which makes it dead chrome around an
+   empty dialog.
+3. **Retire the popover and its trigger outright** — the docked panel already
+   covers the same fields, permanently visible, one column over. Chosen.
+
+### The fix
+
+`<CanvasSettingsPopover />`'s trigger and the component itself
+(`CanvasSettingsPopover.tsx`) are deleted; `PreviewPane.tsx` no longer renders
+it. `useCompositionSize.ts` — the READ-side hook `CanvasBoundary` depends on
+for "what is the output frame with no clip selected" — is untouched: it never
+owned the setting, only answered the question, and `ProjectSettingsPanel.tsx`
+(via `useProjectSettings.ts`) now drives the same `chroma://project-settings-
+changed` broadcast the popover used to.
+
+`panelRegistry.ts`'s `PANEL_IDS` drops `'canvas-settings'`, mirroring exactly
+how D-263 retired `'caption-panel'` before it. `@apelles/debug`'s real-DOM
+proof for `debug_set_popover_open` (`debugOps.popover.dom.test.tsx`, D-252)
+moved to driving `EditorExportDialog`/`'export-dialog'` instead — the one
+real registered popover left — the same kind of migration D-263 already did
+once for the same reason.
+
+### Consequences
+
+- One way to reach Canvas/Resolution/Frame Rate/Colour Space settings from
+  the Edit tab (the docked panel), not two.
+- `PreviewPane.tsx`'s toolbar loses a button; nothing else about the preview
+  changes — `CanvasBoundary`'s always-drawn frame outline is unaffected.
+- `packages/editor/src/index.ts` no longer exports `CanvasSettingsPopover`.
+
+### Verification
+
+`npm test --workspace @apelles/debug` (32/32) and `npm test --workspace
+@apelles/editor` (87 files / 1666 tests) both green after the swap; `npx tsc
+--noEmit` clean on both packages.
+
+---
+
+## D-276 — drop the Export dialog's per-clip SPEED override; fix its FPS field's raw floating-point display
+
+**Date:** 2026-09-10. Two owner reports against the live Export dialog: the
+FPS field showed `24.0034587116299...` verbatim, and the per-clip "1×" speed
+field and Freeze toggle looked redundant with something "already added."
+
+### FPS display
+
+`fps` was seeded as `String(timelineFps(timeline))` — the raw float, no
+rounding. `formatFps()` now rounds to 3 decimals before it ever reaches
+`useState`, matching this app's existing fps-precision convention
+(`ProjectSettingsForm`'s own custom-fps field steps by `0.001`;
+`AdjustmentClipInspectorPanel`'s numeric fields round the same way). Applied
+at both the initial seed and the per-timeline reset.
+
+### Per-clip speed override
+
+Checked before removing anything, rather than assuming the report was right:
+`editorExport.ts`'s own `resolveSpeedSegments` already prefers a clip's
+PERSISTED `speed_points` (D-236's real, keyframeable Speed/Retime section in
+`ClipInspectorPanel`) over this dialog's flat `speedOverrides` entry, falling
+back to the override only when a clip has no ramp of its own, and to 1× when
+neither exists. When D-188 built `speedOverrides`/`freezeOverrides`, "no
+persisted `Clip`/`EditOp` field... exists for this yet" was true for BOTH.
+D-236 later made it false for speed only — leaving this dialog's own flat
+speed field a second, less capable place to set the exact same fact the
+clip's own Inspector already does better (a ramp, not just a flat multiplier,
+reachable and visible where the clip itself is). Freeze has no persisted
+equivalent — "hold the last frame until the export's own total duration,
+whatever that turns out to be once every clip's length is known" is a fact
+about the EXPORT, not the clip, with nothing in the `Clip`/`EditOp` model to
+hold it — so it stays, unlike speed.
+
+**Removed:** the per-clip speed `<Input>` row, and the `speedOverrides`/
+`setSpeedOverrides` local state entirely (dead once nothing in the GUI wrote
+to it — CLAUDE.md's no-dead-code rule). **Kept:** `fit`/Freeze rows, and
+`editorExport.ts`/`timelineExport.ts`'s own `speedOverrides` PARAMETER —
+still real, tested plumbing a scripted `editor_export` MCP call can still
+populate; this dialog just never does.
+
+### Consequences
+
+- One place to set a clip's speed for export (its own Inspector's Speed
+  section), matching what the live preview already shows during editing,
+  instead of a second flat number that could silently disagree with it.
+- The MCP `editor_export` tool's `speedOverrides` argument is unchanged —
+  this was a GUI-only simplification, not a capability removal.
+
+### Verification
+
+`npx tsc --noEmit -p packages/editor` clean; `npm test --workspace
+@apelles/debug` (32/32, exercises the dialog via the popover-registry proof)
+and `npm test --workspace @apelles/editor -- timelineExport` (10 files / 195
+tests, unaffected — `speedOverrides` itself is untouched) both green.
+
+---
+
+## D-277 — Project Settings form: Resolution preset as a `Select`, consistent full-width controls, a real aspect-ratio lock
+
+**Date:** 2026-09-10. A run of live owner feedback against D-274's docked
+panel and its shared form, addressed in one pass since each individual
+change was small but they compound into one coherent shape:
+
+1. **Resolution preset pills → a `Select`.** The four resolution pills
+   (`RES_PRESETS` as `Button`s) were the odd control shape out — Frame Rate's
+   own preset row and Colour Space were already `Select`s. Converted to
+   match, `value={${w}x${h}}` round-tripped through `matchesResPreset`.
+2. **Consistent full width.** Frame Rate's preset `Select` was `w-32` against
+   Resolution's (now) and Colour Space's `w-full` — flagged live as
+   "weird... either full width or less." Frame Rate's `Select` and its
+   Custom-mode `ScrubbableNumberInput` are now `w-full` too; Resolution's own
+   Custom width/height pair uses `flex-1` on each field so the row itself
+   fills the same width the other rows do.
+3. **A real aspect-ratio lock for Custom resolution.** Owner request, with a
+   reference to `ClipInspectorPanel`'s own Width/Height lock (D-193) — same
+   contract, not a new pattern: a `Lock`/`Unlock` icon button, locked by
+   default, recomputes the OTHER dimension by the currently-showing aspect
+   ratio while locked, leaves it alone once unlocked. Field-level `Width`/
+   `Height` captions were added at the same time (their own ask: "so end user
+   knows") — the same `<label><span>…</span><ScrubbableNumberInput/></label>`
+   shape `ClipInspectorPanel`'s own fields already use, which is also what
+   let this form's own tests reuse that file's exact `field()`/`type()`
+   helpers rather than inventing new ones.
+4. **Dropped the "Canvas" `CollapsibleSection` wrapper.** `ProjectSettingsPanel`
+   used to wrap the whole form in one collapsible titled "Canvas," matching
+   the reference screenshot's own section title. With exactly one section,
+   `canToggleVisibility={false}`, and the panel's own "Project Settings"
+   header already sitting right above it, the title/chevron said nothing the
+   header didn't already say — flagged live as busier than it needed to be,
+   with dead space left over once the section stopped adding anything. The
+   form now renders directly under the panel's header.
+
+### Consequences
+
+- Every dropdown-shaped control in this form is now genuinely a dropdown of
+  the same width; no control reads as accidentally different from its
+  neighbours.
+- Setting a custom resolution now behaves like an image-editor's own
+  width/height pair — type one dimension, the other follows, until you
+  explicitly unlock it.
+- The docked panel is one flat list of fields under one header, not a header
+  plus a second, redundant section header.
+
+### Tests
+
+`ProjectSettingsForm.dom.test.tsx` gained: a Resolution-preset-`Select`-render
+proof (mirroring the pre-existing Colour Space one — Base UI's `Select` only
+mounts its item list once the popover truly opens, which jsdom's no-layout
+tier can't produce, so the honest thing to prove at this tier is that the
+control renders, not a full click-through-and-select), and two ratio-lock
+tests (locked: editing Width recomputes Height by the current ratio;
+unlocked: editing Width leaves Height alone). The old button-driven
+"clicking a resolution preset" test and `EditorInspectorPanel.
+projectSettings.dom.test.tsx`'s equivalent were rewritten to drive Custom
+mode's seed-on-switch write instead, for the same jsdom-Select reason.
+
+`npm test --workspace @apelles/editor` (87 files / 1666 tests) and `npx tsc
+--noEmit -p packages/editor` both green.

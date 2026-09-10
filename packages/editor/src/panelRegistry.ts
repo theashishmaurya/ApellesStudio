@@ -36,13 +36,24 @@
  * needing a GUI/MCP pair of their own, but the reachability problem itself
  * still deserves a real, reusable fix rather than a one-off).
  *
- * **D-263 retired the `caption-panel` id.** That popover — D-252's own
- * motivating case — no longer exists: the caption style library is docked
- * content now (`CaptionLibrary.tsx` inside `EditLibraryPanel.tsx`), reached by
- * selecting Subtitles on the library rail, so there is no open flag left to
- * drive. `@apelles/debug`'s real-DOM proof for `debug_set_popover_open` drives
- * `CanvasSettingsPopover` instead. The same pass removed the rail's own
- * uncontrolled popovers noted below, for the same reason.
+ * **D-263 retired the `caption-panel` id**, the same way. That popover —
+ * D-252's own motivating case — no longer exists: the caption style library
+ * is docked content now (`CaptionLibrary.tsx` inside `EditLibraryPanel.tsx`),
+ * reached by selecting Subtitles on the library rail, so there is no open
+ * flag left to drive. The same pass removed the rail's own uncontrolled
+ * popovers noted below, for the same reason. `@apelles/debug`'s real-DOM
+ * proof for `debug_set_popover_open` moved to driving `CanvasSettingsPopover`
+ * at that point.
+ *
+ * **D-275 retired the `canvas-settings` id.** D-274 docked Project Settings
+ * (Resolution/Frame Rate/Colour Space, `ProjectSettingsPanel.tsx`) into the
+ * Edit tab's Inspector column, permanently visible — making
+ * `CanvasSettingsPopover`'s trigger a redundant second way to the same
+ * fields, confirmed live (the docked panel and the popover both open at
+ * once, showing the same Canvas section twice). The popover, its trigger in
+ * `PreviewPane.tsx`, and its `canvas-settings` panel id are gone.
+ * `@apelles/debug`'s real-DOM proof moved again, to `EditorExportDialog`
+ * (`'export-dialog'`) — the one real registered popover left.
  *
  * **Not migrated yet, deliberately** (a real follow-on gap, not silently
  * dropped): `MarkerStrip`'s marker editor is keyed by `editingId: string | null`
@@ -56,7 +67,7 @@ import { useEditorTimelineStore } from './timelineStore';
 /** Every popover/dialog this registry can open or close by name. Add a new
  *  panel here, plus one `useState(false)` → `usePanelOpen(id)` swap at its
  *  call site — no store field, no new debug op, no new arg parser needed. */
-export const PANEL_IDS = ['canvas-settings', 'export-dialog'] as const;
+export const PANEL_IDS = ['export-dialog'] as const;
 
 export type PanelId = (typeof PANEL_IDS)[number];
 

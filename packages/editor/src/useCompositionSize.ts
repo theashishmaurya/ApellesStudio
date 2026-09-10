@@ -8,9 +8,13 @@
  * output spec (D-038 `ProjectSettings`), or the timeline's first video
  * clip's own probed resolution when no explicit settings exist — but without
  * needing a clip selected first. This is what the canvas-boundary overlay
- * (`CanvasBoundary.tsx`) and the canvas-settings popover
- * (`CanvasSettingsPopover.tsx`) both need: a persistent, selection-independent
- * answer to "what IS the output frame," not a per-clip fact.
+ * (`CanvasBoundary.tsx`) needs: a persistent, selection-independent answer to
+ * "what IS the output frame," not a per-clip fact. Originally paired with a
+ * `CanvasSettingsPopover.tsx` trigger for setting that same frame; D-275
+ * retired that popover once D-274's docked `ProjectSettingsPanel.tsx` covered
+ * the same write, but this hook's own read-side job is unchanged — something
+ * still needs to answer "what is the output frame" with no clip selected,
+ * regardless of which surface currently writes it.
  *
  * Refetches whenever `timeline` changes identity (every `applyOp`/`load()`,
  * per `PreviewPane.tsx`'s own module doc) — a `set_project_settings` write
@@ -18,9 +22,10 @@
  * refetch at all.
  *
  * **B-086 fix.** This used to also take an optional `extraDep` token that a
- * caller applying a settings write had to remember to bump by hand —
- * `CanvasSettingsPopover.tsx`'s own "Apply" handler did, correctly, for ITS
- * OWN write. But the `set_project_settings` MCP tool writes through a
+ * caller applying a settings write had to remember to bump by hand — the
+ * (since-retired, D-275) `CanvasSettingsPopover.tsx`'s own "Apply" handler
+ * did, correctly, for ITS OWN write. But the `set_project_settings` MCP tool
+ * writes through a
  * completely different path (`useSessionStore.getState().setProjectSettings`
  * in `app/src`, which has no way to reach into this hook's component-local
  * state at all), so an MCP-driven write left the boundary overlay showing a
@@ -33,9 +38,10 @@
  * it, and this hook listens for that event directly instead of depending on
  * each caller to plumb a token through. That closes the gap for the MCP tool
  * AND any future caller — a caller no longer needs to know this hook exists
- * to make a write it made visible. `CanvasSettingsPopover.tsx`'s own write
- * now also refreshes this hook purely via that broadcast, so its `onSaved`
- * callback no longer needs to (and no longer does) drive this hook itself.
+ * to make a write it made visible. `ProjectSettingsPanel.tsx`'s (D-274) own
+ * write, via `useProjectSettings.ts`, refreshes this hook purely through that
+ * same broadcast today, same as `CanvasSettingsPopover.tsx`'s write did
+ * before D-275 retired it — no caller-specific plumbing either way.
  */
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';

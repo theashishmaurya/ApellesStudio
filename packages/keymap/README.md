@@ -1,6 +1,6 @@
 # `@apelles/keymap`
 
-Apelles' **single source of truth for keyboard shortcuts** (D-272).
+Apelles' **single source of truth for keyboard shortcuts** (D-273).
 
 One registry, one dispatcher, one settings window. No component in this app
 compares a key to a literal any more.
@@ -61,6 +61,6 @@ while a drag or an edit is in progress, and would be meaningless — and dangero
 
 ## MCP
 
-None, deliberately — see D-272. A key binding is a local human input
+None, deliberately — see D-273. A key binding is a local human input
 preference, like a theme; an agent never presses keys, it calls the
 `editor_*`/`set_*` tool the shortcut invokes.

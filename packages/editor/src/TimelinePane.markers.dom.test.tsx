@@ -291,7 +291,7 @@ describe('timeline markers — real DOM (D-222)', () => {
   });
 
   it('9. the `M` shortcut adds one too — but not while typing in a field', async () => {
-    // D-272 — this is now a REGISTRY shortcut (`edit.add_marker`), dispatched
+    // D-273 — this is now a REGISTRY shortcut (`edit.add_marker`), dispatched
     // by `@apelles/keymap`'s single window-level listener rather than by an
     // `onKeyDown` on the pane's own div. Two consequences this test pins:
     // the press goes to `window` (it no longer needs the pane to have been

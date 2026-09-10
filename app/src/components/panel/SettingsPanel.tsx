@@ -2300,7 +2300,7 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                     </div>
                   </div>
 
-                  {/* D-272 — the keybind editor that used to be inlined here
+                  {/* D-273 — the keybind editor that used to be inlined here
                       is now the app-level Keyboard Shortcuts window, opened
                       from the keyboard button in the title bar. It was moved
                       rather than duplicated: this pane listed Colorist's 45

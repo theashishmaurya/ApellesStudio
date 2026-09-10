@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * @apelles/editor — real-DOM coverage for the shared `ProjectSettingsForm`
- * (D-272): the ONE component both the Colorist tab's `ProjectSettingsModal`
+ * (D-274): the ONE component both the Colorist tab's `ProjectSettingsModal`
  * (a dialog) and the Edit tab's docked `ProjectSettingsPanel` render.
  *
  * **Why a DOM test.** This form is pure presentation (`settings` in,
@@ -65,19 +65,46 @@ async function click(el: HTMLElement) {
   await waitFrames(1);
 }
 
+// Same helpers `ClipInspectorPanel.tabs.dom.test.tsx` uses for its own
+// ratio-lock coverage — this form's Width/Height fields are the identical
+// pattern (a `<label>` wrapping a caption `<span>` and a `ScrubbableNumberInput`).
+function field(label: string): HTMLInputElement {
+  const labels = [...(mounted?.container.querySelectorAll('label') ?? [])];
+  const hit = labels.find((l) => l.querySelector('span')?.textContent === label);
+  const input = hit?.querySelector('input');
+  if (!input) throw new Error(`no field labelled "${label}"`);
+  return input as HTMLInputElement;
+}
+
+function type(input: HTMLInputElement, value: number) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  actSync(() => {
+    setter?.call(input, String(value));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
 describe('ProjectSettingsForm', () => {
   it('defaults to "Match first clip" for both Resolution and Frame Rate when the project has no explicit spec', async () => {
     await renderForm({});
     expect(buttons('Match first clip')).toHaveLength(2); // one per group (Resolution, Frame Rate)
     // Neither group's Preset/Custom sub-controls are shown while on Match.
-    expect(buttons('1920×1080 (HD)')).toHaveLength(0);
+    expect(mounted?.container.querySelector('[data-chroma-field="resolution-preset"]')).toBeFalsy();
   });
 
-  it('clicking a resolution preset writes width+height together', async () => {
-    const onChange = await renderForm({ width: null, height: null });
+  // Resolution's preset picker is a `Select` (D-277, matching Frame
+  // Rate/Colour Space for a consistent control shape across the form), so
+  // this hits the same honest jsdom limitation the Colour Space test below
+  // already documents: Base UI only mounts `SelectContent`'s items once the
+  // popover actually opens, which jsdom's no-layout/no-pointer tier doesn't
+  // produce. What IS worth proving at this tier is that the control renders
+  // once Preset mode is selected — the value/onChange wiring itself is plain,
+  // typed prop-passing (`v.split('x').map(Number)`) with no branch to get
+  // wrong.
+  it('renders a Resolution preset control once Preset mode is selected', async () => {
+    await renderForm({ width: 1080, height: 1920 });
     await click(button('Preset', 0));
-    await click(button('1080×1920 (vertical)'));
-    expect(onChange).toHaveBeenCalledWith({ width: 1080, height: 1920 });
+    expect(mounted?.container.querySelector('[data-chroma-field="resolution-preset"]')).toBeTruthy();
   });
 
   it('switching Resolution to Custom from Match seeds a real starting size', async () => {
@@ -126,5 +153,25 @@ describe('ProjectSettingsForm', () => {
     for (const btn of buttons('Match first clip')) {
       expect((btn as HTMLButtonElement).disabled).toBe(true);
     }
+  });
+
+  // Custom resolution's ratio lock (owner request, 2026-09-10) mirrors
+  // `ClipInspectorPanel`'s own Width/Height lock (D-193) exactly: locked by
+  // default, mirrors the OTHER field by the current aspect ratio while
+  // locked, leaves it alone once unlocked.
+  it('locked (the default): editing Width recomputes Height by the current aspect ratio', async () => {
+    const onChange = await renderForm({ width: 1920, height: 1080 });
+    await click(button('Custom', 0));
+    type(field('Width'), 3840);
+    expect(onChange).toHaveBeenLastCalledWith({ width: 3840, height: 2160 });
+  });
+
+  it('unlocked: editing Width leaves the current Height untouched', async () => {
+    const onChange = await renderForm({ width: 1920, height: 1080 });
+    await click(button('Custom', 0));
+    const lockBtn = mounted?.container.querySelector('button[title="Unlock aspect ratio"]') as HTMLButtonElement;
+    await click(lockBtn);
+    type(field('Width'), 3840);
+    expect(onChange).toHaveBeenLastCalledWith({ width: 3840, height: 1080 });
   });
 });

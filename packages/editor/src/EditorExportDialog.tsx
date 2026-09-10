@@ -15,10 +15,20 @@
  * `Dialog`/`DialogContent` from `@apelles/ui`, a native `save()` picker for
  * the output path, plain elements + colour tokens for the rest. What's
  * different here, because the underlying capability is different: per-clip
- * `speedOverrides`/`fitOverrides`/`freezeOverrides` rows (Colorist's export
- * has no multi-clip timeline to speak of) and a real job QUEUE instead of a
- * single blocking progress bar — `editorExport.ts`'s own module doc and
- * D-198 explain why sequential-only this pass, not decorative, not parallel.
+ * `fitOverrides`/`freezeOverrides` rows (Colorist's export has no multi-clip
+ * timeline to speak of) and a real job QUEUE instead of a single blocking
+ * progress bar — `editorExport.ts`'s own module doc and D-198 explain why
+ * sequential-only this pass, not decorative, not parallel.
+ *
+ * **D-276 dropped this dialog's own per-clip SPEED override.** It used to sit
+ * alongside `fitOverrides`/`freezeOverrides` here; D-236 later gave every
+ * clip a real, persisted Speed (Retime) section in its own Inspector, which
+ * export already prefers over this dialog's flat override (`editorExport.ts`'s
+ * `resolveSpeedSegments`: persisted `speed_points`, else a flat override,
+ * else 1×) — a second, less capable GUI for the same fact was confusing, not
+ * useful, confirmed live. `editorExport.ts`'s `speedOverrides` param itself is
+ * untouched (a scripted `editor_export` MCP call can still pass one); this
+ * dialog just never populates it now.
  *
  * Width/height default from the project's own composition size
  * (`chroma_timeline_clip_geometry`'s `compWidth`/`compHeight` — the SAME
@@ -72,6 +82,15 @@ interface ClipGeometry {
 
 const FALLBACK_WIDTH = 1920;
 const FALLBACK_HEIGHT = 1080;
+
+/** `timelineFps` can carry a long floating-point tail (e.g. an NTSC-derived
+ *  rate) — round to the same 3-decimal display precision the rest of the app
+ *  already uses for fps (`ProjectSettingsForm`'s own custom-fps field steps
+ *  by `0.001`, `AdjustmentClipInspectorPanel`'s numeric fields round the
+ *  same way) rather than showing every raw digit. */
+function formatFps(fps: number): string {
+  return String(Number(fps.toFixed(3)));
+}
 
 function suggestedExt(): string {
   return 'mp4';
@@ -137,8 +156,7 @@ export function EditorExportDialog() {
   const [outPath, setOutPath] = useState<string | null>(null);
   const [width, setWidth] = useState(String(FALLBACK_WIDTH));
   const [height, setHeight] = useState(String(FALLBACK_HEIGHT));
-  const [fps, setFps] = useState(String(timelineFps(timeline)));
-  const [speedOverrides, setSpeedOverrides] = useState<Record<string, string>>({});
+  const [fps, setFps] = useState(formatFps(timelineFps(timeline)));
   const [fitOverrides, setFitOverrides] = useState<Record<string, 'fit' | 'stretch'>>({});
   const [freezeOverrides, setFreezeOverrides] = useState<Record<string, boolean>>({});
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -176,11 +194,10 @@ export function EditorExportDialog() {
     if (!open) return;
     const tl = timelineRef.current;
     setOutPath(null);
-    setSpeedOverrides({});
     setFitOverrides({});
     setFreezeOverrides({});
     setValidationError(null);
-    setFps(String(timelineFps(tl)));
+    setFps(formatFps(timelineFps(tl)));
     let cancelled = false;
     fetchCompositionSize(tl).then(({ width: w, height: h }) => {
       if (!cancelled) {
@@ -226,12 +243,6 @@ export function EditorExportDialog() {
       return;
     }
 
-    const speed: Record<string, number> = {};
-    for (const [clipId, raw] of Object.entries(speedOverrides)) {
-      const n = parseFloat(raw);
-      if (Number.isFinite(n) && n > 0 && n !== 1) speed[clipId] = n;
-    }
-
     // D-256 — bake each graded clip's Colorist grade BEFORE compiling. The
     // queue freezes a job's ffmpeg argv at enqueue time (D-198), and that argv
     // names the `.cube` files by path, so they have to exist and be current
@@ -260,7 +271,6 @@ export function EditorExportDialog() {
       width: w,
       height: h,
       fps: f,
-      speedOverrides: Object.keys(speed).length > 0 ? speed : undefined,
       fitOverrides: Object.keys(fitOverrides).length > 0 ? fitOverrides : undefined,
       freezeOverrides: Object.keys(freezeOverrides).length > 0 ? freezeOverrides : undefined,
     });
@@ -328,7 +338,26 @@ export function EditorExportDialog() {
               </div>
             </div>
 
-            {/* per-clip overrides — speed / fit / freeze (export-time-only, B-074/D-188) */}
+            {/* per-clip overrides — fit / freeze (export-time-only, B-074/D-188).
+                D-276 dropped the per-clip SPEED override that used to sit here:
+                D-236 later gave every clip a real, persisted Speed (Retime)
+                section in its own Inspector — reachable, keyframeable, and
+                already what export renders from FIRST (`timelineExport.ts`'s
+                own `resolveSpeedSegments`: a clip's persisted `speed_points`,
+                else this dialog's flat override, else 1×). Once that existed,
+                this flat export-time-only field was a second, less capable
+                place to set the exact same thing — confirmed live (owner,
+                2026-09-10) as confusing rather than useful. Freeze has no
+                persisted equivalent (no `Clip`/`EditOp` field holds "extend to
+                the export's own total duration" — a genuinely export-specific
+                fact, not a property of the clip itself), so it stays; `fit`
+                stays for the same reason (`fitOverrides`'s own stretch escape
+                hatch, B-074, has no timeline-model equivalent either). The
+                underlying `speedOverrides` plumbing in `editorExport.ts`/
+                `timelineExport.ts` is untouched — still real state
+                `compileEditorExportArgs` reads, just never populated from
+                this dialog now; a scripted MCP `editor_export` call can still
+                pass one. */}
             {clips.length > 0 && (
               <div className="flex flex-col gap-1.5">
                 <Label>Per-clip export options</Label>
@@ -339,16 +368,6 @@ export function EditorExportDialog() {
                         <span className="min-w-0 flex-1 truncate text-xs text-text-primary" title={clip.name}>
                           {clip.name}
                         </span>
-                        <Input
-                          type="number"
-                          min={0.1}
-                          step="0.1"
-                          placeholder="1×"
-                          value={speedOverrides[clip.id] ?? ''}
-                          onChange={(e) => setSpeedOverrides((s) => ({ ...s, [clip.id]: e.target.value }))}
-                          className="h-7 w-16 text-xs"
-                          title="Speed multiplier (export-time only)"
-                        />
                         <Select
                           value={fitOverrides[clip.id] ?? 'fit'}
                           onValueChange={(v) => setFitOverrides((s) => ({ ...s, [clip.id]: v as 'fit' | 'stretch' }))}

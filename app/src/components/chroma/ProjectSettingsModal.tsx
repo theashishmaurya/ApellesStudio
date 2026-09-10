@@ -9,14 +9,14 @@
 // colorSpace is stored + surfaced only for now — a real colour-managed
 // pipeline is D-004. Reached from the gear on the Colorist shot strip.
 //
-// D-272 — this dialog's BODY is now `@apelles/editor`'s `ProjectSettingsForm`,
+// D-274 — this dialog's BODY is now `@apelles/editor`'s `ProjectSettingsForm`,
 // the same component the Edit tab's docked `ProjectSettingsPanel` renders in
 // its Inspector column, rather than a second, hand-kept-in-sync copy of the
 // resolution/fps/colour-space controls. Only the surrounding chrome (the
 // backdrop + close button below) is specific to this being a dialog — see
 // that component's own module doc.
 //
-// D-272 also moved this from a staged Save/Cancel flow to instant-apply:
+// D-274 also moved this from a staged Save/Cancel flow to instant-apply:
 // `ProjectSettingsForm` fires `onChange` per edit (the shape the ALWAYS-
 // VISIBLE docked panel needs, since a permanently-open panel cannot sensibly
 // carry a pending, unsaved Save button), and the shared component has to

@@ -93,7 +93,7 @@ export interface TrimToolbarProps {
  *  what the WAI-ARIA toolbar pattern uses, and it keeps each one reachable by
  *  its own accessible name (which is how the DOM tests drive them). */
 export function TrimToolbar({ active, onSelect }: TrimToolbarProps) {
-  // D-272 — the key shown in each tooltip is whatever the registry currently
+  // D-273 — the key shown in each tooltip is whatever the registry currently
   // resolves that tool's action to, so a rebind in the Keyboard Shortcuts
   // window is reflected here immediately. Subscribed (not `getState`) for
   // exactly that reason.

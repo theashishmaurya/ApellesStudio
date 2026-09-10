@@ -2489,8 +2489,13 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   around the same form. See D-274 for the full "why" (the D-039 layering
   wrinkle this took to reuse `app`'s settings state from a `tabs`-layer
   package, the "Aspect Ratio" → Colour Space field mapping, the modal's move
-  from staged Save/Cancel to instant-apply, and the known/deliberately-left
-  overlap with the Edit tab's own narrower `CanvasSettingsPopover`).
+  from staged Save/Cancel to instant-apply). The known/deliberately-left
+  overlap it flagged with the Edit tab's own narrower `CanvasSettingsPopover`
+  turned out to be real, confirmed live within minutes (**B-140**) — retired
+  in **D-275**, and the form itself picked up a further round of polish in
+  **D-276**/**D-277** (Resolution preset as a `Select`, consistent full-width
+  controls, a real aspect-ratio lock, the redundant "Canvas" section header
+  dropped).
 - **B-136's remaining gap: the real cursor still shows once a scrub travels
   past the field's own ~80px box** — logged 2026-09-10, owner explicitly
   deferred rather than asked for a seventh attempt tonight. Confirmed live:
@@ -2572,6 +2577,33 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   implement this: a dropdown next to the transport, J/K/L-style shuttling,
   audio time-stretch vs. pitch-shift-and-skip) before building, per
   CLAUDE.md's own standing rule.
+- **Keyboard Shortcuts window: visual redesign against a real reference** —
+  owner request 2026-09-10, with a reference screenshot (a Figma community
+  "Keyboard Shortcuts Collection" cheat sheet — a dense, multi-column grid
+  grouped by category, each row a plain action-label + key-combo pair, no
+  extra chrome; saved at `scratch/keyboard-shortcuts-figma-reference.png`).
+  **Not a functionality gap** — checked directly against
+  `KeyboardShortcutsDialog.tsx` (D-273) before logging this: click-to-remap
+  already works exactly as the owner asked ("I should be able to edit as
+  well") — click a combo chip, it enters a recording state, the next chord
+  rebinds it, Escape leaves it unassigned. What the reference is actually
+  asking for is a LAYOUT change: today's window is one column of stacked
+  named sections; the reference is a tighter multi-column grid. A real
+  redesign pass, not a quick tweak — needs the same research-the-real-
+  pattern treatment (how many columns at this window's real width, whether
+  Apelles' ~60 rows against three tab-scoped categories fit the reference's
+  density) before rebuilding, per CLAUDE.md's standing rule.
+- **A camera/snapshot button on the preview transport** — owner idea,
+  2026-09-10, prompted by a "how does Freeze work elsewhere" question:
+  clicking it captures the current frame as a real still image, adds it to
+  the Sources panel as a new importable item, which can then be dragged onto
+  the timeline like any other source — the way some NLEs offer a still-frame
+  grab as their own alternative to an in-place freeze. Not scoped further
+  than the idea itself: needs a real capture command (a still-frame export
+  of the CURRENT composited preview frame, not just the raw source — so it
+  should honour whatever transform/grade is showing), a place to write the
+  resulting file, and `SourcesPanel.tsx`'s own real import path reused rather
+  than a bespoke "fake source" entry.
 
 ---
 

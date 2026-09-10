@@ -1,6 +1,6 @@
 /**
  * @apelles/editor — this package's own live view of the project's D-038
- * `ProjectSettings` (D-272).
+ * `ProjectSettings` (D-274).
  *
  * Mirrors `useCompositionSize.ts`'s own pattern exactly, for the same
  * layering reason its module doc already states: `packages/editor` cannot

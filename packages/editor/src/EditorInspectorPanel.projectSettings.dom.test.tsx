@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * @apelles/editor — real-DOM coverage for D-272: the Edit tab Inspector
+ * @apelles/editor — real-DOM coverage for D-274: the Edit tab Inspector
  * column's "nothing selected" slot fills with the docked `ProjectSettingsPanel`
  * (Resolution / Frame Rate / Colour Space, via the shared `ProjectSettingsForm`)
  * instead of the plain "Select a clip" message.
@@ -154,11 +154,10 @@ async function click(el: HTMLElement) {
   await waitFrames(2);
 }
 
-describe('EditorInspectorPanel — Project Settings (D-272)', () => {
+describe('EditorInspectorPanel — Project Settings (D-274)', () => {
   it('fills the "nothing selected" slot with the docked Project Settings panel', async () => {
     await render();
     expect(text()).toContain('Project Settings');
-    expect(text()).toContain('Canvas');
     expect(text()).toContain('Resolution');
     expect(text()).toContain('Frame Rate');
     expect(text()).toContain('Colour Space');
@@ -178,14 +177,19 @@ describe('EditorInspectorPanel — Project Settings (D-272)', () => {
     expect(text()).toContain('Transform');
   });
 
-  it('a resolution preset click writes through the real chroma_project_set_settings command', async () => {
+  // Resolution's preset picker is a `Select` (D-277), whose item
+  // list Base UI only mounts once the popover actually opens — jsdom's
+  // no-layout/no-pointer tier doesn't produce that, the same honest
+  // limitation `ProjectSettingsForm.dom.test.tsx` already documents. Custom
+  // mode's own seed-on-switch write exercises the identical real command
+  // (`chroma_project_set_settings`) through a control jsdom CAN drive.
+  it('switching Resolution to Custom writes through the real chroma_project_set_settings command', async () => {
     await render();
-    await click(button('Preset', 0));
-    await click(button('1080×1920 (vertical)'));
+    await click(button('Custom', 0));
 
-    expect(backend.setCalls).toContainEqual({ width: 1080, height: 1920 });
-    expect(backend.settings.width).toBe(1080);
-    expect(backend.settings.height).toBe(1920);
+    expect(backend.setCalls).toContainEqual({ width: 1920, height: 1080 });
+    expect(backend.settings.width).toBe(1920);
+    expect(backend.settings.height).toBe(1080);
   });
 
   it('single source of truth: a write from OUTSIDE this panel (the Colorist modal, or MCP) is reflected live, with no forked state', async () => {

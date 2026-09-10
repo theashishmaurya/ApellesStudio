@@ -1,9 +1,9 @@
 /**
- * @apelles/keymap — the Keyboard Shortcuts settings window (D-272).
+ * @apelles/keymap — the Keyboard Shortcuts settings window (D-273).
  *
  * **What it is.** The one surface where every shortcut in Apelles can be seen
  * and rebound. Shell-level, so it opens the same way from all three tabs —
- * before D-272 the only remap UI in the app was a section buried inside
+ * before D-273 the only remap UI in the app was a section buried inside
  * Colorist's own settings modal, listing Colorist's 45 actions and nothing
  * else, unreachable without switching tabs first.
  *

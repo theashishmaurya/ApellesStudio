@@ -59,7 +59,7 @@
  * instead is its own pair of handlers below (`applyEqBand`/`clearEq`) writing
  * its own `set_clip_eq` op, exactly as the level pair writes `set_clip_audio`.
  *
- * D-272 — when NOTHING is selected (`selection.length === 0`), this component
+ * D-274 — when NOTHING is selected (`selection.length === 0`), this component
  * renders `ProjectSettingsPanel` instead of `ClipInspectorPanel`, filling the
  * column's own former "Select a clip to edit its properties" empty state with
  * the project's own output spec. Deliberately scoped to the genuinely-empty
@@ -470,7 +470,7 @@ export function EditorInspectorPanel() {
     applyKeyframes(applyDynamicZoom(clipKeyframes, end, start, span.first, span.last, dynamicZoom.curve));
   };
 
-  // D-272 — nothing selected at all fills this column with Project Settings
+  // D-274 — nothing selected at all fills this column with Project Settings
   // instead of the generic "Select a clip" message; see this file's own
   // module doc for why a multi-selection deliberately does NOT take this
   // branch.

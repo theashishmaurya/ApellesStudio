@@ -3026,7 +3026,7 @@ export function TimelinePane() {
     setSelectedGap(null);
   };
 
-  // D-272 — every one of this pane's shortcuts, resolved from the registry.
+  // D-273 — every one of this pane's shortcuts, resolved from the registry.
   //
   // These used to be a `onKeyDown` on the pane's own root div comparing
   // `e.key` to 'm' / 'Delete' / the trim-tool letters, each with its own

@@ -1,6 +1,6 @@
 /**
  * @apelles/keymap — the user's remaps, and the rules that turn a combo into an
- * action (D-272).
+ * action (D-273).
  *
  * **What it is.** A small zustand store holding `overrides` (action id → the
  * combo the user chose), plus the pure resolution helpers the dispatcher and
@@ -22,7 +22,7 @@
  * deliberate (tab switching, undo/redo) and has to work in every tab, so it
  * wins; a tab-scoped action bound to the same combo is shadowed and shows as
  * conflicting in the settings window, where the user can rebind it. This
- * matters for a real collision that predates D-272: ⌘1 is both "go to Edit
+ * matters for a real collision that predates D-273: ⌘1 is both "go to Edit
  * tab" and Colorist's `zoom_100`. Before this pass BOTH fired (two independent
  * `window` listeners), which is B-138; now exactly one does, and the loser is
  * visible and fixable rather than silent.
@@ -39,7 +39,7 @@ import { SHORTCUT_DEFINITIONS, type ShortcutDefinition, type ShortcutScope } fro
 
 export type Overrides = Record<string, Combo>;
 
-/** D-051 moved undo/redo's handler from Colorist to the shell; D-272 moved the
+/** D-051 moved undo/redo's handler from Colorist to the shell; D-273 moved the
  *  registry row to match. Anyone who had remapped them under the fork's old
  *  ids keeps their remap. */
 const LEGACY_ID_MIGRATIONS: Record<string, string> = {
