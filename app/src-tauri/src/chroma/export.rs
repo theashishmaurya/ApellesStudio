@@ -39,12 +39,12 @@ use std::time::Instant;
 
 use image::{DynamicImage, GenericImageView, GrayImage, RgbImage};
 use once_cell::sync::Lazy;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::adjustment_utils::apply_all_transformations;
 use crate::gpu_processing::RenderRequest;
 use crate::image_processing::{apply_geometry_warp, get_all_adjustments_from_json};
-use crate::mask_generation::{generate_mask_bitmap, MaskDefinition};
+use crate::mask_generation::{MaskDefinition, generate_mask_bitmap};
 use crate::render_core::{self, OwnedRenderCaches};
 
 use super::state::{current_video, set_current_frame, set_current_video};
@@ -165,7 +165,14 @@ fn drain_stderr(child: &mut Child) -> std::sync::Arc<Mutex<Vec<u8>>> {
 
 fn tail(sink: &std::sync::Arc<Mutex<Vec<u8>>>) -> String {
     let g = sink.lock().unwrap_or_else(|e| e.into_inner());
-    String::from_utf8_lossy(&g).chars().rev().take(1200).collect::<String>().chars().rev().collect()
+    String::from_utf8_lossy(&g)
+        .chars()
+        .rev()
+        .take(1200)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect()
 }
 
 /// Spawn the decoder for `[from, to]` as raw rgb24.
@@ -242,7 +249,14 @@ fn spawn_encoder(
         }
         _ => {
             let profile = quality.unwrap_or(3).clamp(0, 5).to_string();
-            cmd.args(["-c:v", "prores_ks", "-profile:v", &profile, "-pix_fmt", "yuv422p10le"]);
+            cmd.args([
+                "-c:v",
+                "prores_ks",
+                "-profile:v",
+                &profile,
+                "-pix_fmt",
+                "yuv422p10le",
+            ]);
         }
     }
 
@@ -521,7 +535,12 @@ fn grade_frame(
         caches.as_ref(),
         transformed.as_ref(),
         frame_index.wrapping_add(1),
-        RenderRequest { adjustments, mask_bitmaps: &mask_bitmaps, lut, roi: None },
+        RenderRequest {
+            adjustments,
+            mask_bitmaps: &mask_bitmaps,
+            lut,
+            roi: None,
+        },
         "export",
         false,
         None,
@@ -677,7 +696,12 @@ pub fn export_video(
                 )?;
                 let stderr = drain_stderr(&mut child);
                 let stdin = child.stdin.take().ok_or("encoder stdin unavailable")?;
-                enc = Some(EncoderPipe { child, stderr, stdin, dims });
+                enc = Some(EncoderPipe {
+                    child,
+                    stderr,
+                    stdin,
+                    dims,
+                });
             } else if (gw, gh) != geometry {
                 // A grade's geometry is frame-independent by construction
                 // (`apply_all_transformations` reads only `adjustments`), so
@@ -707,8 +731,12 @@ pub fn export_video(
         // `total` is always >= 1 (`to = to.max(from)`), so the encoder exists
         // unless the loop returned early — but a `?` on an empty range is
         // still better than an `unwrap`.
-        let EncoderPipe { mut child, stderr, stdin, .. } =
-            enc.ok_or("no frames were graded, so no encoder was ever spawned")?;
+        let EncoderPipe {
+            mut child,
+            stderr,
+            stdin,
+            ..
+        } = enc.ok_or("no frames were graded, so no encoder was ever spawned")?;
         drop(stdin); // EOF → encoder flushes and exits
 
         let status = child.wait().map_err(|e| format!("wait for encoder: {e}"))?;
@@ -780,7 +808,11 @@ pub fn bake_primary_lut(
 fn default_out_path(kind: &str) -> Result<PathBuf, String> {
     let cv = current_video().ok_or("no video loaded")?;
     let dir = cv.path.parent().ok_or("clip has no parent dir")?;
-    let stem = cv.path.file_stem().and_then(|s| s.to_str()).unwrap_or("clip");
+    let stem = cv
+        .path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("clip");
     let name = match kind {
         "cube" => format!("{stem}.graded.cube"),
         "h264" => format!("{stem}.graded.mp4"),
@@ -829,7 +861,10 @@ pub async fn chroma_export_video(
     {
         let p = progress_snapshot();
         if p.running {
-            return Err(format!("an export is already running ({}/{})", p.done, p.total));
+            return Err(format!(
+                "an export is already running ({}/{})",
+                p.done, p.total
+            ));
         }
     }
 
@@ -907,7 +942,9 @@ pub async fn chroma_export_video(
         }
     });
 
-    Ok(json!({ "started": true, "out_path": out_str, "from": from, "to": to, "total": to - from + 1 }))
+    Ok(
+        json!({ "started": true, "out_path": out_str, "from": from, "to": to, "total": to - from + 1 }),
+    )
 }
 
 /// Poll the running / last export.
@@ -1215,11 +1252,19 @@ mod tests {
         // no override: the geometry's own size, evened down
         assert_eq!(
             resolve_encoder_dims((1280, 720), (None, None)).unwrap(),
-            EncoderDims { width: 1280, height: 720, resample: false }
+            EncoderDims {
+                width: 1280,
+                height: 720,
+                resample: false
+            }
         );
         assert_eq!(
             resolve_encoder_dims((1281, 721), (None, None)).unwrap(),
-            EncoderDims { width: 1280, height: 720, resample: false }
+            EncoderDims {
+                width: 1280,
+                height: 720,
+                resample: false
+            }
         );
     }
 
@@ -1227,18 +1272,30 @@ mod tests {
     fn resolve_encoder_dims_honours_and_evens_an_override() {
         assert_eq!(
             resolve_encoder_dims((1920, 1080), (Some(1280), Some(720))).unwrap(),
-            EncoderDims { width: 1280, height: 720, resample: true }
+            EncoderDims {
+                width: 1280,
+                height: 720,
+                resample: true
+            }
         );
         // D-049 let an odd custom resolution through to libx264, which rejects
         // it outright — the same rule fixes that on the way past.
         assert_eq!(
             resolve_encoder_dims((1920, 1080), (Some(1281), Some(721))).unwrap(),
-            EncoderDims { width: 1280, height: 720, resample: true }
+            EncoderDims {
+                width: 1280,
+                height: 720,
+                resample: true
+            }
         );
         // a partial / non-positive override is absent, same as `ExportOpts`
         assert_eq!(
             resolve_encoder_dims((1920, 1080), (Some(1280), None)).unwrap(),
-            EncoderDims { width: 1920, height: 1080, resample: false }
+            EncoderDims {
+                width: 1920,
+                height: 1080,
+                resample: false
+            }
         );
     }
 
@@ -1281,7 +1338,10 @@ mod tests {
     }
 
     fn test_video() -> Option<PathBuf> {
-        std::env::var("CHROMA_TEST_VIDEO").ok().map(PathBuf::from).filter(|p| p.exists())
+        std::env::var("CHROMA_TEST_VIDEO")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
     }
 
     /// Synthesise a tiny high-contrast clip with ffmpeg, so the end-to-end
@@ -1292,7 +1352,15 @@ mod tests {
         let out = std::env::temp_dir().join(name);
         let _ = std::fs::remove_file(&out);
         let ok = Command::new(ffmpeg_bin())
-            .args(["-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
+            .args([
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
             .arg(format!("testsrc=size={w}x{h}:rate=24:duration=2"))
             .args([
                 "-frames:v",
@@ -1368,7 +1436,10 @@ mod tests {
             .expect("decode exported frame 0")
             .to_rgb8();
         let mad = mean_abs_diff(&expected, &got);
-        assert!(mad < 10.0, "exported crop is not the region the user chose: mean|Δ| {mad}");
+        assert!(
+            mad < 10.0,
+            "exported crop is not the region the user chose: mean|Δ| {mad}"
+        );
 
         // sanity: the WRONG crop (the un-offset top-left) really is a different
         // picture, so the assertion above isn't passing by coincidence.
@@ -1413,7 +1484,10 @@ mod tests {
         )
         .expect("export");
         let probed = video::probe(&out).expect("probe output");
-        assert_eq!((probed.resolution.width, probed.resolution.height), (120, 160));
+        assert_eq!(
+            (probed.resolution.width, probed.resolution.height),
+            (120, 160)
+        );
     }
 
     /// An odd-sized crop must produce a valid h.264 file, not a libx264
@@ -1438,13 +1512,19 @@ mod tests {
             &js,
             0,
             3,
-            ExportOpts { codec: Some("h264".into()), ..Default::default() },
+            ExportOpts {
+                codec: Some("h264".into()),
+                ..Default::default()
+            },
             None,
         )
         .expect("odd-crop h264 export");
 
         let probed = video::probe(&out).expect("probe output");
-        assert_eq!((probed.resolution.width, probed.resolution.height), (100, 60));
+        assert_eq!(
+            (probed.resolution.width, probed.resolution.height),
+            (100, 60)
+        );
     }
 
     /// The refusal that replaces D-127's: a crop too small to encode names
@@ -1482,10 +1562,21 @@ mod tests {
         let out = std::env::temp_dir().join("chroma_geom_plain.mov");
         let _ = std::fs::remove_file(&out);
 
-        export_video(&vid, &out, &json!({ "exposure": 0.0 }), 0, 3, ExportOpts::default(), None)
-            .expect("export");
+        export_video(
+            &vid,
+            &out,
+            &json!({ "exposure": 0.0 }),
+            0,
+            3,
+            ExportOpts::default(),
+            None,
+        )
+        .expect("export");
         let probed = video::probe(&out).expect("probe output");
-        assert_eq!((probed.resolution.width, probed.resolution.height), (160, 120));
+        assert_eq!(
+            (probed.resolution.width, probed.resolution.height),
+            (160, 120)
+        );
     }
 
     /// D-030: the seeked decoder must hand back the *same* absolute frames the
@@ -1505,17 +1596,26 @@ mod tests {
         let mut out = dec.stdout.take().unwrap();
         for n in from..=to {
             let mut buf = vec![0u8; fb];
-            out.read_exact(&mut buf).unwrap_or_else(|e| panic!("frame {n}: {e}"));
-            let piped = image::RgbImage::from_raw(info.resolution.width, info.resolution.height, buf).unwrap();
+            out.read_exact(&mut buf)
+                .unwrap_or_else(|e| panic!("frame {n}: {e}"));
+            let piped =
+                image::RgbImage::from_raw(info.resolution.width, info.resolution.height, buf)
+                    .unwrap();
             let one = video::decode_frame(&vid, video::FramePos::Index(n), &info)
                 .expect("decode_frame")
                 .to_rgb8();
-            let (cnt, sum) = piped.as_raw().iter().zip(one.as_raw()).fold(
-                (0u64, 0u64),
-                |(c, s), (a, b)| (c + 1, s + (*a as i64 - *b as i64).unsigned_abs()),
-            );
+            let (cnt, sum) = piped
+                .as_raw()
+                .iter()
+                .zip(one.as_raw())
+                .fold((0u64, 0u64), |(c, s), (a, b)| {
+                    (c + 1, s + (*a as i64 - *b as i64).unsigned_abs())
+                });
             let mad = sum as f64 / cnt as f64;
-            assert!(mad < 1.0, "frame {n}: mean|Δ| {mad} — seeked decoder is off by a frame");
+            assert!(
+                mad < 1.0,
+                "frame {n}: mean|Δ| {mad} — seeked decoder is off by a frame"
+            );
         }
         let _ = dec.wait();
     }
@@ -1548,9 +1648,13 @@ mod tests {
         // no override → output dims == clip dims (byte-for-byte the old path)
         let plain = std::env::temp_dir().join("chroma_export_res_plain.mov");
         let _ = std::fs::remove_file(&plain);
-        export_video(&vid, &plain, &json!({}), 0, 9, ExportOpts::default(), None).expect("plain export");
+        export_video(&vid, &plain, &json!({}), 0, 9, ExportOpts::default(), None)
+            .expect("plain export");
         let pi = video::probe(&plain).expect("probe plain");
-        assert_eq!((pi.resolution.width, pi.resolution.height), (info.resolution.width, info.resolution.height));
+        assert_eq!(
+            (pi.resolution.width, pi.resolution.height),
+            (info.resolution.width, info.resolution.height)
+        );
 
         // half-res override → encoded file is that resolution
         let (hw, hh) = (info.resolution.width / 2, info.resolution.height / 2);
@@ -1562,7 +1666,11 @@ mod tests {
             &json!({}),
             0,
             9,
-            ExportOpts { out_width: Some(hw), out_height: Some(hh), ..Default::default() },
+            ExportOpts {
+                out_width: Some(hw),
+                out_height: Some(hh),
+                ..Default::default()
+            },
             None,
         )
         .expect("scaled export");
@@ -1578,8 +1686,16 @@ mod tests {
         };
         let out = std::env::temp_dir().join("chroma_export_bright.mov");
         let _ = std::fs::remove_file(&out);
-        export_video(&vid, &out, &json!({ "exposure": 1.0 }), 0, 29, ExportOpts::default(), None)
-            .expect("export");
+        export_video(
+            &vid,
+            &out,
+            &json!({ "exposure": 1.0 }),
+            0,
+            29,
+            ExportOpts::default(),
+            None,
+        )
+        .expect("export");
         assert!(out.exists());
     }
 
@@ -1680,7 +1796,8 @@ mod tests {
         });
         let out = std::env::temp_dir().join("chroma_export_tracked.mov");
         let _ = std::fs::remove_file(&out);
-        let res = export_video(&vid, &out, &js, 0, 260, ExportOpts::default(), None).expect("export");
+        let res =
+            export_video(&vid, &out, &js, 0, 260, ExportOpts::default(), None).expect("export");
         assert_eq!(res.frames, 261);
         eprintln!("tracked: {res:?} -> {}", out.display());
     }
@@ -1703,7 +1820,10 @@ mod tests {
         let rows: Vec<[f32; 3]> = body
             .lines()
             .filter_map(|l| {
-                let p: Vec<f32> = l.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+                let p: Vec<f32> = l
+                    .split_whitespace()
+                    .filter_map(|x| x.parse().ok())
+                    .collect();
                 (p.len() == 3 && !l.contains("DOMAIN")).then(|| [p[0], p[1], p[2]])
             })
             .collect();
