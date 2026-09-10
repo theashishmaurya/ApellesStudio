@@ -389,10 +389,19 @@ export default function ProjectLauncher() {
           <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
             <button
               onClick={() => setShowNew(true)}
-              className="aspect-video rounded-lg border border-dashed border-border-color bg-surface/40 flex flex-col items-center justify-center gap-2 text-text-secondary hover:text-text-primary hover:border-accent transition-colors"
+              className="flex flex-col rounded-lg border border-dashed border-border-color bg-surface/40 text-text-secondary hover:text-text-primary hover:border-accent transition-colors"
             >
-              <PlusIcon size={22} />
-              <span className="text-xs font-medium">New Project</span>
+              <div className="aspect-video flex flex-col items-center justify-center gap-2">
+                <PlusIcon size={22} />
+                <span className="text-xs font-medium">New Project</span>
+              </div>
+              {/* Matches ProjectCard's px-3 py-2 text footer in height (empty
+                  here) so both cards in the same grid row are the same total
+                  height — the footer's aspect-video image area alone is not. */}
+              <div className="px-3 py-2 invisible">
+                <div className="text-sm font-medium">&nbsp;</div>
+                <div className="text-[11px] mt-0.5">&nbsp;</div>
+              </div>
             </button>
             {projects.map((p) => (
               <ProjectCard
