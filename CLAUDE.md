@@ -30,8 +30,11 @@ session with `docs/00-vision.md`, `docs/02-scope.md`, `docs/04-roadmap.md`,
   bare `@ts-ignore`. Rust: no `unwrap()`/`expect()` on anything that can fail at runtime —
   `Result` + `?`. `tsc` introduces **zero** new errors; `cargo fmt` + `cargo clippy`
   clean on new code.
-- **No dead code** left "just in case" — except the explicitly-unrouted RapidRAW
-  components kept for upstream cherry-picks (D-003), which are documented as such.
+- **No dead code** left "just in case." `app/` (the vendored RapidRAW fork) is owned
+  code now, not a tracked-upstream drop (D-281, 2026-09-10, owner: "it's fine if we
+  change things in rapidraw, as we now gonna own it") — a redundant or unreachable
+  RapidRAW-inherited component gets deleted outright like any other dead code, not
+  kept "for upstream cherry-picks."
 - **No `TODO` / `FIXME` in committed code** without a matching `docs/04-roadmap.md` line.
 - **Every commit builds, is atomic, one concern, messaged with the why + the `D-NNN`.**
 - If something is structurally wrong, fix the structure — don't monkey-patch around it.
@@ -137,10 +140,14 @@ in the same commit.
 - **v1 scope is deliberately tiny** (one footage type, macOS ARM, Rec709, adjustment
   stack not nodes). Do not add v2/v3 features "while I'm here." If it's not in
   `docs/02-scope.md` v1, it goes in a `D-NNN` as a proposal, not in the code.
-- **We vendor RapidRAW at `app/`, we don't rewrite it.** Prefer extending it over
-  reimplementing. When you must diverge from upstream, document the divergence in
-  `docs/09-engine-notes.md` so we can still cherry-pick upstream fixes. (Over time the
-  Apelles `crates/` absorb more and the fork shrinks — D-039.)
+- **`app/` (the vendored RapidRAW fork) is owned code, not a tracked upstream drop**
+  (D-281, 2026-09-10 — supersedes this rule's original "prefer extending it over
+  reimplementing, document every divergence so we can cherry-pick upstream" framing).
+  Change it the same way you'd change anything else in this repo: correct, documented,
+  to this file's standards — not judged against upstream compatibility. The AGPL-3.0
+  licence obligation is unchanged; only the maintenance stance is. (Over time the
+  Apelles `crates/` still absorb more and the fork still shrinks — D-039 — just no
+  longer framed as "so we can still track upstream.")
 - **Every resizable-by-nature panel/pane/sidebar must actually be resizable** (owner,
   2026-09-03, said once so it's a standing rule, not a per-feature ask). Fixed-width
   panels, popovers, and dialogs that don't need to flex are fine as-is — this is about
@@ -202,13 +209,18 @@ chroma/
 ```
 
 Rules for the fork at `app/`:
-- AGPL-3.0 (→ `CyberTimon/RapidRAW`). Upstream is **tracked manually now** — the hard fork
-  is D-003 (no live submodule remote). Cherry-pick upstream fixes by hand when wanted.
-- Do not scatter edits through `app/src-tauri` casually — new files/modules over
-  in-place edits, and every divergence from upstream is logged in `docs/09-engine-notes.md`
-  (what changed, why, the upstream commit we branched from).
+- AGPL-3.0 (→ `CyberTimon/RapidRAW`, the historical origin) — the licence obligation is
+  unchanged. Ownership of day-to-day maintenance is not: `app/` is owned code now, not a
+  tracked-upstream drop (D-281) — there is no live submodule remote (D-003) and no
+  standing expectation of cherry-picking upstream fixes going forward.
+- Still prefer new files/modules over scattering in-place edits through `app/src-tauri`
+  where that's the cleaner shape — that's ordinary code hygiene, not an upstream-tracking
+  requirement. `docs/09-engine-notes.md` is no longer a required ledger for every
+  divergence (D-281); use it when a change's own history is genuinely worth recording,
+  the same judgment call as any other `docs/notes/`.
 - Over time Apelles' `crates/` absorb more and the fork shrinks to "grade shader + mask
-  raster" (D-039).
+  raster" (D-039) — redundant RapidRAW-inherited chrome superseded by a real Apelles-tab
+  equivalent gets deleted outright as part of that, not kept alongside it.
 
 ## Running the app (post-D-039)
 

@@ -27352,3 +27352,85 @@ packages: all green. `cargo fmt` + `cargo clippy` clean on the new code.
 the algorithm preserves frequency and the `cpal` rms/peak proxy proves real
 audio reaches the device at 3×; neither can say a voice at 4× is pleasant.
 That needs the owner's ears.
+
+---
+
+## D-281 — RapidRAW at `app/` is owned code now, not a tracked fork; redundant inherited chrome can be removed outright
+
+**Date:** 2026-09-10. Owner, live, plainly: *"it's fine if we change things in
+rapidraw, as we now gonna own it."*
+
+### Context
+
+D-003 (the original hard-fork decision) and CLAUDE.md's own standing rules
+have treated `app/` as a **vendored, upstream-tracked fork** since day one:
+"prefer extending it over reimplementing," "document every divergence in
+`docs/09-engine-notes.md` so we can still cherry-pick upstream fixes," and an
+explicit no-dead-code exception for "the explicitly-unrouted RapidRAW
+components kept for upstream cherry-picks." That framing made sense while
+Apelles was a thin set of tabs bolted onto RapidRAW's own single-image
+editor. It stopped matching reality well before today: D-039 already has
+Apelles' own layered `crates/`/`packages/` absorbing more of the app over
+time "so the fork shrinks," and this session's own live testing surfaced
+multiple RapidRAW-inherited panels that are now flatly **redundant** with
+real Apelles-native equivalents rather than merely divergent from
+upstream — Colorist's own `CropPanel.tsx` duplicating the Edit tab's real
+per-clip transform, its `MetadataPanel.tsx`/rating widget serving RapidRAW's
+original single-photo workflow with no equivalent in a multi-clip timeline,
+its own `ExportDialog.tsx`/`ExportPanel.tsx` next to the Edit tab's real
+`EditorExportDialog`, its own `ImageCanvas.tsx` preview pipeline never wired
+to the Edit timeline's own `Clip` data at all (see B-141, B-147). Keeping
+these "for upstream cherry-picks" no longer buys anything real: there is no
+live upstream remote (D-003), cherry-picking has been manual since the
+fork, and every one of these specific panels is being actively replaced by
+an Apelles-native equivalent, not merely improved on.
+
+### The decision
+
+**`app/` is Apelles' own code now, not a tracked vendor drop.** Concretely:
+
+- The AGPL-3.0 attribution stays (`CyberTimon/RapidRAW` is still the
+  historical origin, unchanged licence obligation) — this is an ownership-
+  of-development stance, not a relicensing.
+- The "prefer extending over reimplementing" and "document every divergence
+  in `docs/09-engine-notes.md` so we can cherry-pick upstream" rules are
+  **retired**. A change to `app/` is now judged the same way a change
+  anywhere else in this repo is: is it correct, is it documented, does it
+  follow this file's own standards — not "does it preserve upstream
+  compatibility."
+- The no-dead-code exception for "explicitly-unrouted RapidRAW components
+  kept for upstream cherry-picks" is **retired** — a RapidRAW-inherited
+  component that is genuinely redundant (superseded by a real Apelles-tab
+  equivalent, or simply unreachable) should be deleted outright, the same
+  standard this file already applies to Apelles' own dead code.
+- `docs/09-engine-notes.md` stops being a required cherry-pick ledger for
+  every divergence. It may still be useful as a *historical* record of what
+  changed and why, but a change to `app/` no longer needs an entry there to
+  be considered complete — a `D-NNN`/`B-NNN` in the usual places is enough,
+  exactly as for any other part of the codebase.
+
+### What this does NOT change
+
+- The AGPL-3.0 licence terms themselves (still binding, unrelated to who
+  maintains the code day to day).
+- D-039's own layered-architecture law (`app → tabs → services → domain →
+  media/gpu → types`) — owning the code is not license to reach across
+  layers; new work still goes in the layer its dependencies allow, and
+  `app/` shrinking over time as `crates/`/`packages/` absorb more of it is
+  still the direction, just no longer framed as "so we can still track
+  upstream."
+- The "no shortcuts" standard — deleting redundant RapidRAW chrome still
+  means deleting it properly (its own removal documented, callers updated,
+  no half-removed dead references left behind), not just ripping out files.
+
+### Consequences
+
+Unblocks a live batch of Colorist-tab consolidation already in flight when
+this was decided: removing the duplicate Crop & Transform panel in favour of
+the Edit tab's own per-clip transform, removing the Metadata panel and
+rating widget, consolidating Export to one global entry point, unifying the
+Colorist/Edit preview into one shared player component, and fixing Colorist's
+`ImageCanvas` to read a clip's real transform/trim from the Edit timeline
+instead of the raw source file. See `docs/04-roadmap.md` for that batch's own
+entry and `docs/BUGS.md` B-147 for the specific transform/trim bug this
+decision was made alongside.
