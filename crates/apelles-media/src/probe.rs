@@ -127,7 +127,15 @@ mod tests {
     /// whose `VideoInfo` genuinely differs.
     fn synth(path: &Path, size: &str, secs: &str, fps: &str) {
         let out = std::process::Command::new("ffmpeg")
-            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
             .arg(format!("testsrc=size={size}:rate={fps}"))
             .args(["-t", secs, "-pix_fmt", "yuv420p"])
             .arg(path)

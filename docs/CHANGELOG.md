@@ -9,10 +9,24 @@ One or two lines per session. Detail lives in the decision it references.
   new tools (D-280's `editor_set_playback_rate` among them) — caught by
   `mcp-data.test.ts`'s own anti-fabrication guard, not missed silently.
 
+- **2026-09-10** — **B-146 root-caused and partly fixed (D-290):** "playback
+  lags" / "4x jumps the frames" is not the decoder. Measured live, the play
+  loop costs 25.0 ms a frame and still costs 21.5 ms over a timeline gap where
+  Rust decodes nothing — the ceiling is the webview. A displayed frame no
+  longer costs a React render at all (the `<img>`'s `src` is written
+  imperatively), pausing no longer re-decodes the frame already on screen, and
+  `useCanvasClipPick` stopped re-registering its capture-phase listener every
+  frame. The audio-seek warnings in the dev log measured out as a bounded
+  once-per-source cost and are now guarded by a test that proves which path it
+  measured. `debug_frame_timing` gained `fetch`/`tick` duration channels so the
+  remaining ~19 ms can be split by subtraction. Completes an interrupted
+  session's work; renumbered twice on the way in (draft D-281 → D-282, both
+  meanwhile claimed by other merges) before landing on D-290.
 - **2026-09-10** — **B-146 logged, investigating:** general preview playback
   lag and janky frame-jumping at 4× — dispatched to an Opus agent to profile
   before fixing; a real repeating seek-error warning in the live audio log
-  passed along as a lead, not yet confirmed as the cause.
+  passed along as a lead, not yet confirmed as the cause. (Answered by the
+  entry above: it was not the cause.)
 - **2026-09-10** — **B-145 logged, not fixed:** dragging a clip lands it at
   frame 0 instead of the drop position — reported live, no jsdom repro
   attempted yet.

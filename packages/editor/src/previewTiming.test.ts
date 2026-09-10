@@ -12,6 +12,7 @@ import {
   DEFAULT_REPORT_LIMIT,
   TIMING_CAPACITY,
   previewTimingReport,
+  recordPreviewSpan,
   recordPreviewTiming,
   resetPreviewTiming,
 } from './previewTiming';
@@ -92,13 +93,89 @@ describe('previewTimingReport', () => {
     expect(previewTimingReport(0).paint.intervalsMs).toHaveLength(1);
   });
 
-  it('resets both channels', () => {
+  it('resets every channel', () => {
     record('paint', 5, 10);
     record('raf', 5, 10);
+    recordPreviewSpan('fetch', 3);
+    recordPreviewSpan('tick', 9);
     resetPreviewTiming();
     const report = previewTimingReport();
 
     expect(report.paint.samples).toBe(0);
     expect(report.raf.samples).toBe(0);
+    expect(report.fetch.samples).toBe(0);
+    expect(report.tick.samples).toBe(0);
+  });
+});
+
+/**
+ * The D-290 duration channels. These exist to answer one question the two
+ * timestamp channels above structurally cannot — "the loop is running at
+ * 40 fps, but where did the 25 ms GO?" — and the answer is got by subtracting
+ * one median from another, so the medians have to be right for the conclusion
+ * drawn from them to be worth anything.
+ */
+describe('previewTimingReport — the duration channels', () => {
+  it('reports the spread of a duration channel, and no cadence', () => {
+    for (const ms of [4, 6, 5, 5, 20, 5, 5, 5, 5, 5]) recordPreviewSpan('fetch', ms);
+    const { fetch } = previewTimingReport();
+
+    expect(fetch.samples).toBe(10);
+    expect(fetch.minMs).toBe(4);
+    expect(fetch.medianMs).toBe(5);
+    expect(fetch.maxMs).toBe(20);
+    expect(fetch.meanMs).toBeCloseTo(6.5, 5);
+    // A cost has no frame rate and no hitch count — those belong to a cadence.
+    expect(fetch).not.toHaveProperty('fps');
+    expect(fetch).not.toHaveProperty('hitches');
+  });
+
+  it('keeps fetch and tick independent, so their difference means something', () => {
+    for (let i = 0; i < 10; i += 1) recordPreviewSpan('fetch', 4);
+    for (let i = 0; i < 10; i += 1) recordPreviewSpan('tick', 7);
+    const report = previewTimingReport();
+
+    // The subtraction the module doc prescribes: `tick − fetch` is the loop's
+    // own JavaScript, here 3 ms.
+    expect(report.tick.medianMs! - report.fetch.medianMs!).toBeCloseTo(3, 5);
+    expect(report.fetch.samples).toBe(10);
+    expect(report.tick.samples).toBe(10);
+  });
+
+  it('reports nothing rather than a guess before anything has been measured', () => {
+    const { fetch, tick } = previewTimingReport();
+    expect(fetch.samples).toBe(0);
+    expect(fetch.medianMs).toBeNull();
+    expect(fetch.meanMs).toBeNull();
+    expect(tick.msLatest).toEqual([]);
+  });
+
+  it('refuses a negative or non-finite span rather than poisoning the median', () => {
+    recordPreviewSpan('tick', 10);
+    recordPreviewSpan('tick', -1);
+    recordPreviewSpan('tick', Number.NaN);
+    recordPreviewSpan('tick', Number.POSITIVE_INFINITY);
+    const { tick } = previewTimingReport();
+
+    // A span is always `now - start`, so anything else is a caller bug. The
+    // readout's whole value is that a number it reports can be trusted as
+    // evidence, which it cannot be if a bug silently skews the statistics.
+    expect(tick.samples).toBe(1);
+    expect(tick.medianMs).toBe(10);
+  });
+
+  it('drops the oldest durations past the ring buffer capacity', () => {
+    for (let i = 0; i < TIMING_CAPACITY + 50; i += 1) recordPreviewSpan('fetch', 5);
+    expect(previewTimingReport().fetch.samples).toBe(TIMING_CAPACITY);
+  });
+
+  it('trims the returned duration list to the limit but derives stats over the whole buffer', () => {
+    for (let i = 0; i < 100; i += 1) recordPreviewSpan('tick', 5);
+    recordPreviewSpan('tick', 400);
+    const { tick } = previewTimingReport(5);
+
+    expect(tick.msLatest).toHaveLength(5);
+    expect(tick.maxMs).toBe(400);
+    expect(tick.samples).toBe(101);
   });
 });

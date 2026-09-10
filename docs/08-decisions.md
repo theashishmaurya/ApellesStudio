@@ -28196,3 +28196,228 @@ colour literal, no banned typeface), with no page-specific test written for
 legal copy itself, since asserting the CONTENT of a legal document is
 exactly the kind of judgement call a test suite shouldn't be substituting
 for real legal review.
+
+---
+
+## D-290 — "playback lags": the preview's frame-rate ceiling is the WEBVIEW, not the decoder (B-146)
+
+**Date:** 2026-09-10. Owner, immediately after using D-280's new playback-rate
+control: *"playback lags btw"* and *"4x speed jumps the frames at playback"*,
+then, clarifying: *"related to clip and all in the whole thing :/"* — i.e. not
+a rate-control bug, a general one. Logged as **B-146**.
+
+### Measured first, and the standing theory was wrong again
+
+Same discipline as D-217 (which found base64 was 0.02% of a frame while
+everyone "knew" it was the cost). Profiled live with `debug_frame_timing`
+against the running app and the owner's own project — `2026-09-09-edit.chroma`,
+24 fps, six 4K HEVC camera originals, one video track — with the window
+genuinely frontmost:
+
+| where the playhead was | raf median | paint median | fps |
+| --- | --- | --- | --- |
+| over real 4K footage, Inspector open | 25.0 ms | 25.0 ms | 38.5 |
+| over real 4K footage, Inspector **closed** | 23.0 ms | 23.0 ms | 43.5 |
+| over a timeline **GAP** (frame is a 1×1 JPEG) | 21.5 ms | 21.0 ms | 46.0 |
+
+The gap row is the whole finding. A gap resolves to no visible layer at all, so
+`timeline_frame` returns `blank_frame_jpeg()` — a **1×1** black JPEG, no probe,
+no ffmpeg, no composite. It still costs **21.5 ms a frame**. So:
+
+- **decode + composite + JPEG encode ≈ 3.5 ms/frame.** Not the bottleneck. (Ten
+  times better than D-217's starting point, which is D-217 working as intended.)
+- **≈21.5 ms/frame is on the webview side**, and is paid whatever is on the
+  timeline — which is exactly why the owner's report is "the whole thing" and
+  not "the rate control".
+- **≈2 ms of it is the Inspector alone**, proved by closing it and re-measuring.
+  Eight components subscribe to `playhead`, and every one of them re-renders on
+  every displayed frame.
+
+The loop is **work-bound, not vsync-bound**: adding 3.5 ms of decode moved the
+median by exactly 3.5 ms (21.5 → 25.0), where a vsync-quantised loop would have
+moved by a whole refresh period or not at all. That kills the obvious first
+theory ("it's waiting for `requestAnimationFrame`") and with it the obvious
+first fix — there is no dead time to reclaim by requesting earlier.
+
+**So there is no D-280 regression.** Its video half is one multiplication, its
+audio half runs on the `cpal` thread behind the mixer, and the loop costs the
+same 21.5 ms over a gap where neither is doing anything. What the rate control
+did was make an always-present ceiling *visible*: at 1× a 24 fps timeline has a
+41.7 ms budget and the loop needs 25 ms, so it fits; at 2× the budget is 20.8 ms
+and it does not; at 4× the demand is 96 fps against a ~40 fps ceiling.
+
+### "4× jumps the frames" — that is the ceiling, not the pacing
+
+Worth stating plainly because it was the obvious thing to go and "fix": at 4× the
+loop showed **38.5 fps with zero hitches**, p95 30 ms against a 25 ms median.
+The drops are *even*. Re-pacing them would not help, and the two candidate
+re-pacings are both actively wrong:
+
+- **Uniform frame steps** instead of `elapsed × fps × rate` would decouple the
+  picture from the wall clock, and the wall clock is what D-050's open-loop model
+  syncs the audio against. A smoother-looking picture that drifts from the sound
+  is a worse preview.
+- **Clamping the forward step** to avoid `decode_pipe`'s `MAX_FORWARD_SKIP` (48)
+  respawn is solving a problem that is not occurring: at 4× on 24 fps the step is
+  2-3 frames, nowhere near it.
+
+At 4× the loop displays every ~2.5th frame at 38 fps. That IS a shuttle. It
+looks jumpy because it is 40% of a 96 fps signal, and the honest fix for that is
+to raise the ceiling — which is the rest of this entry — not to re-pace the
+drops.
+
+### The audio seek warning, ruled out with a number
+
+The dev log was full of, during real sessions:
+`chroma audio: …C024.MOV could not seek to 74.317s (seek error: requested seek
+timestamp is out-of-range for stream) — skipping forward by packet timestamps
+instead`. That is B-052's fallback, and it looks alarming: an unseekable
+container means walking the demuxer forward from 0:00 in a 568 MB file.
+Measured on that exact file rather than reasoned about — open 0.2-0.5 ms, first
+second of audio **9.3 ms at 0:00 and 65.7-67.4 ms at 40 s / 74 s in**. Bounded,
+paid once per source per session (not per frame), and not the lag. It stays as
+it is; what it gained is a permanent ceiling test, because the *reason* it is
+65 ms and not 6 s is that `DecodedSource::ensure` classifies a packet before
+decoding it, and nothing enforced that.
+
+**Re-measured when this pass was finished, and two things in the paragraph
+above needed correcting.** The file is `A001_09091123_C024.MOV`, 568 MB and
+**124.6 s** — not the 86 s first written down. And on a warm page cache the same
+three starts cost **5.6 ms at 0:00 and 5.4-5.6 ms at 40 s / 74 s**, not 9.3 /
+65.7-67.4 ms. The gap between the two runs is the OS page cache (the first run
+was the first read of a 568 MB file); both are kept above because the *cold*
+number is the one a real session pays. Neither changes the conclusion — it moves
+it further from the lag, not closer: even the cold 67 ms is once per source per
+session against a **per-frame** 21.5 ms.
+
+What the re-measurement did change is the test. As first written it could not
+tell whether it had exercised B-052's walk at all: if the container had seeked
+cleanly the assertion would still have passed, guarding nothing. It now captures
+the very `log::warn!` `seek_source` already emits (a `log::Log` implementation
+living entirely inside `#[cfg(test)]`; `seek_source` itself is untouched) and
+reports, per start, which of the two paths it took. On the reported file that
+prints `container seek` at 0:00 — correct, `seek_source` early-returns at 0 —
+and **`packet walk` at both 40 s and 74 s**, which is the evidence that the
+fallback is genuinely being measured. Pointed at a seekable source the ceiling
+still holds and the test says in as many words that the walk was not covered,
+rather than quietly implying it was.
+
+### What was actually changed
+
+Three things, all on the webview side, none of them a redesign:
+
+1. **A displayed frame no longer costs a React render.** `showFrame` used to
+   `setFrameSrc(url)`, so every frame committed `PreviewPane`'s whole subtree —
+   `Player`, the surface, `CanvasBoundary`, `TransformOverlay`,
+   `DynamicZoomOverlay`, four hooks — *a second time*, on top of the commit the
+   same frame's `setPlayhead` already causes. Two full commits per frame, up to
+   46 times a second, to change one attribute. The `<img>`'s `src` is now written
+   imperatively through a ref and is **not a JSX prop**, which is what makes it
+   safe: React never manages an attribute it was not given, so no later commit
+   can clobber it. Only the first frame still needs a render (the element does
+   not exist until then); its callback ref applies the pending URL.
+   **Measured, in the test that guards it: 38 commits → 22, for the same 20
+   painted frames.**
+2. **Pausing no longer re-decodes the frame already on screen.** The scrub effect
+   fetched `playhead` unconditionally, and on a pause that is the frame the play
+   loop had just decoded and painted — a whole extra round trip for a
+   byte-identical picture, *and* a request the decode pipe had already streamed
+   past, which D-125 documents as the expensive case (ffmpeg respawn + keyframe
+   seek). A `shownFrame` ref records what the picture on screen is of; a
+   `savedVersion` bump drops that record outright, so B-088's other half — the
+   same position compositing to a different picture after an edit — still
+   refetches.
+3. **`useCanvasClipPick` stopped rebuilding its listener every frame.** It listed
+   `layers` — an array rebuilt every render by design — in its effect deps, so it
+   removed and re-added a capture-phase `pointerdown` listener on the preview's
+   hottest surface once per displayed frame. Now held in a ref, filled in an
+   effect (a render-phase `ref.current = …` is a React Compiler bailout, and one
+   bailout switches auto-memoisation off for the whole file — D-201's
+   `reactCompiler.test.ts` caught exactly that, which is the guard working).
+
+### And the tool got fixed, because it could not answer the question
+
+CLAUDE.md's "when a tool is broken, fix the tool". `debug_frame_timing`'s two
+channels could say *40 fps* and could not say *where the 25 ms went* — the
+gap-vs-footage split above is a natural experiment, not an instrument, and it
+cannot go any finer. So `previewTiming.ts` gained two **duration** channels
+(D-219's own extension point): `fetch` (the IPC round trip + all of Rust) and
+`tick` (one whole pass of the loop). Read by subtraction — `fetch` is Rust+IPC,
+`tick − fetch` is the loop's own JavaScript, `raf − tick` is React's commit plus
+the animation-frame wait. Same `import.meta.env.DEV` compile-time gate as the
+rest of the module, so none of it exists in a production build.
+
+Two measurement traps found the hard way while doing this, now documented in the
+tool's own docstring and in `docs/notes/debug-tooling.md`, because both look
+exactly like "playback stalled": a playhead already parked on the **last frame**
+ends playback on the first tick, and a stretch of timeline with a **gap** under
+it measures the loop's floor rather than real playback.
+
+### What was deliberately NOT done, and why it is scoped instead of TODO'd
+
+Both of these are real and both are bigger than a bug fix, so they are roadmap
+item 25 entries (`docs/04-roadmap.md`), not comments in the code:
+
+- **The picture path is still `Blob` → object URL → `<img src>` → WebKit
+  resource load → main-thread JPEG decode, per frame.** The right shape is
+  `createImageBitmap()` into a `<canvas>`, which moves the decode off the main
+  thread and makes the swap a zero-copy bitmap hand-off. That is a real change to
+  how the preview surface is built (and to what `TransformOverlay`/`useContentBox`
+  measure), and it cannot be verified in jsdom — it needs the real app.
+- **`playhead` lives in the store slice eight panels subscribe to**, so every
+  displayed frame re-renders the Inspector, the timeline, the library panel and
+  the overlays. The ~2 ms measured for the Inspector alone is the shape of that
+  cost. Fixing it properly is a transient-subscription / separate-slice refactor
+  across those components, not something to bolt onto a perf fix.
+- **A request-ahead (2-deep) decode pipeline.** Tempting, and useless until the
+  above land: the loop is work-bound on the *webview* side, and `decode_pipe`
+  gives no ordering guarantee for two concurrent `chroma_timeline_frame` calls
+  into the same slot, which is exactly what `inFlight` exists to prevent.
+
+**Honest limit of this pass.** Everything above is measured except the *result*:
+the profiling was done against the running app in the main checkout, and the
+fixes were built in an isolated worktree, so the post-fix live number has not
+been taken. What is proved is what the loop stopped doing — commit counts, fetch
+counts and listener counts, all exact, all from tests that fail on the pre-D-290
+code (verified by temporarily restoring it: 38 commits vs 22). The millisecond
+value of that on the owner's machine is the first thing to measure after merge,
+with the new `fetch`/`tick` spans this pass added for exactly that purpose.
+
+### Tests
+
+- `packages/editor/src/PreviewPane.playbackCost.dom.test.tsx` (new, 6) — commits
+  per painted frame via a real `React.Profiler`; the `<img>`'s `src` advancing
+  with no commit and with the element never replaced; no refetch of the frame on
+  screen at pause; no object-URL leak per played frame; the capture-phase
+  listener not re-registered per frame; both spans recorded, with `fetch` inside
+  `tick`.
+- `packages/editor/src/previewTiming.test.ts` — 6 new cases for the duration
+  channels: spread, independence (the subtraction), empty-means-null, a negative
+  or non-finite span refused rather than poisoning the median, ring-buffer
+  capacity, limit-trims-the-tail-not-the-stats.
+- `crates/apelles-media/src/audio.rs` —
+  `an_unseekable_source_still_reaches_a_late_start_by_demuxing_not_decoding`, the
+  cliff guard behind the numbers measured above, plus the `#[cfg(test)]`
+  `SeekWarnSpy` that makes it report which path it measured. Env-gated on
+  `CHROMA_TEST_AUDIO_VIDEO` (it needs a real camera original), so it skips in an
+  ordinary run; verified against the reported file, which prints `packet walk` at
+  both late starts.
+
+`npm test --workspace @apelles/editor` (92 files / 1706 tests),
+`npm test --workspace @apelles/debug` (3 files / 32 tests),
+`cargo test -p apelles-media` (173), plus that env-gated one run explicitly
+against `A001_09091123_C024.MOV`, `tsc --noEmit` on `@apelles/editor` and
+`@apelles/debug`, `cargo fmt -p apelles-media` + `cargo clippy -p apelles-media
+--all-targets` (no warnings): all green.
+
+### A numbering correction, and one thing this pass had to reconcile
+
+This entry was drafted as **D-281** by a session that was interrupted before it
+committed. While it was interrupted, `main` landed a *different* D-281 (RapidRAW
+at `app/` is owned code, not a tracked fork), so this one is **D-290** — the
+renumber is the whole of the difference, and every reference in code, tests, the
+MCP docstring and `docs/notes/debug-tooling.md` moved with it. `main` had also
+logged **B-146** itself in the meantime, as `investigating`, naming this
+worktree; that entry is the one kept and updated, rather than the duplicate the
+interrupted session had appended — its "found"/"expected" wording and its
+screenshot reference are the original report and are preserved verbatim.

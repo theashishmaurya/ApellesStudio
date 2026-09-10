@@ -1438,12 +1438,49 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         reporting 0 fps and letting it be read as a regression. The latency
         number itself is still un-taken (it needs a frontmost instance on real
         footage); the instrument for taking it now exists.
-      - ⬜ **Still open:** `useCanvasClipPick` removes and re-adds its
+      - ~~⬜ **Still open:** `useCanvasClipPick` removes and re-adds its
         capture-phase `pointerdown` listener on every render, because its
         `layers` dependency is a fresh array each time. Cheap per occurrence,
         but it is per playback frame. Deliberately not touched inside D-209's
         bug fix — that hook is the delicate B-085/B-092 surface and deserves its
-        own pass.
+        own pass.~~ **DONE, 2026-09-10 (D-290).** It got that pass, as part of
+        B-146. `layers` is held in a ref filled by an effect (a render-phase
+        `ref.current = …` is a React Compiler bailout, and one bailout switches
+        auto-memoisation off for the whole file — D-201's own test caught
+        exactly that) and is no longer an effect dependency; the listener now
+        reads the current value when a press actually arrives. Guarded by
+        `PreviewPane.playbackCost.dom.test.tsx`, which counts real
+        `addEventListener` calls across 25 played frames.
+      - ✅ **And the loop was PROFILED end to end at last, D-290 (2026-09-10,
+        B-146) — the latency number two items above is now taken, and it moves
+        the target off Rust entirely.** With `debug_frame_timing` against a
+        frontmost instance on the owner's own 24 fps / 4K HEVC project: one pass
+        of the play loop costs **25.0 ms (~38.5 fps, zero hitches)**, and over a
+        timeline GAP — where the frame is a 1×1 JPEG and Rust decodes nothing —
+        it still costs **21.5 ms**. So the whole Rust side is ~3.5 ms and the
+        remaining ~21.5 ms is webview-side, paid whatever is on the timeline.
+        That retires the two "still open" Rust-side items above as the *wrong*
+        target for smoothness: a faster JPEG encoder saves at most a slice of
+        3.5 ms, and a lookahead is useless while the loop is work-bound on the
+        other side of the IPC. D-290 removed the largest webview-side piece it
+        could without a redesign (a displayed frame no longer costs a React
+        render at all), and `debug_frame_timing` gained `fetch`/`tick` duration
+        channels so the remainder can be split by subtraction rather than by
+        the gap-vs-footage natural experiment D-290 had to use.
+      - ⬜ **Still open — the preview picture path is `Blob` → object URL →
+        `<img src>` → main-thread JPEG decode, once per displayed frame.** The
+        right shape is `createImageBitmap()` into a `<canvas>`, which moves the
+        decode off the main thread and makes the swap a zero-copy bitmap
+        hand-off. Scoped out of D-290 deliberately: it changes how the preview
+        surface is built and what `TransformOverlay`/`useContentBox` measure,
+        and it cannot be verified in jsdom — it needs the real app. This and the
+        next item are where the remaining ~19 ms lives.
+      - ⬜ **Still open — `playhead` lives in the store slice eight panels
+        subscribe to**, so every displayed frame re-renders the Inspector, the
+        timeline, the library panel and the overlays. Measured shape of the
+        cost: closing the Inspector alone moved the loop 25.0 → 23.0 ms. The fix
+        is a transient-subscription / separate-slice refactor across those
+        components, not something to bolt onto a perf fix.
 26. ~~**`editor_set_selection` — the Edit tab's selection is READABLE over MCP and
     not WRITABLE, so the whole on-canvas surface is agent-unreachable.**~~
     **BUILT 2026-09-08 (D-216).** Found

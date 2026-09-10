@@ -27,7 +27,7 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use image::DynamicImage;
 
@@ -77,11 +77,7 @@ impl VideoInfo {
     /// project frame index -> presentation time in seconds
     pub fn frame_to_secs(&self, frame: u64) -> f64 {
         let fps = self.fps();
-        if fps <= 0.0 {
-            0.0
-        } else {
-            frame as f64 / fps
-        }
+        if fps <= 0.0 { 0.0 } else { frame as f64 / fps }
     }
 }
 
@@ -170,7 +166,8 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
         ));
     }
 
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).context("parsing ffprobe json")?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&out.stdout).context("parsing ffprobe json")?;
     let fmt = v.get("format");
     // B-089 — `-select_streams v:0` legitimately returns an EMPTY `streams`
     // array for a real, readable, pure-audio source (SFX/music with no video
@@ -210,7 +207,11 @@ pub fn probe(path: &Path) -> Result<VideoInfo> {
         .and_then(|x| x.as_str())
         .and_then(|x| x.parse::<u64>().ok())
         .filter(|&n| n > 0);
-    let fps = if fps_den == 0 { 0.0 } else { fps_num as f64 / fps_den as f64 };
+    let fps = if fps_den == 0 {
+        0.0
+    } else {
+        fps_num as f64 / fps_den as f64
+    };
     let frame_count = nb_frames.unwrap_or_else(|| (duration_secs * fps).round().max(0.0) as u64);
 
     let (has_audio, audio_sample_rate, audio_channels) = probe_audio_stream(path);
@@ -286,10 +287,14 @@ fn probe_audio_only(path: &Path, fmt: Option<&serde_json::Value>) -> Result<Vide
 fn probe_audio_stream(path: &Path) -> (bool, u32, u16) {
     let out = Command::new(ffprobe_bin())
         .args([
-            "-v", "error",
-            "-select_streams", "a:0",
-            "-show_entries", "stream=sample_rate,channels",
-            "-of", "json",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=sample_rate,channels",
+            "-of",
+            "json",
         ])
         .arg(path)
         .output();
@@ -346,10 +351,14 @@ pub fn decode_frame(path: &Path, at: FramePos, info: &VideoInfo) -> Result<Dynam
     }
     let mut child = cmd
         .args([
-            "-frames:v", "1",
-            "-f", "image2pipe",
-            "-vcodec", "png",
-            "-pix_fmt", "rgb24",
+            "-frames:v",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-pix_fmt",
+            "rgb24",
             "-",
         ])
         .stdout(Stdio::piped())
@@ -409,11 +418,16 @@ pub fn extract_thumb_strip(
         .arg("-i")
         .arg(path)
         .args([
-            "-vf", &vf,
-            "-fps_mode", "passthrough",
-            "-q:v", "5",
-            "-f", "image2pipe",
-            "-c:v", "mjpeg",
+            "-vf",
+            &vf,
+            "-fps_mode",
+            "passthrough",
+            "-q:v",
+            "5",
+            "-f",
+            "image2pipe",
+            "-c:v",
+            "mjpeg",
             "-",
         ])
         .stdout(Stdio::piped())
@@ -435,7 +449,10 @@ pub fn extract_thumb_strip(
         .enumerate()
         .map(|(i, bytes)| {
             let frame = (i as u64 * step).min(total.saturating_sub(1));
-            (frame, format!("data:image/jpeg;base64,{}", b64.encode(bytes)))
+            (
+                frame,
+                format!("data:image/jpeg;base64,{}", b64.encode(bytes)),
+            )
         })
         .collect())
 }
@@ -483,11 +500,16 @@ const KEYFRAME_PROBE_WINDOW_SECS: u32 = 30;
 pub fn probe_keyframe_interval(path: &Path) -> Result<f64> {
     let out = Command::new(ffprobe_bin())
         .args([
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "packet=pts_time,flags",
-            "-read_intervals", &format!("%+{KEYFRAME_PROBE_WINDOW_SECS}"),
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "packet=pts_time,flags",
+            "-read_intervals",
+            &format!("%+{KEYFRAME_PROBE_WINDOW_SECS}"),
+            "-of",
+            "csv=p=0",
         ])
         .arg(path)
         .output()
@@ -524,10 +546,7 @@ fn max_keyframe_gap(csv: &str) -> f64 {
         return DEFAULT_KEYFRAME_INTERVAL_SECS;
     }
     times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let gap = times
-        .windows(2)
-        .map(|w| w[1] - w[0])
-        .fold(0.0f64, f64::max);
+    let gap = times.windows(2).map(|w| w[1] - w[0]).fold(0.0f64, f64::max);
     if gap > 0.0 {
         gap
     } else {
@@ -602,10 +621,14 @@ pub fn extract_thumb_chunk(
                 // `-skip_frame nokey` usable at all — keyframes arrive at
                 // irregular indices but correct timestamps (D-124).
                 &format!("fps={:.9},scale=-2:{THUMB_STRIP_HEIGHT}", 1.0 / step_secs),
-                "-frames:v", &tiles.to_string(),
-                "-q:v", "6",
-                "-f", "image2pipe",
-                "-c:v", "mjpeg",
+                "-frames:v",
+                &tiles.to_string(),
+                "-q:v",
+                "6",
+                "-f",
+                "image2pipe",
+                "-c:v",
+                "mjpeg",
                 "-",
             ])
             .stdout(Stdio::piped())
@@ -663,11 +686,16 @@ pub fn extract_thumb(path: &Path, info: &VideoInfo, frame: u64, height: u32) -> 
         .args(["-i"])
         .arg(path)
         .args([
-            "-frames:v", "1",
-            "-vf", &format!("scale=-2:{}", height.max(2)),
-            "-q:v", "5",
-            "-f", "image2pipe",
-            "-c:v", "mjpeg",
+            "-frames:v",
+            "1",
+            "-vf",
+            &format!("scale=-2:{}", height.max(2)),
+            "-q:v",
+            "5",
+            "-f",
+            "image2pipe",
+            "-c:v",
+            "mjpeg",
             "-",
         ])
         .stdout(Stdio::piped())
@@ -681,7 +709,10 @@ pub fn extract_thumb(path: &Path, info: &VideoInfo, frame: u64, height: u32) -> 
         ));
     }
     let b64 = base64::engine::general_purpose::STANDARD;
-    Ok(format!("data:image/jpeg;base64,{}", b64.encode(&out.stdout)))
+    Ok(format!(
+        "data:image/jpeg;base64,{}",
+        b64.encode(&out.stdout)
+    ))
 }
 
 /// Split a concatenated MJPEG byte stream into individual JPEG frames on the
@@ -735,9 +766,15 @@ mod tests {
     fn max_keyframe_gap_falls_back_when_there_is_nothing_to_measure() {
         assert_eq!(max_keyframe_gap(""), DEFAULT_KEYFRAME_INTERVAL_SECS);
         // one keyframe is not a gap
-        assert_eq!(max_keyframe_gap("0.0,K__\n"), DEFAULT_KEYFRAME_INTERVAL_SECS);
+        assert_eq!(
+            max_keyframe_gap("0.0,K__\n"),
+            DEFAULT_KEYFRAME_INTERVAL_SECS
+        );
         // garbage lines are skipped, not parsed into a bogus time
-        assert_eq!(max_keyframe_gap("side_data\nN/A,K__\n"), DEFAULT_KEYFRAME_INTERVAL_SECS);
+        assert_eq!(
+            max_keyframe_gap("side_data\nN/A,K__\n"),
+            DEFAULT_KEYFRAME_INTERVAL_SECS
+        );
     }
 
     #[test]
@@ -768,7 +805,10 @@ mod tests {
         assert!(is_media_file("music/bed.flac"));
         assert!(is_media_file("a/b/C019.MOV"), "still accepts real video");
         assert!(!is_media_file("x.png"), "an image is neither");
-        assert!(!is_video_file("sfx/click.mp3"), "is_video_file itself must stay video-only");
+        assert!(
+            !is_video_file("sfx/click.mp3"),
+            "is_video_file itself must stay video-only"
+        );
     }
 
     #[test]
@@ -845,7 +885,10 @@ mod tests {
         assert!(dur > 0.0, "{p} has no duration to sample");
 
         let kf = probe_keyframe_interval(path).expect("keyframe probe");
-        assert!(kf > 0.0 && kf.is_finite(), "keyframe interval must be a real number, got {kf}");
+        assert!(
+            kf > 0.0 && kf.is_finite(),
+            "keyframe interval must be a real number, got {kf}"
+        );
         eprintln!("extract_thumb_chunk: {p} keyframe interval {kf:.3}s");
 
         let distinct_ratio = |bytes: &[u8]| -> (usize, usize) {
@@ -881,8 +924,16 @@ mod tests {
 
         // Every emitted tile is a real JPEG (SOI marker), not a truncated one.
         for f in split_mjpeg(&coarse).iter().chain(split_mjpeg(&fine).iter()) {
-            assert!(f.len() > 128, "a tile must be a real JPEG, got {} bytes", f.len());
-            assert_eq!(&f[..3], &[0xFF, 0xD8, 0xFF], "tile must start with a JPEG SOI marker");
+            assert!(
+                f.len() > 128,
+                "a tile must be a real JPEG, got {} bytes",
+                f.len()
+            );
+            assert_eq!(
+                &f[..3],
+                &[0xFF, 0xD8, 0xFF],
+                "tile must start with a JPEG SOI marker"
+            );
         }
     }
 
@@ -900,7 +951,15 @@ mod tests {
         ));
         let _ = std::fs::remove_file(&path);
         let out = Command::new(ffmpeg_bin())
-            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
             .arg("sine=frequency=440:duration=2")
             .arg(&path)
             .output();
@@ -909,15 +968,29 @@ mod tests {
             return;
         };
         if !out.status.success() {
-            eprintln!("skip: ffmpeg synth failed: {}", String::from_utf8_lossy(&out.stderr));
+            eprintln!(
+                "skip: ffmpeg synth failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
             return;
         }
 
         let info = probe(&path).expect("a pure-audio source must probe successfully, not error");
-        assert_eq!(info.resolution.width, 0, "no video stream means no real width");
+        assert_eq!(
+            info.resolution.width, 0,
+            "no video stream means no real width"
+        );
         assert_eq!(info.resolution.height, 0);
-        assert!((info.duration_secs - 2.0).abs() < 0.1, "got {}", info.duration_secs);
-        assert_eq!(info.fps(), 24.0, "nominal reference rate for frame bookkeeping");
+        assert!(
+            (info.duration_secs - 2.0).abs() < 0.1,
+            "got {}",
+            info.duration_secs
+        );
+        assert_eq!(
+            info.fps(),
+            24.0,
+            "nominal reference rate for frame bookkeeping"
+        );
         assert!(
             (info.frame_count as i64 - 48).abs() <= 2,
             "~2s at the nominal 24fps reference rate, got {}",

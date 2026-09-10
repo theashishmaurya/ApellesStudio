@@ -4773,8 +4773,8 @@ def debug_frame_timing(limit: int | None = None, reset: bool = False) -> str:
     frame-to-frame intervals, in the webview, as measured by the app itself.
 
     Use it to answer "is playback smooth?" — a question no Rust-side timing and
-    no screenshot can answer. Two independent channels, and the difference
-    between them is the diagnosis:
+    no screenshot can answer. Two CADENCE channels, and the difference between
+    them is the diagnosis:
       * `paint` — frames actually put on screen. Low fps here = decode/
         composite is too slow.
       * `raf`   — requestAnimationFrame ticks, i.e. how often the play loop got
@@ -4782,18 +4782,39 @@ def debug_frame_timing(limit: int | None = None, reset: bool = False) -> str:
         throttled (backgrounded/occluded), not that rendering is slow. Bring
         the window to the front and measure again.
 
-    Each channel returns {samples, intervalsMs, minMs, medianMs, p95Ms, maxMs,
-    fps, hitches} — `hitches` counts intervals over twice the median, which is
-    the "stutter" a human reports. min/median/p95/max/fps cover the whole ring
+    Each returns {samples, intervalsMs, minMs, medianMs, p95Ms, maxMs, fps,
+    hitches} — `hitches` counts intervals over twice the median, which is the
+    "stutter" a human reports. min/median/p95/max/fps cover the whole ring
     buffer (240 samples); `intervalsMs` is just the tail.
+
+    Plus two COST channels (D-282), which answer the next question — "the loop
+    is at 40 fps, so where did the 25 ms GO?":
+      * `fetch` — the `chroma_timeline_frame` round trip: Tauri IPC plus all of
+        Rust's decode + composite + JPEG. Everything below the webview.
+      * `tick`  — one whole pass of the play loop.
+    Each returns {samples, msLatest, minMs, medianMs, p95Ms, maxMs, meanMs} —
+    costs, so no fps and no hitches. Read them by SUBTRACTION:
+      * `fetch.medianMs`                  → Rust + IPC
+      * `tick.medianMs - fetch.medianMs`  → the loop's own JavaScript
+      * `raf.medianMs  - tick.medianMs`   → React's render/commit + the wait
+                                            for the next animation frame
+    D-282's own profile of the owner's project, for comparison: 25.0 ms a
+    frame, of which only ~3.5 ms was Rust — the preview's frame-rate ceiling is
+    set on the webview side, not by the decoder.
 
     Measure properly: `debug_frame_timing(reset=True)` to clear, then
     `editor_set_playing(True)`, wait a few seconds, `editor_set_playing(False)`,
     then read. Numbers from before a reset mix scrubbing in with playback.
+    Two traps worth knowing, both hit live while D-282 was profiling: a
+    playhead already parked on the LAST frame makes playback stop instantly
+    (one raf sample, no movement — check `editor_get_state`'s playhead against
+    the timeline's length), and a stretch of timeline with a GAP under it
+    decodes nothing at all, so it measures the loop's floor rather than real
+    playback. Both look exactly like "it stalled" in the numbers.
 
     Args:
-        limit: how many raw intervals to return per channel. Default 60.
-        reset: clear both buffers first (and return the now-empty report)."""
+        limit: how many raw samples to return per channel. Default 60.
+        reset: clear all four buffers first (and return the now-empty report)."""
     import json
 
     args: dict[str, Any] = {}

@@ -104,11 +104,18 @@ export type { PanelId } from './panelRegistry';
  *  this export tree-shakes away with them. */
 export {
   previewTimingReport,
+  recordPreviewSpan,
   recordPreviewTiming,
   resetPreviewTiming,
   TIMING_CAPACITY,
 } from './previewTiming';
-export type { PreviewTimingReport, ChannelTimingReport, PreviewTimingChannel } from './previewTiming';
+export type {
+  PreviewTimingReport,
+  ChannelTimingReport,
+  PreviewTimingChannel,
+  PreviewSpanChannel,
+  SpanTimingReport,
+} from './previewTiming';
 /** D-198 — the Edit tab's own Export button/dialog/queue. Exported for the
  *  same D-142 harness-mounting reason `TimelinePane` itself is, and for any
  *  call site that wants the button standalone. D-249 moved where the app

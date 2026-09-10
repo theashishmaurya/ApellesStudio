@@ -70,7 +70,7 @@
  *     and a re-render on the preview's hottest surface; a real, separate
  *     affordance to weigh, not a freebie.
  */
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 import { pickTopmostLayer, visibleVideoLayersAt, type PickCandidate } from './canvasPick';
 import { screenToFraction } from './transformGeometry';
@@ -106,6 +106,28 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
   // the request list's CONTENT, not this array's identity, so the playhead
   // advancing a frame within the same set of clips refetches nothing.
   const layers = visibleVideoLayersAt(timeline, playhead);
+
+  // **D-290 — held in a ref, and NOT a dependency of the effect below.**
+  // `layers` is a brand-new array on every render by design (above), and the
+  // effect used to list it, so the capture-phase `pointerdown` listener on the
+  // preview's hottest surface was torn down and re-added once per RENDER —
+  // which during playback means once per displayed frame, up to ~46 times a
+  // second, on top of the `visibleVideoLayersAt` walk itself. The listener
+  // never needed to be rebuilt for this: it only reads `layers` when a press
+  // actually arrives, and a ref hands it the current value at that moment just
+  // as well as a closure does. Exactly the split `PreviewPane`'s own wheel
+  // listener already makes and documents (`fitRef` / `viewRef`) — same reason,
+  // same surface, so this is that established pattern rather than a new one,
+  // down to the ref being filled in an EFFECT rather than during render: a
+  // render-phase `ref.current = …` is a React Compiler bailout ("Cannot access
+  // refs during render"), and one bailout anywhere switches auto-memoization
+  // off for this whole file, which would cost more than it saved (D-201,
+  // `docs/notes/react-compiler-coverage.md`; `reactCompiler.test.ts` enforces
+  // it and did catch exactly this).
+  const layersRef = useRef(layers);
+  useEffect(() => {
+    layersRef.current = layers;
+  }, [layers]);
   const geometries = useClipGeometries(
     layers.map((l) => ({ track: l.track, clipIndex: l.clipIndex, sourcePath: l.clip.source_path })),
     // A clip's natural footprint is a fraction OF THE COMPOSITION, so a
@@ -133,7 +155,7 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
 
       const rect = container.getBoundingClientRect();
       const point = screenToFraction({ x: e.clientX - rect.left, y: e.clientY - rect.top }, contentBox);
-      const candidates: PickCandidate[] = layers.map((l) => {
+      const candidates: PickCandidate[] = layersRef.current.map((l) => {
         const g = geometries.get(clipGeometryKey(l.track, l.clipIndex, l.clip.source_path));
         return { ...l, natural: g ? { width: g.naturalWidth, height: g.naturalHeight } : null };
       });
@@ -166,5 +188,5 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
 
     container.addEventListener('pointerdown', onPointerDownCapture, { capture: true });
     return () => container.removeEventListener('pointerdown', onPointerDownCapture, { capture: true });
-  }, [container, ready, contentBox, layers, geometries]);
+  }, [container, ready, contentBox, geometries]);
 }
