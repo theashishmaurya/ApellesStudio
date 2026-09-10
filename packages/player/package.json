@@ -6,9 +6,18 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "description": "Apelles shared preview component (D-039 roadmap \"Next\" item 1) — canvas viewport + title strip + transport bar, fully controlled and presentational. Each tab supplies its own frame source via the `surface` slot and owns all frame-fetch / playback-loop / IPC logic itself; this package has none.",
+  "scripts": {
+    "test": "vitest run"
+  },
   "dependencies": {
     "@apelles/ui": "*",
     "lucide-react": "^1.33.0",
     "react": "^19.2.8"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.0",
+    "jsdom": "^29.1.1",
+    "react-dom": "^19.2.8",
+    "vitest": "^3.2.4"
   }
 }

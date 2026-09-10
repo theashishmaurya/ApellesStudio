@@ -2561,22 +2561,40 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   is a screenshot of Apelles' own Edit tab), so the pane's documented
   behaviour was used instead — worth re-capturing if this surface is
   revisited.
-- **A preview PLAYBACK-RATE control (2x/3x/4x/custom, WITH audio) — not the
-  same thing as a clip's own Speed property** — owner request 2026-09-10,
+- [x] **A preview PLAYBACK-RATE control (2x/3x/4x/custom, WITH audio) — not
+  the same thing as a clip's own Speed property** — owner request 2026-09-10,
   with a reference screenshot of the preview transport bar (saved at
   `scratch/preview-playback-speed-control-reference.png`, gitignored).
-  Checked, not assumed: no such control exists anywhere in `@apelles/player`
-  or `PreviewPane.tsx` today. This is deliberately distinct from the
-  Inspector's existing per-clip Speed field (`23–347%`, changes the actual
-  edit/export duration of that one clip) — the ask here is a TRANSPORT
-  control, for scrubbing/reviewing faster without touching the edit at all,
-  the way Resolve/Premiere's own playback-rate shuttle works, and the
-  owner's explicit "with audio" means pitch-corrected or at least
-  intelligible fast playback, not silence or noise at speed. Not scoped
-  further than that — real reference research (how the named tools actually
-  implement this: a dropdown next to the transport, J/K/L-style shuttling,
-  audio time-stretch vs. pitch-shift-and-skip) before building, per
-  CLAUDE.md's own standing rule.
+  Checked, not assumed: no such control existed anywhere in `@apelles/player`
+  or `PreviewPane.tsx`. This is deliberately distinct from the Inspector's
+  existing per-clip Speed field (`23–347%`, changes the actual edit/export
+  duration of that one clip) — the ask here is a TRANSPORT control, for
+  scrubbing/reviewing faster without touching the edit at all, the way
+  Resolve/Premiere's own playback-rate shuttle works, and the owner's explicit
+  "with audio" means pitch-corrected or at least intelligible fast playback,
+  not silence or noise at speed.
+  **Done 2026-09-10 — D-278.** `0.25×–8×`, presets `0.5 / 1 / 2 / 3 / 4` plus
+  a custom field, in the transport bar's left cluster next to play/pause; the
+  MCP half is `editor_set_playback_rate` + `playbackRate` in
+  `editor_get_state`. **Audio is real and pitch-preserved**, not muted: a new
+  WSOLA stage (`crates/apelles-media/src/timestretch.rs`) time-scales the
+  *mixed* preview stream at exactly one seam, so a voice at 3× is still that
+  voice. The reference research that decided that is written up in D-278 —
+  Premiere's own "Maintain pitch while Shuttling" default is the closest
+  precedent; Resolve and Final Cut varispeed their J/K/L shuttle instead.
+  Persists nothing, touches no clip, changes no export (asserted by test).
+- **J/K/L shuttle for the Edit tab's transport** — the follow-up D-278
+  deliberately did not build. All three reference NLEs drive playback rate
+  from J/K/L (Resolve: `L`,`L` = 2×, `L`,`L`,`L` = 4×; Final Cut: 1→2→4→8),
+  and D-278's rate control is the state such a shuttle would drive — but `J`
+  is *reverse* play, which neither `PreviewPane`'s rAF loop nor
+  `apelles_media::audio`'s forward-only session can do today. Shipping `K`+`L`
+  without `J` is a half-implementation of an idiom every editor has muscle
+  memory for, so it was left whole rather than half-claimed. Real scope for
+  this item is therefore **reverse playback first** (picture: the decode pipes
+  are sequential-forward, so this is not a one-liner; sound: `Retime` already
+  plays a buffer backwards for D-241's reversed clips, which is the seam),
+  then the three keys on top.
 - **Keyboard Shortcuts window: visual redesign against a real reference** —
   owner request 2026-09-10, with a reference screenshot (a Figma community
   "Keyboard Shortcuts Collection" cheat sheet — a dense, multi-column grid

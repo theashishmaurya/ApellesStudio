@@ -76,6 +76,10 @@ import {
   type Timeline,
 } from './timeline';
 import { clampPreviewView, FIT_VIEW, type PreviewView } from './previewZoom';
+// D-278 — the transport's playback-rate model lives with the transport
+// component (`@apelles/player`), which renders the control; this store only
+// holds the value and clamps it. See that module's own doc.
+import { clampPlaybackRate, DEFAULT_PLAYBACK_RATE } from '@apelles/player';
 import { DEFAULT_CLIP_INSPECTOR_TAB, type ClipInspectorTab } from './clipInspectorTabs';
 import { DEFAULT_EDIT_LIBRARY_MODE, type EditLibraryMode } from './editLibrary';
 
@@ -273,6 +277,30 @@ interface EditorTimelineState {
    *  them (CLAUDE.md's "one op/store action under both interfaces"). */
   monitorVolume: number;
   monitorMuted: boolean;
+  /** D-278 — the preview's PLAYBACK RATE: how many timeline seconds the
+   *  transport plays per real second. `1` is ordinary playback; `3` reviews the
+   *  cut three times as fast, with pitch-preserved audio (see
+   *  `apelles_media::timestretch`).
+   *
+   *  **Transport state, not project data — and this is the field's whole
+   *  point.** It is emphatically NOT a clip's Speed/Retime property (D-236):
+   *  that one lives on the `Clip`, is persisted, is undoable, changes the
+   *  clip's real duration on the timeline, and is baked into every export. This
+   *  changes how fast you WATCH, and nothing else — an export while the preview
+   *  is at 4x renders exactly what an export at 1x renders. Session chrome
+   *  under D-216's rule, like `waveformView` and `monitorVolume` above: never
+   *  persisted, never undoable, never part of `Timeline`.
+   *
+   *  Clamped to `playbackRate.ts`'s bounds by `setPlaybackRate`, so no surface
+   *  can leave an impossible value here for the rAF loop or the audio session
+   *  to find.
+   *
+   *  In the store rather than in `PreviewPane`'s own `useState` for the reason
+   *  `waveformView` and `monitorVolume` are: `editor_set_playback_rate` runs
+   *  outside React and must drive the SAME state the human's transport control
+   *  drives, not a parallel copy (CLAUDE.md's "one op/store action under both
+   *  interfaces"). */
+  playbackRate: number;
   /** D-234 — which clip's DYNAMIC ZOOM boxes the viewer is showing, and the
    *  ease the next bake will use. `null` (the default) = the ordinary
    *  single-box transform overlay.
@@ -403,6 +431,12 @@ interface EditorTimelineState {
    *  independent facts (a muted transport still remembers where the slider
    *  was). */
   setAudioMonitor: (next: { volume?: number; muted?: boolean }) => void;
+  /** D-278 — set the preview playback rate. The one writer for both the human's
+   *  transport control (`Player`, via `PreviewPane`) and
+   *  `editor_set_playback_rate`. Clamps rather than rejects, matching
+   *  `setAudioMonitor`'s own contract and the Rust command's; nonsense reads as
+   *  ordinary playback. Writes nothing to the project. */
+  setPlaybackRate: (rate: number) => void;
   /** D-234 — arm/disarm the viewer's dynamic-zoom boxes, or change the ease
    *  the next bake uses. The one writer for both the human's Inspector toggle
    *  and `editor_set_dynamic_zoom`'s own arming. Writes no keyframes: a bake
@@ -499,6 +533,11 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
   // D-126/D-266 — unity and unmuted: monitoring starts at "what the mix says".
   monitorVolume: 1,
   monitorMuted: false,
+  // D-278 — ordinary playback. Deliberately NOT sticky across a project switch
+  // in `setOpenProject` either: unlike a viewer zoom, a shuttle rate is
+  // something you set to skim a specific take and would be startled to find
+  // still running on the next project you open. See `setOpenProject`.
+  playbackRate: DEFAULT_PLAYBACK_RATE,
   // D-234 — disarmed by default; the viewer shows the ordinary transform box.
   dynamicZoom: null,
   // D-252 — nothing open by default; see the field's own doc.
@@ -554,6 +593,11 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
       // goes with it rather than leaving two boxes over a picture that has
       // nothing to do with them.
       dynamicZoom: null,
+      // D-278 — a shuttle rate is set to skim ONE take, not as a viewing
+      // preference (which is the argument `previewView` above makes for
+      // itself). Opening a different project already playing at 4x, with no
+      // memory of having asked for it, is the surprise this avoids.
+      playbackRate: DEFAULT_PLAYBACK_RATE,
     });
 
     if (key === null) return;
@@ -650,6 +694,8 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
           : Math.min(1, Math.max(0, next.volume)),
       monitorMuted: next.muted === undefined ? s.monitorMuted : next.muted,
     })),
+
+  setPlaybackRate: (rate) => set({ playbackRate: clampPlaybackRate(rate) }),
 
   setDynamicZoom: (mode) => set({ dynamicZoom: mode }),
 

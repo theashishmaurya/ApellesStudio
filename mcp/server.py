@@ -1156,10 +1156,46 @@ def editor_set_playing(playing: bool) -> str:
     `chroma_audio_stop` off this same flag, so starting playback here starts
     the real mixed audio session too. Whether anything is audible also depends
     on the monitor (`editor_set_audio_monitor`); `editor_get_audio_level` is
-    how you check that sound actually reached the output device."""
+    how you check that sound actually reached the output device.
+
+    How far the playhead travels per second of real time depends on
+    `editor_set_playback_rate` — the response repeats it for that reason."""
     import json
 
     return json.dumps(_op("editor_set_playing", playing=playing), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_set_playback_rate(rate: float) -> str:
+    """Set the Edit tab's **preview playback rate** — how many timeline seconds
+    the transport plays per real second. The same control the human uses next
+    to play/pause in the viewer's transport bar (D-278).
+
+    **This is NOT a clip's speed.** It changes how fast you WATCH and nothing
+    else: no clip is touched, nothing is persisted, nothing is undoable, and an
+    export taken while the preview is at 4x renders *exactly* what an export at
+    1x renders. If what you actually want is to make a clip play fast in the
+    finished video, that is `editor_set_clip_speed` (D-236) — a different tool
+    that edits the cut. "Make this faster" is genuinely ambiguous between the
+    two; pick deliberately.
+
+    `1` is normal. `2` / `3` / `4` are the review speeds the viewer offers as
+    one-click presets; anything from `0.25` to `8` is accepted and anything
+    outside that is CLAMPED rather than rejected (the response says so when it
+    clamped). `0.5` and below play slower than real time.
+
+    **Audio keeps up and stays intelligible.** Fast playback is not muted and
+    not chipmunked: the mixer time-stretches the mixed output with pitch
+    preserved (WSOLA), so dialogue at 3x is still dialogue. That is deliberately
+    different from a *clip's* speed ramp, which varispeeds like tape (D-242).
+
+    Safe to set while playing — the transport re-baselines picture and sound
+    together from wherever the playhead is, so you continue rather than jump.
+
+    `editor_get_state` reports the current value as `playbackRate`."""
+    import json
+
+    return json.dumps(_op("editor_set_playback_rate", rate=rate), indent=2, default=str)
 
 
 @mcp.tool()

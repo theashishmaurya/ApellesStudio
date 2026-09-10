@@ -157,6 +157,26 @@
 //! frontend only ever needs to call this at that same transition (see
 //! `PreviewPane.tsx`).
 //!
+//! ## Playback rate (D-278)
+//!
+//! [`start`] takes a `rate`: how many TIMELINE seconds this session plays per
+//! REAL second, for the Edit tab's preview playback-rate control. It is applied
+//! at exactly one seam — post-mix, by [`crate::timestretch`] — so it is
+//! **pitch-preserving** (a voice at 3x is still that voice, just fast) and so
+//! nothing upstream of the ring buffer had to learn about it: `pos_frames`
+//! still counts timeline sample-frames, so every envelope and B-111's periodic
+//! re-resolve stay correct for free. [`skew_compensation`] is the one other
+//! place that knows, because its discard is in timeline samples.
+//!
+//! A rate change is a NEW session, not a live parameter: the frontend restarts
+//! playback from the current playhead, which re-baselines the video clock at
+//! the same instant — exactly the D-050 open-loop model every other transport
+//! change already uses, rather than a second sync mechanism.
+//!
+//! This is not a clip's own Speed/Retime ramp ([`AudioSourceSpec::speed`] →
+//! `Retime`). That one is per-source, is part of the project, changes the
+//! export, and deliberately varispeeds (D-242). The two compose.
+//!
 //! ### Request ordering (D-130 — the follow-up D-125 made necessary)
 //!
 //! Everything above assumes the transport commands happen in the order the
@@ -367,16 +387,31 @@ pub(crate) fn resampled_frame_count(input_frames: usize, in_rate: u32, out_rate:
 /// logs it. A negative or non-finite `skew_secs` (not reachable from
 /// `Instant::elapsed`, but this is pure arithmetic with a real correct answer)
 /// compensates nothing. Pure — no I/O.
+///
+/// **`rate` is D-278's playback rate**, and the two arguments are in different
+/// clocks on purpose: `skew_secs` is REAL elapsed time (and so is what the cap
+/// applies to), while the samples to discard are TIMELINE samples, of which
+/// `rate` seconds' worth pass per real second. At 4x, 200 ms of start-up
+/// latency is 800 ms of timeline the picture has already moved past. Getting
+/// this wrong would leave the sound a rate-multiplied fraction of a second
+/// behind the picture for the whole session — precisely the D-125 failure this
+/// function exists to prevent, scaled up.
 pub(crate) fn skew_compensation(
     skew_secs: f64,
     out_rate: u32,
     out_channels: usize,
+    rate: f64,
 ) -> (usize, f64) {
     if !skew_secs.is_finite() || skew_secs <= 0.0 {
         return (0, 0.0);
     }
+    let rate = if rate.is_finite() && rate > 0.0 {
+        rate
+    } else {
+        1.0
+    };
     let capped = skew_secs.min(MAX_SKEW_COMPENSATION_SECS);
-    let samples = (capped * out_rate as f64) as usize * out_channels.max(1);
+    let samples = (capped * rate * out_rate as f64) as usize * out_channels.max(1);
     (samples, capped)
 }
 
@@ -1809,11 +1844,20 @@ pub type ResolveAt = Box<dyn Fn(u64) -> Result<Vec<AudioSourceSpec>, String> + S
 /// comes rather than never. This crate still never sees a timeline: it drives
 /// the closure with a frame number and reads back the same
 /// [`AudioSourceSpec`] shape `sources` already is.
+/// **`rate` is D-278's preview PLAYBACK rate** — how many timeline seconds this
+/// session plays per real second, `1.0` for ordinary playback. It scales
+/// nothing about the timeline resolution above and changes no source: it is
+/// applied once, post-mix, by [`crate::timestretch::TimeStretch`], so the sound
+/// is pitch-preserved rather than sped-up-and-pitched-up. See that module and
+/// D-278. It is emphatically NOT a clip's own Speed/Retime ramp
+/// ([`AudioSourceSpec::speed`]), which is per-source, varispeeds on purpose
+/// (D-242), and is part of the project.
 pub fn start(
     session: PlaySession,
     sources: Vec<AudioSourceSpec>,
     start_frame: u64,
     fps: f64,
+    rate: f64,
     resolve_at: ResolveAt,
 ) -> Result<(), String> {
     let PlaySession {
@@ -1829,8 +1873,15 @@ pub fn start(
         .name("chroma-audio".into())
         .spawn(move || {
             let n = sources.len();
-            if let Err(e) = run_session(sources, my_gen, requested_at, start_frame, fps, resolve_at)
-            {
+            if let Err(e) = run_session(
+                sources,
+                my_gen,
+                requested_at,
+                start_frame,
+                fps,
+                rate,
+                resolve_at,
+            ) {
                 log::warn!("chroma audio session ({n} source(s)): {e}");
             }
         })
@@ -3162,12 +3213,38 @@ fn discard_samples(
 /// times a second in the mixing hot loop.
 const RESOLVE_INTERVAL_SECS: f64 = 0.1;
 
+/// D-278 — the preview playback rate is applied at exactly ONE seam in
+/// [`run_session`]: between [`mix_chunk`]'s output and the ring buffer the
+/// `cpal` callback drains. Everything upstream of that seam therefore stays in
+/// TIMELINE time and needed no change at all — `pos_frames` still counts
+/// timeline sample-frames, so every fade/duck/level envelope and B-111's
+/// periodic re-resolve keep evaluating at the right timeline position for free.
+/// Everything downstream is REAL time: the ring holds `1/rate` as many samples
+/// per mixed chunk, cpal drains it at the device's own rate, and the mixer's
+/// existing backpressure loop consequently pulls timeline audio `rate` times
+/// faster with no scheduling change. The only two places that needed to know
+/// about it are this stage and [`skew_compensation`], whose discard is in
+/// timeline samples.
+type PlaybackStretch = Option<crate::timestretch::TimeStretch>;
+
+/// Turn one mixed chunk of TIMELINE audio into the REAL-time samples the ring
+/// buffer wants, applying D-278's playback rate when there is one. `None` is
+/// ordinary 1x playback and is a straight hand-off — not one added
+/// multiplication in the common path.
+fn to_output(stretch: &mut PlaybackStretch, mixed: Vec<f32>) -> Vec<f32> {
+    match stretch {
+        Some(st) => st.push(&mixed),
+        None => mixed,
+    }
+}
+
 fn run_session(
     sources: Vec<AudioSourceSpec>,
     my_gen: u64,
     requested_at: Instant,
     start_frame: u64,
     fps: f64,
+    rate: f64,
     resolve_at: ResolveAt,
 ) -> Result<(), String> {
     let host = cpal::default_host();
@@ -3277,8 +3354,14 @@ fn run_session(
     // is the only correction that keeps the two clocks aligned without
     // introducing the per-tick position polling D-050 deliberately did not
     // build.
+    // D-278 — the playback-rate stage. `None` at 1x (and at any nonsense rate),
+    // which is the identity and must cost nothing; see `to_output` above and
+    // `crate::timestretch`.
+    let mut stretch: PlaybackStretch =
+        crate::timestretch::TimeStretch::new(rate, out_rate, out_channels.max(1));
+
     let skew = requested_at.elapsed().as_secs_f64();
-    let (skew_samples, capped_skew) = skew_compensation(skew, out_rate, out_channels);
+    let (skew_samples, capped_skew) = skew_compensation(skew, out_rate, out_channels, rate);
     if skew > MAX_SKEW_COMPENSATION_SECS {
         // Something pathological (an unresponsive device, a source that took
         // seconds to seek). Compensating the whole way would skip audible
@@ -3318,7 +3401,8 @@ fn run_session(
             out_rate,
         )?;
         pos_frames += (mixed.len() / out_channels.max(1)) as u64;
-        ring.lock().unwrap_or_else(|e| e.into_inner()).extend(mixed);
+        let ready = to_output(&mut stretch, mixed);
+        ring.lock().unwrap_or_else(|e| e.into_inner()).extend(ready);
     }
 
     // A stop (or a superseding play) that landed during the warm-up means this
@@ -3404,6 +3488,11 @@ fn run_session(
             out_rate,
         )?;
         pos_frames += (mixed.len() / out_channels.max(1)) as u64;
+        // D-278 — timeline audio becomes real-time audio here, and only here.
+        // At 4x this is a quarter as many samples per mixed chunk, which is
+        // exactly what makes the backpressure loop below pull the timeline four
+        // times faster without knowing anything about a rate.
+        let ready = to_output(&mut stretch, mixed);
 
         // Backpressure: block briefly while the ring buffer is comfortably
         // full rather than growing it unbounded — bail out early if a
@@ -3418,7 +3507,18 @@ fn run_session(
         if !is_current(my_gen) {
             break 'mix;
         }
-        ring.lock().unwrap_or_else(|e| e.into_inner()).extend(mixed);
+        ring.lock().unwrap_or_else(|e| e.into_inner()).extend(ready);
+    }
+
+    // D-278 — the stretch stage holds a crossfade tail it can only emit once it
+    // knows no more input is coming. Without this the last ~12 ms of a session's
+    // audio would be dropped rather than faded out. No-op at 1x, and skipped
+    // outright if we were superseded (that session must make no sound at all).
+    if let Some(st) = stretch.as_mut().filter(|_| is_current(my_gen)) {
+        let tail = st.flush();
+        if !tail.is_empty() {
+            ring.lock().unwrap_or_else(|e| e.into_inner()).extend(tail);
+        }
     }
 
     // Every source exhausted (or a benign reset/EOF-shaped error) — keep the
@@ -4701,14 +4801,27 @@ mod tests {
     #[test]
     fn skew_compensation_converts_seconds_to_interleaved_samples() {
         // 100 ms of 48 kHz stereo = 4800 frames = 9600 interleaved samples.
-        assert_eq!(skew_compensation(0.1, 48_000, 2), (9_600, 0.1));
+        assert_eq!(skew_compensation(0.1, 48_000, 2, 1.0), (9_600, 0.1));
         // mono halves it
-        assert_eq!(skew_compensation(0.1, 48_000, 1), (4_800, 0.1));
+        assert_eq!(skew_compensation(0.1, 48_000, 1, 1.0), (4_800, 0.1));
+    }
+
+    /// D-278 — the samples are TIMELINE samples, so a faster playback rate
+    /// means the same real start-up latency covers proportionally more of them.
+    /// The reported `capped` stays in REAL seconds (it is what the log line
+    /// talks about).
+    #[test]
+    fn skew_compensation_scales_the_discard_by_the_playback_rate() {
+        assert_eq!(skew_compensation(0.1, 48_000, 2, 4.0), (38_400, 0.1));
+        assert_eq!(skew_compensation(0.1, 48_000, 2, 0.5), (4_800, 0.1));
+        // A nonsense rate must not silently discard nothing or everything.
+        assert_eq!(skew_compensation(0.1, 48_000, 2, f64::NAN), (9_600, 0.1));
+        assert_eq!(skew_compensation(0.1, 48_000, 2, 0.0), (9_600, 0.1));
     }
 
     #[test]
     fn skew_compensation_is_capped_so_it_never_skips_audible_content() {
-        let (samples, capped) = skew_compensation(10.0, 48_000, 2);
+        let (samples, capped) = skew_compensation(10.0, 48_000, 2, 1.0);
         assert_eq!(capped, MAX_SKEW_COMPENSATION_SECS);
         assert_eq!(
             samples,
@@ -4718,9 +4831,9 @@ mod tests {
 
     #[test]
     fn skew_compensation_of_nothing_compensates_nothing() {
-        assert_eq!(skew_compensation(0.0, 48_000, 2), (0, 0.0));
-        assert_eq!(skew_compensation(-1.0, 48_000, 2), (0, 0.0));
-        assert_eq!(skew_compensation(f64::NAN, 48_000, 2), (0, 0.0));
+        assert_eq!(skew_compensation(0.0, 48_000, 2, 1.0), (0, 0.0));
+        assert_eq!(skew_compensation(-1.0, 48_000, 2, 1.0), (0, 0.0));
+        assert_eq!(skew_compensation(f64::NAN, 48_000, 2, 1.0), (0, 0.0));
     }
 
     #[test]

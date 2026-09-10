@@ -44,7 +44,7 @@ This is genuinely comprehensive for grading/masks/relight — an agent can drive
 essentially the whole Colorist tab today. **Everything below is a real, verified
 zero.**
 
-## Edit tab / multi-track NLE — CLOSED, 67 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218; +4, D-222; +1, D-223; +1, D-224; +4, D-226; +5, D-229; +2, D-230; +2, D-232; +2, D-233; +1, D-234; +1, D-236; +1, D-238; +1, D-239; +2, D-243; +1, D-256; +6, D-266)
+## Edit tab / multi-track NLE — CLOSED, 68 tools (D-183, 2026-09-07; +1, D-191; +2, D-195; +1, D-196; +3, D-211; +1, D-214; +1, D-216; +1, D-218; +4, D-222; +1, D-223; +1, D-224; +4, D-226; +5, D-229; +2, D-230; +2, D-232; +2, D-233; +1, D-234; +1, D-236; +1, D-238; +1, D-239; +2, D-243; +1, D-256; +6, D-266; +1, D-278)
 
 > **Re-counted 2026-09-09 against the same grep, after D-266 added the media
 > pool's four read/organise tools and the two audio-monitoring ones**: it
@@ -106,7 +106,8 @@ zero.**
 > |---|---|
 > | `get_timeline` | Read-only. Every track and clip, with the `index` mutating tools address a clip by and the `id` that survives a reorder. Reports fades + ducking + each clip's own `volume`/`pan` (D-223) and its `eqBands`/`eqActive` (D-224), and (D-222) the timeline's own `markers`. |
 > | `editor_get_state` | Read-only. Project-open + WHICH project (`openProject`, B-083)/load-status/playhead/playing/has-timeline, plus the current `selection` (`[{track, id}]`) and `selectedGap` (2026-09-07, B-085 follow-up — selection was previously invisible to everything outside the webview, so a selection bug could only be caught by eyeballing the window), plus `previewZoom` (D-218 — the preview VIEWPORT's own zoom/pan; read it before interpreting a `debug_screenshot` of the preview, since at a non-fit view the picture on screen is a magnified crop of the frame). |
-> | `editor_set_playhead` / `editor_set_playing` | Seek / play-pause. |
+> | `editor_set_playhead` / `editor_set_playing` | Seek / play-pause. `editor_set_playing`'s response repeats `playbackRate`, because at 4× five seconds of wall clock moves the playhead twenty seconds. |
+> | `editor_set_playback_rate` (D-278, 2026-09-10) | The preview's **transport rate** — timeline seconds played per real second. `1` normal, `2`/`3`/`4` the review presets the viewer offers, `0.25`–`8` accepted, out-of-range CLAMPED (and said so) rather than rejected. Same store action the human's control next to play/pause drives. **Not a clip's speed, and the two are worth keeping straight:** `editor_set_clip_speed` (D-236) edits the cut — persisted, undoable, changes the clip's length and the export; this changes only how fast you WATCH, so an export taken at 4× preview renders exactly what an export at 1× renders. Fast playback keeps real, **pitch-preserved** audio (a post-mix WSOLA stage, `apelles_media::timestretch`), deliberately unlike a clip speed ramp's tape-style varispeed (D-242). Safe to set while playing — both clocks re-baseline from the current playhead. `editor_get_state` reports it as `playbackRate`. **Not undoable** (transport state — see below). |
 > | `editor_set_selection` (D-216, 2026-09-08) | The WRITE half of `editor_get_state`'s `selection`/`selectedGap` — `clips=[{track, clip}]` or `[{track, clipId}]` (an array, so the GUI's real D-107 multi-select is reachable; `[]` clears), or `gap={track, frame}`, the two mutually exclusive exactly as in the store (D-105). **Why it matters, given that every editing tool already takes an explicit `track`/`clip` and needs no selection:** the Edit tab has surfaces that exist only FOR a selection — `TransformOverlay`'s on-canvas box and corner handles, and the Inspector's clip form, both gated on EXACTLY ONE clip being selected — and until this op nothing but a human's mouse could reach them, which is why every on-canvas fix (D-136, D-204, B-085, B-092, D-209) had to be verified by the owner clicking, or not at all. Pair it with `debug_screenshot` to actually see the box land. Validates every entry against the live timeline (a bad index or unknown id is a real error, never a stored selection of nothing) and a gap with the same `gapAt` the GUI's own empty-area click uses. **Not undoable** — see below. |
 > | `editor_set_preview_zoom` (D-218, 2026-09-08) | Zoom/pan the preview VIEWPORT — `zoom` a multiplier where `1` = fit (0.25–8, clamped with the clamp reported in `note`), `"fit"` to reset zoom AND pan, optional `pan_x`/`pan_y` as fractions of the fitted picture offset from centre (legal range `±(zoom-1)/2`, reported back as `panLimit`). **Display-only — it is NOT a clip's transform**: nothing about the render or the export changes, only how large the frame is drawn on screen. Its use is inspection: at fit the preview is a ~960px-long-edge proxy of the whole frame, so a thin edge or a small title is a handful of pixels in a `debug_screenshot`; zoom to 200-400% and pan first and the same screenshot shows it. `editor_get_state`'s new `previewZoom` block is the read half, and reading it is what makes a preview screenshot interpretable at all (at a non-fit view the picture on screen is a magnified crop of the frame). **Not undoable** — same reasoning as `editor_set_selection`, see below. |
 > | `editor_import_media` | Import absolute paths into the shared media pool — the prerequisite for `editor_add_clip`. |
@@ -148,19 +149,19 @@ zero.**
 > equivalent real store action), so an agent's edit lands on the same undo stack
 > a human's does — D-140's rule, restated in `mcp-architecture.md`.
 >
-> **`editor_set_selection`, `editor_set_preview_zoom` and
-> `editor_set_waveform_view` are the tools that
+> **`editor_set_selection`, `editor_set_preview_zoom`,
+> `editor_set_waveform_view` and `editor_set_playback_rate` are the tools that
 > deliberately push nothing onto
-> that stack** (D-216, D-218, D-232), and none is an exception to D-140 so much as outside
-> its subject: `selection`/`selectedGap`/`previewView`/`waveformView` are fields of the STORE, not of
+> that stack** (D-216, D-218, D-232, D-278), and none is an exception to D-140 so much as outside
+> its subject: `selection`/`selectedGap`/`previewView`/`waveformView`/`playbackRate` are fields of the STORE, not of
 > `Timeline`, so D-051's whole-`Timeline` undo snapshots have never carried
 > them, nothing persists them to `project.json`, and every GUI path that writes
 > them (`TimelinePane`'s clip click, its marquee, its gap click,
 > `useCanvasClipPick`; the preview's own zoom buttons and ctrl-wheel; its
-> waveform toggle) pushes
-> nothing either. An MCP selection, zoom or waveform toggle that WAS undoable would behave
+> waveform toggle; its playback-rate control) pushes
+> nothing either. An MCP selection, zoom, waveform toggle or rate change that WAS undoable would behave
 > differently from the identical human click and would sit between the user and
-> their last real edit on the next cmd-Z. All three drive the same store actions
+> their last real edit on the next cmd-Z. All four drive the same store actions
 > those paths call, which is the half of D-140 that does apply.
 
 **Net effect: an agent can now drive essentially the whole Edit tab** — import
@@ -376,6 +377,13 @@ driving the same store state the transport bar's speaker button and slider do
 after the same lift `waveformView` got in D-232; `editor_get_state` reports the
 pair as `monitor`) and `editor_get_audio_level` (the rms/peak of what actually
 reached the output device).
+
+**D-278 added a third argument to that same transport**, and it is worth noting
+here because it is the shape this doc keeps finding: `chroma_audio_play` now
+takes a `rate`, and the GUI control for it (`editor_set_playback_rate`) shipped
+in the same pass rather than as a follow-up. The rate is not a fourth Tauri
+command and does not want one — there is still exactly ONE transport, and this
+is a parameter of it.
 
 **Still open, deliberately.** `editor_get_audio_level` is a probe, not a meter,
 and there is no GUI meter to pair it with: `build_typed` in

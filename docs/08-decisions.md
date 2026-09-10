@@ -26994,3 +26994,170 @@ mode's seed-on-switch write instead, for the same jsdom-Select reason.
 
 `npm test --workspace @apelles/editor` (87 files / 1666 tests) and `npx tsc
 --noEmit -p packages/editor` both green.
+
+## D-278 — A preview PLAYBACK-RATE control (0.5×–8×), with pitch-preserved audio
+
+**Date:** 2026-09-10. Owner request, with a reference screenshot of the Edit
+tab's transport bar (`scratch/preview-playback-speed-control-reference.png`,
+gitignored): *"a control offering 2x/3x/4x and a custom rate, next to the
+existing play/pause transport controls… with audio."* Explicitly, in the
+roadmap entry that scoped it, **not** the Inspector's per-clip Speed/Retime
+field (D-236) — this reviews the cut faster, it does not edit it.
+
+### The reference research (CLAUDE.md's "research the real pattern first")
+
+Pulled before building, not assumed:
+
+- **Premiere Pro** shuttles with J/K/L and carries a preference in **Audio →
+  "Maintain pitch while Shuttling"**. The pitch-corrected behaviour is the
+  modern default; letting pitch rise and fall with speed is described as the
+  *legacy* result you opt back into, and there is a keyboard-assignable toggle
+  for it. (Adobe community + ProVideo Coalition's "Maintaining Pitch with high
+  speed playback".)
+- **DaVinci Resolve** shuttles with J/K/L only — press `L` twice for 2×, three
+  times for 4× — and has no rate control in the viewer's transport bar at all.
+  Its **Pitch Correction** checkbox lives in *Retime Controls*, i.e. on the
+  clip, which is the other feature.
+- **Final Cut Pro** shuttles 1× → 2× → 4× → 8× on repeated `L`, and its
+  documentation is explicit that J/K/L *shift the pitch* so you can hear
+  detail at speed.
+- **Media players** (QuickTime, VLC, YouTube) are where a rate *menu* next to
+  the transport comes from, and where a non-power-of-two rate like 1.5× or 3×
+  is normal.
+
+Two conclusions, both taken: **pitch-corrected is the right default for a
+transport shuttle** (Premiere's own default, and the only way "with audio"
+means anything at 3×), and **a menu, not a doubling ladder**, because the ask
+is a menu and 3× only exists in menus.
+
+### The audio decision — WSOLA post-mix, not a resample, not silence
+
+The honest options, weighed against what the engine already had
+(`apelles_media::audio` mixes every source at timeline rate into a ring the
+`cpal` callback drains, and already contains a per-source varispeed `Retime`
+stage for D-242's clip ramps):
+
+1. **Mute above 1×.** Rejected outright — it is exactly the shortcut the
+   request forbids, and it makes the feature useless for the thing an editor
+   skims for (finding the line, the beat, the cut).
+2. **Reuse `Retime` per source** — multiply every clip's speed segments by the
+   playback rate. Real, but wrong twice: it varispeeds (2× = an octave up, 4× =
+   two octaves, which is not intelligible), and it would have had to touch
+   `duration_secs`, every envelope's time base and the B-111 re-resolve clock
+   per source.
+3. **A single resampler on the mixed output.** One seam, but the same pitch
+   problem as (2).
+4. **A single WSOLA time-scaler on the mixed output.** ← chosen.
+
+WSOLA (`crates/apelles-media/src/timestretch.rs`, new) reads `rate` seconds of
+the mixed stream per output second by overlap-adding waveform-aligned segments
+of the *original* samples, so pitch is untouched. It is ~120 lines with an
+exactly testable definition, which is why it is written rather than pulled in:
+the alternatives are C/C++ FFI (SoundTouch, Signalsmith Stretch) — a
+build-system dependency and a licence to carry for one algorithm.
+
+**The seam is the whole design.** The stage sits between `mix_chunk` and the
+ring buffer, and *only* there. Everything upstream stays in TIMELINE time and
+needed no change: `pos_frames` still counts timeline sample-frames, so every
+fade/duck/level envelope and B-111's periodic re-resolve stay correct for
+free. Everything downstream is REAL time: the ring holds `1/rate` as many
+samples per mixed chunk, `cpal` drains it at the device rate, and the mixer's
+existing backpressure loop consequently pulls the timeline `rate` times faster
+without knowing a rate exists. Exactly one other place had to learn about it —
+`skew_compensation`, whose D-125 warm-up discard is in timeline samples and so
+scales by the rate.
+
+**This does not contradict D-242**, which deliberately varispeeds a *clip's*
+speed ramp. That one is about media whose recorded speed was changed, where
+tape behaviour is semantically right (and is Premiere's and Resolve's own
+default for a retimed clip). This is about reviewing unchanged media faster.
+The two compose: a 2× clip previewed at 2× advances through the file at 4×,
+pitched up one octave by the clip's ramp and not at all by this stage.
+
+### Rate is a SESSION parameter, not a live one
+
+`chroma_audio_play(start_frame, seq, rate)`. Changing the rate mid-playback
+re-runs both of `PreviewPane`'s effects, which stops the audio session and
+starts a fresh one from the playhead the picture is on, while the video rAF
+loop re-baselines its own wall clock at the same instant. That is precisely
+D-050's open-loop sync model, which every Play toggle already uses — rather
+than inventing a second, live-parameter sync mechanism whose two clocks would
+have to be re-agreed mid-flight.
+
+### Video, and the rest
+
+The picture half is one multiplication: the rAF loop asks for
+`elapsed * fps * rate` frames instead of `elapsed * fps`. It already drops
+frames to stay real-time, so a fast rate simply means requesting further ahead
+each tick — which is what a preview shuttle IS.
+
+- **Model:** `packages/player/src/playbackRate.ts` — bounds (`0.25`–`8`),
+  presets (`0.5 / 1 / 2 / 3 / 4`), formatting. In `@apelles/player` because the
+  transport component itself renders all three; `@apelles/editor` imports the
+  same values for its store clamp and its MCP bounds, so there is one source.
+  `8` is Final Cut's own shuttle ceiling.
+- **GUI:** a `Gauge` + readout button in the transport bar's LEFT cluster,
+  after the timecode (where the reference screenshot points), opening a popover
+  of presets plus a `ScrubbableNumberInput` for a custom rate — and one line of
+  copy saying it changes no clip and no export, because "make this faster" is
+  genuinely ambiguous between this and D-236. It replaces a vestigial
+  `0.5/1/2` cycle button that had shipped in `Player.tsx` since the start and
+  that **no caller ever passed `rate` to**, so nothing was removed from any
+  tab's UI.
+- **MCP:** `editor_set_playback_rate(rate)`, plus `playbackRate` in
+  `editor_get_state` and in `editor_set_playing`'s response (it changes what
+  that call did — at 4× five seconds of wall clock moves the playhead twenty
+  seconds). Same store action as the human's control, per CLAUDE.md's
+  human-AND-AI rule. Clamps rather than rejects, and says so.
+- **State:** `timelineStore.playbackRate` — session chrome under D-216's rule
+  like `waveformView` and the monitor volume: never persisted, never undoable,
+  never part of `Timeline`. It resets on a project switch (unlike
+  `previewView`: a shuttle rate is set to skim one take, not as a viewing
+  preference).
+- **Space / ←  / → keep working unchanged** — they act on the same
+  `playing`/playhead state at any rate.
+
+### What this deliberately does NOT do
+
+- **No J/K/L shuttle**, even though all three reference tools drive rate that
+  way. `J` is *reverse* play, and neither the rAF loop nor the audio session
+  can run the transport backwards today; shipping `K`+`L` without `J` is a
+  half-implementation of an idiom every editor has muscle memory for, which is
+  worse than not claiming the keys. Tracked as its own roadmap item.
+- **No pitch-correction toggle.** Premiere has one; we ship only the
+  pitch-preserved behaviour, since the varispeed alternative is already
+  reachable — as a real edit — through a clip's own Speed ramp.
+- **~24 ms of trailing audio is dropped** at end-of-session (the stage's last
+  unaligned window). Bounded, documented in `timestretch.rs`, and at the moment
+  the transport is stopping anyway.
+- **Heavy sources may drop video frames at 4×+.** Expected: the loop is
+  frame-dropping by design and the audio is what stays real-time.
+
+### Tests
+
+- `crates/apelles-media/src/timestretch.rs` — 8 unit tests with real correct
+  answers: output length is `input / rate` (±2%) at 0.5/2/3/4×; **a 440 Hz tone
+  still measures 440 Hz at every rate** (a resampler would read 880/1320/1760);
+  chunked pushes equal one big push; determinism; never leaves `[-1, 1]`;
+  short/silent input; bounded buffering over ~13 s of feeding.
+- `crates/apelles-media/src/audio.rs` — `skew_compensation` now scales the
+  discard by the rate, tested at 4× and 0.5× and for a nonsense rate.
+- `app/src-tauri/src/chroma/audio.rs` — `clamp_playback_rate`, and an
+  env-gated end-to-end `chroma_audio_play(…, 3.0)` that asserts non-silent PCM
+  really reached the `cpal` device at 3× (the same D-049 verification proxy).
+- `packages/player` gained a test rig (vitest + jsdom + `@testing-library/react`,
+  mirroring `@apelles/keymap`'s) — 11 model tests and 9 real-DOM control tests.
+- `packages/editor/src/PreviewPane.playbackRate.dom.test.tsx` — the MCP op
+  moves the same visible control the human uses, the rate reaches
+  `chroma_audio_play`, a mid-playback rate change restarts the session at the
+  new rate, and **nothing is ever persisted at any rate**.
+
+`cargo test -p apelles-media` (172), `cargo test -p apelles --lib chroma::audio`
+(37), `npm test --workspace @apelles/editor` (89 files / 1680 tests),
+`npm test --workspace @apelles/player` (20), and `tsc --noEmit` on both
+packages: all green. `cargo fmt` + `cargo clippy` clean on the new code.
+
+**Not verified by this pass:** how it actually *sounds*. The pitch test proves
+the algorithm preserves frequency and the `cpal` rms/peak proxy proves real
+audio reaches the device at 3×; neither can say a voice at 4× is pleasant.
+That needs the owner's ears.

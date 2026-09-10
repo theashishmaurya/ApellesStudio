@@ -371,8 +371,20 @@ fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
 /// `seq` (D-130) is the frontend's monotonic request stamp; a play that a newer
 /// request has already overtaken is dropped instead of starting a session from
 /// a stale `start_frame`.
+///
+/// `rate` (D-278) is the preview PLAYBACK rate — timeline seconds per real
+/// second, `1.0` for ordinary playback, clamped here to
+/// [`PLAYBACK_RATE_MIN`]`..=`[`PLAYBACK_RATE_MAX`] so a malformed IPC value
+/// cannot ask the mixer for something absurd. It changes only how fast this
+/// SESSION runs, applied post-mix and pitch-preserving; it touches no clip, no
+/// project and no export. A rate change is a fresh `chroma_audio_play` from the
+/// current playhead, which is also when the video clock re-baselines — see
+/// `apelles_media::audio`'s own "Playback rate" section, and `PreviewPane.tsx`.
+///
+/// **Not** [`speed_for_clip`]'s per-clip Speed/Retime ramp (D-236/D-242), which
+/// is project data, is part of the export, and varispeeds on purpose.
 #[tauri::command(async)]
-pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
+pub fn chroma_audio_play(start_frame: u64, seq: u64, rate: f64) -> Result<(), String> {
     // Claims the transport and stamps the "the frontend asked for playback"
     // instant the D-125 skew compensation measures against — deliberately
     // before the resolution below, exactly as the pre-split code did.
@@ -391,8 +403,33 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64) -> Result<(), String> {
         sources,
         start_frame,
         fps,
+        clamp_playback_rate(rate),
         Box::new(resolve_sources_at),
     )
+}
+
+/// D-278 — the slowest preview playback rate the transport will accept.
+/// Below this the WSOLA stage is repeating each segment four times or more and
+/// the artefacts stop being worth the review speed; it is also well past
+/// anything the reference tools' own shuttle ladders offer.
+pub const PLAYBACK_RATE_MIN: f64 = 0.25;
+
+/// D-278 — the fastest. 8x is the top of Final Cut Pro's own J/K/L shuttle
+/// ladder (1x → 2x → 4x → 8x), which is the natural ceiling to borrow; the
+/// GUI's own presets stop at 4x and only the custom field can reach here.
+pub const PLAYBACK_RATE_MAX: f64 = 8.0;
+
+/// Bring an IPC-supplied playback rate into range. A non-finite or absent value
+/// reads as ordinary 1x playback rather than as an error: the transport must
+/// keep working, and a caller that sent nonsense wanted to play something.
+/// Mirrors `chroma_audio_set_volume`'s own clamp-don't-reject contract, and the
+/// same clamp `@apelles/editor`'s `playbackRate.ts` applies on the way in — a
+/// boundary is checked at the boundary, on both sides.
+fn clamp_playback_rate(rate: f64) -> f64 {
+    if !rate.is_finite() || rate <= 0.0 {
+        return 1.0;
+    }
+    rate.clamp(PLAYBACK_RATE_MIN, PLAYBACK_RATE_MAX)
 }
 
 /// Build the fade envelope for `clip`, or `None` if it has no fade — the
@@ -1159,6 +1196,23 @@ mod tests {
         );
     }
 
+    /// D-278 — the transport must survive a malformed rate rather than refuse
+    /// to play. Pure arithmetic with a real correct answer, so it is tested
+    /// rather than reasoned about.
+    #[test]
+    fn playback_rate_is_clamped_not_rejected() {
+        assert_eq!(clamp_playback_rate(1.0), 1.0);
+        assert_eq!(clamp_playback_rate(3.0), 3.0);
+        assert_eq!(clamp_playback_rate(PLAYBACK_RATE_MAX), PLAYBACK_RATE_MAX);
+        assert_eq!(clamp_playback_rate(1000.0), PLAYBACK_RATE_MAX);
+        assert_eq!(clamp_playback_rate(0.01), PLAYBACK_RATE_MIN);
+        // Nonsense reads as ordinary playback, never as an error or as silence.
+        assert_eq!(clamp_playback_rate(0.0), 1.0);
+        assert_eq!(clamp_playback_rate(-2.0), 1.0);
+        assert_eq!(clamp_playback_rate(f64::NAN), 1.0);
+        assert_eq!(clamp_playback_rate(f64::INFINITY), 1.0);
+    }
+
     #[test]
     fn generation_bump_invalidates_a_session() {
         let _guard = session_test_guard();
@@ -1215,7 +1269,7 @@ mod tests {
         let gen_after_newer = begin_request(newer).expect("the newer request is accepted");
         // No project is open, so this would return Ok(()) either way — what is
         // under test is that it never gets as far as claiming the session.
-        let stale = chroma_audio_play(0, older);
+        let stale = chroma_audio_play(0, older, 1.0);
 
         assert!(stale.is_ok(), "a dropped stale play is not an error");
         let (generation, last_seq) = session_snapshot();
@@ -1261,7 +1315,7 @@ mod tests {
                 // Stagger nothing deliberately — let the OS interleave these
                 // however it likes, including newest-first.
                 if i % 2 == 0 {
-                    let _ = chroma_audio_play(0, seq);
+                    let _ = chroma_audio_play(0, seq, 1.0);
                 } else {
                     chroma_audio_stop(seq);
                 }
@@ -1427,7 +1481,7 @@ mod tests {
         };
 
         let _tmp = open_test_project(&video_path);
-        let played = chroma_audio_play(0, next_test_seq());
+        let played = chroma_audio_play(0, next_test_seq(), 1.0);
         // B-106 — 2.5 s, not 1.5 s. `chroma_audio_level` refreshes only once per
         // second of audio the device has actually written, and a session's first
         // few hundred ms are device-open + seek, during which the ring is
@@ -1450,6 +1504,46 @@ mod tests {
         );
     }
 
+    /// D-278 — the "with audio" half, end to end, at a real non-1x rate.
+    ///
+    /// The owner's ask was explicitly that fast playback still *makes
+    /// intelligible sound* rather than silence. This is the same D-049
+    /// verification proxy as the test above — "did non-silent PCM reach the real
+    /// device" — applied at 3x, which is the claim that could actually regress:
+    /// a broken time-stretch stage would starve the ring and the meter would
+    /// read zero. It cannot say the result sounds *good*; that is
+    /// `apelles_media::timestretch`'s own pitch test (a 440 Hz tone still
+    /// measures 440 Hz at 0.5x/2x/3x/4x) plus a human listening.
+    #[test]
+    fn chroma_audio_play_at_a_faster_rate_still_produces_non_silent_pcm() {
+        let _guard = session_test_guard();
+        let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
+            eprintln!(
+                "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
+            );
+            return;
+        };
+
+        let _tmp = open_test_project(&video_path);
+        let played = chroma_audio_play(0, next_test_seq(), 3.0);
+        // B-106's 2.5 s, for its own reason (the level meter refreshes once per
+        // second of written audio) — unchanged by the rate, since that window is
+        // real output time either way.
+        thread::sleep(Duration::from_millis(2500));
+        let (rms, peak) = chroma_audio_level();
+        chroma_audio_stop(next_test_seq());
+        super::super::state::set_project(None);
+
+        played.expect("chroma_audio_play at 3x");
+        eprintln!(
+            "chroma_audio_play_at_a_faster_rate_still_produces_non_silent_pcm ({video_path}): rms={rms:.4} peak={peak:.4}"
+        );
+        assert!(
+            peak > 0.001,
+            "3x playback must still deliver audible PCM, not silence — got peak={peak}"
+        );
+    }
+
     // Integration test — only runs if CHROMA_TEST_SILENT_VIDEO points at a
     // real file confirmed (via `ffprobe`) to have NO audio stream — this
     // repo's own real project's shot (`pexels_28808272.mp4`) is exactly such
@@ -1467,7 +1561,7 @@ mod tests {
         };
 
         let _tmp = open_test_project(&video_path);
-        let played = chroma_audio_play(0, next_test_seq());
+        let played = chroma_audio_play(0, next_test_seq(), 1.0);
         thread::sleep(Duration::from_millis(300));
         let (rms, peak) = chroma_audio_level();
         chroma_audio_stop(next_test_seq());
@@ -1509,7 +1603,7 @@ mod tests {
             &video_path,
             Some((&tone_path.display().to_string(), 1.0)),
         );
-        let played = chroma_audio_play(0, next_test_seq());
+        let played = chroma_audio_play(0, next_test_seq(), 1.0);
         // B-106 — 2.5 s, not 1.5 s. `chroma_audio_level` refreshes only once per
         // second of audio the device has actually written, and a session's first
         // few hundred ms are device-open + seek, during which the ring is
@@ -1554,7 +1648,7 @@ mod tests {
             &video_path,
             Some((&tone_path.display().to_string(), 0.0)),
         );
-        let played = chroma_audio_play(0, next_test_seq());
+        let played = chroma_audio_play(0, next_test_seq(), 1.0);
         // B-106 — 2.5 s, not 1.5 s. `chroma_audio_level` refreshes only once per
         // second of audio the device has actually written, and a session's first
         // few hundred ms are device-open + seek, during which the ring is
