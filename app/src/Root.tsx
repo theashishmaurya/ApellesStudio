@@ -317,14 +317,14 @@ export function Root() {
       // `@apelles/keymap` may depend on i18next, same app → shell direction as
       // `launcher` and `sourcesPanel` above.
       translate={translate}
-      // D-251/D-294 — Export lives in the shell's chrome bar, beside the tab
-      // switcher, and is reachable from EVERY tab now: D-294 retired
-      // Colorist's own `ExportDialog` (which after D-291 exported a different
+      // D-251/D-297 — Export lives in the shell's chrome bar, beside the tab
+      // switcher, and is reachable from EVERY tab now: D-297 retired
+      // Colorist's own `ExportDialog` (which after D-294 exported a different
       // picture than Colorist's own preview) in favour of this one. Injected
       // here rather than imported by `Shell`, same app → shell direction as
       // `launcher` and `sourcesPanel` above.
       headerAction={<EditorExportDialog />}
-      // D-295 — the agent activity feed + `request_human` banner, promoted out
+      // D-298 — the agent activity feed + `request_human` banner, promoted out
       // of the Colorist app (where it was mounted in `App.tsx`) to a
       // shell-level surface: an agent's work spans all three tabs, and a feed
       // of it that only exists on one of them cannot report the other two.

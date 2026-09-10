@@ -96,7 +96,7 @@
  * debug recipe already uses) and the shared `sourcesPanel` stays MOUNTED but
  * hidden while a tab's own library shows, so its search/bin state survives.
  *
- * Chrome-bar action (D-251, made shell-level by D-294): the `headerAction`
+ * Chrome-bar action (D-251, made shell-level by D-297): the `headerAction`
  * node renders in the top bar's own right-hand cluster, left of the window
  * controls, whenever a project is open — on every tab.
  *
@@ -106,7 +106,7 @@
  * seeing D-249 land it in the Edit tab's own top strip. The note it carried —
  * "Colorist and Motion have no export action of their own" — was already only
  * half true (Colorist had its own D-049 `ExportDialog` in its toolbar), and
- * **D-294 resolved that the other way**: there is now ONE export in the app,
+ * **D-297 resolved that the other way**: there is now ONE export in the app,
  * the Edit tab's, and the owner asked for it to be reachable from Colorist
  * too. A slot that will only ever hold the same node for all three tabs is a
  * shell-level prop, not a per-tab one, so `ShellTab.headerAction` is gone
@@ -170,14 +170,14 @@ export interface ShellProps {
    *  only, same reasoning as `launcher`). Docked to the right of the tab
    *  content, toggled via a chrome-bar button; omit to run without one. */
   sourcesPanel?: ReactNode;
-  /** D-294 — the chrome bar's right-hand action, rendered while a project is
+  /** D-297 — the chrome bar's right-hand action, rendered while a project is
    *  open **whatever tab is active**. D-251 made this per-tab (only the Edit
-   *  tab carried one); D-294 made Export genuinely global, and a slot that can
+   *  tab carried one); D-297 made Export genuinely global, and a slot that can
    *  only ever hold one node for all three tabs is a shell-level prop, not a
    *  per-tab one. Injected by the composition root exactly like `launcher` and
    *  `sourcesPanel` — `Shell` still never imports `@apelles/editor`. */
   headerAction?: ReactNode;
-  /** D-295 — a floating surface rendered ABOVE the tab content, on every tab,
+  /** D-298 — a floating surface rendered ABOVE the tab content, on every tab,
    *  while a project is open: the agent activity feed + `request_human`
    *  banner (D-032). It was mounted inside the Colorist app, which made a feed
    *  of what an agent is doing to the whole project visible only from one of
@@ -329,7 +329,7 @@ export function Shell({
           </div>
         )}
 
-        {/* right: the shell-level header action (D-251/D-294 — Export, the
+        {/* right: the shell-level header action (D-251/D-297 — Export, the
             app's one export surface, reachable from every tab), then
             win/linux controls / mac spacer. The Sources toggle
             used to live here too, but D-116 moved the panel itself to the
@@ -365,7 +365,7 @@ export function Shell({
 
       <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} translate={translate} />
 
-      {/* D-295 — the agent activity feed, above every tab. Rendered here
+      {/* D-298 — the agent activity feed, above every tab. Rendered here
           rather than inside a tab for the same reason the Keyboard Shortcuts
           window above is: it is genuinely shell-level (an agent's work spans
           all three tabs), and a surface that only exists while one tab is on

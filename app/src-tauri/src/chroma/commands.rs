@@ -28,7 +28,7 @@ pub struct VideoInfoDto {
 
 /// `null` when the loaded item is not a video.
 ///
-/// **D-291 (B-147) — reported against the Edit-timeline CLIP when there is
+/// **D-294 (B-147) — reported against the Edit-timeline CLIP when there is
 /// one.** `frameCount`/`durationSecs` are the clip's own length and
 /// `width`/`height` are the project's composition size, because those are what
 /// the Colorist transport is actually scrubbing and what its canvas actually
@@ -96,7 +96,7 @@ pub async fn chroma_seek(
 /// edge before it hits the pipe (D-031 playback — avoids a CPU downscale of a 4K
 /// frame per frame). `None` = native size (scrub / single-frame seek).
 ///
-/// **D-291 (B-147) — `frame` is CLIP-LOCAL, and the installed picture carries
+/// **D-294 (B-147) — `frame` is CLIP-LOCAL, and the installed picture carries
 /// the clip's geometry.** When the active shot is a clip on the open project's
 /// Edit timeline ([`colorist_view::resolve`]), `frame` counts from that clip's
 /// in-point, the source frame actually decoded comes from the clip's own trim
@@ -108,7 +108,7 @@ pub async fn chroma_seek(
 /// are no layers beneath it here) — see `colorist_view`'s module doc.
 ///
 /// An Untitled loose-clip session resolves no clip and takes exactly the
-/// pre-D-291 raw-source path, which was always correct for it.
+/// pre-D-294 raw-source path, which was always correct for it.
 pub async fn seek_and_install(
     frame: u64,
     scale_long_edge: Option<u32>,
@@ -182,7 +182,7 @@ pub async fn seek_and_install(
             video::decode_frame(&path, video::FramePos::Index(decode_frame_index), &info)
         })
         .map_err(|e| e.to_string())?;
-        // D-291 — the geometry pass, on the blocking thread with the decode it
+        // D-294 — the geometry pass, on the blocking thread with the decode it
         // belongs to (it is a CPU resize + rotate of a full frame). Free for an
         // untransformed clip: `apply_geometry` hands the buffer straight back.
         match view_for_task {

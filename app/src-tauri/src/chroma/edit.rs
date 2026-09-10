@@ -1194,7 +1194,7 @@ impl ClipTransform {
             && self.crop_bottom <= 0.0
     }
 
-    /// D-291 — the same geometry with the **blend** neutralised: opacity back
+    /// D-294 — the same geometry with the **blend** neutralised: opacity back
     /// to fully opaque. For a consumer that places one clip on a canvas with
     /// nothing beneath it, where opacity/fade have nothing to blend *against*
     /// — today that is the Colorist's own preview (`super::colorist_view`).

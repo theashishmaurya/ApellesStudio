@@ -73,7 +73,7 @@ export const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
   { id: 'library', label: 'Library', labelKey: 'settings.keybinds.sections.library', scope: 'colorist' },
   { id: 'editing', label: 'Editing', labelKey: 'settings.keybinds.sections.editing', scope: 'colorist' },
   { id: 'view', label: 'View', labelKey: 'settings.keybinds.sections.view', scope: 'colorist' },
-  // D-293 — was 'Rating'; the five-star culling actions were removed with the
+  // D-296 — was 'Rating'; the five-star culling actions were removed with the
   // rating widget itself, leaving this section holding only colour labels.
   // No `labelKey`: there is no translated key for the new heading, and the
   // Apelles-native sections above are English-only for the same reason.

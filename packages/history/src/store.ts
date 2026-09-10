@@ -20,13 +20,13 @@
  * own closures. Does NOT persist across restarts (in-memory only, cleared on
  * close — deliberate for this pass, see D-051).
  *
- * **Who did it (D-295).** Every entry carries a `source`: `'user'` (the
+ * **Who did it (D-298).** Every entry carries a `source`: `'user'` (the
  * default) or `'agent'`. An MCP op dispatcher wraps its handler in
  * [`runAsAgent`], and every `push` that happens inside that window is stamped
  * `'agent'` — so the Edit and Motion tabs need no per-op instrumentation at
  * all, only one wrapper each at the point where an MCP request is dispatched.
  * That is what lets the agent activity feed report work done on ANY tab
- * (D-295) instead of only Colorist grade changes (D-032), without a second
+ * (D-298) instead of only Colorist grade changes (D-032), without a second
  * cross-tab record to keep in step with this one.
  *
  * The scope is a plain depth counter, not async-context tracking: JS is
@@ -50,7 +50,7 @@ export interface HistoryEntry {
   tab: string;
   /** human-readable one-liner, e.g. "Trim clip (start)" or "primary: exposure +0.35" */
   label: string;
-  /** D-295 — who caused this: the person at the keyboard, or an agent through
+  /** D-298 — who caused this: the person at the keyboard, or an agent through
    *  the MCP bridge. Set automatically from [`runAsAgent`]'s scope, so a
    *  caller never passes it. Drives the cross-tab agent activity feed. */
   source: EntrySource;
@@ -68,7 +68,7 @@ export type PushableEntry = Omit<HistoryEntry, 'id' | 'ts' | 'source'> &
   Partial<Pick<HistoryEntry, 'id' | 'ts'>>;
 
 // --------------------------------------------------------------------------- //
-// D-295 — the agent scope
+// D-298 — the agent scope
 // --------------------------------------------------------------------------- //
 
 let agentDepth = 0;

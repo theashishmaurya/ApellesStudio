@@ -122,7 +122,7 @@ afterEach(() => {
 // how `Root.tsx` builds it once per render of the composition root, and
 // avoids the tab subtrees remounting on every unrelated re-render.
 //
-// D-294 — `headerAction` moved OFF `ShellTab` and onto `ShellProps`, so no tab
+// D-297 — `headerAction` moved OFF `ShellTab` and onto `ShellProps`, so no tab
 // entry carries one any more. That is the whole point of the change and is
 // what this file's third case now pins.
 const tabs: ShellTab[] = [
@@ -162,7 +162,7 @@ function exportTrigger(container: HTMLElement): HTMLButtonElement | null {
   return container.querySelector('button[aria-label="Export"]');
 }
 
-describe('Shell chrome-bar headerAction slot (D-251, shell-level since D-294)', () => {
+describe('Shell chrome-bar headerAction slot (D-251, shell-level since D-297)', () => {
   it('renders the real Export trigger in the chrome bar, and it opens the real dialog', () => {
     const { container, unmount } = mountShell();
     try {
@@ -185,7 +185,7 @@ describe('Shell chrome-bar headerAction slot (D-251, shell-level since D-294)', 
     }
   });
 
-  // D-294 — this case is the exact INVERSE of what it pinned under D-251,
+  // D-297 — this case is the exact INVERSE of what it pinned under D-251,
   // deliberately. Export is the app's one export surface now (Colorist's own
   // `ExportDialog` was retired), and the owner asked for it to be reachable
   // from Colorist too — so "the trigger disappears on Motion/Colorist" is the

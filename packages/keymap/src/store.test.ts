@@ -53,7 +53,7 @@ describe('the registry itself', () => {
     // D-273 folded it in here. Renaming any of these silently drops a user's
     // saved remap, which is why this is pinned.
     //
-    // D-293 dropped `rate_3` from this sample, and that is a deliberate
+    // D-296 dropped `rate_3` from this sample, and that is a deliberate
     // exception rather than a weakening of the rule: the five-star rating
     // actions were REMOVED with the rating widget itself (a photo-culling
     // concept with no meaning in a video timeline), not renamed. A stale

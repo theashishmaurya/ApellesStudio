@@ -1,8 +1,8 @@
 // Apelles — the agent activity feed + `request_human` banner (D-032),
-// **shell-level and cross-tab since D-295**.
+// **shell-level and cross-tab since D-298**.
 //
 // A fixed bottom-left dock, injected into `@apelles/shell`'s `overlay` slot by
-// `Root.tsx` — it was mounted inside `App.tsx` (the Colorist tab) until D-295,
+// `Root.tsx` — it was mounted inside `App.tsx` (the Colorist tab) until D-298,
 // which made a feed of what an agent is doing to the whole project visible
 // from only one of the three tabs.
 // - top card: the `request_human` hand-back banner (reason + "Resume agent")
@@ -10,7 +10,7 @@
 //   two sources:
 //     * **Colorist grade changes** (D-032, `useAgentStore`) — the rich rows:
 //       an expandable per-field diff and a jump-to-here "Undo".
-//     * **Edit / Motion ops** (D-295, `@apelles/history` entries stamped
+//     * **Edit / Motion ops** (D-298, `@apelles/history` entries stamped
 //       `source: 'agent'` by `runAsAgent` around each tab's MCP dispatcher) —
 //       label, tab and time. Deliberately NO per-row undo: those live on the
 //       shared LIFO undo stack, where undoing an entry that is not on top
@@ -147,7 +147,7 @@ function ActivityRow({ entry }: { entry: AgentActivityEntry }) {
   );
 }
 
-/** D-295 — one Edit/Motion op an agent performed, read off the shared
+/** D-298 — one Edit/Motion op an agent performed, read off the shared
  *  `@apelles/history` stack. No diff and no per-row Undo: see this file's
  *  module doc for why (the shared stack is LIFO; Cmd/Ctrl+Z is its control). */
 function TabActivityRow({ entry }: { entry: HistoryEntry }) {
@@ -175,7 +175,7 @@ export default function AgentActivityDock() {
   const setFeedOpen = useAgentStore((s) => s.setFeedOpen);
   const clearActivity = useAgentStore((s) => s.clearActivity);
   const pending = useAgentStore((s) => s.pendingHumanRequest);
-  // D-295 — the Edit/Motion half. `tab !== 'colorist'` because the D-051
+  // D-298 — the Edit/Motion half. `tab !== 'colorist'` because the D-051
   // bridge pushes Colorist grade edits onto this same stack, and those are
   // already listed (with their diff and their undo) from `useAgentStore`.
   const undoStack = useHistoryStore((s) => s.undoStack);
@@ -211,7 +211,7 @@ export default function AgentActivityDock() {
             <button
               onClick={clearActivity}
               className="text-text-secondary hover:text-text-primary p-0.5"
-              // D-295 — clears the Colorist half only. The Edit/Motion rows
+              // D-298 — clears the Colorist half only. The Edit/Motion rows
               // come off the shared UNDO stack, and clearing that to tidy a
               // feed would throw away real undo history — a far worse trade
               // than a feed that still lists them.

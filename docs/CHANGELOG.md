@@ -4,9 +4,9 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-10** — **D-296: Colorist's duplicate Crop panel and the "one common
+- **2026-09-10** — **D-299: Colorist's duplicate Crop panel and the "one common
   player" ask are the same pass — scoped, not forced.** The owner's literal
-  crop ask ("make the Edit one authoritative") was already delivered by D-291.
+  crop ask ("make the Edit one authoritative") was already delivered by D-294.
   What the investigation added: `CropPanel` is two halves (a real duplicate,
   and perspective+lens which nothing else in the app provides), `Panel.Crop` is
   a canvas MODE with 63 call sites reaching into grade-document fields the
@@ -14,9 +14,9 @@ One or two lines per session. Detail lives in the decision it references.
   simply share a component is that **Colorist's picture is not a DOM element**:
   it is a native wgpu surface behind the webview. Three-phase shape recorded
   for the dedicated pass; the user-visible half of the complaint (the previews
-  disagreeing) is already fixed by D-291.
+  disagreeing) is already fixed by D-294.
 
-- **2026-09-10** — **D-295: the agent activity feed is global, and finally
+- **2026-09-10** — **D-298: the agent activity feed is global, and finally
   reports Edit and Motion.** The dock moved out of the Colorist tab onto a new
   shell-level `overlay` slot. The instrumentation gap the roadmap predicted was
   real: nothing outside Colorist fed the feed. Closed by attributing what was
@@ -24,7 +24,7 @@ One or two lines per session. Detail lives in the decision it references.
   `source: 'user' | 'agent'`, stamped by a `runAsAgent()` scope that each tab's
   MCP dispatcher wraps its handler in, one line per tab rather than one per op.
 
-- **2026-09-10** — **D-294: one Export, reachable from every tab.** Colorist's
+- **2026-09-10** — **D-297: one Export, reachable from every tab.** Colorist's
   own Export dialog is gone; `EditorExportDialog` moved off the Edit tab's
   per-tab slot onto a shell-level `headerAction`, so it sits in the chrome bar
   whatever tab is active. Colorist's export BACKEND was kept, not deleted — it
@@ -34,7 +34,7 @@ One or two lines per session. Detail lives in the decision it references.
   side. A speed-ramped clip is now refused there rather than silently
   exporting the wrong frames.
 
-- **2026-09-10** — **D-293: RapidRAW's photo-culling workflow removed from the
+- **2026-09-10** — **D-296: RapidRAW's photo-culling workflow removed from the
   Colorist tab.** The Metadata panel (a single-photo EXIF viewer whose every
   field reads `-` on video) and the five-star rating widget are gone outright,
   D-281's standard — with every entry point: the `Panel.Metadata` route and its
@@ -43,7 +43,7 @@ One or two lines per session. Detail lives in the decision it references.
   paths, the `Filmstrip` badge, and `set_rating_for_paths` in Rust. 13 locale
   files cleaned of the orphaned keys.
 
-- **2026-09-10** — **B-147 fixed (D-291): the Colorist grades the Edit
+- **2026-09-10** — **B-147 fixed (D-294): the Colorist grades the Edit
   timeline's clip, not the raw source file.** A new one-way bridge,
   `chroma::colorist_view`, resolves the active shot to its
   `apelles_timeline::Clip` and gives Colorist the clip's real trim (the
@@ -51,7 +51,7 @@ One or two lines per session. Detail lives in the decision it references.
   real geometry (crop/scale/rotation/position, applied through the Edit
   compositor itself). No grade, no opacity/fade, no other layers — the
   geometry counterpart of `grade_lut`'s colour bridge. Identity fast path
-  keeps an untransformed clip byte-identical. **D-292:** Colorist's
+  keeps an untransformed clip byte-identical. **D-295:** Colorist's
   frame-thumbnail strip retired for a real scrub bar (`ColoristTransport`),
   answering "a proper timeline or none" with "a transport, not a second
   timeline"; `chroma_frame_thumbnails`, `extract_thumb_strip` and

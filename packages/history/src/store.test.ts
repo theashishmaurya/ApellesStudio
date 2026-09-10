@@ -148,11 +148,11 @@ describe('clear', () => {
   });
 });
 
-// D-295 — who caused an entry. This is the whole of the Edit/Motion tabs'
+// D-298 — who caused an entry. This is the whole of the Edit/Motion tabs'
 // agent-activity instrumentation (one `runAsAgent` wrapper per MCP
 // dispatcher), so the stamping rule has a real correct answer and is pinned
 // here rather than eyeballed in the dock.
-describe('agent scope (D-295)', () => {
+describe('agent scope (D-298)', () => {
   it('stamps a push inside runAsAgent as agent, and everything else as user', async () => {
     useHistoryStore.getState().push({ tab: 'edit', label: 'by hand', undo: vi.fn(), redo: vi.fn() });
 

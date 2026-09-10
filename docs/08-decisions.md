@@ -28424,7 +28424,7 @@ screenshot reference are the original report and are preserved verbatim.
 
 ---
 
-## D-291 — the Colorist grades the Edit timeline's CLIP, not the raw source file (B-147)
+## D-294 — the Colorist grades the Edit timeline's CLIP, not the raw source file (B-147)
 
 **Context.** The Colorist tab's preview showed the owner's footage upside down
 while the Edit tab showed it the right way up: every clip in that project
@@ -28496,7 +28496,7 @@ failure mode B-034 and B-083 both were.
 
 **The identity fast path is not an optimisation, it is the contract.** An
 untransformed clip whose source already fills the composition gets its decoded
-buffer handed straight back — byte-identical to pre-D-291, no allocation, no
+buffer handed straight back — byte-identical to pre-D-294, no allocation, no
 resample. That is the overwhelmingly common case and it runs on every scrub and
 every playback frame; this is the same two-part guard `timeline_frame` takes
 (D-132/D-136), for the same reason.
@@ -28510,10 +28510,10 @@ indexed in source-frame space and will land on the wrong frames for a trimmed
 clip. Re-tracking is the fix; there is no migration, because the old indices
 carry no record of which clip they were authored against.
 
-**Left on raw source by this commit, and closed by D-294:** Colorist's own
+**Left on raw source by this commit, and closed by D-297:** Colorist's own
 `chroma_export_video` decodes the source file directly with its own ffmpeg
-pipeline and knew nothing of this bridge, so between D-291 and D-294 it
-exported a different picture than its own preview. D-294 investigated whether
+pipeline and knew nothing of this bridge, so between D-294 and D-297 it
+exported a different picture than its own preview. D-297 investigated whether
 to retire it (the Edit tab's exporter composites clips correctly already) and
 found a real reason not to — it is the only path that renders the SPATIAL half
 of a grade (masks/local layers, relight, the Colorist crop), which the Edit
@@ -28530,7 +28530,7 @@ the same 66 `main` has.
 
 ---
 
-## D-292 — Colorist's frame-thumbnail strip becomes a scrub bar: a transport, not a second timeline
+## D-295 — Colorist's frame-thumbnail strip becomes a scrub bar: a transport, not a second timeline
 
 **Context.** Owner, offering both options against
 `scratch/colorist-filmstrip-timeline-question.png`: *"have a proper timeline or
@@ -28541,7 +28541,7 @@ a timecode readout. (`docs/04-roadmap.md`'s own entry named
 `panel/Filmstrip.tsx` for this; that file is RapidRAW's photo-library thumbnail
 grid, a different component, and it is untouched.)
 
-D-291 forced the question rather than merely raising it: the strip was built
+D-294 forced the question rather than merely raising it: the strip was built
 from the whole **source file** (`chroma_frame_thumbnails` →
 `extract_thumb_strip`), while the transport under it now counts the **clip's**
 frames. Leaving it would have meant a picture strip whose thumbnails address
@@ -28584,7 +28584,7 @@ symbol anywhere in `app/src`, `app/src-tauri`, `crates/` or `mcp/`.
 
 ---
 
-## D-293 — the Metadata panel and the star-rating widget are removed outright, not hidden
+## D-296 — the Metadata panel and the star-rating widget are removed outright, not hidden
 
 **Context.** Two of the Colorist-consolidation batch's items, taken together
 because they are one thing: RapidRAW's **photo-culling** workflow, inherited
@@ -28658,13 +28658,13 @@ locale files.
 
 ---
 
-## D-294 — one Export, in the shell chrome bar, reachable from every tab; Colorist's own dialog retired
+## D-297 — one Export, in the shell chrome bar, reachable from every tab; Colorist's own dialog retired
 
 **Context.** The app had two export buttons. The owner pointed at Colorist's
 (`scratch/colorist-export-button-remove.png`) and asked for one global entry
-point. D-291 made the question urgent rather than cosmetic: Colorist's own
+point. D-294 made the question urgent rather than cosmetic: Colorist's own
 `ExportDialog` drove `chroma_export_video`, which decoded the **raw source
-file** — so from D-291 onward it rendered a different picture (and a different
+file** — so from D-294 onward it rendered a different picture (and a different
 length) than the Colorist preview sitting right above it.
 
 **The question the roadmap asked to answer first: does Colorist's export do
@@ -28699,7 +28699,7 @@ both: **one export SURFACE, two export JOBS.**
    imports `@apelles/editor` — the node comes from `Root.tsx`, exactly like
    `launcher` and `sourcesPanel`.
 3. **`chroma_export_video` is kept, and made clip-aware** (the B-147 residual
-   D-291 flagged): its `from_frame`/`to_frame` are clip-local now, resolved to
+   D-294 flagged): its `from_frame`/`to_frame` are clip-local now, resolved to
    source frames through the same `colorist_view` bridge the preview uses, and
    each decoded frame gets the clip's geometry before the grade. Preview and
    single-clip render agree again, by construction rather than by coincidence.
@@ -28719,7 +28719,7 @@ rather than pretending the item is fully closed.
 batch **still-image** exporter, driving `export_images` over file *paths* — a
 different feature on a different input, as D-049 already recorded. It is
 plausibly dead in a video-only Colorist and is a candidate for the same
-treatment as D-293's panels, but that is its own investigation (it reaches
+treatment as D-296's panels, but that is its own investigation (it reaches
 export presets, watermarking, filename templates and three Rust commands) and
 not something to fold into an Export-consolidation commit as a guess.
 
@@ -28734,7 +28734,7 @@ file is not fmt-clean on `main`; nothing this pass added is dirty);
 
 ---
 
-## D-295 — the agent activity feed goes shell-level, and Edit/Motion ops finally feed it
+## D-298 — the agent activity feed goes shell-level, and Edit/Motion ops finally feed it
 
 **Context.** `AgentActivityDock` (D-032) was mounted inside `App.tsx` — the
 Colorist tab — so a feed of what an agent is doing to the project was visible
@@ -28802,7 +28802,7 @@ the post-`await` case, re-entrancy + the throwing-handler unwind);
 `@apelles/shell` 7/7; `@apelles/motion` 632/632; `@apelles/editor` 1706/1706
 (the full parallel run fails 7 *files* to collect on this machine under load —
 run with `--maxWorkers=2` they pass, 1631 + 75 = 1706, and each passes alone);
-`tsc --noEmit` on `app` at 65 errors, `main`'s baseline minus the one D-293
+`tsc --noEmit` on `app` at 65 errors, `main`'s baseline minus the one D-296
 removed.
 
 **Note on verification method, worth recording.** This worktree had no
@@ -28816,7 +28816,7 @@ re-measured after that.
 
 ---
 
-## D-296 — Colorist's canvas: the duplicate Crop panel and the "one common player" ask are ONE pass, and this is its shape
+## D-299 — Colorist's canvas: the duplicate Crop panel and the "one common player" ask are ONE pass, and this is its shape
 
 Two Colorist-consolidation items (1's leftover half and 6) that the
 investigation found are the same piece of work, in the same two files. Both are
@@ -28838,7 +28838,7 @@ have broken.
 
 Owner: *"we have two crop and reset, one in edit and one here, please make sure
 Edit one is applied to all the clips."* **The literal ask is already
-delivered — that is D-291**, which is what the roadmap entry itself predicted
+delivered — that is D-294**, which is what the roadmap entry itself predicted
 ("'make the Edit one authoritative' is not a UI toggle, it is the B-147 fix").
 The remaining question was whether `CropPanel` should also go.
 
@@ -28846,7 +28846,7 @@ The remaining question was whether `CropPanel` should also go.
 
 - **Aspect Ratio / Crop / Rotation (straighten) / Orientation (90° steps +
   flips)** — a genuine duplicate of the Edit tab's per-clip transform
-  (D-193/D-208, GUI + `editor_set_clip_transform`), and after D-291 *worse* than
+  (D-193/D-208, GUI + `editor_set_clip_transform`), and after D-294 *worse* than
   a duplicate: it now applies **on top of** the clip's already-composited
   picture, so the two compound. It also cannot reach any output the Edit tab
   produces — `grade_lut::bake_lut3d` strips crop/rotation/flips before baking,
@@ -28934,7 +28934,7 @@ and independently verifiable, which is exactly what this pass could not offer):
 lands in the wrong place — the exact defect class B-043 and B-053 already cost
 this project, and CLAUDE.md's priority order puts stability above shipping
 speed. The owner's underlying complaint (the two previews *disagree about the
-picture*) was the real one, and **that is fixed** — by D-291, in Rust, with no
+picture*) was the real one, and **that is fixed** — by D-294, in Rust, with no
 component unification needed. What remains is duplicated *code*, not a
 divergence a user can see.
 

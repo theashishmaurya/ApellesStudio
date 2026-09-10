@@ -291,10 +291,10 @@ export default function BottomBar({
   return (
     <div className="shrink-0 bg-bg-secondary rounded-lg flex flex-col">
       <ShotStrip />
-      {/* D-292 — the Colorist transport is a control strip, not a browsable
+      {/* D-295 — the Colorist transport is a control strip, not a browsable
           filmstrip, so it hugs its own content instead of taking the
           resizable filmstrip height (which existed to show thumbnails, and
-          after D-292 there are none). Still behind the same collapse toggle,
+          after D-295 there are none). Still behind the same collapse toggle,
           so the bottom-panel button keeps meaning something on a video. */}
       {showFilmstrip && isChromaVideo && isFilmstripVisible && (
         <div className="w-full p-2 shrink-0">

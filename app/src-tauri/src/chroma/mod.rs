@@ -20,7 +20,7 @@
 //!   the engine is `apelles-media`
 //! - `decode_pipe` — persistent sequential-decode pipe for smooth scrub/playback
 //!   (D-030); a re-export shim since D-146 — the real code is `apelles-media`
-//! - `colorist_view` — **the Colorist ⇄ Edit *picture* bridge (D-291, B-147)**:
+//! - `colorist_view` — **the Colorist ⇄ Edit *picture* bridge (D-294, B-147)**:
 //!   resolves the decode session's active clip path to the `apelles_timeline::
 //!   Clip` the Edit tab holds for it, and turns that clip's trim + geometry
 //!   into the picture the Colorist grades — so a rotated / trimmed clip is

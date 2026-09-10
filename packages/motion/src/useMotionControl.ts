@@ -224,7 +224,7 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       }
 
       try {
-        // D-295 — every `@apelles/history` push inside this window is stamped
+        // D-298 — every `@apelles/history` push inside this window is stamped
         // `source: 'agent'`, which is the whole of this tab's agent-activity
         // instrumentation: one wrapper at the dispatcher, not a line in each
         // of the ~90 handlers. The shell-level feed reads those entries, so

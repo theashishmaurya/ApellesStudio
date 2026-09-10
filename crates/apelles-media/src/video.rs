@@ -392,7 +392,7 @@ pub fn decode_frame(path: &Path, at: FramePos, info: &VideoInfo) -> Result<Dynam
 /// timeline row this tiles into is 52px tall (`TimelinePane.tsx`'s
 /// `ROW_HEIGHT`), so this is exactly 2x it — enough for a Retina panel and
 /// nothing beyond it. D-119 inherited the retired
-/// Colorist frame-strip's `150` (D-292), which is Colorist's *poster-frame*
+/// Colorist frame-strip's `150` (D-295), which is Colorist's *poster-frame*
 /// size (a much larger on-screen element), not this one's: owner, live — "for thumbnail you dont have to take all the
 /// frame in high quality right so do the optimization."
 pub(crate) const THUMB_STRIP_HEIGHT: u32 = 104;

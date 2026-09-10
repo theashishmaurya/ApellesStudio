@@ -8,7 +8,7 @@ first-class tool).
 
 Two pieces, one store, minimal upstream footprint.
 
-> **Updated 2026-09-10 by D-295 — this is a THREE-tab feed now, and it is
+> **Updated 2026-09-10 by D-298 — this is a THREE-tab feed now, and it is
 > shell-level.** Everything below still describes the Colorist half exactly, and
 > that half is unchanged. What changed: the dock is no longer mounted in
 > `App.tsx` (it is injected into `@apelles/shell`'s `overlay` slot by
@@ -199,7 +199,7 @@ postHumanRequest(reason, roi)  clearHumanRequest()  setFeedOpen(b)
 ## GUI
 
 - `app/src/components/chroma/AgentActivityDock.tsx` (new) — a fixed
-  bottom-left dock. Mounted in `App.tsx` until **D-295**; it is now injected
+  bottom-left dock. Mounted in `App.tsx` until **D-298**; it is now injected
   into `@apelles/shell`'s `overlay` slot by `Root.tsx`, so it is on screen
   whatever tab is active.
   Contains the `request_human` banner (top) + the collapsible activity feed.
@@ -211,7 +211,7 @@ postHumanRequest(reason, roi)  clearHumanRequest()  setFeedOpen(b)
 
 ## Upstream-file edits (divergence — doc 09)
 
-- `App.tsx` — was +1 import, +1 `<AgentActivityDock />` in the tree; **D-295
+- `App.tsx` — was +1 import, +1 `<AgentActivityDock />` in the tree; **D-298
   removed both** (the dock is injected from `Root.tsx` into the shell now, so
   this upstream file is back to zero footprint for this feature).
 - `components/panel/editor/ImageCanvas.tsx` — +1 import, +~6 lines to render
@@ -230,7 +230,7 @@ and creative calls, not routine steps; the agent should keep working after
 
 ---
 
-## C. The other two tabs (D-295)
+## C. The other two tabs (D-298)
 
 The Edit and Motion tabs record agent work through `@apelles/history`, not
 through `useAgentStore`, and the dock merges the two into one list.

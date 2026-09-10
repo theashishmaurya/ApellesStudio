@@ -1,4 +1,4 @@
-//! **colorist_view.rs — the Colorist ⇄ Edit *picture* bridge** (D-291, B-147).
+//! **colorist_view.rs — the Colorist ⇄ Edit *picture* bridge** (D-294, B-147).
 //!
 //! What it is: the one place that answers "which Edit-timeline
 //! [`apelles_timeline::Clip`] is the Colorist tab actually grading right now,
@@ -11,7 +11,7 @@
 //!   the open project's active timeline, plus that timeline's fps and the
 //!   project's composition size.
 //! - [`ClipView::source_frame`] maps a **clip-local** frame (what the Colorist
-//!   transport counts in after D-291) to the **source** frame to decode,
+//!   transport counts in after D-294) to the **source** frame to decode,
 //!   through the clip's own trim and speed ramp
 //!   (`Clip::clamped_source_frame_at` — the same function the Edit preview and
 //!   the exporter use, never a second copy of that arithmetic).
@@ -36,7 +36,7 @@
 //!   uses; the Colorist's wgpu pipeline runs *after* this, on the picture this
 //!   produces.
 //!
-//! ## Why resolution is by PATH, not by clip id (D-291)
+//! ## Why resolution is by PATH, not by clip id (D-294)
 //!
 //! The decode session (`chroma::state::Session`) is keyed by source path and
 //! carries no clip identity — D-070 chose that deliberately and recorded the

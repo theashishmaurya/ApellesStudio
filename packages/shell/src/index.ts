@@ -14,11 +14,11 @@
  * tabs. The shell still doesn't import `ProjectLauncher` (app → shell only); it
  * arrives via the `launcher` prop.
  *
- * D-251, shell-level since D-294: `Shell` takes a `headerAction` node,
+ * D-251, shell-level since D-297: `Shell` takes a `headerAction` node,
  * rendered in the chrome bar's own right-hand cluster (beside the window
  * controls) whenever a project is open — on every tab. It is the Export
  * trigger/dialog (`@apelles/editor`'s `EditorExportDialog`), the app's ONE
- * export surface since D-294 retired Colorist's own, and it arrives via the
+ * export surface since D-297 retired Colorist's own, and it arrives via the
  * same injection pattern as `launcher`. D-251 had it as a per-tab
  * `ShellTab.headerAction`; see `Shell.tsx`'s own module doc ("Chrome-bar
  * action") for why it stopped being per-tab and why neither shape reopens the

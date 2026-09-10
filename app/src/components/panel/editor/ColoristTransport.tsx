@@ -1,4 +1,4 @@
-// Apelles — the Colorist tab's transport (D-292; was `ChromaTimeline.tsx`,
+// Apelles — the Colorist tab's transport (D-295; was `ChromaTimeline.tsx`,
 // D-031's frame-thumbnail strip).
 //
 // What it is: play / pause / step, a **scrub bar** over the clip currently
@@ -6,18 +6,18 @@
 // lives in the BottomBar, in place of RapidRAW's photo `Filmstrip` whenever
 // the loaded item is a video.
 //
-// What it does NOT do — and this is the point of D-292: it is not a timeline.
+// What it does NOT do — and this is the point of D-295: it is not a timeline.
 // It shows no thumbnails, no clips, no tracks, and no other shot. The Edit tab
 // owns the one real timeline in this app; a second, frame-thumbnail one in
 // Colorist duplicated it (the owner: "no point of having a timeline" here) and
-// after D-291 it was also actively misleading — the strip was built from the
+// after D-294 it was also actively misleading — the strip was built from the
 // whole SOURCE file while the transport it sat under counts the CLIP's own
 // frames. What is genuinely lost with the thumbnails is visual "where am I in
 // this shot" scanning; the scrub bar keeps the capability that mattered
 // (scrubbing within the shot you are grading) and the Edit tab's own filmstrip
 // keeps the one that was duplicated.
 //
-// **Frames here are CLIP-LOCAL (D-291/B-147).** `videoInfo.frameCount` is the
+// **Frames here are CLIP-LOCAL (D-294/B-147).** `videoInfo.frameCount` is the
 // clip's length on the Edit timeline, frame 0 is the clip's in-point, and the
 // backend maps both through the clip's own trim. Nothing in this file knows
 // that — it just counts the frames the backend reports, which is exactly why

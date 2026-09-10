@@ -2692,28 +2692,28 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   not a tracked-upstream drop — a redundant inherited panel can be deleted
   outright). Each item below came with its own reference screenshot,
   gitignored but kept in `scratch/` for this session and the next.
-  **Foundational, done first: B-147 (D-291)** — Colorist now reads the Edit
+  **Foundational, done first: B-147 (D-294)** — Colorist now reads the Edit
   timeline's clip (its real trim and transform) instead of the raw source
   file, via the new `chroma::colorist_view` bridge. Items 1, 6 and 7 all
   turn on that read path existing at all.
   1. **[~] Duplicate Crop & Transform** — **the owner's literal ask is done
-     (D-291); the panel's removal is scoped, not built (D-296).** Screenshot:
+     (D-294); the panel's removal is scoped, not built (D-299).** Screenshot:
      `scratch/colorist-duplicate-crop-transform-panel.png`. Owner: *"we have
      two crop and reset, one in edit and one here, please make sure Edit one
      is applied to all the clips."* Exactly as this entry predicted, "make the
      Edit one authoritative" was the B-147 fix, and that landed. What the
      investigation then found: `CropPanel` is **not one thing** — its
      Crop/Aspect/Straighten/Orientation half is a genuine duplicate (and after
-     D-291 actively compounds on the clip's own geometry), but its **Geometry →
+     D-294 actively compounds on the clip's own geometry), but its **Geometry →
      Transform (perspective/keystone) and Lens correction** half is duplicated
      *nowhere* in the app and has no MCP tool either. And `Panel.Crop` is a
      canvas MODE, not a route: 63 references across `Editor.tsx`/
      `ImageCanvas.tsx` plus grade-document fields the renderer, the
      mask-coordinate un-transform, the thumbnail path and the exporter all
      read. Retiring it is phase 1 of the canvas pass below (item 6) — doing it
-     standalone would touch the same 63 sites twice. Full reasoning: **D-296**.
+     standalone would touch the same 63 sites twice. Full reasoning: **D-299**.
   2. **[x] Agent activity should be global, not Colorist-only** — **done
-     2026-09-10, D-295.** Screenshot:
+     2026-09-10, D-298.** Screenshot:
      `scratch/colorist-agent-activity-should-be-global.png`. Both halves:
      `AgentActivityDock` moved to `@apelles/shell`'s new `overlay` slot
      (injected by `Root.tsx`, same pattern as `launcher`/`headerAction`), and
@@ -2724,10 +2724,10 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      instrumented the day it is written. The dock merges the Colorist grade
      feed (rich rows: diff + jump-to-here Undo) with agent-sourced shared-history
      entries from the other tabs (label + tab + time, no per-row undo — the
-     shared stack is LIFO, and Cmd/Ctrl+Z is already global). See D-295 for the
+     shared stack is LIFO, and Cmd/Ctrl+Z is already global). See D-298 for the
      depth counter's honest limit.
   3. **[x] One global Export, not a per-tab one** — **done 2026-09-10,
-     D-294.** Screenshot: `scratch/colorist-export-button-remove.png`.
+     D-297.** Screenshot: `scratch/colorist-export-button-remove.png`.
      Colorist's `ExportDialog.tsx` deleted; `EditorExportDialog` moved from
      `ShellTab.headerAction` to a shell-level `ShellProps.headerAction`, so
      Export sits in the chrome bar on **every** tab. The check this entry asked
@@ -2736,29 +2736,29 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      local layers / relight / the Colorist crop reach the file, where the Edit
      exporter carries only the global grade as a baked LUT (D-256 strips the
      spatial half with a warning). So the backend was kept and made clip-aware
-     (D-291's residual, closing B-147 on the export side) rather than deleted,
+     (D-294's residual, closing B-147 on the export side) rather than deleted,
      and only the duplicate *button* went. `ExportPanel` (RapidRAW's batch
-     still-image exporter) deliberately untouched — see D-294.
+     still-image exporter) deliberately untouched — see D-297.
      - [ ] **Follow-up, honestly open:** "render THIS clip with its full grade"
        is now MCP-only (`export`), which is the wrong side of the "human AND
        AI" rule. Fold it into `EditorExportDialog` as a "current clip, full
        grade" mode — the one export surface is where it belongs.
-  4. **[x] Remove the Metadata panel** — **done 2026-09-10, D-293.**
+  4. **[x] Remove the Metadata panel** — **done 2026-09-10, D-296.**
      Screenshot: `scratch/colorist-metadata-panel-remove.png`. Removed with
      `Panel.Metadata` (enum, switcher, mobile order, `ALL_PANELS`, region map,
      both saved-workspace defaults), the `toggle_metadata` keyboard action and
      its `@apelles/keymap` registry row, and the `editor.metadata.*` subtree in
      all 13 locales.
-  5. **[x] Remove the rating widget** — **done 2026-09-10, D-293**, together
+  5. **[x] Remove the rating widget** — **done 2026-09-10, D-296**, together
      with item 4 (one inherited photo-culling workflow, not two things).
      Screenshot: `scratch/colorist-rating-remove.png`. Removed whole: the
      widget, the quick-filter stars, the six `rate_0..5` shortcuts, both
      context-menu Rating submenus, `imageRatings` and the rating filter / sort
      / search paths, the `Filmstrip` badge, the `useTauriListeners` plumbing,
      and `file_management::set_rating_for_paths`. `ImageMetadata.rating` stays
-     in the Rust sidecar struct deliberately — see D-293 for why.
+     in the Rust sidecar struct deliberately — see D-296 for why.
   6. **[~] The Colorist/Edit preview should be ONE shared player component** —
-     **investigated and designed, deliberately not forced (D-296).**
+     **investigated and designed, deliberately not forced (D-299).**
      Screenshot: `scratch/colorist-edit-players-should-be-common.png`. Owner:
      *"player is different for both, it should be common component."* This
      entry already said a rushed merge was the wrong outcome; the
@@ -2773,8 +2773,8 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      quick-erase / AI patch / crop / straighten / WB-pick / relight) are not
      the `container`-prop shape the Edit tab's are.
      **The user-visible half of the complaint — the two previews disagreeing
-     about the picture — is fixed, by D-291, in Rust, with no component
-     unification needed.** What remains is duplicated code. D-296 records the
+     about the picture — is fixed, by D-294, in Rust, with no component
+     unification needed.** What remains is duplicated code. D-299 records the
      three-phase shape for the dedicated pass:
      - [ ] **Phase 1** — retire the duplicate crop MODE (closes item 1's
        remaining half): drop `Panel.Crop` + the `ReactCrop`/straighten/guides
@@ -2791,7 +2791,7 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
        `container`-prop shape one at a time, with the pointer arbitration
        lifted into an explicit, testable resolver.
   7. **[x] The Colorist filmstrip: build a proper one, or remove it** —
-     **done 2026-09-10, D-292.** Screenshot:
+     **done 2026-09-10, D-295.** Screenshot:
      `scratch/colorist-filmstrip-timeline-question.png`. Owner, offering both
      options: *"have a proper timeline or remove this timeline from the
      Colorist no point of having a timeline."* Two corrections the
@@ -2804,7 +2804,7 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      scrub bar (`ColoristTransport.tsx`), against Resolve's own Color-page
      viewer. `chroma_frame_thumbnails`, `extract_thumb_strip` and
      `state::THUMB_CACHE` deleted whole. What is lost — visual "where am I in
-     this shot" scanning — is named in D-292 rather than glossed.
+     this shot" scanning — is named in D-295 rather than glossed.
   - **Not requested — a compliment, not a task:** the player's eye
     (visibility toggle) button was called out as liked
     (`scratch/colorist-eye-button-liked.png`) — no action, keep it as-is.

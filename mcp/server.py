@@ -318,7 +318,7 @@ def seek(frame: int) -> list:
     """Move the video playhead to `frame` and re-render it with the current
     grade. No-op if the loaded item is a still.
 
-    **`frame` is CLIP-LOCAL (D-291).** 0 is the active clip's own in-point on
+    **`frame` is CLIP-LOCAL (D-294).** 0 is the active clip's own in-point on
     the Edit timeline, not frame 0 of the source file, and the last valid frame
     is `get_state().shot.frameCount - 1` — the CLIP's length, not the file's.
     The picture you get back also carries that clip's real transform (crop,
@@ -4441,13 +4441,13 @@ def export(
     one for a cut, and this one when you want one clip's grade rendered at full
     fidelity.
 
-    **What this does that `editor_export` cannot (D-294):** it renders through
+    **What this does that `editor_export` cannot (D-297):** it renders through
     the real wgpu grading pipeline, so the SPATIAL half of a grade — mask layers
     / local adjustments, relight, the Colorist crop — reaches the file.
     `editor_export` carries only the global grade, baked to a 3D LUT (D-256),
     and warns when it drops the rest.
 
-    **`from_frame`/`to_frame` are CLIP-LOCAL (D-291)**, like `seek`: 0 is the
+    **`from_frame`/`to_frame` are CLIP-LOCAL (D-294)**, like `seek`: 0 is the
     clip's in-point on the Edit timeline and the range is bounded by
     `get_state().shot.frameCount`. The rendered picture carries the clip's own
     transform, so it matches what the Colorist preview shows. A clip with a

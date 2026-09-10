@@ -545,7 +545,7 @@ fn grade_frame(
 /// second copy of `apply_all_transformations`' arithmetic that could drift from
 /// it.
 ///
-/// **D-294/D-291 — `clip` is the Edit-timeline clip this source is a view of**,
+/// **D-297/D-294 — `clip` is the Edit-timeline clip this source is a view of**,
 /// when there is one. `from_frame`/`to_frame` are then already SOURCE frames
 /// resolved through that clip's trim by the caller, and each decoded frame gets
 /// the clip's geometry (crop / scale / rotation / position) applied before the
@@ -653,7 +653,7 @@ pub fn export_video(
 
             let src =
                 RgbImage::from_raw(w, h, buf.clone()).ok_or("rgb frame buffer size mismatch")?;
-            // D-294 — the clip's own geometry first, then the grade, the same
+            // D-297 — the clip's own geometry first, then the grade, the same
             // order (and through the same code) the preview uses. `None` (an
             // Untitled loose clip) and an untransformed clip both hand the
             // buffer straight back.
@@ -839,7 +839,7 @@ pub async fn chroma_export_video(
         None => default_out_path(&kind)?,
     };
 
-    // D-294/D-291 — the caller's frame range is CLIP-LOCAL when the active
+    // D-297/D-294 — the caller's frame range is CLIP-LOCAL when the active
     // shot is a clip on the Edit timeline, matching `chroma_seek` and
     // `chroma_video_info`. Resolved to source frames here, once, so the
     // decoder below still walks a plain contiguous source range.
@@ -850,7 +850,7 @@ pub async fn chroma_export_video(
         // A speed ramp makes the clip's source frames non-contiguous, which
         // this single-clip exporter's one linear decoder pass cannot express.
         // Refusing is the honest answer: the Edit tab's exporter honours ramps
-        // and is the one export surface anyway (D-294).
+        // and is the one export surface anyway (D-297).
         return Err(
             "this clip has a speed ramp — export it from the Edit tab, whose exporter honours \
              ramps; the single-clip render does one linear decode pass"
