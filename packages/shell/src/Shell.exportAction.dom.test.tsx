@@ -120,13 +120,16 @@ afterEach(() => {
 
 // A stable array reference (module-level, not rebuilt per render) — matches
 // how `Root.tsx` builds it once per render of the composition root, and
-// avoids the header-action subtree remounting on every unrelated re-render.
+// avoids the tab subtrees remounting on every unrelated re-render.
+//
+// D-294 — `headerAction` moved OFF `ShellTab` and onto `ShellProps`, so no tab
+// entry carries one any more. That is the whole point of the change and is
+// what this file's third case now pins.
 const tabs: ShellTab[] = [
   {
     id: 'edit',
     label: 'Edit',
     element: React.createElement('div', { 'data-testid': 'edit-body' }, 'Edit tab body'),
-    headerAction: React.createElement(EditorExportDialog),
   },
   { id: 'motion', label: 'Motion', element: React.createElement('div', null, 'Motion tab body') },
   { id: 'colorist', label: 'Colorist', element: React.createElement('div', null, 'Colorist tab body') },
@@ -141,6 +144,7 @@ function mountShell() {
       React.createElement(Shell, {
         projectOpen: true,
         launcher: React.createElement('div', null, 'launcher'),
+        headerAction: React.createElement(EditorExportDialog),
         tabs,
       }),
     );
@@ -158,8 +162,8 @@ function exportTrigger(container: HTMLElement): HTMLButtonElement | null {
   return container.querySelector('button[aria-label="Export"]');
 }
 
-describe('Shell chrome-bar headerAction slot (D-251)', () => {
-  it('renders the real Export trigger in the chrome bar while Edit is active, and it opens the real dialog', () => {
+describe('Shell chrome-bar headerAction slot (D-251, shell-level since D-294)', () => {
+  it('renders the real Export trigger in the chrome bar, and it opens the real dialog', () => {
     const { container, unmount } = mountShell();
     try {
       const trigger = exportTrigger(container);
@@ -181,7 +185,12 @@ describe('Shell chrome-bar headerAction slot (D-251)', () => {
     }
   });
 
-  it('hides the Export trigger when a different tab is active, and restores it when switching back', () => {
+  // D-294 — this case is the exact INVERSE of what it pinned under D-251,
+  // deliberately. Export is the app's one export surface now (Colorist's own
+  // `ExportDialog` was retired), and the owner asked for it to be reachable
+  // from Colorist too — so "the trigger disappears on Motion/Colorist" is the
+  // behaviour that is now wrong, and this is what proves it is gone.
+  it('keeps the Export trigger in the chrome bar on every tab, not only Edit', () => {
     const { container, unmount } = mountShell();
     try {
       expect(exportTrigger(container)).not.toBeNull();
@@ -189,13 +198,14 @@ describe('Shell chrome-bar headerAction slot (D-251)', () => {
       act(() => {
         useShellStore.getState().setActiveTab('motion');
       });
-      expect(exportTrigger(container)).toBeNull();
+      expect(exportTrigger(container)).not.toBeNull();
       expect(container.textContent).toContain('Motion tab body');
 
       act(() => {
         useShellStore.getState().setActiveTab('colorist');
       });
-      expect(exportTrigger(container)).toBeNull();
+      expect(exportTrigger(container)).not.toBeNull();
+      expect(container.textContent).toContain('Colorist tab body');
 
       act(() => {
         useShellStore.getState().setActiveTab('edit');
@@ -206,17 +216,29 @@ describe('Shell chrome-bar headerAction slot (D-251)', () => {
     }
   });
 
-  it('never shows the trigger for Motion or Colorist, which register no headerAction of their own', () => {
-    const { container, unmount } = mountShell();
+  // The one thing that still gates it: the launcher. There is nothing to
+  // export before a project is open, and the chrome bar is just traffic
+  // lights + wordmark + window controls there (see `Shell.tsx`'s project
+  // gating note).
+  it('does not render the trigger while the launcher is up', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = ReactDOMClient.createRoot(container);
+    act(() => {
+      root.render(
+        React.createElement(Shell, {
+          projectOpen: false,
+          launcher: React.createElement('div', null, 'launcher'),
+          headerAction: React.createElement(EditorExportDialog),
+          tabs,
+        }),
+      );
+    });
     try {
-      for (const id of ['motion', 'colorist'] as const) {
-        act(() => {
-          useShellStore.getState().setActiveTab(id);
-        });
-        expect(exportTrigger(container)).toBeNull();
-      }
+      expect(exportTrigger(container)).toBeNull();
     } finally {
-      unmount();
+      act(() => root.unmount());
+      container.remove();
     }
   });
 });

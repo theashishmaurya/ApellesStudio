@@ -83,7 +83,8 @@
  * LEFTMOST column of the content area — left of the docked column above — and
  * the panel renders INSIDE that column in place of `sourcesPanel`, both only
  * while that tab is active. This is the same injection slot, with the same
- * reasoning, as `headerAction` below: the Edit tab's library rail
+ * reasoning, as `headerAction` below (D-251 introduced both): the Edit tab's
+ * library rail
  * (`@apelles/editor`'s `EditLibraryRail`) is tab-local content that has to sit
  * at a specific position relative to a panel the SHELL owns, which reordering
  * anything inside `EditorTab.tsx` could never achieve — it was rendering to
@@ -95,33 +96,33 @@
  * debug recipe already uses) and the shared `sourcesPanel` stays MOUNTED but
  * hidden while a tab's own library shows, so its search/bin state survives.
  *
- * Per-tab chrome-bar action (D-251): each `ShellTab` may carry a
- * `headerAction` node, rendered in the top bar's own right-hand cluster
- * (left of the window controls) ONLY while that tab is the active one. This
- * is a deliberate, owner-directed narrowing of D-118's "`Shell` stays
- * tab-agnostic" rule, not a silent reversal of it — the owner asked, live,
- * for Export to sit at the very top, beside the tab switcher, after seeing
- * D-249 land it in the Edit tab's own top strip instead. D-118 kept the
- * Inspector toggle tab-local specifically because making it shell-level
- * would need `Shell` to know which tab is active just to decide whether to
- * render it; `Shell` already has to know that regardless (it is exactly how
- * the tab **content** below is switched, `tabs.map` + `hidden` below), so
- * this is `Shell` finally acting on information it already held, for the
- * one case the owner explicitly asked to see there. The injected node itself
- * is still owned entirely by whichever package built it (`@apelles/editor`'s
+ * Chrome-bar action (D-251, made shell-level by D-294): the `headerAction`
+ * node renders in the top bar's own right-hand cluster, left of the window
+ * controls, whenever a project is open — on every tab.
+ *
+ * D-251 introduced this as a PER-TAB slot (`ShellTab.headerAction`), because
+ * at the time only the Edit tab had an action to put there: the owner asked,
+ * live, for Export to sit at the very top beside the tab switcher, after
+ * seeing D-249 land it in the Edit tab's own top strip. The note it carried —
+ * "Colorist and Motion have no export action of their own" — was already only
+ * half true (Colorist had its own D-049 `ExportDialog` in its toolbar), and
+ * **D-294 resolved that the other way**: there is now ONE export in the app,
+ * the Edit tab's, and the owner asked for it to be reachable from Colorist
+ * too. A slot that will only ever hold the same node for all three tabs is a
+ * shell-level prop, not a per-tab one, so `ShellTab.headerAction` is gone
+ * rather than being populated three times identically — which would also have
+ * meant `Shell` re-rendering a different-but-identical node on every tab
+ * switch for no reason.
+ *
+ * What is unchanged is the boundary D-251 was careful about: the node is owned
+ * entirely by whichever package built it (`@apelles/editor`'s
  * `EditorExportDialog` today) and supplied by the composition root
- * (`Root.tsx`) exactly like `launcher`/`sourcesPanel` above — `Shell` never
- * imports `@apelles/editor` itself, so the "shell depends only on
- * react + zustand + Tauri" boundary this package's own `package.json`
- * describes is unchanged; only the *behavioral* tab-agnostic rule narrows,
- * and only for this one slot. Colorist and Motion have no export action of
- * their own today (checked directly: no "Export" UI anywhere in `app/src`
- * outside Colorist's own per-image `ExportDialog`/`ExportPanel`, which are
- * unrelated, differently-scoped actions triggered from Colorist's own
- * toolbar/BottomBar — and none at all in `packages/motion`), so only the
- * `edit` tab entry populates `headerAction` for now; the field stays generic
- * (keyed by whichever tab is active) so Motion/Colorist can grow their own
- * later without another `Shell` change.
+ * (`Root.tsx`) exactly like `launcher`/`sourcesPanel` above. `Shell` never
+ * imports `@apelles/editor`, so the "shell depends only on react + zustand +
+ * Tauri" boundary this package's own `package.json` describes still holds —
+ * and D-118's "`Shell` stays tab-agnostic" rule is now LESS narrowed than
+ * D-251 left it, since the shell no longer has to know which tab is active to
+ * decide whether to render this at all.
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
@@ -137,12 +138,6 @@ export interface ShellTab {
   label: string;
   icon?: ReactNode;
   element: ReactNode;
-  /** D-251 — rendered in the chrome bar's own right-hand cluster, beside the
-   *  window controls, ONLY while this tab is active. See this file's own
-   *  module doc ("Per-tab chrome-bar action") for why this exists and why it
-   *  doesn't reopen `@apelles/shell`'s "never imports the tab packages" rule.
-   *  Omit for a tab with no such action (Motion/Colorist today). */
-  headerAction?: ReactNode;
   /** D-263 — this tab's own icon rail, rendered as the LEFTMOST column of the
    *  content area (left of the docked library column), ONLY while this tab is
    *  active. Same injection slot and same reasoning as `headerAction` above;
@@ -175,6 +170,13 @@ export interface ShellProps {
    *  only, same reasoning as `launcher`). Docked to the right of the tab
    *  content, toggled via a chrome-bar button; omit to run without one. */
   sourcesPanel?: ReactNode;
+  /** D-294 — the chrome bar's right-hand action, rendered while a project is
+   *  open **whatever tab is active**. D-251 made this per-tab (only the Edit
+   *  tab carried one); D-294 made Export genuinely global, and a slot that can
+   *  only ever hold one node for all three tabs is a shell-level prop, not a
+   *  per-tab one. Injected by the composition root exactly like `launcher` and
+   *  `sourcesPanel` — `Shell` still never imports `@apelles/editor`. */
+  headerAction?: ReactNode;
   /** D-273 — i18next's `t`, injected for the Keyboard Shortcuts window so the
    *  fork's 13 translated locales keep rendering translated Colorist rows.
    *  Same app → shell direction as `launcher`: neither `@apelles/shell` nor
@@ -190,7 +192,15 @@ const SOURCES_PANEL_DEFAULT_WIDTH = 288;
 const SOURCES_PANEL_MIN_WIDTH = 220;
 const SOURCES_PANEL_MAX_WIDTH = 480;
 
-export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPanel, translate }: ShellProps) {
+export function Shell({
+  tabs,
+  projectOpen,
+  launcher,
+  onCloseProject,
+  sourcesPanel,
+  headerAction,
+  translate,
+}: ShellProps) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const activeTab = useShellStore((s) => s.activeTab);
   const setActiveTab = useShellStore((s) => s.setActiveTab);
@@ -202,11 +212,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
   // If persisted/default tab isn't in the registry, fall back to the first tab.
   const active = tabs.some((t) => t.id === activeTab) ? activeTab : tabs[0]?.id;
   const activeTabEntry = projectOpen ? tabs.find((t) => t.id === active) : undefined;
-  // D-251 — the active tab's own chrome-bar action, if it registered one.
-  // `undefined` renders nothing (Motion/Colorist today), and switching tabs
-  // switches which node (if any) shows here, same as the tab content below.
-  const activeHeaderAction = activeTabEntry?.headerAction;
-  // D-263 — the same, for the active tab's left icon rail and for the content
+  // D-263 — the active tab's left icon rail, and the content
   // it puts in the docked library column in place of the shared media pool.
   const activeLibraryRail = activeTabEntry?.libraryRail;
   const activeLibraryPanel = activeTabEntry?.libraryPanel;
@@ -313,8 +319,9 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
           </div>
         )}
 
-        {/* right: the active tab's own header action (D-251, e.g. Edit's
-            Export), then win/linux controls / mac spacer. The Sources toggle
+        {/* right: the shell-level header action (D-251/D-294 — Export, the
+            app's one export surface, reachable from every tab), then
+            win/linux controls / mac spacer. The Sources toggle
             used to live here too, but D-116 moved the panel itself to the
             left without moving its opener — leaving it stranded on the
             opposite side from the panel it controls (owner: "the opener
@@ -323,7 +330,7 @@ export function Shell({ tabs, projectOpen, launcher, onCloseProject, sourcesPane
             occupies, matching the spatial pattern D-118 established for the
             Inspector's own toggle (opposite corner, same idea). */}
         <div className="ml-auto flex items-center h-full gap-1">
-          {activeHeaderAction}
+          {projectOpen && headerAction}
           {/* D-273 — the Keyboard Shortcuts window's opener. Genuinely
               shell-level (all three tabs share one registry), which is why it
               lives here and not in a tab, on the same reasoning D-120 used to

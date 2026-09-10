@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-294: one Export, reachable from every tab.** Colorist's
+  own Export dialog is gone; `EditorExportDialog` moved off the Edit tab's
+  per-tab slot onto a shell-level `headerAction`, so it sits in the chrome bar
+  whatever tab is active. Colorist's export BACKEND was kept, not deleted — it
+  is the only path that renders masks / local layers / relight / the Colorist
+  crop into a file (the Edit exporter carries the global grade only, as a
+  baked LUT) — and was made clip-aware, closing B-147's residual on the export
+  side. A speed-ramped clip is now refused there rather than silently
+  exporting the wrong frames.
+
 - **2026-09-10** — **D-293: RapidRAW's photo-culling workflow removed from the
   Colorist tab.** The Metadata panel (a single-photo EXIF viewer whose every
   field reads `-` on video) and the five-star rating widget are gone outright,

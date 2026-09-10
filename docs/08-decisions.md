@@ -28650,3 +28650,79 @@ and introduces none; `npm test --workspace @apelles/keymap` 43/43;
 `cargo check -p apelles --lib` and `cargo clippy` clean; no reference to any
 removed symbol remains in `app/src`, `app/src-tauri`, `packages/` or the
 locale files.
+
+---
+
+## D-294 — one Export, in the shell chrome bar, reachable from every tab; Colorist's own dialog retired
+
+**Context.** The app had two export buttons. The owner pointed at Colorist's
+(`scratch/colorist-export-button-remove.png`) and asked for one global entry
+point. D-291 made the question urgent rather than cosmetic: Colorist's own
+`ExportDialog` drove `chroma_export_video`, which decoded the **raw source
+file** — so from D-291 onward it rendered a different picture (and a different
+length) than the Colorist preview sitting right above it.
+
+**The question the roadmap asked to answer first: does Colorist's export do
+anything the Edit tab's genuinely cannot?** Checked, and the answer is **yes**,
+which changed the shape of this decision:
+
+- `EditorExportDialog` (D-198) exports the **timeline** through ffmpeg, and a
+  clip's Colorist grade reaches it as a baked 3D LUT (D-256). A LUT is a pure
+  per-pixel function, so the **spatial half of a grade is dropped** — mask
+  layers / local adjustments, relight, the Colorist crop — with a logged
+  warning. That is documented in `grade_lut`'s own header and is not a bug.
+- `chroma_export_video` renders through the **real wgpu grading pipeline**, so
+  all of that reaches the file. It is the only path that exports a *complete*
+  grade.
+- The `.cube` bake (`chroma_bake_lut`) has no Edit-tab equivalent at all.
+
+So "delete it outright" would have quietly removed a real capability, and
+"keep both buttons" was what the owner asked to stop. The split that resolves
+both: **one export SURFACE, two export JOBS.**
+
+**Chosen.**
+
+1. **Colorist's `ExportDialog.tsx` is deleted** — the GUI duplicate, with its
+   mount in `EditorToolbar`.
+2. **`EditorExportDialog` moves from a per-tab slot to a shell-level one.**
+   `ShellTab.headerAction` (D-251) is gone; `ShellProps.headerAction` replaces
+   it, rendered whenever a project is open, on every tab. D-251 made it
+   per-tab because only Edit had an action to put there; a slot that will only
+   ever hold the same node for all three tabs is a shell-level prop, and
+   populating three tab entries identically would also have re-rendered a
+   different-but-identical node on every tab switch. `Shell` still never
+   imports `@apelles/editor` — the node comes from `Root.tsx`, exactly like
+   `launcher` and `sourcesPanel`.
+3. **`chroma_export_video` is kept, and made clip-aware** (the B-147 residual
+   D-291 flagged): its `from_frame`/`to_frame` are clip-local now, resolved to
+   source frames through the same `colorist_view` bridge the preview uses, and
+   each decoded frame gets the clip's geometry before the grade. Preview and
+   single-clip render agree again, by construction rather than by coincidence.
+   A clip with a **speed ramp** is refused with a message pointing at the Edit
+   exporter: this render is one linear decode pass and cannot express
+   non-contiguous source frames, and silently exporting the wrong frames is
+   exactly the class of defect B-053/B-090 were.
+
+**The honest gap this leaves.** "Render THIS clip with its full grade" is now
+reachable from the MCP surface (`export`) and not from the GUI — the wrong side
+of CLAUDE.md's "every feature is built for a human AND an AI." It is on the
+roadmap as a real follow-up: fold a "current clip, full grade" mode into
+`EditorExportDialog`, which is where the one export surface lives. Stating it
+rather than pretending the item is fully closed.
+
+**`ExportPanel` (`Panel.Export`) is deliberately untouched.** It is RapidRAW's
+batch **still-image** exporter, driving `export_images` over file *paths* — a
+different feature on a different input, as D-049 already recorded. It is
+plausibly dead in a video-only Colorist and is a candidate for the same
+treatment as D-293's panels, but that is its own investigation (it reaches
+export presets, watermarking, filename templates and three Rust commands) and
+not something to fold into an Export-consolidation commit as a guess.
+
+**Verified:** `npm test --workspace @apelles/shell` 7/7 — including the
+export-action case rewritten to its **inverse** (the trigger must now stay on
+Motion and Colorist, where D-251's version asserted it disappeared) plus a new
+one pinning that the launcher still gets no trigger; `tsc --noEmit` on
+`@apelles/shell` clean; `cargo check -p apelles --lib --tests` clean;
+`cargo fmt --check` shows one *fewer* diff in `export.rs` than `main` does (the
+file is not fmt-clean on `main`; nothing this pass added is dirty);
+`py_compile` on `mcp/server.py`.

@@ -544,6 +544,15 @@ fn grade_frame(
 /// ffmpeg is told is measured from the real pipeline rather than predicted by a
 /// second copy of `apply_all_transformations`' arithmetic that could drift from
 /// it.
+///
+/// **D-294/D-291 — `clip` is the Edit-timeline clip this source is a view of**,
+/// when there is one. `from_frame`/`to_frame` are then already SOURCE frames
+/// resolved through that clip's trim by the caller, and each decoded frame gets
+/// the clip's geometry (crop / scale / rotation / position) applied before the
+/// grade — exactly what `chroma::commands::seek_and_install` does for the
+/// preview, through the same `colorist_view` bridge. Without that, this export
+/// rendered the raw source while Colorist previewed the composited clip, which
+/// is B-147 reappearing on the way out of the app.
 pub fn export_video(
     video_path: &Path,
     out_path: &Path,
@@ -551,6 +560,7 @@ pub fn export_video(
     from_frame: u64,
     to_frame: u64,
     opts: ExportOpts,
+    clip: Option<&super::colorist_view::ClipView>,
 ) -> Result<ExportResult, String> {
     let started = Instant::now();
     let info: VideoInfo = video::probe(video_path).map_err(|e| e.to_string())?;
@@ -641,15 +651,17 @@ pub fn export_video(
             let frame_index = from + i;
             set_current_frame(frame_index);
 
-            let src = RgbImage::from_raw(w, h, buf.clone())
-                .ok_or("rgb frame buffer size mismatch")?;
-            let graded = grade_frame(
-                &ctx,
-                &caches,
-                DynamicImage::ImageRgb8(src),
-                frame_index,
-                js_adjustments,
-            )?;
+            let src =
+                RgbImage::from_raw(w, h, buf.clone()).ok_or("rgb frame buffer size mismatch")?;
+            // D-294 — the clip's own geometry first, then the grade, the same
+            // order (and through the same code) the preview uses. `None` (an
+            // Untitled loose clip) and an untransformed clip both hand the
+            // buffer straight back.
+            let placed = match clip {
+                Some(v) => v.apply_geometry(frame_index, DynamicImage::ImageRgb8(src), None)?,
+                None => DynamicImage::ImageRgb8(src),
+            };
+            let graded = grade_frame(&ctx, &caches, placed, frame_index, js_adjustments)?;
             let (gw, gh) = graded.dimensions();
 
             if enc.is_none() {
@@ -827,9 +839,34 @@ pub async fn chroma_export_video(
         None => default_out_path(&kind)?,
     };
 
-    let last = cv.info.frame_count.saturating_sub(1);
-    let from = from_frame.unwrap_or(0).min(last);
-    let to = to_frame.unwrap_or(last).min(last).max(from);
+    // D-294/D-291 — the caller's frame range is CLIP-LOCAL when the active
+    // shot is a clip on the Edit timeline, matching `chroma_seek` and
+    // `chroma_video_info`. Resolved to source frames here, once, so the
+    // decoder below still walks a plain contiguous source range.
+    let view = super::colorist_view::resolve(&cv.path);
+    if let Some(v) = &view
+        && v.clip.speed_segments().len() > 1
+    {
+        // A speed ramp makes the clip's source frames non-contiguous, which
+        // this single-clip exporter's one linear decoder pass cannot express.
+        // Refusing is the honest answer: the Edit tab's exporter honours ramps
+        // and is the one export surface anyway (D-294).
+        return Err(
+            "this clip has a speed ramp — export it from the Edit tab, whose exporter honours \
+             ramps; the single-clip render does one linear decode pass"
+                .to_string(),
+        );
+    }
+    let last = match &view {
+        Some(v) => v.frame_count().saturating_sub(1),
+        None => cv.info.frame_count.saturating_sub(1),
+    };
+    let from_local = from_frame.unwrap_or(0).min(last);
+    let to_local = to_frame.unwrap_or(last).min(last).max(from_local);
+    let (from, to) = match &view {
+        Some(v) => (v.source_frame(from_local), v.source_frame(to_local)),
+        None => (from_local, to_local),
+    };
 
     // D-038: a loaded project's output spec (resolution + timebase) overrides
     // the clip-derived output. Absent settings ⇒ every field stays `None` ⇒
@@ -857,7 +894,15 @@ pub async fn chroma_export_video(
     progress_reset(to - from + 1, &out_str);
 
     tauri::async_runtime::spawn_blocking(move || {
-        if let Err(e) = export_video(&video_path, &out, &js_adjustments, from, to, opts) {
+        if let Err(e) = export_video(
+            &video_path,
+            &out,
+            &js_adjustments,
+            from,
+            to,
+            opts,
+            view.as_ref(),
+        ) {
             log::error!("[chroma::export] {e}");
         }
     });
@@ -1304,7 +1349,7 @@ mod tests {
         let _ = std::fs::remove_file(&out);
 
         let js = json!({ "crop": { "x": 20.0, "y": 10.0, "width": 100.0, "height": 60.0 } });
-        let res = export_video(&vid, &out, &js, 0, 5, ExportOpts::default()).expect("export");
+        let res = export_video(&vid, &out, &js, 0, 5, ExportOpts::default(), None).expect("export");
         assert_eq!(res.frames, 6);
 
         let probed = video::probe(&out).expect("probe output");
@@ -1335,7 +1380,7 @@ mod tests {
         // `warp_image_geometry`), so it belongs under that rule too.
         let again = std::env::temp_dir().join("chroma_geom_cropped_again.mov");
         let _ = std::fs::remove_file(&again);
-        export_video(&vid, &again, &js, 0, 5, ExportOpts::default()).expect("second export");
+        export_video(&vid, &again, &js, 0, 5, ExportOpts::default(), None).expect("second export");
         assert_eq!(
             std::fs::read(&out).unwrap(),
             std::fs::read(&again).unwrap(),
@@ -1357,8 +1402,16 @@ mod tests {
         let out = std::env::temp_dir().join("chroma_geom_turned.mov");
         let _ = std::fs::remove_file(&out);
 
-        export_video(&vid, &out, &json!({ "orientationSteps": 1 }), 0, 3, ExportOpts::default())
-            .expect("export");
+        export_video(
+            &vid,
+            &out,
+            &json!({ "orientationSteps": 1 }),
+            0,
+            3,
+            ExportOpts::default(),
+            None,
+        )
+        .expect("export");
         let probed = video::probe(&out).expect("probe output");
         assert_eq!((probed.resolution.width, probed.resolution.height), (120, 160));
     }
@@ -1386,6 +1439,7 @@ mod tests {
             0,
             3,
             ExportOpts { codec: Some("h264".into()), ..Default::default() },
+            None,
         )
         .expect("odd-crop h264 export");
 
@@ -1408,7 +1462,7 @@ mod tests {
         let _ = std::fs::remove_file(&out);
 
         let js = json!({ "crop": { "x": 0.0, "y": 0.0, "width": 1.0, "height": 60.0 } });
-        let err = export_video(&vid, &out, &js, 0, 1, ExportOpts::default())
+        let err = export_video(&vid, &out, &js, 0, 1, ExportOpts::default(), None)
             .expect_err("a 1px-wide crop is not encodable");
         assert!(err.contains("even-dimension rule"), "{err}");
         assert!(!out.exists(), "no encoder should have been spawned");
@@ -1428,7 +1482,7 @@ mod tests {
         let out = std::env::temp_dir().join("chroma_geom_plain.mov");
         let _ = std::fs::remove_file(&out);
 
-        export_video(&vid, &out, &json!({ "exposure": 0.0 }), 0, 3, ExportOpts::default())
+        export_video(&vid, &out, &json!({ "exposure": 0.0 }), 0, 3, ExportOpts::default(), None)
             .expect("export");
         let probed = video::probe(&out).expect("probe output");
         assert_eq!((probed.resolution.width, probed.resolution.height), (160, 120));
@@ -1474,7 +1528,7 @@ mod tests {
         };
         let out = std::env::temp_dir().join("chroma_export_neutral.mov");
         let _ = std::fs::remove_file(&out);
-        let res = export_video(&vid, &out, &json!({}), 0, 29, ExportOpts::default())
+        let res = export_video(&vid, &out, &json!({}), 0, 29, ExportOpts::default(), None)
             .expect("export");
         assert_eq!(res.frames, 30);
         assert!(out.exists());
@@ -1494,7 +1548,7 @@ mod tests {
         // no override → output dims == clip dims (byte-for-byte the old path)
         let plain = std::env::temp_dir().join("chroma_export_res_plain.mov");
         let _ = std::fs::remove_file(&plain);
-        export_video(&vid, &plain, &json!({}), 0, 9, ExportOpts::default()).expect("plain export");
+        export_video(&vid, &plain, &json!({}), 0, 9, ExportOpts::default(), None).expect("plain export");
         let pi = video::probe(&plain).expect("probe plain");
         assert_eq!((pi.resolution.width, pi.resolution.height), (info.resolution.width, info.resolution.height));
 
@@ -1509,6 +1563,7 @@ mod tests {
             0,
             9,
             ExportOpts { out_width: Some(hw), out_height: Some(hh), ..Default::default() },
+            None,
         )
         .expect("scaled export");
         let si = video::probe(&scaled).expect("probe scaled");
@@ -1523,7 +1578,7 @@ mod tests {
         };
         let out = std::env::temp_dir().join("chroma_export_bright.mov");
         let _ = std::fs::remove_file(&out);
-        export_video(&vid, &out, &json!({ "exposure": 1.0 }), 0, 29, ExportOpts::default())
+        export_video(&vid, &out, &json!({ "exposure": 1.0 }), 0, 29, ExportOpts::default(), None)
             .expect("export");
         assert!(out.exists());
     }
@@ -1625,7 +1680,7 @@ mod tests {
         });
         let out = std::env::temp_dir().join("chroma_export_tracked.mov");
         let _ = std::fs::remove_file(&out);
-        let res = export_video(&vid, &out, &js, 0, 260, ExportOpts::default()).expect("export");
+        let res = export_video(&vid, &out, &js, 0, 260, ExportOpts::default(), None).expect("export");
         assert_eq!(res.frames, 261);
         eprintln!("tracked: {res:?} -> {}", out.display());
     }

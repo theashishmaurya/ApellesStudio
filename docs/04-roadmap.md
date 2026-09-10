@@ -2715,14 +2715,23 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      tabs, and check whether Edit/Motion tab MCP operations are even
      instrumented to feed it yet — if not, that instrumentation gap is part
      of this item, not a separate one to discover later.
-  3. **One global Export, not a per-tab one.** Screenshot:
-     `scratch/colorist-export-button-remove.png`. Colorist's own
-     `ExportDialog.tsx`/`ExportPanel.tsx` should go away in favour of the
-     Edit tab's real `EditorExportDialog` (D-198) as the one export surface,
-     reachable from wherever export needs to be reachable from — check
-     whether Colorist's own export does anything the Edit one genuinely
-     cannot (e.g. exporting a single graded still with no timeline at all)
-     before deleting it outright, and say so in the D-NNN either way.
+  3. **[x] One global Export, not a per-tab one** — **done 2026-09-10,
+     D-294.** Screenshot: `scratch/colorist-export-button-remove.png`.
+     Colorist's `ExportDialog.tsx` deleted; `EditorExportDialog` moved from
+     `ShellTab.headerAction` to a shell-level `ShellProps.headerAction`, so
+     Export sits in the chrome bar on **every** tab. The check this entry asked
+     for turned up a real answer: Colorist's export DOES do something the Edit
+     one cannot — it renders through the wgpu grading pipeline, so masks /
+     local layers / relight / the Colorist crop reach the file, where the Edit
+     exporter carries only the global grade as a baked LUT (D-256 strips the
+     spatial half with a warning). So the backend was kept and made clip-aware
+     (D-291's residual, closing B-147 on the export side) rather than deleted,
+     and only the duplicate *button* went. `ExportPanel` (RapidRAW's batch
+     still-image exporter) deliberately untouched — see D-294.
+     - [ ] **Follow-up, honestly open:** "render THIS clip with its full grade"
+       is now MCP-only (`export`), which is the wrong side of the "human AND
+       AI" rule. Fold it into `EditorExportDialog` as a "current clip, full
+       grade" mode — the one export surface is where it belongs.
   4. **[x] Remove the Metadata panel** — **done 2026-09-10, D-293.**
      Screenshot: `scratch/colorist-metadata-panel-remove.png`. Removed with
      `Panel.Metadata` (enum, switcher, mobile order, `ALL_PANELS`, region map,

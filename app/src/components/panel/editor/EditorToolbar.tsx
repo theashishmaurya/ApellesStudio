@@ -10,7 +10,6 @@ import { TextColors, TextVariants, TextWeights } from '../../../types/typography
 import { useLibraryStore } from '../../../store/useLibraryStore';
 import { useSettingsStore } from '../../../store/useSettingsStore';
 import { findGroupVariants, getVariantLabel } from '../../../utils/imageGrouping';
-import ExportDialog from '../../chroma/ExportDialog';
 
 interface EditorToolbarProps {
   canRedo: boolean;
@@ -685,13 +684,6 @@ const EditorToolbar = memo(
               <Maximize size={20} />
             </div>
           </button>
-
-          {/* D-049: the Colorist tab's real video-export entry point — the
-              rightmost (top-right corner) button, replacing the old buried
-              Panel.Export toggle. Self-contained (reads useChromaStore /
-              useSessionStore / useEditorStore directly, no prop drilling —
-              same pattern as ShotStrip / RelightPanel). */}
-          <ExportDialog />
         </div>
       </div>
     );

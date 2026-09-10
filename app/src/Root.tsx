@@ -316,24 +316,21 @@ export function Root() {
       // `@apelles/keymap` may depend on i18next, same app → shell direction as
       // `launcher` and `sourcesPanel` above.
       translate={translate}
+      // D-251/D-294 — Export lives in the shell's chrome bar, beside the tab
+      // switcher, and is reachable from EVERY tab now: D-294 retired
+      // Colorist's own `ExportDialog` (which after D-291 exported a different
+      // picture than Colorist's own preview) in favour of this one. Injected
+      // here rather than imported by `Shell`, same app → shell direction as
+      // `launcher` and `sourcesPanel` above.
+      headerAction={<EditorExportDialog />}
       onCloseProject={() => {
         void useSessionStore.getState().closeProject();
       }}
       tabs={[
-        // D-251 — Export moved from the Edit tab's own top strip (D-249) to
-        // the shell's chrome bar, beside the tab switcher, per the owner's
-        // live request. `headerAction` is `@apelles/shell`'s injection slot
-        // for exactly this: `Root` (the composition root) supplies the real
-        // `EditorExportDialog`, `Shell` only renders whatever node the active
-        // tab registered — same `app → shell`/`app → editor` dependency
-        // direction as `element` below, `Shell` itself still never imports
-        // `@apelles/editor`. Motion/Colorist have no export action of their
-        // own yet, so their entries omit it.
         {
           id: 'edit',
           label: 'Edit',
           element: <EditorTab />,
-          headerAction: <EditorExportDialog />,
           // D-263 — the icon rail, leftmost. It drives the shell's own
           // open/closed flag through these props rather than importing
           // `@apelles/shell` itself (a tab package must not).

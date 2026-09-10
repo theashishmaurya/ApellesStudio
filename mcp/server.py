@@ -4436,7 +4436,23 @@ def export(
     to_frame: int | None = None,
     quality: int | None = None,
 ) -> str:
-    """Render the current grade to a file.
+    """Render the ACTIVE CLIP's grade to a file — the Colorist single-clip
+    render, not the timeline. `editor_export` is the timeline exporter; use that
+    one for a cut, and this one when you want one clip's grade rendered at full
+    fidelity.
+
+    **What this does that `editor_export` cannot (D-294):** it renders through
+    the real wgpu grading pipeline, so the SPATIAL half of a grade — mask layers
+    / local adjustments, relight, the Colorist crop — reaches the file.
+    `editor_export` carries only the global grade, baked to a 3D LUT (D-256),
+    and warns when it drops the rest.
+
+    **`from_frame`/`to_frame` are CLIP-LOCAL (D-291)**, like `seek`: 0 is the
+    clip's in-point on the Edit timeline and the range is bounded by
+    `get_state().shot.frameCount`. The rendered picture carries the clip's own
+    transform, so it matches what the Colorist preview shows. A clip with a
+    SPEED RAMP is refused — this render does one linear decode pass; export it
+    from the Edit tab, whose exporter honours ramps.
 
     kind:
       - "prores" (default) — ProRes 422 HQ .mov (prores_ks -profile:v 3, 10-bit 422)
