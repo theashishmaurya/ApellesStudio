@@ -2947,6 +2947,18 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   verify the surrounding flex layout doesn't leave a visible gap where it sat)
   but not yet done — logged here rather than fixed inline since it was raised
   as a backlog item, not an immediate ask.
+- **`chroma_export_video` has no queue — a second call while one is running is
+  refused outright.** Confirmed live, 2026-09-10: owner asked to queue a second
+  full-length export while the first was still rendering; the code
+  (`export.rs:862-868`) checks `progress_snapshot().running` and returns
+  `Err("an export is already running ({done}/{total})")` rather than queuing
+  or waiting. Fine for a human doing one export at a time by hand, a real
+  limitation for an agent (or a human) wanting to render several grades/ranges
+  back to back without babysitting each one. Owner's reaction: *"We should if
+  we dont have one ,.."* — logged as a real feature ask, not built inline
+  (a real job queue is more than a one-line fix: needs a pending-jobs list,
+  a "next up" progress-poll shape, and a decision on whether jobs run serially
+  or the renderer can be made to handle more than one in flight).
 
 ---
 
