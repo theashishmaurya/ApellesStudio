@@ -28808,3 +28808,132 @@ silently checking `main`'s code, not this branch's. Caught when a correct
 link farm (`node_modules/@apelles/*` → this worktree's own packages, everything
 else symlinked from the main checkout's install); every figure above was
 re-measured after that.
+
+---
+
+## D-296 — Colorist's canvas: the duplicate Crop panel and the "one common player" ask are ONE pass, and this is its shape
+
+Two Colorist-consolidation items (1's leftover half and 6) that the
+investigation found are the same piece of work, in the same two files. Both are
+**scoped here and deliberately not built in this pass** — the reasoning is the
+whole point of the entry, and each half explains what a rushed version would
+have broken.
+
+### What was actually checked
+
+| | lines | what it is |
+|---|---|---|
+| `app/src/components/panel/editor/ImageCanvas.tsx` | 3,259 | Colorist's preview: the picture plus mask overlay, crop overlay, straighten line, relight pucks, AI-patch/brush/quick-erase gestures, WB picker, agent ROI, composition guides. **47 props.** |
+| `app/src/components/panel/Editor.tsx` | 2,239 | its host — owns zoom/pan (`transformState`, a hand-rolled pointer/wheel implementation, applied as a CSS transform on a wrapping div), the panel gating, and the crop-preview plumbing |
+| `packages/editor/src/PreviewPane.tsx` | 938 | the Edit tab's preview: fetch + rAF play loop + `<img>` + overlays |
+| `packages/player/src/Player.tsx` | 651 | the shared, **purely presentational** transport + viewport chrome |
+| `app/src/components/panel/right/CropPanel.tsx` | 755 | Crop & Transform |
+
+### Item: the duplicate Crop & Transform panel
+
+Owner: *"we have two crop and reset, one in edit and one here, please make sure
+Edit one is applied to all the clips."* **The literal ask is already
+delivered — that is D-291**, which is what the roadmap entry itself predicted
+("'make the Edit one authoritative' is not a UI toggle, it is the B-147 fix").
+The remaining question was whether `CropPanel` should also go.
+
+**It is not one thing, and that is the finding.** The panel holds two halves:
+
+- **Aspect Ratio / Crop / Rotation (straighten) / Orientation (90° steps +
+  flips)** — a genuine duplicate of the Edit tab's per-clip transform
+  (D-193/D-208, GUI + `editor_set_clip_transform`), and after D-291 *worse* than
+  a duplicate: it now applies **on top of** the clip's already-composited
+  picture, so the two compound. It also cannot reach any output the Edit tab
+  produces — `grade_lut::bake_lut3d` strips crop/rotation/flips before baking,
+  by definition (a LUT is per-pixel).
+- **Geometry → Transform (perspective/keystone) and Lens (distortion
+  correction)** — **not duplicated anywhere.** The Edit tab's clip transform has
+  no perspective and no lens correction, and neither does any MCP tool. Deleting
+  `CropPanel.tsx` would silently remove them.
+
+**Why the duplicate half cannot just be deleted now.** `Panel.Crop` is not a
+route to a panel; it is a *mode* the canvas is in. `isCropping` threads through
+`Editor.tsx` (14 call sites: pointer handling, pan gating, the uncropped-preview
+fetch, the live-rotation preview) and `ImageCanvas.tsx` (`ReactCrop`, the
+straighten drag line, `CompositionOverlays`), and the fields it writes
+(`adjustments.crop`/`aspectRatio`/`rotation`/`orientationSteps`/`flip*`) are read
+by `adjustment_utils::apply_all_transformations`, by the mask-geometry
+un-transform in `image_processing.rs`, by `file_management.rs`'s thumbnail path
+and by `chroma::export`'s `prepare_frame` — and they are persisted in
+`grade.json`, which the renderer reads and only it (CLAUDE.md's own invariant).
+Retiring them is a grade-document field retirement plus a mask-coordinate
+change, not a UI deletion. **63 references across the two largest files in the
+fork.**
+
+**Decision:** it goes, and it goes as **phase 1 of the canvas pass below** —
+because unpicking `isCropping` from `ImageCanvas`/`Editor` IS the first move of
+unifying the player, not a separate errand. Doing it standalone would mean
+touching those 63 sites twice.
+
+### Item: "player is different for both, it should be common component"
+
+**A full unification cannot be done safely in one pass, and the reason is not
+size.** It is this:
+
+**The Colorist's picture is not a DOM element.** On macOS and Windows the grade
+is painted straight onto a **native wgpu surface behind the webview**, showing
+through a transparent hole the DOM leaves for it (B-006 — it is why
+`Shell.tsx`'s root goes `bg-transparent` when `wgpuSurfaceActive`). A render
+returns the 11 bytes `WGPU_RENDER` and **no pixels**;
+`finalPreviewUrl` stays null. The Edit tab's preview is the opposite: a JPEG per
+frame over IPC into an `<img>` whose `src` is written imperatively (D-290).
+
+So `@apelles/player`'s `surface: ReactNode` prop — the slot that makes it
+"shared" — has nothing to accept from Colorist. What Colorist needs is not a
+node but a **measured rectangle** the native surface is positioned against, and
+`Player`'s viewport currently exposes no such contract. That is the gap, and no
+amount of moving overlay components around closes it.
+
+**The two other real obstacles, named:**
+
+1. **Zoom/pan lives in the wrong place on both sides, differently.** The Edit
+   tab's is a compositor-only CSS transform inside `PreviewPane` with the
+   overlays fed an arithmetically identical transform (D-218). Colorist's is a
+   hand-rolled pointer/wheel implementation in `Editor.tsx` that transforms a
+   wrapping div — and on the wgpu path it must also drive where the native
+   surface is drawn. One shared viewport has to own one of these models.
+2. **Colorist's overlays are not `PreviewPane`-shaped.** `TransformOverlay` /
+   `DynamicZoomOverlay` take a `container` element and read a shared content
+   box. Colorist's take **47 props** and reach back into `Editor.tsx`'s state
+   for gesture arbitration (which of brush / quick-erase / AI patch / crop /
+   straighten / WB-pick / relight owns this pointer-down). That arbitration is
+   real behaviour, not incidental, and there is no equivalent on the Edit side
+   to inherit it from.
+
+**Concrete shape for the dedicated pass** (each phase independently shippable
+and independently verifiable, which is exactly what this pass could not offer):
+
+- **Phase 1 — retire the duplicate crop mode.** Remove `Panel.Crop`, the
+  `ReactCrop`/straighten/composition-guide layer and the `isCropping` gating;
+  keep perspective + lens as their own small "Geometry" panel; retire the
+  now-unwritten `crop`/`rotation`/`orientation`/`flip` fields from the grade
+  path (with the mask-coordinate un-transform they feed), versioning
+  `grade.json` accordingly. Closes the Crop item and removes the largest single
+  source of `ImageCanvas` prop churn before anything else moves.
+- **Phase 2 — give `@apelles/player` a viewport contract, not just a slot.**
+  Add a measured content-box + zoom/pan model to the shared component (the Edit
+  tab already has one — D-218 — so this is promotion, not invention), and let a
+  caller take the box **without** supplying a `surface` node, so a native
+  surface can be positioned against it.
+- **Phase 3 — move Colorist onto it**, its remaining overlays (mask, relight
+  puck, agent ROI, WB picker) converted to the `container`-prop shape one at a
+  time, with the pointer arbitration lifted into an explicit, testable
+  "who owns this gesture" resolver rather than a chain of booleans.
+
+**Why not force it now.** A half-migrated canvas is a canvas where a mask drag
+lands in the wrong place — the exact defect class B-043 and B-053 already cost
+this project, and CLAUDE.md's priority order puts stability above shipping
+speed. The owner's underlying complaint (the two previews *disagree about the
+picture*) was the real one, and **that is fixed** — by D-291, in Rust, with no
+component unification needed. What remains is duplicated *code*, not a
+divergence a user can see.
+
+**Recorded so the next pass starts here, not from scratch**: the wgpu-surface
+finding above is the single fact that makes this hard, and it is not visible
+from either component's source — it took following `WGPU_RENDER` from
+`useImageProcessing.ts` back through `Shell.tsx`'s `wgpuSurfaceActive` to B-006.

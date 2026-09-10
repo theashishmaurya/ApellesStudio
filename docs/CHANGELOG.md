@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-296: Colorist's duplicate Crop panel and the "one common
+  player" ask are the same pass — scoped, not forced.** The owner's literal
+  crop ask ("make the Edit one authoritative") was already delivered by D-291.
+  What the investigation added: `CropPanel` is two halves (a real duplicate,
+  and perspective+lens which nothing else in the app provides), `Panel.Crop` is
+  a canvas MODE with 63 call sites reaching into grade-document fields the
+  renderer and the mask maths read — and the reason the two previews cannot
+  simply share a component is that **Colorist's picture is not a DOM element**:
+  it is a native wgpu surface behind the webview. Three-phase shape recorded
+  for the dedicated pass; the user-visible half of the complaint (the previews
+  disagreeing) is already fixed by D-291.
+
 - **2026-09-10** — **D-295: the agent activity feed is global, and finally
   reports Edit and Motion.** The dock moved out of the Colorist tab onto a new
   shell-level `overlay` slot. The instrumentation gap the roadmap predicted was

@@ -2696,17 +2696,22 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   timeline's clip (its real trim and transform) instead of the raw source
   file, via the new `chroma::colorist_view` bridge. Items 1, 6 and 7 all
   turn on that read path existing at all.
-  1. **Duplicate Crop & Transform.** Colorist's own `CropPanel.tsx` (RapidRAW's
-     single-image crop/rotate/orientation tool) duplicates the Edit tab's
-     real per-clip transform (`ClipInspectorPanel`'s Transform section,
-     `Clip.rotation`/`scale`/`position_*`/crop insets, D-193/D-208). Owner:
-     *"we have two crop and reset, one in edit and one here, please make
-     sure Edit one is applied to all the clips."* Screenshot:
-     `scratch/colorist-duplicate-crop-transform-panel.png`. This is the same
-     underlying gap as **B-147**: Colorist has no read path into the Edit
-     timeline's `Clip` data at all right now, so "make the Edit one
-     authoritative" is not a UI toggle, it is the B-147 fix. Scope this and
-     B-147 as one piece of work, not two.
+  1. **[~] Duplicate Crop & Transform** — **the owner's literal ask is done
+     (D-291); the panel's removal is scoped, not built (D-296).** Screenshot:
+     `scratch/colorist-duplicate-crop-transform-panel.png`. Owner: *"we have
+     two crop and reset, one in edit and one here, please make sure Edit one
+     is applied to all the clips."* Exactly as this entry predicted, "make the
+     Edit one authoritative" was the B-147 fix, and that landed. What the
+     investigation then found: `CropPanel` is **not one thing** — its
+     Crop/Aspect/Straighten/Orientation half is a genuine duplicate (and after
+     D-291 actively compounds on the clip's own geometry), but its **Geometry →
+     Transform (perspective/keystone) and Lens correction** half is duplicated
+     *nowhere* in the app and has no MCP tool either. And `Panel.Crop` is a
+     canvas MODE, not a route: 63 references across `Editor.tsx`/
+     `ImageCanvas.tsx` plus grade-document fields the renderer, the
+     mask-coordinate un-transform, the thumbnail path and the exporter all
+     read. Retiring it is phase 1 of the canvas pass below (item 6) — doing it
+     standalone would touch the same 63 sites twice. Full reasoning: **D-296**.
   2. **[x] Agent activity should be global, not Colorist-only** — **done
      2026-09-10, D-295.** Screenshot:
      `scratch/colorist-agent-activity-should-be-global.png`. Both halves:
@@ -2752,25 +2757,39 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      / search paths, the `Filmstrip` badge, the `useTauriListeners` plumbing,
      and `file_management::set_rating_for_paths`. `ImageMetadata.rating` stays
      in the Rust sidecar struct deliberately — see D-293 for why.
-  6. **The Colorist/Edit preview should be ONE shared player component.**
-     Screenshot: `scratch/colorist-edit-players-should-be-common.png`.
-     Owner: *"player is different for both, it should be common component."*
-     Checked, not assumed, before scoping: Colorist's own preview is
-     `app/src/components/panel/editor/ImageCanvas.tsx` (**3259 lines** —
-     masks, crop overlay, relight puck, transform overlays, zoom/pan, all
-     bundled into one component), the Edit tab's is `@apelles/player`'s
-     `Player.tsx` (**651 lines**, a much narrower transport + surface). This
-     is genuinely large architectural work, not a simple swap-in — the
-     right shape (does Colorist's own interactive-mask/relight tooling move
-     into a shared player's own overlay slot, the way Edit's
-     `TransformOverlay`/`DynamicZoomOverlay` already compose onto
-     `@apelles/player`'s `surface` prop? does unification happen in one pass
-     or does Colorist first gain the SAME B-147 fix while staying on its own
-     canvas, with true unification as a follow-on?) needs a real D-NNN
-     design decision, not a rushed merge. If a full unification cannot be
-     done safely in one pass, a scoped first step (B-147's fix, without full
-     component unification) is an acceptable, honestly-reported partial
-     result — say so plainly rather than forcing a bad merge to claim done.
+  6. **[~] The Colorist/Edit preview should be ONE shared player component** —
+     **investigated and designed, deliberately not forced (D-296).**
+     Screenshot: `scratch/colorist-edit-players-should-be-common.png`. Owner:
+     *"player is different for both, it should be common component."* This
+     entry already said a rushed merge was the wrong outcome; the
+     investigation found the specific reason, and it is not size:
+     **Colorist's picture is not a DOM element at all.** On macOS/Windows the
+     grade is painted onto a native wgpu surface *behind* the webview (B-006 —
+     a render returns the 11 bytes `WGPU_RENDER` and no pixels), so
+     `@apelles/player`'s `surface: ReactNode` slot has nothing to accept from
+     it; what Colorist needs is a measured *rectangle*, which `Player` does not
+     yet expose. Plus zoom/pan lives in a different place on each side, and
+     Colorist's overlays (47 props, pointer arbitration across brush /
+     quick-erase / AI patch / crop / straighten / WB-pick / relight) are not
+     the `container`-prop shape the Edit tab's are.
+     **The user-visible half of the complaint — the two previews disagreeing
+     about the picture — is fixed, by D-291, in Rust, with no component
+     unification needed.** What remains is duplicated code. D-296 records the
+     three-phase shape for the dedicated pass:
+     - [ ] **Phase 1** — retire the duplicate crop MODE (closes item 1's
+       remaining half): drop `Panel.Crop` + the `ReactCrop`/straighten/guides
+       layer + the `isCropping` gating, keep perspective + lens as their own
+       small Geometry panel, retire the now-unwritten grade-document geometry
+       fields and the mask-coordinate un-transform they feed (versioning
+       `grade.json`).
+     - [ ] **Phase 2** — give `@apelles/player` a real viewport contract:
+       promote the Edit tab's measured content-box + zoom/pan model (D-218)
+       into the shared component, and let a caller take the box WITHOUT
+       supplying a `surface` node, so a native surface can be positioned
+       against it.
+     - [ ] **Phase 3** — move Colorist onto it, converting its overlays to the
+       `container`-prop shape one at a time, with the pointer arbitration
+       lifted into an explicit, testable resolver.
   7. **[x] The Colorist filmstrip: build a proper one, or remove it** —
      **done 2026-09-10, D-292.** Screenshot:
      `scratch/colorist-filmstrip-timeline-question.png`. Owner, offering both
