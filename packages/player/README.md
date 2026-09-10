@@ -25,7 +25,7 @@ it to the caller.
 │                                               │
 ├─────────────────────────────────────────────┤
 │  ───────────●─────────────────────────────   │  ← scrub bar (only if onSeek given)
-│  ⏮ ⏴ ▶ ⏵ ⏭   00:00:12:04 / 00:01:03:00   📷 ⛶ 1× 🔍Fit │  ← transport bar
+│  ⏮ ⏴ ▶ ⏵ ⏭   00:00:12:04 / 00:01:03:00  ⏱1×      📷 ⛶ 🔍Fit │  ← transport bar
 └─────────────────────────────────────────────┘
 ```
 
@@ -51,7 +51,7 @@ interface PlayerProps {
 
   onSnapshot?: () => void;               // omit → button hidden
   onFullscreen?: () => void;             // omit → button hidden
-  rate?: number;                          // e.g. 1 — omit → rate control hidden
+  rate?: number;                          // PLAYBACK rate, 1 = normal (D-280) — omit → control hidden
   onRateChange?: (rate: number) => void;
   zoom?: number;                          // viewport magnification, 1 = fit — omit → zoom cluster hidden
   onZoomIn?: () => void;                  // omit → the + button renders disabled
@@ -75,6 +75,18 @@ without the Editor's choices constraining them. Exceptions, by design:
   callback is missing (D-218) — that is how a caller expresses "already at
   min/max", and a control that vanished at a bound would make the cluster
   jump around under the pointer.
+- **`rate` is the TRANSPORT's playback rate** (D-280) — timeline seconds
+  played per real second — and is **not** any clip's Speed/Retime property.
+  It changes how fast the user watches; it persists nothing and changes no
+  render. The control sits in the transport bar's left cluster, after the
+  timecode, and opens a popover of presets plus a custom field. Unlike `zoom`,
+  the presets/bounds/formatting DO live in this package
+  (`src/playbackRate.ts`, exported) because the control renders all three —
+  the tab imports the same values for its own clamp so there is one source.
+  What the tab still owns entirely is what a rate MEANS: `@apelles/editor`'s
+  `PreviewPane.tsx` multiplies its rAF loop's frame target by it and hands it
+  to `chroma_audio_play`, which time-stretches the mixed audio with pitch
+  preserved. This package makes no sound and decodes no frame.
 - **`zoom` carries no math** (D-218). It is a multiplier where `1` = fit,
   shown as a percentage; the three callbacks are pure intent ("in" / "out" /
   "back to fit") and the tab owns its own bounds, step and clamping, since
@@ -87,7 +99,7 @@ without the Editor's choices constraining them. Exceptions, by design:
 Icons (all `lucide-react`): skip-to-start/end use `SkipBack`/`SkipForward`;
 the ±1 step buttons use the distinct `StepBack`/`StepForward` so the two
 concepts never look the same control. Nav uses `ChevronLeft`/`ChevronRight`.
-Snapshot `Camera`, fullscreen `Maximize`, zoom `ZoomOut`/`ZoomIn` (the same
+Snapshot `Camera`, fullscreen `Maximize`, playback rate `Gauge`, zoom `ZoomOut`/`ZoomIn` (the same
 pair `TimelinePane`'s own timeline-zoom cluster uses — one tab, one zoom
 idiom).
 
@@ -154,10 +166,19 @@ should reach for, not (yet) a replacement for that one; see its own doc
 comment for why migrating Colorist onto it is a separate, deliberately
 deferred refactor.
 
+## Tests
+
+`npm test --workspace @apelles/player` (vitest; jsdom via `vitest.config.ts`,
+mirroring `@apelles/keymap`'s rig). `playbackRate.test.ts` is the pure model;
+`Player.rate.dom.test.tsx` mounts the real transport bar and clicks the real
+popover. Added by D-280 — the package had no test rig before it.
+
 ## What's NOT here
 
 - No `@tauri-apps/api` invoke calls, no zustand store, no knowledge of what a
   "timeline" or "frame source" is.
+- No decode, no audio, no sense of how fast time passes — `rate` is a number
+  this package renders a control for; the tab is what makes playback obey it.
 - No craft-specific controls (color scopes, mask overlay toggles, LUT
   preview) — those stay in the Colorist tab's own chrome around `surface`.
 - Colorist and Motion have not adopted this component yet (follow-on items on

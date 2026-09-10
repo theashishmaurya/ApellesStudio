@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * @apelles/editor — real-DOM coverage for the clip-drag ghost's position
- * (B-137 / D-278), on the same harness and in the same tier as
+ * (B-137 / D-279), on the same harness and in the same tier as
  * `TimelinePane.trim.dom.test.tsx` and `TimelinePane.trimTools.dom.test.tsx`.
  *
  * **What this file proves, and why it had to be a DOM test.** B-137 was

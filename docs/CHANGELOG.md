@@ -52,6 +52,17 @@ One or two lines per session. Detail lives in the decision it references.
   `dragGhost.ts` + 8 pure tests + 5 real-DOM mid-drag tests. Also logged
   **B-144** (a slip/slide drag still paints the move preview it will not
   perform) — root-caused, deliberately left, reasons in the entry.
+- **2026-09-10** — **D-280: a real preview PLAYBACK-RATE control on the Edit
+  tab's transport** (`0.25×–8×`; `0.5/1/2/3/4` presets plus a custom field,
+  next to play/pause), with `editor_set_playback_rate` as its MCP half. **Fast
+  review keeps its audio and keeps its pitch** — a new WSOLA time-stretch stage
+  (`crates/apelles-media/src/timestretch.rs`) scales the *mixed* preview stream
+  at one seam, so a voice at 3× is still that voice rather than a chipmunk or
+  silence; the choice is Premiere's own "Maintain pitch while Shuttling"
+  default, researched before building. It is transport state only: no clip
+  changes, nothing is persisted, nothing about an export moves — deliberately
+  not the Inspector's per-clip Speed field (D-236). J/K/L shuttling is a
+  separate roadmap item, since `J` needs reverse playback we do not have.
 - **2026-09-10** — **B-140/D-275: retired the Edit tab's `CanvasSettingsPopover`**
   — confirmed live, minutes after D-274 shipped, as a real duplicate of the
   new docked Project Settings panel (both showing Resolution/Frame Rate at

@@ -14,6 +14,14 @@
  * callback isn't supplied — a tab that doesn't support fullscreen just
  * doesn't render the button. This is what lets Motion and Colorist adopt this
  * component later without the Editor's choices constraining them.
+ *
+ * D-280 added a real PLAYBACK-RATE control to the transport cluster
+ * (`RateControl` below, model in `playbackRate.ts`). It replaces a vestigial
+ * `0.5 / 1 / 2` cycle button that had shipped with this component from the
+ * start and that **no caller had ever passed `rate` to** — so nothing was
+ * removed from any tab's UI, only from this file. Like every other control
+ * here it stays presentational: the tab holds the value, clamps it, and
+ * decides what a rate means for its own playback loop and audio session.
  */
 
 import { useCallback, useEffect, useRef, type ReactNode } from 'react';
@@ -22,6 +30,7 @@ import {
   Camera,
   ChevronLeft,
   ChevronRight,
+  Gauge,
   Maximize,
   Minimize,
   Pause,
@@ -36,9 +45,25 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { Button, Slider, cn } from '@apelles/ui';
+import {
+  Button,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  ScrubbableNumberInput,
+  Slider,
+  cn,
+} from '@apelles/ui';
 
 import { fmtTimecode } from './timecode';
+import {
+  formatPlaybackRate,
+  isDefaultPlaybackRate,
+  MAX_PLAYBACK_RATE,
+  MIN_PLAYBACK_RATE,
+  PLAYBACK_RATE_PRESETS,
+  PLAYBACK_RATE_STEP,
+} from './playbackRate';
 
 export interface PlayerProps {
   /** Whatever the tab renders inside the viewport — an `<img>`, `<canvas>`, `@remotion/player`, etc. */
@@ -107,7 +132,28 @@ export interface PlayerProps {
   onMuteToggle?: () => void;
   volume?: number;
   onVolumeChange?: (volume: number) => void;
-  /** e.g. 1 — omit → rate control hidden. */
+  /**
+   * PLAYBACK rate — how many timeline seconds the transport plays per real
+   * second (D-280). `1` is ordinary playback. Omit `rate` → the whole control
+   * is hidden, matching every other optional control here; supply `rate` with
+   * no `onRateChange` and it renders as a read-only readout.
+   *
+   * **This is the transport's rate, not any clip's Speed/Retime property**
+   * (D-236). It changes how fast the user WATCHES and nothing else: no clip is
+   * touched, nothing is persisted, nothing about an export changes. The two
+   * are easy to confuse and easy to keep apart — see `playbackRate.ts`.
+   *
+   * The presets, the bounds and the readout format are `playbackRate.ts`'s, not
+   * this component's and not the caller's, because the control renders all
+   * three; the caller's only job is to hold the value and to clamp what comes
+   * back (`clampPlaybackRate`), the same division of labour {@link zoom} has.
+   *
+   * Placement is deliberate: the control sits in the LEFT cluster with the
+   * transport buttons and the timecode, because that is what the owner's
+   * reference screenshot points at and because a shuttle rate is a fact about
+   * the transport, not about the viewport (which is what the right-hand cluster
+   * holds).
+   */
   rate?: number;
   onRateChange?: (rate: number) => void;
 
@@ -161,11 +207,104 @@ export interface PlayerProps {
   className?: string;
 }
 
-const RATE_STEPS = [0.5, 1, 2] as const;
+/**
+ * D-280 — the playback-rate control: a readout that opens a preset list plus a
+ * custom field, sitting with the transport buttons.
+ *
+ * **Why a menu and not a keyboard shuttle.** Resolve, Premiere and Final Cut all
+ * drive playback rate from J/K/L rather than from a control in the transport
+ * bar — but J is *reverse* play, and neither this component's callers nor the
+ * audio engine underneath them can run the transport backwards today. Shipping
+ * K and L without J would be a half-implementation of an idiom every editor
+ * already has muscle memory for, which is worse than not claiming the keys at
+ * all; the menu is the media-player idiom (QuickTime, VLC, YouTube) and is what
+ * the owner's reference screenshot asks for. See D-280, and the roadmap line
+ * that tracks real JKL shuttling as its own item.
+ *
+ * Rendered as its own component so the hook-free `Player` body stays flat and
+ * so the popover's own state does not re-render the whole transport on every
+ * open — this bar re-renders on every playhead tick during playback.
+ */
+function RateControl({
+  rate,
+  onRateChange,
+}: {
+  rate: number;
+  onRateChange?: (rate: number) => void;
+}) {
+  const label = formatPlaybackRate(rate);
+  const off = isDefaultPlaybackRate(rate);
 
-function cycle<T>(steps: readonly T[], current: T): T {
-  const i = steps.indexOf(current);
-  return steps[(i + 1) % steps.length] ?? steps[0];
+  // Read-only: a caller that reports a rate but offers no way to change it.
+  // Omitted-not-disabled is this component's rule for whole controls; a
+  // readout that is genuinely informative is the one exception the original
+  // `rate` prop already made, and it is kept.
+  if (!onRateChange) {
+    return (
+      <span className="px-2 text-xs tabular-nums text-text-secondary" aria-label="Playback rate">
+        {label}
+      </span>
+    );
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn('h-7 gap-1 px-1.5 text-xs tabular-nums', !off && 'text-accent')}
+            title={
+              off
+                ? 'Playback rate — review the timeline faster or slower (audio stays in pitch)'
+                : `Playing at ${label} — the timeline itself is unchanged`
+            }
+            aria-label="Playback rate"
+          >
+            <Gauge className="size-3.5" />
+            {label}
+          </Button>
+        }
+      />
+      <PopoverContent align="start" className="w-56 p-2 text-xs">
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap gap-1" role="group" aria-label="Playback rate presets">
+            {PLAYBACK_RATE_PRESETS.map((preset) => (
+              <Button
+                key={preset}
+                variant={preset === rate ? 'default' : 'ghost'}
+                size="sm"
+                className="h-6 flex-1 px-2 text-[11px] tabular-nums"
+                aria-pressed={preset === rate}
+                onClick={() => onRateChange(preset)}
+              >
+                {formatPlaybackRate(preset)}
+              </Button>
+            ))}
+          </div>
+          <label className="flex items-center justify-between gap-2">
+            <span className="text-text-secondary">Custom</span>
+            <ScrubbableNumberInput
+              className="h-6 w-20 px-1 text-[11px]"
+              value={rate}
+              step={PLAYBACK_RATE_STEP}
+              min={MIN_PLAYBACK_RATE}
+              max={MAX_PLAYBACK_RATE}
+              onValueChange={onRateChange}
+              aria-label="Custom playback rate"
+            />
+          </label>
+          {/* The one thing a user could plausibly get wrong about this control,
+              said once, where they are looking — the Inspector's Speed field is
+              a different feature that edits the cut. */}
+          <p className="text-[10px] leading-snug text-text-secondary/70">
+            Preview only — this does not change any clip&apos;s speed or the export.
+          </p>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function Player({
@@ -382,6 +521,18 @@ export function Player({
             {fmtTimecode(frame, fps)} / {fmtTimecode(total, fps)}
           </span>
 
+          {/* D-280 — the playback-rate control, in the LEFT cluster with the
+              transport buttons and the timecode (where the owner's reference
+              screenshot puts it), not in the right-hand viewport cluster. It
+              follows the timecode rather than splitting play from it: the two
+              have always been adjacent and a shuttle rate reads naturally as
+              "…and at this speed". */}
+          {rate !== undefined && (
+            <div className="ml-1">
+              <RateControl rate={rate} onRateChange={onRateChange} />
+            </div>
+          )}
+
           <div className="flex-1" />
 
           {showMute && (
@@ -446,22 +597,6 @@ export function Player({
               {isFullscreen ? <Minimize /> : <Maximize />}
             </Button>
           )}
-
-          {rate !== undefined &&
-            (onRateChange ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="tabular-nums"
-                onClick={() => onRateChange(cycle(RATE_STEPS, rate as (typeof RATE_STEPS)[number]))}
-                title="Playback rate"
-                aria-label="Playback rate"
-              >
-                {rate}×
-              </Button>
-            ) : (
-              <span className="px-2 text-xs tabular-nums text-text-secondary">{rate}×</span>
-            ))}
 
           {/* D-218 — the preview's own zoom cluster, shaped exactly like the
               one `TimelinePane.tsx`'s toolbar already ships for the timeline

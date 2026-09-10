@@ -78,6 +78,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, emit } from '@tauri-apps/api/event';
 
 import { useMediaPoolStore, type MediaItem } from '@apelles/bridge';
+// D-280 — the transport's own rate bounds, from the package that owns the
+// transport. The same pair the store clamps to and the Rust session clamps to.
+import { MAX_PLAYBACK_RATE, MIN_PLAYBACK_RATE } from '@apelles/player';
 
 import { useEditorTimelineStore, type Selection } from './timelineStore';
 // D-243 — the caption preset library and the one action that applies it,
@@ -830,6 +833,15 @@ export function useEditorControl(): void {
           // makes no sound), so a caller reasoning about audio needs it in the
           // one state call rather than by inference.
           monitor: { volume: s.monitorVolume, muted: s.monitorMuted },
+          // D-280 — the transport's PLAYBACK rate, the read half of
+          // `editor_set_playback_rate`. Reported for the same reason
+          // `previewZoom` and `monitor` are: it silently changes what
+          // `editor_set_playing` does (playback runs `playbackRate` times
+          // faster and the playhead lands somewhere else after N seconds), so a
+          // caller reasoning about the transport needs it in the one state call
+          // rather than by inference. NOT any clip's speed — that is per-clip,
+          // in `editor_get_timeline`.
+          playbackRate: s.playbackRate,
         };
       },
 
@@ -848,7 +860,56 @@ export function useEditorControl(): void {
 
       editor_set_playing: (a) => {
         useEditorTimelineStore.getState().setPlaying(!!a?.playing);
-        return { ok: true, playing: useEditorTimelineStore.getState().playing };
+        const s = useEditorTimelineStore.getState();
+        return {
+          ok: true,
+          playing: s.playing,
+          // D-280 — said here, not just in `editor_get_state`, because it
+          // changes what this very call did: at 4x, five seconds of wall clock
+          // moves the playhead twenty seconds down the timeline.
+          playbackRate: s.playbackRate,
+        };
+      },
+
+      // ---- D-280: the transport's playback RATE ---------------------------
+      //
+      // The MCP half of the preview playback-rate control (roadmap, owner
+      // request 2026-09-10). Same store action the human's transport control
+      // writes, per CLAUDE.md's human-AND-AI rule.
+      //
+      // **Deliberately separate from `editor_set_clip_speed`, and the two must
+      // not be confused.** That one edits a CLIP: it is persisted, undoable,
+      // changes the clip's duration on the timeline, and is baked into the
+      // export. This one changes how fast the preview PLAYS and touches nothing
+      // — an export taken at 4x preview renders exactly what an export at 1x
+      // renders. The tool's own doc in `mcp/server.py` says so at the top,
+      // because "make this faster" is genuinely ambiguous between the two.
+
+      editor_set_playback_rate: (a) => {
+        if (a?.rate === undefined || a?.rate === null) {
+          return {
+            error:
+              'pass rate: timeline seconds played per real second (1 = normal, 2/3/4 = faster review, 0.5 = slower). To change a CLIP\'s speed instead, use editor_set_clip_speed.',
+          };
+        }
+        const rate = Number(a.rate);
+        if (!Number.isFinite(rate) || rate <= 0) {
+          return { error: 'rate must be a finite number greater than 0' };
+        }
+        useEditorTimelineStore.getState().setPlaybackRate(rate);
+        const s = useEditorTimelineStore.getState();
+        return {
+          ok: true,
+          playbackRate: s.playbackRate,
+          playing: s.playing,
+          // Never a silent no-op (B-053's shape): an out-of-range request is
+          // honoured as the clamp and says so, rather than reporting back a
+          // number the caller did not ask for with no explanation.
+          note:
+            rate !== s.playbackRate
+              ? `rate ${rate} is outside ${MIN_PLAYBACK_RATE}..${MAX_PLAYBACK_RATE} and was clamped to ${s.playbackRate}`
+              : undefined,
+        };
       },
 
       // ---- D-266: audio monitoring ----------------------------------------

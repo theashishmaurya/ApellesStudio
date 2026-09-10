@@ -25,6 +25,10 @@
 //!   → cpal, D-049/D-050/D-057) and the waveform-envelope path (D-051/D-128).
 //!   Its *timeline resolution* — which clip is under a playhead — stayed in
 //!   `app/src-tauri` on purpose; see that module's doc.
+//! - [`timestretch`] — pitch-preserving time-scaling of the mixed preview
+//!   stream (D-280), the DSP behind the Edit tab's playback-RATE control. Used
+//!   only by [`audio`]'s live mixer; it is not a clip property and no render
+//!   path can reach it.
 //! - [`scrub`] — tape-style audio scrubbing (D-232): the **position-driven**
 //!   playback mode that sits beside [`audio`]'s time-driven one, sharing its
 //!   single transport, its `cpal` output stream and its `DecodedSource` decode
@@ -52,4 +56,5 @@ pub mod filmstrip;
 pub mod media_cache;
 pub mod probe;
 pub mod scrub;
+pub mod timestretch;
 pub mod video;

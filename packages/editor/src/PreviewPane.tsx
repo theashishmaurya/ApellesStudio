@@ -44,6 +44,28 @@
  * rather than a tighter per-frame coupling. (D-049 scoped scrub audio out
  * entirely; D-232 put it back, as its own position-driven mode — see above.)
  *
+ * Playback RATE (D-280, roadmap "A preview PLAYBACK-RATE control"): the
+ * transport can review the timeline at 0.5x–8x, and it is *two multiplications
+ * and one extra IPC argument* in this file, because both clocks were already
+ * built to be re-baselined:
+ *   - **picture** — the rAF loop asks for `elapsed * fps * rate` frames instead
+ *     of `elapsed * fps`. It already drops frames to stay real-time, so a fast
+ *     rate simply means it requests further ahead each tick.
+ *   - **sound** — `chroma_audio_play` takes the rate and the Rust session
+ *     applies it post-mix through `apelles_media::timestretch` (WSOLA), so 3x
+ *     review is PITCH-PRESERVED and still intelligible rather than chipmunked
+ *     or muted. See that module and D-280 for why it is WSOLA here when a
+ *     clip's own speed ramp deliberately varispeeds (D-242).
+ * Both effects list `playbackRate` in their deps, so a rate change re-baselines
+ * the two together from the same playhead at the same instant — exactly the
+ * D-050 open-loop model a Play toggle already uses, not a second mechanism.
+ *
+ * **It is not a clip's Speed/Retime property (D-236).** Nothing here writes to
+ * the project: no clip changes, nothing is persisted, nothing is undoable, and
+ * an export taken at 4x preview renders precisely what an export at 1x renders.
+ * `timelineStore`'s `playbackRate` is session chrome under D-216's rule, like
+ * `waveformView` and the monitor volume beside it.
+ *
  * Frame payload (D-217): `chroma_timeline_frame` answers with the JPEG's raw
  * bytes (an `ArrayBuffer`), not a `data:image/jpeg;base64,…` string, and this
  * file wraps them in a `Blob` object URL — see `PREVIEW_MIME` and `frameUrl`.
@@ -209,6 +231,12 @@ export function PreviewPane() {
   // toggle does; see the field's own doc in `timelineStore.ts`.
   const waveformView = useEditorTimelineStore((s) => s.waveformView);
   const setWaveformView = useEditorTimelineStore((s) => s.setWaveformView);
+  // D-280 — the transport's playback RATE. Store state for the same reason
+  // `waveformView` is: `editor_set_playback_rate` has to drive the very same
+  // value the human's control does. Not a clip's Speed property — see the
+  // field's own doc in `timelineStore.ts`.
+  const playbackRate = useEditorTimelineStore((s) => s.playbackRate);
+  const setPlaybackRate = useEditorTimelineStore((s) => s.setPlaybackRate);
 
   const [frameSrc, setFrameSrc] = useState<string | null>(null);
   const [decodeErr, setDecodeErr] = useState<string | null>(null);
@@ -504,7 +532,13 @@ export function PreviewPane() {
       // outside. Same `import.meta.env.DEV` compile-time gate as `showFrame`.
       if (import.meta.env.DEV) recordPreviewTiming('raf');
       const elapsed = (performance.now() - startTime) / 1000;
-      const want = startFrame + Math.floor(elapsed * fps);
+      // D-280 — the playback rate is exactly one multiplication, here. The
+      // loop is already wall-clock-driven and already frame-drops to stay
+      // real-time, so asking it for `rate` times as many timeline frames per
+      // real second is the whole of the video half of the feature: at 4x it
+      // simply requests every fourth frame (or as many as decode can keep up
+      // with), which is what a preview shuttle IS.
+      const want = startFrame + Math.floor(elapsed * fps * playbackRate);
       if (want >= duration) {
         setPlayhead(lastFrame);
         setPlaying(false);
@@ -551,7 +585,26 @@ export function PreviewPane() {
     // `fetchFrame` is a `useCallback` with no deps, so it is referentially
     // stable and never re-runs this effect — listed because the play loop now
     // really does call it (to drain a scrub frame queued during a pause).
-  }, [playing, timeline, duration, fps, lastFrame, setPlayhead, setPlaying, fetchFrame, showFrame]);
+    //
+    // D-280 — `playbackRate` re-runs this effect on purpose, which RE-BASELINES
+    // the loop: `startFrame` becomes the playhead the picture is actually on
+    // and `startTime` becomes now, so changing rate mid-playback continues from
+    // where you are instead of jumping. That is the same re-baselining a Play
+    // toggle does, and the audio effect below re-runs on the same dependency at
+    // the same moment — which is precisely what keeps D-050's open-loop sync
+    // model true at any rate rather than needing a second mechanism.
+  }, [
+    playing,
+    timeline,
+    duration,
+    fps,
+    playbackRate,
+    lastFrame,
+    setPlayhead,
+    setPlaying,
+    fetchFrame,
+    showFrame,
+  ]);
 
   // audio (D-049): start/stop in lockstep with the same `playing` transitions
   // that (re)baseline the video rAF loop above — both begin from the same
@@ -585,7 +638,13 @@ export function PreviewPane() {
       return;
     }
     const startFrame = useEditorTimelineStore.getState().playhead;
-    invoke('chroma_audio_play', { startFrame, seq: nextAudioSeq() }).catch((e) => {
+    // D-280 — `rate` makes the audio session run the timeline this many times
+    // faster, PITCH-PRESERVED (`apelles_media::timestretch`), so fast review is
+    // still intelligible rather than chipmunked or silent. It is a session
+    // parameter, not a live one: a rate change re-runs this effect, which stops
+    // the old session and starts a fresh one from the playhead the picture is
+    // on — the same instant the video loop above re-baselines its own clock.
+    invoke('chroma_audio_play', { startFrame, seq: nextAudioSeq(), rate: playbackRate }).catch((e) => {
       // A clip with no audio stream isn't an error on the Rust side
       // (chroma_audio_play returns Ok(()) and just plays nothing) — a
       // rejection here is a real decode/device failure. Not fatal to video
@@ -595,7 +654,13 @@ export function PreviewPane() {
     return () => {
       if (!isScrubbing()) invoke('chroma_audio_stop', { seq: nextAudioSeq() }).catch(() => {});
     };
-  }, [playing, hasTimeline]);
+    // D-280 — `playbackRate` joins `playing`/`hasTimeline` deliberately: it is
+    // the third thing that genuinely changes what this session should be
+    // playing. Adding it here and to the video loop above is what keeps the two
+    // clocks starting from the same frame at the same moment (D-130's note
+    // about NOT depending on the `timeline` object still stands — a rate is a
+    // transport fact, not a timeline one, so this adds no session churn).
+  }, [playing, hasTimeline, playbackRate]);
 
   // D-232 — the transport's own scrub gesture. `Player` reports the position
   // bar's drag as a real start/move/end triple (`onSeek` alone cannot tell a
@@ -665,6 +730,11 @@ export function PreviewPane() {
         onVolumeChange={(v) => setAudioMonitor({ volume: v })}
         onFullscreen={toggleFullscreen}
         isFullscreen={isFullscreen}
+        // D-280 — the transport's playback rate. `setPlaybackRate` clamps, so
+        // `Player` can hand back whatever the custom field produced without
+        // this file (or the Rust session) having to trust it.
+        rate={playbackRate}
+        onRateChange={setPlaybackRate}
         // D-218 — the zoom cluster, mirroring the timeline toolbar's own. A
         // bound is expressed by withholding that direction's callback, which
         // `Player` renders as a disabled button (its own documented

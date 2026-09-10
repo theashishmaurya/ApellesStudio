@@ -1,6 +1,6 @@
 /**
  * @apelles/editor — where a clip-drag's cursor-follow ghost sits, and which
- * slice of the clip it shows (B-137 / D-278).
+ * slice of the clip it shows (B-137 / D-279).
  *
  * **What it is.** One pure function. `@dnd-kit/core`'s `DragOverlay` always
  * anchors itself to the dragged node's own measured rect — `PositionedOverlay`

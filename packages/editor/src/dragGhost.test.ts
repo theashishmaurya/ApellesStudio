@@ -1,5 +1,5 @@
 /**
- * `dragGhost.ts` — the window a clip-drag ghost shows (B-137 / D-278).
+ * `dragGhost.ts` — the window a clip-drag ghost shows (B-137 / D-279).
  *
  * The arithmetic half of the fix. Where the ghost actually ends up on screen is
  * `TimelinePane.dragGhost.dom.test.tsx`'s job (it is dnd-kit's positioning, and
