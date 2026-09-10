@@ -15,7 +15,8 @@ opinion about Tauri, the GPU, or which project happens to be open right now
     `load_manifest` (+ the D-114 mtime-validated `load_manifest_cached`),
     the atomic `save_manifest` (B-034/D-112), every schema migration
     (`migrate_legacy_timeline`, `migrate_legacy_shots`, the D-136 normalised-
-    geometry pass), the media pool + bins (D-044/D-045/D-059),
+    geometry pass), the media pool + bins (D-044/D-045/D-059) including its two probed source
+    kinds (`MediaItem.video` / `MediaItem.image`, mutually exclusive — D-292),
     `migrate_shot_grades_to_clips` and the D-070 unified-clip-identity
     resolution (`resolve_active_clip_index`, `top_wins_clip_index`),
     `list_projects_in` / `new_project_in` / `infer_settings_from_clip`.
@@ -30,7 +31,8 @@ opinion about Tauri, the GPU, or which project happens to be open right now
 `docs/notes/architecture-lock.md`'s dependency table listed this crate as
 depending on `types, grade-model, timeline`. The real code also probes and
 thumbnails the media it references — `video::probe`, `video::extract_thumb`,
-`probe::probe_cached` — which after D-146 is `apelles-media`. The edge is
+`probe::probe_cached`, and (D-292) `still::probe` / `still::thumbnail` for a
+still-image pool item — which after D-146 is `apelles-media`. The edge is
 **legal** in the locked graph (L2 `project` → L1 `media`); the table simply
 did not list it. D-141's scoping pass found it, D-148 landed it, and the lock
 doc's table is corrected. There is **no** `apelles-grade-model` edge: this

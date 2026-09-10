@@ -877,6 +877,39 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "the transition sits on, so the two cannot both be honoured."
         ),
     },
+    "still_images": {
+        "a_still_is_an_ordinary_clip": (
+            "D-292: a STILL IMAGE (.png/.jpg/.jpeg/.webp/.tif/.tiff/.bmp) is a "
+            "first-class media-pool source and an ordinary video-track clip — "
+            "it has a real source_path and media_id, and every op applies to "
+            "it unchanged: trim, slip, split, roll, transitions, "
+            "editor_set_clip_transform, keyframes, fades, the Colorist grade. "
+            "It is NOT a separate clip kind the way a title "
+            "(editor_add_text_clip) or an adjustment clip is — those are "
+            "GENERATED and carry no source file at all. Whether a clip is a "
+            "still is read off its source path's extension, so nothing has to "
+            "be told twice and editor_swap_clip_media can point a clip at a "
+            "still or away from one freely."
+        ),
+        "it_has_no_length_so_one_is_synthesized": (
+            "A still genuinely has no duration, frame rate or frame count, and "
+            "the pool reports none: editor_list_media gives it an `image` key "
+            "(width/height only) where footage has `video`. editor_add_clip "
+            "therefore places it at 3 SECONDS at the project's rate by default "
+            "— the same default a title gets — rather than 'the rest of the "
+            "source'. Pass `duration` for anything else. Its reported "
+            "`sourceLen` is a synthesized ONE HOUR of trim headroom, not a "
+            "length: it exists so a still can be extended freely, and reading "
+            "it as 'how long this source is' is the one real trap here."
+        ),
+        "video_tracks_only": (
+            "A still is refused on an audio track (it is picture with no audio "
+            "stream, so unlike a video clip it can never be an audio source), "
+            "and it never gets a linked audio half on drop. Animated GIF and "
+            "camera RAW are deliberately not importable at all — a GIF is not "
+            "one frame, and RAW cannot be opened by the export engine."
+        ),
+    },
     "colorist_grade": {
         "it_is_automatic": (
             "D-256: a clip's COLORIST GRADE is now live on the Edit "
@@ -1068,7 +1101,9 @@ def editor_get_capabilities() -> str:
     exact box" primitive — plus the recipe for landing a clip in an exact
     half-canvas slot anyway), track paint order, why keyframes are per-clip,
     why a keyframe silently beats `editor_set_clip_transform` per property,
-    export's real v1 scope (video only), and known rough edges worth testing
+    export's real v1 scope (video only), how a STILL IMAGE differs from
+    footage (D-292 — it has no length, so one is synthesized), and known rough
+    edges worth testing
     for before trusting a real edit (a stuck media-pool entry, a one-time
     flake right after an app restart, a macOS screen-recording filename trap
     that will silently break ANY tool given a hand-typed path, an animated
@@ -1481,10 +1516,17 @@ def editor_import_media(paths: list[str], folder: str | None = None) -> str:
 
     A path already in the pool is skipped, not duplicated — with one
     exception (B-073): an entry whose own first probe failed and therefore
-    has no video metadata is re-probed here and returned if it now succeeds,
+    has no probed metadata is re-probed here and returned if it now succeeds,
     so re-importing really is a valid repair for that case. To repair such an
     item by id instead — keeping its id and every reference to it — use
-    `editor_reprobe_media`."""
+    `editor_reprobe_media`.
+
+    STILL IMAGES are importable too (D-292): `.png`, `.jpg`/`.jpeg`, `.webp`,
+    `.tif`/`.tiff`, `.bmp`. They come back with an `image` key (width/height)
+    where footage has `video`, and are placed by `editor_add_clip` on a video
+    track with a synthesized duration — see that tool. Animated GIF and camera
+    RAW are deliberately NOT importable: a GIF is not one frame, and RAW cannot
+    be opened by the export engine."""
     import json
 
     args: dict = {"paths": paths}
@@ -1550,12 +1592,18 @@ def editor_list_media() -> str:
     an import actually did.
 
     **Every row carries `usable`, and an unusable one explains itself in
-    `problem`.** `editor_add_clip` refuses any item with no probed frame count,
-    and that refusal — not the pool state itself — is the symptom you would
-    otherwise hit (see `docs/BUGS.md` B-073). The response's `unusable` array
-    is the ids of exactly those items, so "which one is the broken one" is one
-    call rather than a hand-read of `project.json`. `video.hasAudio: null`
-    means "never probed for that", NOT "silent".
+    `problem`.** `editor_add_clip` refuses any item that never probed
+    successfully, and that refusal — not the pool state itself — is the symptom
+    you would otherwise hit (see `docs/BUGS.md` B-073). The response's
+    `unusable` array is the ids of exactly those items, so "which one is the
+    broken one" is one call rather than a hand-read of `project.json`.
+    `video.hasAudio: null` means "never probed for that", NOT "silent".
+
+    **`video` vs `image` (D-292).** A row has exactly one of them. `video` is
+    moving footage (or an audio-only source). `image` is a STILL — width and
+    height only, because a still genuinely has no rate, duration or frame
+    count; a still is usable with no frame count at all, and `editor_add_clip`
+    synthesizes its length. Neither key present means the probe failed.
 
     `hasThumb` is a boolean, deliberately: the real thumbnail is a base64 JPEG
     data URL that would swamp this response and means nothing to you anyway.
@@ -1686,7 +1734,22 @@ def editor_add_clip(
     should land. `source_start` defaults to 0 and `duration` to the rest of
     the source if omitted. `at_index` inserts at a specific position on the
     track instead of appending; `ripple=True` shifts later clips to make
-    room rather than overlapping them."""
+    room rather than overlapping them.
+
+    STILL IMAGES (D-292). A pool item that is a still (PNG/JPEG/TIFF/WebP/BMP —
+    `editor_list_media` reports it with an `image` key instead of `video`) is
+    placed exactly like footage, on a VIDEO track. A still has no length of its
+    own, so two things differ:
+
+    * `duration` defaults to **3 seconds at the project's rate**, not "the rest
+      of the source" — pass `duration` explicitly for any other length, in
+      timeline frames. It is the same default a title gets, for the same reason.
+    * `source_start` is meaningless on a still (every frame is the same
+      picture); leave it at 0. Its reported `sourceLen` is a synthesized ONE
+      HOUR of trim headroom, not a real length — so a still can be extended
+      about as far as you like, and a `duration` up to that ceiling is accepted.
+
+    A still is refused on an audio track: it is picture with no audio stream."""
     import json
 
     args: dict = {"track": track, "ripple": ripple}
@@ -2689,7 +2752,11 @@ def editor_swap_clip_media(
     call being refused. `source_fps` is always re-read from the NEW source's
     own real probed rate, never carried over from the old one — before
     calling this on a clip whose length matters, consider whether you also
-    want to re-trim/re-check it afterward with `get_timeline`."""
+    want to re-trim/re-check it afterward with `get_timeline`.
+
+    The new source may be a STILL IMAGE (D-292), and swapping TO one never
+    shortens the clip: a still's synthesized extent is an hour. Swapping AWAY
+    from one to real footage can, by the shrink rule above."""
     import json
 
     args: dict = {"track": track, "clip": clip}

@@ -166,6 +166,7 @@ mod tests {
             name: "a.mov".into(),
             added: String::new(),
             video: None,
+            image: None,
             folder: None,
             motion_scene_id: None,
         });
@@ -218,6 +219,7 @@ mod tests {
             name: "a.mov".into(),
             added: String::new(),
             video: None,
+            image: None,
             folder: None,
             motion_scene_id: None,
         });

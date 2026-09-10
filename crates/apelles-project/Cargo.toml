@@ -23,3 +23,12 @@ chrono = "0.4"
 log = "0.4"
 once_cell = "1.21"
 uuid = { version = "1.25", features = ["v4", "serde"] }
+
+[dev-dependencies]
+# D-292 — this crate's tests need to WRITE a real still (a PNG on disk) to
+# assert that importing one produces a probed, online pool item. `image` is
+# already in the workspace's tree via `apelles-media` (which is where all this
+# crate's actual image *reading* lives — nothing here decodes a pixel), pinned
+# to the same version, so this is a test-only re-use of an existing dependency
+# rather than a new one to weigh.
+image = "0.25.10"

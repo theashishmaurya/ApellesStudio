@@ -1598,7 +1598,7 @@ describe('track lock enforcement (D-086/D-089) — mirrors apelles_timeline::Tim
 
 describe('clipFromDraggedMedia (D-070)', () => {
   it('sets media_id from the dragged Sources-panel item, not shot_id', () => {
-    const built = clipFromDraggedMedia({ id: 'media-1', sourcePath: '/a.mov', name: 'a.mov', frameCount: 240 });
+    const built = clipFromDraggedMedia({ id: 'media-1', sourcePath: '/a.mov', name: 'a.mov', frameCount: 240 }, 24);
     expect(built).not.toBeNull();
     expect(built!.media_id).toBe('media-1');
     expect(built!.shot_id).toBeNull();
@@ -1607,8 +1607,8 @@ describe('clipFromDraggedMedia (D-070)', () => {
   });
 
   it('returns null for media with no known frame count (unprobed/offline)', () => {
-    expect(clipFromDraggedMedia({ id: 'm', sourcePath: '/a.mov', name: 'a.mov', frameCount: null })).toBeNull();
-    expect(clipFromDraggedMedia({ id: 'm', sourcePath: '/a.mov', name: 'a.mov' })).toBeNull();
+    expect(clipFromDraggedMedia({ id: 'm', sourcePath: '/a.mov', name: 'a.mov', frameCount: null }, 24)).toBeNull();
+    expect(clipFromDraggedMedia({ id: 'm', sourcePath: '/a.mov', name: 'a.mov' }, 24)).toBeNull();
   });
 });
 
@@ -1934,7 +1934,7 @@ describe('linkedClipsFromDraggedMedia (D-129)', () => {
   const media = { id: 'm1', sourcePath: '/media/m1.mov', name: 'Shot', frameCount: 120 };
 
   it('builds a linked audio half for a source that really has audio', () => {
-    const pair = linkedClipsFromDraggedMedia({ ...media, hasAudio: true });
+    const pair = linkedClipsFromDraggedMedia({ ...media, hasAudio: true }, 24);
     expect(pair).not.toBeNull();
     expect(pair!.audio).not.toBeNull();
     expect(pair!.video.link_group).toBeTruthy();
@@ -1947,24 +1947,24 @@ describe('linkedClipsFromDraggedMedia (D-129)', () => {
   });
 
   it('builds NO audio half, and leaves the video unlinked, for a silent source', () => {
-    const pair = linkedClipsFromDraggedMedia({ ...media, hasAudio: false });
+    const pair = linkedClipsFromDraggedMedia({ ...media, hasAudio: false }, 24);
     expect(pair!.audio).toBeNull();
     expect(pair!.video.link_group).toBeNull();
   });
 
   it('treats an unknown hasAudio (a pre-D-129 pool item) as no audio half — never guesses', () => {
-    const pair = linkedClipsFromDraggedMedia(media); // hasAudio absent entirely
+    const pair = linkedClipsFromDraggedMedia(media, 24); // hasAudio absent entirely
     expect(pair!.audio).toBeNull();
     expect(pair!.video.link_group).toBeNull();
   });
 
   it('still rejects media with no usable frame count, exactly as before', () => {
-    expect(linkedClipsFromDraggedMedia({ ...media, frameCount: 0, hasAudio: true })).toBeNull();
-    expect(linkedClipsFromDraggedMedia({ ...media, frameCount: null, hasAudio: true })).toBeNull();
+    expect(linkedClipsFromDraggedMedia({ ...media, frameCount: 0, hasAudio: true }, 24)).toBeNull();
+    expect(linkedClipsFromDraggedMedia({ ...media, frameCount: null, hasAudio: true }, 24)).toBeNull();
   });
 
   it('clipFromDraggedMedia keeps returning just the video half (unchanged callers)', () => {
-    const v = clipFromDraggedMedia({ ...media, hasAudio: true });
+    const v = clipFromDraggedMedia({ ...media, hasAudio: true }, 24);
     expect(v?.name).toBe('Shot');
     expect(v?.duration).toBe(120);
   });
@@ -1997,7 +1997,7 @@ describe('add_clip with a linked audio half (D-129)', () => {
     name: 'Shot',
     frameCount: 100,
     hasAudio: true,
-  })!;
+  }, 24)!;
 
   it('drops the picture on the video track and its audio on a NEW audio track', () => {
     const before: Timeline = { id: 't', name: 't', tracks: [{ kind: 'video', clips: [] }] };
@@ -2061,7 +2061,7 @@ describe('add_clip with a linked audio half (D-129)', () => {
     const before: Timeline = { id: 't', name: 't', tracks: [{ kind: 'video', clips: [] }] };
     const after = applyOp(before, { kind: 'add_clip', track: 0, clip: clipFromDraggedMedia({
       id: 'm2', sourcePath: '/m2.mov', name: 'Silent', frameCount: 40,
-    })! });
+    }, 24)! });
     expect(after.tracks).toHaveLength(1);
     expect(after.tracks[0].clips[0].link_group).toBeNull();
   });
