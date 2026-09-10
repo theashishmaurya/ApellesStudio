@@ -4,6 +4,12 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — B-149: fixed two real Lighthouse findings on production
+  (`apelles.studio`) — a contrast failure on the "01/02/03" room numbers
+  (ochre on marble, 2.95:1; switched to terracotta, 5.3:1) and a
+  render-blocking Google Fonts request costing ~750ms of LCP (moved to the
+  standard preload+swap non-blocking pattern). Measured LCP 968ms → 225ms on
+  the same production URL before/after. Deployed via `wrangler pages deploy`.
 - **2026-09-10** — D-291: `website/` now has real hosting — Cloudflare Pages
   project `apelles-studio` on the `ashish.1999vns@gmail.com` account, custom
   domains `apelles.studio` (live, SSL verified) and `www.apelles.studio`
