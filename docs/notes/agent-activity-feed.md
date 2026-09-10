@@ -274,3 +274,12 @@ rather than state, so the cost is one wrong row.
 an `await` inside a handler is still agent-scoped) and the one that would be
 dangerous (a throwing handler must not leak the counter and make every later
 user edit read as agent work).
+
+**Live-verified, 2026-09-10.** This design was unit-tested but not confirmed
+against the real running app. Confirmed live, incidentally: a `debug_screenshot`
+taken while the **Edit** tab was frontmost showed the Agent Activity dock
+displaying two **Colorist** MCP actions (`set_color_grade`, `set_primary`) that
+had just been called via `mcp__chroma__set_color_grade`/`set_primary` while a
+different tab was active. That is exactly the D-298 claim — one shell-level
+feed, global across tabs, not scoped to whichever tab happens to be showing —
+observed working, not just documented.
