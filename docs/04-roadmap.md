@@ -2929,6 +2929,14 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      the best before committing one to the shot.
   4. **Mask coverage isn't independently verifiable.** No way to confirm "did
      that mask actually cover what I intended" without a screenshot.
+     **Confirmed live, 2026-09-10** (skin-retouch attempt via an AI subject
+     mask + `set_mask_adjust`'s structure/saturation/temperature): region-
+     average pixel stats (`sample_region`'s mean/min/max) can confirm a mask
+     edit's *direction* is real and confined to the masked area, but cannot
+     verify a *texture*-level claim like "blemishes are smoothed" — that needs
+     a frequency/variance analysis this tool doesn't expose. Also hit **B-153**
+     in the same attempt: `add_subject_mask` reported a tool error on a call
+     that had actually succeeded server-side.
   5. **The active-shot/timeline-drift + source-path-vs-per-clip grading gap
      (B-147) underlies all four above** — none of them matter if the tool might
      be grading the wrong shot. D-294's `colorist_view` bridge (just merged) is

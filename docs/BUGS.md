@@ -2599,6 +2599,15 @@ status: open · severity: high (silently distorts every export in an affected pr
 - **not yet fixed:** the real fix needs a design decision, not a quick patch — options include: (a) prefer the first *video-codec* clip over a still when both exist before falling back further, (b) require an explicit project resolution before allowing an image-only track to seed composition size, or (c) warn/flag when composition size come from a still while the timeline also holds real video. Logged rather than patched blind, since the wrong choice here could itself become a footgun (e.g. a genuinely image-first project like a slideshow needs (a) to NOT apply).
 - **immediate workaround used this session:** none applied to the project yet — flagging to the owner rather than silently moving the reference clip, since removing/reordering it changes the project.
 
+## B-153 — `add_subject_mask` reports a tool error even when the mask is actually created successfully
+
+status: open · severity: medium (misleading failure signal — an agent following the error would retry or give up on a call that already worked) · area: `mcp/server.py` (`add_subject_mask`'s response path), possibly the underlying `add_mask`/`add_subject_mask` Tauri command's return shape
+
+- **found:** 2026-09-10, live — `mcp__chroma__add_subject_mask(bbox=[850, 0, 1920, 1085])` returned a bare `Error executing tool add_subject_mask` with no detail. A follow-up `list_masks` call showed the mask had actually been created correctly (real `ai-subject` sub-mask, bbox matching what was requested, id `a15f8e35-ff0e-45c0-be0f-483e83b9c743`), and a subsequent `set_mask_adjust` against that id worked and was independently verified (via `sample_region` before/after) to actually change the masked pixels.
+- **expected:** a tool call that succeeds server-side returns its normal success payload (mask id, rendered frame), not an error.
+- **not yet root-caused:** didn't dig into `mcp/server.py`/the Rust command's response serialization this session — flagging with a clean, exact repro rather than guessing at the cause. Likely candidates to check first: the response payload for a freshly-generated AI-subject mask may be large/shaped differently than other mask-adjust responses (e.g. carrying the matte data) in a way that trips whatever the MCP layer uses to detect a tool error.
+- **workaround used this session:** called `list_masks` after the apparent failure to confirm the real state, then proceeded normally.
+
 ## B-150 — a second Edit-timeline clip of an already-open source file doesn't appear in Colorist's shot list at all
 
 status: open · severity: high (silently drops a clip from Colorist entirely — not a wrong-picture bug like B-147, an *invisible* one) · area: `app/src-tauri/src/chroma/state.rs` (`Session::upsert`), `app/src-tauri/src/chroma/colorist_view.rs` (D-294)
