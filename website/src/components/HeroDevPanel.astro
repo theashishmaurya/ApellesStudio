@@ -1,0 +1,327 @@
+---
+/**
+ * HeroDevPanel.astro — a Framer-style live inspector for Hero.astro's
+ * hand-measured landmark positions (D-275).
+ *
+ * What it is: a floating side panel, dev-only, with sliders for the CSS
+ * custom properties Hero.astro's own `.headline`/`.ask`/`.art`/`.scrim`
+ * rules each read with a fallback (`var(--dev-headline-top, 34%)` and
+ * friends) — dragging a slider calls `style.setProperty` on `.hero`
+ * directly, so the change is live with zero rebuild. `.headline` and `.ask`
+ * are independently positioned (D-275 split them back apart after D-274 had
+ * briefly merged them into one column), so each gets its own group of three
+ * sliders here rather than sharing one. A "Copy CSS" button serialises the
+ * current values as plain labelled text, meant to be pasted back into chat
+ * or straight into Hero.astro to make a value permanent. Values persist in
+ * `localStorage` so a reload does not lose an in-progress adjustment.
+ *
+ * What it does NOT do: render in a production build. Gated by
+ * `import.meta.env.DEV`, which Astro/Vite evaluate at build time for a
+ * static site — the whole block is simply absent from `astro build`'s
+ * output, not hidden with CSS or a runtime flag (this repo's own standing
+ * rule for debug-only tooling, CLAUDE.md, applied here even though this is
+ * the marketing site rather than the app). It also carries no design
+ * opinion of its own worth preserving: it is scaffolding for finding a
+ * number, not a feature, so it is intentionally plain rather than themed
+ * with the same care as the rest of the site.
+ */
+interface Control {
+  /** The CSS custom property this drives, without the leading `--`. */
+  readonly prop: string;
+  readonly label: string;
+  readonly min: number;
+  readonly max: number;
+  readonly default: number;
+  /** Appended to the numeric value when writing the custom property. */
+  readonly unit: '%' | '';
+}
+
+interface Group {
+  readonly name: string;
+  readonly controls: readonly Control[];
+}
+
+const GROUPS: readonly Group[] = [
+  {
+    name: 'Headline',
+    controls: [
+      { prop: 'dev-headline-top', label: 'Top', min: 5, max: 80, default: 36, unit: '%' },
+      { prop: 'dev-headline-left', label: 'Left', min: 10, max: 90, default: 50, unit: '%' },
+      { prop: 'dev-headline-width', label: 'Width', min: 15, max: 80, default: 44, unit: '%' },
+    ],
+  },
+  {
+    name: 'Signup form',
+    controls: [
+      { prop: 'dev-ask-top', label: 'Top', min: 5, max: 90, default: 50, unit: '%' },
+      { prop: 'dev-ask-left', label: 'Left', min: 10, max: 90, default: 50, unit: '%' },
+      { prop: 'dev-ask-width', label: 'Width', min: 15, max: 70, default: 32, unit: '%' },
+    ],
+  },
+  {
+    name: 'Image',
+    controls: [
+      { prop: 'dev-art-x', label: 'Position — x', min: 0, max: 100, default: 44, unit: '%' },
+      { prop: 'dev-art-y', label: 'Position — y', min: 0, max: 100, default: 46, unit: '%' },
+      { prop: 'dev-scrim', label: 'Scrim opacity', min: 0, max: 60, default: 41, unit: '%' },
+    ],
+  },
+];
+---
+
+<aside class="dev-panel" data-hero-dev-panel aria-label="Hero position inspector (dev only)">
+  <div class="title">
+    <span>Hero inspector <span class="badge">dev only</span></span>
+    <button type="button" data-hide aria-label="Hide inspector">Hide</button>
+  </div>
+  <div data-body>
+  {
+    GROUPS.map((g) => (
+      <div class="group">
+        <p class="group-name">{g.name}</p>
+        {g.controls.map((c) => (
+          <label class="row" data-control={c.prop}>
+            <span class="name">{c.label}</span>
+            <input
+              type="range"
+              min={c.min}
+              max={c.max}
+              step="1"
+              value={c.default}
+              data-slider={c.prop}
+              data-unit={c.unit}
+            />
+            <output data-readout={c.prop}>
+              {c.default}
+              {c.unit}
+            </output>
+          </label>
+        ))}
+      </div>
+    ))
+  }
+  <div class="actions">
+    <button type="button" data-reset>Reset</button>
+    <button type="button" data-copy>Copy CSS</button>
+  </div>
+  <p class="hint" data-copied hidden>Copied — paste it into chat, or straight into Hero.astro.</p>
+  </div>
+</aside>
+
+<button type="button" class="reopen" data-reopen hidden aria-label="Show hero inspector">⚙</button>
+
+<style>
+  .dev-panel {
+    position: fixed;
+    top: 5.5rem;
+    right: 1rem;
+    z-index: 200;
+    width: 16.5rem;
+    max-height: calc(100vh - 7rem);
+    overflow-y: auto;
+    background: var(--pigment-marble);
+    border: 1px solid var(--edge-strong);
+    border-radius: var(--radius-md);
+    padding: 0.85rem;
+    font-family: var(--font-ui);
+    box-shadow: 0 12px 30px -14px color-mix(in srgb, var(--pigment-basalt) 45%, transparent);
+  }
+
+  .title {
+    margin: 0 0 0.6rem;
+    font-size: var(--step--1);
+    font-weight: 500;
+    color: var(--pigment-basalt);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .badge {
+    font-size: var(--step--2);
+    color: var(--pigment-basalt-soft);
+    font-weight: 400;
+  }
+
+  [data-hide] {
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    color: var(--pigment-basalt-soft);
+    background: none;
+    border: 1px solid var(--edge-strong);
+    border-radius: var(--radius-md);
+    padding: 0.2rem 0.5rem;
+    cursor: pointer;
+  }
+  [data-hide]:hover {
+    background: var(--wash);
+  }
+
+  .reopen {
+    position: fixed;
+    top: 5.5rem;
+    right: 1rem;
+    z-index: 200;
+    width: 2.5rem;
+    height: 2.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--step-1);
+    background: var(--pigment-marble);
+    color: var(--pigment-basalt);
+    border: 1px solid var(--edge-strong);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    box-shadow: 0 12px 30px -14px color-mix(in srgb, var(--pigment-basalt) 45%, transparent);
+  }
+  .reopen:hover {
+    background: var(--wash);
+  }
+
+  .group + .group {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--edge);
+  }
+
+  .group-name {
+    margin: 0;
+    font-size: var(--step--2);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--pigment-terracotta);
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.15rem 0.5rem;
+    margin-top: 0.6rem;
+  }
+
+  .name {
+    font-size: var(--step--2);
+    color: var(--pigment-basalt-soft);
+  }
+
+  output {
+    font-family: var(--font-mono);
+    font-size: var(--step--2);
+    color: var(--pigment-basalt);
+    text-align: right;
+    min-width: 2.75rem;
+  }
+
+  input[type='range'] {
+    grid-column: 1 / -1;
+    width: 100%;
+    accent-color: var(--pigment-terracotta);
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.85rem;
+  }
+
+  .actions button {
+    flex: 1;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    color: var(--pigment-basalt);
+    background: var(--pigment-marble-deep);
+    border: 1px solid var(--edge-strong);
+    border-radius: var(--radius-md);
+    padding: 0.4rem 0.5rem;
+    cursor: pointer;
+  }
+  .actions button:hover {
+    background: var(--wash);
+  }
+
+  .hint {
+    margin: 0.6rem 0 0;
+    font-size: var(--step--2);
+    color: var(--pigment-basalt-soft);
+  }
+</style>
+
+<script>
+  const STORAGE_KEY = 'apelles-hero-dev-panel';
+  const HIDDEN_KEY = 'apelles-hero-dev-panel-hidden';
+
+  const panel = document.querySelector<HTMLElement>('[data-hero-dev-panel]');
+  const reopen = document.querySelector<HTMLElement>('[data-reopen]');
+  const hero = document.querySelector<HTMLElement>('.hero');
+  if (!panel || !reopen || !hero) throw new Error('HeroDevPanel: .hero or the panel itself is missing');
+
+  function setHidden(hidden: boolean) {
+    panel!.hidden = hidden;
+    reopen!.hidden = !hidden;
+    localStorage.setItem(HIDDEN_KEY, hidden ? '1' : '0');
+  }
+  setHidden(localStorage.getItem(HIDDEN_KEY) === '1');
+  panel.querySelector('[data-hide]')?.addEventListener('click', () => setHidden(true));
+  reopen.addEventListener('click', () => setHidden(false));
+
+  const sliders = [...panel.querySelectorAll<HTMLInputElement>('[data-slider]')];
+
+  const saved: Record<string, string> = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+
+  function apply(slider: HTMLInputElement) {
+    const prop = slider.dataset.slider!;
+    const unit = slider.dataset.unit ?? '';
+    const value = `${slider.value}${unit}`;
+    hero!.style.setProperty(`--${prop}`, value);
+    const readout = panel!.querySelector<HTMLOutputElement>(`[data-readout="${prop}"]`);
+    if (readout) readout.textContent = value;
+  }
+
+  for (const slider of sliders) {
+    const prop = slider.dataset.slider!;
+    if (saved[prop] !== undefined) slider.value = saved[prop];
+    apply(slider);
+
+    slider.addEventListener('input', () => {
+      apply(slider);
+      const next = { ...JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'), [prop]: slider.value };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    });
+  }
+
+  panel.querySelector('[data-reset]')?.addEventListener('click', () => {
+    localStorage.removeItem(STORAGE_KEY);
+    for (const slider of sliders) {
+      slider.value = slider.defaultValue;
+      apply(slider);
+    }
+  });
+
+  panel.querySelector('[data-copy]')?.addEventListener('click', async () => {
+    const val = (prop: string) => sliders.find((s) => s.dataset.slider === prop)?.value ?? '?';
+    const text = [
+      'Hero position values (paste this back to update Hero.astro):',
+      'Headline:',
+      `  top: ${val('dev-headline-top')}%`,
+      `  left: ${val('dev-headline-left')}%`,
+      `  width: ${val('dev-headline-width')}%`,
+      'Signup form:',
+      `  top: ${val('dev-ask-top')}%`,
+      `  left: ${val('dev-ask-left')}%`,
+      `  width: ${val('dev-ask-width')}%`,
+      'Image:',
+      `  position: ${val('dev-art-x')}% ${val('dev-art-y')}%`,
+      `  scrim opacity: ${val('dev-scrim')}%`,
+    ].join('\n');
+    await navigator.clipboard.writeText(text);
+    const hint = panel!.querySelector<HTMLElement>('[data-copied]');
+    if (hint) {
+      hint.hidden = false;
+      setTimeout(() => {
+        hint.hidden = true;
+      }, 2500);
+    }
+  });
+</script>

@@ -44,9 +44,12 @@
 </section>
 
 <style>
+  /* A basalt section (D-272): the tonal inverse of the page, not a second dark
+     theme — same two neutrals, ochre standing in for terracotta as the working
+     link colour, since terracotta's contrast on basalt is too low to read. */
   .diff {
-    background: var(--pigment-marble-deep);
-    border-block: 1px solid var(--edge);
+    background: var(--pigment-basalt);
+    border-block: 1px solid var(--edge-inverse);
   }
 
   .wrap {
@@ -56,11 +59,16 @@
     align-items: start;
   }
 
+  .eyebrow {
+    color: var(--ink-inverse-soft);
+  }
+
   h2 {
     font-size: var(--step-3);
     margin-top: 1rem;
     max-width: 17ch;
     font-weight: 300;
+    color: var(--ink-inverse);
   }
 
   .body p + p {
@@ -69,11 +77,15 @@
 
   .body p {
     max-width: 54ch;
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
   }
 
   .more {
     margin-top: 2rem;
+  }
+
+  .onward {
+    color: var(--pigment-ochre);
   }
 
   @media (max-width: 880px) {

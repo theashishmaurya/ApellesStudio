@@ -1,0 +1,138 @@
+---
+/**
+ * terms.astro — terms of use (D-280).
+ *
+ * What it is: terms sized to what this site actually does today — a
+ * pre-launch marketing page with a beta-signup form, no purchase, no
+ * account, no live product download. Written to match that reality rather
+ * than a generic SaaS terms template with clauses for things (subscriptions,
+ * user content, refunds) that do not exist here.
+ * What it does NOT do: name a governing law or jurisdiction — that is a real
+ * decision only the owner can make (where the business is actually
+ * domiciled), left as an explicit placeholder rather than guessed. See the
+ * note at the bottom and D-280 in the decision log.
+ */
+import Base from '../layouts/Base.astro';
+import PageHead from '../components/PageHead.astro';
+
+const updated = 'September 10, 2026';
+---
+
+<Base
+  title="Terms — Apelles"
+  description="The terms for using the Apelles website and its pre-launch beta signup. Short version: the software is AGPL-3.0, there is no product to buy yet, and the beta signup is a request, not a guarantee."
+>
+  <PageHead
+    eyebrow="Legal"
+    title="Terms"
+    lede={`Last updated ${updated}. This site is a pre-launch marketing page. There is no purchase, no account, and no live product download here yet — these terms are sized to that.`}
+  />
+
+  <section class="section">
+    <div class="shell prose">
+      <h2>What this site is</h2>
+      <p>
+        This is the marketing and pre-launch site for Apelles, a video editor built on top of a
+        vendored fork of <a class="link" href="https://github.com/CyberTimon/RapidRAW">RapidRAW</a>.
+        There is no application to download from this site yet — the only thing it does is describe
+        the product and let you leave an email address to hear about it when there is a build worth
+        installing.
+      </p>
+
+      <h2>The beta signup is a request, not a guarantee</h2>
+      <p>
+        Submitting the form means you have asked to be told when a beta build exists. It does not
+        reserve you a place in any program, does not create an account, and does not obligate us to
+        contact you by any date or at all if the project changes direction. See the
+        <a class="link" href="/privacy/">Privacy Policy</a> for exactly what happens to the address
+        you give us.
+      </p>
+
+      <h2>The software's own licence</h2>
+      <p>
+        Apelles itself — the application, once it exists as a build — is free software under the
+        <span class="mono">AGPL-3.0</span> licence, the same licence its vendored engine
+        (RapidRAW) ships under. These website terms govern this site; they do not modify or
+        override the AGPL-3.0 licence that governs the software itself. Read the licence directly
+        at <a class="link" href="https://www.gnu.org/licenses/agpl-3.0.html">gnu.org</a> for what it
+        actually permits and requires.
+      </p>
+
+      <h2>No warranty, pre-release</h2>
+      <p>
+        Everything on this site describes software that is pre-release. Where the AGPL-3.0 licence
+        already disclaims warranty for the software itself, that disclaimer stands; separately, the
+        content of this website (the copy, the claims about what is shipped) is provided as
+        accurately as we can make it at the time of writing, but the project is actively changing
+        and a claim here can become stale before this page is next updated.
+      </p>
+
+      <h2>What you can do with this site's own content</h2>
+      <p>
+        The words and design of this website are not open-source in the way the application is —
+        please don't reproduce this site's own copy or design elsewhere as though it were yours.
+        The application's own source code is separately licensed under AGPL-3.0 as described above,
+        and that licence, not these terms, governs your rights to that code.
+      </p>
+
+      <h2>Changes to these terms</h2>
+      <p>
+        If these terms change, this page changes in the same commit as whatever prompted it — that
+        is a standing rule for this whole codebase (see this repo's own
+        <code class="mono">CLAUDE.md</code>), not a promise made separately from the code.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        Questions about these terms: email
+        <a class="link" href="mailto:ashish.1999vns@gmail.com">ashish.1999vns@gmail.com</a>.
+      </p>
+
+      <p class="fine">
+        <strong>Governing law is deliberately left blank here.</strong> A real terms-of-use document
+        names the jurisdiction and law that governs it, which depends on where the business behind
+        this site is actually domiciled — a fact this page cannot invent. Fill that in (and have the
+        whole page reviewed by a lawyer) before relying on it for a real public launch; this page is
+        a good-faith draft sized to what the site currently does, not a substitute for legal advice.
+      </p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .prose {
+    max-width: 68ch;
+  }
+
+  .prose h2 {
+    font-size: var(--step-2);
+    font-weight: 400;
+    margin-top: 2.5rem;
+  }
+  .prose h2:first-child {
+    margin-top: 0;
+  }
+
+  .prose p {
+    margin-top: 1rem;
+    color: var(--pigment-basalt-soft);
+    line-height: 1.7;
+  }
+
+  .prose .link {
+    color: var(--pigment-terracotta);
+    border-bottom: 1px solid color-mix(in srgb, var(--pigment-terracotta) 35%, transparent);
+  }
+  .prose .link:hover {
+    border-bottom-color: var(--pigment-terracotta);
+  }
+
+  .fine {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--edge);
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    color: var(--pigment-basalt-soft);
+  }
+</style>

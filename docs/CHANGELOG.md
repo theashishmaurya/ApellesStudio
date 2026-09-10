@@ -4,6 +4,126 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **Privacy Policy and Terms pages added; no cookie-consent
+  banner (D-280, `website/`).** `/privacy/` and `/terms/` written from what
+  the code actually does (FormSubmit as the one data processor, no
+  cookies/analytics anywhere, AGPL-3.0 for the eventual software vs. these
+  pages' own terms) rather than a generic template — both explicitly flagged
+  as a good-faith draft needing real legal review, not a certification. No
+  cookie-consent banner built: there are no cookies to consent to, and
+  faking a consent flow (or adding tracking just to justify one) would be
+  exactly the decoration this site's own discipline argues against. Linked
+  from a new Footer "Legal" column.
+- **2026-09-10** — **Stale imagery hidden, `/docs/mcp/` hidden, a real domain
+  bug fixed, a real SEO pass (D-279, `website/`).** Home page's Demo section
+  and the Edit room's screenshot hidden (owner's call — the captures predate
+  the rename), using the same honest "not shown yet" shape Motion/Colorist
+  already had; `Demo.astro` itself untouched, just not currently rendered.
+  `/docs/mcp/` excluded from routing via Astro's own `_` convention, every
+  link to it removed. Caught and fixed a real bug: `astro.config.mjs`'s
+  `site` was still the pre-D-265 placeholder domain (`apelles.video`)
+  instead of the real one the owner bought (`apelles.studio`) — every
+  canonical/OG URL had been wrong since that domain purchase. Added
+  `@astrojs/sitemap` + `robots.txt`, moved the OG/Twitter preview image off
+  a (now-hidden) editor screenshot onto the hero painting with real
+  dimensions, added a minimal JSON-LD block restating only already-tested
+  facts. One genuine orphaned screenshot file (only used by the things just
+  removed) caught by the test suite's own orphan-detection check and
+  deleted, not papered over.
+
+- **2026-09-10** — **Hero values baked in from the live inspector; the
+  highlighter mark retired; eyebrow and two Footer paragraphs cut (D-278,
+  `website/`).** Baked HeroDevPanel's final slider values into Hero.astro's
+  `var(--dev-*, …)` fallbacks. Removed D-274's ochre `<mark>` highlighter
+  entirely — headline is plain light ink again, legible via a darker 41%
+  scrim and a two-layer text-shadow. Fixed a real, separate bug found while
+  chasing "why does the text still look thin": `global.css` forces the
+  large-display `opsz 72` optical cut on every h1, wrong for this
+  much-smaller one — reset to let `font-optical-sizing: auto` pick the
+  right cut, plus a real weight bump (300→480/440). Cut the hero's eyebrow
+  line (the "never learned to edit" objection check moved to a page-title
+  assertion in build-output.test.ts, since it still holds there), and two
+  Footer paragraphs — the colour-citation colophon and the licence/RapidRAW
+  attribution, the latter only after being shown that Footer.astro's own
+  header comment flags it as a licence-compliance item and confirming the
+  removal explicitly rather than treating it as routine copy trimming.
+  Footer's "who Apelles was" bio replaced with two lines about the product
+  instead. HeroDevPanel gained a Hide/reopen toggle.
+
+- **2026-09-10** — **Hero's headline and signup split back into
+  independently-positioned blocks (D-276, `website/`).** Live-tested
+  HeroDevPanel revealed every slider moved both together (D-274 had merged
+  them into one column). Split into `.headline`/`.ask`, each with its own
+  top/left/width custom properties; panel now groups its nine sliders under
+  Headline / Signup form / Image. Verified with a real DOM check
+  (`getBoundingClientRect` before/after), not just a screenshot — moving one
+  block's position leaves the other's bounding rect untouched.
+
+- **2026-09-10** — **A dev-only live inspector for the hero's position
+  values (D-275, `website/`).** `HeroDevPanel.astro` — six sliders (content
+  top/left/width, image crop x/y, scrim opacity) bound to CSS custom
+  properties `Hero.astro` already reads with real-value fallbacks; dragging
+  one updates the page live, no rebuild. Gated by `import.meta.env.DEV`,
+  confirmed absent from a real `astro build` output. Built after evaluating
+  and rejecting real open-source visual editors for this stack: Onlook
+  needs Next.js + Tailwind specifically (not Astro, despite an initial wrong
+  answer from a search summary — corrected against its actual GitHub
+  README), and Webstudio/GrapesJS are standalone builders with their own
+  project format rather than tools that attach to an existing codebase's
+  real source files. Owner chose to keep the site on Astro over migrating
+  to Next.js for the sake of visual-editor support.
+
+- **2026-09-10** — **The signature retires rose for ink; the hero headline
+  gets a real highlighter mark (D-274, `website/`).** `--pigment-rose` is
+  gone from the palette (not just unused — removed from `palette.ts`,
+  `tokens.css`, the Footer's own colophon copy, and the test suite's
+  "spent once" mechanism, which was rewritten rather than patched since it
+  was fundamentally about colour *scarcity*, and ink is the opposite of
+  scarce). `.signature` is now a solid basalt-ink fill everywhere, flipped
+  light-on-dark inside Hero.astro's own dark ground via a scoped override.
+  The hero headline's lines now sit on real ochre `<mark>` highlights
+  (`box-decoration-break: clone`), replacing an earlier `::selection`
+  override the owner had spotted by accident and liked. Also replaced the
+  hero's dual-landmark absolute positioning (headline pinned to the moon,
+  form pinned separately to the brush tip) with one centred column — it
+  didn't read as centred in practice — and caught a real mobile bug live: a
+  `flex: 1 1 10rem` written for a row layout was inflating the email input
+  to hundreds of pixels tall once the mobile breakpoint switched that row to
+  a column. Two dev-tooling lessons worth keeping: a browser-window resize
+  doesn't reliably reflect in screenshots (switched to Chrome DevTools'
+  `resize_page`, a real viewport resize, to actually catch the bug), and a
+  screenshot that disagrees with the live DOM/CSS state is the thing to
+  distrust first.
+
+- **2026-09-10** — **The home page hero gets a commissioned painting, and the
+  site's signature colour moves into it (D-273, `website/`).** A real
+  brush-in-hand Apelles painting is now the hero's full-bleed background,
+  locked to its own aspect ratio (not cropped) so the headline can sit
+  centred on the painting's golden disc and the "Request beta access" form
+  can land exactly at the brush tip — both measured against the real image,
+  not guessed. `<Signature/>` moved from `Beta.astro`'s section up into the
+  hero's own inline form (the page's one rose element, per D-264's own
+  spent-once rule); `Beta.astro`'s button is now a plain marble pill. Hero
+  copy trimmed (lede, facts list, "See it mid-edit" link all cut, not
+  relocated). `Nav.astro` is now a floating rounded island (`position:
+  fixed`) instead of a bar flush to the viewport edge, on every page.
+- **2026-09-10** — **The website's beta signup is live (`website/`).** Moved
+  from Formspree (50/month free cap) to FormSubmit.co (free, unlimited),
+  emailing every submission to the owner's inbox. Required matching
+  FormSubmit's own conventions, not Formspree's: the AJAX/JSON endpoint needs
+  a `/ajax/` path segment, and its honeypot field is named `_honey`, not
+  `_gotcha`. Verified end to end in a real browser against the live
+  FormSubmit endpoint (not just the test suite) — real submission, real
+  success state, real one-time confirmation email triggered.
+- **2026-09-10** — **`website/`'s six "second ground" sections go from
+  `--pigment-marble-deep` to basalt (D-272).** New `--ink-inverse(-soft)` /
+  `--edge-inverse(-strong)` tokens (mixed the same way `--edge`/`--wash`
+  already are, so `palette.test.ts` still passes them as documented, not
+  literals). Real finding along the way: ochre reads better than terracotta
+  on a dark ground (5.1:1 vs 2.9:1), so it takes over as the working
+  link/emphasis colour inside these sections instead. Also caught and fixed
+  an unrelated one-tool drift in `src/data/mcp.ts` (`editor_reprobe_media`,
+  B-073's real fix via D-270, had never been added) while re-verifying.
 - **2026-09-09** — **B-135/B-136: two more Inspector numeric-field bugs, found
   live right after B-133.** B-135 — undo (or any other external write) landed
   correctly in the store immediately, but a FOCUSED field kept showing its own

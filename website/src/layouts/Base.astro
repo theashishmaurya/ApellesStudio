@@ -1,6 +1,6 @@
 ---
 /**
- * Base.astro — the site's single document shell (D-264).
+ * Base.astro — the site's single document shell (D-264, SEO pass D-279).
  *
  * What it is: <head>, fonts, global CSS, nav and footer around a slot.
  * What it does NOT do: any per-page logic — pages compose their own sections.
@@ -10,11 +10,23 @@
  * interface, IBM Plex Mono carries technical material. Newsreader is requested
  * with its optical-size axis so the display cut and the reading cut are the
  * same family behaving correctly at both ends, rather than two fonts.
+ *
+ * D-279: the social-preview image moved off an editor screenshot (D-279 also
+ * hid those from every page — see index.astro/product.ts) onto the hero's
+ * own commissioned painting, which is real, on-brand, and not mid-retake.
+ * The `Astro.site` fallback also moved from a placeholder domain
+ * (apelles.video) to the one D-265 actually records the owner buying
+ * (apelles.studio) — that fallback only matters if this ever builds without
+ * `site` set in astro.config.mjs, which itself now carries the real domain.
+ * A minimal, honest `SoftwareApplication` JSON-LD block was added below —
+ * only facts already asserted elsewhere on the site (name, description,
+ * platform, price, licence), nothing invented for the sake of rich results.
  */
 import '../styles/global.css';
 import Nav from '../components/Nav.astro';
 import Footer from '../components/Footer.astro';
 import { PIGMENTS } from '../data/palette.ts';
+import { STATUS } from '../data/product.ts';
 
 interface Props {
   title: string;
@@ -22,13 +34,36 @@ interface Props {
 }
 
 const { title, description } = Astro.props;
-const origin = Astro.site ?? new URL('https://apelles.video');
+const origin = Astro.site ?? new URL('https://apelles.studio');
 const canonical = new URL(Astro.url.pathname, origin).href;
-const ogImage = new URL('/shots/edit-transform.png', origin).href;
+const ogImage = new URL('/hero/painter.jpg', origin).href;
 
 /** `theme-color` needs a literal, not a CSS variable — so it is read from the
  *  palette rather than typed a second time and left to drift. */
 const themeColor = PIGMENTS.find((p) => p.token === 'pigment-marble')?.hex;
+
+/**
+ * Every claim here is already made, and tested, elsewhere on the site
+ * (src/data/product.ts's STATUS, and the AGPL-3.0 licence D-002/D-003
+ * settled on for the vendored engine) — this block restates them for search
+ * engines, it does not introduce new ones.
+ */
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Apelles',
+  description:
+    'A local, AI-native video editor. An agent handles the cutting, the colour and the motion graphics — through the same real controls, on your own machine.',
+  applicationCategory: 'MultimediaApplication',
+  operatingSystem: STATUS.platform,
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+  },
+  license: 'https://www.gnu.org/licenses/agpl-3.0.html',
+  url: origin.toString(),
+};
 ---
 
 <!doctype html>
@@ -43,9 +78,18 @@ const themeColor = PIGMENTS.find((p) => p.token === 'pigment-marble')?.hex;
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Apelles" />
     <meta property="og:url" content={canonical} />
     <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1568" />
+    <meta property="og:image:height" content="1003" />
+    <meta property="og:image:alt" content="Apelles, brush in hand, painting a filmstrip into the Greek landscape." />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+
+    <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} is:inline />
 
     <meta name="theme-color" content={themeColor} />
     <link rel="icon" href="/favicon.ico" sizes="any" />

@@ -1,8 +1,9 @@
 /**
- * website/src/data/palette.ts — the brand palette's source of record (D-264).
+ * website/src/data/palette.ts — the brand palette's source of record (D-264,
+ * the signature moved from rose to ink 2026-09-10 — D-274).
  *
- * What it is: every colour the Apelles brand is allowed to use, each one tied to
- * a real material in the Alexander Mosaic (Pompeii, c. 100 BC; now in the
+ * What it is: every colour the Apelles brand is allowed to use, each one tied
+ * to a real material in the Alexander Mosaic (Pompeii, c. 100 BC; now in the
  * National Archaeological Museum of Naples). The mosaic is believed to be a
  * Roman copy of a lost Hellenistic painting, and it is the one tangible object
  * with a credible documented link to Apelles himself — so the brand's colours
@@ -21,9 +22,22 @@
  *   https://pmc.ncbi.nlm.nih.gov/articles/PMC11734927/
  * It discriminated ten tesserae colours and proposed geological provenances:
  * white from Carrara marble, dark greens from Greek serpentinite, black from
- * Iberian basalt, the reds and yellows from iron oxides — and, on Alexander's
- * own face and nowhere else in the work, several shades of pink whose
- * composition points to Portugal.
+ * Iberian basalt, the reds and yellows from iron oxides.
+ *
+ * D-264 originally spent one further colour here — a pink the analysis traced
+ * to Portugal, used on Alexander's face alone out of roughly two million
+ * tesserae — as the site's signature: one element per page, the single action
+ * that page exists for. D-274 retired it. The pink was scarce in the mosaic
+ * and the site copied that scarcity literally (one CSS declaration, checked by
+ * a test); basalt ink is the opposite of scarce in either the mosaic or this
+ * site's own palette — it is the dominant dark across the whole work, and
+ * already this site's own body text. Reusing it as the primary action's fill
+ * is a *consistency* argument (one ink, used with total confidence, the same
+ * way a single confident pen stroke reads as more considered than a spot of
+ * colour), not a scarcity one — so there is no "spent once" pigment left to
+ * name here, and no equivalent of `SIGNATURE_TOKEN`. What stayed constant is
+ * the discipline itself: the primary action still has exactly one consistent
+ * treatment, still asserted by tests, just no longer color-scarcity-based.
  */
 
 export interface Pigment {
@@ -47,13 +61,11 @@ export const SOURCE = {
 } as const;
 
 /**
- * The working palette. Two neutrals, two working colours, one signature.
+ * The working palette. Two neutrals and two working colours.
  *
- * The discipline is the mosaic's own: the pink was imported from the far end of
- * the empire and spent on one face out of roughly two million tesserae. So the
- * rose below is spent on exactly one element per page — the single action that
- * page exists for — and appears nowhere else. `tests/palette.test.ts` enforces
- * that literally.
+ * Six pigments now, not seven (D-274 retired `pigment-rose` — see this file's
+ * header comment for why a scarce-pigment signature made no sense once the
+ * site's primary action moved to ink).
  */
 export const PIGMENTS: readonly Pigment[] = [
   {
@@ -72,7 +84,8 @@ export const PIGMENTS: readonly Pigment[] = [
     token: 'pigment-basalt',
     hex: '#1c1a17',
     material: 'Iberian basalt and Greek serpentinite — the mosaic’s darks',
-    role: 'Ink, and the ground behind product imagery. A warm black, never #000.',
+    role:
+      'Ink, the ground behind product imagery, and — as of D-274 — the site’s one consistent primary-action fill (a solid ink pill, marble text). A warm black, never #000.',
   },
   {
     token: 'pigment-basalt-soft',
@@ -91,20 +104,9 @@ export const PIGMENTS: readonly Pigment[] = [
     hex: '#b4823a',
     material: 'Iron-oxide yellows — the other dominant across the work',
     role:
-      'The second working colour. 3.0:1 on marble, so it is used for rules, marks and large display type — never for body text.',
-  },
-  {
-    token: 'pigment-rose',
-    hex: '#c98c86',
-    material:
-      'The pink imported from Portugal, used on Alexander’s face alone out of roughly two million tesserae',
-    role:
-      'The signature. Exactly one element per page — the one action that page exists for — carries it, as a fill under basalt text.',
+      'The second working colour: rules, marks and large display type on marble (3.0:1, never body text there) — and, on a basalt ground, links and highlighter-style marks besides (5.1:1 there, D-272’s own finding).',
   },
 ];
-
-/** The one token that may appear only once per rendered page. */
-export const SIGNATURE_TOKEN = 'pigment-rose';
 
 /**
  * The typefaces, and why each one. Named here so the type system is a decision

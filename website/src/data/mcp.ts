@@ -16,7 +16,7 @@
  * media-understanding ones; `motion_*`; `debug_*`; the remainder is Colorist).
  */
 
-export const VERIFIED_ON = '2026-09-09';
+export const VERIFIED_ON = '2026-09-10';
 
 export interface ToolGroup {
   /** Short label used as the group's heading. */
@@ -45,23 +45,30 @@ export interface ToolGroup {
  * 153 → 159 on 2026-09-09 (D-266): the media pool's four read/organise tools
  * and the two audio-monitoring ones, which is also why both `GAPS` entries
  * below were rewritten the same day rather than left standing.
+ *
+ * 159 → 160 on 2026-09-10 (D-270, found while re-verifying for an unrelated
+ * change): `editor_reprobe_media`, B-073's real fix, landed the day before and
+ * was never added here. It re-probes a stuck pool item by id on demand, which
+ * is also why the first `GAPS` entry below is narrowed rather than left
+ * claiming there is still no way to re-probe one.
  */
 export const TOOL_TOTALS = {
-  all: 159,
-  shipped: 150,
+  all: 160,
+  shipped: 151,
   debugOnly: 9,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 67,
+    count: 68,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [
       'editor_import_media',
       'editor_list_media',
       'editor_move_media',
+      'editor_reprobe_media',
       'editor_add_clip',
       'editor_edit_in',
       'editor_split_clip',
@@ -157,9 +164,15 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
  * which in both cases is narrower and more specific than what it replaces —
  * that is what closing a gap honestly looks like, rather than deleting the
  * line.
+ *
+ * The first entry narrowed again on 2026-09-10 (D-270): an agent can now
+ * re-probe a stuck item by id on demand (`editor_reprobe_media`), which was
+ * the real gap here. What is left is narrower and deliberate, not an oversight
+ * — a listing call does not re-probe every row it returns (a real `ffprobe`
+ * per row, unasked, on the one call meant to be the cheap way to see the pool).
  */
 export const GAPS: readonly string[] = [
-  'A media-pool item whose first probe fails stays wrong for the life of the project. An agent can now list the pool, spot the broken item and repair it by removing and re-importing the path, but there is still no re-probe on demand and nothing expires a stale entry on its own.',
+  'A media-pool item that fails its probe stays marked unusable until someone re-probes it. An agent can now list the pool, spot the broken item and repair it in place by id, but nothing re-probes it automatically or expires a stale entry on its own — listing the pool deliberately does not re-probe every row it returns.',
   'Audio monitoring is a probe, not a meter. The output level refreshes about once per second, which is enough to confirm that real sound reached the device and not enough to watch a mix — and nothing in the app draws a meter for a human either.',
 ] as const;
 

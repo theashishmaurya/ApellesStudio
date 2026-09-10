@@ -1,5 +1,6 @@
 /**
- * website/src/styles/tokens.css — the site's only colour and type source (D-264).
+ * website/src/styles/tokens.css — the site's only colour and type source
+ * (D-264; the signature moved from rose to ink 2026-09-10 — D-274).
  *
  * What it is: two token layers, each with a real, checkable source.
  *   1. THE BRAND (`--pigment-*`) — quarried from the Alexander Mosaic. Transcribed
@@ -14,11 +15,11 @@
  * colour literal that is not in one of those two sources. `tests/palette.test.ts`
  * reads both real files and fails on any drift or any undocumented literal.
  *
- * The governing rule, and the reason there is a whole file about it: the mosaic's
- * makers imported one pink from Portugal and spent it on Alexander's face alone,
- * out of roughly two million tesserae. `--pigment-rose` is spent the same way —
- * one element per page, the single action that page exists for. That constraint
- * is what makes the rest of the palette read as considered rather than decorated.
+ * D-264's original governing rule lived here: a scarce rose, spent on one
+ * element per page. D-274 retired it — see `src/data/palette.ts`'s own header
+ * comment for why. The site's one primary action is now a solid
+ * `--pigment-basalt` fill instead: not scarce, just consistent, the same ink
+ * as the rest of the page's own text.
  */
 
 :root {
@@ -40,14 +41,32 @@
   /* Iron-oxide yellow. Second working colour: rules, marks, large display type.
      3.0:1 on marble, so it is never used for body text. */
   --pigment-ochre: #b4823a;
-  /* THE SIGNATURE. One element per page. A fill, under basalt text (6.4:1). */
-  --pigment-rose: #c98c86;
 
   /* Tints of the above, mixed rather than hand-picked, so no new literal enters
      the palette by the back door. */
   --edge: color-mix(in srgb, var(--pigment-basalt) 14%, transparent);
   --edge-strong: color-mix(in srgb, var(--pigment-basalt) 28%, transparent);
   --wash: color-mix(in srgb, var(--pigment-ochre) 9%, transparent);
+
+  /* The inverse pair (D-272): a basalt section (Difference, Machine, the beta
+     form card, the footer, and each page's own "band") is a tonal inversion of
+     the page, not a second dark theme — so its text and hairlines are the same
+     two neutrals, mixed the other way round. --ink-inverse-soft is basalt-soft's
+     mirror (marble thinned toward transparent, not a new grey); --edge-inverse
+     mirrors --edge/--edge-strong the same way. Terracotta's link/emphasis role
+     does NOT carry over: at 2.9:1 on basalt it fails even large-text contrast,
+     while ochre — capped at marks/rules on marble because it is only 3.0:1 there
+     — reaches 5.1:1 on basalt. So inside a basalt section ochre takes over as
+     the working link/emphasis colour and terracotta is not used at all. */
+  --ink-inverse: var(--pigment-marble);
+  --ink-inverse-soft: color-mix(in srgb, var(--pigment-marble) 68%, transparent);
+  --edge-inverse: color-mix(in srgb, var(--pigment-marble) 14%, transparent);
+  --edge-inverse-strong: color-mix(in srgb, var(--pigment-marble) 28%, transparent);
+  /* Terracotta lightened toward marble, so the beta form's error state keeps
+     its terracotta hue (the site's one danger colour) instead of borrowing
+     ochre's — terracotta itself is 2.9:1 on basalt, too low to read; this
+     reaches 5.4:1. */
+  --danger-inverse: color-mix(in srgb, var(--pigment-terracotta) 65%, var(--pigment-marble) 35%);
 
   /* ------------------------------------------------------------------
    * THE PRODUCT — verbatim from app/src/utils/themes.ts, Theme.Dark. Only the

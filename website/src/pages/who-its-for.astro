@@ -149,18 +149,24 @@ import { CONTRASTS, LIMITS } from '../data/product.ts';
     margin-top: 1.25rem;
   }
 
+  /* A basalt section (D-272): the tonal inverse of the page — see tokens.css's
+     --ink-inverse comment. Both bands here (.jobs and .limits) render only
+     inside a .band section, so their own rules take the inverse tones
+     directly rather than needing a .band-prefixed override. */
   .band {
-    background: var(--pigment-marble-deep);
-    border-block: 1px solid var(--edge);
+    background: var(--pigment-basalt);
+    border-block: 1px solid var(--edge-inverse);
   }
 
   .band h2 {
     max-width: 24ch;
+    color: var(--ink-inverse);
   }
 
   .intro {
     margin-top: 1.25rem;
     font-size: var(--step-0);
+    color: var(--ink-inverse-soft);
   }
 
   /* ---- the two-ways list ---------------------------------------------- */
@@ -173,10 +179,10 @@ import { CONTRASTS, LIMITS } from '../data/product.ts';
 
   .job {
     padding-block: clamp(1.5rem, 1rem + 1.5vw, 2.25rem);
-    border-top: 1px solid var(--edge);
+    border-top: 1px solid var(--edge-inverse);
   }
   .job:last-child {
-    border-bottom: 1px solid var(--edge);
+    border-bottom: 1px solid var(--edge-inverse);
   }
 
   /* What the person actually wants, in their own voice. The serif italic is the
@@ -186,6 +192,7 @@ import { CONTRASTS, LIMITS } from '../data/product.ts';
     font-style: italic;
     line-height: 1.3;
     max-width: 30ch;
+    color: var(--ink-inverse);
   }
 
   .ways {
@@ -196,7 +203,7 @@ import { CONTRASTS, LIMITS } from '../data/product.ts';
   }
 
   .way p:not(.tag):not(.tool) {
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
     max-width: 44ch;
   }
 
@@ -205,24 +212,26 @@ import { CONTRASTS, LIMITS } from '../data/product.ts';
     font-size: var(--step--2);
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
     margin-bottom: 0.6rem;
   }
 
   /* The right-hand column gets the working colour on its label and a hairline
-     down its edge — enough to say "this side" without a box or a checkmark. */
+     down its edge — enough to say "this side" without a box or a checkmark.
+     Ochre, not terracotta: terracotta's contrast on this section's basalt
+     background is too low to read (see tokens.css's --ink-inverse comment). */
   .here {
-    border-left: 2px solid var(--pigment-terracotta);
+    border-left: 2px solid var(--pigment-ochre);
     padding-left: clamp(0.9rem, 0.6rem + 0.6vw, 1.25rem);
   }
   .here .tag {
-    color: var(--pigment-terracotta);
+    color: var(--pigment-ochre);
   }
 
   .tool {
     margin-top: 0.75rem;
     font-size: var(--step--2);
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
   }
 
   /* ---- limits ---------------------------------------------------------- */
@@ -240,7 +249,7 @@ import { CONTRASTS, LIMITS } from '../data/product.ts';
     display: grid;
     grid-template-columns: 1.25rem minmax(0, 1fr);
     gap: 0.65rem;
-    color: var(--pigment-basalt-soft);
+    color: var(--ink-inverse-soft);
   }
   .limits li::before {
     content: '';

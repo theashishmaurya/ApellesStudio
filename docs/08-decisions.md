@@ -26245,3 +26245,765 @@ try/catch is what keeps a jsdom render (no `window.__TAURI_INTERNALS__`) from
 throwing. The actual cursor icon change during a real drag needs the owner's
 own trackpad against the live app to fully confirm; jsdom has no OS cursor to
 assert against.
+
+---
+
+## D-272 — The website's "second ground" sections go to `#1c1a17` (basalt), and get their own inverse ink/edge tokens rather than a one-off dark override per component
+
+**Date:** 2026-09-10.
+
+### Context
+
+The owner asked, pointing at a screenshot of the home page's "Why this exists"
+section, to make every section using that background colour (`#eae2d4`,
+`--pigment-marble-deep`, D-264's "second ground" — used for one alternating
+band per page: `Difference.astro`, `Machine.astro`, the beta form card, the
+whole footer, and one alternating room/band on `inside.astro` and
+`who-its-for.astro`) into `#1c1a17` instead — which is not a new colour, it is
+already `--pigment-basalt`, the brand's ink and the ground D-264 already used
+behind product screenshots (`.frame`).
+
+Swapping only the `background` declaration would have made six sections
+unreadable: every text rule in those six files inherited or set
+`--pigment-basalt`/`--pigment-basalt-soft` (the page's ink, tuned for
+contrast on `--pigment-marble`), and every hairline used `--edge`/
+`--edge-strong` (basalt tinted, tuned to be faint on marble) — both go
+basically invisible on a basalt ground, and the working-colour links
+(`--pigment-terracotta`, 5.3:1 on marble) turned out to measure only **2.9:1
+on basalt**, under WCAG's 3:1 floor even for large/UI text.
+
+### The options
+
+1. **Override colour by hand in each of the six files.** Cheapest per file,
+   but six independent guesses at the same problem, with no guarantee they'd
+   agree with each other or that a seventh dark section added later would
+   match either.
+2. **A reusable "inverse" token pair, mixed from the existing pigments the
+   same way `--edge`/`--edge-strong`/`--wash` already are.** Chosen — it is
+   the site's own established pattern (tokens.css's own comment: "Tints of
+   the above, mixed rather than hand-picked, so no new literal enters the
+   palette by the back door") applied to a second ground colour instead of
+   the first.
+
+### The choice
+
+`tokens.css` gains four tokens, all `color-mix()` of existing pigments (so
+`palette.test.ts`'s "no literal outside the two documented sources" check
+passes them exactly as it already passes `--edge`/`--wash`):
+
+- `--ink-inverse: var(--pigment-marble)` — primary text on a basalt ground.
+- `--ink-inverse-soft: color-mix(in srgb, var(--pigment-marble) 68%, transparent)`
+  — secondary/muted text, basalt-soft's mirror.
+- `--edge-inverse` / `--edge-inverse-strong` — marble-tinted hairlines,
+  mirroring `--edge`/`--edge-strong` at the same 14%/28%.
+- `--danger-inverse: color-mix(in srgb, var(--pigment-terracotta) 65%, var(--pigment-marble) 35%)`
+  — used once, for the beta form's error/invalid text on its own basalt card;
+  terracotta lightened toward marble so the site's one danger colour keeps its
+  hue instead of borrowing ochre's, reaching 5.4:1 where plain terracotta
+  measured 2.9:1.
+
+**The real finding: ochre reads better on basalt than terracotta does, so it
+swaps roles inside a dark section.** On marble, terracotta is the working
+link/emphasis colour (5.3:1) and ochre is capped to marks/rules/large display
+only (3.0:1, per D-264). Measured against basalt instead: terracotta drops to
+2.9:1 (fails), ochre climbs to **5.1:1** (passes normal body text). So every
+link, hover state, and "this side" marker inside a basalt section
+(`Difference.astro`'s "The longer version", `Machine.astro`'s tool count and
+its "Connect an agent" link, the whole footer's nav/legal links, and
+`who-its-for.astro`'s right-hand `.here` column) now uses
+`var(--pigment-ochre)` instead of `var(--pigment-terracotta)` — not a new
+colour, just the existing working pair used the way the numbers actually
+support once the ground is dark rather than light.
+
+Applied to all six spots. Two are whole-section swaps (`Difference.astro`,
+`Machine.astro`, the alternating `.band` rooms in `inside.astro` and
+`who-its-for.astro`) using `.band <selector>` overrides where a rule also has
+to serve the page's light sections; two are narrower — the footer (every text
+rule in `Footer.astro` touched, since the whole element goes dark) and the
+beta signup form (only `.form` and what sits directly on it — the `<input>`/
+`<select>` elements keep their own marble background and untouched dark-on-
+light styling, so only their sibling label/error/status text needed the
+inverse ink).
+
+`Signature.astro`'s rose pill needed no change — it is its own filled
+element (rose fill, basalt text) regardless of what is behind it.
+
+### An unrelated drift caught while re-verifying
+
+`npm run verify` failed on three pre-existing, unrelated assertions in
+`mcp-data.test.ts`: `src/data/mcp.ts` still published 159 tools (150 shipped,
+Edit 67) while `mcp/server.py` now has 160 — `editor_reprobe_media` (B-073's
+fix, D-270, landed the day before this session and never added to the site's
+own data file). Fixed here rather than left failing: `TOOL_TOTALS`, the Edit
+group's count and sample, and `GAPS`' first entry (which was still claiming
+"no re-probe on demand" — the exact thing D-270 shipped) all corrected,
+narrowing that gap to what is actually still true — nothing auto-expires a
+stale pool entry, by deliberate design (a listing call does not re-probe
+every row it returns). `VERIFIED_ON` moved to 2026-09-10.
+
+### Verification
+
+`npm run verify` (check → build → test): 0 astro-check errors, 5 pages built,
+**191/191 tests passing** — `palette.test.ts` (the new tokens are
+`color-mix()`, not literals, so the "no undocumented colour literal" count
+stayed exact), `mcp-data.test.ts` (the drift above, now closed), and
+`build-output.test.ts`/`render.test.ts` unchanged and green.
+
+---
+
+## D-273 — The home page gets a commissioned hero painting, the site's one signature colour moves up into it, and the nav becomes a floating island
+
+**Date:** 2026-09-10.
+
+### Context
+
+The owner supplied a commissioned painting (generated outside this repo,
+`brand/`-adjacent in spirit to D-267's photographic mark) — Apelles himself,
+brush in hand, painting a filmstrip into a Greek landscape, on the same
+ochre/terracotta/marble/basalt palette D-264 had already quarried from the
+Alexander Mosaic — and asked for it as the home page's hero background, with
+the headline sitting where the brush points and a real, inline "email +
+Request beta access" signup beside it. Over several fast visual iterations
+the owner also asked to: drop a frosted card that had been sitting over the
+art (image should just be visible, full stop), make the button the site's
+actual primary/rose colour rather than a look-alike, drop the "See it
+mid-edit" link entirely, convert the nav from a bar flush to the viewport
+edge into a floating rounded island, and finally — the most specific ask —
+centre the headline on the painting's own golden disc and land the signup
+exactly at the tip of the painted brush, where a spark of light was already
+painted in.
+
+### The real image, stored properly
+
+The owner's PNG (1568×1003, 2.6MB, no transparency needed — this is a solid
+photographic/painterly background, not a UI mark) is converted to an
+optimised JPEG (`quality=85`, 326KB) at `public/hero/painter.jpg`. No vector
+attempt: same reasoning as D-267's photographic brand mark — genuine painted
+texture does not survive an auto-trace, and a single sufficiently large
+raster master covers every real size this hero needs.
+
+### Why the hero is locked to the image's own aspect ratio, not cropped
+
+The first pass used `object-fit: cover` with a fixed `object-position`,
+letting the browser crop the image to fill whatever box the viewport
+produced. That works for a generic "photo behind text" hero, but it cannot
+satisfy "centre the headline on the disc" and "land the button on the brush
+tip" — a `cover` crop shifts a different part of the source image into frame
+at every viewport width, so a percentage position tuned for one aspect ratio
+drifts off the intended landmark at any other. `.hero` is instead set to
+`aspect-ratio: 1568 / 1003` (the image's own real ratio) and scales as one
+proportional unit; the two content blocks are `position: absolute` at
+percentages measured directly off the source painting (disc centre ≈ 48%
+across / 29% down; brush tip ≈ 44% / 56% down, both hand-measured against
+the actual pixels, not guessed) — those percentages now point at the same
+visual landmark at any viewport width, because the image is never cropped,
+only scaled.
+
+### No card behind the text — legibility is the scrim + text-shadow's job
+
+The first working pass put a frosted basalt glass panel (the same
+colour-mix + backdrop-filter treatment `Nav.astro` already used) behind the
+text for guaranteed contrast. Correct technique, wrong call here: the panel
+was opaque enough to hide most of the painting behind it, which defeats the
+entire point of commissioning one. Replaced with a light, uniform basalt
+wash (`color-mix(... 16-20%, transparent)` — just enough to unify the
+painting's colours with the rest of the site) plus a soft `text-shadow` on
+the headline and eyebrow. The painting stays fully visible everywhere except
+directly behind the letterforms.
+
+### The signature moves up, and Beta.astro's own button gives it up
+
+D-264's rule — `--pigment-rose` on at most one element per page, tested
+literally by `palette.test.ts` and `build-output.test.ts` — did not move.
+What moved is *which* element carries it. The hero's inline form is now the
+page's one signature-coloured action (`<Signature/>` reused as the form's
+own submit button, unmodified), because it is now the first, most prominent
+ask on the page — the "single action a page exists for" that the mosaic's
+own pink was always describing. `Beta.astro`'s own section further down
+keeps its full form (role dropdown, privacy fine print, the fuller
+explanation a scrolled-down visitor gets) but its submit button is now a
+plain marble-filled pill, not `<Signature/>` — deliberately, so the page
+still carries exactly one rose element rather than two. Both forms still
+submit through the exact same handler: Beta.astro's own script finds every
+`[data-beta-form]` on the page generically (by `[name="email"]`, not a
+hardcoded id two instances could never both hold), so a second instance
+needed zero new script code.
+
+### The nav becomes an island
+
+`Nav.astro` moves from `position: sticky; top: 0` (flush to the viewport
+edge, full width) to `position: fixed`, centred, inset from the edges, with
+its own rounded corners and shadow — a self-contained floating bar rather
+than a strip of the page. This was the right call for the new hero
+specifically (a full-bleed painting reads better under a bar that is
+obviously its own object than one that looks like a light-coloured stripe
+cut across the top of the art), and it now floats identically over every
+page. Because `position: fixed` removes the nav from normal flow, every
+page's own opening block needed enough top padding to clear it —
+`PageHead.astro` and `docs/mcp.astro`'s own header block both had their
+minimum `padding-top` raised; `404.astro`'s was already generous enough; the
+home page needs no compensating padding at all, since the hero is meant to
+run from the very top edge with the island floating over the art itself.
+
+### What was deliberately cut, not merely trimmed
+
+The hero's lede paragraph and its three-fact list (open source / runs
+locally / tool count) are gone, not relocated — the owner's own read on the
+first draft ("shorten the hero copy") was that a hero carrying a headline,
+a paragraph, a form, three facts and a link was doing too much at once. The
+"See it mid-edit" onward link is gone too, on the same instruction. None of
+that information is uniquely lost: the free/open-source and local-first
+claims are still made, with more room to argue them, in `Machine.astro`'s
+own pillars further down the same page.
+
+### Verification
+
+`npm run verify` (check → build → test): 0 astro-check errors, 5 pages
+built, **193/193 tests passing** — `render.test.ts` updated for the new
+hero contract (no anchor, one `form[data-beta-form]`, the signature is now
+found in `doc('hero')` rather than `doc('beta')`, a new check that
+`Beta.astro`'s own button is real but deliberately not `.signature`) and
+otherwise green, `build-output.test.ts`'s existing "at most one signature
+per page" / "every page that asks for something has exactly one" checks
+pass unchanged against the new arrangement. Checked live in a real browser,
+not just the test suite, per this repo's own verification rule — including
+catching and fixing two live dev-server staleness incidents (the Astro/Vite
+cache serving an old compiled version of `Hero.astro`'s scoped styles after
+a same-session rewrite) that made the layout look broken in a way the
+source on disk never was; resolved by a full cache-clear
+(`node_modules/.astro`, `node_modules/.vite`) and dev-server restart, then
+re-confirmed by reading the actually-served CSS before trusting a
+screenshot again.
+
+---
+
+## D-274 — The signature retires rose for ink, the hero headline gets a real highlighter mark, and a genuine mobile layout bug gets caught live
+
+**Date:** 2026-09-10.
+
+### Context
+
+Live, looking at the hero D-273 had just shipped, the owner asked for three
+more changes in quick succession: replace the rose "Request beta access"
+pill with the site's actual dark ink colour ("much better"); make the
+ochre-highlighted look of a text *selection* (which the owner had seen by
+accident, mid-session, from a stray click) a real, permanent treatment
+instead of a browser artifact; and re-centre the hero's form, which — after
+an earlier pass had pinned it to the exact pixel of the painted brush's
+spark, independent of the headline — no longer read as centred at any real
+viewport width.
+
+### Retiring rose was not a simple recolour
+
+D-264's entire signature mechanism is built on scarcity: the mosaic's
+makers imported one pink from Portugal and spent it on Alexander's face
+alone, out of roughly two million tesserae, and `--pigment-rose` copied
+that literally — one CSS declaration, asserted by a test that fails the
+moment a second one appears. Ink (`--pigment-basalt`) is the opposite of
+scarce: it is already the page's own body text colour, used hundreds of
+times over. Repointing `SIGNATURE_TOKEN` at it and keeping the "exactly one
+CSS declaration" test would have failed structurally in the wrong
+direction — not zero uses, but hundreds — because the test was never really
+about ink or rose, it was about a colour being *rare*. Ink cannot be rare on
+a page that is mostly ink.
+
+So this is a real retirement, not a find-and-replace: `pigment-rose` is
+gone from `src/data/palette.ts`'s `PIGMENTS` array (six pigments now, not
+seven) and from `tokens.css`; `SIGNATURE_TOKEN` is gone from palette.ts
+entirely, since there is no longer a scarce token to name; the Footer's own
+colophon sentence dropped "the pink imported from Portugal for one face"
+along with it; and `palette.test.ts`'s "spent once" describe block was
+rewritten rather than patched — what survives is the part of the discipline
+that was never about colour scarcity in the first place: `.signature` is
+still emitted by exactly one component (`Signature.astro`), and still
+appears at most once per built page (`build-output.test.ts`, unchanged).
+What's new is a test that the retirement is real — no stray
+`--pigment-rose` declaration or `var()` usage left anywhere (deliberately
+excluding a bare mention of the name in a comment explaining the history,
+which this decision and several code comments do on purpose).
+
+`.signature`'s own rule (`global.css`) is now a solid `--pigment-basalt`
+fill with `--pigment-marble` text — dark ink, not a colour that has to be
+protected from a second use, just used consistently everywhere the site's
+one primary action appears. Because Hero.astro's own ground is dark (the
+painting, scrimmed) rather than the light marble ground `<Signature/>`
+otherwise assumes, its copy of the button gets a scoped
+`:global(.signature)` override flipping the fill light-on-dark — the same
+inverse-context pattern D-272 already established for text and hairlines on
+a basalt section, applied to a component's own exported class rather than a
+locally-authored one.
+
+### The headline gets a real highlighter mark, not a card
+
+The accidental discovery was the site's own `::selection` style
+(`background: var(--pigment-ochre); color: var(--pigment-basalt)`,
+D-264) — genuinely a nice look, and the owner asked for it as a standing
+treatment on the hero headline rather than something a stray click reveals.
+Implemented with `<mark>` (the correct semantic element for exactly this)
+and `box-decoration-break: clone` — the real CSS mechanism for a background
+that wraps each individually WRAPPED line of an inline element rather than
+one box around the whole multi-line block, which is what makes it read as
+a highlighter dragged under running text instead of a rectangle behind a
+paragraph. The old `::selection` override is removed outright now that the
+look is a real, permanent element rather than a repurposed browser default.
+
+### The dual-landmark positioning didn't survive contact with real viewports
+
+D-273's hero pinned the headline to the painting's golden disc AND the
+signup form to the brush's spark independently, each its own
+absolutely-positioned block at its own measured percentage. Looked right in
+the one browser check that shipped it; did not look centred to the owner
+looking at it fresh. Replaced with one centred column (`.content`, a single
+absolutely-positioned block containing headline and form together) — still
+positioned against the painting's own disc so the "in the moon" placement
+D-273 established is not lost, just no longer trying to hit two independent
+landmarks at once. Simpler, and it is the version that actually held up
+under a second look.
+
+### A real bug, caught live, that a screenshot nearly hid
+
+Testing the new column at a real narrow phone width (Chrome DevTools'
+`resize_page`, 390×844 — not a browser-window resize, which this session
+had already found unreliable for actually re-rendering at a new size) found
+the email input rendering several hundred pixels tall. Root cause: the
+mobile breakpoint switches `.row` to `flex-direction: column`, and the
+input's own `flex: 1 1 10rem` — written for the desktop ROW layout, where
+flex-grow governs width — governs HEIGHT once the main axis rotates to
+vertical, so the input grew to fill all remaining vertical space in its
+column. Fixed by resetting the input to `flex: none; width: 100%` inside
+the same mobile media query. A second, related problem surfaced at the same
+narrow width: the hero's own `aspect-ratio: 1568 / 1003` (a landscape
+ratio) leaves almost no vertical room for a stacked headline + form on a
+portrait phone screen at all, flex bug or not — mobile now drops the locked
+aspect ratio for a plain `min-height: 100vh`, trading the precise
+moon-centred positioning (a desktop-only nicety) for a layout that actually
+has room to hold its own content.
+
+**Worth naming as its own finding:** the first two attempts to verify this
+visually were misled by tooling, not code. A browser-window `resize_window`
+to a narrow width produced a screenshot at different pixel dimensions than
+requested and, once, an apparently blank grey hero despite the DOM/CSS
+reporting a fully loaded, correctly-sized, fully opaque image element —
+resolved only by switching to `mcp__chrome-devtools__resize_page` (a real
+CSS viewport resize, not an OS window resize) and re-screenshotting, which
+is what actually surfaced the genuine flex-direction bug above. A screenshot
+that disagrees with the DOM/CSS state is itself a signal to distrust the
+screenshot first, not the source.
+
+### Verification
+
+`npm run verify` (check → build → test): 0 astro-check errors, 5 pages
+built, **192/192 tests passing** — `palette.test.ts`'s rewritten
+retirement/ink describe block, `build-output.test.ts`'s unchanged
+one-signature-per-page checks (still pass, because they were never about
+the colour), `render.test.ts` unaffected. Checked live in a real browser at
+both a normal desktop width and a real 390×844 phone viewport (Chrome
+DevTools device emulation, not a resized window) after a full
+`node_modules/.astro`/`.vite` cache clear and dev-server restart, per this
+session's own established practice of not trusting a screenshot without
+first confirming the served CSS matches the source on disk.
+
+---
+
+## D-275 — A dev-only live inspector replaces "change a number, rebuild, screenshot, repeat" for the hero's hand-measured positions; a real Framer-style visual editor was evaluated and rejected for this stack
+
+**Date:** 2026-09-10.
+
+### Context
+
+Tuning `Hero.astro`'s hand-measured landmark positions (the headline's
+position over the painting's disc, the image's crop, the scrim's opacity)
+had been going through a slow loop all session: change a percentage in the
+source, rebuild, screenshot, look, repeat. The owner asked for "some control
+like Framer... on the side panel so I can edit," and separately asked
+whether an open-source Framer-equivalent existed that could edit this
+project's actual source directly, since the team expects to work in React
+going forward.
+
+### The real tooling landscape, checked against primary sources, not search summaries
+
+An initial answer (based on a web search summary) claimed Onlook supports
+Astro via React islands. That was wrong, caught by reading Onlook's own
+GitHub README and roadmap directly: it runs on **Next.js + Tailwind
+specifically**, and "support non-Next.js projects" / "support non-Tailwind
+projects" are both unchecked roadmap items, not shipped. Webstudio
+(AGPL-3.0, genuinely open source) and GrapesJS were checked next and
+rejected for a different reason: both are standalone visual-builder
+platforms with their own project format — you build inside their canvas,
+not attach the tool to an existing hand-written codebase's real files.
+**No open-source tool found today attaches to this repo's actual `.astro`
+source and lets a human drag things around while the code stays the
+code.** The owner chose to keep the site on Astro rather than migrate to
+Next.js + Tailwind for the sake of Onlook support — a real, disruptive
+rewrite that was correctly judged not worth it for a positioning-tuning
+problem.
+
+### The choice: a small, real dev-only inspector, built for this file specifically
+
+`HeroDevPanel.astro` — a floating panel with six range sliders (content
+top/left/width, image object-position x/y, scrim opacity), each bound to a
+CSS custom property `Hero.astro`'s own `.content`/`.art`/`.scrim` rules
+already read with a fallback (`top: var(--dev-content-top, 38%)`). Dragging
+a slider calls `style.setProperty` on `.hero` directly — genuinely live,
+zero rebuild — and a "Copy CSS" button serialises the current values as
+plain labelled text (`content top: 41%`, etc.) to the clipboard, meant to be
+pasted back into chat or straight into the source to make a value
+permanent. Values persist in `localStorage` so a reload mid-adjustment
+doesn't lose progress.
+
+**Gated by `import.meta.env.DEV`, evaluated at build time** — the same
+discipline CLAUDE.md's standing rule requires for the app's own debug
+tooling (a real compile-time gate, never a runtime flag), applied here even
+though this is the marketing site rather than the app, because the
+reasoning is identical: a tool this useful for development has no business
+shipping to production. Verified by grepping the actual `dist/index.html`
+output for the panel's own markup after a real `astro build` — zero
+occurrences, not just visually absent.
+
+### What this is not
+
+Not a general design-system tool, not themed with the same care as the rest
+of the site (it's scaffolding for finding a number, not a feature), and not
+a replacement for a real visual editor if one becomes worth adopting later
+— it is scoped to `Hero.astro`'s own six tunable values specifically. If
+another section needs the same kind of live tuning, the pattern (CSS custom
+properties with real-value fallbacks + a small dev-only slider panel) is
+the one to repeat, not a new one to invent.
+
+### Verification
+
+`npm run verify` (check → build → test): 0 astro-check errors, 5 pages
+built, **192/192 tests passing**, unchanged by this addition. `astro build`
+output grepped directly for the panel's markup — absent, confirming the
+dev-only gate actually works rather than merely looking right in the dev
+server.
+
+---
+
+## D-276 — The hero's headline and signup split back into two independently-positioned blocks
+
+**Date:** 2026-09-10.
+
+### Context
+
+Trying HeroDevPanel's sliders live, the owner reported "it's moving both" —
+every slider moved the headline AND the signup form together, because
+D-274 had merged them into one `.content` column (a deliberate choice at
+the time: two independently-pinned landmarks hadn't read as centred). With
+the panel now built and a live view of what any position actually looks
+like, that original problem — no way to see a change without a rebuild —
+no longer applies, so the reason for merging them was gone.
+
+### Choice
+
+Split `.content` back into `.headline` and `.ask`, each its own
+`position: absolute` block with its own `--dev-headline-*`/`--dev-ask-*`
+top/left/width triple. `HeroDevPanel.astro` gained a `Group` concept —
+Headline / Signup form / Image, three sliders each rather than one flat
+list — so the two blocks are visibly, not just functionally, independent
+in the UI. Verified programmatically, not just by eye: moved
+`--dev-headline-top` from 39% to 10% via `evaluate_script` against a real
+page and read `.ask`'s `getBoundingClientRect()` before and after — its
+`top` was bit-for-bit identical, confirming the two blocks share no layout
+dependency any more.
+
+### Verification
+
+`npm run verify`: 0 astro-check errors (one dead-code warning fixed along
+the way — the `CONTROLS` flat array became unused once the panel's markup
+switched to iterating `GROUPS`, removed rather than left as dead code), 5
+pages built, **192/192 tests passing**, unchanged by the split. Production
+build re-checked for the panel's markup — still absent.
+
+---
+
+## D-278 — Values baked in from the live inspector, the highlighter mark retired, the eyebrow and two Footer paragraphs cut, and one cut explicitly confirmed first
+
+**Date:** 2026-09-10.
+
+### Context
+
+A fast round of live trims, each confirmed against the running page rather
+than guessed: the owner dragged HeroDevPanel's sliders to a final
+arrangement and handed back the exact values to bake in; asked for the
+ochre highlighter-mark background (D-274) removed from the headline
+entirely, with a stray line-wrap fixed via a real `<br>`; then, separately,
+asked to cut the hero's eyebrow line, the Footer's colour-citation
+colophon, the Footer's licence/RapidRAW attribution paragraph, and to
+replace the Footer's "who Apelles was" historical bio with copy about the
+product instead.
+
+### The one cut that got a stop, not a straight yes
+
+Footer.astro's own header comment stated plainly that the AGPL notice and
+RapidRAW source link "are required however Apelles's own licensing question
+resolves, since the vendored engine is AGPL either way (D-002/D-003)" — a
+compliance flag, not decorative copy. Removing it was not treated as
+routine copy trimming: the owner was shown that exact flag and asked to
+confirm specifically, understanding it as a licence-attribution removal
+rather than a copy edit. They confirmed. Recorded here rather than silently
+complied with, because a future reader of this file (or of Footer.astro)
+should be able to tell this was a deliberate, informed call and not an
+agent quietly deleting a compliance notice while trimming prose. Separately
+worth noting: the actual AGPL obligation, if any, is discharged by whatever
+the application itself does (its own licence file, about screen, etc.) —
+this decision only concerns what the *marketing site's footer* prints, not
+the software's own compliance posture.
+
+### What baking in the values actually meant
+
+`Hero.astro`'s `var(--dev-*, <fallback>)` values were updated to the
+numbers HeroDevPanel reported: headline top 36% / left 50% / width 44%,
+signup top 50% / left 50% / width 32%, scrim 41% (image position unchanged
+at 44%/46%). `HeroDevPanel.astro`'s own slider `default`s were updated to
+match, so the panel now starts wherever the page actually ships rather than
+at stale numbers from before this round.
+
+### The highlighter mark's removal exposed a real, separate typography bug
+
+Taking the ochre `<mark>` background out meant the headline needed to be
+legible against the painting directly again — the scrim went from a barely-
+there 16% to 41% specifically to carry that weight, and the text reverted
+to light ink (`--ink-inverse`) with a two-layer shadow (a tight near-opaque
+one for a crisp edge, a soft wide one underneath for ambient contrast).
+Investigating why the plain text still looked thin turned up a real,
+independent bug rather than just "needs a heavier shadow": `global.css`
+forces `font-variation-settings: 'opsz' 72` on every `h1` site-wide — the
+right call for the site's normal, large display headlines, but this
+specific h1 renders far smaller (it has to fit the painted disc), and
+Newsreader's optical-size axis is drawn to get STURDIER at small sizes, not
+thinner — forcing the large-display cut onto a small heading fights that.
+Reset to `font-variation-settings: normal` so `font-optical-sizing: auto`
+(already set on `body`) picks the cut that actually matches the rendered
+size. Combined with a real weight bump (300 → 480 for the main line, 440
+for the italic turn — Newsreader's variable range covers 300–600), this is
+most of what "make the text pop" actually turned out to be: not a bigger
+shadow, a wrong optical-size axis value fighting the font at this size.
+
+### The line break needed a real `<br>`, not CSS
+
+Widening `.headline` to 44% for the baked-in layout meant the main sentence
+and the italic turn no longer reliably wrapped onto separate lines on their
+own — a literal `<br>` in the markup, as the owner asked for, guarantees
+the break regardless of container width, rather than depending on wrapping
+behaviour that changes with the width slider.
+
+### Two Footer sections retired without replacement, one replaced with product copy
+
+The colour colophon (the PLOS ONE citation paragraph) is gone from the
+page; `SOURCE` stays defined in `palette.ts` as the real record the
+material-colour claims still rest on, so `palette.test.ts`'s citation check
+now verifies `SOURCE` itself is well-formed rather than requiring
+`Footer.astro` to print it. The licence/RapidRAW paragraph is gone per the
+confirmed exception above. The historical "who Apelles was" bio
+(`NAMESAKE`, `product.ts`) is removed from the data file entirely (nothing
+else imported it) and replaced in `Footer.astro` with two lines about the
+product, reusing claims already made and tested elsewhere on the site
+(`Machine.astro`'s own pillars) rather than inventing new copy. The
+Footer's own grid dropped from three columns to two.
+
+### The eyebrow's removal moved a test, not deleted a guarantee
+
+"Never learned to edit" — the objection the eyebrow named — still survives
+on the home page, in `index.astro`'s own `<title>`. The assertion for it
+moved from `render.test.ts` (Hero-component-scoped) to
+`build-output.test.ts` (checks the real built home page), rather than being
+dropped, since the phrase itself didn't stop being true of the site, only
+of the Hero component in isolation.
+
+### A hide/reopen toggle for the inspector
+
+The owner asked to hide the dev tools currently on screen. `HeroDevPanel`
+gained a `Hide` button that collapses the whole panel to a small floating
+"⚙" button in the same corner, state persisted in `localStorage`
+(`apelles-hero-dev-panel-hidden`) separately from the slider values
+themselves, so hiding it doesn't lose an in-progress adjustment.
+
+### Verification
+
+`npm run verify` (check → build → test): 0 astro-check errors, 5 pages
+built, **192/192 tests passing** — `render.test.ts`'s eyebrow check removed,
+`build-output.test.ts` gained the page-level replacement,
+`palette.test.ts`'s citation check narrowed to what's still true. Checked
+live in a real browser (not just the suite): the hide button verified via
+`evaluate_script` to actually set `panel.hidden`/`reopen.hidden` correctly,
+not just visually; the served CSS re-confirmed to match source
+(`font-variation-settings:normal` grepped directly out of the page) after
+yet another dev-server cache clear, per this session's now-standard
+practice of not trusting a screenshot on faith.
+
+---
+
+## D-279 — Stale imagery and an unfinished docs page hidden rather than shown-with-disclosure; a real domain bug fixed; a genuine SEO pass
+
+**Date:** 2026-09-10.
+
+### Context
+
+Three more owner calls, each real content decisions rather than styling:
+cut the "how it is built" section's shipped-MCP-tool-count line
+(`Machine.astro`); hide every Edit/Motion/Colorist screenshot and the home
+page's scrubbable demo, on the grounds that the Edit captures predate the
+rename and "they are not real" any more as a representation of the current
+app; and hide `/docs/mcp/` entirely for now. Separately, asked for a real
+SEO pass ahead of launch.
+
+### Hiding imagery, the honest way this site already had a pattern for
+
+D-264 already established the right shape for "we don't have this yet":
+Motion and Colorist's own rooms say so plainly and list real capabilities
+instead of a mockup. D-279 applies that same shape to the Edit room (whose
+capture predates the rename) and to the home page's Demo section, rather
+than inventing a new treatment:
+
+- `index.astro` no longer imports or renders `<Demo />` — the component
+  itself (`src/components/Demo.astro`) is untouched and still fully valid,
+  including its own render.test.ts suite, which still runs directly against
+  the component regardless of whether any page uses it. Re-enabling it
+  later is re-adding two lines, not rebuilding anything.
+- `product.ts`'s `TABS[0]` (Edit) gets the same `shot: null` /
+  `shotNote` shape Motion and Colorist already had, rather than a bespoke
+  one.
+- `TODO-RECAPTURE-SHOTS.md` and `TODO-DEMO-VIDEO.md` were rewritten to
+  describe this actual state rather than the old "shown, disclosed" one —
+  a stale TODO doc is worse than an accurate one that says "currently
+  hidden."
+
+**One real orphan, found by the test suite itself.** Removing the OG
+image's old reference to `edit-transform.png` (see below) left that one
+file — unlike the other three, which `Demo.astro` still references — with
+zero references anywhere. `tests/build-output.test.ts`'s orphan-detection
+check caught it immediately; the file was deleted from `public/shots/`
+rather than the check being weakened, and the check itself now carries a
+narrow, sourced-from-`Demo.astro`-directly allowance for the three files
+that component still legitimately needs on disk while dormant.
+
+### `/docs/mcp/` hidden via Astro's own convention, not a workaround
+
+Renamed `src/pages/docs/mcp.astro` → `src/pages/docs/_mcp.astro` — Astro's
+documented, supported way to exclude a file from routing without deleting
+it (files/directories starting with `_` under `src/pages/` are never built
+as routes). Every link to it — `Nav.astro`, `Footer.astro`,
+`Machine.astro`'s own "Connect an agent to it" onward link — was removed
+rather than left pointing at a route that now 404s. `build-output.test.ts`
+gained two guards: the route is asserted absent, and no page is asserted to
+still link to it, so either regressing silently re-adds a broken link or a
+dead route without a test noticing.
+
+### A real bug: the domain in `astro.config.mjs` was wrong
+
+`site` was `https://apelles.video` — a placeholder D-264 explicitly
+documented as one, written before the real domain existed. D-265, the very
+next decision in this log, records the owner actually buying
+**`apelles.studio`**. Nobody updated `astro.config.mjs` when that happened,
+so every canonical URL and Open Graph tag this site has emitted since D-265
+pointed at the wrong domain. Fixed here, caught only because an SEO pass
+means actually reading `astro.config.mjs` against this file's own history
+rather than assuming it was already right.
+
+### The SEO pass itself
+
+- `@astrojs/sitemap` added (a new real dependency — official Astro package,
+  actively maintained) — `astro build` now emits `/sitemap-index.xml`;
+  `public/robots.txt` added, allowing all crawling and pointing at it.
+- The Open Graph/Twitter-card image moved off an editor screenshot (now
+  hidden anyway) onto the hero's own commissioned painting — real, on-brand,
+  not mid-retake — with real `og:image:width`/`height`/`alt` added alongside
+  it, plus `og:site_name` and explicit `twitter:title`/`description`/`image`
+  (previously relying on Twitter's card fallback to the `og:` tags).
+- A minimal `SoftwareApplication` JSON-LD block was added to every page
+  (`Base.astro`) — deliberately restating only facts already asserted and
+  tested elsewhere on the site (name, description, platform from
+  `product.ts`'s `STATUS`, price 0, the real AGPL-3.0 licence URL), not
+  inventing anything for the sake of a richer search result.
+
+### Verification
+
+`npm run verify` (check → build → test): 0 astro-check errors, 4 pages
+built (down from 5 — `/docs/mcp/` correctly absent), **191/191 tests
+passing** — the removed-content describe blocks retired rather than left
+failing, two new guards added for the hidden docs route, the orphan-shot
+check narrowed to a named, sourced exception rather than weakened
+generally. `npm run build` output inspected directly for
+`sitemap-index.xml`'s presence.
+
+---
+
+## D-280 — A Privacy Policy and Terms page, written from what the code actually does — and no cookie-consent banner, because there are no cookies
+
+**Date:** 2026-09-10.
+
+### Context
+
+Launch prep surfaced the obvious gap: no privacy policy, no terms, and a
+direct ask for "cookie consent / legality." This is legal content, and
+worth being explicit about the limits of what got built: these two pages
+are a good-faith, factually-grounded draft written by checking this
+codebase's own real behaviour first, not a lawyer-reviewed document, and
+both pages say so themselves, in plain text, rather than only in this log.
+
+### The cookie-consent banner that wasn't built, on purpose
+
+This site sets no cookies and loads no analytics or tracking script —
+verified against the actual source, not assumed, and previously an asserted
+test fact before D-278 removed the copy that said so on the page (the
+underlying behaviour never changed, only whether it was printed). A
+cookie-consent banner exists to get consent for something that requires
+it. Building one anyway — the default reflex for "add legal compliance
+stuff" — would have meant either faking a consent flow for cookies that do
+not exist, or quietly adding a cookie/analytics mechanism just to give the
+banner something to be about. Both are the exact shape of decoration this
+site's whole documented discipline (D-264 onward) argues against. The
+`/privacy/` page states the no-cookies fact directly instead, names the one
+narrow real exception (the dev-only Hero inspector's `localStorage` use,
+compiled out of production entirely), and says explicitly why there is no
+banner. If cookies or analytics are ever added, the page and the banner (if
+one becomes genuinely necessary) get built together, in the same commit —
+not before.
+
+### What the two pages actually say, and why each claim is there
+
+`/privacy/` describes the one real data flow this site has: the beta
+signup form's email (and optional role) posts to FormSubmit.co, which
+forwards it to the owner's inbox — the same mechanism `BETA_SIGNUP_SETUP.md`
+and `src/data/beta.ts` already document, cross-checked before writing this
+page rather than assumed. It names FormSubmit as the one third party
+involved, links their own privacy policy, states retention honestly (kept
+until the one promised email is sent or a deletion request arrives — there
+is no automated retention schedule to describe truthfully beyond that), and
+gives a real contact address (the same inbox FormSubmit already delivers
+to, and the same address already present in the page source per D-274's own
+disclosed trade-off — using it again here is consistent with what already
+ships, not a new exposure).
+
+`/terms/` is sized to what this site is today — a pre-launch marketing page
+with a signup form, no purchase, no account, no live download — rather than
+a generic SaaS terms template carrying clauses (subscriptions, refunds,
+user-generated content) for things that don't exist here. It separates the
+website's own terms from the AGPL-3.0 licence that governs the eventual
+software itself, and links the real licence text rather than restating it.
+
+**Deliberately left blank: governing law and jurisdiction.** A real terms
+page names the law and jurisdiction it operates under, which depends on
+where the business behind this site is actually domiciled — a fact no
+amount of reading this codebase can produce. The page says so directly and
+flags it as the one thing that must be filled in (with real legal input)
+before this is relied on publicly, rather than guessing a jurisdiction to
+make the page look complete.
+
+### Findable, not just present
+
+Both pages are linked from `Footer.astro`'s own new "Legal" nav column
+(a third column, replacing the one D-278 removed) — a real, standard
+pattern, not just two routes that build but nothing points at.
+
+### Verification
+
+`npm run verify` (check → build → test): 0 astro-check errors, 6 pages
+built (privacy and terms added), **191/191 tests passing** unchanged by the
+addition — both new pages pass the same generic per-page checks every page
+already gets (one h1, a title and description, a canonical URL, no stray
+colour literal, no banned typeface), with no page-specific test written for
+legal copy itself, since asserting the CONTENT of a legal document is
+exactly the kind of judgement call a test suite shouldn't be substituting
+for real legal review.

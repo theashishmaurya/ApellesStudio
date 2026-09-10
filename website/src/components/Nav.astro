@@ -1,20 +1,24 @@
 ---
 /**
- * Nav.astro — the top bar (D-264; mark updated D-267).
+ * Nav.astro — the top bar (D-264; mark updated D-267; island treatment D-273;
+ * "Connect an agent" removed D-279).
  *
- * What it is: a wordmark, three destinations, and one quiet action. The mark
- * is the real brand medallion (`icon-192.png`, D-267's transparent master,
- * downscaled) set beside the name in the display serif — the same asset the
- * favicon and the desktop app icon are built from, so there is exactly one
- * mark image in this codebase, not three.
- * What it does NOT do: carry the signature colour. The rose belongs to the one
- * action a page exists for, and a persistent header button is not that; the
- * nav's beta link is deliberately the quietest control on the page.
+ * What it is: a wordmark, two destinations, and one quiet action, floating
+ * as a self-contained rounded island inset from the viewport edges rather
+ * than a bar flush to them — real weight of its own (rounded corners, a
+ * shadow, a hairline border) so it reads over any page, including the home
+ * page's own full-bleed hero art.
+ * What it does NOT do: carry the signature treatment. That belongs to the one
+ * action a page exists for (the home page's hero, as of D-273), and a
+ * persistent header button is not that; the nav's beta link is deliberately
+ * the quietest control on the page. It also no longer links to `/docs/mcp/`
+ * — that page is hidden from routing for now (D-279, the owner's own call;
+ * see `src/pages/docs/_mcp.astro`, the underscore is Astro's own convention
+ * for excluding a file from routing without deleting it).
  */
 const links = [
   { href: '/inside/', label: 'Inside Apelles' },
   { href: '/who-its-for/', label: 'Who it’s for' },
-  { href: '/docs/mcp/', label: 'Connect an agent' },
 ];
 
 const path = Astro.url.pathname;
@@ -42,20 +46,30 @@ const path = Astro.url.pathname;
 </header>
 
 <style>
+  /* The island: fixed rather than sticky, so it floats over the top of every
+     page — including the home page's own hero art — instead of docking flush
+     to the viewport edge. Every page's opening block carries its own
+     top padding sized to clear it (PageHead.astro, 404.astro, the hidden
+     docs/_mcp.astro, Hero.astro's own vertical centring). */
   .bar {
-    position: sticky;
-    top: 0;
+    position: fixed;
+    top: clamp(0.75rem, 0.5rem + 1vw, 1.25rem);
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 50;
-    background: color-mix(in srgb, var(--pigment-marble) 86%, transparent);
-    backdrop-filter: blur(14px);
-    border-bottom: 1px solid var(--edge);
+    width: calc(100% - 2 * var(--gutter));
+    max-width: var(--shell-max);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--pigment-marble) 88%, transparent);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--edge);
+    box-shadow: 0 14px 34px -16px color-mix(in srgb, var(--pigment-basalt) 45%, transparent);
   }
 
   .inner {
-    max-width: var(--shell-max);
-    margin-inline: auto;
-    padding: 0 var(--gutter);
-    height: 62px;
+    padding: 0 clamp(1rem, 0.6rem + 1.4vw, 1.75rem);
+    height: 58px;
     display: grid;
     grid-template-columns: 1fr auto 1fr;
     align-items: center;

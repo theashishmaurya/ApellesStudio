@@ -1,5 +1,6 @@
 /**
- * palette.test.ts — the visual system is a system, and it is enforced (D-264).
+ * palette.test.ts — the visual system is a system, and it is enforced (D-264,
+ * the signature moved from rose to ink 2026-09-10 — D-274).
  *
  * This replaces D-255's tokens.test.ts, which guarded a different rule: that the
  * site's palette WAS the desktop app's dark theme. D-264 deliberately split
@@ -8,18 +9,21 @@
  * So the coverage moves rather than disappears: both sources are still read
  * from disk, and both still fail this suite if the site drifts from them.
  *
- * The rule worth having a test for at all is the signature: `--pigment-rose` is
- * the pink the mosaicists imported from Portugal and spent on one face out of
- * roughly two million tesserae. A signature colour used twice is not a
- * signature, so it is asserted literally — one CSS rule, one component, one
- * element per built page (that last one lives in build-output.test.ts, where
- * the real pages are).
+ * D-264 originally spent one further test here on `--pigment-rose`: the pink
+ * the mosaicists imported from Portugal and spent on one face out of roughly
+ * two million tesserae, asserted literally as one CSS declaration. D-274
+ * retired the pigment — see src/data/palette.ts's own header comment for why
+ * ink, already this site's dominant colour, cannot be "spent once" the same
+ * way — so what is asserted now is the discipline that outlived it: the
+ * primary action still has exactly one consistent treatment, still emitted by
+ * exactly one component, still at most once per built page (that last one
+ * lives in build-output.test.ts, where the real pages are).
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PIGMENTS, SIGNATURE_TOKEN, TYPEFACES, BANNED_TYPEFACES, SOURCE } from '../src/data/palette.ts';
+import { PIGMENTS, TYPEFACES, BANNED_TYPEFACES, SOURCE } from '../src/data/palette.ts';
 
 const abs = (rel: string) => fileURLToPath(new URL(rel, import.meta.url));
 const read = (rel: string) => readFileSync(abs(rel), 'utf8');
@@ -73,11 +77,16 @@ describe('the brand palette is exactly the documented one', () => {
     }
   });
 
-  it('cites the analysis the material claims rest on', () => {
+  /**
+   * D-278: the owner removed the Footer's own colophon paragraph — the
+   * citation is no longer printed on the page. What's still checked is that
+   * `SOURCE` itself, the record this file's own header comment and the
+   * material claims above rest on, stays well-formed — not that anything on
+   * the built site prints it.
+   */
+  it('the material claims still rest on a real, well-formed citation', () => {
     expect(SOURCE.url).toMatch(/^https:\/\//);
     expect(SOURCE.year).toBe(2025);
-    // The citation is printed on the site, not just kept in a comment.
-    expect(read('../src/components/Footer.astro')).toContain('SOURCE.url');
   });
 });
 
@@ -145,21 +154,21 @@ describe('no colour exists outside those two sources', () => {
 
 });
 
-describe('the signature is spent once, the way the mosaic spent it', () => {
-  const uses = SRC.filter(
-    ({ file }) => file.endsWith('.css') || file.endsWith('.astro'),
-  ).flatMap(({ file, text }) =>
-    [...text.matchAll(new RegExp(`var\\(--${SIGNATURE_TOKEN}\\)`, 'g'))].map(() => file),
-  );
-
-  it('is referenced by exactly one CSS declaration in the whole site', () => {
-    expect(uses, `--${SIGNATURE_TOKEN} is used in: ${uses.join(', ')}`).toHaveLength(1);
+describe('the primary action has one consistent treatment (D-274: ink, not a scarce colour)', () => {
+  it('rose is fully retired — no stray declaration or usage left anywhere', () => {
+    // Mentioning the retired token BY NAME in a comment (palette.ts's own
+    // history, this test itself) is documentation, not a stray reference —
+    // what must be gone is an actual CSS declaration or var() usage.
+    const stray = SRC.filter(({ text }) =>
+      /--pigment-rose\s*:|var\(--pigment-rose\)/.test(text),
+    ).map(({ file }) => file);
+    expect(stray, `--pigment-rose still declared or used in: ${stray.join(', ')}`).toEqual([]);
   });
 
-  it('and that declaration is the .signature rule in global.css', () => {
-    expect(uses[0]).toMatch(/global\.css$/);
+  it('the .signature rule in global.css fills with ink (basalt), not a literal', () => {
     const rule = global.slice(global.indexOf('.signature {'), global.indexOf('.signature:hover'));
-    expect(rule).toContain(`var(--${SIGNATURE_TOKEN})`);
+    expect(rule).toContain('var(--pigment-basalt)');
+    expect(rule).toContain('var(--pigment-marble)');
   });
 
   it('is emitted by one component only, so a page cannot grow a second by accident', () => {
@@ -169,7 +178,6 @@ describe('the signature is spent once, the way the mosaic spent it', () => {
     expect(emitters).toHaveLength(1);
     expect(emitters[0]).toMatch(/Signature\.astro$/);
   });
-
 });
 
 /**

@@ -218,7 +218,8 @@ Content-Type: application/json
 
 <style>
   .hd {
-    padding-top: clamp(3rem, 2rem + 4vw, 5rem);
+    /* Minimum clears the fixed island nav (D-273) at any viewport width. */
+    padding-top: clamp(4.5rem, 3.5rem + 4vw, 6.5rem);
     padding-bottom: clamp(2rem, 1.5rem + 2vw, 3rem);
     border-bottom: 1px solid var(--edge);
   }

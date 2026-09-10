@@ -1,18 +1,17 @@
 ---
 /**
- * Signature.astro — the one rose element on a page (D-264).
+ * Signature.astro — the site's one primary-action element on a page (D-264;
+ * ink instead of rose since D-274).
  *
  * What it is: the site's single primary action, rendered as either the link
- * that carries you to the signup or the signup's own submit button.
+ * that carries you to the signup or the signup's own submit button. A solid
+ * basalt-ink fill (`.signature` in global.css) — see palette.ts's own header
+ * comment for why this moved off a scarce colour and onto ink instead.
  * What it does NOT do: appear twice on a page, or get used for a secondary
- * action. `--pigment-rose` is defined once, used by one CSS rule (`.signature`
- * in global.css), and rendered by this component alone.
- *
- * Why the ceremony: in the Alexander Mosaic the pink was imported from Portugal
- * and spent on Alexander's face alone, out of roughly two million tesserae.
- * A signature colour used twice is not a signature. `tests/palette.test.ts`
- * asserts at most one `.signature` per built page, so the rule is enforced
- * rather than remembered.
+ * action. `tests/build-output.test.ts` asserts at most one `.signature` per
+ * built page, so the one-primary-action discipline is enforced rather than
+ * remembered — that discipline outlived the rose pigment that used to carry
+ * it.
  */
 interface Props {
   /** Where it goes. Omit to render a form submit button instead. */

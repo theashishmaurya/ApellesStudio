@@ -2,17 +2,20 @@
 /**
  * index.astro — the home page (D-264).
  *
- * The section order is an argument, and it is deliberately short: the promise
- * (hero) → the proof that a real application exists behind it (demo) → who it
- * is for and who it is not (difference) → what is in it (rooms) → why it is
- * built this way (machine) → the one ask (beta).
+ * The section order is an argument: the promise (hero) → who it is for and
+ * who it is not (difference) → what is in it (rooms) → why it is built this
+ * way (machine) → the one ask (beta).
  *
- * Five bands and one action. Anything else a visitor might want has its own
- * page, so this one keeps a single focal point.
+ * D-279: Demo.astro (the scrubbable filmstrip of real screenshots) is not
+ * rendered for now — the owner's own call, on the same honesty grounds this
+ * site already applies to the Motion/Colorist rooms: the captures it was
+ * built around predate the rename and are being retaken (TODO-RECAPTURE-
+ * SHOTS.md), and a demo built on stand-in shots is a mockup by another name.
+ * The component itself is untouched, not deleted — re-add the import and the
+ * `<Demo />` line once real captures exist.
  */
 import Base from '../layouts/Base.astro';
 import Hero from '../components/Hero.astro';
-import Demo from '../components/Demo.astro';
 import Difference from '../components/Difference.astro';
 import Rooms from '../components/Rooms.astro';
 import Machine from '../components/Machine.astro';
@@ -24,7 +27,6 @@ import Beta from '../components/Beta.astro';
   description="You already know what your video should look like. Apelles is the part you were missing: describe what you want, and a real AI agent does the cutting, the colour and the motion graphics — free, open source, and running on your own machine."
 >
   <Hero />
-  <Demo />
   <Difference />
   <Rooms />
   <Machine />

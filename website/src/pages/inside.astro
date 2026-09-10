@@ -89,9 +89,16 @@ import { TABS, STATUS } from '../data/product.ts';
 </Base>
 
 <style>
+  /* A basalt section (D-272): the tonal inverse of the page — see tokens.css's
+     --ink-inverse comment. Only alternating "band" rooms go dark, so every
+     text override below is scoped under .band rather than applied globally. */
   .band {
-    background: var(--pigment-marble-deep);
-    border-block: 1px solid var(--edge);
+    background: var(--pigment-basalt);
+    border-block: 1px solid var(--edge-inverse);
+  }
+
+  .band .eyebrow {
+    color: var(--ink-inverse-soft);
   }
 
   h2 {
@@ -100,8 +107,16 @@ import { TABS, STATUS } from '../data/product.ts';
     font-weight: 300;
   }
 
+  .band h2 {
+    color: var(--ink-inverse);
+  }
+
   .intro .lede {
     margin-top: 1.25rem;
+  }
+
+  .band .lede {
+    color: var(--ink-inverse-soft);
   }
 
   .shotwrap {
@@ -115,6 +130,10 @@ import { TABS, STATUS } from '../data/product.ts';
     color: var(--pigment-basalt-soft);
   }
 
+  .band .shotwrap figcaption {
+    color: var(--ink-inverse-soft);
+  }
+
   /* The honest absence. Marked with the working colour so it reads as a
      deliberate statement rather than an empty slot the layout forgot. */
   .gap {
@@ -126,6 +145,10 @@ import { TABS, STATUS } from '../data/product.ts';
     font-size: var(--step--1);
     line-height: 1.7;
     font-family: var(--font-ui);
+  }
+
+  .band .gap {
+    color: var(--ink-inverse-soft);
   }
 
   .shipped {
@@ -145,6 +168,10 @@ import { TABS, STATUS } from '../data/product.ts';
     font-size: var(--step--1);
     line-height: 1.65;
     color: var(--pigment-basalt-soft);
+  }
+
+  .band .shipped li {
+    color: var(--ink-inverse-soft);
   }
   .shipped li::before {
     content: '';

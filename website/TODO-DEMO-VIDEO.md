@@ -1,27 +1,33 @@
 # TODO — a real demo video
 
 **Status: still not built. Tracked in `docs/04-roadmap.md` under the website
-item (D-255); carried forward unchanged by D-264's rebuild.**
+item (D-255); carried forward unchanged by D-264's rebuild. As of D-279 the
+whole demonstration section is not rendered on the home page at all — see
+below.**
 
 The site currently has **no video of any kind**, deliberately. No recording of
 the product in motion existed when the site was built, and a marketing site for a
 video tool must not fake one — no stock footage, no screen recording of
 something else, no motion mockup presented as the product.
 
-## What the site does instead
+## What the site did instead, and why it's off right now
 
-The demonstration section is a **scrubbable filmstrip of real screenshots** of the running
-application (`public/shots/`), with a working playhead and timecode. Its caption
-says so in plain language:
+The demonstration section (`src/components/Demo.astro`) is a **scrubbable
+filmstrip of real screenshots** of the running application, with a working
+playhead and timecode, and a caption that says so in plain language:
 
 > Real screenshots of the running application, scrubbable. Apelles has no
 > recorded product demo yet, and there is no stand-in for one on this page.
 
-That sentence is asserted by a test (`tests/render.test.ts`), so it cannot be
-quietly deleted while the video is still missing.
-
-See also `TODO-RECAPTURE-SHOTS.md`: those same screenshots predate the rename
-and still show the old wordmark in the app's title bar, disclosed the same way.
+That sentence is still asserted by `tests/render.test.ts` against the
+component directly — D-279 didn't touch `Demo.astro` itself, it just stopped
+importing/rendering it on `index.astro`, because the screenshots that
+filmstrip is built on predate the rename (`TODO-RECAPTURE-SHOTS.md`) and the
+owner's own call was to hide stale imagery rather than show it disclosed.
+Re-enable it the same way `TODO-RECAPTURE-SHOTS.md` describes, with real
+post-rename captures, whenever that happens — that also resolves this file,
+partly, by giving the filmstrip real current imagery even before a video
+exists.
 
 ## What to do when a real recording exists
 

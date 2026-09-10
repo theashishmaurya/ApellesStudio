@@ -52,10 +52,29 @@ beforeAll(() => {
 });
 
 describe('the build emits the expected pages', () => {
+  /**
+   * D-279: `/docs/mcp/` is deliberately not in this list any more — the page
+   * is hidden from routing (renamed to `src/pages/docs/_mcp.astro`, Astro's
+   * own underscore convention), not deleted, and the next test below asserts
+   * it specifically stays that way rather than silently reappearing.
+   */
   it('built every route the site is structured around', () => {
     const routes = pages.map((p) => p.route);
-    for (const route of ['/', '/inside/', '/who-its-for/', '/docs/mcp/']) {
+    for (const route of ['/', '/inside/', '/who-its-for/']) {
       expect(routes, `${route} was not built`).toContain(route);
+    }
+  });
+
+  it('does not build /docs/mcp/ while it is hidden (D-279)', () => {
+    const routes = pages.map((p) => p.route);
+    expect(routes).not.toContain('/docs/mcp/');
+  });
+
+  it('no page links to the hidden /docs/mcp/ route', () => {
+    for (const p of pages) {
+      expect(p.html, `${p.file} still links to the hidden docs/mcp page`).not.toContain(
+        'href="/docs/mcp/"',
+      );
     }
   });
 
@@ -83,13 +102,25 @@ describe('the build emits the expected pages', () => {
       expect(n, `${p.file} should have exactly one h1, found ${n}`).toBe(1);
     }
   });
+
+  /**
+   * D-278: the hero's own eyebrow line naming this objection was removed
+   * from the headline itself — this moved from a Hero-scoped check
+   * (render.test.ts) to a page-level one, since the phrase survives in the
+   * home page's own <title> instead.
+   */
+  it('names the objection a non-editor actually has, at least in the home page title', () => {
+    const home = pages.find((p) => p.route === '/');
+    expect(home?.html.toLowerCase()).toContain('never learned to edit');
+  });
 });
 
 describe('the design system’s one hard rule holds on every built page', () => {
   /**
-   * The Portugal pink was spent on Alexander's face alone, out of roughly two
-   * million tesserae. If a page ever carries two of these, the colour has
-   * stopped meaning anything and the rule needs re-arguing, not relaxing.
+   * D-274: the signature moved from a scarce rose to ink, but "exactly one
+   * primary action per page" was never about the colour being rare — it is
+   * about not having two elements of the same weight competing for the same
+   * attention. That discipline outlived the pigment that used to carry it.
    */
   it('no page carries more than one signature element', () => {
     for (const p of pages) {
@@ -238,7 +269,17 @@ describe('no broken internal links', () => {
     expect(missing, `missing head assets:\n${missing.join('\n')}`).toEqual([]);
   });
 
-  it('ships no screenshot that nothing references', () => {
+  /**
+   * D-279: Demo.astro is not rendered on any page right now (the owner's own
+   * call — its filmstrip was built entirely around the pre-rename shots
+   * TODO-RECAPTURE-SHOTS.md already tracked for retaking), but the component
+   * itself is real, valid and kept ready to re-enable, and its own render.test.ts
+   * suite still checks that the images it references exist on disk. So its
+   * three shots stay shipped-but-unreferenced-by-any-page on purpose. The
+   * allowlist is read out of Demo.astro's own source, not hand-typed, so it
+   * cannot silently grow to cover a real orphan later.
+   */
+  it('ships no screenshot that nothing references, except Demo.astro’s own (dormant, D-279)', () => {
     const referenced = new Set<string>();
     for (const p of pages) {
       const d = parseHTML(p.html).document;
@@ -250,6 +291,12 @@ describe('no broken internal links', () => {
         referenced.add(c.startsWith('http') ? new URL(c).pathname : c);
       }
     }
+    const demoSrc = readFileSync(
+      fileURLToPath(new URL('../src/components/Demo.astro', import.meta.url)),
+      'utf8',
+    );
+    for (const m of demoSrc.matchAll(/src:\s*'(\/shots\/[^']+)'/g)) referenced.add(m[1]);
+
     const orphans = [...assets].filter((a) => a.startsWith('/shots/') && !referenced.has(a));
     expect(orphans, `unused screenshots shipped:\n${orphans.join('\n')}`).toEqual([]);
   });
@@ -274,9 +321,9 @@ describe('the shipped HTML carries nothing it should not', () => {
     }
   });
 
-  it('keeps the beta endpoint an obvious placeholder until the owner sets one', () => {
-    // If this ever fails, a real endpoint was configured — update the test then.
+  it('ships a real beta endpoint, not the placeholder', () => {
     const home = pages.find((p) => p.route === '/');
-    expect(home?.html).toContain('YOUR_FORM_ID');
+    expect(home?.html).not.toContain('YOUR_FORM_ID');
+    expect(home?.html).toContain('https://formsubmit.co/ajax/');
   });
 });

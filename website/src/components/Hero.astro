@@ -1,136 +1,347 @@
 ---
 /**
- * Hero.astro — the home page's single focal point (D-264).
+ * Hero.astro — the home page's single focal point (D-264, given a
+ * full-bleed art panel and the page's one primary action by D-273, ink
+ * instead of rose by D-274, independent headline/signup positions by D-275).
  *
- * What it is: one benefit-led headline that carries the whole value proposition
- * on its own, because most visitors read the headline and nothing else. It is
- * written from the visitor's side of the screen — what they already have (a
- * picture in their head) and what they do not (the craft) — rather than from
- * the architecture's side.
- * What it does NOT do: list features, carry a product shot, or compete with
- * itself. There is exactly one thing to read here and one place to go next; the
- * demonstration is the section below, and the ask is at the bottom of the page.
+ * What it is: one benefit-led headline that carries the whole value
+ * proposition on its own, set directly INTO a commissioned painting of
+ * Apelles himself — brush in hand, painting a filmstrip into the Greek
+ * landscape. The headline (`.headline`) and the signup (`.ask`) are two
+ * independently-positioned blocks, each its own percentage measured against
+ * the real painting via HeroDevPanel.astro (dev-only, see its own header) —
+ * dragged to their current values live, then baked in here as the real
+ * `var(--dev-*, <value>)` fallbacks (D-277). That is still why `.hero` stays
+ * locked to the source image's own aspect ratio (1568×1003) rather than
+ * cropped with `object-fit: cover` — both blocks' positions are percentages
+ * measured against the real painting, and cover-cropping would shift them at
+ * every viewport width.
+ * What it does NOT do: carry a product shot (this is brand art, not a
+ * screenshot of the app), or highlight the headline with a mark/card
+ * (D-274 tried an ochre highlighter mark behind each line; D-277 removed it
+ * — plain light text with a shadow and a darker scrim reads more like a
+ * headline and less like a sticky note). One typographic move survives from
+ * the original design: the h1's roman-then-italic turn, on its own line via
+ * a real `<br>` rather than relying on wrapping, since a wide `.headline`
+ * column stopped forcing that break on its own (D-277).
  *
- * The one typographic move on this site is in the h1: a roman first sentence
- * and an italic second one, at different sizes, doing real hierarchy work —
- * setup, then turn. Nothing else on the page is allowed a flourish.
+ * D-273 moved the page's one primary action up here from the bottom
+ * (Beta.astro's own section further down keeps the same form and copy but a
+ * plain button, since a page carries only one). D-274 changed what that
+ * primary action looks like everywhere on the site — ink (a solid basalt
+ * fill) instead of a scarce rose, see src/data/palette.ts's header comment —
+ * and because Hero.astro's own ground here is dark (the painting, scrimmed),
+ * the ink flips light-on-dark via a scoped override below, the same
+ * inverse-context pattern D-272 established for text and hairlines on a
+ * basalt section. Both this form and Beta.astro's share one submit handler
+ * (Beta.astro's own script, found generically per `[data-beta-form]`).
+ *
+ * D-275/D-277: every hand-measured landmark value below (`.headline`'s and
+ * `.ask`'s own top/left/width, `.art`'s object-position, `.scrim`'s
+ * opacity) is a `var(--dev-*, <real value>)` — the fallback is what ships,
+ * and HeroDevPanel.astro can override any of them live from a slider
+ * instead of another round of "change a number, rebuild, screenshot,
+ * repeat."
+ *
+ * D-278: the eyebrow line ("a video app for people who never learned to
+ * edit") is gone from the headline itself — the owner's own trim, on top of
+ * D-273's earlier ones. The phrase survives at the page level (index.astro's
+ * own `<title>`), which is what tests/build-output.test.ts now checks
+ * instead of tests/render.test.ts's old Hero-scoped assertion. Also this
+ * pass: `h1`'s `font-variation-settings` reset to let `font-optical-sizing:
+ * auto` (global.css, on body) pick Newsreader's actual optical cut for this
+ * h1's real (small) rendered size, instead of inheriting the large-display
+ * `opsz 72` global.css forces on every h1 — a mismatch that was quietly
+ * making this specific headline read thinner than intended.
  */
-import { TOOL_TOTALS } from '../data/mcp.ts';
-import { STATUS } from '../data/product.ts';
+import Signature from './Signature.astro';
+import HeroDevPanel from './HeroDevPanel.astro';
+import { BETA_FORM_ENDPOINT, isPlaceholderEndpoint } from '../data/beta.ts';
 
-/** Three facts, each checkable elsewhere on this site. Not a feature list. */
-const FACTS = [
-  `Free and open source, ${STATUS.licence}`,
-  'Runs on your machine, not a server',
-  `${TOOL_TOTALS.shipped} real controls an agent can reach`,
-];
+const endpoint = BETA_FORM_ENDPOINT;
+const placeholder = isPlaceholderEndpoint(endpoint);
 ---
 
 <section class="hero">
-  <div class="shell">
-    <p class="eyebrow">A video app for people who never learned to edit</p>
+  <img
+    class="art"
+    src="/hero/painter.jpg"
+    alt=""
+    width="1568"
+    height="1003"
+    loading="eager"
+    fetchpriority="high"
+    decoding="async"
+  />
+  <div class="scrim" aria-hidden="true"></div>
 
+  <!-- Roughly over the painting's own golden disc — measured, not eyeballed:
+       the disc's centre sits at about 48% across, 29% down the source image. -->
+  <div class="headline">
     <h1>
       You already know what your video should look like.
+      <br />
       <span class="turn">Apelles is the part you were missing.</span>
     </h1>
-
-    <p class="lede">
-      Tell it what you are going for, in ordinary words. A real AI agent does the cutting, the
-      colour and the motion graphics &mdash; the parts that normally take years to learn &mdash;
-      right there on your own machine, in an app you can pick up and drive by hand whenever you
-      would rather.
-    </p>
-
-    <ul class="facts">
-      {FACTS.map((f) => <li>{f}</li>)}
-    </ul>
-
-    <p class="next">
-      <a class="onward" href="#demo">
-        See it mid-edit <span class="arrow" aria-hidden="true">&darr;</span>
-      </a>
-    </p>
   </div>
+
+  <!-- Independently positioned from the headline — see this file's own
+       header comment (D-275). -->
+  <form
+    class="ask"
+    data-beta-form
+    data-endpoint={endpoint}
+    data-placeholder={placeholder ? 'true' : 'false'}
+    action={endpoint}
+    method="POST"
+    novalidate
+  >
+    <div class="row">
+      <label class="sr-only" for="hero-beta-email">Email</label>
+      <input
+        id="hero-beta-email"
+        name="email"
+        type="email"
+        inputmode="email"
+        autocomplete="email"
+        placeholder="you@example.com"
+        required
+        aria-describedby="hero-beta-email-err"
+      />
+      <Signature label="Request beta access" />
+    </div>
+    <p class="err" id="hero-beta-email-err" data-err hidden></p>
+    <p class="status" data-status role="status" aria-live="polite"></p>
+
+    <input type="hidden" name="_subject" value="New Apelles beta signup" />
+    <!-- Honeypot: see Beta.astro's own for why `_honey` and not `_gotcha`. -->
+    <div class="hp" aria-hidden="true">
+      <label for="hero-beta-company">Company</label>
+      <input id="hero-beta-company" name="_honey" type="text" tabindex="-1" autocomplete="off" />
+    </div>
+  </form>
 </section>
+
+{import.meta.env.DEV && <HeroDevPanel />}
 
 <style>
   .hero {
-    padding-top: clamp(3.5rem, 2rem + 6vw, 7.5rem);
-    /* Deliberately small: the section below brings its own generous top
-       padding, and stacking both left a dead band the eye had to cross. */
-    padding-bottom: clamp(1rem, 0.5rem + 1vw, 1.75rem);
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    /* Locked to the source painting's own ratio — see this file's header
+       comment for why the centred column below depends on this never
+       cropping. */
+    aspect-ratio: 1568 / 1003;
   }
 
-  h1 {
-    font-size: var(--step-5);
-    margin: 1.5rem 0 0;
-    max-width: 19ch;
-    font-weight: 300;
+  .art {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    /* Tunable live from HeroDevPanel (dev-only) — see that file. */
+    object-position: var(--dev-art-x, 44%) var(--dev-art-y, 46%);
   }
 
-  /* The turn. Italic, one step down, and in the softened ink — so the eye reads
-     the claim first and the promise second, in that order, without a rule or a
-     colour or a box making it happen. */
+  /* A basalt wash — settles the painting's own colours against the rest of
+     the site's palette, and (D-277, now that the headline no longer sits on
+     its own highlighter mark) is the main thing making the text legible, so
+     it is meaningfully darker than the original barely-there wash. Opacity
+     tunable live from HeroDevPanel (dev-only). */
+  .scrim {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in srgb, var(--pigment-basalt) var(--dev-scrim, 41%), transparent);
+  }
+
+  /* Position/size tunable live from HeroDevPanel (dev-only, stripped from
+     the production build) — see that component for the actual controls.
+     The var() fallbacks here are the real shipped values, so the page looks
+     identical whether or not the panel ever ran. Independent of .ask below
+     (D-275) — the two used to be one column; they move separately now. */
+  .headline {
+    position: absolute;
+    left: var(--dev-headline-left, 50%);
+    top: var(--dev-headline-top, 36%);
+    transform: translate(-50%, -50%);
+    width: var(--dev-headline-width, 44%);
+    min-width: 19rem;
+    text-align: center;
+  }
+
+  /* D-277: no highlighter mark behind the text any more (D-274's ochre
+     `<mark>` treatment) — plain light ink instead, legible against the
+     darker scrim above plus its own text-shadow. Two layers (D-278): a
+     tight, near-opaque one right against the letterforms for a crisp edge
+     (what actually reads as "pop" against a pale part of the painting, like
+     the disc), plus the original soft wide one underneath for ambient
+     contrast over busier areas. */
+  h1,
   .turn {
-    display: block;
-    margin-top: 0.24em;
+    text-shadow:
+      0 1px 3px color-mix(in srgb, var(--pigment-basalt) 92%, transparent),
+      0 4px 22px color-mix(in srgb, var(--pigment-basalt) 70%, transparent);
+  }
+
+  /* global.css forces `opsz 72` (the LARGE-display optical cut) on every h1
+     site-wide — right for the full-size headlines elsewhere, wrong here:
+     Newsreader's optical-size axis is drawn to get sturdier, not thinner, at
+     small sizes, and this h1 renders far smaller than a normal display
+     headline (it has to fit inside the painted disc). Resetting it lets
+     `font-optical-sizing: auto` (set on body, global.css) pick the cut that
+     actually matches the real rendered size instead of a forced large one —
+     this alone is most of "why does this look thin" (D-278). */
+  h1 {
+    font-variation-settings: normal;
+    font-size: clamp(1.15rem, 0.7rem + 1.8vw, 2.15rem);
+    margin: 0.6rem 0 0;
+    font-weight: 480;
+    line-height: 1.2;
+    color: var(--ink-inverse);
+  }
+
+  /* The turn. Italic, one step down — the eye reads the claim first and the
+     promise second. A real `<br>` in the markup puts it on its own line now
+     (D-277) — a wide `.headline` column stopped forcing that break on its
+     own once the width grew past what the main sentence needed. */
+  .turn {
+    display: inline-block;
+    margin-top: 0.4em;
     font-style: italic;
-    font-size: 0.62em;
-    color: var(--pigment-basalt-soft);
+    font-weight: 440;
+    font-size: 0.76em;
+    color: var(--ink-inverse-soft);
     letter-spacing: -0.012em;
-    max-width: 26ch;
   }
 
-  .lede {
-    margin-top: 2rem;
-    max-width: 56ch;
+  /* ---- the inline ask: the page's one primary action --------------------
+     Independently positioned from .headline (D-275) — its own tunable
+     position/size, live from HeroDevPanel same as .headline's. */
+
+  .ask {
+    position: absolute;
+    left: var(--dev-ask-left, 50%);
+    top: var(--dev-ask-top, 50%);
+    transform: translate(-50%, -50%);
+    width: var(--dev-ask-width, 32%);
+    min-width: 18rem;
+    max-width: 90vw;
   }
 
-  .facts {
-    list-style: none;
-    margin: 2.25rem 0 0;
-    padding: 0;
+  .row {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem 1.6rem;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  /* The ink signature is dark-on-light by default (global.css), sized for a
+     light — marble — ground. This hero's own ground is dark (the painting,
+     scrimmed), so it flips light-on-dark here — the same inverse-context
+     pattern D-272 established for text and hairlines on a basalt section. */
+  .ask :global(.signature) {
+    background: var(--pigment-marble);
+    color: var(--pigment-basalt);
+    flex: none;
+    padding: 0.7rem 1.15rem;
+    font-size: var(--step--1);
+  }
+  .ask :global(.signature:hover:not(:disabled)) {
+    filter: brightness(0.96);
+  }
+
+  .ask input[type='email'] {
+    flex: 1 1 10rem;
+    background: var(--pigment-marble);
+    border: 1px solid var(--edge-inverse-strong);
+    border-radius: var(--radius-md);
+    color: var(--pigment-basalt);
     font-family: var(--font-ui);
     font-size: var(--step--1);
-    color: var(--pigment-basalt-soft);
+    padding: 0.6rem 0.75rem;
+    transition: border-color var(--dur-slow) var(--ease-out);
+  }
+  .ask input[type='email']:hover {
+    border-color: var(--pigment-marble-deep);
+  }
+  .ask input[type='email']:focus {
+    border-color: var(--pigment-marble);
+  }
+  .ask input[aria-invalid='true'] {
+    border-color: var(--danger-inverse);
   }
 
-  /* An ochre tessera before each fact — the mosaic's own unit, used as a list
-     mark. This is the only ornament on the page and it is 4px wide. */
-  .facts li {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.55rem;
-  }
-  .facts li::before {
-    content: '';
-    width: 5px;
-    height: 5px;
-    border-radius: 1px;
-    background: var(--pigment-ochre);
-    flex: none;
+  .ask .err {
+    margin: 0.5rem 0 0;
+    text-align: left;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    color: var(--danger-inverse);
+    text-shadow: 0 1px 8px color-mix(in srgb, var(--pigment-basalt) 60%, transparent);
   }
 
-  .next {
-    margin-top: 2.75rem;
+  .ask .status {
+    margin: 0.5rem 0 0;
+    text-align: left;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    line-height: 1.6;
+    color: var(--ink-inverse-soft);
+    min-height: 1.2em;
+    text-shadow: 0 1px 8px color-mix(in srgb, var(--pigment-basalt) 60%, transparent);
   }
-  .next .arrow {
-    transition: transform var(--dur-slow) var(--ease-out);
+  .ask .status[data-tone='ok'] {
+    color: var(--ink-inverse);
   }
-  .next .onward:hover .arrow {
-    transform: translateY(3px);
+  .ask .status[data-tone='bad'] {
+    color: var(--danger-inverse);
   }
 
-  @media (max-width: 720px) {
-    h1 {
-      max-width: none;
+  .ask .hp {
+    position: absolute;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+
+  .hero :focus-visible {
+    outline-color: var(--pigment-ochre);
+  }
+
+  @media (max-width: 640px) {
+    /* The image's own landscape ratio (1568:1003) leaves almost no vertical
+       room for two independently-positioned blocks on a narrow phone
+       screen, so mobile trades the precise moon/brush landmark positioning
+       for a simple minimum height instead — .headline and .ask still centre
+       within whatever height that produces, just wider. */
+    .hero {
+      aspect-ratio: auto;
+      min-height: 100vh;
     }
-    .turn {
-      font-size: 0.7em;
+    .headline {
+      width: 85%;
+    }
+    .ask {
+      width: 85%;
+      min-width: 0;
+    }
+    h1 {
+      font-size: clamp(1.3rem, 1rem + 3vw, 1.8rem);
+    }
+    .row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    /* flex-grow along a COLUMN's main axis (the row above switches to
+       column here) would otherwise stretch the input to fill all remaining
+       vertical space — the actual bug behind the input rendering hundreds
+       of pixels tall on a real phone width, caught live. */
+    .ask input[type='email'] {
+      flex: none;
+      width: 100%;
     }
   }
 </style>
