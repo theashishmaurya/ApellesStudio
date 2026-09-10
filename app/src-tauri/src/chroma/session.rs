@@ -202,6 +202,18 @@ pub async fn chroma_session_thumbnail(index: usize, height: Option<u32>) -> Resu
 
 /// Decode `shot`'s frame (persistent pipe, D-030; falls back to a single-frame
 /// decode) and swap it into `AppState.original_image`.
+///
+/// **B-158 fix** — this used to decode `shot.frame` as a raw SOURCE frame
+/// index and install the source pixels untouched, unlike `chroma_seek`'s own
+/// [`super::commands::seek_and_install`] (D-294), which treats the frame as
+/// CLIP-LOCAL and runs it through [`colorist_view::ClipView::apply_geometry`].
+/// For an Edit-timeline clip that differs from its source in trim, start
+/// offset, or geometry — a clip rotated 180° to correct an upside-down camera
+/// being the case that surfaced this live — a shot switch showed the wrong
+/// picture (raw source, no rotation) for exactly one frame, until the next
+/// `chroma_seek` scrub silently fixed it back up. Now mirrors
+/// `seek_and_install` exactly: resolve the clip view, map clip-local → source
+/// frame, decode, then `apply_geometry`.
 async fn decode_and_install(
     shot: &Shot,
     state: &tauri::State<'_, AppState>,
@@ -228,32 +240,40 @@ async fn decode_and_install(
         }
     }
 
+    let view = colorist_view::resolve_for(shot);
+    let (clamped, decode_frame_index) =
+        colorist_view::frame_mapping(view.as_ref(), shot.frame, shot.info.frame_count);
+
     let path = shot.path.clone();
     let info = shot.info.clone();
-    let frame = shot.frame.min(info.frame_count.saturating_sub(1));
-    let decoded = tokio::task::spawn_blocking(move || {
-        decode_pipe::playback_frame_scaled(
+    let view_for_task = view.clone();
+    let decoded = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, String> {
+        let img = decode_pipe::playback_frame_scaled(
             decode_pipe::PipeSlot::Current,
             &path,
             &info,
-            frame,
+            decode_frame_index,
             None,
         )
         .or_else(|e| {
             log::warn!("[chroma::session] decode pipe fell back to single-frame decode: {e}");
-            video::decode_frame(&path, video::FramePos::Index(frame), &info)
+            video::decode_frame(&path, video::FramePos::Index(decode_frame_index), &info)
         })
+        .map_err(|e| e.to_string())?;
+        match view_for_task {
+            Some(v) => v.apply_geometry(decode_frame_index, img, None),
+            None => Ok(img),
+        }
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())??;
 
     let virtual_path = shot.path.to_string_lossy().to_string();
-    // D-306: the same shot, at its clamped playhead — identity (`clip_id`)
-    // included, so this re-install updates the shot instead of appending a
-    // second, path-keyed one next to it.
+    // D-306: the same shot, at its clamped (clip-local) playhead — identity
+    // (`clip_id`) included, so this re-install updates the shot instead of
+    // appending a second, path-keyed one next to it.
     let installed = Shot {
-        frame,
+        frame: clamped,
         ..shot.clone()
     };
     Ok(load::install_frame(

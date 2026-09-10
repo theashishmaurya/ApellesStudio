@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **fixed B-158: switching the active Colorist shot now decodes the
+  right frame with the clip's geometry applied.** Live-caught: a shot switch showed
+  `A001_09091129_C026.MOV` (a `rotation: 180` clip) upside-down. `decode_and_install`
+  (the shot-switch pixel path) decoded `shot.frame` as a raw source index with no clip
+  resolution and no geometry pass, unlike `chroma_seek`'s own clip-aware
+  `seek_and_install` (D-294). Pulled the clip-local→source-frame mapping into a shared
+  `colorist_view::frame_mapping`, used by both paths so a third can't independently
+  drop it; `decode_and_install` now resolves the clip and runs `apply_geometry` before
+  installing. 3 new unit tests; live-verified in the running app.
 - **2026-09-10** — **fixed B-071 (D-309): the control server waits for a real frontend
   handshake before forwarding an op.** It binds its HTTP port in Tauri's `.setup()`, long
   before the webview loads and any `chroma://request` registry has subscribed, and Tauri

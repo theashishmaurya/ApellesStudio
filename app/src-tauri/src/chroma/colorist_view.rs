@@ -167,6 +167,31 @@ impl ClipView {
     }
 }
 
+/// Maps a transport-space `frame` to `(clamped, source_frame)`: clip-local
+/// against `view`'s own length when a clip resolves, else the raw source's
+/// `source_frame_count`. Every call site that decodes a Colorist picture needs
+/// this pair before it can call [`ClipView::apply_geometry`].
+///
+/// **B-158** — pulled out after a second call site
+/// (`chroma::session::decode_and_install`) re-derived this mapping by hand and
+/// simply omitted the clip branch (no [`resolve_for`] call, no
+/// `apply_geometry` at all), so a shot switch on a rotated/trimmed clip showed
+/// the raw, un-rotated source until the next `chroma_seek` scrub silently
+/// fixed it back up. One function now backs both `chroma_seek`
+/// ([`super::commands::seek_and_install`]) and `decode_and_install`, so a
+/// third call site cannot forget the clip branch the way this one did.
+pub fn frame_mapping(view: Option<&ClipView>, frame: u64, source_frame_count: u64) -> (u64, u64) {
+    let clamped = match view {
+        Some(v) => frame.min(v.frame_count().saturating_sub(1)),
+        None => frame.min(source_frame_count.saturating_sub(1)),
+    };
+    let decode_frame_index = match view {
+        Some(v) => v.source_frame(clamped),
+        None => clamped,
+    };
+    (clamped, decode_frame_index)
+}
+
 /// The clip the Colorist is grading when its active shot's source file is
 /// `source_path`, or `None` when there is no clip to speak of — no project
 /// open (an Untitled loose-clip session), no active timeline, no video track,
@@ -403,6 +428,33 @@ mod tests {
         assert_eq!(frame_count, 1380);
         assert_eq!(resolution, apelles_types::Resolution::new(1920, 1080)); // `view()`'s comp
         assert!((duration_secs - 1380.0 / 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn frame_mapping_with_a_resolved_clip_goes_through_its_trim_b158() {
+        // B-158's own repro: a clip trimmed in 131 frames, at clip-local frame
+        // 0, must decode source frame 131 — the exact mapping `chroma_seek`
+        // already applied and `decode_and_install` used to skip entirely.
+        let v = view(clip(131, 0, 1380));
+        let (clamped, source_frame) = frame_mapping(Some(&v), 0, 2990);
+        assert_eq!(clamped, 0);
+        assert_eq!(source_frame, 131);
+    }
+
+    #[test]
+    fn frame_mapping_clamps_to_the_clips_own_length_not_the_sources() {
+        let v = view(clip(131, 0, 1380));
+        let (clamped, _) = frame_mapping(Some(&v), 9_999, 2990);
+        assert_eq!(clamped, 1379); // the clip's last frame, not the source's
+    }
+
+    #[test]
+    fn frame_mapping_with_no_resolved_clip_passes_the_frame_through() {
+        // An Untitled loose-clip session: no clip resolves, so the frame is a
+        // raw source index clamped to the source's own length.
+        let (clamped, source_frame) = frame_mapping(None, 50, 2990);
+        assert_eq!(clamped, 50);
+        assert_eq!(source_frame, 50);
     }
 
     #[test]

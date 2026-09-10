@@ -106,14 +106,8 @@ pub async fn seek_and_install(
     // track D-036) are indexed by, so it stays in the transport's own space —
     // clip-local when there is a clip. `decode_frame_index` is the source
     // frame that space maps to.
-    let clamped = match &view {
-        Some(v) => frame.min(v.frame_count().saturating_sub(1)),
-        None => frame.min(cv.info.frame_count.saturating_sub(1)),
-    };
-    let decode_frame_index = match &view {
-        Some(v) => v.source_frame(clamped),
-        None => clamped,
-    };
+    let (clamped, decode_frame_index) =
+        colorist_view::frame_mapping(view.as_ref(), frame, cv.info.frame_count);
 
     // drop the per-frame pixel caches so the next render uses the new frame
     if let Ok(mut c) = state.decoded_image_cache.lock() {
