@@ -194,6 +194,56 @@ pub fn resolve(source_path: &Path) -> Option<ClipView> {
     })
 }
 
+/// The `(resolution, frame_count, duration_secs)` a shot at `source_path`
+/// should be DISPLAYED as: clip-local when it resolves to an Edit-timeline
+/// clip ([`resolve`]), else the raw source's own probe (`info`) — the same
+/// choice [`ClipView::frame_count`] documents, shared so every surface that
+/// reports a shot's length agrees with what the transport actually scrubs.
+///
+/// **B-154** — D-294 gave this correction to `chroma_video_info` alone, but
+/// `chroma::session`'s `ShotDto` (`chroma_session_list`/`_add`/`_set_active`/
+/// `_remove` — what the ShotStrip and every shot-switch actually populate the
+/// Colorist transport from) built straight off `Shot.info`, the raw source
+/// probe, and never called [`resolve`] at all. That is the whole bug: the
+/// Colorist's own main-preview decode was already clip-aware (`chroma_seek` /
+/// `seek_and_install`), so playback correctly stopped at the real trim
+/// boundary, while the transport bar's readout and scrub-range kept
+/// advertising the source file's full length. Fixed by routing both call
+/// sites through this one function instead of leaving a second, unfixed copy
+/// of D-294's arithmetic in `session.rs`.
+pub fn display_info(
+    source_path: &Path,
+    info: &super::video::VideoInfo,
+) -> (apelles_types::Resolution, u64, f64) {
+    display_info_for(resolve(source_path).as_ref(), info)
+}
+
+/// The pure half of [`display_info`], split out so a test can supply an
+/// already-built [`ClipView`] directly rather than needing a real open
+/// project on disk for [`resolve`] to read.
+fn display_info_for(
+    view: Option<&ClipView>,
+    info: &super::video::VideoInfo,
+) -> (apelles_types::Resolution, u64, f64) {
+    let (resolution, frame_count) = match view {
+        Some(v) => (
+            apelles_types::Resolution {
+                width: v.comp.0,
+                height: v.comp.1,
+            },
+            v.frame_count(),
+        ),
+        None => (info.resolution, info.frame_count),
+    };
+    let fps = info.fps();
+    let duration_secs = if fps > 0.0 {
+        frame_count as f64 / fps
+    } else {
+        info.duration_secs
+    };
+    (resolution, frame_count, duration_secs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,5 +315,50 @@ mod tests {
     fn an_untransformed_clip_is_still_the_identity() {
         let t = view(clip(0, 0, 100)).geometry_at(0);
         assert!(t.is_identity());
+    }
+
+    fn raw_source_info(frame_count: u64, fps: u32) -> super::super::video::VideoInfo {
+        super::super::video::VideoInfo {
+            resolution: apelles_types::Resolution::new(3840, 2160),
+            fps_num: fps,
+            fps_den: 1,
+            duration_secs: frame_count as f64 / fps as f64,
+            frame_count,
+            codec: "hevc".into(),
+            pix_fmt: "yuv420p".into(),
+            color_primaries: String::new(),
+            color_transfer: String::new(),
+            color_space: String::new(),
+            has_audio: false,
+            audio_sample_rate: 0,
+            audio_channels: 0,
+        }
+    }
+
+    #[test]
+    fn display_info_reports_the_clips_length_not_the_sources_b154() {
+        // B-154's own repro numbers: a source probed at 2990 frames / 30fps
+        // (~99.7s — the bug report's real clip ran ~2:04.6 at its own fps,
+        // the exact fps doesn't matter to this assertion) backing a clip
+        // trimmed to 1380 frames on the timeline. The transport bar must
+        // report the clip's 1380, not the source's 2990.
+        let info = raw_source_info(2990, 30);
+        let v = view(clip(131, 0, 1380));
+        let (resolution, frame_count, duration_secs) = display_info_for(Some(&v), &info);
+        assert_eq!(frame_count, 1380);
+        assert_eq!(resolution, apelles_types::Resolution::new(1920, 1080)); // `view()`'s comp
+        assert!((duration_secs - 1380.0 / 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn display_info_falls_back_to_the_raw_source_with_no_resolved_clip() {
+        // An Untitled loose-clip session (no project, so `resolve` finds no
+        // clip) must report the source exactly as before D-294/B-154 — this
+        // is the branch every non-project shot always takes.
+        let info = raw_source_info(2990, 30);
+        let (resolution, frame_count, duration_secs) = display_info_for(None, &info);
+        assert_eq!(frame_count, 2990);
+        assert_eq!(resolution, info.resolution);
+        assert!((duration_secs - 2990.0 / 30.0).abs() < 1e-9);
     }
 }
