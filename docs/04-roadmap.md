@@ -2943,7 +2943,11 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      verify a *texture*-level claim like "blemishes are smoothed" — that needs
      a frequency/variance analysis this tool doesn't expose. Also hit **B-160**
      in the same attempt: `add_subject_mask` reported a tool error on a call
-     that had actually succeeded server-side.
+     that had actually succeeded server-side. **B-153 fixed 2026-09-10 (D-307)**
+     — it was the control server's flat 20s frontend budget cutting off a SAM 2
+     matte that then finished anyway; the budget is per-request now and a
+     timeout comes back as a real, readable answer instead of a masked
+     exception.
   5. **The active-shot/timeline-drift + source-path-vs-per-clip grading gap
      (B-147) underlies all four above** — none of them matter if the tool might
      be grading the wrong shot. D-294's `colorist_view` bridge (just merged) is

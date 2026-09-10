@@ -20,7 +20,7 @@ MCP client (Claude Code, or any MCP client)
         │  stdio, one process: `mcp/server.py`
         ▼
 mcp/server.py            — @mcp.tool() functions, one per agent-facing capability
-        │  HTTP POST /op {op, args}  →  http://127.0.0.1:19788 (CHROMA_CONTROL_PORT)
+        │  HTTP POST /op {op, args, timeout_ms?}  →  http://127.0.0.1:19788 (CHROMA_CONTROL_PORT)
         ▼
 chroma::control           — app/src-tauri/src/chroma/control.rs (D-020)
         │  Tauri event: emit('chroma://request', {id, op, args})
@@ -36,6 +36,13 @@ No layer except the bottom one knows what any `op` name means — `control.rs` h
 **never needed a code change** to support a new tab's ops; it forwards blind. This
 is what makes "add a tool" additive rather than invasive: a new capability is a
 new listener match + a new Python function, nothing upstream or in between moves.
+
+The one thing `control.rs` does need told is *how long to wait*, and that rides on
+the same envelope as `timeout_ms` (D-307, B-153) — clamped 1s..=300s, default 20s.
+It is not op knowledge: the server still has no idea what the op does, only that
+this caller is willing to wait longer. It exists because the top layer is the only
+one that knows a tool drives a model rather than a slider; a flat budget for both
+made a *successful* `add_subject_mask` come back as a bare tool error.
 
 **Why one shared HTTP bridge and not a Tauri IPC command per op (`invoke()`
 directly)**: an MCP client is a separate OS process from the Tauri app: the plugin

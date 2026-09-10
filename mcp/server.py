@@ -77,13 +77,35 @@ mcp = MCPServer(
 )
 
 
-def _op(op: str, **args: Any) -> dict:
-    """POST one op to the control server, return the parsed JSON envelope."""
+# How long the app's frontend is given to apply + render + reply, per op
+# (B-153). The control server's own default is 20s, which is right for the
+# ops that are a store write plus a render — and wrong for the handful that
+# run a real model. `_op` sends the budget because THIS layer is the one that
+# knows which tool is which; `control.rs` has no op list by design.
+DEFAULT_OP_TIMEOUT_MS = 20_000
+#: SAM 2 + ViTMatte over a full 4K frame through the AI sidecar. Measured in
+#: tens of seconds on a cold model, which is exactly how a *successful*
+#: `add_subject_mask` came back to the caller as a bare tool error (B-153).
+AI_MASK_TIMEOUT_MS = 180_000
+
+
+def _op(op: str, timeout_ms: int = DEFAULT_OP_TIMEOUT_MS, **args: Any) -> dict:
+    """POST one op to the control server, return the parsed JSON envelope.
+
+    `timeout_ms` is how long the app's frontend gets to answer; the control
+    server clamps it. A tool that drives a model rather than a slider must pass
+    its own (see `AI_MASK_TIMEOUT_MS`). It is a transport concern, not an op
+    argument — it rides beside `args`, never inside it, so no frontend op may
+    take a parameter of this name.
+    """
     try:
         r = httpx.post(
             f"{BASE_URL}/op",
-            json={"op": op, "args": args},
-            timeout=60.0,
+            json={"op": op, "args": args, "timeout_ms": timeout_ms},
+            # Always outlive the app-side budget, so a real frontend timeout
+            # comes back as the control server's own explanatory 504 envelope
+            # rather than as an httpx read timeout with nothing in it.
+            timeout=timeout_ms / 1000 + 15.0,
         )
     except httpx.ConnectError as e:
         raise RuntimeError(
@@ -91,9 +113,14 @@ def _op(op: str, **args: Any) -> dict:
             "Is the Apelles desktop app running?"
         ) from e
     if r.status_code == 504:
-        raise RuntimeError(
-            "The Apelles app did not respond (its window may be closed or busy)."
-        )
+        # B-153: NOT an exception. The control server's own contract is that a
+        # failure is a normal `{ok, error}` answer with a reason in it — the
+        # client reads `ok`/`error`, not the status code — and raising here
+        # broke that for the one case where the detail matters most: the
+        # frontend keeps working after the timeout, so the op may well have
+        # SUCCEEDED. Raising also meant FastMCP masked the reason entirely and
+        # the caller saw a bare "Error executing tool <name>".
+        return r.json()
     r.raise_for_status()
     return r.json()
 
@@ -4044,7 +4071,7 @@ def add_subject_mask(bbox: list[float] | None = None, mode: str = "additive") ->
     args: dict = {"mode": mode}
     if bbox is not None:
         args["bbox"] = bbox
-    return _result(_op("add_subject_mask", **args))
+    return _result(_op("add_subject_mask", timeout_ms=AI_MASK_TIMEOUT_MS, **args))
 
 
 @mcp.tool()
@@ -4077,7 +4104,7 @@ def add_component(
         args["bbox"] = bbox
     if geometry is not None:
         args["geometry"] = geometry
-    return _result(_op("add_component", **args))
+    return _result(_op("add_component", timeout_ms=AI_MASK_TIMEOUT_MS, **args))
 
 
 @mcp.tool()
@@ -4154,7 +4181,9 @@ def track_subject(sub_mask_id: str, mode: str = "fast") -> list:
     propagation). mode: "fast" (guided-filter edge, upgrades to ViTMatte on
     seek-settle) or "quality" (ViTMatte every frame — the pre-export pass).
     The matte is read from disk per frame at render time."""
-    return _result(_op("track_subject", sub_mask_id=sub_mask_id, mode=mode))
+    return _result(
+        _op("track_subject", timeout_ms=AI_MASK_TIMEOUT_MS, sub_mask_id=sub_mask_id, mode=mode)
+    )
 
 
 @mcp.tool()
@@ -4260,7 +4289,15 @@ def apply_haze(amount: float = 1.0, protect_subject: bool = True, tracked: bool 
     saturation should drop and the black point lift; `sample` a background pixel
     vs a subject pixel and confirm the background moved more.
     Returns {maskId, subMaskId, amount, tracked} and the rendered frame."""
-    return _result(_op("apply_haze", amount=amount, protect_subject=protect_subject, tracked=tracked))
+    return _result(
+        _op(
+            "apply_haze",
+            timeout_ms=AI_MASK_TIMEOUT_MS,
+            amount=amount,
+            protect_subject=protect_subject,
+            tracked=tracked,
+        )
+    )
 
 
 @mcp.tool()

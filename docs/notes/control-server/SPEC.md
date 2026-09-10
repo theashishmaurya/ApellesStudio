@@ -34,11 +34,23 @@ it can never shadow a real frontend one. See
   - loop over requests. Each: parse `op` (from path, e.g. `POST /adjust`) + JSON body.
   - **Bridge:** generate a request id (`uuid`), `app.emit("chroma://request", json!({ "id": id, "op": op, "args": body }))`.
     Register a `app.once(format!("chroma://response/{id}"), move |ev| { tx.send(ev.payload) })`
-    with a `std::sync::mpsc` channel; `rx.recv_timeout(Duration::from_secs(20))`.
+    with a `std::sync::mpsc` channel; `rx.recv_timeout(<the request's budget>)`.
     Respond 200 with the payload JSON, or 504 on timeout, 400 on bad op.
-  - **One generic endpoint:** `POST /op` with body `{op: "<name>", args: {...}}`. (Plus
-    `GET /health` for a liveness check that doesn't need the bridge.) The control server
-    doesn't know the op list — it just forwards. The op registry lives in the frontend.
+  - **One generic endpoint:** `POST /op` with body `{op: "<name>", args: {...},
+    timeout_ms?: <number>}`. (Plus `GET /health` for a liveness check that doesn't need
+    the bridge.) The control server doesn't know the op list — it just forwards. The op
+    registry lives in the frontend.
+  - **`timeout_ms` (D-307, B-153).** How long the frontend gets to answer, clamped to
+    1s..=300s; absent = 20s, the default that has always applied. Because this server has
+    no op list, it cannot tell a decode (milliseconds) from an AI matte over a 4K frame
+    (tens of seconds), and one flat budget for both is what made a *successful*
+    `add_subject_mask` come back to the caller as a failure. The MCP layer owns the tool
+    list, so it declares the budget per tool. This does not weaken the "no op registry in
+    Rust" rule: the server still knows only how long to wait, never what the op does.
+  - **A 504 is an `{ok: false, error}` envelope, not a transport failure.** The frontend
+    keeps running after the server stops waiting, so a timed-out op may still *complete*.
+    The message says so, and the MCP client returns it as a normal answer rather than
+    raising — same rule as `native_op`'s failures below.
   - Every `/op` response body: `{ ok, error?, result, adjustments, image_b64?, histogram? }`
     — mutating ops include the post-render frame + histogram (the agent's eyes).
 
