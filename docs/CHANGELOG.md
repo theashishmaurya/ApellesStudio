@@ -4,6 +4,10 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — B-148: fixed the website Hero's mobile ask overlapping the
+  headline (collapses to just the button below 640px, which now navigates to
+  `/#beta` instead of submitting inline) and, in a same-day follow-up, fixed
+  that fallback button rendering full-width instead of sized-to-content.
 - **2026-09-10** — added a root-level `LICENSE` file (canonical AGPL-3.0 v3 text,
   copied from `app/LICENSE`) — the repo went public and was pushed to GitHub this
   session with no license file at the root. Closed out D-002 (open since project

@@ -331,17 +331,54 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     h1 {
       font-size: clamp(1.3rem, 1rem + 3vw, 1.8rem);
     }
+    /* The image's own landscape ratio leaves no room for the full inline
+       form (email input + button + err/status text) without it overlapping
+       the headline above it on a real phone width — reported live, with a
+       screenshot, as the two visibly colliding. Below this width the ask
+       collapses to just the button; clicking it navigates to the full
+       standalone Beta section (`/#beta`) instead of submitting inline — see
+       this file's own <script> below, which intercepts the submit before
+       Beta.astro's shared handler ever sees it. `align-items: center` (not
+       the desktop layout's `stretch`) so the lone button sizes to its own
+       label instead of stretching edge-to-edge across `.ask`'s 85% column —
+       a full-width bar read as too heavy/not subtle here, reported live. */
     .row {
       flex-direction: column;
-      align-items: stretch;
+      align-items: center;
     }
-    /* flex-grow along a COLUMN's main axis (the row above switches to
-       column here) would otherwise stretch the input to fill all remaining
-       vertical space — the actual bug behind the input rendering hundreds
-       of pixels tall on a real phone width, caught live. */
-    .ask input[type='email'] {
-      flex: none;
-      width: 100%;
+    .ask input[type='email'],
+    .ask .err,
+    .ask .status {
+      display: none;
     }
   }
 </style>
+
+<script>
+  /**
+   * Mobile only: the inline ask collapses to just the button (see the
+   * `max-width: 640px` rule above) — no email input for it to submit, so a
+   * click sends the visitor to the full standalone Beta section instead of
+   * running Beta.astro's shared `[data-beta-form]` submit handler. Attached
+   * on `.hero` (an ancestor of the form, not the form itself) and in the
+   * capture phase, so it always runs before that shared handler regardless
+   * of which script tag happens to execute first — capture-phase listeners
+   * on an ancestor fire before same-element listeners on the target itself.
+   * `stopPropagation` then keeps the event from ever reaching it.
+   */
+  const hero = document.querySelector('.hero');
+  const isMobileAsk = () => window.matchMedia('(max-width: 640px)').matches;
+
+  hero?.addEventListener(
+    'submit',
+    (event) => {
+      const form = event.target;
+      if (form instanceof HTMLFormElement && form.matches('[data-beta-form]') && isMobileAsk()) {
+        event.preventDefault();
+        event.stopPropagation();
+        window.location.href = '/#beta';
+      }
+    },
+    true,
+  );
+</script>
