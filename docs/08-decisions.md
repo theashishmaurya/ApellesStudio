@@ -28510,12 +28510,17 @@ indexed in source-frame space and will land on the wrong frames for a trimmed
 clip. Re-tracking is the fix; there is no migration, because the old indices
 carry no record of which clip they were authored against.
 
-**Still on raw source, deliberately, and closed by D-294:** Colorist's own
+**Left on raw source by this commit, and closed by D-294:** Colorist's own
 `chroma_export_video` decodes the source file directly with its own ffmpeg
-pipeline and knows nothing of this bridge, so after D-291 it exports a different
-picture than its own preview. Rather than teach a second engine the same
-geometry, D-294 retires that export path in favour of the Edit tab's real
-exporter, which already composites clips correctly.
+pipeline and knew nothing of this bridge, so between D-291 and D-294 it
+exported a different picture than its own preview. D-294 investigated whether
+to retire it (the Edit tab's exporter composites clips correctly already) and
+found a real reason not to — it is the only path that renders the SPATIAL half
+of a grade (masks/local layers, relight, the Colorist crop), which the Edit
+exporter drops when it bakes a grade to a LUT (D-256). So it was kept and made
+clip-aware **through this same bridge**: its frame range is clip-local and each
+decoded frame gets `apply_geometry` before the grade. Preview and single-clip
+render agree by construction now, not by coincidence.
 
 **Verified:** `cargo test -p apelles --lib chroma::colorist_view` (5 new cases —
 clip length vs source length, in-point mapping, out-point clamp, opacity dropped
