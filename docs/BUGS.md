@@ -2608,6 +2608,15 @@ status: open · severity: medium (misleading failure signal — an agent followi
 - **not yet root-caused:** didn't dig into `mcp/server.py`/the Rust command's response serialization this session — flagging with a clean, exact repro rather than guessing at the cause. Likely candidates to check first: the response payload for a freshly-generated AI-subject mask may be large/shaped differently than other mask-adjust responses (e.g. carrying the matte data) in a way that trips whatever the MCP layer uses to detect a tool error.
 - **workaround used this session:** called `list_masks` after the apparent failure to confirm the real state, then proceeded normally.
 
+## B-154 — Colorist's transport bar shows the raw source's full duration/frame count, not the trimmed clip's duration on the Edit timeline
+
+status: open · severity: low (cosmetic/misleading, not a data-loss or playback-correctness bug — see below) · area: likely `packages/panel/editor/ColoristTransport.tsx` or wherever it derives its total duration/frame-count readout, cross-check against `colorist_view`/`chroma_video_info` (D-294) which already reports clip-local length correctly for the main preview
+
+- **found:** 2026-09-10, live, screenshot — owner: *"this playhead shows full 2:04 minute but our clip on timeline is little bit shorter so now it's not playing after that which is fine and right but this playhead show[s] to be moving."* Screenshot shows the transport bar reading `0:16.5 / 2:04.6 · f396 / 2990` for `A001_09091123_C024.MOV` (the active Colorist shot).
+- **expected:** the transport bar's total (both the `2:04.6` time and the `2990` frame count) should reflect this clip's actual trimmed duration as placed on the Edit timeline — `1380` frames (`source_start: 131`, `duration: 1380`) — matching what D-294's `colorist_view` bridge already makes the main preview/decode respect.
+- **actual:** the bar's declared total is the raw source file's own length (`2991`-frame source, shown as `2990`/`2:04.6`), not the clip-local `1380`. Per the owner's own observation, actual playback correctly stops at the real trim boundary — so the bug is confined to this readout/scrub-range display, not the decode/playback path itself.
+- **not yet root-caused:** didn't trace the exact component this session — flagging with the owner's exact repro numbers rather than guessing at the fix. The likely story: D-294 fixed `chroma_video_info`/the main preview's frame source but this specific transport-bar readout pulls total duration from a different, not-yet-updated source (a raw probe rather than the clip-aware view).
+
 ## B-150 — a second Edit-timeline clip of an already-open source file doesn't appear in Colorist's shot list at all
 
 status: open · severity: high (silently drops a clip from Colorist entirely — not a wrong-picture bug like B-147, an *invisible* one) · area: `app/src-tauri/src/chroma/state.rs` (`Session::upsert`), `app/src-tauri/src/chroma/colorist_view.rs` (D-294)
