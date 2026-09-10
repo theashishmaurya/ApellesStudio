@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-278: Keyboard Shortcuts window, layout redesign** —
+  against the owner's Figma "Keyboard Shortcuts Collection" reference
+  (`scratch/keyboard-shortcuts-figma-reference.png`), not a functionality
+  change: D-273's click-to-remap/Escape-to-unassign/per-row-reset/"Restore
+  Defaults" all already worked. `KeyboardShortcutsDialog.tsx`'s 9
+  categories / ~62 rows now render inside a CSS multi-column flow
+  (`columns-1 sm:columns-2 lg:columns-3`, each category `break-inside-avoid`)
+  on a widened `max-w-5xl` dialog instead of one stacked column; sticky
+  per-category headers and per-row borders are dropped (sticky fights a
+  multi-column flow) for a plain underline and tighter row spacing closer to
+  the reference. New `KeyboardShortcutsDialog.dom.test.tsx` (7 tests)
+  re-verifies every interaction survived the layout change.
 - **2026-09-10** — **B-140/D-275: retired the Edit tab's `CanvasSettingsPopover`**
   — confirmed live, minutes after D-274 shipped, as a real duplicate of the
   new docked Project Settings panel (both showing Resolution/Frame Rate at

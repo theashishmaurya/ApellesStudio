@@ -2577,22 +2577,27 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   implement this: a dropdown next to the transport, J/K/L-style shuttling,
   audio time-stretch vs. pitch-shift-and-skip) before building, per
   CLAUDE.md's own standing rule.
-- **Keyboard Shortcuts window: visual redesign against a real reference** —
-  owner request 2026-09-10, with a reference screenshot (a Figma community
-  "Keyboard Shortcuts Collection" cheat sheet — a dense, multi-column grid
-  grouped by category, each row a plain action-label + key-combo pair, no
-  extra chrome; saved at `scratch/keyboard-shortcuts-figma-reference.png`).
-  **Not a functionality gap** — checked directly against
-  `KeyboardShortcutsDialog.tsx` (D-273) before logging this: click-to-remap
-  already works exactly as the owner asked ("I should be able to edit as
-  well") — click a combo chip, it enters a recording state, the next chord
-  rebinds it, Escape leaves it unassigned. What the reference is actually
-  asking for is a LAYOUT change: today's window is one column of stacked
-  named sections; the reference is a tighter multi-column grid. A real
-  redesign pass, not a quick tweak — needs the same research-the-real-
-  pattern treatment (how many columns at this window's real width, whether
-  Apelles' ~60 rows against three tab-scoped categories fit the reference's
-  density) before rebuilding, per CLAUDE.md's standing rule.
+- ~~**Keyboard Shortcuts window: visual redesign against a real reference**~~ —
+  **Resolved by D-278** (2026-09-10). Owner request 2026-09-10, with a
+  reference screenshot (a Figma community "Keyboard Shortcuts Collection"
+  cheat sheet — a dense, multi-column grid grouped by category, each row a
+  plain action-label + key-combo pair, no extra chrome; saved at
+  `scratch/keyboard-shortcuts-figma-reference.png`). **Not a functionality
+  gap** — checked directly against `KeyboardShortcutsDialog.tsx` (D-273)
+  before logging this: click-to-remap already worked exactly as the owner
+  asked ("I should be able to edit as well") — click a combo chip, it enters
+  a recording state, the next chord rebinds it, Escape leaves it unassigned.
+  What the reference actually asked for was a LAYOUT change: the window was
+  one column of stacked named sections; the reference is a tighter
+  multi-column grid. `KeyboardShortcutsDialog.tsx` now renders its 9
+  categories/~62 rows inside a CSS multi-column flow (`columns-1 sm:columns-2
+  lg:columns-3` on a widened `max-w-5xl` dialog, each category
+  `break-inside-avoid`) instead of one stacked `<div>` — see D-278 for the
+  column-count reasoning and why the sticky per-category header was dropped.
+  Interaction logic (click-to-record, Escape-to-unassign, per-row reset,
+  "Restore Defaults", the scope tag, the ⚠ shadowed-action flag) is
+  untouched and re-verified by new DOM tests in
+  `KeyboardShortcutsDialog.dom.test.tsx`.
 - **A camera/snapshot button on the preview transport** — owner idea,
   2026-09-10, prompted by a "how does Freeze work elsewhere" question:
   clicking it captures the current frame as a real still image, adds it to

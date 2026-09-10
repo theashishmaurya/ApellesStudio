@@ -26994,3 +26994,100 @@ mode's seed-on-switch write instead, for the same jsdom-Select reason.
 
 `npm test --workspace @apelles/editor` (87 files / 1666 tests) and `npx tsc
 --noEmit -p packages/editor` both green.
+
+---
+
+## D-278 — Keyboard Shortcuts window: a CSS multi-column flow, against the Figma cheat-sheet reference
+
+**Date:** 2026-09-10. Resolves the roadmap's "Keyboard Shortcuts window:
+visual redesign against a real reference" entry (owner request 2026-09-10).
+
+### Context
+
+D-273 built the settings window against macOS System Settings' Keyboard
+Shortcuts pane: one stacked column of named sections, each row `label …
+[chip]`. The owner's follow-up request came with a different reference — a
+Figma community "Keyboard Shortcuts Collection" cheat sheet
+(`scratch/keyboard-shortcuts-figma-reference.png`) — a dense, multi-column
+grid, categories flowing down the page, minimal chrome, no wasted vertical
+space. Checked against `KeyboardShortcutsDialog.tsx` before scoping anything:
+click-to-remap, Escape-to-unassign, per-row reset and "Restore Defaults" all
+already worked exactly as re-requested ("I should be able to edit as well")
+— this was a LAYOUT gap, not a functionality one.
+
+The roadmap entry also flagged that `scratch/keyboard-shortcuts-settings-
+reference.png` (cited as the ORIGINAL D-273 reference) needed re-checking
+before being treated as authoritative. Opened it: it is a screenshot of
+Apelles' own running Edit tab, not macOS's pane — D-273's own text already
+recorded this same finding ("apparently saved over"). Confirmed again here
+rather than re-trusted blind; the Figma file is the only real reference this
+pass used.
+
+### Real row/category count, read before choosing a column count
+
+`SHORTCUT_CATEGORIES` (`packages/keymap/src/shortcuts.ts`) has 9 categories;
+counting `SHORTCUT_DEFINITIONS` by category: Application 5, Playback 3,
+Timeline editing 3, Trim tools 5, Library 7, Editing 7, View 9, Rating 12,
+Panels 11 — 62 rows total, matching D-273's own "~60 rows" note. Row counts
+per category range 3–12, and a naive fixed bucketing into N columns (e.g.
+"first 3 categories in column 1") produces very uneven column heights (an
+11/19/32-row split at 3 columns tried by hand during scoping).
+
+### The real options
+
+1. **Hand-bucket categories into fixed columns.** Rejected: any static
+   assignment goes stale the moment a category gains or loses rows (e.g. a
+   future Motion-tab shortcut section), and the 11/19/32 trial split above
+   was visibly worse than letting the rows balance themselves.
+2. **A CSS Grid with a fixed row-count per column, JS-computed.** Rejected as
+   over-engineering for a static list: it would need a resize observer or a
+   recomputed layout to stay balanced across window widths, for a problem CSS
+   already solves natively.
+3. **CSS multi-column flow (`columns-N` + `break-inside-avoid` per
+   category).** Chosen. The browser's own column-balancing algorithm packs
+   the 9 categories' uneven row-counts into visually even columns with zero
+   layout code, is the same "let it flow" mechanism the reference cheat sheet
+   itself reads as using, and re-balances automatically at any width via the
+   existing `sm:`/`lg:` breakpoints — `columns-1` under 640px, `columns-2`
+   from 640px, `columns-3` from 1024px. The dialog itself widened from
+   `max-w-2xl` to `max-w-5xl` (1024px) so three columns have room for the
+   longest label ("Delete selected clip or gap") plus its chip without
+   wrapping.
+
+### Consequences
+
+- **Sticky per-category headers are dropped.** They were load-bearing for a
+  single tall stacked column (a header pins while its own section scrolls by)
+  but actively wrong under CSS columns: every column reaches a given header
+  at a different scroll offset since column heights differ, so multiple
+  sticky headers would stack on top of each other at once. A plain underline
+  below each header (`border-b`) replaces it — closer to the reference's own
+  minimal-chrome rows anyway.
+- **Per-row bottom borders are dropped** in favour of tighter vertical
+  rhythm (`py-1` instead of `py-1.5`, no border) — matching the reference's
+  whitespace-only row separation rather than a ruled list.
+- **Row labels truncate with a `title` tooltip** (`truncate` + `title={label}`
+  on the label `<span>`) rather than wrapping to a second line: at 3-column
+  width a wrapped label would grow that row's height unevenly against its
+  neighbours in other columns, which reads as broken in a dense grid the way
+  it would not in the old single wide column.
+- The scope tag (`SCOPE_TAGS`, e.g. "Edit"/"Colorist"/"All tabs") and the ⚠
+  shadowed-action flag are unchanged in placement and behaviour — both are
+  D-273's own deliberate divergences from the macOS reference and neither was
+  in scope here.
+- Interaction logic in `KeyboardShortcutsDialog.tsx` (the recording
+  `useEffect`, `setBinding`/`resetBinding`/`resetAll` wiring) is untouched;
+  only the JSX layout around it changed.
+
+### Tests
+
+New `KeyboardShortcutsDialog.dom.test.tsx` (7 tests, none existed before this
+pass): categories render with their scope tag; click-to-record enters
+recording and the next chord rebinds the store; Escape-while-recording writes
+`[]` (unassigned) rather than reverting; a modified row's per-row reset
+button appears, restores the default, and then disappears; "Restore
+Defaults" clears every override in one call; two same-tab actions sharing a
+combo both get flagged ⚠ (and an unrelated row does not); the recording state
+resets when the dialog closes and reopens. `npm test --workspace
+@apelles/keymap` (3 files / 43 tests) and `npx tsc --noEmit -p
+packages/keymap/tsconfig.json` both green.

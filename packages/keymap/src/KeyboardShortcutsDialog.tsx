@@ -7,15 +7,16 @@
  * Colorist's own settings modal, listing Colorist's 45 actions and nothing
  * else, unreachable without switching tabs first.
  *
- * **Reference.** macOS System Settings ▸ Keyboard ▸ Keyboard Shortcuts, the
- * pane the owner cited in the request. Four things are taken from it directly
- * (CLAUDE.md's research-the-real-pattern rule):
+ * **Interaction reference.** macOS System Settings ▸ Keyboard ▸ Keyboard
+ * Shortcuts, the pane the owner cited in the original D-273 request. Four
+ * things came from it directly (CLAUDE.md's research-the-real-pattern rule)
+ * and are UNCHANGED by the D-278 layout pass below:
  *
- *   - **Categories, then rows.** The pane groups shortcuts under named
- *     sections rather than presenting one long alphabetical list. Here the
- *     sections are `SHORTCUT_CATEGORIES` and they carry the tab they belong to
- *     as a tag, because Apelles' three tabs each have their own set — the one
- *     thing macOS's pane has no equivalent of.
+ *   - **Categories, then rows.** Shortcuts group under named sections rather
+ *     than one long alphabetical list. Here the sections are
+ *     `SHORTCUT_CATEGORIES` and they carry the tab they belong to as a tag,
+ *     because Apelles' three tabs each have their own set — the one thing
+ *     macOS's pane has no equivalent of.
  *   - **The combo IS the control.** Each row is `label … [⌘K]`, and you click
  *     the combo itself to change it; there is no separate "edit" button. The
  *     chip goes into a recording state and takes the next chord you press.
@@ -26,6 +27,25 @@
  *     reset. A per-row reset is added anyway (the ↺ on a modified row) because
  *     this list is ~60 rows against macOS's dozen, and nuking all of them to
  *     undo one is a worse trade at that size.
+ *
+ * **Layout reference (D-278).** The single stacked column above read as too
+ * sparse for ~60 rows across 9 categories — the owner's own reference this
+ * time was a Figma community "Keyboard Shortcuts Collection" cheat sheet
+ * (`scratch/keyboard-shortcuts-figma-reference.png`): a dense, multi-column
+ * grid, each row a plain `label … [chip]` pair, minimal chrome, categories
+ * flowing down the page rather than stacking in one tall list. The dialog
+ * widened (`max-w-5xl`) and the category list now renders inside a CSS
+ * multi-column flow (`columns-1 sm:columns-2 lg:columns-3`, each `<section>`
+ * `break-inside-avoid`) instead of a single `<div>` stack — this balances the
+ * 9 categories' uneven row counts (3 to 12 rows each) across columns on its
+ * own, the same "let the browser flow it" trick the reference sheet itself
+ * uses, rather than hand-bucketing categories into fixed columns. Per-row
+ * borders and the sticky category header are dropped (sticky headers fight a
+ * multi-column flow — each column reaches a given header at a different
+ * scroll offset, so they'd stack on top of one another) in favour of a plain
+ * underline below each category's own header, closer to the reference's
+ * minimal-chrome rows. `docs/08-decisions.md` D-278 has the full
+ * column-count reasoning.
  *
  * **What it does NOT do.** It performs no shortcut and owns no binding — it
  * reads `SHORTCUT_DEFINITIONS` and writes `useKeymapStore`. It is also not
@@ -110,7 +130,7 @@ export function KeyboardShortcutsDialog({ open, onOpenChange, translate }: Keybo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-5xl">
         <DialogHeader>
           <DialogTitle>Keyboard Shortcuts</DialogTitle>
           <DialogDescription>
@@ -118,37 +138,39 @@ export function KeyboardShortcutsDialog({ open, onOpenChange, translate }: Keybo
           </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[60vh] overflow-y-auto pr-1" data-chroma-panel="keyboard-shortcuts">
-          {SHORTCUT_CATEGORIES.map((category) => {
-            const defs = SHORTCUT_DEFINITIONS.filter((d) => d.category === category.id);
-            if (defs.length === 0) return null;
-            return (
-              <section key={category.id} className="mb-4">
-                <header className="sticky top-0 z-10 flex items-baseline gap-2 bg-surface/95 py-1.5 backdrop-blur-sm">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-text-primary">
-                    {category.labelKey && translate ? translate(category.labelKey) : category.label}
-                  </h3>
-                  <span className="text-[10px] text-text-secondary">{SCOPE_TAGS[category.scope]}</span>
-                </header>
-                <ul>
-                  {defs.map((def) => (
-                    <ShortcutRow
-                      key={def.id}
-                      def={def}
-                      label={label(def)}
-                      combo={effectiveCombo(def, overrides)}
-                      modified={def.id in overrides}
-                      conflicting={conflicts.has(def.id)}
-                      recording={recording === def.id}
-                      osPlatform={osPlatform}
-                      onRecord={() => setRecording(def.id)}
-                      onReset={() => resetBinding(def.id)}
-                    />
-                  ))}
-                </ul>
-              </section>
-            );
-          })}
+        <div className="max-h-[75vh] overflow-y-auto pr-1" data-chroma-panel="keyboard-shortcuts">
+          <div className="columns-1 gap-x-8 sm:columns-2 lg:columns-3">
+            {SHORTCUT_CATEGORIES.map((category) => {
+              const defs = SHORTCUT_DEFINITIONS.filter((d) => d.category === category.id);
+              if (defs.length === 0) return null;
+              return (
+                <section key={category.id} className="mb-4 break-inside-avoid">
+                  <header className="mb-1 flex items-baseline gap-2 border-b border-border-color/60 pb-1">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-wide text-text-primary">
+                      {category.labelKey && translate ? translate(category.labelKey) : category.label}
+                    </h3>
+                    <span className="text-[10px] text-text-secondary">{SCOPE_TAGS[category.scope]}</span>
+                  </header>
+                  <ul>
+                    {defs.map((def) => (
+                      <ShortcutRow
+                        key={def.id}
+                        def={def}
+                        label={label(def)}
+                        combo={effectiveCombo(def, overrides)}
+                        modified={def.id in overrides}
+                        conflicting={conflicts.has(def.id)}
+                        recording={recording === def.id}
+                        osPlatform={osPlatform}
+                        onRecord={() => setRecording(def.id)}
+                        onReset={() => resetBinding(def.id)}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
+          </div>
         </div>
 
         <DialogFooter>
@@ -188,8 +210,10 @@ function ShortcutRow({
   onReset,
 }: ShortcutRowProps) {
   return (
-    <li className="flex items-center justify-between gap-3 py-1.5 border-b border-border-color/40 last:border-b-0">
-      <span className="text-xs text-text-primary">{label}</span>
+    <li className="flex items-center justify-between gap-2 py-1">
+      <span className="truncate text-xs text-text-primary" title={label}>
+        {label}
+      </span>
       <span className="flex items-center gap-1 shrink-0">
         {conflicting && !recording && (
           <span
