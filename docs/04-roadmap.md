@@ -1650,8 +1650,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       they agree exactly at every authored keyframe. GUI + MCP in the same
       pass (`editor_set_keyframe_ease`, `editor_set_curve_editor`). Proven by
       a real-ffmpeg pixel test that was verified to fail when the curve is
-      dropped in the compile path. Found and filed, not fixed: **B-108**
-      (export interpolates `rotation` the long way round the 0°/360° seam).
+      dropped in the compile path. Found and filed, not fixed here: **B-108**
+      (export interpolates `rotation` the long way round the 0°/360° seam) —
+      **fixed 2026-09-10**, see `docs/BUGS.md`.
     - ~~**Transitions library** — crossfade/dissolve/wipe, drag onto an edit
       point~~ — **DONE, 2026-09-08 (D-226 + D-227).** (Ref is
       `transitions.jpg` / the `edit-transitions` section's own text, not

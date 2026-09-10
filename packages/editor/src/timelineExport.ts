@@ -147,6 +147,54 @@ export interface ExportKeyframe {
 const EASE_SAMPLE_STEPS = 20;
 
 /**
+ * The shortest signed arc, in degrees, from `from` to `to` — mirrors
+ * `chroma::keyframes::lerp_value`'s own `rotation`-only rule byte-for-byte
+ * (same `%`, same clamp into `(-180, 180]`) so a seam-crossing rotation
+ * keyframe animates identically on both sides (B-108). JS's `%` already has
+ * Rust's truncated-division sign behaviour for this range, so no extra
+ * normalisation is needed to match it.
+ */
+function shortestArcDelta(from: number, to: number): number {
+  let d = (to - from) % 360;
+  if (d > 180) d -= 360;
+  else if (d < -180) d += 360;
+  return d;
+}
+
+/**
+ * B-108 — re-express a `rotation` key sequence's values as one continuous,
+ * UNWRAPPED running total, so the straight lines `keyframeExprAt` draws
+ * between them sweep the shortest arc segment-by-segment, the same as
+ * `lerp_value`'s own per-bracket rule.
+ *
+ * **Why a running total works, and why it never mismatches Rust's own
+ * per-request (stateless) computation.** `lerp_value` always computes its arc
+ * from that segment's own two *stored* key values, independent of any other
+ * segment. Here, each key's new value is `previous unwrapped value +
+ * shortestArcDelta(previous RAW value, this RAW value)` — by induction, that
+ * running value stays congruent to the key's own raw number mod 360 at every
+ * key (it only ever differs by a whole multiple of 360°). A whole-turn offset
+ * changes no rendered pixel (rotation is periodic), so the two engines agree
+ * exactly on the physical angle at every instant while this compiler gets a
+ * single continuous piecewise-linear curve — no synthetic duplicate point at
+ * a shared timestamp is needed to "snap back" to the raw number at each key,
+ * which `piecewiseLinearExpr`'s point list has no way to express anyway.
+ *
+ * The very first key is never rewritten (there is no previous key to take an
+ * arc from), so a `rotation` animation with a single key — or no seam at all —
+ * produces byte-identical values to the pre-B-108 plain ramp.
+ */
+function unwrapRotationKeys<T extends { value: number }>(keyed: T[]): T[] {
+  if (keyed.length < 2) return keyed;
+  const out: T[] = [keyed[0]];
+  for (let i = 1; i < keyed.length; i++) {
+    const delta = shortestArcDelta(keyed[i - 1].value, keyed[i].value);
+    out.push({ ...keyed[i], value: out[i - 1].value + delta });
+  }
+  return out;
+}
+
+/**
  * Build an ffmpeg filter expression (using `t`, ffmpeg's own per-frame time
  * in seconds) that piecewise-linearly interpolates `param` across
  * `keyframes`, exactly mirroring the semantics `apelles_timeline::edit::
@@ -190,6 +238,17 @@ const EASE_SAMPLE_STEPS = 20;
  * B-090/B-094/B-095 divergence class is about the two sides interpreting the
  * animation DATA differently; here they interpret it identically and one of
  * them approximates the drawing of it, within a measured bound.
+ *
+ * **B-108 — `rotation` takes the shortest arc, exactly like the live preview.**
+ * `chroma::keyframes::lerp_value` (Rust) special-cases `"rotation"`: rather
+ * than a plain numeric ramp from key to key, it normalises the delta between
+ * two keys into `(-180, 180]` before interpolating, so `350° → 10°` moves
+ * `+20°` forward through `0°` instead of `-340°` backwards through `180°`.
+ * This compiler used to have no such rule — every param, rotation included,
+ * got the plain `y0 + (y1-y0)*t` ramp — so the export took the 340°-long way
+ * round on exactly that animation while the preview took the 20°-short way,
+ * rendering the clip upside down mid-sweep where the preview showed it
+ * upright. See `unwrapRotationKeys` below for how the fix is applied.
  */
 export function keyframeExprAt(
   keyframes: ExportKeyframe[],
@@ -205,7 +264,7 @@ export function keyframeExprAt(
    *  Byte-identical output for the default, so no existing argv changes. */
   timeVar = 't',
 ): string {
-  const keyed = keyframes
+  const rawKeyed = keyframes
     .filter((k) => Object.prototype.hasOwnProperty.call(k.params, param))
     .map((k) => ({
       t: k.frame / fps,
@@ -215,6 +274,10 @@ export function keyframeExprAt(
       ease: isIdentityEase(k.ease?.[param]) ? null : (k.ease?.[param] ?? null),
     }))
     .sort((a, b) => a.t - b.t);
+
+  // B-108 — only `rotation` gets the shortest-arc treatment, matching
+  // `lerp_value`'s own `key == "rotation"` guard exactly.
+  const keyed = param === 'rotation' ? unwrapRotationKeys(rawKeyed) : rawKeyed;
 
   if (keyed.length === 0) return String(staticValue);
 

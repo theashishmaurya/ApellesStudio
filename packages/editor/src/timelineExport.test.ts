@@ -134,6 +134,83 @@ describe('keyframeExprAt', () => {
   });
 });
 
+describe('keyframeExprAt — rotation takes the shortest arc (B-108)', () => {
+  // Mirrors `chroma::keyframes::lerp_value`'s own `rotation_takes_the_shortest_
+  // arc` / `rotation_negative_arc` Rust unit tests exactly (same keys, same
+  // frames, same "near 0 or 360, never near 180" assertion shape) — the two
+  // engines must agree on this, not merely each pass their own test.
+
+  it('350° -> 10° moves +20° forward through 0°, not -340° backward through 180°', () => {
+    const kfs: ExportKeyframe[] = [
+      { frame: 0, params: { rotation: 350 } },
+      { frame: 100, params: { rotation: 10 } },
+    ];
+    const expr = keyframeExprAt(kfs, 'rotation', 0, 100);
+    const mid = evalExpr(expr, 0.5);
+    // the short way's midpoint is 360 (== 0, mod 360) — never 180
+    expect(Math.abs(mid) < 1e-6 || Math.abs(mid - 360) < 1e-6).toBe(true);
+    expect(Math.abs(mid - 180)).toBeGreaterThan(1);
+    // and the sweep is monotonically FORWARD (350 -> 360), never dipping
+    // down through the long way at any sampled instant
+    expect(evalExpr(expr, 0.25)).toBeCloseTo(355);
+    expect(evalExpr(expr, 0.75)).toBeCloseTo(365);
+  });
+
+  it('10° -> 350° moves -20° backward through 0°, the mirror-image seam', () => {
+    const kfs: ExportKeyframe[] = [
+      { frame: 0, params: { rotation: 10 } },
+      { frame: 10, params: { rotation: 350 } },
+    ];
+    const expr = keyframeExprAt(kfs, 'rotation', 0, 10);
+    const mid = evalExpr(expr, 0.5);
+    expect(Math.abs(mid) < 1e-6 || Math.abs(mid - 360) < 1e-6).toBe(true);
+    expect(Math.abs(mid - 180)).toBeGreaterThan(1);
+  });
+
+  it('a chain of keys never takes the long way at any single segment', () => {
+    // 350 -> 10 (short: +20, crosses the seam) -> 30 (short: +20, no seam).
+    const kfs: ExportKeyframe[] = [
+      { frame: 0, params: { rotation: 350 } },
+      { frame: 100, params: { rotation: 10 } },
+      { frame: 200, params: { rotation: 30 } },
+    ];
+    const expr = keyframeExprAt(kfs, 'rotation', 0, 100);
+    // segment 1 midpoint: 360 (== 0)
+    expect(evalExpr(expr, 0.5)).toBeCloseTo(360);
+    // exactly at the middle key: continuing the unwrapped run, 370 (== 10)
+    expect(evalExpr(expr, 1)).toBeCloseTo(370);
+    // segment 2 midpoint: short way from 370 is +10 to 380 (== 20)
+    expect(evalExpr(expr, 1.5)).toBeCloseTo(380);
+    expect(evalExpr(expr, 2)).toBeCloseTo(390); // == 30
+  });
+
+  it('does not change a rotation animation with no seam to cross', () => {
+    // 0 -> 90 is already the short way (90 <= 180), so the fix must be a
+    // no-op here: byte-identical to the pre-B-108 plain ramp.
+    const withFix: ExportKeyframe[] = [
+      { frame: 0, params: { rotation: 0 } },
+      { frame: 30, params: { rotation: 90 } },
+    ];
+    const expr = keyframeExprAt(withFix, 'rotation', 0, 30);
+    expect(evalExpr(expr, 0)).toBeCloseTo(0);
+    expect(evalExpr(expr, 0.5)).toBeCloseTo(45);
+    expect(evalExpr(expr, 1)).toBeCloseTo(90);
+  });
+
+  it('leaves every other param on the plain long-way ramp — the guard is rotation-only', () => {
+    // The same 350 -> 10 numbers on `scale`: must stay the OLD plain ramp
+    // (a `scale` of -340 the "long way" makes no physical sense to special-
+    // case, and `lerp_value` itself only special-cases the literal key
+    // `"rotation"`).
+    const kfs: ExportKeyframe[] = [
+      { frame: 0, params: { scale: 350 } },
+      { frame: 100, params: { scale: 10 } },
+    ];
+    const expr = keyframeExprAt(kfs, 'scale', 0, 100);
+    expect(evalExpr(expr, 0.5)).toBeCloseTo(180);
+  });
+});
+
 describe('buildExportFfmpegArgs', () => {
   it('compiles a single clip with no crop/keyframes/speed to the exact expected argv', () => {
     const tl = timeline([track('video', [clip('c1')])]);

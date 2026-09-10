@@ -141,7 +141,14 @@ One or two lines per session. Detail lives in the decision it references.
   `mcp/server.py` exactly; `website/tests/mcp-data.test.ts` 77/77 passing).
   No code changes were needed for any of the three — just correcting BUGS.md
   to match reality.
-
+- **2026-09-10** — **B-108 fixed:** the export compiler's `keyframeExprAt`
+  now takes the same shortest-signed-arc path for keyframed `rotation` the
+  live preview's `lerp_value` already does, so a `350° → 10°` sweep exports
+  as the +20° short hop through 0° instead of a -340° spin the long way
+  through 180°. New `shortestArcDelta`/`unwrapRotationKeys` helpers in
+  `timelineExport.ts`; 5 new tests mirror the Rust engine's own shortest-arc
+  unit tests key-for-key. All 1730 `@apelles/editor` tests pass, `tsc`
+  clean.
 - **2026-09-10** — **B-141 fixed (code-complete, `cargo check`-clean, test not
   yet run live — see `docs/BUGS.md`):** the launcher card's `thumb.jpg` is now
   generated through the same composited, transform-aware `timeline_frame_
