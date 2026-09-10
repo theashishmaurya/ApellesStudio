@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-142 confirmed fixed live** (the Keyboard Shortcuts
+  3-column grid actually renders now) — **B-143 filed and fixed:** the
+  dialog's own widening to `max-w-[80vw]` never took effect because the
+  base `DialogContent` default is a `sm:`-scoped `sm:max-w-lg`, and
+  `tailwind-merge` only dedupes within the same variant; confirmed against
+  the live generated stylesheet, then matched the variant
+  (`max-w-[80vw] sm:max-w-[80vw]`).
+
 - **2026-09-10** — **B-142, the real fix:** the previous fix (a WebKit-quirk
   theory, merging two divs) shipped and was confirmed live still broken.
   Real cause: `app/src/styles.css`'s Tailwind `@source` list never included

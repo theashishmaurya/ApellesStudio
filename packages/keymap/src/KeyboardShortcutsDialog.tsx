@@ -34,9 +34,15 @@
  * (`scratch/keyboard-shortcuts-figma-reference.png`): a dense, multi-column
  * grid, each row a plain `label … [chip]` pair, minimal chrome, categories
  * flowing down the page rather than stacking in one tall list. The dialog
- * widened (`max-w-[80vw]`, per live feedback — `max-w-5xl` still left dead
- * space and truncated labels at this window's real width) and the category
- * list now renders inside a CSS
+ * widened (per live feedback — `max-w-5xl` still left dead space and
+ * truncated labels at this window's real width) to `max-w-[80vw] sm:max-w-
+ * [80vw]` — BOTH the unprefixed and `sm:`-prefixed form, deliberately: the
+ * base `DialogContent`'s own default is `sm:max-w-lg`, a `sm:`-VARIANT
+ * class, and `tailwind-merge` only dedupes conflicting utilities within the
+ * SAME variant — an unprefixed override alone (tried first, shipped, and
+ * confirmed live still narrow) never touches a `sm:`-scoped rule, which then
+ * keeps winning in the cascade at any viewport past that breakpoint
+ * regardless of source order. The category list now renders inside a CSS
  * multi-column flow (`columns-1 sm:columns-2 lg:columns-3`, each `<section>`
  * `break-inside-avoid`) instead of a single `<div>` stack — this balances the
  * 9 categories' uneven row counts (3 to 12 rows each) across columns on its
@@ -132,7 +138,7 @@ export function KeyboardShortcutsDialog({ open, onOpenChange, translate }: Keybo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[80vw]">
+      <DialogContent className="max-w-[80vw] sm:max-w-[80vw]">
         <DialogHeader>
           <DialogTitle>Keyboard Shortcuts</DialogTitle>
           <DialogDescription>
