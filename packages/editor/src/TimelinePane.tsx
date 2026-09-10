@@ -4348,7 +4348,14 @@ export function TimelinePane() {
                 if (!gap) return null;
                 return (
                   <div
-                    className="pointer-events-none absolute z-20 border-2 border-dashed border-accent bg-accent/15"
+                    // Owner feedback, 2026-09-10: the old dashed outline read
+                    // as an unstyled placeholder ("this looks bad"). A glassy
+                    // translucent fill — soft gradient, backdrop blur, a
+                    // hairline border instead of a dashed one, rounded
+                    // corners — reads as a real selection state rather than
+                    // scaffolding, matching this kit's other glass surfaces
+                    // (e.g. the transport bar's own popovers).
+                    className="pointer-events-none absolute z-20 overflow-hidden rounded-md border border-accent/50 bg-gradient-to-b from-accent/25 to-accent/10 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] backdrop-blur-sm"
                     style={{
                       left: START_LEFT_PX + (gap.gapStart / fps) * pxPerSec - scrollLeft,
                       width: ((gap.gapEnd - gap.gapStart) / fps) * pxPerSec,

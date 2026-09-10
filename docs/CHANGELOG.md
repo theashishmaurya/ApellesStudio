@@ -4,6 +4,12 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-145 logged, not fixed:** dragging a clip lands it at
+  frame 0 instead of the drop position — reported live, no jsdom repro
+  attempted yet.
+- **2026-09-10** — the selected-gap highlight (`TimelinePane.tsx`) is now a
+  glassy translucent fill (soft gradient, backdrop blur, hairline border)
+  instead of a plain dashed outline, per live feedback ("this looks bad").
 - **2026-09-10** — **B-142 confirmed fixed live** (the Keyboard Shortcuts
   3-column grid actually renders now) — **B-143 filed and fixed:** the
   dialog's own widening to `max-w-[80vw]` never took effect because the
