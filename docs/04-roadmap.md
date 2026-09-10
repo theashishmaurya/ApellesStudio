@@ -2627,6 +2627,28 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   should honour whatever transform/grade is showing), a place to write the
   resulting file, and `SourcesPanel.tsx`'s own real import path reused rather
   than a bespoke "fake source" entry.
+- **Still-image import for the Edit tab** — owner request 2026-09-10, found
+  while trying to import a PNG reference for Colorist's `match_to_reference`:
+  `editor_import_media` accepted the file but came back `offline: true,
+  video: null`, and it never appeared in Colorist's own shot list either.
+  Root-caused before logging, not guessed: `probe_media_item`
+  (`crates/apelles-project/src/manifest.rs`) unconditionally calls
+  `video::probe()` (ffprobe) on every import; a still image always fails
+  that probe, so `MediaItem.video` stays `None`, which the whole pool
+  already treats as "offline" (`resolve_shot`'s own doc: "an empty
+  `source_path` as offline"). This is `v1`'s deliberately tiny scope
+  (`docs/02-scope.md`: one footage type) showing up as a real gap now that
+  the owner wants a still (a color reference, a freeze-frame grab — see the
+  camera/snapshot item just above, which depends on this) as a first-class
+  Edit-tab source. Real scope: a second probed media kind alongside video
+  (`MediaItem.image: Option<ImageInfo>` or equivalent), `editor_add_clip`
+  accepting an image source with a synthesized default duration (mirroring
+  `newTitleClip`'s `DEFAULT_TITLE_SECONDS` pattern for text clips — a still
+  has no natural length either), and the Rust decode/composite path
+  rendering a static image for a clip's whole duration instead of
+  frame-stepping through a codec. **In progress** — dispatched to an agent,
+  2026-09-10; update this entry with the actual decision once it lands
+  rather than leaving this as a stale plan.
 
 ---
 
