@@ -4,9 +4,29 @@
  *
  * What it is: two small ring buffers of `performance.now()` timestamps that
  *   `PreviewPane` writes to as it plays — one per `requestAnimationFrame`
- *   tick, one per frame actually handed to the `<img>` — plus a report that
- *   turns them into the intervals, the derived fps, and the drop count. The
- *   debug op `debug_frame_timing` reads it.
+ *   tick, one per frame actually handed to the `<img>` — plus, since D-282,
+ *   two ring buffers of DURATIONS covering what one iteration of that loop
+ *   spent its time on, plus a report that turns all four into intervals, the
+ *   derived fps, the drop count and the per-phase spread. The debug op
+ *   `debug_frame_timing` reads it.
+ *
+ * **Why the duration channels exist (D-282).** The two timestamp channels can
+ *   say the loop is running at 40 fps; they cannot say WHERE the 25 ms went,
+ *   and that is exactly the question the owner's "playback lags" report needs
+ *   answered. D-282 profiled the loop from outside using only these two
+ *   channels plus a natural experiment (playing over a timeline GAP, whose
+ *   frame is a 1×1 JPEG and so costs no decode at all) and could get as far as
+ *   "≈3.5 ms is Rust, ≈21.5 ms is this side" — and then stopped, because
+ *   nothing could split that 21.5 ms further. So the tool got the missing
+ *   half rather than the diagnosis getting a guess:
+ *     * `fetch` — the `chroma_timeline_frame` round trip (Tauri IPC + the Rust
+ *       decode/composite/JPEG). Everything below the webview.
+ *     * `tick`  — one whole pass of the play loop's `tick`, from entry to the
+ *       moment it asks for the next animation frame. `tick − fetch` is the
+ *       loop's own JavaScript (the `Blob`, the object URL, the store write).
+ *   And `raf`'s interval minus `tick` is what is left: React's render/commit
+ *   for that frame plus however long the browser made the loop wait for its
+ *   next animation frame. Three numbers, one subtraction each, no guessing.
  *
  * Why it exists: D-217 fixed the preview's dominant per-frame cost (42.7 →
  *   14.0 ms) and could measure that precisely in Rust, but could NOT measure
@@ -44,7 +64,13 @@ export const DEFAULT_REPORT_LIMIT = 60;
 
 export type PreviewTimingChannel = 'raf' | 'paint';
 
+/** The D-282 duration channels. Unlike {@link PreviewTimingChannel} these hold
+ *  already-measured spans in ms, not moments in time — see the module doc for
+ *  what each one covers and which subtraction it is meant for. */
+export type PreviewSpanChannel = 'fetch' | 'tick';
+
 const buffers: Record<PreviewTimingChannel, number[]> = { raf: [], paint: [] };
+const spans: Record<PreviewSpanChannel, number[]> = { fetch: [], tick: [] };
 
 /** Record one event. `at` defaults to `performance.now()` and is a parameter
  *  purely so the tests can drive a deterministic clock. */
@@ -54,9 +80,23 @@ export function recordPreviewTiming(channel: PreviewTimingChannel, at: number = 
   if (buf.length > TIMING_CAPACITY) buf.shift();
 }
 
+/** Record one already-measured duration, in ms (D-282). Negative and
+ *  non-finite values are dropped rather than stored: a span is always computed
+ *  as `now - start`, so anything else is a caller bug, and silently poisoning
+ *  the median with it would make the readout untrustworthy — which is the one
+ *  thing this module cannot afford to be. */
+export function recordPreviewSpan(channel: PreviewSpanChannel, ms: number): void {
+  if (!Number.isFinite(ms) || ms < 0) return;
+  const buf = spans[channel];
+  buf.push(ms);
+  if (buf.length > TIMING_CAPACITY) buf.shift();
+}
+
 export function resetPreviewTiming(): void {
   buffers.raf = [];
   buffers.paint = [];
+  spans.fetch = [];
+  spans.tick = [];
 }
 
 export interface ChannelTimingReport {
@@ -75,6 +115,21 @@ export interface ChannelTimingReport {
   hitches: number;
 }
 
+/** One duration channel's spread (D-282). No `fps` and no `hitches`: those
+ *  are properties of a CADENCE, and these samples are costs, not moments. */
+export interface SpanTimingReport {
+  /** how many durations the buffer holds (≤ {@link TIMING_CAPACITY}) */
+  samples: number;
+  /** the most recent durations in ms, oldest first, rounded to 0.01 */
+  msLatest: number[];
+  /** null when the buffer is empty */
+  minMs: number | null;
+  medianMs: number | null;
+  p95Ms: number | null;
+  maxMs: number | null;
+  meanMs: number | null;
+}
+
 export interface PreviewTimingReport {
   /** `requestAnimationFrame` ticks: how often the play loop got to run at
    *  all. A near-zero fps here with a healthy `paint` fps means the WINDOW is
@@ -82,6 +137,14 @@ export interface PreviewTimingReport {
   raf: ChannelTimingReport;
   /** frames actually handed to the preview `<img>`. */
   paint: ChannelTimingReport;
+  /** D-282 — the `chroma_timeline_frame` round trip: Tauri IPC plus all of
+   *  Rust's decode + composite + JPEG encode. Everything below the webview. */
+  fetch: SpanTimingReport;
+  /** D-282 — one whole pass of the play loop's `tick`. `tick.medianMs −
+   *  fetch.medianMs` is the loop's own JavaScript; `raf.medianMs −
+   *  tick.medianMs` is React's render/commit plus the wait for the next
+   *  animation frame. */
+  tick: SpanTimingReport;
   capacity: number;
 }
 
@@ -131,11 +194,31 @@ function channelReport(stamps: number[], limit: number): ChannelTimingReport {
   };
 }
 
+function spanReport(durations: number[], limit: number): SpanTimingReport {
+  const tail = durations.slice(Math.max(0, durations.length - limit)).map(round2);
+  if (!durations.length) {
+    return { samples: 0, msLatest: tail, minMs: null, medianMs: null, p95Ms: null, maxMs: null, meanMs: null };
+  }
+  const sorted = [...durations].sort((a, b) => a - b);
+  const mean = durations.reduce((sum, n) => sum + n, 0) / durations.length;
+  return {
+    samples: durations.length,
+    msLatest: tail,
+    minMs: round2(sorted[0]),
+    medianMs: round2(quantile(sorted, 0.5)),
+    p95Ms: round2(quantile(sorted, 0.95)),
+    maxMs: round2(sorted[sorted.length - 1]),
+    meanMs: round2(mean),
+  };
+}
+
 export function previewTimingReport(limit: number = DEFAULT_REPORT_LIMIT): PreviewTimingReport {
   const capped = Math.min(Math.max(Math.round(limit), 1), TIMING_CAPACITY);
   return {
     raf: channelReport(buffers.raf, capped),
     paint: channelReport(buffers.paint, capped),
+    fetch: spanReport(spans.fetch, capped),
+    tick: spanReport(spans.tick, capped),
     capacity: TIMING_CAPACITY,
   };
 }

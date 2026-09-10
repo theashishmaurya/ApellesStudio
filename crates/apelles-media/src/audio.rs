@@ -6143,4 +6143,136 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Captures the one `log::warn!` [`seek_source`] emits when a container
+    /// refuses to seek (B-052), so the test below can prove it really
+    /// exercised the packet-walk fallback instead of passing vacuously on the
+    /// fast path. Test-only in the strictest sense: nothing outside this
+    /// `#[cfg(test)]` module installs it or reads it, and `seek_source` itself
+    /// is unchanged — the log line it already emitted is the whole interface.
+    struct SeekWarnSpy;
+
+    static SEEK_WARNINGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    impl log::Log for SeekWarnSpy {
+        fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record<'_>) {
+            let msg = record.args().to_string();
+            if msg.contains("could not seek to")
+                && let Ok(mut seen) = SEEK_WARNINGS.lock()
+            {
+                seen.push(msg);
+            }
+        }
+        fn flush(&self) {}
+    }
+
+    impl SeekWarnSpy {
+        /// Idempotent: `set_logger` may only ever succeed once per process,
+        /// and other tests in this binary must not be broken by losing that
+        /// race, so a second call is simply a no-op.
+        fn install() {
+            let _ = log::set_logger(&SeekWarnSpy);
+            log::set_max_level(log::LevelFilter::Warn);
+        }
+
+        /// Drain what has been captured since the last call.
+        fn take() -> Vec<String> {
+            SEEK_WARNINGS
+                .lock()
+                .map(|mut seen| std::mem::take(&mut *seen))
+                .unwrap_or_default()
+        }
+    }
+
+    /// **What B-052's packet-skip fallback COSTS (D-282).** A bound, not a
+    /// benchmark.
+    ///
+    /// The owner reported "playback lags", and the running app's log was full
+    /// of this fallback firing on their own camera originals:
+    /// `could not seek to 74.317s (seek error: requested seek timestamp is
+    /// out-of-range for stream) — skipping forward by packet timestamps
+    /// instead`. That reads alarming, and there is a very real cliff behind it:
+    /// starting a session 74 s into a 568 MB `.mov` whose container refuses to
+    /// seek means walking the demuxer forward from 0:00. The whole reason
+    /// [`DecodedSource::ensure`] classifies a packet BEFORE handing it to the
+    /// decoder is to keep that walk a demux and not a decode — and nothing
+    /// enforced that, so a future change that decoded first and trimmed after
+    /// would turn ~65 ms into many seconds with no test to catch it.
+    ///
+    /// Measured on the reported file (`A001_09091123_C024.MOV`, 568 MB,
+    /// 124.6 s), re-measured 2026-09-10 with [`SeekWarnSpy`] confirming the
+    /// fallback really fired at both late starts: first second of audio
+    /// **5.6 ms at 0:00 and 5.4-5.6 ms at 40 s / 74 s in** on a warm page
+    /// cache. (D-282's original pass measured 9.3 ms and 65.7-67.4 ms on the
+    /// same file cold; the gap between the two runs is page cache, and both
+    /// support the same conclusion by an order of magnitude.) So the fallback
+    /// is real, is paid once per source per session (not per frame), and is
+    /// **not** where the lag lives — D-282 found that in the preview's own
+    /// frame loop instead. The generous ceiling below is a cliff guard: it
+    /// fails on a regression of the walk-decodes-everything kind and stays
+    /// quiet about ordinary machine noise, warm cache or cold.
+    #[test]
+    fn an_unseekable_source_still_reaches_a_late_start_by_demuxing_not_decoding() {
+        let Ok(video_path) = std::env::var("CHROMA_TEST_AUDIO_VIDEO") else {
+            eprintln!(
+                "skip: set CHROMA_TEST_AUDIO_VIDEO to run (a real file with an audio stream)"
+            );
+            return;
+        };
+        let path = PathBuf::from(&video_path);
+        /// Well clear of the 5-70 ms measured across warm and cold runs, and
+        /// orders of magnitude under the seconds a decode-everything walk
+        /// would take.
+        const CEILING_MS: f64 = 1_500.0;
+
+        SeekWarnSpy::install();
+        let mut worst = 0.0f64;
+        let mut fell_back = 0usize;
+        for start in [0.0f64, 40.0, 74.0] {
+            SeekWarnSpy::take();
+            let t0 = std::time::Instant::now();
+            let mut src = open_source(&path, start, Some(1.0), 48_000, 2)
+                .unwrap_or_else(|e| panic!("open at {start}s: {e}"));
+            // The skip is lazy — it happens inside `ensure` on the first real
+            // pull, so opening alone measures nothing. This is the number.
+            let _ = src.take(48_000 * 2, 2).expect("one second of audio");
+            let ms = t0.elapsed().as_secs_f64() * 1000.0;
+            // Which of the two paths this start actually took. Without this the
+            // test cannot tell a real walk from a container that seeked fine,
+            // and would pass vacuously the day the fast path starts handling
+            // every case — a guard that silently stops guarding.
+            let walked = !SeekWarnSpy::take().is_empty();
+            if walked {
+                fell_back += 1;
+            }
+            let how = if walked {
+                "packet walk"
+            } else {
+                "container seek"
+            };
+            eprintln!("start {start:>6.1}s → first second of audio in {ms:.1} ms ({how})");
+            worst = worst.max(ms);
+        }
+        // Not an assertion: a caller is free to point `CHROMA_TEST_AUDIO_VIDEO`
+        // at a perfectly seekable file, and the ceiling below is still the
+        // right thing to hold it to. But if nothing fell back, the run said
+        // nothing about B-052's walk, and the reader of the output needs to
+        // know that rather than infer it.
+        if fell_back == 0 {
+            eprintln!(
+                "note: this container seeks cleanly, so B-052's packet walk was NOT exercised — \
+                 the ceiling below still held, but point CHROMA_TEST_AUDIO_VIDEO at an \
+                 unseekable source (a camera-original .MOV) to actually cover that path"
+            );
+        }
+        assert!(
+            worst < CEILING_MS,
+            "reaching a late start in an unseekable container took {worst:.1} ms — over the \
+             {CEILING_MS:.0} ms ceiling. That is the signature of the packet walk DECODING \
+             what it is supposed to be dropping (see `DecodedSource::ensure`, B-052)."
+        );
+    }
 }

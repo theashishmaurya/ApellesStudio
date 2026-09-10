@@ -47,7 +47,8 @@
  *                                   docked that library.)
  *   `debug_dom_tree`              — bounded DOM dump (see `domTree.ts`).
  *   `debug_frame_timing`          — the Edit-tab preview's real paint
- *                                   intervals (see `@apelles/editor`'s
+ *                                   intervals, and since D-282 the per-phase
+ *                                   COSTS behind them (see `@apelles/editor`'s
  *                                   `previewTiming.ts`).
  *
  * NOT here, deliberately: the Colorist tab's own panel/visibility/settings
