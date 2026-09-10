@@ -146,7 +146,10 @@ mod tests {
         let outcome = run_ffmpeg(&req).expect("spawning ffmpeg itself must not fail");
         assert!(outcome.ok, "ffmpeg -version should exit 0");
         assert!(
-            outcome.stdout_tail.to_lowercase().contains("ffmpeg version"),
+            outcome
+                .stdout_tail
+                .to_lowercase()
+                .contains("ffmpeg version"),
             "expected ffmpeg's own version banner on stdout, got: {}",
             outcome.stdout_tail
         );
@@ -158,7 +161,10 @@ mod tests {
     fn run_ffmpeg_reports_failure_and_stderr_for_a_bad_flag() {
         let req = FfmpegRunRequest::new(vec!["-not-a-real-flag".to_string()]);
         let outcome = run_ffmpeg(&req).expect("spawning ffmpeg itself must not fail");
-        assert!(!outcome.ok, "an unrecognized flag should make ffmpeg exit non-zero");
+        assert!(
+            !outcome.ok,
+            "an unrecognized flag should make ffmpeg exit non-zero"
+        );
         assert!(
             !outcome.stderr_tail.trim().is_empty(),
             "expected ffmpeg to explain the bad flag on stderr"

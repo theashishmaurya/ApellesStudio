@@ -16,7 +16,7 @@ use crate::app_state::{AppState, LoadedImage};
 use crate::image_loader::LoadImageResult;
 use crate::image_processing::ImageMetadata;
 
-use super::state::{set_current_video, CurrentVideo};
+use super::state::{CurrentVideo, set_current_video};
 use super::video::{self, FramePos, VideoInfo};
 
 /// Decode `frame` of the video at `source_path` and make it the loaded image.
@@ -38,7 +38,14 @@ pub async fn load_video_frame(
     .await
     .map_err(|e| e.to_string())??;
 
-    Ok(install_frame(source_path, virtual_path, frame, info, img, state))
+    Ok(install_frame(
+        source_path,
+        virtual_path,
+        frame,
+        info,
+        img,
+        state,
+    ))
 }
 
 /// Register `source_path` in the session as a shot at `frame` **without

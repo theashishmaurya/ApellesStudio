@@ -4619,9 +4619,16 @@ def debug_screenshot(
         inline: also return the image itself, not just its path.
 
     LIMITS — read these before trusting a shot:
-      * WEBVIEW ONLY. The native title bar, native menus, a native file/save
-        dialog, and anything from another app are NOT in the image. If you
-        opened a native dialog, the screenshot shows the page behind it.
+      * WEBVIEW, PLUS one deliberate exception. The native title bar, native
+        menus, a native file/save dialog, and anything from another app are
+        NOT in the image. If you opened a native dialog, the screenshot shows
+        the page behind it. The one exception: the Colorist tab's picture is
+        composited in on top of the webview capture (B-151) — it is a native
+        wgpu surface painted behind the webview, invisible to a plain webview
+        snapshot, so it is read back and pasted in separately. That overlay is
+        a standard resize, not a byte-exact copy of the live shader output;
+        for a pixel-exact colour check use `inspect_color`/`sample`/
+        `sample_region` instead of reading pixels out of this screenshot.
       * The image is in real device pixels: `width`/`height` are CSS pixels x
         `scaleFactor` (2 on a Retina display). Divide by `scaleFactor` to map a
         screenshot coordinate back to a DOM coordinate.

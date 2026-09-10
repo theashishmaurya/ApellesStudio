@@ -131,7 +131,10 @@ impl BakeSession {
         size: u32,
         chain_source_lut: bool,
     ) -> Result<BakedGrade, String> {
-        let size = size.clamp(apelles_types::lut3d::MIN_SIZE, apelles_types::lut3d::MAX_SIZE);
+        let size = size.clamp(
+            apelles_types::lut3d::MIN_SIZE,
+            apelles_types::lut3d::MAX_SIZE,
+        );
         let n = size as usize;
 
         // --- strip everything a 3D LUT provably cannot carry -----------------
@@ -521,7 +524,12 @@ pub fn bake_luts_for_clips(clip_ids: &[String]) -> Result<GradeLutPaths, String>
         }
         let grade = resolve_clip_lut(clip_id, session.as_ref())
             .map_err(|e| format!("clip {clip_id}: {e}"))?;
-        warnings.extend(grade.warnings.iter().map(|w| format!("clip {clip_id}: {w}")));
+        warnings.extend(
+            grade
+                .warnings
+                .iter()
+                .map(|w| format!("clip {clip_id}: {w}")),
+        );
         let Some(lut) = grade.lut else {
             continue; // graded, but the grade is a no-op — nothing for ffmpeg to do
         };

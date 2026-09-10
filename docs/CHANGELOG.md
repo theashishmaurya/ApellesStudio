@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-151 fixed:** `debug_screenshot` on the Colorist tab always
+  returned a stale, byte-identical blank frame. Root cause confirmed: Colorist's
+  picture is a native wgpu surface painted onto the window BEHIND the webview
+  (`gpu_processing::get_or_init_gpu_context`/`WgpuDisplay`), invisible to
+  `takeSnapshotWithConfiguration:`'s webview-only capture. Fixed by reading back
+  `GpuProcessor::output_texture` on demand (`gpu_processing::read_display_frame`,
+  never on the interactive render path) and compositing it onto the webview PNG at
+  its real on-screen rect (`debug_capture::composite_wgpu_overlay`). 5 new unit
+  tests on the placement geometry.
 - **2026-09-10** — **D-301: removed Colorist's standalone still-image Export panel**
   (owner call, live) — deleted `ExportPanel.tsx`, `Panel.Export` and every switch/map
   keyed on it, the `toggle_export` shortcut, both context-menu entries that opened it,

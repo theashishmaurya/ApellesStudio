@@ -1272,7 +1272,8 @@ fn generate_sub_mask_bitmap(
     // scrub / playback / export alike) and generate from those. Returns `None`
     // — a zero-cost pass-through — for an un-keyframed sub-mask, a tracked AI
     // matte (chromaTrackDir wins, D-019), or a still. Logic: chroma/keyframes.rs.
-    if let Some(interpolated) = crate::chroma::keyframes::interpolated_parameters(&sub_mask.parameters)
+    if let Some(interpolated) =
+        crate::chroma::keyframes::interpolated_parameters(&sub_mask.parameters)
     {
         let mut sm = sub_mask.clone();
         sm.parameters = interpolated;

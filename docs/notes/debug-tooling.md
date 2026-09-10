@@ -213,6 +213,37 @@ the truth; the pixels did not follow. Two working notes from it:
   D-142 harness in real Chromium, with `requestAnimationFrame` stubbed to a
   no-op, reproduces it exactly and proves the fix under the same condition.
 
+### Colorist's screenshot is a composite, not a pure webview capture (B-151)
+
+`debug_screenshot`'s whole mechanism is `-[WKWebView takeSnapshotWithConfiguration:]`
+— but the Colorist tab's picture is not webview content: it is a native wgpu surface
+painted onto the window BEHIND the webview (`gpu_processing::WgpuDisplay`), which
+WebKit's own snapshot cannot see at all (`packages/shell/src/store.ts`'s
+`wgpuSurfaceActive` doc explains why: the shell goes transparent there so this layer
+shows through a "hole" in the DOM). Before the B-151 fix, that meant a Colorist
+screenshot was always a stale, blank frame no matter what the grade did.
+
+The fix (`chroma::debug_capture::composite_wgpu_overlay`) reads back
+`GpuProcessor::output_texture` — the same texture the wgpu surface last presented —
+on demand, ONLY when a screenshot is requested, and pastes it into the webview PNG at
+its own on-screen `rect`/`clip` (`shaders/display.wgsl`'s own placement math, mirrored
+in Rust as `compute_overlay_placement`). Two things worth knowing before debugging a
+Colorist screenshot that looks slightly off:
+
+- **It is a resize, not a re-render.** The overlay is scaled with a standard bilinear
+  filter (`image::imageops::FilterType::Triangle`), not the shader's own
+  pixelated/nearest-neighbour mode when that toggle is on — close enough to verify a
+  grade landed, not a byte-exact pixel-peep of the live shader output. For that,
+  `inspect_color`/`sample`/`sample_region` (the Colorist MCP tools) read real rendered
+  pixels directly, not through a screenshot at all.
+- **A `None` from `gpu_processing::read_display_frame`** (no wgpu surface, no
+  processor yet, or the shell's own off-screen hidden-rect sentinel) silently falls
+  back to the plain webview screenshot — correct for every other tab, and correct for
+  Colorist whenever there is genuinely nothing on the surface yet (no shot loaded).
+  If a Colorist screenshot looks blank with a shot loaded, that fallback path is the
+  first thing to check, the same way B-124 taught to suspect the render/paint path
+  before the store.
+
 ## The loop, concretely (this is what all five pieces are FOR)
 
 ```

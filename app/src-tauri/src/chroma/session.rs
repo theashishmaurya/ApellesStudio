@@ -120,7 +120,10 @@ pub async fn chroma_session_add(
     if last.is_none() {
         return Err(format!("no shots added: {}", errors.join("; ")));
     }
-    Ok(SessionSwitchDto { session: snapshot(), loaded: last })
+    Ok(SessionSwitchDto {
+        session: snapshot(),
+        loaded: last,
+    })
 }
 
 /// Make shot `index` active and decode its playhead frame into the editor.
@@ -133,7 +136,10 @@ pub async fn chroma_session_set_active(
 ) -> Result<SessionSwitchDto, String> {
     let shot = state::session_set_active(index)?;
     let loaded = decode_and_install(&shot, &state).await?;
-    Ok(SessionSwitchDto { session: snapshot(), loaded: Some(loaded) })
+    Ok(SessionSwitchDto {
+        session: snapshot(),
+        loaded: Some(loaded),
+    })
 }
 
 /// Remove shot `index`. If it was the last shot the session goes empty and
@@ -148,14 +154,20 @@ pub async fn chroma_session_remove(
         Some(shot) => Some(decode_and_install(&shot, &state).await?),
         None => None,
     };
-    Ok(SessionSwitchDto { session: snapshot(), loaded })
+    Ok(SessionSwitchDto {
+        session: snapshot(),
+        loaded,
+    })
 }
 
 /// A small preview JPEG (data URL) of a shot's playhead frame, for the strip.
 #[tauri::command]
 pub async fn chroma_session_thumbnail(index: usize, height: Option<u32>) -> Result<String, String> {
     let (shots, _) = state::session_shots();
-    let shot = shots.get(index).ok_or_else(|| format!("shot index {index} out of range"))?.clone();
+    let shot = shots
+        .get(index)
+        .ok_or_else(|| format!("shot index {index} out of range"))?
+        .clone();
     let h = height.unwrap_or(96);
     tokio::task::spawn_blocking(move || video::extract_thumb(&shot.path, &shot.info, shot.frame, h))
         .await
