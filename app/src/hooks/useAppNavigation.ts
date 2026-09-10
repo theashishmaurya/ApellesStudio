@@ -94,7 +94,6 @@ export function useAppNavigation({ refs }: AppNavigationProps) {
       });
 
       setUI({
-        isLibraryExportPanelVisible: false,
         compactEditorPanelHeightOverride: null,
       });
 

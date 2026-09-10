@@ -313,13 +313,6 @@ export const useKeyboardShortcuts = ({
           });
         },
       },
-      toggle_export: {
-        shouldFire: () => true,
-        execute: (e: any, s: any) => {
-          e.preventDefault();
-          s.ui.setPanel(Panel.Export);
-        },
-      },
       toggle_left_panel: {
         shouldFire: () => true,
         execute: (e: any, s: any) => {
@@ -505,7 +498,7 @@ export const useKeyboardShortcuts = ({
   //
   //   1. **B-138.** This hook is mounted by `App.tsx`, which stays mounted
   //      under every tab (B-007), and a `window` listener has no idea which
-  //      tab is on screen — so `toggle_masks`, `toggle_export`, the rating
+  //      tab is on screen — so `toggle_masks`, `toggle_presets`, the rating
   //      keys and the rest (all `shouldFire: () => true`) fired while the user
   //      was in the Edit or Motion tab, silently rearranging Colorist behind
   //      them. Every row is `scope: 'colorist'` in the registry, so the

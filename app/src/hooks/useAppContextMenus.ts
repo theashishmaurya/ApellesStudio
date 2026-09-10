@@ -8,7 +8,6 @@ import {
   CopySimpleIcon,
   PencilSimpleIcon,
   NotePencilIcon,
-  ExportIcon,
   FolderIcon,
   ImagesIcon,
   LayoutIcon,
@@ -93,7 +92,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
       const { selectedImage, history, historyIndex, undo, redo, resetHistory, copiedAdjustments, setEditor } =
         useEditorStore.getState();
       const { appSettings } = useSettingsStore.getState();
-      const { setPanel, setUI } = useUIStore.getState();
+      const { setUI } = useUIStore.getState();
 
       if (!selectedImage) return;
 
@@ -102,12 +101,6 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
       const commonTags = getCommonTags([selectedImage.path]);
 
       const options: Array<Option> = [
-        {
-          label: t('contextMenus.editor.exportImage'),
-          icon: ExportIcon,
-          onClick: () => setPanel(Panel.Export),
-        },
-        { type: OPTION_SEPARATOR },
         { label: t('contextMenus.editor.undo'), icon: ArrowUUpLeftIcon, onClick: undo, disabled: !canUndo },
         { label: t('contextMenus.editor.redo'), icon: ArrowUUpRightIcon, onClick: redo, disabled: !canRedo },
         { type: OPTION_SEPARATOR },
@@ -250,7 +243,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
       const { selectedImage, copiedAdjustments, setEditor } = useEditorStore.getState();
       const { multiSelectedPaths, imageList, libraryActivePath, setLibrary } = useLibraryStore.getState();
       const { appSettings } = useSettingsStore.getState();
-      const { setUI, setPanel } = useUIStore.getState();
+      const { setUI } = useUIStore.getState();
       const { setProcess } = useProcessStore.getState();
 
       const isTargetInSelection = multiSelectedPaths.includes(path);
@@ -274,7 +267,6 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
       const isSingleSelection = selectionCount === 1;
       const isEditingThisImage = selectedImage?.path === path;
       const deleteLabel = t('contextMenus.thumbnail.deleteImage', { count: selectionCount });
-      const exportLabel = t('contextMenus.thumbnail.exportImage', { count: selectionCount });
 
       const selectionHasVirtualCopies =
         isSingleSelection &&
@@ -383,14 +375,6 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
           });
       };
 
-      const onExportClick = () => {
-        setLibrary({ multiSelectedPaths: finalSelection });
-        if (selectedImage && selectedImage.path !== path) {
-          props.handleImageSelect(path);
-        }
-        setPanel(Panel.Export);
-      };
-
       const options = [
         ...(!isEditingThisImage
           ? [
@@ -400,10 +384,9 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
                 label: t('contextMenus.editor.editImage'),
                 onClick: () => props.handleImageSelect(finalSelection[0]),
               },
-              { icon: ExportIcon, label: exportLabel, onClick: onExportClick },
               { type: OPTION_SEPARATOR },
             ]
-          : [{ icon: ExportIcon, label: exportLabel, onClick: onExportClick }, { type: OPTION_SEPARATOR }]),
+          : []),
         {
           disabled: !isSingleSelection,
           icon: CopyIcon,

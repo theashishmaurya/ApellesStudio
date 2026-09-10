@@ -70,7 +70,6 @@ interface NegativeConversionModalState {
 }
 
 const ALL_PANELS: Panel[] = [
-  Panel.Export,
   Panel.Tethering,
   Panel.Adjustments,
   Panel.Crop,
@@ -81,7 +80,6 @@ const ALL_PANELS: Panel[] = [
 ];
 
 const DEFAULT_PANEL_DEFAULT_REGIONS: Record<Panel, PanelRegion> = {
-  [Panel.Export]: 'leftTop',
   [Panel.Tethering]: 'leftTop',
   [Panel.Adjustments]: 'rightTop',
   [Panel.Crop]: 'rightTop',
@@ -107,13 +105,13 @@ export function reconcileWorkspace(
     leftTopHeight: DEFAULT_PANEL_SECTION_HEIGHT,
     rightTopHeight: DEFAULT_PANEL_SECTION_HEIGHT,
     panelLayout: {
-      leftTop: [Panel.Export, ...(isTetheringSupported ? [Panel.Tethering] : [])],
+      leftTop: isTetheringSupported ? [Panel.Tethering] : [],
       leftBottom: [],
       rightTop: [Panel.Adjustments, Panel.Crop, Panel.Masks, Panel.Relight, Panel.Ai, Panel.Presets],
       rightBottom: [],
     },
     activePanels: {
-      leftTop: Panel.Export,
+      leftTop: isTetheringSupported ? Panel.Tethering : null,
       leftBottom: null,
       rightTop: Panel.Adjustments,
       rightBottom: null,
@@ -192,7 +190,6 @@ interface UIState {
   isInstantTransition: boolean;
   isLayoutReady: boolean;
   uiVisibility: UiVisibility;
-  isLibraryExportPanelVisible: boolean;
   isSettingsOpen: boolean;
 
   leftPanelWidth: number;
@@ -243,7 +240,6 @@ export const useUIStore = create<UIState>((set, get) => ({
   isInstantTransition: false,
   isLayoutReady: false,
   uiVisibility: { filmstrip: true, leftPanel: true, rightPanel: true },
-  isLibraryExportPanelVisible: false,
   isSettingsOpen: false,
 
   leftPanelWidth: DEFAULT_PANEL_WIDTH,
@@ -254,13 +250,13 @@ export const useUIStore = create<UIState>((set, get) => ({
   compactEditorPanelHeightOverride: null,
 
   panelLayout: {
-    leftTop: [Panel.Export],
+    leftTop: [],
     leftBottom: [],
     rightTop: [Panel.Adjustments, Panel.Crop, Panel.Masks, Panel.Ai, Panel.Presets],
     rightBottom: [],
   },
   activePanels: {
-    leftTop: Panel.Export,
+    leftTop: null,
     leftBottom: null,
     rightTop: Panel.Adjustments,
     rightBottom: null,

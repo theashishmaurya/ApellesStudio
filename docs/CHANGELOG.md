@@ -4,6 +4,12 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-301: removed Colorist's standalone still-image Export panel**
+  (owner call, live) — deleted `ExportPanel.tsx`, `Panel.Export` and every switch/map
+  keyed on it, the `toggle_export` shortcut, both context-menu entries that opened it,
+  the dead `isLibraryExportPanelVisible` flag, and its i18n keys across all 13 locales.
+  Colorist grades video via the Edit tab now; standalone still-photo export had no
+  remaining workflow to serve. `tsc` stayed at the pre-existing 65-error baseline.
 - **2026-09-10** — **D-300: the whole app moved off `lucide-react` onto Phosphor
   Icons** (`@phosphor-icons/react` ^2.1.10, MIT) — 82 files and ~180 glyphs across
   all 7 packages that used it (`app`, `ui`, `editor`, `motion`, `player`, `shell`,

@@ -102,7 +102,6 @@ export enum Panel {
   Adjustments = 'adjustments',
   Ai = 'ai',
   Crop = 'crop',
-  Export = 'export',
   Masks = 'masks',
   Presets = 'presets',
   /** Interactive relight (D-046) — draggable light pucks + per-light controls. */

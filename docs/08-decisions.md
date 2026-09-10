@@ -29301,3 +29301,38 @@ from either component's source — it took following `WGPU_RENDER` from
 - **Not covered:** `app/packaging/node-sources.json` is a generated offline-npm manifest
   and was already stale before this pass (it pins `lucide-react@0.515.0` against a
   `^1.33.0` dependency); regenerating it is its own task, not this one.
+
+## D-301 — Remove Colorist's standalone still-image Export panel
+
+**decided (2026-09-10)**
+
+- **Context:** the owner flagged Colorist's dedicated "Export" panel tab (RapidRAW's
+  original single/batch still-image export UI — settings, presets, watermark, a real
+  `Export Image` action) as redundant screen real-estate, live in-session
+  ("let's remove this export panel as well please from colorist"). This is a distinct
+  code path from the video Edit-tab export button D-297 already consolidated — this
+  panel is Colorist's only interface for exporting a graded *still image* to disk.
+- **Options considered** (asked the owner directly since removing it deletes real,
+  working functionality with no replacement, unlike D-297's redundant-chrome case):
+  remove entirely, consolidate into one shell-level button matching D-297's pattern, or
+  leave the code and just log it as a backlog candidate. **Owner chose: remove
+  entirely.** Colorist's primary job today is grading video shots opened via the Edit
+  tab (`colorist_view` bridge, D-294); standalone still-photo export is no longer a
+  supported workflow, so there is nothing to consolidate into — deleting is the correct
+  action per D-281 ("a redundant or unreachable RapidRAW-inherited component gets
+  deleted outright").
+- **What went with it, following the reference through to every entry point** (per
+  CLAUDE.md's "no dead code"): `ExportPanel.tsx` itself; `Panel.Export` from the `Panel`
+  enum (`AppProperties.tsx`) and every switch/record keyed on it
+  (`PanelSwitcher.tsx`'s icon/title maps and mobile panel list, `useUIStore.ts`'s
+  `ALL_PANELS`/`DEFAULT_PANEL_DEFAULT_REGIONS`/default workspace layout); the
+  `toggle_export` keyboard shortcut (`packages/keymap/src/shortcuts.ts`) and its handler
+  (`useKeyboardShortcuts.ts`); the "Export Image" and batch "Export N Images" entries in
+  both context menus (`useAppContextMenus.ts`) that opened the panel; the now-orphaned
+  `isLibraryExportPanelVisible` UI-state flag (was only ever set, never read); and the
+  `exportImage`/`exportImage_one`/`exportImage_other` (+ locale-specific `_few`/`_many`
+  plural forms) i18n keys across all 13 locale files.
+- **What stayed:** `exportState`/`ExportState` (still read by `ExternalEditBar` for an
+  unrelated external-editor-roundtrip error message) and the Edit tab's own
+  `onExportClick`/`ExportIcon` video-export button (D-297) — neither is part of this
+  panel.

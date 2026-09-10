@@ -9,7 +9,6 @@ import {
   StackSimpleIcon,
   PaintBrushIcon,
   SwatchesIcon,
-  ExportIcon,
   CameraIcon,
   LightbulbIcon,
   type Icon as PhosphorIcon,
@@ -23,7 +22,6 @@ export const PANEL_ICONS: Record<Panel, PhosphorIcon> = {
   [Panel.Masks]: StackSimpleIcon,
   [Panel.Ai]: PaintBrushIcon,
   [Panel.Presets]: SwatchesIcon,
-  [Panel.Export]: ExportIcon,
   [Panel.Relight]: LightbulbIcon, // D-046
   [Panel.Tethering]: CameraIcon,
 };
@@ -34,7 +32,6 @@ const PANEL_TITLES: Record<Panel, string> = {
   [Panel.Masks]: 'editor.switcher.tooltips.masks',
   [Panel.Ai]: 'editor.switcher.tooltips.inpaint',
   [Panel.Presets]: 'editor.switcher.tooltips.presets',
-  [Panel.Export]: 'editor.switcher.tooltips.export',
   [Panel.Relight]: 'editor.switcher.tooltips.relight', // D-046
   [Panel.Tethering]: 'editor.switcher.tooltips.tethering',
 };
@@ -252,7 +249,6 @@ export function MobilePanelSwitcher({
     Panel.Masks,
     Panel.Ai,
     Panel.Presets,
-    Panel.Export,
   ];
 
   const isVertical = placement === 'right';

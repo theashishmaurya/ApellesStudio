@@ -282,7 +282,7 @@ status: fixed (2026-09-04, D-124) · severity: medium (a red test suite on `main
 - **fix:** both assertions brought up to the shipped contract (no behaviour change) — `cargo test -p apelles chroma::` is 167 passed / 0 failed.
 
 ## B-010 — `ExportPanel` (`Panel.Export`) is reachable and appears usable while a video clip is loaded, but silently attempts a still-image export against the video's own path
-status: open · severity: low (a working, prominent alternative — `ExportDialog`, D-049 — now exists; this is dead-end UX, not data loss) · area: `app/src/components/panel/right/ExportPanel.tsx`, `app/src-tauri/src/export_processing.rs`
+status: closed (2026-09-10, D-301 — the whole panel and its `Panel.Export` entry point were deleted outright, owner call; the reachable-while-a-video-is-loaded gap this bug described no longer exists because nothing exists to be reachable) · severity: low (a working, prominent alternative — `ExportDialog`, D-049 — now exists; this is dead-end UX, not data loss) · area: `app/src/components/panel/right/ExportPanel.tsx` (deleted), `app/src-tauri/src/export_processing.rs`
 - **repro:** open a video clip in the Colorist tab, click the "Export" icon
   in the panel switcher (`Panel.Export`), pick any format, click Export.
 - **expected:** either the panel is unavailable for video content, or it

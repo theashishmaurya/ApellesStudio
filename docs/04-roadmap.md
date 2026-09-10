@@ -296,19 +296,22 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    genuinely single-video-track in practice (D-041/D-045); a "Video 1" label names
    the one real track honestly instead. Real multi-track visual polish stays gated on
    a future multi-track-*authoring* feature, not this UI pass.
-3. **Export → a top-right button + an Export window** — done, 2026-09-03 (**D-049**):
-   `ExportDialog`, the right-most button in the Colorist tab's `EditorToolbar`
-   (top-right of the tab), backed by the existing `chroma_export_video`/
-   `chroma_bake_lut` (D-022) via `@apelles/ui`'s `Dialog`/`Select` (D-042). Codec,
-   resolution (Project spec / Clip / Custom — D-038 project spec is the default when
-   set), frame range (full clip / custom), a `.cube` bake toggle, an output path via
-   the native save dialog, and a real progress bar (polled `chroma_export_progress` —
-   no new progress mechanism needed, it already existed and had no GUI caller). The
-   old `Panel.Export`/`ExportPanel` toggle was **not** removed — it's RapidRAW's
-   still-image exporter, a different and already-broken-for-video feature, not a
-   duplicate (see D-049; the video-export brokenness itself is **B-010**, still open).
-   **Deferred, unchanged:** shell-level export (the Edit tab's active timeline) and a
-   push-based/percent-exact progress event (polling is coarse but real).
+3. **Export → a top-right button + an Export window** — done, 2026-09-03 (**D-049**),
+   **superseded 2026-09-10 (D-297)**: Colorist originally had its own `ExportDialog` in
+   `EditorToolbar`, backed by `chroma_export_video`/`chroma_bake_lut` (D-022). D-297
+   deleted that dialog outright and moved the Edit tab's `EditorExportDialog` to a
+   shell-level button reachable from every tab — **one export surface, two export
+   jobs**: the shell button still routes to `chroma_export_video` (the only path that
+   exports a *complete* grade — masks/relight/crop, not just a baked LUT) when the
+   video-with-a-real-grade case needs it. The `.cube` bake and per-clip full-grade
+   export both still exist; see D-297 for the full split.
+   The old `Panel.Export`/`ExportPanel` toggle (RapidRAW's still-image exporter, a
+   separate, already-broken-for-video feature — **B-010**) was left alone by both D-049
+   and D-297 since neither touched still-image export. It was then deleted outright,
+   2026-09-10 (**D-301**, owner call) — Colorist's job today is grading video shots via
+   the Edit tab, not standalone still-photo export, so B-010's reachable-while-a-video-
+   is-loaded gap is now closed by there being nothing left to reach. **Deferred,
+   unchanged:** a push-based/percent-exact progress event (polling is coarse but real).
 4. **Global undo/redo** — done, 2026-09-03 (**D-052**): shell-level Cmd/Ctrl+Z
    (undo) / Cmd/Ctrl+Y or Cmd/Ctrl+Shift+Z (redo) spanning all 3 tabs, owned by
    `Shell.tsx` — pops the new `@apelles/history` store (`{tab, label, undo(),
@@ -2776,7 +2779,8 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      spatial half with a warning). So the backend was kept and made clip-aware
      (D-294's residual, closing B-147 on the export side) rather than deleted,
      and only the duplicate *button* went. `ExportPanel` (RapidRAW's batch
-     still-image exporter) deliberately untouched — see D-297.
+     still-image exporter) was deliberately untouched here — see D-297 — but was
+     then deleted outright, 2026-09-10, **D-301** (owner call; closes B-010).
      - [ ] **Follow-up, honestly open:** "render THIS clip with its full grade"
        is now MCP-only (`export`), which is the wrong side of the "human AND
        AI" rule. Fold it into `EditorExportDialog` as a "current clip, full
@@ -2956,9 +2960,12 @@ progress/cancel, a render-output save dialog, a packaged-build story for the eng
 **Export dialog + Editor timeline audio (2026-09-03, D-049/D-050):** Export moved to
 a top-right `ExportDialog` in the Colorist tab (codec/resolution/frame-range/`.cube`
 bake/output path/real progress bar), backed by the existing `chroma_export_video`/
-`chroma_bake_lut` (D-022) — the old still-image `ExportPanel` stays routed as a
-separate, unrelated feature (its pre-existing video-brokenness is **B-010**, still
-open). Editor timeline playback gained real audio — `symphonia`→`rubato`→
+`chroma_bake_lut` (D-022) — the old still-image `ExportPanel` stayed routed as a
+separate, unrelated feature (its pre-existing video-brokenness was **B-010**).
+**Since superseded:** `ExportDialog` was deleted for a shell-level button (D-297,
+2026-09-10), and `ExportPanel` itself was deleted outright (D-301, 2026-09-10,
+closing B-010) — see those entries for the current state. Editor timeline playback
+gained real audio — `symphonia`→`rubato`→
 `dasp_sample`→`cpal`, a dedicated thread synced from the video `rAF` loop's playhead
 (open-loop, no drift correction yet). Found + fixed/logged along the way: B-008
 (`@react-three/fiber` × `React.ElementType` typing collision), B-009 (duplicate

@@ -197,7 +197,6 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   colorist('toggle_ai', 'AI panel', 'panels', ['KeyK']),
   colorist('toggle_presets', 'Presets panel', 'panels', ['KeyP']),
   colorist('toggle_analytics', 'Scopes', 'panels', ['KeyA']),
-  colorist('toggle_export', 'Export panel', 'panels', ['KeyE']),
   colorist('toggle_left_panel', 'Toggle left panel', 'panels', ['ctrl', 'shift', 'KeyB']),
   colorist('toggle_right_panel', 'Toggle right panel', 'panels', ['ctrl', 'KeyB']),
   colorist('toggle_bottom_panel', 'Toggle filmstrip', 'panels', ['ctrl', 'KeyJ']),

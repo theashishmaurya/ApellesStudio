@@ -18,7 +18,6 @@ import clsx from 'clsx';
 import { useShellStore } from '@apelles/shell';
 
 import SettingsPanel from './components/panel/SettingsPanel';
-import ExportPanel from './components/panel/right/ExportPanel';
 import GlobalTooltip from './components/ui/GlobalTooltip';
 import AppModals from './components/modals/AppModals';
 
@@ -183,12 +182,6 @@ function App() {
   // same "reachable regardless of which tab is active" reason.
   useDebugControl();
 
-  const { multiSelectedPaths } = useLibraryStore(
-    useShallow((state) => ({
-      multiSelectedPaths: state.multiSelectedPaths,
-    })),
-  );
-
   const { selectedImage, activeMaskContainerId, activeAiPatchContainerId, hasRenderedFirstFrame, setEditor } =
     useEditorStore(
       useShallow((state) => ({
@@ -200,10 +193,9 @@ function App() {
       })),
     );
 
-  const { exportState, setExportState } = useProcessStore(
+  const { exportState } = useProcessStore(
     useShallow((state) => ({
       exportState: state.exportState,
-      setExportState: state.setExportState,
     })),
   );
 
@@ -593,20 +585,6 @@ function App() {
   const renderAppPanel = useCallback(
     (panelId: Panel) => {
       switch (panelId) {
-        case Panel.Export:
-          return (
-            <ExportPanel
-              exportState={exportState}
-              multiSelectedPaths={multiSelectedPaths}
-              selectedImage={selectedImage}
-              setExportState={setExportState}
-              appSettings={appSettings}
-              onSettingsChange={handleSettingsChange}
-              rootPaths={[]}
-              isVisible={true}
-              onClose={() => setUI({ isLibraryExportPanelVisible: false })}
-            />
-          );
         case Panel.Adjustments:
           return <Controls />;
         case Panel.Crop:
@@ -625,17 +603,7 @@ function App() {
           return null;
       }
     },
-    [
-      setUI,
-      exportState,
-      multiSelectedPaths,
-      selectedImage,
-      setExportState,
-      appSettings,
-      handleSettingsChange,
-      noOpRefresh,
-      handleImageSelect,
-    ],
+    [noOpRefresh, handleImageSelect],
   );
 
   // D-043: the Colorist tab has no folder-tree "Sources" panel any more — the
