@@ -36,21 +36,28 @@
 //!   uses; the Colorist's wgpu pipeline runs *after* this, on the picture this
 //!   produces.
 //!
-//! ## Why resolution is by PATH, not by clip id (D-294)
+//! ## Resolution is by CLIP ID, falling back to path (D-306, was D-294)
 //!
-//! The decode session (`chroma::state::Session`) is keyed by source path and
-//! carries no clip identity — D-070 chose that deliberately and recorded the
-//! one limit it costs: two different clips sharing one `source_path` collapse
-//! onto a single Colorist shot, so only one of them is viewable at a time.
-//! Resolving here by path inherits exactly that limit and adds no new state to
-//! keep in sync; carrying a clip id in the session instead would mean a second
-//! identity that can go stale against the timeline (the failure mode B-083 and
-//! B-034 both are), for a case the session cannot represent anyway. When the
-//! decode session is finally retired in favour of clip identity, this function
-//! is the single place that changes.
+//! D-294 resolved by source path, because the decode session
+//! (`chroma::state::Session`) was itself path-keyed and carried no clip
+//! identity; it inherited D-070's documented limit — two clips sharing one
+//! `source_path` collapse onto a single Colorist shot — and named this function
+//! as "the single place that changes" when the session gained clip identity.
+//! D-306 (B-150) is that change: a session shot now carries the
+//! `apelles_timeline::Clip` id it *is*, so [`resolve_for`] looks the clip up by
+//! id and two clips of one file resolve to their own picture, trim and
+//! geometry.
+//!
+//! [`resolve`]'s path-only lookup remains for the shots that genuinely have no
+//! clip id (see below) and as the fallback when an id no longer matches
+//! anything on the timeline — a clip deleted on the Edit tab between the
+//! session read and this call, which the next resync prunes. Falling back
+//! keeps the picture right for that one frame instead of dropping to raw
+//! source; it cannot resurrect the old ambiguity, because a shot that HAS an
+//! id only reaches the fallback once its clip is genuinely gone.
 //!
 //! An **Untitled** session (a loose clip via the file picker / MCP `open`) has
-//! no project, no timeline and therefore no clip: [`resolve`] returns `None`
+//! no project, no timeline and therefore no clip: both functions return `None`
 //! and every caller falls back to the raw-source behaviour that was correct
 //! for that case all along.
 
@@ -60,6 +67,7 @@ use apelles_timeline::{Clip, TrackKind};
 use image::DynamicImage;
 
 use super::edit;
+use super::state::Shot;
 
 /// The Edit-timeline clip the Colorist is grading, resolved against the open
 /// project's active timeline, plus the two numbers its picture depends on.
@@ -172,9 +180,10 @@ impl ClipView {
 /// `manifest.rs`).
 ///
 /// **First matching clip in track order wins** when several reference the same
-/// file. See the module doc: that is D-070's already-documented "two clips
-/// sharing a source path collapse onto one Colorist shot" limit, restated
-/// deterministically rather than a new ambiguity introduced here.
+/// file — an ambiguity inherent to addressing a clip by the file it reads.
+/// [`resolve_for`] is the identity-addressed entry point every caller with a
+/// session shot in hand should use instead (D-306); this one is for the shots
+/// that have no clip id at all.
 pub fn resolve(source_path: &Path) -> Option<ClipView> {
     let (timeline, settings) = edit::resolve_timeline_and_settings(false).ok()?;
     let clip = timeline
@@ -183,10 +192,54 @@ pub fn resolve(source_path: &Path) -> Option<ClipView> {
         .filter(|t| t.kind == TrackKind::Video)
         .flat_map(|t| t.clips.iter())
         .find(|c| !c.source_path.is_empty() && Path::new(&c.source_path) == source_path)?;
+    view_of(clip, &timeline, &settings)
+}
+
+/// The clip a session **shot** is, resolved by its own [`ShotId`] (D-306,
+/// B-150) — by clip id when the shot has one, by source path when it does not.
+///
+/// This is what makes two Edit-timeline clips of one source file two
+/// independently viewable, independently gradeable Colorist shots: each
+/// resolves to *its* clip's trim, speed ramp and geometry, not to whichever of
+/// the two happened to sit earlier in track order.
+///
+/// A clip id that matches nothing on the timeline falls back to the path lookup
+/// — see the module doc for why that is right rather than a silent
+/// re-introduction of the old ambiguity.
+pub fn resolve_for(shot: &Shot) -> Option<ClipView> {
+    let Some(clip_id) = shot.clip_id.as_deref() else {
+        return resolve(&shot.path);
+    };
+    let (timeline, settings) = edit::resolve_timeline_and_settings(false).ok()?;
+    let found = timeline
+        .tracks
+        .iter()
+        .filter(|t| t.kind == TrackKind::Video)
+        .flat_map(|t| t.clips.iter())
+        .find(|c| c.id == clip_id);
+    match found {
+        Some(clip) => view_of(clip, &timeline, &settings),
+        None => {
+            log::debug!(
+                "[chroma::colorist_view] clip {clip_id} is no longer on the active timeline — \
+                 falling back to a source-path match until the next resync prunes it"
+            );
+            resolve(&shot.path)
+        }
+    }
+}
+
+/// The shared tail of both lookups: reject a zero-length clip, resolve the
+/// composition size, and package the two numbers the picture depends on.
+fn view_of(
+    clip: &Clip,
+    timeline: &apelles_timeline::Timeline,
+    settings: &super::project::ProjectSettings,
+) -> Option<ClipView> {
     if clip.duration <= 0 {
         return None;
     }
-    let comp = edit::composition_size(&settings, &timeline).ok()?;
+    let comp = edit::composition_size(settings, timeline).ok()?;
     Some(ClipView {
         clip: clip.clone(),
         fps: timeline.fps(),
@@ -211,11 +264,13 @@ pub fn resolve(source_path: &Path) -> Option<ClipView> {
 /// advertising the source file's full length. Fixed by routing both call
 /// sites through this one function instead of leaving a second, unfixed copy
 /// of D-294's arithmetic in `session.rs`.
-pub fn display_info(
-    source_path: &Path,
-    info: &super::video::VideoInfo,
-) -> (apelles_types::Resolution, u64, f64) {
-    display_info_for(resolve(source_path).as_ref(), info)
+///
+/// D-306: takes the whole [`Shot`], so the clip it reports against is resolved
+/// by that shot's own identity ([`resolve_for`]). Taking a bare source path
+/// could only ever find the FIRST clip reading a file, so the two shots of a
+/// doubled source would have advertised one trim between them.
+pub fn display_info(shot: &Shot) -> (apelles_types::Resolution, u64, f64) {
+    display_info_for(resolve_for(shot).as_ref(), &shot.info)
 }
 
 /// The pure half of [`display_info`], split out so a test can supply an

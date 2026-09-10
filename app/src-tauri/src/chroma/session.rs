@@ -5,9 +5,14 @@
 //!   the model + does the cache invalidation; this file is add / list /
 //!   set-active / remove + a per-shot thumbnail for the strip.
 //! What it does NOT do: per-shot *grade* or *activity-feed* state — that lives in
-//!   the frontend stores keyed by shot path (D-020 / D-032). The `grade.json`
-//!   sidecar (D-025) is still the per-shot serialisation; there is no `.chroma`
-//!   project bundle (D-033). No session-file persistence yet (deferred).
+//!   the frontend stores keyed by shot identity (D-020 / D-032 / D-070: a clip
+//!   id for a real project's shot). The `grade.json` sidecar (D-025) is still
+//!   the per-shot serialisation; there is no `.chroma` project bundle (D-033).
+//!   No session-file persistence yet (deferred).
+//!
+//! D-306 (B-150): [`ShotDto`] now carries `clipId`, so the frontend reads a
+//! shot's identity off the wire instead of re-deriving it by matching source
+//! paths — a match that could only ever return one id for two clips of one file.
 //!
 //! Fork hygiene (D-003): all new code; upstream footprint is `pub mod session;`
 //! in `chroma/mod.rs` + the `generate_handler!` lines in `lib.rs`.
@@ -22,6 +27,15 @@ use super::{colorist_view, decode_pipe, load, video};
 #[serde(rename_all = "camelCase")]
 pub struct ShotDto {
     pub path: String,
+    /// D-306 (B-150): the `apelles_timeline::Clip` this shot **is**, when the
+    /// session came from a real project — the shot's true identity, and what
+    /// the frontend keys grades / the strip / grade files off. `null` for an
+    /// Untitled loose-clip session, where the path is the identity.
+    ///
+    /// Before this the wire carried no identity at all and the frontend had to
+    /// re-attach a clip id by matching source paths — which silently picked
+    /// ONE id for two clips of the same file (B-150/B-155).
+    pub clip_id: Option<String>,
     /// filename, for the strip label
     pub name: String,
     /// `apelles_types::Resolution` (D-053) via `#[serde(flatten)]` — same
@@ -48,10 +62,10 @@ impl From<&Shot> for ShotDto {
     /// showing the source file's full length even after the transport's own
     /// decode (`chroma_seek`) had been made clip-aware.
     fn from(s: &Shot) -> Self {
-        let (resolution, frame_count, duration_secs) =
-            colorist_view::display_info(&s.path, &s.info);
+        let (resolution, frame_count, duration_secs) = colorist_view::display_info(s);
         ShotDto {
             path: s.path.to_string_lossy().to_string(),
+            clip_id: s.clip_id.clone(),
             name: s
                 .path
                 .file_name()
@@ -235,11 +249,16 @@ async fn decode_and_install(
     .map_err(|e| e.to_string())?;
 
     let virtual_path = shot.path.to_string_lossy().to_string();
-    Ok(load::install_frame(
-        &shot.path,
-        &virtual_path,
+    // D-306: the same shot, at its clamped playhead — identity (`clip_id`)
+    // included, so this re-install updates the shot instead of appending a
+    // second, path-keyed one next to it.
+    let installed = Shot {
         frame,
-        shot.info.clone(),
+        ..shot.clone()
+    };
+    Ok(load::install_frame(
+        &installed,
+        &virtual_path,
         decoded,
         state,
     ))

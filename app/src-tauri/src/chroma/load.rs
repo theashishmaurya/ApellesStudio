@@ -17,7 +17,7 @@ use crate::image_loader::LoadImageResult;
 use crate::image_processing::ImageMetadata;
 
 use super::state::{CurrentVideo, set_current_video};
-use super::video::{self, FramePos, VideoInfo};
+use super::video::{self, FramePos};
 
 /// Decode `frame` of the video at `source_path` and make it the loaded image.
 /// `virtual_path` is the path string the frontend passed (kept for round-tripping).
@@ -38,14 +38,16 @@ pub async fn load_video_frame(
     .await
     .map_err(|e| e.to_string())??;
 
-    Ok(install_frame(
-        source_path,
-        virtual_path,
-        frame,
+    // No clip id: this is the loose-clip / `add_shots` path, whose shots are
+    // path-identified (D-306 — see `chroma::state::ShotId`). A project's clips
+    // come in through `register_video_shot` instead.
+    let shot = CurrentVideo {
+        path: source_path.to_path_buf(),
         info,
-        img,
-        state,
-    ))
+        frame,
+        clip_id: None,
+    };
+    Ok(install_frame(&shot, virtual_path, img, state))
 }
 
 /// Register `source_path` in the session as a shot at `frame` **without
@@ -76,12 +78,22 @@ pub async fn load_video_frame(
 /// the narrowing is that a file which probes but cannot decode is no longer
 /// caught here. It is still caught at the point it matters: the active clip
 /// goes through the real decode path immediately afterwards.
-pub fn register_video_shot(source_path: &Path, frame: u64) -> Result<(), String> {
+///
+/// D-306: `clip_id` is the Edit-timeline `Clip` this shot IS. Two clips cut
+/// from one source file register as two independent shots because of it
+/// (B-150); `None` is the Untitled loose-clip case, where the path is already
+/// a unique identity.
+pub fn register_video_shot(
+    source_path: &Path,
+    frame: u64,
+    clip_id: Option<&str>,
+) -> Result<(), String> {
     let info = super::edit::probe_cached(source_path)?;
     set_current_video(Some(CurrentVideo {
         path: source_path.to_path_buf(),
         info,
         frame,
+        clip_id: clip_id.map(str::to_string),
     }));
     Ok(())
 }
@@ -90,11 +102,14 @@ pub fn register_video_shot(source_path: &Path, frame: u64) -> Result<(), String>
 /// it. The state-writing tail of [`load_video_frame`], split out so the transport
 /// (`chroma_seek`) can feed a frame it got from the fast [`super::decode_pipe`]
 /// path without re-probing or re-decoding.
+///
+/// Takes the whole [`CurrentVideo`] rather than `(path, info, frame)` so the
+/// shot's **identity** (its `clip_id`, D-306) travels with it: installing a
+/// frame re-upserts the shot, and an upsert that had lost the clip id would
+/// append a second, path-keyed shot next to the real one instead of updating it.
 pub fn install_frame(
-    source_path: &Path,
+    shot: &CurrentVideo,
     virtual_path: &str,
-    frame: u64,
-    info: VideoInfo,
     img: DynamicImage,
     state: &tauri::State<'_, AppState>,
 ) -> LoadImageResult {
@@ -110,11 +125,7 @@ pub fn install_frame(
         is_raw: false,
     });
 
-    set_current_video(Some(CurrentVideo {
-        path: source_path.to_path_buf(),
-        info,
-        frame,
-    }));
+    set_current_video(Some(shot.clone()));
 
     LoadImageResult {
         width,

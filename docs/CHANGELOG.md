@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-306 (fixes B-150) + D-307 (fixes B-153), and two real causes
+  found for B-155.** D-306: a Colorist shot's identity is now its Edit-timeline clip
+  (`chroma::state::ShotId`), not its source file — two clips of one file are two
+  independently viewable, independently gradeable shots, threaded through `Session`,
+  `load`, `project`, `export`, `colorist_view`, the `ShotDto.clipId` wire field and
+  `useSessionStore`. D-307: `POST /op` takes a caller-declared `timeout_ms` (clamped
+  1s..=300s) and a 504 comes back as an `{ok,error}` answer instead of a masked
+  exception — the flat 20s bridge timeout was cutting off a *successful*
+  `add_subject_mask` mid-flight and reporting it as a bare, detail-free tool error.
+  B-155 also gained a second, independent fix: `resyncClips` (a background poll) was
+  replacing the editor's adjustments with another shot's grade without stashing the
+  outgoing shot's first, silently discarding a just-created mask. **Verified by unit
+  tests + `cargo clippy`/`fmt` only — not re-tested against the live app**, so B-155
+  stays open pending a real run of its repro, and D-307's sidecar timing is reasoned
+  from the code rather than measured.
 - **2026-09-10** — **fixed B-152 (D-305): composition/export resolution no
   longer hijacked by a reference-image clip.** `composition_size()` used to
   derive a project's output resolution from the first video-track clip in

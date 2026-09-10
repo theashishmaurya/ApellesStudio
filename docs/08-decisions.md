@@ -29343,6 +29343,13 @@ from either component's source — it took following `WGPU_RENDER` from
 - **decision:** the Edit timeline's per-clip transform (`rotation`, `scale`, `positionX`, `positionY` — the fields already on `Clip` in `app/src-tauri/src/chroma`) is the one source of truth. Colorist's shot/grading pipeline must read that same data when resolving a shot to a clip — it does not get its own independent `rotation`/`orientationSteps` fields in the grade `adjustments` object that could drift out of sync with the timeline clip's actual transform. Any transform-related field that currently exists on the grade side needs to be reconciled into (or explicitly deprecated in favor of) the timeline clip's own value, the same way `grade.json` is the only mutator of grade state for the GUI and MCP layers alike.
 - **why now, not deferred:** this is the same architectural seam B-150 already opened (Colorist needs real per-clip shot identity, not bare-path keying) — fixing shot identity without also fixing transform's split-source problem would leave the door open for the exact "it looked right, then flipped" symptom to recur, just via a different two-copies-of-the-same-fact bug. Folded into the same dispatch already fixing B-150/B-153/B-155 rather than opened as separate follow-on work.
 - **not yet fixed:** this is a direction, not a landed change as of this entry — tracked via the B-150 fix in progress. Whoever picks it up should trace, live, exactly how Colorist's screenshot in this session (`A001_09091123_C024.MOV`, `rotation: 180` on its timeline clip) actually rendered upright, before assuming the current code already does the right thing everywhere.
+- **update, 2026-09-10 — the B-150 half landed as D-306; the transform half did NOT.**
+  D-306 gives a Colorist shot real per-clip identity (`chroma::state::ShotId`), which is
+  the seam this entry names, and `colorist_view::resolve_for` now resolves a shot to *its*
+  clip — so the transform Colorist reads is unambiguously that clip's. But nothing in D-306
+  touches the grade `adjustments` object's own `rotation`/`orientationSteps` fields, which
+  is the actual two-copies problem this entry is about. Still open, still needs the live
+  trace this entry asks for.
 ## D-303 — A timeline drag's displacement comes from the dragged node's own rects, never from `event.delta`
 
 **decided (2026-09-10)**
@@ -29491,3 +29498,103 @@ from either component's source — it took following `WGPU_RENDER` from
   resolves to the footage's size), the images-only fallback, and that an explicit
   project resolution still wins over any clip. `cargo fmt`/`cargo clippy` clean,
   full existing suite passes.
+## D-306 — A Colorist shot's identity is its Edit-timeline clip, not its source file
+
+**decided (2026-09-10)** — fixes B-150; removes the mechanism behind B-155.
+
+- **Context.** The decode session (`chroma::state::Session`) keyed a shot by its source
+  **path** and carried no clip identity. Grades on disk have been per-clip since D-070
+  (`<grade_dir>/<clip id>.grade.json`), and `colorist_view` (D-294) resolves a shot to a
+  specific `apelles_timeline::Clip` — but the session underneath both still collapsed
+  two clips of one file into one shot. D-070 recorded that as a known limit and D-294's
+  module doc named this as "the single place that changes" when the session gained clip
+  identity. B-150 is what the limit costs in practice: the owner's project has two
+  Edit-timeline clips of `A001_09091123_C024.MOV` (Video 1 and Video 2, different
+  rotation), `list_shots` returned one entry, and the second clip was **invisible** in
+  Colorist — not gradeable at all.
+- **Options considered.**
+  1. *Keep the path key, disambiguate in the frontend.* Rejected: it is what the code
+     already did (a `source path → clip id` map re-derived on every project open and on
+     every Colorist-focus resync poll) and a map cannot answer with two ids for one key.
+     Whichever clip happened to be last silently won — so a shot could be shown wearing
+     the *other* clip's grade and masks, which is the mechanism behind B-155's "a mask I
+     never created appeared instead of mine".
+  2. *Key by `(timeline_id, clip_id)`.* Rejected as speculative: session shots only ever
+     come from the **active** timeline (`active_timeline_video_clips`), so the timeline
+     half is constant and clip ids are unique within it. If a multi-timeline session ever
+     lands, `ShotId` is one enum variant away.
+  3. **Chosen: key by `ShotId` — the clip id when there is one, the source path when
+     there is not.** A project's shot is its clip; an Untitled loose-clip session (file
+     picker / MCP `open`) has no project, no timeline and therefore no clip, and a path is
+     already unique there, so that case keeps its old behaviour verbatim.
+- **The deliberate asymmetry: identity is per-clip, the decode pipe is per-FILE.**
+  `Session::upsert` still reports "did the active clip *path* change" for cache
+  invalidation, so flipping between two clips cut from the same source is a seek, not a
+  pipe reset (D-030). Pinned by a unit test, since getting it wrong is a silent
+  performance regression rather than a visible bug.
+- **Threaded through, in one pass, everywhere the old key was assumed:**
+  `Session::{upsert, prune_except}` and `resolve_session_index` (identity-keyed);
+  `load::register_video_shot` (takes the clip id) and `load::install_frame` (takes the
+  whole `CurrentVideo`, so a re-install cannot lose the identity and append a phantom
+  path-keyed shot beside the real one); `project::{open_manifest,
+  chroma_project_resync_clips}`; `export::export_video`'s temporary re-point;
+  `colorist_view::resolve_for`; `session::ShotDto.clipId` on the wire; and
+  `useSessionStore`'s `reattachIds`, which now reads that id instead of inferring one.
+  `state::resolve_session_index_for_path` was deleted — the last caller went with the
+  path key.
+- **Why the wire carries the id rather than the frontend keeping its own map:** one
+  identity, decided in one place. The old arrangement had the answer computed
+  independently in three frontend call sites (`reattachIds`, `_hydrateOpenDto`,
+  `resyncClips`), each able to disagree with the others and with Rust.
+- **Not changed:** grade files, mask mattes and `.cube` bakes were already clip-id-keyed
+  (D-070), so there is no migration — this makes the decode session agree with them
+  rather than the other way round. Frame-keyed artefacts (tracked mattes D-019, mask
+  keyframes D-034, the depth track D-036) are indexed per shot in the transport's own
+  clip-local space (D-294) and are unaffected.
+- **Explicitly NOT the transform question D-302 raises.** D-302 (a clip's transform gets
+  one source of truth) names this same seam and says it is "folded into the same dispatch
+  already fixing B-150/B-153/B-155". Only half of that is true of this entry: identity is
+  fixed, so `colorist_view` now resolves a shot to *its* clip and reads that clip's
+  transform unambiguously — but the grade `adjustments` object still carries its own
+  `rotation`/`orientationSteps` fields, and reconciling or deprecating those is D-302's
+  actual subject and is still open.
+
+## D-307 — The control server's frontend budget is per-request, declared by the caller
+
+**decided (2026-09-10)** — fixes B-153.
+
+- **Context.** `control.rs` waited a flat 20s for the frontend to answer any op
+  (`BRIDGE_TIMEOUT`). That is generous for a store write plus a render and far too short
+  for the handful of ops that run a real model: `add_subject_mask` drives SAM 2 +
+  ViTMatte over a full 4K frame through the AI sidecar. When the budget expired the
+  server returned 504 — **but the frontend kept going and finished the work**, so the
+  mask really was created (confirmed live by a follow-up `list_masks`) while the caller
+  was told the tool had failed. `mcp/server.py` turned that 504 into a bare
+  `RuntimeError`, which FastMCP masks, so the agent saw only
+  `Error executing tool add_subject_mask` with no reason at all.
+- **Options considered.**
+  1. *Raise `BRIDGE_TIMEOUT` globally.* Rejected: a genuinely wedged or closed window
+     would then hold every caller for the new, much longer budget — trading a false
+     failure for a false hang, on the ops that are fast precisely so a wedged app is
+     detected quickly.
+  2. *Give `control.rs` a list of slow ops.* Rejected: it would put an op registry in the
+     control server, which its whole design (D-020, and its own module doc) exists to
+     avoid — "it does not know the op list. It just forwards."
+  3. **Chosen: `POST /op` takes an optional `timeout_ms`, clamped 1s..=300s** (default
+     unchanged at 20s), and the MCP layer — which *does* own the tool list — passes a
+     longer one for the four model-driven tools (`add_subject_mask`, `add_component`,
+     `track_subject`, `apply_haze`). The server still knows only how long to wait, never
+     what the op is; the clamp means a bad or hostile value cannot pin an HTTP worker.
+- **A timeout is an answer, not an exception.** `mcp/server.py` now returns the control
+  server's own `{ok: false, error}` envelope for a 504 instead of raising. That is the
+  contract `control.rs` already documented for its native ops ("a *failed* screenshot is a
+  normal answer with a reason in it, not a transport failure, and the MCP client reads
+  `ok`/`error` rather than the status code") — the 504 path was the one place violating
+  it, and it was violating it exactly where the detail mattered most. The message now
+  names the op and the budget and says the work may have completed anyway, with the check
+  to run (`get_state` / `list_masks`) before retrying — because a blind retry of a
+  half-finished mask op is how one stray mask ends up beside the real one.
+- **Still open, deliberately:** `track_subject` blocks until a whole-clip SAM 2
+  propagation finishes, which on a long clip exceeds even the 300s ceiling. Raising the
+  budget is not the fix — it should return a job id and be polled, the way `depth_track`
+  already does. Noted in B-153 rather than half-solved here.

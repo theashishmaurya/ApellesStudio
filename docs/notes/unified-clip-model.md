@@ -148,15 +148,24 @@ One clip identity, flowing through both tabs:
    in-memory decode session (#1, `state::Shot`) likely still exists underneath
    (something has to hold decoded frames/GPU state) but stops being the
    *authoritative* list — it becomes a cache keyed by clip id, populated on
-   demand. **DONE, with a real caveat.** `state::Shot`'s decode session was
-   **not** turned into a clip-id-keyed cache this pass (that was always "likely,"
-   not required — see "Explicitly deferred" below, still holds). It stays
-   path-keyed exactly as before; `useSessionStore.ts` attaches clip identity on
-   top of it by matching source path (`reattachIds`), not by the decode session
-   carrying it. Real, documented consequence: two *different* clips sharing one
-   `source_path` collapse onto one decode-session entry, so only one is
-   independently viewable in Colorist at a time (their grade files still stay
-   genuinely separate on disk) — see D-070's "known limit" note.
+   demand. **DONE, with a real caveat *since closed*.** D-070 did **not** turn
+   `state::Shot`'s decode session into a clip-id-keyed cache (that was always
+   "likely," not required). It stayed path-keyed, with `useSessionStore.ts`
+   attaching clip identity on top by matching source path (`reattachIds`). The
+   documented consequence — two *different* clips sharing one `source_path`
+   collapse onto one decode-session entry, so only one is independently viewable
+   in Colorist at a time — was hit for real by the owner and logged as **B-150**:
+   the second clip wasn't merely "not viewable at a time", it was **absent from
+   `list_shots` entirely** and could not be selected or graded at all. It also
+   turned out to cost more than viewing: the path→clip-id match could only ever
+   answer with ONE id for two clips of a file, so a shot could be shown wearing
+   the other's grade and masks (**B-155**).
+   **Closed 2026-09-10 by D-306.** The decode session now carries a real
+   `ShotId` — the clip id for a project's shot, the source path for an Untitled
+   one — reported on the wire as `ShotDto.clipId` and read straight through by
+   `reattachIds`. Two clips of one file are two independently viewable,
+   independently gradeable shots. The "Explicitly deferred" note below is
+   therefore no longer current on this point.
 4. **`ShotStrip.tsx` → reads the active timeline's clips.** "Add to grading" (the
    `+` on a Sources card, `chroma_project_add_shot`) either goes away (drag-to-
    Edit-timeline is now the one real "this clip exists in my project" action) or
@@ -180,11 +189,17 @@ One clip identity, flowing through both tabs:
 - **"Apply this grade to every clip from the same source"** (Resolve's source-
   level grade vs per-instance grade) — real feature, real UI (a toggle or a
   right-click action), not required for the base unification.
-- **The `state::Shot`/decode-session layer's own possible retirement** — once
+- ~~**The `state::Shot`/decode-session layer's own possible retirement** — once
   everything reads off `apelles-timeline::Clip`, whether the in-memory decode
   session still needs its own parallel `Vec` or can be a plain per-clip-id cache
   is an implementation detail worth revisiting once the rewrite is in front of
-  someone, not decided here.
+  someone, not decided here.~~ **Revisited and half-settled, 2026-09-10 (D-306),
+  once B-150/B-155 put it in front of someone for real.** The decode session
+  keeps its own `Vec` — it holds the playhead and probe info per shot, which a
+  bare cache would not — but it is no longer keyed by anything of its own: a
+  shot's identity IS its clip id (`state::ShotId`), so the parallel list can no
+  longer disagree with the timeline about what a shot is. Fully retiring the
+  `Vec` is still open, and now much cheaper.
 - **Colorist working on a clip that isn't on any Edit-tab timeline at all**
   (a bare loose-clip "Untitled" session, opened by picking a file directly, no
   project) — stays supported as its own thing, same as today; this migration is

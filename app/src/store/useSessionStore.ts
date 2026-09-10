@@ -19,18 +19,18 @@
 // not the old `ProjectShot.id`. `grades`/`gradeWrapper`/`persistShotGrade` all
 // key off `SessionShot.id` (that clip id) instead of `SessionShot.path`, so two
 // different clips trimmed from the same source file grade independently, same
-// as Resolve's default per-instance grading. The decode session itself
-// (`chroma::session`, `chroma_session_*`) still upserts **by path** underneath
-// — deliberately not retired this pass (see the scoping doc's "explicitly
-// deferred" section) — so `SessionShot.id` is attached on top of the raw
-// `chroma_session_list()` result by matching source path against the active
-// project's clip list (`reattachIds`/`_hydrateOpenDto`), not carried by the
-// decode session itself. One known, documented limit of not retiring the
-// decode session this pass: two *different* clips that share the exact same
-// `source_path` collapse onto one decode-session entry (upsert-by-path), so
-// only one of them is independently switchable/viewable at a time in the
-// Colorist tab today — their grade files still stay genuinely separate on
-// disk, this only affects which one's *pixels* are currently shown.
+// as Resolve's default per-instance grading.
+//
+// **The decode session carries that identity too now (D-306, B-150).** It used
+// to upsert **by path**, with `SessionShot.id` attached on top by matching
+// source paths against the project's clip list — and D-070 recorded the limit
+// that cost: two clips sharing a `source_path` collapsed onto ONE decode-session
+// entry, so only one was switchable or viewable in Colorist (the second was
+// invisible: B-150), and the path→clip-id match could only ever answer with one
+// of the two ids, so a shot could be shown wearing the other's grade and masks
+// (B-155). `chroma::state::ShotId` is now the one identity — a clip id for a
+// project's shot, the path for an Untitled one — reported on the wire as
+// `RawShotDto.clipId` and read straight through by `reattachIds`.
 //
 // **Mutual exclusion (B-132/D-268).** The seven actions that mutate the
 // session — `newProject`, `openProject`, `addShots`, `removeShot`,
@@ -68,11 +68,14 @@ import {
 import { Adjustments, INITIAL_ADJUSTMENTS, normalizeLoadedAdjustments } from '../utils/adjustments';
 
 /** The raw per-shot shape `chroma_session_list`/`_set_active`/`_add`/`_remove`
- *  return (mirrors `chroma::session::ShotDto`) — no identity beyond `path`,
- *  since the decode session it comes from is path-keyed (see the module doc).
- *  `SessionShot` (below) is this plus the store's own attached `id`. */
+ *  return (mirrors `chroma::session::ShotDto`). D-306: it now carries the
+ *  decode session's own `clipId` — a real per-clip identity — so the store no
+ *  longer has to infer one by matching source paths. `null` for an in-memory
+ *  Untitled session, where the path IS the identity.
+ *  `SessionShot` (below) is this plus the resolved `id`. */
 interface RawShotDto {
   path: string;
+  clipId: string | null;
   name: string;
   width: number;
   height: number;
@@ -329,15 +332,23 @@ async function persistShotGrade(
   }
 }
 
-/** Attach each `id` in `fresh` (a raw decode-session read with no identity of
- *  its own) by matching `path` against `previous` (the store's last known
- *  `shots`, which already carry the real id) — falls back to the path itself
- *  for a path `previous` has never seen (a brand new Untitled-session shot).
- *  Path-matched rather than index-matched so this stays correct even if the
- *  decode session's own Vec order ever shifts under us. */
+/** Resolve each shot's stable `id`.
+ *
+ *  D-306: the decode session now reports its own `clipId`, so that is the
+ *  answer whenever it is present — one identity, decided in one place
+ *  (`chroma::state::ShotId`), rather than re-derived here.
+ *
+ *  The `previous`-by-path fallback remains for the Untitled session, whose
+ *  shots genuinely have no clip id, and finally the path itself for a shot
+ *  `previous` has never seen. Path-matched rather than index-matched so it
+ *  stays correct even if the decode session's own Vec order shifts under us.
+ *
+ *  B-150/B-155: the old version had ONLY the path fallback, so two clips of one
+ *  source file both resolved to whichever id happened to win the path map —
+ *  one shot's grade (and its masks) could be applied to the other. */
 function reattachIds(fresh: RawShotDto[], previous: SessionShot[]): SessionShot[] {
   const byPath = new Map(previous.map((s) => [s.path, s.id]));
-  return fresh.map((sh) => ({ ...sh, id: byPath.get(sh.path) ?? sh.path }));
+  return fresh.map((sh) => ({ ...sh, id: sh.clipId ?? byPath.get(sh.path) ?? sh.path }));
 }
 
 /** push a loaded frame + a set of adjustments into the editor stores. Shared by
@@ -639,17 +650,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       // the Rust session already holds the online clips (chroma_project_open
       // et al loaded them). Mirror it, then attach per-shot grades + project
-      // metadata. D-070: `dto.shots[i].id` is now a `apelles_timeline::Clip`
-      // id — attach it onto the (path-keyed) decode-session read by matching
-      // source path, since the decode session itself carries no clip
-      // identity of its own (see the module doc).
+      // metadata. D-070: a shot's id is a `apelles_timeline::Clip` id.
+      // D-306: the decode session reports that id itself now, so `reattachIds`
+      // reads it off the wire instead of matching source paths — a match that
+      // returned ONE id for two clips of the same file (B-150/B-155).
       const list = await invoke<SessionDto>('chroma_session_list');
-      const onlineDtoShots = dto.shots.filter((s) => !s.offline);
-      const pathToClipId = new Map(onlineDtoShots.map((s) => [s.sourcePath, s.id]));
-      const shotsWithId: SessionShot[] = list.shots.map((sh) => ({
-        ...sh,
-        id: pathToClipId.get(sh.path) ?? sh.path,
-      }));
+      const shotsWithId: SessionShot[] = reattachIds(list.shots, get().shots);
 
       const offlineShots: OfflineShot[] = dto.shots
         .filter((s) => s.offline)
@@ -719,12 +725,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch {
       return;
     }
-    const onlineDtoShots = dto.shots.filter((s) => !s.offline);
-    const pathToClipId = new Map(onlineDtoShots.map((s) => [s.sourcePath, s.id]));
-    const shotsWithId: SessionShot[] = list.shots.map((sh) => ({
-      ...sh,
-      id: pathToClipId.get(sh.path) ?? sh.path,
-    }));
+    // D-306 — identity off the wire, not inferred from source paths. This poll
+    // runs on every Colorist tab focus, so the old path map re-derived every
+    // shot's id (and therefore which grade the store thought was loaded) many
+    // times a session; for two clips of one file it got that wrong every time.
+    const shotsWithId: SessionShot[] = reattachIds(list.shots, get().shots);
     const offlineShots: OfflineShot[] = dto.shots
       .filter((s) => s.offline)
       .map((s) => ({ id: s.id, sourcePath: s.sourcePath, name: s.name }));
@@ -735,6 +740,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // `chroma_project_resync_clips`'s doc) — this just detects that outcome
     // rather than re-deciding it, so the frontend and backend can't disagree.
     const activeChanged = prevActive?.id !== newActive?.id;
+
+    // B-155 — bank the OUTGOING shot's grade before anything replaces the
+    // editor's adjustments below. This is a background poll: whatever the user
+    // or the agent has just done to the active shot (a mask added seconds ago,
+    // an exposure nudge not yet autosaved) lives only in `useEditorStore` until
+    // something stashes it, and this branch used to swap `adjustments` wholesale
+    // without doing so — so that work was simply discarded, with no warning and
+    // no explicit shot switch to blame it on. `switchToShot` has always done
+    // this; the resync path never caught up. Done BEFORE the `set` below,
+    // because `stashActiveGrade` keys off whatever is active *now*.
+    if (activeChanged && prevActive) {
+      const carried = useEditorStore.getState().adjustments;
+      set({ grades: { ...get().grades, [prevActive.id]: carried } });
+      void persistShotGrade(get, prevActive, carried);
+    }
 
     set({ shots: shotsWithId, activeIndex: list.active, offlineShots });
 

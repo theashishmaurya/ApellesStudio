@@ -623,10 +623,21 @@ pub fn export_video(
     // The grade path fetches tracked mattes for `current_video().frame` (D-019).
     // Point Apelles' clip state at the export target, restore it afterwards.
     let prev = current_video();
+    // D-306: carry the shot's identity across, or this temporary re-point
+    // appends a second, path-keyed shot next to the real one instead of
+    // updating it — and `restore` below would leave that stray behind. The
+    // clip view is the authority when there is one; otherwise keep whatever
+    // identity the active shot already had for this same file.
+    let clip_id = clip.map(|v| v.clip.id.clone()).or_else(|| {
+        prev.as_ref()
+            .filter(|p| p.path == video_path)
+            .and_then(|p| p.clip_id.clone())
+    });
     set_current_video(Some(super::state::CurrentVideo {
         path: video_path.to_path_buf(),
         info: info.clone(),
         frame: from,
+        clip_id,
     }));
     let restore = |prev: Option<super::state::CurrentVideo>| {
         if let Some(p) = prev {
@@ -878,7 +889,7 @@ pub async fn chroma_export_video(
     // shot is a clip on the Edit timeline, matching `chroma_seek` and
     // `chroma_video_info`. Resolved to source frames here, once, so the
     // decoder below still walks a plain contiguous source range.
-    let view = super::colorist_view::resolve(&cv.path);
+    let view = super::colorist_view::resolve_for(&cv);
     if let Some(v) = &view
         && v.clip.speed_segments().len() > 1
     {

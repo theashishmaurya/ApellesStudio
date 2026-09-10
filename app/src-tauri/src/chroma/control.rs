@@ -10,6 +10,15 @@
 //! What it does NOT do: any grade or mask logic, and it does not know the op
 //! list. It just forwards `{op, args}`. The op registry lives in the frontend.
 //!
+//! **Per-request timeout (B-153).** `POST /op` also accepts an optional
+//! `timeout_ms`. Because this server has no op list, it cannot tell a decode
+//! (milliseconds) from an AI matte over a 4K frame (tens of seconds) — and the
+//! flat 20s budget it used for both is what made `add_subject_mask` report a
+//! failure for a mask it had actually created. The MCP layer owns the tool list
+//! and therefore declares the budget; [`bridge_timeout`] clamps it. Nothing
+//! about the op-registry boundary changes: this still forwards `{op, args}` and
+//! knows nothing about what the op does, only how long the caller says to wait.
+//!
 //! The one exception is [`native_op`] (D-210): a short, explicit list of ops
 //! that have no frontend state to consult and are answered here, in Rust —
 //! today the debug webview screenshot and its pixel probe. Those deliberately
@@ -35,8 +44,17 @@ use tauri::{Emitter, Listener};
 use tiny_http::{Header, Method, Response, Server};
 
 const DEFAULT_PORT: u16 = 19788;
-/// How long the HTTP request waits for the frontend to apply + render + reply.
+/// How long the HTTP request waits for the frontend to apply + render + reply,
+/// when the caller doesn't say (see [`bridge_timeout`]).
 const BRIDGE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Ceiling on a caller-supplied `timeout_ms` (B-153). Generous enough for the
+/// slowest real op — an AI matte over a 4K frame — without letting a bad value
+/// pin an HTTP worker here indefinitely.
+const MAX_BRIDGE_TIMEOUT: Duration = Duration::from_secs(300);
+/// Floor on a caller-supplied `timeout_ms`: below this, even a healthy
+/// frontend's normal render round trip would "time out", which would report a
+/// working app as broken.
+const MIN_BRIDGE_TIMEOUT: Duration = Duration::from_secs(1);
 /// Shorter budget for `GET /health` so a dead/hidden window still answers fast.
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -95,8 +113,9 @@ pub fn serve(app: tauri::AppHandle) {
             continue;
         }
 
-        // Two shapes: `POST /op {op, args}` (the generic one) or `POST /<op> {..args}`.
-        let (op, args) = if path.is_empty() || path == "op" {
+        // Two shapes: `POST /op {op, args, timeout_ms?}` (the generic one) or
+        // `POST /<op> {..args}`.
+        let (op, args, timeout) = if path.is_empty() || path == "op" {
             let v: serde_json::Value =
                 serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
             let op = v
@@ -108,10 +127,10 @@ pub fn serve(app: tauri::AppHandle) {
                 .get("args")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
-            (op, args)
+            (op, args, bridge_timeout(v.get("timeout_ms")))
         } else {
             let args = serde_json::from_str(&body).unwrap_or_else(|_| serde_json::json!({}));
-            (path.clone(), args)
+            (path.clone(), args, BRIDGE_TIMEOUT)
         };
 
         if op.is_empty() {
@@ -125,17 +144,44 @@ pub fn serve(app: tauri::AppHandle) {
             continue;
         }
 
-        match dispatch(&app, &op, args, BRIDGE_TIMEOUT) {
+        match dispatch(&app, &op, args, timeout) {
             Ok(payload) => {
                 let _ = req.respond(json_response(200, payload));
             }
             Err(BridgeErr::Timeout) => {
+                // B-153 — say what the budget actually was, and that the work
+                // may well have LANDED. The frontend keeps running after this
+                // gives up: `add_subject_mask` really did create its mask, and
+                // the caller was told only that something failed.
                 let _ = req.respond(json_response(
                     504,
-                    err_body("frontend did not respond within 20s — is the Apelles window open?"),
+                    err_body(&format!(
+                        "op '{op}' got no reply from the frontend within {}s. The Apelles window \
+                         may be closed or busy — but a slow op can also still be running and \
+                         COMPLETE after this, so re-read the state (get_state / list_masks) \
+                         before assuming nothing happened or retrying.",
+                        timeout.as_secs()
+                    )),
                 ));
             }
         }
+    }
+}
+
+/// The frontend budget for one request: the caller's `timeout_ms` when it gave
+/// one, clamped to [`MIN_BRIDGE_TIMEOUT`]..=[`MAX_BRIDGE_TIMEOUT`], else
+/// [`BRIDGE_TIMEOUT`].
+///
+/// **Why the CALLER decides (B-153).** This server deliberately does not know
+/// the op list (see the module doc), so it cannot know that `add_subject_mask`
+/// runs SAM 2 + ViTMatte over a 4K frame while `seek` is a decode. A flat 20s
+/// for both is what made the AI-mask ops report a failure for work that had in
+/// fact succeeded. The MCP layer *does* own the tool list, so it declares the
+/// budget per tool and this clamps it.
+fn bridge_timeout(requested: Option<&serde_json::Value>) -> Duration {
+    match requested.and_then(|v| v.as_u64()) {
+        Some(ms) => Duration::from_millis(ms).clamp(MIN_BRIDGE_TIMEOUT, MAX_BRIDGE_TIMEOUT),
+        None => BRIDGE_TIMEOUT,
     }
 }
 
@@ -249,4 +295,43 @@ fn json_response(status: u16, body: String) -> HttpResponse {
 
 fn err_body(msg: &str) -> String {
     serde_json::json!({ "ok": false, "error": msg }).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ms(v: u64) -> serde_json::Value {
+        serde_json::json!(v)
+    }
+
+    #[test]
+    fn no_timeout_given_keeps_the_default() {
+        assert_eq!(bridge_timeout(None), BRIDGE_TIMEOUT);
+        // a non-numeric value is not a budget — fall back rather than guess
+        assert_eq!(
+            bridge_timeout(Some(&serde_json::json!("soon"))),
+            BRIDGE_TIMEOUT
+        );
+        assert_eq!(
+            bridge_timeout(Some(&serde_json::Value::Null)),
+            BRIDGE_TIMEOUT
+        );
+    }
+
+    #[test]
+    fn a_callers_budget_is_honoured_within_the_bounds() {
+        // B-153's case: an AI-mask tool asking for more than the flat 20s that
+        // was cutting a successful `add_subject_mask` off mid-flight.
+        assert_eq!(bridge_timeout(Some(&ms(120_000))), Duration::from_secs(120));
+        assert_eq!(bridge_timeout(Some(&ms(5_000))), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn an_out_of_range_budget_clamps_instead_of_being_taken_literally() {
+        // Neither end may be honoured as asked: 0 would report a healthy app as
+        // broken on every call, and an hour would pin an HTTP worker here.
+        assert_eq!(bridge_timeout(Some(&ms(0))), MIN_BRIDGE_TIMEOUT);
+        assert_eq!(bridge_timeout(Some(&ms(3_600_000))), MAX_BRIDGE_TIMEOUT);
+    }
 }

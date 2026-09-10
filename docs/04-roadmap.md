@@ -2943,12 +2943,20 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      verify a *texture*-level claim like "blemishes are smoothed" — that needs
      a frequency/variance analysis this tool doesn't expose. Also hit **B-160**
      in the same attempt: `add_subject_mask` reported a tool error on a call
-     that had actually succeeded server-side.
+     that had actually succeeded server-side. **B-153 fixed 2026-09-10 (D-307)**
+     — it was the control server's flat 20s frontend budget cutting off a SAM 2
+     matte that then finished anyway; the budget is per-request now and a
+     timeout comes back as a real, readable answer instead of a masked
+     exception.
   5. **The active-shot/timeline-drift + source-path-vs-per-clip grading gap
      (B-147) underlies all four above** — none of them matter if the tool might
      be grading the wrong shot. D-294's `colorist_view` bridge (just merged) is
      the fix; re-verify it holds under real multi-clip-same-source use before
-     building anything on top of it.
+     building anything on top of it. **Update, 2026-09-10:** that re-verification
+     happened the hard way — real multi-clip-same-source use is exactly what
+     **B-150** was, and D-294 did *not* hold under it, because the decode session
+     beneath it had no per-clip identity to resolve against. **D-306** gives it
+     one (`state::ShotId`), so `colorist_view` now resolves by clip id.
   6. **Grading tools operate on the live, shared playhead — not a pinned frame
      reference — so concurrent human+agent use of the same app collides.**
      Owner's own observation, live, 2026-09-10, immediately after hitting it:

@@ -207,3 +207,82 @@ describe('the session lock', () => {
     expect((await useSessionStore.getState().newProject('fresh', [])).ok).toBe(true);
   });
 });
+
+// --- D-306 / B-150: two clips of one source file are two independent shots ---
+//
+// The decode session used to be path-keyed and reported no identity, so the
+// store re-derived each shot's clip id by matching source paths — which can
+// only ever answer with ONE id for two clips of the same file. The Rust half of
+// the fix is unit-tested in `chroma::state`; this pins the store half: whatever
+// `chroma_session_list` reports as `clipId` IS the shot's id, and two shots of
+// one path stay two shots with two independent grades.
+describe('per-clip shot identity (D-306)', () => {
+  /** One `chroma::session::ShotDto`, as it arrives over the wire. */
+  function rawShot(path: string, clipId: string | null, frame = 0) {
+    return {
+      path,
+      clipId,
+      name: path.split('/').pop(),
+      width: 1920,
+      height: 1080,
+      fps: 24,
+      frameCount: 240,
+      durationSecs: 10,
+      frame,
+      codec: 'h264',
+      colorSpace: 'bt709',
+    };
+  }
+
+  /** `chroma_session_list` answering with `shots`; everything else null. */
+  function sessionOf(shots: ReturnType<typeof rawShot>[], active = 0) {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'chroma_session_list' ? { shots, active, count: shots.length } : null,
+    );
+  }
+
+  /** B-150's real project: two Edit-timeline clips of one source file, one on
+   *  Video 1 and one on Video 2. */
+  const C024 = '/footage/A001_09091123_C024.MOV';
+  const doubled = () => [rawShot(C024, 'clip-video1'), rawShot(C024, 'clip-video2')];
+
+  it('keeps two clips of one source file apart, by clip id', async () => {
+    // Before the fix the session reported ONE shot for this file and the
+    // second clip was invisible in Colorist — not gradeable at all.
+    sessionOf(doubled());
+
+    await useSessionStore.getState().syncFromRust();
+
+    const { shots } = useSessionStore.getState();
+    expect(shots.map((s) => s.path)).toEqual([C024, C024]);
+    expect(shots.map((s) => s.id)).toEqual(['clip-video1', 'clip-video2']);
+  });
+
+  it('scopes each of those two shots to its own grade', async () => {
+    sessionOf(doubled());
+    // Two genuinely different grades already cached, one per clip — the exact
+    // state that used to collapse: both shots resolved to whichever id won the
+    // path map, so one clip's grade (and its masks) rendered on the other.
+    // That is the mechanism behind B-155's "a mask I never created appeared".
+    useSessionStore.setState({
+      grades: {
+        'clip-video1': { contrast: 24 } as never,
+        'clip-video2': { contrast: -10 } as never,
+      },
+    });
+
+    await useSessionStore.getState().syncFromRust();
+
+    const { shots, grades } = useSessionStore.getState();
+    expect(grades[shots[0].id]).toEqual({ contrast: 24 });
+    expect(grades[shots[1].id]).toEqual({ contrast: -10 });
+  });
+
+  it('falls back to the path for an Untitled session, which has no clip ids', async () => {
+    sessionOf([rawShot('/loose/a.mov', null)]);
+
+    await useSessionStore.getState().syncFromRust();
+
+    expect(useSessionStore.getState().shots[0].id).toBe('/loose/a.mov');
+  });
+});
