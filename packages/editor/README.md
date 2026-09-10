@@ -51,6 +51,14 @@ dragging a pool item in from the shell's Sources panel.
   selection, and the pixel↔timeline conversions the overlay paints from. No
   React, no DOM, no `window` — `TimelinePane` owns the wiring. See
   **Marquee-select** below.
+- `dragGhost.ts` (B-137/D-278) — which slice of a clip its cursor-follow drag
+  ghost shows, and how far into the clip that slice starts. `DragOverlay`
+  anchors the ghost at the dragged clip's own rect while the ghost's width is
+  capped, so on any clip wider than the cap the ghost used to sit at the clip's
+  head, far from the pointer. One pure function of on-screen pixels — no DOM,
+  no React, no dnd-kit types; `TimelinePane` feeds it a measured press and uses
+  the answer for both the overlay's `Modifier` and the ghost's own
+  filmstrip/waveform window.
 - `clipFade.ts` (D-205) — the pure half of the timeline's on-clip fade
   handles: a fade duration in the clip's own **source** frames ↔ its on-screen
   width at the current zoom (via `timeline.ts`'s

@@ -27091,3 +27091,95 @@ combo both get flagged ⚠ (and an unrelated row does not); the recording state
 resets when the dialog closes and reopens. `npm test --workspace
 @apelles/keymap` (3 files / 43 tests) and `npx tsc --noEmit -p
 packages/keymap/tsconfig.json` both green.
+
+---
+
+## D-279 — a clip-drag ghost is a WINDOW onto the clip under the pointer, not the clip's head
+
+**Context.** B-137, reported live from one screenshot: dragging a clip with the
+Trim tool active, "the preview box sits at an arbitrary start position" while the
+cursor is seconds away to the right, with no visual connection between the two.
+The bug entry could not name a cause and listed three candidates (a regression in
+the vendored timeline library's edge resize, something specific to the Trim tool,
+or a one-off).
+
+Investigating it in a real jsdom drag test (`TimelinePane.dragGhost.dom.test.tsx`,
+built on `testUtils/pointerHarness.ts`) settled all three, and none of them was
+right. The screenshot's "preview box" is the `@dnd-kit/core` `DragOverlay` clip
+ghost — identifiable in the image by the two things only it has: the clip's name
+and accent ring on a floating box that overhangs the track-header column, and a
+width of exactly D-119's `MAX_OVERLAY_PX` (320 logical px, measured against the
+52px row height in the same screenshot). So the gesture was a clip **body** drag,
+not the library's interact.js edge resize, and the Trim tool was incidental: with
+Ripple or Roll chosen, a body drag is still the plain move it has always been
+(D-261, its own test 8), so it reaches the identical ghost — as does the Select
+tool.
+
+The real cause is a mismatch between two things that were each individually
+correct. `DragOverlay` anchors itself at the dragged node's own measured rect
+(`PositionedOverlay` writes `left: rect.left; top: rect.top` and then applies the
+drag transform — read in its bundled source). D-119 caps the ghost's width so an
+hour-long clip does not produce an off-screen-sized DOM node. Together they mean
+that for any clip wider than the cap, the ghost is a 320px stub pinned to the
+clip's LEFT EDGE while the pointer is wherever in the body it actually pressed.
+At the default 90px/s zoom the cap is hit by every clip longer than ~3.5 seconds,
+so this is not an edge case — it fires on essentially every real drag, and the
+further right you grab, the further behind the ghost sits. A static screenshot of
+that reads exactly as "the preview is stuck at the clip's original position."
+
+**Options.**
+
+1. **Drop the cap** — full-width ghost, always under the pointer by construction.
+   Rejected: it is the thing D-119 capped for, and an hour-long clip at 100% zoom
+   is a genuinely unusable DOM node.
+2. **Cap at the visible edit-area width instead of a fixed 320px.** Keeps the
+   ghost's left edge meaning "where the head lands," and a long clip's ghost then
+   spans the visible timeline. Rejected on two counts: it does not actually fix
+   the bug (grab a clip further along than one viewport and the ghost is behind
+   the cursor again), and an opaque, full-viewport slab hides the drop context
+   the ghost exists to help judge.
+3. **Chosen: keep the cap, and make the ghost a window onto the clip centred on
+   the grab point** — shifted right by that window's own offset so the pixel
+   under the cursor is the pixel the cursor is holding.
+
+**Why.** It is the only option that guarantees the ghost is under the pointer for
+every clip length and every grab point, and it is a strict no-op for clips that
+fit inside the cap (`startPx === 0`), so the case D-119 shipped for is untouched
+— proved, not asserted: `TimelinePane.dragGhost.dom.test.tsx` test 3. The window
+is centred rather than started at the grab point so the eye has clip on both
+sides of the pointer, and clamped to the clip's ends so a grab near either end
+cannot produce a window running off it.
+
+The shift is implemented as a dnd-kit `Modifier` on `<DragOverlay>` — that
+library's own extension point for exactly this — rather than by writing a
+competing inline offset. `PositionedOverlay` owns the overlay's `left`/`top`, and
+a second positioning system on one element is the shape this file has already
+been burned by twice (D-098, D-100).
+
+**Shape.** A new pure module, `packages/editor/src/dragGhost.ts`
+(`dragGhostWindow(clipWidthPx, grabOffsetPx, maxPx)` → `{widthPx, startPx}`), used
+by both halves so they cannot disagree: the modifier shifts by `startPx`, and the
+ghost's `Filmstrip`/`Waveform` read the same `startPx` mapped back to source
+seconds through the clip's own width-to-duration ratio (so a speed-changed clip
+needs no special case). The grab point is measured off the DOM in
+`TimelinePane`'s existing capture-phase `pointerdown` listener — the same
+`.timeline-editor-action` rect the smart trim tool's own vertical band already
+uses, so the two cannot disagree about which clip was pressed. Deliberately NOT
+`event.active.rect.current.initial`: that ref is not yet populated when
+`onDragStart` runs, established by probe on the real component (the ghost simply
+never moved), not assumed.
+
+**GUI/AI parity.** Nothing to add: this changes what an in-progress drag looks
+like, and has no state, no persisted field, and no capability behind it. The
+edits a drag commits are unchanged and already have their `editor_*` tools.
+
+### Tests
+
+`dragGhost.test.ts` (8, pure — every clamp, the short-clip no-op, the
+unmeasurable-clip guard, and a swept invariant that the window always contains
+the grab point and stays inside the clip) and
+`TimelinePane.dragGhost.dom.test.tsx` (5, real `PointerEvent`s through the real
+`TimelinePane`, asserting the ghost's LIVE mid-drag geometry — which is what a
+screenshot shows and a commit-only assertion cannot). Verified to fail without
+the fix: tests 1, 4 and 5 go red with the modifier neutralised, and 2 and 3 stay
+green because they are the behaviour that was already right.
