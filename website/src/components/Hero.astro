@@ -82,6 +82,7 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     />
   </picture>
   <div class="scrim" aria-hidden="true"></div>
+  <div class="fade" aria-hidden="true"></div>
 
   <!-- Roughly over the painting's own golden disc — measured, not eyeballed:
        the disc's centre sits at about 48% across, 29% down the source image. -->
@@ -162,6 +163,32 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     position: absolute;
     inset: 0;
     background: color-mix(in srgb, var(--pigment-basalt) var(--dev-scrim, 41%), transparent);
+  }
+
+  /* The hero sits on Difference.astro's own solid basalt section (D-282's
+     tonal-inversion pattern) — without this, the painting cuts straight to
+     that flat colour in one hard horizontal line, reported live with a
+     screenshot. Ramps the last stretch of the image to the exact same
+     basalt the next section opens with, so the seam reads as one continuous
+     surface instead of two stacked blocks. */
+  .fade {
+    position: absolute;
+    inset: 0;
+    /* Eased stops (front-loaded, easing in a curve rather than a flat
+       ramp) plus oklab interpolation, which blends colour perceptually
+       instead of in raw sRGB — both genuinely cut banding on a fade into
+       this near-black. (A noise-dither overlay was also tried; it read as
+       visible static rather than a fix and was reverted.) */
+    background: linear-gradient(
+      in oklab to bottom,
+      transparent 0%,
+      color-mix(in oklab, var(--pigment-basalt) 4%, transparent) 20%,
+      color-mix(in oklab, var(--pigment-basalt) 15%, transparent) 35%,
+      color-mix(in oklab, var(--pigment-basalt) 35%, transparent) 50%,
+      color-mix(in oklab, var(--pigment-basalt) 60%, transparent) 65%,
+      color-mix(in oklab, var(--pigment-basalt) 85%, transparent) 80%,
+      var(--pigment-basalt) 100%
+    );
   }
 
   /* Position/size tunable live from HeroDevPanel (dev-only, stripped from
@@ -255,6 +282,11 @@ const placeholder = isPlaceholderEndpoint(endpoint);
     flex: none;
     padding: 0.7rem 1.15rem;
     font-size: var(--step--1);
+    /* The same soft glow the OG social-card's own CTA circle carries
+       (matched there via a real box-shadow, not a literal — this project's
+       own `--pigment-marble` token IS its "white"), so the live button and
+       its social-preview twin read as the same mark. */
+    box-shadow: 0 0 60px var(--pigment-marble);
   }
   .ask :global(.signature:hover:not(:disabled)) {
     filter: brightness(0.96);

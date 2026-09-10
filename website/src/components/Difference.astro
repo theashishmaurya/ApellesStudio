@@ -48,8 +48,37 @@
      theme — same two neutrals, ochre standing in for terracotta as the working
      link colour, since terracotta's contrast on basalt is too low to read. */
   .diff {
+    position: relative;
     background: var(--pigment-basalt);
-    border-block: 1px solid var(--edge-inverse);
+  }
+
+  /* The same eased/oklab fade Hero.astro uses at its own bottom edge (see
+     that file's comment for why plain linear-alpha bands visibly), run in
+     reverse into the section below — owner: "do gradient on the next seam
+     as well... such that the hero's [fade] just start[s continuing] to
+     [the] next seam['s] gradient," so the whole opening reads as one
+     continuous wash (image → dark → light) rather than three flat blocks
+     each ending in a hard edge. This flip is basalt → marble, a much bigger
+     lightness jump than Hero's own fade, so the eased stops matter even
+     more here. */
+  .diff::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 140px;
+    pointer-events: none;
+    background: linear-gradient(
+      in oklab to bottom,
+      transparent 0%,
+      color-mix(in oklab, var(--pigment-marble) 4%, transparent) 20%,
+      color-mix(in oklab, var(--pigment-marble) 15%, transparent) 35%,
+      color-mix(in oklab, var(--pigment-marble) 35%, transparent) 50%,
+      color-mix(in oklab, var(--pigment-marble) 60%, transparent) 65%,
+      color-mix(in oklab, var(--pigment-marble) 85%, transparent) 80%,
+      var(--pigment-marble) 100%
+    );
   }
 
   .wrap {
