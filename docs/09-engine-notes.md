@@ -1,14 +1,19 @@
 # 09 — Engine notes (RapidRAW code-read)
 
 Living map of the RapidRAW fork, branched from upstream commit `4f6a365` (2026-08-31,
-shallow). Update this whenever we learn more or diverge from upstream.
+shallow).
 
 > **As of D-040 (2026-09-02):** the fork is no longer a git submodule — its working
 > tree is **vendored at `app/`** (was submodule branch `chroma`, tip `41e9326`).
 > Pre-fold history is archived in `engine-history.bundle` (repo root, gitignored).
-> There is no live `upstream` remote anymore — we've diverged hard and **track
-> upstream RapidRAW manually**. Paths below now read `app/src-tauri/…` and
-> `app/src/…` (bulk-updated from `engine/…` in the D-039 skeleton commit).
+> There is no live `upstream` remote anymore.
+>
+> **As of D-281 (2026-09-10):** `app/` is owned code now, not a tracked-upstream drop
+> (owner: "it's fine if we change things in rapidraw, as we now gonna own it"). This
+> file is no longer a required ledger of every divergence from upstream — a change to
+> `app/` just needs the usual `D-NNN`/`B-NNN` in the usual places, same as anywhere
+> else in the repo. Kept as a historical map / for entries genuinely worth recording,
+> not as a cherry-pick-tracking obligation.
 
 Read status: **first pass, not built yet.** ~35k LOC Rust in `app/src-tauri/src/`.
 

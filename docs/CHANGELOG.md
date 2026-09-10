@@ -17,6 +17,11 @@ One or two lines per session. Detail lives in the decision it references.
   remaining ~19 ms can be split by subtraction. Completes an interrupted
   session's work; renumbered from its draft D-281, which `main` had meanwhile
   used for something else.
+- **2026-09-10** — **B-146 logged, investigating:** general preview playback
+  lag and janky frame-jumping at 4× — dispatched to an Opus agent to profile
+  before fixing; a real repeating seek-error warning in the live audio log
+  passed along as a lead, not yet confirmed as the cause. (Answered by the
+  entry above: it was not the cause.)
 - **2026-09-10** — **B-145 logged, not fixed:** dragging a clip lands it at
   frame 0 instead of the drop position — reported live, no jsdom repro
   attempted yet.
