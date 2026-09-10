@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-137 fixed (D-278): a clip drag's ghost now stays under
+  the pointer.** Root-caused in a real jsdom pointer drag rather than guessed
+  from the one screenshot: the "pinned preview" is dnd-kit's `DragOverlay`
+  clip ghost, which anchors at the dragged clip's LEFT EDGE while D-119 caps
+  its width at 320px — so every clip longer than ~3.5s at the default zoom
+  leaves the ghost hundreds of pixels behind the cursor. Neither the vendored
+  timeline library's edge resize nor the Trim tool was involved; both are
+  ruled out with evidence in the bug entry. The ghost is now a window onto the
+  clip centred on the grab point, shifted to the pointer via a dnd-kit
+  `Modifier`, and is a strict no-op for clips inside the cap. New
+  `dragGhost.ts` + 8 pure tests + 5 real-DOM mid-drag tests. Also logged
+  **B-142** (a slip/slide drag still paints the move preview it will not
+  perform) — root-caused, deliberately left, reasons in the entry.
 - **2026-09-10** — **B-140/D-275: retired the Edit tab's `CanvasSettingsPopover`**
   — confirmed live, minutes after D-274 shipped, as a real duplicate of the
   new docked Project Settings panel (both showing Resolution/Frame Rate at

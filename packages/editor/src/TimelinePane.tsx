@@ -284,6 +284,7 @@ import {
   type DragEndEvent,
   type DragMoveEvent,
   type DragStartEvent,
+  type Modifier,
 } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS as DndCSS } from '@dnd-kit/utilities';
@@ -448,6 +449,7 @@ import {
   type TrimZone,
 } from './trimMode';
 import { TrimToolbar } from './TrimToolbar';
+import { dragGhostWindow } from './dragGhost';
 import { adjustmentSummary } from './adjustment';
 import {
   canStartMarquee,
@@ -1444,6 +1446,12 @@ export function TimelinePane() {
   // the user aimed at.
   const [trimArmed, setTrimArmed] = useState(false);
   const trimPressRef = useRef<{ altKey: boolean; shiftKey: boolean; bodyYRatio: number; tool: TrimTool } | null>(null);
+  /** B-137 — the horizontal half of the same capture-phase press: how wide the
+   *  pressed clip really is on screen, and how far into it the pointer went
+   *  down. Stamped by the listener below and promoted to `clipGrab` state once
+   *  dnd-kit confirms a drag actually started, so an ordinary click never
+   *  re-renders the pane. See `dragGhost.ts` for what the ghost does with it. */
+  const clipGrabRef = useRef<{ widthPx: number; offsetPx: number } | null>(null);
 
   // Declared beside `trimArmed` because disarming has to clear it (see below).
   const [hoverTrimMode, setHoverTrimMode] = useState<TrimMode | null>(null);
@@ -1530,6 +1538,18 @@ export function TimelinePane() {
         // Read from the ref, not the state, so this listener never re-binds.
         tool: trimToolRef.current,
       };
+      // B-137 — the same press, measured horizontally, for the drag ghost.
+      // Taken here rather than from dnd-kit's own `active.rect.current.initial`
+      // in `onDragStart`: that ref is not yet populated when the drag-start
+      // handler runs (established by probe on the real component, not
+      // assumed — the ghost simply never moved), whereas the clip's box is
+      // readable from the very press that starts the gesture. Same rect the
+      // trim tool's own vertical band already uses, so the two cannot disagree
+      // about which clip was pressed.
+      clipGrabRef.current =
+        rect && rect.width > 0
+          ? { widthPx: rect.width, offsetPx: Math.max(0, Math.min(rect.width, e.clientX - rect.left)) }
+          : null;
     };
     el.addEventListener('pointerdown', onPointerDown, true);
     return () => el.removeEventListener('pointerdown', onPointerDown, true);
@@ -1725,6 +1745,12 @@ export function TimelinePane() {
   // — drives the `DragOverlay` ghost and whether `TrackDropZone` overlays
   // exist in the DOM at all (only during a clip-type drag).
   const [activeDrag, setActiveDrag] = useState<TrackHeaderDragData | ClipDragData | null>(null);
+  /** B-137 — the press that started the current clip drag, measured against
+   *  the dragged clip's own on-screen box: how wide it is and how far into it
+   *  the pointer went down. `null` for anything that is not a clip drag, and
+   *  for a clip drag dnd-kit could not measure (a pane laid out to nothing).
+   *  Feeds `dragGhostWindow` — see that module for why the ghost needs it. */
+  const [clipGrab, setClipGrab] = useState<{ widthPx: number; offsetPx: number } | null>(null);
   // D-113 — owner, live: "when i drag and drop it shows whole track as
   // white make only the track length and where it is actually going to
   // go, placeholder kindda." The full-row wash `TrackDropZone` used to
@@ -1865,6 +1891,7 @@ export function TimelinePane() {
     const onBlur = () => {
       document.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, cancelable: true }));
       setActiveDrag((prev) => (prev === null ? prev : null));
+      setClipGrab((prev) => (prev === null ? prev : null));
     };
     window.addEventListener('blur', onBlur);
     return () => window.removeEventListener('blur', onBlur);
@@ -3200,10 +3227,19 @@ export function TimelinePane() {
     const next = clip ?? header;
     if (!next) return; // a transitions-palette drag — no overlay ghost of its own
     setActiveDrag(next);
+    // B-137 — where in the clip the press that started this drag landed, and
+    // how wide that clip really is on screen. Measured off the DOM at press
+    // (`clipGrabRef`), not recomputed from frames × zoom: the ghost has to line
+    // up with the element `DragOverlay` anchors itself to, and a second,
+    // independently-derived width is exactly how those two drift apart.
+    // Promoted to state only now, once there is a real drag to render a ghost
+    // for. See `dragGhost.ts` for what it is used for.
+    setClipGrab(clip ? clipGrabRef.current : null);
   }, []);
 
   const onDndDragCancel = useCallback(() => {
     setActiveDrag(null);
+    setClipGrab(null);
     setClipDragPreview((prev) => (prev === null ? prev : null));
   }, []);
 
@@ -3360,6 +3396,7 @@ export function TimelinePane() {
       const transitionDrag =
         raw && (raw as TransitionDragData).type === 'transition' ? (raw as TransitionDragData) : null;
       setActiveDrag(null);
+      setClipGrab(null);
       setClipDragPreview((prev) => (prev === null ? prev : null));
 
       // D-226 — a transition dragged out of the palette. Its only legal target
@@ -3650,7 +3687,7 @@ export function TimelinePane() {
   // to preview), but a `clip` drag now gets the clip's real filmstrip +
   // waveform in the overlay — the same visual `getActionRender` already
   // builds for the resting clip, not a generic placeholder. Capped at
-  // `MAX_OVERLAY_PX` — this is a cursor-follow *preview*, not a literal
+  // `MAX_DRAG_GHOST_PX` — this is a cursor-follow *preview*, not a literal
   // render of the clip at full timeline zoom; an hour-long clip dragged at
   // 100% would otherwise produce an unusable, off-screen-sized ghost.
   const dragOverlayClip =
@@ -3658,10 +3695,40 @@ export function TimelinePane() {
       ? clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)]
       : null;
   const dragOverlayTrack = activeDrag?.type === 'clip' ? tracks[activeDrag.track] : null;
-  const MAX_OVERLAY_PX = 320;
-  const dragOverlayWidth = dragOverlayClip
-    ? Math.max(60, Math.min(MAX_OVERLAY_PX, (dragOverlayClip.duration / (dragOverlayClip.source_fps ?? fps)) * pxPerSec))
+  // B-137 — the cap above is what made the ghost detach from the pointer: a
+  // capped ghost anchored (by `DragOverlay`, unavoidably) at the dragged
+  // clip's LEFT EDGE has no spatial relationship to a press two-thirds of the
+  // way along a clip, and at the default zoom every clip longer than ~3.5s is
+  // capped. `dragGhostWindow` turns the ghost into the slice of the clip
+  // around the grab point; the modifier below shifts it right by that same
+  // offset so the slice lands under the cursor. Falls back to the clip's own
+  // frames × zoom width when dnd-kit could not measure the node (no clip
+  // grab), which reproduces the pre-B-137 geometry exactly rather than
+  // guessing.
+  const dragOverlayClipWidth = dragOverlayClip
+    ? (clipGrab?.widthPx ?? (dragOverlayClip.duration / (dragOverlayClip.source_fps ?? fps)) * pxPerSec)
     : 0;
+  const dragGhost = dragGhostWindow(dragOverlayClipWidth, clipGrab?.offsetPx ?? 0);
+  const dragOverlayWidth = dragOverlayClip ? dragGhost.widthPx : 0;
+  const dragOverlayFullSecs = dragOverlayClip ? dragOverlayClip.duration / (dragOverlayClip.source_fps ?? fps) : 0;
+  /** Source-seconds per on-screen pixel of THIS clip — derived from the clip's
+   *  own measured width rather than from `pxPerSec`, so a clip with a speed
+   *  change maps its window back to the right part of the media. */
+  const dragOverlaySecsPerPx = dragOverlayClipWidth > 0 ? dragOverlayFullSecs / dragOverlayClipWidth : 0;
+  const dragOverlayStartSecs = dragOverlayClip
+    ? dragOverlayClip.source_start / (dragOverlayClip.source_fps ?? fps) + dragGhost.startPx * dragOverlaySecsPerPx
+    : 0;
+  // `min` so the short-clip case — where `MIN_DRAG_GHOST_PX` makes the ghost
+  // WIDER than the clip — still asks for the clip's own duration and not a
+  // stretched-out over-read of the media, exactly as it did before B-137.
+  const dragOverlayDurationSecs = Math.min(dragOverlayFullSecs, dragOverlayWidth * dragOverlaySecsPerPx);
+  /** B-137 — the whole fix, in dnd-kit's own canonical extension point.
+   *  `PositionedOverlay` pins the ghost to `activeNodeRect.left` and then adds
+   *  this transform (read in its bundled source), so shifting x by the window's
+   *  own offset into the clip is exactly what puts the grabbed slice under the
+   *  pointer — and is a no-op (`startPx === 0`) for every clip that fits inside
+   *  the cap, which is why short clips are untouched by this. */
+  const dragGhostToPointer: Modifier = ({ transform }) => ({ ...transform, x: transform.x + dragGhost.startPx });
 
   // B-069 fix: these two cases used to `return` early, ABOVE several
   // useMemo/useCallback hooks that follow in this component (linkCheck, the
@@ -4460,9 +4527,19 @@ export function TimelinePane() {
         </ResizablePanel>
       </ResizablePanelGroup>
       </div>
-      <DragOverlay dropAnimation={null}>
+      {/* B-137 — `modifiers` is dnd-kit's own extension point for exactly this,
+          and is deliberately preferred over positioning the ghost by hand:
+          `PositionedOverlay` owns the overlay's `left`/`top`, so a competing
+          inline offset would be a second positioning system on one element,
+          which is the shape this file has already been burned by twice
+          (D-098/D-100). See `dragGhostToPointer` above. */}
+      <DragOverlay dropAnimation={null} modifiers={[dragGhostToPointer]}>
         {dragOverlayClip ? (
           <div
+            // B-137 — a stable hook for the regression test to find this ghost
+            // and read back where it really is mid-drag; a `DragOverlay` child
+            // is otherwise only identifiable by its Tailwind classes.
+            data-chroma-drag-ghost=""
             className="pointer-events-none relative overflow-hidden rounded shadow-lg ring-2 ring-accent"
             style={{
               width: dragOverlayWidth,
@@ -4475,16 +4552,16 @@ export function TimelinePane() {
               <>
                 <Filmstrip
                   sourcePath={dragOverlayClip.source_path}
-                  startSecs={dragOverlayClip.source_start / (dragOverlayClip.source_fps ?? fps)}
-                  durationSecs={dragOverlayClip.duration / (dragOverlayClip.source_fps ?? fps)}
+                  startSecs={dragOverlayStartSecs}
+                  durationSecs={dragOverlayDurationSecs}
                   width={dragOverlayWidth}
                   height={ROW_HEIGHT}
                 />
                 <div className="absolute inset-x-0 bottom-0" style={{ height: ROW_HEIGHT * 0.4 }}>
                   <Waveform
                     sourcePath={dragOverlayClip.source_path}
-                    startSecs={dragOverlayClip.source_start / (dragOverlayClip.source_fps ?? fps)}
-                    durationSecs={dragOverlayClip.duration / (dragOverlayClip.source_fps ?? fps)}
+                    startSecs={dragOverlayStartSecs}
+                    durationSecs={dragOverlayDurationSecs}
                     width={dragOverlayWidth}
                     height={ROW_HEIGHT * 0.4}
                   />
@@ -4496,8 +4573,8 @@ export function TimelinePane() {
             {dragOverlayTrack?.kind === 'audio' && (
               <Waveform
                 sourcePath={dragOverlayClip.source_path}
-                startSecs={dragOverlayClip.source_start / (dragOverlayClip.source_fps ?? fps)}
-                durationSecs={dragOverlayClip.duration / (dragOverlayClip.source_fps ?? fps)}
+                startSecs={dragOverlayStartSecs}
+                durationSecs={dragOverlayDurationSecs}
                 width={dragOverlayWidth}
                 height={ROW_HEIGHT}
               />
