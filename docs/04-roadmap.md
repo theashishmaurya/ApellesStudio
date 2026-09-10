@@ -2937,6 +2937,16 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   Not scoped into a D-NNN yet — needs the WebSearch re-run first, then sizing
   each of the 5 as its own tool/change before committing to an implementation
   order.
+- **Redundant "Apelles" label in the custom titlebar** — owner flagged live with a
+  screenshot (macOS menu bar already shows the app name at the very top; the
+  custom titlebar repeats it right below, immediately after the traffic-light
+  buttons): *"add this to backlock lets remove the apelles from here my project
+  as on the very top it's aleady there."* Location: `app/src/window/
+  TitleBar.tsx:116` — `<p className="text-sm font-semibold text-text-secondary
+  pointer-events-none">Apelles</p>`. Trivial removal (delete the element,
+  verify the surrounding flex layout doesn't leave a visible gap where it sat)
+  but not yet done — logged here rather than fixed inline since it was raised
+  as a backlog item, not an immediate ask.
 
 ---
 
