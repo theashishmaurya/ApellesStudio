@@ -1,5 +1,10 @@
 # --- Apelles monorepo ---
 
+# secrets — never commit, this repo is public
+.env
+.env.*
+!.env.example
+
 # Rust workspace build output
 /target/
 **/target/
