@@ -57,7 +57,6 @@ import { useProjectAutosave } from './hooks/useProjectAutosave';
 import { useColoristHistoryBridge } from './hooks/useColoristHistoryBridge';
 import { useDebugScreenshot } from './hooks/useDebugScreenshot';
 import { useDebugControl } from '@apelles/debug';
-import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ExternalEditBar from './components/ui/ExternalEditBar';
 import { Status } from './components/ui/ExportImportProperties';
 
@@ -839,8 +838,6 @@ function App() {
           executeDelete={executeDelete}
           handleSaveCollage={handleSaveCollage}
         />
-        {/* Apelles: the agent activity feed + request_human banner (D-032) */}
-        <AgentActivityDock />
         <ToastContainer
           position="bottom-right"
           autoClose={5000}

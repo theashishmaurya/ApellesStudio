@@ -177,6 +177,15 @@ export interface ShellProps {
    *  per-tab one. Injected by the composition root exactly like `launcher` and
    *  `sourcesPanel` — `Shell` still never imports `@apelles/editor`. */
   headerAction?: ReactNode;
+  /** D-295 — a floating surface rendered ABOVE the tab content, on every tab,
+   *  while a project is open: the agent activity feed + `request_human`
+   *  banner (D-032). It was mounted inside the Colorist app, which made a feed
+   *  of what an agent is doing to the whole project visible only from one of
+   *  the three tabs. Positions itself (the node is `fixed`), so the shell only
+   *  decides *whether* it is on screen, not where. Injected by the caller for
+   *  the same reason as `launcher`/`headerAction`: it lives in `app/src` and
+   *  `Shell` must not import it. */
+  overlay?: ReactNode;
   /** D-273 — i18next's `t`, injected for the Keyboard Shortcuts window so the
    *  fork's 13 translated locales keep rendering translated Colorist rows.
    *  Same app → shell direction as `launcher`: neither `@apelles/shell` nor
@@ -199,6 +208,7 @@ export function Shell({
   onCloseProject,
   sourcesPanel,
   headerAction,
+  overlay,
   translate,
 }: ShellProps) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -354,6 +364,15 @@ export function Shell({
       </div>
 
       <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} translate={translate} />
+
+      {/* D-295 — the agent activity feed, above every tab. Rendered here
+          rather than inside a tab for the same reason the Keyboard Shortcuts
+          window above is: it is genuinely shell-level (an agent's work spans
+          all three tabs), and a surface that only exists while one tab is on
+          screen cannot report what happened on another. Gated on
+          `projectOpen` only — the node hides itself when there is nothing to
+          show. */}
+      {projectOpen && overlay}
 
       <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0 overflow-hidden relative">
         {/* D-263 — the active tab's icon rail, LEFTMOST, immediately left of

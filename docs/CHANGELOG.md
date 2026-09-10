@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-295: the agent activity feed is global, and finally
+  reports Edit and Motion.** The dock moved out of the Colorist tab onto a new
+  shell-level `overlay` slot. The instrumentation gap the roadmap predicted was
+  real: nothing outside Colorist fed the feed. Closed by attributing what was
+  already recorded — `@apelles/history` entries gained
+  `source: 'user' | 'agent'`, stamped by a `runAsAgent()` scope that each tab's
+  MCP dispatcher wraps its handler in, one line per tab rather than one per op.
+
 - **2026-09-10** — **D-294: one Export, reachable from every tab.** Colorist's
   own Export dialog is gone; `EditorExportDialog` moved off the Edit tab's
   per-tab slot onto a shell-level `headerAction`, so it sits in the chrome bar

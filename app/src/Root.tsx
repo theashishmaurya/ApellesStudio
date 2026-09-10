@@ -19,6 +19,7 @@ import { useMediaPoolStore, trackEvent } from '@apelles/bridge';
 import { useKeymapStore } from '@apelles/keymap';
 import { useTranslation } from 'react-i18next';
 import App from './App';
+import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
 import { selectProjectKey, useSessionStore } from './store/useSessionStore';
@@ -323,6 +324,13 @@ export function Root() {
       // here rather than imported by `Shell`, same app → shell direction as
       // `launcher` and `sourcesPanel` above.
       headerAction={<EditorExportDialog />}
+      // D-295 — the agent activity feed + `request_human` banner, promoted out
+      // of the Colorist app (where it was mounted in `App.tsx`) to a
+      // shell-level surface: an agent's work spans all three tabs, and a feed
+      // of it that only exists on one of them cannot report the other two.
+      // Injected like `launcher`/`sourcesPanel`/`headerAction` — `Shell` never
+      // imports it.
+      overlay={<AgentActivityDock />}
       onCloseProject={() => {
         void useSessionStore.getState().closeProject();
       }}

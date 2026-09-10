@@ -8,7 +8,15 @@ first-class tool).
 
 Two pieces, one store, minimal upstream footprint.
 
-## A. Agent activity feed
+> **Updated 2026-09-10 by D-295 — this is a THREE-tab feed now, and it is
+> shell-level.** Everything below still describes the Colorist half exactly, and
+> that half is unchanged. What changed: the dock is no longer mounted in
+> `App.tsx` (it is injected into `@apelles/shell`'s `overlay` slot by
+> `Root.tsx`, so it is on screen whatever tab is active), and the Edit and
+> Motion tabs feed it too. They do so through a *different* mechanism, and
+> deliberately so — see "C. The other two tabs" at the end.
+
+## A. Agent activity feed (Colorist)
 
 A running, newest-first list of every grade change the agent made through the
 MCP/control bridge. Per entry: a human-readable summary, a timestamp, an
@@ -191,7 +199,9 @@ postHumanRequest(reason, roi)  clearHumanRequest()  setFeedOpen(b)
 ## GUI
 
 - `app/src/components/chroma/AgentActivityDock.tsx` (new) — a fixed
-  bottom-left dock, mounted once in `App.tsx` next to `useChromaControl()`.
+  bottom-left dock. Mounted in `App.tsx` until **D-295**; it is now injected
+  into `@apelles/shell`'s `overlay` slot by `Root.tsx`, so it is on screen
+  whatever tab is active.
   Contains the `request_human` banner (top) + the collapsible activity feed.
   Hidden entirely when there's no activity and no pending request. RapidRAW
   `Text` / `Button` + the `bg-surface` / `border-border-color` / `text-text-*`
@@ -201,7 +211,9 @@ postHumanRequest(reason, roi)  clearHumanRequest()  setFeedOpen(b)
 
 ## Upstream-file edits (divergence — doc 09)
 
-- `App.tsx` — +1 import, +1 `<AgentActivityDock />` in the tree.
+- `App.tsx` — was +1 import, +1 `<AgentActivityDock />` in the tree; **D-295
+  removed both** (the dock is injected from `Root.tsx` into the shell now, so
+  this upstream file is back to zero footprint for this feature).
 - `components/panel/editor/ImageCanvas.tsx` — +1 import, +~6 lines to render
   `<AgentRoiHighlight>` in the existing absolute overlay layer.
 
@@ -214,3 +226,51 @@ Apelles-only file from D-020) + `mcp/server.py` + `mcp/README.md`.
 `POST /op request_human`. Scope-first docstring: it's for genuine uncertainty
 and creative calls, not routine steps; the agent should keep working after
 `get_state` shows the request cleared. Tool count 23 → 24.
+
+
+---
+
+## C. The other two tabs (D-295)
+
+The Edit and Motion tabs record agent work through `@apelles/history`, not
+through `useAgentStore`, and the dock merges the two into one list.
+
+**Why not the same store.** `useAgentStore` lives in `app/src`, which a
+`packages/*` tab package must not import (D-039's one-way layer rule), and
+every field of an entry above is Colorist-shaped: two full `Adjustments`
+snapshots, a `diffAdjustments` field diff, and an undo that jumps the
+Colorist's own history index. None of that has a meaning for "trim clip 3" or
+"add a layer".
+
+**What is used instead.** Every Edit and Motion op already pushes a
+`@apelles/history` entry — `{ tab, label, undo, redo }` — because that is how
+global undo works (D-051), and that package is already a dependency of both tab
+packages and of `app`. The only missing fact was *who caused it*:
+
+- `HistoryEntry.source: 'user' | 'agent'`, defaulting to `'user'`.
+- `runAsAgent(fn)` — a re-entrant depth counter, unwound in a `finally`, that
+  stamps every push inside its window.
+- Each tab's MCP dispatcher (`useEditorControl.ts`, `useMotionControl.ts`)
+  wraps its handler call in it. **One line per tab, not one per op**, so a new
+  op is instrumented the day it is written.
+
+**What the dock shows for them:** label, tab and time — and **no per-row
+Undo**. The shared stack is LIFO: undoing an entry that is not on top would
+apply a reversal out of order and leave the stack describing a state the app is
+no longer in. Cmd/Ctrl+Z is the right control for those, and it is already
+global. The Colorist rows keep their per-row undo because the Colorist's own
+history supports a *jump* to an index, which is a different primitive.
+
+**Deduplication.** D-051's Colorist→shared-history bridge pushes grade edits
+onto the same stack, so the shared-stack side of the merge filters
+`tab !== 'colorist'`; Colorist rows come from `useAgentStore`, where the diff
+and the jump-undo live.
+
+**Honest limit.** The depth counter is not async-context tracking. A push that
+lands after an `await` while two MCP ops are interleaved could be attributed to
+the wrong one. It is still attributed to *an agent*, and this is a feed label
+rather than state, so the cost is one wrong row.
+`packages/history/src/store.test.ts` pins the case that matters (a push after
+an `await` inside a handler is still agent-scoped) and the one that would be
+dangerous (a throwing handler must not leak the counter and make every later
+user edit read as agent work).

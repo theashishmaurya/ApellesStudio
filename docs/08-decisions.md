@@ -28726,3 +28726,85 @@ one pinning that the launcher still gets no trigger; `tsc --noEmit` on
 `cargo fmt --check` shows one *fewer* diff in `export.rs` than `main` does (the
 file is not fmt-clean on `main`; nothing this pass added is dirty);
 `py_compile` on `mcp/server.py`.
+
+---
+
+## D-295 — the agent activity feed goes shell-level, and Edit/Motion ops finally feed it
+
+**Context.** `AgentActivityDock` (D-032) was mounted inside `App.tsx` — the
+Colorist tab — so a feed of what an agent is doing to the project was visible
+from exactly one of three tabs. Owner:
+`scratch/colorist-agent-activity-should-be-global.png`. The roadmap entry asked
+for a second thing too, and it was the real work: *check whether Edit/Motion
+MCP operations are even instrumented to feed it yet — if not, that gap is part
+of this item.*
+
+**They were not.** The feed's only writer is `useChromaControl.ts`, and every
+entry it records is Colorist-shaped: a full `Adjustments` snapshot before and
+after, a `diffAdjustments` field diff, and an undo that jumps the Colorist's
+own history stack. Nothing in `@apelles/editor` or `@apelles/motion` wrote to
+it, and neither could — `useAgentStore` lives in `app/src`, which a tab package
+must not import (D-039's one-way layer rule).
+
+**Options for closing that.**
+
+1. *Generalise `useAgentStore` and move it into a package.* A new entry type, a
+   new package or a new home in an existing one, and the per-shot scoping
+   (`shotFeeds`/`scopeToShot`) and grade-diff machinery carried along for the
+   ride. Correct, and much larger than the item.
+2. *Instrument each Edit/Motion op individually.* ~90 handlers in
+   `useEditorControl.ts` alone, each needing a hand-written summary — a
+   maintenance surface that would go stale on the first new op.
+3. **Chosen: attribute what is already recorded.** Every Edit and Motion op
+   *already* pushes a `@apelles/history` entry — `{ tab, label, undo, redo }` —
+   because that is how global undo (D-051) works, and `@apelles/history` is
+   already a dependency of both tab packages **and** of `app`. The only thing
+   missing was *who caused it*.
+
+**What that took.** `HistoryEntry` gains `source: 'user' | 'agent'`, and
+`@apelles/history` gains `runAsAgent(fn)`: a re-entrant depth counter, unwound
+in a `finally`, that stamps every push inside its window. Each tab's MCP
+dispatcher wraps its handler call in it — **one line per tab**, not one per op,
+so a new op is instrumented the day it is written without anyone remembering
+to. The dock then merges two sources into one newest-first list: Colorist grade
+entries from `useAgentStore` (rich — diff + jump-to-here Undo) and shared-stack
+entries with `source === 'agent' && tab !== 'colorist'` (label + tab + time).
+The `tab !== 'colorist'` filter is what stops double-listing, since D-051's
+Colorist→shared-history bridge pushes grade edits onto the same stack.
+
+**Why the Edit/Motion rows carry no Undo, deliberately.** The shared stack is
+LIFO; calling `undo()` on an entry that is not on top would apply a reversal
+out of order and leave the stack describing a state the app is no longer in.
+Cmd/Ctrl+Z is the right control for those, and it is already global. The
+Colorist rows keep their per-row undo because the Colorist's own history
+supports a *jump* to an index, which is a different primitive.
+
+**The honest limit of the depth counter.** It is not async-context tracking. A
+push that lands after an `await`, while two MCP ops are interleaved, could be
+attributed to the wrong one — it is still attributed to *an agent*, and this is
+a feed label rather than state, so the cost is one wrong row. A test pins the
+case that actually matters (a push after an `await` inside a handler is still
+agent-scoped) and the one that would be dangerous (a throwing handler must not
+leak the counter and make every later user edit read as agent work).
+
+**The surface itself** is `@apelles/shell`'s new `overlay` prop — the same
+injected-node pattern as `launcher`/`sourcesPanel`/`headerAction`, supplied by
+`Root.tsx`, so `Shell` still imports nothing from `app`. Gated on `projectOpen`
+only; the dock hides itself when there is nothing to show.
+
+**Verified:** `npm test --workspace @apelles/history` 14/14 (3 new — stamping,
+the post-`await` case, re-entrancy + the throwing-handler unwind);
+`@apelles/shell` 7/7; `@apelles/motion` 632/632; `@apelles/editor` 1706/1706
+(the full parallel run fails 7 *files* to collect on this machine under load —
+run with `--maxWorkers=2` they pass, 1631 + 75 = 1706, and each passes alone);
+`tsc --noEmit` on `app` at 65 errors, `main`'s baseline minus the one D-293
+removed.
+
+**Note on verification method, worth recording.** This worktree had no
+`node_modules`, so `@apelles/*` resolved up the tree to the **main checkout's**
+packages — meaning any `tsc`/test run that crossed a package boundary was
+silently checking `main`'s code, not this branch's. Caught when a correct
+`ShellProps.headerAction` reported as missing. Fixed with a worktree-local
+link farm (`node_modules/@apelles/*` → this worktree's own packages, everything
+else symlinked from the main checkout's install); every figure above was
+re-measured after that.

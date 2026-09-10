@@ -1,16 +1,33 @@
-// Apelles — the agent activity feed + `request_human` banner (D-032).
+// Apelles — the agent activity feed + `request_human` banner (D-032),
+// **shell-level and cross-tab since D-295**.
 //
-// A fixed bottom-left dock, mounted once in App.tsx next to useChromaControl().
+// A fixed bottom-left dock, injected into `@apelles/shell`'s `overlay` slot by
+// `Root.tsx` — it was mounted inside `App.tsx` (the Colorist tab) until D-295,
+// which made a feed of what an agent is doing to the whole project visible
+// from only one of the three tabs.
 // - top card: the `request_human` hand-back banner (reason + "Resume agent")
-// - bottom card: a newest-first list of every grade change the agent made
-//   through the MCP / control bridge, each with an expandable per-field diff
-//   and a jump-to-here "Undo".
+// - bottom card: a newest-first list of what the agent has done, merged from
+//   two sources:
+//     * **Colorist grade changes** (D-032, `useAgentStore`) — the rich rows:
+//       an expandable per-field diff and a jump-to-here "Undo".
+//     * **Edit / Motion ops** (D-295, `@apelles/history` entries stamped
+//       `source: 'agent'` by `runAsAgent` around each tab's MCP dispatcher) —
+//       label, tab and time. Deliberately NO per-row undo: those live on the
+//       shared LIFO undo stack, where undoing an entry that is not on top
+//       would corrupt it. Cmd/Ctrl+Z is the correct control for them, and it
+//       is already global (D-051).
+//   Colorist rows are read from `useAgentStore` rather than from the shared
+//   stack (which the D-051 bridge also pushes them onto) so the diff and the
+//   jump-to-here undo survive; the shared-stack side filters
+//   `tab !== 'colorist'` so nothing is listed twice.
 //
 // Hidden entirely when there's no activity and no pending request. Styling
 // follows the sibling ColoristTransport (plain elements + the app's colour tokens).
 // See docs/notes/agent-activity-feed.md.
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Undo2, Trash2, UserRound, X } from 'lucide-react';
+
+import { useHistoryStore, type HistoryEntry } from '@apelles/history';
 
 import { useAgentStore, AgentActivityEntry } from '../../store/useAgentStore';
 import { restoreEditorHistorySnapshot } from '../../utils/editorHistorySnapshot';
@@ -130,21 +147,56 @@ function ActivityRow({ entry }: { entry: AgentActivityEntry }) {
   );
 }
 
+/** D-295 — one Edit/Motion op an agent performed, read off the shared
+ *  `@apelles/history` stack. No diff and no per-row Undo: see this file's
+ *  module doc for why (the shared stack is LIFO; Cmd/Ctrl+Z is its control). */
+function TabActivityRow({ entry }: { entry: HistoryEntry }) {
+  return (
+    <div className="px-2.5 py-2 border-b border-border-color last:border-b-0">
+      <div className="flex items-start gap-1.5">
+        {/* aligns with `ActivityRow`'s disclosure chevron, which this row has
+            no use for — there is nothing to expand. */}
+        <span className="mt-0.5 w-[13px] shrink-0" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <span className="block text-xs font-medium text-text-primary truncate">{entry.label}</span>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-[10px] text-text-secondary">{timeAgo(entry.ts)}</span>
+            <span className="text-[10px] text-text-secondary/60">· {entry.tab}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AgentActivityDock() {
   const activity = useAgentStore((s) => s.activity);
   const feedOpen = useAgentStore((s) => s.feedOpen);
   const setFeedOpen = useAgentStore((s) => s.setFeedOpen);
   const clearActivity = useAgentStore((s) => s.clearActivity);
   const pending = useAgentStore((s) => s.pendingHumanRequest);
+  // D-295 — the Edit/Motion half. `tab !== 'colorist'` because the D-051
+  // bridge pushes Colorist grade edits onto this same stack, and those are
+  // already listed (with their diff and their undo) from `useAgentStore`.
+  const undoStack = useHistoryStore((s) => s.undoStack);
+  const tabActivity = undoStack.filter((e) => e.source === 'agent' && e.tab !== 'colorist');
+
+  // One list, newest first, over both sources — an agent's work is one
+  // sequence of actions, and splitting it by which tab it touched would make
+  // "what just happened?" two questions instead of one.
+  const rows = [
+    ...activity.map((e) => ({ ts: e.ts, key: `c-${e.id}`, node: <ActivityRow key={`c-${e.id}`} entry={e} /> })),
+    ...tabActivity.map((e) => ({ ts: e.ts, key: `h-${e.id}`, node: <TabActivityRow key={`h-${e.id}`} entry={e} /> })),
+  ].sort((a, b) => b.ts - a.ts);
 
   const showBanner = !!pending && !pending.cleared;
-  if (activity.length === 0 && !showBanner) return null;
+  if (rows.length === 0 && !showBanner) return null;
 
   return (
     <div className="fixed left-3 bottom-3 z-40 w-[340px] max-w-[calc(100vw-24px)] flex flex-col gap-2">
       {showBanner && <RequestHumanBanner />}
 
-      {activity.length > 0 && (
+      {rows.length > 0 && (
         <div className="rounded-lg border border-border-color bg-surface shadow-2xl overflow-hidden flex flex-col max-h-[45vh]">
           <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border-color shrink-0">
             <button
@@ -154,12 +206,16 @@ export default function AgentActivityDock() {
               {feedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               <span className="text-xs font-semibold">Agent activity</span>
             </button>
-            <span className="text-[10px] text-text-secondary tabular-nums">{activity.length}</span>
+            <span className="text-[10px] text-text-secondary tabular-nums">{rows.length}</span>
             <div className="flex-1" />
             <button
               onClick={clearActivity}
               className="text-text-secondary hover:text-text-primary p-0.5"
-              title="Clear the feed (does not revert any grade)"
+              // D-295 — clears the Colorist half only. The Edit/Motion rows
+              // come off the shared UNDO stack, and clearing that to tidy a
+              // feed would throw away real undo history — a far worse trade
+              // than a feed that still lists them.
+              title="Clear the grade feed (does not revert anything, and leaves Edit/Motion undo history alone)"
             >
               <Trash2 size={12} />
             </button>
@@ -174,9 +230,7 @@ export default function AgentActivityDock() {
 
           {feedOpen && (
             <div className="overflow-y-auto custom-scrollbar min-h-0">
-              {activity.map((entry) => (
-                <ActivityRow key={entry.id} entry={entry} />
-              ))}
+              {rows.map((r) => r.node)}
             </div>
           )}
         </div>

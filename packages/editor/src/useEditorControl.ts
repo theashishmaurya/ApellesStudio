@@ -78,6 +78,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, emit } from '@tauri-apps/api/event';
 
 import { useMediaPoolStore, type MediaItem } from '@apelles/bridge';
+import { runAsAgent } from '@apelles/history';
 // D-280 — the transport's own rate bounds, from the package that owns the
 // transport. The same pair the store clamps to and the Rust session clamps to.
 import { MAX_PLAYBACK_RATE, MIN_PLAYBACK_RATE } from '@apelles/player';
@@ -3699,7 +3700,12 @@ export function useEditorControl(): void {
       }
 
       try {
-        const result = await fn(opArgs(args));
+        // D-295 — every `@apelles/history` push inside this window is stamped
+        // `source: 'agent'`, which is the whole of this tab's agent-activity
+        // instrumentation: one wrapper at the dispatcher, not a line in each
+        // of the ~90 handlers. The shell-level feed reads those entries, so
+        // work an agent does here is finally visible from any tab.
+        const result = await runAsAgent(() => fn(opArgs(args)));
         const error = opError(result);
         respond({ ok: !error, error, result });
       } catch (e) {

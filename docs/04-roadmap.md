@@ -2707,14 +2707,20 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      timeline's `Clip` data at all right now, so "make the Edit one
      authoritative" is not a UI toggle, it is the B-147 fix. Scope this and
      B-147 as one piece of work, not two.
-  2. **Agent activity should be global, not Colorist-only.** Screenshot:
-     `scratch/colorist-agent-activity-should-be-global.png`. `AgentActivityDock`
-     (`app/src/components/chroma/AgentActivityDock.tsx`) currently only
-     surfaces Colorist grade operations (`match_to_reference` and friends).
-     Real scope: move it to a shell-level surface reachable from all three
-     tabs, and check whether Edit/Motion tab MCP operations are even
-     instrumented to feed it yet — if not, that instrumentation gap is part
-     of this item, not a separate one to discover later.
+  2. **[x] Agent activity should be global, not Colorist-only** — **done
+     2026-09-10, D-295.** Screenshot:
+     `scratch/colorist-agent-activity-should-be-global.png`. Both halves:
+     `AgentActivityDock` moved to `@apelles/shell`'s new `overlay` slot
+     (injected by `Root.tsx`, same pattern as `launcher`/`headerAction`), and
+     the instrumentation gap this entry predicted was real and is closed —
+     Edit and Motion ops fed nothing, and now do. `@apelles/history` gained
+     `source: 'user' | 'agent'` plus `runAsAgent()`, and each tab's MCP
+     dispatcher wraps its handler in it: **one line per tab**, so a new op is
+     instrumented the day it is written. The dock merges the Colorist grade
+     feed (rich rows: diff + jump-to-here Undo) with agent-sourced shared-history
+     entries from the other tabs (label + tab + time, no per-row undo — the
+     shared stack is LIFO, and Cmd/Ctrl+Z is already global). See D-295 for the
+     depth counter's honest limit.
   3. **[x] One global Export, not a per-tab one** — **done 2026-09-10,
      D-294.** Screenshot: `scratch/colorist-export-button-remove.png`.
      Colorist's `ExportDialog.tsx` deleted; `EditorExportDialog` moved from
