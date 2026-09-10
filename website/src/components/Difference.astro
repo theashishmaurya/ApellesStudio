@@ -52,32 +52,32 @@
     background: var(--pigment-basalt);
   }
 
-  /* The same eased/oklab fade Hero.astro uses at its own bottom edge (see
-     that file's comment for why plain linear-alpha bands visibly), run in
-     reverse into the section below — owner: "do gradient on the next seam
-     as well... such that the hero's [fade] just start[s continuing] to
-     [the] next seam['s] gradient," so the whole opening reads as one
-     continuous wash (image → dark → light) rather than three flat blocks
-     each ending in a hard edge. This flip is basalt → marble, a much bigger
-     lightness jump than Hero's own fade, so the eased stops matter even
-     more here. */
-  .diff::after {
+  /* Hero already fades into this exact basalt at its own bottom edge (see
+     that file's comment) — an instant flat cut right after that still read
+     as a seam, reported live. Rather than a colour-change gradient (tried at
+     this section's bottom instead, into Rooms; reverted — wrong seam and a
+     muddy transition), this continues Hero's own darkening a little further:
+     a `multiply`-blended wash of the section's own basalt over itself, eased
+     from strong at the very top to nothing partway down. Multiplying a
+     colour by itself always darkens it, so this needs no literal "darker
+     than basalt" token — it is the one token, doubled. */
+  .diff::before {
     content: '';
     position: absolute;
     left: 0;
     right: 0;
-    bottom: 0;
-    height: 140px;
+    top: 0;
+    height: 180px;
     pointer-events: none;
+    mix-blend-mode: multiply;
     background: linear-gradient(
       in oklab to bottom,
-      transparent 0%,
-      color-mix(in oklab, var(--pigment-marble) 4%, transparent) 20%,
-      color-mix(in oklab, var(--pigment-marble) 15%, transparent) 35%,
-      color-mix(in oklab, var(--pigment-marble) 35%, transparent) 50%,
-      color-mix(in oklab, var(--pigment-marble) 60%, transparent) 65%,
-      color-mix(in oklab, var(--pigment-marble) 85%, transparent) 80%,
-      var(--pigment-marble) 100%
+      var(--pigment-basalt) 0%,
+      color-mix(in oklab, var(--pigment-basalt) 85%, transparent) 20%,
+      color-mix(in oklab, var(--pigment-basalt) 60%, transparent) 40%,
+      color-mix(in oklab, var(--pigment-basalt) 35%, transparent) 60%,
+      color-mix(in oklab, var(--pigment-basalt) 15%, transparent) 80%,
+      transparent 100%
     );
   }
 
