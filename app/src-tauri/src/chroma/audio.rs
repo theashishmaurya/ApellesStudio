@@ -211,6 +211,36 @@ pub fn chroma_audio_scrub_end(seq: u64) {
 /// across two calls at different frames — this function has no idea that
 /// matters, it just resolves `frame` fresh every time, exactly as if it were
 /// the only call.
+
+/// A count of **TIMELINE** frames (the difference of two timeline-space frame
+/// numbers, e.g. `Clip::end_frame_at(fps) - playhead`), converted to real
+/// elapsed seconds at the timeline's own rate — never a source file's.
+///
+/// **B-041.** `resolve_sources_at`'s `remaining_frames` below used to be
+/// handed to `VideoInfo::frame_to_secs`, which divides by the SOURCE's own
+/// probed `fps()`. That is correct for a genuinely source-space frame count
+/// (like `source_frame`, a few lines away, which really is measured in the
+/// file's own native rate) but wrong for `remaining_frames`: it is the
+/// difference of two TIMELINE-space values, so "N of them" means "N /
+/// (timeline fps) real seconds" by construction, regardless of what rate the
+/// source file happens to report. The two rates usually agree closely enough
+/// that this was invisible (a project's timeline fps is commonly set to match
+/// its dominant clip's own native rate) — until the source has no REAL native
+/// rate to agree with at all: an audio-only file's `VideoInfo::fps()` is
+/// [`apelles_media::video::probe`]'s nominal `24/1` "there is no frame rate to
+/// measure" placeholder (see that function's own doc), which only coincides
+/// with the timeline's real rate when the project happens to be 24fps. On any
+/// other project rate this silently played an audio-track clip's tail for the
+/// wrong number of real seconds — not the crash B-041 was originally filed
+/// against (`apelles_media::video::probe`'s own audio-only branch, added by
+/// B-089/D-292, already stopped that), but the "an audio clip's frame
+/// positions have to be interpreted against the TIMELINE's rate rather than a
+/// source video's" semantics gap that bug's own investigation named as the
+/// real fix still owed.
+fn timeline_frame_span_to_secs(frames: u64, fps: f64) -> f64 {
+    if fps > 0.0 { frames as f64 / fps } else { 0.0 }
+}
+
 fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
     let mut sources: Vec<AudioSourceSpec> = Vec::new();
     // B-079 — the active timeline's own rate, for every `end_frame_at(fps)`
@@ -261,11 +291,10 @@ fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
                 start_secs: speed
                     .as_ref()
                     .map_or_else(|| info.frame_to_secs(source_frame), |s| s.open_secs),
-                duration_secs: Some(
-                    speed
-                        .as_ref()
-                        .map_or_else(|| info.frame_to_secs(remaining_frames), |s| s.output_secs),
-                ),
+                duration_secs: Some(speed.as_ref().map_or_else(
+                    || timeline_frame_span_to_secs(remaining_frames, fps),
+                    |s| s.output_secs,
+                )),
                 speed: speed.map(|s| s.segments).unwrap_or_default(),
                 gain: 1.0,
                 // D-147 — a fade on a VIDEO clip fades its embedded audio too,
@@ -329,11 +358,10 @@ fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
             start_secs: speed
                 .as_ref()
                 .map_or_else(|| info.frame_to_secs(source_frame), |s| s.open_secs),
-            duration_secs: Some(
-                speed
-                    .as_ref()
-                    .map_or_else(|| info.frame_to_secs(remaining_frames), |s| s.output_secs),
-            ),
+            duration_secs: Some(speed.as_ref().map_or_else(
+                || timeline_frame_span_to_secs(remaining_frames, fps),
+                |s| s.output_secs,
+            )),
             speed: speed.map(|s| s.segments).unwrap_or_default(),
             gain,
             // D-147 — an audio clip's fade is a gain fade, the direct
@@ -1572,6 +1600,118 @@ mod tests {
             (rms, peak),
             (0.0, 0.0),
             "a source with no audio stream must not produce any device output"
+        );
+    }
+
+    /// B-041 — a genuine `TrackKind::Audio` clip pointing at an audio-only
+    /// file (no video stream at all) must resolve without error, and its
+    /// `duration_secs` must be computed against the **timeline's** own fps —
+    /// not whatever nominal rate `apelles_media::video::probe` invents for a
+    /// file with no real frame rate to measure (see
+    /// `timeline_frame_span_to_secs`'s own doc for the full reasoning).
+    ///
+    /// No `CHROMA_TEST_*` gate and no real device: this calls
+    /// [`resolve_sources_at`] directly — the exact timeline-resolution step
+    /// `chroma_audio_play` runs before it ever reaches `cpal` — so it is real
+    /// coverage of the originally reported crash (`"probe /…/tone.m4a: no
+    /// video stream in /…/tone.m4a"`) and the semantics gap B-041's own
+    /// investigation found still owed, without needing a real audio device or
+    /// a `CHROMA_TEST_AUDIO_VIDEO` fixture. Only real dependency is `ffmpeg`
+    /// (already hard, `synth_test_tone`'s own doc).
+    #[test]
+    fn resolve_sources_at_a_genuine_audio_only_track_clip_uses_the_timeline_fps() {
+        let _guard = session_test_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // A real audio-only source — no video stream at all, exactly B-041's
+        // reported shape.
+        let tone_path = synth_test_tone(tmp.path(), 440, 3.0, 48_000);
+
+        let project_dir = tmp.path().join("AudioOnlyTest.chroma");
+        std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
+
+        // A 30fps timeline — deliberately NOT 24fps, the one rate that would
+        // coincidentally mask this bug: `probe_audio_only`'s own nominal rate
+        // for a source with no real frame rate to measure IS 24, so a 24fps
+        // project would make the pre-fix formula agree with the fix by luck.
+        const TIMELINE_FPS: i64 = 30;
+        // 90 timeline frames at 30fps is exactly the tone's real 3.0s length
+        // — chosen so a wrong-fps computation is visibly wrong (3.75s against
+        // the nominal-24 rate) rather than off by an unreadable rounding hair.
+        const CLIP_FRAMES: i64 = 90;
+
+        let timeline = apelles_timeline::Timeline {
+            id: "tl1".into(),
+            name: "AudioOnlyTest".into(),
+            rate: Some(apelles_types::Rational::new(TIMELINE_FPS, 1)),
+            tracks: vec![
+                // `resolve_video_position` errors outright on a timeline with
+                // NO video track at all (a separate, deliberate contract) —
+                // an empty one satisfies that without contributing a source.
+                apelles_timeline::Track {
+                    kind: apelles_timeline::TrackKind::Video,
+                    clips: vec![],
+                    ..Default::default()
+                },
+                apelles_timeline::Track {
+                    kind: apelles_timeline::TrackKind::Audio,
+                    clips: vec![apelles_timeline::Clip {
+                        id: "audio-clip1".into(),
+                        shot_id: None,
+                        media_id: None,
+                        name: "tone".into(),
+                        source_path: tone_path.display().to_string(),
+                        source_start: 0,
+                        duration: CLIP_FRAMES,
+                        source_len: CLIP_FRAMES,
+                        start_frame: 0,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            markers: Vec::new(),
+        };
+        let manifest = super::super::project::ProjectManifest {
+            schema: "chroma.project/1".into(),
+            name: "AudioOnlyTest".into(),
+            created: String::new(),
+            modified: String::new(),
+            shots: Vec::new(),
+            active_shot: 0,
+            active_clip_id: None,
+            settings: Default::default(),
+            timelines: vec![timeline],
+            active_timeline: 0,
+            media: Vec::new(),
+            folders: Vec::new(),
+        };
+        super::super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
+        super::super::state::set_project(Some(super::super::state::ProjectRef {
+            path: project_dir,
+            name: "AudioOnlyTest".into(),
+        }));
+
+        let result = resolve_sources_at(0);
+        super::super::state::set_project(None);
+
+        let sources = result.expect(
+            "an audio-only clip on a genuine Audio track must resolve, not error \
+             — this is B-041's own originally reported crash",
+        );
+        assert_eq!(
+            sources.len(),
+            1,
+            "the audio-track clip should be the only resolved source (the empty video track contributes nothing)"
+        );
+        let src = &sources[0];
+        assert_eq!(src.start_secs, 0.0);
+        let got = src
+            .duration_secs
+            .expect("duration_secs must be Some for a clip with a known length");
+        assert!(
+            (got - 3.0).abs() < 1e-6,
+            "90 frames at the timeline's real 30fps is 3.0s, not {got} \
+             (computing against probe's nominal 24fps would give 3.75s instead)"
         );
     }
 

@@ -4,6 +4,31 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **fixed B-144: a slip/slide drag no longer shows the move
+  preview.** `onDndDragMove`'s suppression only checked Alt, so D-261's
+  tool-driven slip/slide (no modifier) still painted the landing preview; the
+  `DragOverlay` filmstrip/pill ghost was never suppressed for either entrance
+  at all. Both now gate on the same `claimed` test `onDndDragEnd` already
+  used to commit. New `TimelinePane.slipSlidePreview.dom.test.tsx` (6 tests).
+- **2026-09-10** — **fixed B-011: `export_video`'s state restore was a no-op
+  whenever nothing was loaded before the export** (`if let Some(p) = prev`
+  never fires for `prev: None`, the ordinary case) — a real leak in the
+  running app, not just the test-only symptom this was filed as, since
+  `current_video()` stayed pointed at the export's last frame forever
+  afterward. Now `set_current_video(prev)` unconditionally; `chroma::export`'s
+  own tests also take `PROJECT_STATE_LOCK` (D-211), matching `chroma::audio`'s
+  and `chroma::relight`'s (B-105) existing use of it.
+- **2026-09-10** — **fixed B-041: `chroma_audio_play` on an audio-only Audio-track
+  clip.** The original crash (`probe`'s `-select_streams v:0` erroring on a
+  video-less file) was already gone, fixed incidentally by B-089/D-292's
+  `probe_audio_only`. What was still live: `resolve_sources_at` converted a
+  TIMELINE-frame span (`remaining_frames`) through the SOURCE's own probed
+  fps, which for an audio-only file is `probe_audio_only`'s nominal `24` —
+  wrong on any project whose fps isn't 24. New `timeline_frame_span_to_secs`
+  divides by the timeline's own fps instead; new
+  `resolve_sources_at_a_genuine_audio_only_track_clip_uses_the_timeline_fps`
+  test (30fps timeline) pins `duration_secs: 3.0`, not the `3.75` the old
+  formula would give.
 - **2026-09-10** — **fixed B-152 (D-305): composition/export resolution no
   longer hijacked by a reference-image clip.** `composition_size()` used to
   derive a project's output resolution from the first video-track clip in

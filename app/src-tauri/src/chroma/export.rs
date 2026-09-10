@@ -622,17 +622,23 @@ pub fn export_video(
 
     // The grade path fetches tracked mattes for `current_video().frame` (D-019).
     // Point Apelles' clip state at the export target, restore it afterwards.
+    //
+    // B-011 — `restore` used to be `if let Some(p) = prev { set_current_video(Some(p)) }`,
+    // which is a no-op whenever `prev` was `None` (the ordinary case: nothing was
+    // loaded before this export ran). That left `current_video()` permanently
+    // pointing at the export's own last frame instead of putting it back — a
+    // real state leak in the running app, not just a test artifact: any code
+    // that reads `current_video()` afterwards (D-034's keyframe interpolation,
+    // among others) would see a video "loaded" that the user never opened.
+    // `set_current_video(prev)` restores whatever was really there, `Some` or
+    // `None` alike — the same "borrow and put back" contract every other user
+    // of this global honours.
     let prev = current_video();
     set_current_video(Some(super::state::CurrentVideo {
         path: video_path.to_path_buf(),
         info: info.clone(),
         frame: from,
     }));
-    let restore = |prev: Option<super::state::CurrentVideo>| {
-        if let Some(p) = prev {
-            set_current_video(Some(p));
-        }
-    };
 
     progress_reset(total, &out_path.to_string_lossy());
 
@@ -747,7 +753,7 @@ pub fn export_video(
     };
 
     let result = run();
-    restore(prev);
+    set_current_video(prev);
 
     match result {
         Ok(frames) => {
@@ -978,6 +984,24 @@ pub async fn chroma_bake_lut(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B-011 — every test below that calls `export_video` mutates the
+    /// process-global `current_video()` (D-019's `state::SESSION`) for the
+    /// duration of the export, restoring it afterwards. That restore makes a
+    /// single call order-safe, but two such tests running concurrently (the
+    /// `cargo test` default) can still interleave: one's `current_video()` is
+    /// genuinely `Some(...)` while another test — in this file, or `relight`'s
+    /// own `keyframed_light_without_a_loaded_video_falls_back_to_raw_fields`,
+    /// which takes the same lock for exactly this reason — is reading it.
+    /// `PROJECT_STATE_LOCK` (D-211) is the one lock every test that touches
+    /// this global already shares (`chroma::audio`'s own `session_test_guard`
+    /// is the same one-liner, private to that file); taking it here closes
+    /// the loop for `chroma::export`'s side of it too.
+    fn session_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
 
     // D-049: explicit dialog resolution > project spec > clip-derived (None).
     #[test]
@@ -1406,6 +1430,7 @@ mod tests {
     /// clip's own frame, cropped by `image` rather than by our pipeline.
     #[test]
     fn export_encodes_a_real_crop() {
+        let _guard = session_test_guard();
         if !gpu_or_skip("export_encodes_a_real_crop") {
             return;
         }
@@ -1463,6 +1488,7 @@ mod tests {
     /// spawn-with-the-clip's-size code could not have produced at all.
     #[test]
     fn export_encodes_a_90_degree_step() {
+        let _guard = session_test_guard();
         if !gpu_or_skip("export_encodes_a_90_degree_step") {
             return;
         }
@@ -1495,6 +1521,7 @@ mod tests {
     /// never guarantees them. Rounded DOWN, so at most one row/column is lost.
     #[test]
     fn export_evens_an_odd_crop_for_h264() {
+        let _guard = session_test_guard();
         if !gpu_or_skip("export_evens_an_odd_crop_for_h264") {
             return;
         }
@@ -1531,6 +1558,7 @@ mod tests {
     /// itself, and no file is produced.
     #[test]
     fn export_refuses_a_sub_pixel_crop() {
+        let _guard = session_test_guard();
         if !gpu_or_skip("export_refuses_a_sub_pixel_crop") {
             return;
         }
@@ -1552,6 +1580,7 @@ mod tests {
     /// the source clip's own dimensions, no trim, no resample.
     #[test]
     fn export_without_geometry_is_unchanged() {
+        let _guard = session_test_guard();
         if !gpu_or_skip("export_without_geometry_is_unchanged") {
             return;
         }
@@ -1622,6 +1651,7 @@ mod tests {
 
     #[test]
     fn export_neutral_30_frames() {
+        let _guard = session_test_guard();
         let Some(vid) = test_video() else {
             eprintln!("skip: set CHROMA_TEST_VIDEO");
             return;
@@ -1639,6 +1669,7 @@ mod tests {
     /// export with no override is unchanged (the resize path is skipped).
     #[test]
     fn export_resolution_override() {
+        let _guard = session_test_guard();
         let Some(vid) = test_video() else {
             eprintln!("skip: set CHROMA_TEST_VIDEO");
             return;
@@ -1680,6 +1711,7 @@ mod tests {
 
     #[test]
     fn export_exposure_brighter() {
+        let _guard = session_test_guard();
         let Some(vid) = test_video() else {
             eprintln!("skip: set CHROMA_TEST_VIDEO");
             return;
@@ -1777,6 +1809,7 @@ mod tests {
     /// cache dir for the test clip.
     #[test]
     fn export_tracked_range() {
+        let _guard = session_test_guard();
         let (Some(vid), Ok(dir)) = (test_video(), std::env::var("CHROMA_TEST_MATTE_DIR")) else {
             eprintln!("skip: set CHROMA_TEST_VIDEO + CHROMA_TEST_MATTE_DIR");
             return;

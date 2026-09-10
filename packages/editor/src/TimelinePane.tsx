@@ -3299,8 +3299,19 @@ export function TimelinePane() {
       // promise a reposition that is never going to happen, so the preview is
       // suppressed for the whole gesture rather than left to contradict the op
       // that actually commits (`onDndDragEnd`).
+      //
+      // B-144 — this used to check ONLY `altKey`, so D-261's tool-driven
+      // entrance (choosing Slip/Slide in the palette, no modifier held) was
+      // never suppressed and still painted the move ghost/landing preview.
+      // `claimedAsTrim` is now exactly `onDndDragEnd`'s own `claimed` test
+      // below it (the Alt arm OR a palette tool that owns body drags), read
+      // from the same `trimPressRef` capture, so this can never disagree with
+      // what the drag is actually going to commit.
       const armedActivator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
-      if (armedActivator?.altKey || trimPressRef.current?.altKey) {
+      const armedPress = trimPressRef.current;
+      const armedAltKey = armedActivator?.altKey ?? armedPress?.altKey ?? false;
+      const claimedAsTrim = armedPress !== null && (armedAltKey || trimToolOwns(armedPress.tool, 'body'));
+      if (claimedAsTrim) {
         dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
         dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
         return;
@@ -3658,13 +3669,33 @@ export function TimelinePane() {
   // sourced from `useEditorTimelineStore` (lifted in the same pass) so both
   // components read the exact same selection without prop-drilling.
 
+  // B-144 — a slip or a slide is not a move: the dragged clip's position
+  // (and, for a slide, its neighbours') never changes, so a cursor-follow
+  // ghost promising a reposition — the filmstrip/waveform preview below, or
+  // its label-pill fallback — would be lying about what this gesture is
+  // about to commit. Read `trimPressRef` directly rather than the live
+  // `trimArmed` state: a trim's mode is resolved once, from the press that
+  // started the drag (see that ref's own doc), not continuously from
+  // whatever key state happens to be true mid-drag — the exact same
+  // `claimed` test `onDndDragEnd` uses to decide whether this gesture
+  // commits a slip/slide instead of a move, so the preview can never
+  // disagree with the op that actually fires. D-250's pointer-adjacent mode
+  // badge already names the gesture correctly; this just stops the move
+  // ghost from contradicting it.
+  const clipDragPress = trimPressRef.current;
+  const isSlipOrSlideDrag =
+    activeDrag?.type === 'clip' &&
+    clipDragPress !== null &&
+    (clipDragPress.altKey || trimToolOwns(clipDragPress.tool, 'body'));
+
   // D-098 — `DragOverlay` content: a small floating pill following the
   // pointer for whichever drag is active, a real cursor-follow preview
   // native HTML5 drag/drop never gave us (B-027's own drag-ghost complaint
   // was a symptom of that gap, not a one-off bug — the browser's default
   // drag image is a frozen DOM snapshot captured once at `dragstart`).
-  const dragOverlayLabel =
-    activeDrag?.type === 'track-header'
+  const dragOverlayLabel = isSlipOrSlideDrag
+    ? null
+    : activeDrag?.type === 'track-header'
       ? labels[activeDrag.index]
       : activeDrag?.type === 'clip'
         ? (clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)]?.name ?? activeDrag.clipId)
@@ -3679,8 +3710,9 @@ export function TimelinePane() {
   // `MAX_DRAG_GHOST_PX` — this is a cursor-follow *preview*, not a literal
   // render of the clip at full timeline zoom; an hour-long clip dragged at
   // 100% would otherwise produce an unusable, off-screen-sized ghost.
-  const dragOverlayClip =
-    activeDrag?.type === 'clip'
+  const dragOverlayClip = isSlipOrSlideDrag
+    ? null
+    : activeDrag?.type === 'clip'
       ? clipsOf(activeDrag.track)[idxOf(activeDrag.track, activeDrag.clipId)]
       : null;
   const dragOverlayTrack = activeDrag?.type === 'clip' ? tracks[activeDrag.track] : null;
