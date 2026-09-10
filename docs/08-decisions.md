@@ -28432,3 +28432,64 @@ logged **B-146** itself in the meantime, as `investigating`, naming this
 worktree; that entry is the one kept and updated, rather than the duplicate the
 interrupted session had appended — its "found"/"expected" wording and its
 screenshot reference are the original report and are preserved verbatim.
+
+## D-291 — website hosting: Cloudflare Pages (direct upload) + a path-filtered GitHub Actions workflow, not Cloudflare's own Git integration
+
+**decided (2026-09-10)**
+
+- **Context:** the repo went public this session (D-002) and needed real hosting for
+  `website/` (D-255's static Astro site) with a CI/CD pipeline gated so that pushes
+  to unrelated parts of this monorepo (the Tauri app, Rust crates, MCP server) never
+  trigger a website deploy — owner, live: *"such that only when website changes we
+  trigger the CI/CD pipeline?"*
+- **False start, corrected same session:** the Cloudflare Pages project was first
+  created against whatever Cloudflare account `wrangler` happened to already be
+  OAuth-logged into on this machine (`subscriptions@ivoyant.com`, an unrelated
+  agency/client account already hosting 4 other unrelated projects) without
+  confirming whose account that was first — caught by the owner (*"wtf :/ no delete
+  it right now and remove all the trace"*), corrected by deleting that project,
+  `wrangler logout`, then `wrangler login` fresh as `ashish.1999vns@gmail.com`
+  (account `a222ada0c62175788fc6745129aeb25a`) before redoing any of this. Lesson:
+  never assume an already-authenticated CLI session is the right account for a new
+  piece of infrastructure — confirm whose it is first, the same standing bar as any
+  other "changing account settings" action.
+- **Options considered:**
+  - **Cloudflare Pages' own Git integration** (dashboard-connected to the GitHub
+    repo, with Cloudflare's "build watch paths" glob for the monorepo filtering) —
+    simplest to wire, but the build runs on Cloudflare's own build image/environment
+    with less control, and connecting it requires an OAuth grant from Cloudflare to
+    the GitHub repo (an account-linking dashboard action).
+  - **GitHub Actions + `wrangler pages deploy` (direct upload)** — a workflow gated
+    by `paths: ["website/**", ".github/workflows/website-deploy.yml"]`, so it is a
+    plain, inspectable `on: push: paths:` filter rather than a Cloudflare-side
+    setting; the build (`npm ci && npm run check && npm run test && npm run build`)
+    runs in GitHub's own environment, matching how `website/`'s own `npm run verify`
+    already works locally; no OAuth grant from Cloudflare to GitHub needed.
+- **Decision:** GitHub Actions + direct upload. Matches this Cloudflare account's own
+  existing pattern (its other projects are all direct-upload, no Git provider
+  connected) and keeps the actual build/test/deploy pipeline as ordinary, readable
+  CI config in this repo rather than a dashboard setting invisible to `git log`.
+  `.github/workflows/website-deploy.yml` runs the website's own `check`/`test`/
+  `build` scripts before publishing, so a broken build or a failing test blocks the
+  deploy the same way it would locally.
+- **Live infrastructure, this pass:**
+  - Cloudflare Pages project `apelles-studio` (account `a222ada0c62175788fc6745129aeb25a`,
+    `ashish.1999vns@gmail.com`), first deploy verified live at
+    `https://apelles-studio.pages.dev`.
+  - Custom domain `apelles.studio` attached and active (DNS: a proxied `CNAME @ ->
+    apelles-studio.pages.dev`), SSL cert issued and verified — `curl` confirms the
+    real page title serves over HTTPS.
+  - `www.apelles.studio` also attached as a custom domain (proxied `CNAME www ->
+    apelles-studio.pages.dev`, needed so the redirect below has a valid cert to
+    redirect *from*) plus a zone-level Redirect Rule (Cloudflare's own "Redirect from
+    WWW to root" template: `https://www.*` → `https://${1}`, 301) — verified live:
+    `https://www.apelles.studio/some/path?x=1` → `301` →
+    `https://apelles.studio/some/path?x=1`, path and query preserved.
+- **What this does NOT cover yet:** the two GitHub Actions secrets
+  (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) the workflow needs are
+  deliberately NOT set by this pass — creating/handling API tokens is out of scope
+  for an agent to do on the owner's behalf; the owner creates a Cloudflare API token
+  scoped to "Pages: Edit" and sets both secrets themselves (`gh secret set` or the
+  GitHub UI) before the workflow can run for real. Until then, deploys are manual
+  (`cd website && npm run build && npx wrangler pages deploy dist
+  --project-name=apelles-studio --branch=main`).

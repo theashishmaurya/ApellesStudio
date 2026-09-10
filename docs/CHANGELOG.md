@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — D-291: `website/` now has real hosting — Cloudflare Pages
+  project `apelles-studio` on the `ashish.1999vns@gmail.com` account, custom
+  domains `apelles.studio` (live, SSL verified) and `www.apelles.studio`
+  (301-redirects to the apex, path/query preserved), and a path-filtered
+  GitHub Actions workflow (`.github/workflows/website-deploy.yml`) so a push
+  only deploys when `website/**` actually changed. GitHub secrets for the
+  workflow are not yet set (owner's own step — see D-291). Corrected a false
+  start mid-pass: the Pages project was first created against the wrong,
+  already-logged-in Cloudflare account and had to be deleted and redone.
 - **2026-09-10** — B-148: fixed the website Hero's mobile ask overlapping the
   headline (collapses to just the button below 640px, which now navigates to
   `/#beta` instead of submitting inline) and, in a same-day follow-up, fixed

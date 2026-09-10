@@ -1,0 +1,57 @@
+# Deploys website/ to Cloudflare Pages (project "apelles-studio", account
+# ashish.1999vns@gmail.com). This is a monorepo — chroma/ also holds the
+# Tauri app, Rust crates, and MCP server — so this workflow is gated to only
+# the paths that can affect the built site, per D-291. It does not build or
+# touch anything else in the repo.
+#
+# Requires two repo secrets (Settings > Secrets and variables > Actions),
+# neither of which this workflow or any agent sets — create them by hand:
+#   CLOUDFLARE_API_TOKEN   — a token scoped to "Cloudflare Pages: Edit" for
+#                            this account (My Profile > API Tokens > Create
+#                            Token > "Cloudflare Pages — Edit" template).
+#   CLOUDFLARE_ACCOUNT_ID  — this Cloudflare account's id.
+name: Deploy website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/website-deploy.yml"
+  workflow_dispatch: {}
+
+# Only one deploy in flight at a time; a newer push wins over a stale one
+# still building.
+concurrency:
+  group: website-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test
+      - run: npm run build
+
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: website
+          command: pages deploy dist --project-name=apelles-studio --branch=main
