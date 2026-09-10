@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — fixed a real bug in D-291's own
+  `.github/workflows/website-deploy.yml`: it ran `npm run test` before
+  `npm run build`, but `tests/build-output.test.ts` requires `dist/` to
+  already exist — every run since D-291 landed failed at the test step
+  before ever reaching the deploy step, unrelated to the still-unset
+  Cloudflare secrets. Caught by actually pushing and checking `gh run view`
+  rather than assuming the workflow was correct. Reordered to check → build →
+  test, matching `website/package.json`'s own `verify` script.
 - **2026-09-10** — B-149: fixed two real Lighthouse findings on production
   (`apelles.studio`) — a contrast failure on the "01/02/03" room numbers
   (ochre on marble, 2.95:1; switched to terracotta, 5.3:1) and a
