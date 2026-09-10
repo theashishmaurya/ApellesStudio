@@ -47,38 +47,16 @@
   /* A basalt section (D-282): the tonal inverse of the page, not a second dark
      theme — same two neutrals, ochre standing in for terracotta as the working
      link colour, since terracotta's contrast on basalt is too low to read. */
+  /* No top treatment here — a `multiply`-darken overlay was tried (see git
+     history) but it made the seam DARKER than final basalt and then eased
+     back up to normal, a dip that broke the monotonic light→dark→ink-dark
+     flow the owner asked for (reported live: "we got darker, which is
+     breaking it, should be lighter than dark[er]"). Hero.astro's own fade is
+     now paced to already BE this exact basalt by its bottom edge, so this
+     section just continues in flat, unmodified colour — the actual fix is
+     there, not here. */
   .diff {
-    position: relative;
     background: var(--pigment-basalt);
-  }
-
-  /* Hero already fades into this exact basalt at its own bottom edge (see
-     that file's comment) — an instant flat cut right after that still read
-     as a seam, reported live. Rather than a colour-change gradient (tried at
-     this section's bottom instead, into Rooms; reverted — wrong seam and a
-     muddy transition), this continues Hero's own darkening a little further:
-     a `multiply`-blended wash of the section's own basalt over itself, eased
-     from strong at the very top to nothing partway down. Multiplying a
-     colour by itself always darkens it, so this needs no literal "darker
-     than basalt" token — it is the one token, doubled. */
-  .diff::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 0;
-    height: 180px;
-    pointer-events: none;
-    mix-blend-mode: multiply;
-    background: linear-gradient(
-      in oklab to bottom,
-      var(--pigment-basalt) 0%,
-      color-mix(in oklab, var(--pigment-basalt) 85%, transparent) 20%,
-      color-mix(in oklab, var(--pigment-basalt) 60%, transparent) 40%,
-      color-mix(in oklab, var(--pigment-basalt) 35%, transparent) 60%,
-      color-mix(in oklab, var(--pigment-basalt) 15%, transparent) 80%,
-      transparent 100%
-    );
   }
 
   .wrap {
