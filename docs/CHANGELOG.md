@@ -80,6 +80,20 @@ One or two lines per session. Detail lives in the decision it references.
   CSS `fill` recoloured the outline instead of solidifying it). Closes the
   roadmap's "Lock/Unlock icons are hard to tell apart" item. Also deleted
   `simple-icons`, an unreferenced dependency in `app/package.json`.
+- **2026-09-10** — BUGS.md status audit for B-077/B-091/B-126: all three were
+  already fixed in code/data but their entries still read `status: open`.
+  B-077 (timeline fps conversion) was fixed the same day it was filed
+  (D-194) under a duplicate `## B-077` heading that never got cross-linked
+  back to the original entry. B-091 (`editor_export`'s intermittent MCP
+  response failure) was mitigated in the very commit that documented it
+  (d88ad66, stripping the unbounded `args` field from the default response)
+  but the doc text wasn't updated in the same commit. B-126 (website's stale
+  MCP tool count) was fixed by D-264/D-266/D-270 and reconciled again in the
+  2026-09-10 website-redesign merge (161 tools, 37 `motion_*`, matching
+  `mcp/server.py` exactly; `website/tests/mcp-data.test.ts` 77/77 passing).
+  No code changes were needed for any of the three — just correcting BUGS.md
+  to match reality.
+
 - **2026-09-10** — website image weight + SEO/social-card follow-ups from the
   same Lighthouse pass as B-149: converted the three `Demo.astro` screenshots
   from PNG to WebP (77-81% smaller, same pixel dimensions) and the hero

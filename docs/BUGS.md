@@ -1045,7 +1045,7 @@ status: fixed (2026-09-07, D-187) · severity: blocker (no export could ever com
 - **verification:** `timelineExport.test.ts` — 2 new tests (multi-track max-end-wins, empty-timeline-gets-zero). The real-ffmpeg suite (`timelineExport.ffmpeg.test.ts`) — all 3 tests complete in under a second each, where the equivalent real command previously ran unbounded.
 
 ## B-077 — `endFrame`/the GUI timeline display add a clip's SOURCE-frame `duration` directly to its TIMELINE-frame `start_frame`, with no fps conversion — wrong gap detection, wrong displayed duration, for any clip whose native fps differs from the project's
-status: open · severity: high (a real, silent correctness bug across gap detection/trim/ripple/display for exactly the content this session's reel uses — mixed native-fps clips — though it does NOT affect `editor_export`'s actual rendered output, which already converts correctly per B-075) · area: `packages/editor/src/timeline.ts` (`endFrame`, and by extension `trackDuration`/`timelineDuration`/gap detection/ripple/trim), `packages/editor/src/TimelinePane.tsx` (every `clip.duration / fps` / `clip.source_start / fps` pixel-width and gap calculation)
+status: fixed (2026-09-07, D-194 — same-day, same-session fix; see the second `## B-077` entry below for the full write-up) · **doc bug, verified 2026-09-10:** this entry was left at `status: open`/`fix: not attempted` after the fix actually landed later the same session — the bug number was reused for the write-up of its own fix (the entry titled "The Edit-tab GUI … mis-converts a clip's `duration`/`source_start` at the WRONG frame rate — the same B-075 bug, everywhere else it appears") instead of this entry being updated in place, leaving two `## B-077` headings in this file with contradictory statuses. Re-verified independently rather than trusted blind: `packages/editor/src/timeline.ts`'s `endFrame` (now `c.start_frame + sourceFramesToTimeline(c, …, fps)`, with `sourceFramesToTimeline`/`timelineFramesToSource` as real fps-aware helpers, both carrying `B-077` doc comments) and `packages/editor/src/TimelinePane.tsx` (every filmstrip/waveform/drag-overlay width now reads `clip.source_fps ?? fps`, not a bare `fps`) both confirmed on disk to have the fix described below, not the bug described above · severity: high (as originally filed) · area: `packages/editor/src/timeline.ts` (`endFrame`, and by extension `trackDuration`/`timelineDuration`/gap detection/ripple/trim), `packages/editor/src/TimelinePane.tsx` (every `clip.duration / fps` / `clip.source_start / fps` pixel-width and gap calculation)
 - **found:** 2026-09-07, live, owner looking at the real Edit-tab timeline UI for the two placed clips (AFTER: 39.38s real, 1875 native frames @ 47.6fps; BEFORE: 47.86s real, 2113 native frames @ 44.1fps) — the transport bar showed a total duration of **00:01:28:00** (88s) and both clip bars visibly extended far past their real content (a thumbnailed region for the real footage, then a long plain blue "empty" tail).
 - **repro:** place a clip whose native fps differs from the project's own (`timelineFps`, `DEFAULT_FPS=24` when unset, as on any fresh project) and look at its displayed length, or the total timeline duration.
 - **expected:** BEFORE (real 47.86s) should show as such; the total timeline should read ~0:48, not 1:28.
@@ -1053,7 +1053,7 @@ status: open · severity: high (a real, silent correctness bug across gap detect
 - **cause:** `crates/apelles-timeline`'s own `Clip` doc is explicit: "`source_start`/`duration` are in **source frames**; `start_frame` is in **timeline** frames" — genuinely two different frame-rate spaces, by design (so a trim boundary check can correctly compare against the source's own `source_len`). But `endFrame(c) { return c.start_frame + c.duration; }` (`timeline.ts`) adds them directly with no conversion, and `TimelinePane.tsx` divides `clip.duration`/`clip.source_start` by the single project-wide `fps` (`timelineFps(timeline)`) throughout — both are only correct when a clip's native fps happens to equal the project's own, which is true for almost all normal same-fps footage and therefore was never noticed until today's genuinely mixed-fps content (two screen recordings at two different real frame rates) exercised it for the first time. This is the SAME root shape as B-075 (which already fixed the identical conflation, but only inside `timelineExport.ts` specifically) — `endFrame`/gap-detection/ripple/trim/display are a second, separate, much more pervasive set of call sites with the same bug, now that `Clip.source_fps` (B-075) exists to actually fix them with.
 - **NOT a thumbnail bug** (first guessed live, then corrected by the owner) — the thumbnail/filmstrip rendering was working correctly the whole time, generating real thumbnails only for the clip's REAL footage duration; it was the clip BAR's drawn length that was wrong (too long), making the correctly-short thumbnailed region look like a bug in the thumbnails instead of in the bar's own length.
 - **does NOT affect export correctness:** `editor_export`'s own `buildExportFfmpegArgs` computes `startSec`/`endSec` independently (never calls `endFrame`) and already uses `clip.source_fps ?? opts.fps` correctly per B-075 — the rendered video's actual timing is right; only the GUI's live display/gap-math for these clips is wrong.
-- **fix:** not attempted here — genuinely large and cross-cutting (every `duration`/`source_start` consumer across gap detection, trim/ripple, snap points, and display needs the SAME `clip.source_fps ?? timelineFps`-aware conversion `timelineExport.ts` already got in isolation for the export path only), scoped out as real follow-up work rather than rushed inline. `Clip.source_fps` (B-075) already exists and is already populated by both real clip-creation sites (`editor_add_clip`, the GUI drag-drop path) — this fix has what it needs, it just hasn't been done yet.
+- **fix:** landed the same session (D-194) — see the second `## B-077` entry below for the exact call sites touched (`endFrame`, `trackDuration`/`timelineDuration`, `computeInsertion`/`gapAt`/`clipAt`, the trim clamps, `TimelinePane.tsx`'s filmstrip/waveform/drag props) and its verification (`npm test --workspace @apelles/editor` 335/335, `cargo test -p apelles-timeline` 129/129). This entry's own "not attempted" line above was stale from before that fix landed — left uncorrected until this 2026-09-10 pass.
 
 ## B-078 — `Clip.source_fps` (B-075) does not survive `save_project`/`open_project` — silently dropped, regressing B-075's own fix the moment a project is saved and reopened
 status: fixed (2026-09-07, D-194, fixed incidentally by the B-077 audit) · severity: high (silently reintroduces B-075's wrong-duration bug on ANY project that gets saved and reloaded — which is every real usage session, not an edge case) · area: `packages/editor/src/timeline.ts` (`Clip.source_fps`), `crates/apelles-timeline/src/lib.rs` (`Clip`)
@@ -1194,12 +1194,12 @@ status: fixed (2026-09-07) · severity: high (this is the Edit tab's own adverti
 
 ## B-091 — `editor_export`'s own MCP tool response intermittently fails outright ("Error executing tool editor_export") for a large-but-not-huge payload, instead of the graceful "saved to a file, read it in chunks" handling the same size class gets most of the time — while the underlying ffmpeg render always completes successfully regardless
 
-status: open · severity: medium (never lost real work — the exported FILE is correct every time this was checked — but the tool call itself is unreliable enough to need a blind retry, and a caller with no way to inspect the real file might reasonably conclude the export itself failed) · area: MCP response-size handling between `mcp/server.py`'s `editor_export` and whatever enforces the token/size limit on its return value (not `editor_export`'s own Rust/TS code, which was confirmed unaffected — this is a transport/tooling-layer question, not this repo's own bug, but worth a firm repro trail since it directly blocked verifying a real fix this session)
+status: fixed (mitigated 2026-09-07, same session, commit d88ad66) · **doc bug, verified 2026-09-10:** this entry was left at `status: open`/`fix: not attempted` even though the SAME commit that added this entry (`d88ad66`) also shipped the mitigation described in its own "fix" section below — a real inconsistency within one commit, not just later drift. Re-verified independently on 2026-09-10: `mcp/server.py`'s `editor_export` (search its own `# B-091` comment) strips the `result.args` key — the full compiled ffmpeg argv/filter_complex, the field that grew unboundedly with keyframe count and was the actual size driver — from the MCP response by default, before `json.dumps`. What remains (`ok`, `error`, `outPath`, `stdoutTail`, `stderrTail`) is bounded: `packages/editor/src/editorExport.ts`'s `runEditorExport` returns `stdoutTail`/`stderrTail` from `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `tail()`, capped at 20/40 lines respectively, and the response envelope (`useEditorControl.ts`'s `{ok, error, result}`) carries nothing else (no frame/histogram — those are grading-op-only fields). So the response can no longer grow with a timeline's keyframe/clip count at all, which removes the actual size-boundary instability this bug reported rather than merely reducing its odds — the full argv is still available to an in-app/test caller (the TS function's own return value is untouched; only the MCP boundary trims it), matching this entry's own originally-proposed fix. Not independently re-confirmed against a real oversized export this pass (would need reproducing the original 2-clip/~50-keyframe/11-audio-input reel) — the code-level argument is that the field responsible for the reported growth is now unconditionally absent, not that a new size ceiling was measured · severity: medium (as originally filed; downgraded in practice since the payload is now deterministically small) · area: MCP response-size handling between `mcp/server.py`'s `editor_export` and whatever enforces the token/size limit on its return value (not `editor_export`'s own Rust/TS code, which was confirmed unaffected — this is a transport/tooling-layer question, not this repo's own bug, but worth a firm repro trail since it directly blocked verifying a real fix this session)
 - **found:** 2026-09-07, live, re-exporting the comparison reel after the B-090 fix (a real timeline with 2 video clips × ~50 dense eased keyframes each + 11 audio inputs — a large but not unusually large `filter_complex` string by this project's own standards). One `editor_export` call failed with the bare, detail-free error `"Error executing tool editor_export"`; the IMMEDIATATE retry (identical arguments, nothing else changed) instead got the SAME general size class of response gracefully handled — "result exceeds maximum allowed tokens… saved to /path/to/file.txt" — and the export itself was, on inspection of the real output file, correct and complete both times.
 - **repro (not fully reliable — this is what's confirmed, not a deterministic trigger):** call `editor_export` on a timeline whose compiled `filter_complex` is large (dozens of keyframes across multiple clips plus several audio inputs — this session's own real reel is a working example). Sometimes the tool call errors outright with no detail; sometimes the identical call is caught by size-limit handling and saved to a file instead; the actual `ffmpeg` render itself has never been observed to fail or produce a wrong file in either case — confirmed each time via direct `ffprobe`/pixel inspection of the real output path from `outPath`, independent of what the tool call itself returned.
 - **expected:** either the response is ALWAYS handled the same way for a given size (gracefully truncated/saved, per the size-limit behavior already seen working), or the hard failure mode at minimum surfaces WHAT was too large / what actually happened, rather than a bare "Error executing tool" with zero diagnostic detail.
 - **cause:** not root-caused — the failure sits somewhere between `mcp/server.py`'s `editor_export` (which unconditionally returns `json.dumps(_op("editor_export", **args))`, no truncation of its own — see this function's own code, unchanged by this investigation) and whatever layer enforces a maximum tool-result size for this session. Given the SAME general payload size was observed to hit BOTH the graceful path and the hard-failure path on different calls, this looks like a real boundary-condition instability (e.g. a race, or a threshold that isn't purely payload-byte-count) rather than a simple "too big, every time" limit — but this wasn't independently instrumented enough to say precisely where the line is.
-- **fix:** not attempted — outside this repo's own code as far as this investigation could tell (mcp/server.py's own `editor_export` implementation was inspected and is not itself doing anything unusual with response size). Documented as a real, reproducible-in-kind (if not reliably reproducible exactly) operational gotcha for whoever next works on the MCP transport layer or on `editor_export`'s own response shape — a real mitigation worth considering on THIS side of the boundary regardless of where the limit itself lives: `editor_export` could return a SUMMARY (outPath, duration, whether it succeeded) by default instead of echoing the full compiled `ffmpeg` argv verbatim on every call, with the full argv available on request — the full argv is genuinely useful for debugging a failed compile, but is arguably the wrong default once a timeline has more than a handful of keyframes, and is the entire reason this response is large enough to hit the limit in the first place.
+- **fix (landed the same session, commit d88ad66 — this line was stale, see the status line above):** exactly the mitigation this section proposed. `editor_export`'s MCP wrapper now drops `result["args"]` (the full compiled ffmpeg argv, the unbounded field) before returning, so the default response is a small, fixed-shape summary (`ok`/`error`/`outPath`/`stdoutTail`/`stderrTail`) regardless of how many keyframes/clips/audio inputs the timeline has. The full argv is unaffected for any caller that goes through the TS function directly (in-app, tests) — only the MCP boundary trims it, per the code comment on that block.
 - **workaround used this session:** verify the real output file directly (`ffprobe`/frame extraction) rather than trusting the tool call's own success/failure signal when the timeline is this complex; retry once on a bare "Error executing tool" failure — it has, so far, always turned out the underlying export had already succeeded.
 
 ## B-093 — On a KEYFRAMED clip the on-canvas transform box is drawn from the clip's STATIC transform, so it sits nowhere near the picture — and dragging it commits a write the compositor can never show
@@ -2281,42 +2281,56 @@ shared seek decision is the proper follow-up.
 
 ## B-126 — the marketing site publishes an MCP tool count that is 37 tools stale, and its own anti-fabrication test cannot currently fail loudly enough to stop it
 
-status: open · severity: medium · area: website / docs-accuracy
+status: fixed (2026-09-09/2026-09-10, D-264 + D-266 + D-270, reconciled through the D-293 merge) · severity: medium · area: website / docs-accuracy
 
-**Repro.** `grep -c '^@mcp.tool()' mcp/server.py` returns **152**.
-`website/src/data/mcp.ts` declares `TOOL_TOTALS = { all: 115, shipped: 106,
-debugOnly: 9 }`, and `website/tests/mcp-data.test.ts` asserts
-`TOOL_TOTALS.all === TOOLS.length` against that same file. Those cannot both be
-true, so that test fails as things stand.
+**Original repro (2026-09-07).** `grep -c '^@mcp.tool()' mcp/server.py` returned
+**152**. `website/src/data/mcp.ts` declared `TOOL_TOTALS = { all: 115, shipped:
+106, debugOnly: 9 }`, and `website/tests/mcp-data.test.ts` asserted
+`TOOL_TOTALS.all === TOOLS.length` against that same file — those could not
+both be true, so the test failed as things stood.
 
-**Expected.** The site's published numbers track `mcp/server.py`, which is
-exactly what D-255 built that test for ("if someone adds a tool, this test fails
-until the site's own count is updated — which is the point").
+**Verified fixed, 2026-09-10.** `grep -c '^@mcp.tool()' mcp/server.py` now
+returns **161** (9 `debug_*`, 37 `motion_*`). `website/src/data/mcp.ts`'s
+`TOOL_TOTALS` is `{ all: 161, shipped: 152, debugOnly: 9 }` and its `TOOL_GROUPS`
+breaks down as Edit 69 + Colorist 42 + Motion 37 + Media understanding 4 = 152
+— matching exactly. The stale "Motion tab's 0 MCP tools" framing is gone
+(`TOOL_GROUPS` now has a real `Motion` entry, and `GAPS` no longer mentions it).
+Ran `website/tests/mcp-data.test.ts` directly (`npm install && npm test` in
+`website/`, since it's still deliberately outside the npm workspace): **77/77
+pass**, including `total tool count matches the server`, `Motion matches the
+real motion_* tools`, and `does not claim a gap that has actually been closed`.
+`npm run check` (astro + tsc): 0 errors. This entry itself was left at
+`status: open` after the fix landed — corrected in this pass rather than
+re-fixing an already-fixed bug.
 
-**Actual.** The site says 115 definitions / 106 shipped. It also still prints
-"the Motion tab's 0 MCP tools" as a stated gap, and
-`website/tests/mcp-data.test.ts` asserts
-`TOOLS.filter((t) => t.startsWith('motion_'))` has length **0** — there are now
-**36** of them.
+**Cause (historical).** Ordering, not a coding error. D-255 (the website)
+landed on 2026-09-09 with numbers correct as of that moment; D-257 added 32
+`motion_*` tools later the same day and did not update `website/`, and a
+follow-up pass added 4 more. `website/` being outside the npm workspace meant
+`npm test` at the repo root never ran its suite, so the guard test's failure
+was invisible from the normal test command.
 
-**Cause.** Ordering, not a coding error. D-255 (the website) landed on
-2026-09-09 with numbers correct as of that moment; **D-257** added the 32
-`motion_*` tools later the same day and did not update `website/`, and
-**D-259** (this pass) added 4 more. `website/` is deliberately outside the npm
-workspace (D-255), so `npm test` at the repo root never runs its suite and the
-guard test's failure is invisible from the normal test command — which is the
-part that makes this a real defect rather than routine staleness. It also has no
-`node_modules` in a fresh worktree, so it cannot be run without an install
-first.
+**What actually fixed it.** D-264 (2026-09-09) rebuilt `website/src/data/mcp.ts`
+and rewrote `website/tests/mcp-data.test.ts` as a real anti-fabrication guard:
+it now parses `TOOLS` directly out of `mcp/server.py` at test time (a regex
+over `@mcp.tool()` decorators) and asserts every published total/group
+count/sample name against that live list, rather than a hardcoded number — the
+"must be 0" `motion_` assertion the original bug called out no longer exists in
+this form. D-266 (2026-09-09) and D-270 (2026-09-10) each re-counted and
+updated `TOOL_TOTALS`/`TOOL_GROUPS` as real tools were added
+(`editor_reprobe_media`, the media-pool read/organise tools, the two
+audio-monitoring ones), and the 2026-09-10 merge (D-293 branch) reconciled two
+concurrent count bumps (160→161) during conflict resolution rather than
+silently picking one side.
 
-**Fix (not done here — deliberately out of D-259's scope, and flagged rather
-than widened).** Update `website/src/data/mcp.ts`'s totals and per-group
-breakdown from a fresh count, rewrite the `MOTION_GAP` copy (the Motion tab is
-no longer a zero — it has 36 tools), and change the `motion_` assertion in
-`website/tests/mcp-data.test.ts` from "must be 0" to a real count. The deeper
-fix is making that suite reachable from the repo-root test command so the next
-tool addition cannot silently re-stale it; that is the part worth a decision of
-its own.
+**Still open, deliberately not folded into this fix (a real decision, not an
+oversight):** `website/` remaining outside the root npm workspace means its
+suite still is not reachable from a bare `npm test` at the repo root — the
+"deeper fix" this entry originally flagged. `mcp-data.test.ts` is now robust
+enough that a future tool addition fails LOUDLY the next time anyone runs
+`npm test` inside `website/` (which `npm run verify` there also does), but
+nothing forces that run automatically from the root. Worth its own `D-NNN` if
+it's ever prioritized; not re-scoped into this bug fix.
 
 ## B-127 — the filmstrip's keyframe-interval MEMORY cache was keyed on the path alone, in front of a disk cache keyed on (path, mtime, len): a replaced source served the old file's interval forever
 
