@@ -17,6 +17,20 @@ One or two lines per session. Detail lives in the decision it references.
   `docs/02-scope.md`'s Edit-tab section is updated (Colorist's own scope line
   is not). Drafted as D-281, renumbered on the way in — `main` had meanwhile
   landed a different D-281 (RapidRAW ownership).
+- **2026-09-10** — fixed a real bug in D-291's own
+  `.github/workflows/website-deploy.yml`: it ran `npm run test` before
+  `npm run build`, but `tests/build-output.test.ts` requires `dist/` to
+  already exist — every run since D-291 landed failed at the test step
+  before ever reaching the deploy step, unrelated to the still-unset
+  Cloudflare secrets. Caught by actually pushing and checking `gh run view`
+  rather than assuming the workflow was correct. Reordered to check → build →
+  test, matching `website/package.json`'s own `verify` script.
+- **2026-09-10** — B-149: fixed two real Lighthouse findings on production
+  (`apelles.studio`) — a contrast failure on the "01/02/03" room numbers
+  (ochre on marble, 2.95:1; switched to terracotta, 5.3:1) and a
+  render-blocking Google Fonts request costing ~750ms of LCP (moved to the
+  standard preload+swap non-blocking pattern). Measured LCP 968ms → 225ms on
+  the same production URL before/after. Deployed via `wrangler pages deploy`.
 - **2026-09-10** — D-291: `website/` now has real hosting — Cloudflare Pages
   project `apelles-studio` on the `ashish.1999vns@gmail.com` account, custom
   domains `apelles.studio` (live, SSL verified) and `www.apelles.studio`

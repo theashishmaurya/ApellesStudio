@@ -83,7 +83,13 @@ const ASKS: Record<string, string> = {
 
   .num {
     font-size: var(--step--2);
-    color: var(--pigment-ochre);
+    /* Terracotta, not ochre: this section sits on marble, and ochre is only
+       3.0:1 there (tokens.css) — too low for real text at this size. Ochre is
+       reserved for rules/marks/large display type; terracotta is the
+       documented working colour for text needing real contrast on marble
+       (5.3:1) — a real WCAG AA failure caught live by Lighthouse, not a
+       stylistic swap. */
+    color: var(--pigment-terracotta);
     padding-top: 0.55rem;
     letter-spacing: 0.08em;
   }

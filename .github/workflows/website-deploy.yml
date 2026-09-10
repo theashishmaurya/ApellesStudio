@@ -45,8 +45,8 @@ jobs:
 
       - run: npm ci
       - run: npm run check
-      - run: npm run test
       - run: npm run build
+      - run: npm run test
 
       - name: Publish to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
