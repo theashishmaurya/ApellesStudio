@@ -1124,7 +1124,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
        itself, or does it re-render through React state every pointer-move
        frame?~~ — D-201 (2026-09-07) answered "it already defers, no change
        made", and **that answer was wrong for the clip drag** — corrected by
-       **B-153 / D-303 (2026-09-10)**, which measured it instead of reasoning
+       **B-153 / D-304 (2026-09-10)**, which measured it instead of reasoning
        about it: the `clipDragPreview`/`insertPreview` change-gating is real but
        almost never fires (at any ordinary zoom a few pixels of movement IS a
        different landing frame), so the state, living on `TimelinePane` itself,

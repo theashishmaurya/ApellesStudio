@@ -5,7 +5,7 @@ One or two lines per session. Detail lives in the decision it references.
 ## [Unreleased]
 
 - **2026-09-10** — **B-145 + B-153: the timeline's drag gestures, root-caused and fixed.**
-  **D-302** — a clip dragged on a horizontally-scrolled timeline landed at frame 0 no
+  **D-303** — a clip dragged on a horizontally-scrolled timeline landed at frame 0 no
   matter where it was dropped, because `@dnd-kit/core`'s `event.delta` is short by the
   whole scroll offset on this surface (its scroll adjustment is measured against
   `over ?? active`'s scrollable ancestors, and the dragged clip is inside the timeline
@@ -13,7 +13,7 @@ One or two lines per session. Detail lives in the decision it references.
   `dragDelta.ts` derives the displacement from `active.rect.current` instead and adds the
   pane's own scroll change back; one helper now feeds the landing preview, the move, the
   create-a-track drop, the slip/slide drag and the transition drop — two of which were
-  silently broken the same way and unreported. **D-303** — the drag also felt shaky:
+  silently broken the same way and unreported. **D-304** — the drag also felt shaky:
   measured at ~2 full re-renders of `TimelinePane` per pointer-move (frame p90 24.3ms vs
   16.7ms idle), because the landing-preview state lived on the pane; moved it and its four
   overlays into `TimelineDragPreview.tsx` behind an imperative handle, back to p90 17.0ms.

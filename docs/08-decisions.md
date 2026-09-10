@@ -29337,7 +29337,7 @@ from either component's source — it took following `WGPU_RENDER` from
   `onExportClick`/`ExportIcon` video-export button (D-297) — neither is part of this
   panel.
 
-## D-302 — A timeline drag's displacement comes from the dragged node's own rects, never from `event.delta`
+## D-303 — A timeline drag's displacement comes from the dragged node's own rects, never from `event.delta`
 
 **decided (2026-09-10)**
 
@@ -29399,13 +29399,13 @@ from either component's source — it took following `WGPU_RENDER` from
   grid; its test 4 lands the clip at frame 0 on the pre-fix code). Full map:
   `docs/notes/timeline-drag-interactions.md`.
 
-## D-303 — The timeline's live drag preview owns its own state, in its own component
+## D-304 — The timeline's live drag preview owns its own state, in its own component
 
 **decided (2026-09-10)**
 
 - **Context:** B-153 — the owner, live: *"i feel drag and drop in the timeline is still not
   smooth and animations are shakky :/"*. Investigated as its own bug rather than assumed to
-  be a symptom of D-302, and it was: unrelated cause, unrelated fix.
+  be a symptom of D-303, and it was: unrelated cause, unrelated fix.
 - **Measured, not guessed** (`app/harness.html` in real Chromium, 4 tracks × 6 clips, a
   stubbed backend — far smaller than a real edit). During a plain clip drag the pane
   re-rendered ~2× per pointer-move (88 renders across 41 moves) and frame intervals went

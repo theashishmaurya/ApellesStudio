@@ -1,4 +1,4 @@
-# Timeline drag interactions — the full map (2026-09-10, D-302 / D-303)
+# Timeline drag interactions — the full map (2026-09-10, D-303 / D-304)
 
 `packages/editor/src/TimelinePane.tsx` is ~4600 lines and hosts **seven structurally
 different drag gestures**, spread across **three independent drag systems** that share
@@ -182,7 +182,7 @@ absolute positions the honest way, which is part of why the two paths disagreed.
 
 ---
 
-## Why the drag felt shaky, and what changed (B-153 / D-303)
+## Why the drag felt shaky, and what changed (B-153 / D-304)
 
 Separate bug, separate cause, found by measuring rather than assuming.
 
@@ -208,7 +208,7 @@ largest component — ruler, every track, every clip, every filmstrip and wavefo
 four small absolutely-positioned boxes. Confirmed by contrast: the Alt/slip path, which
 D-235 already skips this state for, held p90 at 18ms with 4 renders for the whole gesture.
 
-**D-303** moved that state and those four overlays into `TimelineDragPreview.tsx`, written to
+**D-304** moved that state and those four overlays into `TimelineDragPreview.tsx`, written to
 via a `useImperativeHandle` (nothing in the pane ever *reads* the preview, only sets it), so a
 tick re-renders that subtree instead of the pane.
 
