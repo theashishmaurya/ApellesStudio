@@ -34,7 +34,6 @@ export interface AppModalsProps {
   handleSaveDenoisedImage: () => Promise<string>;
   handleSaveRename: (nameTemplate: string) => Promise<void>;
   handleSetColorLabel: (color: string | null, paths?: string[]) => Promise<void>;
-  handleRate: (rating: number, paths?: string[]) => void;
   executeDelete: (paths: string[], options: any) => Promise<void>;
   handleSaveCollage: (base64Data: string, firstPath: string) => Promise<string>;
 }

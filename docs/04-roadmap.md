@@ -2731,82 +2731,128 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   request, 2026-09-10, unblocked by **D-281** (`app/` is owned code now,
   not a tracked-upstream drop — a redundant inherited panel can be deleted
   outright). Each item below came with its own reference screenshot,
-  gitignored but kept in `scratch/` for this session and the next:
-  1. **Duplicate Crop & Transform.** Colorist's own `CropPanel.tsx` (RapidRAW's
-     single-image crop/rotate/orientation tool) duplicates the Edit tab's
-     real per-clip transform (`ClipInspectorPanel`'s Transform section,
-     `Clip.rotation`/`scale`/`position_*`/crop insets, D-193/D-208). Owner:
-     *"we have two crop and reset, one in edit and one here, please make
-     sure Edit one is applied to all the clips."* Screenshot:
-     `scratch/colorist-duplicate-crop-transform-panel.png`. This is the same
-     underlying gap as **B-147**: Colorist has no read path into the Edit
-     timeline's `Clip` data at all right now, so "make the Edit one
-     authoritative" is not a UI toggle, it is the B-147 fix. Scope this and
-     B-147 as one piece of work, not two.
-  2. **Agent activity should be global, not Colorist-only.** Screenshot:
-     `scratch/colorist-agent-activity-should-be-global.png`. `AgentActivityDock`
-     (`app/src/components/chroma/AgentActivityDock.tsx`) currently only
-     surfaces Colorist grade operations (`match_to_reference` and friends).
-     Real scope: move it to a shell-level surface reachable from all three
-     tabs, and check whether Edit/Motion tab MCP operations are even
-     instrumented to feed it yet — if not, that instrumentation gap is part
-     of this item, not a separate one to discover later.
-  3. **One global Export, not a per-tab one.** Screenshot:
-     `scratch/colorist-export-button-remove.png`. Colorist's own
-     `ExportDialog.tsx`/`ExportPanel.tsx` should go away in favour of the
-     Edit tab's real `EditorExportDialog` (D-198) as the one export surface,
-     reachable from wherever export needs to be reachable from — check
-     whether Colorist's own export does anything the Edit one genuinely
-     cannot (e.g. exporting a single graded still with no timeline at all)
-     before deleting it outright, and say so in the D-NNN either way.
-  4. **Remove the Metadata panel.** Screenshot:
-     `scratch/colorist-metadata-panel-remove.png`. `MetadataPanel.tsx`
-     (File Information/Camera Details/Author & Copyright/Organization) is
-     RapidRAW's single-photo EXIF viewer, with every field showing `-` on
-     real video assets in this screenshot — dead weight for a video editor.
-  5. **Remove the rating widget.** Screenshot:
-     `scratch/colorist-rating-remove.png`. The five-star rating control
-     (also inherited from RapidRAW's photo-culling workflow) has no
-     equivalent concept in a multi-clip video timeline.
-  6. **The Colorist/Edit preview should be ONE shared player component.**
-     Screenshot: `scratch/colorist-edit-players-should-be-common.png`.
-     Owner: *"player is different for both, it should be common component."*
-     Checked, not assumed, before scoping: Colorist's own preview is
-     `app/src/components/panel/editor/ImageCanvas.tsx` (**3259 lines** —
-     masks, crop overlay, relight puck, transform overlays, zoom/pan, all
-     bundled into one component), the Edit tab's is `@apelles/player`'s
-     `Player.tsx` (**651 lines**, a much narrower transport + surface). This
-     is genuinely large architectural work, not a simple swap-in — the
-     right shape (does Colorist's own interactive-mask/relight tooling move
-     into a shared player's own overlay slot, the way Edit's
-     `TransformOverlay`/`DynamicZoomOverlay` already compose onto
-     `@apelles/player`'s `surface` prop? does unification happen in one pass
-     or does Colorist first gain the SAME B-147 fix while staying on its own
-     canvas, with true unification as a follow-on?) needs a real D-NNN
-     design decision, not a rushed merge. If a full unification cannot be
-     done safely in one pass, a scoped first step (B-147's fix, without full
-     component unification) is an acceptable, honestly-reported partial
-     result — say so plainly rather than forcing a bad merge to claim done.
-  7. **The Colorist filmstrip: build a proper one, or remove it.**
-     Screenshot: `scratch/colorist-filmstrip-timeline-question.png`. Owner,
-     offering both options: *"have a proper timeline or remove this
-     timeline from the Colorist no point of having a timeline."* Default,
-     absent a stronger reason found during investigation: **remove it**
-     (`app/src/components/panel/Filmstrip.tsx`) — a real per-clip timeline
-     inside Colorist would duplicate the Edit tab's own timeline (the same
-     "two sources of truth" problem every other item in this batch is
-     resolving), and the owner's own framing ("no point of having this")
-     already leans that way. Investigate what, if anything, Filmstrip
-     uniquely provides (e.g. scrubbing within a single shot's own frame
-     range while grading) before removing — if something real is lost, name
-     it in the D-NNN rather than silently dropping a capability.
+  gitignored but kept in `scratch/` for this session and the next.
+  **Foundational, done first: B-147 (D-294)** — Colorist now reads the Edit
+  timeline's clip (its real trim and transform) instead of the raw source
+  file, via the new `chroma::colorist_view` bridge. Items 1, 6 and 7 all
+  turn on that read path existing at all.
+  1. **[~] Duplicate Crop & Transform** — **the owner's literal ask is done
+     (D-294); the panel's removal is scoped, not built (D-299).** Screenshot:
+     `scratch/colorist-duplicate-crop-transform-panel.png`. Owner: *"we have
+     two crop and reset, one in edit and one here, please make sure Edit one
+     is applied to all the clips."* Exactly as this entry predicted, "make the
+     Edit one authoritative" was the B-147 fix, and that landed. What the
+     investigation then found: `CropPanel` is **not one thing** — its
+     Crop/Aspect/Straighten/Orientation half is a genuine duplicate (and after
+     D-294 actively compounds on the clip's own geometry), but its **Geometry →
+     Transform (perspective/keystone) and Lens correction** half is duplicated
+     *nowhere* in the app and has no MCP tool either. And `Panel.Crop` is a
+     canvas MODE, not a route: 63 references across `Editor.tsx`/
+     `ImageCanvas.tsx` plus grade-document fields the renderer, the
+     mask-coordinate un-transform, the thumbnail path and the exporter all
+     read. Retiring it is phase 1 of the canvas pass below (item 6) — doing it
+     standalone would touch the same 63 sites twice. Full reasoning: **D-299**.
+  2. **[x] Agent activity should be global, not Colorist-only** — **done
+     2026-09-10, D-298.** Screenshot:
+     `scratch/colorist-agent-activity-should-be-global.png`. Both halves:
+     `AgentActivityDock` moved to `@apelles/shell`'s new `overlay` slot
+     (injected by `Root.tsx`, same pattern as `launcher`/`headerAction`), and
+     the instrumentation gap this entry predicted was real and is closed —
+     Edit and Motion ops fed nothing, and now do. `@apelles/history` gained
+     `source: 'user' | 'agent'` plus `runAsAgent()`, and each tab's MCP
+     dispatcher wraps its handler in it: **one line per tab**, so a new op is
+     instrumented the day it is written. The dock merges the Colorist grade
+     feed (rich rows: diff + jump-to-here Undo) with agent-sourced shared-history
+     entries from the other tabs (label + tab + time, no per-row undo — the
+     shared stack is LIFO, and Cmd/Ctrl+Z is already global). See D-298 for the
+     depth counter's honest limit.
+  3. **[x] One global Export, not a per-tab one** — **done 2026-09-10,
+     D-297.** Screenshot: `scratch/colorist-export-button-remove.png`.
+     Colorist's `ExportDialog.tsx` deleted; `EditorExportDialog` moved from
+     `ShellTab.headerAction` to a shell-level `ShellProps.headerAction`, so
+     Export sits in the chrome bar on **every** tab. The check this entry asked
+     for turned up a real answer: Colorist's export DOES do something the Edit
+     one cannot — it renders through the wgpu grading pipeline, so masks /
+     local layers / relight / the Colorist crop reach the file, where the Edit
+     exporter carries only the global grade as a baked LUT (D-256 strips the
+     spatial half with a warning). So the backend was kept and made clip-aware
+     (D-294's residual, closing B-147 on the export side) rather than deleted,
+     and only the duplicate *button* went. `ExportPanel` (RapidRAW's batch
+     still-image exporter) deliberately untouched — see D-297.
+     - [ ] **Follow-up, honestly open:** "render THIS clip with its full grade"
+       is now MCP-only (`export`), which is the wrong side of the "human AND
+       AI" rule. Fold it into `EditorExportDialog` as a "current clip, full
+       grade" mode — the one export surface is where it belongs.
+  4. **[x] Remove the Metadata panel** — **done 2026-09-10, D-296.**
+     Screenshot: `scratch/colorist-metadata-panel-remove.png`. Removed with
+     `Panel.Metadata` (enum, switcher, mobile order, `ALL_PANELS`, region map,
+     both saved-workspace defaults), the `toggle_metadata` keyboard action and
+     its `@apelles/keymap` registry row, and the `editor.metadata.*` subtree in
+     all 13 locales.
+  5. **[x] Remove the rating widget** — **done 2026-09-10, D-296**, together
+     with item 4 (one inherited photo-culling workflow, not two things).
+     Screenshot: `scratch/colorist-rating-remove.png`. Removed whole: the
+     widget, the quick-filter stars, the six `rate_0..5` shortcuts, both
+     context-menu Rating submenus, `imageRatings` and the rating filter / sort
+     / search paths, the `Filmstrip` badge, the `useTauriListeners` plumbing,
+     and `file_management::set_rating_for_paths`. `ImageMetadata.rating` stays
+     in the Rust sidecar struct deliberately — see D-296 for why.
+  6. **[~] The Colorist/Edit preview should be ONE shared player component** —
+     **investigated and designed, deliberately not forced (D-299).**
+     Screenshot: `scratch/colorist-edit-players-should-be-common.png`. Owner:
+     *"player is different for both, it should be common component."* This
+     entry already said a rushed merge was the wrong outcome; the
+     investigation found the specific reason, and it is not size:
+     **Colorist's picture is not a DOM element at all.** On macOS/Windows the
+     grade is painted onto a native wgpu surface *behind* the webview (B-006 —
+     a render returns the 11 bytes `WGPU_RENDER` and no pixels), so
+     `@apelles/player`'s `surface: ReactNode` slot has nothing to accept from
+     it; what Colorist needs is a measured *rectangle*, which `Player` does not
+     yet expose. Plus zoom/pan lives in a different place on each side, and
+     Colorist's overlays (47 props, pointer arbitration across brush /
+     quick-erase / AI patch / crop / straighten / WB-pick / relight) are not
+     the `container`-prop shape the Edit tab's are.
+     **The user-visible half of the complaint — the two previews disagreeing
+     about the picture — is fixed, by D-294, in Rust, with no component
+     unification needed.** What remains is duplicated code. D-299 records the
+     three-phase shape for the dedicated pass:
+     - [ ] **Phase 1** — retire the duplicate crop MODE (closes item 1's
+       remaining half): drop `Panel.Crop` + the `ReactCrop`/straighten/guides
+       layer + the `isCropping` gating, keep perspective + lens as their own
+       small Geometry panel, retire the now-unwritten grade-document geometry
+       fields and the mask-coordinate un-transform they feed (versioning
+       `grade.json`).
+     - [ ] **Phase 2** — give `@apelles/player` a real viewport contract:
+       promote the Edit tab's measured content-box + zoom/pan model (D-218)
+       into the shared component, and let a caller take the box WITHOUT
+       supplying a `surface` node, so a native surface can be positioned
+       against it.
+     - [ ] **Phase 3** — move Colorist onto it, converting its overlays to the
+       `container`-prop shape one at a time, with the pointer arbitration
+       lifted into an explicit, testable resolver.
+  7. **[x] The Colorist filmstrip: build a proper one, or remove it** —
+     **done 2026-09-10, D-295.** Screenshot:
+     `scratch/colorist-filmstrip-timeline-question.png`. Owner, offering both
+     options: *"have a proper timeline or remove this timeline from the
+     Colorist no point of having a timeline."* Two corrections the
+     investigation turned up, recorded because this entry got both wrong:
+     the component in that screenshot is **`ChromaTimeline.tsx`** (D-031's
+     48-thumbnail frame strip), not `panel/Filmstrip.tsx` (RapidRAW's photo
+     library grid, untouched); and it does carry one real capability with no
+     other home — Colorist's only transport (play/step/scrub within the shot
+     being graded). So: thumbnails removed, transport kept and rebuilt as a
+     scrub bar (`ColoristTransport.tsx`), against Resolve's own Color-page
+     viewer. `chroma_frame_thumbnails`, `extract_thumb_strip` and
+     `state::THUMB_CACHE` deleted whole. What is lost — visual "where am I in
+     this shot" scanning — is named in D-295 rather than glossed.
   - **Not requested — a compliment, not a task:** the player's eye
     (visibility toggle) button was called out as liked
     (`scratch/colorist-eye-button-liked.png`) — no action, keep it as-is.
   8. **Export: consolidate the underlying state, not just the button** —
      owner follow-up, 2026-09-10, after the consolidation agent's report on
-     item 3. What landed (on the not-yet-merged
-     `worktree-agent-af18c5eb8c0b19df9` branch, its own D-294): Colorist's
+     item 3. What landed (merged to `main` 2026-09-10 from the
+     `worktree-agent-af18c5eb8c0b19df9` branch, its own **D-297** — drafted
+     there as D-294, renumbered on the way in): Colorist's
      `ExportDialog` was deleted and `EditorExportDialog` moved to a
      shell-level `headerAction` slot so there is one Export *button* on every
      tab — but the agent's own investigation found Colorist's export

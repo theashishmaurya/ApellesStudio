@@ -19,6 +19,7 @@ import { useMediaPoolStore, trackEvent } from '@apelles/bridge';
 import { useKeymapStore } from '@apelles/keymap';
 import { useTranslation } from 'react-i18next';
 import App from './App';
+import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
 import { selectProjectKey, useSessionStore } from './store/useSessionStore';
@@ -316,24 +317,28 @@ export function Root() {
       // `@apelles/keymap` may depend on i18next, same app → shell direction as
       // `launcher` and `sourcesPanel` above.
       translate={translate}
+      // D-251/D-297 — Export lives in the shell's chrome bar, beside the tab
+      // switcher, and is reachable from EVERY tab now: D-297 retired
+      // Colorist's own `ExportDialog` (which after D-294 exported a different
+      // picture than Colorist's own preview) in favour of this one. Injected
+      // here rather than imported by `Shell`, same app → shell direction as
+      // `launcher` and `sourcesPanel` above.
+      headerAction={<EditorExportDialog />}
+      // D-298 — the agent activity feed + `request_human` banner, promoted out
+      // of the Colorist app (where it was mounted in `App.tsx`) to a
+      // shell-level surface: an agent's work spans all three tabs, and a feed
+      // of it that only exists on one of them cannot report the other two.
+      // Injected like `launcher`/`sourcesPanel`/`headerAction` — `Shell` never
+      // imports it.
+      overlay={<AgentActivityDock />}
       onCloseProject={() => {
         void useSessionStore.getState().closeProject();
       }}
       tabs={[
-        // D-251 — Export moved from the Edit tab's own top strip (D-249) to
-        // the shell's chrome bar, beside the tab switcher, per the owner's
-        // live request. `headerAction` is `@apelles/shell`'s injection slot
-        // for exactly this: `Root` (the composition root) supplies the real
-        // `EditorExportDialog`, `Shell` only renders whatever node the active
-        // tab registered — same `app → shell`/`app → editor` dependency
-        // direction as `element` below, `Shell` itself still never imports
-        // `@apelles/editor`. Motion/Colorist have no export action of their
-        // own yet, so their entries omit it.
         {
           id: 'edit',
           label: 'Edit',
           element: <EditorTab />,
-          headerAction: <EditorExportDialog />,
           // D-263 — the icon rail, leftmost. It drives the shell's own
           // open/closed flag through these props rather than importing
           // `@apelles/shell` itself (a tab package must not).

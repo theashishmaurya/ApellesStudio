@@ -32,7 +32,6 @@ interface EditorViewProps {
   handleClearSelection: () => void;
   handleCopyAdjustments: () => void;
   handlePasteAdjustments: () => void;
-  handleRate: (...args: any) => void;
   handleZoomChange: (zoom: number) => void;
   handlePanelSelect: (panelId: any) => void;
   requestThumbnails: any;
@@ -56,7 +55,6 @@ export default function EditorView({
   handleClearSelection,
   handleCopyAdjustments,
   handlePasteAdjustments,
-  handleRate,
   handleZoomChange,
   handlePanelSelect,
   requestThumbnails,
@@ -86,10 +84,9 @@ export default function EditorView({
     })),
   );
 
-  const { multiSelectedPaths, imageRatings, isViewLoading } = useLibraryStore(
+  const { multiSelectedPaths, isViewLoading } = useLibraryStore(
     useShallow((state) => ({
       multiSelectedPaths: state.multiSelectedPaths,
-      imageRatings: state.imageRatings,
       isViewLoading: state.isViewLoading,
     })),
   );
@@ -109,14 +106,12 @@ export default function EditorView({
     <BottomBar
       filmstripHeight={bottomPanelHeight}
       imageList={sortedImageList}
-      imageRatings={imageRatings}
       isCopied={isCopied}
       isCopyDisabled={!selectedImage}
       isFilmstripVisible={uiVisibility.filmstrip}
       isLoading={isViewLoading}
       isPasted={isPasted}
       isPasteDisabled={copiedAdjustments === null}
-      isRatingDisabled={!selectedImage}
       isResizing={isResizing}
       multiSelectedPaths={multiSelectedPaths}
       onClearSelection={handleClearSelection}
@@ -125,10 +120,8 @@ export default function EditorView({
       onOpenCopyPasteSettings={() => setUI({ isCopyPasteSettingsModalOpen: true })}
       onImageSelect={handleImageClick}
       onPaste={() => handlePasteAdjustments()}
-      onRate={handleRate}
       onRequestThumbnails={requestThumbnails}
       onZoomChange={handleZoomChange}
-      rating={imageRatings[selectedImage?.path || ''] || 0}
       selectedImage={selectedImage ?? undefined}
       showFilmstrip={layoutMode !== 'compact'}
       layoutMode={layoutMode}

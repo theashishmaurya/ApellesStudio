@@ -4,8 +4,8 @@
 use crate::app_state::AppState;
 use crate::image_loader::LoadImageResult;
 
-use super::state::{cached_thumbs, current_video, store_thumbs};
-use super::{decode_pipe, load, video};
+use super::state::current_video;
+use super::{colorist_view, decode_pipe, load, video};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,16 +27,47 @@ pub struct VideoInfoDto {
 }
 
 /// `null` when the loaded item is not a video.
+///
+/// **D-294 (B-147) — reported against the Edit-timeline CLIP when there is
+/// one.** `frameCount`/`durationSecs` are the clip's own length and
+/// `width`/`height` are the project's composition size, because those are what
+/// the Colorist transport is actually scrubbing and what its canvas actually
+/// shows after [`seek_and_install`] places the frame. Reporting the raw source
+/// file's 2990 frames for a clip trimmed to 400 is precisely the half of B-147
+/// that let the transport scrub past the clip's out-point into footage neither
+/// the Edit tab nor the export ever shows. `fps` stays the SOURCE's: the
+/// transport's wall-clock playback loop steps source frames at source rate,
+/// and a clip is not resampled onto the timeline's rate by the Colorist.
+///
+/// An Untitled loose-clip session (no project, so no clip) reports the raw
+/// source exactly as before — which was always right for that case.
 #[tauri::command]
 pub fn chroma_video_info() -> Option<VideoInfoDto> {
     let cv = current_video()?;
+    let view = colorist_view::resolve(&cv.path);
+    let (resolution, frame_count) = match &view {
+        Some(v) => (
+            apelles_types::Resolution {
+                width: v.comp.0,
+                height: v.comp.1,
+            },
+            v.frame_count(),
+        ),
+        None => (cv.info.resolution, cv.info.frame_count),
+    };
+    let fps = cv.info.fps();
+    let duration_secs = if fps > 0.0 {
+        frame_count as f64 / fps
+    } else {
+        cv.info.duration_secs
+    };
     Some(VideoInfoDto {
         is_video: true,
         path: cv.path.to_string_lossy().to_string(),
-        resolution: cv.info.resolution,
-        fps: cv.info.fps(),
-        frame_count: cv.info.frame_count,
-        duration_secs: cv.info.duration_secs,
+        resolution,
+        fps,
+        frame_count,
+        duration_secs,
         frame: cv.frame,
         codec: cv.info.codec.clone(),
         color_space: cv.info.color_space.clone(),
@@ -64,13 +95,40 @@ pub async fn chroma_seek(
 /// `scale_long_edge`: `Some(px)` makes ffmpeg downscale each frame to that long
 /// edge before it hits the pipe (D-031 playback — avoids a CPU downscale of a 4K
 /// frame per frame). `None` = native size (scrub / single-frame seek).
+///
+/// **D-294 (B-147) — `frame` is CLIP-LOCAL, and the installed picture carries
+/// the clip's geometry.** When the active shot is a clip on the open project's
+/// Edit timeline ([`colorist_view::resolve`]), `frame` counts from that clip's
+/// in-point, the source frame actually decoded comes from the clip's own trim
+/// (and speed ramp) via `Clip::clamped_source_frame_at`, and the decoded
+/// picture is placed into composition space with the clip's crop / scale /
+/// rotation / position applied — so the Colorist grades the same picture the
+/// Edit preview and the export show. Deliberately **not** the clip's grade
+/// (that is what the Colorist is producing) and not its opacity/fade (there
+/// are no layers beneath it here) — see `colorist_view`'s module doc.
+///
+/// An Untitled loose-clip session resolves no clip and takes exactly the
+/// pre-D-294 raw-source path, which was always correct for it.
 pub async fn seek_and_install(
     frame: u64,
     scale_long_edge: Option<u32>,
     state: &tauri::State<'_, AppState>,
 ) -> Result<LoadImageResult, String> {
     let cv = current_video().ok_or("no video loaded")?;
-    let clamped = frame.min(cv.info.frame_count.saturating_sub(1));
+    let view = colorist_view::resolve(&cv.path);
+    // `clamped` is what the session's playhead marker and every frame-keyed
+    // Colorist artefact (tracked mattes D-019, mask keyframes D-034, the depth
+    // track D-036) are indexed by, so it stays in the transport's own space —
+    // clip-local when there is a clip. `decode_frame_index` is the source
+    // frame that space maps to.
+    let clamped = match &view {
+        Some(v) => frame.min(v.frame_count().saturating_sub(1)),
+        None => frame.min(cv.info.frame_count.saturating_sub(1)),
+    };
+    let decode_frame_index = match &view {
+        Some(v) => v.source_frame(clamped),
+        None => clamped,
+    };
 
     // drop the per-frame pixel caches so the next render uses the new frame
     if let Ok(mut c) = state.decoded_image_cache.lock() {
@@ -107,24 +165,33 @@ pub async fn seek_and_install(
     // back to `video::decode_frame` (unchanged behaviour).
     let path = cv.path.clone();
     let info = cv.info.clone();
-    let scale = scale_long_edge
-        .and_then(|le| decode_pipe::scale_target(cv.info.resolution.width, cv.info.resolution.height, le));
-    let decoded = tokio::task::spawn_blocking(move || {
-        decode_pipe::playback_frame_scaled(
+    let scale = scale_long_edge.and_then(|le| {
+        decode_pipe::scale_target(cv.info.resolution.width, cv.info.resolution.height, le)
+    });
+    let view_for_task = view.clone();
+    let decoded = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, String> {
+        let img = decode_pipe::playback_frame_scaled(
             decode_pipe::PipeSlot::Current,
             &path,
             &info,
-            clamped,
+            decode_frame_index,
             scale,
         )
         .or_else(|e| {
             log::warn!("[chroma::seek] decode pipe fell back to single-frame decode: {e}");
-            video::decode_frame(&path, video::FramePos::Index(clamped), &info)
+            video::decode_frame(&path, video::FramePos::Index(decode_frame_index), &info)
         })
+        .map_err(|e| e.to_string())?;
+        // D-294 — the geometry pass, on the blocking thread with the decode it
+        // belongs to (it is a CPU resize + rotate of a full frame). Free for an
+        // untransformed clip: `apply_geometry` hands the buffer straight back.
+        match view_for_task {
+            Some(v) => v.apply_geometry(decode_frame_index, img, scale_long_edge),
+            None => Ok(img),
+        }
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())??;
 
     Ok(load::install_frame(
         &cv.path,
@@ -134,41 +201,4 @@ pub async fn seek_and_install(
         decoded,
         state,
     ))
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FrameThumbDto {
-    pub frame: u64,
-    /// data:image/jpeg;base64,...
-    pub data_url: String,
-}
-
-/// `count` evenly-spaced frame thumbnails across the loaded clip, for the timeline.
-/// Decoded once per (clip, count) then cached.
-#[tauri::command]
-pub async fn chroma_frame_thumbnails(count: u32) -> Result<Vec<FrameThumbDto>, String> {
-    let cv = current_video().ok_or("no video loaded")?;
-    let count = count.clamp(4, 200);
-
-    if let Some(hit) = cached_thumbs(&cv.path, count) {
-        return Ok(hit
-            .into_iter()
-            .map(|(frame, data_url)| FrameThumbDto { frame, data_url })
-            .collect());
-    }
-
-    let path = cv.path.clone();
-    let info = cv.info.clone();
-    let thumbs = tokio::task::spawn_blocking(move || -> Result<Vec<(u64, String)>, String> {
-        video::extract_thumb_strip(&path, &info, count).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())??;
-
-    store_thumbs(cv.path.clone(), count, thumbs.clone());
-    Ok(thumbs
-        .into_iter()
-        .map(|(frame, data_url)| FrameThumbDto { frame, data_url })
-        .collect())
 }

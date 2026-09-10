@@ -14,7 +14,6 @@ import {
   LayoutTemplate,
   Redo,
   RotateCcw,
-  Star,
   SquaresUnite,
   Palette,
   Tag,
@@ -59,7 +58,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
 
   const { handleAutoAdjustments, handleResetAdjustments, handleCopyAdjustments, handlePasteAdjustments } =
     useEditorActions();
-  const { handleRate, handleSetColorLabel, handleTagsChanged } = useLibraryActions();
+  const { handleSetColorLabel, handleTagsChanged } = useLibraryActions();
 
   const getCommonTags = useCallback((paths: string[]): { tag: string; isUser: boolean }[] => {
     const { imageList } = useLibraryStore.getState();
@@ -179,17 +178,6 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         },
         { type: OPTION_SEPARATOR },
         {
-          label: t('contextMenus.editor.rating'),
-          icon: Star,
-          submenu: [0, 1, 2, 3, 4, 5].map((rating: number) => ({
-            label:
-              rating === 0
-                ? t('contextMenus.editor.noRating')
-                : t('contextMenus.editor.ratingLabel', { count: rating }),
-            onClick: () => handleRate(rating),
-          })),
-        },
-        {
           label: t('contextMenus.editor.colorLabel'),
           icon: Palette,
           submenu: [
@@ -247,7 +235,6 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
       handleCopyAdjustments,
       handlePasteAdjustments,
       handleAutoAdjustments,
-      handleRate,
       handleSetColorLabel,
       handleTagsChanged,
       showContextMenu,
@@ -566,17 +553,6 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
         { icon: FileEdit, label: renameLabel, onClick: () => props.handleRenameFiles(finalSelection) },
         { type: OPTION_SEPARATOR },
         {
-          icon: Star,
-          label: t('contextMenus.editor.rating'),
-          submenu: [0, 1, 2, 3, 4, 5].map((rating: number) => ({
-            label:
-              rating === 0
-                ? t('contextMenus.editor.noRating')
-                : t('contextMenus.editor.ratingLabel', { count: rating }),
-            onClick: () => handleRate(rating, finalSelection),
-          })),
-        },
-        {
           label: t('contextMenus.editor.colorLabel'),
           icon: Palette,
           submenu: [
@@ -640,7 +616,6 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
       getCommonTags,
       handleCopyAdjustments,
       handlePasteAdjustments,
-      handleRate,
       handleSetColorLabel,
       handleTagsChanged,
       handleResetAdjustments,

@@ -26,7 +26,6 @@ export function useTauriListeners({ markGenerated }: TauriListenerProps) {
 
   const thumbnailBuffer = useRef<Record<string, string>>({});
   const mediumThumbnailBuffer = useRef<Record<string, string>>({});
-  const ratingBuffer = useRef<Record<string, number>>({});
   const editStatusBuffer = useRef<Record<string, boolean>>({});
   const flushHandle = useRef<number | null>(null);
 
@@ -39,12 +38,10 @@ export function useTauriListeners({ markGenerated }: TauriListenerProps) {
 
       const pendingThumbs = thumbnailBuffer.current;
       const pendingMediumThumbs = mediumThumbnailBuffer.current;
-      const pendingRatings = ratingBuffer.current;
       const pendingEdits = editStatusBuffer.current;
 
       thumbnailBuffer.current = {};
       mediumThumbnailBuffer.current = {};
-      ratingBuffer.current = {};
       editStatusBuffer.current = {};
 
       if (Object.keys(pendingThumbs).length > 0) {
@@ -54,9 +51,8 @@ export function useTauriListeners({ markGenerated }: TauriListenerProps) {
         }));
       }
 
-      if (Object.keys(pendingRatings).length > 0 || Object.keys(pendingEdits).length > 0) {
+      if (Object.keys(pendingEdits).length > 0) {
         useLibraryStore.getState().setLibrary((state) => ({
-          imageRatings: { ...state.imageRatings, ...pendingRatings },
           imageList:
             Object.keys(pendingEdits).length > 0
               ? state.imageList.map((img) =>
@@ -101,7 +97,7 @@ export function useTauriListeners({ markGenerated }: TauriListenerProps) {
       }),
       listen('thumbnail-generated', (event: any) => {
         if (!isEffectActive) return;
-        const { path, thumbnailPath, previewPath, rating, is_edited, data } = event.payload;
+        const { path, thumbnailPath, previewPath, is_edited, data } = event.payload;
 
         if (thumbnailPath && previewPath) {
           thumbnailBuffer.current[path] = convertFileSrc(thumbnailPath.replace(/\\/g, '/'));
@@ -112,22 +108,18 @@ export function useTauriListeners({ markGenerated }: TauriListenerProps) {
           mediumThumbnailBuffer.current[path] = data;
           refs.current.markGenerated(path);
         }
-        if (rating !== undefined) {
-          ratingBuffer.current[path] = rating;
-        }
         if (is_edited !== undefined) {
           editStatusBuffer.current[path] = is_edited;
         }
-        if (thumbnailPath || data || rating !== undefined || is_edited !== undefined) {
+        if (thumbnailPath || data || is_edited !== undefined) {
           scheduleFlush();
         }
       }),
       listen('image-metadata-loaded', (event: any) => {
         if (!isEffectActive) return;
-        const { path, rating, is_edited, tags } = event.payload;
+        const { path, is_edited, tags } = event.payload;
 
         useLibraryStore.getState().setLibrary((state) => ({
-          imageRatings: { ...state.imageRatings, [path]: rating },
           imageList: state.imageList.map((img) =>
             img.path === path ? { ...img, is_edited, tags: tags ?? img.tags } : img,
           ),
@@ -314,7 +306,6 @@ export function useTauriListeners({ markGenerated }: TauriListenerProps) {
         flushHandle.current = null;
       }
       thumbnailBuffer.current = {};
-      ratingBuffer.current = {};
       listeners.forEach(safeUnlisten);
     };
   }, []);

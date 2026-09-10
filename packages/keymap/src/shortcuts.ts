@@ -73,7 +73,11 @@ export const SHORTCUT_CATEGORIES: ShortcutCategory[] = [
   { id: 'library', label: 'Library', labelKey: 'settings.keybinds.sections.library', scope: 'colorist' },
   { id: 'editing', label: 'Editing', labelKey: 'settings.keybinds.sections.editing', scope: 'colorist' },
   { id: 'view', label: 'View', labelKey: 'settings.keybinds.sections.view', scope: 'colorist' },
-  { id: 'rating', label: 'Rating', labelKey: 'settings.keybinds.sections.rating', scope: 'colorist' },
+  // D-296 — was 'Rating'; the five-star culling actions were removed with the
+  // rating widget itself, leaving this section holding only colour labels.
+  // No `labelKey`: there is no translated key for the new heading, and the
+  // Apelles-native sections above are English-only for the same reason.
+  { id: 'labels', label: 'Colour labels', scope: 'colorist' },
   { id: 'panels', label: 'Panels', labelKey: 'settings.keybinds.sections.panels', scope: 'colorist' },
 ];
 
@@ -181,24 +185,17 @@ export const SHORTCUT_DEFINITIONS: ShortcutDefinition[] = [
   colorist('zoom_100', 'Zoom to 100%', 'view', ['ctrl', 'Digit1']),
   colorist('toggle_fullscreen', 'Toggle full screen', 'view', ['KeyF']),
   colorist('show_original', 'Show original', 'view', ['KeyB']),
-  colorist('rate_0', 'Rate 0 stars', 'rating', ['Digit0']),
-  colorist('rate_1', 'Rate 1 star', 'rating', ['Digit1']),
-  colorist('rate_2', 'Rate 2 stars', 'rating', ['Digit2']),
-  colorist('rate_3', 'Rate 3 stars', 'rating', ['Digit3']),
-  colorist('rate_4', 'Rate 4 stars', 'rating', ['Digit4']),
-  colorist('rate_5', 'Rate 5 stars', 'rating', ['Digit5']),
-  colorist('color_label_none', 'Clear colour label', 'rating', ['shift', 'Digit0']),
-  colorist('color_label_red', 'Colour label red', 'rating', ['shift', 'Digit1']),
-  colorist('color_label_yellow', 'Colour label yellow', 'rating', ['shift', 'Digit2']),
-  colorist('color_label_green', 'Colour label green', 'rating', ['shift', 'Digit3']),
-  colorist('color_label_blue', 'Colour label blue', 'rating', ['shift', 'Digit4']),
-  colorist('color_label_purple', 'Colour label purple', 'rating', ['shift', 'Digit5']),
+  colorist('color_label_none', 'Clear colour label', 'labels', ['shift', 'Digit0']),
+  colorist('color_label_red', 'Colour label red', 'labels', ['shift', 'Digit1']),
+  colorist('color_label_yellow', 'Colour label yellow', 'labels', ['shift', 'Digit2']),
+  colorist('color_label_green', 'Colour label green', 'labels', ['shift', 'Digit3']),
+  colorist('color_label_blue', 'Colour label blue', 'labels', ['shift', 'Digit4']),
+  colorist('color_label_purple', 'Colour label purple', 'labels', ['shift', 'Digit5']),
   colorist('toggle_adjustments', 'Adjustments panel', 'panels', ['KeyD']),
   colorist('toggle_crop_panel', 'Crop panel', 'panels', ['KeyR']),
   colorist('toggle_masks', 'Masks panel', 'panels', ['KeyM']),
   colorist('toggle_ai', 'AI panel', 'panels', ['KeyK']),
   colorist('toggle_presets', 'Presets panel', 'panels', ['KeyP']),
-  colorist('toggle_metadata', 'Metadata panel', 'panels', ['KeyI']),
   colorist('toggle_analytics', 'Scopes', 'panels', ['KeyA']),
   colorist('toggle_export', 'Export panel', 'panels', ['KeyE']),
   colorist('toggle_left_panel', 'Toggle left panel', 'panels', ['ctrl', 'shift', 'KeyB']),

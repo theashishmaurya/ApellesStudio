@@ -100,6 +100,7 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
+import { runAsAgent } from '@apelles/history';
 import type { PlayerRef } from '@remotion/player';
 
 import { createMotionOps, type MotionOpsApi, type MotionEditLinks } from './motionOps';
@@ -223,7 +224,12 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       }
 
       try {
-        const result = await fn(args || {});
+        // D-298 — every `@apelles/history` push inside this window is stamped
+        // `source: 'agent'`, which is the whole of this tab's agent-activity
+        // instrumentation: one wrapper at the dispatcher, not a line in each
+        // of the ~90 handlers. The shell-level feed reads those entries, so
+        // work an agent does here is finally visible from any tab.
+        const result = await runAsAgent(() => fn(args || {}));
         void respond({ ok: !result?.error, error: result?.error ?? null, result });
       } catch (e) {
         void respond({ ok: false, error: e instanceof Error ? e.message : String(e), result: null });

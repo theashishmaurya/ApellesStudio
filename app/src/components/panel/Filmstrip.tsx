@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
-import { Image as ImageIcon, Star, SlidersHorizontal } from 'lucide-react';
+import { Image as ImageIcon, SlidersHorizontal } from 'lucide-react';
 import clsx from 'clsx';
 import { Grid, useGridCallbackRef } from 'react-window';
 import { useTranslation } from 'react-i18next';
@@ -23,7 +23,6 @@ interface ImageLayer {
 
 interface ItemData {
   imageList: ImageFile[];
-  imageRatings: any;
   selectedPath: string | undefined;
   multiSelectedPaths: string[];
   thumbnailAspectRatio: ThumbnailAspectRatio;
@@ -37,7 +36,6 @@ interface ItemData {
 const FilmstripThumbnail = memo(
   ({
     imageFile,
-    imageRatings,
     isActive,
     isSelected,
     onContextMenu,
@@ -48,7 +46,6 @@ const FilmstripThumbnail = memo(
     setRatio,
   }: {
     imageFile: ImageFile;
-    imageRatings: any;
     isActive: boolean;
     isSelected: boolean;
     onContextMenu?: (event: any, path: string) => void;
@@ -86,7 +83,6 @@ const FilmstripThumbnail = memo(
       data: { type: 'library-image', path },
     });
 
-    const rating = imageRatings?.[path] || 0;
     const colorTag = tags?.find((t: string) => t.startsWith('color:'))?.substring(6);
     const colorLabel = COLOR_LABELS.find((c: Color) => c.name === colorTag);
     const isVirtualCopy = path.includes('?vc=');
@@ -95,8 +91,7 @@ const FilmstripThumbnail = memo(
 
     const hasEditIcon = !!showEditIcon;
     const hasColorLabel = !!colorLabel;
-    const hasRating = rating > 0;
-    const hasAnyOverlay = hasEditIcon || hasColorLabel || hasRating;
+    const hasAnyOverlay = hasEditIcon || hasColorLabel;
 
     const cleanPath = path.split('?')[0];
     const filename = cleanPath.split(/[\\/]/).pop() || '';
@@ -262,18 +257,6 @@ const FilmstripThumbnail = memo(
               />
             </div>
 
-            <div
-              className={clsx(
-                'flex items-center gap-0.5 shrink-0 transition-all duration-200 ease-out overflow-hidden',
-                hasRating ? 'max-w-7 opacity-100 scale-100' : 'max-w-0 opacity-0 scale-75 pointer-events-none',
-                hasRating && (hasEditIcon || hasColorLabel) ? 'ml-1.5' : 'ml-0',
-              )}
-            >
-              <Text variant={TextVariants.small} color={TextColors.white}>
-                {rating}
-              </Text>
-              <Star size={12} className="text-white fill-white" />
-            </div>
           </div>
         </div>
 
@@ -304,7 +287,6 @@ const FilmstripCell = ({
   columnIndex,
   style,
   imageList,
-  imageRatings,
   selectedPath,
   multiSelectedPaths,
   thumbnailAspectRatio,
@@ -331,7 +313,6 @@ const FilmstripCell = ({
       <div style={{ width: contentWidth, height: itemHeight }}>
         <FilmstripThumbnail
           imageFile={imageFile}
-          imageRatings={imageRatings}
           isActive={selectedPath === imageFile.path}
           isSelected={multiSelectedPaths.includes(imageFile.path)}
           onContextMenu={onContextMenu}
@@ -602,7 +583,6 @@ const FilmstripList = ({
 
 interface FilmStripProps {
   imageList: Array<ImageFile>;
-  imageRatings: any;
   isLoading: boolean;
   multiSelectedPaths: Array<string>;
   onClearSelection?(): void;
@@ -617,7 +597,6 @@ interface FilmStripProps {
 
 export default function Filmstrip({
   imageList,
-  imageRatings,
   isLoading: _isLoading,
   multiSelectedPaths,
   onClearSelection,
@@ -682,7 +661,6 @@ export default function Filmstrip({
           width={size.width}
           data={{
             imageList,
-            imageRatings,
             selectedPath: filmstripActivePath,
             multiSelectedPaths,
             thumbnailAspectRatio,

@@ -20,6 +20,14 @@
 //!   the engine is `apelles-media`
 //! - `decode_pipe` — persistent sequential-decode pipe for smooth scrub/playback
 //!   (D-030); a re-export shim since D-146 — the real code is `apelles-media`
+//! - `colorist_view` — **the Colorist ⇄ Edit *picture* bridge (D-294, B-147)**:
+//!   resolves the decode session's active clip path to the `apelles_timeline::
+//!   Clip` the Edit tab holds for it, and turns that clip's trim + geometry
+//!   into the picture the Colorist grades — so a rotated / trimmed clip is
+//!   graded against what the Edit preview and the export actually show, not
+//!   against frame 0 of the untouched source file. The geometry counterpart of
+//!   `grade_lut` (the same bridge, colour half, other direction). No grade, no
+//!   opacity/fade, no other layers, no GPU — see its own module doc
 //! - `state`    — Apelles' own process state (the multi-shot session, D-033)
 //! - `load`     — load a video as one decoded frame into the existing image pipeline
 //! - `commands` — tauri commands for the transport (`chroma_video_info`, `chroma_seek`)
@@ -83,6 +91,7 @@
 
 pub mod audio;
 pub mod caption_render;
+pub mod colorist_view;
 pub mod commands;
 pub mod control;
 /// B-100/D-219 — internal debug tooling, never shipped: the whole module,

@@ -26,7 +26,7 @@ export const useKeyboardShortcuts = ({
   handleZoomChange,
 }: KeyboardShortcutsProps) => {
   const { handleRotate, handleCopyAdjustments, handlePasteAdjustments, toggleShowOriginal } = useEditorActions();
-  const { handleRate, handleSetColorLabel } = useLibraryActions();
+  const { handleSetColorLabel } = useLibraryActions();
 
   const sortedListRef = useRef(sortedImageList);
   useEffect(() => {
@@ -301,13 +301,6 @@ export const useKeyboardShortcuts = ({
           s.ui.setPanel(Panel.Presets);
         },
       },
-      toggle_metadata: {
-        shouldFire: () => true,
-        execute: (e: any, s: any) => {
-          e.preventDefault();
-          s.ui.setPanel(Panel.Metadata);
-        },
-      },
       toggle_analytics: {
         shouldFire: (s: any) => !!s.editor.selectedImage,
         execute: (e: any, s: any) => {
@@ -375,48 +368,6 @@ export const useKeyboardShortcuts = ({
             s.ui.setPanel(Panel.Crop);
             s.editor.setEditor({ isStraightenActive: true });
           }
-        },
-      },
-      rate_0: {
-        shouldFire: () => true,
-        execute: (e: any) => {
-          e.preventDefault();
-          handleRate(0);
-        },
-      },
-      rate_1: {
-        shouldFire: () => true,
-        execute: (e: any) => {
-          e.preventDefault();
-          handleRate(1);
-        },
-      },
-      rate_2: {
-        shouldFire: () => true,
-        execute: (e: any) => {
-          e.preventDefault();
-          handleRate(2);
-        },
-      },
-      rate_3: {
-        shouldFire: () => true,
-        execute: (e: any) => {
-          e.preventDefault();
-          handleRate(3);
-        },
-      },
-      rate_4: {
-        shouldFire: () => true,
-        execute: (e: any) => {
-          e.preventDefault();
-          handleRate(4);
-        },
-      },
-      rate_5: {
-        shouldFire: () => true,
-        execute: (e: any) => {
-          e.preventDefault();
-          handleRate(5);
         },
       },
       color_label_none: {
@@ -542,7 +493,6 @@ export const useKeyboardShortcuts = ({
     handleCopyAdjustments,
     handleCopyImagePaths,
     handlePasteAdjustments,
-    handleRate,
     handleSetColorLabel,
     toggleShowOriginal,
   ]);

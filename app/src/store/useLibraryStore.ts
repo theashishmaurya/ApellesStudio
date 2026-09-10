@@ -11,7 +11,6 @@ interface SearchCriteria {
 interface LibraryState {
   // Images & Selection
   imageList: Array<ImageFile>;
-  imageRatings: Record<string, number>;
   multiSelectedPaths: Array<string>;
   selectionAnchorPath: string | null;
   libraryActivePath: string | null;
@@ -35,14 +34,13 @@ interface LibraryState {
 
 export const useLibraryStore = create<LibraryState>((set) => ({
   imageList: [],
-  imageRatings: {},
   multiSelectedPaths: [],
   selectionAnchorPath: null,
   libraryActivePath: null,
   libraryActiveAdjustments: INITIAL_ADJUSTMENTS,
 
   sortCriteria: { key: 'name', order: SortDirection.Ascending },
-  filterCriteria: { colors: [], rating: 0, rawStatus: RawStatus.All },
+  filterCriteria: { colors: [], rawStatus: RawStatus.All },
   searchCriteria: { tags: [], text: '', mode: 'OR' },
 
   isViewLoading: false,

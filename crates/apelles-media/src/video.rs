@@ -399,81 +399,12 @@ pub fn decode_frame(path: &Path, at: FramePos, info: &VideoInfo) -> Result<Dynam
     image::load_from_memory(&buf).context("decoding the PNG frame ffmpeg produced")
 }
 
-/// Extract ~`count` evenly-spaced thumbnails in ONE decode pass (fast) as small
-/// JPEGs. Returns `(frame_index, "data:image/jpeg;base64,...")`.
-///
-/// One `ffmpeg` invocation with a `select` filter + `scale`, piping concatenated
-/// MJPEG which we split on the JPEG SOI marker. This is O(one linear read of the
-/// file) instead of O(count) seeks+decodes.
-///
-/// D-228: the source is conformed to its nominal grid *first*, which is what
-/// makes the `select` below legitimate — it filters on the filter graph's own
-/// frame counter `n`, and only after the conform does `n` mean "source frame
-/// `n`" as the rest of Apelles defines it. On a VFR source it previously meant
-/// "the `n`th coded frame", so every returned index labelled a picture that
-/// lives somewhere else (B-104).
-pub fn extract_thumb_strip(
-    path: &Path,
-    info: &VideoInfo,
-    count: u32,
-) -> Result<Vec<(u64, String)>> {
-    let total = info.frame_count.max(1);
-    let step = (total / count as u64).max(1);
-    let grid = crate::conform::whole_source(info);
-    let pick = format!("select=not(mod(n\\,{step}))");
-    let vf = grid.vf([pick.as_str(), "scale=-2:150"]).unwrap_or_default();
-
-    let out = Command::new(ffmpeg_bin())
-        .args(["-hide_banner", "-loglevel", "error"])
-        .args(&grid.input_args)
-        .arg("-i")
-        .arg(path)
-        .args([
-            "-vf",
-            &vf,
-            "-fps_mode",
-            "passthrough",
-            "-q:v",
-            "5",
-            "-f",
-            "image2pipe",
-            "-c:v",
-            "mjpeg",
-            "-",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| format!("running ffmpeg thumb strip on {}", path.display()))?;
-
-    if !out.status.success() {
-        return Err(anyhow!(
-            "ffmpeg thumb strip failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
-
-    let jpegs = split_mjpeg(&out.stdout);
-    let b64 = base64::engine::general_purpose::STANDARD;
-    Ok(jpegs
-        .into_iter()
-        .enumerate()
-        .map(|(i, bytes)| {
-            let frame = (i as u64 * step).min(total.saturating_sub(1));
-            (
-                frame,
-                format!("data:image/jpeg;base64,{}", b64.encode(bytes)),
-            )
-        })
-        .collect())
-}
-
 /// Rendered height of a filmstrip thumbnail, in px (D-124). The Edit-tab
 /// timeline row this tiles into is 52px tall (`TimelinePane.tsx`'s
 /// `ROW_HEIGHT`), so this is exactly 2x it — enough for a Retina panel and
-/// nothing beyond it. D-119 inherited [`extract_thumb_strip`]'s `150`, which
-/// is Colorist's *poster-frame* size (a much larger on-screen element), not
-/// this one's: owner, live — "for thumbnail you dont have to take all the
+/// nothing beyond it. D-119 inherited the retired
+/// Colorist frame-strip's `150` (D-295), which is Colorist's *poster-frame*
+/// size (a much larger on-screen element), not this one's: owner, live — "for thumbnail you dont have to take all the
 /// frame in high quality right so do the optimization."
 pub(crate) const THUMB_STRIP_HEIGHT: u32 = 104;
 

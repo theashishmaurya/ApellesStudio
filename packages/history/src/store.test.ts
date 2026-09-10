@@ -3,7 +3,7 @@
 // real correct/incorrect answer, so these run for real rather than being
 // eyeballed.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_HISTORY_ENTRIES, useHistoryStore } from './store';
+import { MAX_HISTORY_ENTRIES, isAgentScope, runAsAgent, useHistoryStore } from './store';
 
 function reset() {
   useHistoryStore.setState({ undoStack: [], redoStack: [] });
@@ -145,5 +145,58 @@ describe('clear', () => {
     const s = useHistoryStore.getState();
     expect(s.undoStack).toHaveLength(0);
     expect(s.redoStack).toHaveLength(0);
+  });
+});
+
+// D-298 — who caused an entry. This is the whole of the Edit/Motion tabs'
+// agent-activity instrumentation (one `runAsAgent` wrapper per MCP
+// dispatcher), so the stamping rule has a real correct answer and is pinned
+// here rather than eyeballed in the dock.
+describe('agent scope (D-298)', () => {
+  it('stamps a push inside runAsAgent as agent, and everything else as user', async () => {
+    useHistoryStore.getState().push({ tab: 'edit', label: 'by hand', undo: vi.fn(), redo: vi.fn() });
+
+    await runAsAgent(() => {
+      useHistoryStore.getState().push({ tab: 'edit', label: 'by agent', undo: vi.fn(), redo: vi.fn() });
+    });
+
+    useHistoryStore.getState().push({ tab: 'edit', label: 'by hand again', undo: vi.fn(), redo: vi.fn() });
+
+    expect(useHistoryStore.getState().undoStack.map((e) => [e.label, e.source])).toEqual([
+      ['by hand', 'user'],
+      ['by agent', 'agent'],
+      ['by hand again', 'user'],
+    ]);
+  });
+
+  it('covers a push that lands after an await inside the handler', async () => {
+    // The real shape: every MCP handler is async, and `applyOp` may run after
+    // an `await` inside it. A scope that closed at the first suspension point
+    // would attribute the actual edit to the user.
+    await runAsAgent(async () => {
+      await Promise.resolve();
+      useHistoryStore.getState().push({ tab: 'motion', label: 'late', undo: vi.fn(), redo: vi.fn() });
+    });
+    expect(useHistoryStore.getState().undoStack[0].source).toBe('agent');
+  });
+
+  it('is re-entrant, and unwinds even when the handler throws', async () => {
+    await expect(
+      runAsAgent(async () => {
+        expect(isAgentScope()).toBe(true);
+        await runAsAgent(() => {
+          expect(isAgentScope()).toBe(true);
+        });
+        // still inside the outer scope
+        expect(isAgentScope()).toBe(true);
+        throw new Error('handler blew up');
+      }),
+    ).rejects.toThrow('handler blew up');
+
+    // The failure mode this guards: a leaked counter would make every
+    // subsequent user edit in the session read as agent work.
+    expect(isAgentScope()).toBe(false);
+    useHistoryStore.getState().push({ tab: 'edit', label: 'after the throw', undo: vi.fn(), redo: vi.fn() });
+    expect(useHistoryStore.getState().undoStack[0].source).toBe('user');
   });
 });

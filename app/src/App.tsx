@@ -25,7 +25,6 @@ import AppModals from './components/modals/AppModals';
 import SidePanelArea from './components/panel/SidePanelArea';
 import { PANEL_ICONS } from './components/panel/PanelSwitcher';
 import Controls from './components/panel/right/ControlsPanel';
-import MetadataPanel from './components/panel/right/MetadataPanel';
 import CropPanel from './components/panel/right/CropPanel';
 import MasksPanel from './components/panel/right/MasksPanel';
 import RelightPanel from './components/chroma/RelightPanel';
@@ -58,7 +57,6 @@ import { useProjectAutosave } from './hooks/useProjectAutosave';
 import { useColoristHistoryBridge } from './hooks/useColoristHistoryBridge';
 import { useDebugScreenshot } from './hooks/useDebugScreenshot';
 import { useDebugControl } from '@apelles/debug';
-import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ExternalEditBar from './components/ui/ExternalEditBar';
 import { Status } from './components/ui/ExportImportProperties';
 
@@ -330,7 +328,7 @@ function App() {
     finishExternalEdit,
   } = useExternalEditSession(handleImageSelect);
 
-  const { handleRate, handleClearSelection, handleLibraryImageSingleClick, handleImageClick, handleSetColorLabel } =
+  const { handleClearSelection, handleLibraryImageSingleClick, handleImageClick, handleSetColorLabel } =
     useLibraryActions(handleImageSelect);
 
   const { displayList: sortedImageList, badges: groupBadgeInfo } = useSortedLibrary();
@@ -611,8 +609,6 @@ function App() {
           );
         case Panel.Adjustments:
           return <Controls />;
-        case Panel.Metadata:
-          return <MetadataPanel />;
         case Panel.Crop:
           return <CropPanel />;
         case Panel.Masks:
@@ -773,7 +769,6 @@ function App() {
                       handleClearSelection={handleClearSelection}
                       handleCopyAdjustments={handleCopyAdjustments}
                       handlePasteAdjustments={handlePasteAdjustments}
-                      handleRate={handleRate}
                       handleZoomChange={handleZoomChange}
                       handlePanelSelect={handlePanelSelect}
                       requestThumbnails={requestThumbnails}
@@ -840,12 +835,9 @@ function App() {
           handleSaveDenoisedImage={handleSaveDenoisedImage}
           handleSaveRename={handleSaveRename}
           handleSetColorLabel={handleSetColorLabel}
-          handleRate={handleRate}
           executeDelete={executeDelete}
           handleSaveCollage={handleSaveCollage}
         />
-        {/* Apelles: the agent activity feed + request_human banner (D-032) */}
-        <AgentActivityDock />
         <ToastContainer
           position="bottom-right"
           autoClose={5000}

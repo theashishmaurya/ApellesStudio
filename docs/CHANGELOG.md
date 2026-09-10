@@ -30,13 +30,72 @@ One or two lines per session. Detail lives in the decision it references.
   `docs/02-scope.md`'s Edit-tab section is updated (Colorist's own scope line
   is not). Drafted as D-281, renumbered on the way in — `main` had meanwhile
   landed a different D-281 (RapidRAW ownership).
-- **2026-09-10** — Colorist-tab consolidation agent (`af18c5eb8c0b19df9`)
-  finished: B-147 fixed, Metadata panel + rating widget removed, Filmstrip
-  replaced with a scrub bar, Agent Activity moved to a shell overlay with
-  real `source: 'user'|'agent'` attribution, Export consolidated to one
-  button (two backends kept underneath — see roadmap item 8). Crop-panel
-  dedup and player unification explicitly not forced through — logged as
-  roadmap items 8 and 9 for follow-up instead. Not yet merged to `main`.
+- **2026-09-10** — **merged the Colorist-tab consolidation** (agent worktree
+  `af18c5eb8c0b19df9`) into `main`: B-147 fixed, the Metadata panel + rating
+  widget removed, the Colorist frame strip replaced by a scrub bar, Agent
+  Activity promoted to a shell overlay with real `source: 'user'|'agent'`
+  attribution, and Export consolidated to one shell-level button with **both**
+  backends deliberately kept underneath (Colorist's is the only one that
+  renders masks/relight/crop — see D-297). Crop-panel dedup and player
+  unification were investigated and deliberately NOT forced (D-299; roadmap
+  items 8 and 9). All six of its decisions were renumbered on the way in —
+  drafted D-291..D-296, landed as **D-294..D-299** — because `main` had
+  meanwhile taken D-291/292/293. One dangling forward reference in B-147 was
+  corrected in the same pass. The five entries below are that work.
+
+- **2026-09-10** — **D-299: Colorist's duplicate Crop panel and the "one common
+  player" ask are the same pass — scoped, not forced.** The owner's literal
+  crop ask ("make the Edit one authoritative") was already delivered by D-294.
+  What the investigation added: `CropPanel` is two halves (a real duplicate,
+  and perspective+lens which nothing else in the app provides), `Panel.Crop` is
+  a canvas MODE with 63 call sites reaching into grade-document fields the
+  renderer and the mask maths read — and the reason the two previews cannot
+  simply share a component is that **Colorist's picture is not a DOM element**:
+  it is a native wgpu surface behind the webview. Three-phase shape recorded
+  for the dedicated pass; the user-visible half of the complaint (the previews
+  disagreeing) is already fixed by D-294.
+
+- **2026-09-10** — **D-298: the agent activity feed is global, and finally
+  reports Edit and Motion.** The dock moved out of the Colorist tab onto a new
+  shell-level `overlay` slot. The instrumentation gap the roadmap predicted was
+  real: nothing outside Colorist fed the feed. Closed by attributing what was
+  already recorded — `@apelles/history` entries gained
+  `source: 'user' | 'agent'`, stamped by a `runAsAgent()` scope that each tab's
+  MCP dispatcher wraps its handler in, one line per tab rather than one per op.
+
+- **2026-09-10** — **D-297: one Export, reachable from every tab.** Colorist's
+  own Export dialog is gone; `EditorExportDialog` moved off the Edit tab's
+  per-tab slot onto a shell-level `headerAction`, so it sits in the chrome bar
+  whatever tab is active. Colorist's export BACKEND was kept, not deleted — it
+  is the only path that renders masks / local layers / relight / the Colorist
+  crop into a file (the Edit exporter carries the global grade only, as a
+  baked LUT) — and was made clip-aware, closing B-147's residual on the export
+  side. A speed-ramped clip is now refused there rather than silently
+  exporting the wrong frames.
+
+- **2026-09-10** — **D-296: RapidRAW's photo-culling workflow removed from the
+  Colorist tab.** The Metadata panel (a single-photo EXIF viewer whose every
+  field reads `-` on video) and the five-star rating widget are gone outright,
+  D-281's standard — with every entry point: the `Panel.Metadata` route and its
+  keyboard action, the `rate_0..5` shortcuts, both context-menu Rating
+  submenus, the quick-filter stars, `imageRatings` and its filter/sort/search
+  paths, the `Filmstrip` badge, and `set_rating_for_paths` in Rust. 13 locale
+  files cleaned of the orphaned keys.
+
+- **2026-09-10** — **B-147 fixed (D-294): the Colorist grades the Edit
+  timeline's clip, not the raw source file.** A new one-way bridge,
+  `chroma::colorist_view`, resolves the active shot to its
+  `apelles_timeline::Clip` and gives Colorist the clip's real trim (the
+  transport counts clip-local frames now, not the source file's 2990) and its
+  real geometry (crop/scale/rotation/position, applied through the Edit
+  compositor itself). No grade, no opacity/fade, no other layers — the
+  geometry counterpart of `grade_lut`'s colour bridge. Identity fast path
+  keeps an untransformed clip byte-identical. **D-295:** Colorist's
+  frame-thumbnail strip retired for a real scrub bar (`ColoristTransport`),
+  answering "a proper timeline or none" with "a transport, not a second
+  timeline"; `chroma_frame_thumbnails`, `extract_thumb_strip` and
+  `state::THUMB_CACHE` deleted whole.
+
 - **2026-09-10** — fixed a real bug in D-291's own
   `.github/workflows/website-deploy.yml`: it ran `npm run test` before
   `npm run build`, but `tests/build-output.test.ts` requires `dist/` to

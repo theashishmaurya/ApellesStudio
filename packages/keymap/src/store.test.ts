@@ -52,7 +52,17 @@ describe('the registry itself', () => {
     // A sample of ids that `app/src/utils/keyboardUtils.ts` persisted before
     // D-273 folded it in here. Renaming any of these silently drops a user's
     // saved remap, which is why this is pinned.
-    for (const id of ['copy_files', 'zoom_100', 'toggle_masks', 'rate_3', 'brush_size_up']) {
+    //
+    // D-296 dropped `rate_3` from this sample, and that is a deliberate
+    // exception rather than a weakening of the rule: the five-star rating
+    // actions were REMOVED with the rating widget itself (a photo-culling
+    // concept with no meaning in a video timeline), not renamed. A stale
+    // `rate_*` override in a user's settings is inert — `useShortcuts` only
+    // dispatches ids the registry still declares — so nothing breaks; what
+    // this test guards against is a rename, and there is nothing left to
+    // rename. `color_label_red` stands in for it: same fork origin, same
+    // section, still shipped.
+    for (const id of ['copy_files', 'zoom_100', 'toggle_masks', 'color_label_red', 'brush_size_up']) {
       expect(shortcutById(id)).toBeDefined();
       expect(shortcutById(id)!.scope).toBe('colorist');
     }

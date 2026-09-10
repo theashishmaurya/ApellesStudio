@@ -190,12 +190,8 @@
       "frameImage": "裝裱影像",
       "mergeHdr": "合併為 HDR",
       "noLabel": "無標籤",
-      "noRating": "無評分",
       "pasteAdjustments": "貼上調整",
       "productivity": "效率",
-      "rating": "評分",
-      "ratingLabel_one": "{{count}} 星",
-      "ratingLabel_other": "{{count}} 星",
       "redo": "重做",
       "resetAdjustments": "重置調整",
       "stitchPanorama": "拼接全景圖",
@@ -628,58 +624,6 @@
         "selectNewSourcePoint": "{{modifier}} + 點擊選擇新的來源點"
       }
     },
-    "metadata": {
-      "author": {
-        "creatorDetails": "創作者詳情",
-        "title": "作者與版權"
-      },
-      "camera": {
-        "aperture": "光圈",
-        "focalLength": "焦距",
-        "iso": "ISO",
-        "lens": "鏡頭",
-        "shutterSpeed": "快門速度",
-        "title": "相機詳情"
-      },
-      "clickToEdit": "點選編輯",
-      "copied": "已複製",
-      "copy": "複製",
-      "emptyClickToAdd": "空（點選新增）",
-      "extendedExif": {
-        "title": "擴充 EXIF"
-      },
-      "fields": {
-        "author": "作者",
-        "comments": "備註",
-        "copyright": "版權",
-        "title": "標題"
-      },
-      "fileInfo": {
-        "dimensions": "{{width}} × {{height}} 畫素 · {{megapixels}} MP",
-        "dimensionsNoMp": "{{width}} × {{height}} 畫素",
-        "emptyDimensions": "- × - 畫素",
-        "title": "檔案資訊",
-        "virtualCopy": "虛擬副本"
-      },
-      "gps": {
-        "altitude": "海拔",
-        "clickToOpenTooltip": "點選在新標籤頁中開啟地圖",
-        "latitude": "緯度",
-        "longitude": "經度",
-        "title": "GPS 位置"
-      },
-      "organization": {
-        "addTagPlaceholder": "新增標籤...",
-        "colorLabel": "顏色標籤",
-        "noTags": "無標籤",
-        "none": "無",
-        "rating": "評分",
-        "ratingLabels": "評分與標籤",
-        "tags": "標籤",
-        "title": "組織"
-      },
-      "title": "後設資料"
-    },
     "presets": {
       "amount": "數量",
       "dialog": {
@@ -733,7 +677,6 @@
         "adjust": "調整",
         "crop": "裁剪",
         "export": "匯出",
-        "info": "資訊",
         "inpaint": "修復",
         "masks": "遮色片",
         "presets": "預設",
@@ -885,7 +828,6 @@
       "noTagsAdded": "未新增標籤",
       "none": "無",
       "rateAndLabel": "評分與標籤",
-      "rating": "評分",
       "selectImagesToCompare": "選擇要比較的影像",
       "shutterSpeed": "快門速度",
       "syncZoomAndPan": "同步縮放與平移",
@@ -900,17 +842,6 @@
         "uneditedOnly": "僅未編輯"
       },
       "noMatch": "未找到匹配過濾條件的影像。",
-      "rating": {
-        "all": "顯示全部",
-        "andUpSuffix": "及以上",
-        "fiveOnly": "僅 5 星",
-        "fourAndUp": "4 星及以上",
-        "oneAndUp": "1 星及以上",
-        "onlySuffix": "僅",
-        "threeAndUp": "3 星及以上",
-        "twoAndUp": "2 星及以上",
-        "unrated": "僅未評分"
-      },
       "raw": {
         "all": "所有型別",
         "nonRawOnly": "僅非 RAW",
@@ -953,7 +884,6 @@
         "label": "標籤",
         "modified": "修改日期",
         "name": "名稱",
-        "rating": "評分",
         "shutter": "快門"
       }
     },
@@ -977,7 +907,6 @@
         "filterByColorLabel": "按顏色標籤過濾",
         "filterByEdited": "按編輯狀態過濾",
         "filterByFileType": "按檔案型別過濾",
-        "filterByRating": "按評分過濾",
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1029,7 +958,6 @@
       "fileName": "檔名",
       "focalLength": "焦距",
       "iso": "ISO",
-      "rating": "評分",
       "shutterSpeed": "快門速度"
     },
     "status": {
@@ -1538,12 +1466,6 @@
         "paste_files": "將檔案貼上到當前資料夾",
         "preview_next": "下一張",
         "preview_prev": "上一張",
-        "rate_0": "星級評分：0",
-        "rate_1": "星級評分：1",
-        "rate_2": "星級評分：2",
-        "rate_3": "星級評分：3",
-        "rate_4": "星級評分：4",
-        "rate_5": "星級評分：5",
         "redo": "重做調整",
         "rotate_left": "逆時針旋轉 90°",
         "rotate_right": "順時針旋轉 90°",
@@ -1561,7 +1483,6 @@
         "toggle_left_panel": "切換左側面板",
         "toggle_library_exif": "切換 EXIF 疊加",
         "toggle_masks": "切換遮色片面板",
-        "toggle_metadata": "切換後設資料面板",
         "toggle_presets": "切換預設面板",
         "toggle_right_panel": "切換右側面板",
         "undo": "復原調整",
@@ -1576,7 +1497,6 @@
         "editing": "編輯",
         "library": "相簿",
         "panels": "面板",
-        "rating": "評分與標籤",
         "view": "檢視"
       }
     },
@@ -1864,10 +1784,7 @@
         "export": "匯出",
         "pasteSettings": "貼上設定",
         "quickFilter": "快速篩選",
-        "rateStars_one": "評分 1 星",
-        "rateStars_other": "評分 {{count}} 星",
-        "resetZoom": "重置縮放以適應視窗",
-        "selectToRate": "選擇一張影像以評分"
+        "resetZoom": "重置縮放以適應視窗"
       },
       "zoomLabel": "縮放",
       "zoomLabelReset": "重置縮放"

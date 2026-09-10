@@ -28701,3 +28701,523 @@ nothing: a hard `ffmpeg` failure rather than silence.
   as a reminder that "no analytics" is a claim about the infra host too, not just this
   codebase, and needs the same "found live, not assumed" discipline this file's other
   entries already apply to first-party code.
+---
+
+## D-294 — the Colorist grades the Edit timeline's CLIP, not the raw source file (B-147)
+
+**Context.** The Colorist tab's preview showed the owner's footage upside down
+while the Edit tab showed it the right way up: every clip in that project
+carries `rotation: 180` (deliberately, to correct genuinely upside-down-at-
+capture footage), and Colorist knew nothing about it. Owner, live: *"see in
+colorist even though we have transformed the clip its taking from source with
+0 :D we need to get it from the timeline :) right the length etc.."*
+(`scratch/colorist-ignores-timeline-transform-and-trim.png`). The transport also
+counted the whole source file — `f405 / 2990` on a clip trimmed to a few hundred
+frames — so scrubbing ran straight past the clip's out-point into footage
+nothing else in the app ever shows.
+
+Root cause, and it is architectural rather than a missed field: the Colorist's
+whole pipeline operates on the **source file path**. `chroma::state`'s decode
+session holds `(path, VideoInfo, frame)`; `chroma::commands::seek_and_install`
+decodes source frame N of that path straight into `AppState.original_image`;
+the wgpu grade renders that. There was no read path from the Colorist into
+`apelles_timeline::Clip` at all — no `rotation`, no `source_start`, no
+`duration`. B-141 had already found the identical disconnect in the project
+launcher's thumbnail; this was the same gap in the one place it matters most,
+because it means every colour decision was being judged against the wrong
+picture.
+
+**Options.**
+
+1. *Show the Edit tab's composited frame in Colorist* — point the Colorist
+   preview at `chroma_timeline_frame`. Rejected: that frame already has the
+   clip's saved grade baked into it (D-256's `Lut3d`), so the live wgpu grade
+   would apply on top of itself and every adjustment would compound. It also
+   carries other layers, other tracks, captions and transitions, none of which
+   belong in a single clip's grading view.
+2. *Move the Colorist onto clip identity* — retire the path-keyed decode session
+   in favour of `Clip` ids end to end. The right long-term shape, and explicitly
+   deferred by D-070 for its size; doing it here would have made a critical bug
+   fix wait on a session-model rewrite.
+3. **Chosen: a narrow, one-way bridge — `chroma::colorist_view`.** A new module
+   that resolves the active shot's *path* to the clip the open project's active
+   timeline holds for it, and exposes exactly two things: the clip-local →
+   source frame mapping (`Clip::clamped_source_frame_at`, the same function the
+   Edit preview and the exporter use), and a geometry pass that places the
+   decoded frame into composition space with `edit::composite_layer_onto` — the
+   compositor itself, not a second copy of it.
+
+**Why.** It is the geometry counterpart of `grade_lut`, which is already the
+colour half of the same Colorist ⇄ Edit bridge in the other direction, so the
+app gains one symmetric pair of bridges rather than a special case. It carries
+**no grade** (the Colorist produces that), **no opacity/fade/transition alpha**
+(those blend against layers this canvas does not have), and **no other layers**.
+It reads the manifest per frame, so an Inspector transform edit or a trim on the
+Edit tab reaches Colorist on the next frame with nothing to keep in sync. And it
+resolves **by path**, which inherits D-070's already-documented "two clips
+sharing a source path collapse onto one Colorist shot" limit instead of
+inventing a second identity that could go stale against the timeline — the exact
+failure mode B-034 and B-083 both were.
+
+**What actually changed.**
+- `chroma::colorist_view` (new): `resolve(path) -> Option<ClipView>`,
+  `ClipView::frame_count/source_frame/apply_geometry`.
+- `chroma::commands::seek_and_install`: `frame` is **clip-local** now, the
+  decoded source frame comes from the clip's trim, and the geometry pass runs on
+  the same blocking thread as the decode. Both the scrub path (`chroma_seek`)
+  and the playback path (`chroma_play_frame`, which shares this body) inherit it.
+- `chroma_video_info`: reports the clip's length and the project's composition
+  size. `fps` deliberately stays the source's — the transport's wall-clock loop
+  steps source frames at source rate.
+- `chroma::edit`: five items widened to `pub(super)` and one new
+  `ClipTransform::without_blend()`, so the bridge calls the real compositor
+  rather than reimplementing crop → scale → rotate → position.
+
+**The identity fast path is not an optimisation, it is the contract.** An
+untransformed clip whose source already fills the composition gets its decoded
+buffer handed straight back — byte-identical to pre-D-294, no allocation, no
+resample. That is the overwhelmingly common case and it runs on every scrub and
+every playback frame; this is the same two-part guard `timeline_frame` takes
+(D-132/D-136), for the same reason.
+
+**Everything frame-keyed on the Colorist side moves with it, consistently.**
+Tracked mattes (D-019), mask keyframes (D-034) and the depth track (D-036) are
+all indexed by `current_video().frame`, which is now the clip-local frame — so
+they stay in lockstep with what is on screen. One real consequence, stated
+plainly: a depth track or mask keyframes authored **before** this change are
+indexed in source-frame space and will land on the wrong frames for a trimmed
+clip. Re-tracking is the fix; there is no migration, because the old indices
+carry no record of which clip they were authored against.
+
+**Left on raw source by this commit, and closed by D-297:** Colorist's own
+`chroma_export_video` decodes the source file directly with its own ffmpeg
+pipeline and knew nothing of this bridge, so between D-294 and D-297 it
+exported a different picture than its own preview. D-297 investigated whether
+to retire it (the Edit tab's exporter composites clips correctly already) and
+found a real reason not to — it is the only path that renders the SPATIAL half
+of a grade (masks/local layers, relight, the Colorist crop), which the Edit
+exporter drops when it bakes a grade to a LUT (D-256). So it was kept and made
+clip-aware **through this same bridge**: its frame range is clip-local and each
+decoded frame gets `apply_geometry` before the grade. Preview and single-clip
+render agree by construction now, not by coincidence.
+
+**Verified:** `cargo test -p apelles --lib chroma::colorist_view` (5 new cases —
+clip length vs source length, in-point mapping, out-point clamp, opacity dropped
+while rotation survives, identity preserved), `chroma::state` (8), `cargo clippy
+-p apelles --lib` clean on the new code, `tsc --noEmit` on `app` at 66 errors —
+the same 66 `main` has.
+
+---
+
+## D-295 — Colorist's frame-thumbnail strip becomes a scrub bar: a transport, not a second timeline
+
+**Context.** Owner, offering both options against
+`scratch/colorist-filmstrip-timeline-question.png`: *"have a proper timeline or
+remove this timeline from the Colorist no point of having a timeline."* The
+thing in that screenshot is `ChromaTimeline.tsx` (D-031) — 48 evenly-spaced
+frame thumbnails across the loaded clip, with a playhead, transport buttons and
+a timecode readout. (`docs/04-roadmap.md`'s own entry named
+`panel/Filmstrip.tsx` for this; that file is RapidRAW's photo-library thumbnail
+grid, a different component, and it is untouched.)
+
+D-294 forced the question rather than merely raising it: the strip was built
+from the whole **source file** (`chroma_frame_thumbnails` →
+`extract_thumb_strip`), while the transport under it now counts the **clip's**
+frames. Leaving it would have meant a picture strip whose thumbnails address
+frames the playhead can no longer reach.
+
+**Options.** (a) Make the strip clip-ranged — keep two filmstrips in the app.
+(b) Delete the whole bottom bar for a video — lose Colorist's only transport.
+(c) **Chosen:** keep the transport, drop the thumbnails.
+
+**Why.** The capability that is genuinely Colorist's — scrubbing within the shot
+you are grading, stepping a frame, playing it back — is real and has no other
+home; Colorist has no other transport at all. The capability that was
+*duplicated* is the picture strip, and the Edit tab's own filmstrip
+(`chroma_clip_thumbnails`, D-128) is the real one. A scrub bar is not a
+timeline, which is what makes this answer both of the owner's options at once:
+there is no second timeline, and what remains is a proper control rather than a
+half-timeline.
+
+Shape taken from Resolve's own Color-page viewer (`scratch/resolve-reference/`,
+the same reference D-193's Inspector pass used): transport cluster, timecode,
+and a jog track with a played-portion fill and a handle. The mask-keyframe
+diamond track (D-034) stays exactly where it was, above the bar.
+
+**What is lost, named rather than glossed:** visual "where am I in this shot"
+scanning from the thumbnails. Judged worth it — that is precisely the thing the
+Edit tab's timeline does better and at project scale, and it was the duplication
+the owner was pointing at.
+
+**Removed, whole, not hidden** (D-281's standard):
+`ChromaTimeline.tsx`, `chroma_frame_thumbnails` and its `generate_handler!`
+line, `apelles_media::video::extract_thumb_strip`, and
+`chroma::state::THUMB_CACHE` with its four invalidation sites and its test —
+nothing else called any of them. `BottomBar` now renders the transport at its
+own natural height instead of the resizable filmstrip height, which existed to
+show thumbnails.
+
+**Verified:** `cargo check -p apelles --lib --tests` clean, `tsc --noEmit` on
+`app` unchanged at 66 pre-existing errors, no remaining reference to any removed
+symbol anywhere in `app/src`, `app/src-tauri`, `crates/` or `mcp/`.
+
+---
+
+## D-296 — the Metadata panel and the star-rating widget are removed outright, not hidden
+
+**Context.** Two of the Colorist-consolidation batch's items, taken together
+because they are one thing: RapidRAW's **photo-culling** workflow, inherited
+wholesale and never meaningful in a video editor.
+
+- **The Metadata panel** (`panel/right/MetadataPanel.tsx`, 822 lines — File
+  Information / Camera Details / Author & Copyright / Organization) is a
+  single-photo EXIF viewer. Owner's screenshot
+  (`scratch/colorist-metadata-panel-remove.png`) shows every field reading `-`
+  on the project's real video assets, which is what it will always read: those
+  fields come from a still's EXIF, and a camera original's video track carries
+  none of them.
+- **The five-star rating widget** (`scratch/colorist-rating-remove.png`) is the
+  cull-and-pick control of a photo import workflow. There is no such concept in
+  a multi-clip timeline: a clip is on the timeline or it is not, and the Edit
+  tab's own markers/link groups are how a shot gets flagged.
+
+**Options.** Hide them behind a flag (the pre-D-281 reflex, "keep it for
+upstream cherry-picks") · leave them · **remove them outright**. D-281 settles
+it: `app/` is owned code, and a redundant inherited component is deleted like
+any other dead code.
+
+**What "outright" had to mean, checked call site by call site.** Removing a
+panel is not removing a file — both of these had reach:
+
+- *Metadata:* the component, `Panel.Metadata` (the enum member, the switcher
+  icon + tooltip, the mobile panel order, `ALL_PANELS`, the default region
+  map, both saved-workspace layouts, both `activePanels` defaults), the
+  `toggle_metadata` keyboard action in `useKeyboardShortcuts` **and** its
+  `@apelles/keymap` registry row (a shortcut with no target is exactly the
+  half-removal this pass was told to avoid), and the `editor.metadata.*`
+  subtree plus `editor.switcher.tooltips.info` in all 13 locales.
+  `reconcileWorkspace` needed no migration code of its own: it already filters
+  a saved layout against `ALL_PANELS`, so dropping the member is the
+  migration.
+- *Rating:* the `StarRating` component and its four `BottomBar` props, the
+  quick-filter star row, the `EditorView`/`App`/`AppModals` prop chain,
+  `handleRate` in `useLibraryActions`, the six `rate_0..5` keyboard actions and
+  their registry rows, both context-menu Rating submenus, `imageRatings` in
+  `useLibraryStore`, the rating filter/sort/search-query paths in
+  `useSortedLibrary`, the rating badge in `Filmstrip`, the whole `ratingBuffer`
+  plumbing through `useTauriListeners`' two Rust events, `Invokes
+  .SetRatingForPaths`, and `file_management::set_rating_for_paths` with its
+  `generate_handler!` line.
+
+**Two things deliberately left, and why.**
+
+1. **`ImageMetadata.rating` stays in the Rust sidecar struct.** It is a field of
+   RapidRAW's persisted `.rrdata` format and is written by XMP import
+   (`extract_xmp_rating`). Nothing in the app reads it any more, but removing it
+   would silently rewrite every existing sidecar on the next save and change an
+   on-disk format for no gain. The *feature* is gone — there is no way to set a
+   rating, and nothing displays one; the byte in the file is inert.
+2. **The keymap's `rating` section became `labels`**, holding only the six
+   colour-label actions that remain. Its `labelKey` was dropped with the
+   rename: there is no translated key for the new heading, and every
+   Apelles-native section (`Application`, `Playback`, `Timeline editing`,
+   `Trim tools`) is already English-only for the same reason.
+   `store.test.ts`'s "the fork's keybind ids survive verbatim" guard sampled
+   `rate_3`; it now samples `color_label_red`. That is not the guard weakening —
+   the guard is against a *rename* silently dropping a user's saved remap, and
+   `rate_*` was removed, not renamed. A stale `rate_*` override in someone's
+   settings is inert, because the dispatcher only fires ids the registry
+   declares.
+
+**Verified:** `tsc --noEmit` on `app` drops from 66 pre-existing errors to 65
+and introduces none; `npm test --workspace @apelles/keymap` 43/43;
+`cargo check -p apelles --lib` and `cargo clippy` clean; no reference to any
+removed symbol remains in `app/src`, `app/src-tauri`, `packages/` or the
+locale files.
+
+---
+
+## D-297 — one Export, in the shell chrome bar, reachable from every tab; Colorist's own dialog retired
+
+**Context.** The app had two export buttons. The owner pointed at Colorist's
+(`scratch/colorist-export-button-remove.png`) and asked for one global entry
+point. D-294 made the question urgent rather than cosmetic: Colorist's own
+`ExportDialog` drove `chroma_export_video`, which decoded the **raw source
+file** — so from D-294 onward it rendered a different picture (and a different
+length) than the Colorist preview sitting right above it.
+
+**The question the roadmap asked to answer first: does Colorist's export do
+anything the Edit tab's genuinely cannot?** Checked, and the answer is **yes**,
+which changed the shape of this decision:
+
+- `EditorExportDialog` (D-198) exports the **timeline** through ffmpeg, and a
+  clip's Colorist grade reaches it as a baked 3D LUT (D-256). A LUT is a pure
+  per-pixel function, so the **spatial half of a grade is dropped** — mask
+  layers / local adjustments, relight, the Colorist crop — with a logged
+  warning. That is documented in `grade_lut`'s own header and is not a bug.
+- `chroma_export_video` renders through the **real wgpu grading pipeline**, so
+  all of that reaches the file. It is the only path that exports a *complete*
+  grade.
+- The `.cube` bake (`chroma_bake_lut`) has no Edit-tab equivalent at all.
+
+So "delete it outright" would have quietly removed a real capability, and
+"keep both buttons" was what the owner asked to stop. The split that resolves
+both: **one export SURFACE, two export JOBS.**
+
+**Chosen.**
+
+1. **Colorist's `ExportDialog.tsx` is deleted** — the GUI duplicate, with its
+   mount in `EditorToolbar`.
+2. **`EditorExportDialog` moves from a per-tab slot to a shell-level one.**
+   `ShellTab.headerAction` (D-251) is gone; `ShellProps.headerAction` replaces
+   it, rendered whenever a project is open, on every tab. D-251 made it
+   per-tab because only Edit had an action to put there; a slot that will only
+   ever hold the same node for all three tabs is a shell-level prop, and
+   populating three tab entries identically would also have re-rendered a
+   different-but-identical node on every tab switch. `Shell` still never
+   imports `@apelles/editor` — the node comes from `Root.tsx`, exactly like
+   `launcher` and `sourcesPanel`.
+3. **`chroma_export_video` is kept, and made clip-aware** (the B-147 residual
+   D-294 flagged): its `from_frame`/`to_frame` are clip-local now, resolved to
+   source frames through the same `colorist_view` bridge the preview uses, and
+   each decoded frame gets the clip's geometry before the grade. Preview and
+   single-clip render agree again, by construction rather than by coincidence.
+   A clip with a **speed ramp** is refused with a message pointing at the Edit
+   exporter: this render is one linear decode pass and cannot express
+   non-contiguous source frames, and silently exporting the wrong frames is
+   exactly the class of defect B-053/B-090 were.
+
+**The honest gap this leaves.** "Render THIS clip with its full grade" is now
+reachable from the MCP surface (`export`) and not from the GUI — the wrong side
+of CLAUDE.md's "every feature is built for a human AND an AI." It is on the
+roadmap as a real follow-up: fold a "current clip, full grade" mode into
+`EditorExportDialog`, which is where the one export surface lives. Stating it
+rather than pretending the item is fully closed.
+
+**`ExportPanel` (`Panel.Export`) is deliberately untouched.** It is RapidRAW's
+batch **still-image** exporter, driving `export_images` over file *paths* — a
+different feature on a different input, as D-049 already recorded. It is
+plausibly dead in a video-only Colorist and is a candidate for the same
+treatment as D-296's panels, but that is its own investigation (it reaches
+export presets, watermarking, filename templates and three Rust commands) and
+not something to fold into an Export-consolidation commit as a guess.
+
+**Verified:** `npm test --workspace @apelles/shell` 7/7 — including the
+export-action case rewritten to its **inverse** (the trigger must now stay on
+Motion and Colorist, where D-251's version asserted it disappeared) plus a new
+one pinning that the launcher still gets no trigger; `tsc --noEmit` on
+`@apelles/shell` clean; `cargo check -p apelles --lib --tests` clean;
+`cargo fmt --check` shows one *fewer* diff in `export.rs` than `main` does (the
+file is not fmt-clean on `main`; nothing this pass added is dirty);
+`py_compile` on `mcp/server.py`.
+
+---
+
+## D-298 — the agent activity feed goes shell-level, and Edit/Motion ops finally feed it
+
+**Context.** `AgentActivityDock` (D-032) was mounted inside `App.tsx` — the
+Colorist tab — so a feed of what an agent is doing to the project was visible
+from exactly one of three tabs. Owner:
+`scratch/colorist-agent-activity-should-be-global.png`. The roadmap entry asked
+for a second thing too, and it was the real work: *check whether Edit/Motion
+MCP operations are even instrumented to feed it yet — if not, that gap is part
+of this item.*
+
+**They were not.** The feed's only writer is `useChromaControl.ts`, and every
+entry it records is Colorist-shaped: a full `Adjustments` snapshot before and
+after, a `diffAdjustments` field diff, and an undo that jumps the Colorist's
+own history stack. Nothing in `@apelles/editor` or `@apelles/motion` wrote to
+it, and neither could — `useAgentStore` lives in `app/src`, which a tab package
+must not import (D-039's one-way layer rule).
+
+**Options for closing that.**
+
+1. *Generalise `useAgentStore` and move it into a package.* A new entry type, a
+   new package or a new home in an existing one, and the per-shot scoping
+   (`shotFeeds`/`scopeToShot`) and grade-diff machinery carried along for the
+   ride. Correct, and much larger than the item.
+2. *Instrument each Edit/Motion op individually.* ~90 handlers in
+   `useEditorControl.ts` alone, each needing a hand-written summary — a
+   maintenance surface that would go stale on the first new op.
+3. **Chosen: attribute what is already recorded.** Every Edit and Motion op
+   *already* pushes a `@apelles/history` entry — `{ tab, label, undo, redo }` —
+   because that is how global undo (D-051) works, and `@apelles/history` is
+   already a dependency of both tab packages **and** of `app`. The only thing
+   missing was *who caused it*.
+
+**What that took.** `HistoryEntry` gains `source: 'user' | 'agent'`, and
+`@apelles/history` gains `runAsAgent(fn)`: a re-entrant depth counter, unwound
+in a `finally`, that stamps every push inside its window. Each tab's MCP
+dispatcher wraps its handler call in it — **one line per tab**, not one per op,
+so a new op is instrumented the day it is written without anyone remembering
+to. The dock then merges two sources into one newest-first list: Colorist grade
+entries from `useAgentStore` (rich — diff + jump-to-here Undo) and shared-stack
+entries with `source === 'agent' && tab !== 'colorist'` (label + tab + time).
+The `tab !== 'colorist'` filter is what stops double-listing, since D-051's
+Colorist→shared-history bridge pushes grade edits onto the same stack.
+
+**Why the Edit/Motion rows carry no Undo, deliberately.** The shared stack is
+LIFO; calling `undo()` on an entry that is not on top would apply a reversal
+out of order and leave the stack describing a state the app is no longer in.
+Cmd/Ctrl+Z is the right control for those, and it is already global. The
+Colorist rows keep their per-row undo because the Colorist's own history
+supports a *jump* to an index, which is a different primitive.
+
+**The honest limit of the depth counter.** It is not async-context tracking. A
+push that lands after an `await`, while two MCP ops are interleaved, could be
+attributed to the wrong one — it is still attributed to *an agent*, and this is
+a feed label rather than state, so the cost is one wrong row. A test pins the
+case that actually matters (a push after an `await` inside a handler is still
+agent-scoped) and the one that would be dangerous (a throwing handler must not
+leak the counter and make every later user edit read as agent work).
+
+**The surface itself** is `@apelles/shell`'s new `overlay` prop — the same
+injected-node pattern as `launcher`/`sourcesPanel`/`headerAction`, supplied by
+`Root.tsx`, so `Shell` still imports nothing from `app`. Gated on `projectOpen`
+only; the dock hides itself when there is nothing to show.
+
+**Verified:** `npm test --workspace @apelles/history` 14/14 (3 new — stamping,
+the post-`await` case, re-entrancy + the throwing-handler unwind);
+`@apelles/shell` 7/7; `@apelles/motion` 632/632; `@apelles/editor` 1706/1706
+(the full parallel run fails 7 *files* to collect on this machine under load —
+run with `--maxWorkers=2` they pass, 1631 + 75 = 1706, and each passes alone);
+`tsc --noEmit` on `app` at 65 errors, `main`'s baseline minus the one D-296
+removed.
+
+**Note on verification method, worth recording.** This worktree had no
+`node_modules`, so `@apelles/*` resolved up the tree to the **main checkout's**
+packages — meaning any `tsc`/test run that crossed a package boundary was
+silently checking `main`'s code, not this branch's. Caught when a correct
+`ShellProps.headerAction` reported as missing. Fixed with a worktree-local
+link farm (`node_modules/@apelles/*` → this worktree's own packages, everything
+else symlinked from the main checkout's install); every figure above was
+re-measured after that.
+
+---
+
+## D-299 — Colorist's canvas: the duplicate Crop panel and the "one common player" ask are ONE pass, and this is its shape
+
+Two Colorist-consolidation items (1's leftover half and 6) that the
+investigation found are the same piece of work, in the same two files. Both are
+**scoped here and deliberately not built in this pass** — the reasoning is the
+whole point of the entry, and each half explains what a rushed version would
+have broken.
+
+### What was actually checked
+
+| | lines | what it is |
+|---|---|---|
+| `app/src/components/panel/editor/ImageCanvas.tsx` | 3,259 | Colorist's preview: the picture plus mask overlay, crop overlay, straighten line, relight pucks, AI-patch/brush/quick-erase gestures, WB picker, agent ROI, composition guides. **47 props.** |
+| `app/src/components/panel/Editor.tsx` | 2,239 | its host — owns zoom/pan (`transformState`, a hand-rolled pointer/wheel implementation, applied as a CSS transform on a wrapping div), the panel gating, and the crop-preview plumbing |
+| `packages/editor/src/PreviewPane.tsx` | 938 | the Edit tab's preview: fetch + rAF play loop + `<img>` + overlays |
+| `packages/player/src/Player.tsx` | 651 | the shared, **purely presentational** transport + viewport chrome |
+| `app/src/components/panel/right/CropPanel.tsx` | 755 | Crop & Transform |
+
+### Item: the duplicate Crop & Transform panel
+
+Owner: *"we have two crop and reset, one in edit and one here, please make sure
+Edit one is applied to all the clips."* **The literal ask is already
+delivered — that is D-294**, which is what the roadmap entry itself predicted
+("'make the Edit one authoritative' is not a UI toggle, it is the B-147 fix").
+The remaining question was whether `CropPanel` should also go.
+
+**It is not one thing, and that is the finding.** The panel holds two halves:
+
+- **Aspect Ratio / Crop / Rotation (straighten) / Orientation (90° steps +
+  flips)** — a genuine duplicate of the Edit tab's per-clip transform
+  (D-193/D-208, GUI + `editor_set_clip_transform`), and after D-294 *worse* than
+  a duplicate: it now applies **on top of** the clip's already-composited
+  picture, so the two compound. It also cannot reach any output the Edit tab
+  produces — `grade_lut::bake_lut3d` strips crop/rotation/flips before baking,
+  by definition (a LUT is per-pixel).
+- **Geometry → Transform (perspective/keystone) and Lens (distortion
+  correction)** — **not duplicated anywhere.** The Edit tab's clip transform has
+  no perspective and no lens correction, and neither does any MCP tool. Deleting
+  `CropPanel.tsx` would silently remove them.
+
+**Why the duplicate half cannot just be deleted now.** `Panel.Crop` is not a
+route to a panel; it is a *mode* the canvas is in. `isCropping` threads through
+`Editor.tsx` (14 call sites: pointer handling, pan gating, the uncropped-preview
+fetch, the live-rotation preview) and `ImageCanvas.tsx` (`ReactCrop`, the
+straighten drag line, `CompositionOverlays`), and the fields it writes
+(`adjustments.crop`/`aspectRatio`/`rotation`/`orientationSteps`/`flip*`) are read
+by `adjustment_utils::apply_all_transformations`, by the mask-geometry
+un-transform in `image_processing.rs`, by `file_management.rs`'s thumbnail path
+and by `chroma::export`'s `prepare_frame` — and they are persisted in
+`grade.json`, which the renderer reads and only it (CLAUDE.md's own invariant).
+Retiring them is a grade-document field retirement plus a mask-coordinate
+change, not a UI deletion. **63 references across the two largest files in the
+fork.**
+
+**Decision:** it goes, and it goes as **phase 1 of the canvas pass below** —
+because unpicking `isCropping` from `ImageCanvas`/`Editor` IS the first move of
+unifying the player, not a separate errand. Doing it standalone would mean
+touching those 63 sites twice.
+
+### Item: "player is different for both, it should be common component"
+
+**A full unification cannot be done safely in one pass, and the reason is not
+size.** It is this:
+
+**The Colorist's picture is not a DOM element.** On macOS and Windows the grade
+is painted straight onto a **native wgpu surface behind the webview**, showing
+through a transparent hole the DOM leaves for it (B-006 — it is why
+`Shell.tsx`'s root goes `bg-transparent` when `wgpuSurfaceActive`). A render
+returns the 11 bytes `WGPU_RENDER` and **no pixels**;
+`finalPreviewUrl` stays null. The Edit tab's preview is the opposite: a JPEG per
+frame over IPC into an `<img>` whose `src` is written imperatively (D-290).
+
+So `@apelles/player`'s `surface: ReactNode` prop — the slot that makes it
+"shared" — has nothing to accept from Colorist. What Colorist needs is not a
+node but a **measured rectangle** the native surface is positioned against, and
+`Player`'s viewport currently exposes no such contract. That is the gap, and no
+amount of moving overlay components around closes it.
+
+**The two other real obstacles, named:**
+
+1. **Zoom/pan lives in the wrong place on both sides, differently.** The Edit
+   tab's is a compositor-only CSS transform inside `PreviewPane` with the
+   overlays fed an arithmetically identical transform (D-218). Colorist's is a
+   hand-rolled pointer/wheel implementation in `Editor.tsx` that transforms a
+   wrapping div — and on the wgpu path it must also drive where the native
+   surface is drawn. One shared viewport has to own one of these models.
+2. **Colorist's overlays are not `PreviewPane`-shaped.** `TransformOverlay` /
+   `DynamicZoomOverlay` take a `container` element and read a shared content
+   box. Colorist's take **47 props** and reach back into `Editor.tsx`'s state
+   for gesture arbitration (which of brush / quick-erase / AI patch / crop /
+   straighten / WB-pick / relight owns this pointer-down). That arbitration is
+   real behaviour, not incidental, and there is no equivalent on the Edit side
+   to inherit it from.
+
+**Concrete shape for the dedicated pass** (each phase independently shippable
+and independently verifiable, which is exactly what this pass could not offer):
+
+- **Phase 1 — retire the duplicate crop mode.** Remove `Panel.Crop`, the
+  `ReactCrop`/straighten/composition-guide layer and the `isCropping` gating;
+  keep perspective + lens as their own small "Geometry" panel; retire the
+  now-unwritten `crop`/`rotation`/`orientation`/`flip` fields from the grade
+  path (with the mask-coordinate un-transform they feed), versioning
+  `grade.json` accordingly. Closes the Crop item and removes the largest single
+  source of `ImageCanvas` prop churn before anything else moves.
+- **Phase 2 — give `@apelles/player` a viewport contract, not just a slot.**
+  Add a measured content-box + zoom/pan model to the shared component (the Edit
+  tab already has one — D-218 — so this is promotion, not invention), and let a
+  caller take the box **without** supplying a `surface` node, so a native
+  surface can be positioned against it.
+- **Phase 3 — move Colorist onto it**, its remaining overlays (mask, relight
+  puck, agent ROI, WB picker) converted to the `container`-prop shape one at a
+  time, with the pointer arbitration lifted into an explicit, testable
+  "who owns this gesture" resolver rather than a chain of booleans.
+
+**Why not force it now.** A half-migrated canvas is a canvas where a mask drag
+lands in the wrong place — the exact defect class B-043 and B-053 already cost
+this project, and CLAUDE.md's priority order puts stability above shipping
+speed. The owner's underlying complaint (the two previews *disagree about the
+picture*) was the real one, and **that is fixed** — by D-294, in Rust, with no
+component unification needed. What remains is duplicated *code*, not a
+divergence a user can see.
+
+**Recorded so the next pass starts here, not from scratch**: the wgpu-surface
+finding above is the single fact that makes this hard, and it is not visible
+from either component's source — it took following `WGPU_RENDER` from
+`useImageProcessing.ts` back through `Shell.tsx`'s `wgpuSurfaceActive` to B-006.

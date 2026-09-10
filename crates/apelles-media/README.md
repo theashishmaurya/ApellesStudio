@@ -15,7 +15,7 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
     (D-228). Not extracted from the fork — new with that decision.
   - `video` — `ffprobe` metadata (`probe`, incl. D-049's audio-stream facts),
     single-frame `ffmpeg` decode (`decode_frame`), thumbnail/filmstrip
-    extraction (`extract_thumb`, `extract_thumb_strip`, `extract_thumb_chunk`)
+    extraction (`extract_thumb`, `extract_thumb_chunk`)
     and the packet-level keyframe scan (`probe_keyframe_interval`, D-128).
   - `still` — **still images as timeline sources (D-292)**: `video`'s
     counterpart for a source that has one frame and no clock. The extension

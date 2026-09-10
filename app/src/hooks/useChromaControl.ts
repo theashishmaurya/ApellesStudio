@@ -1343,6 +1343,16 @@ export function useChromaControl() {
       // ---- export (roadmap item 2, D-022) --------------------------------
       // `kind`: prores | h264 | cube. Video export runs in the background —
       // this op kicks it off and returns; poll `export_progress`.
+      //
+      // D-297 — this is the COLORIST single-clip render, and it no longer has
+      // a GUI twin: Colorist's own Export dialog was retired in favour of the
+      // Edit tab's (the app's one export surface, now in the shell chrome bar
+      // and reachable from every tab). What it still does that the Edit
+      // exporter cannot is render the clip through the real wgpu grading
+      // pipeline, so masks / local layers / relight / the Colorist crop reach
+      // the file — the Edit exporter carries only the global grade, baked to a
+      // 3D LUT (D-256 strips the spatial half with a warning). `from`/`to` are
+      // CLIP-LOCAL frames (D-294), same as `seek`.
       export: async (a) => {
         const kind = a?.kind ?? 'prores';
         const jsAdjustments = useEditorStore.getState().adjustments;

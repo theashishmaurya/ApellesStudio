@@ -28,7 +28,7 @@ inside the component itself:
 `app/src/components/modals/HdrModal.tsx`,
 `app/src/components/modals/NegativeConversionModal.tsx`,
 `app/src/components/modals/PanoramaModal.tsx`,
-`app/src/components/panel/editor/ChromaTimeline.tsx`,
+`app/src/components/panel/editor/ColoristTransport.tsx`,
 `app/src/components/panel/right/ExportPanel.tsx`,
 `app/src/components/panel/right/PresetsPanel.tsx`,
 `app/src/components/panel/right/TetheringPanel.tsx`,
