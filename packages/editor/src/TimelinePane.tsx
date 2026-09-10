@@ -387,6 +387,13 @@ import {
 // B-116 — anchored zoom: keep whatever is under the cursor (wheel) or the
 // playhead (buttons) under it across a zoom step.
 import { buttonZoomAnchorX, frameAtViewportX, scrollLeftForAnchor } from './timelineZoom';
+// B-145 — the one place a dnd-kit drag's displacement is derived. NOT
+// `event.delta`, which is corrupted by this pane's own scroll container — see
+// that module's doc for the full mechanism.
+import { dragDelta, type DragDelta, type ScrollOffset } from './dragDelta';
+// B-153 — the live drag-preview overlays, and the state that drives them, live
+// in their own component so a drag tick does not re-render this whole pane.
+import { TimelineDragPreview, type TimelineDragPreviewHandle } from './TimelineDragPreview';
 // B-122 — the one place the `@dnd-kit` payload shapes are named, and the
 // validating narrowings that replaced this file's six inline `as` casts.
 import {
@@ -1089,7 +1096,7 @@ function ClipBody({
 
 /** D-098 — one droppable target per track, overlaid on the edit area at
  *  that track's real on-screen position (same `RULER_AND_MARGIN_PX +
- *  index*ROW_HEIGHT - scrollTop` math `insertPreview`'s overlays already
+ *  index*ROW_HEIGHT - scrollTop` math `TimelineDragPreview`'s overlays already
  *  use). **Always mounted** (not conditionally rendered on an active
  *  drag) — a real bug found live, not assumed: mounting these only once
  *  `activeDrag` flips on meant dnd-kit had to register + measure a brand
@@ -1126,7 +1133,7 @@ function ClipBody({
  *  dnd-kit needs a real drop target spanning the whole row to resolve
  *  which track the pointer is over at all — but the row is no longer
  *  PAINTED at that full width; the real visual feedback is
- *  `clipDragPreview`'s own precisely-sized/positioned placeholder overlay
+ *  `TimelineDragPreview`'s own precisely-sized/positioned placeholder overlay
  *  (rendered separately, sized to the dragged clip's actual duration,
  *  positioned at its actual resolved landing frame) plus the sync-linked
  *  ghost previews alongside it. This component stays purely a (now
@@ -1143,6 +1150,13 @@ function TrackDropZone({ track, top, height }: { track: number; top: number; hei
   return (
     <div
       ref={setNodeRef}
+      // B-145 — a stable hook for a test to find this droppable, the same
+      // convention `ClipBody`'s own `data-chroma-*` attributes already use.
+      // jsdom has no layout, so a DOM-tier test has to supply this element's
+      // real geometry itself before dnd-kit can resolve a drop onto it (see
+      // `TimelinePane.clipDrag.dom.test.tsx`) — and it cannot do that without
+      // being able to find it.
+      data-chroma-track-drop-zone={track}
       className="pointer-events-none absolute left-0 right-0 z-20"
       style={{ top, height }}
     />
@@ -1209,6 +1223,18 @@ export function TimelinePane() {
   // `react-virtualized`), `scrollTop` just never needed `scrollLeft` before
   // this pass since nothing read a horizontal drop position.
   const [scrollLeft, setScrollLeft] = useState(0);
+  /** B-145 — the live scroll offset, readable from a handler that cannot see
+   *  the state (`onDndDragStart` is memoized with no deps). Synced by an
+   *  effect rather than written next to each `setScrollLeft`/`setScrollTop`
+   *  call, so there is exactly ONE writer and a future third setter cannot
+   *  silently leave it stale. */
+  const scrollRef = useRef<ScrollOffset>({ left: 0, top: 0 });
+  /** B-145 — the scroll offset at the moment the current dnd-kit drag began.
+   *  `dragDelta` needs it to turn an on-screen displacement into a
+   *  content-space one: if the timeline scrolls mid-drag, the clip has moved
+   *  through the content by that much more than the pointer moved on screen.
+   *  `null` when no drag is in flight. */
+  const dragScrollOriginRef = useRef<ScrollOffset | null>(null);
   // D-128 — the filmstrip fetches only the source range a clip is actually
   // showing, so it needs the width of the scroll viewport, not just the
   // clip's own width. `editAreaRef` is the library's scrollable edit area
@@ -1402,6 +1428,14 @@ export function TimelinePane() {
     // file reads this state, and a zoom must not leave them a frame behind.
     setScrollLeft((prev) => (prev === next ? prev : next));
   }, [pxPerSec, fps]);
+
+  // B-145 — `scrollRef`'s single writer. Both real setters (`onTimelineScroll`
+  // and the zoom-anchor effect just above) funnel through the state, so
+  // mirroring the state itself is what keeps this honest — writing the ref at
+  // each call site would be one more thing to remember.
+  useEffect(() => {
+    scrollRef.current = { left: scrollLeft, top: scrollTop };
+  }, [scrollLeft, scrollTop]);
 
   // D-128 — keep `viewportWidth` honest across window and panel resizes.
   useEffect(() => {
@@ -1761,105 +1795,19 @@ export function TimelinePane() {
   // computed live on every `onDragMove` tick instead of only at drop time.
   // Cleared on drag end/cancel and whenever the active drag isn't a clip
   // drag at all (or isn't currently over a real track).
-  const [clipDragPreview, setClipDragPreview] = useState<{
-    fromTrack: number;
-    toTrack: number;
-    clipId: string;
-    startFrame: number;
-    /** B-077 — a TIMELINE-frame footprint (`sourceFramesToTimeline`), not the
-     *  dragged clip's raw `.duration` (source frames) — this is a ripple
-     *  shift AMOUNT applied to `start_frame`-space positions. */
-    duration: number;
-    ripple: boolean;
-  } | null>(null);
-
-  // D-113 — owner, live: "if both are synced, then both should move
-  // together and hover together." A live drag only ripples OTHER
-  // sync-locked tracks when the resolved landing actually needs one
-  // (`ripple: true` — the same condition `applyOp`'s `move` case gates the
-  // real `propagateSyncLockRipple` call on); every affected clip is
-  // rendered as its own ghost, shifted by the dragged clip's own duration
-  // — the exact delta `shiftClipsAtOrAfter` would apply for real on drop —
-  // so what's previewed during the drag matches what actually happens
-  // when it's released, not an approximation of it.
-  //
-  // B-077 — both `clipDragPreview.duration` and each ghost's own `duration`
-  // below are TIMELINE-frame footprints (`sourceFramesToTimeline`), not the
-  // clips' raw (source-frame) `.duration` fields: `shiftedStart` is a
-  // `start_frame`-space position (needs a timeline-frame shift, matching the
-  // real `shiftClipsAtOrAfter` ripple this previews) and the render below
-  // divides `duration` by the project's own `fps` for its pixel width — both
-  // wrong for a `.duration` still in the dragged/ghost clip's own native rate.
-  const dragSyncGhosts = useMemo(() => {
-    if (!timeline || !clipDragPreview || !clipDragPreview.ripple) return [];
-    const linkedIds = syncLinkedClipIdsAtPosition(timeline, clipDragPreview.toTrack, clipDragPreview.startFrame);
-    if (linkedIds.size === 0) return [];
-    const ghosts: { id: string; track: number; shiftedStart: number; duration: number }[] = [];
-    tracks.forEach((t, ti) => {
-      if (ti === clipDragPreview.toTrack) return; // same-track shift already IS the placeholder's own landing
-      for (const c of t.clips) {
-        if (linkedIds.has(c.id)) {
-          ghosts.push({
-            id: c.id,
-            track: ti,
-            shiftedStart: c.start_frame + clipDragPreview.duration,
-            duration: sourceFramesToTimeline(c, c.duration, fps),
-          });
-        }
-      }
-    });
-    return ghosts;
-  }, [timeline, clipDragPreview, tracks, fps]);
-
-  /** B-134 — the live drag ghost for a dragged clip's A/V-linked partner(s).
-   *  Owner, live: dragging a clip on Video 1 left its linked audio clip on
-   *  Audio 1 visually inert for the whole gesture, only snapping to its real
-   *  new position on drop. Root cause: `ClipBody`'s live drag transform comes
-   *  from dnd-kit's own `useDraggable`, which only ever animates the exact
-   *  node whose `id` matches `event.active.id` — the linked partner is a
-   *  wholly separate `ClipBody` instance, with a different `clipId`, on a
-   *  different track's row, so nothing hands it a matching live transform.
+  /** B-153 / D-303 — the live drag-preview overlay layer, and the ONLY thing
+   *  this pane writes on a pointer-move tick. The state that drives it
+   *  (`clipDragPreview` + `insertPreview`) used to live here, which meant every
+   *  tick of a drag re-rendered this whole component — the ruler, every track,
+   *  every clip, every filmstrip and waveform — to move four small overlay
+   *  boxes. That is the "drag and drop... is still not smooth and animations
+   *  are shakky" report; `TimelineDragPreview.tsx`'s own doc has the
+   *  measurements and the B-024 precedent. Writing through an imperative handle
+   *  keeps each of those renders inside that small subtree.
    *
-   *  Same SHAPE of fix as `dragSyncGhosts` just above (a synthesized overlay
-   *  standing in for a live transform dnd-kit will never give this element),
-   *  but keyed off the dragged clip's own `link_group` (`linkGroupMembers`,
-   *  D-129) rather than `syncLinkedClipIdsAtPosition`, and — unlike
-   *  `dragSyncGhosts` — NOT gated on `clipDragPreview.ripple`: an A/V link
-   *  moves with its primary on EVERY move, ripple or not (`timeline.ts`'s
-   *  `move` op unconditionally computes and applies `delta` to every other
-   *  link-group member before it even asks whether a ripple fired).
-   *
-   *  Investigated (B-134's own "not investigated yet" list):
-   *   - **Does a cross-track drag need the ghost to jump tracks?** No.
-   *     `timeline.ts`'s `move` op (D-129) moves every other link-group member
-   *     by the same frame DELTA while leaving it on its OWN track — "a linked
-   *     pair keeps sync, it does not follow the video half onto the video
-   *     half's new track" (that op's own comment, mirroring Resolve's
-   *     documented behaviour). So `g.track` below is always the partner's own
-   *     unchanged track, never `clipDragPreview.toTrack`.
-   *   - **Does `onDndDragEnd`'s commit path already have the position math
-   *     this ghost needs?** Yes, exactly: `onDndDragMove`/`onDndDragEnd` both
-   *     resolve the primary's landing via the same `resolveClipLanding` call
-   *     and pass the same resulting `startFrame` to `applyOp({kind:'move',
-   *     ...})`; `timeline.ts`'s `move` case then derives
-   *     `delta = op.startFrame - c.start_frame` and applies it to every
-   *     linked sibling. Reusing that exact delta here (from
-   *     `clipDragPreview.startFrame`, itself already `resolveClipLanding`'s
-   *     output) means this preview can never disagree with what actually
-   *     commits — no separate math to keep in sync.
-   *
-   *  The actual position math is `timeline.ts`'s own `linkedDragGhosts` —
-   *  pulled out to a pure function (unlike `dragSyncGhosts` above, which
-   *  stays inline) specifically so it has a real unit test:
-   *  `TimelinePane`'s `<DndContext>` cannot be driven to a resolved drop
-   *  target under jsdom at all, confirmed directly while building this fix
-   *  (`linkedDragGhosts`'s own doc has the detail), so a DOM test cannot
-   *  observe this overlay's rendered output the way it can for a gesture
-   *  that never needs `event.over` to resolve. */
-  const linkDragGhosts = useMemo(() => {
-    if (!timeline || !clipDragPreview) return [];
-    return linkedDragGhosts(timeline, clipDragPreview.fromTrack, clipDragPreview.clipId, clipDragPreview.startFrame, fps);
-  }, [timeline, clipDragPreview, fps]);
+   *  Nothing in this file READS the preview — it only ever set it — so a
+   *  write-only handle costs no expressiveness here. */
+  const dragPreviewRef = useRef<TimelineDragPreviewHandle>(null);
 
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
@@ -1898,22 +1846,6 @@ export function TimelinePane() {
     return () => window.removeEventListener('blur', onBlur);
   }, []);
 
-  /** D-095/D-096/D-097 — live feedback for a Sources-panel drag: `'edge'`
-   *  shows an insertion line snapped to the nearest clip boundary on the row
-   *  under the pointer (the dragged clip's real duration is unreadable
-   *  until drop — HTML5 `dataTransfer.getData` is drop-only, see
-   *  `onDragOver`'s own doc — so this can only show *where* it'll snap, not
-   *  yet whether that's an open gap or a ripple; `onDrop` resolves that for
-   *  real via `computeInsertion`), `'new_track'` shows the ghost row at
-   *  insertion boundary `index` — `0..tracks.length` (D-097: any internal
-   *  boundary or above the first track, not just past the last one — see
-   *  `trackInsertBoundary`). Cleared on drag-leave/drop; never set for a
-   *  cross-track clip-move drag (that path doesn't ripple/insert or create
-   *  tracks). */
-  const [insertPreview, setInsertPreview] = useState<
-    { kind: 'edge'; track: number; frame: number } | { kind: 'new_track'; index: number } | null
-  >(null);
-
   /** D-226 — why the last drop onto this pane was refused, shown as a
    *  transient toolbar note. A refusal is the NORMAL outcome of a near-miss
    *  drop (a transition can only live on a cut, and a cross dissolve
@@ -1931,7 +1863,7 @@ export function TimelinePane() {
 
   // D-100 — the equivalent safety net for the OTHER drag system in this
   // file, the native-HTML5 Sources-panel drag (`onDragOver`/`onDrop`
-  // below): `onDrop` is the only place `dragOver`/`insertPreview` reset,
+  // below): `onDrop` is the only place `dragOver`/the insert preview reset,
   // and `drop` never fires at all if a native drag ends outside a valid
   // target (dropped somewhere that isn't this component, or cancelled).
   // `dragend`, per spec, ALWAYS fires exactly once on the element that
@@ -1943,7 +1875,7 @@ export function TimelinePane() {
   useEffect(() => {
     const onGlobalDragEnd = () => {
       setDragOver((prev) => (prev ? false : prev));
-      setInsertPreview((prev) => (prev === null ? prev : null));
+      dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
     };
     document.addEventListener('dragend', onGlobalDragEnd);
     return () => document.removeEventListener('dragend', onGlobalDragEnd);
@@ -2329,13 +2261,13 @@ export function TimelinePane() {
 
     const rect = editAreaRef.current?.getBoundingClientRect();
     if (!rect || tracks.length === 0) {
-      setInsertPreview((prev) => (prev === null ? prev : null));
+      dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
       return;
     }
     const y = e.clientY - rect.top - RULER_AND_MARGIN_PX + scrollTop;
     const boundary = trackInsertBoundary(y, tracks.length);
     if (boundary !== null) {
-      setInsertPreview((prev) =>
+      dragPreviewRef.current?.setInsert((prev) =>
         prev?.kind === 'new_track' && prev.index === boundary ? prev : { kind: 'new_track', index: boundary },
       );
       return;
@@ -2346,7 +2278,7 @@ export function TimelinePane() {
     // in the branch above, so nothing negative ever reaches this point.
     const track = Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ROW_HEIGHT)));
     const edge = nearestEdge(tracks[track], xToFrame(e, rect));
-    setInsertPreview((prev) =>
+    dragPreviewRef.current?.setInsert((prev) =>
       edge === null
         ? prev === null
           ? prev
@@ -2358,7 +2290,7 @@ export function TimelinePane() {
   };
   const onDragLeave = () => {
     setDragOver((prev) => (prev ? false : prev));
-    setInsertPreview((prev) => (prev === null ? prev : null));
+    dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
   };
 
   /**
@@ -2459,7 +2391,7 @@ export function TimelinePane() {
   // handler is Sources-panel media drops only.
   const onDrop = (e: DragEvent) => {
     setDragOver(false);
-    setInsertPreview(null);
+    dragPreviewRef.current?.setInsert(null);
     // D-248 — a generator (title / adjustment clip) dragged out of the left
     // library rail. Handled first and separately because it has no
     // `DraggedMedia` payload at all: nothing to probe, no linked audio half,
@@ -3227,6 +3159,12 @@ export function TimelinePane() {
     // the lane ended up indistinguishable.
     const clip = asClipDrag(event.active.data.current);
     const header = asTrackHeaderDrag(event.active.data.current);
+    // B-145 — the scroll origin is captured for EVERY drag kind, before the
+    // early return below: a transitions-palette drag has no ghost of its own
+    // but its drop still resolves through `dragPx`, and a drag whose origin
+    // was never captured would fall back to `{0,0}` and reintroduce exactly
+    // the offset this bug was.
+    dragScrollOriginRef.current = { ...scrollRef.current };
     const next = clip ?? header;
     if (!next) return; // a transitions-palette drag — no overlay ghost of its own
     setActiveDrag(next);
@@ -3243,8 +3181,23 @@ export function TimelinePane() {
   const onDndDragCancel = useCallback(() => {
     setActiveDrag(null);
     setClipGrab(null);
-    setClipDragPreview((prev) => (prev === null ? prev : null));
+    dragScrollOriginRef.current = null;
+    dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
   }, []);
+
+  /** B-145 — the ONE place a dnd-kit drag's displacement is read in this file.
+   *  `event.delta` is not usable here (see `dragDelta.ts` for the mechanism):
+   *  this pane's draggables live inside the timeline library's own scrolling
+   *  grid while its droppables are overlay siblings outside it, so dnd-kit's
+   *  scroll adjustment goes wrong by the whole scroll offset the drag started
+   *  at. Every consumer — the live landing preview, the committed move, the
+   *  new-track drop, the slip/slide body drag and the transition drop — goes
+   *  through this, so none of them can drift from the others again. */
+  const dragPx = (event: DragMoveEvent | DragEndEvent): DragDelta | null =>
+    dragDelta(event.active.rect.current, dragScrollOriginRef.current ?? scrollRef.current, {
+      left: scrollLeft,
+      top: scrollTop,
+    });
 
   // D-113 — live landing preview, the drag-tick-sensitive twin of
   // `onDndDragEnd`'s own landing computation below (same math, same
@@ -3253,15 +3206,23 @@ export function TimelinePane() {
   // one needs to change with it). Fires on every pointer-move tick during
   // a drag, so the D-083 discipline that already governs every other
   // per-tick handler in this file applies here just as strictly: the
-  // `setClipDragPreview` call is gated to only actually dispatch when the
-  // resolved landing genuinely changed, not on every pixel of movement.
+  // `setLanding` call is gated to only actually dispatch when the resolved
+  // landing genuinely changed, not on every pixel of movement.
   //
   // D-201 audited this against roadmap item 21.3 ("does the drag re-render
-  // through React state every pointer-move frame?") and the answer is no, for
-  // every gesture in this pane: a clip drag writes only this local
-  // `clipDragPreview`/`insertPreview` state (both change-gated), a marquee
-  // writes only local `marquee`, a trim goes through the library's own resize
-  // and reaches `applyOp` in `onActionResizeEndCb` — i.e. on resize END — and
+  // through React state every pointer-move frame?") and answered "no, it is
+  // change-gated." **B-153 found that answer was wrong in practice**: at any
+  // ordinary zoom a few pixels of movement IS a different landing frame, so the
+  // gate almost never fires, and the state lived on `TimelinePane` itself —
+  // which meant a full re-render of the app's largest component on nearly every
+  // tick, measured at ~2 renders per pointer-move with frame intervals p90
+  // 24-28ms against a flat 16.7ms idle. The gating is still right and still
+  // here; what changed is WHERE the state lives — `TimelineDragPreview` owns it
+  // now, so a tick re-renders four overlay boxes instead of the whole pane.
+  //
+  // The rest of D-201's audit still holds: a marquee writes only local
+  // `marquee`, a trim goes through the library's own resize and reaches
+  // `applyOp` in `onActionResizeEndCb` — i.e. on resize END — and
   // `TransformOverlay`'s canvas gesture keeps a local `draft`. The ONE and
   // only `applyOp` for a clip drag is in `onDndDragEnd` below, so exactly one
   // undo entry (`useHistoryStore.push`) and one debounced `chroma_timeline_set`
@@ -3291,17 +3252,22 @@ export function TimelinePane() {
    *  a drop outside the pane almost always produced one; now that above-the-
    *  tracks is a legal boundary, the two have to be told apart explicitly.
    *  The pointer is reconstructed the same way the transition drop already
-   *  does it — `activatorEvent`'s own position plus the drag's `delta`, which
-   *  dnd-kit does not expose directly — so there is one notion of "where did
-   *  this drag actually end" in this file, not two. */
+   *  does it — `activatorEvent`'s own position plus the drag's displacement,
+   *  which dnd-kit does not expose directly — so there is one notion of "where
+   *  did this drag actually end" in this file, not two.
+   *
+   *  B-145 — that displacement is the SCREEN one (`dragPx`), never the content
+   *  one: this is a "is the pointer still over the pane" question, asked in
+   *  the same viewport coordinates `getBoundingClientRect` answers in. */
   const dndBoundary = (event: DragMoveEvent | DragEndEvent): number | null => {
     const rect = editAreaRef.current?.getBoundingClientRect();
     const translated = event.active.rect.current.translated;
-    if (!rect || !translated || tracks.length === 0) return null;
+    const moved = dragPx(event);
+    if (!rect || !translated || !moved || tracks.length === 0) return null;
     const activator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
     if (typeof activator?.clientX !== 'number' || typeof activator?.clientY !== 'number') return null;
-    const px = activator.clientX + event.delta.x;
-    const py = activator.clientY + event.delta.y;
+    const px = activator.clientX + moved.screenX;
+    const py = activator.clientY + moved.screenY;
     if (px < rect.left || px > rect.right || py < rect.top || py > rect.bottom) return null;
     // D-117's own signal for WHICH boundary: the dragged `ClipBody`'s
     // translated top edge, which is what the user actually sees lining up
@@ -3324,8 +3290,8 @@ export function TimelinePane() {
       const data = asClipDrag(event.active.data.current);
       const overTrack = laneDropTrack(event.over?.data.current, tracks.length);
       if (!data) {
-        setClipDragPreview((prev) => (prev === null ? prev : null));
-        setInsertPreview((prev) => (prev === null ? prev : null));
+        dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
+        dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
         return;
       }
       // D-235 — an armed drag is a slip or a slide, and neither one moves the
@@ -3335,17 +3301,17 @@ export function TimelinePane() {
       // that actually commits (`onDndDragEnd`).
       const armedActivator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
       if (armedActivator?.altKey || trimPressRef.current?.altKey) {
-        setClipDragPreview((prev) => (prev === null ? prev : null));
-        setInsertPreview((prev) => (prev === null ? prev : null));
+        dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
+        dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
         return;
       }
       if (overTrack === null) {
         // Not over an existing track's lane — check whether this is a real
         // track-insertion boundary (same helper the Sources-panel add path
         // uses) and show the identical ghost-row preview if so.
-        setClipDragPreview((prev) => (prev === null ? prev : null));
+        dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
         const boundary = dndBoundary(event);
-        setInsertPreview((prev) =>
+        dragPreviewRef.current?.setInsert((prev) =>
           boundary === null
             ? prev === null
               ? prev
@@ -3356,20 +3322,22 @@ export function TimelinePane() {
         );
         return;
       }
-      setInsertPreview((prev) => (prev === null ? prev : null));
+      dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
       const { track: fromTrack, clipId } = data;
       const i = idxOf(fromTrack, clipId);
       if (i < 0) return;
       const clip = clipsOf(fromTrack)[i];
       const toTrack = overTrack;
-      const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
+      const moved = dragPx(event);
+      if (!moved) return;
+      const deltaFrames = Math.round((moved.contentX / pxPerSec) * fps);
       const intendedFrame = clip.start_frame + deltaFrames;
       const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
       // `toTrack` came from `laneDropTrack`, which only ever returns a real
       // track index — so this cannot be the `undefined` that crashed
       // `resolveClipLanding` on `dest.clips` (B-122).
       const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip, intendedFrame, snapFrames, fps);
-      setClipDragPreview((prev) => {
+      dragPreviewRef.current?.setLanding((prev) => {
         if (
           prev &&
           prev.fromTrack === fromTrack &&
@@ -3381,7 +3349,7 @@ export function TimelinePane() {
           return prev; // no real change — same discipline as onDragOver's setDragOver
         }
         // B-077 — a TIMELINE-frame footprint, not `clip.duration`'s raw
-        // (source-frame) value — see `dragSyncGhosts`'s own doc for why.
+        // (source-frame) value — see `TimelineDragPreview`'s own doc for why.
         return { fromTrack, toTrack, clipId, startFrame, duration: sourceFramesToTimeline(clip, clip.duration, fps), ripple };
       });
     };
@@ -3400,7 +3368,13 @@ export function TimelinePane() {
         raw && (raw as TransitionDragData).type === 'transition' ? (raw as TransitionDragData) : null;
       setActiveDrag(null);
       setClipGrab(null);
-      setClipDragPreview((prev) => (prev === null ? prev : null));
+      dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
+      // B-145 — the drag's real displacement, for every branch below that
+      // resolves a position. `dragScrollOriginRef` is deliberately NOT cleared
+      // here: `dndBoundary` further down reads it too, and this handler has a
+      // dozen early returns. It is overwritten by the next `onDndDragStart`
+      // and cleared by `onDndDragCancel`, and nothing reads it outside a drag.
+      const moved = dragPx(event);
 
       // D-226 — a transition dragged out of the palette. Its only legal target
       // is a real CUT on a video track, so the drop resolves to the nearest one
@@ -3415,14 +3389,18 @@ export function TimelinePane() {
         const trackIdx = laneDropTrack(event.over?.data.current, tracks.length);
         if (trackIdx === null || !timeline) return;
         const tr = tracks[trackIdx];
-        // The pointer's real x: `event.delta` is the whole drag's movement, and
+        // The pointer's real x: `dragPx` is the whole drag's movement, and
         // `activatorEvent` is the original pointer event it started from — the
         // pair gives an absolute position without needing a rect measurement,
         // the same relative-plus-origin approach the clip drag above uses.
+        // B-145 — the SCREEN displacement, since it is being added to a
+        // `clientX` and then converted to content space by `- rect.left +
+        // scrollLeft` right here; adding the content one would count the
+        // scroll twice.
         const activator = event.activatorEvent as PointerEvent | MouseEvent | undefined;
         const rect = editAreaRef.current?.getBoundingClientRect();
-        if (!rect || typeof activator?.clientX !== 'number') return;
-        const contentX = activator.clientX + event.delta.x - rect.left + scrollLeft;
+        if (!rect || !moved || typeof activator?.clientX !== 'number') return;
+        const contentX = activator.clientX + moved.screenX - rect.left + scrollLeft;
         const frame = Math.round(((contentX - START_LEFT_PX) / pxPerSec) * fps);
         const snapFrames = Math.max(1, Math.round((TRANSITION_SNAP_PX / pxPerSec) * fps));
         const cuts = tr.kind === 'video' ? cutFrames(tr, fps) : [];
@@ -3514,12 +3492,12 @@ export function TimelinePane() {
         // has this; dnd-kit's activator event knows nothing about it.
         tool: captured.tool,
       };
-      if (timeline) {
+      if (timeline && moved) {
         const op = bodyDragOp({
           tl: timeline,
           track: fromTrack,
           clip: i,
-          delta: Math.round((event.delta.x / pxPerSec) * fps),
+          delta: Math.round((moved.contentX / pxPerSec) * fps),
           press,
         });
         // A `null` op means either "this drag was never a slip/slide" or "it
@@ -3545,8 +3523,13 @@ export function TimelinePane() {
       // those is the same non-landing. `toTrack` below is therefore always a
       // real track index, which is what `resolveClipLanding` requires.
       const overTrack = laneDropTrack(event.over?.data.current, tracks.length);
+      // B-145 — no measurable displacement means dnd-kit never resolved a rect
+      // for this drag, so there is no honest landing to compute. Refuse rather
+      // than commit a `move` to whatever `clip.start_frame` already was: a
+      // silent no-op op is still an undo entry and a save.
+      if (!moved) return;
       if (overTrack === null) {
-        setInsertPreview((prev) => (prev === null ? prev : null));
+        dragPreviewRef.current?.setInsert((prev) => (prev === null ? prev : null));
         // D-117 — not over an existing track's lane: check whether
         // this is a real track-insertion boundary instead of just
         // cancelling. Mirrors the Sources-panel `onDrop`'s own
@@ -3566,7 +3549,7 @@ export function TimelinePane() {
         // math, same as the Sources-panel path) — resolve `fromTrack` AFTER
         // that reposition, not before.
         const resolvedFromTrack = boundary !== newTrackIdx ? trackIndexAfterMove(fromTrack, newTrackIdx, boundary) : fromTrack;
-        const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
+        const deltaFrames = Math.round((moved.contentX / pxPerSec) * fps);
         const intendedFrame = Math.max(0, clip.start_frame + deltaFrames);
         // The new track is guaranteed empty — no gap/ripple resolution
         // needed, `intendedFrame` is always a safe landing.
@@ -3576,9 +3559,12 @@ export function TimelinePane() {
       }
       const toTrack = overTrack;
       const clip = clipsOf(fromTrack)[i];
-      // D-104 — `event.delta.x` is the net pointer movement for the whole
-      // drag, in screen px, converted to frames the same way `xToFrame` does
-      // (relative rather than absolute — no `rect`/`clientX` needed). Used
+      // D-104 — `moved.contentX` is the net pointer movement for the whole
+      // drag, in timeline-content px, converted to frames the same way
+      // `xToFrame` does (relative rather than absolute — no `rect`/`clientX`
+      // needed). B-145 — it used to be `event.delta.x`, which is dnd-kit's own
+      // scroll-adjusted translate and is wrong by the whole horizontal scroll
+      // offset on this surface; `dragDelta.ts` has the mechanism. Used
       // for BOTH cases now: cross-track previously ignored horizontal
       // movement entirely and just kept the clip's original frame verbatim,
       // which is what silently landed a cross-track drop directly on top of
@@ -3592,7 +3578,7 @@ export function TimelinePane() {
       // after two clip, not on top of the clip... that should not be
       // possible"). This reverses D-096's cross-track-overlap-allowed
       // policy — see `EditOp`'s `move` case for the full reasoning.
-      const deltaFrames = Math.round((event.delta.x / pxPerSec) * fps);
+      const deltaFrames = Math.round((moved.contentX / pxPerSec) * fps);
       const intendedFrame = clip.start_frame + deltaFrames;
       const snapFrames = Math.round((INSERT_SNAP_PX / pxPerSec) * fps);
       const { startFrame, ripple } = resolveClipLanding(tracks[toTrack], clip.id, clip, intendedFrame, snapFrames, fps);
@@ -4292,49 +4278,6 @@ export function TimelinePane() {
                 <span className="ml-1.5 text-text-secondary">{trimModeHint(hoverTrimMode)}</span>
               )}
             </div>
-            {/* D-095/D-096/D-097 — the live drop-preview overlay: an
-                insertion line snapped to a clip edge, or a ghost row at a
-                track-insertion boundary. `pointer-events-none` so it never
-                steals the drag's own dragover/drop targeting from the
-                library/edit-area underneath — purely visual, positioned in
-                the same `editAreaRef`-relative coordinate space `xToFrame`/
-                `dropTargetTrack` already compute against. */}
-            {insertPreview?.kind === 'edge' && (
-              <div
-                className="pointer-events-none absolute z-30 bg-accent"
-                style={{
-                  left: START_LEFT_PX + (insertPreview.frame / fps) * pxPerSec - scrollLeft,
-                  top: RULER_AND_MARGIN_PX + insertPreview.track * ROW_HEIGHT - scrollTop,
-                  width: 2,
-                  height: ROW_HEIGHT,
-                }}
-              />
-            )}
-            {insertPreview?.kind === 'new_track' && (
-              <div
-                // B-115 — a stable hook for "the drag is offering a new track
-                // HERE", the same `data-chroma-*` convention D-219 established
-                // for naming a surface without matching on a Tailwind class
-                // string that changes whenever the styling does.
-                data-chroma-new-track-preview={insertPreview.index}
-                className="pointer-events-none absolute left-0 right-0 z-30 border-2 border-dashed border-accent/70 bg-accent/10"
-                style={{
-                  // D-097 — past the last row (`index === tracks.length`)
-                  // there's no row below to overlap into, so the ghost sits
-                  // flush under the last real row, unchanged from D-096.
-                  // Every other boundary (above the first track, or between
-                  // two existing ones) centers the ghost ON the boundary
-                  // line, half-overlapping each neighboring row — the
-                  // standard "squeeze a new row in here" NLE affordance.
-                  top:
-                    RULER_AND_MARGIN_PX +
-                    insertPreview.index * ROW_HEIGHT -
-                    (insertPreview.index === tracks.length ? 0 : ROW_HEIGHT / 2) -
-                    scrollTop,
-                  height: ROW_HEIGHT,
-                }}
-              />
-            )}
             {/* D-105 — the selected gap's own persistent highlight (not a
                 live drag preview like the two overlays above — this stays
                 up until the selection changes). `gapAt` re-derives the exact
@@ -4403,63 +4346,37 @@ export function TimelinePane() {
                 style={{ top: RULER_AND_MARGIN_PX + i * ROW_HEIGHT - scrollTop, height: ROW_HEIGHT }}
               />
             ))}
-            {/* D-113 originally rendered a filled dashed box here at the
-                clip-move landing frame, matching `insertPreview`'s
-                `'new_track'` visual language. Owner, live, after D-119 gave
-                the `DragOverlay` ghost real filmstrip content: "we have 3
-                things — the previous place, the new thumbnail preview, and
-                the dotted line — let's remove the dot." With a real
-                picture-content ghost already following the cursor at the
-                resolved landing position, this second box was drawing the
-                same information twice. Removed — `clipDragPreview` (the
-                state) stays, `dragSyncGhosts` below still derives its own
-                sync-linked-track ghosts from it; only this box's own render
-                is gone. */}
-            {/* D-113 — owner, live: "if both are synced, then both should
-                move together and hover together." One ghost per
-                `dragSyncGhosts` entry, at that clip's OWN track, shifted by
-                the dragged clip's duration — a live preview of the real
-                ripple the drop would apply to every sync-linked track, not
-                just the one track being dragged onto. A slightly different
-                visual weight from the primary landing placeholder above
-                (`ring-text-secondary`-toned, matching D-111's own selection-
-                time sync-linked ring, not the primary accent) — related to
-                the drop, not the drop's own destination. */}
-            {dragSyncGhosts.map((g) => (
-              <div
-                key={`sync-ghost-${g.id}`}
-                className="pointer-events-none absolute z-30 rounded border-2 border-dashed border-text-secondary/70 bg-text-secondary/10"
-                style={{
-                  left: START_LEFT_PX + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
-                  width: (g.duration / fps) * pxPerSec,
-                  top: RULER_AND_MARGIN_PX + g.track * ROW_HEIGHT - scrollTop,
-                  height: ROW_HEIGHT,
-                }}
-              />
-            ))}
-            {/* B-134 — the dragged clip's A/V-linked partner(s), tracking the
-                drag live. `border-accent`-toned (not `dragSyncGhosts`'s
-                `text-secondary`) to match `avLinkedIds`'s own accent-ring
-                convention above: an A/V link is a stronger, more specific
-                relationship than a sync-lock ripple, and must not read as the
-                same thing on screen (D-128). */}
-            {linkDragGhosts.map((g) => (
-              <div
-                key={`link-drag-ghost-${g.id}`}
-                // B-134 — a stable hook for a test to find this ghost, the
-                // same convention `ClipBody`'s own `data-chroma-*` attributes
-                // already use, since a `key` prop is not queryable from the
-                // DOM.
-                data-chroma-link-drag-ghost={g.id}
-                className="pointer-events-none absolute z-30 rounded border-2 border-dashed border-accent/70 bg-accent/10"
-                style={{
-                  left: START_LEFT_PX + (g.shiftedStart / fps) * pxPerSec - scrollLeft,
-                  width: (g.duration / fps) * pxPerSec,
-                  top: RULER_AND_MARGIN_PX + g.track * ROW_HEIGHT - scrollTop,
-                  height: ROW_HEIGHT,
-                }}
-              />
-            ))}
+            {/* B-153 / D-303 — the four live drag-preview overlays (the
+                snapped insertion line, the new-track ghost row, the sync-lock
+                ripple ghosts and the A/V-link ghosts) moved into their own
+                component, which OWNS the state driving them. They update on
+                every pointer-move tick of a drag; keeping that state here made
+                each of those ticks re-render this whole pane. All four are
+                still `z-30`, still absolutely positioned in this same
+                `editAreaRef`-relative space, and still painted in the same
+                order relative to each other — see that file's own doc.
+
+                D-113 originally also rendered a filled dashed box at the
+                clip-move landing frame, matching the new-track ghost's visual
+                language. Owner, live, after D-119 gave the `DragOverlay` ghost
+                real filmstrip content: "we have 3 things — the previous place,
+                the new thumbnail preview, and the dotted line — let's remove
+                the dot." With a real picture-content ghost already following
+                the cursor at the resolved landing position, that second box was
+                drawing the same information twice, so only the ghosts derived
+                from the landing remain. */}
+            <TimelineDragPreview
+              ref={dragPreviewRef}
+              timeline={timeline}
+              tracks={tracks}
+              fps={fps}
+              pxPerSec={pxPerSec}
+              scrollLeft={scrollLeft}
+              scrollTop={scrollTop}
+              startLeftPx={START_LEFT_PX}
+              rowHeight={ROW_HEIGHT}
+              rulerAndMarginPx={RULER_AND_MARGIN_PX}
+            />
             {/* D-098 — one real `useDroppable` target per track, always
                 mounted (see `TrackDropZone`'s own doc for why — a real
                 mid-drag droppable-registration timing bug found live), only

@@ -29336,3 +29336,110 @@ from either component's source — it took following `WGPU_RENDER` from
   unrelated external-editor-roundtrip error message) and the Edit tab's own
   `onExportClick`/`ExportIcon` video-export button (D-297) — neither is part of this
   panel.
+
+## D-302 — A timeline drag's displacement comes from the dragged node's own rects, never from `event.delta`
+
+**decided (2026-09-10)**
+
+- **Context:** B-145 — the owner, live: *"when i move this instead of moving it moves to
+  very starting :("*. Reproduced and root-caused in the real-browser tier
+  (`app/harness.html` + CDP): with the timeline scrolled 2000px in, dragging a clip 150px
+  to the right hands `onDndDragEnd` an `event.delta.x` of **-1850**. The clip's intended
+  frame goes negative, `resolveClipLanding` clamps it to 0, and it lands at the very start
+  no matter where it was dropped. Nothing in the placement math was wrong; it was being
+  handed a wrong number.
+- **The mechanism, read in `@dnd-kit/core@6.3.1`'s own source rather than inferred:**
+  `delta` is `scrollAdjustedTranslate` = `modifiedTranslate + scrollAdjustment`, and
+  `scrollAdjustment` is measured against `useScrollableAncestors(over?.node ?? active.node)`
+  — a set that changes mid-drag the instant a droppable resolves. In this pane the dragged
+  `ClipBody` sits **inside** the timeline library's horizontally-scrolling
+  `react-virtualized` grid while the `TrackDropZone` droppables are overlay siblings
+  **outside** it (they have to be — they are positioned over the rows in the pane's own
+  overlay layer). Confirmed live by walking both chains: the clip's contains
+  `.ReactVirtualized__Grid` at `scrollLeft: 2000`, the zone's does not. dnd-kit captures
+  2000 as the drag's "initial" scroll, then reads 0 for the rest of the gesture, and
+  `useScrollOffsetsDelta`'s own "reset when there is no scroll" branch never fires because
+  the post-switch chain still ends at `document.scrollingElement`, so its offsets are a
+  fresh `{x:0,y:0}` object rather than the reference-equal `defaultCoordinates` sentinel.
+  The error is exactly `-scrollLeft` (and `-scrollTop` for `delta.y`), for the whole drag.
+- **Options considered:**
+  1. *Correct `event.delta` by adding the known scroll offset back.* Rejected: that is
+     reverse-engineering a library's internal bookkeeping into our own call sites, and it
+     breaks the moment dnd-kit changes how it captures the initial offset.
+  2. *Move the droppables inside the library's scrolling grid so both chains agree.* The
+     genuinely structural fix, and not available: the grid's content is rendered by the
+     vendored library through `getActionRender`, with no extension point for an overlay
+     that spans a whole row.
+  3. *Track the pointer ourselves with a `window` `pointermove` listener.* Real, but adds a
+     second live pointer source to a surface that already has three drag systems, for a
+     value dnd-kit already publishes.
+  4. **Chosen: derive the displacement from `active.rect.current`.** `translated.left −
+     initial.left` is exactly `modifiedTranslate` — the translate *before* any scroll
+     adjustment — because both corners are written into the same ref from the same
+     `draggingNodeRect` in the same layout effect. That is dnd-kit's own public API (this
+     file's `dndBoundary` already read `translated` for the vertical question), it carries
+     no scroll term to be wrong, and it was verified against the live component: `rectDx`
+     read 0/50/100/150 for a 150px drag in three steps while `delta.x` read
+     -2000/-1950/-1900/-1850.
+- **The scroll term is not dropped, it is computed honestly:** `dragDelta.ts` returns both a
+  `screen` displacement and a `content` one, the latter adding the pane's OWN
+  `scrollLeft`/`scrollTop` change since the drag began (snapshotted in `onDndDragStart` from
+  a single-writer `scrollRef`). The pane already tracks that pair through the library's
+  `onScroll`; it is the one source that actually knows what the content is offset by.
+- **One helper, five call sites**, so they cannot drift apart again — the live landing
+  preview, the committed move, the new-track branch, the slip/slide body drag and the
+  transition drop all go through `dragPx`. Which of the two displacements each wants is not
+  interchangeable and is documented per call site (a viewport-space question like "is the
+  pointer still over the pane" takes the screen one; a frame position takes the content
+  one). `dragDelta` returns `null` when dnd-kit has no measurement and the move branch
+  refuses rather than committing a no-op `move` — a silent no-op op is still an undo entry
+  and a debounced save.
+- **Coverage:** `dragDelta.test.ts` (the arithmetic) and
+  `TimelinePane.clipDrag.dom.test.tsx` (a real `PointerEvent` drag against a really-scrolled
+  grid; its test 4 lands the clip at frame 0 on the pre-fix code). Full map:
+  `docs/notes/timeline-drag-interactions.md`.
+
+## D-303 — The timeline's live drag preview owns its own state, in its own component
+
+**decided (2026-09-10)**
+
+- **Context:** B-153 — the owner, live: *"i feel drag and drop in the timeline is still not
+  smooth and animations are shakky :/"*. Investigated as its own bug rather than assumed to
+  be a symptom of D-302, and it was: unrelated cause, unrelated fix.
+- **Measured, not guessed** (`app/harness.html` in real Chromium, 4 tracks × 6 clips, a
+  stubbed backend — far smaller than a real edit). During a plain clip drag the pane
+  re-rendered ~2× per pointer-move (88 renders across 41 moves) and frame intervals went
+  from a flat 16.7ms idle to a p90 of 24.3ms with individual frames at 47.8ms. Ruled out by
+  direct counting rather than by theory: layout thrashing (2 `getBoundingClientRect` calls
+  per move), DOM churn (1-2 mutations per move), long tasks (none) and `framer-motion` (not
+  a dependency of this repo at all). The contrast that named the cause: the Alt/slip path,
+  which D-235 already suppresses this state for, held p90 at 18ms with 4 renders for the
+  whole gesture.
+- **Cause:** `clipDragPreview` and `insertPreview` lived on `TimelinePane` itself. D-201's
+  own audit had asked exactly this question (roadmap 21.3, "does the drag re-render through
+  React state every pointer-move frame?") and answered "no, it is change-gated" — which is
+  wrong in practice: at any ordinary zoom a few pixels of movement IS a different landing
+  frame, so the gate almost never fires. Every tick re-rendered the app's largest component
+  — ruler, every track, every clip, every filmstrip and waveform — to move four small
+  absolutely-positioned overlay boxes. Same defect class as **B-024** ("re-rendering N
+  tracks' worth of actions on every tick is what actually froze the UI"), reached from the
+  other direction: B-024 was a prop identity changing every tick, this is the parent
+  re-rendering every tick.
+- **Options considered:** (a) write the overlay geometry straight to the DOM per frame, the
+  way D-250's `placeTrimBadge` and D-271's `ScrubCursorGhost` already do — real, and the
+  right tool for a single element following a pointer, but these are four overlays whose
+  *count and identity* change with the landing (one ghost per sync-linked clip), which is a
+  render, not a transform; (b) memoize harder inside the pane — does not help, the pane's
+  own render function is the cost; (c) **chosen:** move the state and the four overlays into
+  `TimelineDragPreview.tsx` and write to it through a `useImperativeHandle`. Nothing in the
+  pane ever *reads* the preview — it only ever set it — so a write-only handle costs no
+  expressiveness, and it is React's own canonical answer for "a parent drives a child's
+  local state without subscribing to it."
+- **Result, measured the same way:** 4 renders across 41 moves (from 88), frame-interval p90
+  17.0ms (from 24.3ms) — indistinguishable from idle. Geometry constants come in as props
+  (`startLeftPx`/`rowHeight`/`rulerAndMarginPx`), the same shape `TransitionBadges` already
+  uses, so there is no import cycle and the child cannot drift out of the pane's coordinate
+  space. All four overlays keep their `z-30` and their relative paint order.
+- **A doc that was wrong is now right:** `TimelinePane`'s D-201 audit comment states what
+  B-153 found instead of what it originally claimed, rather than being left to mislead the
+  next reader.
