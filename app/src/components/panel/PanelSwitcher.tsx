@@ -19,7 +19,6 @@ import { Panel, PanelRegion } from '../ui/AppProperties';
 import { SwitcherPlacement, useUIStore } from '../../store/useUIStore';
 
 export const PANEL_ICONS: Record<Panel, LucideIcon> = {
-  [Panel.Metadata]: Info,
   [Panel.Adjustments]: SlidersHorizontal,
   [Panel.Crop]: Crop,
   [Panel.Masks]: Layers,
@@ -31,7 +30,6 @@ export const PANEL_ICONS: Record<Panel, LucideIcon> = {
 };
 
 const PANEL_TITLES: Record<Panel, string> = {
-  [Panel.Metadata]: 'editor.switcher.tooltips.info',
   [Panel.Adjustments]: 'editor.switcher.tooltips.adjust',
   [Panel.Crop]: 'editor.switcher.tooltips.crop',
   [Panel.Masks]: 'editor.switcher.tooltips.masks',
@@ -250,7 +248,6 @@ export function MobilePanelSwitcher({
   placement?: 'bottom' | 'right';
 }) {
   const MOBILE_PANELS = [
-    Panel.Metadata,
     Panel.Adjustments,
     Panel.Crop,
     Panel.Masks,

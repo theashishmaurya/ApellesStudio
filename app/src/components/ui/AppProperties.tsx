@@ -75,7 +75,6 @@ export enum Invokes {
   SavePresets = 'save_presets',
   SaveSettings = 'save_settings',
   SetColorLabelForPaths = 'set_color_label_for_paths',
-  SetRatingForPaths = 'set_rating_for_paths',
   ShowInFinder = 'show_in_finder',
   StitchPanorama = 'stitch_panorama',
   StitchFocusStack = 'stitch_focus_stack',
@@ -105,7 +104,6 @@ export enum Panel {
   Crop = 'crop',
   Export = 'export',
   Masks = 'masks',
-  Metadata = 'metadata',
   Presets = 'presets',
   /** Interactive relight (D-046) — draggable light pucks + per-light controls. */
   Relight = 'relight',
@@ -227,7 +225,6 @@ export type EditedStatus = (typeof EditedStatus)[keyof typeof EditedStatus];
 
 export interface FilterCriteria {
   colors: Array<string>;
-  rating: number;
   rawStatus: RawStatus;
   editedStatus?: EditedStatus;
 }

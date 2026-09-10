@@ -25,7 +25,6 @@ import AppModals from './components/modals/AppModals';
 import SidePanelArea from './components/panel/SidePanelArea';
 import { PANEL_ICONS } from './components/panel/PanelSwitcher';
 import Controls from './components/panel/right/ControlsPanel';
-import MetadataPanel from './components/panel/right/MetadataPanel';
 import CropPanel from './components/panel/right/CropPanel';
 import MasksPanel from './components/panel/right/MasksPanel';
 import RelightPanel from './components/chroma/RelightPanel';
@@ -330,7 +329,7 @@ function App() {
     finishExternalEdit,
   } = useExternalEditSession(handleImageSelect);
 
-  const { handleRate, handleClearSelection, handleLibraryImageSingleClick, handleImageClick, handleSetColorLabel } =
+  const { handleClearSelection, handleLibraryImageSingleClick, handleImageClick, handleSetColorLabel } =
     useLibraryActions(handleImageSelect);
 
   const { displayList: sortedImageList, badges: groupBadgeInfo } = useSortedLibrary();
@@ -611,8 +610,6 @@ function App() {
           );
         case Panel.Adjustments:
           return <Controls />;
-        case Panel.Metadata:
-          return <MetadataPanel />;
         case Panel.Crop:
           return <CropPanel />;
         case Panel.Masks:
@@ -773,7 +770,6 @@ function App() {
                       handleClearSelection={handleClearSelection}
                       handleCopyAdjustments={handleCopyAdjustments}
                       handlePasteAdjustments={handlePasteAdjustments}
-                      handleRate={handleRate}
                       handleZoomChange={handleZoomChange}
                       handlePanelSelect={handlePanelSelect}
                       requestThumbnails={requestThumbnails}
@@ -840,7 +836,6 @@ function App() {
           handleSaveDenoisedImage={handleSaveDenoisedImage}
           handleSaveRename={handleSaveRename}
           handleSetColorLabel={handleSetColorLabel}
-          handleRate={handleRate}
           executeDelete={executeDelete}
           handleSaveCollage={handleSaveCollage}
         />

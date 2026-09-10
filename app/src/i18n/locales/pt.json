@@ -190,13 +190,9 @@
       "frameImage": "Emoldurar Imagem",
       "mergeHdr": "Mesclar para HDR",
       "noLabel": "Sem Rótulo",
-      "noRating": "Sem Avaliação",
       "pasteAdjustments": "Colar Ajustes",
       "productivity": "Produtividade",
-      "rating": "Avaliação",
       "ratingLabel_many": "{{count}} Estrelas",
-      "ratingLabel_one": "{{count}} Estrela",
-      "ratingLabel_other": "{{count}} Estrelas",
       "redo": "Refazer",
       "resetAdjustments": "Redefinir Ajustes",
       "stitchPanorama": "Montar Panorama",
@@ -651,58 +647,6 @@
         "selectNewSourcePoint": "{{modifier}} + Clique para selecionar um novo ponto de origem"
       }
     },
-    "metadata": {
-      "author": {
-        "creatorDetails": "Detalhes do Criador",
-        "title": "Autor e Direitos Autorais"
-      },
-      "camera": {
-        "aperture": "Abertura",
-        "focalLength": "Distância Focal",
-        "iso": "ISO",
-        "lens": "Lente",
-        "shutterSpeed": "Velocidade do Obturador",
-        "title": "Detalhes da Câmera"
-      },
-      "clickToEdit": "Clique para editar",
-      "copied": "Copiado",
-      "copy": "Copiar",
-      "emptyClickToAdd": "Vazio (Clique para adicionar)",
-      "extendedExif": {
-        "title": "EXIF Estendido"
-      },
-      "fields": {
-        "author": "Autor",
-        "comments": "Comentários",
-        "copyright": "Direitos Autorais",
-        "title": "Título"
-      },
-      "fileInfo": {
-        "dimensions": "{{width}} × {{height}} px • {{megapixels}} MP",
-        "dimensionsNoMp": "{{width}} × {{height}} px",
-        "emptyDimensions": "- × - px",
-        "title": "Informações do Arquivo",
-        "virtualCopy": "Cópia Virtual"
-      },
-      "gps": {
-        "altitude": "Altitude",
-        "clickToOpenTooltip": "Clique para abrir o mapa em uma nova guia",
-        "latitude": "Latitude",
-        "longitude": "Longitude",
-        "title": "Localização GPS"
-      },
-      "organization": {
-        "addTagPlaceholder": "Adicionar etiqueta...",
-        "colorLabel": "Rótulo de Cor",
-        "noTags": "Sem etiquetas",
-        "none": "Nenhum",
-        "rating": "Avaliação",
-        "ratingLabels": "Avaliação e Rótulos",
-        "tags": "Etiquetas",
-        "title": "Organização"
-      },
-      "title": "Metadados"
-    },
     "presets": {
       "amount": "Intensidade",
       "dialog": {
@@ -756,7 +700,6 @@
         "adjust": "Ajustar",
         "crop": "Cortar",
         "export": "Exportar",
-        "info": "Informações",
         "inpaint": "Preencher",
         "masks": "Máscaras",
         "presets": "Predefinições",
@@ -910,7 +853,6 @@
       "noTagsAdded": "Nenhuma tag adicionada",
       "none": "Nenhum",
       "rateAndLabel": "Avaliar e Rotular",
-      "rating": "Avaliação",
       "selectImagesToCompare": "Selecione imagens para comparar",
       "shutterSpeed": "Velocidade do obturador",
       "syncZoomAndPan": "Sincronizar zoom e deslocamento",
@@ -925,17 +867,6 @@
         "uneditedOnly": "Apenas Não Editadas"
       },
       "noMatch": "Nenhuma imagem encontrada que corresponda ao seu filtro.",
-      "rating": {
-        "all": "Mostrar Tudo",
-        "andUpSuffix": "e superior",
-        "fiveOnly": "Apenas 5",
-        "fourAndUp": "4 e superior",
-        "oneAndUp": "1 e superior",
-        "onlySuffix": "apenas",
-        "threeAndUp": "3 e superior",
-        "twoAndUp": "2 e superior",
-        "unrated": "Apenas Sem Avaliação"
-      },
       "raw": {
         "all": "Todos os Tipos",
         "nonRawOnly": "Apenas Não-RAW",
@@ -978,7 +909,6 @@
         "label": "Rótulo",
         "modified": "Modificado",
         "name": "Nome",
-        "rating": "Avaliação",
         "shutter": "Obturador"
       }
     },
@@ -1002,7 +932,6 @@
         "filterByColorLabel": "Filtrar por Rótulo de Cor",
         "filterByEdited": "Filtrar por Status de Edição",
         "filterByFileType": "Filtrar por Tipo de Arquivo",
-        "filterByRating": "Filtrar por Avaliação",
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1055,7 +984,6 @@
       "fileName": "Nome do Arquivo",
       "focalLength": "Distância Focal",
       "iso": "ISO",
-      "rating": "Avaliação",
       "shutterSpeed": "Velocidade do Obturador"
     },
     "status": {
@@ -1574,12 +1502,6 @@
         "paste_files": "Colar arquivo(s) na pasta atual",
         "preview_next": "Próxima imagem",
         "preview_prev": "Imagem anterior",
-        "rate_0": "Avaliação por estrelas: 0",
-        "rate_1": "Avaliação por estrelas: 1",
-        "rate_2": "Avaliação por estrelas: 2",
-        "rate_3": "Avaliação por estrelas: 3",
-        "rate_4": "Avaliação por estrelas: 4",
-        "rate_5": "Avaliação por estrelas: 5",
         "redo": "Refazer ajuste",
         "rotate_left": "Girar 90° no sentido anti-horário",
         "rotate_right": "Girar 90° no sentido horário",
@@ -1597,7 +1519,6 @@
         "toggle_left_panel": "Alternar painel esquerdo",
         "toggle_library_exif": "Alternar sobreposição EXIF",
         "toggle_masks": "Alternar painel de Máscaras",
-        "toggle_metadata": "Alternar painel de Metadados",
         "toggle_presets": "Alternar painel de Predefinições",
         "toggle_right_panel": "Alternar painel direito",
         "undo": "Desfazer ajuste",
@@ -1612,7 +1533,6 @@
         "editing": "Edição",
         "library": "Biblioteca",
         "panels": "Painéis",
-        "rating": "Avaliação e Rótulos",
         "view": "Visualização"
       }
     },
@@ -1901,10 +1821,7 @@
         "pasteSettings": "Colar Configurações",
         "quickFilter": "Filtro rápido",
         "rateStars_many": "Avaliar com {{count}} estrelas",
-        "rateStars_one": "Avaliar com 1 estrela",
-        "rateStars_other": "Avaliar com {{count}} estrelas",
-        "resetZoom": "Redefinir Zoom para Caber na Janela",
-        "selectToRate": "Selecione uma imagem para avaliar"
+        "resetZoom": "Redefinir Zoom para Caber na Janela"
       },
       "zoomLabel": "Zoom",
       "zoomLabelReset": "Redefinir Zoom"

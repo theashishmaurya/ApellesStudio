@@ -191,12 +191,8 @@
       "frameImage": "Frame Image",
       "mergeHdr": "Merge to HDR",
       "noLabel": "No Label",
-      "noRating": "No Rating",
       "pasteAdjustments": "Paste Adjustments",
       "productivity": "Productivity",
-      "rating": "Rating",
-      "ratingLabel_one": "{{count}} Star",
-      "ratingLabel_other": "{{count}} Stars",
       "redo": "Redo",
       "resetAdjustments": "Reset Adjustments",
       "stitchPanorama": "Stitch Panorama",
@@ -631,58 +627,6 @@
         "selectNewSourcePoint": "{{modifier}} + Click to select a new source point"
       }
     },
-    "metadata": {
-      "author": {
-        "creatorDetails": "Creator Details",
-        "title": "Author & Copyright"
-      },
-      "camera": {
-        "aperture": "Aperture",
-        "focalLength": "Focal Length",
-        "iso": "ISO",
-        "lens": "Lens",
-        "shutterSpeed": "Shutter Speed",
-        "title": "Camera Details"
-      },
-      "clickToEdit": "Click to edit",
-      "copied": "Copied",
-      "copy": "Copy",
-      "emptyClickToAdd": "Empty (Click to add)",
-      "extendedExif": {
-        "title": "Extended EXIF"
-      },
-      "fields": {
-        "author": "Author",
-        "comments": "Comments",
-        "copyright": "Copyright",
-        "title": "Title"
-      },
-      "fileInfo": {
-        "dimensions": "{{width}} × {{height}} px • {{megapixels}} MP",
-        "dimensionsNoMp": "{{width}} × {{height}} px",
-        "emptyDimensions": "- × - px",
-        "title": "File Information",
-        "virtualCopy": "Virtual Copy"
-      },
-      "gps": {
-        "altitude": "Altitude",
-        "clickToOpenTooltip": "Click to open map in a new tab",
-        "latitude": "Latitude",
-        "longitude": "Longitude",
-        "title": "GPS Location"
-      },
-      "organization": {
-        "addTagPlaceholder": "Add tag...",
-        "colorLabel": "Color Label",
-        "noTags": "No tags",
-        "none": "None",
-        "rating": "Rating",
-        "ratingLabels": "Rating & Labels",
-        "tags": "Tags",
-        "title": "Organization"
-      },
-      "title": "Metadata"
-    },
     "presets": {
       "amount": "Amount",
       "dialog": {
@@ -736,7 +680,6 @@
         "adjust": "Adjust",
         "crop": "Crop",
         "export": "Export",
-        "info": "Info",
         "inpaint": "Inpaint",
         "masks": "Masks",
         "presets": "Presets",
@@ -889,7 +832,6 @@
       "noTagsAdded": "No tags added",
       "none": "None",
       "rateAndLabel": "Rate & Label",
-      "rating": "Rating",
       "selectImagesToCompare": "Select images to compare",
       "shutterSpeed": "Shutter Speed",
       "syncZoomAndPan": "Sync Zoom and Pan",
@@ -904,17 +846,6 @@
         "uneditedOnly": "Unedited Only"
       },
       "noMatch": "No images found that match your filter.",
-      "rating": {
-        "all": "Show All",
-        "andUpSuffix": "& up",
-        "fiveOnly": "5 only",
-        "fourAndUp": "4 & up",
-        "oneAndUp": "1 & up",
-        "onlySuffix": "only",
-        "threeAndUp": "3 & up",
-        "twoAndUp": "2 & up",
-        "unrated": "Unrated Only"
-      },
       "raw": {
         "all": "All Types",
         "nonRawOnly": "Non-RAW Only",
@@ -957,7 +888,6 @@
         "label": "Label",
         "modified": "Modified",
         "name": "Name",
-        "rating": "Rating",
         "shutter": "Shutter"
       }
     },
@@ -981,7 +911,6 @@
         "filterByColorLabel": "Filter by Color Label",
         "filterByEdited": "Filter by Edit Status",
         "filterByFileType": "Filter by File Type",
-        "filterByRating": "Filter by Rating",
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1033,7 +962,6 @@
       "fileName": "File Name",
       "focalLength": "Focal Length",
       "iso": "ISO",
-      "rating": "Rating",
       "shutterSpeed": "Shutter Speed"
     },
     "status": {
@@ -1542,12 +1470,6 @@
         "paste_files": "Paste file(s) to current folder",
         "preview_next": "Next image",
         "preview_prev": "Previous image",
-        "rate_0": "Star rating: 0",
-        "rate_1": "Star rating: 1",
-        "rate_2": "Star rating: 2",
-        "rate_3": "Star rating: 3",
-        "rate_4": "Star rating: 4",
-        "rate_5": "Star rating: 5",
         "redo": "Redo adjustment",
         "rotate_left": "Rotate 90° counter-clockwise",
         "rotate_right": "Rotate 90° clockwise",
@@ -1565,7 +1487,6 @@
         "toggle_left_panel": "Toggle Left Panel",
         "toggle_library_exif": "Toggle EXIF overlay",
         "toggle_masks": "Toggle Masks panel",
-        "toggle_metadata": "Toggle Metadata panel",
         "toggle_presets": "Toggle Presets panel",
         "toggle_right_panel": "Toggle Right Panel",
         "undo": "Undo adjustment",
@@ -1580,7 +1501,6 @@
         "editing": "Editing",
         "library": "Library",
         "panels": "Panels",
-        "rating": "Rating & Labels",
         "view": "View"
       }
     },
@@ -1868,10 +1788,7 @@
         "export": "Export",
         "pasteSettings": "Paste Settings",
         "quickFilter": "Quick Filter",
-        "rateStars_one": "Rate 1 star",
-        "rateStars_other": "Rate {{count}} stars",
-        "resetZoom": "Reset Zoom to Fit Window",
-        "selectToRate": "Select an image to rate"
+        "resetZoom": "Reset Zoom to Fit Window"
       },
       "zoomLabel": "Zoom",
       "zoomLabelReset": "Reset Zoom"

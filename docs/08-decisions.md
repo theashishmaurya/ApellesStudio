@@ -28576,3 +28576,77 @@ show thumbnails.
 **Verified:** `cargo check -p apelles --lib --tests` clean, `tsc --noEmit` on
 `app` unchanged at 66 pre-existing errors, no remaining reference to any removed
 symbol anywhere in `app/src`, `app/src-tauri`, `crates/` or `mcp/`.
+
+---
+
+## D-293 — the Metadata panel and the star-rating widget are removed outright, not hidden
+
+**Context.** Two of the Colorist-consolidation batch's items, taken together
+because they are one thing: RapidRAW's **photo-culling** workflow, inherited
+wholesale and never meaningful in a video editor.
+
+- **The Metadata panel** (`panel/right/MetadataPanel.tsx`, 822 lines — File
+  Information / Camera Details / Author & Copyright / Organization) is a
+  single-photo EXIF viewer. Owner's screenshot
+  (`scratch/colorist-metadata-panel-remove.png`) shows every field reading `-`
+  on the project's real video assets, which is what it will always read: those
+  fields come from a still's EXIF, and a camera original's video track carries
+  none of them.
+- **The five-star rating widget** (`scratch/colorist-rating-remove.png`) is the
+  cull-and-pick control of a photo import workflow. There is no such concept in
+  a multi-clip timeline: a clip is on the timeline or it is not, and the Edit
+  tab's own markers/link groups are how a shot gets flagged.
+
+**Options.** Hide them behind a flag (the pre-D-281 reflex, "keep it for
+upstream cherry-picks") · leave them · **remove them outright**. D-281 settles
+it: `app/` is owned code, and a redundant inherited component is deleted like
+any other dead code.
+
+**What "outright" had to mean, checked call site by call site.** Removing a
+panel is not removing a file — both of these had reach:
+
+- *Metadata:* the component, `Panel.Metadata` (the enum member, the switcher
+  icon + tooltip, the mobile panel order, `ALL_PANELS`, the default region
+  map, both saved-workspace layouts, both `activePanels` defaults), the
+  `toggle_metadata` keyboard action in `useKeyboardShortcuts` **and** its
+  `@apelles/keymap` registry row (a shortcut with no target is exactly the
+  half-removal this pass was told to avoid), and the `editor.metadata.*`
+  subtree plus `editor.switcher.tooltips.info` in all 13 locales.
+  `reconcileWorkspace` needed no migration code of its own: it already filters
+  a saved layout against `ALL_PANELS`, so dropping the member is the
+  migration.
+- *Rating:* the `StarRating` component and its four `BottomBar` props, the
+  quick-filter star row, the `EditorView`/`App`/`AppModals` prop chain,
+  `handleRate` in `useLibraryActions`, the six `rate_0..5` keyboard actions and
+  their registry rows, both context-menu Rating submenus, `imageRatings` in
+  `useLibraryStore`, the rating filter/sort/search-query paths in
+  `useSortedLibrary`, the rating badge in `Filmstrip`, the whole `ratingBuffer`
+  plumbing through `useTauriListeners`' two Rust events, `Invokes
+  .SetRatingForPaths`, and `file_management::set_rating_for_paths` with its
+  `generate_handler!` line.
+
+**Two things deliberately left, and why.**
+
+1. **`ImageMetadata.rating` stays in the Rust sidecar struct.** It is a field of
+   RapidRAW's persisted `.rrdata` format and is written by XMP import
+   (`extract_xmp_rating`). Nothing in the app reads it any more, but removing it
+   would silently rewrite every existing sidecar on the next save and change an
+   on-disk format for no gain. The *feature* is gone — there is no way to set a
+   rating, and nothing displays one; the byte in the file is inert.
+2. **The keymap's `rating` section became `labels`**, holding only the six
+   colour-label actions that remain. Its `labelKey` was dropped with the
+   rename: there is no translated key for the new heading, and every
+   Apelles-native section (`Application`, `Playback`, `Timeline editing`,
+   `Trim tools`) is already English-only for the same reason.
+   `store.test.ts`'s "the fork's keybind ids survive verbatim" guard sampled
+   `rate_3`; it now samples `color_label_red`. That is not the guard weakening —
+   the guard is against a *rename* silently dropping a user's saved remap, and
+   `rate_*` was removed, not renamed. A stale `rate_*` override in someone's
+   settings is inert, because the dispatcher only fires ids the registry
+   declares.
+
+**Verified:** `tsc --noEmit` on `app` drops from 66 pre-existing errors to 65
+and introduces none; `npm test --workspace @apelles/keymap` 43/43;
+`cargo check -p apelles --lib` and `cargo clippy` clean; no reference to any
+removed symbol remains in `app/src`, `app/src-tauri`, `packages/` or the
+locale files.

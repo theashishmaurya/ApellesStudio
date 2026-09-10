@@ -190,12 +190,8 @@
       "frameImage": "画像にフレームを追加",
       "mergeHdr": "HDRに統合",
       "noLabel": "ラベルなし",
-      "noRating": "評価なし",
       "pasteAdjustments": "補正設定を貼り付け",
       "productivity": "生産性",
-      "rating": "評価",
-      "ratingLabel_one": "{{count}} つ星",
-      "ratingLabel_other": "{{count}} つ星",
       "redo": "やり直し",
       "resetAdjustments": "補正設定をリセット",
       "stitchPanorama": "パノラマ写真を作成",
@@ -628,58 +624,6 @@
         "selectNewSourcePoint": "{{modifier}} + クリックで新しいソースポイントを選択"
       }
     },
-    "metadata": {
-      "author": {
-        "creatorDetails": "制作者の詳細",
-        "title": "作成者と著作権"
-      },
-      "camera": {
-        "aperture": "絞り値",
-        "focalLength": "焦点距離",
-        "iso": "ISO感度",
-        "lens": "レンズ",
-        "shutterSpeed": "シャッタースピード",
-        "title": "カメラ情報"
-      },
-      "clickToEdit": "クリックして編集",
-      "copied": "コピーしました",
-      "copy": "コピー",
-      "emptyClickToAdd": "未設定 (クリックして追加)",
-      "extendedExif": {
-        "title": "拡張EXIF"
-      },
-      "fields": {
-        "author": "作成者",
-        "comments": "コメント",
-        "copyright": "著作権",
-        "title": "タイトル"
-      },
-      "fileInfo": {
-        "dimensions": "{{width}} × {{height}} px • {{megapixels}} MP",
-        "dimensionsNoMp": "{{width}} × {{height}} px",
-        "emptyDimensions": "- × - px",
-        "title": "ファイル情報",
-        "virtualCopy": "仮想コピー"
-      },
-      "gps": {
-        "altitude": "高度",
-        "clickToOpenTooltip": "クリックして新しいタブで地図を表示",
-        "latitude": "緯度",
-        "longitude": "経度",
-        "title": "GPS位置情報"
-      },
-      "organization": {
-        "addTagPlaceholder": "タグを追加...",
-        "colorLabel": "カラーラベル",
-        "noTags": "タグなし",
-        "none": "なし",
-        "rating": "評価",
-        "ratingLabels": "評価とラベル",
-        "tags": "タグ",
-        "title": "整理"
-      },
-      "title": "メタデータ"
-    },
     "presets": {
       "amount": "適用量",
       "dialog": {
@@ -733,7 +677,6 @@
         "adjust": "補正",
         "crop": "切り抜き",
         "export": "書き出し",
-        "info": "情報",
         "inpaint": "インペイント",
         "masks": "マスク",
         "presets": "プリセット",
@@ -885,7 +828,6 @@
       "noTagsAdded": "タグが追加されていません",
       "none": "なし",
       "rateAndLabel": "評価とラベル",
-      "rating": "評価",
       "selectImagesToCompare": "比較する画像を選択",
       "shutterSpeed": "シャッタースピード",
       "syncZoomAndPan": "ズームとパンを同期",
@@ -900,17 +842,6 @@
         "uneditedOnly": "未編集のみ"
       },
       "noMatch": "フィルターに一致する画像が見つかりません。",
-      "rating": {
-        "all": "すべて表示",
-        "andUpSuffix": "以上",
-        "fiveOnly": "5のみ",
-        "fourAndUp": "4以上",
-        "oneAndUp": "1以上",
-        "onlySuffix": "のみ",
-        "threeAndUp": "3以上",
-        "twoAndUp": "2以上",
-        "unrated": "未評価のみ"
-      },
       "raw": {
         "all": "すべての種類",
         "nonRawOnly": "非RAWのみ",
@@ -953,7 +884,6 @@
         "label": "ラベル",
         "modified": "更新日時",
         "name": "名前",
-        "rating": "評価",
         "shutter": "シャッタースピード"
       }
     },
@@ -977,7 +907,6 @@
         "filterByColorLabel": "カラーラベルでフィルター",
         "filterByEdited": "編集状態でフィルター",
         "filterByFileType": "ファイル形式でフィルター",
-        "filterByRating": "評価でフィルター",
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1029,7 +958,6 @@
       "fileName": "ファイル名",
       "focalLength": "焦点距離",
       "iso": "ISO感度",
-      "rating": "評価",
       "shutterSpeed": "シャッタースピード"
     },
     "status": {
@@ -1538,12 +1466,6 @@
         "paste_files": "現在のフォルダにファイルを貼り付け",
         "preview_next": "次の画像",
         "preview_prev": "前の画像",
-        "rate_0": "星評価: 0",
-        "rate_1": "星評価: 1",
-        "rate_2": "星評価: 2",
-        "rate_3": "星評価: 3",
-        "rate_4": "星評価: 4",
-        "rate_5": "星評価: 5",
         "redo": "操作をやり直す",
         "rotate_left": "反時計回りに90°回転",
         "rotate_right": "時計回りに90°回転",
@@ -1561,7 +1483,6 @@
         "toggle_left_panel": "左パネルの表示/非表示",
         "toggle_library_exif": "EXIF重ね合わせ表示の表示/非表示",
         "toggle_masks": "マスクパネルの表示/非表示",
-        "toggle_metadata": "メタデータパネルの表示/非表示",
         "toggle_presets": "プリセットパネルの表示/非表示",
         "toggle_right_panel": "右パネルの表示/非表示",
         "undo": "操作を元に戻す",
@@ -1576,7 +1497,6 @@
         "editing": "編集",
         "library": "ライブラリ",
         "panels": "パネル",
-        "rating": "評価とラベル",
         "view": "表示"
       }
     },
@@ -1864,10 +1784,7 @@
         "export": "書き出し",
         "pasteSettings": "補正設定を貼り付け",
         "quickFilter": "クイックフィルター",
-        "rateStars_one": "星1に評価",
-        "rateStars_other": "星 {{count}} に評価",
-        "resetZoom": "ズームをウィンドウサイズに合わせる",
-        "selectToRate": "画像を選択して評価を設定"
+        "resetZoom": "ズームをウィンドウサイズに合わせる"
       },
       "zoomLabel": "ズーム",
       "zoomLabelReset": "ズームをリセット"

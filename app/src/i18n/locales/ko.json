@@ -190,12 +190,8 @@
       "frameImage": "이미지 프레임",
       "mergeHdr": "HDR로 병합",
       "noLabel": "레이블 없음",
-      "noRating": "평점 없음",
       "pasteAdjustments": "조정값 붙여넣기",
       "productivity": "생산성",
-      "rating": "평점",
-      "ratingLabel_one": "{{count}}점",
-      "ratingLabel_other": "{{count}}점",
       "redo": "다시 실행",
       "resetAdjustments": "조정값 초기화",
       "stitchPanorama": "파노라마 스티칭",
@@ -628,58 +624,6 @@
         "selectNewSourcePoint": "{{modifier}} + 클릭하여 새 소스 포인트 선택"
       }
     },
-    "metadata": {
-      "author": {
-        "creatorDetails": "제작자 세부 정보",
-        "title": "작성자 및 저작권"
-      },
-      "camera": {
-        "aperture": "조리개",
-        "focalLength": "초점 거리",
-        "iso": "ISO",
-        "lens": "렌즈",
-        "shutterSpeed": "셔터 속도",
-        "title": "카메라 세부 정보"
-      },
-      "clickToEdit": "클릭하여 편집",
-      "copied": "복사됨",
-      "copy": "복사",
-      "emptyClickToAdd": "비어 있음 (클릭하여 추가)",
-      "extendedExif": {
-        "title": "확장 EXIF"
-      },
-      "fields": {
-        "author": "작성자",
-        "comments": "설명",
-        "copyright": "저작권",
-        "title": "제목"
-      },
-      "fileInfo": {
-        "dimensions": "{{width}} × {{height}} px • {{megapixels}} MP",
-        "dimensionsNoMp": "{{width}} × {{height}} px",
-        "emptyDimensions": "- × - px",
-        "title": "파일 정보",
-        "virtualCopy": "가상 복사본"
-      },
-      "gps": {
-        "altitude": "고도",
-        "clickToOpenTooltip": "클릭하여 새 탭에서 지도 열기",
-        "latitude": "위도",
-        "longitude": "경도",
-        "title": "GPS 위치"
-      },
-      "organization": {
-        "addTagPlaceholder": "태그 추가...",
-        "colorLabel": "색상 레이블",
-        "noTags": "태그 없음",
-        "none": "없음",
-        "rating": "평점",
-        "ratingLabels": "평점 및 레이블",
-        "tags": "태그",
-        "title": "정리"
-      },
-      "title": "메타데이터"
-    },
     "presets": {
       "amount": "양",
       "dialog": {
@@ -733,7 +677,6 @@
         "adjust": "조정",
         "crop": "자르기",
         "export": "내보내기",
-        "info": "정보",
         "inpaint": "인페인팅",
         "masks": "마스크",
         "presets": "프리셋",
@@ -885,7 +828,6 @@
       "noTagsAdded": "추가된 태그 없음",
       "none": "없음",
       "rateAndLabel": "평가 및 라벨",
-      "rating": "평가",
       "selectImagesToCompare": "비교할 이미지 선택",
       "shutterSpeed": "셔터 속도",
       "syncZoomAndPan": "줌 및 이동 동기화",
@@ -900,17 +842,6 @@
         "uneditedOnly": "편집되지 않은 항목만"
       },
       "noMatch": "필터와 일치하는 이미지를 찾을 수 없습니다.",
-      "rating": {
-        "all": "모두 표시",
-        "andUpSuffix": "이상",
-        "fiveOnly": "5점만",
-        "fourAndUp": "4점 이상",
-        "oneAndUp": "1점 이상",
-        "onlySuffix": "점만",
-        "threeAndUp": "3점 이상",
-        "twoAndUp": "2점 이상",
-        "unrated": "미평가 항목만"
-      },
       "raw": {
         "all": "모든 유형",
         "nonRawOnly": "RAW가 아닌 항목만",
@@ -953,7 +884,6 @@
         "label": "레이블",
         "modified": "수정됨",
         "name": "이름",
-        "rating": "평점",
         "shutter": "셔터"
       }
     },
@@ -977,7 +907,6 @@
         "filterByColorLabel": "색상 레이블로 필터링",
         "filterByEdited": "편집 상태로 필터링",
         "filterByFileType": "파일 유형으로 필터링",
-        "filterByRating": "평점으로 필터링",
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1029,7 +958,6 @@
       "fileName": "파일 이름",
       "focalLength": "초점 거리",
       "iso": "ISO",
-      "rating": "평점",
       "shutterSpeed": "셔터 속도"
     },
     "status": {
@@ -1538,12 +1466,6 @@
         "paste_files": "현재 폴더에 파일 붙여넣기",
         "preview_next": "다음 이미지",
         "preview_prev": "이전 이미지",
-        "rate_0": "별점: 0",
-        "rate_1": "별점: 1",
-        "rate_2": "별점: 2",
-        "rate_3": "별점: 3",
-        "rate_4": "별점: 4",
-        "rate_5": "별점: 5",
         "redo": "조정 다시 실행",
         "rotate_left": "90° 반시계 방향 회전",
         "rotate_right": "90° 시계 방향 회전",
@@ -1561,7 +1483,6 @@
         "toggle_left_panel": "왼쪽 패널 토글",
         "toggle_library_exif": "EXIF 오버레이 전환",
         "toggle_masks": "마스크 패널 전환",
-        "toggle_metadata": "메타데이터 패널 전환",
         "toggle_presets": "프리셋 패널 전환",
         "toggle_right_panel": "오른쪽 패널 토글",
         "undo": "조정 실행 취소",
@@ -1576,7 +1497,6 @@
         "editing": "편집",
         "library": "라이브러리",
         "panels": "패널",
-        "rating": "평점 및 레이블",
         "view": "보기"
       }
     },
@@ -1864,10 +1784,7 @@
         "export": "내보내기",
         "pasteSettings": "설정 붙여넣기",
         "quickFilter": "빠른 필터",
-        "rateStars_one": "1점 평가",
-        "rateStars_other": "{{count}}점 평가",
-        "resetZoom": "창에 맞게 확대/축소 초기화",
-        "selectToRate": "평가할 이미지를 선택하세요"
+        "resetZoom": "창에 맞게 확대/축소 초기화"
       },
       "zoomLabel": "확대/축소",
       "zoomLabelReset": "확대/축소 초기화"

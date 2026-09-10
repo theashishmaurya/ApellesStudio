@@ -2009,36 +2009,6 @@ pub fn set_color_label_for_paths(
 }
 
 #[tauri::command]
-pub fn set_rating_for_paths(
-    paths: Vec<String>,
-    rating: u8,
-    app_handle: AppHandle,
-) -> Result<(), String> {
-    let settings = load_settings(app_handle.clone()).unwrap_or_default();
-    let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
-    let create_xmp_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
-
-    paths.par_iter().for_each(|path| {
-        let (_, sidecar_path) = parse_virtual_path(path);
-
-        let mut metadata = crate::exif_processing::load_sidecar(&sidecar_path);
-
-        metadata.rating = rating;
-
-        if let Ok(json_string) = serde_json::to_string_pretty(&metadata) {
-            let _ = std::fs::write(&sidecar_path, json_string);
-        }
-
-        if enable_xmp_sync {
-            let source_path = parse_virtual_path(path).0;
-            sync_metadata_to_xmp(&source_path, &metadata, create_xmp_if_missing);
-        }
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
 pub fn load_metadata(path: String, app_handle: AppHandle) -> Result<ImageMetadata, String> {
     let settings = load_settings(app_handle).unwrap_or_default();
     let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);

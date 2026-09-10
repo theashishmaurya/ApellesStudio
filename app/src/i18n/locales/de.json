@@ -190,12 +190,8 @@
       "frameImage": "Bild rahmen",
       "mergeHdr": "Zu HDR zusammenfügen",
       "noLabel": "Keine Markierung",
-      "noRating": "Keine Bewertung",
       "pasteAdjustments": "Einstellungen einfügen",
       "productivity": "Produktivität",
-      "rating": "Bewertung",
-      "ratingLabel_one": "{{count}} Stern",
-      "ratingLabel_other": "{{count}} Sterne",
       "redo": "Wiederholen",
       "resetAdjustments": "Einstellungen zurücksetzen",
       "stitchPanorama": "Panorama zusammenfügen",
@@ -630,58 +626,6 @@
         "selectNewSourcePoint": "{{modifier}} + Klicken, um einen neuen Quellpunkt auszuwählen"
       }
     },
-    "metadata": {
-      "author": {
-        "creatorDetails": "Details zum Ersteller",
-        "title": "Autor & Copyright"
-      },
-      "camera": {
-        "aperture": "Blende",
-        "focalLength": "Brennweite",
-        "iso": "ISO",
-        "lens": "Objektiv",
-        "shutterSpeed": "Verschlusszeit",
-        "title": "Kamera-Details"
-      },
-      "clickToEdit": "Zum Bearbeiten klicken",
-      "copied": "Kopiert",
-      "copy": "Kopieren",
-      "emptyClickToAdd": "Leer (Klicken zum Hinzufügen)",
-      "extendedExif": {
-        "title": "Erweiterte EXIF"
-      },
-      "fields": {
-        "author": "Autor",
-        "comments": "Kommentare",
-        "copyright": "Copyright",
-        "title": "Titel"
-      },
-      "fileInfo": {
-        "dimensions": "{{width}} × {{height}} px • {{megapixels}} MP",
-        "dimensionsNoMp": "{{width}} × {{height}} px",
-        "emptyDimensions": "- × - px",
-        "title": "Dateiinformationen",
-        "virtualCopy": "Virtuelle Kopie"
-      },
-      "gps": {
-        "altitude": "Höhe",
-        "clickToOpenTooltip": "Klicken, um die Karte in neuem Tab zu öffnen",
-        "latitude": "Breitengrad",
-        "longitude": "Längengrad",
-        "title": "GPS-Standort"
-      },
-      "organization": {
-        "addTagPlaceholder": "Tag hinzufügen...",
-        "colorLabel": "Farbmarkierung",
-        "noTags": "Keine Tags",
-        "none": "Keine",
-        "rating": "Bewertung",
-        "ratingLabels": "Bewertung & Markierungen",
-        "tags": "Tags",
-        "title": "Organisation"
-      },
-      "title": "Metadaten"
-    },
     "presets": {
       "amount": "Stärke",
       "dialog": {
@@ -735,7 +679,6 @@
         "adjust": "Anpassen",
         "crop": "Zuschnitt",
         "export": "Exportieren",
-        "info": "Info",
         "inpaint": "Reparieren",
         "masks": "Masken",
         "presets": "Vorgaben",
@@ -887,7 +830,6 @@
       "noTagsAdded": "Keine Tags hinzugefügt",
       "none": "Keine",
       "rateAndLabel": "Bewerten & Markieren",
-      "rating": "Bewertung",
       "selectImagesToCompare": "Wählen Sie Bilder zum Vergleichen aus",
       "shutterSpeed": "Verschlusszeit",
       "syncZoomAndPan": "Zoom und Schwenken synchronisieren",
@@ -902,17 +844,6 @@
         "uneditedOnly": "Nur unbearbeitete"
       },
       "noMatch": "Keine Bilder gefunden, die Ihrem Filter entsprechen.",
-      "rating": {
-        "all": "Alle anzeigen",
-        "andUpSuffix": "& höher",
-        "fiveOnly": "Nur 5",
-        "fourAndUp": "4 & höher",
-        "oneAndUp": "1 & höher",
-        "onlySuffix": "nur",
-        "threeAndUp": "3 & höher",
-        "twoAndUp": "2 & höher",
-        "unrated": "Nur unbewertete"
-      },
       "raw": {
         "all": "Alle Typen",
         "nonRawOnly": "Nur Nicht-RAW",
@@ -955,7 +886,6 @@
         "label": "Markierung",
         "modified": "Geändert",
         "name": "Name",
-        "rating": "Bewertung",
         "shutter": "Verschluss"
       }
     },
@@ -979,7 +909,6 @@
         "filterByColorLabel": "Nach Farbmarkierung filtern",
         "filterByEdited": "Nach Bearbeitungsstatus filtern",
         "filterByFileType": "Nach Dateityp filtern",
-        "filterByRating": "Nach Bewertung filtern",
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1031,7 +960,6 @@
       "fileName": "Dateiname",
       "focalLength": "Brennweite",
       "iso": "ISO",
-      "rating": "Bewertung",
       "shutterSpeed": "Verschlusszeit"
     },
     "status": {
@@ -1540,12 +1468,6 @@
         "paste_files": "Datei(en) in aktuellen Ordner einfügen",
         "preview_next": "Nächstes Bild",
         "preview_prev": "Vorheriges Bild",
-        "rate_0": "Sternbewertung: 0",
-        "rate_1": "Sternbewertung: 1",
-        "rate_2": "Sternbewertung: 2",
-        "rate_3": "Sternbewertung: 3",
-        "rate_4": "Sternbewertung: 4",
-        "rate_5": "Sternbewertung: 5",
         "redo": "Bearbeitung wiederholen",
         "rotate_left": "90° gegen den Uhrzeigersinn drehen",
         "rotate_right": "90° im Uhrzeigersinn drehen",
@@ -1563,7 +1485,6 @@
         "toggle_left_panel": "Linkes Panel ein-/ausblenden",
         "toggle_library_exif": "EXIF-Überlagerung ein-/ausblenden",
         "toggle_masks": "Maskieren-Panel ein-/ausblenden",
-        "toggle_metadata": "Metadaten-Panel ein-/ausblenden",
         "toggle_presets": "Vorgaben-Panel ein-/ausblenden",
         "toggle_right_panel": "Rechtes Panel ein-/ausblenden",
         "undo": "Bearbeitung rückgängig machen",
@@ -1578,7 +1499,6 @@
         "editing": "Bearbeitung",
         "library": "Bibliothek",
         "panels": "Panels",
-        "rating": "Bewertungen & Markierungen",
         "view": "Ansicht"
       }
     },
@@ -1866,10 +1786,7 @@
         "export": "Exportieren",
         "pasteSettings": "Einstellungen einfügen",
         "quickFilter": "Schnellfilter",
-        "rateStars_one": "Mit 1 Stern bewerten",
-        "rateStars_other": "Mit {{count}} Sternen bewerten",
-        "resetZoom": "Zoom auf Einpassen zurücksetzen",
-        "selectToRate": "Bild zur Bewertung auswählen"
+        "resetZoom": "Zoom auf Einpassen zurücksetzen"
       },
       "zoomLabel": "Zoom",
       "zoomLabelReset": "Zoom zurücksetzen"

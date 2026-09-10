@@ -70,7 +70,6 @@ interface NegativeConversionModalState {
 }
 
 const ALL_PANELS: Panel[] = [
-  Panel.Metadata,
   Panel.Export,
   Panel.Tethering,
   Panel.Adjustments,
@@ -82,7 +81,6 @@ const ALL_PANELS: Panel[] = [
 ];
 
 const DEFAULT_PANEL_DEFAULT_REGIONS: Record<Panel, PanelRegion> = {
-  [Panel.Metadata]: 'leftTop',
   [Panel.Export]: 'leftTop',
   [Panel.Tethering]: 'leftTop',
   [Panel.Adjustments]: 'rightTop',
@@ -109,13 +107,13 @@ export function reconcileWorkspace(
     leftTopHeight: DEFAULT_PANEL_SECTION_HEIGHT,
     rightTopHeight: DEFAULT_PANEL_SECTION_HEIGHT,
     panelLayout: {
-      leftTop: [Panel.Metadata, Panel.Export, ...(isTetheringSupported ? [Panel.Tethering] : [])],
+      leftTop: [Panel.Export, ...(isTetheringSupported ? [Panel.Tethering] : [])],
       leftBottom: [],
       rightTop: [Panel.Adjustments, Panel.Crop, Panel.Masks, Panel.Relight, Panel.Ai, Panel.Presets],
       rightBottom: [],
     },
     activePanels: {
-      leftTop: Panel.Metadata,
+      leftTop: Panel.Export,
       leftBottom: null,
       rightTop: Panel.Adjustments,
       rightBottom: null,
@@ -256,13 +254,13 @@ export const useUIStore = create<UIState>((set, get) => ({
   compactEditorPanelHeightOverride: null,
 
   panelLayout: {
-    leftTop: [Panel.Metadata, Panel.Export],
+    leftTop: [Panel.Export],
     leftBottom: [],
     rightTop: [Panel.Adjustments, Panel.Crop, Panel.Masks, Panel.Ai, Panel.Presets],
     rightBottom: [],
   },
   activePanels: {
-    leftTop: Panel.Metadata,
+    leftTop: Panel.Export,
     leftBottom: null,
     rightTop: Panel.Adjustments,
     rightBottom: null,

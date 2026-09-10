@@ -190,14 +190,10 @@
       "frameImage": "Dodaj ramkę do obrazu",
       "mergeHdr": "Scal do HDR",
       "noLabel": "Brak etykiety",
-      "noRating": "Brak oceny",
       "pasteAdjustments": "Wklej ustawienia",
       "productivity": "Produktywność",
-      "rating": "Ocena",
       "ratingLabel_few": "{{count}} Gwiazdki",
       "ratingLabel_many": "{{count}} Gwiazdek",
-      "ratingLabel_one": "{{count}} Gwiazdka",
-      "ratingLabel_other": "{{count}} Gwiazdek",
       "redo": "Ponów",
       "resetAdjustments": "Resetuj ustawienia",
       "stitchPanorama": "Złóż panoramę",
@@ -672,58 +668,6 @@
         "selectNewSourcePoint": "{{modifier}} + Kliknij, aby wybrać nowy punkt źródłowy"
       }
     },
-    "metadata": {
-      "author": {
-        "creatorDetails": "Szczegóły twórcy",
-        "title": "Autor i prawa autorskie"
-      },
-      "camera": {
-        "aperture": "Przysłona",
-        "focalLength": "Ogniskowa",
-        "iso": "ISO",
-        "lens": "Obiektyw",
-        "shutterSpeed": "Czas otwarcia migawki",
-        "title": "Szczegóły aparatu"
-      },
-      "clickToEdit": "Kliknij, aby edytować",
-      "copied": "Skopiowano",
-      "copy": "Kopiuj",
-      "emptyClickToAdd": "Puste (Kliknij, aby dodać)",
-      "extendedExif": {
-        "title": "Rozszerzony EXIF"
-      },
-      "fields": {
-        "author": "Autor",
-        "comments": "Komentarze",
-        "copyright": "Prawa autorskie",
-        "title": "Tytuł"
-      },
-      "fileInfo": {
-        "dimensions": "{{width}} × {{height}} px • {{megapixels}} MP",
-        "dimensionsNoMp": "{{width}} × {{height}} px",
-        "emptyDimensions": "- × - px",
-        "title": "Informacje o pliku",
-        "virtualCopy": "Kopia wirtualna"
-      },
-      "gps": {
-        "altitude": "Wysokość nad poziomem morza",
-        "clickToOpenTooltip": "Kliknij, aby otworzyć mapę w nowej karcie",
-        "latitude": "Szerokość geograficzna",
-        "longitude": "Długość geograficzna",
-        "title": "Lokalizacja GPS"
-      },
-      "organization": {
-        "addTagPlaceholder": "Dodaj tag...",
-        "colorLabel": "Etykieta koloru",
-        "noTags": "Brak tagów",
-        "none": "Brak",
-        "rating": "Ocena",
-        "ratingLabels": "Oceny i Etykiety",
-        "tags": "Tagi",
-        "title": "Organizacja"
-      },
-      "title": "Metadane"
-    },
     "presets": {
       "amount": "Siła",
       "dialog": {
@@ -777,7 +721,6 @@
         "adjust": "Dopasuj",
         "crop": "Kadruj",
         "export": "Eksportuj",
-        "info": "Informacje",
         "inpaint": "Inpaint",
         "masks": "Maski",
         "presets": "Presety",
@@ -933,7 +876,6 @@
       "noTagsAdded": "Nie dodano tagów",
       "none": "Brak",
       "rateAndLabel": "Oceń i Oznacz",
-      "rating": "Ocena",
       "selectImagesToCompare": "Wybierz obrazy do porównania",
       "shutterSpeed": "Czas otwarcia migawki",
       "syncZoomAndPan": "Synchronizuj powiększenie i przesuwanie",
@@ -948,17 +890,6 @@
         "uneditedOnly": "Tylko nieedytowane"
       },
       "noMatch": "Nie znaleziono obrazów pasujących do twojego filtra.",
-      "rating": {
-        "all": "Pokaż wszystko",
-        "andUpSuffix": "i więcej",
-        "fiveOnly": "tylko 5",
-        "fourAndUp": "4 i więcej",
-        "oneAndUp": "1 i więcej",
-        "onlySuffix": "tylko",
-        "threeAndUp": "3 i więcej",
-        "twoAndUp": "2 i więcej",
-        "unrated": "Tylko bez oceny"
-      },
       "raw": {
         "all": "Wszystkie typy",
         "nonRawOnly": "Tylko nie-RAW",
@@ -1001,7 +932,6 @@
         "label": "Etykieta",
         "modified": "Zmodyfikowano",
         "name": "Nazwa",
-        "rating": "Ocena",
         "shutter": "Migawka"
       }
     },
@@ -1025,7 +955,6 @@
         "filterByColorLabel": "Filtruj według Etykiety koloru",
         "filterByEdited": "Filtruj według Statusu edycji",
         "filterByFileType": "Filtruj według Typu pliku",
-        "filterByRating": "Filtruj według Oceny",
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1079,7 +1008,6 @@
       "fileName": "Nazwa pliku",
       "focalLength": "Ogniskowa",
       "iso": "ISO",
-      "rating": "Ocena",
       "shutterSpeed": "Czas otwarcia migawki"
     },
     "status": {
@@ -1608,12 +1536,6 @@
         "paste_files": "Wklej pliki do bieżącego folderu",
         "preview_next": "Następny obraz",
         "preview_prev": "Poprzedni obraz",
-        "rate_0": "Ocena: 0",
-        "rate_1": "Ocena: 1",
-        "rate_2": "Ocena: 2",
-        "rate_3": "Ocena: 3",
-        "rate_4": "Ocena: 4",
-        "rate_5": "Ocena: 5",
         "redo": "Ponów korektę",
         "rotate_left": "Obróć o 90° w lewo",
         "rotate_right": "Obróć o 90° w prawo",
@@ -1631,7 +1553,6 @@
         "toggle_left_panel": "Przełącz lewy panel",
         "toggle_library_exif": "Przełącz nakładkę EXIF",
         "toggle_masks": "Przełącz panel Maski",
-        "toggle_metadata": "Przełącz panel Metadane",
         "toggle_presets": "Przełącz panel Presety",
         "toggle_right_panel": "Przełącz prawy panel",
         "undo": "Cofnij korektę",
@@ -1646,7 +1567,6 @@
         "editing": "Edycja",
         "library": "Biblioteka",
         "panels": "Panele",
-        "rating": "Oceny i Etykiety",
         "view": "Widok"
       }
     },
@@ -1936,10 +1856,7 @@
         "quickFilter": "Szybki filtr",
         "rateStars_few": "Oceń na {{count}} gwiazdki",
         "rateStars_many": "Oceń na {{count}} gwiazdek",
-        "rateStars_one": "Oceń na 1 gwiazdkę",
-        "rateStars_other": "Oceń na {{count}} gwiazdek",
-        "resetZoom": "Dopasuj do okna",
-        "selectToRate": "Zaznacz obraz, aby ocenić"
+        "resetZoom": "Dopasuj do okna"
       },
       "zoomLabel": "Przybliżenie",
       "zoomLabelReset": "Zresetuj powiększenie"

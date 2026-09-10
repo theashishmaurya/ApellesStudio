@@ -2723,15 +2723,20 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      whether Colorist's own export does anything the Edit one genuinely
      cannot (e.g. exporting a single graded still with no timeline at all)
      before deleting it outright, and say so in the D-NNN either way.
-  4. **Remove the Metadata panel.** Screenshot:
-     `scratch/colorist-metadata-panel-remove.png`. `MetadataPanel.tsx`
-     (File Information/Camera Details/Author & Copyright/Organization) is
-     RapidRAW's single-photo EXIF viewer, with every field showing `-` on
-     real video assets in this screenshot — dead weight for a video editor.
-  5. **Remove the rating widget.** Screenshot:
-     `scratch/colorist-rating-remove.png`. The five-star rating control
-     (also inherited from RapidRAW's photo-culling workflow) has no
-     equivalent concept in a multi-clip video timeline.
+  4. **[x] Remove the Metadata panel** — **done 2026-09-10, D-293.**
+     Screenshot: `scratch/colorist-metadata-panel-remove.png`. Removed with
+     `Panel.Metadata` (enum, switcher, mobile order, `ALL_PANELS`, region map,
+     both saved-workspace defaults), the `toggle_metadata` keyboard action and
+     its `@apelles/keymap` registry row, and the `editor.metadata.*` subtree in
+     all 13 locales.
+  5. **[x] Remove the rating widget** — **done 2026-09-10, D-293**, together
+     with item 4 (one inherited photo-culling workflow, not two things).
+     Screenshot: `scratch/colorist-rating-remove.png`. Removed whole: the
+     widget, the quick-filter stars, the six `rate_0..5` shortcuts, both
+     context-menu Rating submenus, `imageRatings` and the rating filter / sort
+     / search paths, the `Filmstrip` badge, the `useTauriListeners` plumbing,
+     and `file_management::set_rating_for_paths`. `ImageMetadata.rating` stays
+     in the Rust sidecar struct deliberately — see D-293 for why.
   6. **The Colorist/Edit preview should be ONE shared player component.**
      Screenshot: `scratch/colorist-edit-players-should-be-common.png`.
      Owner: *"player is different for both, it should be common component."*

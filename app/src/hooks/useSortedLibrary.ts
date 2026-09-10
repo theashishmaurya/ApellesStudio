@@ -5,7 +5,7 @@ import { RawStatus, EditedStatus, SortDirection, ImageFile, GroupingMode } from 
 import { buildImageGroups, GroupBadgeInfo, GroupId } from '../utils/imageGrouping';
 
 export const ADVANCED_QUERY_REGEX =
-  /^(iso|aperture|f|shutter|s|focal|mm|rating|color|camera|make|model|lens)\s*(?::)?\s*(>=|<=|>|<|=)?\s*(.+)$/i;
+  /^(iso|aperture|f|shutter|s|focal|mm|color|camera|make|model|lens)\s*(?::)?\s*(>=|<=|>|<|=)?\s*(.+)$/i;
 
 const parseShutter = (val: string | undefined): number => {
   if (!val) return 0;
@@ -41,20 +41,13 @@ export interface GroupedLibrary {
 }
 
 function computeGroupedLibrary(libraryState: any, settingsState: any): GroupedLibrary {
-  const { imageList, imageRatings, filterCriteria, searchCriteria, sortCriteria } = libraryState;
+  const { imageList, filterCriteria, searchCriteria, sortCriteria } = libraryState;
   const { appSettings } = settingsState;
 
   const groupingMode: GroupingMode = appSettings?.grouping ?? 'off';
   const isGroupingActive = groupingMode !== 'off';
 
   const matchesFilter = (image: ImageFile): boolean => {
-    if (filterCriteria.rating !== 0) {
-      const rating = imageRatings[image.path] || 0;
-      if (filterCriteria.rating === -1 && rating !== 0) return false;
-      if (filterCriteria.rating === 5 && rating !== 5) return false;
-      if (filterCriteria.rating > 0 && filterCriteria.rating < 5 && rating < filterCriteria.rating) return false;
-    }
-
     if (filterCriteria.rawStatus && filterCriteria.rawStatus !== RawStatus.All) {
       if (filterCriteria.rawStatus === RawStatus.RawOnly && !image.is_raw) return false;
       if (filterCriteria.rawStatus === RawStatus.NonRawOnly && image.is_raw) return false;
@@ -91,7 +84,7 @@ function computeGroupedLibrary(libraryState: any, settingsState: any): GroupedLi
   const evaluateQuery = (q: any, image: ImageFile) => {
     const { field, operator, value } = q;
 
-    if (['iso', 'aperture', 'f', 'shutter', 's', 'focal', 'mm', 'rating'].includes(field)) {
+    if (['iso', 'aperture', 'f', 'shutter', 's', 'focal', 'mm'].includes(field)) {
       let imgVal = 0;
       let qVal = parseFloat(value);
 
@@ -99,7 +92,6 @@ function computeGroupedLibrary(libraryState: any, settingsState: any): GroupedLi
         imgVal = parseInt(image.exif?.PhotographicSensitivity || image.exif?.ISOSpeedRatings || '0', 10) || 0;
       else if (field === 'aperture' || field === 'f') imgVal = parseAperture(image.exif?.FNumber);
       else if (field === 'focal' || field === 'mm') imgVal = parseFocalLength(image.exif?.FocalLength);
-      else if (field === 'rating') imgVal = imageRatings[image.path] || 0;
       else if (field === 'shutter' || field === 's') {
         imgVal = parseShutter(image.exif?.ExposureTime);
         qVal = parseShutter(value);
@@ -232,9 +224,6 @@ function computeGroupedLibrary(libraryState: any, settingsState: any): GroupedLi
       case 'date':
         comparison = a.modified - b.modified;
         break;
-      case 'rating':
-        comparison = (imageRatings[a.path] || 0) - (imageRatings[b.path] || 0);
-        break;
       case 'edited':
         comparison = a.is_edited === b.is_edited ? 0 : a.is_edited ? 1 : -1;
         break;
@@ -268,7 +257,6 @@ export function computeSortedLibrary(libraryState: any, settingsState: any): Ima
 
 export function useSortedLibrary() {
   const imageList = useLibraryStore((state) => state.imageList);
-  const imageRatings = useLibraryStore((state) => state.imageRatings);
   const filterCriteria = useLibraryStore((state) => state.filterCriteria);
   const searchCriteria = useLibraryStore((state) => state.searchCriteria);
   const sortCriteria = useLibraryStore((state) => state.sortCriteria);
@@ -277,10 +265,10 @@ export function useSortedLibrary() {
 
   const result = useMemo(() => {
     return computeGroupedLibrary(
-      { imageList, imageRatings, filterCriteria, searchCriteria, sortCriteria },
+      { imageList, filterCriteria, searchCriteria, sortCriteria },
       { appSettings },
     );
-  }, [imageList, sortCriteria, imageRatings, filterCriteria, searchCriteria, appSettings]);
+  }, [imageList, sortCriteria, filterCriteria, searchCriteria, appSettings]);
 
   return result;
 }

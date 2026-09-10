@@ -1,5 +1,5 @@
 import { createElement, useState, useEffect, useRef } from 'react';
-import { Star, Copy, ClipboardPaste, Check, Settings, Filter, PanelLeft, PanelBottom, PanelRight } from 'lucide-react';
+import { Copy, ClipboardPaste, Check, Settings, Filter, PanelLeft, PanelBottom, PanelRight } from 'lucide-react';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useShallow } from 'zustand/react/shallow';
@@ -20,7 +20,6 @@ import { COLOR_LABELS } from '../../utils/adjustments';
 interface BottomBarProps {
   filmstripHeight?: number;
   imageList?: Array<ImageFile>;
-  imageRatings?: Record<string, number> | null;
   isCopied: boolean;
   isCopyDisabled: boolean;
   isExportDisabled?: boolean;
@@ -28,7 +27,6 @@ interface BottomBarProps {
   isLoading?: boolean;
   isPasted: boolean;
   isPasteDisabled: boolean;
-  isRatingDisabled?: boolean;
   isResetDisabled?: boolean;
   isResizing?: boolean;
   multiSelectedPaths?: Array<string>;
@@ -41,10 +39,8 @@ interface BottomBarProps {
   onOpenCopyPasteSettings?(): void;
   onRequestThumbnails?(paths: string[]): void;
   onPaste(): void;
-  onRate(rate: number): void;
   onReset?(): void;
   onZoomChange?(zoomValue: number, fitToWindow?: boolean): void;
-  rating: number;
   selectedImage?: SelectedImage;
   showFilmstrip?: boolean;
   layoutMode: 'compact' | 'wide' | 'full';
@@ -52,49 +48,6 @@ interface BottomBarProps {
   thumbnailAspectRatio: ThumbnailAspectRatio;
   totalImages?: number;
 }
-
-interface StarRatingProps {
-  disabled: boolean;
-  onRate(rate: number): void;
-  rating: number;
-}
-
-const StarRating = ({ rating, onRate, disabled }: StarRatingProps) => {
-  const { t } = useTranslation();
-
-  return (
-    <div className={clsx('flex items-center gap-1', disabled && 'cursor-not-allowed')}>
-      {[...Array(5)].map((_, index: number) => {
-        const starValue = index + 1;
-        return (
-          <button
-            className="disabled:cursor-not-allowed"
-            disabled={disabled}
-            key={starValue}
-            onClick={() => !disabled && onRate(starValue === rating ? 0 : starValue)}
-            data-tooltip={
-              disabled
-                ? t('ui.bottomBar.tooltips.selectToRate')
-                : t('ui.bottomBar.tooltips.rateStars', { count: starValue })
-            }
-          >
-            <Star
-              size={18}
-              className={clsx(
-                'transition-colors duration-150',
-                disabled
-                  ? 'text-text-secondary opacity-40'
-                  : starValue <= rating
-                    ? 'fill-accent text-accent'
-                    : 'text-text-secondary hover:text-accent',
-              )}
-            />
-          </button>
-        );
-      })}
-    </div>
-  );
-};
 
 interface PanelToggleButtonProps {
   onClick: () => void;
@@ -127,14 +80,12 @@ const PanelToggleButton = ({ onClick, Icon, tooltip, disabled = false }: PanelTo
 export default function BottomBar({
   filmstripHeight,
   imageList = [],
-  imageRatings,
   isCopied,
   isCopyDisabled,
   isFilmstripVisible,
   isLoading = false,
   isPasted,
   isPasteDisabled,
-  isRatingDisabled = false,
   isResizing,
   multiSelectedPaths = [],
   onClearSelection,
@@ -145,9 +96,7 @@ export default function BottomBar({
   onOpenCopyPasteSettings,
   onRequestThumbnails,
   onPaste,
-  onRate,
   onZoomChange = () => {},
-  rating,
   selectedImage,
   showFilmstrip = true,
   layoutMode,
@@ -370,7 +319,6 @@ export default function BottomBar({
           >
             <Filmstrip
               imageList={imageList}
-              imageRatings={imageRatings}
               isLoading={isLoading}
               multiSelectedPaths={multiSelectedPaths}
               onClearSelection={onClearSelection}
@@ -393,8 +341,6 @@ export default function BottomBar({
         )}
       >
         <div className="flex items-center gap-4">
-          <StarRating rating={rating} onRate={onRate} disabled={isRatingDisabled} />
-          <div className="h-5 w-px bg-surface"></div>
           <div className="flex items-center gap-2">
             <button
               className="relative w-8 h-8 flex items-center justify-center rounded-md text-text-secondary hover:bg-surface hover:text-text-primary transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed"
@@ -497,34 +443,6 @@ export default function BottomBar({
               )}
             >
               <div className="flex items-center gap-3 whitespace-nowrap">
-                <div className="flex items-center gap-0.5">
-                  {[1, 2, 3, 4, 5].map((starValue) => {
-                    const isFilled = filterCriteria.rating > 0 && starValue <= filterCriteria.rating;
-                    return (
-                      <button
-                        key={`qf-star-${starValue}`}
-                        onClick={() =>
-                          setFilterCriteria((prev) => ({
-                            ...prev,
-                            rating: prev.rating === starValue ? 0 : starValue,
-                          }))
-                        }
-                        className="p-0.5 focus:outline-none"
-                      >
-                        <Star
-                          size={16}
-                          className={clsx(
-                            'transition-colors duration-150',
-                            isFilled ? 'text-accent fill-accent' : 'text-text-secondary hover:text-accent',
-                          )}
-                        />
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="h-4 w-px bg-border-color"></div>
-
                 <div className="flex items-center gap-1.5">
                   {allColors.map((color) => {
                     const isSelected = (filterCriteria.colors || []).includes(color.name);

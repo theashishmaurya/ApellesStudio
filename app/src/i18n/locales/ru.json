@@ -190,14 +190,10 @@
       "frameImage": "Добавить рамку",
       "mergeHdr": "Объединить в HDR",
       "noLabel": "Без метки",
-      "noRating": "Без рейтинга",
       "pasteAdjustments": "Вставить настройки",
       "productivity": "Продуктивность",
-      "rating": "Рейтинг",
       "ratingLabel_few": "{{count}} звезд",
       "ratingLabel_many": "{{count}} звезд",
-      "ratingLabel_one": "{{count}} звезда",
-      "ratingLabel_other": "{{count}} звезд",
       "redo": "Повторить",
       "resetAdjustments": "Сбросить настройки",
       "stitchPanorama": "Сшить панораму",
@@ -672,58 +668,6 @@
         "selectNewSourcePoint": "{{modifier}} + Кликните, чтобы выбрать новую исходную точку"
       }
     },
-    "metadata": {
-      "author": {
-        "creatorDetails": "Информация об авторе",
-        "title": "Автор и авторские права"
-      },
-      "camera": {
-        "aperture": "Диафрагма",
-        "focalLength": "Фокусное расстояние",
-        "iso": "ISO",
-        "lens": "Объектив",
-        "shutterSpeed": "Выдержка",
-        "title": "Параметры съемки"
-      },
-      "clickToEdit": "Нажмите для редактирования",
-      "copied": "Скопировано",
-      "copy": "Копировать",
-      "emptyClickToAdd": "Пусто (нажмите, чтобы добавить)",
-      "extendedExif": {
-        "title": "Расширенный EXIF"
-      },
-      "fields": {
-        "author": "Автор",
-        "comments": "Комментарии",
-        "copyright": "Авторские права",
-        "title": "Название"
-      },
-      "fileInfo": {
-        "dimensions": "{{width}} × {{height}} пикс • {{megapixels}} Мп",
-        "dimensionsNoMp": "{{width}} × {{height}} пикс",
-        "emptyDimensions": "- × - пикс",
-        "title": "Информация о файле",
-        "virtualCopy": "Виртуальная копия"
-      },
-      "gps": {
-        "altitude": "Высота",
-        "clickToOpenTooltip": "Нажмите, чтобы открыть карту в новой вкладке",
-        "latitude": "Широта",
-        "longitude": "Долгота",
-        "title": "Координаты GPS"
-      },
-      "organization": {
-        "addTagPlaceholder": "Добавить тег...",
-        "colorLabel": "Цветовая метка",
-        "noTags": "Нет тегов",
-        "none": "Нет",
-        "rating": "Рейтинг",
-        "ratingLabels": "Рейтинг и метки",
-        "tags": "Теги",
-        "title": "Организация"
-      },
-      "title": "Метаданные"
-    },
     "presets": {
       "amount": "Интенсивность",
       "dialog": {
@@ -777,7 +721,6 @@
         "adjust": "Коррекция",
         "crop": "Обрезка",
         "export": "Экспорт",
-        "info": "Инфо",
         "inpaint": "Восстановление",
         "masks": "Маски",
         "presets": "Пресеты",
@@ -933,7 +876,6 @@
       "noTagsAdded": "Теги не добавлены",
       "none": "Нет",
       "rateAndLabel": "Оценка и метка",
-      "rating": "Оценка",
       "selectImagesToCompare": "Выберите изображения для сравнения",
       "shutterSpeed": "Выдержка",
       "syncZoomAndPan": "Синхронизировать масштаб и панорамирование",
@@ -948,17 +890,6 @@
         "uneditedOnly": "Только исходные"
       },
       "noMatch": "Нет изображений, соответствующих фильтру.",
-      "rating": {
-        "all": "Показать все",
-        "andUpSuffix": "и выше",
-        "fiveOnly": "Только 5",
-        "fourAndUp": "4 и выше",
-        "oneAndUp": "1 и выше",
-        "onlySuffix": "только",
-        "threeAndUp": "3 и выше",
-        "twoAndUp": "2 и выше",
-        "unrated": "Без рейтинга"
-      },
       "raw": {
         "all": "Все типы файлов",
         "nonRawOnly": "Только не-RAW",
@@ -1001,7 +932,6 @@
         "label": "Метка",
         "modified": "Изменен",
         "name": "Имя",
-        "rating": "Рейтинг",
         "shutter": "Выдержка"
       }
     },
@@ -1025,7 +955,6 @@
         "filterByColorLabel": "Фильтр по цвету",
         "filterByEdited": "Фильтр по редактированию",
         "filterByFileType": "Фильтр по формату",
-        "filterByRating": "Фильтр по рейтингу",
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1079,7 +1008,6 @@
       "fileName": "Имени файла",
       "focalLength": "Фокусному расстоянию",
       "iso": "ISO",
-      "rating": "Рейтингу",
       "shutterSpeed": "Выдержке"
     },
     "status": {
@@ -1608,12 +1536,6 @@
         "paste_files": "Вставить файлы в текущую папку",
         "preview_next": "Следующий снимок",
         "preview_prev": "Предыдущий снимок",
-        "rate_0": "Установить рейтинг: 0 звезд",
-        "rate_1": "Установить рейтинг: 1 звезда",
-        "rate_2": "Установить рейтинг: 2 звезды",
-        "rate_3": "Установить рейтинг: 3 звезды",
-        "rate_4": "Установить рейтинг: 4 звезды",
-        "rate_5": "Установить рейтинг: 5 звезд",
         "redo": "Повторить действие",
         "rotate_left": "Повернуть на 90° против часовой стрелки",
         "rotate_right": "Повернуть на 90° по часовой стрелке",
@@ -1631,7 +1553,6 @@
         "toggle_left_panel": "Показать/скрыть левую панель",
         "toggle_library_exif": "Информация EXIF поверх сетки",
         "toggle_masks": "Панель масок",
-        "toggle_metadata": "Панель метаданных",
         "toggle_presets": "Панель пресетов",
         "toggle_right_panel": "Показать/скрыть правую панель",
         "undo": "Отменить действие",
@@ -1646,7 +1567,6 @@
         "editing": "Редактирование",
         "library": "Библиотека",
         "panels": "Панели",
-        "rating": "Оценки и метки",
         "view": "Отображение"
       }
     },
@@ -1936,10 +1856,7 @@
         "quickFilter": "Быстрый фильтр",
         "rateStars_few": "Оценить в {{count}} звезд",
         "rateStars_many": "Оценить в {{count}} звезд",
-        "rateStars_one": "Оценить в 1 звезду",
-        "rateStars_other": "Оценить в {{count}} звезд",
-        "resetZoom": "Сбросить масштаб (по размеру окна)",
-        "selectToRate": "Выберите снимок, чтобы выставить ему оценку"
+        "resetZoom": "Сбросить масштаб (по размеру окна)"
       },
       "zoomLabel": "Масштаб",
       "zoomLabelReset": "Сбросить масштаб"

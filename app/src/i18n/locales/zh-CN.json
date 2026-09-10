@@ -190,12 +190,8 @@
       "frameImage": "装裱图像",
       "mergeHdr": "合并为 HDR",
       "noLabel": "无标签",
-      "noRating": "无评分",
       "pasteAdjustments": "粘贴调整",
       "productivity": "效率",
-      "rating": "评分",
-      "ratingLabel_one": "{{count}} 星",
-      "ratingLabel_other": "{{count}} 星",
       "redo": "重做",
       "resetAdjustments": "重置调整",
       "stitchPanorama": "拼接全景图",
@@ -628,58 +624,6 @@
         "selectNewSourcePoint": "{{modifier}} + 点击选择新的源点"
       }
     },
-    "metadata": {
-      "author": {
-        "creatorDetails": "创作者详情",
-        "title": "作者与版权"
-      },
-      "camera": {
-        "aperture": "光圈",
-        "focalLength": "焦距",
-        "iso": "ISO",
-        "lens": "镜头",
-        "shutterSpeed": "快门速度",
-        "title": "相机详情"
-      },
-      "clickToEdit": "点击编辑",
-      "copied": "已复制",
-      "copy": "复制",
-      "emptyClickToAdd": "空（点击添加）",
-      "extendedExif": {
-        "title": "扩展 EXIF"
-      },
-      "fields": {
-        "author": "作者",
-        "comments": "备注",
-        "copyright": "版权",
-        "title": "标题"
-      },
-      "fileInfo": {
-        "dimensions": "{{width}} × {{height}} 像素 · {{megapixels}} MP",
-        "dimensionsNoMp": "{{width}} × {{height}} 像素",
-        "emptyDimensions": "- × - 像素",
-        "title": "文件信息",
-        "virtualCopy": "虚拟副本"
-      },
-      "gps": {
-        "altitude": "海拔",
-        "clickToOpenTooltip": "点击在新标签页中打开地图",
-        "latitude": "纬度",
-        "longitude": "经度",
-        "title": "GPS 位置"
-      },
-      "organization": {
-        "addTagPlaceholder": "添加标签...",
-        "colorLabel": "颜色标签",
-        "noTags": "无标签",
-        "none": "无",
-        "rating": "评分",
-        "ratingLabels": "评分与标签",
-        "tags": "标签",
-        "title": "组织"
-      },
-      "title": "元数据"
-    },
     "presets": {
       "amount": "数量",
       "dialog": {
@@ -733,7 +677,6 @@
         "adjust": "调整",
         "crop": "裁剪",
         "export": "导出",
-        "info": "信息",
         "inpaint": "修复",
         "masks": "蒙版",
         "presets": "预设",
@@ -885,7 +828,6 @@
       "noTagsAdded": "未添加标签",
       "none": "无",
       "rateAndLabel": "评分与标签",
-      "rating": "评分",
       "selectImagesToCompare": "选择要比较的图像",
       "shutterSpeed": "快门速度",
       "syncZoomAndPan": "同步缩放和平移",
@@ -900,17 +842,6 @@
         "uneditedOnly": "仅未编辑"
       },
       "noMatch": "未找到匹配过滤条件的图像。",
-      "rating": {
-        "all": "显示全部",
-        "andUpSuffix": "及以上",
-        "fiveOnly": "仅 5 星",
-        "fourAndUp": "4 星及以上",
-        "oneAndUp": "1 星及以上",
-        "onlySuffix": "仅",
-        "threeAndUp": "3 星及以上",
-        "twoAndUp": "2 星及以上",
-        "unrated": "仅未评分"
-      },
       "raw": {
         "all": "所有类型",
         "nonRawOnly": "仅非 RAW",
@@ -953,7 +884,6 @@
         "label": "标签",
         "modified": "修改日期",
         "name": "名称",
-        "rating": "评分",
         "shutter": "快门"
       }
     },
@@ -977,7 +907,6 @@
         "filterByColorLabel": "按颜色标签过滤",
         "filterByEdited": "按编辑状态过滤",
         "filterByFileType": "按文件类型过滤",
-        "filterByRating": "按评分过滤",
         "groupEditedFiles": "Include edited files in groups",
         "groupIgnoreMetadata": "Ignore mismatched EXIF dates",
         "groupOff": "Off",
@@ -1029,7 +958,6 @@
       "fileName": "文件名",
       "focalLength": "焦距",
       "iso": "ISO",
-      "rating": "评分",
       "shutterSpeed": "快门速度"
     },
     "status": {
@@ -1538,12 +1466,6 @@
         "paste_files": "将文件粘贴到当前文件夹",
         "preview_next": "下一张",
         "preview_prev": "上一张",
-        "rate_0": "星级评分：0",
-        "rate_1": "星级评分：1",
-        "rate_2": "星级评分：2",
-        "rate_3": "星级评分：3",
-        "rate_4": "星级评分：4",
-        "rate_5": "星级评分：5",
         "redo": "重做调整",
         "rotate_left": "逆时针旋转 90°",
         "rotate_right": "顺时针旋转 90°",
@@ -1561,7 +1483,6 @@
         "toggle_left_panel": "切换左侧面板",
         "toggle_library_exif": "切换 EXIF 叠加",
         "toggle_masks": "切换蒙版面板",
-        "toggle_metadata": "切换元数据面板",
         "toggle_presets": "切换预设面板",
         "toggle_right_panel": "切换右侧面板",
         "undo": "撤销调整",
@@ -1576,7 +1497,6 @@
         "editing": "编辑",
         "library": "图库",
         "panels": "面板",
-        "rating": "评分与标签",
         "view": "视图"
       }
     },
@@ -1864,10 +1784,7 @@
         "export": "导出",
         "pasteSettings": "粘贴设置",
         "quickFilter": "快速筛选",
-        "rateStars_one": "评分 1 星",
-        "rateStars_other": "评分 {{count}} 星",
-        "resetZoom": "重置缩放以适应窗口",
-        "selectToRate": "选择一张图像以评分"
+        "resetZoom": "重置缩放以适应窗口"
       },
       "zoomLabel": "缩放",
       "zoomLabelReset": "重置缩放"

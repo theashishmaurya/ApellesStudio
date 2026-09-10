@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **D-293: RapidRAW's photo-culling workflow removed from the
+  Colorist tab.** The Metadata panel (a single-photo EXIF viewer whose every
+  field reads `-` on video) and the five-star rating widget are gone outright,
+  D-281's standard — with every entry point: the `Panel.Metadata` route and its
+  keyboard action, the `rate_0..5` shortcuts, both context-menu Rating
+  submenus, the quick-filter stars, `imageRatings` and its filter/sort/search
+  paths, the `Filmstrip` badge, and `set_rating_for_paths` in Rust. 13 locale
+  files cleaned of the orphaned keys.
+
 - **2026-09-10** — **B-147 fixed (D-291): the Colorist grades the Edit
   timeline's clip, not the raw source file.** A new one-way bridge,
   `chroma::colorist_view`, resolves the active shot to its

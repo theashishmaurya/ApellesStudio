@@ -190,12 +190,8 @@
       "frameImage": "Emmarcar imatge",
       "mergeHdr": "Fusionar a HDR",
       "noLabel": "Sense etiqueta",
-      "noRating": "Sense puntuació",
       "pasteAdjustments": "Enganxar ajustaments",
       "productivity": "Productivitat",
-      "rating": "Puntuació",
-      "ratingLabel_one": "{{count}} Estrella",
-      "ratingLabel_other": "{{count}} Estrelles",
       "redo": "Refer",
       "resetAdjustments": "Restablir ajustaments",
       "stitchPanorama": "Unir panorama",
@@ -630,58 +626,6 @@
         "selectNewSourcePoint": "{{modifier}} + Clic per seleccionar un nou punt d'origen"
       }
     },
-    "metadata": {
-      "author": {
-        "creatorDetails": "Detalls del creador",
-        "title": "Autor i Drets d'autor"
-      },
-      "camera": {
-        "aperture": "Obertura",
-        "focalLength": "Distància focal",
-        "iso": "ISO",
-        "lens": "Objectiu",
-        "shutterSpeed": "Velocitat d'obturació",
-        "title": "Detalls de la càmera"
-      },
-      "clickToEdit": "Feu clic per editar",
-      "copied": "Copiat",
-      "copy": "Copiar",
-      "emptyClickToAdd": "Buit (Feu clic per afegir)",
-      "extendedExif": {
-        "title": "EXIF ampliat"
-      },
-      "fields": {
-        "author": "Autor",
-        "comments": "Comentaris",
-        "copyright": "Drets d'autor",
-        "title": "Títol"
-      },
-      "fileInfo": {
-        "dimensions": "{{width}} × {{height}} px • {{megapixels}} MP",
-        "dimensionsNoMp": "{{width}} × {{height}} px",
-        "emptyDimensions": "- × - px",
-        "title": "Informació del fitxer",
-        "virtualCopy": "Còpia virtual"
-      },
-      "gps": {
-        "altitude": "Altitud",
-        "clickToOpenTooltip": "Feu clic per obrir el mapa en una pestanya nova",
-        "latitude": "Latitud",
-        "longitude": "Longitud",
-        "title": "Ubicació GPS"
-      },
-      "organization": {
-        "addTagPlaceholder": "Afegir etiqueta...",
-        "colorLabel": "Etiqueta de color",
-        "noTags": "Sense etiquetes",
-        "none": "Cap",
-        "rating": "Puntuació",
-        "ratingLabels": "Puntuació i etiquetes",
-        "tags": "Etiquetes",
-        "title": "Organització"
-      },
-      "title": "Metadades"
-    },
     "presets": {
       "amount": "Quantitat",
       "dialog": {
@@ -735,7 +679,6 @@
         "adjust": "Ajustar",
         "crop": "Retallar",
         "export": "Exportar",
-        "info": "Informació",
         "inpaint": "Inpainting",
         "masks": "Màscares",
         "presets": "Ajustos preestablerts",
@@ -887,7 +830,6 @@
       "noTagsAdded": "No s'han afegit etiquetes",
       "none": "Cap",
       "rateAndLabel": "Puntuar i Etiquetar",
-      "rating": "Puntuació",
       "selectImagesToCompare": "Seleccioneu imatges per comparar",
       "shutterSpeed": "Velocitat d'obturació",
       "syncZoomAndPan": "Sincronitzar zoom i desplaçament",
@@ -902,17 +844,6 @@
         "uneditedOnly": "Només no editades"
       },
       "noMatch": "No s'ha trobat cap imatge que coincideixi amb el vostre filtre.",
-      "rating": {
-        "all": "Mostrar-les totes",
-        "andUpSuffix": "i superior",
-        "fiveOnly": "Només 5",
-        "fourAndUp": "4 i superior",
-        "oneAndUp": "1 i superior",
-        "onlySuffix": "només",
-        "threeAndUp": "3 i superior",
-        "twoAndUp": "2 i superior",
-        "unrated": "Només sense puntuació"
-      },
       "raw": {
         "all": "Tots els tipus",
         "nonRawOnly": "Només no RAW",
@@ -955,7 +886,6 @@
         "label": "Etiqueta",
         "modified": "Modificat",
         "name": "Nom",
-        "rating": "Puntuació",
         "shutter": "Obturador"
       }
     },
@@ -979,7 +909,6 @@
         "filterByColorLabel": "Filtrar per etiqueta de color",
         "filterByEdited": "Filtrar per estat d'edició",
         "filterByFileType": "Filtrar per tipus de fitxer",
-        "filterByRating": "Filtrar per puntuació",
         "groupEditedFiles": "Incloure fitxers editats als grups",
         "groupIgnoreMetadata": "Ignorar dates EXIF no coincidents",
         "groupOff": "Desactivat",
@@ -1031,7 +960,6 @@
       "fileName": "Nom del fitxer",
       "focalLength": "Distància focal",
       "iso": "ISO",
-      "rating": "Puntuació",
       "shutterSpeed": "Velocitat d'obturació"
     },
     "status": {
@@ -1540,12 +1468,6 @@
         "paste_files": "Enganxar fitxers a la carpeta actual",
         "preview_next": "Imatge següent",
         "preview_prev": "Imatge anterior",
-        "rate_0": "Puntuació d'estrelles: 0",
-        "rate_1": "Puntuació d'estrelles: 1",
-        "rate_2": "Puntuació d'estrelles: 2",
-        "rate_3": "Puntuació d'estrelles: 3",
-        "rate_4": "Puntuació d'estrelles: 4",
-        "rate_5": "Puntuació d'estrelles: 5",
         "redo": "Refer ajustament",
         "rotate_left": "Girar 90° en sentit antihorari",
         "rotate_right": "Girar 90° en sentit horari",
@@ -1563,7 +1485,6 @@
         "toggle_left_panel": "Commutar el panell esquerre",
         "toggle_library_exif": "Alternar superposició EXIF",
         "toggle_masks": "Alternar tauler de Màscares",
-        "toggle_metadata": "Alternar tauler de Metadades",
         "toggle_presets": "Alternar tauler d'Ajustos preestablerts",
         "toggle_right_panel": "Commutar el panell dret",
         "undo": "Desfer ajustament",
@@ -1578,7 +1499,6 @@
         "editing": "Edició",
         "library": "Biblioteca",
         "panels": "Taulers",
-        "rating": "Puntuacions i etiquetes",
         "view": "Visualització"
       }
     },
@@ -1866,10 +1786,7 @@
         "export": "Exportar",
         "pasteSettings": "Enganxar ajustaments",
         "quickFilter": "Filtre ràpid",
-        "rateStars_one": "Puntuar amb 1 estrella",
-        "rateStars_other": "Puntuar amb {{count}} estrelles",
-        "resetZoom": "Restablir zoom per ajustar a la finestra",
-        "selectToRate": "Seleccioneu una imatge per puntuar"
+        "resetZoom": "Restablir zoom per ajustar a la finestra"
       },
       "zoomLabel": "Zoom",
       "zoomLabelReset": "Restablir zoom"
