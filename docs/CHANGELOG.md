@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **fixed B-152 (D-305): composition/export resolution no
+  longer hijacked by a reference-image clip.** `composition_size()` used to
+  derive a project's output resolution from the first video-track clip in
+  plain track-index order, so a `match_to_reference` comparison photo sitting
+  ahead of the real footage on the timeline silently set the whole project's —
+  and therefore every export's — aspect ratio. It now prefers the first clip
+  that is real footage anywhere on the timeline, falling back to a still only
+  when the project has no video at all (a genuine slideshow keeps working
+  unchanged). New unit tests in `edit.rs`'s `composition_size_tests` cover the
+  repro, the images-only fallback, and explicit project settings still
+  winning over any clip.
 - **2026-09-10** — **B-145 + B-160: the timeline's drag gestures, root-caused and fixed.**
   **D-303** — a clip dragged on a horizontally-scrolled timeline landed at frame 0 no
   matter where it was dropped, because `@dnd-kit/core`'s `event.delta` is short by the

@@ -274,18 +274,29 @@ pub(crate) fn resolve_timeline_and_settings(
 /// The **composition space** every clip's geometry is measured against
 /// (D-136, Phase 0a of `docs/notes/on-canvas-transform.md`): the project's
 /// recorded output resolution (D-038), or — for a project that never recorded
-/// one — the probed resolution of the timeline's first video clip, which is
-/// exactly the clip [`project::infer_settings_from_clip`] would have derived
-/// those settings from.
+/// one — the probed resolution of the timeline's first **real video** clip,
+/// which is exactly the clip [`project::infer_settings_from_clip`] would have
+/// derived those settings from when a project is first created from footage.
 ///
 /// **Deliberately independent of the playhead.** The pre-D-136 canvas *was*
 /// playhead-dependent (it was whichever layer happened to be on top at that
 /// position, at whatever size it happened to decode to), and that is half of
 /// B-043: a value that means one thing at frame 100 and another at frame 400 is
-/// not a coordinate space. Taking the first clip in Vec order gives one answer
-/// for the whole timeline, for the preview and for
-/// [`chroma_timeline_clip_geometry`] alike, so the overlay and the picture
-/// cannot disagree.
+/// not a coordinate space. Taking one clip gives one answer for the whole
+/// timeline, for the preview and for [`chroma_timeline_clip_geometry`] alike,
+/// so the overlay and the picture cannot disagree.
+///
+/// **B-152 — real video wins over a still, regardless of track order.** Plain
+/// "first clip in Vec order" used to mean a still image (a `match_to_reference`
+/// comparison photo, a title card) sitting on an earlier-indexed video track
+/// than the real footage silently set the composition — and therefore every
+/// export's — aspect ratio for the whole project, with real 4K camera footage
+/// resampled to whatever the still happened to be. Fix option (a) from the bug
+/// writeup: a still is a legitimate composition source (a slideshow project has
+/// nothing else), so this walks every video track/clip once and returns the
+/// **first clip that is real footage** if one exists anywhere on the timeline;
+/// only when the timeline is images-only does it fall back to the first clip
+/// of any kind, preserving that case exactly as before.
 pub(super) fn composition_size(
     settings: &project::ProjectSettings,
     timeline: &Timeline,
@@ -296,15 +307,26 @@ pub(super) fn composition_size(
     {
         return Ok((w, h));
     }
-    let first = timeline
+    let mut first_any: Option<&Clip> = None;
+    for clip in timeline
         .tracks
         .iter()
         .filter(|t| t.kind == TrackKind::Video)
-        .find_map(|t| t.clips.iter().find(|c| !c.source_path.is_empty()))
-        .ok_or_else(|| "no clip to derive a composition size from".to_string())?;
-    // D-292 — `clip_source_size`, not `probe_cached`: the first clip on the
-    // timeline may be a still, and a project whose only source is a still must
-    // still be able to say how big its composition is.
+        .flat_map(|t| t.clips.iter())
+        .filter(|c| !c.source_path.is_empty())
+    {
+        if !apelles_media::still::is_image_file(&clip.source_path) {
+            // Real footage always wins, wherever it sits in track order.
+            return clip_source_size(&clip.source_path);
+        }
+        if first_any.is_none() {
+            first_any = Some(clip);
+        }
+    }
+    let first = first_any.ok_or_else(|| "no clip to derive a composition size from".to_string())?;
+    // D-292 — `clip_source_size`, not `probe_cached`: the timeline may hold
+    // only stills, and a project whose only source is a still must still be
+    // able to say how big its composition is.
     clip_source_size(&first.source_path)
 }
 
@@ -3267,6 +3289,181 @@ mod composite_tests {
         for (x, y) in [(0, 0), (W - 1, 0), (0, H - 1), (W - 1, H - 1)] {
             assert_eq!(canvas.get_pixel(x, y).0, [0, 0, 0, 255]);
         }
+    }
+}
+
+/// B-152 — [`composition_size`] must derive the project's composition/export
+/// resolution from the timeline's real footage, never incidentally from
+/// whatever image happens to sit first in track order (a `match_to_reference`
+/// comparison photo, a title card, anything non-representative).
+///
+/// Needs a real decodable video fixture (`clip_source_size` probes it via
+/// `ffmpeg`), kept out of the pure `composite_tests` module above for the same
+/// reason `preview_text_tests` is — skipped (not failed) without ffmpeg on
+/// PATH.
+#[cfg(test)]
+mod composition_size_tests {
+    use apelles_timeline::{Clip, Timeline, Track, TrackKind};
+
+    use super::*;
+
+    fn have_ffmpeg() -> bool {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    /// A tiny real, decodable video fixture at `(w, h)` — one frame is enough,
+    /// `clip_source_size` only probes the stream's dimensions.
+    fn video_fixture(path: &std::path::Path, w: u32, h: u32) {
+        let ok = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("color=black:size={w}x{h}:rate=1"),
+                "-frames:v",
+                "1",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("spawn ffmpeg");
+        assert!(ok.success(), "generating the video fixture failed");
+    }
+
+    /// A tiny real PNG still fixture at `(w, h)` — a wrong-aspect "reference
+    /// image" stand-in, probed by `apelles_media::still` (no ffmpeg needed).
+    fn still_fixture(path: &std::path::Path, w: u32, h: u32) {
+        image::RgbaImage::new(w, h)
+            .save(path)
+            .expect("write still fixture");
+    }
+
+    fn video_clip(id: &str, path: &std::path::Path) -> Clip {
+        Clip {
+            id: id.into(),
+            name: id.into(),
+            source_path: path.to_string_lossy().into_owned(),
+            duration: 24,
+            source_len: 24,
+            start_frame: 0,
+            ..Default::default()
+        }
+    }
+
+    /// The B-152 repro: track 0's first clip is a 2000×1130 reference photo
+    /// (a `match_to_reference` grading aid, not footage), track 1 holds the
+    /// project's real 3840×2160 camera clip. With no explicit project
+    /// width/height, the composition must come from the real footage, not
+    /// from whichever clip happens to be first in track order.
+    #[test]
+    fn composition_size_prefers_real_video_over_a_first_track_reference_image() {
+        if !have_ffmpeg() {
+            eprintln!("skipping: no ffmpeg on PATH");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let reference_photo = tmp.path().join("reference.png");
+        still_fixture(&reference_photo, 2000, 1130);
+        let camera_footage = tmp.path().join("camera.mp4");
+        video_fixture(&camera_footage, 3840, 2160);
+
+        let timeline = Timeline {
+            id: "tl1".into(),
+            name: "Timeline 1".into(),
+            rate: None,
+            tracks: vec![
+                Track {
+                    kind: TrackKind::Video,
+                    clips: vec![video_clip("reference", &reference_photo)],
+                    ..Default::default()
+                },
+                Track {
+                    kind: TrackKind::Video,
+                    clips: vec![video_clip("camera", &camera_footage)],
+                    ..Default::default()
+                },
+            ],
+            markers: Vec::new(),
+        };
+        let settings = project::ProjectSettings::default();
+
+        let (w, h) = composition_size(&settings, &timeline).expect("composition size");
+        assert_eq!(
+            (w, h),
+            (3840, 2160),
+            "composition size must come from the real camera footage, not the \
+             2000x1130 reference photo that happens to sit on track 0"
+        );
+    }
+
+    /// A genuinely image-only project (a slideshow) must keep working exactly
+    /// as before — falling back to the first still when no real video exists
+    /// anywhere on the timeline, per the bug writeup's own "don't break a
+    /// genuinely image-first project" constraint.
+    #[test]
+    fn composition_size_falls_back_to_a_still_when_no_real_video_exists() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let slide = tmp.path().join("slide.png");
+        still_fixture(&slide, 1200, 800);
+
+        let timeline = Timeline {
+            id: "tl1".into(),
+            name: "Timeline 1".into(),
+            rate: None,
+            tracks: vec![Track {
+                kind: TrackKind::Video,
+                clips: vec![video_clip("slide", &slide)],
+                ..Default::default()
+            }],
+            markers: Vec::new(),
+        };
+        let settings = project::ProjectSettings::default();
+
+        let (w, h) = composition_size(&settings, &timeline).expect("composition size");
+        assert_eq!((w, h), (1200, 800));
+    }
+
+    /// An explicit project width/height always wins, even over real footage of
+    /// a different aspect — unchanged pre-existing behavior, not a B-152
+    /// consequence, but load-bearing enough to pin down alongside the fix.
+    #[test]
+    fn composition_size_prefers_explicit_settings_over_any_clip() {
+        if !have_ffmpeg() {
+            eprintln!("skipping: no ffmpeg on PATH");
+            return;
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let camera_footage = tmp.path().join("camera.mp4");
+        video_fixture(&camera_footage, 3840, 2160);
+
+        let timeline = Timeline {
+            id: "tl1".into(),
+            name: "Timeline 1".into(),
+            rate: None,
+            tracks: vec![Track {
+                kind: TrackKind::Video,
+                clips: vec![video_clip("camera", &camera_footage)],
+                ..Default::default()
+            }],
+            markers: Vec::new(),
+        };
+        let settings = project::ProjectSettings {
+            width: Some(1920),
+            height: Some(1080),
+            ..Default::default()
+        };
+
+        let (w, h) = composition_size(&settings, &timeline).expect("composition size");
+        assert_eq!((w, h), (1920, 1080));
     }
 }
 

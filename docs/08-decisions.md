@@ -29449,3 +29449,45 @@ from either component's source — it took following `WGPU_RENDER` from
 - **A doc that was wrong is now right:** `TimelinePane`'s D-201 audit comment states what
   B-153 found instead of what it originally claimed, rather than being left to mislead the
   next reader.
+
+## D-305 — composition size is derived from real footage, never implicitly from track order (fixes B-152)
+
+**decided (2026-09-10)**
+
+- **Context:** `composition_size()` (`app/src-tauri/src/chroma/edit.rs:289`) — the
+  one shared source of truth for a project's output resolution, the live preview's
+  canvas, and `chroma_timeline_clip_geometry`'s overlay alike (D-136) — fell back,
+  whenever a project had no explicit `width`/`height`, to "the first video-track
+  clip in track-index order." **B-152:** a `match_to_reference` comparison photo
+  (2000×1130) sitting on an earlier-indexed video track than the project's real
+  3840×2160 camera footage silently set the whole project's composition — and
+  therefore every export's — aspect ratio, stretching every real clip in the
+  project to the photo's shape. Logged with three options rather than patched
+  blind, since the wrong call could itself break a genuinely image-first project
+  (a slideshow has no "real video" to prefer).
+- **Options considered (from the original B-152 writeup):** (a) prefer the first
+  real video-codec clip over a still when both exist, falling back further only if
+  none exists; (b) require an explicit project resolution before an image-only
+  track is allowed to seed composition size at all; (c) leave the derivation as-is
+  but warn/flag when it comes from a still while the timeline also holds real video.
+- **Decision: (a).** A still is a legitimate, sometimes the *only*, composition
+  source (D-292 made it a first-class Edit-tab source specifically so a project can
+  be image-only), so (b) would regress that case for no upside — the only thing
+  actually wrong is a still *outranking real footage that exists on the same
+  timeline*. (c) only surfaces the problem, it doesn't fix the export a user
+  actually gets. (a) is the one option that fixes the real bug (real footage's
+  aspect ratio is what an editor of real footage expects) while leaving the
+  images-only case byte-for-byte unchanged.
+- **Shape:** `composition_size` now walks every `TrackKind::Video` track's clips
+  once, in the same track-index order as before, and returns the **first clip that
+  is not a still** (`!apelles_media::still::is_image_file(..)`) if one exists
+  anywhere on the timeline — track order no longer matters once any real footage is
+  present. Only when the timeline is images-only does it fall back to the first
+  clip of any kind, identical to the pre-fix behavior. One function, one policy,
+  shared by export, preview and the transform overlay, so none of the three can
+  disagree about what "the composition" is.
+- **Verified:** new unit tests in `composition_size_tests` (`edit.rs`) cover the
+  exact repro (a wrong-aspect still on track 0 ahead of real 4K footage on track 1
+  resolves to the footage's size), the images-only fallback, and that an explicit
+  project resolution still wins over any clip. `cargo fmt`/`cargo clippy` clean,
+  full existing suite passes.
