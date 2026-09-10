@@ -20,15 +20,26 @@ Status: `open` · `decided` · `revisit`
   (libplacebo + own GUI) or Path C (RapidRAW engine as a crate, new video-first shell).
 
 ## D-002 — Apelles' own license
-**open**
+**decided (2026-09-10)**
 
-- **Context:** `engine/` is AGPL-3.0. Any distributed combined build is AGPL regardless.
-- **Options:** AGPL-3.0 (match engine; SaaS must open-source) · GPL-3.0 · "AGPL because we
-  have to, but state open intent."
-- **Leaning:** AGPL-3.0 for the whole project, stated as deliberate. Blocks a closed SaaS;
-  does not block an open project, sponsorships, or paid support. Revisit only if a
-  compelling reason to relicense appears (won't — engine is AGPL).
-- **Decide before:** first public push.
+- **Context:** `app/` (the vendored RapidRAW fork, D-039/D-040) is AGPL-3.0. Any
+  distributed combined build is AGPL regardless. Left open since project start,
+  gated on "decide before first public push" — the repo went public and was pushed
+  to `theashishmaurya/ApellesStudio` this same session (see the GitHub/Cloudflare
+  setup work logged in `docs/CHANGELOG.md`), which is that trigger.
+- **Options:** AGPL-3.0 (match `app/`; SaaS must open-source) · GPL-3.0 · "AGPL because
+  we have to, but state open intent."
+- **Decision:** AGPL-3.0 for the whole project, stated as deliberate — this was the
+  standing leaning and D-281 (owning `app/` outright rather than treating it as a
+  tracked-upstream vendor drop) removes the only reason to reconsider it. A root-level
+  `LICENSE` file (the canonical AGPL-3.0 v3 text, copied from `app/LICENSE`) now exists.
+  Blocks a closed SaaS; does not block an open project, sponsorships, or paid support.
+- **One carve-out:** `packages/motion-engine/` (the Remotion-derived motion engine,
+  moved in from `videoAgent/engine/motion/`) carries its own separate MIT license
+  (`packages/motion-engine/LICENSE.md`, Jonny Burger/Remotion, 2021) for that
+  sub-component specifically — this predates and is unaffected by the AGPL-3.0 choice
+  for the rest of the repo, the same way a vendored MIT dependency would be.
+- Revisit only if a compelling reason to relicense appears (won't — `app/` is AGPL).
 
 ## D-003 — Hard fork; Apelles is its own project
 **decided (2026-09-01)**

@@ -55,7 +55,11 @@ docs/       everything: vision, PRD, scope, architecture, roadmap, research, dec
 
 ## License
 
-Apelles' own code: TBD (see [`docs/08-decisions.md`](docs/08-decisions.md) D-002).
-The vendored RapidRAW fork at `app/` is **AGPL-3.0** (inherited from RapidRAW) — any
-distributed build of the combined work is AGPL. This blocks a closed SaaS; it does not
-block an open project.
+**AGPL-3.0** for the whole project (see [`LICENSE`](LICENSE) and
+[`docs/08-decisions.md`](docs/08-decisions.md) D-002) — inherited from the vendored
+RapidRAW fork at `app/`, which any distributed combined build is AGPL under regardless.
+This blocks a closed SaaS; it does not block an open project, sponsorships, or paid
+support.
+
+`packages/motion-engine/` (the Remotion-derived motion engine) carries its own separate
+MIT license — see [`packages/motion-engine/LICENSE.md`](packages/motion-engine/LICENSE.md).

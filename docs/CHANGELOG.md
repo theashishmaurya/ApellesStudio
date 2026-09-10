@@ -4,6 +4,13 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — added a root-level `LICENSE` file (canonical AGPL-3.0 v3 text,
+  copied from `app/LICENSE`) — the repo went public and was pushed to GitHub this
+  session with no license file at the root. Closed out D-002 (open since project
+  start, gated on "decide before first public push") as decided: AGPL-3.0 for the
+  whole project, with `packages/motion-engine/`'s own separate MIT license
+  (`packages/motion-engine/LICENSE.md`) called out as an explicit carve-out.
+  Updated `README.md`'s License section to match.
 - **2026-09-10** — fixed `website/`'s own stale MCP tool counts (`161` total /
   `152` shipped / Edit `69`, was `160`/`151`/`68`) after this session added
   new tools (D-280's `editor_set_playback_rate` among them) — caught by
