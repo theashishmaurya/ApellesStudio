@@ -29491,3 +29491,57 @@ from either component's source — it took following `WGPU_RENDER` from
   resolves to the footage's size), the images-only fallback, and that an explicit
   project resolution still wins over any clip. `cargo fmt`/`cargo clippy` clean,
   full existing suite passes.
+## D-306 — A Colorist shot's identity is its Edit-timeline clip, not its source file
+
+**decided (2026-09-10)** — fixes B-150; removes the mechanism behind B-155.
+
+- **Context.** The decode session (`chroma::state::Session`) keyed a shot by its source
+  **path** and carried no clip identity. Grades on disk have been per-clip since D-070
+  (`<grade_dir>/<clip id>.grade.json`), and `colorist_view` (D-294) resolves a shot to a
+  specific `apelles_timeline::Clip` — but the session underneath both still collapsed
+  two clips of one file into one shot. D-070 recorded that as a known limit and D-294's
+  module doc named this as "the single place that changes" when the session gained clip
+  identity. B-150 is what the limit costs in practice: the owner's project has two
+  Edit-timeline clips of `A001_09091123_C024.MOV` (Video 1 and Video 2, different
+  rotation), `list_shots` returned one entry, and the second clip was **invisible** in
+  Colorist — not gradeable at all.
+- **Options considered.**
+  1. *Keep the path key, disambiguate in the frontend.* Rejected: it is what the code
+     already did (a `source path → clip id` map re-derived on every project open and on
+     every Colorist-focus resync poll) and a map cannot answer with two ids for one key.
+     Whichever clip happened to be last silently won — so a shot could be shown wearing
+     the *other* clip's grade and masks, which is the mechanism behind B-155's "a mask I
+     never created appeared instead of mine".
+  2. *Key by `(timeline_id, clip_id)`.* Rejected as speculative: session shots only ever
+     come from the **active** timeline (`active_timeline_video_clips`), so the timeline
+     half is constant and clip ids are unique within it. If a multi-timeline session ever
+     lands, `ShotId` is one enum variant away.
+  3. **Chosen: key by `ShotId` — the clip id when there is one, the source path when
+     there is not.** A project's shot is its clip; an Untitled loose-clip session (file
+     picker / MCP `open`) has no project, no timeline and therefore no clip, and a path is
+     already unique there, so that case keeps its old behaviour verbatim.
+- **The deliberate asymmetry: identity is per-clip, the decode pipe is per-FILE.**
+  `Session::upsert` still reports "did the active clip *path* change" for cache
+  invalidation, so flipping between two clips cut from the same source is a seek, not a
+  pipe reset (D-030). Pinned by a unit test, since getting it wrong is a silent
+  performance regression rather than a visible bug.
+- **Threaded through, in one pass, everywhere the old key was assumed:**
+  `Session::{upsert, prune_except}` and `resolve_session_index` (identity-keyed);
+  `load::register_video_shot` (takes the clip id) and `load::install_frame` (takes the
+  whole `CurrentVideo`, so a re-install cannot lose the identity and append a phantom
+  path-keyed shot beside the real one); `project::{open_manifest,
+  chroma_project_resync_clips}`; `export::export_video`'s temporary re-point;
+  `colorist_view::resolve_for`; `session::ShotDto.clipId` on the wire; and
+  `useSessionStore`'s `reattachIds`, which now reads that id instead of inferring one.
+  `state::resolve_session_index_for_path` was deleted — the last caller went with the
+  path key.
+- **Why the wire carries the id rather than the frontend keeping its own map:** one
+  identity, decided in one place. The old arrangement had the answer computed
+  independently in three frontend call sites (`reattachIds`, `_hydrateOpenDto`,
+  `resyncClips`), each able to disagree with the others and with Rust.
+- **Not changed:** grade files, mask mattes and `.cube` bakes were already clip-id-keyed
+  (D-070), so there is no migration — this makes the decode session agree with them
+  rather than the other way round. Frame-keyed artefacts (tracked mattes D-019, mask
+  keyframes D-034, the depth track D-036) are indexed per shot in the transport's own
+  clip-local space (D-294) and are unaffected.
+

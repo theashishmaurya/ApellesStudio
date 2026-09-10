@@ -113,7 +113,7 @@ async fn open_manifest(
     let candidate_shot = resolve_active_clip_index(&manifest, &clips);
     let active_shot = top_wins_clip_index(&manifest, &clips, candidate_shot);
 
-    let mut online_paths: Vec<PathBuf> = Vec::new();
+    let mut any_online = false;
     let mut dtos: Vec<ProjectShotDto> = Vec::with_capacity(clips.len());
 
     for clip in &clips {
@@ -131,8 +131,10 @@ async fn open_manifest(
             // D-129 — probe-and-register, not decode. See
             // `load::register_video_shot` for why this loop never needed the
             // pixels it used to pay ~1.9s per 4K clip for.
-            match load::register_video_shot(&src, frame) {
-                Ok(()) => online_paths.push(src),
+            // D-306: registered as THIS clip, not just as its source file, so
+            // two clips of one file are two independently gradeable shots.
+            match load::register_video_shot(&src, frame, Some(&clip.id)) {
+                Ok(()) => any_online = true,
                 Err(e) => {
                     log::warn!("[chroma::project] clip {source_path} failed to load: {e}");
                     dtos.push(ProjectShotDto {
@@ -157,34 +159,26 @@ async fn open_manifest(
     }
 
     // put the active clip in front on the canvas (if it's online)
-    if !online_paths.is_empty() {
+    if any_online {
         let want = clips
             .get(active_shot)
-            .map(|c| PathBuf::from(&c.source_path));
-        // B-030: `online_paths` is pushed once per *clip* (this loop, above) —
-        // it is NOT deduplicated by path. The decode session (`state::
-        // set_current_video` -> `Session::upsert`) IS deduplicated by path: two
-        // clips referencing the same source file collapse into one session
-        // shot. Looking up `want`'s position in `online_paths` (the raw,
-        // non-deduped list) and feeding that straight into
-        // `state::session_set_active` used to assume the two lists' index
-        // spaces matched — true only when no two clips share a source path.
-        // Now that clips can legitimately overlap/repeat a source across
-        // tracks (D-088's real multi-layer compositor), a duplicate earlier in
-        // `clips` inflates every later raw index past where that path's shot
-        // actually lands in the deduped session, and `session_set_active`
-        // rejects the out-of-range index — aborting the whole project open
-        // *before* `state::set_project` ever runs, which is why the frontend
-        // never saw a project open at all (found live, chasing a real "click
-        // does nothing" report against the owner's own project, which had
-        // picked up a repeated source path through tonight's NLE work).
-        // Fixed by resolving the index in the session's own (deduped) space —
-        // `state::resolve_session_index_for_path`, the same helper the resync
-        // path below already used (this call site was the one that hadn't
-        // caught up), now unit-tested directly in `state.rs`.
+            .map(|c| state::ShotId::Clip(c.id.clone()));
+        // B-030 / B-150: `clips` is the timeline's own per-clip list; the
+        // session holds a shot per *online* clip. The two index spaces are not
+        // the same list, so the target is resolved in the session's own space
+        // rather than reusing a raw `clips` index — `session_set_active`
+        // validates only against that space, and feeding it a foreign index
+        // used to abort the whole project open *before* `state::set_project`
+        // ever ran (which is why the frontend saw no project open at all —
+        // found live, chasing a real "click does nothing" report).
+        //
+        // D-306: resolved by clip identity now, not by source path. Path
+        // resolution could only ever find the FIRST clip reading a file, so
+        // opening a project whose active clip was the second of two sharing a
+        // source silently activated the wrong one.
         let (session_shots, _) = state::session_shots();
         let active_online = want
-            .and_then(|w| state::resolve_session_index_for_path(&session_shots, &w))
+            .and_then(|w| state::resolve_session_index(&session_shots, &w))
             .unwrap_or(0);
         state::session_set_active(active_online)?;
         let frame = state::current_video().map(|c| c.frame).unwrap_or(0);
@@ -249,18 +243,21 @@ pub async fn chroma_project_resync_clips(
     let grade_dir = apelles_project::grade_dir(&dir);
 
     let clips = active_timeline_video_clips(&manifest);
-    let clip_paths: std::collections::HashSet<PathBuf> = clips
+    // D-306: the resync's "is this still on the timeline?" question is asked
+    // per CLIP now, not per source file. Keyed by path, removing one of two
+    // clips sharing a file could only ever prune both or neither.
+    let clip_ids: std::collections::HashSet<state::ShotId> = clips
         .iter()
         .filter(|c| !c.source_path.is_empty())
-        .map(|c| PathBuf::from(&c.source_path))
+        .map(|c| state::ShotId::Clip(c.id.clone()))
         .collect();
 
     let (session_shots_before, session_active_before) = state::session_shots();
-    let active_path_before = session_shots_before
+    let active_before = session_shots_before
         .get(session_active_before)
-        .map(|s| s.path.clone());
+        .map(|s| s.identity());
 
-    let dropped = state::prune_session_except(&clip_paths);
+    let dropped = state::prune_session_except(&clip_ids);
     if !dropped.is_empty() {
         log::info!(
             "[chroma::project] resync: dropped {} stale session shot(s) no longer on the active timeline: {:?}",
@@ -270,8 +267,8 @@ pub async fn chroma_project_resync_clips(
     }
 
     let (session_shots_after, _) = state::session_shots();
-    let known_paths: std::collections::HashSet<PathBuf> =
-        session_shots_after.iter().map(|s| s.path.clone()).collect();
+    let known_ids: std::collections::HashSet<state::ShotId> =
+        session_shots_after.iter().map(|s| s.identity()).collect();
 
     let mut dtos: Vec<ProjectShotDto> = Vec::with_capacity(clips.len());
     for clip in &clips {
@@ -286,14 +283,14 @@ pub async fn chroma_project_resync_clips(
 
         if online {
             let src = PathBuf::from(&source_path);
-            if !known_paths.contains(&src) {
+            if !known_ids.contains(&state::ShotId::Clip(clip.id.clone())) {
                 // genuinely new — probe it in (D-129: registration only,
                 // no decode). Upserts into the session; does not disturb
                 // whichever shot is currently active unless this path
                 // happens to already be it (a re-add) — which is now true of
                 // `AppState.original_image` too, where the old decoding
                 // version silently overwrote the active clip's pixels.
-                if let Err(e) = load::register_video_shot(&src, frame) {
+                if let Err(e) = load::register_video_shot(&src, frame, Some(&clip.id)) {
                     log::warn!("[chroma::project] resync: clip {source_path} failed to load: {e}");
                     dtos.push(ProjectShotDto {
                         id: clip.id.clone(),
@@ -319,25 +316,28 @@ pub async fn chroma_project_resync_clips(
     // Only re-resolve the active clip if the one active *before* this
     // resync is no longer on the timeline at all — otherwise its own
     // position in `clips`/`dtos` is its index, untouched.
-    let active_still_on_timeline = active_path_before
+    let active_still_on_timeline = active_before
         .as_ref()
-        .is_some_and(|p| clip_paths.contains(p));
+        .is_some_and(|id| clip_ids.contains(id));
     let active_shot = if active_still_on_timeline {
-        let p = active_path_before.expect("checked Some above");
+        // D-306: matched by clip identity, so an active shot that is the
+        // SECOND clip of a doubled source file reports its own index here
+        // instead of silently jumping to the first one — which is how the
+        // active shot could change under the user with no explicit switch.
+        let id = active_before.expect("checked Some above");
         clips
             .iter()
-            .position(|c| PathBuf::from(&c.source_path) == p)
+            .position(|c| state::ShotId::Clip(c.id.clone()) == id)
             .unwrap_or(0)
     } else {
         let candidate = resolve_active_clip_index(&manifest, &clips);
         let idx = top_wins_clip_index(&manifest, &clips, candidate);
-        let want = clips.get(idx).map(|c| PathBuf::from(&c.source_path));
+        let want = clips.get(idx).map(|c| state::ShotId::Clip(c.id.clone()));
         let (shots_now, _) = state::session_shots();
-        // B-030: same deduplicated-session lookup `open_manifest` now uses
-        // too — this call site already had it right; extracted to
-        // `state::resolve_session_index_for_path` so both share one
-        // unit-tested implementation instead of two inline copies.
-        if let Some(i) = want.and_then(|w| state::resolve_session_index_for_path(&shots_now, &w)) {
+        // B-030 / D-306: same identity-resolved session lookup `open_manifest`
+        // uses — one unit-tested implementation (`state::resolve_session_index`)
+        // shared by both call sites instead of two inline copies.
+        if let Some(i) = want.and_then(|w| state::resolve_session_index(&shots_now, &w)) {
             let _ = state::session_set_active(i);
             let frame = state::current_video().map(|c| c.frame).unwrap_or(0);
             let _ = super::commands::seek_and_install(frame, None, &state).await;

@@ -44,7 +44,7 @@ pub struct VideoInfoDto {
 #[tauri::command]
 pub fn chroma_video_info() -> Option<VideoInfoDto> {
     let cv = current_video()?;
-    let (resolution, frame_count, duration_secs) = colorist_view::display_info(&cv.path, &cv.info);
+    let (resolution, frame_count, duration_secs) = colorist_view::display_info(&cv);
     let fps = cv.info.fps();
     Some(VideoInfoDto {
         is_video: true,
@@ -100,7 +100,7 @@ pub async fn seek_and_install(
     state: &tauri::State<'_, AppState>,
 ) -> Result<LoadImageResult, String> {
     let cv = current_video().ok_or("no video loaded")?;
-    let view = colorist_view::resolve(&cv.path);
+    let view = colorist_view::resolve_for(&cv);
     // `clamped` is what the session's playhead marker and every frame-keyed
     // Colorist artefact (tracked mattes D-019, mask keyframes D-034, the depth
     // track D-036) are indexed by, so it stays in the transport's own space —
@@ -178,11 +178,16 @@ pub async fn seek_and_install(
     .await
     .map_err(|e| e.to_string())??;
 
+    // D-306: re-install the SAME shot (clip id and all), only its playhead
+    // moved. Rebuilding a bare `(path, info, frame)` here would drop the clip
+    // id and upsert a second, path-keyed shot alongside the real one.
+    let installed = super::state::CurrentVideo {
+        frame: clamped,
+        ..cv
+    };
     Ok(load::install_frame(
-        &cv.path,
+        &installed,
         &virtual_path,
-        clamped,
-        cv.info.clone(),
         decoded,
         state,
     ))
