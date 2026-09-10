@@ -142,6 +142,16 @@ One or two lines per session. Detail lives in the decision it references.
   No code changes were needed for any of the three — just correcting BUGS.md
   to match reality.
 
+- **2026-09-10** — **B-141 fixed (code-complete, `cargo check`-clean, test not
+  yet run live — see `docs/BUGS.md`):** the launcher card's `thumb.jpg` is now
+  generated through the same composited, transform-aware `timeline_frame_
+  image` path the Edit tab's live preview uses (new `edit::timeline_thumb_
+  jpeg`), instead of a raw, un-rotated single-frame grab off the Colorist
+  tab's `current_video()` — a rotated clip's launcher card now matches what
+  the timeline actually plays. New pixel-level test
+  (`regen_thumb_applies_the_clips_rotation_like_the_edit_tab_preview_does`)
+  proves a 180°-rotated clip's thumbnail is actually rotated. Falls back to
+  the legacy raw grab only when the timeline has nothing to show at frame 0.
 - **2026-09-10** — website image weight + SEO/social-card follow-ups from the
   same Lighthouse pass as B-149: converted the three `Demo.astro` screenshots
   from PNG to WebP (77-81% smaller, same pixel dimensions) and the hero

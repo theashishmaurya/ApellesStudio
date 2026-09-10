@@ -849,6 +849,31 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Vec
     }
 }
 
+/// B-141 — the launcher card's own `thumb.jpg`, generated from the EXACT same
+/// composited picture the Edit tab's live preview shows at timeline position
+/// 0: the same [`timeline_frame_image`] call `chroma_timeline_frame` makes,
+/// so a clip's `rotation`/`scale`/`position_*`/crop and any Colorist grade
+/// are all applied identically. `chroma::project::regen_thumb` is the only
+/// caller — it needs `None` (rather than a placeholder image) for "the
+/// timeline has nothing to show at frame 0" so it can fall back to its own
+/// legacy single-clip grab instead of writing a black square to disk.
+///
+/// **Deliberately not [`timeline_frame`]:** that function turns "nothing
+/// visible" into [`blank_frame_jpeg`] (a 1×1 black JPEG) for the live
+/// preview's `<img>`, which is the right answer for a video element but the
+/// wrong one for a thumbnail file — a black square is a worse launcher card
+/// than the pre-B-141 raw frame grab, not a better one.
+///
+/// `None` on either "no video track at all" (a brand-new project with only
+/// stills, or one whose timeline failed to build) or a genuine decode error —
+/// both cases the caller's own fallback already exists for.
+pub(crate) fn timeline_thumb_jpeg(max_long_edge: u32) -> Option<Vec<u8>> {
+    match timeline_frame_image(0, Some(max_long_edge)) {
+        Ok(Some(img)) => encode_preview_jpeg(&img).ok(),
+        _ => None,
+    }
+}
+
 /// The decode + composite half of [`timeline_frame`]: the finished preview
 /// picture for timeline position `pos`, or `None` when nothing is visible there
 /// (which [`timeline_frame`] turns into [`blank_frame_jpeg`]).

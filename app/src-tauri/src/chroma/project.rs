@@ -372,7 +372,26 @@ pub struct ProjectSaveDto {
     pub thumb_regenerated: bool,
 }
 
+/// B-141 — prefer the SAME composited picture the Edit tab's own timeline
+/// preview shows at frame 0 (post-rotation/scale/position/crop, post-Colorist-
+/// grade): `edit::timeline_thumb_jpeg` runs the identical
+/// `timeline_frame_image` decode+composite path `chroma_timeline_frame` uses
+/// for the live preview, so the launcher card can no longer disagree with
+/// what a user actually sees on opening the project. Before this, every
+/// thumbnail came from `video::extract_thumb`'s raw, un-rotated single-frame
+/// grab off `state::current_video()` — a Colorist-tab concept with no idea a
+/// clip's `rotation` transform (or any other Edit-tab geometry) exists at
+/// all.
+///
+/// Falls back to that legacy raw grab only when the timeline path has
+/// nothing to show at frame 0 (an all-gap timeline, a stills-only project
+/// whose "video" concept doesn't apply, or a genuine decode failure) — some
+/// thumbnail still beats none.
 fn regen_thumb(project_dir: &Path) -> bool {
+    if let Some(bytes) = super::edit::timeline_thumb_jpeg(360) {
+        return std::fs::write(project_dir.join("thumb.jpg"), bytes).is_ok();
+    }
+
     let Some(cv) = state::current_video() else {
         return false;
     };
@@ -1108,6 +1127,41 @@ mod tests {
         (status.success() && out.exists()).then_some(out)
     }
 
+    /// B-141 — a black `w`×`h` clip with a solid white square filling its
+    /// TOP-LEFT quadrant. Deliberately asymmetric (unlike `make_test_clip`'s
+    /// plain `testsrc` colour bars): a 180° rotation is trivially detectable
+    /// by comparing the top-left and bottom-right corners, which is exactly
+    /// what `regen_thumb_applies_the_clips_rotation_like_the_edit_tab_preview_does`
+    /// needs to prove the thumbnail was actually composited through the
+    /// clip's own transform rather than grabbed raw.
+    fn make_asymmetric_test_clip(tag: &str, w: u32, h: u32) -> Option<PathBuf> {
+        let out =
+            std::env::temp_dir().join(format!("chroma_asym_{tag}_{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+            ])
+            .arg(format!("color=black:size={w}x{h}:rate=24:duration=1"))
+            .arg("-vf")
+            .arg(format!(
+                "drawbox=x=0:y=0:w={}:h={}:color=white:t=fill",
+                w / 4,
+                h / 4
+            ))
+            .args(["-pix_fmt", "yuv420p"])
+            .arg(&out)
+            .status()
+            .ok()?;
+        (status.success() && out.exists()).then_some(out)
+    }
+
     #[test]
     fn media_move_refiles_an_existing_item() {
         let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1783,6 +1837,105 @@ mod tests {
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// B-141 — `regen_thumb` must write the SAME composited picture the Edit
+    /// tab's own timeline preview shows at frame 0 (post-`rotation`), not a
+    /// raw, un-rotated grab of the source. Fixture: a white square in the
+    /// clip's TOP-LEFT quadrant, on a clip carrying `rotation: 180.0`. The
+    /// pre-fix path (`video::extract_thumb` off `state::current_video()`) has
+    /// no concept of a clip's Edit-tab transform at all and would have
+    /// written the square back unrotated (top-left); the fixed path
+    /// (`edit::timeline_thumb_jpeg`) runs it through the real compositor, so
+    /// the square must land in the BOTTOM-RIGHT quadrant instead.
+    #[test]
+    fn regen_thumb_applies_the_clips_rotation_like_the_edit_tab_preview_does() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(clip_path) = make_asymmetric_test_clip("thumb_rotation", 320, 180) else {
+            eprintln!(
+                "skipping regen_thumb_applies_the_clips_rotation_like_the_edit_tab_preview_does: no ffmpeg"
+            );
+            return;
+        };
+
+        let root = tmp("thumb_rotation");
+        let project_dir = root.join("Rotated.chroma");
+        std::fs::create_dir_all(apelles_project::grade_dir(&project_dir)).unwrap();
+
+        let manifest = ProjectManifest {
+            schema: "chroma.project/1.1".into(),
+            name: "Rotated".into(),
+            created: String::new(),
+            modified: String::new(),
+            shots: Vec::new(),
+            active_shot: 0,
+            active_clip_id: None,
+            settings: ProjectSettings {
+                width: Some(320),
+                height: Some(180),
+                ..Default::default()
+            },
+            timelines: vec![apelles_timeline::Timeline {
+                id: "tl1".into(),
+                name: "Rotated".into(),
+                rate: Some(apelles_types::Rational { num: 24, den: 1 }),
+                tracks: vec![apelles_timeline::Track {
+                    kind: TrackKind::Video,
+                    clips: vec![Clip {
+                        id: "A".into(),
+                        name: "A".into(),
+                        source_path: clip_path.to_string_lossy().into_owned(),
+                        source_fps: Some(24.0),
+                        source_start: 0,
+                        duration: 24,
+                        source_len: 24,
+                        start_frame: 0,
+                        rotation: 180.0,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                markers: Vec::new(),
+            }],
+            active_timeline: 0,
+            media: Vec::new(),
+            folders: Vec::new(),
+        };
+        save_manifest(&project_dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: project_dir.clone(),
+            name: "Rotated".into(),
+        }));
+
+        assert!(
+            regen_thumb(&project_dir),
+            "thumb regen should succeed against a real one-clip timeline"
+        );
+        let bytes = std::fs::read(project_dir.join("thumb.jpg")).expect("thumb.jpg written");
+        let img = image::load_from_memory(&bytes)
+            .expect("thumb.jpg decodes as a real image")
+            .to_rgba8();
+        let (w, h) = img.dimensions();
+
+        // Pre-rotation this corner held the white square; post-180°-rotation
+        // it must be the plain black background instead.
+        let top_left = img.get_pixel(w / 8, h / 8);
+        assert!(
+            (top_left[0] as i32) < 80,
+            "top-left should be dark after a 180° rotation moved the square away, got {top_left:?}"
+        );
+        // Pre-rotation this corner held plain black; post-rotation it must be
+        // the (now-relocated) white square — the actual proof the composited,
+        // transform-aware path ran rather than a raw source grab.
+        let bottom_right = img.get_pixel(w - w / 8 - 1, h - h / 8 - 1);
+        assert!(
+            (bottom_right[0] as i32) > 180,
+            "bottom-right should be the rotated-in white square, got {bottom_right:?}"
+        );
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&clip_path);
     }
 
     #[test]
