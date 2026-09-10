@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- A small artist's brush, matching the painter's own tool in the hero
+       painting — ink handle, a terracotta ferrule, marble bristles tapering
+       to the tip. Built pointing straight down (tip = hotspot, bottom
+       centre) then rotated for a natural hand-held tilt. -->
+  <g transform="rotate(-28 16 16)">
+    <!-- handle -->
+    <rect x="13.5" y="2" width="5" height="12" rx="2.2" fill="#1c1a17" />
+    <!-- ferrule -->
+    <rect x="13" y="13" width="6" height="3.4" rx="1" fill="#a6432c" />
+    <!-- bristles, tapering to the tip -->
+    <path d="M13.3 16.4 L18.7 16.4 L16 30 Z" fill="#f4efe6" stroke="#1c1a17" stroke-width="1.1" stroke-linejoin="round" />
+  </g>
+</svg>
