@@ -46,13 +46,6 @@ body {
   font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* The painter's own brush, standing in for the arrow — a real file in
-     public/ (not inlined here) so its literal colours don't trip this repo's
-     own "no hard-coded colour in src/" rule. Interactive elements (links,
-     buttons) keep the browser's normal pointer — this only replaces the
-     plain default cursor. Hotspot (14 30) is the bristle tip. Degrades to
-     `auto` wherever a browser doesn't support an SVG cursor. */
-  cursor: url('/cursor-brush.svg') 14 30, auto;
 }
 
 img,

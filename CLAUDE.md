@@ -181,6 +181,21 @@ in the same commit.
   must be compiled out of a production build via a real compile-time gate
   (`#[cfg(debug_assertions)]`, a Cargo feature, or equivalent) — never a runtime flag,
   never "just don't call it in prod." For us, never shipped.
+- **One icon library, used properly — never a hand-drawn or hand-edited SVG icon**
+  (owner, 2026-09-10, said once while stopping a hand-recolored icon mid-task, so it's
+  standing). This repo standardized on **Phosphor Icons** (`@phosphor-icons/react` in
+  the app; see the D-NNN that made that swap) as the one icon library for the whole
+  project — the desktop app and the website both draw every icon from it, not a mix.
+  Never hand-draw an icon's SVG path data, and never hand-copy a library's raw SVG
+  source and then hand-edit it (recoloring by manually splitting paths into groups,
+  adjusting coordinates, etc.) — that produces something that looks close but isn't
+  the real, maintained icon, and drifts from it the moment the library updates. Use the
+  library the real way: import the actual component/asset from the package (or, for a
+  context that needs a static file a package import can't reach — e.g. a CSS `cursor:
+  url(...)` value — export the icon from the installed package through a real,
+  reproducible step, not by hand-transcribing markup). If a genuinely new,
+  custom (non-library) graphic is ever needed, that's a real design task to raise with
+  the owner first, not a default to reach for silently.
 
 ## Monorepo layout (D-039 / D-040)
 
