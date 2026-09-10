@@ -16,7 +16,7 @@ use crate::app_state::AppState;
 use crate::image_loader::LoadImageResult;
 
 use super::state::{self, Shot};
-use super::{decode_pipe, load, video};
+use super::{colorist_view, decode_pipe, load, video};
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,7 +38,18 @@ pub struct ShotDto {
 }
 
 impl From<&Shot> for ShotDto {
+    /// **B-154** — `frame_count`/`duration_secs`/`resolution` go through
+    /// [`colorist_view::display_info`], the same clip-aware correction D-294
+    /// gave `chroma_video_info` (`commands.rs`). Before this fix this `impl`
+    /// still read straight off `Shot.info` (the raw source probe), so every
+    /// caller downstream of `chroma_session_list`/`_add`/`_set_active`/
+    /// `_remove` — the ShotStrip and, per `useSessionStore.ts`'s
+    /// `applyLoaded`, the Colorist transport bar on every shot switch — kept
+    /// showing the source file's full length even after the transport's own
+    /// decode (`chroma_seek`) had been made clip-aware.
     fn from(s: &Shot) -> Self {
+        let (resolution, frame_count, duration_secs) =
+            colorist_view::display_info(&s.path, &s.info);
         ShotDto {
             path: s.path.to_string_lossy().to_string(),
             name: s
@@ -46,10 +57,10 @@ impl From<&Shot> for ShotDto {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| s.path.to_string_lossy().to_string()),
-            resolution: s.info.resolution,
+            resolution,
             fps: s.info.fps(),
-            frame_count: s.info.frame_count,
-            duration_secs: s.info.duration_secs,
+            frame_count,
+            duration_secs,
             frame: s.frame,
             codec: s.info.codec.clone(),
             color_space: s.info.color_space.clone(),

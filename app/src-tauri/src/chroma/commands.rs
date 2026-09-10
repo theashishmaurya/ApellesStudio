@@ -44,23 +44,8 @@ pub struct VideoInfoDto {
 #[tauri::command]
 pub fn chroma_video_info() -> Option<VideoInfoDto> {
     let cv = current_video()?;
-    let view = colorist_view::resolve(&cv.path);
-    let (resolution, frame_count) = match &view {
-        Some(v) => (
-            apelles_types::Resolution {
-                width: v.comp.0,
-                height: v.comp.1,
-            },
-            v.frame_count(),
-        ),
-        None => (cv.info.resolution, cv.info.frame_count),
-    };
+    let (resolution, frame_count, duration_secs) = colorist_view::display_info(&cv.path, &cv.info);
     let fps = cv.info.fps();
-    let duration_secs = if fps > 0.0 {
-        frame_count as f64 / fps
-    } else {
-        cv.info.duration_secs
-    };
     Some(VideoInfoDto {
         is_video: true,
         path: cv.path.to_string_lossy().to_string(),

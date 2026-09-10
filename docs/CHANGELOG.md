@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-154 fixed:** the Colorist transport bar's duration/frame-count
+  readout showed the raw source file's full length instead of the trimmed
+  Edit-timeline clip's — `chroma::session::ShotDto::from` (`chroma_session_list`/
+  `_add`/`_set_active`/`_remove`, what the ShotStrip and every shot switch build
+  `videoInfo` from) never consulted `colorist_view::resolve`, unlike `chroma_video_info`
+  which D-294 had already fixed. Extracted the shared correction into
+  `colorist_view::display_info`/`display_info_for` and routed both call sites through
+  it, with unit tests reproducing the bug's own numbers. Found but not fixed in the
+  same pass, logged as **B-158**: `session.rs`'s `decode_and_install` (shot-switch
+  pixel path) still decodes `Shot.frame` as a raw source index with no clip mapping or
+  geometry pass, unlike the transport's own `chroma_seek`.
 - **2026-09-10** — **D-301: removed Colorist's standalone still-image Export panel**
   (owner call, live) — deleted `ExportPanel.tsx`, `Panel.Export` and every switch/map
   keyed on it, the `toggle_export` shortcut, both context-menu entries that opened it,
