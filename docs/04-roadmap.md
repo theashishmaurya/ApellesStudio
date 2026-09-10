@@ -1443,7 +1443,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         `layers` dependency is a fresh array each time. Cheap per occurrence,
         but it is per playback frame. Deliberately not touched inside D-209's
         bug fix — that hook is the delicate B-085/B-092 surface and deserves its
-        own pass.~~ **DONE, 2026-09-10 (D-282).** It got that pass, as part of
+        own pass.~~ **DONE, 2026-09-10 (D-290).** It got that pass, as part of
         B-146. `layers` is held in a ref filled by an effect (a render-phase
         `ref.current = …` is a React Compiler bailout, and one bailout switches
         auto-memoisation off for the whole file — D-201's own test caught
@@ -1451,7 +1451,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         reads the current value when a press actually arrives. Guarded by
         `PreviewPane.playbackCost.dom.test.tsx`, which counts real
         `addEventListener` calls across 25 played frames.
-      - ✅ **And the loop was PROFILED end to end at last, D-282 (2026-09-10,
+      - ✅ **And the loop was PROFILED end to end at last, D-290 (2026-09-10,
         B-146) — the latency number two items above is now taken, and it moves
         the target off Rust entirely.** With `debug_frame_timing` against a
         frontmost instance on the owner's own 24 fps / 4K HEVC project: one pass
@@ -1462,16 +1462,16 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         That retires the two "still open" Rust-side items above as the *wrong*
         target for smoothness: a faster JPEG encoder saves at most a slice of
         3.5 ms, and a lookahead is useless while the loop is work-bound on the
-        other side of the IPC. D-282 removed the largest webview-side piece it
+        other side of the IPC. D-290 removed the largest webview-side piece it
         could without a redesign (a displayed frame no longer costs a React
         render at all), and `debug_frame_timing` gained `fetch`/`tick` duration
         channels so the remainder can be split by subtraction rather than by
-        the gap-vs-footage natural experiment D-282 had to use.
+        the gap-vs-footage natural experiment D-290 had to use.
       - ⬜ **Still open — the preview picture path is `Blob` → object URL →
         `<img src>` → main-thread JPEG decode, once per displayed frame.** The
         right shape is `createImageBitmap()` into a `<canvas>`, which moves the
         decode off the main thread and makes the swap a zero-copy bitmap
-        hand-off. Scoped out of D-282 deliberately: it changes how the preview
+        hand-off. Scoped out of D-290 deliberately: it changes how the preview
         surface is built and what `TransformOverlay`/`useContentBox` measure,
         and it cannot be verified in jsdom — it needs the real app. This and the
         next item are where the remaining ~19 ms lives.

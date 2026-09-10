@@ -4,16 +4,16 @@
  *
  * What it is: two small ring buffers of `performance.now()` timestamps that
  *   `PreviewPane` writes to as it plays — one per `requestAnimationFrame`
- *   tick, one per frame actually handed to the `<img>` — plus, since D-282,
+ *   tick, one per frame actually handed to the `<img>` — plus, since D-290,
  *   two ring buffers of DURATIONS covering what one iteration of that loop
  *   spent its time on, plus a report that turns all four into intervals, the
  *   derived fps, the drop count and the per-phase spread. The debug op
  *   `debug_frame_timing` reads it.
  *
- * **Why the duration channels exist (D-282).** The two timestamp channels can
+ * **Why the duration channels exist (D-290).** The two timestamp channels can
  *   say the loop is running at 40 fps; they cannot say WHERE the 25 ms went,
  *   and that is exactly the question the owner's "playback lags" report needs
- *   answered. D-282 profiled the loop from outside using only these two
+ *   answered. D-290 profiled the loop from outside using only these two
  *   channels plus a natural experiment (playing over a timeline GAP, whose
  *   frame is a 1×1 JPEG and so costs no decode at all) and could get as far as
  *   "≈3.5 ms is Rust, ≈21.5 ms is this side" — and then stopped, because
@@ -64,7 +64,7 @@ export const DEFAULT_REPORT_LIMIT = 60;
 
 export type PreviewTimingChannel = 'raf' | 'paint';
 
-/** The D-282 duration channels. Unlike {@link PreviewTimingChannel} these hold
+/** The D-290 duration channels. Unlike {@link PreviewTimingChannel} these hold
  *  already-measured spans in ms, not moments in time — see the module doc for
  *  what each one covers and which subtraction it is meant for. */
 export type PreviewSpanChannel = 'fetch' | 'tick';
@@ -80,7 +80,7 @@ export function recordPreviewTiming(channel: PreviewTimingChannel, at: number = 
   if (buf.length > TIMING_CAPACITY) buf.shift();
 }
 
-/** Record one already-measured duration, in ms (D-282). Negative and
+/** Record one already-measured duration, in ms (D-290). Negative and
  *  non-finite values are dropped rather than stored: a span is always computed
  *  as `now - start`, so anything else is a caller bug, and silently poisoning
  *  the median with it would make the readout untrustworthy — which is the one
@@ -115,7 +115,7 @@ export interface ChannelTimingReport {
   hitches: number;
 }
 
-/** One duration channel's spread (D-282). No `fps` and no `hitches`: those
+/** One duration channel's spread (D-290). No `fps` and no `hitches`: those
  *  are properties of a CADENCE, and these samples are costs, not moments. */
 export interface SpanTimingReport {
   /** how many durations the buffer holds (≤ {@link TIMING_CAPACITY}) */
@@ -137,10 +137,10 @@ export interface PreviewTimingReport {
   raf: ChannelTimingReport;
   /** frames actually handed to the preview `<img>`. */
   paint: ChannelTimingReport;
-  /** D-282 — the `chroma_timeline_frame` round trip: Tauri IPC plus all of
+  /** D-290 — the `chroma_timeline_frame` round trip: Tauri IPC plus all of
    *  Rust's decode + composite + JPEG encode. Everything below the webview. */
   fetch: SpanTimingReport;
-  /** D-282 — one whole pass of the play loop's `tick`. `tick.medianMs −
+  /** D-290 — one whole pass of the play loop's `tick`. `tick.medianMs −
    *  fetch.medianMs` is the loop's own JavaScript; `raf.medianMs −
    *  tick.medianMs` is React's render/commit plus the wait for the next
    *  animation frame. */

@@ -4,7 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
-- **2026-09-10** — **B-146 root-caused and partly fixed (D-282):** "playback
+- **2026-09-10** — **B-146 root-caused and partly fixed (D-290):** "playback
   lags" / "4x jumps the frames" is not the decoder. Measured live, the play
   loop costs 25.0 ms a frame and still costs 21.5 ms over a timeline gap where
   Rust decodes nothing — the ceiling is the webview. A displayed frame no

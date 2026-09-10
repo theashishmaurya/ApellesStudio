@@ -6187,7 +6187,7 @@ mod tests {
         }
     }
 
-    /// **What B-052's packet-skip fallback COSTS (D-282).** A bound, not a
+    /// **What B-052's packet-skip fallback COSTS (D-290).** A bound, not a
     /// benchmark.
     ///
     /// The owner reported "playback lags", and the running app's log was full
@@ -6206,11 +6206,11 @@ mod tests {
     /// 124.6 s), re-measured 2026-09-10 with [`SeekWarnSpy`] confirming the
     /// fallback really fired at both late starts: first second of audio
     /// **5.6 ms at 0:00 and 5.4-5.6 ms at 40 s / 74 s in** on a warm page
-    /// cache. (D-282's original pass measured 9.3 ms and 65.7-67.4 ms on the
+    /// cache. (D-290's original pass measured 9.3 ms and 65.7-67.4 ms on the
     /// same file cold; the gap between the two runs is page cache, and both
     /// support the same conclusion by an order of magnitude.) So the fallback
     /// is real, is paid once per source per session (not per frame), and is
-    /// **not** where the lag lives — D-282 found that in the preview's own
+    /// **not** where the lag lives — D-290 found that in the preview's own
     /// frame loop instead. The generous ceiling below is a cliff guard: it
     /// fails on a regression of the walk-decodes-everything kind and stays
     /// quiet about ordinary machine noise, warm cache or cold.

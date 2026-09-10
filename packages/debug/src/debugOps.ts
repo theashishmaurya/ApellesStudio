@@ -47,7 +47,7 @@
  *                                   docked that library.)
  *   `debug_dom_tree`              — bounded DOM dump (see `domTree.ts`).
  *   `debug_frame_timing`          — the Edit-tab preview's real paint
- *                                   intervals, and since D-282 the per-phase
+ *                                   intervals, and since D-290 the per-phase
  *                                   COSTS behind them (see `@apelles/editor`'s
  *                                   `previewTiming.ts`).
  *

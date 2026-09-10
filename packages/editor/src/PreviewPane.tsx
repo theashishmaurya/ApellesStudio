@@ -10,7 +10,7 @@
  * stays here — only the rendered transport JSX (the hand-rolled button row)
  * moved to `<Player>`, which is purely presentational.
  *
- * **What sets the preview's frame rate (D-282, B-146).** Not the decoder.
+ * **What sets the preview's frame rate (D-290, B-146).** Not the decoder.
  * Profiled live against the owner's own project (24 fps, 4K HEVC): one pass of
  * the play loop costs **25.0 ms**, and over a timeline GAP — where the frame is
  * a 1×1 JPEG and Rust decodes nothing at all — it still costs **21.5 ms**. So
@@ -19,7 +19,7 @@
  * frame. That is why "playback lags" is a general report and not a
  * playback-RATE one — the ceiling is ~40-46 fps whatever is on the timeline,
  * which is comfortably over 24 fps at 1× and hopelessly under it at 4×
- * (96 fps of demand). D-282 cut what it could here without a redesign: a
+ * (96 fps of demand). D-290 cut what it could here without a redesign: a
  * displayed frame no longer costs a React render at all (see `showFrame`), and
  * pausing no longer re-decodes the frame already on screen (see the play
  * loop's drain). The two structural fixes it did NOT take — moving the picture
@@ -255,7 +255,7 @@ export function PreviewPane() {
   const playbackRate = useEditorTimelineStore((s) => s.playbackRate);
   const setPlaybackRate = useEditorTimelineStore((s) => s.setPlaybackRate);
 
-  // D-282 — whether ANY frame has decoded yet, which is all this render needs
+  // D-290 — whether ANY frame has decoded yet, which is all this render needs
   // to know. The frame's own URL lives in `frameUrl` and is written straight
   // to the `<img>` (see `showFrame`), so this flips exactly once per mounted
   // session instead of once per displayed frame.
@@ -268,9 +268,9 @@ export function PreviewPane() {
   // is safe: the `<img>` is being pointed away from it in the same commit, so
   // no load that matters is still reading it.
   const frameUrl = useRef<string | null>(null);
-  // D-282 — the `<img>` itself, so a frame can be shown without a render.
+  // D-290 — the `<img>` itself, so a frame can be shown without a render.
   const frameImg = useRef<HTMLImageElement | null>(null);
-  // D-282 — the timeline position the picture currently on screen was decoded
+  // D-290 — the timeline position the picture currently on screen was decoded
   // for, or `null` when nothing on screen can be trusted to be current. The
   // scrub effect below uses it to not re-decode a frame it is already showing.
   const shownFrame = useRef<number | null>(null);
@@ -435,7 +435,7 @@ export function PreviewPane() {
   /** Put one freshly-fetched frame's bytes on screen, releasing the previous
    *  frame's object URL (D-217 — see `frameUrl`'s own note).
    *
-   *  **D-282 — the picture is written to the `<img>` imperatively, not through
+   *  **D-290 — the picture is written to the `<img>` imperatively, not through
    *  React state.** This used to `setFrameSrc(url)`, which meant every single
    *  displayed frame re-rendered `PreviewPane` and reconciled its whole
    *  subtree — `Player`, the surface, `CanvasBoundary`, `TransformOverlay`,
@@ -452,7 +452,7 @@ export function PreviewPane() {
    *  pending URL at that moment, and it is also what re-applies it if the
    *  element is ever remounted (a `decodeErr` swaps the surface out and back).
    *
-   *  Measured cost this removes: see D-282's profile — the loop's floor is
+   *  Measured cost this removes: see D-290's profile — the loop's floor is
    *  ~21.5 ms/frame of which the Rust decode is only ~3.5 ms, so the frame
    *  rate the preview can reach is set on this side of the IPC, not by the
    *  decoder. */
@@ -558,7 +558,7 @@ export function PreviewPane() {
   // `savedVersion` bumps only when the backend really does hold the new
   // timeline, which is exactly when a refetch can return something new.
   //
-  // **D-282 — a backend timeline change invalidates the picture on screen.**
+  // **D-290 — a backend timeline change invalidates the picture on screen.**
   // `shownFrame` records which position the visible frame was decoded for, so
   // the effect below can skip a fetch for a frame it is already showing. That
   // record is only about the POSITION, so the other half of B-088 — the same
@@ -572,7 +572,7 @@ export function PreviewPane() {
 
   useEffect(() => {
     if (playing || !hasTimeline) return;
-    // D-282 — the frame on screen IS this frame, and nothing has invalidated
+    // D-290 — the frame on screen IS this frame, and nothing has invalidated
     // it: there is no picture to go and get. This is the ordinary case on
     // PAUSE — the play loop has just decoded and painted the frame the
     // playhead is now parked on, and re-fetching it cost a whole extra round
@@ -617,7 +617,7 @@ export function PreviewPane() {
       // which is precisely the blocker that stopped D-217 measuring this from
       // outside. Same `import.meta.env.DEV` compile-time gate as `showFrame`.
       if (import.meta.env.DEV) recordPreviewTiming('raf');
-      // D-282 — the `tick` span starts here and is closed just before the next
+      // D-290 — the `tick` span starts here and is closed just before the next
       // `requestAnimationFrame` below, so it covers one whole pass of this
       // loop and nothing else. Same compile-time gate as every other line in
       // this file that touches `previewTiming`.
@@ -639,7 +639,7 @@ export function PreviewPane() {
         inFlight.current = true;
         lastRequested = want;
         setPlayhead(want);
-        // D-282 — the `fetch` span: Tauri IPC + all of Rust. Everything below
+        // D-290 — the `fetch` span: Tauri IPC + all of Rust. Everything below
         // the webview, measured on its own so the rest of the frame's cost can
         // be got at by subtraction rather than by guessing (module doc).
         const fetchStart = performance.now();
@@ -666,7 +666,7 @@ export function PreviewPane() {
         // playing, and play start clears it.)
         const queued = pending.current;
         pending.current = null;
-        // D-282 — but never re-fetch the frame that is already on screen.
+        // D-290 — but never re-fetch the frame that is already on screen.
         // Pausing parks the paused playhead here, and that is USUALLY the very
         // frame this pass just decoded and painted, so the old unconditional
         // drain spent one more full decode round trip (measured: 25 ms on the
@@ -882,7 +882,7 @@ export function PreviewPane() {
               className="relative flex h-full w-full items-center justify-center overflow-hidden"
             >
               <img
-                // D-282 — no `src` prop, deliberately: the picture is written
+                // D-290 — no `src` prop, deliberately: the picture is written
                 // straight to this element (`showFrame` / `applyFrameImg`) so
                 // a played frame costs no React render at all. React does not
                 // manage an attribute it was never handed, so nothing here can

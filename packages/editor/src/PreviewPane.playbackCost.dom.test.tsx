@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 /**
- * @apelles/editor — what one displayed preview frame COSTS (D-282, B-146).
+ * @apelles/editor — what one displayed preview frame COSTS (D-290, B-146).
  *
  * **Why this file exists.** The owner's report was "playback lags", and
  * profiling it live (`debug_frame_timing` against the real app and the real
- * project — the numbers are in D-282) found the ceiling is not the decoder:
+ * project — the numbers are in D-290) found the ceiling is not the decoder:
  * one pass of `PreviewPane`'s play loop cost 25.0 ms, and 21.5 ms of that was
  * still there over a timeline GAP where Rust decodes nothing at all. The
  * expensive part was this side of the IPC, and the biggest single piece of it
@@ -18,7 +18,7 @@
  * actually is, is **how many React commits a played frame causes**. So the
  * assertions are commit counts from a real `React.Profiler`, frame counts from
  * the real `<img>`'s `src`, and call counts at the real IPC boundary. Those
- * are exact numbers with correct answers, and each one fails on the pre-D-282
+ * are exact numbers with correct answers, and each one fails on the pre-D-290
  * code for the right reason.
  *
  * **Tier and its honest limits.** jsdom, sharing every caveat the sibling
@@ -195,7 +195,7 @@ afterEach(() => {
   console_.restore();
 });
 
-describe('a displayed preview frame (D-282 / B-146)', () => {
+describe('a displayed preview frame (D-290 / B-146)', () => {
   it('reaches the <img> without React managing its src at all', async () => {
     const { container } = await mountHarness();
     const img = previewImg(container);
@@ -205,7 +205,7 @@ describe('a displayed preview frame (D-282 / B-146)', () => {
     const first = img.getAttribute('src');
 
     // ...and React is not the thing holding it: nothing re-renders here, yet
-    // a new frame still lands on the element. (Pre-D-282 this attribute was a
+    // a new frame still lands on the element. (Pre-D-290 this attribute was a
     // JSX prop, so it could only ever change via a commit.)
     const before = commits.count;
     actSync(() => useEditorTimelineStore.getState().setPlayhead(140));
@@ -243,7 +243,7 @@ describe('a displayed preview frame (D-282 / B-146)', () => {
     // THE assertion. Every displayed frame necessarily commits once (the
     // playhead moved, and the timecode/timeline cursor have to follow it).
     // What must NOT happen any more is a SECOND commit per frame for the
-    // picture — that is what the pre-D-282 `setFrameSrc(url)` cost, and it is
+    // picture — that is what the pre-D-290 `setFrameSrc(url)` cost, and it is
     // the single biggest thing this side of the IPC was spending a frame on.
     // The `+ 4` is slack for the transport's own start/stop commits, not for
     // per-frame work: a per-frame regression scales with `painted` and blows
@@ -280,14 +280,14 @@ describe('a displayed preview frame (D-282 / B-146)', () => {
     await waitFrames(2);
 
     // One live URL: the frame currently on screen. Every previous one was
-    // revoked as it was replaced — unchanged by D-282's move to an imperative
+    // revoked as it was replaced — unchanged by D-290's move to an imperative
     // `src`, and worth re-proving precisely because that move is what could
     // have broken it.
     expect(objectUrls.live()).toHaveLength(1);
   });
 });
 
-describe('the preview surface during playback (D-282 / B-146)', () => {
+describe('the preview surface during playback (D-290 / B-146)', () => {
   it('does not tear down and re-add its capture-phase pointer listener every frame', async () => {
     await mountHarness();
 
@@ -324,7 +324,7 @@ describe('the preview surface during playback (D-282 / B-146)', () => {
   });
 });
 
-describe('the play loop reports where its time went (D-282)', () => {
+describe('the play loop reports where its time went (D-290)', () => {
   it('records a fetch span and a whole-tick span, with fetch inside tick', async () => {
     await mountHarness();
 

@@ -27437,7 +27437,7 @@ decision was made alongside.
 
 ---
 
-## D-282 — "playback lags": the preview's frame-rate ceiling is the WEBVIEW, not the decoder (B-146)
+## D-290 — "playback lags": the preview's frame-rate ceiling is the WEBVIEW, not the decoder (B-146)
 
 **Date:** 2026-09-10. Owner, immediately after using D-280's new playback-rate
 control: *"playback lags btw"* and *"4x speed jumps the frames at playback"*,
@@ -27616,7 +27616,7 @@ item 25 entries (`docs/04-roadmap.md`), not comments in the code:
 the profiling was done against the running app in the main checkout, and the
 fixes were built in an isolated worktree, so the post-fix live number has not
 been taken. What is proved is what the loop stopped doing — commit counts, fetch
-counts and listener counts, all exact, all from tests that fail on the pre-D-282
+counts and listener counts, all exact, all from tests that fail on the pre-D-290
 code (verified by temporarily restoring it: 38 commits vs 22). The millisecond
 value of that on the owner's machine is the first thing to measure after merge,
 with the new `fetch`/`tick` spans this pass added for exactly that purpose.
@@ -27652,7 +27652,7 @@ against `A001_09091123_C024.MOV`, `tsc --noEmit` on `@apelles/editor` and
 
 This entry was drafted as **D-281** by a session that was interrupted before it
 committed. While it was interrupted, `main` landed a *different* D-281 (RapidRAW
-at `app/` is owned code, not a tracked fork), so this one is **D-282** — the
+at `app/` is owned code, not a tracked fork), so this one is **D-290** — the
 renumber is the whole of the difference, and every reference in code, tests, the
 MCP docstring and `docs/notes/debug-tooling.md` moved with it. `main` had also
 logged **B-146** itself in the meantime, as `investigating`, naming this

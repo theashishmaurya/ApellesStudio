@@ -147,7 +147,7 @@ several rounds of the owner's own screenshots before an agent could even confirm
    wait → `editor_set_playing(False)` → read. Without the reset, scrub frames are
    mixed in with playback.
 
-   **Extended by D-282 (2026-09-10) with two COST channels**, after the two above
+   **Extended by D-290 (2026-09-10) with two COST channels**, after the two above
    answered "the loop is at 40 fps" and then could not answer "so where did the
    25 ms go?" — which is precisely the question the owner's "playback lags" report
    (B-146) needed. `fetch` is the `chroma_timeline_frame` round trip (Tauri IPC +
@@ -157,10 +157,10 @@ several rounds of the owner's own screenshots before an agent could even confirm
    JavaScript, and `raf − tick` is React's render/commit plus the wait for the next
    animation frame. Before this, the only way to split the frame's cost from
    outside was a natural experiment (play over a timeline GAP, whose frame is a 1×1
-   JPEG, and diff) — which is what D-282 had to do, and which is why the tool got
+   JPEG, and diff) — which is what D-290 had to do, and which is why the tool got
    the missing half rather than the diagnosis getting a guess.
 
-   **Two traps that both look like "it stalled"**, hit live while profiling D-282
+   **Two traps that both look like "it stalled"**, hit live while profiling D-290
    and now called out in the tool's own docstring: a playhead already parked on the
    LAST frame ends playback on the first tick (one `raf` sample, playhead unmoved),
    and a stretch of timeline with a GAP under it decodes nothing, so it measures the

@@ -107,7 +107,7 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
   // advancing a frame within the same set of clips refetches nothing.
   const layers = visibleVideoLayersAt(timeline, playhead);
 
-  // **D-282 — held in a ref, and NOT a dependency of the effect below.**
+  // **D-290 — held in a ref, and NOT a dependency of the effect below.**
   // `layers` is a brand-new array on every render by design (above), and the
   // effect used to list it, so the capture-phase `pointerdown` listener on the
   // preview's hottest surface was torn down and re-added once per RENDER —

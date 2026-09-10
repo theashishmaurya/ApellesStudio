@@ -109,7 +109,7 @@ describe('previewTimingReport', () => {
 });
 
 /**
- * The D-282 duration channels. These exist to answer one question the two
+ * The D-290 duration channels. These exist to answer one question the two
  * timestamp channels above structurally cannot — "the loop is running at
  * 40 fps, but where did the 25 ms GO?" — and the answer is got by subtracting
  * one median from another, so the medians have to be right for the conclusion
