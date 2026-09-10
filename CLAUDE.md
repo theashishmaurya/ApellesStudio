@@ -266,6 +266,19 @@ workspace `target/` is fresh at the repo root.
   If you ever do get a stash-list surprise (content you don't recognize), do NOT drop
   it: back it up to a file, then `git stash push` it right back onto the shared stack
   with a message identifying it as recovered-not-yours, so its real owner can find it.
+- **A dispatched agent never deploys to production itself** (owner, 2026-09-10, hit
+  live — a website-tuning agent ran `wrangler pages deploy --branch=main` from its own
+  isolated worktree, using that worktree's stale snapshot of `main`, and silently
+  overwrote a newer, correct production deploy the coordinating session had already
+  made — a wrong/reverted feature briefly went live before anyone noticed). Any deploy
+  target that publishes somewhere real users or the public can see it (Cloudflare Pages
+  production, an app-store release channel, anything not scoped to the agent's own
+  preview/staging alias) is off-limits to a subagent, full stop — a preview/staging
+  deploy under its own branch is fine and expected for its own testing. A subagent
+  finishes by committing its work to `main` (merged/rebased onto the real current tip,
+  not left sitting stale in its own worktree) and reporting back; the coordinating
+  session reviews and does the actual production deploy itself, deliberately, after
+  reviewing what's there.
 
 ## Building UI: research the real pattern first, don't guess (owner, 2026-09-08)
 
