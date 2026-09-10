@@ -4,6 +4,10 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-10** — **B-146 logged, investigating:** general preview playback
+  lag and janky frame-jumping at 4× — dispatched to an Opus agent to profile
+  before fixing; a real repeating seek-error warning in the live audio log
+  passed along as a lead, not yet confirmed as the cause.
 - **2026-09-10** — **B-145 logged, not fixed:** dragging a clip lands it at
   frame 0 instead of the drop position — reported live, no jsdom repro
   attempted yet.
