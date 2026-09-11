@@ -205,12 +205,14 @@ staying the default — never a replacement for local sidecars once it exists.
 > question, so building it early cost nothing and committed nothing.
 >
 > What it added beyond this scope: a real MCP setup/docs page grounded in
-> `mcp/server.py`, and a pre-launch beta signup (real form, placeholder
-> endpoint — `website/BETA_SIGNUP_SETUP.md`).
+> `mcp/server.py`, and a pre-launch beta signup form. It shipped 2026-09-09
+> with a placeholder endpoint, but that's stale as of **2026-09-10**: the form
+> now posts to a real, live FormSubmit.co endpoint that emails every
+> submission to the owner — see `website/BETA_SIGNUP_SETUP.md` for the wiring
+> and how to change it.
 >
-> Read **D-255** before changing it. Still open: a demo video, the real form
-> endpoint, a domain and deployment, download links, and Motion/Colorist
-> screenshots.
+> Read **D-255** before changing it. Still open: a demo video, a domain and
+> deployment, download links, and Motion/Colorist screenshots.
 
 ### Original scope, as researched
 

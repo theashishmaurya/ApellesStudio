@@ -3196,10 +3196,11 @@ nothing — `docs/notes/pre-launch-plan.md` §0 already named the website as one
 the two items that do **not** depend on the unresolved D-002 licensing question.
 Still open on it: no demo video (`website/TODO-DEMO-VIDEO.md`), the four
 screenshots predate the rename and need retaking
-(`website/TODO-RECAPTURE-SHOTS.md`), no real Formspree endpoint
-(`website/BETA_SIGNUP_SETUP.md`), no domain or deployment, no download links
+(`website/TODO-RECAPTURE-SHOTS.md`), no domain or deployment, no download links
 (they wait on real installers), no public changelog page, and no
-Motion/Colorist screenshots (none have ever been captured).
+Motion/Colorist screenshots (none have ever been captured). The beta-signup
+form itself is **not** open anymore — it moved off the Formspree placeholder to
+a real, live FormSubmit.co endpoint on 2026-09-10 (`website/BETA_SIGNUP_SETUP.md`).
 
 **Motion primitive catalog — now 10, not 8 (2026-09-09, D-258):** the eight
 abstract explainer primitives (`text`, `emphasis`, `matrix`, `graph`, `layers`,

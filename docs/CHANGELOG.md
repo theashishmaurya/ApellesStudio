@@ -4,6 +4,12 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-11** — **docs fix: two stale "beta signup is a placeholder" references
+  corrected** in `pre-launch-plan.md` and `04-roadmap.md`'s website section — the
+  form moved off Formspree to a real, live FormSubmit.co endpoint on 2026-09-10
+  (D-255 follow-up, `website/BETA_SIGNUP_SETUP.md`), but both docs still described
+  it as an open placeholder. Caught when the owner corrected a marketing-channel
+  answer that repeated the stale claim.
 - **2026-09-11** — **roadmap: logged that no structured MCP tool parameter has a
   validated schema** (every `dict | None` arg across all 161 tools in `mcp/server.py`
   relies on docstring prose only — see `04-roadmap.md` gap 7 in the "Make Colorist's
