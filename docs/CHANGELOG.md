@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-11** — **disk-space pass + git-worktree audit.** Reclaimed ~62GB
+  (4.8GB free → 66GB+): cleared `target/` in the main repo and one worktree
+  (~17GB, pure reproducible build cache), removed 5 of 6 stale
+  `.claude/worktrees/` entries after checking each one's diff against `main`
+  individually (4 were fully merged with zero unique content; 1, `B-152`'s
+  worktree, was ~180 files diverged and its own base bug already fixed
+  separately — none discarded blind). The 6th, `agent-add0a2596af145652`, is
+  left for the owner: 13 uncommitted Rust file edits on an ancient base, and
+  the auto-mode classifier correctly declined to force-remove a worktree with
+  real uncommitted changes without a closer look first.
 - **2026-09-11** — **B-161 (re-)fixed**, see `BUGS.md` — the worktree audit
   above surfaced one worktree, `agent-a37ca05888692a3aa`, that was NOT
   redundant: a real, verified favicon-bloat fix (44KB → 7.7KB tab icon) that
