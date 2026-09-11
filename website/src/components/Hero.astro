@@ -53,6 +53,22 @@
  * h1's real (small) rendered size, instead of inheriting the large-display
  * `opsz 72` global.css forces on every h1 — a mismatch that was quietly
  * making this specific headline read thinner than intended.
+ *
+ * The painting ships as WebP (35% smaller than the source JPG at equal
+ * visual quality) with a JPG fallback in a `<picture>` for anything that
+ * cannot decode WebP. The JPG is *only* that fallback — an HTML comment here
+ * claimed until B-150 that it doubled as the og:image/twitter:image, which
+ * stopped being true when D-288 moved those to the dedicated 1200×630
+ * /og/card.jpg.
+ *
+ * B-150 also measured the WebP and deliberately left it alone. Against the
+ * source JPG the shipped file is 208,898 B at PSNR 37.88 dB; the best
+ * alternative encodes are 199,262 B / 37.76 dB (`cwebp -q 82 -m 6`), i.e. 5%
+ * for nothing, and 184,740 B / 37.44 dB (`-q 80 -m 6 -sharp_yuv`), which buys
+ * 12% by spending real fidelity on commissioned brand art that is not the LCP
+ * element (the h1 is, on both desktop and mobile) and blocks no paint. It is
+ * already at the knee of that curve — re-encoding it is a downgrade, not an
+ * optimisation.
  */
 import Signature from './Signature.astro';
 import HeroDevPanel from './HeroDevPanel.astro';
@@ -63,11 +79,6 @@ const placeholder = isPlaceholderEndpoint(endpoint);
 ---
 
 <section class="hero">
-  <!-- WebP (35% smaller than the source JPG at equal visual quality) with a
-       JPG fallback for browsers/tools that don't decode WebP — the JPG at
-       /hero/painter.jpg stays as the one og:image/twitter:image reference
-       (Base.astro), since some social-card crawlers still don't render
-       WebP. -->
   <picture>
     <source srcset="/hero/painter.webp" type="image/webp" />
     <img

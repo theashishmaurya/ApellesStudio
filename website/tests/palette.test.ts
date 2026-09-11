@@ -192,8 +192,17 @@ describe('the favicon (D-267): a photographic mark replaces the tesserae SVG', (
     'favicon-32x32.png': 32,
     'favicon-48x48.png': 48,
     'apple-touch-icon.png': 180,
-    'icon-192.png': 192,
   };
+
+  /**
+   * B-150: a browser paints the tab with exactly ONE `rel="icon"`, and picks
+   * it by size — so declaring a big one here is not a harmless extra option,
+   * it is the one that gets downloaded. A 192x192 PNG (44 kB) was, which made
+   * it the largest single asset on four of the six pages. `apple-touch-icon`
+   * is exempt: it is a different relation, fetched only on add-to-home-screen,
+   * never as a tab icon.
+   */
+  const MAX_TAB_ICON_PX = 48;
 
   function pngDimensions(path: string): { width: number; height: number } {
     const buf = readFileSync(path);
@@ -206,6 +215,33 @@ describe('the favicon (D-267): a photographic mark replaces the tesserae SVG', (
       expect(width, `${file} width`).toBe(size);
       expect(height, `${file} height`).toBe(size);
     }
+  });
+
+  it(`declares no rel="icon" bigger than ${MAX_TAB_ICON_PX}px (B-150)`, () => {
+    const base = read('../src/layouts/Base.astro');
+    const oversized = [...base.matchAll(/<link\s+rel="icon"[^>]*>/g)]
+      .map((m) => m[0])
+      .filter((tag) => {
+        const sizes = /sizes="(\d+)x\d+"/.exec(tag);
+        return sizes !== null && Number(sizes[1]) > MAX_TAB_ICON_PX;
+      });
+    expect(
+      oversized,
+      `an oversized rel="icon" is the one the browser downloads for the tab:\n${oversized.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('ships no icon PNG that nothing references (B-150)', () => {
+    const base = read('../src/layouts/Base.astro');
+    const referenced = new Set(
+      [...base.matchAll(/href="\/([\w.-]+\.(?:ico|png|svg))"/g)].map((m) => m[1]),
+    );
+    // favicon-16x16.png is the .ico's own 16px source frame, not a page asset.
+    referenced.add('favicon-16x16.png');
+    const orphans = readdirSync(publicDir).filter(
+      (f) => /^(icon|favicon|apple-touch-icon)[\w.-]*\.png$/.test(f) && !referenced.has(f),
+    );
+    expect(orphans, `unreferenced icon files shipped: ${orphans.join(', ')}`).toEqual([]);
   });
 
   it('favicon.ico exists and is non-empty', () => {

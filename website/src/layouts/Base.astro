@@ -21,6 +21,33 @@
  * A minimal, honest `SoftwareApplication` JSON-LD block was added below —
  * only facts already asserted elsewhere on the site (name, description,
  * platform, price, licence), nothing invented for the sake of rich results.
+ *
+ * B-150: the `<link rel="icon">` set below is tab-icon candidates only, and
+ * deliberately declares nothing bigger than 48px. A browser paints the tab
+ * with exactly ONE of them and picks by size — so the 192×192 PNG declared
+ * here until now was the one Chrome chose, pulling 44 kB down on every load
+ * of every page to draw a 16 px icon. On /inside/ and /who-its-for/, whose
+ * only other image is the 2 kB nav seal, that single file was ~80% of the
+ * page's whole weight. icon-192/icon-512 were web-app-manifest sizes on a
+ * site with no manifest and no install story, so both were deleted rather
+ * than rehomed; Android's own add-to-home-screen falls back to
+ * `apple-touch-icon` when there is no manifest, which is why that one stays
+ * (it is a different relation and is never fetched as a tab icon).
+ * tests/palette.test.ts holds both halves of this so it cannot regress.
+ *
+ * The font links are loaded non-blocking (`preload as="style"` plus a
+ * `media="print"` stylesheet that swaps to `media="all"` onload), not as a
+ * synchronous `<link rel="stylesheet">`: B-149's trace against production
+ * found that exact request render-blocking, holding up first paint of the h1
+ * (the LCP element) for ~800ms of its ~970ms total. The page's text does not
+ * need the web font to paint — tokens.css's fallback stack renders it
+ * immediately and the real face swaps in when it arrives. `<noscript>` keeps
+ * a plain stylesheet for JS-disabled clients.
+ *
+ * B-150 note on where these comments live: Astro emits HTML comments into
+ * every built page, so all of this rationale belongs here in the frontmatter,
+ * which it does not emit. A page whose whole point this pass is trimming
+ * bytes off should not be shipping its own changelog to the reader.
  */
 import '../styles/global.css';
 import Nav from '../components/Nav.astro';
@@ -106,18 +133,9 @@ const jsonLd = {
     <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32" />
     <link rel="icon" href="/favicon-48x48.png" type="image/png" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
-    <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <!-- Loaded non-blocking (preload + swap-the-media-type-on-load), not as a
-         synchronous <link rel="stylesheet">: a real Lighthouse trace against
-         production found this exact request render-blocking, holding up first
-         paint of the H1 (LCP) for ~800ms of its ~970ms total — the page's
-         text doesn't need the web font loaded before it can paint (the
-         fallback stack in tokens.css renders it immediately; the font swaps
-         in once it arrives). <noscript> keeps the fallback for JS-disabled
-         clients. -->
     <link
       rel="preload"
       as="style"

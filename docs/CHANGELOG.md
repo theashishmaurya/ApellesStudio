@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-11** — **B-161 (re-)fixed**, see `BUGS.md` — the worktree audit
+  above surfaced one worktree, `agent-a37ca05888692a3aa`, that was NOT
+  redundant: a real, verified favicon-bloat fix (44KB → 7.7KB tab icon) that
+  never made it into `main` after the `wrangler pages deploy` incident
+  `CLAUDE.md`'s "never deploy to production from a worktree" rule is about.
+  Re-applied the code change fresh (new bug number, since the original `B-150`
+  collided with an unrelated bug already using that number on `main`) rather
+  than merging the stale branch wholesale.
 - **2026-09-11** — **root `README.md` rewritten** — it still described the pre-D-039
   "grading only, not an editor, Phase 0, nothing runs yet" framing from 2026-09-02, over
   a week stale and actively misleading for anyone finding the repo (it's public on
