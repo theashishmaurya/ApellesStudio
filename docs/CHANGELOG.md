@@ -13,6 +13,16 @@ One or two lines per session. Detail lives in the decision it references.
   (needs either a new Opus-capable dependency or a transcode-at-import
   pipeline stage, both real design calls); the one clip this session needed
   was unblocked live via a direct `ffmpeg` re-encode to AAC, not a fix.
+- **2026-09-12** — **fixed B-163: `editor_add_clip` now gives a dropped clip
+  its own linked audio track, matching the real GUI drag.** The MCP tool
+  called the same `add_clip` engine op the GUI's Sources-panel drag does, but
+  never built the `linkedAudio` half the op already supported — an
+  MCP/GUI-parity gap the code's own comments had documented as deliberate,
+  which is exactly what `CLAUDE.md`'s "built for a human AND an AI" rule
+  exists to catch. Fixed and verified live: `get_timeline` now shows a real
+  second `kind: "audio"` track sharing the video clip's `linkGroup`, exactly
+  as a Sources-panel drop produces. `editor_edit_in` has the identical
+  inherited gap, not yet fixed — flagged in B-163, scoped out of this pass.
 - **2026-09-11** — **disk-space pass + git-worktree audit.** Reclaimed ~62GB
   (4.8GB free → 66GB+): cleared `target/` in the main repo and one worktree
   (~17GB, pure reproducible build cache), removed 5 of 6 stale

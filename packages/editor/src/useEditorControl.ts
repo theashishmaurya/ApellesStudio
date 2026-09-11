@@ -1560,11 +1560,21 @@ export function useEditorControl(): void {
           return { error: `duration must be > 0 and sourceStart+duration must be <= ${frames} (the source's own length)` };
         }
 
+        const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        // D-129 parity fix (previously MCP-only asymmetry) — a dropped clip
+        // gets a linked audio half exactly like a Sources-panel drag does
+        // (`linkedClipsFromDraggedMedia`'s own gate, mirrored here): only when
+        // the source is known to have audio and isn't a still. `hasAudio` is
+        // `null`/absent for an unprobed source, which this treats as "no,"
+        // same as the drag path — an agent that needs the link retroactively
+        // can `editor_reprobe_media` then re-add.
+        const linkGroup = media.video?.hasAudio && !facts.still ? `lg-${media.id}-${stamp}` : null;
+
         const clip: NewClipFields = {
-          id: `${media.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+          id: `${media.id}-${stamp}`,
           shot_id: null,
           media_id: media.id,
-          link_group: null,
+          link_group: linkGroup,
           name: a?.name || media.name,
           source_path: media.sourcePath,
           source_start: sourceStart,
@@ -1572,6 +1582,12 @@ export function useEditorControl(): void {
           source_len: frames,
           source_fps: facts.sourceFps,
         };
+        // Same source window as the video half — it only diverges later if
+        // the user deliberately unlinks and slips it (an L-cut), same as a
+        // dragged clip's linked audio starts life.
+        const linkedAudio: NewClipFields | undefined = linkGroup
+          ? { ...clip, id: `${media.id}-${stamp}-a`, link_group: linkGroup }
+          : undefined;
 
         const startFrame = a?.startFrame !== undefined ? Math.round(Number(a.startFrame)) : undefined;
         const ripple = !!a?.ripple;
@@ -1591,6 +1607,7 @@ export function useEditorControl(): void {
           kind: 'add_clip',
           track,
           clip,
+          linkedAudio,
           atIndex: a?.atIndex !== undefined ? Math.round(Number(a.atIndex)) : undefined,
           startFrame,
           ripple,
@@ -1599,7 +1616,27 @@ export function useEditorControl(): void {
         const tl = useEditorTimelineStore.getState().timeline;
         const placed = tl?.tracks[track]?.clips.find((c) => c.id === clip.id);
         if (!placed) return { error: 'add_clip did not place the clip — check track index / project state' };
-        return { ok: true, track, clipId: placed.id, startFrame: placed.start_frame, duration: placed.duration };
+        // D-129 parity — report the linked audio half's own location too, so
+        // an agent doesn't have to call get_timeline just to discover
+        // `ensureAudioTrackWithRoom` picked (or created) an audio track for it.
+        let linkedAudioResult: { track: number; clipId: string } | undefined;
+        if (linkedAudio && tl) {
+          for (let t = 0; t < tl.tracks.length; t++) {
+            const found = tl.tracks[t].clips.find((c) => c.id === linkedAudio.id);
+            if (found) {
+              linkedAudioResult = { track: t, clipId: found.id };
+              break;
+            }
+          }
+        }
+        return {
+          ok: true,
+          track,
+          clipId: placed.id,
+          startFrame: placed.start_frame,
+          duration: placed.duration,
+          linkedAudio: linkedAudioResult ?? null,
+        };
       },
 
       // D-239 (roadmap item 27) — the AI half of the seven edit types, running
@@ -1612,11 +1649,10 @@ export function useEditorControl(): void {
       //
       // The media lookup is `editor_add_clip`'s, verbatim in shape — an agent
       // identifies a source the one way it always has, by `mediaId` or
-      // `sourcePath` against the pool. And like `editor_add_clip`, it places
-      // the PICTURE only: the D-129 linked-audio half is built by
-      // `linkedClipsFromDraggedMedia` at drop time and is a property of the
-      // GUI drag, not of the op. Inherited asymmetry, not a new one — an agent
-      // that wants the sound as its own clip places it explicitly and links it.
+      // `sourcePath` against the pool. B-163 — it now also gets the same
+      // D-129 linked-audio half `editor_add_clip` does (mirrors
+      // `linkedClipsFromDraggedMedia`'s own gate), rather than the GUI drag's
+      // linking being a property of the drag alone.
       editor_edit_in: (a) => {
         if (!isDropEditType(a?.editType)) {
           return { error: `editType must be one of: ${DROP_EDIT_TYPES.map((t) => t.type).join(', ')}` };
@@ -1655,12 +1691,15 @@ export function useEditorControl(): void {
         // called `editor_set_playhead` should not have to restate the number.
         const atFrame = a?.atFrame !== undefined ? Math.round(Number(a.atFrame)) : store.playhead;
 
-        const clipId = `${media.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        // B-163 — same gate as `editor_add_clip`/`linkedClipsFromDraggedMedia`.
+        const linkGroup = media.video?.hasAudio && !facts.still ? `lg-${media.id}-${stamp}` : null;
+        const clipId = `${media.id}-${stamp}`;
         const clip: NewClipFields = {
           id: clipId,
           shot_id: null,
           media_id: media.id,
-          link_group: null,
+          link_group: linkGroup,
           name: a?.name || media.name,
           source_path: media.sourcePath,
           source_start: sourceStart,
@@ -1668,7 +1707,10 @@ export function useEditorControl(): void {
           source_len: frames,
           source_fps: facts.sourceFps,
         };
-        const op = { kind: 'edit_in' as const, editType: a.editType, track, clip, atFrame };
+        const linkedAudio: NewClipFields | undefined = linkGroup
+          ? { ...clip, id: `${media.id}-${stamp}-a`, link_group: linkGroup }
+          : undefined;
+        const op = { kind: 'edit_in' as const, editType: a.editType, track, clip, atFrame, linkedAudio };
 
         // The FULL check (the overlay can only run its `checkEditTarget` half
         // mid-drag — see that function's own doc), reported here as the real
@@ -1691,6 +1733,19 @@ export function useEditorControl(): void {
         });
         if (!placed) return { error: `${a.editType} did not place the clip — check the track index / project state` };
         const fps = timelineFps(after);
+        // B-163 parity — same as `editor_add_clip`: report where the linked
+        // audio half actually landed rather than leaving an agent to
+        // `get_timeline` for it.
+        let linkedAudioResult: { track: number; clipId: string } | undefined;
+        if (linkedAudio && after) {
+          for (let t = 0; t < after.tracks.length; t++) {
+            const found = after.tracks[t].clips.find((c) => c.id === linkedAudio.id);
+            if (found) {
+              linkedAudioResult = { track: t, clipId: found.id };
+              break;
+            }
+          }
+        }
         return {
           ok: true,
           editType: a.editType,
@@ -1704,6 +1759,7 @@ export function useEditorControl(): void {
           duration: placed.duration,
           speedPoints: placed.speed_points ?? null,
           trackCount: after?.tracks.length ?? 0,
+          linkedAudio: linkedAudioResult ?? null,
         };
       },
 
