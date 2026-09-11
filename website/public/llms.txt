@@ -1,0 +1,48 @@
+# Apelles
+
+> An AI-native, local, open-source video tool — three tabs, Edit / Motion / Colorist,
+> one app. An agent does the repetitive craft work — cutting to a transcript, roughing
+> in a motion-graphic explainer, colour science and mask setup — through the same real
+> controls a human uses, on the user's own machine. No cloud calls in the render path,
+> no credits, no account. AGPL-3.0, source at github.com/theashishmaurya/ApellesStudio.
+
+Apelles is built for two audiences by design, not as an afterthought: every capability
+below has both a GUI control and a matching MCP tool doing the identical underlying
+action, so an AI agent (via the Model Context Protocol) and a human can work the same
+project, live, and either one can hand off to the other mid-edit.
+
+## What it is
+
+- **Edit** — a real multi-track NLE: alpha-composited video/audio/subtitle tracks,
+  ripple/roll/slip/slide, transform + keyframes, transitions, captions, per-clip audio
+  mixing, transcript-based cutting (`editor_get_transcript`), export to video or FCPXML.
+- **Motion** — a scene-based motion-graphics builder on a Remotion engine: ten layer
+  primitives, on-canvas drag/resize/keyframe editing with real bezier easing, per-scene
+  render to video, auto-imported back into the project.
+- **Colorist** — a GPU (wgpu/WGSL) grading engine: primary/curves/wheels/LUT, shape and
+  AI-subject masks (SAM 2 + ViTMatte), depth masks and haze (Depth Anything V2),
+  interactive depth-driven relight, live scopes, closed-loop `match_to_reference`.
+
+## Why it exists
+
+The professional tools (DaVinci Resolve, Premiere) already do AI colour match, depth
+masks, and tracked subject masks locally — but they're closed, and their scripting APIs
+don't expose the parts that matter (Resolve's Python API can't drive Magic Mask or
+create a power window; Premiere's is closed entirely). Open-source editors treat grading
+as an afterthought. Apelles is local-first, open (AGPL-3.0), Rust-native (not a browser/
+WebCodecs app), and takes colour science and agent-drivability equally seriously.
+
+## For an agent working with this project
+
+- MCP server: `mcp/` in the repository — 150+ tools covering all three tabs.
+- Docs entry point: `docs/00-vision.md`, `docs/04-roadmap.md` (what's shipped vs.
+  planned), `docs/08-decisions.md` (why things are built the way they are).
+- Repository: https://github.com/theashishmaurya/ApellesStudio
+- Full site: /who-its-for (who this is for), /inside (the MCP surface, in detail)
+
+## Honest limits (as of this writing)
+
+- No public build yet — nothing is downloadable, source-only.
+- Runs on macOS with Apple Silicon; Windows is scoped but not built.
+- No Motion/Colorist screenshots exist publicly yet — capabilities are documented, not
+  shown, until real captures exist.

@@ -1,39 +1,47 @@
 # Apelles
 
-> **Working name — provisional.** AI-native, local, open-source **color grading** tool.
-> Not an editor. Grading only, done properly, with an agent that can actually drive it.
+**An AI-native, local, open-source video tool — three tabs, Edit / Motion / Colorist,
+one app.** The agent does the repetitive craft work — cutting to a transcript, roughing
+in a motion-graphic explainer, colour science and mask setup — the human keeps the
+judgement, the precision, and full manual control on a real GUI, across all three.
 
-The gap: DaVinci Resolve and Premiere do AI color match, depth masks, tracked subject
-masks — all locally — but they're closed, and their scripting APIs don't expose the
-color page anyway. Every open-source project in this space is an **editor** with grading
-bolted on as an afterthought. **Nobody is building an AI-native colorist tool.**
-
-Apelles is that tool: a GPU grading engine + a segmentation/depth/tracking AI layer + an
-MCP server so an agent can grade a shot, match it to a reference, and set up masks —
-with a real GUI for the human to do the parts an agent can't (place a bezier, nudge a
-tracker, judge a look).
+The gap: DaVinci Resolve and Premiere already do AI colour match, depth masks, tracked
+subject masks, transcript-based cutting — all locally — but they're closed, and their
+scripting APIs don't expose the parts that matter (Resolve's Python API can't create a
+power window or drive Magic Mask; Premiere's is closed entirely). Every open-source
+editor bolts grading on as an afterthought, and no open, local, agent-native tool takes
+colour science seriously. Apelles is a GPU-native compositor + grading engine + a
+segmentation/depth/tracking AI layer, all driven by both a real GUI **and** a matching
+[MCP](https://modelcontextprotocol.io) server (150+ tools) — so any MCP client, not a
+bespoke chat UI, can cut, grade, and animate on the exact same project a human is editing,
+live. Local-first: no cloud calls in the render path, no per-use fees, no account.
 
 ## Status
 
-**Phase 0 — scaffolding.** Reading `docs/`. Nothing runs yet.
+**Pre-1.0, actively developed.** All three tabs — Edit (multi-track NLE), Motion
+(scene-based motion graphics on Remotion), and Colorist (masks, scopes, AI relight,
+match-to-reference) — run today from source. No packaged installer yet; see
+[`docs/04-roadmap.md`](docs/04-roadmap.md) for what's shipped vs. in flight, and
+[`docs/CHANGELOG.md`](docs/CHANGELOG.md) for a session-by-session log.
+
+Run it: `npm run tauri:dev` from the repo root (needs Rust + Node; see
+[`docs/03-architecture.md`](docs/03-architecture.md) for the full stack).
 
 ## Layout
 
-> **As of D-039/D-040 (2026-09-02):** Apelles is becoming a 3-tab app
-> (Edit / Motion / Colorist) on a Cargo + npm **monorepo workspace**. The prose
-> above predates that — see `docs/08-decisions.md` D-039 and
-> `docs/notes/architecture-lock.md`.
+One repo, a Cargo + npm monorepo workspace (D-039). Full per-crate/per-package
+boundaries: [`crates/README.md`](crates/README.md).
 
 ```
-app/        the vendored RapidRAW fork (was the engine/ submodule — de-submoduled
-            in D-040, working tree at app/; Rust + wgpu + Tauri grading engine).
-            app/src (React/TS frontend) + app/src-tauri (the Rust crate)
-crates/     Apelles' own layered Rust crates (D-039) — apelles-types / apelles-timeline
-            / apelles-grade-model so far
-packages/   Apelles' frontend workspace — @apelles/{tokens,ui,bridge,editor,motion,shell}
-            + packages/motion-engine/ (the Remotion motion engine, moved in)
-ai/         Python sidecar — SAM 2, Depth Anything V2, CoTracker, color-matcher (planned)
-mcp/        MCP server exposing the grade graph to an agent
+app/        the vendored RapidRAW fork (Rust + wgpu + Tauri grading engine), owned code
+            now, not a tracked upstream drop (D-281). app/src (React/TS) + app/src-tauri.
+crates/     Apelles' own layered Rust crates — apelles-{types,gpu,media,timeline,
+            grade-model,project,motion,ai} — the fork shrinks as these absorb more.
+packages/   Apelles' frontend workspace — @apelles/{tokens,ui,bridge,shell,editor,motion,
+            motion-engine,player,inspector,history,debug}
+ai/         Python sidecars — SAM 2, Depth Anything V2, CoTracker, colour-matcher
+mcp/        the MCP server exposing the Edit/Motion/Colorist surface to an agent
+website/    apelles.studio's source (Astro, static) — not yet deployed
 docs/       everything: vision, PRD, scope, architecture, roadmap, research, decisions, bugs
 ```
 

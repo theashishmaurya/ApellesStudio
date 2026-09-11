@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-11** — **root `README.md` rewritten** — it still described the pre-D-039
+  "grading only, not an editor, Phase 0, nothing runs yet" framing from 2026-09-02, over
+  a week stale and actively misleading for anyone finding the repo (it's public on
+  GitHub). Rewritten to the current 3-tab framing, an honest pre-1.0 status, the accurate
+  `crates/`/`packages/` layout from `CLAUDE.md`, and the 150+-tool MCP server as a named
+  differentiator. Sourced from `docs/00-vision.md` and `website/src/data/product.ts`
+  (the site's own test-checked ground truth) rather than freehand, to avoid introducing
+  a second, driftable copy of the same claims. Also added `website/public/llms.txt`
+  (verified via `npm run build` that it ships to `dist/`) — a machine-readable summary
+  for AI crawlers/agents, on-brand for an AI-native tool and cheap to keep accurate since
+  it draws on the same source data.
 - **2026-09-11** — **docs fix: two stale "beta signup is a placeholder" references
   corrected** in `pre-launch-plan.md` and `04-roadmap.md`'s website section — the
   form moved off Formspree to a real, live FormSubmit.co endpoint on 2026-09-10
