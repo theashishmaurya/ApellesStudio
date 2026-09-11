@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **logged B-162: `hasAudio: true` doesn't mean Apelles can decode the audio
+  codec Apelles' playback pipeline can't decode.** `editor_import_media`
+  correctly probed a WebM/Opus source's audio, but `symphonia` (the D-049
+  playback decoder) has no Opus decoder at all — confirmed against its own
+  published feature list, not assumed — so the clip played silently muted
+  with zero indication anywhere in the app. Logged as an open engine gap
+  (needs either a new Opus-capable dependency or a transcode-at-import
+  pipeline stage, both real design calls); the one clip this session needed
+  was unblocked live via a direct `ffmpeg` re-encode to AAC, not a fix.
 - **2026-09-11** — **disk-space pass + git-worktree audit.** Reclaimed ~62GB
   (4.8GB free → 66GB+): cleared `target/` in the main repo and one worktree
   (~17GB, pure reproducible build cache), removed 5 of 6 stale
