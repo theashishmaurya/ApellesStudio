@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **every structured MCP parameter now has a real, validated schema
+  (D-310, roadmap item 7 done).** New `mcp/schemas.py`: 20 reusable Pydantic models
+  covering all 43 nested parameters across the 40 tools that have them, so each tool
+  publishes real JSON Schema with typed `properties` instead of a bare
+  `{"type": "object"}`, and a malformed argument fails at the tool boundary naming the
+  field. Every shape was read off its real consuming handler rather than its docstring —
+  a docstring-faithful schema would have rejected shapes that work today (the known
+  `centerX/centerY` radial geometry, and four more found the same way). `to_wire()`
+  re-emits only the caller's own keys, so the JSON posted to the control server is
+  byte-identical to the pre-change code (verified, 29/29 payloads), which bounds the
+  regression risk to validation alone.
+- **2026-09-12** — **logged B-164 (high): one slow op permanently bricks the Colorist MCP
+  surface for the session.** Found while trying to live-verify D-310 against the running
+  app. A dispatch timeout makes `control.rs` drop the registry's bridge claim, but a
+  registry announces only once at mount — so a still-healthy, still-mounted
+  `useChromaControl` never re-announces and every later Colorist op 503s with a message
+  blaming startup, on a window that has been up for an hour. Root-caused to
+  `control.rs:471`; very likely the real cause of **B-160** too. Not fixed — it lives in
+  `app/`, outside that change's scope. Also logged **B-165**/**B-166**, two
+  docstring-vs-behaviour gaps the schema work surfaced.
 - **2026-09-12** — **logged B-162: `hasAudio: true` doesn't mean Apelles can decode the audio
   codec Apelles' playback pipeline can't decode.** `editor_import_media`
   correctly probed a WebM/Opus source's audio, but `symphonia` (the D-049
