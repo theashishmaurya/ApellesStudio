@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-11** — **roadmap: logged that no structured MCP tool parameter has a
+  validated schema** (every `dict | None` arg across all 161 tools in `mcp/server.py`
+  relies on docstring prose only — see `04-roadmap.md` gap 7 in the "Make Colorist's
+  MCP tool surface AI-first" section). Found while building a sun-rays-through-window
+  mask effect: `add_component`'s docstring documents `geometry` for a radial sub-mask
+  as `{cx,cy,rx,ry,...}`, but the frontend also silently accepts an undocumented
+  `centerX/centerY/radiusX/radiusY` shape — a second accepted shape a real schema would
+  have made explicit. Nothing was broken (confirmed live after an initial wrong
+  diagnosis — see the roadmap entry for the retraction), but there's no schema for an
+  MCP client to validate against.
 - **2026-09-10** — **fixed B-158: switching the active Colorist shot now decodes the
   right frame with the clip's geometry applied.** Live-caught: a shot switch showed
   `A001_09091129_C026.MOV` (a `rotation: 180` clip) upside-down. `decode_and_install`

@@ -2974,7 +2974,31 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      specific, named frame reference rather than "whatever's live now") would
      let an agent's multi-step before/after sequence survive concurrent human
      scrubbing instead of silently measuring the wrong frame.
-  Not scoped into a D-NNN yet — sizing each of the 6 as its own tool/change
+  7. **No structured params anywhere in `mcp/server.py` carry a real, validated
+     schema — every nested argument across all 161 tools is a bare `dict |
+     None`, so the only field-level contract is docstring prose.** Confirmed by
+     grep, 2026-09-11: `geometry` (mask components), `shadows`/`midtones`/
+     `highlights`/`global_` (color-wheel wheels), `gap`, and every other
+     structured arg in the file are typed `dict | None` — zero uses of a
+     Pydantic model or any other schema mechanism. This surfaced live building
+     the sun-rays effect: `add_component`'s docstring documents `geometry` for
+     a radial sub-mask as `{cx,cy,rx,ry,rotation?,feather?}`, but the tool
+     actually accepts `centerX/centerY/radiusX/radiusY` too (the frontend
+     handler falls back `g.cx ?? g.centerX`, etc.) — a second, undocumented
+     accepted shape existing alongside the documented one is exactly what a
+     real schema would have made explicit (or a single canonical shape would
+     have prevented). Nothing here is broken today — every dict-shaped call in
+     this session eventually did what was asked — but there is no schema for
+     an MCP client to validate against, no autocomplete-style discoverability,
+     and a genuinely malformed dict (wrong key entirely, wrong type) fails
+     downstream in Rust/TS with whatever error that layer happens to produce,
+     not a clear "geometry must have cx/cy/rx/ry" at the tool boundary. Fix:
+     a Pydantic `BaseModel` per structured shape (`RadialGeometry`,
+     `LinearGeometry`, `ColorWheelChannel`, etc.), used as the parameter type
+     instead of `dict`, for real validation and a schema an MCP client can
+     introspect — starting with the mask/grade tools this session actually hit,
+     not a rewrite of all 161 at once.
+  Not scoped into a D-NNN yet — sizing each of the 7 as its own tool/change
   before committing to an implementation order.
 - ~~**Redundant "Apelles" label in the custom titlebar**~~ — **done, 2026-09-10.**
   Owner flagged live with a screenshot (macOS menu bar already shows the app name
