@@ -14,6 +14,12 @@ One or two lines per session. Detail lives in the decision it references.
   follow-up (moving the MCP server itself off Python entirely, onto a native
   Rust implementation) is in progress separately — see `docs/08-decisions.md`
   once that decision record lands.
+- **2026-09-12** — **fixed B-168: `editor_import_subtitles` raised `NameError`
+  on every call** and had done since 2026-09-08 — eleven caption-style
+  arguments its body forwards were never added to its signature (D-241/D-242
+  added them to `editor_set_caption_style` only). Found by D-312's parity
+  harness on its first run, before a line of the port existed, because that
+  harness is the first thing to ever actually *call* all 161 tools.
 - **2026-09-12** — **fixed B-167: Relight now honours a rotated/flipped
   clip's real transform when baking its depth/normal map**, instead of
   always warping as if rotation/flip were zero — the depth (and any baked

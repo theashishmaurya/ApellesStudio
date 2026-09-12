@@ -2120,6 +2120,17 @@ def editor_import_subtitles(
     align: str | None = None,
     position_x: float | None = None,
     position_y: float | None = None,
+    animation: str | None = None,
+    active_color: str | None = None,
+    spoken_color: str | None = None,
+    upcoming_color: str | None = None,
+    highlight_color: str | None = None,
+    highlight_opacity: float | None = None,
+    highlight_pad_x: float | None = None,
+    highlight_pad_y: float | None = None,
+    enter_secs: float | None = None,
+    enter_rise: float | None = None,
+    word_gap: float | None = None,
 ) -> str:
     """Import a SubRip (.srt) or WebVTT (.vtt) subtitle file as a new SUBTITLE
     track, with every cue placed and timed from the file.
@@ -2148,6 +2159,14 @@ def editor_import_subtitles(
     `bold`/`italic` (D-240) toggle weight/slant against `font` (or the
     catalogue default if `font` is omitted) — the same composition
     `editor_set_caption_style`'s own `bold`/`italic` use.
+
+    `animation` and the per-word arguments (`active_color`, `spoken_color`,
+    `upcoming_color`, `highlight_color`, `highlight_opacity`,
+    `highlight_pad_x`, `highlight_pad_y`, `enter_secs`, `enter_rise`,
+    `word_gap`) mean exactly what they mean on `editor_set_caption_style` — see
+    that tool for each one. They are here so an imported file can land already
+    animated in one call. Pass the literal string "default" to a per-word
+    colour to CLEAR it rather than set it.
 
     A caption is positioned entirely by its style — `position_x`/`position_y`
     are normalised 0–1 anchors, `size` is a fraction of the frame HEIGHT.
