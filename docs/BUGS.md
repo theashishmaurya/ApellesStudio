@@ -2925,37 +2925,6 @@ status: **open** (found 2026-09-12, during D-314's verification; deliberately no
   3. Report the missing model in `GET /health` (alongside the existing `ffmpeg` field, which solves this exact "a hard requirement is missing and you find out at job time" problem for the other dependency) so the Settings card can say so before anyone starts a job.
 - **workaround today:** `ai-env/.venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/Qwen3-VL-4B-Instruct-4bit')"` — after which `/understand_video` works normally.
 
-## B-178 — `cargo test -p apelles` has been red since B-171: four tests still assert the auto-placement B-171 deliberately removed
-
-status: **open** · severity: medium (the app crate's own test suite does not pass, so the
-next real regression in it has nothing to fail against) · area:
-`app/src-tauri/src/chroma/project.rs` (tests only)
-
-- **found:** 2026-09-13, D-315's MCP pass, running `cargo test -p apelles` as a
-  pre-commit check. **Not caused by that work** — verified by reverting every
-  `app/src-tauri` change to `1594ccf` and re-running: the same four fail.
-- **repro:** `cargo test -p apelles --lib chroma::project::tests` → 9 passed, 4 failed.
-- **the four:** `single_timeline_project_round_trips_through_get_and_set_unchanged`,
-  `track_commands_add_remove_and_move_clip_on_the_active_timeline`,
-  `track_resolution_opaque_top_wins_across_two_video_tracks`,
-  `link_and_unlink_commands_persist_on_the_active_timeline`.
-- **failure:** `index out of bounds: the len is 0 but the index is 0` at
-  `project.rs:1503` and equivalents — each one calls `new_project_in(...)` with one seed
-  path and then indexes `tl.tracks[0].clips[0]`.
-- **cause:** **B-171** (2026-09-12) stopped `new_project_in` auto-placing seed media on
-  the timeline. That was deliberate and correct; the timeline now starts empty. B-171
-  updated the six affected tests in `crates/apelles-project` and verified with
-  `cargo test -p apelles-project` — but four tests in the *app* crate relied on the same
-  auto-placement and were neither updated nor run (`cargo test -p apelles` is not in that
-  entry's "verified" line).
-- **fix (not done here — it belongs with whoever owns that contract):** give each of the
-  four an explicit clip the way B-171 did for the other six — place one onto the
-  timeline first, mirroring what a real drag from Sources does — rather than relying on
-  seed media appearing there by itself.
-- **the general lesson, which is the reason this is filed rather than just fixed:** a
-  behaviour change in `crates/apelles-project` has callers in `app/src-tauri`, and
-  verifying only the crate you edited is how a green branch ships a red workspace.
-
 ## B-177 — `npm run tauri:dev` never reached a running app: `build.rs` rewrote a watched resource on every build, so the dev watcher restarted the build forever
 
 status: fixed (2026-09-13, D-315) · severity: high (the repo's documented dev command
@@ -3103,3 +3072,47 @@ status: **fixed** (2026-09-13) · severity: medium (the app crate's own test sui
 - **cause:** B-171 (2026-09-12) stopped `new_project_in` auto-placing seed media on the timeline — deliberate and correct; the timeline now starts empty. B-171 updated the six affected tests in `crates/apelles-project` and verified with `cargo test -p apelles-project`, but four tests in the *app* crate relied on the same auto-placement and were neither updated nor run at the time (`cargo test -p apelles` wasn't in that entry's "verified" line).
 - **fix:** each of the four now places its clip(s) explicitly via `append_media_clip`, mirroring what B-171 did for the other six and what a real drag from Sources does.
 - **verified:** `cargo test -p apelles --lib chroma::project::tests` → 13 passed, 0 failed. Full `cargo test -p apelles --lib` → 307 passed, 0 failed. `cargo fmt`/`cargo clippy` clean on the edited lines (one pre-existing, unrelated clippy note elsewhere in the file).
+
+## B-179 — the AI-env health check deleted the 1.6 GB environment it was checking, because "I could not ask" was treated as "the answer was no"
+
+status: **fixed** (same commit) · severity: high (destroys a correct, fully-installed
+1.6 GB environment and forces a multi-minute rebuild) · area:
+`crates/apelles-ai/src/ai_env.rs`
+
+- **found:** 2026-09-13, D-315's own end-to-end run, live — not by a test.
+- **what happened.** The run killed leftover processes by matching a path pattern. That
+  pattern also matched `verify.py` running *through the venv's own interpreter*, so the
+  health check was killed mid-flight. `health()` returned an error, `attempt()` treated
+  that error like any other, re-installed, asked again, got killed again — and then took
+  the second stage of the self-heal: **wiped a complete, working, fully-verified 1.6 GB
+  venv and rebuilt it from scratch.** From the log:
+
+  ```
+  02:00:08 [INFO] [ai-env] Installed 91 packages in 8.81s
+  02:00:24 [WARN] [ai-env] the environment still does not verify after re-installing
+           (verify.py reported the environment unusable: ) — wiping ... and rebuilding
+  ```
+
+  Note the empty reason after the colon: the verifier was killed before it could write
+  anything, so the log could not even say why. That emptiness *was* the evidence, and it
+  was being thrown away.
+- **cause.** `health()` collapsed two genuinely different outcomes into one `Err(String)`:
+  *"`verify.py` ran and returned a verdict — `torch` will not import"* and *"`verify.py`
+  never returned a verdict."* Only the first is evidence about the environment. The second
+  is evidence about the check. The remedy for the first is destructive, so conflating them
+  means a flaky, killed, or unrunnable checker can destroy a perfectly good environment.
+- **fix.** `health()` now returns `Unhealthy::Broken` (a real verdict: the JSON `checks`
+  array names what failed) or `Unhealthy::Inconclusive` (killed by a signal, or exited
+  without the JSON it always writes when it actually runs). **Only `Broken` can trigger the
+  wipe.** `Inconclusive` fails the attempt so the ordinary backoff re-asks the question,
+  destroying nothing. Pinned by
+  `a_health_check_that_never_answered_is_inconclusive_not_broken`, which drives a real
+  Python that SIGKILLs itself, one that exits non-zero silently, and one that returns a
+  genuine verdict — the last of those being the control, without which the wipe path could
+  be dead code and the test would still pass.
+- **why no test caught it.** Every existing test exercised a verifier that *answered*. The
+  whole failure mode is a verifier that does not, and nothing in the suite had ever
+  produced one — the scenario only appeared when a real process got killed at a real
+  moment. The general lesson is the one worth keeping: a check whose failure path is
+  destructive needs a test for *not being able to run the check*, not just for the check
+  returning false.

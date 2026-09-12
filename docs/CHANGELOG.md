@@ -46,9 +46,10 @@ One or two lines per session. Detail lives in the decision it references.
   phase whose supervisor thread has already exited. **B-175:** `add_subject_mask` /
   `track_subject` reported `ok: true` for an AI call that failed — the error was swallowed
   into a GUI toast. **B-177:** `npm run tauri:dev` rebuild-looped forever in a fresh
-  checkout — `build.rs` re-copied a watched resource on every build. **B-178** filed,
-  not fixed: `cargo test -p apelles` has been red since B-171 (four tests in the app
-  crate still assume the auto-placement that change deliberately removed).
+  checkout — `build.rs` re-copied a watched resource on every build. **B-178** filed
+  here (fixed separately, see above): `cargo test -p apelles` had been red since B-171
+  (four tests in the app crate still assumed the auto-placement that change deliberately
+  removed).
 - **2026-09-12** — **D-314: both Python sidecars now run from ONE shared venv
   (`ai-env/.venv`) — 3.5 GB of duplicated wheels down to 1.8 GB.** They stay two
   separate PROCESSES; only the environments merged. D-189 split them because

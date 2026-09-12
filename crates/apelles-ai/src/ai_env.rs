@@ -48,6 +48,10 @@
 //!    re-install over the top first, and only if that still does not verify, wipe the
 //!    venv and rebuild. Two stages because stage one is the 25 s path and stage two is
 //!    the several-minute one; going straight to the wipe would be correct but wasteful.
+//!    The wipe fires only on a real *verdict* from `verify.py`, never on a health check
+//!    that failed to produce one — see [`Unhealthy`] and B-179.
+//!    The wipe fires only on a real *verdict* from `verify.py`, never on a health check
+//!    that failed to produce one — see [`Unhealthy`] and B-179.
 //!
 //! **Boundary.** This is in `apelles-ai` because that crate already owns the sidecar
 //! lifecycle, including the interpreter ladder ([`sidecar::resolve_shared_python`])
@@ -697,23 +701,62 @@ fn parse_progress(line: &str, status: &mut AiEnvStatus) -> bool {
 ///
 /// Deliberately not "does `.venv/bin/python` exist". The failure this exists for is a
 /// half-finished install, which passes every cheaper check there is.
-fn health(python: &Path, verify: &Path) -> Result<(), String> {
+/// Why [`health`] said no — and, crucially, whether it actually *knows*.
+///
+/// The distinction exists because the remedy for one of these is destructive. A
+/// [`Self::Broken`] environment has told us, through `verify.py`'s own verdict, that a
+/// package it needs will not import; wiping and rebuilding is the right answer. An
+/// [`Self::Inconclusive`] result means we never got a verdict — `verify.py` was killed,
+/// or could not be run at all — and the environment may be completely fine.
+///
+/// Found the hard way (B-179): the D-315 end-to-end run killed processes by a path
+/// pattern that also matched `verify.py` running through the venv, and the bootstrap
+/// dutifully deleted a perfectly good, fully-installed 1.6 GB environment and rebuilt it
+/// from scratch. Treating "I could not ask" as "the answer was no" is how a health check
+/// becomes the thing that destroys the health it is checking.
+#[derive(Debug)]
+enum Unhealthy {
+    /// `verify.py` ran and returned a verdict: something genuinely will not import.
+    Broken(String),
+    /// No verdict was obtained. May well be fine; retry, do not destroy.
+    Inconclusive(String),
+}
+
+impl Unhealthy {
+    fn message(&self) -> &str {
+        match self {
+            Unhealthy::Broken(m) | Unhealthy::Inconclusive(m) => m,
+        }
+    }
+}
+
+impl std::fmt::Display for Unhealthy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+fn health(python: &Path, verify: &Path) -> Result<(), Unhealthy> {
     if !python.is_file() {
-        return Err(format!("no interpreter at {}", python.display()));
+        // Definitive, and the commonest one: no venv yet at all.
+        return Err(Unhealthy::Broken(format!(
+            "no interpreter at {}",
+            python.display()
+        )));
     }
     let out = Command::new(python)
         .arg(verify)
         .arg("--json")
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("could not run {}: {e}", verify.display()))?;
+        .map_err(|e| Unhealthy::Inconclusive(format!("could not run {}: {e}", verify.display())))?;
 
     if out.status.success() {
         return Ok(());
     }
 
-    // verify.py prints one JSON object with a `checks` array; name the modules that
-    // actually failed rather than dumping the whole blob into a status line.
+    // `verify.py` prints one JSON object with a `checks` array. Its presence is what makes
+    // a failure *definitive*: the script ran, decided, and named what it could not import.
     let parsed: Option<serde_json::Value> = serde_json::from_slice(&out.stdout).ok();
     if let Some(v) = parsed
         && let Some(checks) = v.get("checks").and_then(|c| c.as_array())
@@ -724,14 +767,31 @@ fn health(python: &Path, verify: &Path) -> Result<(), String> {
             .filter_map(|c| c.get("label").and_then(|l| l.as_str()).map(str::to_string))
             .collect();
         if !failed.is_empty() {
-            return Err(format!("cannot import: {}", failed.join(", ")));
+            return Err(Unhealthy::Broken(format!(
+                "cannot import: {}",
+                failed.join(", ")
+            )));
         }
     }
-    Err(format!(
-        "{} reported the environment unusable: {}",
+
+    // No verdict: the script died before it could produce one. `code() == None` is a
+    // signal kill on Unix; anything else here means it exited without the JSON it always
+    // writes when it actually runs. Either way we do not know that the environment is
+    // bad — only that we failed to ask it.
+    let detail = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let how = match out.status.code() {
+        None => "was killed by a signal".to_string(),
+        Some(c) => format!("exited {c} without a verdict"),
+    };
+    Err(Unhealthy::Inconclusive(format!(
+        "{} {how}{}",
         verify.display(),
-        String::from_utf8_lossy(&out.stderr).trim()
-    ))
+        if detail.is_empty() {
+            String::new()
+        } else {
+            format!(": {detail}")
+        }
+    )))
 }
 
 // ---- one attempt ---------------------------------------------------------------------
@@ -745,9 +805,14 @@ fn health(python: &Path, verify: &Path) -> Result<(), String> {
 /// 2. Otherwise ensure an interpreter and a venv exist, and run the install. On a torn
 ///    venv this is the cheap repair: uv re-installs only what is missing, out of a
 ///    wheel cache that survived whatever killed the last attempt (25 s, measured).
-/// 3. Verify again. If it *still* does not import, the venv is not merely incomplete
-///    but broken, so wipe it and build from scratch — the expensive path, taken only
-///    once the cheap one has been proven insufficient.
+/// 3. Verify again. If `verify.py` returns a *verdict* that something still will not
+///    import, the venv is not merely incomplete but broken, so wipe it and build from
+///    scratch — the expensive path, taken only once the cheap one has been proven
+///    insufficient.
+///
+/// A health check that produced **no verdict** (killed, or unrunnable) is never grounds
+/// for the wipe — see [`Unhealthy`] and B-179. The attempt fails and the ordinary
+/// backoff re-asks the question.
 fn attempt(p: &AiEnvPaths, uv: &Path, notify: &dyn Fn(&AiEnvStatus)) -> Result<(), String> {
     let python = p.python();
 
@@ -760,33 +825,46 @@ fn attempt(p: &AiEnvPaths, uv: &Path, notify: &dyn Fn(&AiEnvStatus)) -> Result<(
         notify,
     );
 
-    if health(&python, &p.verify).is_ok() {
-        return Ok(());
+    match health(&python, &p.verify) {
+        Ok(()) => return Ok(()),
+        // We could not get a verdict at all. Do not build, and above all do not wipe:
+        // the environment is quite possibly fine and we simply failed to ask it. Fail
+        // the attempt so the ordinary backoff retries the *question* (B-179).
+        Err(e @ Unhealthy::Inconclusive(_)) => {
+            return Err(format!("could not check the AI environment: {e}"));
+        }
+        Err(Unhealthy::Broken(_)) => {}
     }
 
     build(p, uv, notify)?;
 
-    if let Err(why) = health(&python, &p.verify) {
-        log::warn!(
-            "[ai-env] the environment still does not verify after re-installing ({why}) — wiping {} and rebuilding from scratch",
-            p.venv().display()
-        );
-        set(
-            |s| {
-                s.phase = Phase::Repairing;
-                s.detail = Some(format!("repairing a damaged environment ({why})"));
-                s.packages_done = 0;
-                s.packages_total = 0;
-            },
-            notify,
-        );
-        std::fs::remove_dir_all(p.venv())
-            .map_err(|e| format!("could not remove the damaged venv: {e}"))?;
-        build(p, uv, notify)?;
-        health(&python, &p.verify)?;
+    match health(&python, &p.verify) {
+        Ok(()) => Ok(()),
+        Err(e @ Unhealthy::Inconclusive(_)) => {
+            // Same rule after the re-install. The packages are very likely in place now;
+            // one unanswered question is not grounds for deleting 1.6 GB.
+            Err(format!("could not check the AI environment: {e}"))
+        }
+        Err(why @ Unhealthy::Broken(_)) => {
+            log::warn!(
+                "[ai-env] the environment still does not verify after re-installing ({why}) — wiping {} and rebuilding from scratch",
+                p.venv().display()
+            );
+            set(
+                |s| {
+                    s.phase = Phase::Repairing;
+                    s.detail = Some(format!("repairing a damaged environment ({why})"));
+                    s.packages_done = 0;
+                    s.packages_total = 0;
+                },
+                notify,
+            );
+            std::fs::remove_dir_all(p.venv())
+                .map_err(|e| format!("could not remove the damaged venv: {e}"))?;
+            build(p, uv, notify)?;
+            health(&python, &p.verify).map_err(|e| e.message().to_string())
+        }
     }
-
-    Ok(())
 }
 
 /// The three uv steps: interpreter, environment, packages.

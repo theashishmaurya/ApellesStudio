@@ -377,7 +377,11 @@ fn the_dev_fallback_finds_the_repos_own_ai_env() {
 fn health_fails_when_the_interpreter_is_not_there() {
     let dir = tmpdir("nohealth");
     let err = health(&dir.join(".venv/bin/python"), &dir.join("verify.py")).unwrap_err();
-    assert!(err.contains("no interpreter"), "got {err:?}");
+    assert!(
+        matches!(err, Unhealthy::Broken(_)),
+        "a missing interpreter is a definitive verdict, not an inconclusive one: {err:?}"
+    );
+    assert!(err.message().contains("no interpreter"), "got {err:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -430,11 +434,15 @@ fn health_rejects_a_venv_that_starts_but_cannot_import() {
     // ...and health still refuses it, naming what it could not import.
     let err = health(&python, &real.verify).unwrap_err();
     assert!(
-        err.contains("cannot import"),
+        matches!(err, Unhealthy::Broken(_)),
+        "verify.py returned a real verdict, so this must be Broken: {err:?}"
+    );
+    assert!(
+        err.message().contains("cannot import"),
         "an empty venv must be reported as unimportable, got {err:?}"
     );
     assert!(
-        err.contains("torch"),
+        err.message().contains("torch"),
         "the message should name a module, got {err:?}"
     );
 
@@ -769,4 +777,66 @@ fn retry_now_declines_only_while_an_attempt_is_in_flight() {
     if let Ok(mut s) = shared().status.lock() {
         *s = restore;
     }
+}
+
+/// **B-179.** A health check that never returned a verdict must NOT be treated as "the
+/// environment is broken", because the remedy for broken is to delete 1.6 GB and rebuild.
+///
+/// Found live: D-315's end-to-end run killed processes by a path pattern that also
+/// matched `verify.py` running through the venv, and the bootstrap dutifully wiped a
+/// fully-installed, perfectly good environment and rebuilt it from scratch. "I could not
+/// ask" is not "the answer was no" — a health check that destroys the health it is
+/// checking is worse than no health check at all.
+#[test]
+fn a_health_check_that_never_answered_is_inconclusive_not_broken() {
+    let Some(python3) = sidecar::which("python3") else {
+        eprintln!("skipping: no python3 on PATH");
+        return;
+    };
+    let dir = tmpdir("inconclusive");
+
+    // Dies the way a killed verifier does: no JSON, no exit code at all.
+    let killed = dir.join("killed.py");
+    std::fs::write(
+        &killed,
+        "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n",
+    )
+    .unwrap();
+    let err = health(&python3, &killed).unwrap_err();
+    assert!(
+        matches!(err, Unhealthy::Inconclusive(_)),
+        "a signal-killed verifier gives no verdict, so it must be Inconclusive: {err:?}"
+    );
+    assert!(
+        err.message().contains("killed by a signal"),
+        "the message should say how it died, got {err:?}"
+    );
+
+    // Exiting non-zero without the JSON verdict it always writes is equally unknowable.
+    let mute = dir.join("mute.py");
+    std::fs::write(&mute, "import sys\nsys.exit(3)\n").unwrap();
+    assert!(
+        matches!(
+            health(&python3, &mute).unwrap_err(),
+            Unhealthy::Inconclusive(_)
+        ),
+        "no verdict means Inconclusive whatever the exit code"
+    );
+
+    // The control: a verifier that DOES answer is a real verdict, or the wipe path
+    // could never fire at all and the self-heal would be dead code.
+    let verdict = dir.join("verdict.py");
+    std::fs::write(
+        &verdict,
+        "import json, sys\njson.dump({\"ok\": False, \"checks\": [{\"label\": \"torch\", \"ok\": False}]}, sys.stdout)\nsys.exit(1)\n",
+    )
+    .unwrap();
+    let err = health(&python3, &verdict).unwrap_err();
+    assert!(
+        matches!(err, Unhealthy::Broken(_)),
+        "a verifier that answered must be Broken: {err:?}"
+    );
+    assert!(err.message().contains("torch"), "got {err:?}");
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

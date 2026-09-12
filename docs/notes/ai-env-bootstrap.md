@@ -171,6 +171,20 @@ That is the point: a Rust-side copy of the module list would drift from the bash
 one, and drift here means the app reporting `ready` for an environment a sidecar then
 dies importing from.
 
+**A verdict is required before anything is destroyed (B-179).** `health()` distinguishes
+*"`verify.py` ran and said `torch` will not import"* from *"`verify.py` never returned a
+verdict"* — killed by a signal, or exited without the JSON it always writes when it really
+runs. Only the first can trigger the wipe. The second fails the attempt and lets the
+ordinary backoff re-ask the question, destroying nothing.
+
+That distinction is not hypothetical: D-315's own end-to-end run killed processes by a
+path pattern that also matched `verify.py` running through the venv, and the first version
+of this code responded by deleting a complete, working, fully-verified 1.6 GB environment
+and rebuilding it. The log line could not even say why — the verifier had been killed
+before it could write a reason, and that empty reason was exactly the signal being thrown
+away. A check whose failure path is destructive has to tell "the answer was no" apart from
+"I could not ask".
+
 Healing is **staged**, because the two repairs cost very different amounts:
 
 1. Re-install over the top. On a torn venv this is the 25-second cache-backed path and
