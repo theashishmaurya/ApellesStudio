@@ -126,6 +126,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { CaretLeftIcon, KeyboardIcon, PlugsConnectedIcon, SidebarSimpleIcon } from '@phosphor-icons/react';
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
 import { useHistoryStore, type HistoryEntry } from '@apelles/history';
@@ -214,6 +215,24 @@ export function Shell({
 }: ShellProps) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [mcpDialogOpen, setMcpDialogOpen] = useState(false);
+
+  // The native Help menu's "Keyboard Shortcuts" / "MCP" items (`lib.rs`'s
+  // `.menu()`/`.on_menu_event()`) are a second opener for these SAME two
+  // dialogs, not a separate surface — a plain Tauri event in, the identical
+  // `setXOpen(true)` a chrome-bar click already does. No `projectOpen` gate
+  // here deliberately: a native menu item can't hide itself per-view the way
+  // the chrome-bar icons do, and both dialogs already render unconditionally
+  // below (only their own `open` state controls visibility).
+  useEffect(() => {
+    const unlistenPromises = [
+      listen('menu://keyboard-shortcuts', () => setShortcutsOpen(true)),
+      listen('menu://connect-mcp', () => setMcpDialogOpen(true)),
+    ];
+    return () => {
+      unlistenPromises.forEach((p) => p.then((unlisten) => unlisten()));
+    };
+  }, []);
+
   const activeTab = useShellStore((s) => s.activeTab);
   const setActiveTab = useShellStore((s) => s.setActiveTab);
   const wgpuSurfaceActive = useShellStore((s) => s.wgpuSurfaceActive);

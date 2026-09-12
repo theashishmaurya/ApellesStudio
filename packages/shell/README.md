@@ -125,6 +125,24 @@ and both are the reason this dialog is not a static string:
 copy-pasted straight into a config file, and a wrong key fails silently in the
 client rather than here.
 
+## The native Help menu is a second opener, not a second surface
+
+Apelles had never customized its menu bar before (owner, live, clicking the
+macOS Help menu: "nothing in help actually" — it was Tauri's own
+`Menu::default()`, whose Help submenu carries zero items on macOS). `lib.rs`
+now appends "Keyboard Shortcuts" and "MCP" to that submenu and, on click,
+emits a plain Tauri event (`menu://keyboard-shortcuts` / `menu://connect-mcp`)
+— `Shell.tsx` listens for both and calls the exact same `setShortcutsOpen`/
+`setMcpDialogOpen` a chrome-bar click does. Neither dialog gates on
+`projectOpen` for this path: they already render unconditionally (only their
+own `open` prop controls visibility), and a native menu item has no per-view
+way to hide itself the way the chrome-bar icons do — so both are reachable
+from the launcher too, which is fine (the MCP server is already running by
+then; the shortcuts list is scope-agnostic). `Shell.menuEvents.dom.test.tsx`
+pins the wiring by mocking `listen` to capture each handler and firing it
+directly, since there is no real Tauri IPC bridge — or native menu bar at
+all — under jsdom.
+
 ## Deps
 
 `react` + `zustand` + `@phosphor-icons/react` + `@tauri-apps/api` + `@tauri-apps/plugin-os`

@@ -63,6 +63,9 @@ vi.mock('@tauri-apps/api/window', () => ({
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: () => Promise.resolve(undefined),
 }));
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: () => Promise.resolve(() => {}),
+}));
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   save: () => Promise.resolve(null),
 }));

@@ -4,6 +4,10 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **the native Help menu now has real items** ("Keyboard
+  Shortcuts", "MCP") instead of macOS's empty default — both just open the
+  same dialogs the chrome bar already does (`app/src-tauri/src/lib.rs`'s new
+  `.menu()`/`.on_menu_event()`, a plain event `Shell.tsx` listens for).
 - **2026-09-12** — **B-169: D-313's MCP sidecar could never have started on its
   own — nothing in the app's build built the binary the app spawns.** It
   crash-looped every ~0.5s from the moment it merged, on a *pre-D-313*

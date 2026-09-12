@@ -67,6 +67,7 @@ use mozjpeg_rs::{Encoder, Preset};
 use rgb::{FromSlice, RGBA8};
 
 use serde_json::Value;
+use tauri::menu::{HELP_SUBMENU_ID, Menu, MenuItem};
 use tauri::{Emitter, Manager, ipc::Response};
 use tempfile::NamedTempFile;
 use tokio::sync::Mutex as TokioMutex;
@@ -1830,6 +1831,50 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(PinchZoomDisablePlugin)
+        // Apelles never customized the native menu bar before this (owner, live,
+        // clicking the macOS Help menu: "nothing in help actually") — the app had been
+        // running on Tauri's own `Menu::default()` the whole time, whose Help submenu on
+        // macOS carries zero items (its one predefined entry, About, is explicitly
+        // `#[cfg(not(target_os = "macos"))]`, since mac already puts About in the app's
+        // own name menu). This appends two real entries to that Help submenu rather than
+        // replacing the default wholesale, so every standard item (Quit, Undo/Redo,
+        // Cut/Copy/Paste, Window management, About) is still exactly what Tauri would
+        // have built anyway. Both just re-open dialogs that already exist and are driven
+        // from the chrome bar (`packages/shell/src/Shell.tsx`'s Keyboard Shortcuts /
+        // Connect-to-MCP icons) — this is a second opener for the same state, not a new
+        // surface, so it emits a plain event for the frontend to react to rather than
+        // owning any dialog logic here.
+        .menu(|app_handle| {
+            let menu = Menu::default(app_handle)?;
+            if let Some(help) = menu.get(HELP_SUBMENU_ID)
+                && let Some(help) = help.as_submenu()
+            {
+                help.append(&MenuItem::with_id(
+                    app_handle,
+                    "help_keyboard_shortcuts",
+                    "Keyboard Shortcuts",
+                    true,
+                    None::<&str>,
+                )?)?;
+                help.append(&MenuItem::with_id(
+                    app_handle,
+                    "help_connect_mcp",
+                    "MCP",
+                    true,
+                    None::<&str>,
+                )?)?;
+            }
+            Ok(menu)
+        })
+        .on_menu_event(|app_handle, event| match event.id().as_ref() {
+            "help_keyboard_shortcuts" => {
+                let _ = app_handle.emit("menu://keyboard-shortcuts", ());
+            }
+            "help_connect_mcp" => {
+                let _ = app_handle.emit("menu://connect-mcp", ());
+            }
+            _ => {}
+        })
         .on_window_event(|window, event| if let tauri::WindowEvent::Resized(size) = event {
             let state = window.state::<AppState>();
             if let Some(ctx) = state.gpu_context.lock().unwrap().as_ref()
