@@ -213,11 +213,14 @@ chroma/
     src-tauri/          ← the Tauri Rust crate, Cargo package `apelles` (was `RapidRAW`
                           until D-265 did the rename D-040 had deferred)
   crates/               ← Apelles' own layered Rust crates (thin-shell/fat-core, D-039)
-                          9 exist, 7 of them real+load-bearing: apelles-{types,gpu,media,
+                          9 exist, 8 of them real+load-bearing: apelles-{types,gpu,media,
                           timeline,grade-model,project,motion,ai} (waves 1-3, 2026-09-05)
-                          + apelles-mcp (D-312, the MCP tool surface, mid-port from
-                          mcp/server.py). Still future: apelles-grade, apelles-compositor,
-                          apelles-agent. Live table + per-crate boundaries: crates/README.md
+                          + apelles-mcp (D-312, the MCP tool surface — port complete, all
+                          161 tools pass the parity harness against mcp/server.py; the
+                          MIGRATION off Python is a separate, not-yet-made call, see
+                          docs/notes/mcp-rust-port.md). Still future: apelles-grade,
+                          apelles-compositor, apelles-agent. Live table + per-crate
+                          boundaries: crates/README.md
   packages/             ← Apelles' frontend workspace — @apelles/{tokens,ui,bridge,shell,
                           editor,motion,motion-engine,player,inspector,history,debug}
     motion-engine/      ← the Remotion motion engine, moved in from videoAgent/engine/motion/
