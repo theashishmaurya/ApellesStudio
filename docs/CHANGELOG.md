@@ -14,20 +14,19 @@ One or two lines per session. Detail lives in the decision it references.
   follow-up (moving the MCP server itself off Python entirely, onto a native
   Rust implementation) is in progress separately — see `docs/08-decisions.md`
   once that decision record lands.
-- **2026-09-12** — **started D-312: the MCP server moves from Python to Rust
-  (`crates/apelles-mcp`, on `rmcp` 3.3).** The test harness came first and is
-  the gate: `parity/capture.py` records what the real `mcp/server.py` publishes
-  and emits for all 161 tools (237 calls, against a stub control server, no app
-  needed, byte-identical across runs), and `cargo test -p apelles-mcp` replays
-  that corpus against the Rust server through a real MCP session. **9 tools
-  **all 161 tools are ported and passing the gate** — Colorist 42, Edit 73,
-  Motion 37, debug 9; both servers publish an identical tool set over a real
-  MCP session, and 16 read-only tools were additionally diffed against the
-  running app. The Rust server has NOT yet been used for real work, so
-  `mcp/server.py` stays as the fallback and the corpus's reference; retiring
-  it is a separate call. Details and the remaining open items are in
-  `docs/notes/mcp-rust-port.md`; `mcp/server.py` is untouched and is still
-  the server in use.
+- **2026-09-12** — **D-312: the MCP server is reimplemented in Rust
+  (`crates/apelles-mcp`, on `rmcp` 3.3), replacing `mcp/server.py`.** The test
+  harness came first and is the gate: `parity/capture.py` records what the real
+  Python server publishes and emits for all 161 tools (237 calls, against a stub
+  control server, no app needed, byte-identical across runs), and
+  `cargo test -p apelles-mcp` replays that corpus against the Rust server
+  through a real MCP session. **All 161 tools are ported and passing** —
+  Colorist 42, Edit 73, Motion 37, debug 9 — with both servers publishing an
+  identical tool set over a real MCP session, and 16 read-only tools
+  additionally diffed field-by-field against the running app. The Rust server
+  has NOT been used for real work yet, so `mcp/server.py` stays as the fallback
+  and as the corpus's reference; retiring it is a separate, deliberate call.
+  Divergences and open items: `docs/notes/mcp-rust-port.md`.
 - **2026-09-12** — **fixed B-168: `editor_import_subtitles` raised `NameError`
   on every call** and had done since 2026-09-08 — eleven caption-style
   arguments its body forwards were never added to its signature (D-241/D-242
