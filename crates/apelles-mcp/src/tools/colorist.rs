@@ -13,10 +13,11 @@ use rmcp::model::CallToolResult;
 use rmcp::{ErrorData, tool, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde_json::{Value, json};
 
 use crate::args::WireArgs;
 use crate::render;
-use crate::schemas::{ColorWheelChannel, CurvePoint, MaskGeometry};
+use crate::schemas::{ColorWheelChannel, CurvePoint, MaskGeometry, Roi};
 use crate::server::ApellesMcp;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -59,6 +60,29 @@ pub struct AddComponentArgs {
     pub geometry: Option<MaskGeometry>,
 }
 
+/// How long between `export_progress` polls while a video export runs.
+const EXPORT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// `{ok, error, ...result}` — the envelope with its `result` object lifted up a level.
+///
+/// Two tools answer this way (`save_grade`, and `export`'s LUT bake) because what the
+/// caller wants is the resolved path, and burying it one level down under `result` makes
+/// the answer read like a status report rather than the filename it actually is.
+fn flatten_result(env: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    out.insert("ok".into(), env.get("ok").cloned().unwrap_or(Value::Null));
+    out.insert(
+        "error".into(),
+        env.get("error").cloned().unwrap_or(Value::Null),
+    );
+    if let Some(Value::Object(result)) = env.get("result") {
+        for (k, v) in result {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    Value::Object(out)
+}
+
 // Argument defaults. These are the Python signature's own defaults, reproduced so an
 // omitted argument reaches the frontend with the same value it always did — the one kind
 // of default that legitimately lives on this side: the caller's, not the app's.
@@ -81,6 +105,38 @@ fn default_depth_track_step() -> i64 {
 /// Video Depth Anything's own inference resolution.
 fn default_depth_track_input_size() -> i64 {
     518
+}
+
+fn default_apply_haze_amount() -> f64 {
+    1.0
+}
+
+fn default_apply_haze_protect_subject() -> bool {
+    true
+}
+
+fn default_apply_haze_tracked() -> bool {
+    false
+}
+
+fn default_add_relight_light_kind() -> String {
+    "key".to_string()
+}
+
+fn default_match_to_reference_strength() -> f64 {
+    1.0
+}
+
+fn default_match_to_reference_max_iters() -> i64 {
+    4
+}
+
+fn default_match_to_reference_tolerance() -> f64 {
+    3.0
+}
+
+fn default_export_kind() -> String {
+    "prores".to_string()
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -210,6 +266,180 @@ pub struct AddSubjectMaskArgs {
     pub bbox: Option<Vec<f64>>,
     #[serde(default = "default_add_subject_mask_mode")]
     pub mode: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetPrimaryArgs {
+    #[serde(default)]
+    pub exposure: Option<f64>,
+    #[serde(default)]
+    pub contrast: Option<f64>,
+    #[serde(default)]
+    pub highlights: Option<f64>,
+    #[serde(default)]
+    pub shadows: Option<f64>,
+    #[serde(default)]
+    pub whites: Option<f64>,
+    #[serde(default)]
+    pub blacks: Option<f64>,
+    #[serde(default)]
+    pub temperature: Option<f64>,
+    #[serde(default)]
+    pub tint: Option<f64>,
+    #[serde(default)]
+    pub saturation: Option<f64>,
+    #[serde(default)]
+    pub vibrance: Option<f64>,
+    #[serde(default)]
+    pub dehaze: Option<f64>,
+    #[serde(default)]
+    pub clarity: Option<f64>,
+    #[serde(default)]
+    pub structure: Option<f64>,
+    #[serde(default)]
+    pub sharpness: Option<f64>,
+    /// camelCase in the published parameter list too, not a Rust-side rename: this is
+    /// the name every existing caller sends, and the wire key is the same.
+    #[serde(rename = "vignetteAmount", default)]
+    pub vignette_amount: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SaveGradeArgs {
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetActiveShotArgs {
+    #[serde(default)]
+    pub index: Option<i64>,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetProjectSettingsArgs {
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub height: Option<i64>,
+    #[serde(default)]
+    pub fps: Option<f64>,
+    #[serde(default)]
+    pub color_space: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetMaskAdjustArgs {
+    pub mask_id: String,
+    #[serde(default)]
+    pub exposure: Option<f64>,
+    #[serde(default)]
+    pub contrast: Option<f64>,
+    #[serde(default)]
+    pub highlights: Option<f64>,
+    #[serde(default)]
+    pub shadows: Option<f64>,
+    #[serde(default)]
+    pub whites: Option<f64>,
+    #[serde(default)]
+    pub blacks: Option<f64>,
+    #[serde(default)]
+    pub temperature: Option<f64>,
+    #[serde(default)]
+    pub tint: Option<f64>,
+    #[serde(default)]
+    pub saturation: Option<f64>,
+    #[serde(default)]
+    pub vibrance: Option<f64>,
+    #[serde(default)]
+    pub dehaze: Option<f64>,
+    #[serde(default)]
+    pub clarity: Option<f64>,
+    #[serde(default)]
+    pub structure: Option<f64>,
+    #[serde(default)]
+    pub sharpness: Option<f64>,
+    #[serde(default)]
+    pub blur: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplyHazeArgs {
+    #[serde(default = "default_apply_haze_amount")]
+    pub amount: f64,
+    #[serde(default = "default_apply_haze_protect_subject")]
+    pub protect_subject: bool,
+    #[serde(default = "default_apply_haze_tracked")]
+    pub tracked: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddRelightLightArgs {
+    #[serde(default = "default_add_relight_light_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    #[serde(default)]
+    pub radius: Option<f64>,
+    #[serde(default)]
+    pub intensity: Option<f64>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetRelightLightArgs {
+    pub id: String,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    #[serde(default)]
+    pub radius: Option<f64>,
+    #[serde(default)]
+    pub intensity: Option<f64>,
+    #[serde(default)]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub visible: Option<bool>,
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MatchToReferenceArgs {
+    pub reference: String,
+    #[serde(default = "default_match_to_reference_strength")]
+    pub strength: f64,
+    #[serde(default = "default_match_to_reference_max_iters")]
+    pub max_iters: i64,
+    #[serde(default = "default_match_to_reference_tolerance")]
+    pub tolerance: f64,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RequestHumanArgs {
+    pub reason: String,
+    #[serde(default)]
+    pub roi: Option<Roi>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExportArgs {
+    #[serde(default = "default_export_kind")]
+    pub kind: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub from_frame: Option<i64>,
+    #[serde(default)]
+    pub to_frame: Option<i64>,
+    #[serde(default)]
+    pub quality: Option<i64>,
 }
 
 #[tool_router(router = colorist_router, vis = "pub")]
@@ -831,6 +1061,461 @@ impl ApellesMcp {
             .op_with("add_subject_mask", crate::AI_MASK_TIMEOUT_MS, args)
             .await?;
         Ok(render::result(&env))
+    }
+
+    #[tool(
+        name = "set_primary",
+        description = r#"Set primary (whole-image) grade knobs. Only the args you pass change;
+    the rest are left as-is. Ranges roughly match the app's sliders
+    (exposure ~ -5..5 stops, most others -100..100). Returns the rendered frame
+    plus the new scope summary. Grade by the numbers: call `inspect_color` before
+    and after and reason from the scope values, not the thumbnail. Never claim a
+    result without citing a scope value or a sampled region."#
+    )]
+    pub async fn set_primary(
+        &self,
+        Parameters(p): Parameters<SetPrimaryArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Every knob the caller supplied, and only those, as one `patch` the handler
+        // merges into the primary grade — which is what makes "nudge exposure and leave
+        // the other fourteen alone" a single call. `vignetteAmount` is camelCase in the
+        // published parameter list too, not a rename: that is the name callers send.
+        let patch = WireArgs::new()
+            .put("exposure", p.exposure)
+            .put("contrast", p.contrast)
+            .put("highlights", p.highlights)
+            .put("shadows", p.shadows)
+            .put("whites", p.whites)
+            .put("blacks", p.blacks)
+            .put("temperature", p.temperature)
+            .put("tint", p.tint)
+            .put("saturation", p.saturation)
+            .put("vibrance", p.vibrance)
+            .put("dehaze", p.dehaze)
+            .put("clarity", p.clarity)
+            .put("structure", p.structure)
+            .put("sharpness", p.sharpness)
+            .put("vignetteAmount", p.vignette_amount);
+        let env = self
+            .op(
+                "set_primary",
+                WireArgs::new().set("patch", patch.into_value()),
+            )
+            .await?;
+        Ok(render::result(&env))
+    }
+
+    #[tool(
+        name = "save_grade",
+        description = r#"Write the current grade to a grade.json file on disk. Omit `path` to save
+    beside the source clip as <name>.grade.json.
+
+    Static mask mattes are externalised to a sibling <name>.mattes/ folder (the
+    JSON keeps a {"$matte": ...} reference), and a tracked-matte folder is
+    referenced, not copied — so moving the project needs its .chroma/mattes/ dir
+    too. The result is small and diff-able: commit grade.json + its .mattes/ dir
+    to the project repo. A one-knob change is a one-line diff.
+
+    Returns {path, matteFiles, trackDirs}. It is a local file the user asked for
+    — no confirm-before-write; the resolved path is always returned."#
+    )]
+    pub async fn save_grade(
+        &self,
+        Parameters(p): Parameters<SaveGradeArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // An empty `path` is omitted, not sent: the handler's own "beside the source
+        // clip" default is what an absent key selects.
+        let args = WireArgs::new().put("path", p.path.filter(|s| !s.is_empty()));
+        let env = self.op("save_grade", args).await?;
+        Ok(render::json_text(&flatten_result(&env)))
+    }
+
+    #[tool(
+        name = "set_active_shot",
+        description = r#"Switch the active shot by 0-based `index` (from list_shots) or by `path`
+    / filename. Saves the current shot's grade, loads the target, restores its
+    grade (neutral if it has none), and scopes the activity feed to it. Grade
+    each shot in turn: set_active_shot(1) -> grade -> set_active_shot(2) -> grade.
+    Returns the target shot's rendered frame + the updated shot list."#
+    )]
+    pub async fn set_active_shot(
+        &self,
+        Parameters(p): Parameters<SetActiveShotArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().put("index", p.index).put("path", p.path);
+        if args.is_empty() {
+            // Answered here rather than sent: with neither argument there is no shot to
+            // switch to, and the app would have to invent one. Rendered through the same
+            // renderer as a real answer so the caller parses one shape, not two.
+            return Ok(render::result(&json!({
+                "ok": false,
+                "error": "pass index or path",
+                "result": null,
+            })));
+        }
+        let env = self.op("set_active_shot", args).await?;
+        Ok(render::result(&env))
+    }
+
+    #[tool(
+        name = "set_project_settings",
+        description = r#"Set the open project's output spec (D-038): one resolution / frame rate /
+    colour space for the whole (possibly multi-shot) project instead of deriving
+    everything from whichever clip is loaded.
+
+    Partial merge — only the arguments you pass are changed; the rest are left
+    as-is. A project with no settings behaves exactly as clip-derived (the
+    default). Export uses width+height (the graded composite is resized to it as
+    the final step) and fps (encoder timebase). `color_space` (`rec709` /
+    `rec2020` / `dci-p3` / `srgb`) is **stored + surfaced only** — a real
+    colour-managed pipeline is D-004, not this. Returns the merged settings.
+
+    Needs a saved project loaded (open_project / new_project first)."#
+    )]
+    pub async fn set_project_settings(
+        &self,
+        Parameters(p): Parameters<SetProjectSettingsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("width", p.width)
+            .put("height", p.height)
+            .put("fps", p.fps)
+            .put("colorSpace", p.color_space);
+        if args.is_empty() {
+            // A partial merge of nothing would be a no-op the caller could not tell from
+            // a successful change, so it is refused here rather than sent. Note this one
+            // answers with a bare `{error}` — no `ok` key — which is what the Python did.
+            return Ok(render::json_text(&json!({
+                "error": "pass at least one of width, height, fps, color_space",
+            })));
+        }
+        let env = self.op("set_project_settings", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "set_mask_adjust",
+        description = r#"Grade *through* a mask — same knobs as set_primary, applied only where
+    the mask (mask_id, from list_masks) is. Only passed args change.
+
+    `blur` (0–100, mask-only) defocuses the masked region: the shader blends it
+    toward a pre-blurred (~40px) copy of the frame, weighted by mask * blur/100.
+    Use it to soften a background behind a subtractive-subject / depth mask
+    ("blur the background"); `apply_haze` already dials it in.
+
+    Grade by the numbers: sample the masked region (`sample_region`) before and
+    after and cite the values; don't eyeball the matted area. For blur, a
+    high-frequency edge under the mask should lose local contrast."#
+    )]
+    pub async fn set_mask_adjust(
+        &self,
+        Parameters(p): Parameters<SetMaskAdjustArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // `set_primary`'s knobs, minus `vignetteAmount` and plus `blur`, which only
+        // means anything through a mask. `mask_id` names the target and is NOT part of
+        // the patch.
+        let patch = WireArgs::new()
+            .put("exposure", p.exposure)
+            .put("contrast", p.contrast)
+            .put("highlights", p.highlights)
+            .put("shadows", p.shadows)
+            .put("whites", p.whites)
+            .put("blacks", p.blacks)
+            .put("temperature", p.temperature)
+            .put("tint", p.tint)
+            .put("saturation", p.saturation)
+            .put("vibrance", p.vibrance)
+            .put("dehaze", p.dehaze)
+            .put("clarity", p.clarity)
+            .put("structure", p.structure)
+            .put("sharpness", p.sharpness)
+            .put("blur", p.blur);
+        let args = WireArgs::new()
+            .set("mask_id", p.mask_id)
+            .set("patch", patch.into_value());
+        let env = self.op("set_mask_adjust", args).await?;
+        Ok(render::result(&env))
+    }
+
+    #[tool(
+        name = "apply_haze",
+        description = r#"Depth-weighted atmospheric haze on the background — one action, pushes the
+    subject forward.
+
+    Adds a "Depth Haze" mask: the matte is a full-range depth mask, inverted, so
+    its weight tracks distance (the subject ~0, the far wall ~max); the grade is
+    negative dehaze (adds haze in-shader) + desaturation + a lifted black point
+    and shadows + a background defocus (per-mask blur, D-027), all scaled by
+    `amount` (1.0 = default, 0.4 subtle, 1.6 heavy).
+
+    protect_subject (default true): a tracked ai-subject mask's own grade
+    composites on top and keeps the subject punchy, so nothing extra is needed.
+    Caveat: a subject physically in the far-depth band still picks up some haze.
+
+    Depth: by default a single-frame Depth Anything V2 bake (static — fine for a
+    locked-off shot; flickers on a moving camera). `tracked=true` (video only)
+    also kicks off a `depth_track` — a per-frame temporally-consistent depth map
+    (Video Depth Anything) that the render then follows frame-by-frame. That runs
+    in the background (minutes on a long clip); poll `depth_track_status`. You
+    can also call `depth_track` later to upgrade an existing haze mask.
+
+    Grade by the numbers: `inspect_color` before and after — whole-frame
+    saturation should drop and the black point lift; `sample` a background pixel
+    vs a subject pixel and confirm the background moved more.
+    Returns {maskId, subMaskId, amount, tracked} and the rendered frame."#
+    )]
+    pub async fn apply_haze(
+        &self,
+        Parameters(p): Parameters<ApplyHazeArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("amount", p.amount)
+            .set("protect_subject", p.protect_subject)
+            .set("tracked", p.tracked);
+        let env = self
+            .op_with("apply_haze", crate::AI_MASK_TIMEOUT_MS, args)
+            .await?;
+        Ok(render::result(&env))
+    }
+
+    #[tool(
+        name = "add_relight_light",
+        description = r##"Add a light to the "Relight" grade layer (D-048) — a deterministic,
+    depth-driven virtual light, the agent's path to relight without driving
+    the canvas puck (RelightPuckLayer) directly.
+
+    kind: "key" | "fill" | "rim" | "ambient". Each has a sensible preset
+    default (e.g. "key" = warm, screen-left, tight falloff) applied first;
+    only the args you pass override it. "ambient" ignores x/y/radius (it
+    tints the whole frame uniformly, no position/falloff).
+
+    x/y: 0-100, percentage of frame width/height. radius: 0-100, percentage
+    of the longer frame dimension — falloff distance, ignored for ambient.
+    intensity: 0-200 (100 = the shader's baseline light strength). color:
+    "#rrggbb".
+
+    A positional (key/fill/rim) light needs a depth source to actually shade
+    anything — run depth_track first (temporal, video only), or use the
+    Relight panel's "Bake Depth" button (static single-frame fallback,
+    D-054, also works on a still). Returns {light} and the rendered frame."##
+    )]
+    pub async fn add_relight_light(
+        &self,
+        Parameters(p): Parameters<AddRelightLightArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("kind", p.kind)
+            .put("x", p.x)
+            .put("y", p.y)
+            .put("radius", p.radius)
+            .put("intensity", p.intensity)
+            .put("color", p.color);
+        let env = self.op("add_relight_light", args).await?;
+        Ok(render::result(&env))
+    }
+
+    #[tool(
+        name = "set_relight_light",
+        description = r#"Update an existing relight light (id from list_relight_lights /
+    add_relight_light). Only passed args change. Same field meanings as
+    add_relight_light. Set visible=false to temporarily disable a light
+    without deleting it. Returns {id, patch} and the rendered frame."#
+    )]
+    pub async fn set_relight_light(
+        &self,
+        Parameters(p): Parameters<SetRelightLightArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Unlike set_primary and set_mask_adjust, the supplied fields go at the TOP
+        // level beside `id` rather than nested under a `patch` key.
+        let args = WireArgs::new()
+            .set("id", p.id)
+            .put("x", p.x)
+            .put("y", p.y)
+            .put("radius", p.radius)
+            .put("intensity", p.intensity)
+            .put("color", p.color)
+            .put("visible", p.visible)
+            .put("kind", p.kind);
+        let env = self.op("set_relight_light", args).await?;
+        Ok(render::result(&env))
+    }
+
+    #[tool(
+        name = "match_to_reference",
+        description = r#"Auto-grade the current shot toward a reference image.
+
+    Measures the scope gap to `reference` (an ABSOLUTE image path) and
+    iteratively applies a DAMPED primary correction — exposure, temperature,
+    tint, contrast, saturation — re-measuring after each step until the combined
+    gap is below `tolerance` or `max_iters` is reached. This automates the
+    measure -> adjust -> re-measure discipline.
+
+    - strength: overall scale on each correction (1.0 default; lower = gentler).
+    - max_iters: cap on iterations (default 4; 1..12).
+    - tolerance: combined-gap magnitude to stop at (default 3.0). The magnitude
+      weights |EV| x8, warm-cool + green-magenta cast (channel-code units),
+      |saturation| x20, and black/white-point deltas.
+
+    Merges into the PRIMARY grade, not a new layer — a reference match is a
+    balance. Creative look, curves, and mask work are separate and untouched.
+
+    Returns {converged, iterations, gap_before, gap_after, applied (cumulative
+    primary delta), trace: [{iter, damp, gapMag_before, gapMag_after, patch,
+    cumulative}]} plus the final rendered frame + scope summary. Scope-first:
+    inspect the result and confirm the cast / black point moved toward the
+    reference; don't declare a match from the thumbnail. Defer the creative call.
+    "#
+    )]
+    pub async fn match_to_reference(
+        &self,
+        Parameters(p): Parameters<MatchToReferenceArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("reference", p.reference)
+            .set("strength", p.strength)
+            .set("max_iters", p.max_iters)
+            .set("tolerance", p.tolerance);
+        let env = self.op("match_reference", args).await?;
+        Ok(render::result(&env))
+    }
+
+    #[tool(
+        name = "request_human",
+        description = r#"Hand back to the user — call this when you are genuinely unsure, when a
+    call is creative rather than technical, or when you are done and want them to
+    review.
+
+    This is NOT a routine step. Use it for: "the skin tone is a judgement call I
+    shouldn't make", "the matte edge on the hair needs manual cleanup here",
+    "I've balanced the shot to the reference — does this look right to you?".
+    Don't use it to narrate ordinary progress.
+
+    reason: a short, specific sentence shown to the user in a banner.
+    roi: optional {x, y, w, h} normalized to 0..1 (top-left origin) — a region
+      drawn as a rectangle on the canvas so the user knows where to look
+      (e.g. a face crop, a matte-edge artifact, the darkest patch).
+
+    Non-blocking: this posts the request and returns immediately with
+    {posted: true, reason, roi}. It does NOT wait for the user. To find out
+    whether they have acted, call `get_state` and read `pendingHumanRequest`:
+    it becomes null / `cleared: true` once they click "Resume agent". Keep going
+    once it's cleared.
+
+    Every change you made is already visible to the user in the GUI "Agent
+    activity" feed, with a per-field diff and an undo button — you don't need to
+    summarise your edits here, just say what you need from them."#
+    )]
+    pub async fn request_human(
+        &self,
+        Parameters(p): Parameters<RequestHumanArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("reason", p.reason).put("roi", p.roi);
+        let env = self.op("request_human", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "export",
+        description = r#"Render the ACTIVE CLIP's grade to a file — the Colorist single-clip
+    render, not the timeline. `editor_export` is the timeline exporter; use that
+    one for a cut, and this one when you want one clip's grade rendered at full
+    fidelity.
+
+    **What this does that `editor_export` cannot (D-297):** it renders through
+    the real wgpu grading pipeline, so the SPATIAL half of a grade — mask layers
+    / local adjustments, relight, the Colorist crop — reaches the file.
+    `editor_export` carries only the global grade, baked to a 3D LUT (D-256),
+    and warns when it drops the rest.
+
+    **`from_frame`/`to_frame` are CLIP-LOCAL (D-294)**, like `seek`: 0 is the
+    clip's in-point on the Edit timeline and the range is bounded by
+    `get_state().shot.frameCount`. The rendered picture carries the clip's own
+    transform, so it matches what the Colorist preview shows. A clip with a
+    SPEED RAMP is refused — this render does one linear decode pass; export it
+    from the Edit tab, whose exporter honours ramps.
+
+    kind:
+      - "prores" (default) — ProRes 422 HQ .mov (prores_ks -profile:v 3, 10-bit 422)
+      - "h264"             — .mp4 (libx264 -crf 18)
+      - "cube"             — bake the PRIMARY grade (global only, no masks) to a
+                             33³ .cube 3D LUT for use in another app
+
+    path: output file. Omit to write next to the source clip as
+      <name>.graded.mov / .mp4 / .cube.
+    from_frame / to_frame: video only; default = the whole clip.
+    quality: h264 → -crf (0-51, lower = better); prores → -profile:v (0-5).
+
+    Video export runs in the background; this polls to completion and returns the
+    resolved path, frame count, elapsed time, and any warning (e.g. masked layers
+    dropped from a .cube). It is a local file the user asked for — no confirm.
+    "#
+    )]
+    pub async fn export(
+        &self,
+        Parameters(p): Parameters<ExportArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // A LUT bake is synchronous — one call, one answer, with `result` flattened up
+        // beside ok/error the way `save_grade` does it.
+        if p.kind == "cube" {
+            let env = self
+                .op(
+                    "export",
+                    WireArgs::new().set("kind", "cube").set("path", p.path),
+                )
+                .await?;
+            return Ok(render::json_text(&flatten_result(&env)));
+        }
+
+        // A video export runs in the background, so this kicks it off and then polls to
+        // completion — the tool returns when the file is written, not when the render
+        // starts, because "it is exporting" is not an answer a caller can act on.
+        let start = self
+            .op(
+                "export",
+                WireArgs::new()
+                    .set("kind", p.kind)
+                    .set("path", p.path)
+                    // Note the wire keys: `from`/`to`, not `from_frame`/`to_frame`.
+                    .put("from", p.from_frame)
+                    .put("to", p.to_frame)
+                    .put("quality", p.quality),
+            )
+            .await?;
+        if !start.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+            // Refused before it began (a speed-ramped clip, a bad range) — hand back the
+            // refusal itself; there is nothing to poll.
+            return Ok(render::json_text(&start));
+        }
+
+        let kicked = start.get("result").cloned().unwrap_or(Value::Null);
+        let last = loop {
+            tokio::time::sleep(EXPORT_POLL_INTERVAL).await;
+            let env = self.op("export_progress", WireArgs::new()).await?;
+            let progress = env.get("result").cloned().unwrap_or(Value::Null);
+            if !progress
+                .get("running")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                break progress;
+            }
+        };
+
+        let field = |v: &Value, k: &str| v.get(k).cloned().unwrap_or(Value::Null);
+        let out_path = match field(&last, "out_path") {
+            Value::Null => field(&kicked, "out_path"),
+            found => found,
+        };
+        Ok(render::json_text(&json!({
+            // The progress feed reports failure by carrying an `error`, so that — not a
+            // separate flag — is what decides whether this succeeded.
+            "ok": field(&last, "error").is_null(),
+            "out_path": out_path,
+            "frames": field(&last, "done"),
+            "total": field(&last, "total"),
+            "error": field(&last, "error"),
+            "kickoff": kicked,
+        })))
     }
 }
 

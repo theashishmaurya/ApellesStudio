@@ -264,6 +264,22 @@ pub struct LinearGeometry {
     pub range: Maybe<f64>,
 }
 
+/// A region of interest drawn on the canvas for the user (`request_human`).
+///
+/// Normalized 0..1 with a top-left origin. All four fields are required — the handler
+/// errors unless every one is a finite number — and each is clamped to 0..1
+/// independently, so `x + w` may exceed 1.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Roi {
+    pub x: f64,
+    pub y: f64,
+    /// Width. Not `width`.
+    pub w: f64,
+    /// Height. Not `height`.
+    pub h: f64,
+}
+
 /// `add_component`'s geometry, discriminated by its sibling `type` argument rather than
 /// by a key inside the object, so this is a plain union. The two members have disjoint
 /// key sets and both forbid extras, which is what lets an object resolve unambiguously.
