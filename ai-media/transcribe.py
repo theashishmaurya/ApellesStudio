@@ -128,6 +128,37 @@ def extract_audio(video_path: str) -> str:
     )
 
 
+def _local_snapshot_or_repo(repo: str) -> str:
+    """Resolve `repo` to its cached local snapshot path, or return `repo`
+    unchanged if it is not cached yet (B-174).
+
+    `mlx_whisper.load_models.load_model` calls
+    `huggingface_hub.snapshot_download(repo_id=path_or_hf_repo)` with no
+    `local_files_only` — which, even when every file is already cached, still
+    reaches out to the Hub to check the cached revision is current. That
+    contradicts this module's own promise ("no network calls beyond a
+    first-run model download") and was caught live: a dead TCP connection
+    (CLOSE_WAIT — the peer had already closed, the client never noticed) left
+    a transcribe job hung indefinitely with 0% CPU, no timeout, no error.
+
+    `load_model` only calls `snapshot_download` when `Path(path_or_hf_repo)`
+    does NOT already exist — a real local directory is used as-is. So
+    resolving the cached snapshot path ourselves, with `local_files_only=True`
+    (which raises immediately rather than touching the network when the
+    repo isn't cached), and handing `load_model` that path instead of the bare
+    repo id skips the network call entirely on every call after the first,
+    with no global state (`HF_HUB_OFFLINE`) to mutate and no thread-safety
+    concern with concurrent jobs for different models."""
+    try:
+        from huggingface_hub import snapshot_download
+
+        return snapshot_download(repo_id=repo, local_files_only=True)
+    except Exception:
+        # Not cached yet (or the cache is unreadable) — fall back to the bare
+        # repo id so `load_model` does its normal first-run download.
+        return repo
+
+
 def transcribe(
     path: str,
     model: str = DEFAULT_MODEL,
@@ -166,7 +197,7 @@ def transcribe(
         import mlx_whisper
 
         kwargs: dict = {
-            "path_or_hf_repo": repo,
+            "path_or_hf_repo": _local_snapshot_or_repo(repo),
             "word_timestamps": word_timestamps,
             # Loop/hallucination guard on long single-take footage — kept from
             # the ported source, where it was added for exactly that reason.

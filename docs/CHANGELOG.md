@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-13** — **B-174: "Captions from Transcript" could hang forever** —
+  a cached transcribe model still tried an online revision check (`huggingface_
+  hub.snapshot_download` with no `local_files_only`), and today that call died
+  mid-flight (a CLOSE_WAIT socket, confirmed live via `lsof`) with no timeout
+  anywhere in the path. Fixed by resolving the cached snapshot path ourselves
+  first, so `mlx_whisper`'s loader never touches the network once a model is
+  cached. Same bug family as B-172; `ai/server.py`'s other model loads weren't
+  audited for it in this pass.
 - **2026-09-12** — **D-314: both Python sidecars now run from ONE shared venv
   (`ai-env/.venv`) — 3.5 GB of duplicated wheels down to 1.8 GB.** They stay two
   separate PROCESSES; only the environments merged. D-189 split them because
