@@ -32,6 +32,32 @@ import httpx
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.types import TextContent
 
+# D-310 — real Pydantic models for every structured (nested-object) parameter, so each
+# tool publishes a typed `inputSchema` instead of a bare `{"type": "object"}`. `to_wire`
+# turns a validated model back into the exact dict the caller sent; see schemas.py.
+from schemas import (
+    ActiveScheduleEntry,
+    Camera2DKey,
+    Camera3DKey,
+    ClipKeyframe,
+    ClipSelector,
+    ColorWheelChannel,
+    CurvePoint,
+    CurveSpec,
+    DynamicZoomFraming,
+    EaseCurve,
+    FitMode,
+    GapSelector,
+    LayerTransformKey,
+    MaskGeometry,
+    MotionKeyTarget,
+    MotionSelection,
+    MotionTarget,
+    Roi,
+    SpeedRampPoint,
+    to_wire,
+)
+
 PORT = os.environ.get("CHROMA_CONTROL_PORT", "19788")
 BASE_URL = f"http://127.0.0.1:{PORT}"
 
@@ -315,21 +341,21 @@ def set_primary(
 
 
 @mcp.tool()
-def set_curve(channel: str, points: list[dict]) -> list:
+def set_curve(channel: str, points: list[CurvePoint]) -> list:
     """Replace a tone-curve channel. channel is one of luma|red|green|blue.
     points is an ordered list of {x, y} in 0..255 (both axes), e.g.
     [{"x":0,"y":0},{"x":128,"y":140},{"x":255,"y":255}].
     Grade by the numbers: verify the move on `inspect_color` (parade / black-white
     points / per-zone means), not the thumbnail."""
-    return _result(_op("set_curve", channel=channel, points=points))
+    return _result(_op("set_curve", channel=channel, points=to_wire(points)))
 
 
 @mcp.tool()
 def set_color_grade(
-    shadows: dict | None = None,
-    midtones: dict | None = None,
-    highlights: dict | None = None,
-    global_: dict | None = None,
+    shadows: ColorWheelChannel | None = None,
+    midtones: ColorWheelChannel | None = None,
+    highlights: ColorWheelChannel | None = None,
+    global_: ColorWheelChannel | None = None,
     blending: float | None = None,
     balance: float | None = None,
 ) -> list:
@@ -346,7 +372,7 @@ def set_color_grade(
         ("global", global_),
     ):
         if val is not None:
-            patch[name] = val
+            patch[name] = to_wire(val)
     if blending is not None:
         patch["blending"] = blending
     if balance is not None:
@@ -438,8 +464,8 @@ def set_clip_fade(
     clip: int,
     fade_in_frames: int | None = None,
     fade_out_frames: int | None = None,
-    fade_in_curve: str | list[float] | None = None,
-    fade_out_curve: str | list[float] | None = None,
+    fade_in_curve: CurveSpec | None = None,
+    fade_out_curve: CurveSpec | None = None,
 ) -> str:
     """Set a clip's fade in / fade out. `track` and `clip` are the 0-based
     indices from get_timeline.
@@ -484,9 +510,9 @@ def set_clip_fade(
     if fade_out_frames is not None:
         args["fade_out_frames"] = fade_out_frames
     if fade_in_curve is not None:
-        args["fade_in_curve"] = fade_in_curve
+        args["fade_in_curve"] = to_wire(fade_in_curve)
     if fade_out_curve is not None:
-        args["fade_out_curve"] = fade_out_curve
+        args["fade_out_curve"] = to_wire(fade_out_curve)
     return json.dumps(_op("editor_set_clip_fade", **args), indent=2, default=str)
 
 
@@ -495,7 +521,7 @@ def set_clip_speed(
     track: int,
     clip: int,
     speed: float | None = None,
-    points: list[dict] | None = None,
+    points: list[SpeedRampPoint] | None = None,
 ) -> str:
     """Retime a clip -- a flat speed change, or a real SPEED RAMP that varies
     over the clip (D-236). `track` and `clip` are the 0-based indices from
@@ -568,7 +594,7 @@ def set_clip_speed(
     if speed is not None:
         args["speed"] = speed
     if points is not None:
-        args["points"] = points
+        args["points"] = to_wire(points)
     return json.dumps(_op("editor_set_clip_speed", **args), indent=2, default=str)
 
 
@@ -1426,8 +1452,8 @@ def editor_get_waveform(
 
 @mcp.tool()
 def editor_set_selection(
-    clips: list[dict] | None = None,
-    gap: dict | None = None,
+    clips: list[ClipSelector] | None = None,
+    gap: GapSelector | None = None,
 ) -> str:
     """Set what the Edit tab has SELECTED — the write half of
     `editor_get_state`'s `selection`/`selectedGap` (D-216, roadmap item 26).
@@ -1495,9 +1521,9 @@ def editor_set_selection(
 
     args: dict = {}
     if clips is not None:
-        args["clips"] = clips
+        args["clips"] = to_wire(clips)
     if gap is not None:
-        args["gap"] = gap
+        args["gap"] = to_wire(gap)
     return json.dumps(_op("editor_set_selection", **args), indent=2, default=str)
 
 
@@ -3406,7 +3432,7 @@ def editor_set_clip_eq(
 
 
 @mcp.tool()
-def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[dict]) -> str:
+def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[ClipKeyframe]) -> str:
     """Animate a SINGLE clip's own transform over time — e.g. a zoom-in at
     the moment of a click. Keyframes are scoped to this one clip only (its
     own local timeline), never the whole track or timeline, so two clips on
@@ -3435,7 +3461,11 @@ def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[dict]) -> s
     value entirely — see `editor_get_capabilities`."""
     import json
 
-    return json.dumps(_op("editor_set_clip_keyframes", track=track, clip=clip, keyframes=keyframes), indent=2, default=str)
+    return json.dumps(
+        _op("editor_set_clip_keyframes", track=track, clip=clip, keyframes=to_wire(keyframes)),
+        indent=2,
+        default=str,
+    )
 
 
 @mcp.tool()
@@ -3444,7 +3474,7 @@ def editor_set_keyframe_ease(
     clip: int,
     param: str,
     frame: int,
-    curve: str | list[float] | None = None,
+    curve: CurveSpec | None = None,
 ) -> str:
     """Shape HOW one animated property moves between two of its keyframes —
     a real cubic-bezier ease, not just a named preset.
@@ -3491,7 +3521,7 @@ def editor_set_keyframe_ease(
 
     args: dict = {"track": track, "clip": clip, "param": param, "frame": frame}
     if curve is not None:
-        args["curve"] = curve
+        args["curve"] = to_wire(curve)
     return json.dumps(_op("editor_set_keyframe_ease", **args), indent=2, default=str)
 
 
@@ -3528,8 +3558,8 @@ def editor_set_curve_editor(
 def editor_set_dynamic_zoom(
     track: int,
     clip: int,
-    start: dict | None = None,
-    end: dict | None = None,
+    start: DynamicZoomFraming | None = None,
+    end: DynamicZoomFraming | None = None,
     ease: str | None = None,
 ) -> str:
     """Animate a push-in or pull-out across a clip's WHOLE length by naming
@@ -3586,9 +3616,9 @@ def editor_set_dynamic_zoom(
 
     args: dict = {"track": track, "clip": clip}
     if start is not None:
-        args["start"] = start
+        args["start"] = to_wire(start)
     if end is not None:
-        args["end"] = end
+        args["end"] = to_wire(end)
     if ease is not None:
         args["ease"] = ease
     return json.dumps(_op("editor_set_dynamic_zoom", **args), indent=2, default=str)
@@ -3601,7 +3631,7 @@ def editor_export(
     height: int,
     fps: float | None = None,
     speed_overrides: dict[str, float] | None = None,
-    fit_overrides: dict[str, str] | None = None,
+    fit_overrides: dict[str, FitMode] | None = None,
     freeze_overrides: dict[str, bool] | None = None,
 ) -> str:
     """Render the open project's ENTIRE multi-track timeline — every visible
@@ -4097,7 +4127,7 @@ def add_component(
     type: str,
     mode: str = "subtractive",
     bbox: list[float] | None = None,
-    geometry: dict | None = None,
+    geometry: MaskGeometry | None = None,
 ) -> list:
     """Add a sub-mask (a "component") to an EXISTING mask container — the agent's
     equivalent of the app's "Add to / Subtract from / Intersect with Mask" menu.
@@ -4120,7 +4150,7 @@ def add_component(
     if bbox is not None:
         args["bbox"] = bbox
     if geometry is not None:
-        args["geometry"] = geometry
+        args["geometry"] = to_wire(geometry)
     return _result(_op("add_component", timeout_ms=AI_MASK_TIMEOUT_MS, **args))
 
 
@@ -4514,7 +4544,7 @@ def match_to_reference(
 # request_human — hand back to the user
 # --------------------------------------------------------------------------- #
 @mcp.tool()
-def request_human(reason: str, roi: dict | None = None) -> str:
+def request_human(reason: str, roi: Roi | None = None) -> str:
     """Hand back to the user — call this when you are genuinely unsure, when a
     call is creative rather than technical, or when you are done and want them to
     review.
@@ -4542,7 +4572,7 @@ def request_human(reason: str, roi: dict | None = None) -> str:
 
     args: dict = {"reason": reason}
     if roi is not None:
-        args["roi"] = roi
+        args["roi"] = to_wire(roi)
     return json.dumps(_op("request_human", **args), indent=2, default=str)
 
 
@@ -5210,7 +5240,7 @@ def motion_set_scene_field(scene_index: int, key: str, value: Any = None) -> str
 
 
 @mcp.tool()
-def motion_set_camera_2d(scene_index: int, keys: list[dict]) -> str:
+def motion_set_camera_2d(scene_index: int, keys: list[Camera2DKey]) -> str:
     """Replace a scene's 2D camera animation — the push-ins and pans over the
     flat layers, `[{at, x?, y?, zoom?, ease?}]`.
 
@@ -5235,12 +5265,14 @@ def motion_set_camera_2d(scene_index: int, keys: list[dict]) -> str:
     import json
 
     return json.dumps(
-        _op("motion_set_camera_2d", scene_index=scene_index, keys=keys), indent=2, default=str
+        _op("motion_set_camera_2d", scene_index=scene_index, keys=to_wire(keys)),
+        indent=2,
+        default=str,
     )
 
 
 @mcp.tool()
-def motion_set_camera_3d(scene_index: int, keys: list[dict]) -> str:
+def motion_set_camera_3d(scene_index: int, keys: list[Camera3DKey]) -> str:
     """Replace a scene's 3D camera animation — `[{at, pos: [x,y,z], look?:
     [x,y,z], ease?}]`, needing at least one key.
 
@@ -5258,7 +5290,9 @@ def motion_set_camera_3d(scene_index: int, keys: list[dict]) -> str:
     import json
 
     return json.dumps(
-        _op("motion_set_camera_3d", scene_index=scene_index, keys=keys), indent=2, default=str
+        _op("motion_set_camera_3d", scene_index=scene_index, keys=to_wire(keys)),
+        indent=2,
+        default=str,
     )
 
 
@@ -5295,7 +5329,7 @@ def motion_add_layer(scene_index: int, use: str) -> str:
 
 
 @mcp.tool()
-def motion_delete_layer(scene_index: int, target: dict) -> str:
+def motion_delete_layer(scene_index: int, target: MotionTarget) -> str:
     """Remove one layer (or one 3D scene child) — the delete button on that row
     in the layer list.
 
@@ -5320,12 +5354,14 @@ def motion_delete_layer(scene_index: int, target: dict) -> str:
     import json
 
     return json.dumps(
-        _op("motion_delete_layer", scene_index=scene_index, target=target), indent=2, default=str
+        _op("motion_delete_layer", scene_index=scene_index, target=to_wire(target)),
+        indent=2,
+        default=str,
     )
 
 
 @mcp.tool()
-def motion_duplicate_layer(scene_index: int, target: dict) -> str:
+def motion_duplicate_layer(scene_index: int, target: MotionTarget) -> str:
     """Copy one layer (or 3D scene child) in directly ABOVE itself in paint
     order — the duplicate button on that row in the layer list.
 
@@ -5345,7 +5381,9 @@ def motion_duplicate_layer(scene_index: int, target: dict) -> str:
     import json
 
     return json.dumps(
-        _op("motion_duplicate_layer", scene_index=scene_index, target=target), indent=2, default=str
+        _op("motion_duplicate_layer", scene_index=scene_index, target=to_wire(target)),
+        indent=2,
+        default=str,
     )
 
 
@@ -5393,7 +5431,9 @@ def motion_reorder_layers(
 
 
 @mcp.tool()
-def motion_set_layer_field(scene_index: int, target: dict, key: str, value: Any = None) -> str:
+def motion_set_layer_field(
+    scene_index: int, target: MotionTarget, key: str, value: Any = None
+) -> str:
     """Set one of a layer's OWN fields — its content and look: a text layer's
     `text`/`size`/`align`, a preset name, a colour, a `layers` primitive's
     `items`, and so on. The workhorse for shaping a layer after
@@ -5418,7 +5458,13 @@ def motion_set_layer_field(scene_index: int, target: dict, key: str, value: Any 
     import json
 
     return json.dumps(
-        _op("motion_set_layer_field", scene_index=scene_index, target=target, key=key, value=value),
+        _op(
+            "motion_set_layer_field",
+            scene_index=scene_index,
+            target=to_wire(target),
+            key=key,
+            value=value,
+        ),
         indent=2,
         default=str,
     )
@@ -5426,7 +5472,7 @@ def motion_set_layer_field(scene_index: int, target: dict, key: str, value: Any 
 
 @mcp.tool()
 def motion_set_field_on_layers(
-    selections: list[dict],
+    selections: list[MotionSelection],
     key: str,
     value: Any = None,
     transform: bool = False,
@@ -5454,7 +5500,7 @@ def motion_set_field_on_layers(
     return json.dumps(
         _op(
             "motion_set_field_on_layers",
-            selections=selections,
+            selections=to_wire(selections),
             key=key,
             value=value,
             transform=transform,
@@ -5467,7 +5513,7 @@ def motion_set_field_on_layers(
 @mcp.tool()
 def motion_set_layer_item(
     scene_index: int,
-    target: dict,
+    target: MotionTarget,
     key: str | None = None,
     value: Any = None,
     dx: float | None = None,
@@ -5501,7 +5547,7 @@ def motion_set_layer_item(
         reset: True to clear both offsets."""
     import json
 
-    args: dict[str, Any] = {"scene_index": scene_index, "target": target}
+    args: dict[str, Any] = {"scene_index": scene_index, "target": to_wire(target)}
     if reset:
         args["reset"] = True
     if dx is not None:
@@ -5515,7 +5561,7 @@ def motion_set_layer_item(
 
 
 @mcp.tool()
-def motion_select(scene_index: int, target: dict) -> str:
+def motion_select(scene_index: int, target: MotionTarget) -> str:
     """Select exactly ONE thing and move the preview to it — the layer-list row
     click, precisely: it replaces the selection and seeks the player so what
     you selected is actually on screen.
@@ -5541,12 +5587,12 @@ def motion_select(scene_index: int, target: dict) -> str:
     import json
 
     return json.dumps(
-        _op("motion_select", scene_index=scene_index, target=target), indent=2, default=str
+        _op("motion_select", scene_index=scene_index, target=to_wire(target)), indent=2, default=str
     )
 
 
 @mcp.tool()
-def motion_set_selection(selections: list[dict]) -> str:
+def motion_set_selection(selections: list[MotionSelection]) -> str:
     """Set the WHOLE selection — the marquee / shift-click half of the canvas
     selection model, and the write half of `motion_get_state`'s `selection`.
     Unlike `motion_select` it takes any number of targets and never seeks.
@@ -5573,11 +5619,13 @@ def motion_set_selection(selections: list[dict]) -> str:
         selections: `[{"scene_index": N, "target": {...}}, ...]`; `[]` clears."""
     import json
 
-    return json.dumps(_op("motion_set_selection", selections=selections), indent=2, default=str)
+    return json.dumps(
+        _op("motion_set_selection", selections=to_wire(selections)), indent=2, default=str
+    )
 
 
 @mcp.tool()
-def motion_set_layer_position(scene_index: int, target: dict, x: float, y: float) -> str:
+def motion_set_layer_position(scene_index: int, target: MotionTarget, x: float, y: float) -> str:
     """Move a layer to an absolute WORLD-pixel position — the canvas drag.
 
     World pixels are the manifest's own coordinate space (`width`/`height`
@@ -5602,14 +5650,14 @@ def motion_set_layer_position(scene_index: int, target: dict, x: float, y: float
     import json
 
     return json.dumps(
-        _op("motion_set_layer_position", scene_index=scene_index, target=target, x=x, y=y),
+        _op("motion_set_layer_position", scene_index=scene_index, target=to_wire(target), x=x, y=y),
         indent=2,
         default=str,
     )
 
 
 @mcp.tool()
-def motion_set_layer_size(scene_index: int, target: dict, w: float, h: float) -> str:
+def motion_set_layer_size(scene_index: int, target: MotionTarget, w: float, h: float) -> str:
     """Resize a layer in WORLD pixels — the canvas resize handles.
 
     Same world-pixel space as `motion_set_layer_position`. Which field this
@@ -5627,7 +5675,7 @@ def motion_set_layer_size(scene_index: int, target: dict, w: float, h: float) ->
     import json
 
     return json.dumps(
-        _op("motion_set_layer_size", scene_index=scene_index, target=target, w=w, h=h),
+        _op("motion_set_layer_size", scene_index=scene_index, target=to_wire(target), w=w, h=h),
         indent=2,
         default=str,
     )
@@ -5635,7 +5683,7 @@ def motion_set_layer_size(scene_index: int, target: dict, w: float, h: float) ->
 
 @mcp.tool()
 def motion_set_layer_transform_field(
-    scene_index: int, target: dict, key: str, value: Any = None
+    scene_index: int, target: MotionTarget, key: str, value: Any = None
 ) -> str:
     """Set one field of a layer's generic TRANSFORM wrapper — this is the tool
     for **scale, rotation and opacity**.
@@ -5665,7 +5713,7 @@ def motion_set_layer_transform_field(
         _op(
             "motion_set_layer_transform_field",
             scene_index=scene_index,
-            target=target,
+            target=to_wire(target),
             key=key,
             value=value,
         ),
@@ -5676,7 +5724,7 @@ def motion_set_layer_transform_field(
 
 @mcp.tool()
 def motion_move_layers_by_delta(
-    selections: list[dict],
+    selections: list[MotionSelection],
     dx: float,
     dy: float,
     auto_key: bool = False,
@@ -5707,7 +5755,7 @@ def motion_move_layers_by_delta(
         at: seconds within the scene, required when auto_key is True."""
     import json
 
-    args: dict[str, Any] = {"selections": selections, "dx": dx, "dy": dy}
+    args: dict[str, Any] = {"selections": to_wire(selections), "dx": dx, "dy": dy}
     if auto_key:
         args["auto_key"] = True
     if at is not None:
@@ -5716,7 +5764,7 @@ def motion_move_layers_by_delta(
 
 
 @mcp.tool()
-def motion_align_layers(selections: list[dict], edge: str) -> str:
+def motion_align_layers(selections: list[MotionSelection], edge: str) -> str:
     """Align 2+ layers to a shared edge or centre line — the align buttons.
 
     `edge` is one of `left`, `centerH`, `right` (horizontal) or `top`,
@@ -5733,12 +5781,12 @@ def motion_align_layers(selections: list[dict], edge: str) -> str:
     import json
 
     return json.dumps(
-        _op("motion_align_layers", selections=selections, edge=edge), indent=2, default=str
+        _op("motion_align_layers", selections=to_wire(selections), edge=edge), indent=2, default=str
     )
 
 
 @mcp.tool()
-def motion_distribute_layers(selections: list[dict], axis: str) -> str:
+def motion_distribute_layers(selections: list[MotionSelection], axis: str) -> str:
     """Space 3+ layers with equal gaps along one axis — the distribute buttons.
 
     The outermost two stay put and everything between them is redistributed
@@ -5751,12 +5799,16 @@ def motion_distribute_layers(selections: list[dict], axis: str) -> str:
     import json
 
     return json.dumps(
-        _op("motion_distribute_layers", selections=selections, axis=axis), indent=2, default=str
+        _op("motion_distribute_layers", selections=to_wire(selections), axis=axis),
+        indent=2,
+        default=str,
     )
 
 
 @mcp.tool()
-def motion_set_layer_transform_keys(scene_index: int, target: dict, keys: list[dict]) -> str:
+def motion_set_layer_transform_keys(
+    scene_index: int, target: MotionTarget, keys: list[LayerTransformKey]
+) -> str:
     """Replace a layer's whole animation — `[{at, x?, y?, scale?, rot?,
     opacity?, ease?}]`. This is the main way to animate anything in Motion.
 
@@ -5786,7 +5838,12 @@ def motion_set_layer_transform_keys(scene_index: int, target: dict, keys: list[d
     import json
 
     return json.dumps(
-        _op("motion_set_layer_transform_keys", scene_index=scene_index, target=target, keys=keys),
+        _op(
+            "motion_set_layer_transform_keys",
+            scene_index=scene_index,
+            target=to_wire(target),
+            keys=to_wire(keys),
+        ),
         indent=2,
         default=str,
     )
@@ -5795,11 +5852,11 @@ def motion_set_layer_transform_keys(scene_index: int, target: dict, keys: list[d
 @mcp.tool()
 def motion_add_layer_keyframe(
     scene_index: int,
-    target: dict,
+    target: MotionTarget,
     at: float,
     x: float | None = None,
     y: float | None = None,
-    ease: list[float] | None = None,
+    ease: EaseCurve | None = None,
 ) -> str:
     """Add (or overwrite) ONE position keyframe at a moment — the auto-keyframe
     a canvas drag performs, without replacing the rest of the animation the
@@ -5829,7 +5886,7 @@ def motion_add_layer_keyframe(
         ease: optional [x1, y1, x2, y2]."""
     import json
 
-    args: dict[str, Any] = {"scene_index": scene_index, "target": target, "at": at}
+    args: dict[str, Any] = {"scene_index": scene_index, "target": to_wire(target), "at": at}
     if x is not None:
         args["x"] = x
     if y is not None:
@@ -5842,7 +5899,7 @@ def motion_add_layer_keyframe(
 @mcp.tool()
 def motion_move_layer_keyframe(
     scene_index: int,
-    target: dict,
+    target: MotionTarget,
     key_index: int,
     new_at: float,
     lane: str = "transform",
@@ -5871,7 +5928,7 @@ def motion_move_layer_keyframe(
         _op(
             "motion_move_layer_keyframe",
             scene_index=scene_index,
-            target=target,
+            target=to_wire(target),
             key_index=key_index,
             new_at=new_at,
             lane=lane,
@@ -5882,7 +5939,7 @@ def motion_move_layer_keyframe(
 
 
 @mcp.tool()
-def motion_delete_layer_keyframe(scene_index: int, target: dict, key_index: int) -> str:
+def motion_delete_layer_keyframe(scene_index: int, target: MotionTarget, key_index: int) -> str:
     """Remove ONE keyframe from a layer's `transform.keys`.
 
     Deleting the LAST remaining key removes the animation entirely (reported
@@ -5903,7 +5960,7 @@ def motion_delete_layer_keyframe(scene_index: int, target: dict, key_index: int)
         _op(
             "motion_delete_layer_keyframe",
             scene_index=scene_index,
-            target=target,
+            target=to_wire(target),
             key_index=key_index,
         ),
         indent=2,
@@ -5944,7 +6001,7 @@ def motion_move_camera_keyframe(
 
 
 @mcp.tool()
-def motion_move_keys_by_delta(targets: list[dict], delta_seconds: float) -> str:
+def motion_move_keys_by_delta(targets: list[MotionKeyTarget], delta_seconds: float) -> str:
     """Shift MANY keyframes by one shared time delta — the keyframe timeline's
     box-select-then-nudge gesture. The tool for "start this whole animation
     half a second later" without recomputing every `at` yourself.
@@ -5970,7 +6027,7 @@ def motion_move_keys_by_delta(targets: list[dict], delta_seconds: float) -> str:
     import json
 
     return json.dumps(
-        _op("motion_move_keys_by_delta", targets=targets, delta_seconds=delta_seconds),
+        _op("motion_move_keys_by_delta", targets=to_wire(targets), delta_seconds=delta_seconds),
         indent=2,
         default=str,
     )
@@ -5980,9 +6037,9 @@ def motion_move_keys_by_delta(targets: list[dict], delta_seconds: float) -> str:
 def motion_set_keyframe_ease(
     scene_index: int,
     key_index: int,
-    ease: list[float] | None = None,
+    ease: EaseCurve | None = None,
     lane: str = "layer",
-    target: dict | None = None,
+    target: MotionTarget | None = None,
 ) -> str:
     """Set (or clear) ONE keyframe's easing curve — the bezier curve editor,
     reachable in a single call instead of resending a whole key array.
@@ -6020,12 +6077,14 @@ def motion_set_keyframe_ease(
         "ease": ease,
     }
     if target is not None:
-        args["target"] = target
+        args["target"] = to_wire(target)
     return json.dumps(_op("motion_set_keyframe_ease", **args), indent=2, default=str)
 
 
 @mcp.tool()
-def motion_set_layer_active_schedule(scene_index: int, target: dict, schedule: list[dict]) -> str:
+def motion_set_layer_active_schedule(
+    scene_index: int, target: MotionTarget, schedule: list[ActiveScheduleEntry]
+) -> str:
     """Set which child of a `layers`/`layerstack` primitive is highlighted, and
     from when — its `active` STEP schedule.
 
@@ -6050,8 +6109,8 @@ def motion_set_layer_active_schedule(scene_index: int, target: dict, schedule: l
         _op(
             "motion_set_layer_active_schedule",
             scene_index=scene_index,
-            target=target,
-            schedule=schedule,
+            target=to_wire(target),
+            schedule=to_wire(schedule),
         ),
         indent=2,
         default=str,

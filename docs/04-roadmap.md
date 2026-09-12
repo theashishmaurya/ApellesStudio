@@ -2974,9 +2974,30 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      specific, named frame reference rather than "whatever's live now") would
      let an agent's multi-step before/after sequence survive concurrent human
      scrubbing instead of silently measuring the wrong frame.
-  7. **No structured params anywhere in `mcp/server.py` carry a real, validated
+  7. ~~**No structured params anywhere in `mcp/server.py` carry a real, validated
      schema — every nested argument across all 161 tools is a bare `dict |
-     None`, so the only field-level contract is docstring prose.** Confirmed by
+     None`, so the only field-level contract is docstring prose.**~~ — **done,
+     2026-09-12 (D-310).** `mcp/schemas.py` defines 20 reusable Pydantic models
+     covering all 43 structured parameters across the 40 tools that have them;
+     every one now publishes real JSON Schema with typed `properties`, and a
+     malformed argument fails at the tool boundary naming the field. Done in one
+     pass rather than "mask/grade tools first" as sized below — the shapes are
+     shared across tabs (one layer target serves 14 Motion tools), so splitting
+     it would have meant writing the same models twice. **The load-bearing part
+     was not the models but where they came from:** each shape was read off its
+     real consuming handler, never its docstring, because a docstring-faithful
+     schema would have *rejected* working calls — the `centerX/centerY` case
+     below is exactly that, and four more turned up (B-165, B-166, plus
+     `target.itemIndex`, an undocumented `{x1,y1,x2,y2}` curve form and an
+     undocumented `keyframes[].ease`, both real and load-bearing). Verified by
+     construction: `to_wire()` re-emits only the caller's own keys, so all 29
+     representative payloads post byte-identical JSON to the pre-change code —
+     the frontend cannot tell the versions apart, which bounds the regression
+     risk to "does validation reject something the app accepts". Live-verified
+     end-to-end on the Edit-tab tools; the Colorist half could not be
+     live-verified in the same session because **B-164** (found doing it) had
+     already bricked that registry in the running app. Original entry follows.
+     Confirmed by
      grep, 2026-09-11: `geometry` (mask components), `shadows`/`midtones`/
      `highlights`/`global_` (color-wheel wheels), `gap`, and every other
      structured arg in the file are typed `dict | None` — zero uses of a
@@ -2998,8 +3019,9 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
      instead of `dict`, for real validation and a schema an MCP client can
      introspect — starting with the mask/grade tools this session actually hit,
      not a rewrite of all 161 at once.
-  Not scoped into a D-NNN yet — sizing each of the 7 as its own tool/change
-  before committing to an implementation order.
+  **Item 7 is done (D-310, 2026-09-12).** The other six are still unscoped —
+  sizing each as its own tool/change before committing to an implementation
+  order.
 - ~~**Redundant "Apelles" label in the custom titlebar**~~ — **done, 2026-09-10.**
   Owner flagged live with a screenshot (macOS menu bar already shows the app name
   at the very top; the custom titlebar repeated it right below, immediately after

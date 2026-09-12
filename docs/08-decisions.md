@@ -29694,3 +29694,78 @@ from either component's source — it took following `WGPU_RENDER` from
   fast is its entire job. The readiness wait sits **on top of** the caller's `timeout_ms`
   rather than eating into it (an AI matte asking for 180s should get 180s of work), which is
   why `mcp/server.py` gained a matching `READY_GRACE_S`; the two constants are a pair.
+
+## D-310 — Every structured MCP parameter gets a Pydantic model, written from the handler and not from the docstring
+
+**Context.** All 161 tools in `mcp/server.py` typed every nested argument as a bare
+`dict | None`, which MCP publishes as `{"type": "object", "additionalProperties": true}` —
+no field names, no types, no contract beyond docstring prose. The MCP spec expects
+`inputSchema` to be real JSON Schema with typed `properties`, so an MCP client had nothing
+to introspect, nothing to autocomplete against, and no way to catch a malformed argument;
+a wrong key failed somewhere downstream in TS or Rust with whatever error that layer
+produced. Logged as roadmap item 7 under "Make Colorist's MCP tool surface AI-first".
+
+The concrete case that surfaced it: `add_component`'s docstring documents radial geometry
+as `{cx,cy,rx,ry}`, but `useChromaControl.ts` also accepts `centerX/centerY/radiusX/radiusY`
+through a `g.cx ?? g.centerX` fallback chain — a second, undocumented, fully working shape.
+
+**The rule this is built on: a schema describes what the handler ACTUALLY accepts, not what
+its docstring claims.** Every one of the 20 shapes here was read off its real consuming
+handler (`useChromaControl.ts`, `useEditorControl.ts`/`editorExport.ts`, `motionOps.ts`),
+never from the prose. A model written from a docstring would have rejected shapes that work
+today, making the tools *more* broken, not less — the opposite of the point. Where two
+spellings are both genuinely accepted, both appear as explicit optional fields, which also
+makes the alternative visible in the published schema for the first time.
+
+**Options considered.**
+1. *One bespoke model per tool function.* Rejected: ~40 near-duplicate models, and the
+   recurring shapes (a layer target used by 14 Motion tools, a colour wheel used by 4
+   parameters) would drift apart the moment one was edited.
+2. *Normalise aliases to one canonical spelling on the way in.* Rejected: it makes this
+   module a second source of truth for defaults and naming, and any normalisation bug
+   silently changes what the app receives. The handlers already own those decisions.
+3. *`TypedDict` / plain annotations instead of `BaseModel`.* Rejected: no validation, and
+   this MCP runtime builds `inputSchema` from Pydantic, so models are the canonical path.
+4. **Chosen: one reusable `BaseModel` per distinct wire shape in a new `mcp/schemas.py`,
+   plus `to_wire()`** — `model_dump(exclude_unset=True)`, so only the fields the caller
+   actually supplied are emitted and the posted dict is byte-identical to the dict they
+   sent. The models *describe*; they never rewrite.
+
+**The safety property, and why it is the whole design.** Because `to_wire` emits exactly
+the caller's own keys and `extra="allow"` preserves unknown ones, the JSON reaching the
+control server is unchanged from the pre-change code. The frontend cannot tell the two
+versions apart, so the only way this change could break a working call is if validation
+*rejects* something the app would have accepted. That reduces the entire risk surface to one
+reviewable question per model, and is verified rather than asserted: 29 representative
+payloads — both radial spellings, every undocumented alias, partial geometries, explicit
+nulls — post byte-identical JSON (`wire-identical: 29/29`).
+
+**Extra-key policy.** `extra="forbid"` for small closed shapes whose handler reads a fixed
+key whitelist and silently ignores the rest (colour wheels, mask geometry, ROI, camera keys,
+schedule entries): there an unknown key is *already* a silent no-op, so rejecting it turns a
+silent failure into the clear boundary error this change exists to provide, and it lets
+`MaskGeometry` discriminate structurally — a `{startX:…}` dict cannot validate as radial.
+`extra="allow"` where the handler stores the object verbatim into the document (a clip
+keyframe reaches `project.json` intact) or where a hand-authored manifest may legitimately
+carry fields the Inspector does not know (`MotionTarget`, `MotionSelection`).
+
+**Deliberately not enforced.** Limits that would reject a call the app accepts today are
+documented in field descriptions instead: `set_curve` keeps only its first 16 points
+(dropped downstream, not rejected here), and Motion's ease `y` is clamped by the handler
+with a warning. Flat scalar parameters were left alone — they already carried real types,
+and narrowing them is a separate change with its own risk.
+
+**Mismatches found and recorded rather than silently encoded.** Writing the models from the
+handlers surfaced four docstring-vs-behaviour gaps beyond the known `add_component` one:
+a documented `"ease"` preset the parser rejects (**B-165**), an ease-`y` clamp three
+docstrings contradict (**B-166**), `target.itemIndex` and seven camelCase scalar aliases
+accepted but undocumented, and an undocumented `{x1,y1,x2,y2}` object form for curves plus
+an undocumented `keyframes[].ease` — the last two both real and load-bearing, and both
+would have been destroyed by a docstring-faithful schema. The schema now encodes the true
+behaviour in every case; the prose fixes are logged, not silently made.
+
+**Consequences.** 20 models cover 43 structured parameters across 40 tools; all 161 tools
+still list. A malformed argument now fails at the tool boundary naming the field
+(`clips.0: each clip entry needs 'clip' (an index) or 'clipId'`) instead of downstream.
+`mcp/schemas.py` is documentation-by-construction: the one place where these shapes,
+their aliases and their real defaults are written down.

@@ -41,9 +41,24 @@ claude mcp add apelles -- /ABS/PATH/chroma/mcp/.venv/bin/python /ABS/PATH/chroma
 Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 (default `19788`).
 
-## Tools — 143 shipped (plus 9 debug-build-only; 152 definitions total)
+## Tools — 152 shipped (plus 9 debug-build-only; 161 definitions total)
 
-> **Re-counted 2026-09-09 (D-259)** directly against this file's own server —
+> **Re-counted 2026-09-12 (D-310)** by AST-parsing this file's own server (not
+> `grep`, which also counts the string in a docstring): **161** `@mcp.tool()`
+> definitions, of which 9 are `debug_*` (dev-build only, never shipped), leaving
+> **152** shipped. Split by prefix: **73 Edit**, **42 Colorist**, **37 Motion**,
+> **9 debug** — 73 + 42 + 37 + 9 = 161. The heading below this one said "143
+> shipped / 152 total", correct when D-259 wrote it on 2026-09-09 and outgrown
+> since.
+>
+> **Parameter schemas (D-310):** every structured (nested-object) parameter is a
+> Pydantic model from `schemas.py`, so each tool's `inputSchema` is real JSON
+> Schema with typed `properties`. The models describe what the frontend handlers
+> actually accept — including alias spellings the docstrings never mentioned —
+> and `to_wire()` re-emits only the caller's own keys, so nothing is normalised
+> or defaulted on the way through.
+>
+> **Superseded count, kept for history — D-259, 2026-09-09:**
 > `grep -c '^@mcp.tool()' server.py` = **152**, of which 9 are `debug_*`
 > (dev-build only, never shipped), leaving **143**. Split by prefix: **65 Edit**
 > (`editor_*` plus the four unprefixed `get_timeline` / `set_clip_fade` /
