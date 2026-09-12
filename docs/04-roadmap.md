@@ -235,6 +235,20 @@ lives in the `D-NNN` / `docs/notes/*.md` referenced. Sequenced because they shar
 files (`App.tsx`, `Shell.tsx`, `useUIStore.ts`) — one subagent at a time until the
 crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
+0. **Finish the MCP server's port to Rust (D-312)** — owner-directed, 2026-09-12,
+   started the same day. `crates/apelles-mcp` replaces `mcp/server.py`: one binary, one
+   toolchain, no venv in the connect command. **The parity harness is done and is the
+   gate** — `parity/capture.py` records the real Python server's published contract and
+   emitted ops for all 161 tools (237 calls, stub app, deterministic), and
+   `cargo test -p apelles-mcp` replays it. **9 tools ported and passing; 152 remain**,
+   batched by prefix (Colorist 42, Edit 65 + 4 unprefixed, Motion 36, debug 9). The
+   ledger is `crates/apelles-mcp/tests/golden/ported.json`; the continuation guide, the
+   non-uniform cases to watch for, and the deliberate divergences are
+   `docs/notes/mcp-rust-port.md`. Not done until every tool is ported and the harness is
+   green for all of them; only then is retiring `mcp/server.py` / `mcp/run.sh` / the
+   Python entry in `ConnectMcpDialog.tsx` on the table, and that is a separate,
+   deliberate step. This also found and fixed **B-168** on day one.
+
 1. ~~**Editor timeline audio playback**~~ — **done, D-050 (2026-09-03).** Real
    `cpal` device audio during Play: `symphonia` decode → `rubato` resample →
    `dasp_sample` format-convert → `cpal` output, reusing the video track's

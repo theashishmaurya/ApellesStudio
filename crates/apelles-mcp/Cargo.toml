@@ -1,0 +1,34 @@
+[package]
+name = "apelles-mcp"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apelles' MCP server — the AI-facing tool surface for the running desktop app (D-312)."
+
+[lib]
+name = "apelles_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "apelles-mcp"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+rmcp = { version = "3.3", features = ["server", "macros", "transport-io"] }
+schemars = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "time"] }
+
+[dev-dependencies]
+# The parity test drives this server through a real MCP session over an in-process
+# duplex stream — the same way `parity/capture.py` drove the Python one over stdio — so
+# what it checks is what a client would actually see, not an internal call path.
+rmcp = { version = "3.3", features = ["client", "server", "macros", "transport-async-rw"] }
+tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "time"] }

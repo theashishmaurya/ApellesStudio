@@ -1,0 +1,74 @@
+{
+  "__comment__": [
+    "Canned control-server envelopes for parity capture (D-312), keyed by OP name.",
+    "`__default__` is the ordinary mutating-op envelope: every key `_result()` reads is",
+    "present and distinctive, so a renderer that drops or mis-keys one is caught. The",
+    "named entries exist only for ops whose envelope the MCP layer post-processes",
+    "(save_grade merges `result` up a level; editor_export strips `result.args`; export",
+    "polls export_progress; inspect_color renders two images) or reads off disk",
+    "(debug_screenshot). Nothing here models app behaviour — see stub_control.py.",
+    "The 1x1 JPEG/PNG payloads are real, decodable images so the image path is honest."
+  ],
+  "__default__": {
+    "ok": true,
+    "error": null,
+    "result": { "applied": true, "note": "stub-default-result" },
+    "frame": 42,
+    "scopes": { "blackPoint": 3.25, "whitePoint": 249.5, "warmCool": -1.75 },
+    "histogram": { "r": [1, 2, 3], "g": [4, 5, 6], "b": [7, 8, 9] },
+    "adjustments": { "exposure": 0.5, "contrast": -12 },
+    "image_b64": "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=="
+  },
+  "inspect_color": {
+    "ok": true,
+    "error": null,
+    "result": {
+      "parade": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "vectorscope": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "scopes": { "blackPoint": 2.0, "whitePoint": 251.0 },
+      "histogram": { "r": [10], "g": [11], "b": [12] },
+      "frameSize": { "width": 3840, "height": 2160 },
+      "reference": { "path": "/stub/reference.png", "scopes": { "blackPoint": 0.0 } },
+      "gap": { "exposure": 0.3, "reading": "stub reading line" }
+    }
+  },
+  "save_grade": {
+    "ok": true,
+    "error": null,
+    "result": {
+      "path": "/stub/clip.grade.json",
+      "matteFiles": ["/stub/clip.mattes/m0.png"],
+      "trackDirs": ["/stub/.chroma/mattes/t0"]
+    }
+  },
+  "editor_export": {
+    "ok": true,
+    "error": null,
+    "result": {
+      "outPath": "/stub/out.mp4",
+      "frames": 120,
+      "args": ["-i", "in.mov", "-c:v", "libx264"]
+    }
+  },
+  "export": {
+    "ok": true,
+    "error": null,
+    "result": { "out_path": "/stub/clip.graded.mov", "kicked": true }
+  },
+  "export_progress": {
+    "ok": true,
+    "error": null,
+    "result": {
+      "running": false,
+      "done": 120,
+      "total": 120,
+      "out_path": "/stub/clip.graded.mov",
+      "error": null
+    }
+  },
+  "debug_screenshot": {
+    "ok": true,
+    "error": null,
+    "result": { "path": "__FIXTURE_PNG__", "width": 1, "height": 1, "window": "main" }
+  }
+}

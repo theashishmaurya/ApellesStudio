@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "The porting ledger for D-312: which of the Python server's 161 tools this Rust",
+    "server has taken over. `tests/parity.rs` checks the live server's advertised set",
+    "against this list in BOTH directions, and checks every name here is a tool the",
+    "golden corpus actually has — so a tool cannot be silently dropped, silently added,",
+    "or listed here under a name that never existed.",
+    "Add a name here in the same commit that lands its tool, never before."
+  ],
+  "tools": [
+    "add_component",
+    "debug_ui_state",
+    "editor_add_clip",
+    "get_state",
+    "get_timeline",
+    "inspect_color",
+    "motion_get_state",
+    "motion_set_layer_field",
+    "set_color_grade"
+  ]
+}

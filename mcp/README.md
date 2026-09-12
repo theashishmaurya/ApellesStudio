@@ -46,6 +46,14 @@ claude mcp add apelles -- /ABS/PATH/chroma/mcp/run.sh
 Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 (default `19788`).
 
+> **This server is being replaced (D-312, started 2026-09-12).** The Rust
+> reimplementation is `crates/apelles-mcp` — same tool names, same descriptions,
+> same control-server contract, one binary instead of a venv. Its parity harness
+> is captured from *this* file, tool by tool. **This server is still the one in
+> use, and is the rollback**: nothing here has been retired and nothing should be
+> until the port is finished. Status, the ledger of which tools have moved, and
+> the deliberate divergences: `../docs/notes/mcp-rust-port.md`.
+
 ## Tools — 152 shipped (plus 9 debug-build-only; 161 definitions total)
 
 > **Re-counted 2026-09-12 (D-310)** by AST-parsing this file's own server (not

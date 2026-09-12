@@ -29809,3 +29809,93 @@ still list. A malformed argument now fails at the tool boundary naming the field
 (`clips.0: each clip entry needs 'clip' (an index) or 'clipId'`) instead of downstream.
 `mcp/schemas.py` is documentation-by-construction: the one place where these shapes,
 their aliases and their real defaults are written down.
+
+## D-312 — the MCP server is reimplemented in Rust (`crates/apelles-mcp`), gated by a golden-corpus parity harness
+
+**Context.** D-020 built the MCP server in Python (`mcp/server.py`, 161 tool definitions —
+152 shipped + 9 debug-only) as a thin stdio wrapper over the app's control server. It works,
+but it makes the app's AI surface a second runtime with its own venv, its own dependency set
+and its own install step: the connect command a user is given is an absolute path into
+`mcp/.venv/bin/python`. Owner's call, 2026-09-12, after being told the tradeoffs explicitly
+(a full port is a multi-day job; it does NOT speed up the render or IPC round trip, which is
+unaffected either way): *"lets port it, before porting have a way to test it properly, and
+port it, go for it."* So the reason is not latency — it is one toolchain, one binary, no
+venv, and a tool surface that lives in the same language and the same workspace as the app it
+drives. This supersedes D-020's implementation choice; D-020's *architecture* (a thin MCP
+layer over `POST /op`, with all grade/mask logic in the frontend) is unchanged and is the
+thing this port most carefully preserves.
+
+**Architecture — options considered.**
+1. *Embed MCP directly in `app/src-tauri`'s process*, calling the frontend bridge in-process
+   with no HTTP hop. Cleanest in the abstract, and it would let a client connect by URL
+   rather than by binary path. Rejected **for now**: it couples the protocol implementation
+   into the app binary and rewrites the carefully-documented control-server boundary
+   (`control.rs` deliberately knows no op names — see its own module doc) in the same change
+   as a 161-tool port. Two large risks at once.
+2. **Chosen: a standalone crate, `crates/apelles-mcp`,** that does exactly what
+   `mcp/server.py` did — `POST /op {op, args, timeout_ms}` to `control.rs` on 19788 — and
+   touches no frontend code and no `control.rs` code at all. It can be developed and tested
+   against a running app exactly as the Python server was, by pointing it at the same port.
+3. Not a fork in the road, because of how (2) is built: the tool surface talks to an
+   `OpTransport` trait, not to HTTP. Option (1) later is one more implementation of that
+   trait plus rmcp's streamable-HTTP server transport — not a rewrite of 161 tools. The
+   thin-shell/fat-core split D-039 already mandates, applied to this crate.
+
+**SDK — `rmcp` 3.3.0, the official `modelcontextprotocol/rust-sdk`.** Apache-2.0 (compatible
+with this workspace's AGPL-3.0), 25.9M downloads, published two days before this decision,
+`rust-version` 1.88 against our 1.98. It supports stdio and streamable-HTTP on both sides, and
+generates each tool's `inputSchema` from `schemars` 1.x derives — the direct analogue of what
+D-310's Pydantic models do today, which is what makes a faithful schema port possible at all.
+Hand-rolling the MCP wire protocol was rejected under CLAUDE.md's "check for an existing
+package first" rule; this is the reference implementation of the protocol, by its authors.
+New deps: `rmcp`, `schemars` 1 (already in the lock via other crates), `async-trait`,
+`base64`; `reqwest`, `tokio`, `serde`, `serde_json`, `thiserror` were already here.
+
+**The harness came first, and it is the deliverable that gates the rest.** Nothing was ported
+until there was a way to prove the port faithful. `crates/apelles-mcp/parity/capture.py`
+drives the REAL `mcp/server.py` over a real stdio MCP session, with a stub control server
+standing in for the app, and records: every tool's name, description and `inputSchema`; and
+for 237 generated calls covering **all 161 tools**, the exact `{op, args, timeout_ms}` posted
+and the exact MCP content rendered. `crates/apelles-mcp/tests/parity.rs` replays that corpus
+against the Rust server through an equally real in-process MCP session.
+
+Why a stub app rather than a live one: the corpus has to cover the destructive tools too, and
+the boundary under test — what the MCP layer sends and how it renders what comes back — is
+entirely on this side of the app. `control.rs` knows no op names, so nothing the app computes
+is part of this contract. The capture is deterministic (two runs are byte-identical) and needs
+no app running, so it is a real regression gate rather than a manual ritual. The one thing a
+stub cannot prove — that the Rust server really reaches the real control server and gets the
+real answer — is covered separately by `parity/live_smoke.py`, which runs read-only tools
+through both servers against a running app and diffs them field by field.
+
+**What is compared how.** Tool descriptions and the server instructions: **byte-for-byte** —
+they are prose a model reads and acts on, and several of them encode behaviour found the hard
+way, live. Emitted ops: **exact JSON equality including `timeout_ms`**, which is the half that
+breaks silently (a renamed wire key, a dropped argument, an AI budget lost back to the 20s
+default — B-153). Rendered content: **JSON value equality**, because a client parses it, so
+the value is the contract and Python's `json.dumps` byte formatting is not. Schemas:
+**normalised structural equality** — Pydantic and schemars spell the same contract differently
+(`anyOf: [T, null]` vs `type: [T, null]`, a `title` on every property), so byte equality would
+only measure which library generated the file; what is compared is property names,
+requiredness, types, enums, nesting and descriptions.
+
+**Migration and rollback.** `mcp/server.py` stays, working and unmodified in behaviour, until
+the port is complete and has been used for real — it is the rollback, and it is also the
+reference the corpus is captured from, so it cannot be retired before the last tool lands.
+`tests/golden/ported.json` is the ledger of which tools have moved; `tests/parity.rs` checks
+the live server's advertised set against it in both directions, so a tool cannot be silently
+dropped or silently half-added, and "the port is done" cannot be asserted while it is not.
+Retiring `mcp/server.py`, `mcp/run.sh` and the Python entry in
+`packages/shell/src/ConnectMcpDialog.tsx` is a separate, deliberate step at the end.
+
+**Deliberate divergences from the Python server** (each one an improvement, each one recorded
+rather than silent — the full list lives in `docs/notes/mcp-rust-port.md`): the nine `debug_*`
+tools are behind a real `#[cfg(debug_assertions)]` gate, so a release build publishes 152
+tools rather than advertising nine it can never answer; and an unreachable-app error surfaces
+its own message instead of being masked to a bare "Error executing tool <name>".
+
+**Status at the time of writing.** Harness complete and passing for all 161 tools' worth of
+corpus; 9 tools ported and verified, chosen to exercise every mechanism in the surface at
+least once (plain-JSON, frame+summary and scope renderers; the AI timeout budget; a
+schema-bearing union; camelCase wire renames; tool-name-vs-op-name divergence; a free-form
+`Any` argument; the debug gate). 152 remain. The port is explicitly NOT complete.

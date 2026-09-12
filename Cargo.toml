@@ -6,10 +6,12 @@
 # `crates/*` are Apelles' own layered crates (thin-shell / fat-core, D-039):
 # pure domain models with no wgpu / ffmpeg, GPU + media I/O isolated below them.
 #
-# 8 crates exist today, 6 of them real and load-bearing (extraction waves 1-3
-# landed 2026-09-05): apelles-{types,gpu,media,timeline,grade-model,project,
-# motion,ai}. Still future: apelles-grade, apelles-compositor. The live table
-# and each crate's boundary are in `crates/README.md`.
+# 9 crates exist today, 7 of them real and load-bearing: apelles-{types,gpu,
+# media,timeline,grade-model,project,motion,ai} from extraction waves 1-3
+# (2026-09-05), plus apelles-mcp (D-312), the MCP tool surface replacing
+# `mcp/server.py`. Still future: apelles-grade, apelles-compositor,
+# apelles-agent. The live table and each crate's boundary are in
+# `crates/README.md`.
 
 [workspace]
 resolver = "2"

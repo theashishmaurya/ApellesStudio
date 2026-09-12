@@ -14,6 +14,15 @@ One or two lines per session. Detail lives in the decision it references.
   follow-up (moving the MCP server itself off Python entirely, onto a native
   Rust implementation) is in progress separately — see `docs/08-decisions.md`
   once that decision record lands.
+- **2026-09-12** — **started D-312: the MCP server moves from Python to Rust
+  (`crates/apelles-mcp`, on `rmcp` 3.3).** The test harness came first and is
+  the gate: `parity/capture.py` records what the real `mcp/server.py` publishes
+  and emits for all 161 tools (237 calls, against a stub control server, no app
+  needed, byte-identical across runs), and `cargo test -p apelles-mcp` replays
+  that corpus against the Rust server through a real MCP session. **9 tools
+  ported and verified, 152 remain** — status and the continuation guide are in
+  `docs/notes/mcp-rust-port.md`; `mcp/server.py` is untouched and is still the
+  server in use.
 - **2026-09-12** — **fixed B-168: `editor_import_subtitles` raised `NameError`
   on every call** and had done since 2026-09-08 — eleven caption-style
   arguments its body forwards were never added to its signature (D-241/D-242
