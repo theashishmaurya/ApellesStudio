@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **fixed B-165/B-166: two MCP docstrings corrected to match
+  real behaviour**, found while modelling D-310's schemas. B-165: `set_clip_fade`
+  and `editor_set_keyframe_ease` claimed CSS's `"ease"` was a valid curve
+  preset; the real parser only accepts `linear`/`ease-in`/`ease-out`/
+  `ease-in-out` and rejects `"ease"` outright — docstrings now say exactly
+  that. B-166: three Motion ease docstrings implied `y` overshoot was
+  unbounded; the real handler silently clamps it to `-0.75..1.75` with a
+  warning — now stated. Also confirmed, while auditing all 161 tools for
+  this: the 121 tools that didn't need a D-310 model all have correct
+  scalar typing already, and the 5 tools with a bare `Any` value param
+  (`motion_set_*_field`/`_item`) are correctly `Any` by design — genuinely
+  open-ended field setters, not a gap.
 - **2026-09-12** — **fixed B-164: a slow Colorist op no longer bricks the
   whole Colorist MCP surface for the rest of the session.** `control.rs`'s
   `dispatch` dropped a registry's bridge claim on ANY timeout, but a registry

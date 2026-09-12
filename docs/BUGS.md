@@ -2823,16 +2823,18 @@ status: **fixed** (2026-09-12) · severity: **high** (every Colorist MCP tool �
 
 ## B-165 — three MCP curve docstrings document a `"ease"` preset that the parser rejects
 
-status: **open** (documented in the schema by D-310, docstrings not yet corrected) · severity: low (an agent that follows the docstring gets a hard error; the four real presets all work) · area: `mcp/server.py`, `packages/editor/src/timeline.ts`
+status: **fixed** (2026-09-12) · severity: low (an agent that follows the docstring gets a hard error; the four real presets all work) · area: `mcp/server.py`
 
 - **found:** 2026-09-12, reading `parseCurve` while modelling D-310's `CurveSpec`.
 - **cause:** `set_clip_fade` and `editor_set_keyframe_ease` both say the preset names are `"linear" | "ease-in" | "ease-out" | "ease-in-out"` *(also "ease", CSS's own)*. `EASE_PRESETS` (`timeline.ts`) contains exactly four entries and `"ease"` is not among them, so `parseCurve` refuses it with `unknown curve "ease"` — correctly, since it never silently substitutes.
-- **fix:** drop the `(also "ease", CSS's own)` clause from both docstrings, or add a real `"ease"` preset. D-310's `EasePresetName` literal deliberately encodes only the four that work, so the published schema is now right even though the prose is not.
+- **fix:** dropped the `(also "ease", CSS's own)` clause from both docstrings — replaced with an explicit "exactly these four, no others" statement naming this bug, rather than adding a real `"ease"` preset. D-310's `EasePresetName` literal already deliberately encodes only the four that work, so the published schema was already right; this fixes the prose to match it.
+- **verified:** `mcp/.venv/bin/python -c "import server"` succeeds, same tool count as before.
 
 ## B-166 — the Motion ease docstrings say `y` is unbounded; the handler clamps it to -0.75..1.75
 
-status: **open** (encoded correctly in D-310's field descriptions, docstrings not yet corrected) · severity: low (an overshoot beyond the clamp is silently reduced, with a `warning` the caller has to notice) · area: `mcp/server.py`, `packages/motion/src/easeCurve.ts`
+status: **fixed** (2026-09-12) · severity: low (an overshoot beyond the clamp is silently reduced, with a `warning` the caller has to notice) · area: `mcp/server.py`
 
 - **found:** 2026-09-12, while modelling `EaseCurve` for D-310.
 - **cause:** `motion_set_camera_2d`, `motion_set_layer_transform_keys` and `motion_set_keyframe_ease` all say "`y` outside `0..1` is legal and means real overshoot" and offer `[0.3, 0, 0.3, 1.4]` as an example, implying `y` is unbounded. `clampEaseCurve` (`easeCurve.ts`) clamps `y1`/`y2` to `EASE_Y_MIN`/`EASE_Y_MAX` = **-0.75..1.75**. The documented example survives; a bigger bounce does not. Note the handler is *stricter* than the manifest's own zod schema, which constrains only `x1`/`x2`.
-- **fix:** state the real clamp in all three docstrings.
+- **fix:** all three docstrings now state the real `-0.75..1.75` clamp and that it's silently applied with a warning, immediately after the "`y` is legal outside `0..1`" claim that was true but incomplete.
+- **verified:** `mcp/.venv/bin/python -c "import server"` succeeds, same tool count as before.

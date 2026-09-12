@@ -477,12 +477,13 @@ def set_clip_fade(
     overlap and their multipliers multiply, so a clip fully fading in and out
     sits at 0.25 in the middle. Omitting a duration leaves that one as it is.
 
-    A curve is either a preset NAME -- "linear" | "ease-in" | "ease-out" |
-    "ease-in-out" (also "ease", CSS's own) -- or four cubic-bezier control
-    points [x1, y1, x2, y2], the same model CSS cubic-bezier() and After
-    Effects keyframe easing use (P0=(0,0) and P3=(1,1) implicit; x is progress
-    through the fade window, y the multiplier at that progress). An unknown
-    preset name is rejected, not silently substituted. Curves always come back
+    A curve is either a preset NAME -- exactly "linear" | "ease-in" |
+    "ease-out" | "ease-in-out", no others (B-165: CSS's own "ease" is NOT one
+    of them and is rejected, not silently substituted) -- or four cubic-bezier
+    control points [x1, y1, x2, y2], the same model CSS cubic-bezier() and
+    After Effects keyframe easing use (P0=(0,0) and P3=(1,1) implicit; x is
+    progress through the fade window, y the multiplier at that progress). An
+    unknown preset name is rejected, not silently substituted. Curves always come back
     as four control points plus the matching preset name if there is one, so a
     curve read and written back is exactly what was read.
 
@@ -3494,9 +3495,10 @@ def editor_set_keyframe_ease(
     exist rather than silently doing nothing. Easing is per property, so the
     same frame can carry a different curve for `scale` than for `opacity`.
 
-    `curve` is either a preset NAME -- "linear" | "ease-in" | "ease-out" |
-    "ease-in-out" (also "ease", CSS's own) -- or four cubic-bezier control
-    points [x1, y1, x2, y2]: the same model, and the same parser, as
+    `curve` is either a preset NAME -- exactly "linear" | "ease-in" |
+    "ease-out" | "ease-in-out", no others (B-165: CSS's own "ease" is NOT one
+    of them and is rejected) -- or four cubic-bezier control points
+    [x1, y1, x2, y2]: the same model, and the same parser, as
     `editor_set_clip_fade`'s curves. `x` is progress from this keyframe to the
     next, `y` is how far through the value change you are at that progress.
     P0=(0,0)/P3=(1,1) are implicit, so an ease can never move a keyframe — both
@@ -5256,8 +5258,10 @@ def motion_set_camera_2d(scene_index: int, keys: list[Camera2DKey]) -> str:
 
     `ease` is a 4-number cubic bezier `[x1, y1, x2, y2]`. `x1`/`x2` outside
     `0..1` are clamped with a warning (the runtime throws on them); `y`
-    outside `0..1` is legal and means real overshoot. A malformed ease is a
-    hard error, never silently dropped.
+    outside `0..1` is legal and means real overshoot -- but not unbounded
+    (B-166): `y1`/`y2` are silently clamped to `-0.75..1.75`, with a warning
+    if that changed anything. A malformed ease is a hard error, never
+    silently dropped.
 
     Args:
         scene_index: which scene.
@@ -5825,8 +5829,9 @@ def motion_set_layer_transform_keys(
     `ease` per key is a cubic bezier `[x1, y1, x2, y2]` shaping the segment
     that STARTS at that key. `x1`/`x2` outside `0..1` are clamped with a
     warning; `y` outside `0..1` is legal and means overshoot (anticipation, a
-    bounce). A malformed ease is a hard error. Unknown fields in a key are
-    dropped rather than stored.
+    bounce) -- but not unbounded (B-166): `y1`/`y2` are silently clamped to
+    `-0.75..1.75`, with a warning if that changed anything. A malformed ease
+    is a hard error. Unknown fields in a key are dropped rather than stored.
 
     Passing `keys=[]` REMOVES the animation entirely, back to the layer's
     static values.
@@ -6055,7 +6060,9 @@ def motion_set_keyframe_ease(
     (fast start, gentle landing), `[0.4, 0, 1, 1]` ease-in. `x1`/`x2` outside
     `0..1` are CLAMPED with a warning (the runtime throws on them); `y`
     outside `0..1` is legal and is real overshoot — `[0.3, 0, 0.3, 1.4]`
-    overshoots and settles back.
+    overshoots and settles back — but not unbounded (B-166): `y1`/`y2` are
+    silently clamped to `-0.75..1.75`, with a warning if that changed
+    anything.
 
     Pass `ease=null` to CLEAR it back to linear. Omitting `ease` entirely is
     an error, since there would be nothing to do.
