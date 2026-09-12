@@ -21,6 +21,12 @@ One or two lines per session. Detail lives in the decision it references.
   pulled in jupyter/open3d/pandas/scikit-learn for nothing. A real bug caught by
   its own new test: `canonicalize()` on a venv's `bin/python` resolves the symlink
   to the *system* interpreter and silently abandons the locked environment.
+- **2026-09-12** — **B-172: `understand_video` can never download its own
+  model** — found end-to-end verifying D-314; `HF_HUB_OFFLINE=1` is set
+  unconditionally on every call, so the "first-run download" the code's own
+  docs promise is unreachable on a machine that's never fetched the model.
+  Not a D-314 regression (reproduces identically pre-merge); left open,
+  wants its own local-first-policy `D-NNN`, not a quiet patch.
 - **2026-09-12** — **B-170: deleting a project you just closed refused with
   "cannot delete the currently open project"**, from a screen that plainly
   has no project open — `closeProject()` now tells the Rust side too (new
