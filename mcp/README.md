@@ -6,7 +6,8 @@ sliders and re-renders its canvas; a read reflects the user's manual edits.
 
 ```
 Claude (MCP client)
-  │  stdio
+  │  stdio                            ← this server. The Rust one (D-312) also
+  │                                     serves HTTP on :19789 — see the note below
 mcp/server.py
   │  HTTP  POST /op {op, args}
 app/src-tauri/src/chroma/control.rs   (control server, in the app, port 19788)
@@ -57,6 +58,14 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 > is captured from — so nothing here has been retired, and retiring it is a
 > separate, deliberate call. Divergences and open items:
 > `../docs/notes/mcp-rust-port.md`.
+>
+> **D-313 widens the gap: the Rust server no longer has to be launched by a
+> client at all.** The app starts and supervises `apelles-mcp --http` on
+> `127.0.0.1:19789/mcp`, so a client registers a URL
+> (`claude mcp add --transport http apelles http://127.0.0.1:19789/mcp`) with no
+> path, no venv and no subprocess of its own. That is the shape this stdio-only
+> Python server cannot match without being rewritten, and it is the practical
+> reason the migration is worth finishing.
 
 ## Tools — 152 shipped (plus 9 debug-build-only; 161 definitions total)
 

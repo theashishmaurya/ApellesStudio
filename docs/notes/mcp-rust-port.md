@@ -12,7 +12,7 @@ Read D-312 in `docs/08-decisions.md` first for *why*. This file is the *how* and
 
 | | |
 |---|---|
-| Harness | **complete** — covers all 161 tools, passing |
+| Harness | **complete** — covers all 161 tools, passing (plus the D-313 HTTP-transport test) |
 | Tools ported | **161 of 161** — Colorist 42, Edit 73, Motion 37, debug 9 |
 | Remaining | **none.** Both servers publish an identical tool set, verified over a real MCP session. |
 | `mcp/server.py` | **still live and still the fallback.** Nothing has been retired — see "what is deliberately still open". |
@@ -101,6 +101,25 @@ mcp/.venv/bin/python crates/apelles-mcp/parity/live_smoke.py [tool ...]
 Runs read-only tools through **both** servers against a running Apelles app and diffs the
 parsed JSON field by field. Deliberately not exhaustive — coverage is the corpus's job,
 and a live app can only answer for whatever happens to be open in it.
+
+### 4. HTTP transport — `crates/apelles-mcp/tests/http_transport.rs` (D-313)
+
+The gap the other three leave: all of them exercise the server over stdio's shape (an
+in-process duplex stream, or a real stdio subprocess), so all three would keep passing if
+`--http` were broken, unroutable, or quietly serving a different tool set.
+
+```bash
+cargo test -p apelles-mcp --test http_transport
+```
+
+Binds the real `serve::router` on an ephemeral loopback port, dials it with a real rmcp
+streamable-HTTP client, and asserts the surface reached **by URL** is the identical one:
+same server instructions, same 161 tools, and for a real tool call the same op with its
+B-153 timeout budget intact and the same rendered content back. Plus `/health` in the
+shape the app's supervisor polls for — `ok` and a 16-hex-char `content_sha256` — because
+renaming either of those breaks supervision silently rather than loudly.
+
+No app needed; the control server is stubbed, as in `parity.rs`.
 
 ---
 
@@ -207,8 +226,10 @@ way, and the same non-uniform cases are still waiting.
 
 ## What is deliberately still open
 
-- **`mcp/server.py`, `mcp/run.sh` and the Python entry in
-  `packages/shell/src/ConnectMcpDialog.tsx` are untouched, deliberately.** The last tool
+- **`mcp/server.py` and `mcp/run.sh` are untouched, deliberately.** (D-313 did rework
+  `packages/shell/src/ConnectMcpDialog.tsx` — it now leads with the Rust server's HTTP
+  URL — but that is a change of what the dialog *recommends*, not a retirement: the
+  Python path is still reachable there, and the two files below it still exist.) The last tool
   has now landed, so the blocker is no longer "the port is unfinished" — it is that the
   Rust server has not yet been used to do real work, and that the corpus is captured FROM
   the Python one. Retiring them is its own deliberate step, and it is the coordinating
@@ -218,6 +239,10 @@ way, and the same non-uniform cases are still waiting.
   and still describe the Python server, which is still the one in use. They move when the
   port does. (`website/src/data/mcp.ts` is separately already stale — that is B-126, not
   this.)
-- **Embedding the server in the Tauri process** — option (1) in D-312 — is a real future
-  option and is cheap by construction: one more `OpTransport` implementation and rmcp's
-  streamable-HTTP server transport, with all 161 tools untouched. It is not scheduled.
+- **Embedding the server in the Tauri process** — option (1) in D-312 — is still open,
+  and D-313 changed what is left of it. The rmcp half is now done and shipped
+  (`src/serve.rs`), so what remains is only the in-process `OpTransport` that would skip
+  the `POST /op` hop. D-313 deliberately did *not* take it: the app supervises
+  `apelles-mcp` as a child process instead, so an MCP-server bug cannot take down the
+  editor and `app/src-tauri` does not have to depend on a crate that sits beside it. All
+  161 tools stay untouched either way. Not scheduled.

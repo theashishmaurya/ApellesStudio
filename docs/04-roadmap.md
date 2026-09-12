@@ -252,6 +252,24 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    Python entry in `ConnectMcpDialog.tsx` on the table, and that is a separate,
    deliberate step. This also found and fixed **B-168** on day one.
 
+   **Follow-on, done the same day — D-313: the app runs its own MCP server on a fixed
+   local port.** `apelles-mcp --http` serves the identical 161 tools over MCP streamable
+   HTTP on loopback `127.0.0.1:19789/mcp` (rmcp `transport-streamable-http-server` +
+   axum; `CHROMA_MCP_PORT`), and `app/src-tauri` spawns and supervises it on launch the
+   way it already does the two Python sidecars. So a client pastes a URL instead of a
+   path, and one server serves every client. stdio stays the default for a bare
+   `apelles-mcp`, which is load-bearing rather than polite: **Claude Desktop's config
+   file cannot express a URL server at all.** Open items this leaves:
+   - **Extract the sidecar supervisor into its own crate.** `apelles_ai::sidecar` is now
+     a general local-service supervisor (`Launch::PythonUvicorn | WorkspaceBin`) living
+     in a crate named for one of its three users. The mechanism is right and shared; only
+     the home is wrong. A mechanical move — `apelles-ai` keeps `AI`/`AI_MEDIA` and
+     re-exports, nothing else changes.
+   - **Packaged-build binary bundling.** `resolve_bin` already prefers the directory of
+     the app's own executable, which is where a Tauri `externalBin` lands, but nothing
+     bundles `apelles-mcp` yet. This inherits the existing Phase-4 sidecar packaging gap
+     (`docs/notes/sidecar-lifecycle.md`) rather than adding a new one.
+
 1. ~~**Editor timeline audio playback**~~ — **done, D-050 (2026-09-03).** Real
    `cpal` device audio during Play: `symphonia` decode → `rubato` resample →
    `dasp_sample` format-convert → `cpal` output, reusing the video track's

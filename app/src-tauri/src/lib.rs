@@ -2025,6 +2025,12 @@ pub fn run() {
                 // `transformers>=5.5`, `ai/` pins `<5`). One thread each; the
                 // shared `shutdown()` below kills both.
                 std::thread::spawn(chroma::sidecar::spawn_and_supervise_media);
+                // Apelles: and the MCP server (D-313) — `apelles-mcp --http` on
+                // 19789, so an assistant only needs a URL instead of spawning
+                // its own copy of the binary by path. Not Python, but the same
+                // supervisor: `Launch::WorkspaceBin` is the only difference, and
+                // the same `shutdown()` below kills this one too.
+                std::thread::spawn(chroma::sidecar::spawn_and_supervise_mcp);
             }
 
             let window_cfg = app.config().app.windows.first().unwrap().clone();
@@ -2313,6 +2319,8 @@ pub fn run() {
             chroma::motion::chroma_motion_render,
             chroma::sidecar::chroma_ai_status,
             chroma::sidecar::chroma_ai_media_status,
+            chroma::sidecar::chroma_mcp_status,
+            chroma::sidecar::chroma_mcp_port,
             chroma::media_understanding::chroma_transcribe,
             chroma::media_understanding::chroma_transcribe_status,
             chroma::media_understanding::chroma_analyze_video,
@@ -2426,7 +2434,7 @@ pub fn run() {
                 }
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     api.prevent_exit();
-                    chroma::sidecar::shutdown(); // Apelles (D-028): no orphan uvicorn
+                    chroma::sidecar::shutdown(); // Apelles (D-028/D-313): no orphan sidecar
 
                     #[cfg(target_os = "macos")]
                     unsafe { libc::_exit(0); }
@@ -2435,7 +2443,7 @@ pub fn run() {
                     std::process::exit(0);
                 }
                 tauri::RunEvent::Exit => {
-                    chroma::sidecar::shutdown(); // Apelles (D-028): no orphan uvicorn
+                    chroma::sidecar::shutdown(); // Apelles (D-028/D-313): no orphan sidecar
 
                     #[cfg(target_os = "macos")]
                     unsafe { libc::_exit(0); }

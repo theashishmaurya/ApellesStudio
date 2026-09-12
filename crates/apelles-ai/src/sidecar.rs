@@ -1,10 +1,11 @@
-//! Rust-managed Python sidecar lifecycle (D-028; extracted from
-//! `app/src-tauri/src/chroma/sidecar.rs` into `apelles-ai` in D-145; generalized
-//! from one hardcoded sidecar to N in D-190).
+//! Rust-managed lifecycle for Apelles' supervised local services (D-028;
+//! extracted from `app/src-tauri/src/chroma/sidecar.rs` into `apelles-ai` in
+//! D-145; generalized from one hardcoded sidecar to N in D-190; generalized
+//! again from "Python only" to any local service in D-313).
 //!
-//! Starts and supervises Apelles' Python sidecars so the user never has to
-//! `cd <dir> && ./run.sh` by hand. Two exist today, described by the two
-//! [`SidecarSpec`] statics below:
+//! Starts and supervises them so the user never has to run one by hand. Each is
+//! described by a [`SidecarSpec`] — two live here, and the third lives in the
+//! app (see "not only Python" below):
 //!   - [`AI`] — `ai/`, PyTorch/MPS: SAM 2 → ViTMatte matting (D-012/D-016),
 //!     Video-Depth-Anything depth tracking (D-036), MoGe-2 normals (D-077).
 //!   - [`AI_MEDIA`] — `ai-media/`, MLX: word-level transcript (mlx-whisper) and
@@ -13,30 +14,32 @@
 //!     `transformers>=5.5` and `ai/` pins `<5`, which pip reports as an outright
 //!     `ResolutionImpossible`. See D-189 for the spike that settled it.
 //!
-//! The app spawns [`spawn_and_supervise`] on a thread per sidecar from `lib.rs`
-//! `.setup()`; the app-exit hook in `lib.rs` `.run(...)` calls [`shutdown`],
-//! which kills every child we own so no uvicorn is orphaned.
+//! The app spawns one supervisor thread per sidecar from `lib.rs` `.setup()`;
+//! the app-exit hook in `lib.rs` `.run(...)` calls [`shutdown`], which kills
+//! every child we own so nothing is orphaned.
 //!
 //! What it does, per sidecar:
-//!   - resolve the sidecar dir + a Python interpreter (env overrides → venv → PATH)
-//!   - if a sidecar is already healthy on the port, monitor it WITHOUT owning it
+//!   - resolve what to launch — a sidecar dir + Python interpreter (env
+//!     overrides → venv → PATH), or a compiled binary ([`Launch`])
+//!   - if something is already healthy on the port, monitor it WITHOUT owning it
 //!     (never kill or respawn someone else's process) — D-101: also compares its
-//!     self-reported `content_sha256` against this build's own `server.py` on
+//!     self-reported `content_sha256` against this build's own code on
 //!     every poll, so a genuinely stale/different external process is detected
 //!     and surfaced (`SidecarStatus::stale`) instead of trusted forever just for
 //!     answering 200 (see `docs/notes/sidecar-lifecycle.md`'s "real ownership" TODO)
-//!   - otherwise spawn `python -m uvicorn server:app`, pipe its stdout+stderr to
+//!   - otherwise spawn it, pipe its stdout+stderr to
 //!     `log::info!("[sidecar/<name>] …")`, poll `/health` until ready, then restart
 //!     it with capped exponential backoff if it dies
 //!   - kill the owned child on app exit
 //!
 //! What it does NOT do: bundle Python, create/repair a venv, install requirements,
-//! or touch `grade.json`. If a venv is missing it logs a one-line fix and retries
-//! every 30 s — the features that need that sidecar just fail with the existing
-//! "unreachable" errors until then (acceptable degradation). It also does not
-//! expose a `#[tauri::command]` — the app-side `app/src-tauri/src/chroma/sidecar.rs`
-//! keeps the thin `chroma_ai_status` / `chroma_ai_media_status` wrappers around
-//! [`status_snapshot`] (D-039 §1: commands do not move).
+//! build a `WorkspaceBin`, or touch `grade.json`. If what it needs is missing it
+//! logs a one-line fix and retries every 30 s — the features that need that
+//! service just fail with the existing "unreachable" errors until then
+//! (acceptable degradation). It also does not expose a `#[tauri::command]` — the
+//! app-side `app/src-tauri/src/chroma/sidecar.rs` keeps the thin
+//! `chroma_ai_status` / `chroma_ai_media_status` / `chroma_mcp_status` wrappers
+//! around [`status_snapshot`] (D-039 §1: commands do not move).
 //!
 //! **D-190, why this is parameterized rather than copy-pasted:** adding the second
 //! sidecar could have been a second module with the names swapped. That would
@@ -50,9 +53,24 @@
 //! `OnceLock`s into a registry keyed by spec name, and the logic below is written
 //! once. Behaviour for the `ai/` sidecar is unchanged.
 //!
-//! Packaged-app path resolution is a known gap — [`resolve_dir`] keys off
-//! `CARGO_MANIFEST_DIR` (a dev path) / the spec's dir env var. See
-//! `docs/notes/sidecar-lifecycle.md` — flagged as a Phase 4 follow-up.
+//! **D-313, not only Python.** `apelles-mcp --http` is supervised by this exact
+//! code: what a compiled binary needs that differs from `python -m uvicorn` is
+//! only how to find it, how to launch it and which bytes to hash, so that — and
+//! only that — moved into [`Launch`]. Its spec is declared in `app/src-tauri`,
+//! not here, because the decision to run an MCP server is the app's and this
+//! crate is the AI client; the registry is keyed by spec name and filled on
+//! first use, so a spec from another crate still gets a state slot, a status
+//! snapshot and a kill on exit with no change to [`shutdown`].
+//!
+//! One consequence worth naming: this module is now a general local-service
+//! supervisor living in a crate named after one of its three users. That is a
+//! real naming wart, tracked in `docs/04-roadmap.md`, not left as a comment.
+//!
+//! Packaged-app path resolution is a known gap for the Python sidecars —
+//! [`resolve_dir`] keys off `CARGO_MANIFEST_DIR` (a dev path) / the spec's dir
+//! env var. See `docs/notes/sidecar-lifecycle.md` — flagged as a Phase 4
+//! follow-up. [`resolve_bin`] is in better shape: it looks beside the app's own
+//! executable first, which is correct in both a dev run and a bundle.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -78,24 +96,63 @@ const HEALTHY_RUN_RESET: Duration = Duration::from_secs(60);
 
 // ---- the specs --------------------------------------------------------------------
 
+/// *What* to start, as opposed to the [`SidecarSpec`] facts (name, port, env vars)
+/// that are the same shape whatever it is.
+///
+/// **D-313, why this exists.** Everything below this line — the D-101 staleness
+/// policy, "monitor but never kill a process we did not start", the
+/// fast-fail/slow-retry ladder, the shutdown races, the one `shutdown()` exit
+/// hook — is subtle and is identical for any supervised local service. What
+/// genuinely differs between a Python sidecar and a compiled Rust binary is only
+/// how to find it, how to launch it, and what bytes to hash for staleness. So
+/// that, and only that, is what varies here. Copy-pasting the ~180-line
+/// supervisor for a second kind of child is exactly what D-190 refused to do for
+/// the second Python sidecar, and the reasoning has not changed.
+pub enum Launch {
+    /// `<python> -m uvicorn server:app --host 127.0.0.1 --port <port>`, run with
+    /// the resolved sidecar directory as the cwd (D-028/D-189).
+    ///
+    /// The dev-layout directory candidates are relative to `CARGO_MANIFEST_DIR`
+    /// (`<workspace>/crates/apelles-ai`) and are tried in order until one
+    /// contains a `server.py`. `"../../<dir>"` is the real post-D-145 path; the
+    /// shorter ones are kept so the lookup still works if this crate is ever
+    /// nested differently.
+    PythonUvicorn {
+        /// Directory name under the workspace root, and the basis of the
+        /// dev-layout candidates.
+        dir: &'static str,
+        /// Override the resolved directory (must contain `server.py`).
+        dir_env: &'static str,
+        /// Override the Python interpreter (must be a file).
+        python_env: &'static str,
+    },
+
+    /// A compiled binary built from this same Cargo workspace (D-313).
+    ///
+    /// **Contract:** the binary must accept `--port <PORT>`, which the supervisor
+    /// appends after `args`. It is also given the spec's `port_env`, like every
+    /// other child here — the explicit flag is on top of that so a `ps` line says
+    /// which port the process is on without anyone having to guess.
+    WorkspaceBin {
+        /// File name to look for, e.g. `"apelles-mcp"`.
+        bin: &'static str,
+        /// Override with an absolute path to a specific build.
+        bin_env: &'static str,
+        /// Fixed flags, before the appended `--port <PORT>`.
+        args: &'static [&'static str],
+        /// The `cargo build -p <package>` in the "can't start" hint.
+        package: &'static str,
+    },
+}
+
 /// Everything that differs between one supervised sidecar and another. Every
 /// field is `&'static` because the specs are `static`s, one per sidecar, and the
 /// supervisor threads outlive any borrow shorter than that.
-///
-/// The dev-layout directory candidates are relative to `CARGO_MANIFEST_DIR`
-/// (`<workspace>/crates/apelles-ai`), and are tried in order until one contains a
-/// `server.py`. `"../../<dir>"` is the real post-D-145 path; the shorter ones are
-/// kept so the lookup still works if this crate is ever nested differently.
 pub struct SidecarSpec {
-    /// Log tag and registry key — `"ai"`, `"ai-media"`.
+    /// Log tag and registry key — `"ai"`, `"ai-media"`, `"mcp"`.
     pub name: &'static str,
-    /// Directory name under the workspace root, and the basis of the dev-layout
-    /// candidates.
-    pub dir: &'static str,
-    /// Override the resolved directory (must contain `server.py`).
-    pub dir_env: &'static str,
-    /// Override the Python interpreter (must be a file).
-    pub python_env: &'static str,
+    /// What to start, and how to find it.
+    pub launch: Launch,
     /// Override the port.
     pub port_env: &'static str,
     /// If set at all, don't auto-spawn — the user is running it themselves.
@@ -114,16 +171,63 @@ impl SidecarSpec {
     /// `cd ai && ./run.sh` — the one-line manual-start hint, used in log lines
     /// and in the "can't start" error the frontend surfaces.
     fn run_hint(&self) -> String {
-        format!("cd {} && ./run.sh", self.dir)
+        match &self.launch {
+            Launch::PythonUvicorn { dir, .. } => format!("cd {dir} && ./run.sh"),
+            Launch::WorkspaceBin { package, args, .. } => {
+                format!(
+                    "cargo build -p {package} && ./target/debug/{package} {}",
+                    args.join(" ")
+                )
+            }
+        }
+    }
+
+    /// What this build would run, named the way a log line has to name it when
+    /// reporting a staleness mismatch — "the thing we hashed and compared."
+    fn code_desc(&self) -> String {
+        match &self.launch {
+            Launch::PythonUvicorn { dir, .. } => format!("{dir}/server.py"),
+            Launch::WorkspaceBin { bin, .. } => format!("the `{bin}` binary"),
+        }
+    }
+
+    /// Every identifier this spec claims — its name, its env vars, and whatever
+    /// its launch kind names.
+    ///
+    /// Public because the disjointness check has to span specs declared in
+    /// different crates since D-313 (the two Python ones live here; the MCP
+    /// server's lives in `app/src-tauri`, which is where the decision to run it
+    /// belongs). Two specs sharing an identifier is a copy-paste slip that
+    /// surfaces only as a baffling runtime failure — one supervisor driving the
+    /// other's process — never as a compile error, so it is worth a test, and
+    /// the test needs this.
+    pub fn identifiers(&self) -> Vec<&'static str> {
+        let mut ids = vec![self.name, self.port_env, self.no_spawn_env];
+        match &self.launch {
+            Launch::PythonUvicorn {
+                dir,
+                dir_env,
+                python_env,
+            } => ids.extend([*dir, *dir_env, *python_env]),
+            Launch::WorkspaceBin {
+                bin,
+                bin_env,
+                package,
+                ..
+            } => ids.extend([*bin, *bin_env, *package]),
+        }
+        ids
     }
 }
 
 /// The `ai/` sidecar (D-028): SAM 2 → ViTMatte matting, depth tracking, normals.
 pub static AI: SidecarSpec = SidecarSpec {
     name: "ai",
-    dir: "ai",
-    dir_env: "CHROMA_AI_DIR",
-    python_env: "CHROMA_AI_PYTHON",
+    launch: Launch::PythonUvicorn {
+        dir: "ai",
+        dir_env: "CHROMA_AI_DIR",
+        python_env: "CHROMA_AI_PYTHON",
+    },
     port_env: "CHROMA_AI_PORT",
     no_spawn_env: "CHROMA_AI_NO_SPAWN",
     default_port: 8765,
@@ -132,9 +236,11 @@ pub static AI: SidecarSpec = SidecarSpec {
 /// The `ai-media/` sidecar (D-189): transcript + video understanding, MLX.
 pub static AI_MEDIA: SidecarSpec = SidecarSpec {
     name: "ai-media",
-    dir: "ai-media",
-    dir_env: "CHROMA_AI_MEDIA_DIR",
-    python_env: "CHROMA_AI_MEDIA_PYTHON",
+    launch: Launch::PythonUvicorn {
+        dir: "ai-media",
+        dir_env: "CHROMA_AI_MEDIA_DIR",
+        python_env: "CHROMA_AI_MEDIA_PYTHON",
+    },
     port_env: "CHROMA_AI_MEDIA_PORT",
     no_spawn_env: "CHROMA_AI_MEDIA_NO_SPAWN",
     default_port: 8766,
@@ -320,16 +426,31 @@ fn health_ok(port: u16) -> bool {
     health_check(port).map(|h| h.ok).unwrap_or(false)
 }
 
-/// D-101 — SHA256 of the sidecar's `server.py` bytes, truncated to the first 8
-/// bytes (16 hex chars) — matches each `server.py`'s own `_CONTENT_SHA256`
-/// byte-for-byte, so an external process's self-reported hash can be compared
-/// against "the exact code this Rust binary would spawn."
-fn content_hash(dir: &Path) -> Option<String> {
-    let bytes = std::fs::read(dir.join("server.py")).ok()?;
+/// D-101 — SHA256 of a file's bytes, truncated to the first 8 bytes (16 hex
+/// chars) — matches each `server.py`'s own `_CONTENT_SHA256` byte-for-byte (and,
+/// since D-313, `apelles-mcp`'s `serve::self_content_sha256`), so an external
+/// process's self-reported hash can be compared against "the exact code this
+/// build would have spawned."
+fn file_hash(path: &Path) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let digest = hasher.finalize();
     Some(digest.iter().take(8).map(|b| format!("{b:02x}")).collect())
+}
+
+/// The bytes this build would run for `spec`, hashed — the "expected" half of the
+/// D-101 staleness comparison.
+///
+/// Computed *before* the external-vs-owned decision (that is the whole point:
+/// "already up" has to be distinguishable from "already up, but a different
+/// build"), so it must never panic and must degrade to `None` — "cannot
+/// determine" — rather than guessing.
+fn expected_content_hash(spec: &SidecarSpec) -> Option<String> {
+    match &spec.launch {
+        Launch::PythonUvicorn { .. } => file_hash(&resolve_dir(spec)?.join("server.py")),
+        Launch::WorkspaceBin { bin, bin_env, .. } => file_hash(&resolve_bin(bin, bin_env)?),
+    }
 }
 
 /// The staleness rule, in exactly one place (it is used from both
@@ -343,18 +464,22 @@ fn is_stale(expected: &Option<String>, got: &Option<String>) -> bool {
     }
 }
 
-// ---- resolve the sidecar dir + a python interpreter ------------------------------
+// ---- resolve what to launch ------------------------------------------------------
 
+/// Where a `PythonUvicorn` sidecar's code lives. `None` for any other launch kind —
+/// there is no directory to find.
 fn resolve_dir(spec: &SidecarSpec) -> Option<PathBuf> {
-    if let Ok(d) = std::env::var(spec.dir_env) {
+    let Launch::PythonUvicorn { dir, dir_env, .. } = &spec.launch else {
+        return None;
+    };
+    if let Ok(d) = std::env::var(dir_env) {
         let p = PathBuf::from(&d);
         if p.join("server.py").is_file() {
             return Some(p);
         }
         log::warn!(
-            "[sidecar/{}] {}={d} has no server.py — ignoring it",
-            spec.name,
-            spec.dir_env
+            "[sidecar/{}] {dir_env}={d} has no server.py — ignoring it",
+            spec.name
         );
     }
     // Dev layout: CARGO_MANIFEST_DIR = <workspace>/crates/apelles-ai, the sidecar
@@ -364,8 +489,46 @@ fn resolve_dir(spec: &SidecarSpec) -> Option<PathBuf> {
     // TODO(Phase 4): packaged builds need a resource-dir lookup instead — docs/notes/sidecar-lifecycle.md.
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     for prefix in ["../..", "..", "."] {
-        let c = manifest.join(prefix).join(spec.dir);
+        let c = manifest.join(prefix).join(dir);
         if c.join("server.py").is_file() {
+            return Some(c.canonicalize().unwrap_or(c));
+        }
+    }
+    None
+}
+
+/// Where a `WorkspaceBin` sidecar's executable is (D-313).
+///
+/// **Next to our own executable first**, and that ordering is the whole design:
+/// in a dev run `current_exe()` is `<target>/<profile>/apelles` and the sidecar
+/// binary sits right beside it, while in a bundle that same directory is where a
+/// Tauri `externalBin` lands. One rule covers both, and it keeps working under a
+/// custom `CARGO_TARGET_DIR`, which a hardcoded `target/` would not.
+///
+/// The workspace sweep after it is for callers nested somewhere else — a test
+/// binary in `<target>/debug/deps/`, most of all.
+fn resolve_bin(bin: &str, bin_env: &str) -> Option<PathBuf> {
+    if let Ok(p) = std::env::var(bin_env) {
+        let pb = PathBuf::from(&p);
+        if pb.is_file() {
+            return Some(pb);
+        }
+        log::warn!("[sidecar] {bin_env}={p} is not a file — ignoring it");
+    }
+
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let c = dir.join(bin);
+        if c.is_file() {
+            return Some(c);
+        }
+    }
+
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for profile in ["debug", "release"] {
+        let c = manifest.join("../../target").join(profile).join(bin);
+        if c.is_file() {
             return Some(c.canonicalize().unwrap_or(c));
         }
     }
@@ -379,41 +542,80 @@ fn which(bin: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// `Ok((python, dir))` or `Err(one-line fix hint)`.
-fn resolve(spec: &SidecarSpec) -> Result<(PathBuf, PathBuf), String> {
-    let dir = resolve_dir(spec).ok_or_else(|| {
-        format!(
-            "{} sidecar can't start: no {}/ dir found. Set {} to the sidecar folder.",
-            spec.name, spec.dir, spec.dir_env
-        )
-    })?;
+/// The fully-resolved `Command` to spawn, or a one-line fix hint the supervisor
+/// logs and surfaces as `SidecarStatus::last_error`.
+///
+/// Stdio and the port env var are NOT set here — the supervisor owns those for
+/// every launch kind alike, so there is one place they can be got wrong.
+fn resolve_command(spec: &SidecarSpec) -> Result<Command, String> {
+    let port = spec.port();
+    match &spec.launch {
+        Launch::PythonUvicorn {
+            dir: dir_name,
+            dir_env,
+            python_env,
+        } => {
+            let dir = resolve_dir(spec).ok_or_else(|| {
+                format!(
+                    "{} sidecar can't start: no {dir_name}/ dir found. Set {dir_env} to the sidecar folder.",
+                    spec.name
+                )
+            })?;
 
-    if let Ok(p) = std::env::var(spec.python_env) {
-        let pb = PathBuf::from(&p);
-        if pb.is_file() {
-            return Ok((pb, dir));
+            let python = if let Ok(p) = std::env::var(python_env) {
+                let pb = PathBuf::from(&p);
+                if !pb.is_file() {
+                    return Err(format!(
+                        "{} sidecar can't start: {python_env}={p} is not a file.",
+                        spec.name
+                    ));
+                }
+                pb
+            } else {
+                let venv = dir.join(".venv/bin/python");
+                if venv.is_file() {
+                    venv
+                } else {
+                    which("python3").ok_or_else(|| format!(
+                        "{} sidecar can't start: no python at {}. Run:  cd {dir_name} && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
+                        spec.name,
+                        venv.display(),
+                    ))?
+                }
+            };
+
+            let mut command = Command::new(python);
+            command
+                .args([
+                    "-m",
+                    "uvicorn",
+                    "server:app",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                ])
+                .arg(port.to_string())
+                .current_dir(&dir);
+            Ok(command)
         }
-        return Err(format!(
-            "{} sidecar can't start: {}={p} is not a file.",
-            spec.name, spec.python_env
-        ));
-    }
 
-    let venv = dir.join(".venv/bin/python");
-    if venv.is_file() {
-        return Ok((venv, dir));
+        Launch::WorkspaceBin {
+            bin,
+            bin_env,
+            args,
+            package,
+        } => {
+            let path = resolve_bin(bin, bin_env).ok_or_else(|| {
+                format!(
+                    "{} sidecar can't start: no `{bin}` binary beside the app or in the workspace target dir. Run:  cargo build -p {package}   (or set {bin_env} to a specific build).",
+                    spec.name
+                )
+            })?;
+            let mut command = Command::new(path);
+            command.args(*args).arg("--port").arg(port.to_string());
+            Ok(command)
+        }
     }
-
-    if let Some(py3) = which("python3") {
-        return Ok((py3, dir));
-    }
-
-    Err(format!(
-        "{} sidecar can't start: no python at {}. Run:  cd {} && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
-        spec.name,
-        venv.display(),
-        spec.dir,
-    ))
 }
 
 // ---- misc helpers ---------------------------------------------------------------
@@ -497,21 +699,21 @@ pub fn supervise(spec: &'static SidecarSpec) {
         return;
     }
 
-    // D-101 — real ownership: compute the content hash we'd expect from a
-    // sidecar built off the exact `server.py` this Rust binary can see,
-    // *before* deciding external-vs-owned, so "already up" can be told apart
-    // from "already up, but a different (probably stale) build" instead of
-    // trusting any 200 forever — the actual D-069 gap. `None` here (no dir
+    // D-101 — real ownership: compute the content hash we'd expect from the exact
+    // code this build can see (a sidecar's `server.py`, or a `WorkspaceBin`'s
+    // binary), *before* deciding external-vs-owned, so "already up" can be told
+    // apart from "already up, but a different (probably stale) build" instead of
+    // trusting any 200 forever — the actual D-069 gap. `None` here (nothing
     // resolved yet) means staleness can't be determined; that's handled as
     // "unknown, not stale" below rather than a false positive.
-    let expected_hash = resolve_dir(spec).and_then(|d| content_hash(&d));
+    let expected_hash = expected_content_hash(spec);
 
     if let Some(info) = health_check(port).filter(|h| h.ok) {
         let stale = is_stale(&expected_hash, &info.content_sha256);
         if stale {
             log::warn!(
-                "[sidecar/{name}] already running (external) on :{port}, but its content_sha256 doesn't match what this build's {}/server.py would produce — likely a stale process from an older build (see D-069/D-101). Monitoring only, NOT killing or restarting a process this app didn't start — if this is unexpected, restart it by hand (kill the pid, then `{}`).",
-                spec.dir,
+                "[sidecar/{name}] already running (external) on :{port}, but its content_sha256 doesn't match what this build's {} would produce — likely a stale process from an older build (see D-069/D-101). Monitoring only, NOT killing or restarting a process this app didn't start — if this is unexpected, restart it by hand (kill the pid, then `{}`).",
+                spec.code_desc(),
                 spec.run_hint()
             );
         } else {
@@ -533,8 +735,8 @@ pub fn supervise(spec: &'static SidecarSpec) {
     let mut fast_failures = 0u32;
 
     while !shutting_down(spec) {
-        let (python, dir) = match resolve(spec) {
-            Ok(v) => v,
+        let mut command = match resolve_command(spec) {
+            Ok(c) => c,
             Err(hint) => {
                 log::warn!("[sidecar/{name}] {hint}");
                 set_status(spec, |s| {
@@ -550,23 +752,12 @@ pub fn supervise(spec: &'static SidecarSpec) {
         };
 
         let started = Instant::now();
-        log::info!(
-            "[sidecar/{name}] starting: {} -m uvicorn server:app --port {port}  (cwd {})",
-            python.display(),
-            dir.display()
-        );
+        // `Command`'s own Debug is the program and its arguments, quoted — the
+        // real command line, rather than a hand-written description of it that
+        // could drift from what is actually spawned.
+        log::info!("[sidecar/{name}] starting: {command:?}");
 
-        let mut child = match Command::new(&python)
-            .args([
-                "-m",
-                "uvicorn",
-                "server:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-            ])
-            .arg(port.to_string())
-            .current_dir(&dir)
+        let mut child = match command
             .env(spec.port_env, port.to_string())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -774,13 +965,13 @@ fn monitor_external(spec: &'static SidecarSpec, port: u16, expected_hash: Option
         if stale != last_stale {
             if stale {
                 log::warn!(
-                    "[sidecar/{name}] external sidecar on :{port} now reports a content_sha256 that doesn't match — became stale mid-session (restarted externally with different code, or this app's own {}/ code changed underneath it). Not managed — not restarting it.",
-                    spec.dir
+                    "[sidecar/{name}] external sidecar on :{port} now reports a content_sha256 that doesn't match — became stale mid-session (restarted externally with different code, or this app's own {} changed underneath it). Not managed — not restarting it.",
+                    spec.code_desc()
                 );
             } else {
                 log::info!(
-                    "[sidecar/{name}] external sidecar on :{port} content_sha256 now matches this build's {}/server.py — no longer considered stale.",
-                    spec.dir
+                    "[sidecar/{name}] external sidecar on :{port} content_sha256 now matches this build's {} — no longer considered stale.",
+                    spec.code_desc()
                 );
             }
             last_stale = stale;
@@ -801,7 +992,7 @@ mod tests {
     }
 
     #[test]
-    fn content_hash_matches_python_sha256_hexdigest_truncated_to_16_chars() {
+    fn file_hash_matches_python_sha256_hexdigest_truncated_to_16_chars() {
         // Real, known SHA256 of the literal bytes b"hello chroma\n" — computed
         // independently (Python `hashlib.sha256(b"hello chroma\n").hexdigest()`)
         // rather than derived from this same code, so this test can't just be
@@ -811,7 +1002,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         write_server_py(&tmp, "hello chroma\n");
 
-        let got = content_hash(&tmp).expect("server.py exists, hash should compute");
+        let got = file_hash(&tmp.join("server.py")).expect("server.py exists, hash should compute");
         assert_eq!(got, "35719cab709150d0");
         assert_eq!(
             got.len(),
@@ -823,19 +1014,19 @@ mod tests {
     }
 
     #[test]
-    fn content_hash_changes_when_the_file_changes_and_is_deterministic_when_it_doesnt() {
+    fn file_hash_changes_when_the_file_changes_and_is_deterministic_when_it_doesnt() {
         let tmp =
             std::env::temp_dir().join(format!("chroma_sidecar_hash_delta_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
 
         write_server_py(&tmp, "version A");
-        let a1 = content_hash(&tmp).unwrap();
-        let a2 = content_hash(&tmp).unwrap();
+        let a1 = file_hash(&tmp.join("server.py")).unwrap();
+        let a2 = file_hash(&tmp.join("server.py")).unwrap();
         assert_eq!(a1, a2, "hashing the same bytes twice must be deterministic");
 
         write_server_py(&tmp, "version B — a single different byte is enough");
-        let b = content_hash(&tmp).unwrap();
+        let b = file_hash(&tmp.join("server.py")).unwrap();
         assert_ne!(
             a1, b,
             "a real code change must change the hash, or staleness could never be detected"
@@ -845,7 +1036,7 @@ mod tests {
     }
 
     #[test]
-    fn content_hash_is_none_when_server_py_is_missing() {
+    fn file_hash_is_none_when_the_file_is_missing() {
         // The "no dir resolved yet" / "somehow no server.py at the resolved
         // path" case — must degrade to "can't determine," never panic, since
         // this runs on every sidecar boot decision.
@@ -855,7 +1046,7 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
-        assert!(content_hash(&tmp).is_none());
+        assert!(file_hash(&tmp.join("server.py")).is_none());
     }
 
     /// A real regression test for the actual D-101 policy, now testing the one
@@ -923,16 +1114,7 @@ mod tests {
         // sidecars today), which is fine. What must never happen is one spec's
         // identifier appearing in another's.
         let keys = |s: &SidecarSpec| -> std::collections::HashSet<&'static str> {
-            [
-                s.name,
-                s.dir,
-                s.dir_env,
-                s.python_env,
-                s.port_env,
-                s.no_spawn_env,
-            ]
-            .into_iter()
-            .collect()
+            s.identifiers().into_iter().collect()
         };
         for (i, a) in ALL.iter().enumerate() {
             for b in &ALL[i + 1..] {
@@ -963,7 +1145,6 @@ mod tests {
 
     #[test]
     fn run_hint_names_the_specs_own_directory() {
-        assert_eq!(AI.run_hint(), "cd ai && ./run.sh");
         assert_eq!(AI_MEDIA.run_hint(), "cd ai-media && ./run.sh");
     }
 
@@ -973,15 +1154,82 @@ mod tests {
     #[test]
     fn resolve_dir_finds_both_sidecars_in_the_dev_layout() {
         for spec in ALL {
+            let Launch::PythonUvicorn { dir: name, .. } = &spec.launch else {
+                panic!("{} is not a Python sidecar", spec.name);
+            };
             let dir = resolve_dir(spec).unwrap_or_else(|| {
                 panic!("{} sidecar dir not found from the workspace", spec.name)
             });
             assert!(dir.join("server.py").is_file());
-            assert!(
-                dir.ends_with(spec.dir),
-                "{dir:?} should end with {}",
-                spec.dir
-            );
+            assert!(dir.ends_with(name), "{dir:?} should end with {name}");
         }
+    }
+
+    // ---- D-313: the generalization to a non-Python child ------------------------
+
+    /// A `WorkspaceBin` spec must produce a real, runnable command line — the
+    /// resolved path plus its fixed flags plus the appended `--port <PORT>` the
+    /// variant's contract promises. This is the half a Python-shaped supervisor
+    /// would silently get wrong.
+    #[test]
+    fn a_workspace_bin_spec_launches_the_binary_with_its_port() {
+        // `cargo test` puts this test binary in the same profile dir the
+        // workspace's other binaries land in, so resolving one by name exercises
+        // the real `resolve_bin` path rather than a fixture.
+        static SPEC: SidecarSpec = SidecarSpec {
+            name: "test-bin",
+            launch: Launch::WorkspaceBin {
+                bin: "apelles-mcp",
+                bin_env: "CHROMA_TEST_BIN_UNSET",
+                args: &["--http"],
+                package: "apelles-mcp",
+            },
+            port_env: "CHROMA_TEST_BIN_PORT_UNSET",
+            no_spawn_env: "CHROMA_TEST_BIN_NO_SPAWN_UNSET",
+            default_port: 19789,
+        };
+
+        let Some(path) = resolve_bin("apelles-mcp", "CHROMA_TEST_BIN_UNSET") else {
+            // Not a failure: a `cargo test -p apelles-ai` on its own has not
+            // necessarily built the other crate's binary. What must never happen
+            // is resolving to something that is not a file, and that is asserted
+            // on the `Some` branch below.
+            eprintln!("skipping: apelles-mcp is not built — `cargo build -p apelles-mcp` first");
+            return;
+        };
+        assert!(path.is_file(), "resolve_bin returned a non-file: {path:?}");
+
+        let command = resolve_command(&SPEC).expect("a resolvable binary should build a command");
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, ["--http", "--port", "19789"]);
+        assert_eq!(command.get_program(), path.as_os_str());
+        // The Python launch sets a cwd; a workspace binary must not inherit that
+        // idea — it is found by absolute path and needs no particular directory.
+        assert!(command.get_current_dir().is_none());
+    }
+
+    /// The hint a user actually reads when the binary has not been built yet.
+    #[test]
+    fn each_launch_kind_names_its_own_way_back() {
+        assert_eq!(AI.run_hint(), "cd ai && ./run.sh");
+        assert_eq!(AI.code_desc(), "ai/server.py");
+
+        static BIN: SidecarSpec = SidecarSpec {
+            name: "mcp",
+            launch: Launch::WorkspaceBin {
+                bin: "apelles-mcp",
+                bin_env: "X_BIN",
+                args: &["--http"],
+                package: "apelles-mcp",
+            },
+            port_env: "X_PORT",
+            no_spawn_env: "X_NO_SPAWN",
+            default_port: 19789,
+        };
+        assert_eq!(
+            BIN.run_hint(),
+            "cargo build -p apelles-mcp && ./target/debug/apelles-mcp --http"
+        );
+        assert_eq!(BIN.code_desc(), "the `apelles-mcp` binary");
     }
 }
