@@ -29907,3 +29907,128 @@ still pointed at `mcp/server.py`. That server therefore stays: it is the rollbac
 is the reference the corpus is captured from. Retiring it, `mcp/run.sh` and the Python
 entry in `ConnectMcpDialog.tsx` is a separate, deliberate step that should follow a real
 session's use of the Rust binary, not this test suite passing.
+
+## D-313 — Apelles runs its own MCP server on a fixed local port; every client just points at a URL
+
+**2026-09-12.** Supersedes nothing; extends D-312 and D-020.
+
+### Context
+
+D-312 landed `crates/apelles-mcp` — all 161 tools, verified against a golden corpus. It
+speaks **stdio only**: whatever client wants it (Claude Code, Cursor, …) spawns the binary
+itself, by absolute path, as a subprocess it then owns. So every client needs the repo
+checkout, the right path, and its own copy of the server; two open clients means two
+server processes; and `ConnectMcpDialog.tsx` was seven variations on "paste this path."
+
+The owner's reference point was Palmier Pro's "Connect an agent" settings page: a short
+list of clients where each row is a one-line `claude mcp add --transport http … <url>` or
+a one-click Install, because the product itself is already running the server. The ask was
+to make Apelles work that way — **the app starts the MCP server, on a fixed local port,
+and a client only ever needs a URL.**
+
+The app already manages exactly this kind of thing: `ai/` and `ai-media/` are
+always-running local HTTP services it spawns, health-checks, restarts and kills on exit
+(D-028/D-189/D-190).
+
+### Options
+
+1. **Keep stdio only.** Zero work, but the dialog stays seven paths and the goal is unmet.
+2. **Embed the server in the Tauri process** — `axum::serve` on 19789 straight from
+   `lib.rs` `.setup()`, no child process at all.
+3. **Add an HTTP transport to the binary and supervise it as a sidecar** — the same shape
+   as `ai/` and `ai-media/`.
+
+### Decision
+
+**Option 3**, with stdio kept as a first-class second transport rather than replaced.
+
+- **Transport: MCP streamable HTTP**, via `rmcp`'s `transport-streamable-http-server`
+  feature, hosted by **axum** (`src/serve.rs`). rmcp hands out a Tower `Service`, not a
+  server, so something must bind the socket; axum is what rmcp's own tests wire it into,
+  it is tokio-rs-maintained and MIT, and 0.8 is the current line — the boring choice, and
+  the canonical one rather than a hand-rolled hyper service. `sha2` was added for the
+  self-hash below (same version `apelles-ai` already uses); `tokio/net` for the listener.
+- **Port 19789**, one above the control server's 19788, overridable by `CHROMA_MCP_PORT`
+  exactly as `CHROMA_CONTROL_PORT` overrides that one. The two halves of the same bridge
+  sit together and are obvious in an `lsof`; nothing in the repo used 19789, and it is far
+  from the sidecars' 8765/8766, which are in the range a stray dev server grabs.
+- **stdio stays the default.** Bare `apelles-mcp` means what it meant in D-312, so a
+  client registered before this change keeps working; `--http` is opt-in and is what the
+  app's supervisor passes. This is not politeness — **Claude Desktop's
+  `claude_desktop_config.json` cannot express a URL server at all** (see below), so stdio
+  is a live path, not a legacy one.
+- **No authentication, loopback only.** The listener binds `127.0.0.1`, never `0.0.0.0`,
+  and rmcp's default `allowed_hosts` keeps its own DNS-rebinding guard on. Anything that
+  can reach 19789 can already reach the unauthenticated control server on 19788 directly,
+  so a token here would be theatre — but the loopback bind is load-bearing and is
+  asserted, not assumed.
+- **Supervision: generalize the existing supervisor rather than write a second one.**
+  `apelles_ai::sidecar`'s `SidecarSpec` grew a launch descriptor so it can drive a plain
+  compiled binary as well as `python -m uvicorn`; the genuinely subtle parts — the D-101
+  staleness policy, the external-process rule ("monitor, never kill, something we did not
+  start"), the fast-fail/slow-retry backoff ladder, the shutdown races, the single
+  `shutdown()` exit hook — are written once and shared. Copy-pasting ~180 lines of that
+  loop for a second child process is exactly what D-190 refused to do for the second
+  Python sidecar, and the reasoning has not changed.
+- **Staleness works here too.** `GET /health` reports a truncated SHA-256 of the binary's
+  own bytes — the compiled-Rust analogue of each Python sidecar's `_CONTENT_SHA256`, same
+  16-hex-char format — so the supervisor's existing comparison answers "is the server on
+  this port the one this build would have started, or a leftover from an earlier
+  `cargo build`?" without a single new line of policy. That case is very likely in a dev
+  checkout, which is why it was worth the analogue rather than a bare TCP liveness probe.
+- **Binary resolution: next to the app's own executable first.** `current_exe()`'s
+  directory is `target/debug/` in a dev run, where `apelles-mcp` already sits beside
+  `apelles`, and is also where a Tauri `externalBin` lands in a bundle — so one rule
+  covers both without inventing packaging that does not exist yet. `CHROMA_MCP_BIN`
+  overrides; a workspace `target/{debug,release}` sweep is the fallback.
+
+### Why not embed it in the Tauri process (option 2)
+
+Tempting, and genuinely simpler: no path resolution, no orphan risk, no packaging gap.
+Rejected for now on three counts. It inverts D-312's layering (`apelles-mcp` is a shell
+that sits *beside* `app/src-tauri`, and the app depending on it makes one shell depend on
+another). It couples an MCP-server bug to the editor's process — a panic in tool
+rendering should not take down someone's timeline. And the standalone binary has to keep
+existing and keep working for stdio regardless, so embedding would mean maintaining two
+hosts of the same surface rather than one. D-312 already deferred embedding once, for the
+in-process `OpTransport` it would also enable; that remains the right eventual shape and
+is unaffected by this — it stays a new `OpTransport`, not a rewrite.
+
+### The client registration shapes are not guessable, and were verified fresh
+
+Each client's HTTP form differs from its stdio form *and* from the others'. Verified
+2026-09-12 against each vendor's own current docs, because three of the seven would have
+been wrong by analogy:
+
+| client | root key | URL field | discriminator |
+|---|---|---|---|
+| Claude Code | CLI: `claude mcp add --transport http` | `url` | `"type": "http"` |
+| **Claude Desktop** | **no HTTP support in the config file** | — | — |
+| Cursor | `mcpServers` | `url` | none |
+| Windsurf | `mcpServers` | **`serverUrl`** | none |
+| VS Code | **`servers`** | `url` | `"type": "http"` (required) |
+| Zed | **`context_servers`** | `url` | none |
+| Cline | `mcpServers` | `url` | **`"type": "streamableHttp"`** (exact camelCase; the kebab-case spelling silently falls back to SSE) |
+
+**Claude Desktop is the reason the dialog keeps both.** A `url` field in
+`claude_desktop_config.json` does not merely fail — it corrupts the `mcpServers` section
+on startup; Anthropic's documented route for a remote server is the in-app Custom
+Connectors UI, which runs from Anthropic's cloud and therefore cannot reach `127.0.0.1`
+at all. So that row stays stdio, and every other row keeps stdio available as a
+"prefer to run it yourself" fallback rather than deleting information a real user needs.
+
+### Consequences
+
+- A client needs one URL and no checkout path; the app is the only thing that manages a
+  server process, and it manages exactly one however many clients connect.
+- One more supervised child at launch, one more port in the `lsof`, and `apelles-mcp`
+  must be built for the app to start it (dev: `cargo build -p apelles-mcp`; a missing
+  binary is logged with that fix and slow-retried, not fatal).
+- **Still open, deliberately:** the packaged-build path. `resolve` prefers
+  `current_exe()`'s directory, which is where a Tauri `externalBin` would land, but
+  nothing bundles it yet — Apelles has no distributed installer for *any* sidecar, and
+  this inherits that same Phase-4 gap (`docs/notes/sidecar-lifecycle.md`), it does not
+  add a new one.
+- **Also still open:** `apelles_ai::sidecar` is now a general local-service supervisor
+  living in a crate named for one of its users. That is a real naming wart and the honest
+  fix is its own crate; tracked in `docs/04-roadmap.md` rather than left as a comment.

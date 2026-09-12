@@ -1,12 +1,13 @@
-# `apelles-mcp` — the AI-facing tool surface (D-312)
+# `apelles-mcp` — the AI-facing tool surface (D-312, D-313)
 
-The MCP server an assistant launches to drive the **running Apelles desktop app**. One
-tool per capability the app exposes; each tool POSTs `{op, args, timeout_ms}` to the
-app's control server and renders the envelope that comes back.
+The MCP server that drives the **running Apelles desktop app**. One tool per capability
+the app exposes; each tool POSTs `{op, args, timeout_ms}` to the app's control server and
+renders the envelope that comes back.
 
 ```
-Claude (MCP client)
-  │  stdio
+Claude Code / Cursor / … (MCP client)
+  │  streamable HTTP :19789/mcp   (D-313 — the app runs one of these for every client)
+  │  …or stdio                    (D-312 — the client spawns this binary itself)
 apelles-mcp                            ← this crate
   │  HTTP  POST /op {op, args, timeout_ms}
 app/src-tauri/src/chroma/control.rs    (control server, in the app, port 19788)
@@ -15,6 +16,11 @@ the frontend op registries             (useChromaControl / useEditorControl / us
   │  the SAME store actions the GUI buttons call
 render  →  { rendered frame, histogram, adjustments, scopes }
 ```
+
+**Two HTTP hops, opposite directions**, and it is worth keeping them straight: 19789 is
+how a *client reaches this server* (`src/serve.rs`); 19788 is how a *tool reaches the app*
+(`src/transport.rs`). Both transports above expose the identical 161 tools off the same
+`ApellesMcp` — nothing in `src/tools/` knows which one it is running on.
 
 ## Boundary
 
@@ -46,14 +52,42 @@ Plan, divergences and open items: **`docs/notes/mcp-rust-port.md`**.
 
 ## Running it
 
+Two transports, same tools. `apelles-mcp --help` lists the arguments.
+
+### HTTP (D-313) — normally you do not run it at all
+
+The desktop app starts and supervises one of these on launch, so a client only needs the
+URL:
+
+```bash
+claude mcp add --transport http apelles http://127.0.0.1:19789/mcp
+```
+
+Other clients' exact config shapes differ (`url` vs `serverUrl`, `mcpServers` vs
+`servers` vs `context_servers`, and Cline's `"type": "streamableHttp"`); the in-app
+**MCP** dialog — `packages/shell/src/ConnectMcpDialog.tsx` — has the verified snippet for
+each one. To run it by hand instead: `apelles-mcp --http [--port <PORT>]`.
+
+`CHROMA_MCP_PORT` overrides the port (default 19789), `CHROMA_MCP_NO_SPAWN` stops the app
+auto-starting its own, and `CHROMA_MCP_BIN` points the app's supervisor at a specific
+binary. `GET /health` answers `{ok, service, version, content_sha256, control}` — that is
+what the supervisor polls, and `content_sha256` is how it tells a stale externally-run
+server from the one this build would have started.
+
+### stdio (D-312) — unchanged
+
+Bare `apelles-mcp` with no arguments is still the stdio server, so a client registered
+before D-313 keeps working. Use it for a client with no HTTP support — **Claude Desktop's
+`claude_desktop_config.json` is stdio-only** — or to run the binary yourself:
+
 ```bash
 cargo build --release -p apelles-mcp
 claude mcp add apelles -- /ABS/PATH/chroma/target/release/apelles-mcp
 ```
 
-The Apelles app must be running (the control server binds on app start), with something
-open. `CHROMA_CONTROL_PORT` overrides the port; default 19788, the same default the app
-and the Python server use.
+Either way the Apelles app must be running (the control server binds on app start), with
+something open. `CHROMA_CONTROL_PORT` overrides *that* port; default 19788, the same
+default the app and the Python server use.
 
 A **release** build publishes 152 tools; a **debug** build also publishes the nine
 `debug_*` ones, which are behind a real `#[cfg(debug_assertions)]` gate because internal
@@ -62,22 +96,28 @@ debug tooling is never shipped.
 ## Verifying it
 
 ```bash
-cargo test -p apelles-mcp                                        # the parity gate
+cargo test -p apelles-mcp                                        # parity gate + HTTP transport
 mcp/.venv/bin/python crates/apelles-mcp/parity/capture.py        # re-record the corpus
 mcp/.venv/bin/python crates/apelles-mcp/parity/live_smoke.py     # against a running app
 ```
 
 `tests/parity.rs` replays a golden corpus captured from the Python server — every tool's
 name, description and schema, and for 237 recorded calls the exact ops emitted and content
-rendered. It needs no Apelles app. `parity/live_smoke.py` covers the one thing the corpus
-cannot: that this really reaches the real control server. Both, and what each compares how,
-are documented in `docs/notes/mcp-rust-port.md`.
+rendered. It needs no Apelles app. `tests/http_transport.rs` (D-313) covers what parity
+structurally cannot: it binds the real router on an ephemeral port, dials it with a real
+streamable-HTTP client, and checks the surface reached *by URL* is the identical one —
+same instructions, same 161 tools, same op emitted, same content back — plus that
+`/health` answers in the shape the supervisor polls for. `parity/live_smoke.py` covers the
+remaining gap: that this really reaches the real control server. All three, and what each
+compares how, are documented in `docs/notes/mcp-rust-port.md`.
 
 ## Layout
 
 | path | what it is |
 |---|---|
-| `src/transport.rs` | the `OpTransport` trait and its HTTP implementation — the `POST /op` boundary |
+| `src/serve.rs` | how a *client* reaches us: stdio, or the streamable-HTTP router (`/mcp` + `/health`) |
+| `src/cli.rs` | which transport the binary was asked for, and on which port |
+| `src/transport.rs` | how a *tool* reaches the app: the `OpTransport` trait and its `POST /op` implementation |
 | `src/render.rs` | envelope → MCP content: plain JSON, frame + summary, and `inspect_color`'s scopes |
 | `src/args.rs` | `WireArgs` — building an `args` object with omit-when-absent as a first-class operation |
 | `src/schemas.rs` | the shared nested-argument shapes (the Rust port of `mcp/schemas.py`, D-310) |

@@ -4,6 +4,19 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **D-313: Apelles runs its own MCP server, and a client only
+  needs a URL.** `apelles-mcp` gained a streamable-HTTP transport (`--http`,
+  rmcp + axum, loopback `127.0.0.1:19789/mcp`, `CHROMA_MCP_PORT`) serving the
+  identical 161 tools; stdio stays the default so every D-312 registration keeps
+  working. The app spawns and supervises it on launch the way it already does
+  the two Python sidecars — health-checked, restarted with backoff, never
+  killing an instance it did not start, killed on exit — by generalizing
+  `apelles_ai::sidecar`'s `SidecarSpec` to describe a compiled binary rather
+  than copy-pasting the supervisor. `ConnectMcpDialog.tsx` now leads with each
+  client's URL registration, verified fresh per client (they genuinely differ:
+  `url` vs `serverUrl`, `mcpServers` vs `servers` vs `context_servers`, Cline's
+  `"type": "streamableHttp"`), keeping stdio as the fallback — Claude Desktop's
+  config file cannot express a URL server at all.
 - **2026-09-12** — **added a "Connect to MCP" help dialog** (shell-level,
   next to the Keyboard Shortcuts opener) covering the real, verified config
   format for 7 MCP clients — Claude Code, Claude Desktop, Cursor, Windsurf,

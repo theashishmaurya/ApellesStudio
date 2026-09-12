@@ -17,18 +17,51 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait = "0.1"
+# D-313 — the HTTP host for rmcp's streamable-HTTP server. `rmcp` hands out a Tower
+# `Service`, not a server, so something has to bind the socket and route `/mcp`; axum is
+# what rmcp's own tests wire it into, it is tokio-rs-maintained and MIT, and it is the
+# canonical pattern rather than a hand-rolled hyper service. Loopback only — see
+# `src/serve.rs`.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 base64 = "0.22"
 reqwest = { version = "0.13", default-features = false, features = ["json"] }
-rmcp = { version = "3.3", features = ["server", "macros", "transport-io"] }
+rmcp = { version = "3.3", features = [
+    "server",
+    "macros",
+    "transport-io",
+    # D-313 — the second way a client may reach the identical 161-tool surface.
+    "transport-streamable-http-server",
+] }
 schemars = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
+# D-313 — `/health` reports a truncated SHA-256 of this binary's own bytes, the exact
+# analogue of each Python sidecar's `_CONTENT_SHA256`, so the app's supervisor can tell a
+# stale externally-run server from the one this build would spawn. Same version as
+# `apelles-ai`, which computes the other side of that comparison.
+sha2 = "0.11"
 thiserror = { workspace = true }
-tokio = { version = "1", features = ["io-std", "macros", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = [
+    "io-std",
+    "macros",
+    # D-313 — `TcpListener` for the HTTP transport's loopback bind.
+    "net",
+    "rt-multi-thread",
+    "time",
+] }
 
 [dev-dependencies]
 # The parity test drives this server through a real MCP session over an in-process
 # duplex stream — the same way `parity/capture.py` drove the Python one over stdio — so
 # what it checks is what a client would actually see, not an internal call path.
-rmcp = { version = "3.3", features = ["client", "server", "macros", "transport-async-rw"] }
-tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "time"] }
+#
+# D-313 adds the streamable-HTTP *client* so `tests/http_transport.rs` can do the same
+# thing over a real socket: a real client, a real port, a real tool call.
+rmcp = { version = "3.3", features = [
+    "client",
+    "server",
+    "macros",
+    "transport-async-rw",
+    "transport-streamable-http-client-reqwest",
+] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }

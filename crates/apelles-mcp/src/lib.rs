@@ -21,13 +21,21 @@
 //!  Top of the stack, beside `app/src-tauri`: a shell that talks to the app over its
 //!  own HTTP boundary. Nothing in `crates/*` may depend on it.
 //!
+//! TWO TRANSPORTS, BOTH DIRECTIONS
+//!  Do not confuse the two HTTP hops a request crosses. [`transport`] is how a *tool
+//!  reaches the app* (`POST /op` on 19788). [`serve`] is how a *client reaches us* —
+//!  either stdio (D-312, still the default for a client that spawns this binary
+//!  itself) or streamable HTTP on 19789 (D-313, which is how the desktop app runs it,
+//!  so a client needs only a URL). Both expose the identical 161 tools off the same
+//!  [`ApellesMcp`]; nothing in [`tools`] knows which is in use.
+//!
 //! TRANSPORT-AGNOSTIC BY CONSTRUCTION
 //!  The tool surface talks to an [`OpTransport`], not to HTTP. The shipped binary uses
 //!  [`transport::HttpControlTransport`] and is a drop-in replacement for the Python
 //!  server. Serving the same surface from inside the Tauri process later — no HTTP
-//!  hop, an in-process dispatch — is then a new `OpTransport` plus a different
-//!  transport for rmcp, not a rewrite. See D-312 for why that was preferred over
-//!  embedding straight away.
+//!  hop, an in-process dispatch — is then a new `OpTransport`, not a rewrite. See
+//!  D-312 for why that was preferred over embedding straight away, and D-313 for why
+//!  the app supervises this as a child process rather than embedding it even now.
 //!
 //! VERIFYING IT
 //!  `tests/parity.rs` replays a golden corpus captured from the Python server against
@@ -35,8 +43,10 @@
 //!  the exact ops emitted and content rendered. See `README.md`.
 
 pub mod args;
+pub mod cli;
 pub mod render;
 pub mod schemas;
+pub mod serve;
 pub mod server;
 pub mod tools;
 pub mod transport;
