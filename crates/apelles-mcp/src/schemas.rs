@@ -67,8 +67,26 @@ where
 }
 
 // --------------------------------------------------------------------------- #
-// Colorist — colour wheels
+// Colorist — tone curve, colour wheels
 // --------------------------------------------------------------------------- #
+
+/// One point on a tone curve (`set_curve`).
+///
+/// Only the first 16 points of a channel are used — `convert_points_to_aligned` in
+/// app/src-tauri/src/image_processing.rs takes 16 and silently drops the rest. Points
+/// are not sorted or de-duplicated for you.
+// That 16-point limit is deliberately documented rather than enforced: rejecting a
+// 20-point curve here would refuse a call the app accepts today (D-310). Kept as a plain
+// comment, not a doc comment — a doc comment reaches the published schema, and this note
+// is for whoever edits this type, not for the model reading the tool.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CurvePoint {
+    /// Input level, 0..255.
+    pub x: f64,
+    /// Output level, 0..255.
+    pub y: f64,
+}
 
 /// One colour-grading wheel — shadows / midtones / highlights / global.
 ///
