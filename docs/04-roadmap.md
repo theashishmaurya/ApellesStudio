@@ -290,10 +290,32 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    (crash isolation + D-084 idle-unload). Install: `./ai-env/setup.sh`.
 
    Open item this leaves:
-   - **Phase-4 packaging is still open and unchanged** — but strictly smaller now:
-     one environment to bundle or bootstrap rather than two, and
-     `CHROMA_SIDECAR_PYTHON` already exists as the one env var pointing both
-     sidecars at a packaged interpreter. See `docs/notes/sidecar-lifecycle.md`.
+   - ~~**Phase-4 packaging**~~ — the **environment half is done, D-315
+     (2026-09-13)**; the code half is not. See the next item.
+
+1. ~~**Phase-4 packaging: the AI environment bootstraps itself**~~ — **done, D-315
+   (2026-09-13).** The 1.6 GB venv is deliberately NOT in the installer; a pinned
+   34.8 MB `uv` binary is (Tauri `externalBin`, fetched + sha256-verified at build
+   time by `app/src-tauri/build.rs`). At launch a background thread runs
+   `uv python install` → `uv venv` → `uv pip install -r requirements.lock.txt`,
+   with `UV_PYTHON_PREFERENCE=only-managed` so it fetches its own self-contained
+   CPython and works on a machine with no Python at all. Never blocks startup.
+   Retry (capped backoff 5 s → 15 min), resume (uv's wheel cache — a `SIGKILL` 45 s
+   into a cold install re-ran to completion in **25 s**), and self-heal (a torn venv
+   is caught by really importing both sidecars' packages via the shared
+   `ai-env/verify.py`, then re-installed and, if still broken, wiped and rebuilt).
+   Live state on `ai-env-status` + `chroma_ai_env_status`, mirrored by the
+   `ai_env_status` / `ai_env_retry` MCP tools and a real "still setting up" state at
+   every AI-feature entry point. Design + measured numbers:
+   `docs/notes/ai-env-bootstrap.md`.
+
+   Open items this leaves (both recorded in `docs/notes/sidecar-lifecycle.md`):
+   - **The sidecar *source* is still not shipped as a Tauri resource** —
+     `resolve_dir` still keys off `CARGO_MANIFEST_DIR`, so a packaged bundle has no
+     `ai/server.py` / `ai-media/server.py` to run. Needs `bundle.resources` + a
+     resource-dir rung, plus a deliberate `__pycache__` answer for a signed bundle.
+   - **`ffmpeg`**, which `ai-media/` hard-requires and which is not pip-installable,
+     so the bootstrap cannot supply it. Bundle a binary or detect-and-degrade.
 
 1. ~~**Editor timeline audio playback**~~ — **done, D-050 (2026-09-03).** Real
    `cpal` device audio during Play: `symphonia` decode → `rubato` resample →

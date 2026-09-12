@@ -182,6 +182,14 @@ tauri-build = { version = "2.6", features = [] }
 sha2 = "0.11"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 hex = "0.4"
+# D-315 — unpack the pinned `uv` release archive at build time (see `build.rs`).
+# `uv` ships as a `.tar.gz`, unlike the ONNX Runtime library above which is a bare
+# file, so the fetch needs a gzip reader and a tar reader. Both were already in
+# `Cargo.lock` as transitive dependencies of this build, so this adds two direct
+# edges and no new crates to the graph. Both are long-standing, widely-used
+# rust-lang-adjacent crates (MIT/Apache-2.0).
+flate2 = "1"
+tar = "0.4"
 
 # Build profiles moved to the workspace root `Cargo.toml` (D-039) — Cargo ignores
 # `[profile.*]` in a non-root workspace member.

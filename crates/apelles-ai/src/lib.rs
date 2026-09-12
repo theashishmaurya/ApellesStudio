@@ -5,8 +5,12 @@
 //! Depth Anything depth tracking, D-036) that does not require `tauri::State`,
 //! an `AppHandle`, or a fork-side global (`chroma::state::current_video()`).
 //!
-//! Four modules — three per source file it was extracted from, plus one added
+//! Five modules — three per source file it was extracted from, plus two added
 //! later:
+//! - [`ai_env`] — builds and repairs the shared Python environment both sidecars
+//!   run from, using a bundled `uv` and no system Python (D-315, Phase 4 of
+//!   `docs/notes/sidecar-lifecycle.md`). Lives here because [`sidecar`] already
+//!   owns the interpreter ladder whose default rung is the venv this creates.
 //! - [`sidecar`] — process lifecycle: spawn, health-poll, content-hash
 //!   staleness detection, capped-backoff respawn, external-process monitoring
 //!   (from `app/src-tauri/src/chroma/sidecar.rs`, D-028/D-101). Since D-190 it
@@ -50,6 +54,7 @@
 //! `chromaTrackDir` extraction stays app-side, next to the fork types that
 //! define those params).
 
+pub mod ai_env;
 pub mod depth;
 pub mod mask;
 pub mod media_understanding;

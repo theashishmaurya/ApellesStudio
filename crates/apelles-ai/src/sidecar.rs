@@ -104,7 +104,7 @@ const HEALTHY_RUN_RESET: Duration = Duration::from_secs(60);
 /// Directory, under the workspace root, holding the ONE virtual environment both
 /// Python sidecars run from (D-314). Built by `ai-env/setup.sh`; not a sidecar
 /// itself — there is no `server.py` in it and nothing there is ever launched.
-const SHARED_ENV_DIR: &str = "ai-env";
+pub(crate) const SHARED_ENV_DIR: &str = "ai-env";
 
 /// Override the interpreter for *both* Python sidecars at once (D-314).
 ///
@@ -528,7 +528,7 @@ fn resolve_dir(spec: &SidecarSpec) -> Option<PathBuf> {
 }
 
 /// `<venv>/bin/python` — the one place that layout is spelled out.
-fn venv_python(venv: &Path) -> PathBuf {
+pub(crate) fn venv_python(venv: &Path) -> PathBuf {
     venv.join("bin").join("python")
 }
 
@@ -536,7 +536,7 @@ fn venv_python(venv: &Path) -> PathBuf {
 /// root, most likely first. `"../.."` is the real post-D-145 path
 /// (`<workspace>/crates/apelles-ai`); the shorter ones are kept so the lookups
 /// still work if this crate is ever nested differently.
-const DEV_LAYOUT_PREFIXES: [&str; 3] = ["../..", "..", "."];
+pub(crate) const DEV_LAYOUT_PREFIXES: [&str; 3] = ["../..", "..", "."];
 
 /// The interpreter of the shared sidecar venv, `<workspace>/ai-env/.venv` (D-314),
 /// or `None` if it has not been created yet (`ai-env/setup.sh` has not been run).
@@ -556,6 +556,20 @@ const DEV_LAYOUT_PREFIXES: [&str; 3] = ["../..", "..", "."];
 /// installed the failure is not an ImportError but the far worse "running, on
 /// unpinned packages, and nobody can tell."
 fn resolve_shared_python() -> Option<PathBuf> {
+    // D-315 — ask the bootstrap first. In a packaged app the venv is under the app's
+    // data directory, not next to a workspace that does not exist there, and only the
+    // bootstrap knows where the app put it. In a dev checkout this resolves to exactly
+    // the sweep below, so the two agree by construction rather than by coincidence.
+    if let Some(p) = crate::ai_env::paths() {
+        let python = p.python();
+        if python.is_file() {
+            return Some(python);
+        }
+        // Configured but not built yet: fall through. A venv that does not exist is
+        // this ladder's ordinary "not that rung", not an error — the bootstrap thread
+        // is very likely building it right now.
+    }
+
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     for prefix in DEV_LAYOUT_PREFIXES {
         let p = venv_python(&manifest.join(prefix).join(SHARED_ENV_DIR).join(".venv"));
@@ -669,7 +683,7 @@ fn resolve_python_with(
 ///
 /// The workspace sweep after it is for callers nested somewhere else — a test
 /// binary in `<target>/debug/deps/`, most of all.
-fn resolve_bin(bin: &str, bin_env: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_bin(bin: &str, bin_env: &str) -> Option<PathBuf> {
     if let Ok(p) = std::env::var(bin_env) {
         let pb = PathBuf::from(&p);
         if pb.is_file() {
@@ -697,7 +711,7 @@ fn resolve_bin(bin: &str, bin_env: &str) -> Option<PathBuf> {
     None
 }
 
-fn which(bin: &str) -> Option<PathBuf> {
+pub(crate) fn which(bin: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|d| d.join(bin))

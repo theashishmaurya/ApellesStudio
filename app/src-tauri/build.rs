@@ -68,6 +68,212 @@ fn download_and_verify(
     }
 }
 
+// ---- uv: the bundled Python toolchain for the AI-env bootstrap (D-315) -------------
+//
+// Apelles' two Python sidecars need a 1.6 GB venv that is deliberately NOT in the
+// installer (see D-315: bundling it re-creates the "nobody downloads a 2 GB app"
+// problem D-314 just spent 1.7 GB fixing). The app builds that venv itself, on
+// first launch, in the background — and to do that on a machine with no Python at
+// all it needs a Python toolchain of its own. That is `uv`: one static binary that
+// can fetch a self-contained `python-build-standalone` CPython, create the venv and
+// install the locked requirements, with no system interpreter anywhere in the loop.
+//
+// Fetched here, at BUILD time, by the same hash-verified pattern as the ONNX Runtime
+// library above — pinned version, pinned sha256, panic on mismatch — and dropped
+// where Tauri's `externalBin` mechanism expects it, so it lands beside the app's own
+// executable in a dev run AND inside the bundle.
+
+/// The pinned `uv` release. Moving this means re-fetching BOTH hashes below from
+/// the release's own published `.sha256` files — never hand-edit one of them.
+const UV_VERSION: &str = "0.12.13";
+
+/// The one target this is wired up for: v1 ships macOS ARM only (`docs/02-scope.md`),
+/// and `externalBin` is declared in `tauri.macos.conf.json` rather than the base
+/// config so a Linux/Windows build is unaffected rather than broken.
+///
+/// A macOS **x86_64** build deliberately gets nothing here and then fails loudly in
+/// `tauri_build::build()` on the missing `binaries/uv-x86_64-apple-darwin`. That is
+/// the right failure: silently bundling an app whose AI features can never bootstrap
+/// is far worse than a build error naming the gap.
+const UV_TARGET: &str = "aarch64-apple-darwin";
+
+/// sha256 of `uv-aarch64-apple-darwin.tar.gz`, from the release's published
+/// `.sha256` file — what the download is verified against.
+const UV_ARCHIVE_SHA256: &str = "7e6ddb9316acc00f2296c82ff4d99977870ee34b2f0ddcae9444d714db9364ed";
+
+/// sha256 of the `uv` executable *inside* that archive. Pinned separately because
+/// the extracted binary is what actually ships and what the "already there, skip the
+/// download" check re-verifies on every rebuild — the archive itself is not kept.
+const UV_BINARY_SHA256: &str = "964e82d2f7736a5dd3c8d4dfe299697286c655ff44c9ae3802886f27c5bf4d4a";
+
+/// Download the pinned `uv` archive, verify it, and extract just the `uv` executable
+/// to `binaries/uv-<target triple>` — the exact path+name Tauri's `externalBin`
+/// resolves (`tauri_utils::resources::external_binaries` appends `-<triple>`, and
+/// `tauri_build`'s `copy_binaries` strips it again when it copies the file next to
+/// our own executable). `uvx`, the other member of the archive, is a `uv tool run`
+/// shim we have no use for and is deliberately not extracted.
+fn fetch_uv(dest: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let url = format!(
+        "https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/uv-{UV_TARGET}.tar.gz"
+    );
+    println!("cargo:warning=Downloading uv {UV_VERSION} for {UV_TARGET}...");
+    println!("cargo:warning=URL: {url}");
+
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
+    let archive = out_dir.join(format!("uv-{UV_TARGET}.tar.gz"));
+
+    // Retried, because this genuinely flakes: the first run of this code in CI-like
+    // conditions failed with a bare "error sending request" and the identical
+    // re-run succeeded. A transient DNS/TLS blip is not a reason to fail a whole
+    // build, and the hash check below means a retry can never paper over a *bad*
+    // download — only over a missing one.
+    let mut last_err = String::new();
+    let mut downloaded = false;
+    for attempt in 1..=3 {
+        match reqwest::blocking::get(&url).and_then(|r| r.error_for_status()) {
+            Ok(mut response) => {
+                let mut file = fs::File::create(&archive)?;
+                response.copy_to(&mut file)?;
+                downloaded = true;
+                break;
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                println!("cargo:warning=uv download attempt {attempt}/3 failed: {e}");
+                std::thread::sleep(std::time::Duration::from_secs(2 * attempt));
+            }
+        }
+    }
+    if !downloaded {
+        return Err(format!("could not download {url}: {last_err}").into());
+    }
+
+    // Verify BEFORE unpacking. Feeding an unverified archive to a tar reader is
+    // exactly the step that must not happen on a corrupt or substituted download.
+    if !verify_sha256(&archive, UV_ARCHIVE_SHA256)? {
+        fs::remove_file(&archive).ok();
+        return Err(format!(
+            "uv {UV_VERSION} archive failed sha256 verification (expected {UV_ARCHIVE_SHA256}). \
+             Refusing to unpack it."
+        )
+        .into());
+    }
+
+    let member = format!("uv-{UV_TARGET}/uv");
+    let reader = flate2::read::GzDecoder::new(fs::File::open(&archive)?);
+    let mut found = false;
+    for entry in tar::Archive::new(reader).entries()? {
+        let mut entry = entry?;
+        if entry.path()?.to_string_lossy() == member {
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            entry.unpack(dest)?;
+            found = true;
+            break;
+        }
+    }
+    fs::remove_file(&archive).ok();
+    if !found {
+        return Err(format!("uv {UV_VERSION} archive contains no `{member}`").into());
+    }
+
+    // The extracted bytes get their own check: the archive hash proves what we
+    // downloaded, this proves what we are about to ship.
+    if !verify_sha256(dest, UV_BINARY_SHA256)? {
+        fs::remove_file(dest).ok();
+        return Err(format!(
+            "the uv executable extracted from a valid archive does not match \
+             {UV_BINARY_SHA256} — refusing to bundle it."
+        )
+        .into());
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dest, fs::Permissions::from_mode(0o755))?;
+    }
+
+    println!("cargo:warning=uv {UV_VERSION} verified and staged at {dest:?}");
+    Ok(())
+}
+
+/// Stage `uv` for `externalBin` if this target is the one we bundle it for, skipping
+/// the download when a valid copy is already staged (same shape as the ONNX check).
+fn stage_uv(manifest_dir: &Path, target_os: &str, target_arch: &str) {
+    if (target_os, target_arch) != ("macos", "aarch64") {
+        println!(
+            "cargo:warning=Not staging uv for {target_os}-{target_arch}: the AI-env bootstrap \
+             (D-315) is wired up for macOS ARM only, which is v1's one platform."
+        );
+        return;
+    }
+
+    let dest = manifest_dir
+        .join("binaries")
+        .join(format!("uv-{UV_TARGET}"));
+
+    if dest.exists() {
+        match verify_sha256(&dest, UV_BINARY_SHA256) {
+            Ok(true) => {
+                println!(
+                    "cargo:warning=uv {UV_VERSION} already staged and valid. Skipping download."
+                );
+                return;
+            }
+            Ok(false) => {
+                println!(
+                    "cargo:warning=Staged uv has the wrong hash (stale pin?). Re-downloading."
+                );
+                fs::remove_file(&dest).ok();
+            }
+            Err(e) => println!("cargo:warning=Could not verify staged uv: {e}. Re-downloading."),
+        }
+    }
+
+    if let Err(e) = fetch_uv(&dest) {
+        panic!("Failed to download and verify uv {UV_VERSION}: {e}");
+    }
+}
+
+/// The two files the AI-env bootstrap reads at runtime, staged into the already-bundled
+/// `resources/` directory (D-315).
+///
+/// They live at the workspace root in `ai-env/`, which is outside this crate, and a
+/// Tauri `resources` entry that reaches out with `../..` is both fragile and awkward to
+/// give a stable in-bundle path. Copying them in here instead means the existing
+/// `"resources"` bundle entry picks them up unchanged, and `resources/ai-env/<file>` is
+/// the one path the runtime resolver has to know — in a dev run and in a bundle alike.
+///
+/// `requirements.lock.txt` is what gets installed; `verify.py` is the import check that
+/// decides whether an existing venv is actually usable. Both are also the *inputs* to
+/// `ai-env/setup.sh`, so a human-run setup and an app-run bootstrap can never disagree
+/// about what "installed" and "healthy" mean (`CLAUDE.md`: shared logic, never copied).
+fn stage_ai_env_resources(manifest_dir: &Path) {
+    let src_dir = manifest_dir.join("../../ai-env");
+    let dest_dir = manifest_dir.join("resources").join("ai-env");
+
+    for name in ["requirements.lock.txt", "verify.py"] {
+        let src = src_dir.join(name);
+        println!("cargo:rerun-if-changed={}", src.display());
+        if !src.is_file() {
+            panic!(
+                "D-315: {} is missing — the AI-env bootstrap cannot be built without it.",
+                src.display()
+            );
+        }
+        if let Err(e) = fs::create_dir_all(&dest_dir)
+            .and_then(|()| fs::copy(&src, dest_dir.join(name)).map(|_| ()))
+        {
+            panic!(
+                "Failed to stage {} into resources/ai-env: {e}",
+                src.display()
+            );
+        }
+    }
+}
+
 fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
@@ -172,6 +378,12 @@ fn main() {
         println!("cargo:rustc-env=ORT_STRATEGY=manual");
         println!("cargo:rustc-link-search=native={}", dest_dir.display());
     }
+
+    // D-315: the Python toolchain the AI-env bootstrap drives, and the two files it
+    // reads. Must run before `tauri_build::build()`, which is what copies
+    // `externalBin` and `resources` into place.
+    stage_uv(&manifest_dir, &target_os, &target_arch);
+    stage_ai_env_resources(&manifest_dir);
 
     println!("cargo:rerun-if-changed=build.rs");
 

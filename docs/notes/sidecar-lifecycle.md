@@ -246,20 +246,54 @@ scoping itself):
 
 **Done — see the "Real ownership... — done (D-101)" section above this one.**
 
-## TODO — packaged app (Phase 4)
+## Packaged app (Phase 4) — the environment half is DONE (D-315), the code half is not
 
-`resolve_dir` and `resolve_shared_python` both rely on `CARGO_MANIFEST_DIR`, a
-build-machine path. A signed `.app` bundle has no workspace next to it. Phase 4
-(packaging) needs:
-- the sidecar source (or a PyInstaller/`briefcase` freeze) shipped as a Tauri
-  resource, resolved via `app.path().resolve("ai", BaseDirectory::Resource)`;
-- a bundled Python or a first-run venv bootstrap + `pip install`;
-- models either bundled or downloaded on first `/segment` (already the case).
-Until then a packaged build should ship with `CHROMA_AI_DIR` +
-`CHROMA_AI_MEDIA_DIR` + `CHROMA_SIDECAR_PYTHON` baked in, or the sidecars
-disabled.
+The original TODO listed three things. Here is where each actually stands.
 
-D-314 does not change this gap, but it does shrink the work: there is **one**
-environment to bundle or bootstrap instead of two, and `CHROMA_SIDECAR_PYTHON`
-already exists as the single env var that points both sidecars at wherever a
-packaged interpreter ends up.
+### ~~a bundled Python or a first-run venv bootstrap + `pip install`~~ — **done, D-315**
+
+The app now builds the shared venv itself, in the background, starting at launch. A
+pinned **`uv`** binary is bundled via Tauri's `externalBin` (fetched and
+sha256-verified at build time by `app/src-tauri/build.rs`, the same pattern the ONNX
+Runtime library uses) and drives `uv python install` -> `uv venv` ->
+`uv pip install -r requirements.lock.txt`. `uv` fetches its **own** self-contained
+CPython, so this works on a machine with no Python at all — which is why a plain
+`python3 -m venv` bootstrap was rejected.
+
+It never blocks startup, retries with backoff, resumes via uv's wheel cache, and
+self-heals a torn venv by actually importing what both sidecars need (the shared
+`ai-env/verify.py`, the same file `setup.sh` runs). State is live on the
+`ai-env-status` event and queryable via `chroma_ai_env_status` / the `ai_env_status`
+MCP tool, so an AI feature clicked before it finishes says "still setting up, N of M"
+instead of failing with a connection error.
+
+Full design, measured timings and the verified retry/resume/heal semantics:
+**`docs/notes/ai-env-bootstrap.md`**. Decision: **D-315**.
+
+### ~~models either bundled or downloaded on first `/segment`~~ — **already true, unchanged**
+
+Models still pull from the HF cache on first use. D-315 deliberately does not touch
+this: it builds the environment, not the model cache. (Note B-172 — `understand_video`
+sets `HF_HUB_OFFLINE=1` unconditionally and so cannot download *its* model at all. A
+separate open bug, not a packaging gap.)
+
+### **STILL OPEN** — the sidecar *source* is not shipped as a resource
+
+`resolve_dir` still keys off `CARGO_MANIFEST_DIR` (a build-machine path) or the spec's
+`CHROMA_AI_DIR` / `CHROMA_AI_MEDIA_DIR` override, so a packaged bundle still has no
+`ai/server.py` or `ai-media/server.py` to run. Deliberately out of D-315's scope, which
+took the environment half only. What it needs:
+
+- both sidecar directories shipped via `bundle.resources` and resolved with
+  `app.path().resolve("ai", BaseDirectory::Resource)`, keeping the dev-layout sweep as
+  the fallback — the same two-case shape `chroma::ai_env::resolve_paths` already uses
+  for the lock file, so there is a worked precedent to copy;
+- a deliberate answer for `__pycache__`: the resource dir is inside the signed bundle
+  and Python will want to write bytecode next to the source
+  (`PYTHONDONTWRITEBYTECODE=1` is the obvious one, but it should be a decision);
+- **`ffmpeg`**, which `ai-media/` hard-requires and which is not pip-installable, so
+  D-315's bootstrap cannot supply it. Either bundle a binary or detect-and-degrade.
+
+Until that lands a packaged build still needs `CHROMA_AI_DIR` + `CHROMA_AI_MEDIA_DIR`
+baked in, or those two sidecars disabled — but it no longer needs
+`CHROMA_SIDECAR_PYTHON`, because the interpreter is now built on the user's machine.

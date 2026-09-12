@@ -17,6 +17,22 @@ One or two lines per session. Detail lives in the decision it references.
   first, so `mlx_whisper`'s loader never touches the network once a model is
   cached. Same bug family as B-172; `ai/server.py`'s other model loads weren't
   audited for it in this pass.
+- **2026-09-13** — **D-315: the AI Python environment now bootstraps itself on first
+  launch from a bundled `uv`, instead of a human running `ai-env/setup.sh`.** The
+  installer carries a 34.8 MB static `uv` binary (Tauri `externalBin`, fetched +
+  sha256-verified at build time) rather than the 1.6 GB venv; at app launch a background
+  thread runs `uv python install` -> `uv venv` -> `uv pip install -r
+  requirements.lock.txt`, fetching its own self-contained CPython so it works on a
+  machine with no Python at all. Never blocks startup. Retry (capped backoff), resume
+  (verified: `SIGKILL` 45 s into a cold install, identical re-run finished in **25 s**
+  off uv's wheel cache) and self-heal (a torn venv is detected by really importing both
+  sidecars' packages via the shared `ai-env/verify.py`, then re-installed and, if still
+  broken, wiped and rebuilt). Live state on the `ai-env-status` event +
+  `chroma_ai_env_status`, mirrored by `ai_env_status` / `ai_env_retry` MCP tools, so
+  clicking Subject Mask thirty seconds after install says "still setting up" instead of
+  a raw connection error. A real bug caught by its own test: `uv venv` refuses an
+  existing environment without `--clear`, so the heal path could never have rebuilt a
+  torn venv.
 - **2026-09-12** — **D-314: both Python sidecars now run from ONE shared venv
   (`ai-env/.venv`) — 3.5 GB of duplicated wheels down to 1.8 GB.** They stay two
   separate PROCESSES; only the environments merged. D-189 split them because

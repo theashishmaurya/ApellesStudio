@@ -2076,6 +2076,15 @@ pub fn run() {
                 // supervisor: `Launch::WorkspaceBin` is the only difference, and
                 // the same `shutdown()` below kills this one too.
                 std::thread::spawn(chroma::sidecar::spawn_and_supervise_mcp);
+                // Apelles: and the AI-env bootstrap (D-315). Not a sidecar — it
+                // builds the shared Python venv the two Python sidecars above run
+                // FROM, with a bundled `uv` so it works on a machine with no Python
+                // at all. Started here, at launch, rather than on the first AI-feature
+                // click, so it is usually finished before anyone reaches for one; it
+                // never blocks startup and every non-AI feature works throughout.
+                // Takes an `AppHandle` (unlike the three above) because it emits a
+                // live `ai-env-status` event the UI subscribes to.
+                chroma::ai_env::spawn_and_supervise(app.handle().clone());
             }
 
             let window_cfg = app.config().app.windows.first().unwrap().clone();
@@ -2367,6 +2376,8 @@ pub fn run() {
             chroma::sidecar::chroma_ai_media_status,
             chroma::sidecar::chroma_mcp_status,
             chroma::sidecar::chroma_mcp_port,
+            chroma::ai_env::chroma_ai_env_status,
+            chroma::ai_env::chroma_ai_env_retry,
             chroma::media_understanding::chroma_transcribe,
             chroma::media_understanding::chroma_transcribe_status,
             chroma::media_understanding::chroma_analyze_video,
@@ -2481,6 +2492,7 @@ pub fn run() {
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     api.prevent_exit();
                     chroma::sidecar::shutdown(); // Apelles (D-028/D-313): no orphan sidecar
+                    apelles_ai::ai_env::shutdown(); // Apelles (D-315): kill a running `uv`
 
                     #[cfg(target_os = "macos")]
                     unsafe { libc::_exit(0); }
@@ -2490,6 +2502,7 @@ pub fn run() {
                 }
                 tauri::RunEvent::Exit => {
                     chroma::sidecar::shutdown(); // Apelles (D-028/D-313): no orphan sidecar
+                    apelles_ai::ai_env::shutdown(); // Apelles (D-315): kill a running `uv`
 
                     #[cfg(target_os = "macos")]
                     unsafe { libc::_exit(0); }

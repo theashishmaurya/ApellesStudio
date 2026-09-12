@@ -30178,3 +30178,138 @@ track, MoGe-2 normal bake, word-level transcript, and Qwen3-VL `analyze_video`.
 - **Still open:** the Phase-4 packaging path (`docs/notes/sidecar-lifecycle.md`) is
   untouched, and this neither helps nor worsens it — though one environment instead of two is
   strictly less to bundle when that work happens.
+
+## D-315 — the AI Python environment is bootstrapped on first launch by a bundled `uv`, not shipped in the installer
+
+**Context.** D-314 got both Python sidecars onto one shared venv, `ai-env/.venv`, built
+from a committed lock file — and left two things that a shipped app cannot have. The venv
+is **1.6 GB**, and creating it is a human running `ai-env/setup.sh`, a command that is not
+reachable from a `.app` bundle (no workspace next to it) and that assumes a system Python
+exists. This is the environment half of the Phase-4 packaging TODO that
+`docs/notes/sidecar-lifecycle.md` has carried since D-028.
+
+**Options.**
+
+1. *Bundle the built venv into the installer.* Rejected. A ~2 GB download is precisely the
+   problem D-314 spent 1.7 GB reducing, and the owner had already flagged "nobody downloads
+   a 1 GB+ app" as the reason that work happened at all. Paying the whole saving straight
+   back into the installer gets nothing for it — and it is worse than it sounds, because a
+   venv is not relocatable in general and would need repair on the user's machine anyway.
+2. *Freeze the sidecars with PyInstaller / briefcase.* Rejected for the same size reason —
+   a frozen `ai/` carrying torch, opencv, ultralytics and a frozen `ai-media/` carrying the
+   MLX stack re-inflate the installer to roughly what the venv costs, with a second problem
+   on top: freezing hides the dependency set behind a build tool, and D-314's whole thesis
+   is that this stack's failures come from dependency versions moving invisibly. The lock
+   file is the artifact we want to keep authoritative.
+3. *A first-run bootstrap that shells out to `python3 -m venv` + `pip install`.* Rejected.
+   A clean macOS install has no usable `python3`, so the feature would simply not work on
+   the machines it most needs to. And on a machine that *does* have one, we inherit
+   whatever interpreter answers — the exact failure D-314 already caught once, where
+   `canonicalize()` on a venv symlink silently yielded the system Python and produced a
+   sidecar that looked healthy while running unpinned system packages.
+4. *Hand-roll interpreter discovery and a `python-build-standalone` downloader.* Rejected
+   under `CLAUDE.md`'s "before hand-rolling something a well-maintained package already
+   does, check for the package first". Fetching the right standalone CPython for a
+   platform, verifying it, managing a wheel cache and resolving a lock file is a solved
+   problem with a maintained tool, and it would be ours to debug forever.
+5. **Chosen: bundle `uv` (one static binary) and let it build the environment in the
+   background at app launch.** The installer carries a 34.8 MB toolchain instead of a
+   1.6 GB environment; the environment is built on the user's machine, from the same
+   committed lock file `setup.sh` uses, with a self-contained CPython that `uv` fetches
+   itself.
+
+**Why `uv` specifically.** Apache-2.0 / MIT, Astral, very actively maintained, and it is
+the one tool that does all three jobs (fetch an interpreter, create a venv, install a lock)
+as a single dependency-free binary. Pinned at **0.12.13**, fetched at build time by
+`app/src-tauri/build.rs` with a pinned sha256 for both the release archive and the
+extracted executable — the same hash-verified-download-or-panic pattern that file already
+uses for the ONNX Runtime library. It is bundled through Tauri's `externalBin`, declared in
+a new `tauri.macos.conf.json` so a Linux build is unaffected rather than broken by a binary
+this repo does not fetch for it (v1 is macOS ARM, `docs/02-scope.md`). `flate2` + `tar`
+join the build-dependencies to unpack the release archive; both were already transitive
+dependencies of this build, so the graph gains two edges and no new crates.
+
+**`UV_PYTHON_PREFERENCE=only-managed` is load-bearing, not tidiness.** Without it,
+`--python 3.11.15` matches any interpreter reporting that version, including a system one.
+With it, the venv's `sys.base_prefix` is always under uv's managed-Python directory. That
+single env var is what the "works on a machine with zero Python" claim rests on, so it has
+a test of its own asserting the base prefix is neither `/usr/` nor `/Library/Frameworks`.
+
+**At launch, not on first use.** The bootstrap thread starts in `lib.rs` `.setup()` beside
+the three sidecar supervisors, so the environment is usually already built by the time
+someone reaches for an AI feature (owner: *"once they install and start using, start
+downloading lazily instead of first AI use — that way we can have server sooner"*). It
+never blocks startup; Edit, Motion, Colorist, grading and export all work throughout,
+including when the bootstrap has failed permanently. That is why it is a background state
+machine with its own status rather than a step in startup.
+
+**The three failure modes, each verified on a real run rather than reasoned about**
+(full numbers in `docs/notes/ai-env-bootstrap.md`):
+
+- **Retry.** Capped backoff `5s → 15 → 45 → 2m → 5m → 15m`, deliberately far slower than
+  the sidecar supervisor's `2s → 30s`: the likely cause here is no internet, and hammering
+  a download that cannot succeed helps nobody. A `Condvar`, not a polling sleep, so
+  "Retry now" is instant even fifteen minutes deep.
+- **Resume.** Re-running the same `uv pip install` **is** the resume, because uv's global
+  wheel cache survives the kill. Measured: `SIGKILL` 45 s into a cold install left 1.6 GB
+  cached and only 3 packages unpacked; the identical command re-run finished in **25 s**
+  and all nine key imports then loaded. A fully-satisfied re-run takes **1 s**, which is
+  what makes the launch-time check cheap enough to run unconditionally.
+- **Heal.** A killed install leaves an interpreter that starts fine over a broken
+  `site-packages`, which every cheap check passes. So the health check actually *imports*
+  what both sidecars need, by running `ai-env/verify.py` — the **same file**
+  `ai-env/setup.sh` runs, extracted from its inline heredoc for exactly this reason
+  (`CLAUDE.md`: shared logic is never copy-pasted; a Rust-side copy of the module list
+  would drift, and drift here means the app reporting `ready` for an environment a sidecar
+  then dies importing from). Healing is staged: re-install over the top first (the 25 s
+  path), and only if that still does not verify, wipe and rebuild.
+
+**A real bug this turned up, caught by its own test.** `uv venv` **refuses** to replace an
+existing environment without `--clear` (exit 2). The first draft omitted the flag, so a
+torn venv — the exact case the heal path exists for — could never be rebuilt and the
+bootstrap would have retried the same failing command forever. Found by
+`a_damaged_environment_is_healed_rather_than_reported_ready`, which is why that test drives
+a real `uv` against a real damaged venv instead of asserting against a mock.
+
+**`failed` and `unavailable` are different states, on purpose.** `failed` means an attempt
+failed and another is scheduled (`retryInSecs` says when). `unavailable` means it cannot be
+attempted at all — no bundled `uv`, no lock file, or `CHROMA_AI_ENV_NO_BOOTSTRAP` — and is
+**not** retried on a timer, because nothing about waiting would change it and a UI
+promising an automatic retry there would be lying.
+
+**Both interfaces, same pass** (`CLAUDE.md`: every feature is built for a human AND an AI).
+A `chroma_ai_env_status` command plus a live `ai-env-status` Tauri event back the Settings
+card and a real "still setting up, N of M installed" state at every AI-feature entry point
+— replacing the raw connection-refused error a user got for clicking Subject Mask thirty
+seconds after install. The `ai_env_status` / `ai_env_retry` MCP tools expose the identical
+state and the identical retry to an agent, and the existing AI-backed tools now return a
+distinguishable "still bootstrapping" answer instead of an unexplained failure.
+
+**Crate boundary.** The state machine, the `uv` invocations and all the tests are
+`apelles_ai::ai_env`; the app keeps only the two `#[tauri::command]` wrappers, the event
+emit, and the bundled-vs-dev path resolution (D-039 §1, D-145: commands do not move,
+engine logic does not stay). `apelles-ai` rather than a new crate because it already owns
+the interpreter ladder whose default rung *is* the venv this builds — splitting "where the
+venv is" across two crates would guarantee they disagree.
+
+### Consequences
+
+- **The installer stays small.** The `.app` grows by the 34.8 MB `uv` binary and two small
+  text resources; the 1.6 GB environment and every model still arrive only on the user's
+  machine, on first launch and first feature use respectively.
+- **A fresh checkout no longer needs `./ai-env/setup.sh`** — the app builds the same venv
+  in the same place. `setup.sh` stays, still supported, still the documented way to do it
+  by hand, and now shares its health check with the app instead of duplicating it.
+- **`resolve_shared_python` gained a rung above its dev-layout sweep**: whatever the
+  bootstrap was configured with. In a dev checkout it resolves to the same path, so the two
+  agree by construction rather than by coincidence.
+- **`uv` writes to its own standard locations** (`~/.local/share/uv/python`,
+  `~/.cache/uv`), shared with any other uv on the machine — which is what makes the resume
+  fast. Redirectable via uv's own `UV_PYTHON_INSTALL_DIR` / `UV_CACHE_DIR`.
+- **Still open, and deliberately not in this decision:** the *code* half of Phase 4. The
+  sidecars' own `server.py` files are still resolved from a dev-layout path, and `ffmpeg`
+  (a hard `ai-media/` requirement, not pip-installable) is still assumed present. Both are
+  recorded in `docs/notes/sidecar-lifecycle.md`; neither is made worse here.
+- **macOS ARM only**, matching v1 scope. A macOS x86_64 build now fails loudly at
+  `tauri_build::build()` on the missing binary rather than silently producing an app whose
+  AI features can never bootstrap.

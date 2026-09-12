@@ -15,16 +15,27 @@ PyTorch/OpenCV/NumPy/SciPy wheels across two venvs.
 ai-env/
   requirements.lock.txt   ← the compiled union: every package, exactly pinned
   setup.sh                ← create/repair .venv from the lock  (or --relock)
+  verify.py               ← "is this environment usable?" — shared with the app
+  python.sh               ← which interpreter a sidecar should run from
   .venv/                  ← the shared environment (gitignored)
 ```
 
 ## Using it
 
+**Usually: nothing.** Since **D-315** the app builds this environment itself, in the
+background, starting at launch — using a bundled `uv` that fetches its own
+self-contained CPython, so it works even on a machine with no Python. Open Apelles and
+watch the "AI Environment" card in Settings. See `docs/notes/ai-env-bootstrap.md`.
+
+To build it by hand anyway (a headless checkout, or you would rather not wait):
+
 ```sh
 ./ai-env/setup.sh          # create or repair .venv from requirements.lock.txt
 ```
 
-That is the only command a fresh checkout needs. The app finds `ai-env/.venv`
+Both routes produce the same `.venv` in the same place from the same lock file, and
+both finish by running the same `verify.py`, so they cannot disagree about whether the
+environment is usable. `CHROMA_AI_ENV_NO_BOOTSTRAP=1` tells the app not to build it. The app finds `ai-env/.venv`
 on its own (`apelles_ai::sidecar`'s interpreter ladder — see
 `docs/notes/sidecar-lifecycle.md`), so both sidecars start against it with no
 env vars set.

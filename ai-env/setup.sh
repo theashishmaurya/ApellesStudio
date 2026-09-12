@@ -75,45 +75,14 @@ else
 fi
 
 # Prove the environment actually serves both sidecars, rather than reporting
-# success on "pip exited 0". These are the imports that were the whole question
-# in D-314 — ViTMatte (the `transformers<5` pin that split the venvs) and the two
-# MLX top-levels — so a broken environment fails here and not hours later in a
-# feature.
+# success on "pip exited 0". The check list lives in `verify.py` rather than
+# inline here (D-315): the Rust bootstrap in `apelles_ai::ai_env` runs the exact
+# same file on every app launch to decide whether the venv it found is usable or
+# has to be wiped and rebuilt, and two hand-maintained copies of that list — one
+# in bash, one in Rust — would drift into "the app says healthy, the sidecar dies
+# on import."
 echo "==> verifying both sidecars' key imports"
-"$VENV/bin/python" - <<'EOF'
-import importlib
-import sys
-
-CHECKS = [
-    ("ai/       torch", "torch"),
-    ("ai/       ultralytics (SAM 2)", "ultralytics"),
-    ("ai/       cv2", "cv2"),
-    ("ai/       scipy", "scipy"),
-    ("ai/       utils3d_moge (MoGe-2)", "utils3d_moge"),
-    ("ai-media/ mlx_vlm (Qwen3-VL)", "mlx_vlm"),
-    ("ai-media/ mlx_whisper", "mlx_whisper"),
-]
-bad = []
-for label, mod in CHECKS:
-    try:
-        importlib.import_module(mod)
-        print(f"    ok  {label}")
-    except Exception as e:
-        print(f"    FAIL {label}: {type(e).__name__}: {e}")
-        bad.append(mod)
-
-try:
-    from transformers import VitMatteForImageMatting, VitMatteImageProcessor  # noqa: F401
-    import transformers
-    print(f"    ok  ai/       ViTMatte on transformers {transformers.__version__}")
-except Exception as e:
-    print(f"    FAIL ai/       ViTMatte: {type(e).__name__}: {e}")
-    bad.append("transformers:ViTMatte")
-
-if bad:
-    print(f"\nenvironment is NOT usable: {', '.join(bad)}", file=sys.stderr)
-    sys.exit(1)
-EOF
+"$VENV/bin/python" "$HERE/verify.py"
 
 # A leftover per-sidecar venv silently wins over this one (the interpreter ladder
 # in apelles_ai::sidecar prefers the more specific path on purpose), so an install

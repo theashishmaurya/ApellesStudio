@@ -2,6 +2,7 @@
   "bundle": {
     "macOS": {
       "minimumSystemVersion": "13.0"
-    }
+    },
+    "externalBin": ["binaries/uv"]
   }
 }

@@ -28,6 +28,13 @@
 //!   against frame 0 of the untouched source file. The geometry counterpart of
 //!   `grade_lut` (the same bridge, colour half, other direction). No grade, no
 //!   opacity/fade, no other layers, no GPU — see its own module doc
+//! - `ai_env`  — **the AI-env bootstrap bridge (D-315)**: starts the thread that
+//!   builds the shared Python venv both AI sidecars run from, using a bundled
+//!   `uv` and no system Python, and exposes its live state
+//!   (`chroma_ai_env_status` / `chroma_ai_env_retry` + the `ai-env-status`
+//!   event). Resolves the bundled-vs-dev paths, which is the only part that
+//!   needs Tauri — the state machine, the retry/resume/heal logic and its tests
+//!   are `apelles_ai::ai_env`
 //! - `state`    — Apelles' own process state (the multi-shot session, D-033)
 //! - `load`     — load a video as one decoded frame into the existing image pipeline
 //! - `commands` — tauri commands for the transport (`chroma_video_info`, `chroma_seek`)
@@ -89,6 +96,7 @@
 //!   this just writes it — no XML/interchange knowledge lives here, mirroring
 //!   `ffmpeg_run`'s own "the caller owns the content" split)
 
+pub mod ai_env;
 pub mod audio;
 pub mod caption_render;
 pub mod colorist_view;
