@@ -295,6 +295,267 @@ pub enum MaskGeometry {
 // Motion tab
 // --------------------------------------------------------------------------- #
 
+/// Cubic-bezier control points [x1, y1, x2, y2]; P0=(0,0) and P3=(1,1) are
+/// implicit. Exactly four finite numbers.
+//
+// A newtype rather than a `Vec<f64>` alias so it carries its own length bound and its
+// own description into every schema that uses it — an alias would publish a bare array
+// and quietly drop both. Both of these paragraphs are plain comments, not doc comments,
+// precisely because a doc comment here reaches the published description.
+//
+// The handler clamps x1/x2 to 0..1 and y1/y2 to -0.75..1.75 with a warning (B-166); that
+// is deliberately not enforced here, since rejecting an overshoot the app accepts would
+// make the tool stricter than the thing it describes.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct EaseCurve(#[schemars(length(min = 4, max = 4))] pub Vec<f64>);
+
+/// One entry in a Motion multi-select (`selections`).
+///
+/// Entries carry their own `scene_index`, so a selection may span scenes. Both the
+/// snake_case and camelCase spellings reach the handler through its `arg()` helper.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MotionSelection {
+    pub target: MotionTarget,
+    /// Which scene this entry's target is in.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scene_index: Maybe<i64>,
+    /// Alias for scene_index.
+    #[serde(
+        rename = "sceneIndex",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scene_index_camel: Maybe<i64>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+// Which lane a keyframe lives in, for `motion_move_keys_by_delta`. A plain comment, not
+// a doc comment: a doc comment here becomes the referenced type's `description` and would
+// shadow the per-field one `MotionKeyTarget.kind` publishes.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum MotionKeyLane {
+    #[serde(rename = "layer")]
+    Layer,
+    #[serde(rename = "camera")]
+    Camera,
+    #[serde(rename = "scene3d-camera")]
+    Scene3dCamera,
+    #[serde(rename = "active")]
+    Active,
+}
+
+/// One keyframe to shift (`motion_move_keys_by_delta`).
+///
+/// A FLAT shape — `kind` sits on the entry itself, not inside a nested `target`, so this
+/// is deliberately not `MotionSelection`. Targets may mix lanes and scenes.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct MotionKeyTarget {
+    /// Which lane the key lives in. 'layer' and 'active' also need a layer index.
+    pub kind: MotionKeyLane,
+    /// Which scene.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scene_index: Maybe<i64>,
+    /// Alias for scene_index.
+    #[serde(
+        rename = "sceneIndex",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scene_index_camel: Maybe<i64>,
+    /// Which key in that lane's array.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub key_index: Maybe<i64>,
+    /// Alias for key_index.
+    #[serde(
+        rename = "keyIndex",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub key_index_camel: Maybe<i64>,
+    /// Required when kind is 'layer' or 'active'.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub layer_index: Maybe<i64>,
+    /// Alias for layer_index.
+    #[serde(
+        rename = "layerIndex",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub layer_index_camel: Maybe<i64>,
+    /// Optional start time to replay a captured drag from. Omit (or null) and the key's
+    /// current time is read off the live manifest.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub base_at: Maybe<f64>,
+    /// Alias for base_at.
+    #[serde(
+        rename = "baseAt",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub base_at_camel: Maybe<f64>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// One 2D camera keyframe (`motion_set_camera_2d`).
+///
+/// Genuinely different from the 3D shape: x/y/zoom here, pos/look there.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Camera2DKey {
+    /// SECONDS from the scene's start. Strictly numeric.
+    pub at: f64,
+    /// World x the camera centres on.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub x: Maybe<f64>,
+    /// World y the camera centres on.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub y: Maybe<f64>,
+    /// Multiplier; 1 = fit.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub zoom: Maybe<f64>,
+    /// Shapes the segment starting at this key.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ease: Maybe<EaseCurve>,
+}
+
+/// One 3D camera keyframe (`motion_set_camera_3d`).
+///
+/// `pos` is required — a 3D camera key with no position is meaningless.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Camera3DKey {
+    /// SECONDS from the scene's start. Strictly numeric.
+    pub at: f64,
+    /// Camera position [x, y, z].
+    #[schemars(length(min = 3, max = 3))]
+    pub pos: Vec<f64>,
+    /// Look-at point [x, y, z].
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schemars(length(min = 3, max = 3))]
+    pub look: Maybe<Vec<f64>>,
+    /// Shapes the segment starting at this key.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ease: Maybe<EaseCurve>,
+}
+
+/// One keyframe in a layer's animation (`motion_set_layer_transform_keys`).
+///
+/// These values are additive DELTAS on top of the layer's static `transform.*` values,
+/// not absolute replacements (motion-engine/src/engine/schema.ts). A property absent
+/// from a key is simply not animated by it.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayerTransformKey {
+    /// SECONDS from the layer's SCENE start. Strictly numeric.
+    pub at: f64,
+    /// World-pixel x delta.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub x: Maybe<f64>,
+    /// World-pixel y delta.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub y: Maybe<f64>,
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scale: Maybe<f64>,
+    /// Rotation. Named `rot`, not `rotation`.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rot: Maybe<f64>,
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opacity: Maybe<f64>,
+    /// Shapes the segment starting at this key. x1/x2 are clamped to 0..1 and y1/y2 to
+    /// -0.75..1.75, each with a warning rather than an error.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ease: Maybe<EaseCurve>,
+}
+
+/// One step in a `layers`/`layerstack` primitive's active schedule.
+///
+/// A STEP, not an interpolation: "from `at` seconds onward, show child `i`", holding
+/// until the next entry. Hence there is no `ease` on it.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActiveScheduleEntry {
+    /// SECONDS from the scene's start. Strictly numeric.
+    pub at: f64,
+    /// Which child to highlight.
+    pub i: i64,
+}
+
 /// What kind of thing a Motion op acts on.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 pub enum MotionTargetKind {

@@ -195,6 +195,15 @@ fn normalise(schema: &Value, defs: &Map<String, Value>, depth: usize) -> Value {
     if depth > 12 {
         return json!("<too deep>");
     }
+    // A `$ref` node may carry its own `description` alongside the reference, and that
+    // one WINS over the referenced type's: it describes this use of the shape, not the
+    // shape. Capturing it before resolving is the difference between comparing a field's
+    // real published description and comparing the type's generic one.
+    let outer_description = schema
+        .get("$ref")
+        .and(schema.get("description"))
+        .and_then(Value::as_str)
+        .map(squash);
     let schema = resolve(schema, defs);
     let Some(obj) = schema.as_object() else {
         return json!({ "any": true });
@@ -249,10 +258,12 @@ fn normalise(schema: &Value, defs: &Map<String, Value>, depth: usize) -> Value {
             if nullable {
                 inner.insert("nullable".into(), json!(true));
             }
-            if !inner.contains_key("description")
-                && let Some(d) = obj.get("description").and_then(Value::as_str)
+            if let Some(d) = outer_description
+                .clone()
+                .or_else(|| obj.get("description").and_then(Value::as_str).map(squash))
+                .filter(|_| !inner.contains_key("description"))
             {
-                inner.insert("description".into(), json!(squash(d)));
+                inner.insert("description".into(), json!(d));
             }
         }
         return only;
@@ -278,8 +289,11 @@ fn normalise(schema: &Value, defs: &Map<String, Value>, depth: usize) -> Value {
     if let Some(c) = obj.get("const") {
         out.insert("const".into(), c.clone());
     }
-    if let Some(d) = obj.get("description").and_then(Value::as_str) {
-        out.insert("description".into(), json!(squash(d)));
+    if let Some(d) = outer_description
+        .clone()
+        .or_else(|| obj.get("description").and_then(Value::as_str).map(squash))
+    {
+        out.insert("description".into(), json!(d));
     }
     if let Some(items) = obj.get("items") {
         out.insert("items".into(), normalise(items, defs, depth + 1));

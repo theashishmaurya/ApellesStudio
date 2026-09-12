@@ -240,9 +240,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    toolchain, no venv in the connect command. **The parity harness is done and is the
    gate** — `parity/capture.py` records the real Python server's published contract and
    emitted ops for all 161 tools (237 calls, stub app, deterministic), and
-   `cargo test -p apelles-mcp` replays it. **The whole Colorist surface is ported and
-   passing (42/42), 47 tools in all; 114 remain** — Edit (71 of 73), Motion (35 of 37)
-   and eight of the nine debug tools, batched by prefix the same way. The
+   `cargo test -p apelles-mcp` replays it. **The whole Colorist (42/42) and Motion
+   (37/37) surfaces are ported and passing, 82 tools in all; 79 remain** — Edit (71 of
+   73) and eight of the nine debug tools, batched by prefix the same way. The
    ledger is `crates/apelles-mcp/tests/golden/ported.json`; the continuation guide, the
    non-uniform cases to watch for, and the deliberate divergences are
    `docs/notes/mcp-rust-port.md`. Not done until every tool is ported and the harness is
