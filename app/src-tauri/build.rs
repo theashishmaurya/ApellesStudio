@@ -4,6 +4,23 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+/// B-181 — a build-time HTTP client with no explicit timeout, not a client
+/// with none at all. `reqwest::blocking::get`'s default client's implicit
+/// timeout is shorter than a real, working download of these binaries can
+/// take on an ordinary (not broken, just not fast) network — verified live:
+/// the uv archive download timed out identically on 3 straight attempts
+/// while `curl` succeeded on the same URL in 11.4s. A short implicit timeout
+/// makes "still transferring" indistinguishable from "actually stuck", so
+/// every retry in [`fetch_uv`] failed the same way a plain re-run of `curl`
+/// would not have. 120s is generous for a binary this size on any network
+/// that will complete at all; a build that is truly offline still fails,
+/// just slower and for the right reason.
+fn http_client() -> Result<reqwest::blocking::Client, reqwest::Error> {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+}
+
 fn verify_sha256(path: &Path, expected_hash: &str) -> Result<bool, io::Error> {
     let mut file = fs::File::open(path)?;
     let mut hasher = Sha256::new();
@@ -33,7 +50,7 @@ fn download_and_verify(
         "cargo:warning=Downloading to temporary path: {:?}",
         temp_path
     );
-    let mut response = reqwest::blocking::get(url)?;
+    let mut response = http_client()?.get(url).send()?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -122,15 +139,16 @@ fn fetch_uv(dest: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
     let archive = out_dir.join(format!("uv-{UV_TARGET}.tar.gz"));
 
-    // Retried, because this genuinely flakes: the first run of this code in CI-like
-    // conditions failed with a bare "error sending request" and the identical
-    // re-run succeeded. A transient DNS/TLS blip is not a reason to fail a whole
-    // build, and the hash check below means a retry can never paper over a *bad*
-    // download — only over a missing one.
+    // Retried, because this genuinely flakes on an ordinary (not broken, just
+    // not fast) network — see [`http_client`]'s doc for the real cause (B-181:
+    // it was a too-short implicit timeout, not a DNS/TLS blip as first
+    // suspected). The hash check below means a retry can never paper over a
+    // *bad* download — only over a missing one.
+    let client = http_client()?;
     let mut last_err = String::new();
     let mut downloaded = false;
     for attempt in 1..=3 {
-        match reqwest::blocking::get(&url).and_then(|r| r.error_for_status()) {
+        match client.get(&url).send().and_then(|r| r.error_for_status()) {
             Ok(mut response) => {
                 let mut file = fs::File::create(&archive)?;
                 response.copy_to(&mut file)?;

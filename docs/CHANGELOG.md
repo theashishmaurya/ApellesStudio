@@ -4,6 +4,13 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-13** — **B-181: `cargo build` on a fresh checkout could fail outright** —
+  the `uv`/ONNX Runtime downloads in `build.rs` used no explicit HTTP timeout, and
+  the implicit default was shorter than a real download reliably takes (`curl`
+  succeeded on the same URL in 11.4s; a bare `reqwest::blocking::get` reproduction
+  timed out every time). All 4 worktrees this session had the binary pre-cached and
+  never hit it — same "verified once under conditions that never exercised it"
+  shape as B-169/B-173/B-177. Fixed with an explicit 120s timeout on a shared client.
 - **2026-09-13** — **B-178: `cargo test -p apelles` had been red since B-171** —
   four tests still relied on the auto-placement B-171 deliberately removed.
   Each now places its clip(s) explicitly via `append_media_clip`, the same
