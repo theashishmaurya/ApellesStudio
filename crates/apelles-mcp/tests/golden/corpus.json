@@ -8053,7 +8053,7 @@
     },
     {
       "name": "new_project",
-      "description": "Create a new `<name>.chroma` project in the projects folder from the given\n    media (absolute paths; may be empty and added later), then open it in the\n    editor. Media is referenced in place, never copied. Returns {created:\n    {name, path}}.\n\n    Like open_project, this switches every tab onto the new project \u2014 the Edit\n    tab's timeline/media pool and the Motion tab's manifest all reload for it\n    (B-083), a beat behind this call's return.",
+      "description": "Create a new `<name>.chroma` project in the projects folder from the given\n    media (absolute paths; may be empty and added later), then open it in the\n    editor. Media is referenced in place, never copied. Returns {created:\n    {name, path}}.\n\n    B-171: `media_paths` lands in the Edit tab's media pool only \u2014 NOT placed\n    on the timeline. Follow with editor_add_clip (per path, in whatever order\n    you actually want them) to place any of them.\n\n    Like open_project, this switches every tab onto the new project \u2014 the Edit\n    tab's timeline/media pool and the Motion tab's manifest all reload for it\n    (B-083), a beat behind this call's return.",
       "inputSchema": {
         "properties": {
           "name": {

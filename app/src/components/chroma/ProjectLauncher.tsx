@@ -62,13 +62,19 @@ function relTime(ms: number): string {
 /** Native multi-select source picker — also reused by `SourcesPanel` (D-046
  *  pass 3) for the Sources panel's Import action, same dialog.
  *
- *  **D-292 — `stills` is why this takes an option at all.** The Sources panel
- *  imports into the Edit tab's MEDIA POOL, where a still image is now a
- *  first-class source, so its picker offers images too. This screen's own use
- *  (creating a project from a set of clips) turns each path into a Colorist
- *  `ProjectShot` — a graded shot with a timeline position — which a still is
- *  not and which D-292 deliberately did not widen. One dialog, two filter sets,
- *  rather than two near-identical pickers that could drift.
+ *  **D-292 — `stills` is why this takes an option at all**, though both
+ *  callers now pass `stills: true`. Every seed path — from either caller —
+ *  lands in the SAME media pool via `find_or_create_media`/`probe_media_item`
+ *  (`apelles-project`'s `new_project_in`, D-070), which already probes a
+ *  still exactly as a first-class source; there is no separate `ProjectShot`
+ *  concept any more for this screen's paths to be excluded from (D-070
+ *  replaced it with a `Clip` on a fresh timeline, the same model D-292
+ *  widened to include stills). A still picked here becomes a real 1-frame
+ *  clip, same as dropping it on the Edit timeline by hand. Bug found live
+ *  (owner: "pick clip does not allow picking images") — this screen's own
+ *  filter had simply never been updated after D-070 stopped needing it to be
+ *  video-only. The `stills` parameter stays (rather than deleting it) in
+ *  case a future caller genuinely needs a video-only picker again.
  *
  *  The extension list is upper-cased as well as lower-cased because the Tauri
  *  dialog plugin's filter is case-sensitive on macOS (a `.PNG` off a camera
@@ -100,8 +106,15 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
   const newProject = useSessionStore((s) => s.newProject);
 
   const create = useCallback(async () => {
+    // The button itself is disabled on both of these — this is the Enter-key
+    // path (the Name input's own onKeyDown), which bypasses that disabled
+    // state entirely.
     if (!name.trim()) {
       toast.error('Give the project a name.');
+      return;
+    }
+    if (paths.length === 0) {
+      toast.error('Pick at least one clip.');
       return;
     }
     setCreating(true);
@@ -140,12 +153,12 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
         </label>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-text-secondary">Clips ({paths.length})</span>
+          <span className="text-xs text-text-secondary">Media ({paths.length})</span>
           <button
-            onClick={async () => setPaths(await pickClips())}
+            onClick={async () => setPaths(await pickClips({ stills: true }))}
             className="self-start px-2.5 py-1.5 rounded-md bg-bg-primary border border-border-color text-xs text-text-primary hover:border-accent flex items-center gap-1.5"
           >
-            <FilmStripIcon size={13} /> {paths.length ? 'Change clips' : 'Pick clips'}
+            <FilmStripIcon size={13} /> {paths.length ? 'Change media' : 'Pick media'}
           </button>
           {paths.length > 0 && (
             <div className="max-h-24 overflow-y-auto text-[11px] text-text-secondary flex flex-col gap-0.5">
@@ -167,7 +180,8 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={create}
-            disabled={creating}
+            disabled={creating || !name.trim() || paths.length === 0}
+            title={!name.trim() ? 'Give the project a name' : paths.length === 0 ? 'Pick at least one clip' : undefined}
             className="px-3 py-1.5 rounded-md text-xs font-semibold bg-accent text-button-text hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5"
           >
             {creating && <CircleNotchIcon size={13} className="animate-spin" />} Create

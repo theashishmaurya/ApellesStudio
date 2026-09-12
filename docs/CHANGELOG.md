@@ -9,6 +9,11 @@ One or two lines per session. Detail lives in the decision it references.
   has no project open — `closeProject()` now tells the Rust side too (new
   `chroma_project_close` command), which `set_project`'s own doc comment
   always said should happen but nothing ever called.
+- **2026-09-12** — **B-171: a new project no longer auto-places every picked
+  clip onto the timeline** in file-picker order — they land in the media
+  pool only, placement is now always a deliberate drag/`editor_add_clip`.
+  Also: the New Project dialog's Create button is now disabled until both a
+  name and at least one clip are chosen.
 - **2026-09-12** — **the native Help menu now has real items** ("Keyboard
   Shortcuts", "MCP") instead of macOS's empty default — both just open the
   same dialogs the chrome bar already does (`app/src-tauri/src/lib.rs`'s new

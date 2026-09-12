@@ -745,6 +745,10 @@ impl ApellesMcp {
     editor. Media is referenced in place, never copied. Returns {created:
     {name, path}}.
 
+    B-171: `media_paths` lands in the Edit tab's media pool only — NOT placed
+    on the timeline. Follow with editor_add_clip (per path, in whatever order
+    you actually want them) to place any of them.
+
     Like open_project, this switches every tab onto the new project — the Edit
     tab's timeline/media pool and the Motion tab's manifest all reload for it
     (B-083), a beat behind this call's return."#

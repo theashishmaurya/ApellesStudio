@@ -1994,10 +1994,19 @@ pub fn new_project_in(
         .map_err(|e| format!("create {}: {e}", project_dir.display()))?;
 
     let mut manifest = ProjectManifest::fresh(&clean);
-    // D-070: every seed path lands in the pool first (find-or-create, probed),
-    // then a `apelles_timeline::Clip` referencing it on a fresh timeline — the
-    // Edit tab's timeline is the single source of truth for what's gradable
-    // now, not a separate `ProjectShot` list (see the module doc).
+    // B-171 (owner, live: "by default don't put everything on timeline when
+    // we open") — every seed path still lands in the pool (find-or-create,
+    // probed), same as before, but is deliberately NOT auto-placed as a clip
+    // on the timeline any more. Picking 5 clips for a new project used to
+    // concatenate all 5 onto the timeline back-to-back in file-picker order —
+    // an order nobody chose — before the human had looked at any of them.
+    // They still land in the media pool exactly as before (visible in the
+    // Sources panel immediately), and D-070's own reasoning (a `Clip` on the
+    // Edit tab's timeline, not a separate `ProjectShot`, is the single source
+    // of truth for what's gradable) is unaffected — placement is now always a
+    // deliberate, later drag, not an automatic side effect of picking media.
+    // A fresh timeline is still created whenever there IS seed media, so
+    // there is somewhere to drag into immediately — it just starts empty.
     if !media_paths.is_empty() {
         let timeline = Timeline {
             id: uuid::Uuid::new_v4().to_string(),
@@ -2010,10 +2019,8 @@ pub fn new_project_in(
         };
         manifest.timelines.push(timeline);
         manifest.active_timeline = manifest.timelines.len() - 1;
-        let idx = manifest.active_timeline;
         for p in media_paths {
-            let media_id = find_or_create_media(&mut manifest, p, None);
-            append_media_clip(&mut manifest, idx, &media_id)?;
+            find_or_create_media(&mut manifest, p, None);
         }
     }
 
@@ -2263,6 +2270,11 @@ mod tests {
             &["/a.mov".into(), "/b.mov".into(), "/c.mov".into()],
         )
         .unwrap();
+        // B-171: seed media no longer auto-places — this test needs a real
+        // clip on the timeline as the padding template below.
+        let media_id = manifest.media[0].id.clone();
+        let idx = manifest.active_timeline;
+        append_media_clip(&mut manifest, idx, &media_id).unwrap();
 
         // Pad the manifest out so a non-atomic write takes long enough for a
         // reader to land inside it — a real project is this size and larger.
@@ -2332,6 +2344,11 @@ mod tests {
             &["/a.mov".into(), "/b.mov".into(), "/c.mov".into()],
         )
         .unwrap();
+        // B-171: seed media no longer auto-places — this test needs a real
+        // clip on the timeline as the padding template below.
+        let media_id = manifest.media[0].id.clone();
+        let idx = manifest.active_timeline;
+        append_media_clip(&mut manifest, idx, &media_id).unwrap();
         for i in 0..400 {
             let seed = manifest.timelines[0].tracks[0].clips[0].clone();
             manifest.timelines[0].tracks[0].clips.push(Clip {
@@ -2385,8 +2402,9 @@ mod tests {
 
     #[test]
     fn new_project_creates_dir_and_manifest() {
-        // D-070: a fresh project's seed media lands on the new timeline as
-        // clips, not `ProjectShot`s — see the module doc.
+        // B-171: a fresh project's seed media lands in the media POOL, on a
+        // fresh (but empty) timeline — not auto-placed as clips any more. See
+        // this function's own doc comment for why.
         let root = tmp("new");
         let (dir, manifest) =
             new_project_in(&root, "My Shoot", &["/a.mov".into(), "/b.mov".into()]).unwrap();
@@ -2398,16 +2416,22 @@ mod tests {
             manifest.shots.is_empty(),
             "no ProjectShot is created any more"
         );
-        assert_eq!(manifest.timelines.len(), 1);
-        let clips = &manifest.timelines[0].tracks[0].clips;
-        assert_eq!(clips.len(), 2);
-        assert_ne!(clips[0].id, clips[1].id);
-        assert_eq!(clips[0].name, "a.mov");
         assert_eq!(
-            manifest.active_clip_id.as_deref(),
-            Some(clips[1].id.as_str()),
-            "the most recently appended clip is active — matches the old \
-             add_shot_for_media semantics (last added = active)"
+            manifest.timelines.len(),
+            1,
+            "a timeline exists to drag into"
+        );
+        assert!(
+            manifest.timelines[0].tracks.is_empty(),
+            "but starts with no tracks/clips — nothing was auto-placed"
+        );
+        assert_eq!(manifest.media.len(), 2, "both seed paths land in the pool");
+        assert_ne!(manifest.media[0].id, manifest.media[1].id);
+        assert_eq!(manifest.media[0].name, "a.mov");
+        assert_eq!(manifest.media[1].name, "b.mov");
+        assert!(
+            manifest.active_clip_id.is_none(),
+            "nothing was placed, so nothing is active"
         );
 
         // creating it again is refused
@@ -2420,6 +2444,12 @@ mod tests {
         let root = tmp("roundtrip");
         let (dir, mut manifest) =
             new_project_in(&root, "grade-job", &["/shoot/A001.mov".into()]).unwrap();
+        // B-171: seed media no longer auto-places as a clip — place it
+        // explicitly, the same way a real drag from the Sources panel would,
+        // so this test still has a real clip to round-trip.
+        let media_id = manifest.media[0].id.clone();
+        let idx = manifest.active_timeline;
+        append_media_clip(&mut manifest, idx, &media_id).unwrap();
         // D-038: typed per-project output spec round-trips
         manifest.settings = ProjectSettings {
             width: Some(1920),
@@ -2607,8 +2637,12 @@ mod tests {
             return;
         };
         let root = tmp("b082_source_fps");
-        let (dir, manifest) =
+        let (dir, mut manifest) =
             new_project_in(&root, "b082", &[clip.to_string_lossy().to_string()]).unwrap();
+        // B-171: place the seed media explicitly — it no longer happens on its own.
+        let media_id = manifest.media[0].id.clone();
+        let idx = manifest.active_timeline;
+        append_media_clip(&mut manifest, idx, &media_id).unwrap();
         let placed = &manifest.timelines[manifest.active_timeline].tracks[0].clips[0];
         assert_eq!(
             placed.source_fps,
@@ -2617,6 +2651,7 @@ mod tests {
         );
 
         // and it survives the save/reload round trip (B-078's own regression)
+        save_manifest(&dir, &manifest).unwrap();
         let reloaded = load_manifest(&dir).unwrap();
         let reloaded_clip = &reloaded.timelines[reloaded.active_timeline].tracks[0].clips[0];
         assert_eq!(reloaded_clip.source_fps, Some(25.0));
@@ -2637,21 +2672,30 @@ mod tests {
             return;
         };
         let root = tmp("b097_timeline_rate");
-        let (dir, manifest) =
+        let (dir, mut manifest) =
             new_project_in(&root, "b097", &[clip.to_string_lossy().to_string()]).unwrap();
+        {
+            let tl = &manifest.timelines[manifest.active_timeline];
+            assert_eq!(
+                tl.rate,
+                Some(apelles_types::Rational::new(25, 1)),
+                "the timeline carries the media's own EXACT rational rate — \
+                 seeded from the pool media even though B-171 no longer places it"
+            );
+            assert_eq!(tl.fps(), 25.0);
+            assert_eq!(
+                Some(tl.fps()),
+                manifest.settings.fps,
+                "the timeline's timebase and the project's recorded one agree — \
+                 the whole point of B-097"
+            );
+        }
+        // B-171: place the seed media explicitly for the frame-arithmetic
+        // assertion below — the timeline-rate assertions above don't need it.
+        let media_id = manifest.media[0].id.clone();
+        let idx = manifest.active_timeline;
+        append_media_clip(&mut manifest, idx, &media_id).unwrap();
         let tl = &manifest.timelines[manifest.active_timeline];
-        assert_eq!(
-            tl.rate,
-            Some(apelles_types::Rational::new(25, 1)),
-            "the timeline carries the media's own EXACT rational rate"
-        );
-        assert_eq!(tl.fps(), 25.0);
-        assert_eq!(
-            Some(tl.fps()),
-            manifest.settings.fps,
-            "the timeline's timebase and the project's recorded one agree — \
-             the whole point of B-097"
-        );
         // With the two agreeing, a clip's timeline footprint is its own source
         // frame count, so the frame arithmetic a caller reasons about in the
         // media's frames is finally the identity it always looked like.
@@ -3633,18 +3677,28 @@ mod tests {
 
     #[test]
     fn new_project_clips_reference_pool_items_not_paths() {
-        // D-070: a fresh project no longer creates a `ProjectShot` — the
-        // seed media lands directly on the new timeline as a `Clip`
-        // referencing the pool item via `media_id`.
+        // D-070: a fresh project no longer creates a `ProjectShot` — a `Clip`
+        // placed on the timeline references the pool item via `media_id`,
+        // never the path directly. B-171: the seed path lands in the pool on
+        // its own; placing it as a clip is now a separate, explicit step
+        // (the same one a real drag from the Sources panel does), not
+        // something `new_project_in` does for you.
         let root = tmp("unify_new_project");
         let a = root.join("a.mov").to_string_lossy().to_string();
-        let (_dir, manifest) = new_project_in(&root, "unify", &[a.clone()]).unwrap();
+        let (_dir, mut manifest) = new_project_in(&root, "unify", &[a.clone()]).unwrap();
         assert_eq!(manifest.media.len(), 1, "the seed path lands in the pool");
         assert!(
             manifest.shots.is_empty(),
             "no ProjectShot is created any more"
         );
         assert_eq!(manifest.timelines.len(), 1);
+        assert!(
+            manifest.timelines[0].tracks.is_empty(),
+            "B-171: not auto-placed"
+        );
+
+        let media_id = manifest.media[0].id.clone();
+        append_media_clip(&mut manifest, 0, &media_id).unwrap();
         let clip = &manifest.timelines[0].tracks[0].clips[0];
         assert_eq!(
             clip.media_id.as_deref(),
@@ -3656,7 +3710,7 @@ mod tests {
         assert_eq!(
             manifest.active_clip_id.as_deref(),
             Some(clip.id.as_str()),
-            "the seeded clip becomes active"
+            "the placed clip becomes active"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -4284,7 +4338,11 @@ mod tests {
     #[test]
     fn top_wins_clip_index_is_a_noop_on_a_single_video_track() {
         let root = tmp("unify_top_wins_single");
-        let (_dir, manifest) = new_project_in(&root, "x", &["/a.mov".into()]).unwrap();
+        let (_dir, mut manifest) = new_project_in(&root, "x", &["/a.mov".into()]).unwrap();
+        // B-171: place the seed media on the (now empty) timeline — this test
+        // needs a real clip on a video track, which is no longer automatic.
+        let media_id = manifest.media[0].id.clone();
+        append_media_clip(&mut manifest, 0, &media_id).unwrap();
         let clips = active_timeline_video_clips(&manifest);
         assert_eq!(top_wins_clip_index(&manifest, &clips, 0), 0);
         let _ = std::fs::remove_dir_all(&root);
