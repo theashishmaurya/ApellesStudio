@@ -4,6 +4,26 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **fixed B-162 (D-311): Apelles now decodes Opus audio
+  natively.** `symphonia` (the D-049 playback decoder) has no Opus decoder at
+  all, confirmed against its own feature list — so a WebM/Opus source
+  (`yt-dlp`'s own default, and therefore most anything downloaded straight
+  from YouTube) played with no sound and no error. Added
+  `symphonia-adapter-libopus` (MIT/Apache-2.0, wraps the real libopus
+  reference implementation, chosen over `moosicbox_opus` which is explicitly
+  "under development" and MPL-2.0) rather than a transcode-at-import step —
+  the owner's call was to decode the original file natively, not convert it.
+  `apelles-media` now builds its own `CodecRegistry` (every default codec
+  symphonia already had, plus Opus) instead of the static default one. Found
+  and fixed a real environment gap along the way: `opusic-sys`'s build needs
+  `cmake`, not installed on this machine — a one-time toolchain requirement
+  now, not a workaround. Verified live against the exact file that surfaced
+  the bug: real, non-silent, varying audio levels decoding from the
+  untranscoded original. Also removed `forget_serving` (`control.rs`) and its
+  dedicated test — B-164's fix left it as a kept-for-later primitive assuming
+  a `WindowEvent` teardown hook would use it, but this app creates exactly
+  one window, so that hook would never fire usefully; `cargo check` had
+  already flagged it dead, removed rather than left speculative.
 - **2026-09-12** — **fixed B-165/B-166: two MCP docstrings corrected to match
   real behaviour**, found while modelling D-310's schemas. B-165: `set_clip_fade`
   and `editor_set_keyframe_ease` claimed CSS's `"ease"` was a valid curve

@@ -29695,6 +29695,46 @@ from either component's source — it took following `WGPU_RENDER` from
   rather than eating into it (an AI matte asking for 180s should get 180s of work), which is
   why `mcp/server.py` gained a matching `READY_GRACE_S`; the two constants are a pair.
 
+## D-311 — Opus audio decode via `symphonia-adapter-libopus`, not a transcode-at-import pipeline
+
+**Context.** B-162: `symphonia` (D-049's playback decoder, pinned 0.6.1) has no Opus decoder
+under any feature flag — confirmed directly against its published feature list, not assumed.
+Opus is YouTube's own default audio codec, so any `yt-dlp`-downloaded source silently plays
+with no sound: `editor_import_media` correctly probes and reports `hasAudio: true`, but
+nothing in the app can decode what it found. Two real fixes were on the table: add an
+Opus-capable decode dependency, or transcode Opus audio to a supported codec once at import
+time (the app already shells out to `ffmpeg` elsewhere, for export). Owner's call: keep the
+decode dependency — the original file's audio should decode natively, not get converted to
+something else on the way in, even for internal playback only.
+
+**Options considered, for the dependency itself.**
+- **`symphonia-adapter-libopus`** (chosen) — a third-party adapter (maintainer `aschey`,
+  `github.com/aschey/symphonia-adapters`) that registers a real `OpusDecoder` with
+  Symphonia's own `CodecRegistry`. Wraps the actual libopus reference implementation via
+  `opusic-sys` bindings, bundled and compiled into the binary by default (no system
+  libopus dependency). Dual-licensed MIT/Apache-2.0 — a clean, permissive fit next to this
+  project's AGPL-3.0. Version 0.3.0 (2026-07-14) targets Symphonia **0.6** exactly, matching
+  the version already pinned here. Fully documented, has CI/CD and coverage tracking.
+- **`moosicbox_opus`** (MoosicBox project, maintainer `BSteffaniak`) — rejected. Its own docs
+  say "this crate is under development"; MPL-2.0 (a more restrictive copyleft than
+  MIT/Apache-2.0 for no real benefit here); and it itself wraps the `audiopus` crate rather
+  than being an independent implementation, so it buys nothing `symphonia-adapter-libopus`
+  doesn't already have while carrying an explicit maturity warning.
+- **A pure-Rust Opus decoder** — none exists yet. Symphonia's own upstream has a WIP PR for
+  one (opened 2025-07-16, SILK mode only, not merged) — worth revisiting once/if it lands,
+  but not something to build on speculatively today.
+
+**Integration.** `apelles-media`'s own `CodecRegistry` construction (currently
+`symphonia::default::get_codecs()`) is extended to also register
+`symphonia_adapter_libopus::OpusDecoder`, rather than replacing the default registry — every
+already-working codec (AAC, ALAC, MP3, etc.) keeps working unchanged; Opus is additive.
+
+**Consequences.** A WebM/Opus source (the common case for anything downloaded via `yt-dlp`,
+not just YouTube) now decodes and plays natively — no transcode step, no second copy of the
+audio, no dependency on `ffmpeg` being invoked at import time. The one thing this does NOT
+fix: `editor_import_media`'s `hasAudio: true` was always accurate (the source really does
+have audio); what was missing was the ability to use it, which this closes.
+
 ## D-310 — Every structured MCP parameter gets a Pydantic model, written from the handler and not from the docstring
 
 **Context.** All 161 tools in `mcp/server.py` typed every nested argument as a bare

@@ -288,12 +288,28 @@ use once_cell::sync::Lazy;
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
+use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::errors::Error as SymError;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::Time;
+use symphonia_adapter_libopus::OpusDecoder;
+
+/// B-162/D-311 — the real codec registry every decode in this module uses:
+/// every codec `symphonia::default::get_codecs()` would have (AAC, ALAC, MP3,
+/// FLAC, Vorbis, PCM, ...) PLUS Opus, which symphonia itself has no decoder
+/// for at all. Built once, additively — `register_enabled_codecs` fills in
+/// the same defaults the static registry has, then Opus is registered
+/// alongside them, so every source that already decoded keeps decoding
+/// exactly as before and Opus (yt-dlp's own default audio codec) newly does.
+static CODEC_REGISTRY: Lazy<CodecRegistry> = Lazy::new(|| {
+    let mut registry = CodecRegistry::new();
+    symphonia::default::register_enabled_codecs(&mut registry);
+    registry.register_audio_decoder::<OpusDecoder>();
+    registry
+});
 
 // --------------------------------------------------------------------------- //
 // pure logic — unit tested (see the `tests` module at the bottom)
@@ -2166,7 +2182,7 @@ fn decode_mono_range(
         .unwrap_or(1)
         .max(1);
 
-    let mut decoder = symphonia::default::get_codecs()
+    let mut decoder = CODEC_REGISTRY
         .make_audio_decoder(&codec_params, &Default::default())
         .map_err(|e| format!("make decoder: {e}"))?;
 
@@ -2964,7 +2980,7 @@ pub(crate) fn open_source(
         .unwrap_or(1)
         .max(1);
 
-    let decoder = symphonia::default::get_codecs()
+    let decoder = CODEC_REGISTRY
         .make_audio_decoder(&codec_params, &Default::default())
         .map_err(|e| format!("make decoder: {e}"))?;
 

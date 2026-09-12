@@ -33,11 +33,18 @@ futures = "0.3.34"
 # `spawn_blocking` around the real `ffmpeg` pass.
 tokio = { version = "1", features = ["rt", "sync"] }
 # The Edit-tab audio engine (D-049): decode (symphonia) → resample (rubato) →
-# format-convert (dasp_sample) → device output (cpal). Pure Rust, no FFI; the
-# audio stack named in D-039 / architecture-lock.md. Versions pinned to match
-# what `app/src-tauri` had before D-146 moved this code — a move, not an
-# upgrade.
+# format-convert (dasp_sample) → device output (cpal). The audio stack named
+# in D-039 / architecture-lock.md. Versions pinned to match what
+# `app/src-tauri` had before D-146 moved this code — a move, not an upgrade.
 symphonia = { version = "0.6.1", features = ["isomp4", "aac", "alac", "aiff", "mp3"] }
+# B-162/D-311 — symphonia has no Opus decoder at all (confirmed against its
+# own feature list, not a missing flag), so a WebM/Opus source (yt-dlp's own
+# default) played silently with no audio. This is the one real exception to
+# "pure Rust, no FFI" above: it bundles and compiles the real libopus
+# reference implementation rather than reimplementing the codec. Registered
+# alongside symphonia's own default codecs in `audio::codec_registry()`, not
+# in place of them.
+symphonia-adapter-libopus = "0.3.0"
 cpal = "0.18.2"
 rubato = "0.15"
 dasp_sample = "0.11.0"
