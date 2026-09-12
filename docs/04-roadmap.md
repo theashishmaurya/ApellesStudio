@@ -280,6 +280,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      bundles `apelles-mcp` yet. This inherits the existing Phase-4 sidecar packaging gap
      (`docs/notes/sidecar-lifecycle.md`) rather than adding a new one.
 
+1. ~~**One Python environment for both AI sidecars instead of two**~~ — **done, D-314
+   (2026-09-12).** D-189's venv split rested on `ai/`'s `transformers<5` pin for
+   ViTMatte vs. `mlx-vlm`'s `>=5.5`; the pin was defensive, never re-tested, and no
+   longer holds (real inference on the actual checkpoint under transformers 5.x: fg
+   1.0000 / bg 0.0000 / 124 distinct alphas). Both sidecars now run from
+   `ai-env/.venv` — **3.5 GB → 1.8 GB** — declared per-sidecar and compiled into a
+   committed, fully-pinned `ai-env/requirements.lock.txt`. Two PROCESSES unchanged
+   (crash isolation + D-084 idle-unload). Install: `./ai-env/setup.sh`.
+
+   Open item this leaves:
+   - **Phase-4 packaging is still open and unchanged** — but strictly smaller now:
+     one environment to bundle or bootstrap rather than two, and
+     `CHROMA_SIDECAR_PYTHON` already exists as the one env var pointing both
+     sidecars at a packaged interpreter. See `docs/notes/sidecar-lifecycle.md`.
+
 1. ~~**Editor timeline audio playback**~~ — **done, D-050 (2026-09-03).** Real
    `cpal` device audio during Play: `symphonia` decode → `rubato` resample →
    `dasp_sample` format-convert → `cpal` output, reusing the video track's

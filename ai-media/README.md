@@ -19,19 +19,27 @@ what's being asked.
 
 ## Why this is a second sidecar and not more endpoints on `ai/`
 
-`ai/` is PyTorch/MPS pinned to `transformers<5` (ViTMatte). This is MLX, and
-`mlx-vlm>=0.6` requires `transformers>=5.5`. `pip install -r ai/requirements.txt
--r ai-media/requirements.txt` is a literal **`ResolutionImpossible`** — verified,
-not assumed (D-189). Two processes, two venvs, two ports, no shared Python
-state. Same supervised-subprocess pattern, one more instance of it.
+**Two processes — for crash isolation and independent idle-unload.** A torch
+segfault in matting must not take transcription down with it, and D-084 has each
+sidecar freeing its own multi-GB model on its own timer, which is a property of
+separate processes. That reasoning is unchanged and is why this directory exists.
+
+**One environment, though, since D-314.** The original answer here was a
+dependency conflict: `ai/` pinned `transformers<5` for ViTMatte, `mlx-vlm>=0.6`
+needs `transformers>=5.5`, and installing both requirement files together was a
+literal `ResolutionImpossible` (D-189). That `<5` turned out to be a defensive pin
+that was never re-tested — ViTMatte produces a real matte on `transformers` 5.x,
+and the union now installs cleanly. Both sidecars share `ai-env/.venv`, which took
+3.5 GB of venvs down to 1.8 GB. Still two processes, two ports, no shared Python
+state — just one `site-packages`. See D-314 and `ai-env/README.md`.
 
 ## Run
 
 The app starts this for you (`apelles_ai::sidecar`, same supervisor as `ai/`).
-Set the venv up once:
+Set the environment up once — the same command covers both sidecars:
 
 ```
-cd ai-media && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+./ai-env/setup.sh
 ```
 
 Manual start still works for standalone testing — the supervisor detects an

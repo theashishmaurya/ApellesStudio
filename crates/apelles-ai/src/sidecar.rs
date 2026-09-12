@@ -10,9 +10,14 @@
 //!     Video-Depth-Anything depth tracking (D-036), MoGe-2 normals (D-077).
 //!   - [`AI_MEDIA`] — `ai-media/`, MLX: word-level transcript (mlx-whisper) and
 //!     video understanding (ffmpeg scene-detect + Qwen3-VL), D-189. A separate
-//!     PROCESS because it is a separate dependency universe — `mlx-vlm` needs
-//!     `transformers>=5.5` and `ai/` pins `<5`, which pip reports as an outright
-//!     `ResolutionImpossible`. See D-189 for the spike that settled it.
+//!     PROCESS for crash isolation and D-084's independent idle-unload — but, as
+//!     of **D-314**, no longer a separate *environment*: both Python sidecars run
+//!     from one shared venv, `ai-env/.venv`. D-189's stated reason for two
+//!     (`mlx-vlm` needs `transformers>=5.5`, `ai/` pinned `<5` for ViTMatte, pip
+//!     called the union `ResolutionImpossible`) rested on that `<5` pin, which
+//!     was defensive, never re-tested, and no longer true — ViTMatte works on
+//!     `transformers` 5.x. The process split is untouched; only the ~1.1 GB of
+//!     duplicated wheels is gone.
 //!
 //! The app spawns one supervisor thread per sidecar from `lib.rs` `.setup()`;
 //! the app-exit hook in `lib.rs` `.run(...)` calls [`shutdown`], which kills
@@ -20,7 +25,9 @@
 //!
 //! What it does, per sidecar:
 //!   - resolve what to launch — a sidecar dir + Python interpreter (env
-//!     overrides → venv → PATH), or a compiled binary ([`Launch`])
+//!     overrides → per-sidecar venv → the shared `ai-env/.venv` → PATH; the full
+//!     ladder and why it is ordered that way is on [`resolve_python`]), or a
+//!     compiled binary ([`Launch`])
 //!   - if something is already healthy on the port, monitor it WITHOUT owning it
 //!     (never kill or respawn someone else's process) — D-101: also compares its
 //!     self-reported `content_sha256` against this build's own code on
@@ -94,6 +101,19 @@ const FAST_FAIL_GIVE_UP: u32 = 6;
 /// A run that stays up at least this long resets the backoff.
 const HEALTHY_RUN_RESET: Duration = Duration::from_secs(60);
 
+/// Directory, under the workspace root, holding the ONE virtual environment both
+/// Python sidecars run from (D-314). Built by `ai-env/setup.sh`; not a sidecar
+/// itself — there is no `server.py` in it and nothing there is ever launched.
+const SHARED_ENV_DIR: &str = "ai-env";
+
+/// Override the interpreter for *both* Python sidecars at once (D-314).
+///
+/// Deliberately a module const and not a [`SidecarSpec`] field: it is shared by
+/// construction, and [`SidecarSpec::identifiers`] exists to assert that no two
+/// specs claim the same string. A name that every spec is *supposed* to share
+/// has to live outside that check, not inside it as a permanent exception.
+const SHARED_PYTHON_ENV: &str = "CHROMA_SIDECAR_PYTHON";
+
 // ---- the specs --------------------------------------------------------------------
 
 /// *What* to start, as opposed to the [`SidecarSpec`] facts (name, port, env vars)
@@ -123,7 +143,9 @@ pub enum Launch {
         dir: &'static str,
         /// Override the resolved directory (must contain `server.py`).
         dir_env: &'static str,
-        /// Override the Python interpreter (must be a file).
+        /// Override the Python interpreter for *this* sidecar (must be a file).
+        /// The top rung of [`resolve_python`]'s ladder; `CHROMA_SIDECAR_PYTHON`
+        /// is the same thing for both sidecars at once (D-314).
         python_env: &'static str,
     },
 
@@ -492,17 +514,149 @@ fn resolve_dir(spec: &SidecarSpec) -> Option<PathBuf> {
     }
     // Dev layout: CARGO_MANIFEST_DIR = <workspace>/crates/apelles-ai, the sidecar
     // dirs are <workspace>/ai and <workspace>/ai-media — both direct workspace
-    // children of the repo root, so "../../<dir>" resolves. The shorter
-    // candidates are kept from the pre-D-145 layout.
+    // children of the repo root, so "../../<dir>" resolves. Same prefixes as
+    // `resolve_shared_python`, which is looking for a sibling of these dirs.
     // TODO(Phase 4): packaged builds need a resource-dir lookup instead — docs/notes/sidecar-lifecycle.md.
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for prefix in ["../..", "..", "."] {
+    for prefix in DEV_LAYOUT_PREFIXES {
         let c = manifest.join(prefix).join(dir);
         if c.join("server.py").is_file() {
             return Some(c.canonicalize().unwrap_or(c));
         }
     }
     None
+}
+
+/// `<venv>/bin/python` — the one place that layout is spelled out.
+fn venv_python(venv: &Path) -> PathBuf {
+    venv.join("bin").join("python")
+}
+
+/// The dev-layout prefixes from this crate's manifest dir up to the workspace
+/// root, most likely first. `"../.."` is the real post-D-145 path
+/// (`<workspace>/crates/apelles-ai`); the shorter ones are kept so the lookups
+/// still work if this crate is ever nested differently.
+const DEV_LAYOUT_PREFIXES: [&str; 3] = ["../..", "..", "."];
+
+/// The interpreter of the shared sidecar venv, `<workspace>/ai-env/.venv` (D-314),
+/// or `None` if it has not been created yet (`ai-env/setup.sh` has not been run).
+///
+/// Existence-checked rather than assumed, because "not created yet" has to fall
+/// through to the next rung of [`resolve_python`]'s ladder instead of producing a
+/// command that fails to spawn.
+///
+/// **Never `canonicalize()` this path**, unlike the directory in [`resolve_dir`].
+/// A venv's `bin/python` is a *symlink to the base interpreter*, and a venv is
+/// activated purely by the path Python was invoked through: CPython finds
+/// `pyvenv.cfg` relative to `sys.executable`, so resolving the symlink silently
+/// yields the system interpreter and the system `site-packages` instead of the
+/// locked environment. Caught by
+/// `resolve_shared_python_finds_the_real_shared_venv_when_it_exists` — and worth
+/// the test, because on a machine whose system Python happens to have torch
+/// installed the failure is not an ImportError but the far worse "running, on
+/// unpinned packages, and nobody can tell."
+fn resolve_shared_python() -> Option<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for prefix in DEV_LAYOUT_PREFIXES {
+        let p = venv_python(&manifest.join(prefix).join(SHARED_ENV_DIR).join(".venv"));
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// The interpreter to run a Python sidecar's `server.py` with, plus a short
+/// phrase naming which rung it came from (logged by the caller).
+///
+/// **Most specific wins, and the ordering IS the design** (D-314 added rungs 2
+/// and 4 to D-028's original three):
+///   1. the spec's own `python_env` — this one sidecar, explicitly
+///   2. `CHROMA_SIDECAR_PYTHON` — both sidecars, explicitly
+///   3. `<sidecar dir>/.venv` — a venv belonging to this sidecar alone
+///   4. `<workspace>/ai-env/.venv` — the shared venv, the D-314 default
+///   5. `python3` on `PATH`
+///
+/// **Why 3 still beats 4**, when the whole point of D-314 is to stop having
+/// per-sidecar venvs: it keeps the change non-breaking (an existing checkout with
+/// the old two venvs keeps working exactly as before, it just saves no disk until
+/// they are removed — `ai-env/setup.sh` says so when it finds them), and a
+/// deliberate per-sidecar venv remains a genuinely useful thing for running one
+/// sidecar against a different dependency set while debugging it. Preferring the
+/// more specific path is also what the two env-var rungs above it already do, so
+/// this is the ladder staying consistent rather than acquiring a special case.
+///
+/// A set-but-missing *override* is a hard error, never a silent fall-through: the
+/// user named a specific interpreter, and quietly running a different one is how
+/// an afternoon gets lost. A missing *venv* is not an error — that is the fall-through.
+fn resolve_python(
+    spec: &SidecarSpec,
+    dir: &Path,
+    python_env: &str,
+) -> Result<(PathBuf, String), String> {
+    resolve_python_with(spec, dir, python_env, resolve_shared_python())
+}
+
+/// [`resolve_python`] with the shared-venv lookup passed in, so the ladder's
+/// ordering — the part a future change can actually get wrong — is unit-testable
+/// against real temp directories instead of depending on whether the machine
+/// running the tests happens to have run `ai-env/setup.sh`.
+fn resolve_python_with(
+    spec: &SidecarSpec,
+    dir: &Path,
+    python_env: &str,
+    shared: Option<PathBuf>,
+) -> Result<(PathBuf, String), String> {
+    for (var, what) in [
+        (python_env, "explicit"),
+        (SHARED_PYTHON_ENV, "explicit, both sidecars"),
+    ] {
+        if let Ok(p) = std::env::var(var) {
+            let pb = PathBuf::from(&p);
+            if !pb.is_file() {
+                return Err(format!(
+                    "{} sidecar can't start: {var}={p} is not a file.",
+                    spec.name
+                ));
+            }
+            return Ok((pb, format!("{var}, {what}")));
+        }
+    }
+
+    let own = venv_python(&dir.join(".venv"));
+
+    if own.is_file() {
+        // The one genuinely confusing state: both exist, and the more specific
+        // one wins, so the shared venv this build expects is being bypassed.
+        // Nothing is wrong — but it is worth saying, because the symptom
+        // otherwise is "I ran setup.sh and the disk did not go down."
+        if let Some(s) = &shared {
+            log::warn!(
+                "[sidecar/{}] using this sidecar's own {} and NOT the shared {} — the per-sidecar venv is more specific, so it wins (D-314). If that is not deliberate, remove it to fall back to the shared one.",
+                spec.name,
+                own.display(),
+                s.display()
+            );
+        }
+        return Ok((own, "per-sidecar venv".to_string()));
+    }
+
+    if let Some(s) = shared {
+        return Ok((s, format!("shared {SHARED_ENV_DIR}/.venv")));
+    }
+
+    // Last rung. The hint names the one command that fixes it — the shared venv
+    // is now the supported way to install, so it must not still tell the user to
+    // build a per-sidecar one.
+    which("python3")
+        .map(|p| (p, "python3 on PATH".to_string()))
+        .ok_or_else(|| {
+            format!(
+                "{} sidecar can't start: no python at {} and no shared {SHARED_ENV_DIR}/.venv. Run:  ./{SHARED_ENV_DIR}/setup.sh",
+                spec.name,
+                own.display(),
+            )
+        })
 }
 
 /// Where a `WorkspaceBin` sidecar's executable is (D-313).
@@ -570,27 +724,17 @@ fn resolve_command(spec: &SidecarSpec) -> Result<Command, String> {
                 )
             })?;
 
-            let python = if let Ok(p) = std::env::var(python_env) {
-                let pb = PathBuf::from(&p);
-                if !pb.is_file() {
-                    return Err(format!(
-                        "{} sidecar can't start: {python_env}={p} is not a file.",
-                        spec.name
-                    ));
-                }
-                pb
-            } else {
-                let venv = dir.join(".venv/bin/python");
-                if venv.is_file() {
-                    venv
-                } else {
-                    which("python3").ok_or_else(|| format!(
-                        "{} sidecar can't start: no python at {}. Run:  cd {dir_name} && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
-                        spec.name,
-                        venv.display(),
-                    ))?
-                }
-            };
+            let (python, source) = resolve_python(spec, &dir, python_env)?;
+            // Which interpreter, and why that one. Worth a line of its own rather
+            // than leaving it to be inferred from the `{command:?}` below: since
+            // D-314 there is more than one place a Python can legitimately come
+            // from, and "it is silently on the old per-sidecar venv" is exactly
+            // the confusion this log line answers.
+            log::info!(
+                "[sidecar/{}] python: {} ({source})",
+                spec.name,
+                python.display()
+            );
 
             let mut command = Command::new(python);
             command
@@ -1261,5 +1405,182 @@ mod tests {
             "cargo build -p apelles-mcp && ./target/debug/apelles-mcp --http"
         );
         assert_eq!(BIN.code_desc(), "the `apelles-mcp` binary");
+    }
+
+    // ---- D-314: one shared venv for both Python sidecars ------------------------
+
+    /// A real (empty, executable-bit-irrelevant) file at `<venv>/bin/python`,
+    /// which is all any rung of the ladder checks for.
+    fn fake_venv(root: &Path, name: &str) -> PathBuf {
+        let py = venv_python(&root.join(name).join(".venv"));
+        if let Some(p) = py.parent() {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        std::fs::write(&py, "#!/bin/sh\n").unwrap();
+        py
+    }
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "chroma_sidecar_{tag}_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn venv_python_is_the_bin_python_layout() {
+        assert!(
+            venv_python(Path::new("/x/ai-env/.venv")).ends_with("ai-env/.venv/bin/python"),
+            "every rung of the ladder depends on this one layout"
+        );
+    }
+
+    /// The D-314 default: with no per-sidecar venv, a Python sidecar runs from the
+    /// shared one. This is the rung that did not exist before D-314, so it is the
+    /// one worth pinning.
+    #[test]
+    fn falls_back_to_the_shared_venv_when_the_sidecar_has_none_of_its_own() {
+        let tmp = tmpdir("shared_only");
+        let shared = fake_venv(&tmp, "ai-env");
+        let sidecar_dir = tmp.join("ai");
+        std::fs::create_dir_all(&sidecar_dir).unwrap();
+
+        let (python, source) = resolve_python_with(
+            &AI,
+            &sidecar_dir,
+            "CHROMA_AI_PYTHON_UNSET",
+            Some(shared.clone()),
+        )
+        .expect("a shared venv is a resolvable interpreter");
+
+        assert_eq!(python, shared);
+        assert!(
+            source.contains("shared"),
+            "the log line has to say WHERE it came from, got {source:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// The deliberate ordering: a sidecar's own venv is more specific, so it wins
+    /// even when the shared one exists. This is what keeps D-314 non-breaking for
+    /// a checkout that still has the old per-sidecar venvs — flip it and those
+    /// installs silently change interpreter under the user.
+    #[test]
+    fn a_per_sidecar_venv_still_beats_the_shared_one() {
+        let tmp = tmpdir("own_wins");
+        let shared = fake_venv(&tmp, "ai-env");
+        let own = fake_venv(&tmp, "ai");
+
+        let (python, source) = resolve_python_with(
+            &AI,
+            &tmp.join("ai"),
+            "CHROMA_AI_PYTHON_UNSET",
+            Some(shared.clone()),
+        )
+        .expect("a per-sidecar venv is a resolvable interpreter");
+
+        assert_eq!(python, own, "the more specific venv must win");
+        assert_ne!(python, shared);
+        assert!(source.contains("per-sidecar"), "got {source:?}");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// With neither venv present the ladder must not invent one — it either finds
+    /// a `python3` on `PATH` (the last rung) or errors with the one command that
+    /// fixes it. Asserted as "not a venv path, and the error names setup.sh"
+    /// rather than assuming this machine has a `python3`, which is not this
+    /// module's fact to depend on.
+    #[test]
+    fn with_no_venv_at_all_it_never_claims_one() {
+        let tmp = tmpdir("no_venv");
+        let sidecar_dir = tmp.join("ai");
+        std::fs::create_dir_all(&sidecar_dir).unwrap();
+
+        match resolve_python_with(&AI, &sidecar_dir, "CHROMA_AI_PYTHON_UNSET", None) {
+            Ok((python, source)) => {
+                assert_eq!(source, "python3 on PATH");
+                assert!(
+                    !python.starts_with(&tmp),
+                    "resolved {python:?} inside a dir with no venv"
+                );
+            }
+            Err(hint) => assert!(
+                hint.contains("ai-env/setup.sh"),
+                "the hint must name the command that fixes it, got {hint:?}"
+            ),
+        }
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// `CHROMA_SIDECAR_PYTHON` is shared by *both* specs on purpose, which is
+    /// exactly why it must not be a `SidecarSpec` field:
+    /// `specs_share_no_name_port_or_env_var` asserts that no two specs claim the
+    /// same identifier, and a deliberately-shared name inside that set would have
+    /// to be carved out as a permanent exception. Pin the invariant so nobody
+    /// "tidies" it into the struct later.
+    #[test]
+    fn the_shared_python_override_is_not_claimed_by_any_spec() {
+        for spec in ALL {
+            assert!(
+                !spec.identifiers().contains(&SHARED_PYTHON_ENV),
+                "{} claims {SHARED_PYTHON_ENV}, which is shared by design",
+                spec.name
+            );
+        }
+        // And it is genuinely distinct from the per-sidecar overrides it sits above.
+        assert_ne!(SHARED_PYTHON_ENV, AI.identifiers()[0]);
+        assert!(!SHARED_PYTHON_ENV.is_empty());
+    }
+
+    /// The dev-layout lookup must find the real `ai-env/.venv` in this checkout —
+    /// the same kind of real check `resolve_dir_finds_both_sidecars_in_the_dev_layout`
+    /// makes for the sidecar dirs, rather than only testing the injected path.
+    #[test]
+    fn resolve_shared_python_finds_the_real_shared_venv_when_it_exists() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let exists = DEV_LAYOUT_PREFIXES
+            .iter()
+            .any(|p| venv_python(&manifest.join(p).join(SHARED_ENV_DIR).join(".venv")).is_file());
+        if !exists {
+            // Not a failure: a checkout that has not run `ai-env/setup.sh` yet has
+            // no shared venv to find, and "returns None" is the correct answer
+            // there (it is what makes the ladder fall through).
+            eprintln!("skipping: no {SHARED_ENV_DIR}/.venv — run ./{SHARED_ENV_DIR}/setup.sh");
+            assert!(resolve_shared_python().is_none());
+            return;
+        }
+        let found = resolve_shared_python().expect("the venv exists, so it must resolve");
+        assert!(found.is_file());
+        assert!(
+            found.ends_with("bin/python"),
+            "{found:?} should be an interpreter path"
+        );
+        assert!(
+            found.components().any(|c| c.as_os_str() == SHARED_ENV_DIR),
+            "{found:?} should live under {SHARED_ENV_DIR}/"
+        );
+        // The real invariant, not just the path shape: the returned path must
+        // still be *inside* the venv, because that is the only thing that makes
+        // Python use the venv at all (CPython locates `pyvenv.cfg` relative to
+        // `sys.executable`). `bin/python` is a symlink to the base interpreter,
+        // so a stray `canonicalize()` anywhere on this path silently swaps the
+        // locked environment for the system one — which is how this assertion
+        // earned its place.
+        let venv_root = found
+            .parent()
+            .and_then(Path::parent)
+            .expect("<venv>/bin/python has two parents");
+        assert!(
+            venv_root.join("pyvenv.cfg").is_file(),
+            "{found:?} is not inside a virtualenv — no pyvenv.cfg at {venv_root:?}; \
+             the symlink was probably resolved away"
+        );
     }
 }

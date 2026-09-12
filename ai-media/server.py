@@ -50,6 +50,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import sys
 import threading
 import time
 import uuid
@@ -183,6 +184,13 @@ def health() -> dict:
             "understand_video": vu_mod.MODEL,
         },
         "jobs_running": running,
+        # D-314 — WHICH environment this process is running from. This sidecar
+        # shares one venv (`ai-env/.venv`) with `ai/` now, so the two /health
+        # responses reporting the same `prefix` is the outside-visible proof
+        # that the shared environment is really in use. It also matters for
+        # `video_understand.py`, which shells out to `sys.executable -m
+        # mlx_vlm.generate` — the subprocess inherits exactly this interpreter.
+        "python": {"executable": sys.executable, "prefix": sys.prefix},
     }
 
 

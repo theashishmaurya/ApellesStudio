@@ -4,12 +4,37 @@ The Apelles app starts and supervises its Python sidecars itself. No more
 `cd <dir> && ./run.sh` before using the features that depend on them.
 
 **There are two**, and everything in this doc applies to each independently —
-they are separate processes, separate venvs, separate ports, separate status:
+they are separate processes with separate ports and separate status. Since
+**D-314** they are *not* separate environments: both run from one shared venv,
+`ai-env/.venv`.
 
-| spec | dir | port | what it does | why it's separate |
+| spec | dir | port | what it does | why it's a separate PROCESS |
 |---|---|---|---|---|
 | `AI` | `ai/` | 8765 | SAM 2 → ViTMatte matting (D-012/D-016), depth track (D-036), MoGe-2 normals (D-077) | — |
-| `AI_MEDIA` | `ai-media/` | 8766 | word-level transcript (mlx-whisper) + video understanding (ffmpeg scene-detect + Qwen3-VL), D-189 | PyTorch/`transformers<5` vs. MLX/`transformers>=5.5` — pip reports the union as `ResolutionImpossible` (D-189) |
+| `AI_MEDIA` | `ai-media/` | 8766 | word-level transcript (mlx-whisper) + video understanding (ffmpeg scene-detect + Qwen3-VL), D-189 | crash isolation, and D-084's independent idle-unload (each frees its own multi-GB model on its own timer) |
+
+**D-314 — one environment, still two processes.** D-189 gave each sidecar its own
+venv because `mlx-vlm` needs `transformers>=5.5` while `ai/` pinned `<5` for
+ViTMatte, which pip called an outright `ResolutionImpossible`. That `<5` was a
+defensive pin that was never re-tested, and it no longer held: ViTMatte produces a
+real matte on `transformers` 5.x, and the union of both sidecars' requirements
+installs cleanly. Merging the environments took **3.5 GB (1.9 + 1.6) down to
+1.8 GB**. The *process* split is untouched — that column above is why it exists,
+and none of D-314's evidence bears on it.
+
+```
+ai-env/
+  requirements.lock.txt   the resolved union of both sidecars' deps, exactly pinned (committed)
+  setup.sh                create/repair .venv from the lock; --relock re-resolves
+  python.sh               the interpreter ladder, shared by both run.sh scripts
+  .venv/                  the shared environment (gitignored)
+```
+
+One command sets a fresh checkout up: **`./ai-env/setup.sh`**. Dependencies are
+declared per-sidecar in `ai/requirements.txt` and `ai-media/requirements.txt`
+(the human-edited `.in` files, exactly pinned); the lock is generated from both
+of them resolved *together*. Details and the exact-pin rationale:
+`ai-env/README.md`.
 
 Code: `apelles_ai::sidecar` (the whole implementation, D-145) +
 `app/src-tauri/src/chroma/sidecar.rs` (the Tauri-only bits). Upstream
@@ -47,11 +72,42 @@ Each spec names its own four env vars. For `AI` they are `CHROMA_AI_*`; for
    `server.py`). `CARGO_MANIFEST_DIR` is `<workspace>/crates/apelles-ai` since
    D-145, so `../../ai` and `../../ai-media` are the dev checkout's sidecars.
 
-**Python** (`resolve`):
+**Python** (`resolve_python`) — most specific first; D-314 added rungs 2 and 4:
 1. `<spec>.python_env` (`CHROMA_AI_PYTHON` / `CHROMA_AI_MEDIA_PYTHON`) — must be
    an existing file (else hard error, retried).
-2. `<dir>/.venv/bin/python`.
-3. `python3` on `PATH`.
+2. `CHROMA_SIDECAR_PYTHON` — the same thing for **both** sidecars at once. Not a
+   `SidecarSpec` field: `identifiers()` asserts no two specs share a string, and a
+   deliberately-shared name cannot live inside that check.
+3. `<dir>/.venv/bin/python` — a venv belonging to that sidecar alone.
+4. `<workspace>/ai-env/.venv/bin/python` — **the shared venv, the default.**
+5. `python3` on `PATH`.
+
+Rung 3 still beats rung 4 deliberately: it keeps D-314 non-breaking (a checkout
+with the old per-sidecar venvs keeps working, it just saves no disk until they are
+removed — `setup.sh` says so when it finds them) and keeps a per-sidecar venv
+useful for debugging one sidecar against a different dependency set. The chosen
+interpreter and the reason are logged
+(`[sidecar/ai] python: … (shared ai-env/.venv)`), and a per-sidecar venv that is
+shadowing an existing shared one gets a warning, because the symptom otherwise is
+"I ran setup.sh and the disk did not go down."
+
+`ai/run.sh` and `ai-media/run.sh` resolve through `ai-env/python.sh`, which walks
+this same ladder, so a hand-start and an auto-start can never disagree about which
+environment they are on.
+
+> **Never `canonicalize()` an interpreter path.** A venv's `bin/python` is a
+> symlink to the base interpreter, and a venv is activated purely by the path
+> Python was invoked through (CPython finds `pyvenv.cfg` relative to
+> `sys.executable`). Resolving that symlink silently yields the *system* Python and
+> the system `site-packages`. D-314 hit this for real; on a machine whose system
+> Python happens to have torch, the sidecars come up "working" on unpinned
+> packages with nothing to show it. A test now asserts `pyvenv.cfg` sits above the
+> resolved interpreter.
+
+Both sidecars' `GET /health` report `python.executable` and `python.prefix`, so
+"which environment is this process actually on" is answerable from outside — the
+two reporting the same `prefix` is the outside-visible proof the shared venv is in
+use.
 
 **Port**: `<spec>.port_env` — `CHROMA_AI_PORT` (default `8765`), the same value
 `apelles_ai::sidecar_base_url()` uses; `CHROMA_AI_MEDIA_PORT` (default `8766`),
@@ -84,7 +140,7 @@ the same value `apelles_ai::media_understanding::media_base_url()` uses.
   clear "check the [sidecar] log" error. Any run that stays up ≥ 60 s resets the
   backoff and the fast-failure counter.
 - **venv / python missing**: log
-  `<name> sidecar can't start: no python at <path>. Run:  cd <dir> && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
+  `<name> sidecar can't start: no python at <path> and no shared ai-env/.venv. Run:  ./ai-env/setup.sh`
   and re-resolve every 30 s. The app does not crash; mask/track calls fail with
   the existing "sidecar unreachable" error until it's fixed.
 
@@ -192,11 +248,18 @@ scoping itself):
 
 ## TODO — packaged app (Phase 4)
 
-`resolve_ai_dir` relies on `CARGO_MANIFEST_DIR`, a build-machine path. A signed
-`.app` bundle has no workspace next to it. Phase 4 (packaging) needs:
+`resolve_dir` and `resolve_shared_python` both rely on `CARGO_MANIFEST_DIR`, a
+build-machine path. A signed `.app` bundle has no workspace next to it. Phase 4
+(packaging) needs:
 - the sidecar source (or a PyInstaller/`briefcase` freeze) shipped as a Tauri
   resource, resolved via `app.path().resolve("ai", BaseDirectory::Resource)`;
 - a bundled Python or a first-run venv bootstrap + `pip install`;
 - models either bundled or downloaded on first `/segment` (already the case).
 Until then a packaged build should ship with `CHROMA_AI_DIR` +
-`CHROMA_AI_PYTHON` baked in, or the sidecar disabled.
+`CHROMA_AI_MEDIA_DIR` + `CHROMA_SIDECAR_PYTHON` baked in, or the sidecars
+disabled.
+
+D-314 does not change this gap, but it does shrink the work: there is **one**
+environment to bundle or bootstrap instead of two, and `CHROMA_SIDECAR_PYTHON`
+already exists as the single env var that points both sidecars at wherever a
+packaged interpreter ends up.

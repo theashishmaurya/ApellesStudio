@@ -31,6 +31,11 @@ app/bench/out/
 **/keystore.jks
 **/key.properties
 
+# the ONE shared environment both Python sidecars run from (D-314). The lock
+# file next to it IS committed — it is what makes the environment reproducible.
+ai-env/.venv/
+ai-env/__pycache__/
+
 # python ai sidecar
 ai/.venv/
 ai/__pycache__/
@@ -39,8 +44,9 @@ ai/models/
 ai/vendor/**/checkpoints/
 *.pyc
 
-# python media-understanding sidecar (D-184) — its own venv, deliberately
-# separate from ai/.venv (mlx-vlm needs transformers>=5, ai/ pins <5)
+# python media-understanding sidecar (D-184). Still its own PROCESS, but since
+# D-314 no longer its own venv — these two entries only cover a deliberate
+# per-sidecar venv, which still wins over ai-env/.venv if someone creates one.
 ai-media/.venv/
 ai-media/__pycache__/
 

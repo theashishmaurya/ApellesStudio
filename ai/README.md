@@ -5,11 +5,17 @@ nothing here touches `grade.json` — it returns mattes, the engine applies them
 
 ## Run
 
-**The app starts this for you now (D-028).** First set up the venv once:
+**The app starts this for you now (D-028).** First set up the environment once —
+one shared venv serves this sidecar *and* `ai-media/` since D-314, so this is the
+only install step for both:
 
 ```
-cd ai && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+./ai-env/setup.sh
 ```
+
+`requirements.txt` here declares what *this* sidecar needs; the environment it
+actually runs from is `ai-env/.venv`, resolved from this file and
+`ai-media/requirements.txt` together. See `ai-env/README.md`.
 
 Then just launch Apelles — `app/src-tauri/src/chroma/sidecar.rs` spawns
 `uvicorn` on app start, pipes its logs into `app.log` (grep `[sidecar]`), and

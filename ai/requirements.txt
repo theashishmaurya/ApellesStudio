@@ -1,14 +1,52 @@
-ultralytics>=8.4
-fastapi>=0.115
-uvicorn[standard]>=0.30
-pillow>=10
-numpy>=1.26
-opencv-contrib-python>=4.10
-transformers>=4.40,<5
+# What the `ai/` sidecar directly needs. Since D-314 this file is an *input* to
+# the resolver, not the thing that gets installed: both Python sidecars run from
+# one shared environment (`ai-env/.venv`), built from `ai-env/requirements.lock.txt`,
+# which is this file resolved together with `ai-media/requirements.txt`.
+#
+#   ./ai-env/setup.sh              # install the shared venv from the lock
+#   ./ai-env/setup.sh --relock     # re-resolve BOTH sidecar files, rewrite the lock
+#
+# See `ai-env/README.md`. Do not `pip install -r` this file on its own into the
+# shared venv — resolving the two sidecars together is what keeps their
+# constraints reconciled (D-314).
+#
+# EXACT pins, never ranges (D-314). This stack has already been bitten once by a
+# float: a prototype had `mlx-vlm` silently upgrade transformers/tokenizers/numpy
+# out from under its neighbours. And the `transformers>=4.40,<5` range this file
+# used to carry — set defensively for ViTMatte, never re-tested — is the whole
+# reason the two sidecars were on two separate 1.6-1.9 GB venvs for as long as
+# they were. A float here has a real downside and no upside.
+
+# SAM 2 (D-012) and the YOLO subject detector
+ultralytics==8.4.149
+torch==2.14.0
+
+# the HTTP surface
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+
+# frame I/O and array math
+pillow==12.3.0
+numpy==2.4.6
+opencv-contrib-python==5.0.0.93
+scipy==1.17.1
+
+# ViTMatte edge refinement (D-016). Verified working on transformers 5.x by a
+# real inference test, not just an import check — that test is what unblocked
+# D-314; see the D-314 entry for the numbers.
+transformers==5.17.0
+huggingface_hub==1.31.0
+
 # Video Depth Anything — Small (vendored in ai/vendor/, D-036): temporal video depth
-einops>=0.4
-easydict>=1.10
-# MoGe-2 (vendored in ai/vendor/, D-077): real surface-normal estimation for Relight
-scipy>=1.11
-huggingface_hub>=0.20
+einops==0.8.2
+easydict==1.13
+
+# MoGe-2 (vendored in ai/vendor/, D-077): real surface-normal estimation for Relight.
+# `moge/utils/geometry_*.py` imports `utils3d_moge` and only falls back to a bare
+# `utils3d` if that is absent — so this, the MoGe author's own fork, is the real
+# dependency. NOTE: `utils3d` on PyPI is an unrelated package by a different
+# author that happens to share the name; D-314 found a stray copy of it installed
+# in the old `ai/.venv`, pulling in jupyter/open3d/pandas/scikit-learn for
+# nothing. Never install it.
 utils3d_moge @ git+https://github.com/EasternJournalist/utils3d-moge.git@62f09d58509485564e24d5d9f6aac9ee9ebc0c37

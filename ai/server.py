@@ -426,7 +426,14 @@ def health():
             # any 200 forever. None if the hash couldn't be computed (e.g.
             # this file isn't readable at its own path for some reason) —
             # the Rust side treats a missing hash as "unknown," not a match.
-            "content_sha256": _CONTENT_SHA256}
+            "content_sha256": _CONTENT_SHA256,
+            # D-314 — WHICH environment this process is actually running from.
+            # Both sidecars now share one venv (`ai-env/.venv`), but a
+            # per-sidecar `.venv` still legitimately wins if one exists, so
+            # "which interpreter is this" stopped being a question with one
+            # possible answer. Reported so it is answerable from outside the
+            # process, instead of by reading logs or guessing.
+            "python": {"executable": sys.executable, "prefix": sys.prefix}}
 
 
 def _process_rss_mb() -> float:

@@ -30046,3 +30046,135 @@ at all. So that row stays stdio, and every other row keeps stdio available as a
 - **Also still open:** `apelles_ai::sidecar` is now a general local-service supervisor
   living in a crate named for one of its users. That is a real naming wart and the honest
   fix is its own crate; tracked in `docs/04-roadmap.md` rather than left as a comment.
+
+---
+
+## D-314 — one shared Python environment for both AI sidecars; still two processes
+
+**Context.** Apelles has two Python sidecars, `ai/` (SAM 2 → ViTMatte matting, depth
+tracking, MoGe-2 normals) and `ai-media/` (mlx-whisper transcript, Qwen3-VL video
+understanding). D-189/D-190 gave each its own venv *and* its own process, and the stated
+reason for the venv split was a hard dependency conflict. `ai-media/requirements.txt` said
+it plainly: *"`mlx-vlm >= 0.6` requires `transformers >= 5.5`, `ai/` pins `transformers < 5`
+for ViTMatte, and pip reports the union as ResolutionImpossible. That is the whole reason
+this is a second venv and a second process."*
+
+The cost was two venvs of **1.9 GB** and **1.6 GB** — 3.5 GB — holding overwhelmingly the
+same wheels. Of the 48 packages installed in both, **43 were already at byte-identical
+versions** (numpy 2.4.6, scipy 1.17.1, opencv 5.0.0.93, sympy 1.14.0, pillow, fastapi,
+uvicorn, safetensors, …); only five differed at all (torch 2.13.0/2.14.0,
+transformers 4.57.6/5.16.1, huggingface-hub, tokenizers, anyio).
+
+**The conflict was no longer real, and the pin that caused it had never been re-tested.**
+`ai/`'s `transformers>=4.40,<5` was set defensively for ViTMatte and then left alone. Three
+things were verified directly rather than reasoned about:
+
+1. `from transformers import VitMatteForImageMatting, VitMatteImageProcessor` imports fine
+   on transformers 5.16.1 — the classes were never removed.
+2. **A real inference test, not an import check.** The actual
+   `hustvl/vitmatte-small-composition-1k` checkpoint, loaded and run on a synthetic
+   RGB + trimap where the answer is known (bright square on a dark ground, definite-fg core,
+   definite-bg ring, unknown band around the edge). On transformers 5.16.1 / torch 2.14.0 it
+   produced a real matte: **foreground core 1.0000, background 0.0000, 124 distinct alpha
+   values**. A degenerate or transposed output would have failed those assertions; it passed.
+3. The union of both sidecars' full requirement sets **installs**, not merely dry-run
+   resolves — landing on transformers 5.17.0, torch 2.14.0, torchvision 0.29.0, numpy 2.4.6,
+   scipy 1.17.1, mlx 0.32.2, mlx-vlm 0.6.17, mlx-whisper 0.4.3.
+
+So the split was caused by our own stale pin, not by anything structural between
+SAM2/ultralytics' dependency tree and mlx-vlm/mlx-whisper's.
+
+**Options.**
+1. *Leave it.* Rejected: 1.1 GB+ of duplication maintained forever to honour a constraint
+   that no longer exists, and two drifting copies of the same wheels.
+2. *Merge the processes too.* Explicitly **rejected and out of scope.** D-189's
+   process-isolation reasoning is untouched by any of the above — crash isolation (a torch
+   segfault in matting must not take transcription down with it) and D-084's independent
+   idle-unload (each sidecar frees its own multi-GB model on its own timer) are properties
+   of separate *processes*, and nothing here argues against them.
+3. **Chosen: one shared environment, two unchanged processes.** A new `ai-env/` holds the
+   venv and its lock; `ai/` and `ai-media/` stay exactly as they are — two `server.py`s, two
+   ports, two supervisor threads, two status cards — just launched from one interpreter.
+
+**Structure.** Three dependency files, and the split is deliberate:
+
+| file | role | edited by |
+|---|---|---|
+| `ai/requirements.txt` | what `ai/` directly needs | a human |
+| `ai-media/requirements.txt` | what `ai-media/` directly needs | a human |
+| `ai-env/requirements.lock.txt` | the resolved union, full transitive closure | `setup.sh --relock` |
+
+This is the ordinary pip `requirements.in` → compiled-`requirements.txt` pattern, with the
+two sidecar files playing the `.in` role, so *which sidecar needs what* stays recorded — the
+fact you want when a dependency has to change, and the fact the Phase-4 packaging work will
+need. There is deliberately **no** third hand-written "shared base" file: what the two
+sidecars share is almost entirely *transitive* (torch, opencv, numpy, scipy, sympy,
+tokenizers, huggingface-hub), so such a file would have held about three entries and invented
+a split that does not match reality. `ai-env/setup.sh` resolves both `.in` files in **one**
+pip invocation, which is what makes pip reconcile the two sidecars' constraints against each
+other rather than letting the second install move what the first one pinned.
+
+**Exact pins everywhere, as the explicit guard against a known repeat.** Every version in all
+three files is `==`. This stack has already been bitten once: a prototype had `mlx-vlm`
+silently upgrade transformers/tokenizers/numpy/mlx-metal out from under `mlx-audiocraft` in a
+shared venv, which is why D-184 pinned the two MLX top-levels exactly while `ai/` kept ranges.
+That discipline was right and now applies to the whole set, transitives included — pinning
+only direct deps would leave exactly the hole that failure came through. And the deeper
+lesson is the one this decision is itself an instance of: `ai/`'s range was a *defensive* pin
+that was never re-verified, and it cost 1.1 GB and a duplicated dependency universe for as
+long as nobody re-ran it. A float here has a real downside and no upside.
+
+**Interpreter resolution** (`apelles_ai::sidecar::resolve_python`), most specific first — two
+rungs added to D-028's original three:
+
+1. the spec's own `python_env` (`CHROMA_AI_PYTHON` / `CHROMA_AI_MEDIA_PYTHON`) — one sidecar
+2. `CHROMA_SIDECAR_PYTHON` — both sidecars at once (new)
+3. `<sidecar dir>/.venv` — a venv belonging to that sidecar alone
+4. `<workspace>/ai-env/.venv` — the shared venv, the new default (new)
+5. `python3` on `PATH`
+
+Rung 3 still beats rung 4 on purpose: it makes this change non-breaking (an existing checkout
+with the old two venvs keeps working exactly as before, it just saves no disk until they are
+removed — `setup.sh` says so when it finds them), it keeps a deliberate per-sidecar venv
+useful for debugging one sidecar against a different dependency set, and it is the ladder
+staying consistent with the two override rungs above it rather than acquiring a special case.
+`CHROMA_SIDECAR_PYTHON` is a module const and **not** a `SidecarSpec` field, because
+`SidecarSpec::identifiers()` exists to assert no two specs claim the same string, and a name
+that every spec is meant to share cannot live inside that check.
+
+**A real bug this turned up, caught by its own test.** `resolve_shared_python` first mirrored
+`resolve_dir` and called `canonicalize()`. A venv's `bin/python` is a *symlink to the base
+interpreter*, and a venv is activated purely by the path Python was invoked through (CPython
+finds `pyvenv.cfg` relative to `sys.executable`) — so canonicalizing silently yielded
+`/Library/Frameworks/Python.framework/.../python3.11`, `sys.prefix` of the **system** Python.
+Worse than an ImportError: this machine's system Python happens to have its own torch, so
+both sidecars would have come up "working" on unpinned system packages, with nothing
+visible to say so. Fixed, commented, and pinned by a test that asserts `pyvenv.cfg` really
+sits above the resolved interpreter. Both sidecars' `/health` now also report
+`python.executable` / `python.prefix`, so "which environment is this actually on" is
+answerable from outside the process instead of by reading logs.
+
+**Verified** — a real run, not a build that compiled. `ai-env/setup.sh --relock` rebuilt the
+venv from scratch from the exact pins alone; both `server.py` import graphs load (MPS
+detected, ffmpeg found); both sidecars were started by the real supervisor and exercised
+end to end on the shared venv: subject mask, multi-frame track, ViTMatte edge refine, depth
+track, MoGe-2 normal bake, word-level transcript, and Qwen3-VL `analyze_video`.
+
+### Consequences
+
+- **3.5 GB → 1.8 GB.** One venv of 90 packages replaces two of 170 and 67.
+- Part of that is a bonus find: `ai/.venv` contained a stray `utils3d` 0.1.0 — an *unrelated*
+  PyPI package that happens to share a name with the MoGe author's `utils3d_moge` fork that
+  `ai/requirements.txt` actually pins. Nothing required it (`Required-by:` empty) and MoGe
+  imports `utils3d_moge` first, but it had dragged in jupyter, open3d, matplotlib, pandas,
+  scikit-learn and dash. `ai/requirements.txt` now warns against it by name.
+- **Unchanged, deliberately:** two processes, two ports, two `/health`s, two status cards,
+  independent supervision/backoff/staleness, D-084's per-sidecar idle-unload. This decision
+  reverses D-189's *dependency* reasoning only, not its process split.
+- One new install command for a fresh checkout: `./ai-env/setup.sh`. `ai/run.sh` and
+  `ai-media/run.sh` now resolve their interpreter through a shared `ai-env/python.sh` that
+  walks the same ladder as the Rust supervisor, so a hand-start and an auto-start can never
+  disagree about which environment they are on.
+- **Still open:** the Phase-4 packaging path (`docs/notes/sidecar-lifecycle.md`) is
+  untouched, and this neither helps nor worsens it — though one environment instead of two is
+  strictly less to bundle when that work happens.

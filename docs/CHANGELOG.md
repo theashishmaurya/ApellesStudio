@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **D-314: both Python sidecars now run from ONE shared venv
+  (`ai-env/.venv`) — 3.5 GB of duplicated wheels down to 1.8 GB.** They stay two
+  separate PROCESSES; only the environments merged. D-189 split them because
+  `mlx-vlm` needs `transformers>=5.5` and `ai/` pinned `<5` for ViTMatte, which
+  pip called `ResolutionImpossible` — but that `<5` was a defensive pin nobody
+  re-tested, and it no longer holds: the real `hustvl/vitmatte-small-composition-1k`
+  checkpoint produces a correct matte on transformers 5.x (fg 1.0000, bg 0.0000,
+  124 distinct alphas), and the union of both requirement sets installs cleanly.
+  Dependencies are declared per-sidecar and compiled into a committed
+  `ai-env/requirements.lock.txt`, **exactly pinned including transitives** —
+  deliberately, as the guard against this stack's known "silent upgrade" failure.
+  One new install step for a fresh checkout: `./ai-env/setup.sh`. Bonus find: the
+  old `ai/.venv` carried a stray `utils3d` 0.1.0 — an unrelated PyPI package
+  sharing a name with the `utils3d_moge` fork MoGe actually imports — which had
+  pulled in jupyter/open3d/pandas/scikit-learn for nothing. A real bug caught by
+  its own new test: `canonicalize()` on a venv's `bin/python` resolves the symlink
+  to the *system* interpreter and silently abandons the locked environment.
 - **2026-09-12** — **B-170: deleting a project you just closed refused with
   "cannot delete the currently open project"**, from a screen that plainly
   has no project open — `closeProject()` now tells the Rust side too (new
