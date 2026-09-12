@@ -31,14 +31,18 @@ budget (B-153).
 Layering: top of the stack, beside `app/src-tauri`. **Nothing in `crates/*` may depend on
 it.**
 
-## Status — mid-migration
+## Status
 
-This is the Rust replacement for `mcp/server.py` (D-020). The port is **in progress**:
-`tests/golden/ported.json` is the ledger of which of the Python server's 161 tools have
-moved, and the tests check the live server against it in both directions. `mcp/server.py`
-remains the working server and the rollback until the port is finished.
+The Rust replacement for `mcp/server.py` (D-020). **All 161 tools are ported and pass the
+parity gate** — both servers publish an identical tool set over a real MCP session.
+`tests/golden/ported.json` is the ledger, and the tests check the live server against it
+in both directions, so a tool cannot be dropped or added unnoticed.
 
-Plan, status and the continuation guide: **`docs/notes/mcp-rust-port.md`**.
+The **migration** is not finished: this server has not been used to do real work yet, so
+`mcp/server.py` remains the configured server, the rollback, and the reference the corpus
+is captured from. Retiring it is a separate, deliberate step.
+
+Plan, divergences and open items: **`docs/notes/mcp-rust-port.md`**.
 
 ## Running it
 
