@@ -13,17 +13,27 @@ Read D-312 in `docs/08-decisions.md` first for *why*. This file is the *how* and
 | | |
 |---|---|
 | Harness | **complete** — covers all 161 tools, passing |
-| Tools ported | **90 of 161** — the whole **Colorist** (42/42), **Motion** (37/37) and **debug** (9/9) surfaces, plus two Edit tracer tools |
-| Remaining | **Edit — 71 of 73** |
-| `mcp/server.py` | **still live and still the fallback.** Nothing has been retired. |
+| Tools ported | **161 of 161** — Colorist 42, Edit 73, Motion 37, debug 9 |
+| Remaining | **none.** Both servers publish an identical tool set, verified over a real MCP session. |
+| `mcp/server.py` | **still live and still the fallback.** Nothing has been retired — see "what is deliberately still open". |
 
 The ledger of what has moved is `crates/apelles-mcp/tests/golden/ported.json`, and it is
 not decoration: `tests/parity.rs` checks the running server's advertised tool set against
 it in both directions, and checks every name in it against the golden corpus. A tool
 cannot be silently dropped, silently added, or listed under a name that never existed.
 
-**The port is not complete and must not be described as complete.** 71 tools remain, all
-of them on the Edit tab.
+**Every tool is ported and passing the gate.** What that means precisely: all 161
+publish the same name, the same byte-for-byte description and a structurally identical
+schema; all 237 recorded calls emit the same ops with the same arguments and the same
+timeout budgets, and render the same content. `python: 161 / rust: 161 / IDENTICAL` over
+a real stdio MCP session against each server.
+
+**What that does NOT mean.** The Rust server has not been used to do real work yet. The
+corpus proves it behaves like the Python one against a stub; the live smoke proves 16
+read-only tools agree against a running app. No mutating tool has been driven against a
+real project through the Rust server, and `mcp/server.py` is still what the owner's
+editor is configured to use. Retiring the Python server is a separate decision that
+should follow a real session's use, not this test suite.
 
 ---
 
@@ -145,52 +155,65 @@ something that does, it is a bug in the port.
 
 ---
 
-## How to port the next tool
+## Adding a tool after this port
 
-1. Find it in `mcp/server.py`. Read the whole function — signature, docstring, body.
+The port is finished, but this is still the recipe — a new capability lands here the same
+way, and the same non-uniform cases are still waiting.
+
+1. Add it to `mcp/server.py` first if it is not there yet (that server is still the
+   reference the corpus is captured from), then re-capture.
 2. Add an args struct (`#[derive(Deserialize, JsonSchema)]`) and a `#[tool]` method in the
    right `src/tools/*.rs` module. Copy the docstring into `description = r#"..."#`
    **byte-for-byte**, indentation included; the parity test compares it character by
    character and will tell you immediately if it drifted.
 3. Build the wire args with `WireArgs`: `.set()` for a key always sent, `.put()` for one
-   sent only when supplied. Spell out any camelCase rename at the call site.
-4. Watch for the things that are not uniform:
-   - **the op name is not always the tool name** — `get_timeline` → `editor_get_timeline`,
-     `set_clip_fade` / `set_clip_speed` / `set_track_duck` likewise,
-     `match_to_reference` → `match_reference`, `debug_ui_state` → `debug_get_ui_state`;
-   - **the timeout is not always the default** — the AI-mask tools pass
-     `AI_MASK_TIMEOUT_MS` (B-153);
-   - **the renderer differs** — `render::json_text`, `render::result` (frame + summary), or
-     `render::inspect_result`;
-   - **`editor_get_capabilities` makes no HTTP call at all** — it returns a large static
-     document, which has to be ported as data;
-   - **`export` polls** `export_progress` in a loop until it stops running;
-   - **`save_grade`, `editor_export` and `export` post-process the envelope** rather than
-     rendering it as-is.
-5. Add the tool's name to `tests/golden/ported.json` **in the same commit**.
-6. `cargo test -p apelles-mcp`. Green means it matches the Python server on every recorded
-   call; red names the exact field that does not.
+   sent only when supplied, `.put_if()` for a flag whose mere presence is the signal.
+   Spell out any camelCase rename at the call site.
+4. Add the name to `tests/golden/ported.json` **in the same commit**, and run
+   `cargo test -p apelles-mcp`.
 
-### Shape of the remaining work
+### The cases that are not uniform, all of which bit during this port
 
-By prefix, using `mcp/README.md`'s own split (Colorist 42, Edit 65 + the 4 unprefixed,
-Motion 36, debug 9 — 161 with the 9). 131 of the 161 bodies are a single statement; 62
-have any branching at all, and almost all of that branching is the omit-when-absent rule
-`WireArgs` already implements. The bulk of the work is prose, not logic: the descriptions
-are most of `mcp/server.py`'s 6,258 lines and every one of them has to survive intact.
-
-The natural batching is one commit per prefix group, since each maps to one frontend op
-registry and one `src/tools/*.rs` module.
+- **The op name is not always the tool name** — `get_timeline` → `editor_get_timeline`,
+  `set_clip_fade` / `set_clip_speed` / `set_track_duck` likewise, `match_to_reference` →
+  `match_reference`, `debug_ui_state` → `debug_get_ui_state`.
+- **The timeout is not always the default** — the AI-mask tools pass `AI_MASK_TIMEOUT_MS`
+  (B-153). Losing that silently turns a working call into a reported failure.
+- **The renderer differs** — `render::json_text`, `render::result` (frame + summary), or
+  `render::inspect_result`.
+- **`editor_get_capabilities` makes no HTTP call at all** — a static ~25 KB document,
+  carried across as `src/tools/edit/capabilities.json` by dumping the Python dict rather
+  than retyping it.
+- **`export` polls** `export_progress` in a loop until it stops running; `editor_export`
+  strips the ffmpeg argv out of its answer; `save_grade` and `export`'s `.cube` branch
+  flatten `result` up beside `ok`/`error`.
+- **A `| None` annotation does NOT mean optional.** `editor_move_media`'s `folder` is
+  annotated `str | None` with no default, so it is REQUIRED and nullable — the key must be
+  present, its value may be null. schemars reports every `Option` as optional, so that one
+  needs `#[schemars(extend("required" = [...]))]`; its per-field `required` attribute
+  drops the nullability instead, which is not the same contract.
+- **Rust keywords collide with real wire keys and parameter names** — `use`
+  (`motion_add_layer`), `from`/`to` (`editor_move_track`), `type` (`add_component`). All
+  are serde renames; the published name never changes.
+- **A doc comment on a shared type reaches the published schema.** Notes meant for whoever
+  edits the type must be plain `//` comments, and a doc comment on an enum shadows the
+  per-field description of any field that refs it. Both of these got caught by the gate
+  rather than by review.
+- **Presence-signalled booleans** (`reset`, `auto_key`, `force`, `clear`) are sent only
+  when true — `false` and absent are the same thing to the handler, and sending `false` is
+  not.
 
 ---
 
 ## What is deliberately still open
 
 - **`mcp/server.py`, `mcp/run.sh` and the Python entry in
-  `packages/shell/src/ConnectMcpDialog.tsx` are untouched.** They are the rollback and the
-  reference the corpus is captured from, so they cannot be retired before the last tool
-  lands. Retiring them is its own deliberate step at the end of the port, and it is the
-  coordinating session's call, not a subagent's.
+  `packages/shell/src/ConnectMcpDialog.tsx` are untouched, deliberately.** The last tool
+  has now landed, so the blocker is no longer "the port is unfinished" — it is that the
+  Rust server has not yet been used to do real work, and that the corpus is captured FROM
+  the Python one. Retiring them is its own deliberate step, and it is the coordinating
+  session's call (and the owner's), not a subagent's. The sensible order: point a real
+  session at the Rust binary, use it for an actual edit, then retire.
 - **The counts published in `mcp/README.md` and `website/src/data/mcp.ts` are unchanged**
   and still describe the Python server, which is still the one in use. They move when the
   port does. (`website/src/data/mcp.ts` is separately already stale — that is B-126, not

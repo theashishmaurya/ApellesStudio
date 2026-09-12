@@ -292,6 +292,196 @@ pub enum MaskGeometry {
 }
 
 // --------------------------------------------------------------------------- #
+// Edit tab
+// --------------------------------------------------------------------------- #
+
+/// A cubic-bezier ease given as an object rather than a 4-array.
+///
+/// Undocumented but fully accepted by `parseCurve` (useEditorControl.ts), which reads
+/// `Array.isArray(v) ? v : [v?.x1, v?.y1, v?.x2, v?.y2]`. Modelled so that typing the
+/// parameter does not silently drop a form that works today.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BezierPoints {
+    pub x1: f64,
+    pub y1: f64,
+    pub x2: f64,
+    pub y2: f64,
+}
+
+/// The four presets in `EASE_PRESETS` (packages/editor/src/timeline.ts).
+//
+// NOTE: CSS's "ease" is NOT among them — several docstrings claimed it was, and it is
+// rejected at runtime (B-165).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum EasePresetName {
+    #[serde(rename = "linear")]
+    Linear,
+    #[serde(rename = "ease-in")]
+    EaseIn,
+    #[serde(rename = "ease-out")]
+    EaseOut,
+    #[serde(rename = "ease-in-out")]
+    EaseInOut,
+}
+
+/// The three interchangeable forms `parseCurve` accepts for an Edit-tab easing argument.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum CurveSpec {
+    Preset(EasePresetName),
+    Points(EaseCurve),
+    Object(BezierPoints),
+}
+
+/// `fit_overrides` values — the handler accepts exactly these two strings.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum FitMode {
+    #[serde(rename = "fit")]
+    Fit,
+    #[serde(rename = "stretch")]
+    Stretch,
+}
+
+/// One segment boundary in a clip speed ramp (`set_clip_speed`).
+///
+/// "From this SOURCE frame onward, play at this speed." Source frames are absolute in
+/// the file, not clip-relative and not timeline frames.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SpeedRampPoint {
+    /// Absolute source frame. Not `frame`/`sourceFrame`.
+    pub source_frame: i64,
+    /// Multiplier. Magnitude must be 0.05..20, either sign; negative plays backwards. 0
+    /// and out-of-range values are refused, not clamped.
+    pub speed: f64,
+}
+
+/// A gap between two clips (`editor_set_selection`).
+///
+/// `frame` must land inside a real, closeable gap — trailing space past the last clip is
+/// not a gap and is refused.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GapSelector {
+    pub track: i64,
+    /// A TIMELINE frame inside the gap.
+    pub frame: i64,
+}
+
+/// One clip in a selection (`editor_set_selection`).
+///
+/// `track` is always required, even when addressing by `clipId` — the id is searched
+/// only within that track. `clipId` wins when both it and `clip` are given.
+//
+// The published description comes from THIS type's doc (schemars reads the outer type's
+// even for a `try_from`), while the property shapes come from `ClipSelectorFields`. Both
+// halves have to be right; the parity gate checks each separately.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(try_from = "ClipSelectorFields")]
+pub struct ClipSelector {
+    pub track: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip: Maybe<i64>,
+    #[serde(rename = "clipId", skip_serializing_if = "Option::is_none")]
+    pub clip_id: Maybe<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+// The wire shape `ClipSelector` is parsed and validated from — a separate type only
+// because serde's `try_from` needs one, and the type schemars reads the PROPERTIES from.
+// What it buys is the check below: "neither `clip` nor `clipId`" becomes a field-level error at
+// the tool boundary, naming the entry, instead of an entry the app cannot resolve
+// reaching the frontend and failing there.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(rename = "ClipSelector")]
+pub struct ClipSelectorFields {
+    /// 0-based track index. Always required.
+    pub track: i64,
+    /// 0-based clip index within the track.
+    #[serde(default, deserialize_with = "maybe")]
+    pub clip: Maybe<i64>,
+    /// Clip id. Wins over `clip`. Prefer this if anything may have moved.
+    #[serde(rename = "clipId", default, deserialize_with = "maybe")]
+    pub clip_id: Maybe<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl TryFrom<ClipSelectorFields> for ClipSelector {
+    type Error = String;
+
+    fn try_from(f: ClipSelectorFields) -> Result<Self, Self::Error> {
+        if f.clip.is_none() && f.clip_id.is_none() {
+            return Err("each clip entry needs `clip` (an index) or `clipId`".to_string());
+        }
+        Ok(Self {
+            track: f.track,
+            clip: f.clip,
+            clip_id: f.clip_id,
+            extra: f.extra,
+        })
+    }
+}
+
+/// One keyframe on a clip's own transform/audio timeline (`editor_set_clip_keyframes`).
+///
+/// `extra="allow"` because the array is stored verbatim — unknown keys survive into
+/// `project.json` rather than being dropped.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ClipKeyframe {
+    /// Clip SOURCE-frame-absolute. Strictly numeric: unlike most numeric arguments in
+    /// the Edit tab this one is not string-coerced.
+    pub frame: f64,
+    /// Subset of opacity / position_x / position_y / scale / rotation / crop_left /
+    /// crop_top / crop_right / crop_bottom / volume / pan. Names outside that set are
+    /// stored but have no effect.
+    pub params: Map<String, Value>,
+    /// Per-param easing for the segment STARTING at this key, keyed by param name. Real
+    /// and load-bearing — this is how `editor_set_keyframe_ease` persists — though no
+    /// docstring documented it before D-310.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ease: Maybe<Map<String, Value>>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// A start or end framing for a dynamic zoom (`editor_set_dynamic_zoom`).
+///
+/// snake_case only — there is no x/y/zoom/positionX alias. Every field is optional and
+/// falls back to the framing it replaces, so `{"scale": 1.4}` zooms without recentring.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DynamicZoomFraming {
+    /// Composition fraction offset from centre.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub position_x: Maybe<f64>,
+    /// Composition fraction offset from centre.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub position_y: Maybe<f64>,
+    /// Multiplier; bigger is more zoomed in. Must be > 0.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scale: Maybe<f64>,
+}
+
+// --------------------------------------------------------------------------- #
 // Motion tab
 // --------------------------------------------------------------------------- #
 

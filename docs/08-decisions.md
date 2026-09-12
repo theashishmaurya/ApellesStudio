@@ -29894,8 +29894,16 @@ tools are behind a real `#[cfg(debug_assertions)]` gate, so a release build publ
 tools rather than advertising nine it can never answer; and an unreachable-app error surfaces
 its own message instead of being masked to a bare "Error executing tool <name>".
 
-**Status at the time of writing.** Harness complete and passing for all 161 tools' worth of
-corpus; 9 tools ported and verified, chosen to exercise every mechanism in the surface at
-least once (plain-JSON, frame+summary and scope renderers; the AI timeout budget; a
-schema-bearing union; camelCase wire renames; tool-name-vs-op-name divergence; a free-form
-`Any` argument; the debug gate). 152 remain. The port is explicitly NOT complete.
+**Status.** **All 161 tools are ported and passing the gate** (Colorist 42, Edit 73,
+Motion 37, debug 9), landed over five commits in one session: harness + tracer, then one
+per surface. Both servers publish an identical tool set over a real stdio MCP session
+(`python: 161 / rust: 161 / IDENTICAL`), every one of the 237 recorded calls replays with
+the same ops, arguments, timeout budgets and rendered content, and 16 read-only tools were
+additionally diffed field-by-field against a running app.
+
+**What is deliberately NOT done.** The Rust server has not been used to do real work — no
+mutating tool has been driven against a real project through it, and the owner's editor is
+still pointed at `mcp/server.py`. That server therefore stays: it is the rollback, and it
+is the reference the corpus is captured from. Retiring it, `mcp/run.sh` and the Python
+entry in `ConnectMcpDialog.tsx` is a separate, deliberate step that should follow a real
+session's use of the Rust binary, not this test suite passing.
