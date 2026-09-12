@@ -2,11 +2,12 @@
  * @apelles/shell — the 3-tab layout + window chrome (D-039).
  *
  * The top bar is the window title bar (the app runs `decorations: false`):
- * left = macOS traffic lights + the APELLES wordmark; centre = the tabs
- * (Edit / Motion / Colorist), absolutely centred; right = Windows/Linux window
- * controls (a matching spacer on macOS so the centre stays true). The bar is a
- * `data-tauri-drag-region` except the buttons and tabs. See `WindowChrome.tsx`
- * for the ported platform logic.
+ * left = macOS traffic lights (no wordmark — the native menu bar already
+ * shows "Apelles" above it, so one here was a plain duplicate); centre = the
+ * tabs (Edit / Motion / Colorist), absolutely centred; right = Windows/Linux
+ * window controls (a matching spacer on macOS so the centre stays true). The
+ * bar is a `data-tauri-drag-region` except the buttons and tabs. See
+ * `WindowChrome.tsx` for the ported platform logic.
  *
  * Tab content is injected by the caller through the `tabs` registry prop, so
  * this package depends only on react + zustand + Tauri (the shell owns the
@@ -296,11 +297,15 @@ export function Shell({
         data-tauri-drag-region
         className="shrink-0 h-10 flex items-center gap-1 px-2 bg-surface border-b border-border-color select-none relative"
       >
-        {/* left: traffic lights (mac) + wordmark */}
+        {/* left: traffic lights (mac). No wordmark here any more (owner,
+            live: "you did not removed APELLES from the shell as it already
+            have it in the TOP") — the native macOS menu bar already shows
+            "Apelles" at top-left (the system menu bar, unrelated to this
+            window's own `decorations: false` chrome, which only removes the
+            native WINDOW title bar), so this custom wordmark was a plain
+            duplicate above it, not something introduced by this session's
+            Help-menu work. */}
         <MacTrafficLights show={chrome.isMac && !chrome.isMobile} />
-        <div className="flex items-center pr-2 text-[11px] font-semibold tracking-wide text-text-secondary/70 pointer-events-none">
-          APELLES
-        </div>
 
         {/* left (project open): back to the launcher */}
         {projectOpen && onCloseProject && (
