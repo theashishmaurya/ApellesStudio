@@ -328,24 +328,6 @@ impl BridgeRegistry {
         self.ready.notify_all();
     }
 
-    /// Forget whichever registry serves `op`. NOT called from [`dispatch`]'s
-    /// timeout path anymore (B-164) — a timeout means SLOW, not gone, and a
-    /// still-mounted registry never re-announces (it only does that once, at
-    /// mount, on `chroma://bridge-ready`), so forgetting a live claim just
-    /// bricked the whole prefix for the rest of the session with no way back
-    /// short of a reload. The mid-session-reload case this was written for
-    /// doesn't actually need it: the NEW registry's own `announce()` replaces
-    /// the stale claim by prefix (see `a_re_announcement_replaces_rather_than_
-    /// duplicates`), which already runs on every mount, reload included. Kept
-    /// as a primitive for a genuine "this registry is gone" signal — a
-    /// `WindowEvent` teardown hook would be the correct caller, not yet wired
-    /// up — rather than removed outright.
-    fn forget_serving(&self, op: &str) {
-        if let Ok(mut claims) = self.claims.lock() {
-            claims.retain(|c| !c.serves(op));
-        }
-    }
-
     /// Block until some checked-in registry serves `op`, or `timeout` elapses.
     /// `Duration::ZERO` makes it a plain non-blocking check.
     fn wait_for(&self, op: &str, timeout: Duration) -> bool {
@@ -601,19 +583,6 @@ mod tests {
         reg.announce(editor());
         reg.announce(editor());
         assert_eq!(reg.claims.lock().expect("test mutex").len(), 1);
-    }
-
-    #[test]
-    fn a_timed_out_registry_is_forgotten_so_the_next_call_re_handshakes() {
-        let reg = BridgeRegistry::default();
-        reg.announce(colorist());
-        reg.announce(editor());
-
-        reg.forget_serving("editor_add_clip");
-
-        assert!(!reg.wait_for("editor_add_clip", Duration::ZERO));
-        // Only the registry that owned that op is dropped — Colorist is intact.
-        assert!(reg.wait_for("get_state", Duration::ZERO));
     }
 
     #[test]
