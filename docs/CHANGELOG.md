@@ -4,6 +4,11 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-13** — **B-178: `cargo test -p apelles` had been red since B-171** —
+  four tests still relied on the auto-placement B-171 deliberately removed.
+  Each now places its clip(s) explicitly via `append_media_clip`, the same
+  fix B-171 already made for its six sibling tests in `apelles-project`.
+  `cargo test -p apelles --lib` → 307 passed, 0 failed.
 - **2026-09-13** — **B-174: "Captions from Transcript" could hang forever** —
   a cached transcribe model still tried an online revision check (`huggingface_
   hub.snapshot_download` with no `local_files_only`), and today that call died

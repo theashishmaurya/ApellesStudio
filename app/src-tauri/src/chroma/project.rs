@@ -1486,12 +1486,18 @@ mod tests {
         // get -> mutate -> set -> get again returns exactly what was set.
         let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = tmp("timeline_single_roundtrip");
-        let (dir, manifest) = new_project_in(
+        let (dir, mut manifest) = new_project_in(
             &root,
             "single-tl",
             &[root.join("a.mov").to_string_lossy().to_string()],
         )
         .unwrap();
+        // B-171 (2026-09-12): seed media lands in the pool only — place it on
+        // the timeline explicitly here, mirroring what a real drag from
+        // Sources does (this test predates that change and used to get its
+        // one clip for free).
+        let media_id = manifest.media[0].id.clone();
+        append_media_clip(&mut manifest, 0, &media_id).unwrap();
         save_manifest(&dir, &manifest).unwrap();
         state::set_project(Some(ProjectRef {
             path: dir.clone(),
@@ -1528,19 +1534,22 @@ mod tests {
     fn track_commands_add_remove_and_move_clip_on_the_active_timeline() {
         let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = tmp("d054_track_commands");
-        let (dir, manifest) = new_project_in(
+        let (dir, mut manifest) = new_project_in(
             &root,
             "track-cmds",
             &[root.join("a.mov").to_string_lossy().to_string()],
         )
         .unwrap();
+        // B-171: seed media lands in the pool only — place it explicitly.
+        let media_id = manifest.media[0].id.clone();
+        append_media_clip(&mut manifest, 0, &media_id).unwrap();
         save_manifest(&dir, &manifest).unwrap();
         state::set_project(Some(ProjectRef {
             path: dir.clone(),
             name: "track-cmds".into(),
         }));
 
-        // lazily builds the one-video-track timeline from the seed shot
+        // one video track, its clip placed explicitly above (B-171)
         let tl = super::super::edit::chroma_timeline_get().unwrap();
         assert_eq!(tl.tracks.len(), 1);
         let clip_id = tl.tracks[0].clips[0].id.clone();
@@ -1610,20 +1619,23 @@ mod tests {
     fn link_and_unlink_commands_persist_on_the_active_timeline() {
         let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let root = tmp("d138_link_commands");
-        let (dir, manifest) = new_project_in(
+        let (dir, mut manifest) = new_project_in(
             &root,
             "link-cmds",
             &[root.join("a.mov").to_string_lossy().to_string()],
         )
         .unwrap();
+        // B-171: seed media lands in the pool only — place it explicitly.
+        let media_id = manifest.media[0].id.clone();
+        append_media_clip(&mut manifest, 0, &media_id).unwrap();
         save_manifest(&dir, &manifest).unwrap();
         state::set_project(Some(ProjectRef {
             path: dir.clone(),
             name: "link-cmds".into(),
         }));
 
-        // Lazily builds the one-video-track timeline from the seed shot, then
-        // hand-adds a second, audio-track clip — `chroma_timeline_set` stores
+        // One video-track clip placed explicitly above (B-171), then
+        // hand-add a second, audio-track clip — `chroma_timeline_set` stores
         // whatever is sent verbatim, the same "the frontend owns clip
         // creation" contract `add_clip`'s own doc names (this crate has no
         // clip-creation op of its own).
@@ -1716,7 +1728,7 @@ mod tests {
         };
 
         let root = tmp("d056_track_resolution");
-        let (dir, manifest) = new_project_in(
+        let (dir, mut manifest) = new_project_in(
             &root,
             "track-res",
             &[
@@ -1725,14 +1737,20 @@ mod tests {
             ],
         )
         .unwrap();
+        // B-171: seed media lands in the pool only — place both explicitly,
+        // in pool order, mirroring the old auto-placement this test relied on.
+        let media_ids: Vec<String> = manifest.media.iter().map(|m| m.id.clone()).collect();
+        for media_id in &media_ids {
+            append_media_clip(&mut manifest, 0, media_id).unwrap();
+        }
         save_manifest(&dir, &manifest).unwrap();
         state::set_project(Some(ProjectRef {
             path: dir.clone(),
             name: "track-res".into(),
         }));
 
-        // lazily built: track 0 has A (short) at [0, durA) then B (long) at
-        // [durA, durA+durB), back to back (from_shots' usual layout).
+        // placed explicitly above (B-171): track 0 has A (short) at [0, durA)
+        // then B (long) at [durA, durA+durB), back to back.
         let tl = super::super::edit::chroma_timeline_get().unwrap();
         assert_eq!(tl.tracks.len(), 1);
         assert_eq!(tl.tracks[0].clips.len(), 2);
