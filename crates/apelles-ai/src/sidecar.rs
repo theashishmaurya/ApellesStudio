@@ -446,6 +446,14 @@ fn file_hash(path: &Path) -> Option<String> {
 /// "already up" has to be distinguishable from "already up, but a different
 /// build"), so it must never panic and must degrade to `None` — "cannot
 /// determine" — rather than guessing.
+///
+/// **Scope, precisely (B-169).** This answers "is the process on that port
+/// running the bytes now on disk?", which is the question the *external* branch
+/// asks and the one it can genuinely answer. It does **not** answer "are the
+/// bytes on disk current with their source": for `WorkspaceBin` both sides of
+/// the comparison read the same executable, so a build that is months out of
+/// date compares equal to itself. Keeping the artifact current is the build's
+/// job, not this function's — see the `stale` reset in [`supervise`].
 fn expected_content_hash(spec: &SidecarSpec) -> Option<String> {
     match &spec.launch {
         Launch::PythonUvicorn { .. } => file_hash(&resolve_dir(spec)?.join("server.py")),
@@ -803,11 +811,25 @@ pub fn supervise(spec: &'static SidecarSpec) {
             s.healthy = false;
             s.pid = Some(pid);
             s.last_error = None;
-            // A Rust-owned spawn is, by construction, running the exact
-            // server.py on disk right now — never stale. Explicit reset (not
-            // just relying on the struct default) in case this status
-            // transitions from a prior external+stale phase within the same
-            // app session (e.g. the external process died and we took over).
+            // A Rust-owned spawn is, by construction, running the exact code on
+            // disk right now — never stale. Explicit reset (not just relying on
+            // the struct default) in case this status transitions from a prior
+            // external+stale phase within the same app session (e.g. the
+            // external process died and we took over).
+            //
+            // **What "the code on disk" means differs by launch kind, and that
+            // is the hole B-169 fell through.** For `PythonUvicorn` the claim is
+            // airtight: the interpreter reads `server.py` at spawn time, so the
+            // file on disk *is* the code that runs. For `WorkspaceBin` the file
+            // on disk is a build artifact that can be arbitrarily older than the
+            // source it came from, and no hash comparison can detect that —
+            // `expected_content_hash` hashes the very file the child executes,
+            // so the two sides agree no matter how stale the build is. The guard
+            // that closes it is upstream of here, not in this flag: whatever
+            // builds the app must also build the binary (for the MCP sidecar,
+            // the `cargo build -p apelles-mcp` in Tauri's build hooks — see
+            // `app/src-tauri/src/chroma/sidecar.rs`'s `MCP`). Keep that true and
+            // this reset stays honest for both kinds.
             s.stale = false;
         });
 
@@ -906,8 +928,16 @@ pub fn supervise(spec: &'static SidecarSpec) {
         }
 
         if fast_failures >= FAST_FAIL_GIVE_UP {
+            // The hint has to be launch-kind aware (B-169). This message used to
+            // say "check the lines above for the Python error", which is the
+            // wrong instruction for a `WorkspaceBin`: a compiled sidecar that
+            // fast-fails is overwhelmingly a *stale or missing binary*, not a
+            // traceback, and `run_hint()` already spells out the
+            // `cargo build -p <package>` that fixes it.
             log::error!(
-                "[sidecar/{name}] {fast_failures} fast failures in a row — check the '[sidecar/{name}]' lines above for the Python error. Slow-retrying every {}s (set {} to stop).",
+                "[sidecar/{name}] {fast_failures} fast failures in a row — check the '[sidecar/{name}]' lines above for what {} reported, and that it is up to date:  {}. Slow-retrying every {}s (set {} to stop).",
+                spec.code_desc(),
+                spec.run_hint(),
                 SLOW_RETRY.as_secs(),
                 spec.no_spawn_env
             );

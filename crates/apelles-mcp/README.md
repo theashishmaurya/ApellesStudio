@@ -68,11 +68,21 @@ Other clients' exact config shapes differ (`url` vs `serverUrl`, `mcpServers` vs
 **MCP** dialog — `packages/shell/src/ConnectMcpDialog.tsx` — has the verified snippet for
 each one. To run it by hand instead: `apelles-mcp --http [--port <PORT>]`.
 
+**What builds it (B-169).** This crate is deliberately *not* a Cargo dependency of
+`apelles`, so nothing in the app's own crate graph produces this binary — the app would
+otherwise spawn whatever stale copy was left in `target/<profile>/`. Tauri's build hooks
+do it: `app/package.json`'s `tauri:before-dev` / `tauri:before-build` run
+`cargo build -p apelles-mcp` before vite. Removing that from either hook re-breaks the
+app's MCP server without breaking any build, which is exactly how B-169 shipped —
+`app/src-tauri/src/chroma/sidecar.rs` has a test pinning the chain.
+
 `CHROMA_MCP_PORT` overrides the port (default 19790), `CHROMA_MCP_NO_SPAWN` stops the app
 auto-starting its own, and `CHROMA_MCP_BIN` points the app's supervisor at a specific
 binary. `GET /health` answers `{ok, service, version, content_sha256, control}` — that is
-what the supervisor polls, and `content_sha256` is how it tells a stale externally-run
-server from the one this build would have started.
+what the supervisor polls, and `content_sha256` is how it tells a stale *externally-run*
+server from the one this build would have started. Note the limit of that check (B-169):
+it hashes this binary's own bytes, so it cannot tell you the binary is out of date with
+respect to its *source* — keeping the artifact current is the build's job, above.
 
 ### stdio (D-312) — unchanged
 

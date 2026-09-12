@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "tauri:before-dev": "cargo build -p apelles-mcp && npm run dev",
+    "tauri:before-build": "cargo build -p apelles-mcp --release && npm run build",
     "test": "vitest run",
     "tauri": "tauri",
     "start": "tauri dev",

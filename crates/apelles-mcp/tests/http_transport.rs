@@ -15,6 +15,11 @@
 //!     one — same instructions, same tool count, same op emitted, same content back —
 //!     and that `/health` answers in the shape the app's supervisor polls for.
 //!
+//!     Since B-169 it also checks the server is still *there*: every test holds the
+//!     serving task and asserts it has not finished, and one of them binds and then
+//!     leaves the server strictly alone for a few seconds. A server that answers one
+//!     request and then dies used to pass this file cleanly.
+//!
 //! WHAT IT DOES NOT DO
 //!     It does not re-check all 161 tools' schemas or rendering. That is `parity.rs`'s
 //!     job and duplicating it here would only mean two files to update. One real tool
@@ -52,15 +57,51 @@ impl OpTransport for StubApp {
     }
 }
 
-/// Serve the real router on an ephemeral loopback port; return its base URL.
-async fn spawn(stub: Arc<StubApp>) -> std::io::Result<String> {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-    let addr = listener.local_addr()?;
-    let router = serve::router(ApellesMcp::new(stub), "http://127.0.0.1:19788".into());
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, router).await;
-    });
-    Ok(format!("http://{addr}"))
+/// How long "idle" is for [`the_server_stays_up_when_no_client_ever_connects`].
+///
+/// B-169's crash loop killed the process in well under a second and on every restart,
+/// so a few seconds with the socket still accepting is real evidence rather than a
+/// coin flip. Long enough to catch that class of bug, short enough to live in
+/// `cargo test`.
+const IDLE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The real router on an ephemeral loopback port, plus the task serving it.
+///
+/// The task handle is **kept and checked** rather than dropped on the floor (B-169).
+/// This used to be a bare `tokio::spawn(async move { let _ = axum::serve(..).await; })`
+/// whose result nothing ever looked at, which meant a server that died the instant
+/// after answering — or a server that never came up at all — still left every
+/// assertion below passing. The bug that shipped was in exactly that blind spot.
+struct Server {
+    base: String,
+    task: tokio::task::JoinHandle<std::io::Result<()>>,
+}
+
+impl Server {
+    async fn spawn(stub: Arc<StubApp>) -> std::io::Result<Self> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let router = serve::router(ApellesMcp::new(stub), "http://127.0.0.1:19788".into());
+        let task = tokio::spawn(async move { axum::serve(listener, router).await });
+        Ok(Self {
+            base: format!("http://{addr}"),
+            task,
+        })
+    }
+
+    /// Error out — with whatever the server task actually reported — if it is no
+    /// longer serving. `axum::serve` only returns when the accept loop is finished,
+    /// so *any* completion during a test is a failure, `Ok(())` included.
+    async fn still_serving(&mut self) -> Result<(), String> {
+        if !self.task.is_finished() {
+            return Ok(());
+        }
+        match (&mut self.task).await {
+            Ok(Ok(())) => Err("the server task returned while the test was still using it".into()),
+            Ok(Err(e)) => Err(format!("axum::serve failed: {e}")),
+            Err(e) => Err(format!("the server task panicked: {e}")),
+        }
+    }
 }
 
 #[tokio::test]
@@ -69,7 +110,8 @@ async fn a_real_client_reaches_the_identical_tool_surface_over_http()
     let stub = Arc::new(StubApp {
         seen: Mutex::new(Vec::new()),
     });
-    let base = spawn(stub.clone()).await?;
+    let mut server = Server::spawn(stub.clone()).await?;
+    let base = server.base.clone();
 
     let client = ()
         .serve(StreamableHttpClientTransport::with_client(
@@ -127,16 +169,55 @@ async fn a_real_client_reaches_the_identical_tool_surface_over_http()
     );
 
     client.cancel().await?;
+    // Everything above could pass against a server that then fell over, or that had
+    // already fallen over after answering. It must still be serving.
+    server.still_serving().await?;
+    Ok(())
+}
+
+/// **B-169's regression guard**: no client, ever, and the server is still there.
+///
+/// D-313 shipped a server that the app's supervisor killed and respawned forever
+/// because it exited about half a second after binding — with nothing connected to it
+/// and nothing to serve. Every test in this file passed throughout, because they all
+/// dial the server immediately and none of them outlive their own request. This one
+/// does the opposite: bind, then *leave it completely alone* for [`IDLE`], then check
+/// both halves of "still up" — the task has not completed, and the socket still
+/// answers a fresh connection.
+#[tokio::test]
+async fn the_server_stays_up_when_no_client_ever_connects() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut server = Server::spawn(Arc::new(StubApp {
+        seen: Mutex::new(Vec::new()),
+    }))
+    .await?;
+
+    tokio::time::sleep(IDLE).await;
+
+    server.still_serving().await?;
+
+    // `still_serving` proves the accept loop has not returned; this proves the port is
+    // genuinely accepting, on a connection opened after the idle period rather than
+    // one held open across it.
+    let status = reqwest::get(format!("{}{}", server.base, serve::HEALTH_PATH))
+        .await
+        .map_err(|e| format!("nothing accepting on the port after {IDLE:?} idle: {e}"))?
+        .status();
+    assert!(
+        status.is_success(),
+        "the server should still be healthy after {IDLE:?} of no traffic, got {status}"
+    );
     Ok(())
 }
 
 #[tokio::test]
 async fn health_answers_in_the_shape_the_apps_supervisor_polls_for()
 -> Result<(), Box<dyn std::error::Error>> {
-    let base = spawn(Arc::new(StubApp {
+    let mut server = Server::spawn(Arc::new(StubApp {
         seen: Mutex::new(Vec::new()),
     }))
     .await?;
+    let base = server.base.clone();
 
     let body: Value = reqwest::get(format!("{base}{}", serve::HEALTH_PATH))
         .await?
@@ -156,6 +237,7 @@ async fn health_answers_in_the_shape_the_apps_supervisor_polls_for()
     );
     assert_eq!(body["service"], json!("apelles-mcp"));
     assert_eq!(body["control"], json!("http://127.0.0.1:19788"));
+    server.still_serving().await?;
     Ok(())
 }
 

@@ -4,6 +4,29 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **B-169: D-313's MCP sidecar could never have started on its
+  own — nothing in the app's build built the binary the app spawns.** It
+  crash-looped every ~0.5s from the moment it merged, on a *pre-D-313*
+  `target/debug/apelles-mcp` that ignored `--http`, served stdio, and hit
+  instant EOF (`ConnectionClosed("initialize request")` — rmcp's stdio path, not
+  its HTTP one; `serve.rs` and rmcp were both innocent). `apelles-mcp` is
+  deliberately not a Cargo dependency of `apelles`, and Tauri's build hooks ran
+  vite only, so `npm run tauri:dev` never produced the binary
+  `Launch::WorkspaceBin` goes on to spawn. Fixed by building it in the hooks
+  (`tauri:before-dev`/`tauri:before-build`), with a test that follows
+  `tauri.conf.json` → `app/package.json` and asserts the hook really builds the
+  package the spec launches. The D-101 staleness guard cannot catch this class at
+  all for a compiled sidecar (it hashes the very file the child runs, so a
+  months-old build matches itself) — now documented as such instead of implying a
+  check it does not perform, and the fast-fail escalation no longer tells the user
+  to look for "the Python error" in a Rust sidecar's crash loop, printing
+  `cargo build -p apelles-mcp` instead. `http_transport.rs` was green throughout
+  because it discarded its serving task's result and every test outlived the
+  server by milliseconds; it now holds and checks that task, and a new test binds
+  the server and leaves it idle with no client for 3s. Both guards
+  negative-controlled. D-313's "the sidecar is healthy and I called a tool
+  through it" was true only because that session had hand-built the binary, which
+  is exactly what masks this.
 - **2026-09-12** — **D-313: Apelles runs its own MCP server, and a client only
   needs a URL.** `apelles-mcp` gained a streamable-HTTP transport (`--http`,
   rmcp + axum, loopback `127.0.0.1:19790/mcp`, `CHROMA_MCP_PORT` — 19789 was

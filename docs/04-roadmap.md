@@ -259,7 +259,17 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    way it already does the two Python sidecars. So a client pastes a URL instead of a
    path, and one server serves every client. stdio stays the default for a bare
    `apelles-mcp`, which is load-bearing rather than polite: **Claude Desktop's config
-   file cannot express a URL server at all.** Open items this leaves:
+   file cannot express a URL server at all.**
+
+   **As shipped it could not start at all — B-169, fixed the same day.** Nothing in the
+   app's build built the binary the app spawns (`apelles-mcp` is deliberately not a Cargo
+   dependency of `apelles`, and Tauri's build hooks ran vite only), so the supervisor
+   spawned whatever stale `target/<profile>/apelles-mcp` was lying around and crash-looped
+   on it every ~0.5s. The hooks now run `cargo build -p apelles-mcp` first. Read B-169
+   before changing either hook or the D-101 staleness guard — that guard structurally
+   cannot detect a stale *compiled* sidecar.
+
+   Open items this leaves:
    - **Extract the sidecar supervisor into its own crate.** `apelles_ai::sidecar` is now
      a general local-service supervisor (`Launch::PythonUvicorn | WorkspaceBin`) living
      in a crate named for one of its three users. The mechanism is right and shared; only

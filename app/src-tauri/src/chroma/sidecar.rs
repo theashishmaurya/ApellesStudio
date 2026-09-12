@@ -43,6 +43,18 @@ pub use apelles_ai::sidecar::{
 /// run it by hand. Note that the supervisor never touches a server it did not
 /// start regardless: if something is already healthy on the port it monitors it
 /// and leaves it alone.
+///
+/// **Something has to actually build this binary, and it is not this crate**
+/// (B-169). `apelles-mcp` is deliberately not a dependency of `apelles` — D-313
+/// declined that edge — so `cargo run`/`cargo build` on this package never
+/// produces it, and `Launch::WorkspaceBin` would then spawn whatever happens to
+/// be lying in `target/<profile>/` from an earlier session. That is exactly how
+/// B-169 shipped: the app crash-looped on a pre-D-313 binary that ignored
+/// `--http`, served stdio, and hit instant EOF. The build hooks in
+/// `tauri.conf.json` (`npm run tauri:before-dev` / `tauri:before-build`) now run
+/// `cargo build -p apelles-mcp` first, which is what makes "the binary beside our
+/// executable is this build's" true rather than merely hoped for —
+/// `the_build_hooks_build_the_binary_this_spec_spawns` below is the guard.
 pub static MCP: SidecarSpec = SidecarSpec {
     name: "mcp",
     launch: Launch::WorkspaceBin {
@@ -135,6 +147,57 @@ mod tests {
                 shared.is_empty(),
                 "the mcp spec shares {shared:?} with {}",
                 other.name
+            );
+        }
+    }
+
+    /// **B-169's regression guard.** The app spawns `target/<profile>/apelles-mcp`
+    /// but nothing in this crate's own dependency graph builds it, so the only
+    /// thing standing between a dev run and a stale-binary crash loop is the
+    /// `cargo build -p apelles-mcp` in Tauri's build hooks. That is a string in a
+    /// JSON file two directories apart from the spec that depends on it — nothing
+    /// would fail to compile if someone simplified either hook back to
+    /// `npm run dev`, which is precisely how B-169 got shipped. So assert the
+    /// chain: both hooks in `tauri.conf.json` name a script in `app/package.json`,
+    /// and that script builds the package this spec launches.
+    #[test]
+    fn the_build_hooks_build_the_binary_this_spec_spawns() {
+        let Launch::WorkspaceBin { package, .. } = &MCP.launch else {
+            panic!("the MCP sidecar is a compiled workspace binary, not an interpreter");
+        };
+
+        let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let read = |p: std::path::PathBuf| -> serde_json::Value {
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                panic!("{} should be readable from the test binary", p.display());
+            };
+            match serde_json::from_str(&text) {
+                Ok(v) => v,
+                Err(e) => panic!("{} is not valid JSON: {e}", p.display()),
+            }
+        };
+        let conf = read(here.join("tauri.conf.json"));
+        let pkg = read(here.join("../package.json"));
+
+        for hook in ["beforeDevCommand", "beforeBuildCommand"] {
+            let Some(cmd) = conf["build"][hook].as_str() else {
+                panic!("tauri.conf.json has no build.{hook}");
+            };
+            // Every hook is an `npm run <script>`; follow it into package.json
+            // rather than matching on the hook string, so the assertion is about
+            // what actually runs.
+            let Some(script_name) = cmd.strip_prefix("npm run ") else {
+                panic!("build.{hook} is {cmd:?}, which this guard cannot follow");
+            };
+            let Some(script) = pkg["scripts"][script_name].as_str() else {
+                panic!("build.{hook} runs `{script_name}`, which app/package.json does not define");
+            };
+            let needle = format!("cargo build -p {package}");
+            assert!(
+                script.contains(&needle),
+                "build.{hook} -> `{script_name}` = {script:?} must run `{needle}` \
+                 (B-169: without it the app spawns whatever stale `{package}` binary \
+                 is left in target/, which crash-loops forever)"
             );
         }
     }
