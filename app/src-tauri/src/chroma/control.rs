@@ -328,12 +328,18 @@ impl BridgeRegistry {
         self.ready.notify_all();
     }
 
-    /// Forget whichever registry serves `op`. Called when a dispatch to it times
-    /// out: it demonstrably is not listening (a webview reload dropped it, or
-    /// its effect was torn down), so the NEXT call should wait for a fresh
-    /// handshake rather than fire into the void and spend another full budget
-    /// learning the same thing. This is what makes a mid-session reload
-    /// self-heal to the cold-start behaviour instead of staying wrong.
+    /// Forget whichever registry serves `op`. NOT called from [`dispatch`]'s
+    /// timeout path anymore (B-164) — a timeout means SLOW, not gone, and a
+    /// still-mounted registry never re-announces (it only does that once, at
+    /// mount, on `chroma://bridge-ready`), so forgetting a live claim just
+    /// bricked the whole prefix for the rest of the session with no way back
+    /// short of a reload. The mid-session-reload case this was written for
+    /// doesn't actually need it: the NEW registry's own `announce()` replaces
+    /// the stale claim by prefix (see `a_re_announcement_replaces_rather_than_
+    /// duplicates`), which already runs on every mount, reload included. Kept
+    /// as a primitive for a genuine "this registry is gone" signal — a
+    /// `WindowEvent` teardown hook would be the correct caller, not yet wired
+    /// up — rather than removed outright.
     fn forget_serving(&self, op: &str) {
         if let Ok(mut claims) = self.claims.lock() {
             claims.retain(|c| !c.serves(op));
@@ -466,10 +472,17 @@ fn dispatch(
         Ok(payload) => Ok(payload),
         Err(_) => {
             app.unlisten(handler_id);
-            // Its claim is stale — see `forget_serving`. The next call to this
-            // prefix waits for a fresh handshake instead of repeating this.
-            registry.forget_serving(op);
-            log::warn!("[chroma::control] op '{op}' timed out waiting for the frontend");
+            // B-164 — no `forget_serving` here anymore. A timeout means the
+            // frontend hasn't answered YET (SAM 2 routinely runs past this
+            // budget), not that its registry is gone — dropping a still-live
+            // claim left every later op on this prefix 503-ing "still
+            // starting up" against a window that had been healthy for an
+            // hour, with no reload ever coming to fix it. See `forget_serving`'s
+            // own doc for why this is safe to drop: the reload case it was
+            // guarding against already self-heals through `announce()`.
+            log::warn!(
+                "[chroma::control] op '{op}' timed out waiting for the frontend (it may still complete there)"
+            );
             Err(BridgeErr::Timeout)
         }
     }

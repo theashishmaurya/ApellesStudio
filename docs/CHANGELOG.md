@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **fixed B-164: a slow Colorist op no longer bricks the
+  whole Colorist MCP surface for the rest of the session.** `control.rs`'s
+  `dispatch` dropped a registry's bridge claim on ANY timeout, but a registry
+  only re-announces once, at mount — so a still-healthy, still-mounted
+  registry (SAM 2 routinely runs past the default 20s budget) never got its
+  claim back, and every later Colorist op 503'd blaming "still starting up"
+  against a window that had been up for an hour. Very likely the real root
+  cause of B-160. Fix: stopped calling `forget_serving` from the timeout
+  path — the mid-session-reload case it was written for already self-heals
+  through the new registry's own `announce()` replacing the stale claim by
+  prefix. `cargo fmt`/`clippy` clean, all 11 `chroma::control` tests pass
+  unchanged.
 - **2026-09-12** — **every structured MCP parameter now has a real, validated schema
   (D-310, roadmap item 7 done).** New `mcp/schemas.py`: 20 reusable Pydantic models
   covering all 43 nested parameters across the 40 tools that have them, so each tool
