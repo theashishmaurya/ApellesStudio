@@ -2924,3 +2924,14 @@ status: **open** (found 2026-09-12, during D-314's verification; deliberately no
   2. Keep the hard-offline guarantee and make the download an **explicit** step — a `--fetch-models` flag on `ai-env/setup.sh`, or a real error that names the one command to run. Fits the local-first rule best and makes the cost visible.
   3. Report the missing model in `GET /health` (alongside the existing `ffmpeg` field, which solves this exact "a hard requirement is missing and you find out at job time" problem for the other dependency) so the Settings card can say so before anyone starts a job.
 - **workaround today:** `ai-env/.venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/Qwen3-VL-4B-Instruct-4bit')"` — after which `/understand_video` works normally.
+
+## B-173 — `npm run tauri:build` (the documented release-build command, `CLAUDE.md`'s own "Running the app" section) fails immediately: `error: unrecognized subcommand 'tauri'`
+
+status: **fixed** (2026-09-12) · severity: medium (the one release-build entry point this repo's own docs point to didn't work at all) · area: `package.json`
+
+- **found:** 2026-09-12, while measuring a real release-build size for the D-315 (AI-env bootstrap) sizing discussion — the first time this session actually ran `npm run tauri:build` rather than only `tauri:dev`.
+- **repro:** `npm run tauri:build` from the repo root.
+- **actual:** `npm run tauri --workspace app -- tauri build` runs `app`'s own `"tauri": "tauri"` script with the extra args `tauri build` appended, producing the literal shell command `tauri tauri build` — the Tauri CLI sees `tauri` as its subcommand and rejects it: `error: unrecognized subcommand 'tauri'`.
+- **cause:** the root `tauri:build` script pre-pended a redundant literal `tauri` before the real subcommand, left over from a version of the script apparently written against a different form of the passthrough. `tauri:dev` never hit this because it goes through `npm run start --workspace app` → `app`'s `"start": "tauri dev"` script, which is a complete, correctly-formed command on its own, not a passthrough.
+- **fix:** `"tauri:build": "npm run tauri --workspace app -- build"` (dropped the redundant leading `tauri`) — matches the root `"tauri"` script's own documented passthrough shape (`npm run tauri --workspace app -- <tauri-cli-args>`).
+- **verified:** `npm run tauri:build` now runs `tauri build` for real (confirmed it reaches `beforeBuildCommand`/`cargo build --release`/the frontend build, past the point the old command never reached at all).

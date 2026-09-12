@@ -27,6 +27,11 @@ One or two lines per session. Detail lives in the decision it references.
   docs promise is unreachable on a machine that's never fetched the model.
   Not a D-314 regression (reproduces identically pre-merge); left open,
   wants its own local-first-policy `D-NNN`, not a quiet patch.
+- **2026-09-12** — **B-173: `npm run tauri:build` — this repo's own
+  documented release-build command — failed outright** with `unrecognized
+  subcommand 'tauri'`, a redundant literal `tauri` left in the root
+  `package.json` script. One-line fix; `tauri:dev` was unaffected (different
+  script shape).
 - **2026-09-12** — **B-170: deleting a project you just closed refused with
   "cannot delete the currently open project"**, from a screen that plainly
   has no project open — `closeProject()` now tells the Rust side too (new
