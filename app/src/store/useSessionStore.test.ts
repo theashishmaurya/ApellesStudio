@@ -206,6 +206,28 @@ describe('the session lock', () => {
     respondNormally();
     expect((await useSessionStore.getState().newProject('fresh', [])).ok).toBe(true);
   });
+
+  // B-170 — `closeProject()` used to reset only its own Zustand state,
+  // leaving the Rust side's notion of "the loaded project" stale
+  // indefinitely. The launcher's own delete button reads exactly that
+  // value and refused to delete a project the human was looking at from a
+  // screen with nothing open at all. This just pins that the IPC call
+  // actually happens — `chroma_project.rs`'s own test
+  // (`closing_a_project_lets_its_own_delete_button_work`) pins that the
+  // Rust side does the right thing once it does.
+  it('tells the Rust side the project closed too (B-170)', async () => {
+    respondNormally();
+    await useSessionStore.getState().closeProject();
+    expect(invoke).toHaveBeenCalledWith('chroma_project_close');
+  });
+
+  it('still gets back to the launcher even if telling Rust fails (B-170)', async () => {
+    invoke.mockImplementation((cmd: string) =>
+      cmd === 'chroma_project_close' ? Promise.reject(new Error('IPC down')) : Promise.resolve(null),
+    );
+    await expect(useSessionStore.getState().closeProject()).resolves.not.toThrow();
+    expect(useSessionStore.getState().projectPath).toBeNull();
+  });
 });
 
 // --- D-306 / B-150: two clips of one source file are two independent shots ---

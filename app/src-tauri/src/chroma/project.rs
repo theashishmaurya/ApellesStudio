@@ -437,15 +437,32 @@ pub fn chroma_project_set_dir(dir: String) -> Result<String, String> {
     Ok(projects_dir().to_string_lossy().to_string())
 }
 
+/// B-170 — `useSessionStore.closeProject()`'s "‹ Projects" back button, the
+/// ONLY caller. `state::set_project`'s own doc already said the Rust side's
+/// notion of "the loaded project" should be "cleared only on an explicit
+/// close" — but no command ever existed for the frontend to make that call,
+/// so `closeProject()` reset its own Zustand state and left `state::PROJECT`
+/// stale indefinitely (its own comment called this "harmless" — true for the
+/// save-guard it was reasoning about, since every save path also checks the
+/// frontend's own `projectPath`, but [`chroma_project_delete`] below reads
+/// ONLY this Rust-side value and had no such second guard). The result: open
+/// a project, go back to the launcher, try to delete that same project —
+/// refused with "cannot delete the currently open project", from a screen
+/// that, to the human looking at it, plainly has no project open at all.
+#[tauri::command]
+pub fn chroma_project_close() {
+    state::set_project(None);
+}
+
 /// The launcher's own delete button (a hover-revealed trash icon on a
 /// project card) — irreversible, `apelles_project::manifest::delete_project_at`
 /// does the actual `remove_dir_all` plus its own real-project validation.
 /// Refuses to delete whichever project is CURRENTLY open (`state::current_
-/// project()`) — the launcher itself is only ever shown with no project
-/// open, so this should never actually trigger in normal use, but a stray
-/// call (e.g. a second window, a future caller) must not be able to pull a
-/// project's directory out from under a live session that still autosaves
-/// to it.
+/// project()`) — true once the frontend actually calls [`chroma_project_close`]
+/// on its way back to the launcher (B-170); before that fix this assumption
+/// was silently false. Still real protection against a stray call (e.g. a
+/// second window, a future caller) pulling a project's directory out from
+/// under a live session that still autosaves to it.
 #[tauri::command]
 pub fn chroma_project_delete(path: String) -> Result<(), String> {
     let dir = PathBuf::from(&path);
@@ -1953,5 +1970,41 @@ mod tests {
         // another parallel test may have set its own project; just assert ours
         // is not still the active one
         assert!(state::current_project().map(|p| p.path) != Some(mine.path));
+    }
+
+    /// B-170 — before `chroma_project_close` existed, going back to the
+    /// launcher never cleared `state::PROJECT`, so this same project's own
+    /// delete button refused it as "currently open" from a screen that
+    /// plainly had no project open. This is the fix's whole point: a project
+    /// still marked current is refused; the SAME project, after the
+    /// launcher's "close" call, is not.
+    #[test]
+    fn closing_a_project_lets_its_own_delete_button_work() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("close_then_delete");
+        let (dir, _manifest) = new_project_in(&root, "close-then-delete", &[]).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "close-then-delete".into(),
+        }));
+
+        let refused = chroma_project_delete(dir.to_string_lossy().to_string());
+        assert!(
+            refused.is_err(),
+            "a project still marked current must still be refused"
+        );
+        assert!(dir.is_dir(), "the refused delete must not have touched it");
+
+        chroma_project_close();
+        assert!(
+            state::current_project().is_none(),
+            "chroma_project_close must actually clear state::PROJECT"
+        );
+
+        chroma_project_delete(dir.to_string_lossy().to_string())
+            .expect("the same project, after closing, must now delete cleanly");
+        assert!(!dir.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

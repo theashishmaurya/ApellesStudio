@@ -2292,6 +2292,7 @@ pub fn run() {
             chroma::project::chroma_project_current,
             chroma::project::chroma_project_settings_dir,
             chroma::project::chroma_project_set_dir,
+            chroma::project::chroma_project_close,
             chroma::project::chroma_project_delete,
             chroma::project::chroma_project_set_settings,
             chroma::project::chroma_project_get_settings,

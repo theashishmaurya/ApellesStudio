@@ -855,10 +855,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         /* ignore — closing anyway */
       }
     }
+    // B-170 — tell the Rust side too, or its own `state::PROJECT` stays set
+    // to this project indefinitely (the next open/new overwrites it, but
+    // nothing else ever clears it): the launcher's own delete button reads
+    // exactly that value and refuses to delete "the currently open project"
+    // — from a screen that, to the human looking at it, has no project open
+    // at all. Best-effort, same reasoning as the save flush above: this
+    // button is also the escape hatch from a wedged session, so a failed
+    // IPC call here must not block getting back to the launcher.
+    try {
+      await invoke('chroma_project_close');
+    } catch {
+      /* ignore — closing anyway */
+    }
     // reset everything back to the initial store state. Autosave's debounced
-    // saveProject() no-ops once projectPath is null; the Rust `state::ProjectRef`
-    // is left as-is (harmless — the next open/new overwrites it, and every
-    // frontend save path guards on projectPath).
+    // saveProject() no-ops once projectPath is null.
     set({
       shots: [],
       activeIndex: 0,
