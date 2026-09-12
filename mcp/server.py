@@ -4301,6 +4301,77 @@ def depth_track_status() -> str:
     return json.dumps(_op("depth_track_status"), indent=2, default=str)
 
 
+# --------------------------------------------------------------------------- #
+# the AI environment (D-315)
+#
+# Every AI-backed tool above and in the Edit tab runs through one of two Python
+# sidecars, and both run from ONE ~1.6 GB virtual environment the app builds
+# itself, in the background, from its first launch. Until that finishes, those
+# tools cannot work — so the state of the build is part of the agent-facing
+# surface, not an implementation detail. These two ops are answered by
+# `control.rs` in Rust with no frontend round trip (D-315), so they still answer
+# while the app window is starting up, which is exactly when the build is
+# running.
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def ai_env_status() -> str:
+    """Is the shared Python environment every AI feature needs built yet — and
+    if not, how far along is it (D-315)?
+
+    Call this when an AI-backed tool (`add_subject_mask`, `track_subject`,
+    `depth_track`, `editor_get_transcript`, `editor_analyze_video`) fails with an
+    error whose first word is `ai_env_not_ready`. That prefix is the machine
+    signal that the environment is still being built — it is NOT a bad request
+    and NOT a crashed sidecar, and the same call will work once this reports
+    `"ready"`.
+
+    Returns {phase, detail, packagesDone, packagesTotal, attempt, retryInSecs,
+    lastError, venv, elapsedSecs}. Branch on `phase`:
+
+      "ready"                usable now, so an AI failure is something else
+      "checking" | "installingPython" | "creatingVenv" |
+      "installingPackages" | "repairing"
+                             still working — wait and poll. `packagesDone` /
+                             `packagesTotal` are real counts parsed from uv, so
+                             3/91 -> 60/91 is progress and a frozen pair with a
+                             climbing `elapsedSecs` is one big wheel downloading
+      "failed"               an attempt failed and another is already scheduled
+                             in `retryInSecs` (almost always: no internet).
+                             `ai_env_retry` skips that wait
+      "unavailable"          cannot be built here at all — no bundled uv, no
+                             lock file, or CHROMA_AI_ENV_NO_BOOTSTRAP is set.
+                             NOT retried on a timer and NOT fixable by waiting,
+                             so tell the human instead of polling
+
+    Nothing else is blocked: Edit, Motion, Colorist, grading and export all work
+    throughout. A non-ready phase is a reason to route around the AI tools for
+    now, never a reason to stop working."""
+    import json
+
+    return json.dumps(_op("ai_env_status"), indent=2, default=str)
+
+
+@mcp.tool()
+def ai_env_retry() -> str:
+    """Attempt the AI-environment build again right now, instead of waiting out
+    the backoff `ai_env_status` reports in `retryInSecs` (D-315). Worth calling
+    once you have fixed the likely cause — reconnecting the network is the usual
+    one; pointless otherwise, since the backoff will try again by itself.
+
+    Returns the same snapshot `ai_env_status` does, plus `started`: `true` if an
+    attempt was really triggered, `false` if there was nothing to trigger —
+    already `"ready"`, an attempt already running, or `"unavailable"` (which no
+    amount of retrying changes). `false` is a normal answer, not a failure; read
+    `phase` and act on that rather than calling this again.
+
+    Retrying costs little and loses nothing: uv's wheel cache survives every
+    failed attempt, so a build that died part-way resumes from what it had
+    already downloaded rather than starting over."""
+    import json
+
+    return json.dumps(_op("ai_env_retry"), indent=2, default=str)
+
+
 @mcp.tool()
 def set_mask_adjust(
     mask_id: str,

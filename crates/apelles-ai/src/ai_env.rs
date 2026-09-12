@@ -241,6 +241,25 @@ impl Phase {
                 | Phase::Repairing
         )
     }
+
+    /// The wire spelling, identical to what `serde` emits. Written out rather than
+    /// round-tripped through `serde_json` because it is used inside error messages, on
+    /// a path that must not itself be able to fail, and because a name a machine
+    /// matches on should be a `match` a compiler checks rather than a serializer's
+    /// incidental output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Phase::Unknown => "unknown",
+            Phase::Checking => "checking",
+            Phase::InstallingPython => "installingPython",
+            Phase::CreatingVenv => "creatingVenv",
+            Phase::InstallingPackages => "installingPackages",
+            Phase::Repairing => "repairing",
+            Phase::Ready => "ready",
+            Phase::Failed => "failed",
+            Phase::Unavailable => "unavailable",
+        }
+    }
 }
 
 /// The whole bootstrap state, as one snapshot. `camelCase` on the wire to match every
@@ -270,6 +289,99 @@ pub struct AiEnvStatus {
     /// Wall-clock seconds spent in the current attempt. The only honest input a
     /// "~N min left" estimate could have; the UI uses it as elapsed, not remaining.
     pub elapsed_secs: u64,
+}
+
+/// The stable token every "the AI environment is not built yet" message starts with.
+///
+/// **This is the machine-readable half of the contract** (D-315). An AI feature that
+/// cannot run because the environment is still being built fails the way every other
+/// refusal in this stack fails — a normal `{ok: false, error}` envelope with the reason
+/// in it, never an exception (the precedent `control.rs`'s 503/504 and
+/// `mcp::transport::OpError` both set deliberately, because raising is what once
+/// reduced a real explanation to a bare "Error executing tool `<name>`"). What makes it
+/// *distinguishable* rather than merely readable is this prefix: a caller matching on
+/// it knows the difference between "wait, this will work later", "the sidecar crashed"
+/// and "your arguments were wrong" without parsing prose, and the `ai_env_status` MCP
+/// tool is the structured read it can then poll.
+///
+/// Compiled into no client, so it is asserted by a test on both sides rather than
+/// trusted: `crates/apelles-mcp` and `mcp/server.py` both document it in the tools that
+/// can return it.
+pub const NOT_READY_CODE: &str = "ai_env_not_ready";
+
+impl AiEnvStatus {
+    /// One line saying why an AI feature cannot run yet, or `None` once the environment
+    /// is [`Phase::Ready`] and the failure must therefore be something else.
+    ///
+    /// Deliberately carries the phase, the package counts and the retry schedule inline:
+    /// the decision the caller has to make is "wait and retry, or give up", and those
+    /// three facts are exactly what decides it. `unavailable` says so explicitly,
+    /// because it is the one state where waiting is pointless.
+    pub fn not_ready_message(&self) -> Option<String> {
+        let phase = self.phase.as_str();
+        let what = match self.phase {
+            // The one phase with nothing to explain. A `return` rather than a
+            // placeholder string so there is no unreachable arm to panic in.
+            Phase::Ready => return None,
+            Phase::Unknown => "the bootstrap has not reported in yet".to_string(),
+            Phase::Checking => "checking the existing environment".to_string(),
+            Phase::InstallingPython => format!("fetching Python {PYTHON_VERSION}"),
+            Phase::CreatingVenv => "creating the virtual environment".to_string(),
+            Phase::InstallingPackages => {
+                if self.packages_total > 0 {
+                    format!(
+                        "installing packages ({} of {})",
+                        self.packages_done, self.packages_total
+                    )
+                } else {
+                    "installing packages (uv has not reported a count yet)".to_string()
+                }
+            }
+            Phase::Repairing => "repairing a damaged environment".to_string(),
+            Phase::Failed => format!(
+                "the last attempt failed ({}); the next automatic retry is in {}s",
+                self.last_error.as_deref().unwrap_or("no reason recorded"),
+                self.retry_in_secs.unwrap_or(0)
+            ),
+            Phase::Unavailable => format!(
+                "it CANNOT be built on this machine ({}) — this is not retried on a \
+                 timer, so waiting will not help",
+                self.detail.as_deref().unwrap_or("no reason recorded")
+            ),
+        };
+        Some(format!(
+            "{NOT_READY_CODE}: the shared Python environment both AI sidecars run from \
+             is not ready — phase '{phase}', {what} (attempt {}, {}s elapsed). This is \
+             the one-time environment build (D-315), not a crash and not a bad request. \
+             Call `ai_env_status` for the live state, or `ai_env_retry` to force an \
+             attempt now.",
+            self.attempt, self.elapsed_secs
+        ))
+    }
+}
+
+/// The message an AI feature fails with when it could not reach its sidecar.
+///
+/// `hint` is the caller's own "sidecar unreachable" diagnosis, which stays in the
+/// message verbatim: this only ever *prepends* the more specific reason, because the
+/// environment being unbuilt is a very likely explanation for a refused connection but
+/// never a certain one, and throwing the underlying error away to assert a guess would
+/// trade one unexplained failure for another.
+///
+/// Checked here, at the one place the app decides to talk to a sidecar, rather than in
+/// either MCP server or in `control.rs`. That is the only spot that is both exhaustive
+/// and correct: exhaustive because every AI feature — present and future, GUI click or
+/// MCP call — funnels through it, and correct because it fires exactly when a Python
+/// sidecar was genuinely needed and missing. An op-name list in `control.rs` would fail
+/// both tests — it would break that server's "knows no op list" boundary (D-020) and it
+/// would wrongly gate `add_subject_mask` on a still image, which runs ONNX SAM
+/// in-process and needs no Python at all.
+pub fn explain_unreachable(hint: impl Into<String>) -> String {
+    let hint = hint.into();
+    match status_snapshot().not_ready_message() {
+        Some(why) => format!("{why} Underlying error: {hint}"),
+        None => hint,
+    }
 }
 
 /// Shared state: the snapshot, plus the two flags the supervisor's interruptible sleep
@@ -310,9 +422,10 @@ pub fn status_snapshot() -> AiEnvStatus {
 
 /// Ask for an immediate re-check, interrupting whatever backoff is in progress.
 ///
-/// Refused (returns `false`) only while an attempt is genuinely **in flight**, so the
-/// caller can say "already running" instead of pretending a second one was queued. The
-/// "Retry now" button and the `ai_env_retry` MCP tool both come through here.
+/// Refused (returns `false`) only while an attempt is genuinely **in flight**, or when
+/// the environment is [`Phase::Unavailable`], so the caller can say so instead of
+/// pretending a second attempt was queued. The "Retry now" button and the
+/// `ai_env_retry` MCP tool both come through here.
 ///
 /// **Accepted when already [`Phase::Ready`]**, deliberately, where it means "re-verify".
 /// The first version refused there too, on the reasoning that there is nothing to retry —
@@ -321,8 +434,19 @@ pub fn status_snapshot() -> AiEnvStatus {
 /// it meant a venv deleted or broken *after* the app reached `ready` would be reported
 /// healthy forever, with no way for a user or an agent to make the app look again. Ready
 /// is a cached answer, and a cached answer needs an invalidation.
+///
+/// **B-180 — `unavailable` is the one phase that really is refused.** [`supervise`]
+/// *returns* when it reaches it (no bundled `uv`, no lock file,
+/// `CHROMA_AI_ENV_NO_BOOTSTRAP`): there is no thread left to wake, so setting the flag
+/// and reporting success would promise an attempt that can never happen. That is the
+/// same lie D-315 refused to tell with an automatic timer, told manually instead —
+/// `unavailable` means *nothing about trying again changes the answer*, and that has to
+/// hold for both kinds of retry. Note this is the opposite call from `ready` above and
+/// for the opposite reason: `ready` is a cached answer worth invalidating, `unavailable`
+/// is a standing fact about the machine with nothing listening for the request.
 pub fn retry_now() -> bool {
-    if status_snapshot().phase.is_working() {
+    let phase = status_snapshot().phase;
+    if phase == Phase::Unavailable || phase.is_working() {
         return false;
     }
     if let Ok(mut r) = shared().retry_requested.lock() {

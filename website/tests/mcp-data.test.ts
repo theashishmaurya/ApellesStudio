@@ -25,6 +25,20 @@ const server = readFileSync(
   'utf8',
 );
 
+/**
+ * B-176 — the error strings the docs page quotes are authored in TWO places, not one:
+ * "cannot reach the app" comes from `mcp/server.py`, but the bridge's 503/504 bodies are
+ * written by the control server in Rust. Checking only the Python file meant the 504
+ * fragment could never match, and this guard sat red instead of catching the real drift
+ * (the 504 was reworded by B-153 and the site kept the old sentence).
+ */
+const errorSources =
+  server +
+  readFileSync(
+    fileURLToPath(new URL('../../app/src-tauri/src/chroma/control.rs', import.meta.url)),
+    'utf8',
+  );
+
 /** Every decorated tool name, in file order. */
 const TOOLS: string[] = [
   ...server.matchAll(/^@mcp\.tool\(\)\n(?:@[^\n]*\n)*def ([a-z_0-9]+)\(/gm),
@@ -39,8 +53,11 @@ const editorAll = TOOLS.filter((t) => t.startsWith('editor_') || UNPREFIXED_EDIT
 const mediaUnderstanding = TOOLS.filter(
   (t) => t.startsWith('editor_get_transcript') || t.startsWith('editor_analyze_video'),
 );
+/** D-315 — belongs to no tab: the AI environment every AI feature runs from. */
+const aiEnv = TOOLS.filter((t) => t.startsWith('ai_env_'));
 const colorist = TOOLS.filter(
-  (t) => !debug.includes(t) && !editorAll.includes(t) && !motion.includes(t),
+  (t) =>
+    !debug.includes(t) && !editorAll.includes(t) && !motion.includes(t) && !aiEnv.includes(t),
 );
 
 describe('mcp/server.py parses', () => {
@@ -89,6 +106,10 @@ describe('per-group counts match the server', () => {
 
   it('Motion matches the real motion_* tools', () => {
     expect(byName['Motion'].count).toBe(motion.length);
+  });
+
+  it('AI environment', () => {
+    expect(byName['AI environment'].count).toBe(aiEnv.length);
   });
 
   it('the group counts sum to the shipped total, with nothing unaccounted for', () => {
@@ -191,7 +212,10 @@ describe('connection details match the server', () => {
 
   it('quotes error text the server really raises', () => {
     for (const fragment of ERROR_FRAGMENTS) {
-      expect(server, `mcp/server.py no longer says "${fragment}"`).toContain(fragment);
+      expect(
+        errorSources,
+        `neither mcp/server.py nor control.rs says "${fragment}" any more`,
+      ).toContain(fragment);
     }
   });
 });

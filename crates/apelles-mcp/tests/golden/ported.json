@@ -1,9 +1,9 @@
 {
   "_comment": [
-    "The porting ledger for D-312: which of the Python server's 161 tools this Rust",
+    "The porting ledger for D-312: which of the Python server's 163 tools this Rust",
     "server has taken over. `tests/parity.rs` checks the live server's advertised set",
     "against this list in BOTH directions, and checks every name here is a tool the",
-    "golden corpus actually has \u2014 so a tool cannot be silently dropped, silently added,",
+    "golden corpus actually has — so a tool cannot be silently dropped, silently added,",
     "or listed here under a name that never existed.",
     "Add a name here in the same commit that lands its tool, never before."
   ],
@@ -13,6 +13,8 @@
     "add_relight_light",
     "add_shots",
     "add_subject_mask",
+    "ai_env_retry",
+    "ai_env_status",
     "apply_haze",
     "clear_mask_keyframe",
     "clear_mask_keyframes",

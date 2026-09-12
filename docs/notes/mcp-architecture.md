@@ -186,15 +186,35 @@ does not. Check which shape your tab's own state is in before copying either.
    `editor_get_timeline`/etc.) doesn't have to break the other, so a Python tool
    can keep a stable public name while its own `_op(...)` call is updated to
    match wherever the frontend handler for it actually lives now.
-3. **Update `docs/notes/mcp-tool-coverage.md`** — move the tab (or the specific
+3. **The Rust half, in the SAME pass (D-312).** `crates/apelles-mcp` is a
+   complete port of `mcp/server.py` and is gated by a golden-corpus harness that
+   compares the two **byte-for-byte**, so a tool added to only one side fails
+   `cargo test -p apelles-mcp` in both directions. Write the Python docstring
+   first, copy it verbatim into the Rust `#[tool(description = r#"..."#)]`, add
+   the tool to the module its surface belongs to (`src/tools/`), re-run
+   `crates/apelles-mcp/parity/capture.py` to refresh the corpus, and add the name
+   to `tests/golden/ported.json`. Two servers, one contract, in one commit — the
+   port is not a fork to catch up with later.
+4. **Update `docs/notes/mcp-tool-coverage.md`** — move the tab (or the specific
    op) out of whichever gap section it was tracked under, into a real "current
    coverage" list. That doc's own last line: "does this need an MCP tool, and if
    so is one actually built? If not, add a line... rather than letting this doc
    silently drift out of date."
-4. **Restart Claude Code** before the new tools are callable — a (re)connected
+5. **Restart Claude Code** before the new tools are callable — a (re)connected
    MCP server's tools only become visible to a Claude Code session after a full
    exit + relaunch, not immediately (the same gotcha `videoAgent`'s
    `/mcp-editor-setup` skill documents for Palmier Pro/OBS).
+
+**The rare exception to step 1: an op with no frontend state at all.** A handful of
+ops are answered by `control.rs` *itself*, in Rust, and never reach a frontend
+registry — the debug screenshot pair (D-210) and `ai_env_status` / `ai_env_retry`
+(D-315). The bar is narrow and worth stating, because widening it would dissolve the
+whole rule above: **the answer must be a fact about the process, not about the
+store.** A screenshot is a picture of the webview; the AI-environment bootstrap is a
+Rust state machine with no store copy. Both are also most wanted exactly when the
+frontend cannot answer — wedged, or still starting up — which is the second half of
+the justification. Anything with a store representation is forwarded, always. Those
+ops skip steps 1 and need no prefix, but steps 2-4 are unchanged.
 
 ## A mistake already made, so it isn't made again
 

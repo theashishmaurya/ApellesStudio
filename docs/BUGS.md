@@ -2925,6 +2925,150 @@ status: **open** (found 2026-09-12, during D-314's verification; deliberately no
   3. Report the missing model in `GET /health` (alongside the existing `ffmpeg` field, which solves this exact "a hard requirement is missing and you find out at job time" problem for the other dependency) so the Settings card can say so before anyone starts a job.
 - **workaround today:** `ai-env/.venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/Qwen3-VL-4B-Instruct-4bit')"` — after which `/understand_video` works normally.
 
+## B-178 — `cargo test -p apelles` has been red since B-171: four tests still assert the auto-placement B-171 deliberately removed
+
+status: **open** · severity: medium (the app crate's own test suite does not pass, so the
+next real regression in it has nothing to fail against) · area:
+`app/src-tauri/src/chroma/project.rs` (tests only)
+
+- **found:** 2026-09-13, D-315's MCP pass, running `cargo test -p apelles` as a
+  pre-commit check. **Not caused by that work** — verified by reverting every
+  `app/src-tauri` change to `1594ccf` and re-running: the same four fail.
+- **repro:** `cargo test -p apelles --lib chroma::project::tests` → 9 passed, 4 failed.
+- **the four:** `single_timeline_project_round_trips_through_get_and_set_unchanged`,
+  `track_commands_add_remove_and_move_clip_on_the_active_timeline`,
+  `track_resolution_opaque_top_wins_across_two_video_tracks`,
+  `link_and_unlink_commands_persist_on_the_active_timeline`.
+- **failure:** `index out of bounds: the len is 0 but the index is 0` at
+  `project.rs:1503` and equivalents — each one calls `new_project_in(...)` with one seed
+  path and then indexes `tl.tracks[0].clips[0]`.
+- **cause:** **B-171** (2026-09-12) stopped `new_project_in` auto-placing seed media on
+  the timeline. That was deliberate and correct; the timeline now starts empty. B-171
+  updated the six affected tests in `crates/apelles-project` and verified with
+  `cargo test -p apelles-project` — but four tests in the *app* crate relied on the same
+  auto-placement and were neither updated nor run (`cargo test -p apelles` is not in that
+  entry's "verified" line).
+- **fix (not done here — it belongs with whoever owns that contract):** give each of the
+  four an explicit clip the way B-171 did for the other six — place one onto the
+  timeline first, mirroring what a real drag from Sources does — rather than relying on
+  seed media appearing there by itself.
+- **the general lesson, which is the reason this is filed rather than just fixed:** a
+  behaviour change in `crates/apelles-project` has callers in `app/src-tauri`, and
+  verifying only the crate you edited is how a green branch ships a red workspace.
+
+## B-177 — `npm run tauri:dev` never reached a running app: `build.rs` rewrote a watched resource on every build, so the dev watcher restarted the build forever
+
+status: fixed (2026-09-13, D-315) · severity: high (the repo's documented dev command
+could not start the app in a checkout whose staged resources were stale or absent) ·
+area: `app/src-tauri/build.rs`
+
+- **found:** 2026-09-13, D-315's MCP pass, trying to exercise the new tools against a
+  real app in a fresh worktree.
+- **repro:** delete `app/src-tauri/resources/ai-env/` (or start from a fresh checkout)
+  and run `npm run tauri:dev`.
+- **expected:** the app builds once and launches.
+- **actual:** `Info File src-tauri/resources/ai-env/requirements.lock.txt changed.
+  Rebuilding application...` — over and over, right at the end of every build.
+- **cause:** `stage_ai_env_resources` used `fs::copy` **unconditionally**, and
+  `fs::copy` bumps the destination's mtime even when the bytes are identical. `tauri
+  dev` watches `src-tauri/` for changes, so the very act of staging the resource
+  invalidated the build that had just staged it. The file is listed in the root
+  `.gitignore`, which is what everyone assumes protects it — but that only helps a
+  watcher that reads *that* ignore file, and this one plainly did not.
+- **fix:** read the source, compare it against the destination, and write only when they
+  differ. This is the same "already valid, skip it" shape the ONNX Runtime and `uv`
+  downloads in the same file already use, and for the same reason — a build script has no
+  business churning mtimes on files it did not change.
+- **why it did not show up when D-315 landed:** the staged files were already present and
+  current from a previous run in the checkout it was developed in, so the copy was a
+  no-op in practice. It bites a fresh worktree, a fresh clone, and anyone who edits
+  `ai-env/requirements.lock.txt` — the same "verified once under conditions that never
+  exercised it" shape as B-169 and B-173.
+
+## B-176 — the website's own anti-fabrication guard could never pass: it looked for the bridge's 504 wording in `mcp/server.py`, which does not author it
+
+status: fixed (2026-09-13, D-315) · severity: low (a docs page quoting an error string the
+app stopped raising, and a red test that had stopped being read) · area:
+`website/tests/mcp-data.test.ts`, `website/src/data/mcp.ts`,
+`website/src/pages/docs/_mcp.astro`
+
+- **found:** 2026-09-13, D-315, on the first `npx vitest run tests/mcp-data.test.ts` after
+  adding the AI-environment group — 79 passed, 1 failed, and the failure was nothing to
+  do with this change.
+- **cause:** `ERROR_FRAGMENTS` holds the two error strings the docs page quotes, and the
+  guard asserts each really appears in the server. But it only ever read
+  `mcp/server.py`. The "cannot reach the app" one is authored there; the bridge's
+  503/504 bodies are authored in **Rust**, by `app/src-tauri/src/chroma/control.rs`. So
+  the 504 fragment could not match whatever it said, and when B-153 reworded that
+  message (`"… did not respond (its window may be closed or busy)"` →
+  `"… got no reply from the frontend within Ns …"`), the guard whose entire job is to
+  catch that drift reported it as its own failure instead.
+- **fix:** the guard now reads both files that author these strings; the fragment and the
+  docs-page copy are updated to what the control server actually says today — including
+  the part B-153 added that the page was missing, that a 504 is **inconclusive**, not a
+  failure, because the op can still complete after the bridge gives up.
+- **not caught earlier because** nothing runs `website/`'s tests in this repo's normal
+  loop (it is deliberately outside the npm workspace, D-255/D-264) and its `node_modules`
+  is not even installed in a fresh checkout.
+
+## B-175 — `add_subject_mask` / `track_subject` reported `ok: true` for an AI call that failed: the error was swallowed into a GUI toast
+
+status: fixed (2026-09-13, D-315) · severity: high (an agent was told a matte existed that
+did not; every subsequent decision was made on a false premise) · area:
+`app/src/hooks/useAiMasking.ts`, `app/src/hooks/useChromaControl.ts`
+
+- **found:** 2026-09-13, D-315, while making the AI-backed MCP tools return a
+  distinguishable "the environment is still building" answer. The two most prominent of
+  them turned out to be incapable of returning *any* failure.
+- **repro:** stop the `ai/` sidecar (or call it before D-315's environment build has
+  finished) and call `add_subject_mask` over MCP on a video clip.
+- **expected:** `{ok: false, error: …}` naming the reason.
+- **actual:** `{ok: true, result: {maskId, subMaskId, bbox, mode}}`. A mask container and
+  sub-mask really were created; the matte behind them was not, and nothing said so.
+- **cause:** `handleGenerateAiMask` and `handleTrackSubject` ended their `catch` with
+  `toast.error(...)` and returned `undefined`. A toast is the GUI's answer and reaches
+  nobody else. The op handlers `await`ed them and then returned their own success object
+  unconditionally, so `useChromaControl`'s `respond({ ok: !result?.error, … })` saw no
+  error to report. `handleTrackDepth`, written later, already returned `{ error }` — the
+  right shape existed in the same file and these two predated it.
+- **fix:** both now return `{ error }` after toasting (and a success object otherwise),
+  and both op handlers propagate it. The GUI toast is unchanged, so nothing about the
+  human path moves.
+- **why nothing caught it:** the MCP parity harness replays what the layer *sends* against
+  a stub app, which is the right boundary for D-312 and cannot see an app-side handler
+  that lies. Nothing else calls these ops with a deliberately broken sidecar.
+
+## B-180 — `ai_env_retry` promised a retry that could never happen: `retry_now()` returned `true` in the one phase whose supervisor thread has already exited
+
+status: fixed (2026-09-13, D-315) · severity: medium (a "Retry now" button and an MCP tool
+both reported an attempt had started, forever, on a machine where none ever would) · area:
+`crates/apelles-ai/src/ai_env.rs`
+
+- **found:** 2026-09-13, D-315, building the `ai_env_retry` MCP tool on top of the
+  same function the GUI button uses.
+- **repro:** run with `CHROMA_AI_ENV_NO_BOOTSTRAP=1` (or any build with no bundled `uv`,
+  or no `requirements.lock.txt`) so the phase is `unavailable`, then call `ai_env_retry` /
+  press Retry now.
+- **expected:** `false` — nothing to retry.
+- **actual:** `true`. The `retry_requested` flag was set and `wake.notify_all()` called
+  with nobody listening; the phase never moved.
+- **cause:** `retry_now()` declined for `Ready` and `Phase::is_working()` and accepted
+  everything else. But `supervise` **returns** when it reaches `Unavailable` — all three
+  routes into that phase (`CHROMA_AI_ENV_NO_BOOTSTRAP`, no `ai-env` directory, no bundled
+  `uv`) are early returns — so there is no thread left to wake. D-315's own note already
+  said `unavailable` is not retried on a timer "because nothing about waiting would change
+  it, and a UI promising an automatic retry there would be lying"; the manual retry told
+  the same lie.
+- **fix:** `retry_now()` returns `false` for `Phase::Unavailable`, with the reason in its
+  doc comment and a case in `retry_now_declines_only_while_an_attempt_is_in_flight`.
+- **note on the `ready` half:** a concurrent D-315 commit changed `retry_now` the other
+  way for `Ready` — it now *accepts* there, because ready is a cached answer and a venv
+  deleted by hand afterwards would otherwise be reported healthy forever. The two calls
+  point opposite ways for opposite reasons and both are right: `ready` is a cached answer
+  worth invalidating, `unavailable` is a standing fact about the machine with nothing
+  listening for the request. Both reasons are written into `retry_now`'s doc comment so
+  the next reader does not "simplify" one into the other.
+
 ## B-173 — `npm run tauri:build` (the documented release-build command, `CLAUDE.md`'s own "Running the app" section) fails immediately: `error: unrecognized subcommand 'tauri'`
 
 status: **fixed** (2026-09-12) · severity: medium (the one release-build entry point this repo's own docs point to didn't work at all) · area: `package.json`

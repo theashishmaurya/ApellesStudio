@@ -433,6 +433,24 @@
       }
     },
     {
+      "name": "ai_env_retry",
+      "description": "Attempt the AI-environment build again right now, instead of waiting out\n    the backoff `ai_env_status` reports in `retryInSecs` (D-315). Worth calling\n    once you have fixed the likely cause \u2014 reconnecting the network is the usual\n    one; pointless otherwise, since the backoff will try again by itself.\n\n    Returns the same snapshot `ai_env_status` does, plus `started`: `true` if an\n    attempt was really triggered, `false` if there was nothing to trigger \u2014\n    already `\"ready\"`, an attempt already running, or `\"unavailable\"` (which no\n    amount of retrying changes). `false` is a normal answer, not a failure; read\n    `phase` and act on that rather than calling this again.\n\n    Retrying costs little and loses nothing: uv's wheel cache survives every\n    failed attempt, so a build that died part-way resumes from what it had\n    already downloaded rather than starting over.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "ai_env_retryArguments"
+      }
+    },
+    {
+      "name": "ai_env_status",
+      "description": "Is the shared Python environment every AI feature needs built yet \u2014 and\n    if not, how far along is it (D-315)?\n\n    Call this when an AI-backed tool (`add_subject_mask`, `track_subject`,\n    `depth_track`, `editor_get_transcript`, `editor_analyze_video`) fails with an\n    error whose first word is `ai_env_not_ready`. That prefix is the machine\n    signal that the environment is still being built \u2014 it is NOT a bad request\n    and NOT a crashed sidecar, and the same call will work once this reports\n    `\"ready\"`.\n\n    Returns {phase, detail, packagesDone, packagesTotal, attempt, retryInSecs,\n    lastError, venv, elapsedSecs}. Branch on `phase`:\n\n      \"ready\"                usable now, so an AI failure is something else\n      \"checking\" | \"installingPython\" | \"creatingVenv\" |\n      \"installingPackages\" | \"repairing\"\n                             still working \u2014 wait and poll. `packagesDone` /\n                             `packagesTotal` are real counts parsed from uv, so\n                             3/91 -> 60/91 is progress and a frozen pair with a\n                             climbing `elapsedSecs` is one big wheel downloading\n      \"failed\"               an attempt failed and another is already scheduled\n                             in `retryInSecs` (almost always: no internet).\n                             `ai_env_retry` skips that wait\n      \"unavailable\"          cannot be built here at all \u2014 no bundled uv, no\n                             lock file, or CHROMA_AI_ENV_NO_BOOTSTRAP is set.\n                             NOT retried on a timer and NOT fixable by waiting,\n                             so tell the human instead of polling\n\n    Nothing else is blocked: Edit, Motion, Colorist, grading and export all work\n    throughout. A non-ready phase is a reason to route around the AI tools for\n    now, never a reason to stop working.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "ai_env_statusArguments"
+      }
+    },
+    {
       "name": "apply_haze",
       "description": "Depth-weighted atmospheric haze on the background \u2014 one action, pushes the\n    subject forward.\n\n    Adds a \"Depth Haze\" mask: the matte is a full-range depth mask, inverted, so\n    its weight tracks distance (the subject ~0, the far wall ~max); the grade is\n    negative dehaze (adds haze in-shader) + desaturation + a lifted black point\n    and shadows + a background defocus (per-mask blur, D-027), all scaled by\n    `amount` (1.0 = default, 0.4 subtle, 1.6 heavy).\n\n    protect_subject (default true): a tracked ai-subject mask's own grade\n    composites on top and keeps the subject punchy, so nothing extra is needed.\n    Caveat: a subject physically in the far-depth band still picks up some haze.\n\n    Depth: by default a single-frame Depth Anything V2 bake (static \u2014 fine for a\n    locked-off shot; flickers on a moving camera). `tracked=true` (video only)\n    also kicks off a `depth_track` \u2014 a per-frame temporally-consistent depth map\n    (Video Depth Anything) that the render then follows frame-by-frame. That runs\n    in the background (minutes on a long clip); poll `depth_track_status`. You\n    can also call `depth_track` later to upgrade an existing haze mask.\n\n    Grade by the numbers: `inspect_color` before and after \u2014 whole-frame\n    saturation should drop and the black point lift; `sample` a background pixel\n    vs a subject pixel and confirm the background moved more.\n    Returns {maskId, subMaskId, amount, tracked} and the rendered frame.",
       "inputSchema": {
@@ -9667,6 +9685,44 @@
         {
           "type": "text",
           "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  }\n}"
+        }
+      ]
+    },
+    {
+      "tool": "ai_env_retry",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "ai_env_retry",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "ai_env_status",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "ai_env_status",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
         }
       ]
     },

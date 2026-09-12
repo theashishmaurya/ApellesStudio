@@ -30285,6 +30285,40 @@ seconds after install. The `ai_env_status` / `ai_env_retry` MCP tools expose the
 state and the identical retry to an agent, and the existing AI-backed tools now return a
 distinguishable "still bootstrapping" answer instead of an unexplained failure.
 
+Three things about the agent half are worth writing down, because each was a real choice
+(full detail in `docs/notes/ai-env-bootstrap.md`; the tool count goes 161 → **163**):
+
+- **The two ops are answered natively by `control.rs`, in Rust, with no frontend round
+  trip** — the D-210 `native_op` path, and its first *shipped* members (the debug pair
+  there stays `#[cfg(debug_assertions)]`). The bar for that list is unchanged: the answer
+  is a fact about this process, not about the store. The bootstrap clears it twice —
+  there is no store copy of the phase, and the moment the answer is most wanted is
+  *during* startup, which is precisely when a forwarded op cannot be answered at all
+  (B-071). So neither frontend registry gains an entry.
+- **The "not ready" answer is a normal `{ok: false, error}` envelope with a stable machine
+  token** — `apelles_ai::ai_env::NOT_READY_CODE`, the literal `ai_env_not_ready` — followed
+  by the phase, the package counts and the retry schedule, then the caller's own underlying
+  error verbatim. Never an exception: raising is what once reduced a real explanation to a
+  bare "Error executing tool `<name>`" (B-153), which is the same defect this is removing.
+- **The check lives app-side at the *sidecar call site*, not in either MCP server, not in
+  `control.rs`, and not in the op handlers.** One function, `ai_env::explain_unreachable`,
+  which prepends the explanation and never replaces the diagnosis. An op-name gate in
+  `control.rs` would break its "knows no op list" boundary (D-020) *and be wrong* —
+  `add_subject_mask` on a still image runs ONNX SAM in-process and needs no Python at all,
+  so it must not be gated. The sidecar boundary is the only place that is both exhaustive
+  and correct, and it covers every future AI feature for free.
+
+**Two defects this pass turned up, both filed rather than quietly patched.** **B-180** —
+`retry_now()` claimed success for `Phase::Unavailable`, where `supervise` has already
+returned and no thread is left to wake; the same lie this decision refused to tell with an
+automatic timer, told manually. **B-175** — `handleGenerateAiMask` / `handleTrackSubject`
+swallowed a failed AI call into a GUI toast, so `add_subject_mask` and `track_subject`
+reported `ok: true` for work that never happened; without fixing that, neither tool could
+have surfaced the new answer at all. **B-177** — `build.rs` re-copied its staged
+`resources/ai-env/` files on every build, bumping their mtime under `tauri dev`'s watcher,
+so `npm run tauri:dev` rebuild-looped forever in any checkout where they were not already
+current; found the first time this pass tried to drive a real app.
+
 **Crate boundary.** The state machine, the `uv` invocations and all the tests are
 `apelles_ai::ai_env`; the app keeps only the two `#[tauri::command]` wrappers, the event
 emit, and the bundled-vs-dev path resolution (D-039 §1, D-145: commands do not move,

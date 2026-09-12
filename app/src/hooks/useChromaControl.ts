@@ -683,7 +683,11 @@ export function useChromaControl() {
         editor().setEditor({ activeMaskContainerId: container.id, activeMaskId: sub.id });
 
         // routes to `chroma_subject_mask` on a video (SAM 2 sidecar), ONNX SAM on a still
-        await ai.handleGenerateAiMask(sub.id, { x: x0, y: y0 }, { x: x1, y: y1 });
+        const gen: any = await ai.handleGenerateAiMask(sub.id, { x: x0, y: y0 }, { x: x1, y: y1 });
+        // B-175 — the matte can fail (no AI sidecar yet, D-315's env still building) while
+        // the container and sub-mask above were created fine. Reporting `ok: true` for
+        // that told the caller a mask exists that has no matte behind it.
+        if (gen?.error) return { maskId: container.id, subMaskId: sub.id, bbox, mode: sub.mode, error: gen.error };
         return { maskId: container.id, subMaskId: sub.id, bbox, mode: sub.mode };
       },
 
@@ -901,7 +905,8 @@ export function useChromaControl() {
         const subMaskId = a?.sub_mask_id ?? a?.subMaskId;
         if (!subMaskId) return { error: 'sub_mask_id required' };
         const mode = a?.mode === 'quality' ? 'quality' : 'fast';
-        await ai.handleTrackSubject(subMaskId, mode);
+        const res: any = await ai.handleTrackSubject(subMaskId, mode);
+        if (res?.error) return { subMaskId, mode, error: res.error }; // B-175
         return { subMaskId, mode };
       },
 

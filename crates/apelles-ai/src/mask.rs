@@ -128,27 +128,36 @@ pub async fn segment(
         .send()
         .await
         .map_err(|e| {
-            format!(
+            crate::ai_env::explain_unreachable(format!(
                 "Apelles AI sidecar unreachable ({e}). The app auto-starts it (D-028) — \
                  check the app log for '[sidecar]' lines. If you run it yourself, set \
                  CHROMA_AI_NO_SPAWN=1; otherwise it will keep retrying. Manual start still \
                  works: cd ai && ./run.sh"
-            )
+            ))
         })?;
 
     let status = resp.status();
-    let body = resp.bytes().await.map_err(|e| format!("read /segment body: {e}"))?;
+    let body = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("read /segment body: {e}"))?;
     if !status.is_success() {
         return Err(format!(
             "sidecar /segment: HTTP {status} — {}",
-            String::from_utf8_lossy(&body).chars().take(300).collect::<String>()
+            String::from_utf8_lossy(&body)
+                .chars()
+                .take(300)
+                .collect::<String>()
         ));
     }
     let seg: RawSegmentResponse = serde_json::from_slice(&body).map_err(|e| {
         format!(
             "decode /segment ({e}) — {} bytes, starts: {}",
             body.len(),
-            String::from_utf8_lossy(&body).chars().take(200).collect::<String>()
+            String::from_utf8_lossy(&body)
+                .chars()
+                .take(200)
+                .collect::<String>()
         )
     })?;
     if let Some(err) = seg.error {
@@ -204,8 +213,11 @@ pub async fn track(
     }
     if let Some(pts) = points {
         if !pts.is_empty() {
-            body["points"] =
-                json!(pts.iter().map(|p| [p.x, p.y, p.label as f64]).collect::<Vec<_>>());
+            body["points"] = json!(
+                pts.iter()
+                    .map(|p| [p.x, p.y, p.label as f64])
+                    .collect::<Vec<_>>()
+            );
         }
     }
 
@@ -215,11 +227,11 @@ pub async fn track(
         .send()
         .await
         .map_err(|e| {
-            format!(
+            crate::ai_env::explain_unreachable(format!(
                 "Apelles AI sidecar unreachable ({e}). The app auto-starts it (D-028) — check \
                  the app log for '[sidecar]' lines (CHROMA_AI_NO_SPAWN=1 disables the auto-start; \
                  manual start: cd ai && ./run.sh)."
-            )
+            ))
         })?
         .json()
         .await
@@ -347,7 +359,10 @@ mod tests {
     #[test]
     fn build_segment_prompt_turns_a_tiny_drag_into_a_click() {
         let (pts, send_box) = build_segment_prompt(&[], Some((10.0, 10.0, 12.0, 11.0)));
-        assert!(send_box.is_none(), "a <8px drag on either axis must not become a box");
+        assert!(
+            send_box.is_none(),
+            "a <8px drag on either axis must not become a box"
+        );
         assert_eq!(pts.len(), 1);
         assert_eq!(pts[0], [11.0, 10.5, 1.0]);
     }
@@ -356,12 +371,27 @@ mod tests {
     fn build_segment_prompt_keeps_a_real_box_normalized() {
         let (pts, send_box) = build_segment_prompt(&[], Some((50.0, 40.0, 10.0, 20.0)));
         assert!(pts.is_empty());
-        assert_eq!(send_box, Some((10.0, 20.0, 50.0, 40.0)), "min/max normalized regardless of drag direction");
+        assert_eq!(
+            send_box,
+            Some((10.0, 20.0, 50.0, 40.0)),
+            "min/max normalized regardless of drag direction"
+        );
     }
 
     #[test]
     fn build_segment_prompt_passes_explicit_points_through() {
-        let points = vec![MaskPoint { x: 1.0, y: 2.0, label: 1 }, MaskPoint { x: 3.0, y: 4.0, label: 0 }];
+        let points = vec![
+            MaskPoint {
+                x: 1.0,
+                y: 2.0,
+                label: 1,
+            },
+            MaskPoint {
+                x: 3.0,
+                y: 4.0,
+                label: 0,
+            },
+        ];
         let (pts, send_box) = build_segment_prompt(&points, None);
         assert_eq!(pts, vec![[1.0, 2.0, 1.0], [3.0, 4.0, 0.0]]);
         assert!(send_box.is_none());
@@ -409,7 +439,11 @@ mod tests {
         write_png(&tmp, 10, 200);
 
         let img = mask_at(tmp.to_str().unwrap(), 12).expect("a PNG at or before frame 12");
-        assert_eq!(img.get_pixel(0, 0).0[0], 200, "frame 12 should hold the frame-10 sample");
+        assert_eq!(
+            img.get_pixel(0, 0).0[0],
+            200,
+            "frame 12 should hold the frame-10 sample"
+        );
 
         std::fs::remove_dir_all(&tmp).ok();
     }

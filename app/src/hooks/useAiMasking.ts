@@ -298,9 +298,14 @@ export function useAiMasking() {
     [setAdjustments],
   );
 
+  // Apelles (B-175): returns `{ error }` on failure instead of only toasting it.
+  // A toast is the GUI's answer and reaches nobody else — the MCP `add_subject_mask`
+  // op awaits this and used to report `ok: true` for a matte that was never generated,
+  // which is the worst shape of "unexplained failure": no explanation and no failure.
+  // `handleTrackDepth` below already had this shape; these two now match it.
   const handleGenerateAiMask = async (subMaskId: string, startPoint: Coord, endPoint: Coord) => {
     const { selectedImage, adjustments, patchesSentToBackend } = useEditorStore.getState();
-    if (!selectedImage?.path) return;
+    if (!selectedImage?.path) return { error: 'no image or clip is open' };
     setEditor({ isGeneratingAiMask: true });
 
     try {
@@ -335,8 +340,10 @@ export function useAiMasking() {
       const mergedParameters = { ...(subMask?.parameters || {}), ...newParameters };
       patchesSentToBackend.delete(subMaskId);
       updateSubMask(subMaskId, { parameters: mergedParameters });
+      return { subMaskId };
     } catch (error) {
       toast.error(`AI Mask Failed: ${error}`);
+      return { error: String((error as Error)?.message || error) };
     } finally {
       setEditor({ isGeneratingAiMask: false });
     }
@@ -384,8 +391,13 @@ export function useAiMasking() {
         updateSubMask(subMaskId, { parameters: { ...(cur?.parameters || {}), chromaTrackDir: dir } });
       }
       useChromaStore.getState().bumpFrameNonce(); // re-render this frame from the cache
+      return { subMaskId, dir };
     } catch (err: any) {
+      // B-175 — see `handleGenerateAiMask`: a toast is the GUI's answer and reaches no
+      // MCP caller, which is why `track_subject` used to report success for a track
+      // that never ran.
       toast.error(`Track Subject failed: ${err?.message || String(err)}`);
+      return { error: String(err?.message || err) };
     } finally {
       setTrackProgress(null);
     }

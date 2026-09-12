@@ -21,6 +21,15 @@ answer anything. `native_op()` returns `None` for every op it doesn't own, so
 it can never shadow a real frontend one. See
 `docs/notes/debug-screenshot-tool.md`.
 
+**Two more joined it on 2026-09-13 (D-315):** `ai_env_status` and `ai_env_retry`, the
+first-launch AI-environment build's own surface. Same bar, met twice — the bootstrap is
+a Rust state machine (`apelles_ai::ai_env`) with no store copy to consult, *and* the
+moment its answer is most wanted is during startup, which is exactly when a forwarded op
+cannot be answered at all (B-071's `NotReady`). Unlike D-210's pair these are **not**
+`#[cfg(debug_assertions)]`: "why can't I use the AI features yet" is a shipped,
+user-facing answer. The debug pair keeps its gate, in `debug_native_op()`. See
+`docs/notes/ai-env-bootstrap.md`.
+
 ---
 
 ## Part 1 — Rust control server  ·  `app/src-tauri/src/chroma/control.rs` (new)

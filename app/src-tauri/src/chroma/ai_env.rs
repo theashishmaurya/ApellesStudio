@@ -156,6 +156,51 @@ mod tests {
         }
     }
 
+    /// The two ops D-315 adds are a four-way string agreement that no compiler checks:
+    /// `control.rs` answers them natively, both MCP servers post them, and the machine
+    /// token their failure carries is named in both tool descriptions. A rename on any
+    /// one side is silent — the op would fall through to `dispatch`, reach
+    /// `useChromaControl`'s catch-all registry, and come back "unknown op" only at
+    /// runtime, on a machine where the AI environment happens not to be ready.
+    #[test]
+    fn the_ai_env_ops_are_spelled_the_same_everywhere_they_are_written_down() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..");
+        let read = |rel: &str| {
+            std::fs::read_to_string(repo.join(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"))
+        };
+
+        let control = read("app/src-tauri/src/chroma/control.rs"); // answers them
+        let python = read("mcp/server.py"); // posts them
+        let rust = read("crates/apelles-mcp/src/tools/ai_env.rs"); // posts them
+
+        for op in ["ai_env_status", "ai_env_retry"] {
+            assert!(
+                control.contains(&format!("\"{op}\" =>")),
+                "control.rs must answer '{op}' natively"
+            );
+            assert!(
+                python.contains(&format!("_op(\"{op}\")")),
+                "mcp/server.py must post '{op}'"
+            );
+            assert!(
+                rust.contains(&format!("self.op(\"{op}\"")),
+                "crates/apelles-mcp must post '{op}'"
+            );
+        }
+
+        // The machine token the gated AI tools fail with. Both descriptions name it, so
+        // an agent is told what to match on by the tool surface itself.
+        let code = apelles_ai::ai_env::NOT_READY_CODE;
+        for (what, src) in [("mcp/server.py", &python), ("apelles-mcp", &rust)] {
+            assert!(
+                src.contains(code),
+                "{what}'s ai_env_status description must name the `{code}` token it explains"
+            );
+        }
+    }
+
     /// The bundled `uv` has to actually be declared as an `externalBin`, or the whole
     /// mechanism ships with nothing to run. It lives in the macOS-only config because
     /// v1 is macOS ARM (`docs/02-scope.md`) and a Linux build must not break on a

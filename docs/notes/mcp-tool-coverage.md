@@ -447,6 +447,38 @@ commands, which had been ungated). Frontend: `import.meta.env.DEV` plus a
 dynamic import, so the registry is dropped from a production bundle. Scope,
 status and the live verification loop: `docs/notes/debug-tooling.md`.
 
+## AI environment — CLOSED, 2 tools (D-315, 2026-09-13)
+
+`ai_env_status`, `ai_env_retry`.
+
+Not a tab. Every AI-backed tool above — `add_subject_mask`, `track_subject`,
+`depth_track` in Colorist; `editor_get_transcript`, `editor_analyze_video` in Edit —
+runs through one of two Python sidecars, and both run from a single ~1.6 GB virtual
+environment the app now builds itself, in the background, from first launch (D-315).
+Until that finishes, all five fail. The state of the build is therefore part of the
+agent-facing surface, not an implementation detail, and these two are it:
+
+| tool | what it does |
+| --- | --- |
+| `ai_env_status` | `{phase, detail, packagesDone, packagesTotal, attempt, retryInSecs, lastError, venv, elapsedSecs}`. `phase` is the field to branch on: `ready`, one of five working phases, `failed` (another attempt already scheduled in `retryInSecs`), or `unavailable` (cannot be built here at all — **not** retried, so waiting is pointless). |
+| `ai_env_retry` | the same snapshot plus `started` — starts an attempt now instead of waiting out the backoff. `started: false` means there was nothing to trigger, which is a normal answer. |
+
+Like D-210's pair these are answered by the control server **itself**, in Rust
+(`native_op` in `control.rs`), rather than forwarded to a frontend `OPS` entry — but
+unlike that pair they are **shipped, not debug-gated**. The reason for the native path
+is the same one and then one more: there is no store copy of the bootstrap phase to
+consult, *and* the moment the answer is most wanted is during startup, which is exactly
+when a forwarded op cannot be answered at all (B-071). So neither frontend registry
+gains an entry for them.
+
+The other half of this, and the reason the tools are worth having: the five AI-backed
+tools above now fail with a **stable machine token**, `ai_env_not_ready`, followed by
+the phase and the package counts, instead of a bare connection error an agent could not
+tell from a crashed sidecar or a bad request. Generated app-side at the sidecar call
+site (`apelles_ai::ai_env::explain_unreachable`), so the GUI gets the same explanation
+and every future AI feature is covered without doing anything. Full contract:
+`docs/notes/ai-env-bootstrap.md`.
+
 ## When shipping something new (going forward)
 
 Before calling a new capability "done," check: does this need an MCP tool, and if

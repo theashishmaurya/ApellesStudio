@@ -162,6 +162,116 @@ fn phases_serialize_as_the_camel_case_names_the_ui_matches_on() {
     }
 }
 
+/// `Phase::as_str` is what goes into the `ai_env_not_ready` message a client matches
+/// phases out of, and `serde` is what goes onto the wire. Two spellings of one fact, in
+/// two places, is exactly the kind of pair that drifts — so they are asserted equal
+/// rather than each asserted separately.
+#[test]
+fn the_phase_name_in_an_error_message_is_the_same_one_the_wire_carries() {
+    for phase in [
+        Phase::Unknown,
+        Phase::Checking,
+        Phase::InstallingPython,
+        Phase::CreatingVenv,
+        Phase::InstallingPackages,
+        Phase::Repairing,
+        Phase::Ready,
+        Phase::Failed,
+        Phase::Unavailable,
+    ] {
+        assert_eq!(
+            serde_json::to_string(&phase).unwrap(),
+            format!("\"{}\"", phase.as_str()),
+        );
+    }
+}
+
+// ---- D-315: the "still bootstrapping" contract -----------------------------------
+
+/// The whole point of the message: a caller can tell "wait, this will work later" from
+/// "the sidecar crashed" without parsing prose, and can then decide *whether* to wait
+/// from the phase and the package counts carried in the same line.
+#[test]
+fn a_not_ready_environment_explains_itself_with_the_machine_token_and_the_progress() {
+    let s = AiEnvStatus {
+        phase: Phase::InstallingPackages,
+        packages_done: 47,
+        packages_total: 91,
+        attempt: 1,
+        elapsed_secs: 63,
+        ..Default::default()
+    };
+    let msg = s
+        .not_ready_message()
+        .expect("not ready must explain itself");
+    assert!(msg.starts_with(NOT_READY_CODE), "{msg}");
+    assert!(msg.contains("installingPackages"), "{msg}");
+    assert!(msg.contains("47 of 91"), "{msg}");
+    assert!(msg.contains("ai_env_status"), "{msg}");
+    assert!(msg.contains("ai_env_retry"), "{msg}");
+}
+
+/// `failed` and `unavailable` are different advice, and the message has to give the
+/// different advice — otherwise the distinction D-315 drew in the state machine is lost
+/// at the one place a caller actually reads it.
+#[test]
+fn failed_promises_a_retry_and_unavailable_refuses_to() {
+    let failed = AiEnvStatus {
+        phase: Phase::Failed,
+        attempt: 3,
+        retry_in_secs: Some(45),
+        last_error: Some("network is unreachable".into()),
+        ..Default::default()
+    }
+    .not_ready_message()
+    .expect("failed is not ready");
+    assert!(failed.contains("retry is in 45s"), "{failed}");
+    assert!(failed.contains("network is unreachable"), "{failed}");
+
+    let unavailable = AiEnvStatus {
+        phase: Phase::Unavailable,
+        detail: Some("CHROMA_AI_ENV_NO_BOOTSTRAP is set".into()),
+        ..Default::default()
+    }
+    .not_ready_message()
+    .expect("unavailable is not ready");
+    assert!(unavailable.contains("CANNOT be built"), "{unavailable}");
+    assert!(
+        unavailable.contains("waiting will not help"),
+        "{unavailable}"
+    );
+    assert!(
+        unavailable.contains("CHROMA_AI_ENV_NO_BOOTSTRAP"),
+        "{unavailable}"
+    );
+}
+
+/// A ready environment must add nothing at all. Every AI failure would otherwise be
+/// mislabelled a bootstrap problem, which is the same "unexplained error" defect this
+/// change exists to remove, pointed the other way.
+#[test]
+fn a_ready_environment_leaves_a_real_failure_exactly_as_it_was() {
+    let ready = AiEnvStatus {
+        phase: Phase::Ready,
+        ..Default::default()
+    };
+    assert!(ready.not_ready_message().is_none());
+}
+
+/// `explain_unreachable` PREPENDS; it never replaces. The environment being unbuilt is
+/// a very likely explanation for a refused connection but never a certain one, so
+/// throwing the caller's own diagnosis away would trade one unexplained failure for
+/// another.
+#[test]
+fn the_underlying_error_is_never_discarded() {
+    // Whatever the live phase is in this test process, the caller's hint survives.
+    let out = explain_unreachable("connection refused on 127.0.0.1:8765");
+    assert!(
+        out.contains("connection refused on 127.0.0.1:8765"),
+        "{out}"
+    );
+}
+
 #[test]
 fn the_status_wire_shape_is_camel_case_and_omits_empty_options() {
     let s = AiEnvStatus {
@@ -637,10 +747,20 @@ fn retry_now_declines_only_while_an_attempt_is_in_flight() {
          deleted by hand is reported healthy forever"
     );
 
-    for phase in [Phase::Failed, Phase::Unavailable, Phase::Unknown] {
+    for phase in [Phase::Failed, Phase::Unknown] {
         set_phase(phase);
         assert!(retry_now(), "{phase:?} must accept a retry");
     }
+
+    // B-180 — `unavailable` is the one that must be refused: `supervise` has already
+    // RETURNED by the time that phase is set, so there is no thread left to wake, and
+    // reporting that an attempt started would promise one that can never happen. The
+    // same lie D-315 refused to tell with an automatic timer.
+    set_phase(Phase::Unavailable);
+    assert!(
+        !retry_now(),
+        "unavailable means nothing about trying again changes the answer"
+    );
 
     // Leave the global as we found it, and drop the flag this test just set.
     if let Ok(mut r) = shared().retry_requested.lock() {

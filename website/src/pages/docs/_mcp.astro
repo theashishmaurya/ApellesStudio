@@ -198,10 +198,11 @@ Content-Type: application/json
               The app is not running, or it is on another port. Start it, or set
               <code> {CONNECTION.portEnvVar}</code> to match.
             </dd>
-            <dt>&ldquo;&hellip; did not respond (its window may be closed or busy)&rdquo;</dt>
+            <dt>&ldquo;&hellip; got no reply from the frontend within &hellip;&rdquo;</dt>
             <dd>
-              A 504 from the bridge: the window is closed, or nothing is open. The bridge only runs
-              while the editor view is mounted.
+              A 504 from the bridge: the window may be closed or busy. Treat it as inconclusive
+              rather than failed &mdash; the app keeps working after the bridge gives up, so a slow
+              op can still complete. Re-read the state before retrying.
             </dd>
             <dt>A response with a histogram but no image</dt>
             <dd>

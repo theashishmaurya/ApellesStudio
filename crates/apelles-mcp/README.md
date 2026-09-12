@@ -19,7 +19,7 @@ render  →  { rendered frame, histogram, adjustments, scopes }
 
 **Two HTTP hops, opposite directions**, and it is worth keeping them straight: 19790 is
 how a *client reaches this server* (`src/serve.rs`); 19788 is how a *tool reaches the app*
-(`src/transport.rs`). Both transports above expose the identical 161 tools off the same
+(`src/transport.rs`). Both transports above expose the identical 163 tools off the same
 `ApellesMcp` — nothing in `src/tools/` knows which one it is running on.
 
 ## Boundary
@@ -39,7 +39,7 @@ it.**
 
 ## Status
 
-The Rust replacement for `mcp/server.py` (D-020). **All 161 tools are ported and pass the
+The Rust replacement for `mcp/server.py` (D-020). **All 163 tools are ported and pass the
 parity gate** — both servers publish an identical tool set over a real MCP session.
 `tests/golden/ported.json` is the ledger, and the tests check the live server against it
 in both directions, so a tool cannot be dropped or added unnoticed.
@@ -99,7 +99,7 @@ Either way the Apelles app must be running (the control server binds on app star
 something open. `CHROMA_CONTROL_PORT` overrides *that* port; default 19788, the same
 default the app and the Python server use.
 
-A **release** build publishes 152 tools; a **debug** build also publishes the nine
+A **release** build publishes 154 tools; a **debug** build also publishes the nine
 `debug_*` ones, which are behind a real `#[cfg(debug_assertions)]` gate because internal
 debug tooling is never shipped.
 
@@ -112,11 +112,11 @@ mcp/.venv/bin/python crates/apelles-mcp/parity/live_smoke.py     # against a run
 ```
 
 `tests/parity.rs` replays a golden corpus captured from the Python server — every tool's
-name, description and schema, and for 237 recorded calls the exact ops emitted and content
+name, description and schema, and for 239 recorded calls the exact ops emitted and content
 rendered. It needs no Apelles app. `tests/http_transport.rs` (D-313) covers what parity
 structurally cannot: it binds the real router on an ephemeral port, dials it with a real
 streamable-HTTP client, and checks the surface reached *by URL* is the identical one —
-same instructions, same 161 tools, same op emitted, same content back — plus that
+same instructions, same 163 tools, same op emitted, same content back — plus that
 `/health` answers in the shape the supervisor polls for. `parity/live_smoke.py` covers the
 remaining gap: that this really reaches the real control server. All three, and what each
 compares how, are documented in `docs/notes/mcp-rust-port.md`.
@@ -132,7 +132,7 @@ compares how, are documented in `docs/notes/mcp-rust-port.md`.
 | `src/args.rs` | `WireArgs` — building an `args` object with omit-when-absent as a first-class operation |
 | `src/schemas.rs` | the shared nested-argument shapes (the Rust port of `mcp/schemas.py`, D-310) |
 | `src/server.rs` | `ApellesMcp`: the handler, the server instructions, the merged router |
-| `src/tools/` | the tools, one module per tab — `colorist` / `edit` / `motion` / `debug` |
+| `src/tools/` | the tools, one module per tab — `colorist` / `edit` / `motion` / `debug` — plus `ai_env`, which is deliberately not a tab (D-315: `control.rs` answers those two natively, and the environment they report on backs AI features in two tabs) |
 | `parity/` | the harness's recording half, plus the live smoke test |
 | `tests/golden/` | the captured corpus and the porting ledger |
 

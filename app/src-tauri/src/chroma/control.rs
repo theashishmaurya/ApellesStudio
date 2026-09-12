@@ -20,19 +20,27 @@
 //! knows nothing about what the op does, only how long the caller says to wait.
 //!
 //! The one exception is [`native_op`] (D-210): a short, explicit list of ops
-//! that have no frontend state to consult and are answered here, in Rust —
-//! today the debug webview screenshot and its pixel probe. Those deliberately
-//! do NOT round-trip through the frontend, because the single most valuable
-//! moment to photograph the UI is when the frontend is too wedged to answer
-//! (and a screenshot is a picture of the webview, not a fact about the store,
-//! so routing it through the store would buy nothing anyway).
+//! that have no frontend state to consult and are answered here, in Rust. Those
+//! deliberately do NOT round-trip through the frontend, because there is nothing
+//! in the store for them to consult and the moment each is most worth having is
+//! the moment the frontend cannot answer:
 //!
-//! Those two are also the only thing here that is `#[cfg(debug_assertions)]`
+//!   - `debug_screenshot` / `debug_sample_pixel` (D-210) — a screenshot is a
+//!     picture of the webview, not a fact about the store, and the single most
+//!     valuable time to take one is when the frontend is too wedged to reply.
+//!   - `ai_env_status` / `ai_env_retry` (D-315) — the AI-environment bootstrap
+//!     is a Rust state machine (`apelles_ai::ai_env`) with no store copy, and it
+//!     is running at its most interesting *during* startup, before the frontend
+//!     registries have subscribed at all.
+//!
+//! Only the `debug_*` pair is `#[cfg(debug_assertions)]`
 //! (B-100/D-219): internal debug tooling is never shipped, so a release build
-//! has no [`native_op`] arms at all and forwards every op onward. The
-//! FRONTEND-side `debug_*` ops (D-219's UI-state / DOM-tree / frame-timing
-//! registry, `@apelles/debug`) need no special handling here — they are
-//! ordinary forwarded ops, gated on their own side by `import.meta.env.DEV`.
+//! has no [`debug_native_op`] arms at all and forwards those two onward; the
+//! AI-env pair ships, because "why can't I use the AI features yet" is a
+//! user-facing answer. The FRONTEND-side `debug_*` ops (D-219's UI-state /
+//! DOM-tree / frame-timing registry, `@apelles/debug`) need no special handling
+//! here — they are ordinary forwarded ops, gated on their own side by
+//! `import.meta.env.DEV`.
 //!
 //! **Cold-start readiness (B-071).** This server binds long before any frontend
 //! listener exists: [`serve`] is spawned from `lib.rs`'s `.setup()`, i.e. while
@@ -359,13 +367,58 @@ impl BridgeRegistry {
 /// answer with a reason in it, not a transport failure, and the MCP client
 /// reads `ok`/`error` rather than the status code.
 ///
-/// B-100/D-219 — this whole function is gated with the module it calls into.
-/// Every op it answers is internal debug tooling, and internal debug tooling
-/// is never shipped, so a release build gets the [`no-op twin`](native_op)
-/// below and forwards everything to the frontend exactly as it did before
-/// D-210 introduced the native path.
-#[cfg(debug_assertions)]
+/// **This is still not an op registry.** It is a short, explicit list of ops that
+/// have no frontend state to consult *at all*, and the bar for joining it is
+/// exactly that: the answer is a fact about this process, not about the store.
+/// Everything that is a fact about the store is forwarded, as D-020 requires.
+///
+/// **The AI-env pair (D-315) is the first shipped member.** `ai_env_status` /
+/// `ai_env_retry` read and poke a state machine that lives entirely in
+/// `apelles_ai::ai_env` — there is no store copy of it to keep in sync, and the
+/// moment the answer is most wanted is early in startup, before the frontend
+/// registries have subscribed, which is precisely when a forwarded op cannot be
+/// answered ([`BridgeErr::NotReady`]). Routing them through the store would
+/// therefore buy nothing and lose the one case that matters.
 fn native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Option<String> {
+    let result = match op {
+        // D-315 — the AI-environment bootstrap. Shipped, not debug-gated: the
+        // reason an AI feature is unavailable is a user-facing fact.
+        "ai_env_status" => serde_json::to_value(apelles_ai::ai_env::status_snapshot())
+            .map_err(|e| format!("could not serialize the AI-env status: {e}")),
+        "ai_env_retry" => {
+            let started = apelles_ai::ai_env::retry_now();
+            let status = apelles_ai::ai_env::status_snapshot();
+            serde_json::to_value(status)
+                .map(|mut v| {
+                    // `started: false` is a real answer, not a failure — it means
+                    // there was nothing to retry (already ready, or an attempt is
+                    // already in flight) and the caller should say so rather than
+                    // show a spinner for a click that did nothing.
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.insert("started".into(), serde_json::Value::Bool(started));
+                    }
+                    v
+                })
+                .map_err(|e| format!("could not serialize the AI-env status: {e}"))
+        }
+        _ => return debug_native_op(app, op, args),
+    };
+
+    Some(match result {
+        Ok(value) => serde_json::json!({ "ok": true, "result": value }).to_string(),
+        Err(e) => {
+            log::warn!("[chroma::control] native op '{op}' failed: {e}");
+            err_body(&e)
+        }
+    })
+}
+
+/// The debug-only half of [`native_op`] (B-100/D-219): internal debug tooling is
+/// never shipped, so a release build gets the [no-op twin](debug_native_op)
+/// below and forwards these two to the frontend exactly as it did before D-210
+/// introduced the native path.
+#[cfg(debug_assertions)]
+fn debug_native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Option<String> {
     let result = match op {
         "debug_screenshot" => {
             let window = args.get("window").and_then(|v| v.as_str());
@@ -389,12 +442,15 @@ fn native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Opti
     })
 }
 
-/// Release-build twin of [`native_op`] (B-100/D-219): there are no native ops
-/// once the debug tooling is compiled out, so everything is forwarded to the
-/// frontend. A real function rather than a `cfg` inside the caller, so the one
-/// call site reads the same in both configurations.
+/// Release-build twin of [`debug_native_op`] (B-100/D-219). A real function
+/// rather than a `cfg` inside the caller, so the one call site reads the same in
+/// both configurations.
 #[cfg(not(debug_assertions))]
-fn native_op(_app: &tauri::AppHandle, _op: &str, _args: &serde_json::Value) -> Option<String> {
+fn debug_native_op(
+    _app: &tauri::AppHandle,
+    _op: &str,
+    _args: &serde_json::Value,
+) -> Option<String> {
     None
 }
 

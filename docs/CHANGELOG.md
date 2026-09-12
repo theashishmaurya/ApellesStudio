@@ -33,6 +33,22 @@ One or two lines per session. Detail lives in the decision it references.
   a raw connection error. A real bug caught by its own test: `uv venv` refuses an
   existing environment without `--clear`, so the heal path could never have rebuilt a
   torn venv.
+- **2026-09-13** — **D-315, the agent half:** `ai_env_status` / `ai_env_retry` land in
+  BOTH MCP servers (161 -> **163** tools, parity harness re-captured and passing), and
+  the five AI-backed tools now fail with a stable `ai_env_not_ready` token carrying the
+  phase and the package counts instead of a bare connection error nobody could tell from
+  a crashed sidecar. Both ops are answered natively by `control.rs` in Rust — the D-210
+  path's first *shipped* members, because the bootstrap has no store state and is most
+  interesting during startup, when a forwarded op cannot be answered at all (B-071). The
+  not-ready check sits at the one sidecar call site rather than in either server or in an
+  op-name list, so the GUI gets it too and a still-image subject mask (ONNX SAM, no
+  Python) is correctly never gated. **B-180:** `retry_now()` promised a retry in the one
+  phase whose supervisor thread has already exited. **B-175:** `add_subject_mask` /
+  `track_subject` reported `ok: true` for an AI call that failed — the error was swallowed
+  into a GUI toast. **B-177:** `npm run tauri:dev` rebuild-looped forever in a fresh
+  checkout — `build.rs` re-copied a watched resource on every build. **B-178** filed,
+  not fixed: `cargo test -p apelles` has been red since B-171 (four tests in the app
+  crate still assume the auto-placement that change deliberately removed).
 - **2026-09-12** — **D-314: both Python sidecars now run from ONE shared venv
   (`ai-env/.venv`) — 3.5 GB of duplicated wheels down to 1.8 GB.** They stay two
   separate PROCESSES; only the environments merged. D-189 split them because

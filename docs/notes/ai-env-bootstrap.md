@@ -112,7 +112,12 @@ Two terminal-ish states that a UI must not confuse:
 - **`unavailable`** — cannot be attempted at all (no bundled `uv`, no lock file, or
   `CHROMA_AI_ENV_NO_BOOTSTRAP` is set). **Not** retried on a timer, because nothing
   about waiting would change it, and a UI promising an automatic retry there would be
-  lying.
+  lying. It is also the one phase `retry_now()` refuses (B-180): `supervise` has
+  *returned* by then, so there is no thread left to wake and a manual "Retry now" would
+  be the same lie told by hand. Note that is the opposite call from `ready`, which
+  `retry_now()` deliberately *accepts* as a re-verify — the two are opposite for opposite
+  reasons: `ready` is a cached answer worth invalidating, `unavailable` is a standing
+  fact about the machine with nothing listening for the request.
 
 `Phase::is_working()` is the single predicate that decides whether a surface says
 "still setting up, hang on" or "this is broken, here is a retry".
@@ -228,6 +233,101 @@ Real numbers from this machine (M-series, ~200 Mbit), `uv` 0.12.13:
 
 The `uv` binary itself is **36,449,104 bytes (34.8 MiB)** — notably larger than uv's
 reputation for "~15 MB", worth knowing since it is paid in the installer.
+
+## The agent-facing surface: two tools, and one distinguishable failure
+
+`CLAUDE.md`: every feature is built for a human AND an AI. The human half is the
+Settings card and the per-feature "still setting up" state. This is the other half.
+
+### `ai_env_status` / `ai_env_retry`
+
+Two MCP tools, in both servers — `mcp/server.py` and
+`crates/apelles-mcp/src/tools/ai_env.rs`, byte-identical descriptions, gated by D-312's
+parity harness.
+`ai_env_status` returns the [`AiEnvStatus`](#the-state-machine) snapshot above verbatim;
+`ai_env_retry` returns the same snapshot plus `started` — `false` when there was nothing
+to trigger, which is a normal answer and not a failure.
+
+**They are answered by `control.rs` in Rust, natively — no frontend round trip.** That
+is the D-210 `native_op` path, and these are its first *shipped* members (the two debug
+ops there stay `#[cfg(debug_assertions)]`). The bar for joining that list is unchanged:
+*the answer is a fact about this process, not about the store.* The bootstrap qualifies
+twice over —
+
+- there is no store copy of the phase to consult, so forwarding would only be a longer
+  route to the same `apelles_ai::ai_env::status_snapshot()` call, and
+- the moment the answer is most wanted is *during* startup, which is exactly when a
+  forwarded op cannot be answered at all (B-071's `BridgeErr::NotReady`). A status tool
+  that goes dark precisely while the thing it reports on is running would be useless.
+
+The two ops therefore need **no frontend op-registry entry**, in either registry.
+
+### The "still bootstrapping" contract
+
+Before D-315, calling `add_subject_mask`, `track_subject`, `depth_track`,
+`editor_get_transcript` or `editor_analyze_video` on a machine whose environment was
+still being built produced a bare connection error. An agent could not tell three very
+different situations apart — *wait, this will work in a minute*; *the sidecar crashed*;
+*your arguments were wrong* — and the advice for each is opposite.
+
+The fix has two halves.
+
+**1. A stable machine token.** `apelles_ai::ai_env::NOT_READY_CODE` — the literal string
+`ai_env_not_ready` — begins every such message, followed by the phase, the package
+counts, the attempt number and the elapsed seconds, and then the caller's own underlying
+error verbatim:
+
+```
+ai_env_not_ready: the shared Python environment both AI sidecars run from is not ready
+— phase 'installingPackages', installing packages (47 of 91) (attempt 1, 63s elapsed).
+This is the one-time environment build (D-315), not a crash and not a bad request. Call
+`ai_env_status` for the live state, or `ai_env_retry` to force an attempt now.
+Underlying error: Apelles AI sidecar unreachable (…)
+```
+
+It is a **normal `{ok: false, error}` envelope**, never an exception — the precedent
+`control.rs`'s 503/504 and `apelles-mcp`'s `OpError` both set deliberately, because
+raising is what once reduced a real explanation to a bare "Error executing tool `<name>`"
+(B-153). `ai_env_status` is the structured read that goes with the token, which is why
+the message names it.
+
+**2. It is generated app-side, at the sidecar boundary — `ai_env::explain_unreachable`.**
+Every place the app fails to reach a Python sidecar routes its own diagnosis through that
+one function, which *prepends* the not-ready explanation when the environment is not
+`ready` and returns the diagnosis untouched when it is.
+
+Why there and nowhere else:
+
+| candidate | why not |
+|---|---|
+| each MCP tool | two servers to keep in sync, and the GUI would still get the old bare error |
+| `control.rs`, keyed on op name | breaks that server's "knows no op list" boundary (D-020) — *and it would be wrong*: `add_subject_mask` on a **still image** runs ONNX SAM in-process and needs no Python at all, so an op-name gate would refuse a call that works fine |
+| each frontend op handler | five handlers across two registries, duplicated, and every future AI feature has to remember |
+| **the sidecar call site (chosen)** | fires exactly when a Python sidecar was genuinely needed and genuinely missing; one place; every AI feature, GUI click or MCP call, present or future, gets it with no further work |
+
+The check is **reactive, not pre-emptive** — it decorates a connection that actually
+failed rather than refusing up front. That is deliberate: a sidecar started by hand, an
+external one on the port, or a `CHROMA_SIDECAR_PYTHON` override all keep working
+regardless of what the bootstrap thinks, and a pre-flight gate would break them. On
+loopback a refused connection is immediate, so nothing is paid for the ordering.
+
+### Three defects this surfaced
+
+- **B-180** — `retry_now()` returned `true` for `Phase::Unavailable`, but `supervise`
+  has already *returned* by then, so there was no thread left to wake. It now returns
+  `false`, matching what this note already said about `unavailable`: nothing about
+  trying again changes the answer, and that has to hold for the manual retry too.
+- **B-175** — `handleGenerateAiMask` / `handleTrackSubject` swallowed a failed AI call
+  into a `toast.error`, so `add_subject_mask` and `track_subject` reported `ok: true`
+  for work that never happened. Both now return `{ error }` the way `handleTrackDepth`
+  already did, and their op handlers propagate it — without which neither of those two
+  tools could surface the message above at all.
+- **B-177** — `build.rs` staged `requirements.lock.txt` / `verify.py` into
+  `resources/ai-env/` with an unconditional `fs::copy`, which bumps the mtime even when
+  the bytes match. `tauri dev` watches `src-tauri/`, so staging the resource invalidated
+  the build that staged it and `npm run tauri:dev` rebuild-looped forever in any checkout
+  where those files were not already current. It now writes only on a real difference —
+  the same "already valid, skip it" shape the ONNX and `uv` downloads in that file use.
 
 ## Configuration
 

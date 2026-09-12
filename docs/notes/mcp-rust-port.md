@@ -12,8 +12,8 @@ Read D-312 in `docs/08-decisions.md` first for *why*. This file is the *how* and
 
 | | |
 |---|---|
-| Harness | **complete** — covers all 161 tools, passing (plus the D-313 HTTP-transport test) |
-| Tools ported | **161 of 161** — Colorist 42, Edit 73, Motion 37, debug 9 |
+| Harness | **complete** — covers all 163 tools, passing (plus the D-313 HTTP-transport test) |
+| Tools ported | **163 of 163** — Colorist 42, Edit 73, Motion 37, AI-env 2, debug 9. (D-312 landed 161; D-315 added `ai_env_status` / `ai_env_retry` to both servers in one pass, which is the pattern every new tool follows now that the port is complete — write the Python docstring, copy it verbatim into the Rust `description`, re-run `parity/capture.py`, add the names to `ported.json`.) |
 | Remaining | **none.** Both servers publish an identical tool set, verified over a real MCP session. |
 | `mcp/server.py` | **still live and still the fallback.** Nothing has been retired — see "what is deliberately still open". |
 
@@ -22,10 +22,10 @@ not decoration: `tests/parity.rs` checks the running server's advertised tool se
 it in both directions, and checks every name in it against the golden corpus. A tool
 cannot be silently dropped, silently added, or listed under a name that never existed.
 
-**Every tool is ported and passing the gate.** What that means precisely: all 161
+**Every tool is ported and passing the gate.** What that means precisely: all 163
 publish the same name, the same byte-for-byte description and a structurally identical
-schema; all 237 recorded calls emit the same ops with the same arguments and the same
-timeout budgets, and render the same content. `python: 161 / rust: 161 / IDENTICAL` over
+schema; all 239 recorded calls emit the same ops with the same arguments and the same
+timeout budgets, and render the same content. `python: 163 / rust: 163 / IDENTICAL` over
 a real stdio MCP session against each server.
 
 **What that does NOT mean.** The Rust server has not been used to do real work yet. The
@@ -53,9 +53,9 @@ mcp/.venv/bin/python crates/apelles-mcp/parity/capture.py
 
 It records:
 
-- every tool's **name, description and `inputSchema`**, verbatim (161 tools);
+- every tool's **name, description and `inputSchema`**, verbatim (163 tools);
 - for each tool, **two calls** — `minimal` (required arguments only) and `full` (every
-  argument the schema declares) — 237 in total;
+  argument the schema declares) — 239 in total;
 - for each call, the exact **`{op, args, timeout_ms}`** posted to the control server, in
   order, and the exact **MCP content blocks** returned.
 
@@ -86,7 +86,7 @@ client would actually see rather than an internal call path. Five tests:
 | `the_advertised_tool_set_is_exactly_the_ported_ledger` | no silent drop, no silent add, no invented name |
 | `every_ported_tool_publishes_the_same_contract_as_the_python_one` | descriptions byte-for-byte; schemas structurally |
 | `every_recorded_call_emits_the_same_ops_and_renders_the_same_content` | the wire — ops, args, timeouts — and the rendered output |
-| `the_remaining_work_is_written_down_rather_than_estimated` | the ledger still adds up to 161 |
+| `the_remaining_work_is_written_down_rather_than_estimated` | the ledger still adds up to 163 |
 
 ### 3. Live smoke — `crates/apelles-mcp/parity/live_smoke.py`
 
@@ -114,7 +114,7 @@ cargo test -p apelles-mcp --test http_transport
 
 Binds the real `serve::router` on an ephemeral loopback port, dials it with a real rmcp
 streamable-HTTP client, and asserts the surface reached **by URL** is the identical one:
-same server instructions, same 161 tools, and for a real tool call the same op with its
+same server instructions, same 163 tools, and for a real tool call the same op with its
 B-153 timeout budget intact and the same rendered content back. Plus `/health` in the
 shape the app's supervisor polls for — `ok` and a 16-hex-char `content_sha256` — because
 renaming either of those breaks supervision silently rather than loudly.
@@ -171,8 +171,8 @@ something that does, it is a bug in the port.
    unconditionally and relied on the app-side half being absent, so a release build
    advertised nine tools it could never answer. This matches the gate `control.rs` already
    uses for its own native debug ops (B-100 / D-219) and CLAUDE.md's standing rule that
-   internal debug tooling is never shipped. A debug build publishes 161 tools; a release
-   build publishes 152.
+   internal debug tooling is never shipped. A debug build publishes 163 tools; a release
+   build publishes 154.
 2. **An unreachable app reports its own message.** In Python the `RuntimeError` raised on a
    connection failure was masked by the MCP runtime down to `Error executing tool <name>`,
    discarding "Is the Apelles desktop app running?" — the single most useful sentence it
@@ -258,4 +258,4 @@ way, and the same non-uniform cases are still waiting.
   the `POST /op` hop. D-313 deliberately did *not* take it: the app supervises
   `apelles-mcp` as a child process instead, so an MCP-server bug cannot take down the
   editor and `app/src-tauri` does not have to depend on a crate that sits beside it. All
-  161 tools stay untouched either way. Not scheduled.
+  163 tools stay untouched either way. Not scheduled.

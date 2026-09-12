@@ -239,9 +239,10 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    started the same day. `crates/apelles-mcp` replaces `mcp/server.py`: one binary, one
    toolchain, no venv in the connect command. **The parity harness is done and is the
    gate** — `parity/capture.py` records the real Python server's published contract and
-   emitted ops for all 161 tools (237 calls, stub app, deterministic), and
-   `cargo test -p apelles-mcp` replays it. **All 161 tools are now ported and passing**
-   (Colorist 42, Edit 73, Motion 37, debug 9), with both servers publishing an identical
+   emitted ops for all 163 tools (239 calls, stub app, deterministic), and
+   `cargo test -p apelles-mcp` replays it. **All 163 tools are now ported and passing**
+   (Colorist 42, Edit 73, Motion 37, AI-env 2, debug 9 — D-312 landed 161, D-315 added
+   the two `ai_env_*` ones), with both servers publishing an identical
    tool set over a real MCP session. What is left is not porting: the Rust server has not
    yet been used for real work, which is what should happen before `mcp/server.py` is
    retired. The
@@ -253,7 +254,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    deliberate step. This also found and fixed **B-168** on day one.
 
    **Follow-on, done the same day — D-313: the app runs its own MCP server on a fixed
-   local port.** `apelles-mcp --http` serves the identical 161 tools over MCP streamable
+   local port.** `apelles-mcp --http` serves the identical 163 tools over MCP streamable
    HTTP on loopback `127.0.0.1:19790/mcp` (rmcp `transport-streamable-http-server` +
    axum; `CHROMA_MCP_PORT`), and `app/src-tauri` spawns and supervises it on launch the
    way it already does the two Python sidecars. So a client pastes a URL instead of a
@@ -305,8 +306,11 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    is caught by really importing both sidecars' packages via the shared
    `ai-env/verify.py`, then re-installed and, if still broken, wiped and rebuilt).
    Live state on `ai-env-status` + `chroma_ai_env_status`, mirrored by the
-   `ai_env_status` / `ai_env_retry` MCP tools and a real "still setting up" state at
-   every AI-feature entry point. Design + measured numbers:
+   `ai_env_status` / `ai_env_retry` MCP tools (in both servers — 161 → **163**, parity
+   harness re-captured and passing) and a real "still setting up" state at every
+   AI-feature entry point. The five AI-backed tools now fail with a stable
+   `ai_env_not_ready` token carrying the phase and the package counts, generated at the
+   one sidecar call site so the GUI gets it too. Design + measured numbers:
    `docs/notes/ai-env-bootstrap.md`.
 
    Open items this leaves (both recorded in `docs/notes/sidecar-lifecycle.md`):

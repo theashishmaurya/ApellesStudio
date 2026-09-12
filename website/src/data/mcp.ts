@@ -46,6 +46,11 @@ export interface ToolGroup {
  * and the two audio-monitoring ones, which is also why both `GAPS` entries
  * below were rewritten the same day rather than left standing.
  *
+ * 161 → 163 on 2026-09-13 (D-315): `ai_env_status` / `ai_env_retry`, the
+ * first-launch AI-environment build's own surface. They get their own group
+ * rather than joining a tab's: the environment they report on backs AI features
+ * in two different tabs, so filing them under either would misdescribe both.
+ *
  * 159 → 160 on 2026-09-10 (D-270, found while re-verifying for an unrelated
  * change): `editor_reprobe_media`, B-073's real fix, landed the day before and
  * was never added here. It re-probes a stuck pool item by id on demand, which
@@ -53,8 +58,8 @@ export interface ToolGroup {
  * claiming there is still no way to re-probe one.
  */
 export const TOOL_TOTALS = {
-  all: 161,
-  shipped: 152,
+  all: 163,
+  shipped: 154,
   debugOnly: 9,
 } as const;
 
@@ -145,6 +150,13 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'editor_analyze_video_status',
     ],
   },
+  {
+    name: 'AI environment',
+    count: 2,
+    blurb:
+      'Whether the local Python environment every AI feature runs from has finished building yet, and a way to retry the build now. It is downloaded and assembled in the background on first launch, so an agent can tell "still setting up, 47 of 91 packages" apart from a real failure instead of guessing.',
+    sample: ['ai_env_status', 'ai_env_retry'],
+  },
 ];
 
 /**
@@ -196,5 +208,5 @@ export const CONNECTION = {
  */
 export const ERROR_FRAGMENTS = [
   'Cannot reach the',
-  'did not respond (its window may be closed or busy)',
+  'got no reply from the frontend within',
 ] as const;

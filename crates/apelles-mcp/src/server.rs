@@ -49,9 +49,12 @@ impl ApellesMcp {
             transport,
             // One router per tab, merged — the same split the frontend uses for its op
             // registries, and the same split `docs/notes/mcp-tool-coverage.md` inventories.
+            // `ai_env` is the one that is not a tab: it is answered natively by
+            // `control.rs` and serves AI features in two of them (D-315).
             tool_router: crate::tools::colorist::router()
                 + crate::tools::edit::router()
                 + crate::tools::motion::router()
+                + crate::tools::ai_env::router()
                 + crate::tools::debug::router(),
         }
     }

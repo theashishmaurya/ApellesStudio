@@ -35,12 +35,16 @@ pub fn media_base_url() -> String {
 }
 
 fn unreachable_hint(e: impl std::fmt::Display) -> String {
-    format!(
+    // D-315 — prefixed with the `ai_env_not_ready` explanation when the shared Python
+    // environment is still being built, so "we have not finished installing yet" is
+    // distinguishable from "the sidecar died".
+    crate::ai_env::explain_unreachable(format!(
         "Apelles media sidecar unreachable ({e}). The app auto-starts it (D-189) — check \
          the app log for '[sidecar/ai-media]' lines (CHROMA_AI_MEDIA_NO_SPAWN=1 disables the \
-         auto-start; manual start: cd ai-media && ./run.sh). It also needs its own venv: \
-         cd ai-media && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
-    )
+         auto-start; manual start: cd ai-media && ./run.sh). Both Python sidecars share one \
+         environment, `ai-env/.venv` (D-314), which the app builds itself on first launch \
+         (D-315) — `./ai-env/setup.sh` builds the same one by hand."
+    ))
 }
 
 /// POST/GET plumbing shared by all four calls. Kept in one place so the

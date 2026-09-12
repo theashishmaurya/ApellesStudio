@@ -257,15 +257,24 @@ fn stage_ai_env_resources(manifest_dir: &Path) {
     for name in ["requirements.lock.txt", "verify.py"] {
         let src = src_dir.join(name);
         println!("cargo:rerun-if-changed={}", src.display());
-        if !src.is_file() {
+        let Ok(bytes) = fs::read(&src) else {
             panic!(
                 "D-315: {} is missing — the AI-env bootstrap cannot be built without it.",
                 src.display()
             );
+        };
+        let dest = dest_dir.join(name);
+
+        // B-177 — write ONLY when the content really differs. `fs::copy` bumps the
+        // destination's mtime even when the bytes are identical, and `tauri dev`
+        // watches `src-tauri/` for exactly that: the copy triggered a rebuild, the
+        // rebuild re-ran this, and `npm run tauri:dev` never reached a running app.
+        // The same "already valid, skip it" shape the ONNX download above uses, and
+        // for the same reason.
+        if fs::read(&dest).is_ok_and(|existing| existing == bytes) {
+            continue;
         }
-        if let Err(e) = fs::create_dir_all(&dest_dir)
-            .and_then(|()| fs::copy(&src, dest_dir.join(name)).map(|_| ()))
-        {
+        if let Err(e) = fs::create_dir_all(&dest_dir).and_then(|()| fs::write(&dest, &bytes)) {
             panic!(
                 "Failed to stage {} into resources/ai-env: {e}",
                 src.display()

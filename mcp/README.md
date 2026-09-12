@@ -49,7 +49,7 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 
 > **This server is being replaced (D-312, 2026-09-12).** The Rust reimplementation
 > is `crates/apelles-mcp` — same tool names, same descriptions, same
-> control-server contract, one binary instead of a venv. **All 161 tools are
+> control-server contract, one binary instead of a venv. **All 163 tools are
 > ported and pass its parity harness**, which is captured from *this* file, tool
 > by tool; both servers publish an identical tool set over a real MCP session.
 >
@@ -67,15 +67,21 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 > Python server cannot match without being rewritten, and it is the practical
 > reason the migration is worth finishing.
 
-## Tools — 152 shipped (plus 9 debug-build-only; 161 definitions total)
+## Tools — 154 shipped (plus 9 debug-build-only; 163 definitions total)
 
-> **Re-counted 2026-09-12 (D-310)** by AST-parsing this file's own server (not
-> `grep`, which also counts the string in a docstring): **161** `@mcp.tool()`
-> definitions, of which 9 are `debug_*` (dev-build only, never shipped), leaving
-> **152** shipped. Split by prefix: **73 Edit**, **42 Colorist**, **37 Motion**,
-> **9 debug** — 73 + 42 + 37 + 9 = 161. The heading below this one said "143
-> shipped / 152 total", correct when D-259 wrote it on 2026-09-09 and outgrown
-> since.
+> **Re-counted 2026-09-13 (D-315):** **163** `@mcp.tool()` definitions, of which
+> 9 are `debug_*` (dev-build only, never shipped), leaving **154** shipped. Split
+> by prefix: **73 Edit**, **42 Colorist**, **37 Motion**, **2 AI-env**, **9
+> debug** — 73 + 42 + 37 + 2 + 9 = 163. D-315 added `ai_env_status` /
+> `ai_env_retry`: whether the shared Python environment every AI feature runs
+> from has finished building, and a way to retry that build now. They belong to
+> no tab — the environment they report on backs AI features in two of them.
+>
+> **Superseded count, kept for history — D-310, 2026-09-12**, AST-parsed rather
+> than grepped (grep also counts the string inside a docstring): **161**
+> definitions, 9 `debug_*`, **152** shipped — 73 Edit + 42 Colorist + 37 Motion +
+> 9 debug. The heading below this one said "143 shipped / 152 total", correct
+> when D-259 wrote it on 2026-09-09 and outgrown since.
 >
 > **Parameter schemas (D-310):** every structured (nested-object) parameter is a
 > Pydantic model from `schemas.py`, so each tool's `inputSchema` is real JSON
@@ -161,12 +167,23 @@ debug-build-only and documented in `../docs/notes/debug-screenshot-tool.md` and
 | `editor_get_transcript_status(path?, media_id?, source_path?)` | poll it — `running` / `done` (with `text`, `segments`, per-word `start`/`end`) / `idle` |
 | `editor_analyze_video(path?, media_id?, source_path?, question?, scene_threshold?, min_gap_s?, max_candidates?, force=False)` | start a visual analysis — "what CHANGED on screen, and when." ffmpeg scene-detect gives the exact timing, Qwen3-VL only describes each before/after frame pair. Finds nothing in a continuous uncut shot — use the transcript there (D-189) |
 | `editor_analyze_video_status(path?, media_id?, source_path?)` | poll it — `running` / `done` (with `events: [{time_s, event}]` + `truncated`) / `idle` |
+| `ai_env_status()` | has the shared Python environment every AI feature runs from finished building? `{phase, packagesDone, packagesTotal, attempt, retryInSecs, lastError, venv, elapsedSecs}`. Branch on `phase`: `ready`, one of five working phases (wait and poll), `failed` (another attempt is already scheduled), or `unavailable` (cannot be built here — waiting will not help) (D-315) |
+| `ai_env_retry()` | build it now instead of waiting out the backoff. Returns the same snapshot plus `started`; `started: false` means there was nothing to trigger, which is a normal answer (D-315) |
+
+**When an AI tool fails with `ai_env_not_ready`.** That prefix is a machine token,
+not prose: it means the ~1.6 GB Python environment the two AI sidecars share is
+still being built (it is downloaded and assembled in the background from the app's
+first launch, D-315), so `add_subject_mask`, `track_subject`, `depth_track`,
+`editor_get_transcript` and `editor_analyze_video` cannot work yet. The message
+carries the phase and the package counts; `ai_env_status` is the structured read.
+It is **not** a crashed sidecar and **not** a bad request, and nothing else is
+affected — Edit, Motion, Colorist, grading and export all work throughout.
 
 Every mutating tool returns the re-rendered frame (as an MCP image when the app
 can supply one) plus the histogram, the full adjustments doc, **and the compact
 `scopes` summary** (the new measurement after the change). The four
-media-understanding tools above are the exception: they mutate nothing, so they
-return plain JSON.
+media-understanding tools and the two `ai_env_*` ones above are the exception:
+they mutate no grade, so they return plain JSON.
 
 ## Agent activity feed (D-032)
 
@@ -200,15 +217,24 @@ tool here. Which hook that is depends on the tab — `useChromaControl.ts`
 (Colorist), `@apelles/editor`'s `useEditorControl.ts` (`editor_*`),
 `@apelles/motion`'s `useMotionControl.ts` (`motion_*`). The full recipe, and the
 op-prefix convention that keeps two hooks from racing for one response, is
-`../docs/notes/mcp-architecture.md`.
+`../docs/notes/mcp-architecture.md`. The rare exception is an op with no frontend
+state to consult at all, which `control.rs` answers itself in Rust — the debug
+screenshot pair (D-210) and the `ai_env_*` pair (D-315); the bar for joining that
+list is "the answer is a fact about the process, not about the store".
 
 ## Troubleshooting
 
 - **"Cannot reach the Apelles control server"** — the app isn't running, or it's
   on another port (`CHROMA_CONTROL_PORT`).
-- **"The Apelles app did not respond"** (504) — the app window is closed or no
-  image/video is loaded. The bridge only runs while the editor view is mounted
-  (i.e. something is open).
+- **"... got no reply from the frontend within Ns"** (504) — the app window may be
+  closed or busy, and the bridge only runs while the editor view is mounted (i.e.
+  something is open). Treat it as **inconclusive**, not failed: the app keeps
+  working after the bridge gives up, so a slow op can still complete (B-153). Re-read
+  the state before retrying.
+- **"`ai_env_not_ready`: ..."** — the shared Python environment the AI sidecars run
+  from is still being built (D-315). Not a crash and not a bad request; call
+  `ai_env_status` for the phase and the package counts, `ai_env_retry` to force an
+  attempt. Only the AI tools are affected.
 - **No image in the response, only the histogram** — known v1 limitation: the app
   renders to a native WGPU surface, so the frame is a best-effort headless
   re-render (`generate_uncropped_preview`). The histogram + adjustments are always

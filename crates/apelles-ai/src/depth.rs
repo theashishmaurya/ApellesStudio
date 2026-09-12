@@ -42,12 +42,15 @@ use std::path::PathBuf;
 use serde_json::json;
 
 fn unreachable_hint(e: impl std::fmt::Display) -> String {
-    format!(
+    // D-315 — prefixed with the `ai_env_not_ready` explanation when the shared Python
+    // environment is still being built, so "we have not finished installing yet" is
+    // distinguishable from "the sidecar died".
+    crate::ai_env::explain_unreachable(format!(
         "Apelles AI sidecar unreachable ({e}). The app auto-starts it (D-028) — check \
          the app log for '[sidecar]' lines (CHROMA_AI_NO_SPAWN=1 disables the auto-start; \
          manual start: cd ai && ./run.sh). The first depth track also lazy-downloads the \
          VDA-Small checkpoint (~112 MB) into ai/models/."
-    )
+    ))
 }
 
 /// Kick off a per-frame depth pass over `video_path`. Returns the sidecar job
@@ -148,27 +151,38 @@ pub async fn depth_track(
 /// Poll a `/depth_track` job.
 pub async fn depth_track_status(job_id: &str) -> Result<serde_json::Value, String> {
     let response = reqwest::Client::new()
-        .get(format!("{}/depth_track/{job_id}", crate::sidecar_base_url()))
+        .get(format!(
+            "{}/depth_track/{job_id}",
+            crate::sidecar_base_url()
+        ))
         .send()
         .await
         .map_err(|e| {
             let msg = unreachable_hint(e);
-            log::error!("[relight] chroma_depth_track_status({job_id}): sidecar unreachable: {msg}");
+            log::error!(
+                "[relight] chroma_depth_track_status({job_id}): sidecar unreachable: {msg}"
+            );
             msg
         })?;
     // Same status-check discipline as `depth_track` above (D-067 follow-up) —
     // don't parse a non-2xx body as if it were a real status.
     let status = response.status();
     let text = response.text().await.map_err(|e| {
-        log::error!("[relight] chroma_depth_track_status({job_id}): couldn't read response body: {e}");
+        log::error!(
+            "[relight] chroma_depth_track_status({job_id}): couldn't read response body: {e}"
+        );
         e.to_string()
     })?;
     if !status.is_success() {
-        log::error!("[relight] chroma_depth_track_status({job_id}): sidecar returned HTTP {status}: {text}");
+        log::error!(
+            "[relight] chroma_depth_track_status({job_id}): sidecar returned HTTP {status}: {text}"
+        );
         return Err(format!("sidecar returned HTTP {status}: {text}"));
     }
     let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
-        log::error!("[relight] chroma_depth_track_status({job_id}): bad response JSON: {e} (body: {text})");
+        log::error!(
+            "[relight] chroma_depth_track_status({job_id}): bad response JSON: {e} (body: {text})"
+        );
         e.to_string()
     })?;
     // D-067: only the terminal states, not every 2s poll — this loop runs
@@ -176,7 +190,9 @@ pub async fn depth_track_status(job_id: &str) -> Result<serde_json::Value, Strin
     if let Some(state) = v.get("state").and_then(|s| s.as_str())
         && matches!(state, "done" | "error" | "cancelled" | "unknown")
     {
-        log::info!("[relight] chroma_depth_track_status({job_id}): terminal state {state}, response: {v}");
+        log::info!(
+            "[relight] chroma_depth_track_status({job_id}): terminal state {state}, response: {v}"
+        );
     }
     Ok(v)
 }
@@ -281,7 +297,11 @@ mod tests {
         write_png(&tmp, 3, 10);
         GrayImage::new(4, 4).save(tmp.join("_preview.png")).unwrap();
         std::fs::write(tmp.join("_depth.json"), "{}").unwrap();
-        assert!(nearest_frame_png(tmp.to_str().unwrap(), 100).unwrap().ends_with("000003.png"));
+        assert!(
+            nearest_frame_png(tmp.to_str().unwrap(), 100)
+                .unwrap()
+                .ends_with("000003.png")
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 
@@ -294,7 +314,11 @@ mod tests {
         write_png(&tmp, 10, 200);
 
         let img = depth_map_at(tmp.to_str().unwrap(), 12).expect("a PNG at or before frame 12");
-        assert_eq!(img.get_pixel(0, 0).0[0], 200, "frame 12 should hold the frame-10 sample");
+        assert_eq!(
+            img.get_pixel(0, 0).0[0],
+            200,
+            "frame 12 should hold the frame-10 sample"
+        );
 
         std::fs::remove_dir_all(&tmp).ok();
     }
