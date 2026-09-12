@@ -6,7 +6,9 @@ One or two lines per session. Detail lives in the decision it references.
 
 - **2026-09-12** — **D-313: Apelles runs its own MCP server, and a client only
   needs a URL.** `apelles-mcp` gained a streamable-HTTP transport (`--http`,
-  rmcp + axum, loopback `127.0.0.1:19789/mcp`, `CHROMA_MCP_PORT`) serving the
+  rmcp + axum, loopback `127.0.0.1:19790/mcp`, `CHROMA_MCP_PORT` — 19789 was
+  the first pick and turned out to be held by Palmier Pro on the owner's own
+  machine, found by `lsof` during end-to-end testing) serving the
   identical 161 tools; stdio stays the default so every D-312 registration keeps
   working. The app spawns and supervises it on launch the way it already does
   the two Python sidecars — health-checked, restarted with backoff, never

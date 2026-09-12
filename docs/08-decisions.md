@@ -29933,7 +29933,7 @@ always-running local HTTP services it spawns, health-checks, restarts and kills 
 ### Options
 
 1. **Keep stdio only.** Zero work, but the dialog stays seven paths and the goal is unmet.
-2. **Embed the server in the Tauri process** — `axum::serve` on 19789 straight from
+2. **Embed the server in the Tauri process** — `axum::serve` on the same port straight from
    `lib.rs` `.setup()`, no child process at all.
 3. **Add an HTTP transport to the binary and supervise it as a sidecar** — the same shape
    as `ai/` and `ai-media/`.
@@ -29948,10 +29948,24 @@ always-running local HTTP services it spawns, health-checks, restarts and kills 
   it is tokio-rs-maintained and MIT, and 0.8 is the current line — the boring choice, and
   the canonical one rather than a hand-rolled hyper service. `sha2` was added for the
   self-hash below (same version `apelles-ai` already uses); `tokio/net` for the listener.
-- **Port 19789**, one above the control server's 19788, overridable by `CHROMA_MCP_PORT`
-  exactly as `CHROMA_CONTROL_PORT` overrides that one. The two halves of the same bridge
-  sit together and are obvious in an `lsof`; nothing in the repo used 19789, and it is far
-  from the sidecars' 8765/8766, which are in the range a stray dev server grabs.
+- **Port 19790**, overridable by `CHROMA_MCP_PORT` exactly as `CHROMA_CONTROL_PORT`
+  overrides the control server's. Close to 19788 so the two halves of the same bridge sit
+  together and are obvious in an `lsof`, and far from the sidecars' 8765/8766, which are
+  in the range a stray dev server grabs.
+
+  **It was 19789 first, and that was wrong — caught live, not in theory.** 19789 is the
+  natural "one above the control server" pick, nothing in this repo used it, and it is
+  what the first commit of this change shipped. Then an `lsof` on the owner's own machine
+  during end-to-end testing showed **Palmier Pro already listening on 127.0.0.1:19789** —
+  the very app whose settings page is this feature's reference. Worse than a bind
+  failure: the supervisor's external-process branch treats "something healthy is already
+  on the port" as *monitor it, never kill it*, so Apelles would have quietly declined to
+  start its own server and every client would have been pointed at Palmier's. `lsof`
+  confirms Palmier holds that single port and no range, so 19790 — the next free port in
+  our own block — is enough. The general lesson is that `CHROMA_MCP_PORT` is not
+  decoration: a fixed default on a developer's machine will eventually collide, and the
+  status line in the Connect dialog exists so that shows up as a sentence rather than as
+  a client mysteriously talking to the wrong program.
 - **stdio stays the default.** Bare `apelles-mcp` means what it meant in D-312, so a
   client registered before this change keeps working; `--http` is opt-in and is what the
   app's supervisor passes. This is not politeness — **Claude Desktop's
@@ -29959,7 +29973,7 @@ always-running local HTTP services it spawns, health-checks, restarts and kills 
   is a live path, not a legacy one.
 - **No authentication, loopback only.** The listener binds `127.0.0.1`, never `0.0.0.0`,
   and rmcp's default `allowed_hosts` keeps its own DNS-rebinding guard on. Anything that
-  can reach 19789 can already reach the unauthenticated control server on 19788 directly,
+  can reach 19790 can already reach the unauthenticated control server on 19788 directly,
   so a token here would be theatre — but the loopback bind is load-bearing and is
   asserted, not assumed.
 - **Supervision: generalize the existing supervisor rather than write a second one.**

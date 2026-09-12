@@ -6,7 +6,7 @@ renders the envelope that comes back.
 
 ```
 Claude Code / Cursor / … (MCP client)
-  │  streamable HTTP :19789/mcp   (D-313 — the app runs one of these for every client)
+  │  streamable HTTP :19790/mcp   (D-313 — the app runs one of these for every client)
   │  …or stdio                    (D-312 — the client spawns this binary itself)
 apelles-mcp                            ← this crate
   │  HTTP  POST /op {op, args, timeout_ms}
@@ -17,7 +17,7 @@ the frontend op registries             (useChromaControl / useEditorControl / us
 render  →  { rendered frame, histogram, adjustments, scopes }
 ```
 
-**Two HTTP hops, opposite directions**, and it is worth keeping them straight: 19789 is
+**Two HTTP hops, opposite directions**, and it is worth keeping them straight: 19790 is
 how a *client reaches this server* (`src/serve.rs`); 19788 is how a *tool reaches the app*
 (`src/transport.rs`). Both transports above expose the identical 161 tools off the same
 `ApellesMcp` — nothing in `src/tools/` knows which one it is running on.
@@ -60,7 +60,7 @@ The desktop app starts and supervises one of these on launch, so a client only n
 URL:
 
 ```bash
-claude mcp add --transport http apelles http://127.0.0.1:19789/mcp
+claude mcp add --transport http apelles http://127.0.0.1:19790/mcp
 ```
 
 Other clients' exact config shapes differ (`url` vs `serverUrl`, `mcpServers` vs
@@ -68,7 +68,7 @@ Other clients' exact config shapes differ (`url` vs `serverUrl`, `mcpServers` vs
 **MCP** dialog — `packages/shell/src/ConnectMcpDialog.tsx` — has the verified snippet for
 each one. To run it by hand instead: `apelles-mcp --http [--port <PORT>]`.
 
-`CHROMA_MCP_PORT` overrides the port (default 19789), `CHROMA_MCP_NO_SPAWN` stops the app
+`CHROMA_MCP_PORT` overrides the port (default 19790), `CHROMA_MCP_NO_SPAWN` stops the app
 auto-starting its own, and `CHROMA_MCP_BIN` points the app's supervisor at a specific
 binary. `GET /health` answers `{ok, service, version, content_sha256, control}` — that is
 what the supervisor polls, and `content_sha256` is how it tells a stale externally-run

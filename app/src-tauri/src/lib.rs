@@ -2026,7 +2026,7 @@ pub fn run() {
                 // shared `shutdown()` below kills both.
                 std::thread::spawn(chroma::sidecar::spawn_and_supervise_media);
                 // Apelles: and the MCP server (D-313) — `apelles-mcp --http` on
-                // 19789, so an assistant only needs a URL instead of spawning
+                // 19790, so an assistant only needs a URL instead of spawning
                 // its own copy of the binary by path. Not Python, but the same
                 // supervisor: `Launch::WorkspaceBin` is the only difference, and
                 // the same `shutdown()` below kills this one too.

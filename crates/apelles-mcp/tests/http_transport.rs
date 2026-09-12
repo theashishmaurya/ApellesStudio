@@ -158,3 +158,69 @@ async fn health_answers_in_the_shape_the_apps_supervisor_polls_for()
     assert_eq!(body["control"], json!("http://127.0.0.1:19788"));
     Ok(())
 }
+
+/// The live counterpart of `parity/live_smoke.py`, over HTTP and with no venv.
+///
+/// The two tests above stub the app, so they prove the transport and nothing about
+/// whether the thing on the other end is real. This one calls a **running Apelles**
+/// through a **running `apelles-mcp --http`** and prints what came back — the
+/// end-to-end round trip D-313 is actually claiming.
+///
+/// `#[ignore]` because it needs both of those running; `cargo test` must stay green on
+/// a machine with neither.
+///
+/// ```bash
+/// # the app supervises one on its own; this is the by-hand equivalent
+/// cargo build -p apelles-mcp
+/// CHROMA_CONTROL_PORT=19788 ./target/debug/apelles-mcp --http --port 19790 &
+/// CHROMA_MCP_PORT=19790 cargo test -p apelles-mcp --test http_transport \
+///     -- --ignored --nocapture
+/// ```
+#[tokio::test]
+#[ignore = "needs a running Apelles app and a running apelles-mcp --http"]
+async fn live_http_round_trip_against_a_running_app() -> Result<(), Box<dyn std::error::Error>> {
+    let port = std::env::var("CHROMA_MCP_PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(serve::DEFAULT_HTTP_PORT);
+    let base = format!("http://127.0.0.1:{port}");
+
+    let health: Value = reqwest::get(format!("{base}{}", serve::HEALTH_PATH))
+        .await
+        .map_err(|e| format!("no apelles-mcp on {port}: {e}"))?
+        .json()
+        .await?;
+    println!("health: {health}");
+
+    let client = ()
+        .serve(StreamableHttpClientTransport::with_client(
+            reqwest::Client::new(),
+            StreamableHttpClientTransportConfig::with_uri(format!("{base}{}", serve::MCP_PATH)),
+        ))
+        .await?;
+
+    let tools = client.list_all_tools().await?;
+    println!("tools advertised over HTTP: {}", tools.len());
+    assert_eq!(tools.len(), TOOL_COUNT);
+
+    // A read, never a write: this runs against the owner's real open project.
+    let result = client
+        .call_tool(CallToolRequestParams::new("get_state"))
+        .await?;
+    let Some(ContentBlock::Text(text)) = result.content.first() else {
+        return Err(format!("get_state returned no text block: {:?}", result.content).into());
+    };
+    println!("get_state via HTTP -> {}", text.text);
+
+    // The app answers with a JSON envelope; a transport that "worked" but reached
+    // nothing real would come back as an unreachable-control-server error string.
+    let state: Value = serde_json::from_str(&text.text)
+        .map_err(|e| format!("get_state did not return JSON ({e}): {}", text.text))?;
+    assert!(
+        state.is_object(),
+        "expected a state object from the running app, got {state}"
+    );
+
+    client.cancel().await?;
+    Ok(())
+}

@@ -1186,7 +1186,7 @@ mod tests {
             },
             port_env: "CHROMA_TEST_BIN_PORT_UNSET",
             no_spawn_env: "CHROMA_TEST_BIN_NO_SPAWN_UNSET",
-            default_port: 19789,
+            default_port: 19790,
         };
 
         let Some(path) = resolve_bin("apelles-mcp", "CHROMA_TEST_BIN_UNSET") else {
@@ -1201,7 +1201,7 @@ mod tests {
 
         let command = resolve_command(&SPEC).expect("a resolvable binary should build a command");
         let args: Vec<_> = command.get_args().collect();
-        assert_eq!(args, ["--http", "--port", "19789"]);
+        assert_eq!(args, ["--http", "--port", "19790"]);
         assert_eq!(command.get_program(), path.as_os_str());
         // The Python launch sets a cwd; a workspace binary must not inherit that
         // idea — it is found by absolute path and needs no particular directory.
@@ -1224,7 +1224,7 @@ mod tests {
             },
             port_env: "X_PORT",
             no_spawn_env: "X_NO_SPAWN",
-            default_port: 19789,
+            default_port: 19790,
         };
         assert_eq!(
             BIN.run_hint(),

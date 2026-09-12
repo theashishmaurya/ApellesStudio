@@ -45,13 +45,13 @@ TRANSPORTS:
                    this binary itself by path.
     --http         Serve streamable HTTP on 127.0.0.1:<PORT>/mcp, so a client only
                    needs a URL. This is how the Apelles desktop app runs it.
-    --port <PORT>  Port for --http. Default: $CHROMA_MCP_PORT, else 19789.
+    --port <PORT>  Port for --http. Default: $CHROMA_MCP_PORT, else 19790.
 
 OPTIONS:
     -h, --help     Print this help.
 
 ENVIRONMENT:
-    CHROMA_MCP_PORT      Default --http port (19789).
+    CHROMA_MCP_PORT      Default --http port (19790).
     CHROMA_CONTROL_PORT  The running app's control server (19788). Both transports
                          expose the identical tool set and both reach the app here.
 
@@ -165,7 +165,7 @@ mod tests {
         // A port with no --http is a silent no-op if accepted: the user asked for
         // something on a port and got stdio. Refusing it is the honest answer.
         assert_eq!(
-            Cli::parse(["--port", "19789"]),
+            Cli::parse(["--port", "19790"]),
             Err(CliError::PortWithoutHttp)
         );
         assert_eq!(

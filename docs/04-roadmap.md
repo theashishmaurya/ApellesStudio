@@ -254,7 +254,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
    **Follow-on, done the same day — D-313: the app runs its own MCP server on a fixed
    local port.** `apelles-mcp --http` serves the identical 161 tools over MCP streamable
-   HTTP on loopback `127.0.0.1:19789/mcp` (rmcp `transport-streamable-http-server` +
+   HTTP on loopback `127.0.0.1:19790/mcp` (rmcp `transport-streamable-http-server` +
    axum; `CHROMA_MCP_PORT`), and `app/src-tauri` spawns and supervises it on launch the
    way it already does the two Python sidecars. So a client pastes a URL instead of a
    path, and one server serves every client. stdio stays the default for a bare

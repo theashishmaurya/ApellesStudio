@@ -94,6 +94,37 @@ Colorist tab's pre-existing one was removed in the same change
 (`app/src/hooks/useKeyboardShortcuts.ts`) in favor of this one, single source
 of truth.
 
+## The "Connect to MCP" dialog (D-313)
+
+`ConnectMcpDialog.tsx` — a read-only help window, opened from the chrome bar
+beside the Keyboard Shortcuts opener. It gives a human the exact registration
+snippet for each of seven MCP clients and **performs no setup and makes no
+connection itself**.
+
+Since D-313 the app runs its own MCP server (`apelles-mcp --http`, supervised
+from `app/src-tauri`'s `lib.rs` `.setup()`), so the primary answer for nearly
+every client is a **URL** rather than a path to a binary. Two things follow,
+and both are the reason this dialog is not a static string:
+
+- **The URL is asked for, not hardcoded.** The port comes from the
+  `chroma_mcp_port` command, so someone who set `CHROMA_MCP_PORT` is shown a
+  URL that actually works. `chroma_mcp_status` drives the live status line —
+  "the URL doesn't work" is the failure this dialog exists to catch, and the
+  answer is usually that the server isn't up. Both commands degrade to the
+  default port if unavailable (not a Tauri context, an older build), so the
+  dialog never renders `127.0.0.1:undefined`.
+- **Each client's shape is its own, and was verified against its own docs.**
+  Windsurf wants `serverUrl`, VS Code's root key is `servers` with a required
+  `type`, Zed's is `context_servers`, and Cline needs `"type":
+  "streamableHttp"` in exactly that camelCase. **Claude Desktop cannot express
+  a URL server at all**, so its row stays stdio — which is also why the stdio
+  path (and the `mcp/server.py` rollback) is kept in a disclosure at the
+  bottom rather than deleted.
+
+`ConnectMcpDialog.dom.test.tsx` pins all of that per client: these strings get
+copy-pasted straight into a config file, and a wrong key fails silently in the
+client rather than here.
+
 ## Deps
 
 `react` + `zustand` + `@phosphor-icons/react` + `@tauri-apps/api` + `@tauri-apps/plugin-os`

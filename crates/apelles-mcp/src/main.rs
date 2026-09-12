@@ -5,9 +5,9 @@
 //! start) and reads `CHROMA_CONTROL_PORT` for the port, default 19788.
 //!
 //! ```text
-//! # HTTP (D-313) — the app already runs one of these on 19789, so this is all a
+//! # HTTP (D-313) — the app already runs one of these on 19790, so this is all a
 //! # client needs. Nothing to spawn, no path to a binary.
-//! claude mcp add --transport http apelles http://127.0.0.1:19789/mcp
+//! claude mcp add --transport http apelles http://127.0.0.1:19790/mcp
 //!
 //! # stdio (D-312) — for a client with no HTTP support, or to run it by hand.
 //! claude mcp add apelles -- /ABS/PATH/chroma/target/release/apelles-mcp

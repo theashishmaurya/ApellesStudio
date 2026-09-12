@@ -25,7 +25,7 @@
 //!  Do not confuse the two HTTP hops a request crosses. [`transport`] is how a *tool
 //!  reaches the app* (`POST /op` on 19788). [`serve`] is how a *client reaches us* —
 //!  either stdio (D-312, still the default for a client that spawns this binary
-//!  itself) or streamable HTTP on 19789 (D-313, which is how the desktop app runs it,
+//!  itself) or streamable HTTP on 19790 (D-313, which is how the desktop app runs it,
 //!  so a client needs only a URL). Both expose the identical 161 tools off the same
 //!  [`ApellesMcp`]; nothing in [`tools`] knows which is in use.
 //!

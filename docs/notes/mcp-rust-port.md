@@ -121,6 +121,19 @@ renaming either of those breaks supervision silently rather than loudly.
 
 No app needed; the control server is stubbed, as in `parity.rs`.
 
+It also carries `live_http_round_trip_against_a_running_app`, `#[ignore]`d — the Rust
+counterpart of `live_smoke.py` above, needing no venv:
+
+```bash
+cargo build -p apelles-mcp
+CHROMA_CONTROL_PORT=19788 ./target/debug/apelles-mcp --http --port 19790 &
+CHROMA_MCP_PORT=19790 cargo test -p apelles-mcp --test http_transport -- --ignored --nocapture
+```
+
+That is the round trip D-313 actually claims: a real streamable-HTTP client → a real
+`apelles-mcp` → the real control server → the running app, printing the state that comes
+back.
+
 ---
 
 ## What is compared how, and why not byte-for-byte everywhere

@@ -31,7 +31,7 @@ pub use apelles_ai::sidecar::{
     SidecarStatus, shutdown, spawn_and_supervise, spawn_and_supervise_media,
 };
 
-/// The MCP server (D-313): `apelles-mcp --http --port 19789`.
+/// The MCP server (D-313): `apelles-mcp --http --port 19790`.
 ///
 /// Unlike the two Python sidecars this is a compiled binary out of this same
 /// Cargo workspace, so there is no directory, no interpreter and no venv to
@@ -57,7 +57,7 @@ pub static MCP: SidecarSpec = SidecarSpec {
     // rather than shared: `app/src-tauri` does not depend on `apelles-mcp` (that
     // edge is exactly what D-313 declined to add), so the constant cannot be
     // imported. `mcp_default_port_matches_the_server` below is the guard.
-    default_port: 19789,
+    default_port: 19790,
 };
 
 /// Supervise the MCP server. Zero-argument for the same reason as the other two:
@@ -92,7 +92,7 @@ pub fn chroma_mcp_status() -> SidecarStatus {
 /// The port the Connect-to-MCP dialog should print, resolved the same way the
 /// supervisor resolves it (`CHROMA_MCP_PORT`, else the default).
 ///
-/// The dialog asks rather than hardcoding 19789 so a user who overrode the port
+/// The dialog asks rather than hardcoding 19790 so a user who overrode the port
 /// is shown a URL that actually works — the whole point of that dialog is that
 /// what it prints can be pasted without editing.
 #[tauri::command]
@@ -116,8 +116,8 @@ mod tests {
     /// other half.
     #[test]
     fn mcp_default_port_matches_the_server() {
-        assert_eq!(MCP.default_port, 19789);
-        assert_eq!(chroma_mcp_port(), 19789, "with CHROMA_MCP_PORT unset");
+        assert_eq!(MCP.default_port, 19790);
+        assert_eq!(chroma_mcp_port(), 19790, "with CHROMA_MCP_PORT unset");
     }
 
     /// The MCP spec must not collide with either Python sidecar — a shared port
@@ -137,5 +137,92 @@ mod tests {
                 other.name
             );
         }
+    }
+
+    /// **The claim D-313 actually makes, tested end to end**: the app starts a
+    /// real MCP server on launch, and the app-exit hook leaves nothing behind.
+    ///
+    /// Everything else here checks a constant. This spawns the real supervisor
+    /// against the real `apelles-mcp` binary, waits for it to report healthy,
+    /// proves the port is genuinely listening, then runs the same
+    /// `shutdown()` that `lib.rs`'s `RunEvent` handler runs and proves the port
+    /// is released. An orphaned MCP server holding a port after quit is the
+    /// exact failure this catches — and it is invisible until the next launch,
+    /// when the supervisor would find "something already healthy" and decline
+    /// to start its own.
+    ///
+    /// Uses a private spec on its own port rather than [`MCP`]: `port()` reads
+    /// an env var, and mutating the environment from one test while 300 others
+    /// share the process is a race, not a test.
+    #[test]
+    fn the_supervisor_really_starts_the_server_and_the_exit_hook_really_stops_it() {
+        use std::net::TcpStream;
+        use std::time::{Duration, Instant};
+
+        /// Not 19790: this must not fight the developer's actually-running app.
+        const PORT: u16 = 19791;
+        static SPEC: SidecarSpec = SidecarSpec {
+            name: "mcp-test",
+            launch: Launch::WorkspaceBin {
+                bin: "apelles-mcp",
+                bin_env: "CHROMA_MCP_TEST_BIN",
+                args: &["--http"],
+                package: "apelles-mcp",
+            },
+            port_env: "CHROMA_MCP_TEST_PORT",
+            no_spawn_env: "CHROMA_MCP_TEST_NO_SPAWN",
+            default_port: PORT,
+        };
+
+        let listening = || TcpStream::connect(("127.0.0.1", PORT)).is_ok();
+
+        if listening() {
+            eprintln!("skipping: something already holds :{PORT}");
+            return;
+        }
+
+        std::thread::spawn(|| apelles_ai::sidecar::supervise(&SPEC));
+
+        // A Rust binary binds a socket in milliseconds; 30s is the same budget
+        // the supervisor itself allows, and only a build that is not there at
+        // all should ever exhaust it.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            if apelles_ai::sidecar::status_snapshot(&SPEC).healthy {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let status = apelles_ai::sidecar::status_snapshot(&SPEC);
+        if !status.healthy {
+            // Genuinely not built — `cargo test -p apelles` alone does not build
+            // another crate's binary. Not a failure of this code; a failure to
+            // assert here would be, which is why the message says what to run.
+            eprintln!(
+                "skipping: apelles-mcp never came up ({:?}) — `cargo build -p apelles-mcp` first",
+                status.last_error
+            );
+            apelles_ai::sidecar::shutdown();
+            return;
+        }
+
+        assert!(status.managed, "we spawned it, so we must own it");
+        assert!(status.pid.is_some(), "an owned child must report its pid");
+        assert!(!status.stale, "a freshly-spawned child is never stale");
+        assert!(listening(), "reported healthy but nothing is on :{PORT}");
+
+        // The exit hook, exactly as `lib.rs` calls it.
+        apelles_ai::sidecar::shutdown();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && listening() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            !listening(),
+            "the MCP server survived shutdown() and is still holding :{PORT} — \
+             that is the orphaned-process bug"
+        );
     }
 }

@@ -13,11 +13,11 @@
 //!
 //! NOT TO BE CONFUSED WITH [`crate::transport`]
 //!  That module is the *other* direction — how a tool reaches the app (`POST /op` to
-//!  the control server on 19788). This one is how a client reaches us (19789). Two
+//!  the control server on 19788). This one is how a client reaches us (19790). Two
 //!  HTTP hops, opposite directions, and a request crosses both:
 //!
 //! ```text
-//!  Claude Code ──HTTP :19789/mcp──▶ apelles-mcp ──HTTP :19788/op──▶ Apelles app
+//!  Claude Code ──HTTP :19790/mcp──▶ apelles-mcp ──HTTP :19788/op──▶ Apelles app
 //!    (client)      this module                    crate::transport      (frontend)
 //! ```
 //!
@@ -25,7 +25,7 @@
 //!  No tools, no ops, no auth. There is deliberately no authentication: the socket is
 //!  bound to loopback only and never to `0.0.0.0`, which is the same trust boundary
 //!  the app's own control server already relies on (D-020) — anything that can reach
-//!  19789 can already reach 19788 directly. It does not serve anything but `/mcp` and
+//!  19790 can already reach 19788 directly. It does not serve anything but `/mcp` and
 //!  `/health`, and it never becomes a general HTTP server for the app.
 
 use std::io;
@@ -49,7 +49,7 @@ use crate::ApellesMcp;
 /// two halves of the same bridge sit together and are obvious in an `lsof`. Deliberately
 /// nowhere near the Python sidecars' 8765/8766, which are in the range a random dev
 /// server grabs.
-pub const DEFAULT_HTTP_PORT: u16 = 19789;
+pub const DEFAULT_HTTP_PORT: u16 = 19790;
 
 /// Overrides [`DEFAULT_HTTP_PORT`]. Mirrors `CHROMA_CONTROL_PORT`'s convention exactly,
 /// and is the variable the app's supervisor sets on the child it spawns.
@@ -111,7 +111,7 @@ pub async fn stdio(service: ApellesMcp) -> Result<(), Box<dyn std::error::Error>
 /// The `/mcp` + `/health` router, without binding anything.
 ///
 /// Split out from [`http`] so a test can drive the real router over an ephemeral port
-/// (`tests/http_transport.rs`) instead of having to take 19789 from a running app.
+/// (`tests/http_transport.rs`) instead of having to take 19790 from a running app.
 ///
 /// `control_url` is passed in rather than re-read from the environment so `/health`
 /// reports the control server this process is *actually* talking to — a second
@@ -177,7 +177,7 @@ mod tests {
         // necessity (the supervisor spawns it, the Connect-to-MCP dialog prints it, the
         // READMEs document it), so drift here is a real "the URL in the dialog does not
         // work" bug.
-        assert_eq!(DEFAULT_HTTP_PORT, 19789);
+        assert_eq!(DEFAULT_HTTP_PORT, 19790);
     }
 
     #[test]
