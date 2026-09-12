@@ -359,7 +359,14 @@ export function ConnectMcpDialog({ open, onOpenChange }: ConnectMcpDialogProps) 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      {/* Both the unprefixed AND sm:-prefixed form, deliberately —
+          `DialogContent`'s own default (`packages/ui/src/components/ui/
+          dialog.tsx`) carries `sm:max-w-lg`, a sm:-VARIANT class;
+          tailwind-merge only dedupes within the same variant, so an
+          unprefixed override alone never touches it and 512px keeps winning
+          past the sm breakpoint. Same fix, same reasoning, as
+          `@apelles/keymap`'s `KeyboardShortcutsDialog` already documents. */}
+      <DialogContent className="max-w-xl sm:max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <PlugsConnectedIcon className="size-4" />
