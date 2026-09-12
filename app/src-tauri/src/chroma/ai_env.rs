@@ -43,11 +43,22 @@ pub const STATUS_EVENT: &str = "ai-env-status";
 /// [`apelles_ai::ai_env::Phase::Unavailable`] — a real state with a real message, not a
 /// crash.
 fn resolve_paths(app: &tauri::AppHandle) -> Option<AiEnvPaths> {
-    // Dev checkout first. If the workspace's own `ai-env/` is there, use it whole:
-    // sharing one venv with `ai-env/setup.sh` is the entire point of D-314's layout,
-    // and a dev build quietly building a second copy under Application Support would
-    // waste 1.6 GB and split the two.
-    if let Some(dev) = apelles_ai::ai_env::paths() {
+    // Dev checkout: if the workspace's own `ai-env/` is there, use it whole. Sharing
+    // one venv with `ai-env/setup.sh` is the entire point of D-314's layout, and a dev
+    // build quietly building a second copy under Application Support would waste 1.6 GB
+    // and split the two.
+    //
+    // Gated on `tauri::is_dev()` and not merely on "does that directory exist", which
+    // is the version of this that is subtly wrong: `apelles_ai::ai_env::paths()`'s
+    // fallback keys off `CARGO_MANIFEST_DIR`, a **build-machine** path baked in at
+    // compile time. On the machine that built the release, that path still exists — so
+    // a packaged `.app` would happily adopt the developer's workspace, write a venv
+    // into their checkout, and take a code path no end user ever takes. Exactly the
+    // class of bug where the developer's build is the only one that behaves
+    // differently, and therefore the only one nobody catches.
+    if tauri::is_dev()
+        && let Some(dev) = apelles_ai::ai_env::paths()
+    {
         log::info!("[ai-env] dev layout: {}", dev.root.display());
         return Some(dev);
     }

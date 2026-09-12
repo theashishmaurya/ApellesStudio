@@ -594,32 +594,53 @@ fn a_missing_lock_file_is_unavailable_not_a_retryable_failure() {
 }
 
 /// `retry_now` must be honest about whether it did anything: a UI that shows a spinner
-/// on a click that was ignored is worse than a disabled button.
+/// on a click that was ignored is worse than a disabled button. It declines only while
+/// an attempt is actually in flight.
+///
+/// **`Ready` must be accepted**, and that is the interesting case. An earlier version of
+/// this refused there too ("nothing to retry"), which was wrong twice over: it left
+/// `supervise`'s post-ready park loop waiting on a signal nothing could ever send, and
+/// it meant a venv deleted or broken *after* the app reached ready stayed reported as
+/// healthy forever. Ready is a cached answer; this is its invalidation.
 #[test]
-fn retry_now_declines_when_there_is_nothing_to_retry() {
+fn retry_now_declines_only_while_an_attempt_is_in_flight() {
     let _guard = STATE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     let restore = status_snapshot();
-    {
-        let mut s = shared().status.lock().unwrap_or_else(|p| p.into_inner());
-        s.phase = Phase::Ready;
-    }
-    assert!(!retry_now(), "nothing to retry when already ready");
+    let set_phase = |phase: Phase| {
+        if let Ok(mut s) = shared().status.lock() {
+            s.phase = phase;
+        }
+        if let Ok(mut r) = shared().retry_requested.lock() {
+            *r = false;
+        }
+    };
 
-    {
-        let mut s = shared().status.lock().unwrap_or_else(|p| p.into_inner());
-        s.phase = Phase::InstallingPackages;
+    for phase in [
+        Phase::Checking,
+        Phase::InstallingPython,
+        Phase::CreatingVenv,
+        Phase::InstallingPackages,
+        Phase::Repairing,
+    ] {
+        set_phase(phase);
+        assert!(
+            !retry_now(),
+            "{phase:?} is already working \u{2014} a second attempt would be a no-op"
+        );
     }
-    assert!(!retry_now(), "already working — a retry would be a no-op");
 
-    {
-        let mut s = shared().status.lock().unwrap_or_else(|p| p.into_inner());
-        s.phase = Phase::Failed;
-    }
+    set_phase(Phase::Ready);
     assert!(
         retry_now(),
-        "a failed bootstrap is exactly what retry is for"
+        "ready is a cached answer and must stay re-checkable \u{2014} otherwise a venv \
+         deleted by hand is reported healthy forever"
     );
+
+    for phase in [Phase::Failed, Phase::Unavailable, Phase::Unknown] {
+        set_phase(phase);
+        assert!(retry_now(), "{phase:?} must accept a retry");
+    }
 
     // Leave the global as we found it, and drop the flag this test just set.
     if let Ok(mut r) = shared().retry_requested.lock() {

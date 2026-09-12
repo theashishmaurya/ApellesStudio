@@ -74,6 +74,15 @@ bundle is **code-signed** — writing 1.6 GB into it would invalidate the signat
 dev checkout they stay together deliberately, so the app and a hand-run
 `ai-env/setup.sh` build and share exactly one environment, which is what D-314 set up.
 
+Which of the two layouts is used is decided by **`tauri::is_dev()`**, not by "does the
+workspace directory exist". That distinction matters: the dev fallback keys off
+`CARGO_MANIFEST_DIR`, a **build-machine** path baked in at compile time, and on the
+machine that built the release that path still exists. An existence check would therefore
+have let a packaged `.app` adopt the developer's workspace, write a venv into their
+checkout, and take a code path no end user ever takes — the class of bug where the
+developer's own build is the only one that behaves differently, and so the only one
+nobody catches.
+
 `uv` is found by the same rule as every other bundled binary (D-313's `resolve_bin`):
 beside our own executable first, which is `target/<profile>/` in a dev run and the
 bundle's binary directory in a packaged one. One rule, both cases.
@@ -169,6 +178,23 @@ rebuilt and the bootstrap would retry the same failing command forever. This was
 bug in the first draft, caught by
 `a_damaged_environment_is_healed_rather_than_reported_ready` — which is precisely why
 that test drives a real `uv` instead of a mock.
+
+## Stalls
+
+`uv` is killed if it produces **no output at all for 15 minutes** (`UV_STALL_TIMEOUT`).
+
+Deliberately a stall timeout and not a cap on total runtime: the honest worst case is a
+multi-gigabyte download on a bad connection, which can legitimately run a very long time
+but emits a line every few seconds while it does. A total-runtime cap would kill a
+slow-but-working install and convert it into an infinite retry loop; a silence timeout
+only catches what is genuinely stuck, such as a dead TCP connection that never times out.
+
+This also dictated the shape of `run_uv`. The obvious implementation — drain the child's
+output to EOF, then wait for it — cannot ever fire the timeout, because draining blocks
+until the child closes its pipes, which a wedged child never does. So the loop polls the
+output channel with a short timeout and checks for exit and for a stall in between,
+then drains whatever is still queued once the child is gone (the last lines before exit
+include the `Installed N packages` that snaps progress to its total).
 
 ## Progress reporting
 

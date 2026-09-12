@@ -90,14 +90,17 @@ pub const PYTHON_VERSION: &str = "3.11.15";
 /// "Retry now" button ([`retry_now`]) for the case where they just reconnected.
 const BACKOFF: [u64; 6] = [5, 15, 45, 120, 300, 900];
 
-/// How long a single `uv` invocation may run before it is killed as hung.
+/// How long `uv` may go **without producing a single line of output** before it is
+/// killed as wedged.
 ///
-/// Generous, because the honest worst case here is a multi-gigabyte download on a bad
-/// connection, and killing a slow-but-progressing install would turn a working
-/// bootstrap into an infinite retry loop. It exists only to stop a genuinely wedged
-/// child (a dead TCP connection that never times out) from parking the state machine
-/// in `installingPackages` forever.
-const UV_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+/// A stall timeout, deliberately, not a cap on total runtime: the honest worst case here
+/// is a multi-gigabyte download on a bad connection, which can legitimately run for a
+/// very long time but emits a line every few seconds while it does. A total-runtime cap
+/// would kill a slow-but-working install and turn it into an infinite retry loop. This
+/// only catches the thing that is genuinely stuck — a dead TCP connection that never
+/// times out — and keeps it from parking the state machine in `installingPackages`
+/// forever.
+const UV_STALL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 // ---- where everything is -----------------------------------------------------------
 
@@ -305,14 +308,21 @@ pub fn status_snapshot() -> AiEnvStatus {
         .unwrap_or_default()
 }
 
-/// Ask for an immediate retry, interrupting whatever backoff is in progress.
+/// Ask for an immediate re-check, interrupting whatever backoff is in progress.
 ///
-/// Returns `false` if there is nothing to retry (already [`Phase::Ready`], or already
-/// working) so the caller can say so rather than pretending it did something. The
-/// button and the MCP tool both go through here.
+/// Refused (returns `false`) only while an attempt is genuinely **in flight**, so the
+/// caller can say "already running" instead of pretending a second one was queued. The
+/// "Retry now" button and the `ai_env_retry` MCP tool both come through here.
+///
+/// **Accepted when already [`Phase::Ready`]**, deliberately, where it means "re-verify".
+/// The first version refused there too, on the reasoning that there is nothing to retry —
+/// which was wrong twice over. It left [`supervise`]'s post-ready park loop waiting on a
+/// signal nothing could ever send (dead code wearing a comment claiming otherwise), and
+/// it meant a venv deleted or broken *after* the app reached `ready` would be reported
+/// healthy forever, with no way for a user or an agent to make the app look again. Ready
+/// is a cached answer, and a cached answer needs an invalidation.
 pub fn retry_now() -> bool {
-    let phase = status_snapshot().phase;
-    if phase == Phase::Ready || phase.is_working() {
+    if status_snapshot().phase.is_working() {
         return false;
     }
     if let Ok(mut r) = shared().retry_requested.lock() {
@@ -409,20 +419,35 @@ fn run_uv(uv: &Path, args: &[&str], mut on_line: impl FnMut(&str)) -> Result<(),
         *slot = Some(child);
     }
 
-    // Drain until both reader threads are gone (all senders dropped). Reading to the
-    // end is what makes the exit status meaningful: a child whose pipes are still full
-    // has not necessarily finished writing.
-    for line in rx {
-        log::info!("[ai-env] {line}");
-        on_line(&line);
-    }
-
-    let deadline = Instant::now() + UV_TIMEOUT;
+    // Interleave draining the output with polling for exit, rather than draining to EOF
+    // first and only then waiting.
+    //
+    // Draining first is the obvious shape and it is wrong: `for line in rx` blocks until
+    // both reader threads end, which happens when the child closes its pipes, which for
+    // a genuinely wedged child never happens. The stall timeout below would then be
+    // unreachable — the exact case it exists for. So: poll the channel with a short
+    // timeout, and between polls check for exit and for a stall.
+    let mut last_activity = Instant::now();
     let status = loop {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(line) => {
+                log::info!("[ai-env] {line}");
+                on_line(&line);
+                last_activity = Instant::now();
+                continue;
+            }
+            // Timeout: no output right now. Disconnected: both readers finished, so the
+            // pipes are closed and the child is on its way out. Either way, fall through
+            // to the exit/stall checks below.
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+        }
+
         if stopping() {
             let _ = kill_child();
             return Err("cancelled".to_string());
         }
+
         let Ok(mut slot) = shared().child.lock() else {
             return Err("bootstrap state is poisoned".to_string());
         };
@@ -437,15 +462,20 @@ fn run_uv(uv: &Path, args: &[&str], mut on_line: impl FnMut(&str)) -> Result<(),
             }
             Ok(None) => {
                 drop(slot);
-                if Instant::now() > deadline {
+                // A *stall* timeout, not a total-runtime one. The honest worst case here
+                // is a multi-gigabyte download on a bad connection, which can legitimately
+                // run for a very long time — but it emits a line every few seconds while
+                // it does. Killing on total elapsed time would murder a slow-but-working
+                // install and turn it into an infinite retry loop; killing on silence
+                // only catches the thing that is actually stuck.
+                if last_activity.elapsed() > UV_STALL_TIMEOUT {
                     let _ = kill_child();
                     return Err(format!(
-                        "uv {} made no progress for {} minutes and was stopped",
+                        "`uv {}` produced no output for {} minutes and was stopped",
                         args.first().unwrap_or(&""),
-                        UV_TIMEOUT.as_secs() / 60
+                        UV_STALL_TIMEOUT.as_secs() / 60
                     ));
                 }
-                std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
                 *slot = None;
@@ -453,6 +483,15 @@ fn run_uv(uv: &Path, args: &[&str], mut on_line: impl FnMut(&str)) -> Result<(),
             }
         }
     };
+
+    // The child is gone, so both pipes are closed and the reader threads have ended or
+    // are ending. Take whatever they already queued: the last few lines — including the
+    // `Installed N packages` that snaps the progress count to its total — are usually
+    // written immediately before exit and would otherwise be dropped on the floor.
+    while let Ok(line) = rx.recv_timeout(Duration::from_millis(50)) {
+        log::info!("[ai-env] {line}");
+        on_line(&line);
+    }
 
     if status.success() {
         Ok(())
