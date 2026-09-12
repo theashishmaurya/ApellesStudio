@@ -30319,6 +30319,40 @@ have surfaced the new answer at all. **B-177** — `build.rs` re-copied its stag
 so `npm run tauri:dev` rebuild-looped forever in any checkout where they were not already
 current; found the first time this pass tried to drive a real app.
 
+The **GUI half** reads one store, `@apelles/bridge`'s `aiEnv.ts`. In `bridge` because
+its consumers straddle the layer boundary — masking, relight and Settings are in
+`app/src`, captions are in `packages/editor`, which cannot import from `app/` (D-039) —
+and one store rather than four copies of the `invoke`-then-`listen` dance because Tauri
+events are not buffered, so every consumer must read the current status once on mount
+*as well as* subscribing. Full surface inventory in `docs/notes/ai-env-bootstrap.md`.
+Two judgement calls in it are worth recording here:
+
+- **It shows the state; it refuses nothing.** This was the pass's one real design
+  argument, and the reactive side won it. A pre-flight gate in the GUI is not merely
+  cautious, it is *wrong*: whether a sidecar answers is not knowable from this status —
+  a developer who started one by hand, or set `CHROMA_SIDECAR_PYTHON`, has a working
+  feature while the bootstrap reports `installingPackages`, and disabling their button
+  would be a straight regression. That is the same reasoning that made
+  `explain_unreachable` reactive, applied one layer up. So every AI control stays
+  enabled and simply carries a line saying the environment is still building and how far
+  it has got. The two halves are complements, not duplicates: the call site explains a
+  failure that already happened, which is the only thing it *can* do; the GUI puts the
+  state on screen before the click, which is the only thing the call site *cannot* do.
+  Between them, a user who clicks an AI feature mid-bootstrap sees "still setting up, 47
+  of 91 packages" either way — before, and if they click anyway, after.
+- **`unknown` shows nothing, and `unavailable` only warns.** `unknown` means the
+  supervisor thread has not reported yet, true for the first milliseconds of every
+  launch; a "setting up" flash in front of every AI control at startup would be noise.
+  `unavailable` is where a hand-built venv lives, so it gets a tooltip, no countdown
+  (nothing is scheduled) and no retry button (`retry_now` declines there — B-174).
+
+The card exposes `retry_now`'s full contract rather than half of it: **Retry now** on
+`failed`, and **Re-check** on `ready`, which is the GUI face of the "a cached answer
+needs an invalidation" call above. The store also polls at 1 Hz while a phase is still
+moving and somebody is watching, because `elapsedSecs` is written under the lock with no
+notify and `retryInSecs` is written once and never decremented — an event-only UI would
+show a frozen elapsed time and a stuck countdown.
+
 **Crate boundary.** The state machine, the `uv` invocations and all the tests are
 `apelles_ai::ai_env`; the app keeps only the two `#[tauri::command]` wrappers, the event
 emit, and the bundled-vs-dev path resolution (D-039 §1, D-145: commands do not move,

@@ -23,5 +23,25 @@ D-045/D-046 media-pool store, now consumed by a real panel (D-046's
   which this package cannot depend on without inverting the D-039 layer
   direction, so it lives directly in `SourcesPanel.tsx` instead.
 
+- `useAiEnv` / `useAiEnvStore` (`src/aiEnv.ts`, D-315) — the AI-environment
+  bootstrap's one frontend view: `chroma_ai_env_status`, `chroma_ai_env_retry`
+  and the `ai-env-status` event behind a reference-counted subscription, plus
+  the pure functions that turn a status into words (`aiEnvHeadline`,
+  `aiEnvNotice`, `aiEnvProgressLabel`, `aiEnvWarning`, `aiEnvIsBuilding`). It
+  is in **this** package precisely because its consumers straddle the D-039
+  boundary — Settings, masking and relight are in `app/src`, captions are in
+  `packages/editor`, and only `bridge` is visible to both. **It reports state
+  and never refuses a call**: a sidecar started by hand answers regardless of
+  what the bootstrap thinks, so gating here would be a regression — the app
+  explains a real failure reactively at the sidecar call site instead. Design
+  and the full consumer inventory: `docs/notes/ai-env-bootstrap.md` § "The GUI
+  surface".
+
+- `safeUnlisten` (`src/tauriListeners.ts`) — the correct teardown for a
+  `listen()` registration (B-032/B-034/D-112). The canonical copy for
+  `packages/*`, which cannot import `app/src/utils/tauriListeners.ts`.
+
 **Tests:** `npm test --workspace @apelles/bridge` (vitest, node environment) —
-`src/media.test.ts` covers the pool's project-identity input (B-083/D-203).
+`src/media.test.ts` covers the pool's project-identity input (B-083/D-203);
+`src/aiEnv.test.ts` covers the D-315 status vocabulary and the rule that
+nothing in it ever reports a control as unusable.

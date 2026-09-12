@@ -22,10 +22,18 @@
  * same `groupTranscriptIntoCues`/`generatedCuesToCaptions` functions and the
  * same `import_subtitles` store op — one grouping algorithm, one rounding
  * rule, one undo entry, whichever interface asked.
+ *
+ * **While the AI environment is still building** (D-315) the button says so,
+ * with the real package count, so the wait is visible before anyone clicks
+ * into it. It stays enabled: an `ai-media/` sidecar someone started by hand
+ * answers regardless of what the bootstrap reports, and a click that really
+ * does fail comes back with the `ai_env_not_ready` explanation rather than a
+ * bare connection error.
  */
 import { useState } from 'react';
 import { SparkleIcon } from '@phosphor-icons/react';
 import { Button } from '@apelles/ui';
+import { aiEnvNotice, aiEnvWarning, useAiEnv } from '@apelles/bridge';
 
 import { useEditorTimelineStore } from './timelineStore';
 import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
@@ -40,6 +48,15 @@ export function CaptionsFromTranscriptButton() {
   const playhead = useEditorTimelineStore((s) => s.playhead);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // D-315 — transcription runs in the `ai-media/` sidecar, which imports from
+  // the shared Python environment the app builds in the background on first
+  // launch. Until that finishes the button says so, with the real package
+  // count, so the state is visible before anyone clicks. Advisory, not a gate
+  // — see `aiEnvIsBuilding`'s own doc for why refusing here would be wrong.
+  const { status: aiEnv } = useAiEnv();
+  const aiEnvBuilding = aiEnvNotice(aiEnv, 'Captions from Transcript');
+  const aiEnvUnavailable = aiEnvWarning(aiEnv);
 
   const generate = async () => {
     setError(null);
@@ -96,11 +113,20 @@ export function CaptionsFromTranscriptButton() {
         size="xs"
         disabled={busy || !timeline}
         onClick={generate}
-        title="Generate captions from the selected clip's transcript (D-189)"
+        title={
+          aiEnvBuilding ??
+          aiEnvUnavailable ??
+          "Generate captions from the selected clip's transcript (D-189)"
+        }
       >
         <SparkleIcon className="size-3.5" />
         <span className="ml-1">{busy ? 'Transcribing…' : 'Captions from Transcript'}</span>
       </Button>
+      {aiEnvBuilding && !error && (
+        <span className="truncate text-[11px] text-text-secondary" title={aiEnvBuilding}>
+          {aiEnvBuilding}
+        </span>
+      )}
       {error && (
         <span className="truncate text-[11px] text-red-400" title={error}>
           {error}

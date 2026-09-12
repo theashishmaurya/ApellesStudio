@@ -50,6 +50,22 @@ One or two lines per session. Detail lives in the decision it references.
   here (fixed separately, see above): `cargo test -p apelles` had been red since B-171
   (four tests in the app crate still assumed the auto-placement that change deliberately
   removed).
+- **2026-09-13** — **D-315, the GUI half: the bootstrap now has a face.** One shared
+  store (`@apelles/bridge`'s `aiEnv.ts` — in `bridge` because the consumers straddle the
+  `app/` / `packages/` layer boundary, and shared because Tauri events aren't buffered so
+  every consumer needs read-once-then-listen), an **AI Environment** card in Settings with
+  a real progress bar, package count, elapsed time, retry countdown, Retry now on `failed`
+  and Re-check on `ready`, and a "still setting up — 47 of 91 packages" line at every
+  sidecar-backed control *before* it is clicked: track subject, finalize matte, track
+  depth, relight bake-normals / track-depth, Captions from Transcript. Deliberately
+  advisory — nothing is disabled, because a sidecar someone started by hand answers
+  regardless of what the bootstrap reports, and the agent half's `explain_unreachable`
+  already turns a call that really fails into `ai_env_not_ready`. The two are complements:
+  the call site can only explain a failure that happened, the GUI can only show the state
+  before it does. `unknown` says nothing (it's the first milliseconds of every launch),
+  `unavailable` warns without promising a retry, and the in-process ONNX Bake Depth
+  carries no notice at all. `safeUnlisten` moved into `bridge` as the canonical copy for
+  `packages/*`.
 - **2026-09-12** — **D-314: both Python sidecars now run from ONE shared venv
   (`ai-env/.venv`) — 3.5 GB of duplicated wheels down to 1.8 GB.** They stay two
   separate PROCESSES; only the environments merged. D-189 split them because

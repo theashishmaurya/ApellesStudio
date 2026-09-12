@@ -93,6 +93,7 @@ import { useEditorActions } from '../../../hooks/useEditorActions';
 import { useUIStore } from '../../../store/useUIStore';
 import { useChromaStore } from '../../../store/useChromaStore';
 import { useWaveformControls } from '../../../hooks/useWaveformControls';
+import { aiEnvNotice, aiEnvWarning, useAiEnv } from '@apelles/bridge';
 
 interface DragData {
   type: 'Container' | 'SubMask' | 'Creation';
@@ -1950,6 +1951,20 @@ function SettingsPanel({
   const isActive = !!container;
   const presetButtonRef = useRef<HTMLButtonElement>(null);
 
+  // D-315 — the three sidecar-backed actions below (track subject, finalize
+  // matte, track depth) all need the shared Python environment, which builds
+  // itself in the background on first launch. While it is building they say
+  // so, with the real package count, so nobody clicks into a wait they cannot
+  // see. Advisory, never disabling: a hand-started sidecar answers regardless
+  // of what this reports, and a click that really does fail comes back with
+  // the `ai_env_not_ready` explanation (D-315's agent half), not a raw error.
+  // `useAiEnv` reads the same store the Settings card does, so the two can
+  // never disagree.
+  const { status: aiEnv } = useAiEnv();
+  const trackSubjectNotice = aiEnvNotice(aiEnv, 'Track subject');
+  const trackDepthNotice = aiEnvNotice(aiEnv, 'Track depth');
+  const aiEnvUnavailable = aiEnvWarning(aiEnv);
+
   const placeholderContainer = {
     ...INITIAL_MASK_CONTAINER,
     adjustments: INITIAL_MASK_ADJUSTMENTS,
@@ -2232,6 +2247,7 @@ function SettingsPanel({
                     <button
                       type="button"
                       disabled={!!chromaTrackProgress}
+                      title={trackSubjectNotice ?? aiEnvUnavailable ?? undefined}
                       onClick={() => handleTrackSubject?.(activeSubMask.id, 'fast')}
                       className="w-full p-2.5 rounded-md border border-surface bg-card-active hover:bg-surface disabled:opacity-60 text-sm font-medium flex items-center justify-center gap-2"
                     >
@@ -2244,11 +2260,17 @@ function SettingsPanel({
                     {isTracked && !chromaTrackProgress && (
                       <button
                         type="button"
+                        title={trackSubjectNotice ?? aiEnvUnavailable ?? undefined}
                         onClick={() => handleTrackSubject?.(activeSubMask.id, 'quality')}
                         className="w-full p-2 rounded-md border border-surface hover:bg-surface text-xs text-secondary flex items-center justify-center gap-2"
                       >
                         Finalize matte — full quality (before export)
                       </button>
+                    )}
+                    {trackSubjectNotice && (
+                      <Text variant={TextVariants.small} className="opacity-70 leading-relaxed">
+                        {trackSubjectNotice}
+                      </Text>
                     )}
                   </div>
                 );
@@ -2257,19 +2279,30 @@ function SettingsPanel({
               {activeSubMask.type === Mask.AiDepth && chromaIsVideo && (() => {
                 const isTracked = !!(activeSubMask.parameters as any)?.chromaDepthDir;
                 return (
-                  <button
-                    type="button"
-                    disabled={!!chromaDepthTrackProgress}
-                    onClick={() => handleTrackDepth?.(activeSubMask.id)}
-                    className="w-full p-2.5 rounded-md border border-surface bg-card-active hover:bg-surface disabled:opacity-60 text-sm font-medium flex items-center justify-center gap-2"
-                    title="Precompute a temporally-consistent depth map for every frame (Video Depth Anything) — the haze then tracks a moving camera without flicker"
-                  >
-                    {chromaDepthTrackProgress
-                      ? `Tracking depth… ${chromaDepthTrackProgress.done}/${chromaDepthTrackProgress.total || '?'}`
-                      : isTracked
-                        ? 'Re-track depth over clip'
-                        : 'Track depth over clip'}
-                  </button>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      disabled={!!chromaDepthTrackProgress}
+                      onClick={() => handleTrackDepth?.(activeSubMask.id)}
+                      className="w-full p-2.5 rounded-md border border-surface bg-card-active hover:bg-surface disabled:opacity-60 text-sm font-medium flex items-center justify-center gap-2"
+                      title={
+                        trackDepthNotice ??
+                        aiEnvUnavailable ??
+                        'Precompute a temporally-consistent depth map for every frame (Video Depth Anything) — the haze then tracks a moving camera without flicker'
+                      }
+                    >
+                      {chromaDepthTrackProgress
+                        ? `Tracking depth… ${chromaDepthTrackProgress.done}/${chromaDepthTrackProgress.total || '?'}`
+                        : isTracked
+                          ? 'Re-track depth over clip'
+                          : 'Track depth over clip'}
+                    </button>
+                    {trackDepthNotice && (
+                      <Text variant={TextVariants.small} className="opacity-70 leading-relaxed">
+                        {trackDepthNotice}
+                      </Text>
+                    )}
+                  </div>
                 );
               })()}
 

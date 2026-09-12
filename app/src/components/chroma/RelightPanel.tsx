@@ -53,7 +53,7 @@ import {
   XIcon,
 } from '@phosphor-icons/react';
 import { Button, Slider, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@apelles/ui';
-import { trackEvent } from '@apelles/bridge';
+import { aiEnvNotice, aiEnvWarning, trackEvent, useAiEnv } from '@apelles/bridge';
 
 import { useEditorStore } from '../../store/useEditorStore';
 import { useEditorActions } from '../../hooks/useEditorActions';
@@ -88,6 +88,18 @@ export default function RelightPanel() {
   const ambientLight = useMemo(() => lights.find((l) => l.kind === 'ambient'), [lights]);
   const positionalLights = useMemo(() => lights.filter((l) => l.kind !== 'ambient'), [lights]);
   const activeLight = useMemo(() => lights.find((l) => l.id === activeLightId) ?? null, [lights, activeLightId]);
+
+  // D-315 — Bake Normals (MoGe-2) and Track Depth (Video Depth Anything) both
+  // run in the AI sidecar, so both depend on the shared Python environment
+  // that builds itself on first launch, and both say so while it is building.
+  // Advisory only, never disabling — see `aiEnvIsBuilding`'s own doc. Bake
+  // *Depth* gets no notice at all: it's the in-process ONNX path, it works
+  // with no environment whatsoever, and the auto-fire effect below depends on
+  // it to stop a positional light rendering as a silent no-op.
+  const { status: aiEnv } = useAiEnv();
+  const bakeNormalsNotice = aiEnvNotice(aiEnv, 'Bake Normals');
+  const trackDepthNotice = aiEnvNotice(aiEnv, 'Track Depth');
+  const aiEnvUnavailable = aiEnvWarning(aiEnv);
 
   // D-073: fire Bake Depth automatically — a positional light with no depth
   // source at all renders as an ambient-only no-op (per `resolve_relight_
@@ -291,27 +303,34 @@ export default function RelightPanel() {
                     }
                   />
                   <TooltipContent side="top" align="end">
-                    Re-bake at the current frame
+                    {bakeNormalsNotice ?? 'Re-bake at the current frame'}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             </>
           ) : (
             <>
-              <span className="flex-1">Shading uses an approximation — for real facial contours, bake real surface normals.</span>
+              <span className="flex-1">
+                {bakeNormalsNotice ??
+                  'Shading uses an approximation — for real facial contours, bake real surface normals.'}
+              </span>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <Button variant="secondary" size="xs" onClick={handleBakeRelightNormals}>
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        onClick={handleBakeRelightNormals}
+                      >
                         Bake Normals
                       </Button>
                     }
                   />
                   <TooltipContent side="top" align="end">
-                    Runs a real AI model (MoGe-2, local) to compute actual surface geometry —
-                    light wraps around contours instead of a flat colour wash. A few seconds,
-                    single frame, not video-tracked.
+                    {bakeNormalsNotice ??
+                      aiEnvUnavailable ??
+                      'Runs a real AI model (MoGe-2, local) to compute actual surface geometry — light wraps around contours instead of a flat colour wash. A few seconds, single frame, not video-tracked.'}
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -549,11 +568,15 @@ export default function RelightPanel() {
           is actually running, since that's live status, not explanation. */}
       {videoInfo?.isVideo && (
         <div className="flex items-center justify-end gap-1.5 mt-1 pt-2 border-t border-border-color">
-          {depthTrackProgress && (
+          {depthTrackProgress ? (
             <span className="text-[10px] text-text-secondary tabular-nums mr-auto">
               Tracking… {depthTrackProgress.total ? `${depthTrackProgress.done}/${depthTrackProgress.total}` : 'starting…'}
             </span>
-          )}
+          ) : trackDepthNotice ? (
+            <span className="text-[10px] text-text-secondary mr-auto leading-snug">
+              {trackDepthNotice}
+            </span>
+          ) : null}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger
@@ -584,7 +607,9 @@ export default function RelightPanel() {
               }
             />
             <TooltipContent side="top" align="end">
-              {relightDepthDir ? 'Re-track depth (full video)' : 'Track Depth (full video)'}
+              {trackDepthNotice ??
+                aiEnvUnavailable ??
+                (relightDepthDir ? 'Re-track depth (full video)' : 'Track Depth (full video)')}
             </TooltipContent>
           </Tooltip>
         </div>

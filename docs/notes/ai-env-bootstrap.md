@@ -234,6 +234,99 @@ cache is never announced as downloaded** — on a fast re-run that is all of the
 finishing. The parser is unit-tested against that block of output transcribed verbatim
 from a genuine run.
 
+## The GUI surface
+
+The contract above is what an agent sees. What a *person* sees is a Settings card and,
+at every control that depends on the environment, a line saying it is still being built
+and how far it has got. All of it reads one store.
+
+**It complements `explain_unreachable`; it does not duplicate it.** That function is
+reactive by design (see above) — it decorates a call that already failed. It therefore
+cannot do the one thing this section exists for: put the state on screen *before* anyone
+clicks. Equally, this half deliberately does **not** refuse anything, for exactly the
+reason the reactive design was chosen — a sidecar someone started by hand, or a
+`CHROMA_SIDECAR_PYTHON` override, answers perfectly well while the bootstrap reports
+`installingPackages`, and a pre-flight gate would break those setups. Every control here
+stays enabled. The rule is: *say what is happening, refuse nothing, and let the call site
+explain a real failure.*
+
+### One store, `@apelles/bridge`'s `aiEnv.ts`
+
+`packages/bridge/src/aiEnv.ts` holds the whole frontend view: the `AiEnvStatus` type, a
+zustand store, the `useAiEnv()` hook, and the pure functions that turn a status into
+words (`aiEnvHeadline`, `aiEnvNotice`, `aiEnvProgressLabel`, `aiEnvWarning`,
+`aiEnvIsBuilding`).
+
+Why `@apelles/bridge` and not `app/src/hooks/`: the consumers are split across the
+layer boundary. Masking, relight and Settings live in `app/src`; captions live in
+`packages/editor`, which cannot import from `app/` (D-039's one-way rule). `bridge` —
+the frontend↔backend seam — is the one layer both can read.
+
+Why a store rather than the `invoke` + `listen` pair written out four times: **Tauri
+events are not buffered** (`chroma/control.rs`'s module doc), so every consumer has to
+read `chroma_ai_env_status` once on mount *and* subscribe to `ai-env-status`. Written
+once, reference-counted, torn down with `safeUnlisten` when the last consumer unmounts.
+(`safeUnlisten` itself moved into `bridge` in the same pass — B-032/B-034/D-112's fix had
+already been hand-copied into two packages because `app/src/utils` is above them in the
+layer order.)
+
+It also **polls at 1 Hz**, but only while somebody is watching and only while the phase
+is still moving. Two fields change with no event to announce them: `elapsedSecs` is
+written by the supervisor's own 250 ms ticker *under the lock* without a notify, and
+`retryInSecs` is written once when an attempt fails and never decremented. So a
+purely event-driven card would show a frozen "0s so far" through a five-minute download
+and a countdown stuck at 45. The tick re-reads the snapshot during a working phase (a
+mutex read on the Rust side) and counts the retry down locally while `failed`; it does
+nothing at all once the phase is `ready`, `unavailable` or `unknown`.
+
+### The Settings card
+
+`AiEnvStatusCard` in `app/src/components/panel/SettingsPanel.tsx`, directly after the
+two `SidecarStatusCard`s and sharing their shell and colour precedent (green healthy /
+amber in-flight-or-degraded / red down). A sibling component rather than a third entry
+in `SIDECAR_CARDS` because the shapes genuinely differ: a sidecar is up or down, this is
+a one-time build with phases, a package count, a retry schedule and two distinct
+not-working states. It shows the headline, the backend's own `detail` sentence, a
+progress bar and "142 of 163 packages · 3m 04s so far" during `installingPackages`,
+`lastError` plus a live countdown plus **Retry now** on `failed`, a **Re-check** button
+on `ready` (the GUI face of `retry_now`'s "a cached answer needs an invalidation"), and
+the venv path throughout. `unavailable` gets the manual route (`./ai-env/setup.sh`) and
+**no** button, because `retry_now` declines there (B-174) and offering one would lie.
+
+### What each phase looks like
+
+| phase | AI controls | what the user sees |
+|---|---|---|
+| `checking` … `repairing` | enabled | an inline line at the control: "Track subject needs the AI environment, which is still setting up — 47 of 91 packages…" |
+| `failed` | enabled | the same line, naming the failure and pointing at Settings' Retry now |
+| `unavailable` | enabled | a tooltip only: automatic setup is off here, so AI works only if the venv was built by hand |
+| `ready`, `unknown` | enabled | nothing |
+
+`unknown` says nothing on purpose: it only means the supervisor thread has not reported
+yet, which is true for the first milliseconds of every launch, and a "setting up" flash
+in front of every AI control at startup would be noise.
+
+### Every surface
+
+| surface | controls |
+|---|---|
+| `app/src/components/panel/right/MasksPanel.tsx` | Track subject, Finalize matte, Track depth — notice inline under the buttons, and in their `title` |
+| `app/src/components/chroma/RelightPanel.tsx` | Bake Normals (initial and re-bake) and Track Depth (full video) — notice in the tooltip and in the existing status line |
+| `packages/editor/src/CaptionsFromTranscriptButton.tsx` | Captions from Transcript — notice inline beside the button |
+
+**Deliberately carrying no notice:** Bake Depth. It is the in-process ONNX
+Depth-Anything-V2 path, needs no Python at all, and RelightPanel's auto-fire effect
+depends on it to stop a positional light rendering as a silent no-op. Nothing outside the
+sidecars is touched: Edit, Motion, Colorist, grading and export are unaffected throughout.
+
+**Tested where it can regress.** `packages/bridge/src/aiEnv.test.ts` pins the phase rules
+and the wording, including a check that no message ever calls a feature blocked, refused
+or disabled. `packages/editor/src/CaptionsFromTranscriptButton.dom.test.tsx` asserts the
+same thing against the real rendered component: mid-build it shows "47 of 91 packages",
+the button stays `disabled === false`, a cached transcript still generates captions, and
+`unknown` renders no notice at all. "Advisory, never disabling" is one `disabled={…}` away
+from being silently undone, which is why it is a test and not a comment.
+
 ## Measured timings and sizes
 
 Real numbers from this machine (M-series, ~200 Mbit), `uv` 0.12.13:

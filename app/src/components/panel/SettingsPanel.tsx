@@ -19,6 +19,8 @@ import {
   ImageIcon,
   MouseIcon,
   HandTapIcon,
+  CircleNotchIcon,
+  CheckCircleIcon,
 } from '@phosphor-icons/react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -40,6 +42,7 @@ import { useOsPlatform } from '../../hooks/useOsPlatform';
 import { open } from '@tauri-apps/plugin-shell';
 import { ArrowCounterClockwiseIcon } from '@phosphor-icons/react';
 import { useUIStore } from '../../store/useUIStore';
+import { aiEnvHeadline, aiEnvIsWorking, aiEnvProgressLabel, useAiEnv } from '@apelles/bridge';
 
 /** Mirrors `chroma::sidecar::SidecarStatus` (D-101, `camelCase` on the wire —
  *  see that struct's own doc comment for why). One per supervised sidecar. */
@@ -148,6 +151,165 @@ function SidecarStatusCard({ spec, status }: { spec: SidecarCardSpec; status: Si
             {status.lastError && (
               <Text variant={TextVariants.small} color={TextColors.error} className="mt-1">
                 {status.lastError}
+              </Text>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** `12s` / `3m 04s` — the bootstrap's own elapsed/countdown seconds, read at a
+ *  glance. Minutes matter here (a cold install is several of them); hours do
+ *  not, and `UV_TIMEOUT` caps a single attempt at one anyway. */
+function formatSecs(secs: number): string {
+  const s = Math.max(0, Math.round(secs));
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+/**
+ * D-315 — the shared Python environment both sidecars run from, and its
+ * first-launch bootstrap.
+ *
+ * A sibling of `SidecarStatusCard` rather than a third entry in
+ * `SIDECAR_CARDS`: the two are genuinely different shapes. A sidecar is a
+ * process that is either up or down and has no progress; this is a one-time
+ * 1.6 GB build with real phases, a real package count, a retry schedule and
+ * two distinct "not working" states. Same visual shell and the same colour
+ * precedent as the sidecar cards (green healthy / amber degraded-or-in-flight
+ * / red down — see `SidecarStatusCard`'s own comment for where that came
+ * from), so the three read as one set.
+ *
+ * The status comes from `@apelles/bridge`'s `useAiEnv`, the same store every
+ * AI-feature entry point reads, so this card and a disabled "Track subject"
+ * button can never disagree.
+ */
+function AiEnvStatusCard() {
+  const { status, loaded, retryIn, retrying, retryDeclined, retry } = useAiEnv();
+  const working = aiEnvIsWorking(status.phase);
+  const progress = aiEnvProgressLabel(status);
+  const pct =
+    status.phase === 'installingPackages' && status.packagesTotal > 0
+      ? Math.min(100, Math.round((status.packagesDone / status.packagesTotal) * 100))
+      : null;
+
+  return (
+    <div className="p-6 bg-surface rounded-xl shadow-md">
+      <Text variant={TextVariants.title} color={TextColors.accent} className="mb-2">
+        AI Environment
+      </Text>
+      <Text variant={TextVariants.small} className="mb-6 opacity-60">
+        A one-time local Python install (~1.6 GB) that both AI sidecars run from. It builds
+        itself in the background on first launch — everything else in the app works meanwhile.
+      </Text>
+      {!loaded ? (
+        <Text variant={TextVariants.small} className="opacity-70">
+          Checking…
+        </Text>
+      ) : (
+        <div className="flex items-start gap-3">
+          {/* `unknown` spins too: it means the supervisor thread has not
+              reported yet, which is a moment of every launch, not a fault. */}
+          {working || status.phase === 'unknown' ? (
+            <CircleNotchIcon size={18} className="mt-0.5 shrink-0 animate-spin text-amber-400" />
+          ) : status.phase === 'ready' ? (
+            <CheckCircleIcon size={18} className="mt-0.5 shrink-0 text-green-400" />
+          ) : status.phase === 'failed' ? (
+            <WarningIcon size={18} className="mt-0.5 shrink-0 text-red-400" />
+          ) : (
+            <WarningIcon size={18} className="mt-0.5 shrink-0 text-amber-400" />
+          )}
+          <div className="min-w-0 flex-1">
+            <Text>{aiEnvHeadline(status)}</Text>
+
+            {status.detail && (
+              <Text variant={TextVariants.small} className="mt-1 opacity-80">
+                {status.detail}
+              </Text>
+            )}
+
+            {pct !== null && (
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-card-active">
+                <div
+                  className="h-full rounded-full bg-accent transition-[width] duration-300"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            )}
+
+            {working && (
+              <Text variant={TextVariants.small} className="mt-1 opacity-60">
+                {progress ? `${progress} · ` : ''}
+                {formatSecs(status.elapsedSecs)} so far
+                {status.attempt > 1 ? ` · attempt ${status.attempt}` : ''}
+              </Text>
+            )}
+
+            {status.phase === 'failed' && (
+              <>
+                {status.lastError && (
+                  <Text variant={TextVariants.small} color={TextColors.error} className="mt-1">
+                    {status.lastError}
+                  </Text>
+                )}
+                <Text variant={TextVariants.small} className="mt-1 opacity-60">
+                  {retryIn !== null && retryIn > 0
+                    ? `Trying again automatically in ${formatSecs(retryIn)} (attempt ${status.attempt + 1}).`
+                    : 'Trying again…'}{' '}
+                  Usually this just means no internet connection.
+                </Text>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="mt-3"
+                  disabled={retrying}
+                  onClick={() => void retry()}
+                >
+                  {retrying ? 'Retrying…' : 'Retry now'}
+                </Button>
+              </>
+            )}
+
+            {/* `ready` is a cached answer, so it gets an invalidation — the
+                same "re-verify" `retry_now` accepts here and the `ai_env_retry`
+                MCP tool exposes. A venv deleted or broken after the app reached
+                `ready` would otherwise be reported healthy until a restart. */}
+            {status.phase === 'ready' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-3"
+                disabled={retrying}
+                onClick={() => void retry()}
+              >
+                {retrying ? 'Re-checking…' : 'Re-check'}
+              </Button>
+            )}
+
+            {/* `unavailable` deliberately gets no countdown and no retry
+                button: nothing is scheduled, and `chroma_ai_env_retry`
+                declines here (B-174 — it used to accept and then do nothing,
+                because the supervisor thread has already exited). The honest
+                thing to offer is the manual route. */}
+            {status.phase === 'unavailable' && (
+              <Text variant={TextVariants.small} className="mt-1 opacity-60">
+                Nothing is scheduled — this will not fix itself by waiting. Build the
+                environment by hand with <code>./ai-env/setup.sh</code> and restart the app,
+                or reinstall a build that ships the <code>uv</code> binary.
+              </Text>
+            )}
+
+            {retryDeclined && (
+              <Text variant={TextVariants.small} className="mt-1 opacity-60">
+                Nothing to retry right now.
+              </Text>
+            )}
+
+            {status.venv && (
+              <Text variant={TextVariants.small} className="mt-2 opacity-40 break-all">
+                <code>{status.venv}</code>
               </Text>
             )}
           </div>
@@ -2200,6 +2362,11 @@ export default function SettingsPanel({ appSettings, onBack, onSettingsChange }:
                       status={sidecarStatuses[spec.command] ?? null}
                     />
                   ))}
+
+                  {/* D-315 — the environment those two sidecars run from. It
+                      sits after them because it is the thing that explains a
+                      sidecar being down on a fresh install. */}
+                  <AiEnvStatusCard />
 
                   <div className="p-6 bg-surface rounded-xl shadow-md">
                     <Text variant={TextVariants.title} color={TextColors.accent} className="mb-8">
