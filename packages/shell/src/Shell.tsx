@@ -126,12 +126,13 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { CaretLeftIcon, KeyboardIcon, SidebarSimpleIcon } from '@phosphor-icons/react';
+import { CaretLeftIcon, KeyboardIcon, PlugsConnectedIcon, SidebarSimpleIcon } from '@phosphor-icons/react';
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
 import { useHistoryStore, type HistoryEntry } from '@apelles/history';
 import { KeyboardShortcutsDialog, useKeymapStore, useShortcut } from '@apelles/keymap';
 import { useShellStore, type ShellTabId } from './store';
 import { useWindowChrome, MacTrafficLights, WindowControls } from './WindowChrome';
+import { ConnectMcpDialog } from './ConnectMcpDialog';
 
 export interface ShellTab {
   id: ShellTabId;
@@ -212,6 +213,7 @@ export function Shell({
   translate,
 }: ShellProps) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [mcpDialogOpen, setMcpDialogOpen] = useState(false);
   const activeTab = useShellStore((s) => s.activeTab);
   const setActiveTab = useShellStore((s) => s.setActiveTab);
   const wgpuSurfaceActive = useShellStore((s) => s.wgpuSurfaceActive);
@@ -359,11 +361,27 @@ export function Shell({
               <KeyboardIcon className="size-3.5" />
             </Button>
           )}
+          {/* Connect to MCP — same shell-level, opposite-corner-of-a-project
+              placement as the Keyboard Shortcuts opener right above it: one
+              opener, shared by all three tabs, not a per-tab duplicate. */}
+          {projectOpen && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => setMcpDialogOpen(true)}
+              title="Connect to MCP"
+              aria-label="Connect to MCP"
+              className="h-6 w-6 p-0 text-text-secondary hover:text-text-primary"
+            >
+              <PlugsConnectedIcon className="size-3.5" />
+            </Button>
+          )}
           <WindowControls chrome={chrome} />
         </div>
       </div>
 
       <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} translate={translate} />
+      <ConnectMcpDialog open={mcpDialogOpen} onOpenChange={setMcpDialogOpen} />
 
       {/* D-298 — the agent activity feed, above every tab. Rendered here
           rather than inside a tab for the same reason the Keyboard Shortcuts

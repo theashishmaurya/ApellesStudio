@@ -29,13 +29,18 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-## Add to Claude Code
+## Add to Claude Code (or Cursor / Claude Desktop / Windsurf / VS Code / Zed /
+## Cline — the app's own "Connect to MCP" dialog, in the chrome bar next to
+## Keyboard Shortcuts, has the exact config for each)
 
 The Apelles desktop app must be running (the control server binds on app start),
-with an image or video open.
+with an image or video open. Every client's config below points at `run.sh`
+(not the venv's python interpreter directly) — it resolves its own location
+and execs the right interpreter against `server.py`, so nothing outside this
+one file needs to know the venv exists at all.
 
 ```bash
-claude mcp add apelles -- /ABS/PATH/chroma/mcp/.venv/bin/python /ABS/PATH/chroma/mcp/server.py
+claude mcp add apelles -- /ABS/PATH/chroma/mcp/run.sh
 ```
 
 Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side

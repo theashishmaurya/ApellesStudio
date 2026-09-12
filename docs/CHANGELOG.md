@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **added a "Connect to MCP" help dialog** (shell-level,
+  next to the Keyboard Shortcuts opener) covering the real, verified config
+  format for 7 MCP clients — Claude Code, Claude Desktop, Cursor, Windsurf,
+  VS Code, Zed, Cline — plus a link to apelles.studio. Reference copy only;
+  performs no setup/connection itself. Every client's command/config now
+  points at a new `mcp/run.sh` wrapper (resolves its own venv + `server.py`)
+  instead of exposing the venv's python interpreter path directly. A larger
+  follow-up (moving the MCP server itself off Python entirely, onto a native
+  Rust implementation) is in progress separately — see `docs/08-decisions.md`
+  once that decision record lands.
 - **2026-09-12** — **fixed B-167: Relight now honours a rotated/flipped
   clip's real transform when baking its depth/normal map**, instead of
   always warping as if rotation/flip were zero — the depth (and any baked
