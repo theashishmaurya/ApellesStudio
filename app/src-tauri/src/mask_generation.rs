@@ -1343,22 +1343,51 @@ fn generate_sub_mask_bitmap(
     }
 }
 
+/// B-167 — the image's current rotate/flip transform (`adjustments.rotation`
+/// / `flipHorizontal` / `flipVertical` / `orientationSteps`), read straight
+/// off the raw JSON the same way every other top-level adjustment field is
+/// (`adjustment_utils.rs`, `cache_utils.rs`). Every AI-mask bake (subject,
+/// sky, depth — `generate_ai_depth_bitmap` above) threads these through its
+/// own `TransformParams` so the bake — always produced from the ORIGINAL,
+/// untransformed source frame — re-aligns with whatever the user currently
+/// has the base image rotated/flipped to. Relight's depth/normal bakes used
+/// to hardcode `rotation: 0.0, flip_horizontal: false, ...` instead (see
+/// git history), on the reasoning "relight has no per-layer rotation/flip of
+/// its own, unlike a mask sub-mask" — but that field was never a per-mask
+/// knob to begin with, it's just each mask's own copy of this same
+/// whole-image transform; relight was the only bake that dropped it. Fixed
+/// once here rather than at each of the three call sites below.
+fn relight_transform_fields(js_adjustments: &Value) -> (f32, bool, bool, u8) {
+    (
+        js_adjustments["rotation"].as_f64().unwrap_or(0.0) as f32,
+        js_adjustments["flipHorizontal"].as_bool().unwrap_or(false),
+        js_adjustments["flipVertical"].as_bool().unwrap_or(false),
+        js_adjustments["orientationSteps"].as_u64().unwrap_or(0) as u8,
+    )
+}
+
 /// Interactive relight (D-048): rasterize the depth track directory the
 /// Relight layer shades against into a full-res `GrayImage`, aligned to the
 /// current frame exactly like an "AI Depth" mask's tracked bitmap
 /// (`generate_ai_depth_bitmap` above) — same `tracked_depth_map` (D-036) +
 /// `generate_ai_bitmap_from_full_mask` warp, no band-pass/feather (relight
-/// wants the raw per-pixel depth value, not a mask opacity). Relight has no
-/// per-layer rotation/flip of its own (unlike a mask sub-mask), so `tf` uses
-/// the image's own orientation only. Returns `None` for an empty dir, no
-/// video loaded, or nothing cached yet at this frame — the caller then renders
+/// wants the raw per-pixel depth value, not a mask opacity). `rotation`/
+/// `flip_horizontal`/`flip_vertical`/`orientation_steps` are the image's own
+/// current transform (B-167 — see [`relight_transform_fields`]), not a
+/// relight-specific concept. Returns `None` for an empty dir, no video
+/// loaded, or nothing cached yet at this frame — the caller then renders
 /// ambient-only relight (see `chroma::relight::resolve_depth_dir`).
+#[allow(clippy::too_many_arguments)]
 pub fn generate_relight_depth_bitmap(
     depth_dir: &str,
     width: u32,
     height: u32,
     scale: f32,
     crop_offset: (f32, f32),
+    rotation: f32,
+    flip_horizontal: bool,
+    flip_vertical: bool,
+    orientation_steps: u8,
 ) -> Option<GrayImage> {
     if depth_dir.is_empty() {
         return None;
@@ -1366,10 +1395,10 @@ pub fn generate_relight_depth_bitmap(
     let params = serde_json::json!({ "chromaDepthDir": depth_dir });
     let full = crate::chroma::depth::tracked_depth_map(&params)?;
     let tf = TransformParams {
-        rotation: 0.0,
-        flip_horizontal: false,
-        flip_vertical: false,
-        orientation_steps: 0,
+        rotation,
+        flip_horizontal,
+        flip_vertical,
+        orientation_steps,
         width,
         height,
         scale,
@@ -1388,24 +1417,28 @@ pub fn generate_relight_depth_bitmap(
 /// model or pipeline. Reuses the *exact* `generate_ai_bitmap_from_base64` warp
 /// path the AI-Depth mask's own static bake and every other base64-backed
 /// mask type already go through, so crop/scale alignment is identical.
-/// Relight has no per-layer rotation/flip of its own (unlike a mask
-/// sub-mask), so `tf` uses the image's own orientation only — same as
-/// [`generate_relight_depth_bitmap`] above.
+/// `rotation`/`flip_horizontal`/`flip_vertical`/`orientation_steps`: see
+/// [`generate_relight_depth_bitmap`] above (B-167).
+#[allow(clippy::too_many_arguments)]
 pub fn generate_relight_depth_bitmap_static(
     depth_base64: &str,
     width: u32,
     height: u32,
     scale: f32,
     crop_offset: (f32, f32),
+    rotation: f32,
+    flip_horizontal: bool,
+    flip_vertical: bool,
+    orientation_steps: u8,
 ) -> Option<GrayImage> {
     if depth_base64.is_empty() {
         return None;
     }
     let tf = TransformParams {
-        rotation: 0.0,
-        flip_horizontal: false,
-        flip_vertical: false,
-        orientation_steps: 0,
+        rotation,
+        flip_horizontal,
+        flip_vertical,
+        orientation_steps,
         width,
         height,
         scale,
@@ -1432,13 +1465,35 @@ pub fn resolve_relight_depth_bitmap(
     scale: f32,
     crop_offset: (f32, f32),
 ) -> Option<GrayImage> {
+    let (rotation, flip_horizontal, flip_vertical, orientation_steps) =
+        relight_transform_fields(js_adjustments);
     if let Some(dir) = crate::chroma::relight::resolve_depth_dir(js_adjustments)
-        && let Some(bitmap) = generate_relight_depth_bitmap(&dir, width, height, scale, crop_offset)
+        && let Some(bitmap) = generate_relight_depth_bitmap(
+            &dir,
+            width,
+            height,
+            scale,
+            crop_offset,
+            rotation,
+            flip_horizontal,
+            flip_vertical,
+            orientation_steps,
+        )
     {
         return Some(bitmap);
     }
     let depth_base64 = crate::chroma::relight::resolve_depth_bake(js_adjustments)?;
-    generate_relight_depth_bitmap_static(&depth_base64, width, height, scale, crop_offset)
+    generate_relight_depth_bitmap_static(
+        &depth_base64,
+        width,
+        height,
+        scale,
+        crop_offset,
+        rotation,
+        flip_horizontal,
+        flip_vertical,
+        orientation_steps,
+    )
 }
 
 /// Interactive relight real surface normals (D-077, follow-up to D-054's
@@ -1453,6 +1508,24 @@ pub fn resolve_relight_depth_bitmap(
 /// depth/mask bakes already go through — once per channel, so crop/scale
 /// alignment matches the depth bitmap pixel-for-pixel. `None` if no bake
 /// exists yet or the data URL fails to decode.
+///
+/// B-167: like [`generate_relight_depth_bitmap`], this now threads the
+/// image's real current rotation/flip through the warp instead of hardcoding
+/// it away, so a baked normal map still lines up with a rotated/flipped
+/// preview. A normal map needs one thing depth doesn't: flipping the IMAGE
+/// also flips the MEANING of the X/Y channel values, not just their pixel
+/// positions — mirroring the scene horizontally negates every surface
+/// normal's X component (mirror the geometry, mirror the normals), same for
+/// Y on a vertical flip. `negate_channel` applies that after the warp so a
+/// baked normal still shades correctly, not just correctly-positioned but
+/// pointing the pre-flip direction. `orientation_steps` (a 90°/270° rotation)
+/// would need the SAME treatment for a genuinely correct normal (swap X/Y
+/// with a sign flip) — deliberately not attempted here since getting that
+/// sign convention wrong silently is worse than the narrower gap it leaves:
+/// positions still warp correctly for a 90°-rotated clip (this function's
+/// `tf` includes the real `orientation_steps`), only the X/Y VECTOR values
+/// wouldn't yet rotate with it. Tracked as a known follow-up, not silently
+/// treated as fully solved.
 pub fn resolve_relight_normal_bitmap(
     js_adjustments: &Value,
     width: u32,
@@ -1480,11 +1553,28 @@ pub fn resolve_relight_normal_bitmap(
         }
     }
 
+    let (rotation, flip_horizontal, flip_vertical, orientation_steps) =
+        relight_transform_fields(js_adjustments);
+
+    // (n + 1) / 2 * 255 encoding (`ai/server.py`'s `_normal_to_b64`) -> negate
+    // n by reflecting the encoded byte around its midpoint: 255 - v.
+    let negate_channel = |ch: &mut GrayImage| {
+        for p in ch.pixels_mut() {
+            p.0[0] = 255 - p.0[0];
+        }
+    };
+    if flip_horizontal {
+        negate_channel(&mut channels[0]);
+    }
+    if flip_vertical {
+        negate_channel(&mut channels[1]);
+    }
+
     let tf = TransformParams {
-        rotation: 0.0,
-        flip_horizontal: false,
-        flip_vertical: false,
-        orientation_steps: 0,
+        rotation,
+        flip_horizontal,
+        flip_vertical,
+        orientation_steps,
         width,
         height,
         scale,
@@ -1707,14 +1797,27 @@ mod relight_depth_bake_tests {
 
     #[test]
     fn static_bake_empty_input_is_none() {
-        assert!(generate_relight_depth_bitmap_static("", 8, 8, 1.0, (0.0, 0.0)).is_none());
+        assert!(
+            generate_relight_depth_bitmap_static("", 8, 8, 1.0, (0.0, 0.0), 0.0, false, false, 0)
+                .is_none()
+        );
     }
 
     #[test]
     fn static_bake_decodes_and_warps_to_requested_size() {
         let data_url = tiny_depth_png_data_url(128);
-        let bitmap = generate_relight_depth_bitmap_static(&data_url, 16, 16, 1.0, (0.0, 0.0))
-            .expect("valid depth PNG should decode");
+        let bitmap = generate_relight_depth_bitmap_static(
+            &data_url,
+            16,
+            16,
+            1.0,
+            (0.0, 0.0),
+            0.0,
+            false,
+            false,
+            0,
+        )
+        .expect("valid depth PNG should decode");
         assert_eq!(bitmap.dimensions(), (16, 16));
     }
 
@@ -1726,9 +1829,81 @@ mod relight_depth_bake_tests {
                 8,
                 8,
                 1.0,
-                (0.0, 0.0)
+                (0.0, 0.0),
+                0.0,
+                false,
+                false,
+                0,
             )
             .is_none()
+        );
+    }
+
+    /// B-167 regression test: flipping the image horizontally must actually
+    /// change the depth bake's pixel layout (it used to ignore the current
+    /// transform entirely and always warp as if flip/rotation were all
+    /// zero/false, regardless of what the real image was doing).
+    #[test]
+    fn static_bake_honours_the_real_flip_and_rotation_state() {
+        // Left half bright, right half dark — asymmetric, so a horizontal
+        // flip is actually visible in the output.
+        let img = GrayImage::from_fn(8, 8, |x, _y| Luma([if x < 4 { 220 } else { 40 }]));
+        let mut buf = Cursor::new(Vec::new());
+        img.write_to(&mut buf, ImageFormat::Png).unwrap();
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            general_purpose::STANDARD.encode(buf.get_ref())
+        );
+
+        let unflipped = generate_relight_depth_bitmap_static(
+            &data_url,
+            8,
+            8,
+            1.0,
+            (0.0, 0.0),
+            0.0,
+            false,
+            false,
+            0,
+        )
+        .expect("valid depth PNG should decode");
+        let flipped = generate_relight_depth_bitmap_static(
+            &data_url,
+            8,
+            8,
+            1.0,
+            (0.0, 0.0),
+            0.0,
+            true,
+            false,
+            0,
+        )
+        .expect("valid depth PNG should decode");
+
+        assert_ne!(
+            unflipped.as_raw(),
+            flipped.as_raw(),
+            "a real horizontal flip on the source image produced an identical depth bake — \
+             the bake isn't reading the image's current transform"
+        );
+        // Roughly the mirror of the unflipped one (not byte-exact — the
+        // shared warp's own continuous-coordinate flip has a well-known
+        // sub-pixel rounding convention, pre-existing and shared with every
+        // other AI mask type, out of scope for B-167): the bright half should
+        // have swapped sides.
+        let left_col_mean = |img: &GrayImage| -> f32 {
+            (0..8).map(|y| img.get_pixel(0, y).0[0] as f32).sum::<f32>() / 8.0
+        };
+        let right_col_mean = |img: &GrayImage| -> f32 {
+            (0..8).map(|y| img.get_pixel(7, y).0[0] as f32).sum::<f32>() / 8.0
+        };
+        assert!(
+            left_col_mean(&unflipped) > right_col_mean(&unflipped),
+            "test fixture sanity: unflipped bake should be bright on the left"
+        );
+        assert!(
+            right_col_mean(&flipped) > left_col_mean(&flipped),
+            "flipping the image should move the bright side to the right of the depth bake"
         );
     }
 

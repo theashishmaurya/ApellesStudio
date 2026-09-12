@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-12** — **fixed B-167: Relight now honours a rotated/flipped
+  clip's real transform when baking its depth/normal map**, instead of
+  always warping as if rotation/flip were zero — the depth (and any baked
+  normal) used to silently drift out of alignment with the displayed frame
+  the moment a clip was rotated or flipped. An initial hypothesis about the
+  `rim` light's default `distance` was built into a real GPU-render
+  regression test and empirically disproved before landing anything — see
+  `docs/BUGS.md`'s B-167 entry for the actual root cause found on the
+  follow-up pass.
 - **2026-09-12** — **fixed B-162 (D-311): Apelles now decodes Opus audio
   natively.** `symphonia` (the D-049 playback decoder) has no Opus decoder at
   all, confirmed against its own feature list — so a WebM/Opus source
