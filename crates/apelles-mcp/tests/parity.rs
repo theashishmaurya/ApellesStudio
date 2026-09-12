@@ -57,6 +57,20 @@ const CORPUS: &str = include_str!("golden/corpus.json");
 const PORTED: &str = include_str!("golden/ported.json");
 const RESPONSES: &str = include_str!("../parity/responses.json");
 
+/// Stands in for the fixture PNG's absolute path in both the canned responses and the
+/// recorded answers. `debug_screenshot` really does read the file back off disk, so the
+/// stub has to hand it a path that exists HERE — while the corpus has to stay portable,
+/// since an absolute path is whatever machine ran the capture. Substituted in on the way
+/// out, substituted back out on the way in.
+const FIXTURE_TOKEN: &str = "__FIXTURE_PNG__";
+
+fn fixture_png() -> String {
+    format!(
+        "{}/parity/fixtures/screenshot.png",
+        env!("CARGO_MANIFEST_DIR")
+    )
+}
+
 // --------------------------------------------------------------------------- #
 // the stub app: the Rust twin of parity/stub_control.py
 // --------------------------------------------------------------------------- #
@@ -80,7 +94,8 @@ struct RecordingTransport {
 
 impl RecordingTransport {
     fn new() -> Self {
-        let raw: Value = serde_json::from_str(RESPONSES).expect("responses.json parses");
+        let raw: Value = serde_json::from_str(&RESPONSES.replace(FIXTURE_TOKEN, &fixture_png()))
+            .expect("responses.json parses");
         let responses = raw
             .as_object()
             .expect("responses.json is an object")
@@ -386,6 +401,17 @@ fn describe(block: &ContentBlock) -> Value {
     }
 }
 
+/// Put the fixture path back as its token, so a machine-specific absolute path never
+/// decides whether the two sides agree.
+fn untokenise(block: Value) -> Value {
+    match serde_json::to_string(&block) {
+        Ok(text) => {
+            serde_json::from_str(&text.replace(&fixture_png(), FIXTURE_TOKEN)).unwrap_or(block)
+        }
+        Err(_) => block,
+    }
+}
+
 /// Text blocks are compared as JSON values when both sides are JSON — see this file's
 /// header for why the bytes are not the contract but the value is.
 fn blocks_match(expected: &Value, actual: &Value) -> bool {
@@ -544,7 +570,11 @@ async fn every_recorded_call_emits_the_same_ops_and_renders_the_same_content() {
 
         // (3) what came back to the client.
         let expected_content = case["content"].as_array().cloned().unwrap_or_default();
-        let actual_content: Vec<Value> = result.content.iter().map(describe).collect();
+        let actual_content: Vec<Value> = result
+            .content
+            .iter()
+            .map(|b| untokenise(describe(b)))
+            .collect();
         assert_eq!(
             expected_content.len(),
             actual_content.len(),

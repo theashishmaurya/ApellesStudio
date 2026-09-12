@@ -16,43 +16,13 @@
 //!  deliberate, documented improvement of the port, not an accident of it — see the
 //!  divergence list in `docs/notes/mcp-rust-port.md`.
 
+// One gate, on the module declaration. Gating the individual `use` lines instead
+// does NOT work: the imports vanish before the `#[tool]`/`#[tool_router]`
+// attributes on the impl are resolved, and a release build fails to compile with
+// "cannot find attribute `tool`". One cfg over the whole module is the shape that
+// actually strips cleanly.
 #[cfg(debug_assertions)]
-mod enabled {
-    use rmcp::model::CallToolResult;
-    use rmcp::{ErrorData, tool, tool_router};
-
-    use crate::args::WireArgs;
-    use crate::render;
-    use crate::server::ApellesMcp;
-
-    #[tool_router(router = debug_router, vis = "pub")]
-    impl ApellesMcp {
-        #[tool(
-            name = "debug_ui_state",
-            description = r#"Read the running app's real UI state: which tab is showing, which panels
-    are open, what is selected, and every dialog currently on screen.
-
-    Call this FIRST when you are about to drive the UI — it tells you what is
-    already open, so you do not toggle a panel closed thinking you are opening
-    it. Call it again after a `debug_set_*` to confirm the change landed
-    (each setter also echoes its own field back, so a second call is only
-    needed when you want the whole picture).
-
-    Open dialogs are read off the DOM (`role="dialog"`/`alertdialog`), not off
-    a store flag, so the list stays correct as modals are added to the app.
-
-    Returns {shell:{activeTab,tabs,sourcesPanelOpen,wgpuSurfaceActive},
-             editor:{inspectorOpen,inspectorTab,inspectorTabs,projectOpen,
-                     timelineStatus,selection,selectedGap,playing,playhead},
-             openDialogs:[{tag,role,label,rect}]}."#
-        )]
-        pub async fn debug_ui_state(&self) -> Result<CallToolResult, ErrorData> {
-            // Tool name and op name differ here too — the op is `debug_get_ui_state`.
-            let env = self.op("debug_get_ui_state", WireArgs::new()).await?;
-            Ok(render::json_text(&env))
-        }
-    }
-}
+mod tools;
 
 /// This tab's contribution to the merged router — empty in a release build, where none
 /// of these tools exist at all.

@@ -9937,7 +9937,7 @@
       "content": [
         {
           "type": "text",
-          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"path\": \"/Users/ashishmaurya/my_projects/chroma/.claude/worktrees/agent-a9c0af9101ecf097f/crates/apelles-mcp/parity/fixtures/screenshot.png\",\n  \"width\": 1,\n  \"height\": 1,\n  \"window\": \"main\"\n}"
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"path\": \"__FIXTURE_PNG__\",\n  \"width\": 1,\n  \"height\": 1,\n  \"window\": \"main\"\n}"
         }
       ]
     },
@@ -9968,7 +9968,7 @@
         },
         {
           "type": "text",
-          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"path\": \"/Users/ashishmaurya/my_projects/chroma/.claude/worktrees/agent-a9c0af9101ecf097f/crates/apelles-mcp/parity/fixtures/screenshot.png\",\n  \"width\": 1,\n  \"height\": 1,\n  \"window\": \"main\"\n}"
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"path\": \"__FIXTURE_PNG__\",\n  \"width\": 1,\n  \"height\": 1,\n  \"window\": \"main\"\n}"
         }
       ]
     },

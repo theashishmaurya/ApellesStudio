@@ -65,6 +65,9 @@ RESPONSES = HERE / "responses.json"
 FIXTURE_PNG = HERE / "fixtures" / "screenshot.png"
 DEFAULT_OUT = CRATE / "tests" / "golden" / "corpus.json"
 
+#: Stands in for the fixture PNG's absolute path wherever it would otherwise be recorded.
+FIXTURE_TOKEN = "__FIXTURE_PNG__"
+
 #: A 1x1 PNG, so `debug_screenshot`'s inline-read branch has a real file to read back.
 FIXTURE_PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -279,7 +282,13 @@ async def capture(out_path: Path) -> int:
         server.shutdown()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(corpus, indent=2, sort_keys=False) + "\n")
+    # The fixture PNG's absolute path leaks into `debug_screenshot`'s recorded answer,
+    # and an absolute path is whatever machine ran the capture. Writing it back as a
+    # token keeps the corpus portable and re-capturable to the same bytes anywhere; the
+    # replay side substitutes its own copy of the same file.
+    text = json.dumps(corpus, indent=2, sort_keys=False).replace(
+        json.dumps(str(FIXTURE_PNG))[1:-1], FIXTURE_TOKEN)
+    out_path.write_text(text + "\n")
     print(
         f"\n{len(corpus['tools'])} tools, {len(corpus['cases'])} cases -> {out_path}",
         file=sys.stderr,

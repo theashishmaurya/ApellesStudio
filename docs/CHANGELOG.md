@@ -20,9 +20,9 @@ One or two lines per session. Detail lives in the decision it references.
   and emits for all 161 tools (237 calls, against a stub control server, no app
   needed, byte-identical across runs), and `cargo test -p apelles-mcp` replays
   that corpus against the Rust server through a real MCP session. **9 tools
-  **the whole Colorist (42/42) and Motion (37/37) surfaces are ported and
-  verified, 82 of 161 tools in all; 79 remain** (Edit, and eight of the nine
-  debug tools) — status and the continuation guide are in
+  **the Colorist (42/42), Motion (37/37) and debug (9/9) surfaces are ported
+  and verified, 90 of 161 tools in all; 71 remain, all on the Edit tab** —
+  status and the continuation guide are in
   `docs/notes/mcp-rust-port.md`; `mcp/server.py` is untouched and is still
   the server in use.
 - **2026-09-12** — **fixed B-168: `editor_import_subtitles` raised `NameError`

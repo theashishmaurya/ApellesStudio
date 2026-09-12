@@ -13,8 +13,8 @@ Read D-312 in `docs/08-decisions.md` first for *why*. This file is the *how* and
 | | |
 |---|---|
 | Harness | **complete** — covers all 161 tools, passing |
-| Tools ported | **82 of 161** — the whole **Colorist** (42/42) and **Motion** (37/37) surfaces, plus the Edit and debug tracer tools |
-| Remaining | **Edit 71 of 73, debug 8 of 9** |
+| Tools ported | **90 of 161** — the whole **Colorist** (42/42), **Motion** (37/37) and **debug** (9/9) surfaces, plus two Edit tracer tools |
+| Remaining | **Edit — 71 of 73** |
 | `mcp/server.py` | **still live and still the fallback.** Nothing has been retired. |
 
 The ledger of what has moved is `crates/apelles-mcp/tests/golden/ported.json`, and it is
@@ -22,8 +22,8 @@ not decoration: `tests/parity.rs` checks the running server's advertised tool se
 it in both directions, and checks every name in it against the golden corpus. A tool
 cannot be silently dropped, silently added, or listed under a name that never existed.
 
-**The port is not complete and must not be described as complete.** 79 tools remain — the
-Edit surface, and eight of the nine debug tools.
+**The port is not complete and must not be described as complete.** 71 tools remain, all
+of them on the Edit tab.
 
 ---
 
