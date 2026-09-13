@@ -101,6 +101,44 @@ export function resolvedBoxSize(
   };
 }
 
+/** `box` shifted by `delta` (composition fractions) — what the live overlay
+ *  draws while a MOVE drag is in flight for a consumer whose rectangle is
+ *  given explicitly rather than derived from `natural * scale` (D-316's
+ *  caption box; see `TransformBox`'s `model` prop).
+ *
+ *  A video clip's box needs no such function: its box is recomputed from the
+ *  dragged `position` through `clipBoxFraction`, which already IS this
+ *  translation. A caption's box is measured, not derived, so the same
+ *  translation has to be applied to the measured rectangle. */
+export function translateFractionBox(box: FractionBox, delta: { x: number; y: number }): FractionBox {
+  return { left: box.left + delta.x, top: box.top + delta.y, width: box.width, height: box.height };
+}
+
+/** `box` scaled uniformly by `factor` about `pivot` (both composition
+ *  fractions).
+ *
+ *  D-316 — the caption half of the same pair as [`translateFractionBox`]. A
+ *  caption's whole rendered box really is a uniform scale about its style's
+ *  own `(position_x, position_y)` anchor as its font size changes: every
+ *  distance in `CaptionLayout` (the advance widths, the line box, the line
+ *  step, the background padding) is proportional to the resolved font size,
+ *  and the anchor itself is not — see `CaptionLayout::bounds`' own
+ *  `bounds_scale_uniformly_about_the_style_anchor` test, which pins that
+ *  property on the Rust side so this function is allowed to assume it. */
+export function scaleFractionBoxAbout(
+  box: FractionBox,
+  pivot: { x: number; y: number },
+  factor: number,
+): FractionBox {
+  const k = Number.isFinite(factor) ? factor : 1;
+  return {
+    left: pivot.x + (box.left - pivot.x) * k,
+    top: pivot.y + (box.top - pivot.y) * k,
+    width: box.width * k,
+    height: box.height * k,
+  };
+}
+
 /** Whether `point` (composition fractions) is inside `box` — half-open on the
  *  right/bottom edges, the same convention `Track::clip_at`'s own
  *  `start <= f < end` frame test uses, so two exactly-abutting boxes can

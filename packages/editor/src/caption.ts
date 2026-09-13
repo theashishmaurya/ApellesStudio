@@ -45,6 +45,42 @@ export const DEFAULT_CAPTION_POSITION_X = 0.5;
  *  height. Extra lines stack upward from it — see `CaptionStyle.position_y`. */
 export const DEFAULT_CAPTION_POSITION_Y = 0.82;
 
+/** D-316 — the range an ON-CANVAS resize drag may leave `CaptionStyle.size`
+ *  in, as a fraction of composition height.
+ *
+ *  A floor and a ceiling on the GESTURE, not on the value: the Inspector's own
+ *  Size field is free to go outside them by typing, exactly as
+ *  `MIN_DRAG_SCALE`'s own doc says of a clip's scale. The floor is the same
+ *  usability argument — a caption dragged to a few pixels tall leaves a box no
+ *  pointer can grab a handle on to bring it back — and the ceiling stops a
+ *  fast drag past the anchor from producing a caption hundreds of frames tall
+ *  that has left the visible canvas entirely. 0.01 ≈ 11 px and 0.5 ≈ 540 px
+ *  per line at 1080p. */
+export const MIN_DRAG_CAPTION_SIZE = 0.01;
+export const MAX_DRAG_CAPTION_SIZE = 0.5;
+
+/** The caption font size a corner drag of `factor` leaves `size` at, clamped
+ *  to the drag range above.
+ *
+ *  `factor` is what `TransformBox` reports as its `scale` when the box was
+ *  handed `scale: 1` — i.e. the ratio by which the corner grew the box, which
+ *  for a caption IS the ratio its font size should grow by: every distance in
+ *  the rendered box is proportional to the resolved font size (see
+ *  `scaleFractionBoxAbout`'s own doc and the Rust
+ *  `bounds_scale_uniformly_about_the_style_anchor` test). */
+export function captionSizeAfterDrag(size: number, factor: number): number {
+  const base = Number.isFinite(size) && size > 0 ? size : DEFAULT_CAPTION_SIZE;
+  const k = Number.isFinite(factor) && factor > 0 ? factor : 1;
+  const raw = Math.min(MAX_DRAG_CAPTION_SIZE, Math.max(MIN_DRAG_CAPTION_SIZE, base * k));
+  // Rounded to the precision the Inspector's own Size field SHOWS (a
+  // percentage to two decimals), so a drag and a typed value produce the same
+  // kind of number and the stored document does not accumulate a drag's
+  // sixteen-digit float. Figma's own docs warn about exactly this — that
+  // scale-dragging type yields fractional sizes a user then cannot reproduce
+  // by typing (see D-316's reference notes).
+  return Math.round(raw * 1e4) / 1e4;
+}
+
 export type CaptionAlign = 'left' | 'center' | 'right';
 
 /** How a caption is drawn — mirrors `apelles_timeline::caption::CaptionStyle`

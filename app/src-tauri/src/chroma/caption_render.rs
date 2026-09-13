@@ -32,12 +32,15 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ab_glyph::{Font, GlyphId, ScaleFont, point};
-use apelles_timeline::caption::{CaptionAlign, CaptionCue, CaptionLayout, CaptionStyle};
+use apelles_timeline::caption::{
+    CaptionAlign, CaptionBounds, CaptionCue, CaptionLayout, CaptionStyle,
+};
 use apelles_timeline::caption_anim::{
     CaptionAnimation, CaptionWordState, caption_active_word, caption_word_rgb, caption_word_state,
     caption_words,
 };
 use image::RgbaImage;
+use serde::Serialize;
 
 use super::text::{freetype_equivalent_scale, load_font, resolve_font_path};
 
@@ -600,6 +603,188 @@ fn rasterise_animated_caption(
     Ok(canvas)
 }
 
+/// **D-316 — where a cue is actually drawn**: its rendered bounding box, in
+/// canvas pixels, or `None` for a cue that draws nothing.
+///
+/// **Why it is here.** The Edit tab's on-canvas caption transform overlay
+/// (`@apelles/editor`'s `CaptionTransformOverlay.tsx`) draws a selection box
+/// around the caption and drags it; that box has to be where the caption is,
+/// to the pixel, or it is the "the box does not match the picture" defect
+/// B-130 already closed once for titles. The only way to guarantee it is to
+/// measure with the same walk that rasterises — so this lives in the
+/// rasteriser's own module and uses its own `advance_of`/line-box
+/// expressions, not a second idea of them. The layout arithmetic it feeds
+/// those measurements into is `CaptionLayout::bounds`, the one both engines
+/// already share.
+///
+/// **The animation is deliberately measured at rest.** For a per-word
+/// animated cue this reports the envelope its words settle into — a whole-line
+/// mode's summed advances plus its word gaps, a single-word mode's WIDEST word
+/// — and ignores two per-frame effects the rasteriser applies: a word's
+/// entrance offset (`dx`/`dy`) and the active word's highlight-box padding.
+/// Both change every frame, and a selection box that jittered frame-to-frame
+/// while nobody was dragging it would be worse than one that sits still on the
+/// settled text. The overlay documents the same limit from its own side.
+///
+/// Returns the box in **canvas pixels**, the unit [`CaptionLayout`] works in;
+/// the caller ([`crate::chroma::edit::caption_geometry`]) divides by the
+/// canvas size for the fraction-space the frontend uses.
+pub fn caption_bounds_px(
+    cue: &CaptionCue,
+    style: &CaptionStyle,
+    canvas_w: u32,
+    canvas_h: u32,
+) -> Result<Option<CaptionBounds>, String> {
+    if canvas_w == 0 || canvas_h == 0 {
+        return Ok(None);
+    }
+    let lines = cue.lines();
+    if lines.is_empty() {
+        return Ok(None);
+    }
+    let anim = style.animation_or_default();
+    // A single-word mode shows one word alone and so lays out as ONE line,
+    // exactly as `rasterise_animated_caption` resolves it.
+    let line_count = if anim.kind.is_single_word() {
+        1
+    } else {
+        lines.len()
+    };
+    let font = load_font(&resolve_font_path(&style.font)?)?;
+    let layout = CaptionLayout::resolve(style, canvas_w, canvas_h, line_count);
+    let scale = freetype_equivalent_scale(&font, layout.font_px as f32);
+    let scaled = font.as_scaled(scale);
+    let line_box_h = (scaled.height() + scaled.line_gap()) as f64;
+    let advance_of = |text: &str| -> f64 {
+        let mut pen = 0.0f32;
+        let mut prev: Option<GlyphId> = None;
+        for ch in text.chars() {
+            let id = font.glyph_id(ch);
+            if let Some(p) = prev {
+                pen += scaled.kern(p, id);
+            }
+            pen += scaled.h_advance(id);
+            prev = Some(id);
+        }
+        pen as f64
+    };
+
+    let advances: Vec<f64> = if !anim.kind.is_per_word() {
+        // The static path hands a whole LINE to one glyph run.
+        lines.iter().map(|l| advance_of(l)).collect()
+    } else {
+        // `caption_words` splits on the text alone; the duration it takes only
+        // decides each word's TIME window, which no bound here depends on.
+        let words = caption_words(&lines, 1.0);
+        let gap_px = anim.word_gap.max(0.0) * layout.font_px as f64;
+        if anim.kind.is_single_word() {
+            vec![
+                words
+                    .iter()
+                    .map(|w| advance_of(&w.text))
+                    .fold(0.0f64, f64::max),
+            ]
+        } else {
+            (0..line_count)
+                .map(|li| {
+                    let on_line: Vec<f64> = words
+                        .iter()
+                        .filter(|w| w.line == li)
+                        .map(|w| advance_of(&w.text))
+                        .collect();
+                    if on_line.is_empty() {
+                        return 0.0;
+                    }
+                    // The same total `rasterise_animated_caption` aligns on.
+                    on_line.iter().sum::<f64>() + gap_px * (on_line.len() - 1) as f64
+                })
+                .collect()
+        }
+    };
+
+    Ok(layout.bounds(style.align, style.box_enabled, &advances, line_box_h))
+}
+
+/// D-316 — one caption's rendered bounding box in **composition-fraction**
+/// space, for the Edit tab's on-canvas caption transform overlay
+/// (`@apelles/editor`'s `CaptionTransformOverlay.tsx`).
+///
+/// Fractions rather than pixels because that is the unit the whole on-canvas
+/// layer works in (`transformGeometry.ts`): the overlay maps this box onto
+/// screen pixels through the identical `boxToScreenRect` a video clip's box
+/// goes through, so the two cannot drift apart at a different preview zoom.
+/// `0,0` is the composition's top-left and `1,1` its bottom-right.
+///
+/// **Not clamped to the frame.** A caption dragged (or styled) off the edge
+/// really does overflow it, and a box that silently stopped at the frame edge
+/// would be the same "the box does not match the text" defect B-130 closed for
+/// titles, from the other side.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptionBoundsFraction {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Measure `text` in `style` against a `comp_width`×`comp_height`
+/// composition — [`caption_bounds_px`], normalised.
+///
+/// **A PURE measurement: the caller passes the cue and the style, and this
+/// touches no timeline at all.** That is the load-bearing part of the design,
+/// not an incidental signature. The obvious alternative — take `track`/`clip`
+/// indices like [`crate::chroma::edit::chroma_timeline_clip_geometry`] does,
+/// and resolve the cue and its style server-side — was built first and is
+/// **wrong**, for a reason found live: the Rust side's timeline is only as
+/// current as the frontend's own debounced save (`timelineStore`'s
+/// `savedVersion`, ~400 ms — the whole story of **B-088**). So the box would be
+/// measured against the style as it was a moment ago. The failure was visible
+/// immediately: dragging a caption's position moved the text and left the
+/// selection box behind, which is precisely the defect this overlay exists to
+/// fix, reintroduced through a different door.
+///
+/// The frontend already HAS the resolved style (it renders the Inspector from
+/// it) and the composition size; the only thing it cannot compute is the glyph
+/// measurement. So it passes everything else in and asks only for that — the
+/// same "the compiler stays pure, the caller supplies what only it can know"
+/// split (D-197) [`chroma_measure_caption_words`] already uses for the export.
+///
+/// `style` arrives with every field present (`resolveCaptionStyle` on the TS
+/// side fills the per-cue-override → track-style → defaults chain, the same
+/// chain `Timeline::resolve_visible_captions_at` resolves for the renderer), so
+/// the serde defaults here are a safety net rather than the normal path.
+///
+/// `None` for a cue that draws nothing — an empty caption, its ordinary state
+/// the moment it is added, before anything is typed. A real state, not an error.
+#[tauri::command]
+pub async fn chroma_measure_caption_bounds(
+    text: String,
+    style: CaptionStyle,
+    comp_width: u32,
+    comp_height: u32,
+) -> Result<Option<CaptionBoundsFraction>, String> {
+    // `spawn_blocking` because measuring loads (and on a cold cache, reads) a
+    // font file — the same reason its sibling geometry command is async.
+    tokio::task::spawn_blocking(move || {
+        let cue = CaptionCue::new(text);
+        let Some(b) = caption_bounds_px(&cue, &style, comp_width, comp_height)? else {
+            return Ok(None);
+        };
+        if comp_width == 0 || comp_height == 0 {
+            return Ok(None);
+        }
+        Ok(Some(CaptionBoundsFraction {
+            left: b.left / comp_width as f64,
+            top: b.top / comp_height as f64,
+            width: b.width / comp_width as f64,
+            height: b.height / comp_height as f64,
+        }))
+    })
+    .await
+    .map_err(|e| format!("caption bounds task: {e}"))?
+}
+
 /// Straight-alpha "source over destination".
 ///
 /// Written out rather than reached for from `image` because what is needed
@@ -695,6 +880,157 @@ mod tests {
             });
         }
         b
+    }
+
+    // ---------------------------------------------------------------------- //
+    // D-316 — `caption_bounds_px` really is where the pixels are
+    //
+    // The whole value of the on-canvas caption transform box is that it sits
+    // on the caption. `apelles_timeline`'s own tests pin the ARITHMETIC; these
+    // pin it to reality, by rendering a real caption and comparing the
+    // computed box against the actual drawn extent. If the rasteriser's layout
+    // and this measurement ever drift apart, these fail.
+    // ---------------------------------------------------------------------- //
+
+    /// The computed box, rounded the way `fill_rect` rounds, as the same
+    /// `(x0, y0, x1, y1)` exclusive tuple [`bounds`] reports.
+    fn computed(
+        cue: &CaptionCue,
+        s: &CaptionStyle,
+        w: u32,
+        h: u32,
+    ) -> Option<(u32, u32, u32, u32)> {
+        let b = caption_bounds_px(cue, s, w, h).expect("measure")?;
+        Some((
+            b.left.round().max(0.0) as u32,
+            b.top.round().max(0.0) as u32,
+            ((b.left + b.width).round().max(0.0) as u32).min(w),
+            ((b.top + b.height).round().max(0.0) as u32).min(h),
+        ))
+    }
+
+    #[test]
+    fn the_measured_bounds_match_the_drawn_pixels() {
+        // With the background box on, the drawn extent IS the padded advance
+        // box (`the_background_box_is_drawn_and_respects_its_opacity` already
+        // establishes the box encloses the glyphs on every side), so the two
+        // must agree exactly rather than approximately.
+        for text in ["Hello there", "first line\nsecond, longer line", "Ag"] {
+            for align in [
+                CaptionAlign::Left,
+                CaptionAlign::Center,
+                CaptionAlign::Right,
+            ] {
+                let cue = CaptionCue::new(text);
+                let s = style(|s| {
+                    s.align = align;
+                    s.position_x = match align {
+                        CaptionAlign::Left => 0.1,
+                        CaptionAlign::Center => 0.5,
+                        CaptionAlign::Right => 0.9,
+                    };
+                });
+                let img =
+                    render_caption_layer(&cue, &s, 960, 540, CaptionTime::STATIC).expect("render");
+                let drawn = bounds(&img).expect("drew something");
+                let box_ = computed(&cue, &s, 960, 540).expect("measured");
+                assert_eq!(
+                    drawn, box_,
+                    "text {text:?} align {align:?}: drawn {drawn:?} vs measured {box_:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_measured_bounds_enclose_the_glyphs_with_no_background_box() {
+        // Without the box there is nothing to match exactly — the glyph INK
+        // sits inside the advance/line box by its own side bearings, and can
+        // poke a pixel past it on an antialiased edge. The contract that
+        // matters is that the box encloses the ink, snugly.
+        let cue = CaptionCue::new("Hamburgefonstiv\nsecond line");
+        let s = style(|s| s.box_enabled = false);
+        let img = render_caption_layer(&cue, &s, 960, 540, CaptionTime::STATIC).expect("render");
+        let (dx0, dy0, dx1, dy1) = bounds(&img).expect("drew");
+        let (bx0, by0, bx1, by1) = computed(&cue, &s, 960, 540).expect("measured");
+        let slack = 3i64;
+        assert!(
+            (bx0 as i64) <= dx0 as i64 + slack && (bx1 as i64) + slack >= dx1 as i64,
+            "horizontally: box {bx0}..{bx1} vs ink {dx0}..{dx1}"
+        );
+        assert!(
+            (by0 as i64) <= dy0 as i64 + slack && (by1 as i64) + slack >= dy1 as i64,
+            "vertically: box {by0}..{by1} vs ink {dy0}..{dy1}"
+        );
+        // And snug — not a whole-frame fallback, which is the B-130 failure
+        // this measurement exists to avoid repeating for captions.
+        assert!(
+            (bx1 - bx0) < 960 && (by1 - by0) < 540 / 2,
+            "the box must be the caption's size, not the frame's"
+        );
+    }
+
+    #[test]
+    fn the_measured_bounds_track_an_animated_cues_settled_words() {
+        // A Build ends with every word on screen, so its settled envelope is
+        // exactly what is drawn at the end of the cue.
+        let cue = CaptionCue::new("alpha bravo charlie");
+        let s = {
+            let mut st = animated(CaptionAnimKind::Build, |a| {
+                a.enter_secs = 0.01;
+                a.enter_rise = 0.0;
+            });
+            // The background band ON, so the drawn extent is the padded layout
+            // rectangle and the comparison is exact. Without it the drawn
+            // extent is the glyph INK, which legitimately sits inside the font
+            // line box by the ascender the string happens not to use — that
+            // relationship is what the box-less test above asserts instead.
+            st.box_enabled = true;
+            st
+        };
+        let img = render_caption_layer(
+            &cue,
+            &s,
+            960,
+            540,
+            CaptionTime {
+                t_secs: 2.99,
+                dur_secs: 3.0,
+            },
+        )
+        .expect("render");
+        let (dx0, dy0, dx1, dy1) = bounds(&img).expect("drew");
+        let (bx0, by0, bx1, by1) = computed(&cue, &s, 960, 540).expect("measured");
+        // A pixel of slack only: the animated path spans its background band
+        // from the first word's pen to the last word's advance end, which is
+        // the same total this measurement sums, so the two agree to the
+        // rounding.
+        let slack = 1i64;
+        for (b, d, what) in [
+            (bx0 as i64, dx0 as i64, "left"),
+            (by0 as i64, dy0 as i64, "top"),
+            (bx1 as i64, dx1 as i64, "right"),
+            (by1 as i64, dy1 as i64, "bottom"),
+        ] {
+            assert!(
+                (b - d).abs() <= slack,
+                "{what}: measured {b} vs drawn {d} (box {bx0},{by0}..{bx1},{by1})"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_cue_has_no_bounds_rather_than_a_zero_box() {
+        assert!(
+            caption_bounds_px(
+                &CaptionCue::new("  \n "),
+                &CaptionStyle::default(),
+                320,
+                180
+            )
+            .expect("measure")
+            .is_none()
+        );
     }
 
     #[test]

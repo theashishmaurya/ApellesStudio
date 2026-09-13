@@ -178,8 +178,33 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   // (the whole composition), so this is a deliberate hide rather than a
   // side-effect of the fetch failing.
   const isAdjustment = !!clip?.adjustment;
+  // D-316 — a CAPTION gets no box from this overlay either, and for a stronger
+  // reason than the adjustment clip above: it has a real, visible footprint on
+  // the canvas, but not one expressible in any field this overlay writes. A
+  // caption has no `position_x`/`scale`/`box_width` of its own at all
+  // (`apelles_timeline::caption` — "a caption cue is not a transformable
+  // clip"), its geometry is its resolved `CaptionStyle`'s, and every gesture
+  // here would write a `set_clip_transform` no renderer reads — B-053's shape
+  // again. `CaptionTransformOverlay` draws and drags it instead, through the
+  // caption style ops; this stands aside so there is exactly one box on the
+  // rectangle, the same rule the dynamic-zoom branch below follows.
+  //
+  // Until this existed, standing aside happened by accident rather than by
+  // decision: `chroma_timeline_clip_geometry` errors for a caption clip (empty
+  // `source_path`), so `geometry` was `null` and the guard below returned
+  // `null` with nothing said about why (B-183).
+  const isCaption = !!clip?.caption;
 
-  const geometry = useClipGeometry(primary?.track ?? null, clipIndex, clip?.source_path);
+  // D-316 — not probed for a caption: that command has no answer for one (it
+  // reports a SIZE, and a caption's box position is not derivable from any
+  // `Clip` field) and returns a real `Err`, so asking would be one failed IPC
+  // round trip per caption selection for a box this overlay is standing aside
+  // from anyway.
+  const geometry = useClipGeometry(
+    isCaption ? null : (primary?.track ?? null),
+    isCaption ? -1 : clipIndex,
+    clip?.source_path,
+  );
 
   // D-218 — the picture's real on-screen rect, i.e. the `object-contain` fit
   // box with the preview's own viewport zoom/pan composed on top. Every
@@ -321,7 +346,15 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
     }
   };
 
-  if (!clip || isAdjustment || !effective || !geometry || contentBox.width <= 0 || contentBox.height <= 0)
+  if (
+    !clip ||
+    isAdjustment ||
+    isCaption ||
+    !effective ||
+    !geometry ||
+    contentBox.width <= 0 ||
+    contentBox.height <= 0
+  )
     return null;
   // D-234 — dynamic zoom is armed for this very clip: its own overlay is
   // drawing the start/end pair over this picture, so this single box stands

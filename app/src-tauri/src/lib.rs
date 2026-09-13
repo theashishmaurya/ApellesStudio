@@ -2322,6 +2322,7 @@ pub fn run() {
             chroma::edit::chroma_timeline_frame,
             chroma::grade_lut::chroma_timeline_grade_luts,
             chroma::edit::chroma_timeline_clip_geometry,
+            chroma::caption_render::chroma_measure_caption_bounds,
             chroma::edit::chroma_timeline_composition_size,
             chroma::edit::chroma_timeline_list,
             chroma::edit::chroma_timeline_create,

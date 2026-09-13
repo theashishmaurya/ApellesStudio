@@ -2055,6 +2055,23 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         Export parity measured, not assumed: `ab_glyph`/`drawtext` ink widths
         agree within 1.5% for the new italic/bold-italic faces, matching
         D-212's own measured tolerance for the original regular/bold ones.
+      - ✅ **On-canvas caption select / move / resize — D-316 (fixing B-183),
+        2026-09-13.** A selected caption drew NOTHING on the picture — no box,
+        no handles — because `chroma_timeline_clip_geometry` errors for a clip
+        with no `source_path` and `TransformOverlay` bailed silently. Now:
+        `CaptionTransformOverlay.tsx` draws the cue's REAL rendered bounds
+        (measured with the same `ab_glyph` walk that rasterises it, via the new
+        `chroma_measure_caption_bounds` command over
+        `CaptionLayout::bounds`), a body drag writes `position_x`/`position_y`
+        and a corner drag writes `size` (the font size — a caption has no
+        `scale` and inventing one would be B-053's shape), both through the
+        same `set_caption_style`/`set_caption_cue_style` ops the Inspector's
+        own fields and the `editor_set_caption_style` MCP tool already use — so
+        no MCP gap to close, this is a GUI gesture over an existing capability.
+        Canvas click-to-select sees captions too. **Deferred:**
+        Shift-constrain, snapping/guides, arrow-key nudge, double-click to edit
+        text in place, side handles (a caption has no non-uniform scale and no
+        wrap width for one to mean).
     - ~~**The Edit tab's left library — one docked, switchable browser**~~ —
       **DONE, 2026-09-09 (D-263).** D-248 gave the tab an icon rail whose
       buttons opened floating popovers, rendered (because Sources is

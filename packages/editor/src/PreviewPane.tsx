@@ -181,6 +181,7 @@ import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
 import { TransformOverlay } from './TransformOverlay';
 import { DynamicZoomOverlay } from './DynamicZoomOverlay';
+import { CaptionTransformOverlay } from './CaptionTransformOverlay';
 import { CanvasBoundary } from './CanvasBoundary';
 import { useCanvasClipPick } from './useCanvasClipPick';
 import { EditOverlay } from './EditOverlay';
@@ -906,6 +907,11 @@ export function PreviewPane() {
                   which mode is active. */}
               <TransformOverlay container={surfaceEl} />
               <DynamicZoomOverlay container={surfaceEl} />
+              {/* D-316 — and the caption box, mutually exclusive with the two
+                  above by exactly the same construction: it draws only for a
+                  selected CAPTION clip, which `TransformOverlay` now explicitly
+                  stands aside for. */}
+              <CaptionTransformOverlay container={surfaceEl} size={compSize} />
             </div>
           ) : timeline ? (
             <div className="flex flex-col items-center gap-2 text-text-secondary">

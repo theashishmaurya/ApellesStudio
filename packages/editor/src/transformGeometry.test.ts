@@ -10,7 +10,9 @@ import {
   dragReposition,
   fractionBoxContains,
   resolvedBoxSize,
+  scaleFractionBoxAbout,
   screenToFraction,
+  translateFractionBox,
 } from './transformGeometry';
 
 describe('clipBoxFraction', () => {
@@ -181,5 +183,64 @@ describe('fractionBoxContains', () => {
   it('rejects a point outside on either axis alone', () => {
     expect(fractionBoxContains(box, { x: 0.1, y: 0.375 })).toBe(false);
     expect(fractionBoxContains(box, { x: 0.5, y: 0.1 })).toBe(false);
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// D-316 — the two box transforms a MEASURED box (a caption's) needs, which a
+// derived box (a video clip's) does not: its rectangle cannot be recomputed
+// from the dragged values, so the gesture is applied to the rectangle itself.
+// -------------------------------------------------------------------------- //
+
+describe('translateFractionBox', () => {
+  const box = { left: 0.25, top: 0.5, width: 0.5, height: 0.25 };
+
+  it('moves the box and leaves its size alone', () => {
+    expect(translateFractionBox(box, { x: 0.1, y: -0.25 })).toEqual({
+      left: 0.35,
+      top: 0.25,
+      width: 0.5,
+      height: 0.25,
+    });
+  });
+
+  it('is the identity for a zero delta', () => {
+    expect(translateFractionBox(box, { x: 0, y: 0 })).toEqual(box);
+  });
+});
+
+describe('scaleFractionBoxAbout', () => {
+  // The caption case: the pivot is the style anchor, which for a centred
+  // subtitle is the bottom-CENTRE of the box.
+  const box = { left: 0.25, top: 0.5, width: 0.5, height: 0.25 };
+  const pivot = { x: 0.5, y: 0.75 };
+
+  it('leaves the pivot exactly where it is', () => {
+    const doubled = scaleFractionBoxAbout(box, pivot, 2);
+    // The pivot was the bottom-centre; it still is.
+    expect(doubled.left + doubled.width / 2).toBeCloseTo(pivot.x, 12);
+    expect(doubled.top + doubled.height).toBeCloseTo(pivot.y, 12);
+  });
+
+  it('scales both dimensions by the factor', () => {
+    const doubled = scaleFractionBoxAbout(box, pivot, 2);
+    expect(doubled.width).toBeCloseTo(1, 12);
+    expect(doubled.height).toBeCloseTo(0.5, 12);
+    expect(doubled.left).toBeCloseTo(0, 12);
+    expect(doubled.top).toBeCloseTo(0.25, 12);
+  });
+
+  it('shrinks about the same pivot', () => {
+    const half = scaleFractionBoxAbout(box, pivot, 0.5);
+    expect(half.width).toBeCloseTo(0.25, 12);
+    expect(half.left + half.width / 2).toBeCloseTo(pivot.x, 12);
+    expect(half.top + half.height).toBeCloseTo(pivot.y, 12);
+  });
+
+  it('is the identity for a factor of 1, and for a non-finite one', () => {
+    expect(scaleFractionBoxAbout(box, pivot, 1)).toEqual(box);
+    // A drag whose start distance was zero can only produce garbage; the box
+    // must stay put rather than becoming NaN and vanishing from the DOM.
+    expect(scaleFractionBoxAbout(box, pivot, Number.NaN)).toEqual(box);
   });
 });

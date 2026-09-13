@@ -4,7 +4,14 @@
 // `transformGeometry.test.ts` is (this package's vitest env is bare `node`).
 import { describe, expect, it } from 'vitest';
 
-import { layerBoxFraction, pickTopmostLayer, visibleVideoLayersAt, type PickCandidate } from './canvasPick';
+import {
+  layerBoxFraction,
+  pickTopmostCaption,
+  pickTopmostLayer,
+  visibleCaptionsAt,
+  visibleVideoLayersAt,
+  type PickCandidate,
+} from './canvasPick';
 import type { Clip, Timeline, Track } from './timeline';
 
 function clip(id: string, startFrame: number, duration: number, extra: Partial<Clip> = {}): Clip {
@@ -213,5 +220,111 @@ describe('pickTopmostLayer', () => {
     const candidates = [candidate(0, left, FULL_FRAME), candidate(1, right, FULL_FRAME)];
     expect(pickTopmostLayer({ x: 0.49999, y: 0.5 }, candidates)?.clip.id).toBe('left');
     expect(pickTopmostLayer({ x: 0.5, y: 0.5 }, candidates)?.clip.id).toBe('right');
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// D-316 — captions. Their own pass, because the compositor has one: captions
+// are painted OVER the finished picture, in ascending order, so the LAST one
+// painted is the topmost — the opposite of the video stack.
+// -------------------------------------------------------------------------- //
+
+function captionClip(id: string, startFrame: number, duration: number, text = 'hello'): Clip {
+  return {
+    id,
+    name: id,
+    source_path: '',
+    source_start: 0,
+    duration,
+    source_len: duration,
+    start_frame: startFrame,
+    caption: { text },
+  };
+}
+
+function subtitleTrack(clips: Clip[], extra: Partial<Track> = {}): Track {
+  return { kind: 'subtitle', clips, ...extra };
+}
+
+describe('visibleCaptionsAt', () => {
+  it('returns nothing for a null timeline, and nothing without a subtitle track', () => {
+    expect(visibleCaptionsAt(null, 0)).toEqual([]);
+    expect(visibleCaptionsAt(timeline([videoTrack([clip('a', 0, 100)])]), 10)).toEqual([]);
+  });
+
+  it('returns only the cues whose own span contains the frame', () => {
+    const tl = timeline([subtitleTrack([captionClip('c1', 0, 50), captionClip('c2', 50, 50)])]);
+    expect(visibleCaptionsAt(tl, 10).map((c) => c.clip.id)).toEqual(['c1']);
+    expect(visibleCaptionsAt(tl, 60).map((c) => c.clip.id)).toEqual(['c2']);
+    expect(visibleCaptionsAt(tl, 200)).toEqual([]);
+  });
+
+  it('returns every OVERLAPPING cue on a track, not just one — the Rust resolver does', () => {
+    // `clipAt` would pick a single clip here; `resolve_visible_captions_at`
+    // walks the whole list, so two overlapping cues both draw and both have to
+    // be pickable.
+    const tl = timeline([subtitleTrack([captionClip('c1', 0, 100), captionClip('c2', 20, 100)])]);
+    expect(
+      visibleCaptionsAt(tl, 30)
+        .map((c) => c.clip.id)
+        .sort(),
+    ).toEqual(['c1', 'c2']);
+  });
+
+  it('orders topmost-FIRST, which for captions is paint order REVERSED', () => {
+    // Track 0's cue is painted first, so it is furthest back; track 1's lands
+    // on top of it. Getting this backwards would make a click on two
+    // overlapping captions select the one underneath.
+    const tl = timeline([
+      subtitleTrack([captionClip('lower', 0, 100)]),
+      subtitleTrack([captionClip('upper', 0, 100)]),
+    ]);
+    expect(visibleCaptionsAt(tl, 10).map((c) => c.clip.id)).toEqual(['upper', 'lower']);
+  });
+
+  it('omits a hidden subtitle track, and a clip on one that carries no cue', () => {
+    const hidden = timeline([subtitleTrack([captionClip('c1', 0, 100)], { hidden: true })]);
+    expect(visibleCaptionsAt(hidden, 10)).toEqual([]);
+    const noCue = timeline([subtitleTrack([clip('not-a-caption', 0, 100)])]);
+    expect(visibleCaptionsAt(noCue, 10)).toEqual([]);
+  });
+
+  it('includes a LOCKED track — locking protects from editing, not from selection', () => {
+    const tl = timeline([subtitleTrack([captionClip('c1', 0, 100)], { locked: true })]);
+    expect(visibleCaptionsAt(tl, 10).map((c) => c.clip.id)).toEqual(['c1']);
+  });
+});
+
+describe('pickTopmostCaption', () => {
+  const captionBox = { left: 0.25, top: 0.7, width: 0.5, height: 0.15 };
+
+  function captionCandidate(id: string, track: number, box: typeof captionBox | null) {
+    return { track, clipIndex: 0, clip: captionClip(id, 0, 100), box };
+  }
+
+  it('returns the caption whose measured box contains the point', () => {
+    expect(pickTopmostCaption({ x: 0.5, y: 0.75 }, [captionCandidate('c1', 0, captionBox)])?.clip.id).toBe('c1');
+  });
+
+  it('returns null for a point outside every box', () => {
+    expect(pickTopmostCaption({ x: 0.5, y: 0.2 }, [captionCandidate('c1', 0, captionBox)])).toBeNull();
+  });
+
+  it('takes the FIRST hit in the given (topmost-first) order', () => {
+    const hit = pickTopmostCaption({ x: 0.5, y: 0.75 }, [
+      captionCandidate('upper', 1, captionBox),
+      captionCandidate('lower', 0, captionBox),
+    ]);
+    expect(hit?.clip.id).toBe('upper');
+  });
+
+  it('skips an unmeasured caption without blocking one underneath it', () => {
+    // An unknown box is not the same as a covering one — the same rule
+    // `pickTopmostLayer` applies to an unresolved clip geometry.
+    const hit = pickTopmostCaption({ x: 0.5, y: 0.75 }, [
+      captionCandidate('unmeasured', 1, null),
+      captionCandidate('lower', 0, captionBox),
+    ]);
+    expect(hit?.clip.id).toBe('lower');
   });
 });

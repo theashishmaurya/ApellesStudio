@@ -30381,3 +30381,158 @@ venv is" across two crates would guarantee they disagree.
 - **macOS ARM only**, matching v1 scope. A macOS x86_64 build now fails loudly at
   `tauri_build::build()` on the missing binary rather than silently producing an app whose
   AI features can never bootstrap.
+
+## D-316 — a caption is selectable, movable and resizable ON THE CANVAS; the corner handle writes FONT SIZE
+
+**decided (2026-09-13)** · fixes **B-183** · builds on D-229 (the caption model),
+D-136/D-234 (the on-canvas transform box), D-204 (canvas click-to-select)
+
+- **Context.** A caption is an ordinary `Clip` on a `TrackKind::Subtitle` track
+  (D-229), so it was selectable, inspectable and editable everywhere *except* the
+  one surface a caption is actually judged on: the picture. Selecting one showed a
+  full Inspector — Position X/Y, Font Size, alignment, padding — and drew nothing
+  at all on the canvas. Owner, live: *"fix that caption is not selectable movable /
+  resizable at all :) and it should propogate to whole caption right :)"*. The root
+  cause was mechanical rather than deliberate, which is why this is a B-NNN as well:
+  `TransformOverlay` needs `chroma_timeline_clip_geometry`, and that command returns
+  `Err("clip has no source")` for a caption clip (its `source_path` is empty), so
+  the overlay's own `!geometry` guard returned `null` — a silent nothing, with no
+  decision anywhere saying captions were out of scope. `TransformOverlay`'s
+  exclusion list names rotation, non-uniform scale, crop, anchor, snapping, marquee
+  and multi-clip; it has never named captions.
+
+- **Real references read first** (CLAUDE.md's hard rule), saved in
+  `scratch/caption-oncanvas-reference/`. Fetched, not recalled — Adobe/Canva were
+  403 to plain fetches and were read through a real browser; Resolve came from
+  Blackmagic's own 4032-page Reference Manual; CapCut only via the Internet
+  Archive (its site is 451 from here — flagged as the weakest leg of the set).
+  - **Resolve** (Ref. Manual ch.31 p.602) gives the canonical gesture spec —
+    *"drag anywhere within the clip's bounding box to adjust pan and tilt, drag any
+    diagonal corner to proportionally resize, drag any top/bottom/left/right side to
+    squeeze or stretch"*. But its **subtitles get none of it** (ch.52 documents
+    Inspector numerics only: Size, Position X/Y, Zoom X/Y…).
+  - **Premiere** distinguishes text-on-a-point from text-in-a-box; an Adobe
+    engineer on Adobe's own forum: *"If it's a TOP the text will re-scale. If it's
+    a TIB the text will reflow inside the box"* — and, in the same thread, *"Even
+    though the text is larger, if you look at the actual text font size it is still
+    the same."*
+  - **Final Cut** corner = *"adjust the image's size while maintaining its current
+    aspect ratio"* → a `Scale %`. **Figma** separates a move tool (box only) from a
+    Scale tool (box + font size), and says font size is *"of the text contents, not
+    the layer"*. **Canva**'s side handles are a deliberately different SHAPE and are
+    documented *"This won't affect the text font size."*
+  - So the attested convention is: **body = move · corner = uniform scale · side =
+    non-uniform or wrap-width**, and in every one of those tools a corner drag
+    writes a *separate scale factor*, never the font-size number.
+
+- **Options for what a corner drag means here.** (a) add a `scale` field to
+  `CaptionStyle` and match the reference tools literally; (b) write
+  `CaptionStyle.size` (font size) directly, multiplicatively; (c) no corner handle
+  at all, Inspector-only sizing, which is what Resolve actually ships for subtitles.
+
+- **Decision: (b).** Our `size` is *already* the resolution-independent scale
+  factor — a fraction of composition height — so it plays the combined role Resolve
+  splits across `Size` and `Zoom`. A parallel `scale` would be two ways to express
+  one pixel size, would break the one-source-of-truth rule this repo holds `Clip`
+  and `grade.json` to, and would reproduce exactly the Premiere confusion quoted
+  above (the text gets bigger, the panel's number does not move). Worse, it would be
+  **B-053's shape**: `drawtext` cannot scale a text box, so a stored caption `scale`
+  is a value the model would keep, the preview would ignore and the export could not
+  honour. (c) was rejected because the whole point of the ask is that
+  Inspector-only was what we already had.
+
+- **The box is the caption's REAL rendered bounds, measured, not approximated.**
+  "Propagate to the whole caption" is the other half of the ask: the box has to
+  enclose every line of the cue, its leading and its background padding, and move
+  and grow as one unit. That needs real font metrics — a per-line advance width and
+  the font's line-box height — which `apelles-timeline` deliberately never has (its
+  whole parity argument is that nothing deciding *where a line goes* may depend on a
+  glyph measurement). So the split is the one D-197 already established: the pure
+  arithmetic is `CaptionLayout::bounds` in the model crate, and it is *handed* the
+  two measurements by `caption_bounds_px` in the rasteriser's own module, which
+  measures them with the identical `ab_glyph` walk that draws the glyphs. New
+  command `chroma_measure_caption_bounds` returns the result in
+  composition-fraction space — its own command rather than a case of
+  `ClipGeometry`, because that struct reports a *size* only and a caption's box
+  position is not derivable from any `Clip` field.
+  **Proved against pixels, not against itself:** `the_measured_bounds_match_the_drawn_pixels`
+  renders real captions (three strings × three alignments) and asserts the computed
+  box equals the actual non-transparent pixel extent exactly.
+
+- **That command is a PURE measurement — text + style + composition size in, box
+  out — and that is load-bearing, not incidental.** The first build of it took
+  `track`/`clip` indices and resolved the cue and its style server-side, exactly
+  as `chroma_timeline_clip_geometry` does. That is **wrong here, and the live
+  verification pass caught it**: the Rust side's timeline is only as current as
+  the frontend's own debounced save (~400 ms — `timelineStore`'s `savedVersion`,
+  the whole story of **B-088**), so the box was measured against the style as it
+  had been a moment earlier. On screen: moving a caption moved the text and left
+  the selection box behind — the precise defect this overlay exists to fix,
+  reintroduced through a different door. The frontend already HAS the resolved
+  style (it renders the Inspector from it) and the composition size; the only
+  thing it cannot compute is the glyph measurement, so it passes everything else
+  in and asks only for that. A caption's box is a function of its style, not of
+  its position in a persisted document, and the signature now says so.
+  `re-measures when the STYLE changes, without waiting on a persisted timeline`
+  is the regression guard.
+
+- **A corner drag scales the box about the style's ANCHOR, not the box's centre** —
+  and that is a fact about the model, not a UI preference: every distance in
+  `CaptionLayout` (advances, line box, line step, padding) is proportional to the
+  resolved font size while `(position_x, position_y)` is not, so the whole box is a
+  uniform scale about that point. Pinned by
+  `bounds_scale_uniformly_about_the_style_anchor` so the live overlay is allowed to
+  assume it.
+
+- **Four corner handles, not eight** (adopted from the reference sweep): a side
+  handle has exactly two attested meanings, non-uniform scale and wrap width, and a
+  caption has neither field. Drawing one would promise a gesture nothing could
+  honour. **The box includes the background/padding band** — undocumented in every
+  reference, so a judgement call: the visible pill is the user's mental model of
+  "the caption", and a box hugging the glyphs inside a larger visible background
+  reads as a bug. **The committed size is rounded to the precision the Inspector's
+  own Size field shows** (a percentage to two decimals), because Figma's docs warn
+  that scale-dragging type otherwise yields fractional sizes a user cannot reproduce
+  by typing.
+
+- **Which style the drag writes is `CaptionInspectorPanel`'s existing rule, exactly**
+  — the cue's own override if it has one, else the track's. Not a new rule invented
+  for the canvas: it is the reference Inspector's "Use Track Style" checkbox, and it
+  means dragging a caption that uses its track style repositions the whole subtitle
+  track, which is the subtitle convention and precisely what typing in the
+  Inspector's Position X field already does. One meaning, one op, one undo entry —
+  the GUI drag and the number field are one source of truth rather than two paths to
+  the same fields.
+
+- **Structure: a sibling overlay, but ONE box implementation.**
+  `CaptionTransformOverlay.tsx` is its own component for the same reason
+  `CaptionInspectorPanel` is its own panel (nothing a caption's box is made of is a
+  `Clip` transform), and `TransformOverlay` now stands aside for a caption
+  *explicitly*, the way it already does for an adjustment clip (D-230) and a
+  dynamic-zoom-armed clip (D-234) — rather than by accidentally failing a geometry
+  probe. But the rectangle, the handles, pointer capture, the Escape cancel, the
+  hit-slop and the "live overlay during the drag, ONE `applyOp` on pointer-up"
+  discipline are all still `TransformBox`'s (D-234 extracted it for exactly this),
+  reached through one new optional `model` prop for a consumer whose box is measured
+  rather than derived. No pointer wiring is duplicated.
+
+- **Canvas click-to-select sees captions too** (`useCanvasClipPick`, D-204's
+  surface): a caption pass ahead of the video pass, because `draw_captions_onto`
+  paints cues over the finished picture — so a caption is above the whole video
+  stack by construction, and its own pass mirrors that resolver including its
+  *reversed* order (captions are painted ascending, so the last is topmost — the
+  opposite of the video stack, and getting it backwards would select the cue
+  underneath).
+
+- **Human AND AI:** no MCP gap to close. `editor_set_caption_style` /
+  `editor_set_caption` already take `position_x`, `position_y` and `size`, and the
+  drag commits through the same `set_caption_style` / `set_caption_cue_style` store
+  ops those tools drive — this adds a GUI gesture over an existing capability, not
+  a new capability. Checked rather than assumed.
+
+- **Deliberately deferred** (each a real, separate affordance, all attested in the
+  reference sweep): Shift-constrain-to-axis, snapping to guides / title-safe /
+  centre, arrow-key nudge, and double-click-to-edit-text-in-place. The selection box
+  also tracks a per-word animated cue's *settled* envelope rather than the moving
+  extent of whichever word is entering — a box that jittered frame-to-frame while
+  nobody was dragging it would be worse than one that sits still on the text.

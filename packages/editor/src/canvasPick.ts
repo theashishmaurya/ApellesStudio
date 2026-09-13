@@ -50,13 +50,22 @@
  *     rectangle, like every reference NLE's own program-monitor pick against
  *     a layer's bounding box. Rotation is Phase 2 and unbuilt.
  *
+ * **D-316 — captions, in their own pass.** A caption is painted over the
+ * finished picture rather than into the video z-order, so it gets its own
+ * resolver and its own pick function below (`visibleCaptionsAt` /
+ * `pickTopmostCaption`), mirroring `draw_captions_onto` the way the video half
+ * mirrors `composite_video_frame`. A caption is ON TOP of every video layer by
+ * construction, which is why `useCanvasClipPick` tries it first. The one input
+ * that pass cannot derive — a cue's measured bounding box — is handed in, for
+ * the same reason a clip's `natural` footprint is.
+ *
  * Pure and node-testable, kept out of the component for the same reason
  * `transformGeometry.ts` is (this package's vitest environment is bare
  * `node`) — see `canvasPick.test.ts`.
  */
 
 import { resolveClipBoxTransform } from './clipKeyframes';
-import { clipAt, timelineFps, type Clip, type Timeline } from './timeline';
+import { clipAt, endFrame, timelineFps, type Clip, type Timeline } from './timeline';
 import { clipBoxFraction, fractionBoxContains, resolvedBoxSize, type FractionBox } from './transformGeometry';
 
 /** One video layer visible at some frame, identified the way every per-clip
@@ -145,6 +154,95 @@ export function pickTopmostLayer(
     if (!c.natural) continue;
     if (fractionBoxContains(layerBoxFraction(c.clip, c.natural, c.sourceFrame), point)) {
       return { track: c.track, clipIndex: c.clipIndex, clip: c.clip, sourceFrame: c.sourceFrame };
+    }
+  }
+  return null;
+}
+
+// -------------------------------------------------------------------------- //
+// D-316 — captions
+//
+// A caption is not a video layer and takes no part in the video z-order
+// (`Clip::caption`'s own doc, and `chroma::edit::draw_captions_onto`, which
+// paints every visible cue over the FINISHED picture in a separate pass). So
+// it gets its own resolution and its own pass here, exactly as it does in the
+// compositor — rather than being folded into `visibleVideoLayersAt`, whose
+// "topmost-first" ordering means something different.
+// -------------------------------------------------------------------------- //
+
+/** One caption cue visible at some frame. No `sourceFrame`, unlike
+ *  [`CanvasLayer`]: a caption has no keyframes and no transform to resolve at
+ *  a frame — its geometry is entirely its resolved `CaptionStyle`'s. */
+export interface CanvasCaption {
+  track: number;
+  clipIndex: number;
+  clip: Clip;
+}
+
+/**
+ * Every caption with picture at `frame`, **topmost first** — the TS mirror of
+ * Rust's `Timeline::resolve_visible_captions_at`, plus that pass's own paint
+ * order.
+ *
+ * Two things differ from `visibleVideoLayersAt` above, both because the
+ * compositor differs:
+ *
+ *   - **Every clip on the track is tested, not just "the one at this frame".**
+ *     `resolve_visible_captions_at` walks the whole clip list and takes every
+ *     cue whose span contains `frame`, so two overlapping cues on one track
+ *     both draw. `clipAt` would silently pick one.
+ *   - **The order is REVERSED.** Captions are alpha-blended in ascending
+ *     (track, clip) order onto the finished frame, so the LAST one painted is
+ *     the one on top — the opposite of the video stack, where track 0 is on
+ *     top. Getting this backwards would make a click on two overlapping cues
+ *     select the one underneath.
+ *
+ * A `hidden` track contributes nothing (the Rust resolver skips it); a
+ * `locked` one is still included, for the same reason it is for video —
+ * locking protects a clip from being edited, not from being selected.
+ */
+export function visibleCaptionsAt(tl: Timeline | null, frame: number): CanvasCaption[] {
+  if (!tl) return [];
+  const fps = timelineFps(tl);
+  const out: CanvasCaption[] = [];
+  tl.tracks.forEach((track, i) => {
+    if (track.kind !== 'subtitle' || track.hidden) return;
+    track.clips.forEach((clip, clipIndex) => {
+      if (!clip.caption) return;
+      if (frame < clip.start_frame || frame >= endFrame(clip, fps)) return;
+      out.push({ track: i, clipIndex, clip });
+    });
+  });
+  // Painted first = furthest back, so topmost-first is paint order reversed.
+  return out.reverse();
+}
+
+/** A visible caption plus its MEASURED box (`useCaptionGeometry` /
+ *  `chroma_measure_caption_bounds`). `box: null` means the measurement
+ *  hasn't resolved, or the cue is empty and draws nothing — such a caption is
+ *  skipped rather than guessed at, exactly as an unresolved clip geometry is
+ *  in [`pickTopmostLayer`]. */
+export interface CaptionPickCandidate extends CanvasCaption {
+  box: FractionBox | null;
+}
+
+/**
+ * The topmost caption whose box contains `point`, or `null`.
+ *
+ * `candidates` must already be in [`visibleCaptionsAt`]'s topmost-first order.
+ * The box tested is the one `CaptionTransformOverlay` DRAWS, because it is
+ * literally the same measurement — a click can therefore never select a
+ * caption whose handles then appear somewhere else, which is the guarantee
+ * this module's own doc makes for video layers.
+ */
+export function pickTopmostCaption(
+  point: { x: number; y: number },
+  candidates: readonly CaptionPickCandidate[],
+): CanvasCaption | null {
+  for (const c of candidates) {
+    if (!c.box) continue;
+    if (fractionBoxContains(c.box, point)) {
+      return { track: c.track, clipIndex: c.clipIndex, clip: c.clip };
     }
   }
   return null;

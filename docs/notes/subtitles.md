@@ -86,6 +86,60 @@ D-211 drew, one step further: the export draws a caption with `drawtext`, which
 cannot scale, rotate or crop a text box, and a preview offering controls the
 export silently ignores is the B-053 class of defect this repo keeps closing.
 
+**This is also why D-316's on-canvas corner handle writes `size` rather than a
+new `scale`** — see §2b.
+
+---
+
+## 2b. On-canvas manipulation (D-316, fixing B-183)
+
+A caption can be selected, moved and resized **on the picture**, not only in
+the Inspector. Until D-316 it could not: `chroma_timeline_clip_geometry` errors
+for a caption clip (empty `source_path`), so `TransformOverlay` silently drew
+nothing — see B-183.
+
+**The three pieces, and where each lives:**
+
+| Question | Answer | Where |
+|---|---|---|
+| Where is the caption on screen? | its real rendered box, in composition fractions | `CaptionLayout::bounds` (pure) ← `caption_bounds_px` (measures) ← `chroma_measure_caption_bounds` (command) |
+| What does dragging the body mean? | `position_x` / `position_y` | `CaptionTransformOverlay.tsx` → `set_caption_style` / `set_caption_cue_style` |
+| What does dragging a corner mean? | `size` (font size), multiplied | same, via `captionSizeAfterDrag` |
+
+**The measurement split is D-197's, again.** The box needs one advance width
+per line plus the font's line-box height — glyph measurements, which this
+crate's whole parity argument forbids it from making (§3: nothing that decides
+where a line goes may depend on a measurement). So `CaptionLayout::bounds` is
+*handed* them, by the rasteriser's own module, measured with the identical
+`ab_glyph` walk that draws the glyphs. `caption_render.rs`'s
+`the_measured_bounds_match_the_drawn_pixels` renders real captions and asserts
+the computed box equals the drawn pixel extent exactly, so the two cannot drift.
+
+**`chroma_measure_caption_bounds` takes the text and the STYLE, never a
+`track`/`clip` pair** — a pure function, deliberately. Resolving the cue
+server-side was the first design and was wrong: the Rust side's timeline is
+only as current as the frontend's debounced save (~400 ms, B-088), so the box
+got measured against the style as it was a moment ago and visibly lagged the
+text it was supposed to be around. The frontend already has the resolved style;
+it asks only for the glyph measurement it cannot make.
+
+**A corner drag scales about the style's anchor**, because that is what the
+model does: every distance in `CaptionLayout` is proportional to the resolved
+font size and `(position_x, position_y)` is not, so the whole box — every line,
+the leading, the background padding — is a uniform scale about that point. The
+box therefore grows as one unit, which is the "propagate to the whole caption"
+half of the ask.
+
+**The write lands wherever the Inspector's own fields land** (the cue's
+override if it has one, else the track), so dragging a caption on a track style
+moves the whole track — the subtitle convention, and identical to typing in the
+Inspector's Position X field. One source of truth, not two paths.
+
+**Deferred, all attested in D-316's reference sweep:** Shift-constrain-to-axis,
+snapping to guides / title-safe / centre, arrow-key nudge,
+double-click-to-edit-in-place, and side handles (they would mean non-uniform
+scale or wrap width — a caption has neither field, so four corners only).
+
 ---
 
 ## 3. The hard part: multi-line, in two rasterisers
@@ -249,6 +303,12 @@ just a missing font file. Tracked below.
 | media | `app/src-tauri/src/chroma/caption_render.rs` | the `ab_glyph` rasteriser |
 | media | `app/src-tauri/src/chroma/edit.rs` | `draw_captions_onto` — the last compositing pass |
 | shell | `app/src-tauri/src/chroma/subtitles.rs` | `chroma_import_subtitles` / `chroma_export_subtitles` |
+| L2 model | `crates/apelles-timeline/src/caption.rs` | `CaptionLayout::bounds` / `CaptionBounds` — D-316's rendered-box arithmetic |
+| media | `app/src-tauri/src/chroma/caption_render.rs` | `caption_bounds_px` — the glyph measurements that box is fed |
+| media | `app/src-tauri/src/chroma/caption_render.rs` | `chroma_measure_caption_bounds` — that box, in composition fractions |
+| editor | `packages/editor/src/CaptionTransformOverlay.tsx` | the on-canvas box + move/resize gestures (D-316) |
+| editor | `packages/editor/src/useCaptionGeometry.ts` | the measured-box fetch (one cue, or every visible one) |
+| editor | `packages/editor/src/canvasPick.ts` | `visibleCaptionsAt` / `pickTopmostCaption` — canvas click-to-select |
 | editor | `packages/editor/src/caption.ts` | the TS mirror of the model + layout |
 | editor | `packages/editor/src/timelineExport.ts` | `buildCaptionDrawtextSteps`, `captionsForExport` |
 | editor | `packages/editor/src/timeline.ts` | the four caption edit ops |

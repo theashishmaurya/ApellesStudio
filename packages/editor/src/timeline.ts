@@ -113,9 +113,12 @@ export {
   captionCps,
   captionLayout,
   captionLines,
+  captionSizeAfterDrag,
   resolveCaptionStyle,
   DEFAULT_CAPTION_FONT,
   DEFAULT_CAPTION_SIZE,
+  MAX_DRAG_CAPTION_SIZE,
+  MIN_DRAG_CAPTION_SIZE,
 } from './caption';
 export {
   EQ_BAND_COUNT,

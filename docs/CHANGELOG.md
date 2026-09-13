@@ -4,6 +4,31 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-13** — **D-316 (fixing B-183): a caption is now selectable, movable
+  and resizable on the canvas.** Selecting a caption showed a full working
+  Inspector and drew absolutely nothing on the picture — root cause was
+  mechanical, not deliberate: `chroma_timeline_clip_geometry` returns
+  `Err("clip has no source")` for a caption clip's empty `source_path`, so
+  `TransformOverlay` bailed silently. Now a real box on the cue's **measured**
+  rendered bounds (`CaptionLayout::bounds`, fed real `ab_glyph` metrics by
+  `caption_bounds_px`, surfaced by the new `chroma_measure_caption_bounds`
+  command — proved against actual drawn pixels, not against itself), with
+  drag-to-move writing `position_x`/`position_y` and a corner drag writing
+  `size`, the font size, scaled about the style's own anchor so every line, the
+  leading and the background padding grow as one unit. Built from a real
+  reference sweep (Premiere/Resolve/FCP/CapCut/Canva/Figma —
+  `scratch/caption-oncanvas-reference/`), which is also why the corner writes
+  font size rather than a new `scale` field, and why there are four handles and
+  not eight. Same ops as the Inspector and `editor_set_caption_style`, so one
+  source of truth and no MCP gap. Canvas click-to-select sees captions too.
+  The live verification pass (a real build, a real talking-head clip, 8 cues
+  from its own Whisper transcript) earned its keep: it caught the measurement
+  command resolving the cue from the PERSISTED timeline, so the box lagged the
+  text by one ~400 ms save debounce — B-088's class, reintroduced through a
+  different door. The command is now a pure `text + style + comp size → box`
+  function with no timeline access at all.
+
+
 - **2026-09-13** — **B-182: the shared Sources panel toggle silently ate every
   click in Colorist, only Colorist** — Colorist's own `EditorToolbar` wrapper
   sat at the identical `z-10` and, rendering after the chip in DOM order, won

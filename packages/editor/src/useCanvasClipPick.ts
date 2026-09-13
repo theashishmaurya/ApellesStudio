@@ -33,9 +33,14 @@
  *      Detected with `closest('[data-transform-handle]')` — the same "was this
  *      press on a real widget?" test `TimelinePane`'s own D-100 clear-selection
  *      branch makes with `closest('.timeline-editor-action')`.
- *   3. Hit-test the pointer against every visible layer, topmost first
- *      (`canvasPick.ts`, which mirrors the Rust compositor's own layer
- *      resolution and paint order rather than guessing).
+ *   3. Hit-test the pointer against every visible CAPTION first (D-316), then
+ *      against every visible video layer, each topmost first (`canvasPick.ts`,
+ *      which mirrors the Rust compositor's own resolution and paint order
+ *      rather than guessing). Captions come first because
+ *      `draw_captions_onto` paints them over the finished picture — a caption
+ *      is above the whole video stack by construction, so there is no
+ *      interleaving to decide, and a press inside a caption's box is a press
+ *      on the caption even when a full-frame clip sits behind it.
  *   4. The topmost hit IS the one clip already selected → not ours: that is a
  *      grab on the selected clip's own picture, i.e. exactly D-136's move
  *      drag, which continues to work untouched.
@@ -72,10 +77,19 @@
  */
 import { useEffect, useRef } from 'react';
 
-import { pickTopmostLayer, visibleVideoLayersAt, type PickCandidate } from './canvasPick';
+import {
+  pickTopmostCaption,
+  pickTopmostLayer,
+  visibleCaptionsAt,
+  visibleVideoLayersAt,
+  type CaptionPickCandidate,
+  type PickCandidate,
+} from './canvasPick';
 import { screenToFraction } from './transformGeometry';
+import { resolveCaptionStyle } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { clipGeometryKey, useClipGeometries } from './useClipGeometry';
+import { captionGeometryKey, useCaptionGeometries } from './useCaptionGeometry';
 import { usePreviewContentBox } from './usePreviewContentBox';
 import type { CompositionSize } from './useCompositionSize';
 
@@ -128,6 +142,34 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
   useEffect(() => {
     layersRef.current = layers;
   }, [layers]);
+
+  // D-316 — the captions showing at the playhead, resolved and measured the
+  // same way. Same ref discipline as `layers` above, for the same D-290 reason:
+  // a fresh array every render must not re-register the capture-phase listener.
+  const captions = visibleCaptionsAt(timeline, playhead);
+  // Measured from the style the STORE holds right now, not from the persisted
+  // timeline — see `useCaptionGeometry`'s own doc for why that distinction is
+  // load-bearing (B-088's debounce). Resolved here the same way
+  // `CaptionTransformOverlay` resolves it, so the hit rect and the drawn box
+  // are the same measurement by construction.
+  const captionRequests = captions.map((c) => ({
+    id: `${c.track}:${c.clip.id}`,
+    req: {
+      text: c.clip.caption?.text ?? '',
+      style: resolveCaptionStyle(c.clip.caption?.style, timeline?.tracks[c.track]?.caption_style),
+      size,
+    },
+  }));
+  const captionGeometries = useCaptionGeometries(captionRequests);
+  // Paired with its own request list rather than re-derived inside the handler,
+  // so a candidate and the key its measurement was filed under cannot drift.
+  const captionsRef = useRef<CaptionPickCandidate[]>([]);
+  useEffect(() => {
+    captionsRef.current = captions.map((c, i) => ({
+      ...c,
+      box: captionGeometries.get(captionGeometryKey(captionRequests[i].id, captionRequests[i].req)) ?? null,
+    }));
+  }, [captions, captionRequests, captionGeometries]);
   const geometries = useClipGeometries(
     layers.map((l) => ({ track: l.track, clipIndex: l.clipIndex, sourcePath: l.clip.source_path })),
     // A clip's natural footprint is a fraction OF THE COMPOSITION, so a
@@ -155,11 +197,17 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
 
       const rect = container.getBoundingClientRect();
       const point = screenToFraction({ x: e.clientX - rect.left, y: e.clientY - rect.top }, contentBox);
+      // D-316 — captions first, unconditionally: `draw_captions_onto` paints
+      // every visible cue OVER the finished picture, so a caption is above
+      // every video layer by construction and there is no interleaving to
+      // resolve. A press inside a caption's measured box is a press on the
+      // caption, even where a clip's picture fills the frame behind it.
+      const captionHit = pickTopmostCaption(point, captionsRef.current);
       const candidates: PickCandidate[] = layersRef.current.map((l) => {
         const g = geometries.get(clipGeometryKey(l.track, l.clipIndex, l.clip.source_path));
         return { ...l, natural: g ? { width: g.naturalWidth, height: g.naturalHeight } : null };
       });
-      const hit = pickTopmostLayer(point, candidates);
+      const hit = captionHit ?? pickTopmostLayer(point, candidates);
 
       // Read the selection through `getState()` rather than subscribing: this
       // listener is re-registered on every dependency change already, and an

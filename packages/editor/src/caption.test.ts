@@ -16,9 +16,12 @@ import {
   captionCps,
   captionLayout,
   captionLines,
+  captionSizeAfterDrag,
   resolveCaptionStyle,
   DEFAULT_CAPTION_FONT,
   DEFAULT_CAPTION_SIZE,
+  MAX_DRAG_CAPTION_SIZE,
+  MIN_DRAG_CAPTION_SIZE,
 } from './caption';
 
 describe('captionLines', () => {
@@ -134,5 +137,37 @@ describe('captionLayout', () => {
     const l = captionLayout(resolveCaptionStyle(null, null), 1920, 1080, 0);
     expect(l.lines).toEqual([]);
     expect(l.font_px).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// D-316 — the on-canvas resize gesture's one piece of arithmetic.
+// -------------------------------------------------------------------------- //
+
+describe('captionSizeAfterDrag', () => {
+  it('multiplies the size by the corner drag’s factor', () => {
+    expect(captionSizeAfterDrag(0.05, 2)).toBeCloseTo(0.1, 6);
+    expect(captionSizeAfterDrag(0.05, 0.5)).toBeCloseTo(0.025, 6);
+  });
+
+  it('is the identity for a factor of 1', () => {
+    expect(captionSizeAfterDrag(DEFAULT_CAPTION_SIZE, 1)).toBe(DEFAULT_CAPTION_SIZE);
+  });
+
+  it('clamps to the drag range rather than letting a fast drag run away', () => {
+    expect(captionSizeAfterDrag(0.055, 1000)).toBe(MAX_DRAG_CAPTION_SIZE);
+    expect(captionSizeAfterDrag(0.055, 0.0001)).toBe(MIN_DRAG_CAPTION_SIZE);
+  });
+
+  it('rounds to the precision the Inspector’s own Size field shows', () => {
+    // 0.055 * 1.1111 = 0.0611105 — a number no one could reproduce by typing.
+    expect(captionSizeAfterDrag(0.055, 1.1111)).toBe(0.0611);
+  });
+
+  it('degrades a non-finite or non-positive input rather than poisoning the style', () => {
+    expect(captionSizeAfterDrag(Number.NaN, 2)).toBeCloseTo(DEFAULT_CAPTION_SIZE * 2, 6);
+    expect(captionSizeAfterDrag(0, 2)).toBeCloseTo(DEFAULT_CAPTION_SIZE * 2, 6);
+    expect(captionSizeAfterDrag(0.05, Number.NaN)).toBeCloseTo(0.05, 6);
+    expect(captionSizeAfterDrag(0.05, -3)).toBeCloseTo(0.05, 6);
   });
 });

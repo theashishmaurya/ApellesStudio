@@ -16,6 +16,12 @@
  *   / `set_clip_keyframes` per D-209's per-property auto-key rule;
  * - `DynamicZoomOverlay.tsx` — two boxes, both committing through
  *   `dynamicZoom.ts`'s bake.
+ * - `CaptionTransformOverlay.tsx` (D-316) — one box over a CAPTION, whose
+ *   rectangle is measured rather than derived and whose corner drag means
+ *   "font size", committing through `set_caption_style`/`set_caption_cue_style`.
+ *   It reaches that through the `model` prop below; everything else about the
+ *   gesture is this file's, unchanged — which is exactly the reuse the D-234
+ *   extraction was for.
  *
  * **What it is NOT.** It knows nothing about clips, ops, keyframes, the store,
  * or where its geometry came from. It is handed a framing and a footprint, it
@@ -39,8 +45,11 @@ import {
   clipBoxFraction,
   dragCornerScale,
   dragReposition,
+  scaleFractionBoxAbout,
   screenToFraction,
+  translateFractionBox,
   type ContentBoxLike,
+  type FractionBox,
 } from './transformGeometry';
 
 /** Screen-pixel handle size + hit-slop, and the box stroke width — named
@@ -69,6 +78,35 @@ export interface TransformDraft {
 
 export type TransformGestureKind = 'move' | 'scale';
 
+/**
+ * D-316 — an explicit rectangle and scale pivot, for a consumer whose box is
+ * **not** `natural * scale` centred at `0.5 + position`.
+ *
+ * **Why this exists rather than a second box component.** A caption's
+ * rectangle is MEASURED (`chroma_measure_caption_bounds` — real font
+ * metrics over the cue's real text, alignment and line count), and it grows
+ * about the style's own anchor rather than about its own centre. None of that
+ * fits the video-clip parameterization above, but every other thing this
+ * component does — pointer capture, the Escape cancel, the handle hit-slop,
+ * the live-draft-then-one-commit discipline — is identical, and D-234
+ * extracted this file precisely so a second consumer would not copy that
+ * wiring. So the box takes the geometry it cannot derive, and keeps owning the
+ * gesture.
+ *
+ * With a `model` given, the two numbers the consumer is handed on release mean
+ * exactly what they mean without one — `position` is wherever the drag moved
+ * the passed-in `position` to, and `scale` is the passed-in `scale` times
+ * however much the corner drag grew the box — the consumer just interprets
+ * them in its own units (for a caption: the style's anchor, and a multiplier
+ * on its font size).
+ */
+export interface TransformBoxModel {
+  /** The box AT REST, in composition fractions. */
+  restBox: FractionBox;
+  /** The point a corner drag scales about, in composition fractions. */
+  pivot: { x: number; y: number };
+}
+
 export function TransformBox({
   container,
   contentBox,
@@ -76,6 +114,7 @@ export function TransformBox({
   scale,
   natural,
   restSize,
+  model,
   moveEnabled,
   scaleEnabled,
   strokeClassName,
@@ -100,6 +139,12 @@ export function TransformBox({
    *  an on-canvas resize a deliberately simpler gesture than the Inspector's
    *  (see `TransformOverlay`'s own doc). */
   restSize: { width: number; height: number } | null;
+  /** D-316 — an explicit rectangle + scale pivot, for a consumer whose box is
+   *  measured rather than derived from `natural`/`scale`/`position`. When
+   *  given it supersedes `natural`/`restSize` entirely (pass `natural` as the
+   *  box's own size so the two stay consistent for anything that reads it).
+   *  See [`TransformBoxModel`]. */
+  model?: TransformBoxModel;
   moveEnabled: boolean;
   scaleEnabled: boolean;
   /** Tailwind border-colour class for the stroke and handles — the ONE thing
@@ -179,8 +224,10 @@ export function TransformBox({
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     // The box's own centre is the only pivot a single `scale` field can
     // express — see `dragCornerScale`'s own doc. Every corner therefore drives
-    // the same uniform math (Phase 1, unchanged since D-136).
-    const center = { x: 0.5 + position.x, y: 0.5 + position.y };
+    // the same uniform math (Phase 1, unchanged since D-136). D-316 — a
+    // `model` consumer names its own pivot instead, because its box does not
+    // grow about its centre (a caption grows about its style's anchor).
+    const center = model ? model.pivot : { x: 0.5 + position.x, y: 0.5 + position.y };
     dragRef.current = { kind: 'scale', startPoint: localPoint(e), center, startScale: scale };
     setDraft({ position, scale });
   };
@@ -211,12 +258,30 @@ export function TransformBox({
     if (current) onCommit(current, drag.kind);
   };
 
-  // While a drag is live the box always follows the uniform `natural * scale`
-  // formula; at rest an independent size override takes over (D-193). Passing
-  // the already-resolved size through as `natural` with `scale: 1` reuses
-  // `clipBoxFraction` unchanged rather than needing a second box-math variant.
-  const box =
-    draft || !restSize
+  // D-316 — a `model` consumer's box is the measured rectangle with the live
+  // gesture applied to it: translated by however far the drag has moved
+  // `position`, and scaled about the model's own pivot by however much it has
+  // grown `scale`. BOTH are applied unconditionally rather than switched on
+  // the gesture kind, because each is the identity for the other's gesture (a
+  // move never changes `scale`, a corner drag never changes `position`) — so
+  // there is no kind to get wrong here, and the render needs no access to the
+  // in-flight `dragRef`.
+  //
+  // Otherwise (the video-clip parameterization): while a drag is live the box
+  // always follows the uniform `natural * scale` formula; at rest an
+  // independent size override takes over (D-193). Passing the already-resolved
+  // size through as `natural` with `scale: 1` reuses `clipBoxFraction`
+  // unchanged rather than needing a second box-math variant.
+  const box = model
+    ? scaleFractionBoxAbout(
+        translateFractionBox(model.restBox, {
+          x: livePosition.x - position.x,
+          y: livePosition.y - position.y,
+        }),
+        model.pivot,
+        scale !== 0 ? liveScale / scale : 1,
+      )
+    : draft || !restSize
       ? clipBoxFraction(natural, livePosition, liveScale)
       : clipBoxFraction(restSize, livePosition, 1);
   const rect = boxToScreenRect(box, contentBox);

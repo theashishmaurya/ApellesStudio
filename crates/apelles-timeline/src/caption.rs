@@ -498,6 +498,114 @@ impl CaptionLayout {
             })
             .collect()
     }
+
+    /// D-316 — the cue's whole **rendered bounding box**, in composition
+    /// pixels: the union of every line's drawn rectangle.
+    ///
+    /// **Why it lives here and not in the rasteriser.** The on-canvas caption
+    /// transform overlay (`@apelles/editor`'s `CaptionTransformOverlay.tsx`)
+    /// has to draw a selection box around exactly what the user can see, and
+    /// "exactly" is the whole requirement — a box derived from a second,
+    /// approximate idea of where a caption sits would visibly drift from the
+    /// caption as soon as the text, the font, the alignment or the line count
+    /// changed. So the box is computed from the same numbers the rasteriser
+    /// lays lines out with, in the one module that owns those numbers.
+    ///
+    /// **The two inputs this module cannot produce itself** are exactly the
+    /// two the module doc already names as each engine's own job: one advance
+    /// width per line, and the font's line-box height. Both are glyph
+    /// measurements, and this crate never opens a font — so they are passed
+    /// in, the same "the pure part is given what only the caller can know"
+    /// split (D-197) `chroma_measure_caption_words` already uses for the
+    /// export compiler. `chroma::text::caption_bounds_fraction` is the caller
+    /// that measures them with `ab_glyph`.
+    ///
+    /// `line_advances` is one entry per line, in [`Self::lines`] order; extra
+    /// entries are ignored and a short slice simply bounds the lines it
+    /// covers. `None` when there is nothing drawn to bound (no lines, or a
+    /// non-finite/non-positive line box) — which is a real state (an
+    /// empty cue), not an error.
+    ///
+    /// **`include_box` mirrors [`CaptionStyle::box_enabled`]**: with the
+    /// background band on, the drawn rectangle really is the advance box grown
+    /// by [`Self::box_padding`] on every side (that is literally the rect
+    /// `chroma::caption_render` fills); with it off, what is drawn is the
+    /// glyph run inside its own line box. Following the render rather than
+    /// always padding is what keeps the selection box on the pixels.
+    pub fn bounds(
+        &self,
+        align: CaptionAlign,
+        include_box: bool,
+        line_advances: &[f64],
+        line_box_h: f64,
+    ) -> Option<CaptionBounds> {
+        if !line_box_h.is_finite() || line_box_h <= 0.0 {
+            return None;
+        }
+        let pad = if include_box {
+            self.box_padding as f64
+        } else {
+            0.0
+        };
+        let mut acc: Option<CaptionBounds> = None;
+        for (line, advance) in self.lines().into_iter().zip(line_advances) {
+            if !advance.is_finite() {
+                continue;
+            }
+            let advance = advance.max(0.0);
+            // The same alignment rule both renderers apply to a line's measured
+            // advance — see `CaptionLine::x_anchor`'s own doc.
+            let pen_x = match align {
+                CaptionAlign::Left => line.x_anchor as f64,
+                CaptionAlign::Center => line.x_anchor as f64 - advance / 2.0,
+                CaptionAlign::Right => line.x_anchor as f64 - advance,
+            };
+            let rect = CaptionBounds {
+                left: pen_x - pad,
+                top: line.line_top as f64 - pad,
+                width: advance + pad * 2.0,
+                height: line_box_h + pad * 2.0,
+            };
+            acc = Some(match acc {
+                None => rect,
+                Some(a) => a.union(&rect),
+            });
+        }
+        acc
+    }
+}
+
+/// D-316 — an axis-aligned rectangle in **composition pixels**, the unit
+/// [`CaptionLayout`] works in.
+///
+/// Deliberately not `apelles_types`' fraction-space box: this is the output of
+/// pixel arithmetic over a known composition, and the one consumer that wants
+/// fractions (`@apelles/editor`'s overlay, which works in composition-fraction
+/// space) divides by the composition size at the boundary, in
+/// `chroma::text::caption_bounds_fraction`. Converting here would mean this
+/// module carrying a second unit for one caller.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CaptionBounds {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl CaptionBounds {
+    /// The smallest rectangle containing both.
+    fn union(&self, other: &Self) -> Self {
+        let left = self.left.min(other.left);
+        let top = self.top.min(other.top);
+        let right = (self.left + self.width).max(other.left + other.width);
+        let bottom = (self.top + self.height).max(other.top + other.height);
+        Self {
+            left,
+            top,
+            width: right - left,
+            height: bottom - top,
+        }
+    }
 }
 
 /// `value` if it is finite, else `fallback` — the one place this module
@@ -689,5 +797,128 @@ mod tests {
         let l = CaptionLayout::resolve(&CaptionStyle::default(), 1920, 1080, 0);
         assert!(l.lines().is_empty());
         assert!(l.font_px >= 1);
+    }
+
+    // ------------------------------------------------------------------ //
+    // D-316 — the rendered bounding box (`CaptionLayout::bounds`)
+    //
+    // The numbers below are the documented arithmetic, exactly as
+    // `layout_numbers_are_the_documented_arithmetic` pins the layout's. The
+    // stronger check — that these bounds really are where the glyphs land —
+    // is `chroma::caption_render`'s `the_measured_bounds_match_the_drawn_pixels`,
+    // which renders a real caption and compares this box against the actual
+    // non-transparent pixel extent.
+    // ------------------------------------------------------------------ //
+
+    #[test]
+    fn bounds_of_one_centred_line_are_the_advance_box_plus_padding() {
+        let style = CaptionStyle::default();
+        let l = CaptionLayout::resolve(&style, 1920, 1080, 1);
+        let b = l
+            .bounds(CaptionAlign::Center, true, &[400.0], 68.0)
+            .expect("one line bounds");
+        // pen_x = 960 - 200 = 760, padded by 13 on each side.
+        assert_eq!(b.left, 760.0 - 13.0);
+        assert_eq!(b.width, 400.0 + 26.0);
+        // last line top = 886, padded.
+        assert_eq!(b.top, 886.0 - 13.0);
+        assert_eq!(b.height, 68.0 + 26.0);
+    }
+
+    #[test]
+    fn bounds_without_a_background_box_drop_the_padding() {
+        let style = CaptionStyle::default();
+        let l = CaptionLayout::resolve(&style, 1920, 1080, 1);
+        let b = l
+            .bounds(CaptionAlign::Center, false, &[400.0], 68.0)
+            .expect("bounds");
+        assert_eq!(
+            (b.left, b.top, b.width, b.height),
+            (760.0, 886.0, 400.0, 68.0)
+        );
+    }
+
+    #[test]
+    fn bounds_span_every_line_of_a_multi_line_cue() {
+        let style = CaptionStyle::default();
+        let l = CaptionLayout::resolve(&style, 1920, 1080, 2);
+        // A narrow line above a wide one: the box must take the WIDE line's
+        // width and BOTH lines' vertical extent.
+        let b = l
+            .bounds(CaptionAlign::Center, false, &[100.0, 500.0], 68.0)
+            .expect("bounds");
+        assert_eq!(b.left, 960.0 - 250.0);
+        assert_eq!(b.width, 500.0);
+        assert_eq!(b.top, (886 - 74) as f64);
+        // First line top to last line bottom.
+        assert_eq!(b.height, 74.0 + 68.0);
+    }
+
+    #[test]
+    fn bounds_follow_the_alignment_rule() {
+        let l = CaptionLayout::resolve(&CaptionStyle::default(), 1920, 1080, 1);
+        let left = l
+            .bounds(CaptionAlign::Left, false, &[400.0], 68.0)
+            .expect("bounds");
+        let right = l
+            .bounds(CaptionAlign::Right, false, &[400.0], 68.0)
+            .expect("bounds");
+        assert_eq!(left.left, 960.0);
+        assert_eq!(right.left + right.width, 960.0);
+    }
+
+    #[test]
+    fn bounds_scale_uniformly_about_the_style_anchor() {
+        // The property the on-canvas RESIZE gesture is built on (D-316): a
+        // caption's whole box is a uniform scale about (position_x, position_y)
+        // as its font size changes. Asserted on the arithmetic rather than
+        // assumed, because the drag's live overlay computes the box that way.
+        let base = CaptionStyle {
+            box_enabled: false,
+            ..CaptionStyle::default()
+        };
+        let doubled = CaptionStyle {
+            size: base.size * 2.0,
+            ..base.clone()
+        };
+        let (w, h) = (1920u32, 1080u32);
+        let a = CaptionLayout::resolve(&base, w, h, 2)
+            .bounds(CaptionAlign::Center, false, &[100.0, 500.0], 68.0)
+            .expect("bounds");
+        // Every glyph measurement doubles with the em, so the caller's
+        // advances and line box double too.
+        let b = CaptionLayout::resolve(&doubled, w, h, 2)
+            .bounds(CaptionAlign::Center, false, &[200.0, 1000.0], 136.0)
+            .expect("bounds");
+        let anchor = (0.5 * w as f64, 0.82 * h as f64);
+        let scaled = |v: f64, about: f64| about + (v - about) * 2.0;
+        assert!(
+            (b.left - scaled(a.left, anchor.0)).abs() <= 1.0,
+            "{a:?} {b:?}"
+        );
+        assert!((b.width - a.width * 2.0).abs() <= 1.0, "{a:?} {b:?}");
+        // Vertically the anchor is the LAST line's top, which `position_y`
+        // rounds to — within a pixel of the rounding, the box scales about it.
+        assert!(
+            (b.top - scaled(a.top, anchor.1)).abs() <= 2.0,
+            "{a:?} {b:?}"
+        );
+        assert!((b.height - a.height * 2.0).abs() <= 2.0, "{a:?} {b:?}");
+    }
+
+    #[test]
+    fn bounds_of_an_empty_or_unmeasurable_cue_are_none() {
+        let l = CaptionLayout::resolve(&CaptionStyle::default(), 1920, 1080, 0);
+        assert!(l.bounds(CaptionAlign::Center, true, &[], 68.0).is_none());
+        let one = CaptionLayout::resolve(&CaptionStyle::default(), 1920, 1080, 1);
+        assert!(
+            one.bounds(CaptionAlign::Center, true, &[400.0], 0.0)
+                .is_none()
+        );
+        assert!(
+            one.bounds(CaptionAlign::Center, true, &[f64::NAN], 68.0)
+                .is_none(),
+            "a non-finite advance contributes nothing rather than poisoning the box"
+        );
     }
 }
