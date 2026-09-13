@@ -65,7 +65,7 @@
  */
 
 import { resolveClipBoxTransform } from './clipKeyframes';
-import { clipAt, endFrame, timelineFps, type Clip, type Timeline } from './timeline';
+import { clipAt, clipCoversFrame, timelineFps, type Clip, type Timeline } from './timeline';
 import { clipBoxFraction, fractionBoxContains, resolvedBoxSize, type FractionBox } from './transformGeometry';
 
 /** One video layer visible at some frame, identified the way every per-clip
@@ -209,7 +209,7 @@ export function visibleCaptionsAt(tl: Timeline | null, frame: number): CanvasCap
     if (track.kind !== 'subtitle' || track.hidden) return;
     track.clips.forEach((clip, clipIndex) => {
       if (!clip.caption) return;
-      if (frame < clip.start_frame || frame >= endFrame(clip, fps)) return;
+      if (!clipCoversFrame(clip, frame, fps)) return;
       out.push({ track: i, clipIndex, clip });
     });
   });

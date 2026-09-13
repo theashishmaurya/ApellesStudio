@@ -30536,3 +30536,69 @@ D-136/D-234 (the on-canvas transform box), D-204 (canvas click-to-select)
   also tracks a per-word animated cue's *settled* envelope rather than the moving
   extent of whichever word is entering — a box that jittered frame-to-frame while
   nobody was dragging it would be worse than one that sits still on the text.
+
+## D-317 — the on-canvas caption box exists only while its cue is on screen (fixes B-185)
+
+**Context.** D-316 gave a caption a real on-canvas selection/move/resize box and
+decided, deliberately and in writing (`CaptionTransformOverlay`'s own header),
+that the box "draws whenever a caption is selected, including when the playhead
+sits outside that cue's own span … the box is drawn where the caption will be
+when its cue comes up." B-185 is that decision failing in practice, one day
+later, on the reporter's own project.
+
+The reasoning behind D-316's rule quietly assumed the box would sit in empty
+space when its cue was not up. It does not. A caption is pinned at its style's
+anchor, so an off-screen cue's box lands **on top of whichever cue IS on
+screen** — and because `CaptionLayout` anchors `position_y` at a cue's *last*
+line with earlier lines stacking upward, a selected one-line cue's box falls
+exactly on a visible two-line cue's bottom line. Reported, reasonably, as "the
+box only covers one line of a multi-line caption". Nothing was mis-measured:
+`chroma_measure_caption_bounds` and the rasteriser agree exactly, at every font
+size, and no caption text is wrapped anywhere in Apelles (D-229 — lines are
+literal `\n`s), so the font size cannot change a cue's line count at all. It was
+a correct box for the wrong cue.
+
+**Options.**
+
+1. *Keep D-316's rule, make the box visually distinct when its cue is off
+   screen* (dimmed, dashed). Still draws a handle-bearing rectangle over a
+   caption it does not belong to, and still lets a drag be scaled against a cue
+   the user cannot see. Treats a wrong box as a labelling problem.
+2. *Move the playhead to the cue when one is selected.* Fixes the picture by
+   moving the user's playhead for them — a large, surprising side effect on
+   every selection, and wrong the moment selection comes from anything but a
+   deliberate "show me this cue".
+3. **Draw only while the cue is genuinely on screen. (Chosen.)**
+
+**Why 3.** It is what the other half of this very surface already does:
+`useCanvasClipPick` hit-tests against `visibleCaptionsAt`, so a click can only
+ever select an on-screen cue, and `canvasPick.ts`'s own doc states the guarantee
+that "a click can never select a caption whose handles then appear somewhere
+else". A box that outlived its cue's span was the single way those two halves
+could disagree, so this is restoring an invariant the codebase already claimed
+rather than inventing a new rule. It is also what every reference NLE does — the
+program monitor shows one frame, and the controls on it belong to what is in
+that frame. Selection itself is untouched and still plainly visible: the
+Inspector keeps showing the selected cue, its text and its full style.
+
+**The shared predicate is the real structural change.** "Is this clip on screen
+at this frame" was two hand-written copies of one comparison (`clipAt`,
+`visibleCaptionsAt`) and simply absent from the third caller. It is now one
+exported `clipCoversFrame` in `timeline.ts` that all three use — per this repo's
+"shared logic → one place, never copy-pasted" rule, and so that the draw half
+and the pick half are answers to one question rather than two.
+
+**What this does NOT settle.** The owner's separate remark — "if i use the canvas
+box to make things smaller and fix in certain width does not work for all" — is
+deliberately left open rather than claimed as fixed. This change does remove its
+defect-shaped half (a corner drag can no longer be scaled against a cue that is
+not the one you are looking at). But the rest of it appears not to be a defect:
+a caption has no width, wrap-width or box-size field at all (D-229 — `drawtext`
+could not honour one), so its only size control is the font size, and cues with
+different amounts of text will always come out different widths at the same
+size. "Fix every caption to a certain width" is therefore an absent capability,
+not a broken one, and a cue carrying its own style override (the "Use Track
+Style" toggle) will also correctly resize alone rather than "for all". Which of
+those the owner meant needs one question to them, not a guess — see B-185's
+closing note. The same hole in the VIDEO clip overlay is filed as B-186, found
+by reading but not reproduced, and deliberately not fixed here.

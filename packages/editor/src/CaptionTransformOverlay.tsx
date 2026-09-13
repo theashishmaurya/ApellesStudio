@@ -81,16 +81,28 @@
  * - **It never SETS the selection**, the same contract `TransformOverlay`
  *   states: clicking a caption on the picture to select it is
  *   `useCanvasClipPick.ts`, which D-316 taught to see subtitle tracks.
- * - **It draws whenever a caption is selected**, including when the playhead
- *   sits outside that cue's own span and the caption is therefore not on
- *   screen. Same posture as `TransformOverlay` (which boxes a selected clip
- *   regardless of where the playhead is): the overlay reflects the selection,
- *   and the box is drawn where the caption will be when its cue comes up.
+ * - **It draws ONLY while the selected cue is actually on screen** — the
+ *   playhead inside its own span, [`clipCoversFrame`] (D-317, fixing B-185).
+ *   D-316 shipped the opposite rule ("the box is drawn where the caption WILL
+ *   be when its cue comes up") and it was wrong, live: a caption is drawn at
+ *   an anchor its style pins, so an off-screen cue's box lands on top of
+ *   whichever cue IS on screen, describing text that is not there. With a
+ *   one-line cue selected and a two-line cue showing, the phantom box covers
+ *   exactly the visible cue's LAST line — because `CaptionLayout` anchors
+ *   `position_y` at the last line and stacks earlier lines upward — which
+ *   reads precisely as "the box only covers one line of a multi-line caption"
+ *   (B-185's report). The box is not stale or mis-measured in that state; it
+ *   is a correct box for the wrong cue. Gating on visibility also restores the
+ *   guarantee `canvasPick.ts` states from the other side — `visibleCaptionsAt`
+ *   already lets a click select only an on-screen cue, so a box that outlived
+ *   its cue's span was the one way the two halves could disagree.
  */
 import {
   captionSizeAfterDrag,
+  clipCoversFrame,
   findClip,
   resolveCaptionStyle,
+  timelineFps,
   type CaptionStyle,
 } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
@@ -117,6 +129,11 @@ export function CaptionTransformOverlay({
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const selection = useEditorTimelineStore((s) => s.selection);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
+  // B-185/D-317 — the box may only exist while its cue is on screen, so this
+  // component re-renders as the playhead moves. Same cost `TransformOverlay`
+  // already documents for its own D-209 playhead dependency, and the same
+  // reason: what the canvas shows is a function of the playhead.
+  const playhead = useEditorTimelineStore((s) => s.playhead);
 
   // The same Phase-1 multi-select fallback every single-clip-only consumer in
   // this tab applies (`docs/notes/multi-select.md`).
@@ -127,6 +144,14 @@ export function CaptionTransformOverlay({
   const track = primary ? (timeline?.tracks[primary.track] ?? null) : null;
   const cue = clip?.caption ?? null;
   const trackLocked = !!track?.locked;
+
+  // B-185/D-317 — is the selected cue the one the viewer is actually looking
+  // at? The SAME predicate `visibleCaptionsAt` gates canvas click-to-select on,
+  // so the box a click can produce and the box this draws are answers to one
+  // question rather than two. A hidden track draws nothing either, which is
+  // why that is part of the same test.
+  const onScreen =
+    !!clip && !!track && !track.hidden && clipCoversFrame(clip, playhead, timelineFps(timeline));
 
   // The resolved style — the cue's own override, else the track's, else the
   // defaults — which is what the preview actually drew with
@@ -140,7 +165,10 @@ export function CaptionTransformOverlay({
   // `useCaptionGeometry`'s own doc, and B-088). Derived fresh every render on
   // purpose: the hook keys its fetch on the request's CONTENT, so nothing
   // refetches until the box genuinely moves.
-  const geometry = useCaptionGeometry(cue ? `${primary?.track ?? -1}:${clip?.id ?? ''}` : null, {
+  // `null` when the cue is off screen: there is no box to draw, so there is no
+  // measurement to ask the backend for either — scrubbing past a selected cue
+  // must not spend a font round trip per frame.
+  const geometry = useCaptionGeometry(cue && onScreen ? `${primary?.track ?? -1}:${clip?.id ?? ''}` : null, {
     text: cue?.text ?? '',
     style,
     size,
@@ -184,7 +212,7 @@ export function CaptionTransformOverlay({
     }
   };
 
-  if (!cue || !geometry || contentBox.width <= 0 || contentBox.height <= 0) return null;
+  if (!cue || !onScreen || !geometry || contentBox.width <= 0 || contentBox.height <= 0) return null;
 
   const restBox = geometry;
   // The style's own anchor — where `CaptionLayout` pins the cue, and so the

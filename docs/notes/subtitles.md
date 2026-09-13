@@ -135,6 +135,21 @@ override if it has one, else the track), so dragging a caption on a track style
 moves the whole track — the subtitle convention, and identical to typing in the
 Inspector's Position X field. One source of truth, not two paths.
 
+**The box exists only while its cue is ON SCREEN** — the playhead inside that
+clip's own span, `clipCoversFrame` (**D-317, fixing B-185**). D-316 shipped the
+opposite rule, on the reasoning that the box showed "where the caption will be
+when its cue comes up". That was wrong in a way worth remembering, because the
+symptom pointed somewhere else entirely: a cue is pinned at its style's anchor,
+so an off-screen cue's box does not sit in empty space — it lands on top of
+whichever cue *is* on screen. And since `position_y` anchors a cue's **last**
+line (§2), a selected one-line cue's box falls exactly on a visible two-line
+cue's bottom line, which reads as "the box only covers one line of a multi-line
+caption" and sent the first investigation hunting for a text-wrapping
+divergence that does not exist. The gate also restores the guarantee
+`canvasPick.ts` states from the other side: `visibleCaptionsAt` already let a
+click select only an on-screen cue, so a box outliving its cue's span was the
+one way the draw half and the pick half could disagree.
+
 **Deferred, all attested in D-316's reference sweep:** Shift-constrain-to-axis,
 snapping to guides / title-safe / centre, arrow-key nudge,
 double-click-to-edit-in-place, and side handles (they would mean non-uniform

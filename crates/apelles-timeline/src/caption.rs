@@ -700,6 +700,65 @@ mod tests {
         assert_eq!(nan.box_alpha(), 1.0);
     }
 
+    /// B-185 — why a box belonging to a ONE-line cue lands exactly on a
+    /// TWO-line cue's bottom line, and so reads as "the box only covers the
+    /// last line of a multi-line caption".
+    ///
+    /// This is not a defect in this module; it is the documented anchor rule
+    /// working correctly ([`CaptionLayout::resolve`]: `position_y` fixes the
+    /// LAST line, earlier lines stack upward, so a cue gaining a line keeps
+    /// its bottom line put). It is recorded as a test because that rule is
+    /// precisely what made B-185's real defect — a frontend overlay drawing a
+    /// box for a cue the playhead was not over (D-317) — look like a
+    /// line-counting or text-wrapping bug in the layout instead. Anyone who
+    /// reads that report and comes here looking for a wrap boundary should
+    /// find this first.
+    #[test]
+    fn a_one_line_cues_layout_sits_exactly_on_a_two_line_cues_last_line() {
+        let style = CaptionStyle::default();
+        let one = CaptionLayout::resolve(&style, 1920, 1080, 1);
+        let two = CaptionLayout::resolve(&style, 1920, 1080, 2);
+
+        let one_lines = one.lines();
+        let two_lines = two.lines();
+        assert_eq!(one_lines.len(), 1);
+        assert_eq!(two_lines.len(), 2);
+
+        // The single line and the two-line cue's LAST line are the same row.
+        assert_eq!(
+            one_lines[0].line_top, two_lines[1].line_top,
+            "the anchor pins the last line, so these must coincide"
+        );
+        // And the two-line cue's FIRST line is a full step above it — the line
+        // a one-line box would leave entirely uncovered.
+        assert_eq!(two_lines[0].line_top, two_lines[1].line_top - two.line_step);
+        assert!(two.line_step > 0);
+    }
+
+    /// B-185 — a cue's line count comes from its TEXT, never from its size.
+    ///
+    /// The report's hypothesis was that a font-size change re-wraps a caption
+    /// into a different number of lines and that two places disagree about the
+    /// new count. Nothing in Apelles wraps caption text: [`CaptionCue::lines`]
+    /// splits on literal `\n` alone, so the count is size-independent by
+    /// construction. Pinned here so a future "let's auto-wrap captions" change
+    /// has to come past a test that states what that would break.
+    #[test]
+    fn the_line_count_is_independent_of_the_font_size() {
+        let cue = CaptionCue::new("I want to show you\nhow on-canvas captions work");
+        for size in [0.01, 0.055, 0.2, 0.5, 2.0] {
+            let style = CaptionStyle {
+                size,
+                ..CaptionStyle::default()
+            };
+            let layout = CaptionLayout::resolve(&style, 1920, 1080, cue.lines().len());
+            assert_eq!(
+                layout.line_count, 2,
+                "size {size} must not change how many lines this cue has"
+            );
+        }
+    }
+
     #[test]
     fn lines_drops_surrounding_blanks_but_keeps_an_interior_one() {
         let cue = CaptionCue::new("\nfirst\n\nthird\n\n");

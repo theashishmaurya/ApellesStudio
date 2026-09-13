@@ -1102,6 +1102,29 @@ export function endFrame(c: Clip, fps: number): number {
   return c.start_frame + sourceFramesToTimeline(c, Math.round(clipOutputSourceFrames(c)), fps);
 }
 
+/**
+ * Is `c` **on screen** at timeline `frame` — i.e. does its half-open span
+ * `[start_frame, endFrame)` contain it (B-185)?
+ *
+ * **Why this is a named function and not three copies of one comparison.**
+ * "Is this clip the one the viewer is looking at" is a single question with a
+ * single right answer, and it is asked from three unrelated places: [`clipAt`]
+ * (which clip a track shows at a frame), `canvasPick.ts`'s
+ * `visibleCaptionsAt` (which cues a canvas click may hit), and
+ * `CaptionTransformOverlay` (whether the selected cue's transform box may be
+ * drawn at all). It was written out inline in the first two and simply MISSING
+ * from the third, which is exactly B-185: the caption overlay drew a selection
+ * box for a cue the frame did not contain, so the box described a caption
+ * nobody could see while a different one was rendered under it.
+ *
+ * Half-open on purpose, matching `apelles_timeline::Track::clip_at` and
+ * `Timeline::resolve_visible_captions_at`: the end frame belongs to whatever
+ * comes next, so two butt-joined clips never both claim one frame.
+ */
+export function clipCoversFrame(c: Clip, frame: number, fps: number): boolean {
+  return frame >= c.start_frame && frame < endFrame(c, fps);
+}
+
 /** D-236 — how much OUTPUT this clip produces, still measured in its own
  *  source-frame units (so `sourceFramesToTimeline` converts it exactly as it
  *  always converted `duration`).
@@ -2164,7 +2187,7 @@ export function clipAt(
   if (frame < 0) return null;
   for (let i = 0; i < tr.clips.length; i++) {
     const c = tr.clips[i];
-    if (frame >= c.start_frame && frame < endFrame(c, fps)) {
+    if (clipCoversFrame(c, frame, fps)) {
       // B-077 — `frame - c.start_frame` is a TIMELINE-frame offset into the
       // clip; converting it to c's own SOURCE frames (what `source_start`
       // is in) needs `timelineFramesToSource`, not a direct add.

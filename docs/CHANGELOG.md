@@ -4,6 +4,21 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-13** — **D-317 (fixing B-185): the on-canvas caption box no longer
+  draws for a cue the playhead is not over.** Reported as "the box only covers
+  one line of a multi-line caption after a size change re-wraps it"; the
+  wrapping theory was wrong twice over — nothing in Apelles wraps caption text
+  (lines are literal `\n`s, D-229), and the measurement and rasteriser agree
+  exactly at every font size. The box was simply drawn for the SELECTED cue with
+  no check that it was on screen, so it landed on top of whichever cue was, and
+  because `CaptionLayout` anchors `position_y` at a cue's last line, a one-line
+  phantom box falls precisely on a two-line caption's bottom line. Confirmed
+  live on the reporter's own project (selection on a cue starting at frame 230
+  while the playhead sat at 115). Now gated on `clipCoversFrame`, newly
+  extracted so `clipAt`, `visibleCaptionsAt` and the overlay share one
+  definition of "on screen at this frame" instead of two copies and a missing
+  third. B-186 files the same hole in the video-clip overlay.
+
 - **2026-09-13** — **D-316 (fixing B-183): a caption is now selectable, movable
   and resizable on the canvas.** Selecting a caption showed a full working
   Inspector and drew absolutely nothing on the picture — root cause was

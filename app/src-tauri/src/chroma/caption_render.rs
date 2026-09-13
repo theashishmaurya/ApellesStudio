@@ -942,6 +942,63 @@ mod tests {
         }
     }
 
+    /// B-185 — the measurement and the rasteriser must still agree AFTER a
+    /// font-size change, at every size, for a genuinely multi-line cue.
+    ///
+    /// **Why this test exists even though the sibling above passes.** B-185
+    /// was reported as "the box only covers the last line of a two-line
+    /// caption once a size change makes it wrap differently", and the
+    /// hypothesis was that these two functions compute line counts
+    /// separately and drift apart across a wrap boundary. They do not, and
+    /// this pins that down rather than leaving it as a code-reading claim:
+    /// **nothing in Apelles wraps caption text.** A cue's lines are its
+    /// literal `\n`s and nothing else (`CaptionCue::lines`, mirrored by
+    /// `caption.ts`'s `captionLines` and the export compiler), so a font size
+    /// cannot change a cue's line COUNT at all — it only scales the box. The
+    /// real defect was in the frontend overlay (D-317): it drew a box for a
+    /// cue the playhead was not over.
+    ///
+    /// The sizes deliberately span from below the default to several times it,
+    /// including sizes whose two lines together overflow the canvas height,
+    /// which is where a line-count or anchor disagreement would show first.
+    #[test]
+    fn the_measured_bounds_match_the_drawn_pixels_at_every_font_size() {
+        let cue = CaptionCue::new("I want to show you\nhow on-canvas captions work");
+        assert_eq!(cue.lines().len(), 2, "the fixture really is a two-line cue");
+        for size in [0.02, 0.045, 0.055, 0.09, 0.13, 0.2, 0.3] {
+            let s = style(|s| {
+                s.size = size;
+                s.position_x = 0.5;
+                s.position_y = 0.5;
+            });
+            // The line count the layout uses is the cue's own, at every size —
+            // derived from the text, never from a measurement.
+            let layout = CaptionLayout::resolve(&s, 960, 540, cue.lines().len());
+            assert_eq!(layout.line_count, 2, "size {size}: still two lines");
+
+            let img =
+                render_caption_layer(&cue, &s, 960, 540, CaptionTime::STATIC).expect("render");
+            let drawn = bounds(&img).expect("drew something");
+            let box_ = computed(&cue, &s, 960, 540).expect("measured");
+            assert_eq!(
+                drawn, box_,
+                "size {size}: drawn {drawn:?} vs measured {box_:?}"
+            );
+
+            // And the box really does span BOTH lines, not just the anchored
+            // last one — the specific shape B-185 reported. Two lines plus
+            // padding are at least one `line_step` taller than one line's box,
+            // so a one-line box could never pass this.
+            let (_, y0, _, y1) = box_;
+            assert!(
+                (y1 - y0) as i64 > layout.line_step,
+                "size {size}: box height {} must cover two lines (line_step {})",
+                y1 - y0,
+                layout.line_step
+            );
+        }
+    }
+
     #[test]
     fn the_measured_bounds_enclose_the_glyphs_with_no_background_box() {
         // Without the box there is nothing to match exactly — the glyph INK

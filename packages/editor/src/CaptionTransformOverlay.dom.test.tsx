@@ -90,6 +90,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 import { useEditorTimelineStore } from './timelineStore';
+import { visibleCaptionsAt } from './canvasPick';
 import { PreviewPane } from './PreviewPane';
 import {
   DEFAULT_CAPTION_SIZE,
@@ -147,10 +148,30 @@ async function mountWith(
     trackStyle?: CaptionStyle | null;
     cueStyle?: CaptionStyle | null;
     locked?: boolean;
+    /** B-185 — where the playhead sits. Defaults inside the cue's own span
+     *  (which starts at 0), because "the cue is on screen" is the precondition
+     *  for there being a box at all. */
+    playhead?: number;
+    /** B-185 — the cue's own span, so a test can put the playhead OUTSIDE it. */
+    cueStart?: number;
+    cueDuration?: number;
   } = {},
 ): Promise<void> {
-  const { selected = 'caption', trackStyle = null, cueStyle = null, locked = false } = options;
-  const cue = captionClip({ caption: { text: 'Hello, and welcome back', ...(cueStyle ? { style: cueStyle } : {}) } });
+  const {
+    selected = 'caption',
+    trackStyle = null,
+    cueStyle = null,
+    locked = false,
+    playhead = 0,
+    cueStart = 0,
+    cueDuration = DURATION,
+  } = options;
+  const cue = captionClip({
+    start_frame: cueStart,
+    duration: cueDuration,
+    source_len: cueDuration,
+    caption: { text: 'Hello, and welcome back', ...(cueStyle ? { style: cueStyle } : {}) },
+  });
   const tracks: Track[] = [
     { kind: 'video', clips: [videoClip()] },
     { kind: 'subtitle', clips: [cue], locked, ...(trackStyle ? { caption_style: trackStyle } : {}) },
@@ -161,7 +182,7 @@ async function mountWith(
       openProjectKey: 'test-project',
       status: 'ready',
       error: null,
-      playhead: 0,
+      playhead,
       playing: false,
       selection:
         selected === 'caption'
@@ -335,6 +356,102 @@ describe('D-316 — the on-canvas caption box', () => {
 
   it('draws nothing when nothing is selected', async () => {
     await mountWith({ selected: 'none' });
+    expect(captionBoxEl()).toBeNull();
+  });
+
+  // ---- B-185 / D-317: the box may not outlive its cue's own span ----------
+  //
+  // The live defect this reproduces: a caption was selected, the playhead sat
+  // over a DIFFERENT cue, and the overlay drew a box for the selected (not
+  // visible) one on top of the cue that WAS rendered. Because `CaptionLayout`
+  // anchors `position_y` at the cue's LAST line and stacks earlier lines
+  // upward, a one-line phantom box lands exactly on a two-line cue's bottom
+  // line — which is why the report reads "the box only covers one line of a
+  // multi-line caption". Nothing was mis-measured; it was a correct box for
+  // the wrong cue.
+
+  it('draws NOTHING while the playhead is outside the selected cue’s span (B-185)', async () => {
+    // The cue occupies [40, 70). The playhead sits at 100 — past its end, so
+    // the caption is not on screen and there is nothing on the picture for a
+    // box to be around. Derived from the span, not from a recorded number:
+    // 100 >= 40 + 30, so `clipCoversFrame` is false by construction.
+    await mountWith({ cueStart: 40, cueDuration: 30, playhead: 100 });
+    expect(captionBoxEl()).toBeNull();
+    // And it did not even ASK for a measurement: an off-screen cue has no box
+    // to draw, so scrubbing past one must not cost a font round trip a frame.
+    expect(captionMeasureCalls).toEqual([]);
+  });
+
+  it('draws nothing one frame PAST the cue’s end, and does at its last frame (B-185)', async () => {
+    // The half-open boundary, checked from both sides rather than assumed:
+    // `endFrame` is exclusive, so frame 69 is the cue's last visible frame and
+    // 70 belongs to whatever follows it.
+    await mountWith({ cueStart: 40, cueDuration: 30, playhead: 69 });
+    expect(captionBoxEl()).not.toBeNull();
+    mounted?.unmount();
+    mounted = null;
+    captionMeasureCalls.length = 0;
+
+    await mountWith({ cueStart: 40, cueDuration: 30, playhead: 70 });
+    expect(captionBoxEl()).toBeNull();
+  });
+
+  it('draws nothing BEFORE the selected cue starts (B-185)', async () => {
+    await mountWith({ cueStart: 40, cueDuration: 30, playhead: 39 });
+    expect(captionBoxEl()).toBeNull();
+  });
+
+  it('brings the box BACK when the playhead re-enters the cue’s span (B-185)', async () => {
+    // The gate must be a gate, not a removal: the same selection that drew
+    // nothing a moment ago draws its real measured box once its cue is on
+    // screen again, with no re-selection needed.
+    await mountWith({ cueStart: 40, cueDuration: 30, playhead: 100 });
+    expect(captionBoxEl()).toBeNull();
+
+    actSync(() => useEditorTimelineStore.setState({ playhead: 50 }));
+    await waitFrames(4);
+
+    const box = captionBoxEl();
+    expect(box).not.toBeNull();
+    expect(rectOf(box as HTMLElement)).toEqual({
+      left: CAPTION_BOX.left * CANVAS_W,
+      top: CAPTION_BOX.top * CANVAS_H,
+      width: CAPTION_BOX.width * CANVAS_W,
+      height: CAPTION_BOX.height * CANVAS_H,
+    });
+  });
+
+  it('agrees with what a canvas click could have selected (B-185)', async () => {
+    // The invariant behind the fix, stated as `canvasPick.ts`'s own doc states
+    // it: a click can only ever select a cue that is on screen
+    // (`visibleCaptionsAt`), so a box drawn for one that is NOT on screen is
+    // the single way the draw half and the pick half can disagree. Both now
+    // ask `clipCoversFrame`, so this is checked against the pick side's own
+    // answer rather than against a second copy of the rule.
+    const tl = () => useEditorTimelineStore.getState().timeline;
+    await mountWith({ cueStart: 40, cueDuration: 30, playhead: 100 });
+    expect(visibleCaptionsAt(tl(), 100)).toHaveLength(0);
+    expect(captionBoxEl()).toBeNull();
+
+    actSync(() => useEditorTimelineStore.setState({ playhead: 55 }));
+    await waitFrames(4);
+    expect(visibleCaptionsAt(tl(), 55)).toHaveLength(1);
+    expect(captionBoxEl()).not.toBeNull();
+  });
+
+  it('draws nothing when the selected cue’s track is HIDDEN (B-185)', async () => {
+    // A hidden subtitle track renders no caption at all, so the same rule
+    // applies for the same reason — and `visibleCaptionsAt` already excluded
+    // it, which is the agreement the test above pins down.
+    await mountWith();
+    expect(captionBoxEl()).not.toBeNull();
+    actSync(() => {
+      const t = useEditorTimelineStore.getState().timeline;
+      if (!t) throw new Error('no timeline');
+      const tracks = t.tracks.map((tr, i) => (i === 1 ? { ...tr, hidden: true } : tr));
+      useEditorTimelineStore.setState({ timeline: { ...t, tracks } });
+    });
+    await waitFrames(4);
     expect(captionBoxEl()).toBeNull();
   });
 
