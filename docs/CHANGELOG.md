@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-13** — **B-182: the shared Sources panel toggle silently ate every
+  click in Colorist, only Colorist** — Colorist's own `EditorToolbar` wrapper
+  sat at the identical `z-10` and, rendering after the chip in DOM order, won
+  every stacking tie and absorbed the click before React ever saw it. Isolated
+  live via a temporary `console.log` inside the real `onClick` (zero output on
+  a real click, correct output once raised above the competing element) —
+  no DOM inspection or state test could have shown this, since jsdom computes
+  no real paint order. Fixed by raising the chip to `z-20`.
 - **2026-09-13** — **B-181: `cargo build` on a fresh checkout could fail outright** —
   the `uv`/ONNX Runtime downloads in `build.rs` used no explicit HTTP timeout, and
   the implicit default was shorter than a real download reliably takes (`curl`

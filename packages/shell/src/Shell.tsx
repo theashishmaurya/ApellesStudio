@@ -501,7 +501,16 @@ export function Shell({
               aria-label="Sources"
               aria-pressed={sourcesPanelOpen}
               className={
-                'absolute top-2 left-2 h-6 w-6 p-0 z-10 rounded-md border border-border-color bg-surface/90 shadow-sm backdrop-blur-sm ' +
+                // B-182 — z-20, not z-10: Colorist's own EditorToolbar wrapper
+                // (`app/src/components/panel/Editor.tsx`) sits at `relative
+                // z-10` too, and Colorist's content renders AFTER this chip in
+                // Shell's own DOM order — so at equal z-index, Colorist's
+                // toolbar won every stacking tie and silently absorbed clicks
+                // meant for this button (confirmed live: a click fired zero
+                // JS with z-10, fired correctly once raised above it). Motion
+                // has no element at this position/z-index, which is why only
+                // Colorist ever showed this.
+                'absolute top-2 left-2 h-6 w-6 p-0 z-20 rounded-md border border-border-color bg-surface/90 shadow-sm backdrop-blur-sm ' +
                 (sourcesPanelOpen ? 'text-accent' : 'text-text-secondary hover:text-text-primary')
               }
             >
