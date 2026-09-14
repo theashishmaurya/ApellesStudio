@@ -1715,6 +1715,147 @@ mod tests {
         );
     }
 
+    /// Build a throwaway project whose audio track is `n_clips` short clips
+    /// butted together with **no gaps and no source continuity** — the exact
+    /// shape `editor_ripple_delete_ranges` (D-318/D-321) leaves behind, where
+    /// every clip is its own `Clip::id` and points at a source frame nowhere
+    /// near where the previous clip stopped.
+    ///
+    /// Deliberately a `TrackKind::Audio` track rather than a video track's
+    /// embedded audio: the mechanism under test lives entirely in
+    /// `apelles_media::audio::run_session` (which of the OPEN sources are
+    /// exhausted, and when the timeline is re-resolved for the next one) and is
+    /// identical for both kinds of source — and this way the fixture is a
+    /// synthesized tone rather than an env-gated multi-gigabyte real file, so
+    /// the regression runs in CI.
+    fn open_ripple_cut_project(
+        tone_path: &Path,
+        n_clips: i64,
+        clip_frames: i64,
+        fps: i64,
+    ) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project_dir = tmp.path().join("RippleCut.chroma");
+        std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
+
+        let clips: Vec<apelles_timeline::Clip> = (0..n_clips)
+            .map(|i| apelles_timeline::Clip {
+                id: format!("cut-{i}"),
+                shot_id: None,
+                media_id: None,
+                name: format!("cut-{i}"),
+                source_path: tone_path.display().to_string(),
+                // Twice the clip length apart: every boundary is a real jump in
+                // source space, like a silence/retake removal, not a seam that
+                // happens to be continuous.
+                source_start: i * clip_frames * 2,
+                duration: clip_frames,
+                source_len: n_clips * clip_frames * 2,
+                start_frame: i * clip_frames, // butted: no gap anywhere
+                ..Default::default()
+            })
+            .collect();
+
+        let timeline = apelles_timeline::Timeline {
+            id: "tl1".into(),
+            name: "RippleCut".into(),
+            rate: Some(apelles_types::Rational::new(fps, 1)),
+            tracks: vec![
+                // `resolve_video_position` errors on a timeline with no video
+                // track at all — an empty one satisfies that and contributes
+                // no source of its own.
+                apelles_timeline::Track {
+                    kind: apelles_timeline::TrackKind::Video,
+                    clips: vec![],
+                    ..Default::default()
+                },
+                apelles_timeline::Track {
+                    kind: apelles_timeline::TrackKind::Audio,
+                    clips,
+                    ..Default::default()
+                },
+            ],
+            markers: Vec::new(),
+        };
+        let manifest = super::super::project::ProjectManifest {
+            schema: "chroma.project/1".into(),
+            name: "RippleCut".into(),
+            created: String::new(),
+            modified: String::new(),
+            shots: Vec::new(),
+            active_shot: 0,
+            active_clip_id: None,
+            settings: Default::default(),
+            timelines: vec![timeline],
+            active_timeline: 0,
+            media: Vec::new(),
+            folders: Vec::new(),
+        };
+        super::super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
+        super::super::state::set_project(Some(super::super::state::ProjectRef {
+            path: project_dir,
+            name: "RippleCut".into(),
+        }));
+        tmp
+    }
+
+    /// **B-190 / D-323 — the regression test for the reported dropout.**
+    ///
+    /// On a heavily recut timeline, playback must keep making sound after it
+    /// crosses a cut. Before D-323 it did not: `run_session`'s mix loop broke
+    /// out permanently the first time every OPEN source was exhausted, and on a
+    /// butted timeline that is every cut boundary, so the session fell silent
+    /// for good at the first cut and only a stop/start brought it back — the
+    /// owner's "it kinda stops getting voice, then I stop and start and it
+    /// starts working."
+    ///
+    /// The observable is D-050's own verification proxy (`chroma_audio_level`'s
+    /// rms/peak off the real `cpal` output callback), sampled well past several
+    /// boundaries rather than once at the start. A real device is required, the
+    /// same as its sibling end-to-end tests; only `ffmpeg` is needed for the
+    /// fixture itself.
+    #[test]
+    fn audio_keeps_playing_across_ripple_cut_boundaries() {
+        let _guard = session_test_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Long enough that every clip below has real source behind it.
+        let tone_path = synth_test_tone(tmp.path(), 440, 30.0, 48_000);
+
+        const FPS: i64 = 24;
+        const CLIP_FRAMES: i64 = 12; // 0.5 s — first cut lands at t=0.5s
+        const N_CLIPS: i64 = 24; // 12 s of timeline, 23 cut boundaries
+        let _project = open_ripple_cut_project(&tone_path, N_CLIPS, CLIP_FRAMES, FPS);
+
+        let played = chroma_audio_play(0, next_test_seq(), 1.0);
+
+        // Sample the meter repeatedly rather than once: it refreshes about once
+        // per second of audio the device has actually written (B-106), so a
+        // single read is a coin flip on where that window happens to land.
+        let mut samples: Vec<(u64, f32)> = Vec::new();
+        for i in 1..=10u64 {
+            thread::sleep(Duration::from_millis(600));
+            let (_rms, peak) = chroma_audio_level();
+            samples.push((i * 600, peak));
+        }
+        chroma_audio_stop(next_test_seq());
+        super::super::state::set_project(None);
+
+        played.expect("chroma_audio_play");
+        eprintln!("audio_keeps_playing_across_ripple_cut_boundaries: peaks by ms {samples:?}");
+
+        // Everything from 1.8 s on is past several cut boundaries (the first is
+        // at 0.5 s), and the tone runs to 12 s, so every one of these windows
+        // must carry real signal.
+        let late: Vec<&(u64, f32)> = samples.iter().filter(|(ms, _)| *ms >= 1800).collect();
+        assert!(
+            late.iter().all(|(_, peak)| *peak > 0.001),
+            "playback must stay audible across cut boundaries — got {late:?}. A run that is \
+             loud early and silent from the first boundary on is B-190: the mix loop decided \
+             the session was over because every source it had OPEN was exhausted, without \
+             first re-resolving the timeline for the clip that starts at that very frame."
+        );
+    }
+
     /// End-to-end through the real command surface (D-057): a genuine
     /// two-track `Timeline` — the video's embedded audio on the video track,
     /// plus a synthesized tone clip on a real `TrackKind::Audio` track

@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-14** — **D-323 fixes B-190: a recut timeline's audio went silent for
+  good at the first cut.** The mix loop ended the session the first time every
+  OPEN source ran dry, and its timeline re-resolve ran on a separate 100 ms
+  schedule — so four boundaries in five were judged against a stale resolve, and
+  the first to lose the race ended playback permanently ("stop and start and it
+  starts working"). Now exhaustion forces a resolve at that exact position
+  before it is believed. Exhausted sources are also retired, which that fix
+  would otherwise have made reachable as one open decoder per cut. A slow
+  synchronous open was ruled out by measurement (0.4–4.7 ms), so no audio
+  prefetch was built. B-192 filed for the narrower gap case left.
+
 - **2026-09-14** — **D-322 fixes B-189: the transcribe "subprocess" was a
   plain function call.** `server.py` imported `transcribe.py` and called it, so
   every job's mlx-whisper weights and Metal buffers landed in the long-lived

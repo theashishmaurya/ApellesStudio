@@ -30936,3 +30936,90 @@ and the rule for a third capability here is: spawn it, never import it.
 9-second fixture a job takes 5-6 s end to end including that load; against a
 multi-minute transcript it is noise, and it is the same trade `video_understand`
 has always made.
+
+## D-323 — a session's audio no longer ends because everything it happens to have open ran dry
+
+**decided (2026-09-14)** · fixes **B-190** · completes B-111
+
+**Context.** On the same recut timelines as D-324, "audio drops out every time
+playback crosses into the next clip — then I stop and start and it starts
+working". The stop/start detail is the whole diagnosis: a ring-buffer underrun
+self-heals, and this did not. Something was ending the session for good.
+
+**Root cause.** `run_session`'s mix loop:
+
+```rust
+if pos_frames >= next_resolve_at_pos_frames { /* re-resolve the timeline */ }
+if decoded.iter().all(DecodedSource::is_done) { break 'mix; }
+```
+
+B-111 deliberately put the re-resolve *before* the exhaustion check so a
+just-ended source could still discover a later clip. But the two run on
+different clocks. The resolve fires every `RESOLVE_INTERVAL_SECS` (0.1 s ≈ 4.7
+iterations of the loop at 1024 frames / 48 kHz); exhaustion is noticed the
+instant it happens. So for roughly four iterations in five, "every source is
+done" was decided against a resolve taken up to 100 ms of timeline ago — one
+that legitimately did not yet know about the clip starting at that very frame.
+
+On one long clip this never mattered: nothing exhausts mid-playback, so the
+check only ever fired at the real end of the media. On a ripple-deleted timeline
+it is the steady state — each of 60–96 butted clips exhausts exactly as the next
+begins — and **the first boundary to lose that race ended the session**, leaving
+the device open and silent until the user pressed stop and play again.
+
+**Ruled out by measurement, not argument.** The obvious suspect was a
+synchronous open stalling the mix thread. It is not: on the real 4.48 GB MOV,
+`open_source` (symphonia probe + seek) costs **0.4–4.7 ms**, and the first
+`take()` after it **96–148 ms** — real work, but the ring buffer holds up to 2 s,
+so it cannot produce an audible dropout, let alone a permanent one. No audio
+prefetch was built, because nothing measured asks for one.
+
+**Fix.** Exhaustion becomes a question for the timeline rather than a verdict on
+its own: when every open source is done, re-resolve *right now, at this exact
+position*, and only break if the timeline agrees there is nothing left. Two
+lines of control flow; the resolve-and-open step is factored into
+`resolve_and_open_new` so the scheduled and forced paths cannot drift apart.
+
+**And the growth this fix would otherwise have introduced.** Nothing was ever
+retired from the five index-parallel per-source vecs — harmless before, because
+a session *ended* at its first cut and so could not accumulate. Once playback
+continues, an un-retired set grows by one open `symphonia` decoder (file handle,
+demuxer state, decode buffers) per boundary: 60–96 held open against a
+multi-gigabyte source, contributing digital silence. So `OpenSources` becomes a
+real struct (five separate `&mut`s were workable while the set only grew; a
+*removal* has to hit all five at the same index or the mix starts applying one
+clip's envelopes to another clip's samples) with `retire_exhausted`, driven by a
+single keep-mask. A retired source is by definition `is_done`, so this cannot
+change the mix — asserted sample-for-sample, not argued.
+
+The dedupe set had to split from `clip_ids` for this: `ever_opened` never
+shrinks, because a clip dropped from the live list at its out-point would be
+re-opened by the next re-resolve if that resolve still considers it active for
+one more frame — audibly, as a stutter at every cut.
+
+**Measured result.** A 24-clip butted timeline (0.5 s clips, first cut at 0.5 s),
+played through the real command surface, sampling `chroma_audio_level`'s peak
+off the real `cpal` output callback:
+
+| | 0.6 s | 1.2 s | 1.8 s | 2.4 s | 3.0 s | … | 6.0 s |
+|---|---|---|---|---|---|---|---|
+| before | 0.0 | 0.091 | 0.091 | **0.0** | **0.0** | **0.0** | **0.0** |
+| after | 0.0 | 0.091 | 0.091 | 0.090 | 0.090 | 0.089–0.094 | 0.094 |
+
+Silent for good from the first boundary, against sustained level across all 23.
+
+**Tested.** `audio_keeps_playing_across_ripple_cut_boundaries` (app-side, real
+device, the regression above — the fixture is a synthesized tone on a real
+`TrackKind::Audio` track, since the mechanism is identical for embedded and
+track audio and this way it runs without an env-gated multi-gigabyte file);
+`retiring_an_exhausted_source_does_not_change_the_mix` (the safety property the
+whole retirement pass rests on, including that the *surviving* entry is the live
+clip in every parallel vec); `retire_exhausted_is_a_no_op_when_every_source_is_live`;
+`retain_by_drops_exactly_the_masked_positions`.
+
+**Known gap, unchanged and now the narrower one.** A session that exhausts
+*inside a genuine timeline gap* still ends: the forced resolve finds nothing at
+that frame, and `run_session` has no way to know a clip starts later. Not what
+was reported (a ripple delete leaves no gaps by construction) and not introduced
+here — it is the same residue B-111's own "known gap" note describes, one step
+smaller. Left as **B-192**.

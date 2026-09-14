@@ -275,7 +275,7 @@
 //! Fork hygiene (D-003): all new code; `chroma/mod.rs` gains `pub mod audio;`,
 //! `lib.rs` three new `generate_handler!` lines.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -3129,69 +3129,205 @@ const PREFILL_SECS: f64 = 0.15;
 /// and logged instead.
 const MAX_SKEW_COMPENSATION_SECS: f64 = 2.0;
 
-/// Open `spec` and push it onto [`run_session`]'s four index-parallel
-/// per-source vecs, tagged with `pos_frames` as its own B-111 `opened_at`
-/// baseline (see [`mix_chunk`]'s doc for what that baseline is for). Shared
-/// by [`run_session`]'s initial open (every source, at `pos_frames == 0`) and
-/// its periodic re-resolve (only the newly-active ones, opened whenever their
-/// own moment comes) so the two paths — which must agree on exactly what
-/// "open a source" means — cannot drift apart.
-#[allow(clippy::too_many_arguments)]
-fn open_and_track(
-    spec: &AudioSourceSpec,
-    out_rate: u32,
-    out_channels: usize,
-    pos_frames: u64,
-    decoded: &mut Vec<DecodedSource>,
-    gains: &mut Vec<f32>,
-    envelopes: &mut Vec<SourceEnvelopes>,
-    clip_ids: &mut Vec<String>,
-    opened_at: &mut Vec<u64>,
-) -> Result<(), String> {
-    let ds = open_source(
-        &spec.path,
-        spec.start_secs,
-        spec.duration_secs,
-        out_rate,
-        out_channels,
-    )?;
-    // D-242 — the ramp is attached here, not inside `open_source`, because it
-    // needs `out_rate` (the device's, only known once the device is open) and
-    // because no other caller of `open_source` has one.
-    decoded.push(ds.with_speed(&spec.speed, out_rate, out_channels));
-    gains.push(spec.gain);
-    // D-147/D-149 — pushed in the same call as `decoded`/`gains` above, so a
-    // source that failed to open (the early `?` on `open_source`) never
-    // leaves its envelopes behind to be applied to the next source's buffer.
-    envelopes.push(SourceEnvelopes {
-        fade: spec.fade.clone(),
-        duck: spec.duck.clone(),
-        level: spec.level.clone(),
-        // D-224 — built HERE rather than by the caller, because a biquad's
-        // coefficients are a function of the sample rate and `out_rate` is
-        // not known until the device is open. Per output channel, for the
-        // same reason (see `EqFilter`).
-        eq: EqFilter::new(&spec.eq_bands, out_rate, out_channels),
-    });
-    clip_ids.push(spec.clip_id.clone());
-    opened_at.push(pos_frames);
-    Ok(())
-}
-
-/// Which of `fresh` — a re-resolve at some later timeline frame — are NOT
-/// already open, by [`AudioSourceSpec::clip_id`] (B-111). Pure and
+/// Which of `fresh` — a re-resolve at some later timeline frame — this session
+/// has NOT already opened, by [`AudioSourceSpec::clip_id`] (B-111). Pure and
 /// independently testable on its own: the `open_and_track` step that follows
 /// a positive match touches the filesystem and cannot be, but "which specs
 /// need it" is exactly the part a wrong resolve or a stale id list would get
 /// wrong, and is worth pinning on its own rather than only end-to-end.
+///
+/// **D-323 — `already_opened` is [`OpenSources::ever_opened`], not the set of
+/// currently-open clips.** Those were the same thing until sources began being
+/// retired at their out-point; see that field's own doc for why the difference
+/// is audible.
 fn newly_active_sources<'a>(
     fresh: &'a [AudioSourceSpec],
-    open_clip_ids: &[String],
+    already_opened: &HashSet<String>,
 ) -> Vec<&'a AudioSourceSpec> {
     fresh
         .iter()
-        .filter(|s| !open_clip_ids.iter().any(|id| id == &s.clip_id))
+        .filter(|s| !already_opened.contains(&s.clip_id))
         .collect()
+}
+
+/// Re-resolve the timeline at whatever frame `pos_frames` names and open every
+/// clip that has become active since the last resolve — the single step
+/// [`run_session`] runs both on [`RESOLVE_INTERVAL_SECS`] schedule and,
+/// unscheduled, the instant every open source runs dry (B-190). Returns how
+/// many sources it opened.
+///
+/// A resolve failure is logged and treated as "nothing new", never fatal: the
+/// timeline being momentarily unreadable must not take down a session that is
+/// mid-playback.
+fn resolve_and_open_new(
+    resolve_at: &ResolveAt,
+    open: &mut OpenSources,
+    start_frame: u64,
+    fps: f64,
+    out_rate: u32,
+    out_channels: usize,
+    pos_frames: u64,
+) -> usize {
+    let elapsed_secs = pos_frames as f64 / out_rate.max(1) as f64;
+    let current_frame = start_frame + (elapsed_secs * fps).round() as u64;
+    let fresh = match resolve_at(current_frame) {
+        Ok(f) => f,
+        Err(e) => {
+            log::warn!("chroma audio: timeline re-resolve failed: {e}");
+            return 0;
+        }
+    };
+    let mut opened = 0;
+    for spec in newly_active_sources(&fresh, &open.ever_opened) {
+        match open.open_and_track(spec, out_rate, out_channels, pos_frames) {
+            Ok(()) => {
+                opened += 1;
+                log::debug!(
+                    "chroma audio: re-resolve opened a newly-active source at timeline frame {current_frame}: {}",
+                    spec.path.display()
+                );
+            }
+            Err(e) => {
+                log::warn!("chroma audio: re-resolve failed to open a newly-active source: {e}")
+            }
+        }
+    }
+    opened
+}
+
+/// Every per-source vec [`run_session`] keeps index-parallel, in one place.
+///
+/// **D-323.** These five used to be five separate locals threaded through
+/// [`open_and_track`] and [`mix_chunk`] as five separate `&mut`s. That was
+/// workable while the set only ever grew; it stopped being workable once
+/// sources had to be *retired* as well (see [`Self::retire_exhausted`]), since
+/// a removal has to hit all five at the same index or the mix silently starts
+/// applying one clip's envelopes to another clip's samples. Making them one
+/// struct makes that impossible to get wrong rather than merely unlikely.
+#[derive(Default)]
+struct OpenSources {
+    decoded: Vec<DecodedSource>,
+    gains: Vec<f32>,
+    envelopes: Vec<SourceEnvelopes>,
+    /// B-111 — what a re-resolve matches a fresh `AudioSourceSpec` against to
+    /// tell "already open" from "just started". Index-parallel like the rest.
+    clip_ids: Vec<String>,
+    /// B-111 — each source's own `pos_frames` at the moment it was opened; see
+    /// [`mix_chunk`] for what that baseline is for.
+    opened_at: Vec<u64>,
+    /// **D-323 — every `clip_id` this session has EVER opened, including the
+    /// ones since retired.** The dedupe above cannot be `clip_ids` any more:
+    /// that vec now shrinks, and a clip dropped from it the instant it hit its
+    /// out-point would be re-opened by the very next re-resolve if the resolve
+    /// still considers it active for one more frame — audibly, as a stutter at
+    /// every cut. This set never shrinks, so "already played" stays permanent
+    /// for the life of the session while the decoder behind it does not.
+    ever_opened: HashSet<String>,
+}
+
+impl OpenSources {
+    fn is_empty(&self) -> bool {
+        self.decoded.is_empty()
+    }
+
+    /// True when nothing currently open will ever make another sound. **Note
+    /// that this is `true` for an empty set** — which is exactly right, and is
+    /// why [`run_session`] must treat it as "ask the timeline again", not as
+    /// "the session is over" (B-190).
+    fn all_done(&self) -> bool {
+        self.decoded.iter().all(DecodedSource::is_done)
+    }
+
+    /// Open `spec` and push it onto all five vecs, tagged with `pos_frames` as
+    /// its own B-111 `opened_at` baseline. Shared by [`run_session`]'s initial
+    /// open (every source, at `pos_frames == 0`) and its re-resolve (only the
+    /// newly-active ones, opened whenever their own moment comes) so the two
+    /// paths — which must agree on exactly what "open a source" means — cannot
+    /// drift apart.
+    fn open_and_track(
+        &mut self,
+        spec: &AudioSourceSpec,
+        out_rate: u32,
+        out_channels: usize,
+        pos_frames: u64,
+    ) -> Result<(), String> {
+        let ds = open_source(
+            &spec.path,
+            spec.start_secs,
+            spec.duration_secs,
+            out_rate,
+            out_channels,
+        )?;
+        // D-242 — the ramp is attached here, not inside `open_source`, because
+        // it needs `out_rate` (the device's, only known once the device is
+        // open) and because no other caller of `open_source` has one.
+        self.decoded
+            .push(ds.with_speed(&spec.speed, out_rate, out_channels));
+        self.gains.push(spec.gain);
+        // D-147/D-149 — pushed in the same call as `decoded`/`gains` above, so
+        // a source that failed to open (the early `?` on `open_source`) never
+        // leaves its envelopes behind to be applied to the next source's
+        // buffer.
+        self.envelopes.push(SourceEnvelopes {
+            fade: spec.fade.clone(),
+            duck: spec.duck.clone(),
+            level: spec.level.clone(),
+            // D-224 — built HERE rather than by the caller, because a biquad's
+            // coefficients are a function of the sample rate and `out_rate` is
+            // not known until the device is open. Per output channel, for the
+            // same reason (see `EqFilter`).
+            eq: EqFilter::new(&spec.eq_bands, out_rate, out_channels),
+        });
+        self.clip_ids.push(spec.clip_id.clone());
+        self.opened_at.push(pos_frames);
+        self.ever_opened.insert(spec.clip_id.clone());
+        Ok(())
+    }
+
+    /// **D-323** — drop every source that will never produce another non-silent
+    /// sample, and report how many went.
+    ///
+    /// Before D-323 nothing was ever dropped, because before B-190's fix a
+    /// session ENDED the first time every source was exhausted, so the set
+    /// could not outlive its first cut. Now that playback continues across a
+    /// cut, an un-retired set grows by one open `symphonia` decoder — with its
+    /// own file handle, demuxer state and decode buffers — at every boundary.
+    /// On the recut talking-head timelines this was reported against that is
+    /// 60-96 of them held open simultaneously against a multi-gigabyte source,
+    /// for a mix contribution of digital silence.
+    ///
+    /// **This cannot change the mix.** A retired source is by definition
+    /// [`DecodedSource::is_done`], so every sample it would still contribute is
+    /// `0.0` at whatever gain — see `retiring_an_exhausted_source_does_not_change_the_mix`.
+    fn retire_exhausted(&mut self) -> usize {
+        // One keep-mask, applied to all five vecs, so they stay index-parallel
+        // by construction rather than by five separate correct predicates.
+        let keep: Vec<bool> = self.decoded.iter().map(|d| !d.is_done()).collect();
+        let going = keep.iter().filter(|k| !**k).count();
+        if going == 0 {
+            return 0;
+        }
+        retain_by(&mut self.decoded, &keep);
+        retain_by(&mut self.gains, &keep);
+        retain_by(&mut self.envelopes, &keep);
+        retain_by(&mut self.clip_ids, &keep);
+        retain_by(&mut self.opened_at, &keep);
+        going
+    }
+}
+
+/// [`Vec::retain`] driven by a precomputed parallel keep-mask instead of by a
+/// predicate over the element — the one primitive
+/// [`OpenSources::retire_exhausted`] needs to drop the same positions out of
+/// several index-parallel vecs whose element types have nothing in common.
+fn retain_by<T>(v: &mut Vec<T>, keep: &[bool]) {
+    debug_assert_eq!(v.len(), keep.len());
+    let mut i = 0;
+    v.retain(|_| {
+        let k = keep.get(i).copied().unwrap_or(true);
+        i += 1;
+        k
+    });
 }
 
 /// Pull one `chunk_len` window from every source in lockstep and mix it —
@@ -3219,25 +3355,24 @@ fn newly_active_sources<'a>(
 /// every source opened at session start (`opened_at == 0`, every source
 /// before this fix existed) the two are the same number, which is why nothing
 /// about the pre-B-111 mix changes.
-#[allow(clippy::too_many_arguments)]
+///
+/// D-323 — takes the whole [`OpenSources`] rather than four separate slices
+/// (`envelopes` is `&mut` because an EQ carries state across chunks — a
+/// biquad's own history — where the three gain envelopes are pure functions of
+/// time).
 fn mix_chunk(
-    decoded: &mut [DecodedSource],
-    gains: &[f32],
-    // D-224 — `&mut`, because an EQ carries state across chunks (a biquad's
-    // own history) where the three gain envelopes are pure functions of time.
-    envelopes: &mut [SourceEnvelopes],
-    opened_at: &[u64],
+    open: &mut OpenSources,
     chunk_len: usize,
     out_channels: usize,
     pos_frames: u64,
     out_rate: u32,
 ) -> Result<Vec<f32>, String> {
-    let mut bufs: Vec<Vec<f32>> = Vec::with_capacity(decoded.len());
+    let mut bufs: Vec<Vec<f32>> = Vec::with_capacity(open.decoded.len());
     let mut none = SourceEnvelopes::default();
-    for (i, ds) in decoded.iter_mut().enumerate() {
+    for (i, ds) in open.decoded.iter_mut().enumerate() {
         let mut buf = ds.take(chunk_len, out_channels)?;
-        let local_pos = pos_frames.saturating_sub(opened_at.get(i).copied().unwrap_or(0));
-        envelopes.get_mut(i).unwrap_or(&mut none).apply(
+        let local_pos = pos_frames.saturating_sub(open.opened_at.get(i).copied().unwrap_or(0));
+        open.envelopes.get_mut(i).unwrap_or(&mut none).apply(
             &mut buf,
             out_channels,
             local_pos,
@@ -3245,7 +3380,7 @@ fn mix_chunk(
         );
         bufs.push(buf);
     }
-    Ok(mix_sources(&bufs, gains, chunk_len))
+    Ok(mix_sources(&bufs, &open.gains, chunk_len))
 }
 
 /// Decode and throw away `n` interleaved samples from every source in
@@ -3368,34 +3503,14 @@ fn run_session(
         ring.clone(),
     )?;
 
-    let mut decoded: Vec<DecodedSource> = Vec::with_capacity(sources.len());
-    let mut gains: Vec<f32> = Vec::with_capacity(sources.len());
-    let mut envelopes: Vec<SourceEnvelopes> = Vec::with_capacity(sources.len());
-    // B-111 — two more parallel vecs. `clip_ids` is what the periodic
-    // re-resolve below matches a fresh `AudioSourceSpec` against to tell
-    // "already open" from "just started"; `opened_at` is the `pos_frames`
-    // this source was opened at, which every envelope's `gain_at` needs
-    // SUBTRACTED from the session's own `pos_frames` before it sees a
-    // position — a `FadeEnvelope`/`DuckEnvelope`/`LevelEnvelope` is built by
-    // `chroma::audio::resolve_sources_at` to expect "seconds since I opened",
-    // not "seconds since the whole session started" (see `mix_chunk`). Every
-    // source opened HERE, at session construction, opens at `pos_frames == 0`
-    // by definition — the same thing "seconds since I opened" already meant
-    // before this fix, which is why nothing below changes for them.
-    let mut clip_ids: Vec<String> = Vec::with_capacity(sources.len());
-    let mut opened_at: Vec<u64> = Vec::with_capacity(sources.len());
+    // D-323 — one struct rather than five index-parallel locals; see
+    // `OpenSources`. Every source opened HERE, at session construction, opens
+    // at `pos_frames == 0` by definition — the same thing B-111's "seconds
+    // since I opened" already meant, which is why nothing below changes for
+    // them.
+    let mut open = OpenSources::default();
     for (i, spec) in sources.iter().enumerate() {
-        if let Err(e) = open_and_track(
-            spec,
-            out_rate,
-            out_channels,
-            0,
-            &mut decoded,
-            &mut gains,
-            &mut envelopes,
-            &mut clip_ids,
-            &mut opened_at,
-        ) {
+        if let Err(e) = open.open_and_track(spec, out_rate, out_channels, 0) {
             if i == 0 {
                 return Err(e); // the baseline source failing is a real error
             }
@@ -3411,7 +3526,7 @@ fn run_session(
     // since the caller (`chroma_audio_play`) already treats "nothing to play"
     // as a non-error; the device is simply never started, so this session holds
     // no output stream open while it waits to be told to stop.
-    if decoded.is_empty() {
+    if open.is_empty() {
         // Same "a stop landed during warm-up means never make a sound" gate the
         // real path below has (D-130) — this branch used to start the device
         // unconditionally, which opened an output stream for a session that had
@@ -3473,25 +3588,16 @@ fn run_session(
     // warm-up late for the rest of the session.
     let mut pos_frames: u64 = 0;
     if skew_samples > 0 {
-        discard_samples(&mut decoded, skew_samples, out_channels, chunk_len)?;
+        discard_samples(&mut open.decoded, skew_samples, out_channels, chunk_len)?;
         pos_frames += (skew_samples / out_channels.max(1)) as u64;
     }
 
     let prefill_len = (PREFILL_SECS * out_rate as f64) as usize * out_channels.max(1);
     while ring.lock().unwrap_or_else(|e| e.into_inner()).len() < prefill_len
-        && !decoded.iter().all(DecodedSource::is_done)
+        && !open.all_done()
         && is_current(my_gen)
     {
-        let mixed = mix_chunk(
-            &mut decoded,
-            &gains,
-            &mut envelopes,
-            &opened_at,
-            chunk_len,
-            out_channels,
-            pos_frames,
-            out_rate,
-        )?;
+        let mixed = mix_chunk(&mut open, chunk_len, out_channels, pos_frames, out_rate)?;
         pos_frames += (mixed.len() / out_channels.max(1)) as u64;
         let ready = to_output(&mut stretch, mixed);
         ring.lock().unwrap_or_else(|e| e.into_inner()).extend(ready);
@@ -3535,50 +3641,69 @@ fn run_session(
         // still be frozen at whatever `resolve_at` returned for `start_frame`.
         if pos_frames >= next_resolve_at_pos_frames {
             next_resolve_at_pos_frames = pos_frames + resolve_interval_frames;
-            let elapsed_secs = pos_frames as f64 / out_rate.max(1) as f64;
-            let current_frame = start_frame + (elapsed_secs * fps).round() as u64;
-            match resolve_at(current_frame) {
-                Ok(fresh) => {
-                    for spec in newly_active_sources(&fresh, &clip_ids) {
-                        match open_and_track(
-                            spec,
-                            out_rate,
-                            out_channels,
-                            pos_frames,
-                            &mut decoded,
-                            &mut gains,
-                            &mut envelopes,
-                            &mut clip_ids,
-                            &mut opened_at,
-                        ) {
-                            Ok(()) => log::debug!(
-                                "chroma audio: B-111 periodic resolve opened a newly-active source at timeline frame {current_frame}: {}",
-                                spec.path.display()
-                            ),
-                            Err(e) => log::warn!(
-                                "chroma audio: B-111 periodic resolve failed to open a newly-active source: {e}"
-                            ),
-                        }
-                    }
-                }
-                Err(e) => log::warn!("chroma audio: B-111 periodic resolve failed: {e}"),
+            resolve_and_open_new(
+                &resolve_at,
+                &mut open,
+                start_frame,
+                fps,
+                out_rate,
+                out_channels,
+                pos_frames,
+            );
+        }
+
+        // **B-190 / D-323 — exhaustion is a question for the timeline, not a
+        // verdict on its own.**
+        //
+        // B-111 put the scheduled resolve above this check so a just-ended
+        // source could still discover a later clip — but the two run on
+        // different clocks. The resolve fires every `RESOLVE_INTERVAL_SECS`
+        // (≈100 ms, ≈4.7 iterations of this loop at 1024 frames / 48 kHz);
+        // exhaustion is noticed the moment it happens. So for roughly four
+        // iterations out of every five, "every source is done" was being
+        // decided against a resolve taken up to 100 ms of timeline ago — one
+        // that legitimately did not yet know about the clip starting at this
+        // very frame.
+        //
+        // On one long clip that never mattered: nothing exhausts mid-playback,
+        // so this check only ever fired at the real end of the media. On a
+        // ripple-deleted timeline (D-318/D-321) it is the steady state — every
+        // one of 60-96 butted clips exhausts exactly as the next begins — and
+        // the first boundary to lose that race ended the session for good,
+        // leaving the device open and silent until the user hit stop and play
+        // again. That is the reported dropout.
+        //
+        // So: ask again, right now, at this exact position, and only believe
+        // the answer if the timeline agrees there is nothing left.
+        if open.all_done() {
+            next_resolve_at_pos_frames = pos_frames + resolve_interval_frames;
+            resolve_and_open_new(
+                &resolve_at,
+                &mut open,
+                start_frame,
+                fps,
+                out_rate,
+                out_channels,
+                pos_frames,
+            );
+            if open.all_done() {
+                break 'mix; // genuinely nothing left — fall through to the idle wait below
             }
         }
 
-        if decoded.iter().all(DecodedSource::is_done) {
-            break 'mix; // every source exhausted, INCLUDING the fresh resolve above — fall through to the idle wait below
+        // D-323 — retire what the fresh resolve has just made redundant, so a
+        // long recut timeline holds one open decoder per *playing* clip rather
+        // than one per clip played so far. Only ever drops sources that can no
+        // longer contribute anything but silence, so the mix is unchanged.
+        let retired = open.retire_exhausted();
+        if retired > 0 {
+            log::trace!(
+                "chroma audio: retired {retired} exhausted source(s), {} still open",
+                open.decoded.len()
+            );
         }
 
-        let mixed = mix_chunk(
-            &mut decoded,
-            &gains,
-            &mut envelopes,
-            &opened_at,
-            chunk_len,
-            out_channels,
-            pos_frames,
-            out_rate,
-        )?;
+        let mixed = mix_chunk(&mut open, chunk_len, out_channels, pos_frames, out_rate)?;
         pos_frames += (mixed.len() / out_channels.max(1)) as u64;
         // D-280 — timeline audio becomes real-time audio here, and only here.
         // At 4x this is a quarter as many samples per mixed chunk, which is
@@ -3783,7 +3908,7 @@ mod tests {
     #[test]
     fn newly_active_sources_skips_already_open_and_keeps_the_rest() {
         let fresh = vec![spec_with_id("a"), spec_with_id("b"), spec_with_id("c")];
-        let open = vec!["a".to_string(), "c".to_string()];
+        let open = HashSet::from(["a".to_string(), "c".to_string()]);
         let found: Vec<&str> = newly_active_sources(&fresh, &open)
             .iter()
             .map(|s| s.clip_id.as_str())
@@ -3803,7 +3928,7 @@ mod tests {
     #[test]
     fn newly_active_sources_finds_a_clip_that_started_after_play_was_pressed() {
         let at_start_frame = [spec_with_id("music-bed")];
-        let open: Vec<String> = at_start_frame.iter().map(|s| s.clip_id.clone()).collect();
+        let open: HashSet<String> = at_start_frame.iter().map(|s| s.clip_id.clone()).collect();
 
         let later = vec![spec_with_id("music-bed"), spec_with_id("sfx-whoosh")];
         let found: Vec<&str> = newly_active_sources(&later, &open)
@@ -3817,12 +3942,142 @@ mod tests {
         );
     }
 
+    /// A one-source [`OpenSources`] at unity gain — the shape the `mix_chunk`
+    /// tests below want, without hand-writing five index-parallel vecs each
+    /// time and risking one of them being the wrong length.
+    fn one_open_source(
+        ds: DecodedSource,
+        envelopes: SourceEnvelopes,
+        opened_at: u64,
+    ) -> OpenSources {
+        OpenSources {
+            decoded: vec![ds],
+            gains: vec![1.0],
+            envelopes: vec![envelopes],
+            clip_ids: vec!["test-clip".to_string()],
+            opened_at: vec![opened_at],
+            ever_opened: HashSet::from(["test-clip".to_string()]),
+        }
+    }
+
+    /// D-323 — a retired source is by construction one that can only emit
+    /// silence, so dropping it must not change a single sample of the mix.
+    /// This is the safety property the whole retirement pass rests on, and the
+    /// one that would be expensive to discover live: a wrong keep-mask would
+    /// misalign the five vecs and start applying one clip's fade/EQ to
+    /// another clip's samples.
+    #[test]
+    fn retiring_an_exhausted_source_does_not_change_the_mix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out_rate = 48_000u32;
+        let out_channels = 2usize;
+        let tone = synth_sine_wav(tmp.path(), 440, 2.0, out_rate);
+        let chunk_len = 1024 * out_channels;
+
+        // Two sources: a live tone, and a spent one either side of it, so a
+        // misaligned retain would visibly shift the live source's gain or
+        // envelope onto the wrong index.
+        let spent = || {
+            // `duration_secs: 0.0` => `remaining == Some(0)` => `is_done` from
+            // the very first call, without decoding anything.
+            open_source(&tone, 0.0, Some(0.0), out_rate, out_channels).expect("open spent")
+        };
+        let live =
+            || open_source(&tone, 0.0, Some(2.0), out_rate, out_channels).expect("open live");
+
+        let mut with_spent = OpenSources {
+            decoded: vec![spent(), live(), spent()],
+            gains: vec![0.25, 1.0, 0.5],
+            envelopes: vec![
+                SourceEnvelopes::default(),
+                SourceEnvelopes::default(),
+                SourceEnvelopes::default(),
+            ],
+            clip_ids: vec!["spent-a".into(), "live".into(), "spent-b".into()],
+            opened_at: vec![0, 0, 0],
+            ever_opened: HashSet::from([
+                "spent-a".to_string(),
+                "live".to_string(),
+                "spent-b".to_string(),
+            ]),
+        };
+        assert!(
+            !with_spent.all_done(),
+            "sanity: the live source must not be done"
+        );
+
+        let retired = with_spent.retire_exhausted();
+        assert_eq!(retired, 2, "both spent sources go, the live one stays");
+        assert_eq!(with_spent.decoded.len(), 1);
+        assert_eq!(
+            with_spent.clip_ids,
+            vec!["live".to_string()],
+            "the SURVIVING entry must be the live clip in every parallel vec, \
+             not whatever happened to land at index 0"
+        );
+        assert_eq!(with_spent.gains, vec![1.0], "…including its gain");
+        assert_eq!(
+            with_spent.ever_opened.len(),
+            3,
+            "retirement must NOT forget that the spent clips already played — \
+             forgetting is what would let the next re-resolve reopen them"
+        );
+
+        // And the audible half: the retained set mixes to exactly what the
+        // full set would have.
+        let mut reference = one_open_source(live(), SourceEnvelopes::default(), 0);
+        let expected =
+            mix_chunk(&mut reference, chunk_len, out_channels, 0, out_rate).expect("reference mix");
+        let got = mix_chunk(&mut with_spent, chunk_len, out_channels, 0, out_rate)
+            .expect("post-retirement mix");
+        assert!(
+            expected.iter().any(|s| s.abs() > 0.01),
+            "sanity: the tone must be genuinely non-silent"
+        );
+        assert_eq!(
+            got, expected,
+            "retiring silent sources changed the mix — it must be sample-identical"
+        );
+    }
+
+    /// D-323 — nothing to retire is a no-op, not a rebuild. The common case on
+    /// every one of the ~47 chunks a second this runs on.
+    #[test]
+    fn retire_exhausted_is_a_no_op_when_every_source_is_live() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let tone = synth_sine_wav(tmp.path(), 440, 2.0, 48_000);
+        let mut open = one_open_source(
+            open_source(&tone, 0.0, Some(2.0), 48_000, 2).expect("open"),
+            SourceEnvelopes::default(),
+            0,
+        );
+        assert_eq!(open.retire_exhausted(), 0);
+        assert_eq!(open.decoded.len(), 1);
+        assert_eq!(open.clip_ids.len(), 1);
+    }
+
+    /// D-323 — `retain_by` drops exactly the masked-off positions, in order.
+    #[test]
+    fn retain_by_drops_exactly_the_masked_positions() {
+        let mut v = vec!["a", "b", "c", "d"];
+        retain_by(&mut v, &[true, false, false, true]);
+        assert_eq!(v, vec!["a", "d"]);
+
+        let mut all = vec![1, 2, 3];
+        retain_by(&mut all, &[true, true, true]);
+        assert_eq!(all, vec![1, 2, 3]);
+
+        let mut none: Vec<i32> = vec![1, 2, 3];
+        retain_by(&mut none, &[false, false, false]);
+        assert!(none.is_empty());
+    }
+
     /// Nothing new at all — the common case on every re-resolve tick between
     /// two clips starting. Must not manufacture a spurious reopen.
     #[test]
     fn newly_active_sources_is_empty_when_nothing_changed() {
         let fresh = vec![spec_with_id("a"), spec_with_id("b")];
-        let open = vec!["a".to_string(), "b".to_string()];
+        let open = HashSet::from(["a".to_string(), "b".to_string()]);
         assert!(newly_active_sources(&fresh, &open).is_empty());
     }
 
@@ -3883,20 +4138,13 @@ mod tests {
 
         // Reference: the same tone, no envelope at all — mix_chunk's
         // pre-B-111 arithmetic, byte for byte.
-        let mut raw = vec![
+        let mut raw = one_open_source(
             open_source(&tone, 0.0, Some(2.0), out_rate, out_channels).expect("open tone (raw)"),
-        ];
-        let raw_mixed = mix_chunk(
-            &mut raw,
-            &[1.0],
-            &mut [SourceEnvelopes::default()],
-            &[0],
-            chunk_len,
-            out_channels,
+            SourceEnvelopes::default(),
             0,
-            out_rate,
-        )
-        .expect("mix_chunk (raw)");
+        );
+        let raw_mixed =
+            mix_chunk(&mut raw, chunk_len, out_channels, 0, out_rate).expect("mix_chunk (raw)");
         assert!(
             raw_mixed.iter().any(|s| s.abs() > 0.01),
             "sanity: the synthesized tone must be genuinely non-silent"
@@ -3916,19 +4164,18 @@ mod tests {
             "sanity: 0.5s into a 1s linear fade-in is ~0.5 gain, got {expected_gain}"
         );
 
-        let mut faded = vec![
+        let mut faded = one_open_source(
             open_source(&tone, 0.0, Some(2.0), out_rate, out_channels).expect("open tone (faded)"),
-        ];
-        let faded_mixed = mix_chunk(
-            &mut faded,
-            &[1.0],
-            &mut [SourceEnvelopes {
+            SourceEnvelopes {
                 fade: Some(fade.clone()),
                 duck: None,
                 level: None,
                 eq: None,
-            }],
-            &[opened_at_pos_frames],
+            },
+            opened_at_pos_frames,
+        );
+        let faded_mixed = mix_chunk(
+            &mut faded,
             chunk_len,
             out_channels,
             session_pos_frames,
