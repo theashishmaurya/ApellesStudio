@@ -30602,3 +30602,144 @@ Style" toggle) will also correctly resize alone rather than "for all". Which of
 those the owner meant needs one question to them, not a guess — see B-185's
 closing note. The same hole in the VIDEO clip overlay is filed as B-186, found
 by reading but not reproduced, and deliberately not fixed here.
+
+## D-318 — silence and retake detection: a real VAD, read-only, in a crate of its own
+
+**Context.** The owner has raw talking-head footage — two clips, ~11–16 min each
+— that needs the retakes and the dead air cut out. Nothing in Apelles could find
+either. `editor_get_waveform` returns raw amplitude peaks with no
+classification; `editor_remove_gap` closes *editorial* gaps already on the
+timeline and has nothing to do with silence in source audio; and
+`docs/notes/mcp-tool-coverage.md` told an agent, in writing, to read the
+transcript and decide the spans by hand ("cut gaps/retakes by only placing the
+segments to keep"). That manual instruction is what this supersedes.
+
+The first reach was a raw `ffmpeg silencedetect` shell command. The owner
+stopped it: "we should build internal tool not rely on ffmpeg scripts."
+
+**Options for the silence signal.**
+
+1. *Transcript word-gaps.* `ai-media/transcribe.py` already returns real
+   per-word `start`/`end`, so a gap between one word's end and the next word's
+   start is, arguably, silence. Free — no new model, no new dependency.
+2. *Amplitude thresholding* over the waveform peaks already cached.
+3. **A real VAD — silero-vad's ONNX export, run on-device in Rust. (Chosen.)**
+
+**Why 3.** The owner asked for a real VAD explicitly, and the reasons hold up.
+Word-gaps make silence detection *depend on a full Whisper pass*: minutes of
+large-v3 decode before the first span can be reported, for a question that has
+nothing to do with words. They also inherit Whisper's own failure modes — a
+decoder that hallucinates or duplicates a word across a pause papers over the
+very gap being looked for, and a quiet-but-real word gets cut. Amplitude
+thresholding is worse again: it cannot tell a breath, a room tone or a chair
+creak from speech, which is the entire problem VAD exists to solve. A real
+acoustic model answers the actual question ("is anyone talking"), runs in
+milliseconds rather than minutes, and needs no transcript at all.
+
+Word-gaps are therefore **dropped as the silence mechanism**, not kept
+alongside — two detectors for one question would disagree on real footage and
+there would be no principled way to pick a winner. The transcript keeps the half
+only it can do: retakes are a fact about *words*, and VAD has no text.
+
+**Why a new crate (`apelles-speech`) rather than an existing one.**
+`apelles-timeline` is pure model with a `types`-only dependency and no business
+loading an ONNX graph. `apelles-media` owns decode and would have to grow an
+inference stack. `apelles-ai` is an HTTP client for the Python sidecar — this
+runs in-process, not over the wire. The honest boundary is a crate that takes
+**decoded PCM and transcript text in, and returns candidates out**: it never
+opens a file, never touches a timeline, never shells out. That is also what
+makes the interesting logic testable — the hysteresis, the grouping and the
+thresholds are all exercised against fixtures with known-correct answers, with
+no model in the loop (33 tests).
+
+**Read-only, and that is the point.** Neither detector cuts anything. Both
+return *candidates*; applying one goes through the split/remove/ripple ops that
+already existed and are already tested. An auto-cutter would contradict
+`docs/00-vision.md`, and more practically: retake grouping has an honest false
+positive (a later utterance that genuinely extends an earlier one looks exactly
+like a retake from text alone), which is survivable as a suggestion a human
+rejects and unforgivable as a deletion they have to discover.
+
+**Spans are seconds in the crate, frames at the edge.** `apelles-speech` has no
+fps and no timeline; converting a span to a clip's source frames needs both, so
+the op layer does it, by the same round-each-endpoint-independently rule
+`captionsFromTranscript.ts` already uses for transcript timestamps.
+
+**What is deliberately NOT here.** No speaker diarisation, no filler-word
+("um", "uh") detection, no automatic tightening of pauses to a target length —
+each is a real feature, none is in `docs/02-scope.md` v1, and each would have
+been "while I'm here" scope.
+
+## D-319 — Silero VAD v6.2.1 as the speech-presence model
+
+**Context.** D-318 needs an on-device voice-activity model. It must be small
+(this ships in a desktop app), permissively licensed, actively maintained, and
+available as a *real released ONNX artifact* — hand-converting a PyTorch
+checkpoint would put a model nobody can reproduce into the build.
+
+**Options.** WebRTC VAD (the classic; a GMM-based energy model, effectively
+unmaintained, and poor on the exact case here — a quiet voice in a quiet room);
+a Whisper-derived `no_speech_prob` (back to requiring a full transcription
+pass — D-318 rejects this); **silero-vad (chosen)**.
+
+**Why Silero.** Purpose-built for this one job, ~2.3 MB, MIT-licensed, actively
+released (v6.2.1 is current; the project has shipped steadily since 2020), and
+it publishes its ONNX export *in its own repository*, so the artifact is fetched
+from upstream at a pinned tag rather than from a third-party re-host:
+
+- `https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.1/src/silero_vad/data/silero_vad.onnx`
+- sha256 `1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3`, 2,327,524 bytes
+
+It also costs this workspace **no new dependency tree**: `ort` (=2.0.0-rc.10) and
+`ndarray` (0.16) are already how `app/src-tauri` has run seven ONNX models since
+the fork, and the model file is fetched-and-verified lazily on first use by the
+same pattern `ai_processing.rs` uses for the other seven — not bundled, so the
+installer does not grow.
+
+**The finding that justifies pinning a version at all.** v6's ONNX export is
+**not** call-compatible with v5's, and the incompatibility is silent. Both take
+`input[batch, samples]`, `state[2, batch, 128]` and a scalar `sr`; from v5.1
+onward the correct input is **64 samples of the previous window followed by the
+current 512** (576 values). v5 tolerated a bare 512-sample window; v6 does not.
+Measured on a real 5.27 s speech clip while making this decision:
+
+| model | input | frames scored as speech |
+|---|---|---|
+| v5.1.2 | bare 512 | 100 / 164 |
+| v5.1.2 | 64 + 512 | 101 / 164 |
+| v6.2.1 | bare 512 | **0 / 164** |
+| v6.2.1 | 64 + 512 | 102 / 164 |
+
+A bare window through v6 does not error — it returns probabilities pinned near
+0.001, so every frame reads as silence and a caller would cheerfully offer the
+entire clip for deletion. That is why `CONTEXT_SAMPLES` is a named constant with
+this table in its doc comment, why the live test asserts `speech > 0` as its
+first check, and why the on-disk filename carries the version
+(`silero_vad_v6.2.1.onnx`) — a re-pin must not be mistaken for a corrupt copy of
+this one.
+
+## D-320 — `strsim` for retake text similarity
+
+**Context.** D-318's retake detector needs "are these two utterances the same
+line". CLAUDE.md is explicit that a fuzzy-match algorithm is not ours to
+hand-roll.
+
+**Options.** `strsim` 0.11.1 (**chosen**) — MIT, ~1.07 billion downloads,
+maintained under the `rapidfuzz` org, and **already in this workspace's
+`Cargo.lock`** transitively, so adopting it directly adds nothing to the tree;
+`textdistance` (a fraction of the usage, no advantage here); `triple_accel`
+(SIMD edit distance, last released 2021 — the maintenance bar in CLAUDE.md rules
+it out for a long project).
+
+**What it is used for, and the one thing composed on top.**
+`normalized_levenshtein` over case-folded, punctuation-stripped text is the
+whole-string measure. That alone proved insufficient on the exact case this
+feature was asked for: a **false start**, "The cat sat— the cat sat on the mat"
+against "The cat sat on the mat", scores only **0.647** — under any threshold
+loose enough to be safe — because the stumble makes one side half again as long.
+So `similarity()` takes the larger of the whole-string score and a
+**containment** score: the best `normalized_levenshtein` of the shorter
+utterance against any equal-length word-window of the longer one, which scores
+that pair 1.00. Only the window sweep is ours; the edit distance underneath it
+is still `strsim`'s. A length-ratio guard (3x) stops containment from matching a
+sentence against a paragraph that merely quotes it.

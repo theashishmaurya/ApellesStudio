@@ -333,6 +333,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "apelles-speech"
+version = "0.0.0"
+dependencies = [
+ "ndarray",
+ "ort",
+ "serde",
+ "serde_json",
+ "strsim",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "apelles-timeline"
 version = "0.0.0"
 dependencies = [

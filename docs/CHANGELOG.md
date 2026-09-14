@@ -4,6 +4,28 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-14** — **D-318/D-319/D-320: `apelles-speech`, the read-only silence
+  and retake detectors.** The owner's talking-head footage needed the dead air
+  and the flubbed takes cut, and Apelles could find neither — `editor_get_waveform`
+  returns unclassified amplitude, `editor_remove_gap` is about *editorial* gaps,
+  and `mcp-tool-coverage.md` literally instructed an agent to pick the spans by
+  hand. A raw `ffmpeg silencedetect` was the first reach and was correctly
+  stopped ("we should build internal tool not rely on ffmpeg scripts"). Silence
+  now comes from a **real VAD** — silero-vad v6.2.1's own released ONNX, on-device
+  via the `ort` stack `app/src-tauri` has run seven models on since the fork
+  (D-319) — rather than from Whisper word-gaps, which would have made a purely
+  acoustic question wait minutes for a transcript and inherit the decoder's
+  hallucinations. Retakes stay transcript-based, since they are a fact about
+  words. Both are strictly read-only: they return candidates, and applying one
+  reuses the split/remove/ripple ops that already existed. Pinning the model
+  version turned out to matter — v6 fed v5's bare 512-sample window returns
+  probabilities pinned near 0.001, so **every frame reads as silence** with no
+  error at all (measured table in D-319). Plain edit distance also missed the
+  exact case this was asked for (a false start scores 0.647), so `similarity()`
+  adds a containment view over `strsim` (D-320). 33 tests; the Rust runner
+  reproduces an independent Python reference exactly on a real clip. B-187 files
+  an `ort` process-exit abort found and root-caused along the way.
+
 - **2026-09-13** — **D-317 (fixing B-185): the on-canvas caption box no longer
   draws for a cue the playhead is not over.** Reported as "the box only covers
   one line of a multi-line caption after a size change re-wraps it"; the

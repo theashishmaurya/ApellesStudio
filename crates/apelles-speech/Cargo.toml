@@ -1,0 +1,25 @@
+[package]
+name = "apelles-speech"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apelles L2 — silence detection (Silero VAD over PCM) and retake detection (near-duplicate transcript utterances). Read-only analysis: returns candidates, never cuts."
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+# D-319 — the speech-presence model. `ort` + `ndarray` are already this
+# workspace's ONNX stack (`app/src-tauri` has run seven models on them since
+# the fork); the versions here match `app/src-tauri/Cargo.toml` exactly so the
+# workspace resolves one copy of each and one ONNX Runtime library.
+ort = { version = "=2.0.0-rc.10", features = ["ndarray", "load-dynamic"] }
+ndarray = "0.16"
+
+# D-320 — normalised edit distance for retake grouping.
+strsim = "0.11"
+
+[dev-dependencies]
+serde_json = { workspace = true }

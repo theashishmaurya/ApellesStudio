@@ -2072,6 +2072,23 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         Shift-constrain, snapping/guides, arrow-key nudge, double-click to edit
         text in place, side handles (a caption has no non-uniform scale and no
         wrap width for one to mean).
+      - ✅ **Silence + retake detection for a talking-head recut — D-318/D-319/
+        D-320, 2026-09-14.** Nothing could find dead air or a flubbed take:
+        `editor_get_waveform` is unclassified amplitude, `editor_remove_gap` is
+        about *editorial* gaps, and `mcp-tool-coverage.md` told an agent to pick
+        the spans by hand. Now the new `apelles-speech` crate does both, and
+        both are **read-only** — they return candidates; applying one reuses the
+        split/remove/ripple ops that already existed, so there is no new
+        destructive op and no auto-cutter (`docs/00-vision.md`). Silence is a
+        **real VAD** (silero-vad v6.2.1 ONNX on the `ort` stack, D-319), not
+        Whisper word-gaps: it answers the acoustic question directly instead of
+        waiting minutes for a transcript and inheriting the decoder's
+        hallucinations. Retakes stay transcript-based — they are a fact about
+        words — grouped by `strsim` edit distance plus a containment view
+        (D-320), which the measured false-start case (0.647 on the whole string)
+        proved was necessary. **Deferred:** speaker diarisation, filler-word
+        ("um"/"uh") detection, and automatic pause-tightening to a target
+        length — each real, none in `docs/02-scope.md` v1.
     - ~~**The Edit tab's left library — one docked, switchable browser**~~ —
       **DONE, 2026-09-09 (D-263).** D-248 gave the tab an icon rail whose
       buttons opened floating popovers, rendered (because Sources is

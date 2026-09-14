@@ -2122,6 +2122,52 @@ pub async fn waveform(
     .map_err(|e| e.to_string())?
 }
 
+/// Decode `path`'s audio to mono `f32` at exactly `target_rate` Hz (D-318).
+///
+/// [`decode_mono_range`] returns the source's own rate, which is right for the
+/// waveform (whose buckets only need representative samples) and wrong for a
+/// model with a fixed input rate. Silero VAD is scored in 512-sample windows
+/// that only mean 32 ms at 16 kHz, so feeding it 48 kHz audio would silently
+/// analyse the clip at a third speed — every span three times too short.
+///
+/// Resampling goes through the same `rubato` sinc converter the playback engine
+/// uses ([`RateConverter`]), rather than a second, simpler path: one resampler
+/// in this crate, not two. Returns the samples alone — the rate is `target_rate`
+/// by construction.
+///
+/// A source already at `target_rate` skips the converter entirely.
+pub fn decode_mono_at_rate(
+    path: &Path,
+    start_secs: f64,
+    duration_secs: f64,
+    target_rate: u32,
+) -> Result<Vec<f32>, String> {
+    if target_rate == 0 {
+        return Err("target_rate must be non-zero".to_string());
+    }
+    let (samples, src_rate) = decode_mono_range(path, start_secs, duration_secs)?;
+    if src_rate == target_rate || samples.is_empty() {
+        return Ok(samples);
+    }
+
+    let mut converter = RateConverter::new(src_rate, target_rate, 1)?;
+    let expect = resampled_frame_count(samples.len(), src_rate, target_rate);
+
+    // [`RateConverter::push_interleaved`] only emits WHOLE chunks and keeps the
+    // remainder buffered — right for the endless playback stream it was built
+    // for, wrong here, where the tail of a finite clip would simply vanish. One
+    // extra chunk of silence is always enough to flush the last real chunk
+    // through (`floor((n + chunk)/chunk) >= ceil(n/chunk)`), and the output is
+    // then trimmed to the length the input actually implies, so the padding
+    // cannot show up as phantom audio at the end.
+    let mut padded = samples;
+    padded.resize(padded.len() + converter.chunk_frames, 0.0);
+
+    let mut out = converter.push_interleaved(&padded)?;
+    out.truncate(expect);
+    Ok(out)
+}
+
 /// Decode `path`'s default audio track from `start_secs` for `duration_secs`,
 /// mixed down to mono `f32` at the source's native sample rate — no
 /// resampling, since [`peaks_from_samples`]'s bucket reduction only needs
