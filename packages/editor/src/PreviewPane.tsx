@@ -648,6 +648,15 @@ export function PreviewPane() {
           const bytes = await invoke<ArrayBuffer>('chroma_timeline_frame', {
             pos: want,
             maxLongEdge: PREVIEW_LONG_EDGE,
+            // D-324 — this loop, and only this loop, is continuous forward
+            // playback, so the backend can work out the next cut boundary and
+            // have a decode pipe already seeked and waiting when the playhead
+            // reaches it. On a heavily recut timeline that is the difference
+            // between ~31 ms and ~307 ms at every cut. The scrub path in
+            // `fetchFrame` deliberately does NOT pass this: its next position
+            // is wherever the pointer goes, so a prediction from the current
+            // one is worthless and would spawn an `ffmpeg` per dragged frame.
+            playing: true,
           });
           if (import.meta.env.DEV) recordPreviewSpan('fetch', performance.now() - fetchStart);
           showFrame(bytes, want);

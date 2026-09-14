@@ -1,5 +1,6 @@
 //! Persistent sequential-decode pipe for smooth scrub / playback (roadmap
-//! round-2 item 5, D-030; multi-pipe pool + hardware decode, D-125).
+//! round-2 item 5, D-030; multi-pipe pool + hardware decode, D-125; boundary
+//! prefetch, D-324).
 //!
 //! What it is: one long-lived `ffmpeg -f rawvideo` process per *pipe slot* that
 //!   streams frames sequentially, instead of a fresh process + keyframe seek +
@@ -7,7 +8,8 @@
 //! What it does: `playback_frame_scaled(slot, path, info, target, scale)`
 //!   returns frame `target` as an 8-bit RGB `DynamicImage`. Cheap when `target`
 //!   is the next frame or a short forward hop *for that slot*; a keyframe-seek
-//!   respawn otherwise (no worse than the old per-frame path).
+//!   respawn otherwise — or, since D-324, the adoption of a pipe `prefetch`
+//!   primed for that exact jump.
 //! What it does NOT do: audio, colour management, the GPU grade, caching decoded
 //!   frames. It is purely "give me frame N fast, in order".
 //! Fallback: any pipe error drops that slot's pipe and returns `Err` — callers
@@ -52,6 +54,30 @@
 //! software on failure (hardware decode does not cover every codec/pixel format)
 //! and remember the failure per path so the fallback is paid once, not per
 //! respawn.
+//!
+//! ## Why a respawn is prefetched rather than made cheaper (D-324, B-191)
+//!
+//! D-030 described a respawn as "no worse than today", which was true under its
+//! stated assumption: rare scrubs on one long clip. A ripple-deleted timeline
+//! (D-318/D-321) breaks that assumption completely — its cut boundaries are by
+//! construction large, arbitrary jumps in source-frame space, so **every** one
+//! of them is a forced respawn, and the owner's real recut had 95-155 of them
+//! inside one continuous playthrough.
+//!
+//! What a respawn actually costs, measured on that footage (4K HEVC, decoded at
+//! the preview's 1280 px scale): a sequential read is **6.7 ms**, a respawn is
+//! **248-337 ms**, and `Command::spawn` is only **0.8-1.0 ms** of that. The cost
+//! is ffmpeg's keyframe seek — not process creation, and not decode throughput.
+//! That single fact decides the design: raising [`MAX_FORWARD_SKIP`] would only
+//! discard more frames before paying the same seek, and proxy media (rejected
+//! at D-030 and again at D-128) would still reseek at every boundary while
+//! making cheaper the one part that was already 6.7 ms.
+//!
+//! So [`prefetch`] spawns the next clip's `ffmpeg` ~0.5 s early and lets the
+//! seek happen *in that process*, concurrently, while this one keeps serving
+//! the outgoing clip. Nothing reads the primed pipe until the boundary arrives,
+//! which is what makes "spawn early, read later" the whole mechanism and why
+//! there is no worker thread here. Measured end to end: 307 ms → 31 ms per cut.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Read};
@@ -266,6 +292,22 @@ impl FramePipe {
         Ok(())
     }
 
+    /// Whether this pipe can produce `target` by reading forward — i.e. without
+    /// the kill-and-respawn a keyframe seek costs. The same source, the same
+    /// output scale, and a target that is either the very next frame or a short
+    /// enough forward hop to be cheaper to discard than to seek to.
+    ///
+    /// Factored out of [`Self::frame_scaled`] by D-324 because the prefetch
+    /// needs to ask exactly this question of two *different* pipes: of the live
+    /// one ("do I even need to prime anything?") and of a primed standby ("can
+    /// this one be adopted for the frame actually being asked for?").
+    fn can_serve(&self, path: &Path, target: u64, scale: Option<(u32, u32)>) -> bool {
+        path == self.path
+            && scale == self.scale
+            && target >= self.next_index
+            && target <= self.next_index + MAX_FORWARD_SKIP
+    }
+
     /// Absolute frame `target` as an 8-bit RGB image, optionally downscaled to
     /// `scale` by ffmpeg. A change of `path` or `scale`, a backward step, or a
     /// forward jump past [`MAX_FORWARD_SKIP`] forces a keyframe-seek respawn.
@@ -276,10 +318,7 @@ impl FramePipe {
         target: u64,
         scale: Option<(u32, u32)>,
     ) -> Result<DynamicImage> {
-        let need_restart = path != self.path
-            || scale != self.scale
-            || target < self.next_index
-            || target > self.next_index + MAX_FORWARD_SKIP;
+        let need_restart = !self.can_serve(path, target, scale);
 
         if need_restart {
             *self = Self::open_scaled(path, info, target, scale)?;
@@ -344,7 +383,33 @@ pub enum PipeSlot {
     TrackTransition(usize),
 }
 
-static PIPES: Lazy<Mutex<HashMap<PipeSlot, FramePipe>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+/// The live pipes, plus D-324's primed-but-unread ones.
+///
+/// **One mutex over both maps, not two mutexes.** Every interesting operation
+/// touches both (a decode may adopt a standby; a release must drop both a
+/// slot's live pipe and its standby), so two locks would mean a lock ORDER —
+/// an invariant nothing in the type system would hold us to, for no gain.
+#[derive(Default)]
+struct PipePool {
+    /// One per slot, mid-stream, `next_index` at whatever was last read.
+    live: HashMap<PipeSlot, FramePipe>,
+    /// **D-324 — one per slot at most, spawned ahead of a known cut boundary
+    /// and not yet read from.**
+    ///
+    /// Its `ffmpeg` is already running, already past its keyframe seek, already
+    /// decoding — which is the entire cost a respawn pays (measured: 0.8-1.0 ms
+    /// to `spawn`, 248-337 ms before the first frame comes out, on the owner's
+    /// real 4K HEVC footage). Adopting one at the boundary turns that into the
+    /// ~1 ms of a pipe read.
+    ///
+    /// A standby is never *required*: [`playback_frame_scaled`] adopts it only
+    /// if it can genuinely serve the frame being asked for, and otherwise drops
+    /// it and respawns exactly as before. So a wrong prediction costs one
+    /// wasted `ffmpeg`, never a wrong picture.
+    standby: HashMap<PipeSlot, FramePipe>,
+}
+
+static PIPES: Lazy<Mutex<PipePool>> = Lazy::new(|| Mutex::new(PipePool::default()));
 
 /// Decode `target` via `slot`'s playback pipe, creating / advancing /
 /// restarting it as needed. On any failure the slot's pipe is dropped and the
@@ -381,7 +446,39 @@ pub fn playback_frame_scaled(
 ) -> Result<DynamicImage> {
     let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
 
-    let pipe = match pool.entry(slot) {
+    // D-324 — the boundary crossing. If this slot's live pipe cannot serve
+    // `target` (a cut: the source frame jumped somewhere a forward read can't
+    // reach) but a standby primed for exactly this moment can, adopt it. The
+    // old pipe drops here, killing its `ffmpeg`; the primed one takes its place
+    // with its seek already paid.
+    //
+    // Both halves of the condition matter. Only consulting the standby when the
+    // live pipe has genuinely failed keeps the ordinary mid-clip frame on the
+    // exact code path it was always on. And re-checking `can_serve` on the
+    // standby itself is what makes a mispredicted prefetch harmless: playback
+    // that jumped somewhere else entirely simply does not adopt it.
+    let live_can_serve = pool
+        .live
+        .get(&slot)
+        .is_some_and(|p| p.can_serve(path, target, scale));
+    if !live_can_serve {
+        // The `remove` runs either way — it is the first half of the chain, so
+        // a standby that turns out NOT to serve this frame is still taken out
+        // of the map and dropped here. Deliberate: such a standby is a
+        // prediction that has been overtaken, and holding it would pin an
+        // `ffmpeg` process for a boundary playback is never going to reach.
+        if let Some(primed) = pool.standby.remove(&slot)
+            && primed.can_serve(path, target, scale)
+        {
+            log::trace!(
+                "decode pipe: adopted a primed pipe for {slot:?} at frame {target} \
+                 instead of respawning"
+            );
+            pool.live.insert(slot, primed);
+        }
+    }
+
+    let pipe = match pool.live.entry(slot) {
         std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
         std::collections::hash_map::Entry::Vacant(v) => {
             v.insert(FramePipe::open_scaled(path, info, target, scale)?)
@@ -392,7 +489,7 @@ pub fn playback_frame_scaled(
         Ok(img) => Ok(img),
         Err(e) => {
             let was_hwaccel = pipe.hwaccel;
-            pool.remove(&slot); // poison → next call respawns clean
+            pool.live.remove(&slot); // poison → next call respawns clean
             if !was_hwaccel {
                 return Err(e);
             }
@@ -403,9 +500,87 @@ pub fn playback_frame_scaled(
             disable_hwaccel(path);
             let mut sw = FramePipe::open_with_hwaccel(path, info, target, scale, false)?;
             let img = sw.frame_scaled(path, info, target, scale)?;
-            pool.insert(slot, sw);
+            pool.live.insert(slot, sw);
             Ok(img)
         }
+    }
+}
+
+/// **D-324 — prime `slot` for a cut boundary it is about to reach.**
+///
+/// Spawn an `ffmpeg` for `(path, target, scale)` now, so that by the time
+/// playback actually crosses into that clip the keyframe seek has already
+/// happened in a separate process and the first read is a pipe read rather than
+/// a quarter-second stall. Cheap to call and safe to call often: it returns
+/// immediately, doing nothing at all, unless a respawn is genuinely coming.
+///
+/// **Why prefetch rather than the alternatives** (the full argument is D-324):
+/// a cut's source-frame jump is arbitrary, so raising [`MAX_FORWARD_SKIP`] only
+/// buys more frames discarded before the same respawn; and proxy media — twice
+/// considered and twice rejected, D-030 and D-128 — would still reseek at every
+/// boundary, because the cost here is the seek, not the per-frame decode.
+/// Prefetching is the only one of the three that uses what the app uniquely
+/// knows: the edit list, which says where the next boundary is and what is on
+/// the far side of it, ahead of time.
+///
+/// **No thread.** `Command::spawn` measured 0.8-1.0 ms against the owner's real
+/// 4K HEVC footage, against 248-337 ms for the seek-and-decode that follows it
+/// — and that part already runs concurrently, in the child process, because
+/// nothing reads the pipe until the boundary arrives. A worker thread would add
+/// a lifetime and a cancellation protocol to hide a millisecond.
+///
+/// **Cleanup.** A standby is dropped — killing its `ffmpeg` — when it is
+/// adopted, when it is found unable to serve the frame actually asked for
+/// (playback paused, seeked elsewhere, or the timeline changed under it), when
+/// its slot stops being visible ([`retain_pipe_slots`]), when its file is
+/// replaced ([`drop_pipes_for_path`]), or on [`reset`]. At most one per slot
+/// exists at a time: priming a slot that already has a standby replaces it.
+///
+/// Errors are swallowed deliberately. A prefetch is an optimisation with a
+/// complete fallback (the respawn that would have happened anyway), so a
+/// failure to spawn one must never become a failure to show a frame.
+pub fn prefetch(
+    slot: PipeSlot,
+    path: &Path,
+    info: &VideoInfo,
+    target: u64,
+    scale: Option<(u32, u32)>,
+) {
+    let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Nothing to do: reading forward from where this slot already is will
+    // reach `target` on its own. This is every frame in the middle of a clip,
+    // and it is why the caller can prefetch unconditionally.
+    if pool
+        .live
+        .get(&slot)
+        .is_some_and(|p| p.can_serve(path, target, scale))
+    {
+        return;
+    }
+    // Already primed for exactly this boundary — don't kill a running seek and
+    // start it again, which is what makes calling this every frame of the
+    // approach harmless rather than pathological.
+    if pool
+        .standby
+        .get(&slot)
+        .is_some_and(|p| p.path == path && p.scale == scale && p.next_index == target)
+    {
+        return;
+    }
+
+    match FramePipe::open_scaled(path, info, target, scale) {
+        Ok(primed) => {
+            log::trace!(
+                "decode pipe: primed {slot:?} for {} @ frame {target}",
+                path.display()
+            );
+            pool.standby.insert(slot, primed); // any previous standby drops here
+        }
+        Err(e) => log::debug!(
+            "decode pipe: could not prime {slot:?} for {} @ frame {target}: {e}",
+            path.display()
+        ),
     }
 }
 
@@ -427,14 +602,18 @@ pub fn playback_frame_scaled(
 /// the track's own slot keeps running. A track-index keep-list could not say
 /// that, so it would have leaked one `ffmpeg` process per transition for the
 /// rest of the session.
+///
+/// **D-324 — releases a slot's primed standby on exactly the same rule.** A
+/// standby is an `ffmpeg` process like any other, and a prediction for a track
+/// that has since gone hidden or been deleted is one nothing will ever adopt.
 pub fn retain_pipe_slots(keep: &[PipeSlot]) {
-    PIPES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|slot, _| match slot {
-            PipeSlot::Current => true,
-            other => keep.contains(other),
-        });
+    let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
+    let visible = |slot: &PipeSlot| match slot {
+        PipeSlot::Current => true,
+        other => keep.contains(other),
+    };
+    pool.live.retain(|slot, _| visible(slot));
+    pool.standby.retain(|slot, _| visible(slot));
 }
 
 /// How many pipes — and therefore how many live `ffmpeg` processes — the pool
@@ -450,13 +629,29 @@ pub fn retain_pipe_slots(keep: &[PipeSlot]) {
 /// still links none of this.
 #[cfg(any(test, feature = "test-support"))]
 pub fn open_pipe_count() -> usize {
-    PIPES.lock().unwrap_or_else(|e| e.into_inner()).len()
+    PIPES.lock().unwrap_or_else(|e| e.into_inner()).live.len()
 }
 
-/// Drop every playback pipe (frees the ffmpeg processes + their fds). Called
-/// from `state::set_current_video` when the clip changes, and before an export.
+/// How many D-324 standby pipes are primed right now — the observable the
+/// "a prefetch is adopted, superseded or released, never leaked" contract is
+/// tested against. Test-only, same rationale and same gate as
+/// [`open_pipe_count`].
+#[cfg(any(test, feature = "test-support"))]
+pub fn standby_pipe_count() -> usize {
+    PIPES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .standby
+        .len()
+}
+
+/// Drop every playback pipe, primed standbys included (frees the ffmpeg
+/// processes + their fds). Called from `state::set_current_video` when the clip
+/// changes, and before an export.
 pub fn reset() {
-    PIPES.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
+    pool.live.clear();
+    pool.standby.clear();
 }
 
 /// Drop every pipe currently decoding `path`, and report how many were dropped.
@@ -482,17 +677,44 @@ pub fn reset() {
 /// unlike in [`retain_pipe_slots`]: there the caller is the Edit tab's
 /// per-frame release, which has no business judging the Colorist's session; here
 /// the file it is reading has genuinely been replaced.
+///
+/// **D-324 — drops a primed standby on that path too**, and counts it. Exactly
+/// the same argument: a standby holds the replaced file's old inode open just
+/// as firmly as a live pipe does, and adopting it after the swap would serve
+/// the stale picture from a process nothing else can see.
 pub fn drop_pipes_for_path(path: &Path) -> usize {
     let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
-    let before = pool.len();
-    pool.retain(|_, pipe| pipe.path != path);
-    before - pool.len()
+    let before = pool.live.len() + pool.standby.len();
+    pool.live.retain(|_, pipe| pipe.path != path);
+    pool.standby.retain(|_, pipe| pipe.path != path);
+    before - (pool.live.len() + pool.standby.len())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// Serialises every test that touches the process-global [`PIPES`] pool.
+    ///
+    /// The pool is one global, and these tests assert on its exact contents
+    /// ([`open_pipe_count`], [`standby_pipe_count`]) after calling [`reset`],
+    /// which clears it for the whole process. Run in parallel, one test's
+    /// `reset()` lands in the middle of another's arrange/assert and the
+    /// counts are whatever the interleaving happened to produce. Same
+    /// reasoning — and the same "one lock, one global" rule — as
+    /// `chroma::audio`'s `session_test_guard` and `PROJECT_STATE_LOCK`.
+    ///
+    /// Taken by every test below that calls `reset`, `prefetch`,
+    /// `playback_frame*`, `retain_pipe_slots` or `drop_pipes_for_path` —
+    /// including the ones that only `reset()` before driving their own
+    /// standalone `FramePipe`, since that `reset()` is itself the thing that
+    /// disturbs a concurrent pool test.
+    static POOL_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn pool_guard() -> std::sync::MutexGuard<'static, ()> {
+        POOL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     fn test_video() -> Option<PathBuf> {
         std::env::var("CHROMA_TEST_VIDEO")
@@ -515,6 +737,7 @@ mod tests {
     /// entries leave the map, so any two decodable files will do.
     #[test]
     fn drop_pipes_for_path_drops_only_that_file() {
+        let _pool = pool_guard();
         let ffmpeg_ok = std::process::Command::new("ffmpeg")
             .arg("-version")
             .stdout(std::process::Stdio::null())
@@ -571,6 +794,335 @@ mod tests {
         assert_eq!(drop_pipes_for_path(&a), 0);
         assert_eq!(open_pipe_count(), 1);
         reset();
+    }
+
+    // ----------------------------------------------------------------- //
+    // D-324 — the prefetch. A cut boundary is a large, arbitrary jump in
+    // source-frame space, which is exactly the case `frame_scaled` answers
+    // with a kill-and-respawn; on the recut timelines this was reported
+    // against there are 95-155 of them inside one continuous playthrough.
+    //
+    // These build their own small fixtures with `ffmpeg` rather than gating
+    // on `CHROMA_TEST_VIDEO`, because what they assert is *which pipe served
+    // the frame* and *what was left running afterwards* — properties of the
+    // pool's bookkeeping, true of any decodable file. The measured payoff on
+    // real 4K HEVC footage lives in `prefetch_hides_the_respawn_on_real_footage`
+    // below, which is env-gated like its siblings.
+    // ----------------------------------------------------------------- //
+
+    /// A 24 fps `testsrc` long enough to seek around inside.
+    fn synth_seekable(dir: &Path, secs: u32) -> PathBuf {
+        let out = dir.join("seekable.mp4");
+        let status = Command::new(ffmpeg_bin())
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg(format!("testsrc=size=320x240:rate=24:duration={secs}"))
+            .args(["-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p"])
+            .arg(&out)
+            .status()
+            .expect("running ffmpeg to synthesize the seekable fixture");
+        assert!(status.success(), "ffmpeg could not build the fixture");
+        out
+    }
+
+    /// The core decision both the live pipe and a standby are judged by.
+    #[test]
+    fn can_serve_accepts_a_forward_hop_and_rejects_a_seek() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_seekable(dir.path(), 20);
+        let other = synth_cfr(dir.path());
+        let info = crate::video::probe(&vid).expect("probe");
+
+        let pipe = FramePipe::open_with_hwaccel(&vid, &info, 100, None, false).expect("open");
+        assert_eq!(pipe.next_index, 100);
+
+        assert!(pipe.can_serve(&vid, 100, None), "its own opening frame");
+        assert!(pipe.can_serve(&vid, 101, None), "the next frame");
+        assert!(
+            pipe.can_serve(&vid, 100 + MAX_FORWARD_SKIP, None),
+            "the furthest forward hop still worth discarding to"
+        );
+        assert!(
+            !pipe.can_serve(&vid, 100 + MAX_FORWARD_SKIP + 1, None),
+            "one frame past the skip threshold is a seek"
+        );
+        assert!(!pipe.can_serve(&vid, 99, None), "backward is always a seek");
+        assert!(
+            !pipe.can_serve(&vid, 100, Some((160, 120))),
+            "a change of output scale needs a fresh ffmpeg, whatever the frame"
+        );
+        assert!(
+            !pipe.can_serve(&other, 100, None),
+            "a different source is never servable"
+        );
+    }
+
+    /// **The prefetch's whole point:** a pipe primed for a boundary is adopted
+    /// when the boundary arrives, and hands back the right picture.
+    #[test]
+    fn a_primed_standby_is_adopted_at_the_boundary() {
+        let _pool = pool_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_seekable(dir.path(), 20);
+        let info = crate::video::probe(&vid).expect("probe");
+        reset();
+
+        // Playing along at frame 10 — a long way from the boundary below, so
+        // the live pipe genuinely cannot reach it by reading forward.
+        playback_frame(PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
+        assert_eq!(open_pipe_count(), 1);
+        assert_eq!(standby_pipe_count(), 0);
+
+        const BOUNDARY: u64 = 300;
+        prefetch(PipeSlot::Track(0), &vid, &info, BOUNDARY, None);
+        assert_eq!(
+            standby_pipe_count(),
+            1,
+            "a target the live pipe cannot reach must be primed"
+        );
+
+        let got = playback_frame(PipeSlot::Track(0), &vid, &info, BOUNDARY)
+            .expect("the boundary frame")
+            .to_rgb8();
+        assert_eq!(
+            standby_pipe_count(),
+            0,
+            "the standby was adopted, not left running alongside the live pipe"
+        );
+        assert_eq!(open_pipe_count(), 1, "still exactly one pipe on this slot");
+
+        // Adoption must not cost a frame, duplicate one, or land elsewhere.
+        let want = crate::video::decode_frame(&vid, crate::video::FramePos::Index(BOUNDARY), &info)
+            .expect("reference decode")
+            .to_rgb8();
+        assert!(
+            mean_abs_diff(&got, &want) < 1.0,
+            "the adopted pipe served the wrong frame"
+        );
+
+        // And the adopted pipe is a normal sequential pipe afterwards.
+        let next = playback_frame(PipeSlot::Track(0), &vid, &info, BOUNDARY + 1)
+            .expect("the frame after the boundary")
+            .to_rgb8();
+        let next_want =
+            crate::video::decode_frame(&vid, crate::video::FramePos::Index(BOUNDARY + 1), &info)
+                .expect("reference decode")
+                .to_rgb8();
+        assert!(
+            mean_abs_diff(&next, &next_want) < 1.0,
+            "reading on from an adopted pipe drifted"
+        );
+        reset();
+    }
+
+    /// Playback dropping a frame or two across the cut — the normal case under
+    /// load, since the rAF loop skips frames to stay real-time — still adopts,
+    /// because the standby is primed at the clip's FIRST frame and a few frames
+    /// in is an ordinary forward skip from there.
+    #[test]
+    fn a_standby_still_serves_when_playback_lands_a_few_frames_late() {
+        let _pool = pool_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_seekable(dir.path(), 20);
+        let info = crate::video::probe(&vid).expect("probe");
+        reset();
+
+        playback_frame(PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
+        const BOUNDARY: u64 = 300;
+        prefetch(PipeSlot::Track(0), &vid, &info, BOUNDARY, None);
+
+        let late = BOUNDARY + 3;
+        let got = playback_frame(PipeSlot::Track(0), &vid, &info, late)
+            .expect("a late landing")
+            .to_rgb8();
+        assert_eq!(standby_pipe_count(), 0, "adopted, not discarded");
+        let want = crate::video::decode_frame(&vid, crate::video::FramePos::Index(late), &info)
+            .expect("reference decode")
+            .to_rgb8();
+        assert!(
+            mean_abs_diff(&got, &want) < 1.0,
+            "a late landing must skip forward within the adopted pipe, not respawn"
+        );
+        reset();
+    }
+
+    /// A mispredicted prefetch is harmless: the frame is still right, and the
+    /// stale `ffmpeg` is released rather than left holding a slot. This is what
+    /// makes the prediction safe to make at all.
+    #[test]
+    fn a_standby_that_cannot_serve_is_discarded_and_the_frame_is_still_right() {
+        let _pool = pool_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_seekable(dir.path(), 20);
+        let info = crate::video::probe(&vid).expect("probe");
+        reset();
+
+        playback_frame(PipeSlot::Track(0), &vid, &info, 200).expect("frame 200");
+        prefetch(PipeSlot::Track(0), &vid, &info, 300, None);
+        assert_eq!(standby_pipe_count(), 1);
+
+        // The user seeks backwards instead — the prediction is now worthless.
+        let elsewhere = 40;
+        let got = playback_frame(PipeSlot::Track(0), &vid, &info, elsewhere)
+            .expect("a seek elsewhere")
+            .to_rgb8();
+        assert_eq!(
+            standby_pipe_count(),
+            0,
+            "an overtaken prediction must release its ffmpeg, not pin it for the session"
+        );
+        let want =
+            crate::video::decode_frame(&vid, crate::video::FramePos::Index(elsewhere), &info)
+                .expect("reference decode")
+                .to_rgb8();
+        assert!(
+            mean_abs_diff(&got, &want) < 1.0,
+            "a discarded standby must not affect the picture"
+        );
+        reset();
+    }
+
+    /// `prefetch` is called every frame of the approach, so it has to be a
+    /// no-op in the two cases that are not a boundary — or it would spawn (and
+    /// kill) an `ffmpeg` per displayed frame, which is worse than the stall it
+    /// exists to remove.
+    #[test]
+    fn prefetch_does_nothing_mid_clip_or_when_already_primed() {
+        let _pool = pool_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_seekable(dir.path(), 20);
+        let info = crate::video::probe(&vid).expect("probe");
+        reset();
+
+        playback_frame(PipeSlot::Track(0), &vid, &info, 100).expect("frame 100");
+
+        // Mid-clip: the lookahead frame is a short forward hop the live pipe
+        // will reach on its own.
+        prefetch(PipeSlot::Track(0), &vid, &info, 112, None);
+        assert_eq!(
+            standby_pipe_count(),
+            0,
+            "a target the live pipe can already reach must not be primed"
+        );
+
+        // Approaching a real boundary: primed once…
+        prefetch(PipeSlot::Track(0), &vid, &info, 400, None);
+        assert_eq!(standby_pipe_count(), 1);
+        // …and re-asking for the SAME boundary on the next frame must not kill
+        // the seek that is already running and start it over.
+        for _ in 0..5 {
+            prefetch(PipeSlot::Track(0), &vid, &info, 400, None);
+            assert_eq!(standby_pipe_count(), 1);
+        }
+
+        // A DIFFERENT boundary replaces it — still exactly one standby.
+        prefetch(PipeSlot::Track(0), &vid, &info, 420, None);
+        assert_eq!(standby_pipe_count(), 1);
+        reset();
+    }
+
+    /// Every release path covers standbys too — the "don't leak ffmpeg
+    /// processes" half of the contract, one assertion per way a prefetch can
+    /// stop being wanted.
+    #[test]
+    fn standbys_are_released_by_every_path_that_releases_a_live_pipe() {
+        let _pool = pool_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vid = synth_seekable(dir.path(), 20);
+        let info = crate::video::probe(&vid).expect("probe");
+
+        // (a) the slot stops being visible
+        reset();
+        prefetch(PipeSlot::Track(3), &vid, &info, 100, None);
+        assert_eq!(standby_pipe_count(), 1);
+        retain_pipe_slots(&[PipeSlot::Track(3)]);
+        assert_eq!(standby_pipe_count(), 1, "still visible — kept");
+        retain_pipe_slots(&[PipeSlot::Track(0)]);
+        assert_eq!(
+            standby_pipe_count(),
+            0,
+            "a track that went hidden/deleted must release its primed pipe too"
+        );
+
+        // (b) the file is replaced underneath it (D-260)
+        reset();
+        prefetch(PipeSlot::Track(0), &vid, &info, 100, None);
+        playback_frame(PipeSlot::Track(1), &vid, &info, 0).expect("a live pipe too");
+        assert_eq!(
+            drop_pipes_for_path(&vid),
+            2,
+            "both the live pipe and the standby on that path are dropped, and counted"
+        );
+        assert_eq!(standby_pipe_count(), 0);
+        assert_eq!(open_pipe_count(), 0);
+
+        // (c) a wholesale reset
+        reset();
+        prefetch(PipeSlot::Track(0), &vid, &info, 100, None);
+        assert_eq!(standby_pipe_count(), 1);
+        reset();
+        assert_eq!(standby_pipe_count(), 0, "reset clears standbys as well");
+    }
+
+    /// The measured claim, on the real footage the bug was reported against:
+    /// crossing a cut costs a respawn's full keyframe seek without a prefetch,
+    /// and a pipe read with one.
+    ///
+    /// ```text
+    /// CHROMA_TEST_VIDEO=~/Downloads/A001_09122319_C038.MOV \
+    ///   cargo test -p apelles-media prefetch_hides_the_respawn -- --nocapture
+    /// ```
+    #[test]
+    fn prefetch_hides_the_respawn_on_real_footage() {
+        let _pool = pool_guard();
+        let Some(vid) = test_video() else {
+            eprintln!("skip: set CHROMA_TEST_VIDEO");
+            return;
+        };
+        let info = crate::video::probe(&vid).expect("probe");
+        let scale = scale_target(info.resolution.width, info.resolution.height, 1280);
+
+        // Cuts far enough apart that each is a genuine seek, walked the way
+        // playback walks them.
+        let cuts: [u64; 4] = [4000, 9000, 13000, 2500];
+
+        let mut without = Vec::new();
+        for &cut in &cuts {
+            reset();
+            playback_frame_scaled(PipeSlot::Track(0), &vid, &info, 100, scale).expect("warm");
+            let t = std::time::Instant::now();
+            playback_frame_scaled(PipeSlot::Track(0), &vid, &info, cut, scale).expect("cut");
+            without.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+
+        let mut with = Vec::new();
+        for &cut in &cuts {
+            reset();
+            playback_frame_scaled(PipeSlot::Track(0), &vid, &info, 100, scale).expect("warm");
+            prefetch(PipeSlot::Track(0), &vid, &info, cut, scale);
+            // The lookahead D-324 actually uses: 0.5 s of playback, during
+            // which the real preview would have been decoding frames of the
+            // OUTGOING clip while this ffmpeg seeks in parallel.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let t = std::time::Instant::now();
+            playback_frame_scaled(PipeSlot::Track(0), &vid, &info, cut, scale).expect("cut");
+            with.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        reset();
+
+        let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+        let (a, b) = (mean(&without), mean(&with));
+        eprintln!(
+            "cut-boundary latency on {}: without prefetch {a:.1} ms {:?}, with prefetch {b:.1} ms {:?}",
+            vid.display(),
+            without.iter().map(|v| v.round()).collect::<Vec<_>>(),
+            with.iter().map(|v| v.round()).collect::<Vec<_>>(),
+        );
+        assert!(
+            b * 4.0 < a,
+            "a primed pipe should turn a cut into a pipe read — got {b:.1} ms with the \
+             prefetch against {a:.1} ms without, which is not the order-of-magnitude \
+             difference the design rests on"
+        );
     }
 
     #[test]
@@ -788,6 +1340,7 @@ mod tests {
     /// name the same instant-range and must therefore be the same picture.
     #[test]
     fn a_held_frame_is_held_for_every_grid_slot_it_covers() {
+        let _pool = pool_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         let vid = synth_vfr_with_a_hold(dir.path());
         let info = crate::video::probe(&vid).expect("probe");
@@ -842,6 +1395,7 @@ mod tests {
     /// which is why the drift *snapped back* whenever the owner scrubbed.
     #[test]
     fn a_frame_is_the_same_picture_wherever_the_pipe_was_opened() {
+        let _pool = pool_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         let vid = synth_vfr_with_a_hold(dir.path());
         let info = crate::video::probe(&vid).expect("probe");
@@ -876,6 +1430,7 @@ mod tests {
     /// would show up live as the picture jumping at a random moment.
     #[test]
     fn pipe_and_single_frame_decode_agree_on_a_vfr_source() {
+        let _pool = pool_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         let vid = synth_vfr_with_a_hold(dir.path());
         let info = crate::video::probe(&vid).expect("probe");
@@ -925,6 +1480,7 @@ mod tests {
     /// duplicated) and the two decode paths still agree.
     #[test]
     fn a_cfr_source_is_unaffected_by_the_conform() {
+        let _pool = pool_guard();
         let dir = tempfile::tempdir().expect("tempdir");
         let vid = synth_cfr(dir.path());
         let info = crate::video::probe(&vid).expect("probe");

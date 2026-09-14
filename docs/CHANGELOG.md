@@ -4,6 +4,15 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-14** — **D-324 fixes B-191: every cut of a recut timeline cost a
+  ~300 ms ffmpeg keyframe seek in the playback hot path.** A ripple-delete's
+  boundaries are arbitrary source-frame jumps, so all 95–155 of them forced a
+  pipe respawn — measured at 248–337 ms, of which `Command::spawn` is 0.8 ms, so
+  the cost is the seek and nothing else. Fixed by priming the next clip's pipe
+  ~0.5 s ahead off the edit list the app already has, and adopting it at the
+  boundary: **307 ms → 31 ms per cut**, inside one frame's budget. Proxy media
+  rejected a third time, now on evidence — it would reseek at every boundary too.
+
 - **2026-09-14** — **D-323 fixes B-190: a recut timeline's audio went silent for
   good at the first cut.** The mix loop ended the session the first time every
   OPEN source ran dry, and its timeline re-resolve ran on a separate 100 ms

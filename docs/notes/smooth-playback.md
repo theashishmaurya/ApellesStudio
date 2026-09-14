@@ -92,9 +92,22 @@ ffmpeg -ss <(from/fps)-1.0> -copyts -i <clip>
   ~1280 px playback grade res (the ffmpeg scaler does the downscale, not the
   CPU), and a `requestAnimationFrame` wall-clock loop in `ChromaTimeline`.
   Headless harness: **36.5 fps** at 1280 px on C019 (was 14.5 fps at 4K).
-- **Proxy files** (option B) — deferred. Only worth it if decode stays the
-  bottleneck after the pipe, which it shouldn't for v1's single-clip talking-head
-  workflow.
+- ~~**Proxy files** (option B) — deferred.~~ **Rejected outright by D-324**, the
+  third time it was considered (here, then D-128). The case that finally tested
+  it was a ripple-deleted timeline, where option (A)'s "otherwise → kill and
+  respawn" arm above stops being the rare path and becomes the steady state: a
+  cut is an arbitrary jump in source-frame space, so every one of 95-155
+  boundaries forces a respawn. Profiling that respawn is what settles the
+  question — **248-337 ms, of which `Command::spawn` is 0.8-1.0 ms**. The cost is
+  ffmpeg's keyframe seek. A proxy file would reseek at every boundary exactly as
+  the source does, and would only make cheaper the sequential read that was
+  already 6.7 ms. It solves a bottleneck this path does not have.
+  D-324 primes the next clip's pipe ~0.5 s ahead instead (the app knows the edit
+  list, so the next boundary is arithmetic) — 307 ms → 31 ms per cut, measured
+  end to end. See D-324 / B-191.
+- **The respawn itself is still ~300 ms** for anything the prefetch cannot
+  predict — a backward scrub, a jump to an arbitrary point. That is unchanged
+  and deliberate: those genuinely have no lookahead to exploit.
 - **VFR footage** — the `-ss` seek math assumes CFR (D-004's v1 assumption). A VFR
   clip could land ±1 frame off; acceptable for scrub, and the export path selects
   by timestamp so it stays correct.

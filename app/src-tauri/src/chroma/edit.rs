@@ -824,12 +824,25 @@ fn blank_frame_jpeg() -> Result<Vec<u8>, String> {
 /// fixes, which is far too long to hold the main thread. Same `async fn` +
 /// `spawn_blocking` shape `chroma::commands`' and `chroma::session`'s decode
 /// commands already use.
+///
+/// **`playing` is D-324.** `Some(true)` means "this is the next frame of a
+/// running playback", which is what licenses priming a decode pipe for the cut
+/// ahead (see [`prefetch_upcoming_boundaries`]). Optional and defaulting to
+/// `false` so a scrub, a paused seek or any caller that does not care keeps the
+/// exact pre-D-324 behaviour rather than spawning an `ffmpeg` per dragged
+/// frame.
 #[tauri::command]
 pub async fn chroma_timeline_frame(
     pos: u64,
     max_long_edge: Option<u32>,
+    playing: Option<bool>,
 ) -> Result<tauri::ipc::Response, String> {
-    let jpeg = tokio::task::spawn_blocking(move || timeline_frame(pos, max_long_edge))
+    let intent = if playing.unwrap_or(false) {
+        FrameIntent::Playing
+    } else {
+        FrameIntent::Single
+    };
+    let jpeg = tokio::task::spawn_blocking(move || timeline_frame(pos, max_long_edge, intent))
         .await
         .map_err(|e| format!("timeline frame task: {e}"))??;
     Ok(tauri::ipc::Response::new(jpeg))
@@ -842,8 +855,12 @@ pub async fn chroma_timeline_frame(
 /// Two phases, deliberately separable so they can be timed apart (D-217):
 /// [`timeline_frame_image`] produces the picture (decode + composite),
 /// [`encode_preview_jpeg`] turns it into the wire payload.
-pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Vec<u8>, String> {
-    match timeline_frame_image(pos, max_long_edge)? {
+pub(crate) fn timeline_frame(
+    pos: u64,
+    max_long_edge: Option<u32>,
+    intent: FrameIntent,
+) -> Result<Vec<u8>, String> {
+    match timeline_frame_image(pos, max_long_edge, intent)? {
         Some(img) => encode_preview_jpeg(&img),
         None => blank_frame_jpeg(),
     }
@@ -868,7 +885,7 @@ pub(crate) fn timeline_frame(pos: u64, max_long_edge: Option<u32>) -> Result<Vec
 /// stills, or one whose timeline failed to build) or a genuine decode error —
 /// both cases the caller's own fallback already exists for.
 pub(crate) fn timeline_thumb_jpeg(max_long_edge: u32) -> Option<Vec<u8>> {
-    match timeline_frame_image(0, Some(max_long_edge)) {
+    match timeline_frame_image(0, Some(max_long_edge), FrameIntent::Single) {
         Ok(Some(img)) => encode_preview_jpeg(&img).ok(),
         _ => None,
     }
@@ -885,6 +902,7 @@ pub(crate) fn timeline_thumb_jpeg(max_long_edge: u32) -> Option<Vec<u8>> {
 pub(crate) fn timeline_frame_image(
     pos: u64,
     max_long_edge: Option<u32>,
+    intent: FrameIntent,
 ) -> Result<Option<DynamicImage>, String> {
     let (timeline, settings) = resolve_timeline_and_settings(false)?;
     if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
@@ -922,11 +940,33 @@ pub(crate) fn timeline_frame_image(
     // by real `PipeSlot`, since a transition's partner clip holds a second slot
     // on the same track whose lifetime is the transition window, not the
     // track's.
-    let visible_slots: Vec<decode_pipe::PipeSlot> =
+    let mut keep_slots: Vec<decode_pipe::PipeSlot> =
         layers.iter().filter_map(layer_pipe_slot).collect();
-    decode_pipe::retain_pipe_slots(&visible_slots);
+
+    // D-324 — resolve the upcoming cut boundaries BEFORE the release above
+    // runs, because their slots have to survive it.
+    //
+    // A track whose playhead currently sits in a gap (or on a still, or on a
+    // text clip) contributes no visible slot, so an unextended keep-list would
+    // release the pipe primed for the clip starting a few frames later — and
+    // then the next frame would prime it again, and the frame after that would
+    // release it again. That is one `ffmpeg` spawned and killed per displayed
+    // frame: strictly worse than the stall this is here to remove. Extending
+    // the keep-list with what is about to be visible keeps at most half a
+    // second of extra lifetime per slot, which is exactly the lookahead.
+    let upcoming = match intent {
+        FrameIntent::Playing => upcoming_boundary_targets(&timeline, pos, max_long_edge),
+        // A scrub/thumbnail predicts nothing, so it also extends nothing — the
+        // keep-list stays exactly the pre-D-324 visible set.
+        FrameIntent::Single => Vec::new(),
+    };
+    keep_slots.extend(upcoming.iter().map(|t| t.slot));
+    decode_pipe::retain_pipe_slots(&keep_slots);
 
     if layers.is_empty() {
+        // A gap under the playhead still has a boundary coming, and priming it
+        // is the whole reason the keep-list above was extended.
+        prime(&upcoming);
         return Ok(None);
     }
     let comp = composition_size(&settings, &timeline)?;
@@ -1047,7 +1087,31 @@ pub(crate) fn timeline_frame_image(
     // that comes back empty.
     let img = draw_captions_onto(img, &timeline, pos as i64)?;
 
+    // D-324 — prime the upcoming boundaries AFTER this frame is decoded, not
+    // before.
+    //
+    // Order is load-bearing, and getting it wrong is silent: a standby is
+    // consulted by `playback_frame_scaled` whenever the live pipe cannot serve
+    // the frame being asked for, which is exactly the situation on the first
+    // frame of a clip. Priming first therefore had this very frame's decode
+    // pick up the pipe meant for the NEXT clip, find it could not serve the
+    // frame at hand, and drop it — so the standby was spawned and killed every
+    // frame and never once adopted. The prefetch ran, the processes churned,
+    // and nothing got faster. (Caught by
+    // `playback_primes_the_upcoming_cut_and_a_scrub_does_not`, which is why it
+    // asserts on the standby count rather than only on wall-clock.)
+    prime(&upcoming);
+
     Ok(Some(img))
+}
+
+/// Hand every resolved [`PrefetchTarget`] to `decode_pipe::prefetch` (D-324).
+/// Its own `can_serve` check makes each call a no-op unless a respawn is
+/// genuinely coming, so this is cheap on every ordinary mid-clip frame.
+fn prime(targets: &[PrefetchTarget]) {
+    for t in targets {
+        decode_pipe::prefetch(t.slot, &t.path, &t.info, t.target, t.scale);
+    }
 }
 
 /// D-229 — alpha-composite every caption showing at `pos` onto `frame`.
@@ -1097,6 +1161,135 @@ fn draw_captions_onto(
         image::imageops::overlay(&mut canvas, layer.as_ref(), 0, 0);
     }
     Ok(DynamicImage::ImageRgba8(canvas))
+}
+
+/// **D-324 — how far ahead of the playhead to look for the next cut.**
+///
+/// Measured, not guessed. On the owner's real 4K HEVC footage a decode-pipe
+/// respawn takes 248-337 ms before its first frame appears, essentially all of
+/// it ffmpeg's keyframe seek. Priming the pipe that far ahead of the boundary
+/// and then reading it measured: 200 ms of lead → 103 ms still to wait, 400 ms
+/// → 1.0 ms, 800 ms → 2.6 ms. So 400 ms is where the curve has already
+/// flattened, and 500 ms is that with headroom for a slower file or a busier
+/// machine, at the cost of one `ffmpeg` process starting half a second early.
+///
+/// **Why a duration and not a frame count**: the thing being hidden is wall
+/// clock (a seek), so the lead has to be wall clock too — 12 frames is half a
+/// second at 24 fps and a fifth of one at 60.
+///
+/// Capped below `apelles_media::decode_pipe`'s own forward-skip threshold on
+/// purpose. Beyond that, a lookahead frame inside the *current* clip would stop
+/// looking servable by the live pipe, and every ordinary mid-clip frame would
+/// start priming a standby it was never going to adopt.
+const PREFETCH_LOOKAHEAD_SECS: f64 = 0.5;
+
+/// [`PREFETCH_LOOKAHEAD_SECS`] in timeline frames at `fps`, clamped to a range
+/// that stays useful without tipping into the pathological case its own doc
+/// describes. The floor of 1 keeps a nonsense or missing fps from turning the
+/// lookahead into "this very frame", which would prime nothing.
+fn prefetch_lookahead_frames(fps: f64) -> u64 {
+    if !fps.is_finite() || fps <= 0.0 {
+        return 1;
+    }
+    ((PREFETCH_LOOKAHEAD_SECS * fps).round() as u64).clamp(1, MAX_PREFETCH_LOOKAHEAD_FRAMES)
+}
+
+/// The clamp in [`prefetch_lookahead_frames`]. Must stay strictly under
+/// `decode_pipe`'s `MAX_FORWARD_SKIP` (48) — see [`PREFETCH_LOOKAHEAD_SECS`].
+const MAX_PREFETCH_LOOKAHEAD_FRAMES: u64 = 36;
+
+/// Whether a preview-frame request is one step of continuous playback or a
+/// one-off picture — the only thing that decides whether it is worth priming a
+/// decode pipe for the cut ahead (D-324).
+///
+/// A scrub, a paused seek and a thumbnail are all `Single`: their next position
+/// is whatever the user's pointer does next, so a prediction from the current
+/// one is worth nothing and would spawn an `ffmpeg` per dragged frame. Playback
+/// is the opposite — its next position is arithmetic.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum FrameIntent {
+    /// A scrub, a paused seek, a thumbnail — no prefetch.
+    Single,
+    /// The next frame of a running playback — prime the upcoming boundary.
+    Playing,
+}
+
+/// **D-324 — prime a decode pipe for every cut boundary playback is about to
+/// cross.**
+///
+/// The Edit tab knows the whole edit list, so when playback is running, the
+/// next clip on each track — and the exact source frame it opens on — is
+/// arithmetic rather than a guess. This resolves the timeline once at
+/// `pos + lookahead` and hands each visible layer's slot to
+/// `decode_pipe::prefetch`, which does nothing at all unless a respawn is
+/// genuinely coming. So mid-clip this is one extra timeline walk per frame and
+/// no processes; approaching a cut it is the one `ffmpeg` spawn that turns a
+/// ~300 ms stall into a ~1 ms read.
+///
+/// **The prefetch target is the clip's FIRST frame, not the frame at
+/// `pos + lookahead`.** Playback crosses the boundary at the new clip's own
+/// `start_frame`, and a pipe primed past that point could not serve it — it
+/// would respawn, which is the entire thing being avoided. Priming at the start
+/// instead means the boundary frame is the standby's very next read, and the
+/// handful of frames after it are the ordinary forward-skip the pipe already
+/// does, so a dropped frame either side changes nothing.
+///
+/// Never fails the frame. Every step that could error (an unprobeable source, a
+/// clip whose media has gone offline) simply skips that layer: the fallback is
+/// the respawn that would have happened anyway.
+fn upcoming_boundary_targets(
+    timeline: &Timeline,
+    pos: u64,
+    max_long_edge: Option<u32>,
+) -> Vec<PrefetchTarget> {
+    let fps = timeline.fps();
+    let ahead = pos + prefetch_lookahead_frames(fps);
+    let mut out = Vec::new();
+
+    for layer in timeline.resolve_visible_video_layers_at(ahead as i64) {
+        let Some(slot) = layer_pipe_slot(&layer) else {
+            continue; // text, adjustment, colour plate, still — never a pipe
+        };
+        let LayerSource::Clip { clip, .. } = &layer.source else {
+            continue;
+        };
+        // A clip already under the playhead is mid-stream, not a boundary; its
+        // own live pipe is already there and `decode_pipe::prefetch` will
+        // no-op. Clamping rather than skipping keeps that decision in one
+        // place — `prefetch`'s own `can_serve` check.
+        let boundary = clip.start_frame.max(pos as i64);
+        let source_frame = clip.source_frame_at(boundary, fps);
+        if source_frame < 0 {
+            continue;
+        }
+        let path = PathBuf::from(&clip.source_path);
+        let (Ok(size), Ok(info)) = (clip_source_size(&clip.source_path), probe_cached(&path))
+        else {
+            continue;
+        };
+        out.push(PrefetchTarget {
+            slot,
+            path,
+            info,
+            target: source_frame as u64,
+            scale: decode_scale(size, max_long_edge),
+        });
+    }
+    out
+}
+
+/// One resolved D-324 prefetch: everything `decode_pipe::prefetch` needs for a
+/// boundary the playhead is approaching. Produced by
+/// [`upcoming_boundary_targets`] before the frame is decoded, because its
+/// `slot` also has to extend that frame's `retain_pipe_slots` keep-list — see
+/// the call site for why a slot about to become visible must not be released
+/// first and re-primed a frame later.
+struct PrefetchTarget {
+    slot: decode_pipe::PipeSlot,
+    path: PathBuf,
+    info: apelles_media::video::VideoInfo,
+    target: u64,
+    scale: Option<(u32, u32)>,
 }
 
 /// D-226 — the decode-pipe slot a clip layer belongs in: the track's own slot
@@ -3648,7 +3841,9 @@ mod preview_text_tests {
         let _project = open_title_project(&video);
         super::decode_pipe::reset();
 
-        let frame = decode_preview(&super::timeline_frame(12, Some(W)).expect("preview frame"));
+        let frame = decode_preview(
+            &super::timeline_frame(12, Some(W), super::FrameIntent::Single).expect("preview frame"),
+        );
         assert_eq!(frame.dimensions(), (W, H));
 
         // Real, bright glyph pixels — and the ink's bounding box centred, the
@@ -3731,7 +3926,7 @@ mod preview_text_tests {
         };
 
         let centred = centre_x(&decode_preview(
-            &super::timeline_frame(12, Some(W)).expect("frame"),
+            &super::timeline_frame(12, Some(W), super::FrameIntent::Single).expect("frame"),
         ));
 
         // Shift the title a quarter of the frame to the right and re-render
@@ -3741,7 +3936,7 @@ mod preview_text_tests {
         super::chroma_timeline_set(tl).expect("persist");
         let _ = &project; // keep the project dir alive for the second render
         let shifted = centre_x(&decode_preview(
-            &super::timeline_frame(12, Some(W)).expect("frame"),
+            &super::timeline_frame(12, Some(W), super::FrameIntent::Single).expect("frame"),
         ));
 
         let moved = shifted - centred;
@@ -3891,7 +4086,8 @@ mod preview_transition_tests {
     /// decoded back from `timeline_frame`'s own JPEG bytes — exactly what the
     /// preview `<img>` shows.
     fn centre_pixel(pos: u64) -> [u8; 3] {
-        let jpeg = super::timeline_frame(pos, Some(W)).expect("preview frame");
+        let jpeg =
+            super::timeline_frame(pos, Some(W), super::FrameIntent::Single).expect("preview frame");
         let img = image::load_from_memory(&jpeg)
             .expect("decode jpeg")
             .to_rgba8();
@@ -4106,6 +4302,243 @@ mod preview_throughput_tests {
         tmp
     }
 
+    /// **D-324 — a timeline shaped the way `editor_ripple_delete_ranges`
+    /// leaves one**: many short clips butted together with no gaps, each
+    /// pointing at a source frame far from where the previous one stopped.
+    ///
+    /// `jump` is the distance in source frames between consecutive clips —
+    /// comfortably past `decode_pipe`'s 48-frame forward-skip threshold, so
+    /// every boundary is a genuine keyframe seek rather than a hop the live
+    /// pipe would absorb on its own. That is the whole property under test.
+    fn open_ripple_cut_project(
+        video_path: &str,
+        n_clips: i64,
+        clip_frames: i64,
+        jump: i64,
+    ) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let project_dir = tmp.path().join("RippleCut.chroma");
+        std::fs::create_dir_all(&project_dir).expect("mkdir project dir");
+
+        let clips: Vec<Clip> = (0..n_clips)
+            .map(|i| Clip {
+                id: format!("cut{i}"),
+                name: format!("cut{i}"),
+                source_path: video_path.to_string(),
+                source_start: i * jump,
+                duration: clip_frames,
+                source_len: n_clips * jump + clip_frames,
+                start_frame: i * clip_frames,
+                ..Default::default()
+            })
+            .collect();
+
+        let manifest = super::project::ProjectManifest {
+            schema: "chroma.project/1".into(),
+            name: "RippleCut".into(),
+            created: String::new(),
+            modified: String::new(),
+            shots: Vec::new(),
+            active_shot: 0,
+            active_clip_id: None,
+            settings: Default::default(),
+            timelines: vec![Timeline {
+                id: "tl1".into(),
+                name: "RippleCut".into(),
+                rate: None,
+                tracks: vec![Track {
+                    kind: TrackKind::Video,
+                    clips,
+                    ..Default::default()
+                }],
+                markers: Vec::new(),
+            }],
+            active_timeline: 0,
+            media: Vec::new(),
+            folders: Vec::new(),
+        };
+        super::project::save_manifest(&project_dir, &manifest).expect("save manifest");
+        super::state::set_project(Some(super::state::ProjectRef {
+            path: project_dir,
+            name: "RippleCut".into(),
+        }));
+        tmp
+    }
+
+    /// A 24 fps fixture long enough for the cut jumps below to land inside it.
+    fn synth_long_fixture(dir: &std::path::Path, frames: i64) -> String {
+        let out = dir.join("cuts.mp4");
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+            .arg(format!(
+                "testsrc=size=320x240:rate=24:duration={}",
+                frames as f64 / 24.0
+            ))
+            .args(["-c:v", "libx264", "-crf", "20", "-pix_fmt", "yuv420p"])
+            .arg(&out)
+            .status()
+            .expect("ffmpeg to synthesize the cut fixture");
+        assert!(status.success(), "ffmpeg could not build the cut fixture");
+        out.display().to_string()
+    }
+
+    /// **D-324, the caller half.** Continuous playback must prime the decode
+    /// pipe for the cut it is approaching; a scrub must not.
+    ///
+    /// This is the piece `decode_pipe`'s own tests cannot cover: they prove a
+    /// primed pipe is adopted, but not that the Edit tab works out *what* to
+    /// prime, *when*, from the edit list — nor that it stops short of doing so
+    /// for a one-off frame.
+    #[test]
+    fn playback_primes_the_upcoming_cut_and_a_scrub_does_not() {
+        // B-105 — this test opens a project AND drives the process-global
+        // decode-pipe pool, both of which its assertions read back. One lock,
+        // one global (see `chroma::audio`'s `session_test_guard`).
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp_src = tempfile::tempdir().expect("tempdir");
+        const N_CLIPS: i64 = 8;
+        const CLIP_FRAMES: i64 = 12; // 0.5 s at 24 fps — one per lookahead window
+        const JUMP: i64 = 100; // >> the 48-frame forward-skip threshold
+        let video = synth_long_fixture(tmp_src.path(), N_CLIPS * JUMP + CLIP_FRAMES + 24);
+        let _project = open_ripple_cut_project(&video, N_CLIPS, CLIP_FRAMES, JUMP);
+
+        // --- a scrub primes nothing -------------------------------------- //
+        apelles_media::decode_pipe::reset();
+        super::timeline_frame(0, Some(640), super::FrameIntent::Single).expect("scrub frame");
+        assert_eq!(
+            apelles_media::decode_pipe::standby_pipe_count(),
+            0,
+            "a one-off frame must not spawn an ffmpeg for a boundary it cannot predict"
+        );
+
+        // --- playback primes the next boundary --------------------------- //
+        apelles_media::decode_pipe::reset();
+        super::timeline_frame(0, Some(640), super::FrameIntent::Playing).expect("play frame 0");
+        assert_eq!(
+            apelles_media::decode_pipe::standby_pipe_count(),
+            1,
+            "frame 0 is within the 0.5 s lookahead of the cut at frame {CLIP_FRAMES}, so the \
+             next clip's pipe must already be spawning"
+        );
+
+        // --- and crossing every boundary neither fails nor leaks --------- //
+        for pos in 0..(N_CLIPS * CLIP_FRAMES) as u64 {
+            super::timeline_frame(pos, Some(640), super::FrameIntent::Playing)
+                .unwrap_or_else(|e| panic!("play frame {pos}: {e}"));
+            assert!(
+                apelles_media::decode_pipe::open_pipe_count() <= 1,
+                "one video track is one live pipe, at frame {pos}"
+            );
+            assert!(
+                apelles_media::decode_pipe::standby_pipe_count() <= 1,
+                "at most one primed pipe per slot — a prefetch that replaced another \
+                 without dropping it would leak an ffmpeg per cut, at frame {pos}"
+            );
+        }
+
+        apelles_media::decode_pipe::reset();
+        super::state::set_project(None);
+    }
+
+    /// **D-324's measured claim, end to end through the real preview path.**
+    ///
+    /// Plays a stretch of a heavily recut timeline twice — once as playback
+    /// (prefetch on), once as a series of one-off frames (prefetch off, i.e.
+    /// exactly the pre-D-324 behaviour) — and reports the per-frame cost at the
+    /// **cut boundaries** separately from the frames in between. That split is
+    /// the whole point: mid-clip frames were never the problem, and averaging
+    /// the two together dilutes a stall the user sees as a hitch into a number
+    /// that looks like mild slowness.
+    ///
+    /// **Paced to the timeline's real frame rate, deliberately.** The lookahead
+    /// D-324 buys is half a second of WALL CLOCK for ffmpeg to seek in. A
+    /// flat-out loop decodes a 12-frame clip in ~80 ms, so it hands the
+    /// prefetch a tenth of the lead real playback would and measures a benefit
+    /// that is real but much smaller than the one a user gets. Sleeping out
+    /// each frame's budget is what makes this the same experiment as playing
+    /// the timeline.
+    ///
+    /// Env-gated on real footage because the cost being removed is a real 4K
+    /// HEVC keyframe seek; on a 320×240 `testsrc` a respawn is cheap enough
+    /// that the difference is noise. The assertion is loose for
+    /// `b040_multi_layer_preview_throughput`'s stated reason: a guard against
+    /// the *class* of regression, not a wall-clock budget.
+    ///
+    /// ```text
+    /// CHROMA_TEST_VIDEO=~/Downloads/A001_09122319_C038.MOV \
+    ///   cargo test -p apelles ripple_cut_playback_throughput -- --nocapture
+    /// ```
+    #[test]
+    fn ripple_cut_playback_throughput() {
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(video) = test_video() else {
+            eprintln!("skip: set CHROMA_TEST_VIDEO");
+            return;
+        };
+        // 0.5 s clips, each jumping 30 s further into the source — the shape of
+        // a silence/retake cleanup on a talking head.
+        const N_CLIPS: i64 = 10;
+        const CLIP_FRAMES: i64 = 12;
+        const JUMP: i64 = 720;
+        const FPS: f64 = 24.0;
+        let _project = open_ripple_cut_project(&video, N_CLIPS, CLIP_FRAMES, JUMP);
+        let last = (N_CLIPS * CLIP_FRAMES) as u64;
+        let budget = std::time::Duration::from_secs_f64(1.0 / FPS);
+
+        // Returns (mean ms at a cut boundary, mean ms mid-clip).
+        let run = |intent: super::FrameIntent| -> (f64, f64) {
+            apelles_media::decode_pipe::reset();
+            // The first frame of any run pays a cold spawn either way.
+            super::timeline_frame(0, Some(960), intent).expect("warm frame");
+            let (mut cuts, mut mids) = (Vec::new(), Vec::new());
+            for pos in 1..last {
+                let t = Instant::now();
+                super::timeline_frame(pos, Some(960), intent).expect("frame");
+                let ms = t.elapsed().as_secs_f64() * 1000.0;
+                if pos % CLIP_FRAMES as u64 == 0 {
+                    cuts.push(ms);
+                } else {
+                    mids.push(ms);
+                }
+                // Play at the timeline's rate: whatever is left of this frame's
+                // budget is time the prefetched ffmpeg gets to seek in, exactly
+                // as it would during real playback.
+                if let Some(rest) = budget.checked_sub(t.elapsed()) {
+                    std::thread::sleep(rest);
+                }
+            }
+            let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
+            (mean(&cuts), mean(&mids))
+        };
+
+        let (cut_without, mid_without) = run(super::FrameIntent::Single);
+        let (cut_with, mid_with) = run(super::FrameIntent::Playing);
+        apelles_media::decode_pipe::reset();
+        super::state::set_project(None);
+
+        eprintln!(
+            "ripple_cut_playback_throughput ({N_CLIPS} clips, {} cuts, paced at {FPS} fps):\n  \
+             without prefetch: {cut_without:.1} ms at a cut, {mid_without:.1} ms mid-clip\n  \
+             with prefetch:    {cut_with:.1} ms at a cut, {mid_with:.1} ms mid-clip",
+            N_CLIPS - 1,
+        );
+        assert!(
+            cut_with * 2.0 < cut_without,
+            "crossing a cut must get materially cheaper — got {cut_with:.1} ms with the \
+             prefetch against {cut_without:.1} ms without"
+        );
+        assert!(
+            cut_with < budget.as_secs_f64() * 1000.0,
+            "with the pipe primed, a cut should cost less than one frame's budget \
+             ({:.1} ms) — got {cut_with:.1} ms, i.e. the stall is still dropping frames",
+            budget.as_secs_f64() * 1000.0
+        );
+    }
+
     /// The B-040 regression guard. Before D-125 every composited layer past
     /// the first forced a full `ffmpeg` respawn + keyframe seek *per displayed
     /// frame* on a timeline shaped like the owner's real three-video-track
@@ -4141,11 +4574,11 @@ mod preview_throughput_tests {
 
         // The first frame legitimately pays the pipe spawns + keyframe seeks;
         // it is not part of the steady-state measurement.
-        super::timeline_frame(100, Some(960)).expect("warm frame");
+        super::timeline_frame(100, Some(960), super::FrameIntent::Single).expect("warm frame");
 
         let start = Instant::now();
         for f in 101..101 + FRAMES {
-            super::timeline_frame(f, Some(960)).expect("frame");
+            super::timeline_frame(f, Some(960), super::FrameIntent::Single).expect("frame");
         }
         let per_frame = start.elapsed().as_millis() / FRAMES as u128;
         eprintln!(
@@ -4178,7 +4611,7 @@ mod preview_throughput_tests {
         let _project = open_multi_track_project(&vid, 3, None);
         super::decode_pipe::reset();
 
-        super::timeline_frame(100, Some(960)).expect("frame");
+        super::timeline_frame(100, Some(960), super::FrameIntent::Single).expect("frame");
         assert_eq!(
             super::decode_pipe::open_pipe_count(),
             3,
@@ -4227,13 +4660,14 @@ mod preview_throughput_tests {
         const LONG_EDGE: u32 = 960;
 
         // The first frame pays the pipe spawns + keyframe seeks; not measured.
-        super::timeline_frame(100, Some(LONG_EDGE)).expect("warm frame");
+        super::timeline_frame(100, Some(LONG_EDGE), super::FrameIntent::Single)
+            .expect("warm frame");
 
         let (mut t_image, mut t_jpeg, mut t_b64) = (0u128, 0u128, 0u128);
         let (mut n_jpeg, mut n_b64) = (0usize, 0usize);
         for f in 101..101 + FRAMES {
             let t0 = Instant::now();
-            let img = super::timeline_frame_image(f, Some(LONG_EDGE))
+            let img = super::timeline_frame_image(f, Some(LONG_EDGE), super::FrameIntent::Single)
                 .expect("image")
                 .expect("a visible layer");
             t_image += t0.elapsed().as_micros();
@@ -4267,7 +4701,8 @@ mod preview_throughput_tests {
 
         // The invariant, not the wall clock: what crosses the IPC boundary is
         // the JPEG, byte for byte.
-        let payload = super::timeline_frame(120, Some(LONG_EDGE)).expect("frame");
+        let payload =
+            super::timeline_frame(120, Some(LONG_EDGE), super::FrameIntent::Single).expect("frame");
         assert_eq!(&payload[..2], &[0xFF, 0xD8], "raw JPEG bytes, not a string");
         assert!(
             payload.len() < n_b64,
@@ -4449,7 +4884,8 @@ mod preview_adjustment_tests {
     /// decoded back from `timeline_frame`'s own JPEG bytes — exactly what the
     /// preview `<img>` shows.
     fn centre_pixel(pos: u64) -> [u8; 3] {
-        let jpeg = super::timeline_frame(pos, Some(W)).expect("preview frame");
+        let jpeg =
+            super::timeline_frame(pos, Some(W), super::FrameIntent::Single).expect("preview frame");
         let img = image::load_from_memory(&jpeg)
             .expect("decode jpeg")
             .to_rgba8();
@@ -4779,7 +5215,8 @@ mod grade_bridge_tests {
     /// input.
     fn preview(pos: u64) -> ([u8; 3], u64) {
         super::decode_pipe::reset();
-        let jpeg = super::timeline_frame(pos, Some(W)).expect("preview frame");
+        let jpeg =
+            super::timeline_frame(pos, Some(W), super::FrameIntent::Single).expect("preview frame");
         (centre_pixel(&jpeg), hash(&jpeg))
     }
 

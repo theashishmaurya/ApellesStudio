@@ -31023,3 +31023,150 @@ that frame, and `run_session` has no way to know a clip starts later. Not what
 was reported (a ripple delete leaves no gaps by construction) and not introduced
 here — it is the same residue B-111's own "known gap" note describes, one step
 smaller. Left as **B-192**.
+
+## D-324 — a heavily recut timeline plays smoothly because the decode pipe is primed for the next cut, not because the media got cheaper
+
+**decided (2026-09-14)** · fixes **B-191** · extends D-030 / D-125 · re-rejects
+D-030's option (B) and D-128's proxy proposal, for the third time and on new
+evidence
+
+**Context.** Using D-318/D-321's silence + retake detection on two raw 4K HEVC
+talking-head clips, the owner ripple-deleted ~95–155 individual spans out of
+EACH clip in one atomic edit, leaving each as 60–96 tiny segments butted
+together with no gaps. Playing the result "just lags like hell".
+
+**What the profiling found.** `decode_pipe` (D-030) keeps one persistent
+`ffmpeg -f rawvideo` process per `PipeSlot`, reading frames sequentially, and
+kills + respawns it seeked to the target whenever the target goes backwards or
+more than `MAX_FORWARD_SKIP` (48 frames) forward. Measured on
+`A001_09122319_C038.MOV` (4.48 GB, HEVC 4K/24), decoding at the preview's own
+1280 px scale:
+
+| operation | cost |
+|---|---|
+| sequential read (the play-forward case) | **6.7 ms/frame** |
+| respawn — `Command::spawn` alone | **0.8–1.0 ms** |
+| respawn — first frame out of the new pipe | **248–337 ms** |
+| the frame after that | 0.7–6.9 ms |
+
+So a respawn costs ~250–340 ms and **essentially all of it is ffmpeg's keyframe
+seek**, not process creation and not decode throughput.
+
+A ripple-delete's cut boundaries are by construction large, arbitrary jumps in
+source-frame space: the next clip points at the same file, thousands of frames
+from where the previous one stopped. Every one of them is therefore a forced
+respawn. D-030's own module doc called a respawn "no worse than today" — true
+under its stated assumption of *occasional* scrubs on one long clip, and false
+once 95–155 of them land inside one continuous playthrough. At 24 fps a 307 ms
+boundary drops ~7 frames; 155 of them is ~48 s of stall inside a 5–9 minute
+review.
+
+**Options.**
+
+| option | verdict |
+|---|---|
+| **(A) prime the next clip's pipe before the playhead reaches the cut** | **chosen** |
+| (B) raise `MAX_FORWARD_SKIP` | rejected — a cut jumps an arbitrary distance, so a higher threshold only discards *more* decoded frames before paying the same respawn. Strictly worse. |
+| (C) proxy media | rejected, third time (D-030 option B, D-128). It remains "a whole subsystem", and on this evidence it would not even fix this: a proxy file still reseeks at every boundary. The cost measured above is the seek, not the per-frame decode, and a proxy only makes the part that was already 6.7 ms cheaper. |
+| (D) decode the next clip's first frames into memory ahead of the cut | rejected — that is (A) plus a buffer, a copy and an eviction policy, to avoid a cost (A) already removes. |
+
+**Why (A) works, and why it needs no thread.** The app knows the whole edit
+list, so during playback the next boundary — and the exact source frame on the
+far side of it — is arithmetic, not a guess. And the expensive half of a
+respawn already runs concurrently: `Command::spawn` returns in ~1 ms and ffmpeg
+then does its seek *in its own process*, writing into a pipe nobody reads until
+the boundary arrives. Priming is therefore "spawn early, read later" — a
+millisecond on the calling thread, with the 300 ms paid by the OS in parallel.
+A worker thread would add a lifetime and a cancellation protocol to hide that
+millisecond.
+
+**How much lookahead.** Measured directly — prime the pipe, wait, then read:
+
+| lead given to the prefetch | first read still costs |
+|---|---|
+| 0 ms | 339 ms |
+| 100 ms | 198 ms |
+| 200 ms | 103 ms |
+| **400 ms** | **1.0 ms** |
+| 800 ms | 2.6 ms |
+
+The curve has flattened by 400 ms, so `PREFETCH_LOOKAHEAD_SECS = 0.5` — that,
+with headroom for a slower file or a busier machine. **A duration, not a frame
+count**, because the thing being hidden is wall clock; 12 frames is half a
+second at 24 fps and a fifth of one at 60. Clamped to 36 frames, strictly under
+`MAX_FORWARD_SKIP`, so a lookahead frame inside the *current* clip never stops
+looking servable by the live pipe — otherwise every ordinary mid-clip frame
+would prime a standby it was never going to adopt.
+
+**Shape.** `decode_pipe`'s pool gains a second map, `standby`, under the same
+mutex as `live` (every operation touches both, so two locks would mean a lock
+order for no gain). `prefetch(slot, path, info, target, scale)` spawns into it
+and is a **no-op unless a respawn is genuinely coming** — it returns early if
+the live pipe can already reach `target`, or if a standby is already primed for
+exactly it. That is what makes it safe for the caller to call unconditionally,
+every frame. `playback_frame_scaled` consults the standby only when the live
+pipe cannot serve the frame, and adopts it only if `can_serve` says it genuinely
+can; a mispredicted standby is dropped there and then. So a wrong prediction
+costs one wasted `ffmpeg`, never a wrong picture — the fallback is exactly the
+respawn that would have happened anyway.
+
+**Cleanup — no leaked processes.** A standby is dropped (killing its `ffmpeg`)
+when adopted, when found unable to serve the frame actually asked for, when its
+slot stops being visible (`retain_pipe_slots`), when its file is replaced
+(`drop_pipes_for_path`, D-260), or on `reset`. At most one per slot exists at a
+time. `retain_pipe_slots`'s keep-list is extended with the slots about to become
+visible, because a track whose playhead sits in a gap contributes no visible
+slot — without that, the pipe primed for the clip starting a few frames later
+would be released and re-primed every displayed frame, which is *one ffmpeg
+spawned and killed per frame*, strictly worse than the stall being removed.
+
+**Two ordering facts that are load-bearing and silent when wrong.**
+
+1. **Prime AFTER the frame is decoded, not before.** A standby is consulted
+   whenever the live pipe cannot serve the frame at hand — which is precisely
+   the situation on the first frame of a clip. Priming first had *this* frame's
+   decode pick up the pipe meant for the NEXT clip, find it unusable, and drop
+   it: spawned and killed every frame, never once adopted. The prefetch ran, the
+   processes churned, and nothing got faster. Caught by the test below, which is
+   why that test asserts on the standby count and not only on wall clock.
+2. **Prime the new clip's FIRST frame, not the frame at `pos + lookahead`.**
+   Playback crosses at the clip's own `start_frame`; a pipe primed past that
+   point could not serve it and would respawn. Priming at the start makes the
+   boundary frame the standby's next read, and the frames after it an ordinary
+   forward skip — so a dropped frame either side changes nothing.
+
+**Gated on continuous playback.** `chroma_timeline_frame` takes a new optional
+`playing` flag (`FrameIntent::Playing` / `Single`), passed only by
+`PreviewPane.tsx`'s rAF play loop. A scrub's next position is wherever the
+pointer goes, so a prediction from the current one is worth nothing and would
+spawn an `ffmpeg` per dragged frame; a thumbnail predicts nothing either. Both
+keep the exact pre-D-324 behaviour.
+
+**Measured result**, end to end through the real preview path, on the owner's
+own footage, on a 10-clip recut timeline paced at the timeline's real 24 fps
+(the pacing matters: a flat-out loop hands the prefetch a tenth of the lead real
+playback gives it, and measures a benefit that is real but much smaller):
+
+| | at a cut | mid-clip |
+|---|---|---|
+| without prefetch (pre-D-324 behaviour) | **307.0 ms** | 11.1 ms |
+| with prefetch | **31.1 ms** | 8.7 ms |
+
+31.1 ms is inside one frame's 41.7 ms budget, so a cut no longer drops a frame
+at all. At the decode-pipe level the same comparison is 254.5 ms → 30.6 ms.
+
+**Tested.** `decode_pipe`: `can_serve` accepts a forward hop and rejects a seek /
+a scale change / a different source; a primed standby is adopted at the boundary
+and returns the same picture `decode_frame` does, and reads on correctly
+afterwards; it still serves when playback lands a few frames late (the
+frame-dropping case); a standby that cannot serve is discarded *and the frame is
+still right*; `prefetch` is a no-op mid-clip and when already primed for the same
+target; every release path drops standbys too. `edit.rs`: playback primes the
+upcoming cut and a scrub does not, and crossing every boundary of an 8-clip recut
+timeline never exceeds one live pipe and one standby. The real-footage latency
+numbers above are env-gated (`CHROMA_TEST_VIDEO`) and reported rather than
+tightly budgeted, matching `b040_multi_layer_preview_throughput`.
+
+**Not done.** The ~21.5 ms/frame that lives on the webview side of the IPC
+(D-290/B-146) is untouched and is still the preview's real frame-rate ceiling —
+this entry removes a per-cut stall, not that ceiling.

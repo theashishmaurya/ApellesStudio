@@ -1807,14 +1807,21 @@ mod tests {
         // D-217: raw JPEG bytes now, not a base64 data URL — so "is a real
         // frame" is checked against the JPEG SOI marker and the decoded size,
         // and "is the blank frame" against its 1×1 dimensions.
-        let jpeg = super::super::edit::timeline_frame(0, None).unwrap();
+        let jpeg =
+            super::super::edit::timeline_frame(0, None, super::super::edit::FrameIntent::Single)
+                .unwrap();
         assert_eq!(&jpeg[..2], &[0xFF, 0xD8], "a JPEG");
         let real = image::load_from_memory(&jpeg).expect("decode preview jpeg");
         assert!(
             real.width() > 1 && real.height() > 1,
             "a real frame, not the blank one"
         );
-        let blank = super::super::edit::timeline_frame(dur_b as u64, None).unwrap();
+        let blank = super::super::edit::timeline_frame(
+            dur_b as u64,
+            None,
+            super::super::edit::FrameIntent::Single,
+        )
+        .unwrap();
         let blank = image::load_from_memory(&blank).expect("decode blank jpeg");
         assert_eq!(
             (blank.width(), blank.height()),
