@@ -1650,6 +1650,98 @@
       }
     },
     {
+      "name": "editor_detect_retakes",
+      "description": "Group the places in a timeline clip where the speaker **said the same\n    line more than once** \u2014 the flubbed take, the stumble, the third attempt.\n\n    Unlike `editor_detect_silences` this needs the transcript, because a retake\n    is a fact about words. If one has not been made yet this starts it and\n    returns `state: \"running\"` with a `note` \u2014 poll\n    `editor_get_transcript_status`, then call this again.\n\n    - `track` / `clip` \u2014 which clip to analyse, by index. Only its own trimmed\n      range is considered.\n    - `similarity` \u2014 how alike two utterances must be to count as the same line\n      (0..1, default 0.82).\n    - `window_secs` \u2014 how far apart two takes may be (default 30). A line\n      repeated half an hour later is a callback, not a retake.\n    - `min_words` \u2014 utterances shorter than this are never grouped (default 3),\n      which is what stops every \"Yeah.\" pairing with every other one.\n\n    Each group has `takes` (each with its `text` and the same three frame\n    spaces `editor_detect_silences` returns), a `similarity` score, and `keep` \u2014\n    the index of the take this **suggests** keeping, which is the last one,\n    normally what the speaker settled on. `keep` is a suggestion and nothing\n    more: text alone cannot always tell a retake from a later line that merely\n    extends an earlier one, so read the `text` before cutting.\n\n    **Nothing is cut.** Pass the takes you want gone to\n    `editor_ripple_delete_ranges`.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "clip": {
+            "title": "Clip",
+            "type": "integer"
+          },
+          "similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Similarity"
+          },
+          "window_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window Secs"
+          },
+          "min_words": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Min Words"
+          }
+        },
+        "required": [
+          "track",
+          "clip"
+        ],
+        "type": "object",
+        "title": "editor_detect_retakesArguments"
+      }
+    },
+    {
+      "name": "editor_detect_silences",
+      "description": "Find the stretches of a timeline clip where **nobody is speaking** \u2014\n    \"where is the dead air.\" Uses a real on-device voice-activity model (Silero\n    VAD, D-319) over the clip's own audio, so it needs no transcript and takes\n    seconds rather than minutes.\n\n    - `track` / `clip` \u2014 which clip to analyse, by index (`editor_get_timeline`\n      lists them). Only the clip's OWN trimmed range is analysed, so a source\n      trimmed to its second half never reports silence from material nobody\n      sees.\n    - `min_silence_ms` \u2014 the shortest gap worth reporting (default 600). Below\n      about 400 you start getting the pauses *inside* sentences, which are not\n      cut points.\n\n    Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what\n    was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source\n    frames) and `startFrame`/`endFrame` \u2014 **timeline** frames, which is what\n    `editor_ripple_delete_ranges` takes. An empty list is a normal answer, not\n    an error: that clip has no gap that long.\n\n    **Nothing is cut.** This proposes; you decide. Pass the ranges you accept to\n    `editor_ripple_delete_ranges`.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "clip": {
+            "title": "Clip",
+            "type": "integer"
+          },
+          "min_silence_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Min Silence Ms"
+          }
+        },
+        "required": [
+          "track",
+          "clip"
+        ],
+        "type": "object",
+        "title": "editor_detect_silencesArguments"
+      }
+    },
+    {
       "name": "editor_edit_in",
       "description": "Edit a media-pool source into the timeline using one of the SEVEN real\n    edit types, rather than just placing it at a position (`editor_add_clip`).\n    This is the same operation the app's own edit overlay performs when a clip\n    is dragged onto the preview, so a human and you produce identical results.\n\n    `edit_type` is one of, and every one of them acts at `at_frame` (the\n    playhead by default) on `track` (the first video track by default):\n\n    - `insert` \u2014 pushes everything at/after the playhead down to make room,\n      splitting whatever clip the playhead is inside. The only type that\n      lengthens the timeline by exactly the source's own length.\n    - `overwrite` \u2014 writes over whatever is there for the new clip's length.\n      Clips it lands inside are trimmed or split; clips it swallows whole are\n      removed. Nothing's position changes: the timeline stays the same length.\n    - `replace` \u2014 swaps the clip UNDER THE PLAYHEAD for this source, kept to\n      that clip's exact start and exact length (the source is re-cut, not\n      retimed). Refused if the source is too short to cover the slot \u2014 use\n      `fit_to_fill` for that. Note this is NOT `editor_swap_clip_media`, which\n      keeps the existing clip and only changes which file it points at,\n      preserving its transform/keyframes/grade; `replace` is a new edit.\n    - `fit_to_fill` \u2014 the same slot as `replace`, but the source keeps its full\n      marked length and gets a flat speed ramp calculated to fill the slot\n      exactly (see `editor_set_clip_speed`). Refused if that speed would fall\n      outside 0.05x\u201320x.\n    - `place_on_top` \u2014 puts the clip on the next video track ABOVE the\n      destination that has room at the playhead, creating a new topmost video\n      track if none has any. For titles, graphics, picture-in-picture. Nothing\n      on the track below is disturbed. **The response's `track` is where it\n      really landed, which may be a track that did not exist before, and every\n      other track's index will have shifted down by one when that happens \u2014\n      re-read `editor_get_state` before addressing tracks by index again.**\n    - `append` \u2014 after the last edit on the destination track, ignoring the\n      playhead entirely.\n    - `ripple_overwrite` \u2014 replaces the clip under the playhead even at a\n      different length: a longer source pushes everything after it down, a\n      shorter one pulls everything in, so no gap is ever left.\n\n    Identify the source with `media_id` or `source_path` (import it first with\n    `editor_import_media`), optionally trimmed to `[source_start,\n    source_start+duration)` of its own frames exactly as `editor_add_clip`\n    takes them.\n\n    Every one of the seven is ONE undo entry, named for the edit type. A\n    refused edit returns a real `error` sentence saying why and changes\n    nothing \u2014 it is never a silent no-op. `insert` and `ripple_overwrite` are\n    additionally refused when a sync-locked track has a clip straddling the\n    frame they would ripple from (docs/BUGS.md B-033).",
       "inputSchema": {
@@ -2913,6 +3005,29 @@
         ],
         "type": "object",
         "title": "editor_reprobe_mediaArguments"
+      }
+    },
+    {
+      "name": "editor_ripple_delete_ranges",
+      "description": "Cut N stretches out of one track and close every gap behind them, **as a\n    single edit** \u2014 the apply half of `editor_detect_silences` /\n    `editor_detect_retakes`, and the same thing the Recut panel's Cut button\n    does.\n\n    - `track` \u2014 the track index to cut on.\n    - `ranges` \u2014 a list of `{\"startFrame\": int, \"endFrame\": int}` in **TIMELINE**\n      frames, half-open. The `startFrame`/`endFrame` of a detected silence or\n      retake take are already in exactly this form.\n\n    Ranges are sorted, merged and applied back-to-front for you, so overlapping\n    or out-of-order input is safe and you never have to compensate for an\n    earlier cut having moved a later one.\n\n    One call is **one undo entry**, however many ranges it removes \u2014 which is\n    the reason this exists rather than looping `editor_split_clip` +\n    `editor_remove_clip` + `editor_remove_gap` yourself. Refused with an `error`\n    if the track is locked or no range describes real material on it.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "ranges": {
+            "items": {},
+            "title": "Ranges",
+            "type": "array"
+          }
+        },
+        "required": [
+          "track",
+          "ranges"
+        ],
+        "type": "object",
+        "title": "editor_ripple_delete_rangesArguments"
       }
     },
     {
@@ -10850,6 +10965,114 @@
       ]
     },
     {
+      "tool": "editor_detect_retakes",
+      "case": "minimal",
+      "arguments": {
+        "track": 73,
+        "clip": 11
+      },
+      "requests": [
+        {
+          "op": "editor_detect_retakes",
+          "args": {
+            "track": 73,
+            "clip": 11
+          },
+          "timeout_ms": 180000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_detect_retakes",
+      "case": "full",
+      "arguments": {
+        "track": 73,
+        "clip": 11,
+        "similarity": 40.12,
+        "window_secs": -8.35,
+        "min_words": 75
+      },
+      "requests": [
+        {
+          "op": "editor_detect_retakes",
+          "args": {
+            "track": 73,
+            "clip": 11,
+            "similarity": 40.12,
+            "windowSecs": -8.35,
+            "minWords": 75
+          },
+          "timeout_ms": 180000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_detect_silences",
+      "case": "minimal",
+      "arguments": {
+        "track": 92,
+        "clip": 68
+      },
+      "requests": [
+        {
+          "op": "editor_detect_silences",
+          "args": {
+            "track": 92,
+            "clip": 68
+          },
+          "timeout_ms": 180000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_detect_silences",
+      "case": "full",
+      "arguments": {
+        "track": 92,
+        "clip": 68,
+        "min_silence_ms": 46.74
+      },
+      "requests": [
+        {
+          "op": "editor_detect_silences",
+          "args": {
+            "track": 92,
+            "clip": 68,
+            "minSilenceMs": 46.74
+          },
+          "timeout_ms": 180000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_edit_in",
       "case": "minimal",
       "arguments": {
@@ -11869,6 +12092,35 @@
           "args": {
             "ids": [
               "v_editor_reprobe_media.ids[0]"
+            ]
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_ripple_delete_ranges",
+      "case": "minimal",
+      "arguments": {
+        "track": 55,
+        "ranges": [
+          "any_editor_ripple_delete_ranges.ranges[0]"
+        ]
+      },
+      "requests": [
+        {
+          "op": "editor_ripple_delete_ranges",
+          "args": {
+            "track": 55,
+            "ranges": [
+              "any_editor_ripple_delete_ranges.ranges[0]"
             ]
           },
           "timeout_ms": 20000

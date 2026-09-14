@@ -170,6 +170,9 @@
     "set_relight_light",
     "set_submask_mode",
     "set_track_duck",
-    "track_subject"
+    "track_subject",
+    "editor_detect_silences",
+    "editor_detect_retakes",
+    "editor_ripple_delete_ranges"
   ]
 }

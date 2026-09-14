@@ -67,6 +67,12 @@ pub const DEFAULT_OP_TIMEOUT_MS: u64 = 20_000;
 /// back to the caller as a bare tool error (B-153).
 pub const AI_MASK_TIMEOUT_MS: u64 = 180_000;
 
+/// D-318 — the recut detectors' budget. `editor_detect_silences` decodes the
+/// clip's audio and runs a VAD over it: fast (16 minutes of audio scores in
+/// ~6s, measured) but not 20s-fast once a cold decode of a long 4K source is in
+/// front of it. Mirrors `mcp/server.py`'s `RECUT_TIMEOUT_MS`.
+pub const RECUT_TIMEOUT_MS: u64 = 180_000;
+
 /// B-071 — extra client-side slack covering the control server's own cold-start
 /// readiness wait (`control.rs`'s `BRIDGE_READY_TIMEOUT`), which sits on TOP of the
 /// per-op budget rather than eating into it. The two are a pair: if this is smaller, a

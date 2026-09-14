@@ -908,6 +908,45 @@ fn media_args(
         .put("sourcePath", source_path)
 }
 
+/// D-318 — the recut detectors and the batched cut they feed.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorDetectSilencesArgs {
+    pub track: i64,
+    pub clip: i64,
+    #[serde(default)]
+    pub min_silence_ms: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorDetectRetakesArgs {
+    pub track: i64,
+    pub clip: i64,
+    #[serde(default)]
+    pub similarity: Option<f64>,
+    #[serde(default)]
+    pub window_secs: Option<f64>,
+    #[serde(default)]
+    pub min_words: Option<i64>,
+}
+
+/// The schema for a parameter the Python tool declares as a bare `list`.
+///
+/// `Vec<serde_json::Value>` would publish `items: {"any": …}`, which is a
+/// NARROWER contract than the Python server's `items: {}` — and the parity
+/// harness rightly rejects it. The port's job is to reproduce the published
+/// contract exactly, not to improve it, so the schema is written out by hand
+/// and the Rust side keeps its `Vec<Value>` for deserialising.
+fn untyped_array_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": "array", "items": {} })
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorRippleDeleteRangesArgs {
+    pub track: i64,
+    #[schemars(schema_with = "untyped_array_schema")]
+    pub ranges: Vec<serde_json::Value>,
+}
+
 #[tool_router(router = edit_router, vis = "pub")]
 impl ApellesMcp {
     #[tool(
@@ -3892,6 +3931,123 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let args = media_args(p.path, p.media_id, p.source_path);
         let env = self.op("editor_get_transcript_status", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_detect_silences",
+        description = r#"Find the stretches of a timeline clip where **nobody is speaking** —
+    "where is the dead air." Uses a real on-device voice-activity model (Silero
+    VAD, D-319) over the clip's own audio, so it needs no transcript and takes
+    seconds rather than minutes.
+
+    - `track` / `clip` — which clip to analyse, by index (`editor_get_timeline`
+      lists them). Only the clip's OWN trimmed range is analysed, so a source
+      trimmed to its second half never reports silence from material nobody
+      sees.
+    - `min_silence_ms` — the shortest gap worth reporting (default 600). Below
+      about 400 you start getting the pauses *inside* sentences, which are not
+      cut points.
+
+    Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what
+    was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source
+    frames) and `startFrame`/`endFrame` — **timeline** frames, which is what
+    `editor_ripple_delete_ranges` takes. An empty list is a normal answer, not
+    an error: that clip has no gap that long.
+
+    **Nothing is cut.** This proposes; you decide. Pass the ranges you accept to
+    `editor_ripple_delete_ranges`."#
+    )]
+    pub async fn editor_detect_silences(
+        &self,
+        Parameters(p): Parameters<EditorDetectSilencesArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("clip", p.clip)
+            .put("minSilenceMs", p.min_silence_ms);
+        // D-318 — decode + VAD over a long 4K source does not reliably fit the
+        // 20s default, the same reason the AI mask tools have their own budget.
+        let env = self
+            .op_with("editor_detect_silences", crate::RECUT_TIMEOUT_MS, args)
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_detect_retakes",
+        description = r#"Group the places in a timeline clip where the speaker **said the same
+    line more than once** — the flubbed take, the stumble, the third attempt.
+
+    Unlike `editor_detect_silences` this needs the transcript, because a retake
+    is a fact about words. If one has not been made yet this starts it and
+    returns `state: "running"` with a `note` — poll
+    `editor_get_transcript_status`, then call this again.
+
+    - `track` / `clip` — which clip to analyse, by index. Only its own trimmed
+      range is considered.
+    - `similarity` — how alike two utterances must be to count as the same line
+      (0..1, default 0.82).
+    - `window_secs` — how far apart two takes may be (default 30). A line
+      repeated half an hour later is a callback, not a retake.
+    - `min_words` — utterances shorter than this are never grouped (default 3),
+      which is what stops every "Yeah." pairing with every other one.
+
+    Each group has `takes` (each with its `text` and the same three frame
+    spaces `editor_detect_silences` returns), a `similarity` score, and `keep` —
+    the index of the take this **suggests** keeping, which is the last one,
+    normally what the speaker settled on. `keep` is a suggestion and nothing
+    more: text alone cannot always tell a retake from a later line that merely
+    extends an earlier one, so read the `text` before cutting.
+
+    **Nothing is cut.** Pass the takes you want gone to
+    `editor_ripple_delete_ranges`."#
+    )]
+    pub async fn editor_detect_retakes(
+        &self,
+        Parameters(p): Parameters<EditorDetectRetakesArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("clip", p.clip)
+            .put("similarity", p.similarity)
+            .put("windowSecs", p.window_secs)
+            .put("minWords", p.min_words);
+        let env = self
+            .op_with("editor_detect_retakes", crate::RECUT_TIMEOUT_MS, args)
+            .await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_ripple_delete_ranges",
+        description = r#"Cut N stretches out of one track and close every gap behind them, **as a
+    single edit** — the apply half of `editor_detect_silences` /
+    `editor_detect_retakes`, and the same thing the Recut panel's Cut button
+    does.
+
+    - `track` — the track index to cut on.
+    - `ranges` — a list of `{"startFrame": int, "endFrame": int}` in **TIMELINE**
+      frames, half-open. The `startFrame`/`endFrame` of a detected silence or
+      retake take are already in exactly this form.
+
+    Ranges are sorted, merged and applied back-to-front for you, so overlapping
+    or out-of-order input is safe and you never have to compensate for an
+    earlier cut having moved a later one.
+
+    One call is **one undo entry**, however many ranges it removes — which is
+    the reason this exists rather than looping `editor_split_clip` +
+    `editor_remove_clip` + `editor_remove_gap` yourself. Refused with an `error`
+    if the track is locked or no range describes real material on it."#
+    )]
+    pub async fn editor_ripple_delete_ranges(
+        &self,
+        Parameters(p): Parameters<EditorRippleDeleteRangesArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("ranges", p.ranges);
+        let env = self.op("editor_ripple_delete_ranges", args).await?;
         Ok(render::json_text(&env))
     }
 

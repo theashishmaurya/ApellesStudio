@@ -58,15 +58,15 @@ export interface ToolGroup {
  * claiming there is still no way to re-probe one.
  */
 export const TOOL_TOTALS = {
-  all: 163,
-  shipped: 154,
+  all: 166,
+  shipped: 157,
   debugOnly: 9,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 69,
+    count: 72,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [

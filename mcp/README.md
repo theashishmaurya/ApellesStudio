@@ -49,7 +49,7 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 
 > **This server is being replaced (D-312, 2026-09-12).** The Rust reimplementation
 > is `crates/apelles-mcp` — same tool names, same descriptions, same
-> control-server contract, one binary instead of a venv. **All 163 tools are
+> control-server contract, one binary instead of a venv. **All 166 tools are
 > ported and pass its parity harness**, which is captured from *this* file, tool
 > by tool; both servers publish an identical tool set over a real MCP session.
 >
@@ -67,12 +67,14 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 > Python server cannot match without being rewritten, and it is the practical
 > reason the migration is worth finishing.
 
-## Tools — 154 shipped (plus 9 debug-build-only; 163 definitions total)
+## Tools — 157 shipped (plus 9 debug-build-only; 166 definitions total)
 
-> **Re-counted 2026-09-13 (D-315):** **163** `@mcp.tool()` definitions, of which
-> 9 are `debug_*` (dev-build only, never shipped), leaving **154** shipped. Split
-> by prefix: **73 Edit**, **42 Colorist**, **37 Motion**, **2 AI-env**, **9
-> debug** — 73 + 42 + 37 + 2 + 9 = 163. D-315 added `ai_env_status` /
+> **Re-counted 2026-09-14 (D-318):** **166** `@mcp.tool()` definitions, of which
+> 9 are `debug_*` (dev-build only, never shipped), leaving **157** shipped. Split
+> by prefix: **76 Edit**, **42 Colorist**, **37 Motion**, **2 AI-env**, **9
+> debug** — 76 + 42 + 37 + 2 + 9 = 166. D-318 added the three recut tools
+> (`editor_detect_silences` / `editor_detect_retakes` /
+> `editor_ripple_delete_ranges`). D-315 added `ai_env_status` /
 > `ai_env_retry`: whether the shared Python environment every AI feature runs
 > from has finished building, and a way to retry that build now. They belong to
 > no tab — the environment they report on backs AI features in two of them.
@@ -167,6 +169,9 @@ debug-build-only and documented in `../docs/notes/debug-screenshot-tool.md` and
 | `editor_get_transcript_status(path?, media_id?, source_path?)` | poll it — `running` / `done` (with `text`, `segments`, per-word `start`/`end`) / `idle` |
 | `editor_analyze_video(path?, media_id?, source_path?, question?, scene_threshold?, min_gap_s?, max_candidates?, force=False)` | start a visual analysis — "what CHANGED on screen, and when." ffmpeg scene-detect gives the exact timing, Qwen3-VL only describes each before/after frame pair. Finds nothing in a continuous uncut shot — use the transcript there (D-189) |
 | `editor_analyze_video_status(path?, media_id?, source_path?)` | poll it — `running` / `done` (with `events: [{time_s, event}]` + `truncated`) / `idle` |
+| `editor_detect_silences(track, clip, min_silence_ms?)` | find where **nobody is speaking** in a timeline clip — a real on-device VAD (Silero, D-319) over the clip's own audio, so no transcript and seconds not minutes. Each span comes back in source seconds, the clip's source frames AND timeline frames. **Read-only** — nothing is cut (D-318) |
+| `editor_detect_retakes(track, clip, similarity?, window_secs?, min_words?)` | group the places the speaker **said the same line twice** — the flubbed take, the stumble. Needs the transcript (a retake is a fact about words); starts one and returns `state: "running"` if there is none yet. `keep` suggests the LAST take. **Read-only** (D-318) |
+| `editor_ripple_delete_ranges(track, ranges)` | the apply half: cut N `{startFrame, endFrame}` timeline ranges and close every gap, as **one undo entry**. Sorts, merges and applies back-to-front for you (D-318) |
 | `ai_env_status()` | has the shared Python environment every AI feature runs from finished building? `{phase, packagesDone, packagesTotal, attempt, retryInSecs, lastError, venv, elapsedSecs}`. Branch on `phase`: `ready`, one of five working phases (wait and poll), `failed` (another attempt is already scheduled), or `unavailable` (cannot be built here — waiting will not help) (D-315) |
 | `ai_env_retry()` | build it now instead of waiting out the backoff. Returns the same snapshot plus `started`; `started: false` means there was nothing to trigger, which is a normal answer (D-315) |
 

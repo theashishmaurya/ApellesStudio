@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-14** — **D-318 (cont.): the Recut panel, three MCP tools, and an
+  atomic `ripple_delete_ranges`.** The GUI half and the agent half landed
+  together because CLAUDE.md requires it. `ripple_delete_ranges` exists because
+  this store pushes one history entry per op, so accepting 20 detected silences
+  would otherwise cost 20+ presses of cmd-Z — it composes the already-tested
+  split/remove/remove_gap rather than re-deriving ripple arithmetic, and applies
+  ranges back-to-front so an earlier cut cannot move a later one. MCP goes to
+  **166 tools** (was 163), all still passing the golden-corpus parity harness;
+  the recapture was byte-identical for the 163 that already existed. Detection
+  is synchronous on a 180s budget because it was measured, not guessed: 16.1
+  minutes of audio scores in 6.1s.
+
 - **2026-09-14** — **D-318/D-319/D-320: `apelles-speech`, the read-only silence
   and retake detectors.** The owner's talking-head footage needed the dead air
   and the flubbed takes cut, and Apelles could find neither — `editor_get_waveform`

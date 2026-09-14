@@ -113,6 +113,12 @@ DEFAULT_OP_TIMEOUT_MS = 20_000
 #: tens of seconds on a cold model, which is exactly how a *successful*
 #: `add_subject_mask` came back to the caller as a bare tool error (B-153).
 AI_MASK_TIMEOUT_MS = 180_000
+
+# D-318 — the recut detectors. `editor_detect_silences` decodes the clip's audio
+# and runs a VAD over it, which is fast (16 minutes of audio scores in ~6s,
+# measured) but not 20s-fast once a cold decode of a long 4K source is in front
+# of it. Same reasoning, and the same shape, as `AI_MASK_TIMEOUT_MS` above.
+RECUT_TIMEOUT_MS = 180_000
 #: B-071 — extra client-side slack covering the control server's own cold-start
 #: readiness wait (`control.rs`'s `BRIDGE_READY_TIMEOUT`), which sits on TOP of
 #: the per-op budget below rather than eating into it. The two are a pair: if
@@ -3976,6 +3982,131 @@ def editor_analyze_video_status(
 
     return json.dumps(
         _op("editor_analyze_video_status", **_media_args(path, media_id, source_path)),
+        indent=2,
+        default=str,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Edit tab: recut (D-318) — find the dead air and the flubbed takes in a clip
+# that is already on the timeline, then cut the ones you accept. Both detectors
+# are READ-ONLY: they return candidates and never modify the timeline. The one
+# tool here that DOES cut is `editor_ripple_delete_ranges`, and it only ever
+# cuts ranges you hand it.
+# --------------------------------------------------------------------------- #
+@mcp.tool()
+def editor_detect_silences(
+    track: int,
+    clip: int,
+    min_silence_ms: float | None = None,
+) -> str:
+    """Find the stretches of a timeline clip where **nobody is speaking** —
+    "where is the dead air." Uses a real on-device voice-activity model (Silero
+    VAD, D-319) over the clip's own audio, so it needs no transcript and takes
+    seconds rather than minutes.
+
+    - `track` / `clip` — which clip to analyse, by index (`editor_get_timeline`
+      lists them). Only the clip's OWN trimmed range is analysed, so a source
+      trimmed to its second half never reports silence from material nobody
+      sees.
+    - `min_silence_ms` — the shortest gap worth reporting (default 600). Below
+      about 400 you start getting the pauses *inside* sentences, which are not
+      cut points.
+
+    Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what
+    was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source
+    frames) and `startFrame`/`endFrame` — **timeline** frames, which is what
+    `editor_ripple_delete_ranges` takes. An empty list is a normal answer, not
+    an error: that clip has no gap that long.
+
+    **Nothing is cut.** This proposes; you decide. Pass the ranges you accept to
+    `editor_ripple_delete_ranges`."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    if min_silence_ms is not None:
+        args["minSilenceMs"] = min_silence_ms
+    return json.dumps(
+        _op("editor_detect_silences", timeout_ms=RECUT_TIMEOUT_MS, **args),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def editor_detect_retakes(
+    track: int,
+    clip: int,
+    similarity: float | None = None,
+    window_secs: float | None = None,
+    min_words: int | None = None,
+) -> str:
+    """Group the places in a timeline clip where the speaker **said the same
+    line more than once** — the flubbed take, the stumble, the third attempt.
+
+    Unlike `editor_detect_silences` this needs the transcript, because a retake
+    is a fact about words. If one has not been made yet this starts it and
+    returns `state: "running"` with a `note` — poll
+    `editor_get_transcript_status`, then call this again.
+
+    - `track` / `clip` — which clip to analyse, by index. Only its own trimmed
+      range is considered.
+    - `similarity` — how alike two utterances must be to count as the same line
+      (0..1, default 0.82).
+    - `window_secs` — how far apart two takes may be (default 30). A line
+      repeated half an hour later is a callback, not a retake.
+    - `min_words` — utterances shorter than this are never grouped (default 3),
+      which is what stops every "Yeah." pairing with every other one.
+
+    Each group has `takes` (each with its `text` and the same three frame
+    spaces `editor_detect_silences` returns), a `similarity` score, and `keep` —
+    the index of the take this **suggests** keeping, which is the last one,
+    normally what the speaker settled on. `keep` is a suggestion and nothing
+    more: text alone cannot always tell a retake from a later line that merely
+    extends an earlier one, so read the `text` before cutting.
+
+    **Nothing is cut.** Pass the takes you want gone to
+    `editor_ripple_delete_ranges`."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    if similarity is not None:
+        args["similarity"] = similarity
+    if window_secs is not None:
+        args["windowSecs"] = window_secs
+    if min_words is not None:
+        args["minWords"] = min_words
+    return json.dumps(
+        _op("editor_detect_retakes", timeout_ms=RECUT_TIMEOUT_MS, **args),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def editor_ripple_delete_ranges(track: int, ranges: list) -> str:
+    """Cut N stretches out of one track and close every gap behind them, **as a
+    single edit** — the apply half of `editor_detect_silences` /
+    `editor_detect_retakes`, and the same thing the Recut panel's Cut button
+    does.
+
+    - `track` — the track index to cut on.
+    - `ranges` — a list of `{"startFrame": int, "endFrame": int}` in **TIMELINE**
+      frames, half-open. The `startFrame`/`endFrame` of a detected silence or
+      retake take are already in exactly this form.
+
+    Ranges are sorted, merged and applied back-to-front for you, so overlapping
+    or out-of-order input is safe and you never have to compensate for an
+    earlier cut having moved a later one.
+
+    One call is **one undo entry**, however many ranges it removes — which is
+    the reason this exists rather than looping `editor_split_clip` +
+    `editor_remove_clip` + `editor_remove_gap` yourself. Refused with an `error`
+    if the track is locked or no range describes real material on it."""
+    import json
+
+    return json.dumps(
+        _op("editor_ripple_delete_ranges", track=track, ranges=ranges),
         indent=2,
         default=str,
     )

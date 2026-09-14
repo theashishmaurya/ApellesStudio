@@ -165,8 +165,11 @@ zero.**
 > those paths call, which is the half of D-140 that does apply.
 
 **Net effect: an agent can now drive essentially the whole Edit tab** — import
-media, assemble a track from raw footage (cut gaps/retakes by only placing the
-segments to keep), split/trim/move/remove clips, manage tracks, composite/stack
+media, assemble a track from raw footage (~~cut gaps/retakes by only placing the
+segments to keep~~ — **superseded by D-318**, see the recut section below: the
+silences and the retakes are now *detected*, and cut with one
+`editor_ripple_delete_ranges` call, rather than avoided by hand-placing only the
+good segments), split/trim/move/remove clips, manage tracks, composite/stack
 multiple video tracks with per-clip keyframed zooms, and render the result to a
 file with its real mixed audio (D-197 — gain/duck/fade and embedded-audio
 inclusion, no longer a silent video).
@@ -185,6 +188,34 @@ inclusion, no longer a silent video).
 > | `editor_get_transcript_status` | Poll it. `state` is `running` / `done` (result attached) / `idle`. |
 > | `editor_analyze_video` | Start a visual analysis — "what CHANGED on screen, and when." ffmpeg scene-detect supplies the (exact, deterministic) timing; Qwen3-VL only describes a before/after frame pair at each moment. |
 > | `editor_analyze_video_status` | Poll it. Carries `truncated` — candidates hit the cap and were dropped, so raise `max_candidates` and re-run. |
+>
+> ## Edit tab: recut — CLOSED, 3 tools (D-318, 2026-09-14)
+>
+> > **What an agent could not do before this.** The section above gave it the
+> > *content* of a file. It still had to decide where the dead air and the
+> > flubbed takes were BY HAND, by reading a transcript and eyeballing the word
+> > timings — which is exactly what this document used to instruct it to do
+> > ("cut gaps/retakes by only placing the segments to keep", below). That
+> > instruction is **superseded**: both are now detected.
+> >
+> > | Tool | What it does |
+> > |---|---|
+> > | `editor_detect_silences` | Where nobody is speaking, from a real VAD (Silero v6.2.1 ONNX, on-device, D-319) over the clip's own audio. Needs **no transcript** — it answers an acoustic question acoustically, in seconds rather than the minutes a Whisper pass costs. |
+> > | `editor_detect_retakes` | Where the speaker said the same line more than once. This one DOES need the transcript, because a retake is a fact about words; it starts one and says `state: "running"` if there is none yet. |
+> > | `editor_ripple_delete_ranges` | The apply half: cut N timeline ranges and close every gap, as **one undo entry**. |
+> >
+> > **The two detectors are not alternatives and do not overlap** — one is
+> > acoustic and one is textual. Silence detection deliberately does NOT use
+> > transcript word-gaps: that would make a purely acoustic question wait on a
+> > full transcription and inherit the decoder's hallucinations across a pause
+> > (D-318 has the reasoning).
+> >
+> > **Both detectors are READ-ONLY.** They return candidates and never touch the
+> > timeline; `keep` on a retake group is a *suggestion*. That is deliberate —
+> > text alone cannot always tell a retake from a later line that merely extends
+> > an earlier one, which is survivable as a suggestion a human rejects and not
+> > as a deletion they have to discover. The same three tools back the Edit
+> > tab's own Recut panel, through the same commands and the same store op.
 >
 > **The two capabilities are complementary, not alternatives**, and an agent must
 > pick by content rather than by default: the transcript finds nothing in silent
