@@ -48,6 +48,7 @@
  * that context is (D-248).
  */
 import {
+  ScissorsIcon,
   ClosedCaptioningIcon,
   FilmStripIcon,
   TextTIcon,
@@ -83,6 +84,8 @@ const RAIL_ICONS: Record<EditLibraryMode, PhosphorIcon> = {
   titles: TextTIcon,
   effects: MagicWandIcon,
   subtitles: ClosedCaptioningIcon,
+  // D-318 — scissors: this is the one library that CUTS rather than adds.
+  recut: ScissorsIcon,
 };
 
 const RAIL_TIPS: Record<EditLibraryMode, string> = {
@@ -90,6 +93,7 @@ const RAIL_TIPS: Record<EditLibraryMode, string> = {
   titles: 'Titles — drag one onto the timeline, or add it at the playhead',
   effects: 'Effects — drag an adjustment clip onto a track above your picture',
   subtitles: 'Subtitles and captions — apply a caption style, import a file, or generate cues from the transcript',
+  recut: 'Recut — find the silences and the retakes in the selected clip, then cut the ones you accept',
 };
 
 export interface EditLibraryRailProps {

@@ -75,6 +75,14 @@
  */
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+// D-318 — the seconds↔frames edge shared with the Recut panel, so the human's
+// cut and the agent's land on the same frame.
+import {
+  DEFAULT_MIN_SILENCE_MS,
+  clipSourceRangeSecs,
+  spanToFrames,
+  type RetakeGroupWire,
+} from './recut';
 import { listen, emit } from '@tauri-apps/api/event';
 
 import { useMediaPoolStore, type MediaItem } from '@apelles/bridge';
@@ -159,6 +167,7 @@ import {
   type Clip,
   type DraggedMedia,
   type EqBand,
+  mergeFrameRanges,
   type EqBandKind,
   type Marker,
   type NewClipFields,
@@ -3806,6 +3815,158 @@ export function useEditorControl(): void {
         const path = resolveMediaPath(a);
         if ('error' in path) return path;
         return analysisResult(path.path);
+      },
+
+      // ---- recut: find the dead air and the retakes (D-318) ---------------
+      // Both detectors are READ-ONLY — they propose spans and never cut. The
+      // cutting is `editor_ripple_delete_ranges` below, which the human's
+      // Recut panel drives through the same store op, so neither interface has
+      // a capability the other lacks (CLAUDE.md).
+      editor_detect_silences: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        const c = found.c;
+        if (!c.source_path) {
+          return { error: 'that clip is generated (a title or adjustment) and has no audio to analyse' };
+        }
+
+        const minSilenceMs = a?.minSilenceMs === undefined ? undefined : Number(a.minSilenceMs);
+        if (minSilenceMs !== undefined && (!Number.isFinite(minSilenceMs) || minSilenceMs <= 0)) {
+          return { error: 'minSilenceMs must be a positive number of milliseconds' };
+        }
+
+        const fps = timelineFps(tl);
+        const range = clipSourceRangeSecs(c, fps);
+        const detected = await invoke<{ silences?: Array<{ start_secs: number; end_secs: number }> }>(
+          'chroma_detect_silences',
+          {
+            path: c.source_path,
+            startSecs: range.startSecs,
+            durationSecs: range.durationSecs,
+            minSilenceMs: minSilenceMs ?? null,
+          },
+        );
+
+        const silences = (detected?.silences ?? []).map((s) => spanToFrames(c, s.start_secs, s.end_secs, fps));
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          clipId: c.id,
+          source: c.source_path,
+          minSilenceMs: minSilenceMs ?? DEFAULT_MIN_SILENCE_MS,
+          silences,
+          note:
+            silences.length === 0
+              ? 'no silence found in this clip at that threshold'
+              : 'nothing was cut — pass these ranges to editor_ripple_delete_ranges to apply them',
+        };
+      },
+
+      editor_detect_retakes: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        const c = found.c;
+        if (!c.source_path) {
+          return { error: 'that clip is generated (a title or adjustment) and has no speech to analyse' };
+        }
+
+        // Retakes are a fact about WORDS, so this one genuinely needs the
+        // transcript. Reuse the cached one and report the same
+        // `state`/`note` shape the transcript ops do rather than inventing a
+        // second vocabulary for "not ready yet".
+        const status = useMediaUnderstandingStore.getState().transcriptStatus(c.source_path);
+        if (status.phase === 'error') return { error: status.error ?? 'transcription failed' };
+        if (status.phase !== 'done') {
+          useMediaUnderstandingStore.getState().startTranscript(c.source_path, { wordTimestamps: true });
+          return {
+            ok: true,
+            source: c.source_path,
+            state: status.phase === 'idle' ? 'running' : status.phase,
+            note: 'a transcript is needed first — poll editor_get_transcript_status, then call this again',
+          };
+        }
+
+        const fps = timelineFps(tl);
+        const range = clipSourceRangeSecs(c, fps);
+        // Only what this clip actually shows: a source trimmed to its second
+        // half must not report retakes from material nobody will ever see.
+        const utterances = (status.result?.segments ?? [])
+          .filter((s) => s.end > range.startSecs && s.start < range.startSecs + range.durationSecs)
+          .map((s) => ({ start: s.start, end: s.end, text: s.text }));
+
+        const num = (v: unknown): number | undefined => {
+          const n = Number(v);
+          return Number.isFinite(n) ? n : undefined;
+        };
+        const detected = await invoke<{ groups?: RetakeGroupWire[] }>('chroma_detect_retakes', {
+          utterances,
+          similarity: num(a?.similarity) ?? null,
+          windowSecs: num(a?.windowSecs) ?? null,
+          minWords: a?.minWords === undefined ? null : Math.round(Number(a.minWords)),
+        });
+
+        const groups = (detected?.groups ?? []).map((g) => ({
+          similarity: g.similarity,
+          keep: g.keep,
+          takes: g.members.map((m) => ({
+            text: m.text,
+            ...spanToFrames(c, m.start_secs, m.end_secs, fps),
+          })),
+        }));
+
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          clipId: c.id,
+          source: c.source_path,
+          utterances: utterances.length,
+          groups,
+          note:
+            groups.length === 0
+              ? 'no retakes found in this clip'
+              : 'nothing was cut — `keep` is a SUGGESTION (the last take); cut the others with editor_ripple_delete_ranges',
+        };
+      },
+
+      editor_ripple_delete_ranges: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const track = Math.round(Number(a?.track));
+        if (!Number.isFinite(track) || !tl.tracks[track]) {
+          return { error: `no track ${track} (0..${tl.tracks.length - 1})` };
+        }
+        if (!Array.isArray(a?.ranges)) {
+          return { error: 'ranges must be an array of {startFrame, endFrame} in TIMELINE frames' };
+        }
+        const ranges = a.ranges.map((r: unknown) => {
+          const row = r as { startFrame?: unknown; endFrame?: unknown };
+          return { start: Math.round(Number(row?.startFrame)), end: Math.round(Number(row?.endFrame)) };
+        });
+        if (ranges.some((r: { start: number; end: number }) => !Number.isFinite(r.start) || !Number.isFinite(r.end))) {
+          return { error: 'every range needs a finite startFrame and endFrame' };
+        }
+
+        const before = tl;
+        useEditorTimelineStore.getState().applyOp({ kind: 'ripple_delete_ranges', track, ranges });
+        const after = useEditorTimelineStore.getState().timeline;
+        if (after === before) {
+          return {
+            error:
+              'nothing was cut — the track is locked, or no range describes real material on it',
+          };
+        }
+        return {
+          ok: true,
+          track,
+          ranges: mergeFrameRanges(ranges).length,
+          note: 'applied as ONE edit, so a single undo reverses all of it',
+        };
       },
 
       // ---- track-level toggles — trivial 1:1 EditOp wrappers --------------

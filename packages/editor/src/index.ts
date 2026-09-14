@@ -47,6 +47,21 @@ export { EditorInspectorPanel } from './EditorInspectorPanel';
 export { EditLibraryRail } from './EditLibraryRail';
 export type { EditLibraryRailProps } from './EditLibraryRail';
 export { EditLibraryPanel } from './EditLibraryPanel';
+/** D-318 — the Recut library's own panel, and the pure seconds↔frames helpers
+ *  it shares with the `editor_detect_*` ops. Exported because the conversion is
+ *  the one place a detected span becomes a cut, and both interfaces must reach
+ *  the same copy of it; the panel itself is exported for the same reason the
+ *  other library panels are (`@apelles/debug` drives it, and a composition root
+ *  may want to mount it directly). */
+export { RecutPanel } from './RecutPanel';
+export {
+  DEFAULT_MIN_SILENCE_MS,
+  clipSourceRangeSecs,
+  cuttableSpans,
+  findClipById,
+  spanToFrames,
+} from './recut';
+export type { DetectedSpan, RetakeGroupWire } from './recut';
 /** D-274 — the project-level output-spec form (Resolution/Frame Rate/Colour
  *  Space), shared between this package's own docked `ProjectSettingsPanel`
  *  (`EditorInspectorPanel`'s "nothing selected" branch) and `app/src`'s

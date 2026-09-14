@@ -2142,6 +2142,86 @@ export function resolveClipLanding(
  *  one" cases: `frame` is inside a clip, or it's trailing empty space past
  *  the last clip — nothing after it to ripple, so not a real gap). Clips are
  *  walked by value, never assumed to be in position order (D-054). */
+/** D-318 — sort `ranges`, drop the empty/degenerate ones, and merge any that
+ *  touch or overlap, so `ripple_delete_ranges` can assume a clean, ascending,
+ *  disjoint list.
+ *
+ *  Merging is not tidiness: two overlapping ranges applied one after the other
+ *  would have the second one's frame numbers measured against a timeline the
+ *  first had already rippled, and would cut the wrong material. Adjacent ranges
+ *  (`a.end === b.start`) merge too — they describe one continuous stretch.
+ *
+ *  Exported for its own tests; `ripple_delete_ranges` is the only caller. */
+export function mergeFrameRanges(
+  ranges: ReadonlyArray<{ start: number; end: number }>,
+): Array<{ start: number; end: number }> {
+  const clean = ranges
+    .map((r) => ({ start: Math.round(r.start), end: Math.round(r.end) }))
+    .filter((r) => Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start && r.end > 0)
+    .map((r) => ({ start: Math.max(0, r.start), end: r.end }))
+    .sort((a, b) => a.start - b.start);
+
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const r of clean) {
+    const last = merged[merged.length - 1];
+    if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+    else merged.push({ ...r });
+  }
+  return merged;
+}
+
+/** D-318 — cut ONE `[start, end)` timeline-frame range out of `track` and close
+ *  the gap, by composing `split` + `remove` + `remove_gap`.
+ *
+ *  Every refusal is a skip, never a guess: if a split is unnecessary or
+ *  refused, if `remove` is rejected (a locked track, a link group reaching onto
+ *  one), or if there is no closeable gap afterwards, this returns whatever it
+ *  has rather than reaching past the ops' own guards. That is deliberate — the
+ *  ops below already encode D-106/D-129/B-033, and a batch helper that
+ *  second-guessed them would be a second, weaker implementation of rules that
+ *  are already right. */
+function rippleDeleteOneRange(
+  tl: Timeline,
+  track: number,
+  start: number,
+  end: number,
+  fps: number,
+): Timeline {
+  let next = tl;
+
+  // 1. Isolate the range into whole clips. The LATER split goes first: cutting
+  //    at `start` first would renumber the clip that `end` falls in.
+  for (const at of [end, start]) {
+    const tr = next.tracks[track];
+    if (!tr) return next;
+    const hit = clipAt(tr, at, fps);
+    // A boundary that already falls on a clip edge needs no split — and asking
+    // for one there would be a no-op the reducer rejects anyway.
+    if (!hit || at <= hit.clip.start_frame) continue;
+    next = applyOp(next, { kind: 'split', track, clip: hit.index, atFrame: at });
+  }
+
+  // 2. Remove every clip now sitting wholly inside the range. Re-resolved each
+  //    time, because `remove` can delete a whole A/V link group and can prune
+  //    an emptied track — both of which renumber what is left.
+  for (;;) {
+    const tr = next.tracks[track];
+    if (!tr) return next;
+    const idx = tr.clips.findIndex((c) => c.start_frame >= start && endFrame(c, fps) <= end);
+    if (idx < 0) break;
+    const after = applyOp(next, { kind: 'remove', track, clip: idx });
+    // Refused (locked track, or a link member on one). Stop rather than spin:
+    // the `findIndex` above would return the same clip forever.
+    if (after === next) return next;
+    next = after;
+  }
+
+  // 3. Close the hole. Refused as a no-op when there is nothing to ripple —
+  //    e.g. the cut ran to the end of the track, where there is no later
+  //    material to pull earlier (`remove_gap`'s own documented behaviour).
+  return applyOp(next, { kind: 'remove_gap', track, frame: start });
+}
+
 export function gapAt(tr: Track, frame: number, fps: number): { gapStart: number; gapEnd: number } | null {
   if (frame < 0 || clipAt(tr, frame, fps)) return null;
   let gapStart = 0;
@@ -2851,6 +2931,31 @@ export type EditOp =
    *  it's inside a clip, the track is locked, or it's trailing empty space
    *  past the last clip — nothing there to ripple). */
   | { kind: 'remove_gap'; track: number; frame: number }
+  /** D-318 — cut N stretches out of one track and close every gap behind them,
+   *  as ONE edit.
+   *
+   *  **Why this op exists at all**, given `split`+`remove`+`remove_gap` already
+   *  did this three ops at a time: because this store pushes one history entry
+   *  per applied op (see `add_clip`'s `linkedAudio` doc for the same argument).
+   *  A recut that accepts 20 detected silences would otherwise cost 20+ presses
+   *  of cmd-Z to back out of, leaving a half-cut timeline at every intermediate
+   *  step. Accepting a set of candidates is one decision to the user, so it is
+   *  one entry in the history.
+   *
+   *  **It invents no new arithmetic.** Each range is applied by composing the
+   *  very ops named above — the exact recipe `useEditorControl.ts` already
+   *  documents for "cut a gap out of a recording" — so ripple, sync-lock
+   *  propagation (D-106), A/V link-group deletion (D-129) and B-033's
+   *  straddle guard all behave here exactly as they do when a human does it by
+   *  hand. This op is the *batching*, not a second implementation.
+   *
+   *  `ranges` are TIMELINE frames, half-open `[start, end)`. They are sorted,
+   *  merged and de-duplicated first, then applied back-to-front so that an
+   *  earlier cut's ripple cannot move a later one out from under itself.
+   *  Refused as a whole no-op (returns the timeline unchanged) if the track is
+   *  locked or no range describes real material; an individual range that turns
+   *  out to be un-cuttable is skipped rather than guessed at. */
+  | { kind: 'ripple_delete_ranges'; track: number; ranges: Array<{ start: number; end: number }> }
   /** D-046 pass 3 — drag a Sources-panel pool item onto the timeline. Appends
    *  a full-length clip referencing the media (or inserts at `atIndex`). If
    *  `track` doesn't exist yet (a brand new timeline has `tracks: []` — see
@@ -3587,6 +3692,12 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return `Remove ${clipLabel(before, op.track, op.clip)}`;
     case 'remove_gap':
       return `Close gap on track ${op.track + 1}`;
+    // D-318 — named for the COUNT, because that is the decision being undone:
+    // "accept these 12 candidates", not twelve separate cuts.
+    case 'ripple_delete_ranges':
+      return op.ranges.length === 1
+        ? `Ripple delete 1 range on track ${op.track + 1}`
+        : `Ripple delete ${op.ranges.length} ranges on track ${op.track + 1}`;
     case 'add_clip':
       // B-129/D-262 — the new-track case says so: this one op also created a
       // track, so its Undo removes one, and a history entry reading only
@@ -5012,6 +5123,19 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // behavior; see `propagateSyncLockRipple`'s own doc). The gap-*finding*
       // requirement above (`gapAt`) stays exactly as-is for `op.track` only.
       propagateSyncLockRipple(next.tracks, op.track, gap.gapEnd, -shift);
+      return next;
+    }
+    case 'ripple_delete_ranges': {
+      // D-318 — the BATCHING of split+remove+remove_gap, not a second
+      // implementation of any of them. See the op's own doc.
+      const ranges = mergeFrameRanges(op.ranges);
+      if (ranges.length === 0) return tl;
+      let next = tl;
+      // Back to front: cutting an earlier range ripples every later one
+      // earlier, which would invalidate the frame numbers we were handed.
+      for (let i = ranges.length - 1; i >= 0; i--) {
+        next = rippleDeleteOneRange(next, op.track, ranges[i].start, ranges[i].end, fps);
+      }
       return next;
     }
     case 'trim_start': {

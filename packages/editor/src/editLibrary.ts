@@ -27,7 +27,7 @@
 /** Every mode the Edit tab's library column can be showing, in the order the
  *  rail renders them top-to-bottom. `sources` first: it is the shared media
  *  pool, the one every tab has and the one an edit starts from. */
-export const EDIT_LIBRARY_MODES = ['sources', 'titles', 'effects', 'subtitles'] as const;
+export const EDIT_LIBRARY_MODES = ['sources', 'titles', 'effects', 'subtitles', 'recut'] as const;
 
 export type EditLibraryMode = (typeof EDIT_LIBRARY_MODES)[number];
 
@@ -42,6 +42,9 @@ export const EDIT_LIBRARY_MODE_LABELS: Record<EditLibraryMode, string> = {
   titles: 'Titles',
   effects: 'Effects',
   subtitles: 'Subtitles',
+  // D-318 — last, because it is the only mode that acts on what is ALREADY on
+  // the timeline rather than offering something to add to it.
+  recut: 'Recut',
 };
 
 /** Parse an untyped library-mode id, or say why it is not one. Recognise or

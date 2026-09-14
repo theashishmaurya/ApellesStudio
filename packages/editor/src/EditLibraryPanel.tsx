@@ -48,6 +48,7 @@ import { TextTIcon, MagicWandIcon } from '@phosphor-icons/react';
 import { Button, TooltipProvider } from '@apelles/ui';
 
 import { CaptionLibrary } from './CaptionLibrary';
+import { RecutPanel } from './RecutPanel';
 import { CaptionsFromTranscriptButton } from './CaptionsFromTranscriptButton';
 import { EDIT_LIBRARY_MODE_LABELS } from './editLibrary';
 import { useEditorTimelineStore } from './timelineStore';
@@ -215,6 +216,11 @@ export function EditLibraryPanel() {
             <LibraryEntry entry={GENERATORS.effects} onAdd={addAtPlayhead} />
           </div>
         )}
+
+        {/* D-318 — the one library that acts on what is already on the
+            timeline: it finds silences and retakes in the selected clip and
+            cuts the ones the user accepts. */}
+        {mode === 'recut' && <RecutPanel />}
 
         {mode === 'subtitles' && (
           <div className="flex min-h-0 flex-1 flex-col">
