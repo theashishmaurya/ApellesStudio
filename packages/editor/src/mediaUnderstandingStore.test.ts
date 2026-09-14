@@ -17,7 +17,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
 
-const { useMediaUnderstandingStore } = await import('./mediaUnderstandingStore');
+const { useMediaUnderstandingStore, silenceKey, retakeKey } = await import(
+  './mediaUnderstandingStore',
+);
 
 const PATH = '/clips/take-1.mp4';
 
@@ -246,5 +248,128 @@ describe('start + status, the shape the control ops actually use', () => {
     expect(store.startTranscript(PATH)).toBe('running');
     await until(() => store.transcriptStatus(PATH).phase === 'done', 'the retry to succeed');
     expect(store.transcriptStatus(PATH).result).toEqual(TRANSCRIPT);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// B-188 / D-321 — the recut detectors' own start-then-poll surface.
+//
+// The defect this covers is not "the detector is wrong", it is "the detector
+// was RIGHT and the answer went nowhere": `editor_detect_silences` ran past its
+// caller's 180-second op timeout, finished some minutes later, and had nowhere
+// to put the result, so the caller that had already given up could never
+// retrieve it. The fix is that the store — not the in-flight promise — is where
+// a detection's answer lives, which is exactly what these assert.
+// --------------------------------------------------------------------------- //
+
+const SILENCES = {
+  source: PATH,
+  start_secs: 0,
+  duration_secs: 20,
+  analysed_secs: 20,
+  min_silence_ms: 600,
+  model: 'silero_vad_v6.2.1.onnx',
+  silences: [{ start_secs: 2, end_secs: 3.5, duration_secs: 1.5 }],
+};
+
+const SILENCE_ARGS = { path: PATH, startSecs: 0, durationSecs: 20 };
+
+describe('the detection cache key (D-321)', () => {
+  it('separates two clips trimmed from one source, and two thresholds of one clip', () => {
+    const a = silenceKey({ path: PATH, startSecs: 0, durationSecs: 20 });
+    const b = silenceKey({ path: PATH, startSecs: 20, durationSecs: 20 });
+    const c = silenceKey({ path: PATH, startSecs: 0, durationSecs: 20, minSilenceMs: 900 });
+
+    expect(a, 'a different range is a different question').not.toBe(b);
+    expect(a, 'so is a different threshold').not.toBe(c);
+    expect(silenceKey({ path: PATH, startSecs: 0, durationSecs: 20 }), 'same ask, same key').toBe(a);
+  });
+
+  it('defaults the threshold so an omitted 600 and an explicit 600 are one entry', () => {
+    expect(silenceKey({ path: PATH, startSecs: 0, durationSecs: 20 })).toBe(
+      silenceKey({ path: PATH, startSecs: 0, durationSecs: 20, minSilenceMs: 600 }),
+    );
+  });
+
+  it('keys retakes on the utterance count, so a run made before the words arrived is not reused', () => {
+    const empty = retakeKey({ path: PATH, startSecs: 0, durationSecs: 20, utterances: [] });
+    const full = retakeKey({
+      path: PATH,
+      startSecs: 0,
+      durationSecs: 20,
+      utterances: [{ start: 0, end: 1, text: 'hello' }],
+    });
+    expect(empty).not.toBe(full);
+  });
+});
+
+describe('a detection that outlives the caller waiting on it', () => {
+  it('is still retrievable afterwards — the actual B-188 failure', async () => {
+    // The detector takes longer than whoever asked is willing to wait.
+    let finish: (v: unknown) => void = () => {};
+    invokeMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const store = useMediaUnderstandingStore.getState();
+
+    expect(store.startSilenceDetection(SILENCE_ARGS)).toBe('running');
+    const key = silenceKey(SILENCE_ARGS);
+    // The caller polls, times out, and gives up right here. Pre-D-321 this is
+    // the point past which the answer was unreachable forever.
+    expect(store.silenceDetectionStatus(key).phase).toBe('running');
+
+    finish(SILENCES);
+    await until(() => store.silenceDetectionStatus(key).phase === 'done', 'the late finish');
+
+    expect(
+      store.silenceDetectionStatus(key).result,
+      'a later poll finds the answer the timed-out caller never saw',
+    ).toEqual(SILENCES);
+  });
+
+  it('serves a repeated ask from cache instead of decoding the clip twice', async () => {
+    invokeMock.mockResolvedValue(SILENCES);
+    const store = useMediaUnderstandingStore.getState();
+    await store.detectSilences(SILENCE_ARGS);
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    await expect(store.detectSilences(SILENCE_ARGS)).resolves.toEqual(SILENCES);
+    expect(invokeMock, 'the second ask never reached the detector').toHaveBeenCalledTimes(1);
+
+    await store.detectSilences(SILENCE_ARGS, true);
+    expect(invokeMock, 'but force re-runs it').toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a failed detection as an error phase, and retries on the next ask', async () => {
+    invokeMock.mockRejectedValue(new Error('no audio stream'));
+    const store = useMediaUnderstandingStore.getState();
+    const key = silenceKey(SILENCE_ARGS);
+
+    store.startSilenceDetection(SILENCE_ARGS);
+    await until(() => store.silenceDetectionStatus(key).phase === 'error', 'the failure to land');
+    expect(store.silenceDetectionStatus(key).error).toContain('no audio stream');
+
+    invokeMock.mockResolvedValue(SILENCES);
+    expect(store.startSilenceDetection(SILENCE_ARGS)).toBe('running');
+    await until(() => store.silenceDetectionStatus(key).phase === 'done', 'the retry to succeed');
+  });
+
+  it('forgets a file’s detections when that file is cleared, and only that file’s', async () => {
+    invokeMock.mockResolvedValue(SILENCES);
+    const store = useMediaUnderstandingStore.getState();
+    const other = { path: '/clips/take-2.mp4', startSecs: 0, durationSecs: 20 };
+    await store.detectSilences(SILENCE_ARGS);
+    await store.detectSilences(other);
+
+    store.clear(PATH);
+
+    expect(store.silenceDetectionStatus(silenceKey(SILENCE_ARGS)).phase).toBe('idle');
+    expect(
+      store.silenceDetectionStatus(silenceKey(other)).phase,
+      'the other file is untouched',
+    ).toBe('done');
   });
 });

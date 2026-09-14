@@ -114,11 +114,13 @@ DEFAULT_OP_TIMEOUT_MS = 20_000
 #: `add_subject_mask` came back to the caller as a bare tool error (B-153).
 AI_MASK_TIMEOUT_MS = 180_000
 
-# D-318 — the recut detectors. `editor_detect_silences` decodes the clip's audio
-# and runs a VAD over it, which is fast (16 minutes of audio scores in ~6s,
-# measured) but not 20s-fast once a cold decode of a long 4K source is in front
-# of it. Same reasoning, and the same shape, as `AI_MASK_TIMEOUT_MS` above.
-RECUT_TIMEOUT_MS = 180_000
+# D-318's recut detectors used to have a 180_000 budget here, on the reasoning
+# that a cold decode of a long 4K source is not 20s-fast. B-188 proved that far
+# too optimistic — a real 16.5-minute 4K file took 244s and blew it anyway — and
+# D-321 fixed the cause (an O(n^2) resample, now 4.9s) AND made both detectors
+# START-then-POLL, so they answer within a 12s grace window or hand back a
+# pollable `state: "running"`. Neither can block for minutes any more, so both
+# are back on `DEFAULT_OP_TIMEOUT_MS` and the special budget is gone.
 #: B-071 — extra client-side slack covering the control server's own cold-start
 #: readiness wait (`control.rs`'s `BRIDGE_READY_TIMEOUT`), which sits on TOP of
 #: the per-op budget below rather than eating into it. The two are a pair: if
@@ -3999,11 +4001,11 @@ def editor_detect_silences(
     track: int,
     clip: int,
     min_silence_ms: float | None = None,
+    force: bool = False,
 ) -> str:
     """Find the stretches of a timeline clip where **nobody is speaking** —
     "where is the dead air." Uses a real on-device voice-activity model (Silero
-    VAD, D-319) over the clip's own audio, so it needs no transcript and takes
-    seconds rather than minutes.
+    VAD, D-319) over the clip's own audio, so it needs no transcript.
 
     - `track` / `clip` — which clip to analyse, by index (`editor_get_timeline`
       lists them). Only the clip's OWN trimmed range is analysed, so a source
@@ -4012,6 +4014,15 @@ def editor_detect_silences(
     - `min_silence_ms` — the shortest gap worth reporting (default 600). Below
       about 400 you start getting the pauses *inside* sentences, which are not
       cut points.
+    - `force` — re-run even though this exact clip range and threshold has
+      already been analysed (the answer is cached per range+threshold).
+
+    **Reading the answer: check `state` first** (D-321). A normal clip finishes
+    inside this call and comes back `state: "done"` with `silences`. A long one
+    comes back `state: "running"` with no `silences` — the detection is still
+    going, so poll `editor_detect_silences_status` with the same `track`/`clip`/
+    `min_silence_ms` until it says `done`. The answer is held for you either
+    way; it is never computed and thrown away.
 
     Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what
     was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source
@@ -4026,11 +4037,33 @@ def editor_detect_silences(
     args: dict = {"track": track, "clip": clip}
     if min_silence_ms is not None:
         args["minSilenceMs"] = min_silence_ms
-    return json.dumps(
-        _op("editor_detect_silences", timeout_ms=RECUT_TIMEOUT_MS, **args),
-        indent=2,
-        default=str,
-    )
+    if force:
+        args["force"] = True
+    return json.dumps(_op("editor_detect_silences", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_detect_silences_status(
+    track: int,
+    clip: int,
+    min_silence_ms: float | None = None,
+) -> str:
+    """Poll a silence detection started by `editor_detect_silences` (D-321).
+
+    Pass the SAME `track` / `clip` / `min_silence_ms` you started it with — a
+    detection is cached per clip range and threshold, so different arguments are
+    a different question and will read as `state: "idle"`.
+
+    `state` is `running` (still going — poll again), `done` (with `silences`,
+    exactly as `editor_detect_silences` returns them) or `idle` (nothing was
+    ever started for this clip at this threshold). Starting nothing itself, this
+    is a pure read and free to call."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    if min_silence_ms is not None:
+        args["minSilenceMs"] = min_silence_ms
+    return json.dumps(_op("editor_detect_silences_status", **args), indent=2, default=str)
 
 
 @mcp.tool()
@@ -4040,6 +4073,7 @@ def editor_detect_retakes(
     similarity: float | None = None,
     window_secs: float | None = None,
     min_words: int | None = None,
+    force: bool = False,
 ) -> str:
     """Group the places in a timeline clip where the speaker **said the same
     line more than once** — the flubbed take, the stumble, the third attempt.
@@ -4048,6 +4082,12 @@ def editor_detect_retakes(
     is a fact about words. If one has not been made yet this starts it and
     returns `state: "running"` with a `note` — poll
     `editor_get_transcript_status`, then call this again.
+
+    Once the words exist, the grouping itself follows the same start-then-poll
+    contract as `editor_detect_silences` (D-321): `state: "done"` with `groups`
+    if it finished inside this call, otherwise `state: "running"` — poll
+    `editor_detect_retakes_status` with the same arguments. `force` re-runs a
+    grouping that is already cached for this clip range and these thresholds.
 
     - `track` / `clip` — which clip to analyse, by index. Only its own trimmed
       range is considered.
@@ -4076,11 +4116,39 @@ def editor_detect_retakes(
         args["windowSecs"] = window_secs
     if min_words is not None:
         args["minWords"] = min_words
-    return json.dumps(
-        _op("editor_detect_retakes", timeout_ms=RECUT_TIMEOUT_MS, **args),
-        indent=2,
-        default=str,
-    )
+    if force:
+        args["force"] = True
+    return json.dumps(_op("editor_detect_retakes", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def editor_detect_retakes_status(
+    track: int,
+    clip: int,
+    similarity: float | None = None,
+    window_secs: float | None = None,
+    min_words: int | None = None,
+) -> str:
+    """Poll a retake grouping started by `editor_detect_retakes` (D-321).
+
+    Pass the SAME arguments you started it with — a grouping is cached per clip
+    range and per threshold set, so different arguments read as `state: "idle"`.
+
+    `state` is `running`, `done` (with `groups`, exactly as
+    `editor_detect_retakes` returns them) or `idle`. If the transcript itself is
+    still being made this reports that instead, with a `note` pointing at
+    `editor_get_transcript_status` — the same answer the start tool gives, since
+    there is nothing to group until there are words. A pure read."""
+    import json
+
+    args: dict = {"track": track, "clip": clip}
+    if similarity is not None:
+        args["similarity"] = similarity
+    if window_secs is not None:
+        args["windowSecs"] = window_secs
+    if min_words is not None:
+        args["minWords"] = min_words
+    return json.dumps(_op("editor_detect_retakes_status", **args), indent=2, default=str)
 
 
 @mcp.tool()

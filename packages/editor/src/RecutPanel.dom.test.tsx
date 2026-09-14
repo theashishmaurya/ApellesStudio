@@ -267,10 +267,62 @@ describe('RecutPanel (D-318)', () => {
 
   it('8. says so rather than guessing when no transcript exists yet', async () => {
     await mountPanel(true);
+    // A transcript already in flight — the state this notice is about. (Set
+    // directly rather than letting the panel start one, so the assertion is
+    // about the panel and not about the sidecar stub.)
+    actSync(() => useMediaUnderstandingStore.setState({ transcribing: { [SOURCE]: true } } as never));
     await click(q('[data-chroma-recut-find-retakes]'));
 
     expect(rows()).toHaveLength(0);
     expect(q('[data-chroma-recut-notice]')!.textContent).toContain('Transcribing');
+  });
+
+  // B-188/D-321 — the panel used to stop dead here and tell the human to come
+  // back and click again, which is a poll implemented by a person. The run now
+  // survives the wait and finishes itself.
+  it('8b. picks a waiting retake run back up when the transcript finally lands', async () => {
+    await mountPanel(true);
+    actSync(() => useMediaUnderstandingStore.setState({ transcribing: { [SOURCE]: true } } as never));
+    await click(q('[data-chroma-recut-find-retakes]'));
+    expect(rows(), 'nothing to show while the words are still coming').toHaveLength(0);
+
+    actSync(() =>
+      useMediaUnderstandingStore.setState({
+        transcribing: {},
+        transcripts: {
+          [SOURCE]: {
+            text: 'x',
+            language: 'en',
+            model: 'test',
+            source: SOURCE,
+            segments: [
+              { start: 1.0, end: 2.5, text: 'The cat sat—', words: [] },
+              { start: 3.0, end: 5.0, text: 'The cat sat on the mat.', words: [] },
+              { start: 6.0, end: 8.0, text: 'The cat sat on the mat!', words: [] },
+            ],
+          },
+        },
+      } as never),
+    );
+    await waitFrames(3);
+
+    expect(rows(), 'the run resumed on its own — no second click').toHaveLength(3);
+  });
+
+  // B-188/D-321 — the defect that made this whole pass necessary: a detection
+  // that outlives the caller waiting on it must leave its answer somewhere
+  // retrievable. Here the store holds it and the panel reads it back.
+  it('8c. a detection that finishes after the panel gave up is still retrievable', async () => {
+    await mountPanel(true);
+    await click(q('[data-chroma-recut-find-silences]'));
+    await waitFrames(2);
+    const key = Object.keys(useMediaUnderstandingStore.getState().silences)[0];
+
+    expect(key, 'the finished detection is held in the store, keyed').toBeTruthy();
+    expect(
+      useMediaUnderstandingStore.getState().silenceDetectionStatus(key),
+      'and reports done with its result, for any later poller',
+    ).toMatchObject({ phase: 'done' });
   });
 
   it('9. clears stale candidates after a cut, since their frame numbers moved', async () => {

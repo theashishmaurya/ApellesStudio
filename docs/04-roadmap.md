@@ -2089,6 +2089,17 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         proved was necessary. **Deferred:** speaker diarisation, filler-word
         ("um"/"uh") detection, and automatic pause-tightening to a target
         length — each real, none in `docs/02-scope.md` v1.
+        **Followed up 2026-09-14 by D-321 (fixes B-188):** the first real use on
+        the owner's own 4K footage took 244s and blew the 180s op budget. It was
+        not the VAD and not the packet loop — `RateConverter::push_interleaved`,
+        a *streaming* helper being handed a whole clip in one push, was O(n²) in
+        its per-chunk `drain` (989s clip: **243.6s → 4.9s**, output identical).
+        Both detectors are now **start-then-poll** through the same store the
+        transcript tools use, with `editor_detect_silences_status` /
+        `editor_detect_retakes_status` (MCP → **168 tools**), so a detection
+        that outruns its caller is held rather than discarded; `RECUT_TIMEOUT_MS`
+        is deleted. The Recut panel polls the same store instead of blocking, and
+        a retake run now waits for its transcript and resumes itself.
     - ~~**The Edit tab's left library — one docked, switchable browser**~~ —
       **DONE, 2026-09-09 (D-263).** D-248 gave the tab an icon rail whose
       buttons opened floating popovers, rendered (because Sources is

@@ -62,6 +62,14 @@ fn default_editor_generate_captions_from_transcript_force() -> bool {
     false
 }
 
+fn default_editor_detect_retakes_force() -> bool {
+    false
+}
+
+fn default_editor_detect_silences_force() -> bool {
+    false
+}
+
 fn default_editor_get_transcript_force() -> bool {
     false
 }
@@ -915,10 +923,36 @@ pub struct EditorDetectSilencesArgs {
     pub clip: i64,
     #[serde(default)]
     pub min_silence_ms: Option<f64>,
+    #[serde(default = "default_editor_detect_silences_force")]
+    pub force: bool,
+}
+
+/// D-321 — the poll half. No `force`: a status read starts nothing.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorDetectSilencesStatusArgs {
+    pub track: i64,
+    pub clip: i64,
+    #[serde(default)]
+    pub min_silence_ms: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorDetectRetakesArgs {
+    pub track: i64,
+    pub clip: i64,
+    #[serde(default)]
+    pub similarity: Option<f64>,
+    #[serde(default)]
+    pub window_secs: Option<f64>,
+    #[serde(default)]
+    pub min_words: Option<i64>,
+    #[serde(default = "default_editor_detect_retakes_force")]
+    pub force: bool,
+}
+
+/// D-321 — the poll half. No `force`: a status read starts nothing.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorDetectRetakesStatusArgs {
     pub track: i64,
     pub clip: i64,
     #[serde(default)]
@@ -3938,8 +3972,7 @@ impl ApellesMcp {
         name = "editor_detect_silences",
         description = r#"Find the stretches of a timeline clip where **nobody is speaking** —
     "where is the dead air." Uses a real on-device voice-activity model (Silero
-    VAD, D-319) over the clip's own audio, so it needs no transcript and takes
-    seconds rather than minutes.
+    VAD, D-319) over the clip's own audio, so it needs no transcript.
 
     - `track` / `clip` — which clip to analyse, by index (`editor_get_timeline`
       lists them). Only the clip's OWN trimmed range is analysed, so a source
@@ -3948,6 +3981,15 @@ impl ApellesMcp {
     - `min_silence_ms` — the shortest gap worth reporting (default 600). Below
       about 400 you start getting the pauses *inside* sentences, which are not
       cut points.
+    - `force` — re-run even though this exact clip range and threshold has
+      already been analysed (the answer is cached per range+threshold).
+
+    **Reading the answer: check `state` first** (D-321). A normal clip finishes
+    inside this call and comes back `state: "done"` with `silences`. A long one
+    comes back `state: "running"` with no `silences` — the detection is still
+    going, so poll `editor_detect_silences_status` with the same `track`/`clip`/
+    `min_silence_ms` until it says `done`. The answer is held for you either
+    way; it is never computed and thrown away.
 
     Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what
     was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source
@@ -3962,15 +4004,42 @@ impl ApellesMcp {
         &self,
         Parameters(p): Parameters<EditorDetectSilencesArgs>,
     ) -> Result<CallToolResult, ErrorData> {
+        let mut args = WireArgs::new()
+            .set("track", p.track)
+            .set("clip", p.clip)
+            .put("minSilenceMs", p.min_silence_ms);
+        if p.force {
+            args = args.set("force", true);
+        }
+        // D-321 — back on the default budget: the op now answers within its own
+        // grace window or hands back a pollable `state: "running"`, so there is
+        // nothing left for a 180s ceiling to protect against.
+        let env = self.op("editor_detect_silences", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_detect_silences_status",
+        description = r#"Poll a silence detection started by `editor_detect_silences` (D-321).
+
+    Pass the SAME `track` / `clip` / `min_silence_ms` you started it with — a
+    detection is cached per clip range and threshold, so different arguments are
+    a different question and will read as `state: "idle"`.
+
+    `state` is `running` (still going — poll again), `done` (with `silences`,
+    exactly as `editor_detect_silences` returns them) or `idle` (nothing was
+    ever started for this clip at this threshold). Starting nothing itself, this
+    is a pure read and free to call."#
+    )]
+    pub async fn editor_detect_silences_status(
+        &self,
+        Parameters(p): Parameters<EditorDetectSilencesStatusArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new()
             .set("track", p.track)
             .set("clip", p.clip)
             .put("minSilenceMs", p.min_silence_ms);
-        // D-318 — decode + VAD over a long 4K source does not reliably fit the
-        // 20s default, the same reason the AI mask tools have their own budget.
-        let env = self
-            .op_with("editor_detect_silences", crate::RECUT_TIMEOUT_MS, args)
-            .await?;
+        let env = self.op("editor_detect_silences_status", args).await?;
         Ok(render::json_text(&env))
     }
 
@@ -3983,6 +4052,12 @@ impl ApellesMcp {
     is a fact about words. If one has not been made yet this starts it and
     returns `state: "running"` with a `note` — poll
     `editor_get_transcript_status`, then call this again.
+
+    Once the words exist, the grouping itself follows the same start-then-poll
+    contract as `editor_detect_silences` (D-321): `state: "done"` with `groups`
+    if it finished inside this call, otherwise `state: "running"` — poll
+    `editor_detect_retakes_status` with the same arguments. `force` re-runs a
+    grouping that is already cached for this clip range and these thresholds.
 
     - `track` / `clip` — which clip to analyse, by index. Only its own trimmed
       range is considered.
@@ -4007,15 +4082,43 @@ impl ApellesMcp {
         &self,
         Parameters(p): Parameters<EditorDetectRetakesArgs>,
     ) -> Result<CallToolResult, ErrorData> {
+        let mut args = WireArgs::new()
+            .set("track", p.track)
+            .set("clip", p.clip)
+            .put("similarity", p.similarity)
+            .put("windowSecs", p.window_secs)
+            .put("minWords", p.min_words);
+        if p.force {
+            args = args.set("force", true);
+        }
+        let env = self.op("editor_detect_retakes", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_detect_retakes_status",
+        description = r#"Poll a retake grouping started by `editor_detect_retakes` (D-321).
+
+    Pass the SAME arguments you started it with — a grouping is cached per clip
+    range and per threshold set, so different arguments read as `state: "idle"`.
+
+    `state` is `running`, `done` (with `groups`, exactly as
+    `editor_detect_retakes` returns them) or `idle`. If the transcript itself is
+    still being made this reports that instead, with a `note` pointing at
+    `editor_get_transcript_status` — the same answer the start tool gives, since
+    there is nothing to group until there are words. A pure read."#
+    )]
+    pub async fn editor_detect_retakes_status(
+        &self,
+        Parameters(p): Parameters<EditorDetectRetakesStatusArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new()
             .set("track", p.track)
             .set("clip", p.clip)
             .put("similarity", p.similarity)
             .put("windowSecs", p.window_secs)
             .put("minWords", p.min_words);
-        let env = self
-            .op_with("editor_detect_retakes", crate::RECUT_TIMEOUT_MS, args)
-            .await?;
+        let env = self.op("editor_detect_retakes_status", args).await?;
         Ok(render::json_text(&env))
     }
 

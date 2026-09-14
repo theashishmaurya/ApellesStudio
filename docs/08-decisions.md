@@ -30743,3 +30743,117 @@ utterance against any equal-length word-window of the longer one, which scores
 that pair 1.00. Only the window sweep is ours; the edit distance underneath it
 is still `strsim`'s. A length-ratio guard (3x) stops containment from matching a
 sentence against a paragraph that merely quotes it.
+
+## D-321 — the recut slowdown was an O(n²) resample, and both detectors become start-then-poll
+
+**decided (2026-09-14)** · fixes **B-188** · supersedes D-318's "no async poll needed"
+
+**Context.** D-318 shipped `editor_detect_silences` advertising VAD that "runs
+in milliseconds rather than minutes", backed by a real benchmark: 16.1 minutes
+of audio scored in 6.1 s. Its first use on the owner's actual footage
+(`A001_09122319_C038.MOV` — 4.48 GB, HEVC 4K/24, 989 s) blew the 180 s op
+timeout, stayed at ~95% CPU for five more minutes, then went idle with nothing
+logged and the result discarded.
+
+**What the profiling actually found.** Measured end to end on both real files,
+in the `dev` profile (the build that hit the bug), with each stage timed
+separately:
+
+| stage | C038 (989 s) | C040 (686 s) |
+|---|---|---|
+| symphonia packet loop — the whole interleaved container | 2.99 s | 3.03 s |
+| …of which `next_packet()` across every video packet | 2.46 s | 2.02 s |
+| `decode_mono_at_rate` (decode **+ resample**) — *before* | **243.6 s** | **169.5 s** |
+| `decode_mono_at_rate` — *after* | **4.9 s** | **3.0 s** |
+| Silero VAD (30,922 / 21,448 windows) | 5.0 s | 4.9 s |
+
+End to end after the fix, decode + VAD: **9.8 s** (C038) and **7.9 s** (C040) in
+`dev`; **7.0 s** and **3.8 s** in `release`. Both profiles are now far inside the
+20 s default op budget, so this is fixed for the shipped app AND for the
+`tauri:dev` loop an agent actually drives. The VAD's speech-window counts are
+identical across all four runs, which is the determinism check on the change.
+
+So ~240 s of the 244 s was the **resample**, and none of B-188's three named
+suspects was the cause. Each is ruled out by a measurement, not by argument:
+
+- **(a) `next_packet()` walking past the video packets — ruled out.** It does
+  demux all 23,754 non-audio packets (4.46 GB) to reach 46,384 audio ones, and
+  that costs **2.46 s**, not minutes. No packet-skip optimisation is warranted
+  and none was written.
+- **(b) debug-build overhead — ruled out by inspection.** This workspace's
+  `[profile.dev]` is already `opt-level = 2` (moved to the root by D-040), so
+  the "unoptimized build" B-188 hypothesised does not exist here. The numbers
+  above ARE the dev profile.
+- **(c) per-window ONNX overhead — ruled out.** 163–231 µs per window, 5 s for a
+  16.5-minute clip, matching D-319's own benchmark. The `Tensor::from_array`
+  clones B-188 flagged are real allocations but are noise next to the session
+  call, and the session call is already fast enough. Left alone: optimising it
+  would be work against a measurement that says it does not matter.
+
+**The real cause.** `RateConverter::push_interleaved` (`apelles-media::audio`)
+was written for **playback**, which pushes one small packet at a time. Its loop
+did `acc[c].drain(0..chunk_frames)` per resampled chunk — one memmove of the
+entire unconsumed tail, per chunk. With a small push the loop runs about once
+and that is free. `decode_mono_at_rate` (D-318) pushes a **whole clip** in one
+call, so the same line becomes quadratic in clip length: 47.5 M frames ⇒ ~10¹²
+sample moves. The measured scaling is the giveaway — 100 s→1.4 s, 200 s→4.9 s,
+400 s→24.3 s, 800 s→174.8 s: worse than 4× per doubling, because past L3 every
+memmove is DRAM-bound.
+
+**The fix, and why this one.** Walk `acc` with a cursor and reclaim the consumed
+prefix **once per call** instead of once per chunk, and hand `rubato` borrowed
+slices instead of a fresh `to_vec()` per chunk. Same resampler, same settings,
+same output — the VAD scores bit-identically before and after (14393/30922
+speech windows on C038, 9586/21448 on C040) — and the batch call is linear.
+Playback's steady state is one chunk per push, where the new code does the
+identical single memmove it always did.
+
+Rejected: giving `decode_mono_at_rate` its own second resampler or a cheap
+decimator (D-318's "one resampler in this crate, not two" still holds, and the
+shared one was not wrong, just quadratic when batch-fed); and chunking the
+caller's push into small pieces (that hides a defect in the shared helper behind
+a caller-side workaround, which is exactly what CLAUDE.md forbids).
+
+**The second, independent defect: a slow op's result was unrecoverable.** Speed
+alone does not fix this — no measurement guarantees the *next* file finishes in
+time, and a 3-hour source would not. D-318 deliberately did not follow
+`editor_get_transcript`/`_status`'s async-poll design, reasoning VAD was fast
+enough not to need it; B-188 disproves the premise, so the reasoning goes with
+it. Both detectors now use **the same pattern, not a second one**: the work runs
+through `mediaUnderstandingStore` — the same store, the same three parallel
+`Record` maps, the same `startJob` helper and the same `idle|running|done|error`
+vocabulary transcripts already use — and `editor_detect_silences_status` /
+`editor_detect_retakes_status` are pure reads of it. A finished-but-unpolled
+detection sits in the store until it is asked for; it can no longer be computed
+and thrown away.
+
+**One deliberate deviation from the transcript pattern: a grace window.** A
+transcript ALWAYS takes tens of seconds, so its start op never had a reason to
+wait. A detection now normally takes ~5 s, and forcing every caller through a
+second round trip for that would be a real ergonomic regression. So the start op
+waits up to `DETECT_GRACE_MS` (12 s, comfortably inside `control.rs`'s 20 s
+`BRIDGE_TIMEOUT`) and returns `state: "done"` with the answer if it lands —
+falling back to `state: "running"` only when it genuinely runs long. This is the
+transcript contract plus a fast path, not a competing convention: the same
+`state` field, the same `_status` companion, the same store underneath.
+
+Because neither op can block for minutes any more, `RECUT_TIMEOUT_MS` (180 s) is
+**deleted** from both MCP servers and both detectors return to
+`DEFAULT_OP_TIMEOUT_MS`. A 180 s ceiling now protects against nothing.
+
+**The GUI half, per CLAUDE.md's human-AND-AI rule.** `RecutPanel` no longer
+`await`s a blocking `invoke`; it starts the run in the same store and derives its
+rows from it. This also closes a smaller defect of the same family: asking for
+retakes before a transcript existed used to print "try again when it finishes" —
+a poll implemented by a human. The run now waits for the words and resumes
+itself.
+
+**Tests.** The resampler's batch-equals-streaming equivalence, its
+under-one-chunk and accumulator-growth behaviour (`apelles-media`, 3 tests); the
+cache-key separation, the late-finishing detection being retrievable *after* the
+caller gave up, force, non-sticky errors and per-path clearing
+(`mediaUnderstandingStore.test.ts`, 9 tests); and the panel resuming a waiting
+retake run and holding a finished detection (`RecutPanel.dom.test.tsx`,
+3 tests). The 180 s timing itself is not a test — a wall-clock assertion is not
+reliable CI — which is why the equivalence property is tested instead and the
+numbers live in this entry.

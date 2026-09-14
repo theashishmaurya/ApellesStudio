@@ -726,24 +726,54 @@ impl RateConverter {
             self.out_rate,
         );
         let mut out = Vec::with_capacity(expect_frames * self.channels);
-        while self.acc[0].len() >= self.chunk_frames {
-            let chunk: Vec<Vec<f32>> = self
-                .acc
-                .iter()
-                .map(|c| c[..self.chunk_frames].to_vec())
-                .collect();
-            let waves_out = self
-                .resampler
+
+        // Borrow the fields separately: `process` needs `&mut resampler` while
+        // the chunk it is handed borrows `acc`.
+        let Self {
+            resampler,
+            acc,
+            chunk_frames,
+            channels,
+            ..
+        } = self;
+        let (chunk_frames, channels) = (*chunk_frames, *channels);
+
+        // B-188/D-321 — walk `acc` with a cursor and reclaim what was consumed
+        // ONCE at the end, rather than `drain(0..chunk_frames)` per chunk.
+        //
+        // That drain memmoves the entire unconsumed tail left by one chunk on
+        // every iteration, so the cost of a single push is quadratic in its
+        // length. Playback never noticed (its pushes are one packet, so the
+        // loop runs about once), but `decode_mono_at_rate` pushes a whole clip
+        // in one call: 47.5 M frames of a 16.5-minute source spent **240 s**
+        // inside that memmove and blew the recut op's 180 s timeout. Same
+        // output, now linear — measured 243.6 s → 1.5 s.
+        let mut consumed = 0usize;
+        // Slices INTO `acc`, not copies out of it — `process` takes anything
+        // that is `AsRef<[f32]>`, so the per-chunk `to_vec()` this used to do
+        // (one allocation per 1024 frames) was pure overhead.
+        let mut chunk: Vec<&[f32]> = Vec::with_capacity(channels);
+        while acc[0].len() - consumed >= chunk_frames {
+            chunk.clear();
+            chunk.extend(acc.iter().map(|c| &c[consumed..consumed + chunk_frames]));
+            let waves_out = resampler
                 .process(&chunk, None)
                 .map_err(|e| format!("rubato process: {e}"))?;
-            for c in self.acc.iter_mut() {
-                c.drain(0..self.chunk_frames);
-            }
+            consumed += chunk_frames;
             let out_frames = waves_out.first().map(Vec::len).unwrap_or(0);
             for f in 0..out_frames {
-                for c in waves_out.iter().take(self.channels) {
+                for c in waves_out.iter().take(channels) {
                     out.push(c[f]);
                 }
+            }
+        }
+
+        // Playback's steady state is one chunk per push, so this is the same
+        // single memmove it always did; a batch push now pays it once instead
+        // of once per chunk.
+        if consumed > 0 {
+            for c in acc.iter_mut() {
+                c.drain(0..consumed);
             }
         }
         Ok(out)
@@ -3970,6 +4000,83 @@ mod tests {
         assert_eq!(resampled_frame_count(44_100, 44_100, 48_000), 48_000); // 44.1k -> 48k, 1s
         assert_eq!(resampled_frame_count(48_000, 48_000, 44_100), 44_100); // 48k -> 44.1k, 1s
         assert_eq!(resampled_frame_count(1_000, 0, 48_000), 0); // guard against div-by-zero
+    }
+
+    // --- B-188/D-321: the batch push is the streaming push ---------------- //
+    //
+    // `RateConverter` was written for playback, which feeds it one small packet
+    // at a time. `decode_mono_at_rate` feeds it a WHOLE CLIP in one call, and
+    // the per-chunk `Vec::drain` that made that quadratic is what B-188 spent
+    // 240 seconds inside. Removing it is only safe if one big push and many
+    // small pushes still produce the same samples — which is a fact with a
+    // correct answer, so it gets a test rather than an argument.
+
+    /// A deterministic, non-trivial signal: a sweep, so a resampler that
+    /// silently dropped or re-ordered a chunk shows up as a value mismatch and
+    /// not merely a length one.
+    fn sweep(frames: usize, channels: usize) -> Vec<f32> {
+        (0..frames * channels)
+            .map(|i| ((i as f32) * 0.001).sin() * 0.5)
+            .collect()
+    }
+
+    #[test]
+    fn one_big_push_resamples_identically_to_many_small_ones() {
+        const FRAMES: usize = 20_000; // ~19 chunks, so the loop really iterates
+        for channels in [1usize, 2] {
+            let input = sweep(FRAMES, channels);
+
+            let mut batch = RateConverter::new(48_000, 16_000, channels).unwrap();
+            let whole = batch.push_interleaved(&input).unwrap();
+
+            // Deliberately NOT a multiple of `chunk_frames`, so pushes land
+            // mid-chunk and the accumulator carries a real remainder across
+            // calls — the case a cursor could get wrong.
+            let mut streamed = RateConverter::new(48_000, 16_000, channels).unwrap();
+            let mut piecewise: Vec<f32> = Vec::new();
+            for part in input.chunks(777 * channels) {
+                piecewise.extend(streamed.push_interleaved(part).unwrap());
+            }
+
+            assert_eq!(
+                whole.len(),
+                piecewise.len(),
+                "{channels}ch: one push and many pushes must emit the same count"
+            );
+            assert_eq!(
+                whole, piecewise,
+                "{channels}ch: and bit-for-bit the same samples"
+            );
+        }
+    }
+
+    #[test]
+    fn a_push_shorter_than_one_chunk_emits_nothing_and_keeps_its_input() {
+        let mut rc = RateConverter::new(48_000, 16_000, 1).unwrap();
+        let short = sweep(100, 1);
+        assert!(
+            rc.push_interleaved(&short).unwrap().is_empty(),
+            "under one chunk there is nothing to resample yet"
+        );
+        assert_eq!(
+            rc.acc[0].len(),
+            100,
+            "and the input is still buffered — a cursor must not drop unconsumed frames"
+        );
+    }
+
+    #[test]
+    fn consumed_frames_are_reclaimed_so_the_accumulator_does_not_grow() {
+        let mut rc = RateConverter::new(48_000, 16_000, 1).unwrap();
+        for _ in 0..20 {
+            rc.push_interleaved(&sweep(1_500, 1)).unwrap();
+        }
+        // 20 pushes of 1500 = 30_000 frames; 29 whole 1024-chunks consumed.
+        assert!(
+            rc.acc[0].len() < rc.chunk_frames,
+            "the leftover must stay under one chunk ({} held)",
+            rc.acc[0].len()
+        );
     }
 
     // --- D-147: clip fades in the mix ------------------------------------ //

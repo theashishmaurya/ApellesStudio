@@ -31,6 +31,7 @@
  */
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { DEFAULT_MIN_SILENCE_MS, type RetakeGroupWire } from './recut';
 
 /** How often to poll a running sidecar job. Coarse on purpose: these jobs run
  *  for tens of seconds to minutes, so a tighter loop would just add IPC
@@ -105,6 +106,82 @@ export interface AnalyzeOptions {
   force?: boolean;
 }
 
+/** `chroma_detect_silences`'s result, verbatim — seconds, not frames. The
+ *  seconds→frames conversion needs a clip and an fps and belongs to the op
+ *  layer (D-318), so this store caches what the detector actually said. */
+export interface SilenceDetection {
+  source: string;
+  start_secs: number;
+  duration_secs: number;
+  analysed_secs: number;
+  min_silence_ms: number;
+  model: string;
+  silences: Array<{ start_secs: number; end_secs: number; duration_secs: number }>;
+}
+
+/** `chroma_detect_retakes`'s result, verbatim. */
+export interface RetakeDetection {
+  similarity: number;
+  window_secs: number;
+  min_words: number;
+  utterances: number;
+  groups: RetakeGroupWire[];
+}
+
+/** Everything that changes what `chroma_detect_silences` would answer. */
+export interface SilenceDetectionArgs {
+  path: string;
+  startSecs: number;
+  durationSecs: number;
+  minSilenceMs?: number;
+}
+
+/** Everything that changes what `chroma_detect_retakes` would answer, plus the
+ *  clip range the utterances were filtered to. */
+export interface RetakeDetectionArgs {
+  path: string;
+  startSecs: number;
+  durationSecs: number;
+  utterances: Array<{ start: number; end: number; text: string }>;
+  similarity?: number;
+  windowSecs?: number;
+  minWords?: number;
+}
+
+/** The cache key for one silence detection (B-188/D-321).
+ *
+ *  Unlike a transcript — which is a fact about a whole FILE and is therefore
+ *  keyed by path alone — a detection is a fact about a *range of* a file at a
+ *  *given threshold*. Two clips trimmed from one source, or one clip asked at
+ *  two thresholds, are different questions with different answers, so every
+ *  input that changes the answer is in the key. Pure, and unit-tested: a key
+ *  that collided would silently serve one clip another clip's cut list.
+ */
+export function silenceKey(a: SilenceDetectionArgs): string {
+  return [
+    a.path,
+    a.startSecs,
+    a.durationSecs,
+    a.minSilenceMs ?? DEFAULT_MIN_SILENCE_MS,
+  ].join('|');
+}
+
+/** The cache key for one retake detection. Same rule as [`silenceKey`], plus
+ *  the utterance COUNT — the transcript can arrive between two calls, and a
+ *  detection run over 0 utterances must not be served to a caller that now has
+ *  the words. */
+export function retakeKey(a: RetakeDetectionArgs): string {
+  return [
+    a.path,
+    a.startSecs,
+    a.durationSecs,
+    a.utterances.length,
+    a.similarity ?? '',
+    a.windowSecs ?? '',
+    a.minWords ?? '',
+  ].join('|');
+}
+
 export interface TranscribeOptions {
   language?: string;
   wordTimestamps?: boolean;
@@ -149,6 +226,18 @@ interface MediaUnderstandingState {
   transcriptErrors: Record<string, string>;
   analysisErrors: Record<string, string>;
 
+  /** [`silenceKey`] -> detection. The recut detectors (D-318) get the same
+   *  three-map treatment for the same reason the sidecar jobs above do — see
+   *  B-188/D-321: a detection that outruns its caller's timeout must leave its
+   *  answer somewhere retrievable instead of being thrown away. */
+  silences: Record<string, SilenceDetection>;
+  detectingSilences: Record<string, boolean>;
+  silenceErrors: Record<string, string>;
+  /** [`retakeKey`] -> detection, and its twins. */
+  retakes: Record<string, RetakeDetection>;
+  detectingRetakes: Record<string, boolean>;
+  retakeErrors: Record<string, string>;
+
   /** Run to completion. Resolves with the result (cached, if there is one).
    *  Callers that cannot wait minutes — anything reached through
    *  `chroma::control`'s 20 s bridge — should use `start*` + `*Status` below
@@ -164,6 +253,18 @@ interface MediaUnderstandingState {
 
   transcriptStatus(path: string): AnalysisStatus<Transcript>;
   analysisStatus(path: string): AnalysisStatus<VideoAnalysis>;
+
+  /** The recut detectors, in the same three shapes (B-188/D-321). `detect*`
+   *  runs to completion; `startDetect*` kicks it and returns the phase now;
+   *  `*DetectionStatus` is a pure read of the maps above, keyed by
+   *  [`silenceKey`] / [`retakeKey`]. */
+  detectSilences(args: SilenceDetectionArgs, force?: boolean): Promise<SilenceDetection>;
+  startSilenceDetection(args: SilenceDetectionArgs, force?: boolean): AnalysisPhase;
+  silenceDetectionStatus(key: string): AnalysisStatus<SilenceDetection>;
+
+  detectRetakes(args: RetakeDetectionArgs, force?: boolean): Promise<RetakeDetection>;
+  startRetakeDetection(args: RetakeDetectionArgs, force?: boolean): AnalysisPhase;
+  retakeDetectionStatus(key: string): AnalysisStatus<RetakeDetection>;
 
   /** Drop a cached result (or everything, with no argument) — the escape hatch
    *  for "this file changed and I don't want to pass `force` at every call
@@ -232,6 +333,16 @@ function startJob(
   return 'running';
 }
 
+/** Every entry of a detection map whose key did NOT come from `path`.
+ *
+ *  Both key builders put the path first and join with `|`, and a real absolute
+ *  path cannot contain `|`, so the prefix test is exact rather than a
+ *  heuristic. Pure — unit-tested alongside the key builders. */
+function withoutPath<T>(map: Record<string, T>, path: string): Record<string, T> {
+  const prefix = `${path}|`;
+  return Object.fromEntries(Object.entries(map).filter(([k]) => !k.startsWith(prefix)));
+}
+
 export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, get) => ({
   transcripts: {},
   analyses: {},
@@ -239,6 +350,12 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
   analyzing: {},
   transcriptErrors: {},
   analysisErrors: {},
+  silences: {},
+  detectingSilences: {},
+  silenceErrors: {},
+  retakes: {},
+  detectingRetakes: {},
+  retakeErrors: {},
 
   getTranscript: async (path, options = {}) => {
     const cached = get().transcripts[path];
@@ -330,6 +447,103 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
     );
   },
 
+  detectSilences: async (args, force = false) => {
+    const key = silenceKey(args);
+    const cached = get().silences[key];
+    if (cached && !force) return cached;
+
+    set((s) => {
+      const { [key]: _cleared, ...silenceErrors } = s.silenceErrors;
+      return { detectingSilences: { ...s.detectingSilences, [key]: true }, silenceErrors };
+    });
+    try {
+      // One `invoke`, not a start/poll pair: the work is a Tauri command that
+      // runs to completion in-process (there is no sidecar job id to poll).
+      // The store IS the job record — which is the whole point of B-188/D-321,
+      // because this promise outliving its caller's timeout is exactly the
+      // case that used to throw the answer away.
+      const detection = await invoke<SilenceDetection>('chroma_detect_silences', {
+        path: args.path,
+        startSecs: args.startSecs,
+        durationSecs: args.durationSecs,
+        minSilenceMs: args.minSilenceMs ?? null,
+      });
+      set((s) => ({ silences: { ...s.silences, [key]: detection } }));
+      return detection;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      set((s) => ({ silenceErrors: { ...s.silenceErrors, [key]: message } }));
+      throw e;
+    } finally {
+      set((s) => {
+        const { [key]: _dropped, ...rest } = s.detectingSilences;
+        return { detectingSilences: rest };
+      });
+    }
+  },
+
+  startSilenceDetection: (args, force = false) => {
+    const key = silenceKey(args);
+    const s = get();
+    return startJob(!!s.detectingSilences[key], !!s.silences[key], s.silenceErrors[key], force, () =>
+      get().detectSilences(args, force),
+    );
+  },
+
+  silenceDetectionStatus: (key) => {
+    const s = get();
+    if (s.silences[key]) return { phase: 'done', result: s.silences[key] };
+    if (s.detectingSilences[key]) return { phase: 'running' };
+    if (s.silenceErrors[key]) return { phase: 'error', error: s.silenceErrors[key] };
+    return { phase: 'idle' };
+  },
+
+  detectRetakes: async (args, force = false) => {
+    const key = retakeKey(args);
+    const cached = get().retakes[key];
+    if (cached && !force) return cached;
+
+    set((s) => {
+      const { [key]: _cleared, ...retakeErrors } = s.retakeErrors;
+      return { detectingRetakes: { ...s.detectingRetakes, [key]: true }, retakeErrors };
+    });
+    try {
+      const detection = await invoke<RetakeDetection>('chroma_detect_retakes', {
+        utterances: args.utterances,
+        similarity: args.similarity ?? null,
+        windowSecs: args.windowSecs ?? null,
+        minWords: args.minWords ?? null,
+      });
+      set((s) => ({ retakes: { ...s.retakes, [key]: detection } }));
+      return detection;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      set((s) => ({ retakeErrors: { ...s.retakeErrors, [key]: message } }));
+      throw e;
+    } finally {
+      set((s) => {
+        const { [key]: _dropped, ...rest } = s.detectingRetakes;
+        return { detectingRetakes: rest };
+      });
+    }
+  },
+
+  startRetakeDetection: (args, force = false) => {
+    const key = retakeKey(args);
+    const s = get();
+    return startJob(!!s.detectingRetakes[key], !!s.retakes[key], s.retakeErrors[key], force, () =>
+      get().detectRetakes(args, force),
+    );
+  },
+
+  retakeDetectionStatus: (key) => {
+    const s = get();
+    if (s.retakes[key]) return { phase: 'done', result: s.retakes[key] };
+    if (s.detectingRetakes[key]) return { phase: 'running' };
+    if (s.retakeErrors[key]) return { phase: 'error', error: s.retakeErrors[key] };
+    return { phase: 'idle' };
+  },
+
   transcriptStatus: (path) => {
     const s = get();
     if (s.transcripts[path]) return { phase: 'done', result: s.transcripts[path] };
@@ -348,7 +562,16 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
 
   clear: (path) => {
     if (path === undefined) {
-      set({ transcripts: {}, analyses: {}, transcriptErrors: {}, analysisErrors: {} });
+      set({
+        transcripts: {},
+        analyses: {},
+        transcriptErrors: {},
+        analysisErrors: {},
+        silences: {},
+        silenceErrors: {},
+        retakes: {},
+        retakeErrors: {},
+      });
       return;
     }
     set((s) => {
@@ -356,7 +579,19 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
       const { [path]: _a, ...analyses } = s.analyses;
       const { [path]: _te, ...transcriptErrors } = s.transcriptErrors;
       const { [path]: _ae, ...analysisErrors } = s.analysisErrors;
-      return { transcripts, analyses, transcriptErrors, analysisErrors };
+      // Detections are keyed by `<path>|<range>|<params>`, not by path alone,
+      // so "forget this file" has to drop every key that file contributed —
+      // otherwise a changed file keeps serving its old cut list.
+      return {
+        transcripts,
+        analyses,
+        transcriptErrors,
+        analysisErrors,
+        silences: withoutPath(s.silences, path),
+        silenceErrors: withoutPath(s.silenceErrors, path),
+        retakes: withoutPath(s.retakes, path),
+        retakeErrors: withoutPath(s.retakeErrors, path),
+      };
     });
   },
 }));

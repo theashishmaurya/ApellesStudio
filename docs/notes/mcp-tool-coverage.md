@@ -200,8 +200,10 @@ inclusion, no longer a silent video).
 > >
 > > | Tool | What it does |
 > > |---|---|
-> > | `editor_detect_silences` | Where nobody is speaking, from a real VAD (Silero v6.2.1 ONNX, on-device, D-319) over the clip's own audio. Needs **no transcript** — it answers an acoustic question acoustically, in seconds rather than the minutes a Whisper pass costs. |
-> > | `editor_detect_retakes` | Where the speaker said the same line more than once. This one DOES need the transcript, because a retake is a fact about words; it starts one and says `state: "running"` if there is none yet. |
+> > | `editor_detect_silences` | Where nobody is speaking, from a real VAD (Silero v6.2.1 ONNX, on-device, D-319) over the clip's own audio. Needs **no transcript** — it answers an acoustic question acoustically. **Check `state`**: `done` with the answer, or `running` — then poll `editor_detect_silences_status` (D-321). |
+> > | `editor_detect_silences_status` | Poll a started silence detection. Same arguments you started it with. |
+> > | `editor_detect_retakes` | Where the speaker said the same line more than once. This one DOES need the transcript, because a retake is a fact about words; it starts one and says `state: "running"` if there is none yet. Same start-then-poll contract once the words exist (D-321). |
+> > | `editor_detect_retakes_status` | Poll a started retake grouping. |
 > > | `editor_ripple_delete_ranges` | The apply half: cut N timeline ranges and close every gap, as **one undo entry**. |
 > >
 > > **The two detectors are not alternatives and do not overlap** — one is

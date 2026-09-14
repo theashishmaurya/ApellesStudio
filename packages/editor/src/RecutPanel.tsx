@@ -33,9 +33,8 @@
  * VAD is right; that is the Rust crate's own 33 tests and its live model check.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ScissorsIcon, SpinnerIcon, WaveformIcon, RepeatIcon } from '@phosphor-icons/react';
-import { invoke } from '@tauri-apps/api/core';
 import { Button } from '@apelles/ui';
 
 import {
@@ -43,11 +42,16 @@ import {
   clipSourceRangeSecs,
   spanToFrames,
   type DetectedSpan,
-  type RetakeGroupWire,
 } from './recut';
-import { timelineFps } from './timeline';
+import { timelineFps, type Clip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
-import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
+import {
+  retakeKey,
+  silenceKey,
+  useMediaUnderstandingStore,
+  type RetakeDetectionArgs,
+  type SilenceDetectionArgs,
+} from './mediaUnderstandingStore';
 
 /** One row the user can tick. A silence is its own candidate; a retake group
  *  contributes one candidate per take, with the suggested keep marked so the
@@ -73,17 +77,55 @@ function stamp(secs: number): string {
   return `${m}:${(s - m * 60).toFixed(1).padStart(4, '0')}`;
 }
 
+/** A detection this panel is waiting on (B-188/D-321).
+ *
+ *  The panel used to `await invoke(...)` directly, which meant a detection that
+ *  ran long left the user staring at a spinner with no way to get the answer
+ *  back if anything interrupted it, and a retake run that needed a transcript
+ *  simply gave up with "try again when it finishes." Both now go through
+ *  `mediaUnderstandingStore`, so the work outlives this component's render and
+ *  its result is *looked up*, not awaited.
+ *
+ *  `key` is `null` for a retake whose transcript has not landed yet — there is
+ *  nothing to key a detection on until there are words. */
+interface PendingJob {
+  kind: 'silence' | 'retake';
+  /** The clip AS IT WAS when the run started: the detection describes that
+   *  exact source range, so the frames must be derived from that snapshot and
+   *  not from whatever is selected by the time the answer arrives. */
+  clip: Clip;
+  fps: number;
+  source: string;
+  startSecs: number;
+  durationSecs: number;
+  minSilenceMs: number;
+  key: string | null;
+}
+
 export function RecutPanel() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const selection = useEditorTimelineStore((s) => s.selection);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
 
-  const [busy, setBusy] = useState<null | 'silence' | 'retake'>(null);
+  const [pending, setPending] = useState<PendingJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [ticked, setTicked] = useState<Record<string, boolean>>({});
   const [minSilenceMs, setMinSilenceMs] = useState(DEFAULT_MIN_SILENCE_MS);
+
+  // Subscribed as whole maps rather than through a key-dependent selector: the
+  // key only exists once a run has started, and a map's identity changes
+  // exactly when one of its entries does, so this re-renders precisely when
+  // there is something new to look up.
+  const silences = useMediaUnderstandingStore((s) => s.silences);
+  const silenceErrors = useMediaUnderstandingStore((s) => s.silenceErrors);
+  const retakes = useMediaUnderstandingStore((s) => s.retakes);
+  const retakeErrors = useMediaUnderstandingStore((s) => s.retakeErrors);
+  const transcripts = useMediaUnderstandingStore((s) => s.transcripts);
+  const transcriptErrors = useMediaUnderstandingStore((s) => s.transcriptErrors);
+
+  const busy = pending ? pending.kind : null;
 
   // Phase-1 multi-select fallback, the same one every single-clip consumer in
   // this package uses (docs/notes/multi-select.md).
@@ -97,84 +139,126 @@ export function RecutPanel() {
     setTicked({});
     setError(null);
     setNotice(null);
+    setPending(null);
   };
 
-  const findSilences = async () => {
-    reset();
-    if (!timeline || !clip?.source_path) return;
+  /** The bit both buttons share: snapshot the clip and its source range. */
+  const beginJob = (kind: PendingJob['kind']): PendingJob | null => {
+    if (!timeline || !clip?.source_path) return null;
     const fps = timelineFps(timeline);
     const range = clipSourceRangeSecs(clip, fps);
-
-    setBusy('silence');
-    let found: { silences?: Array<{ start_secs: number; end_secs: number }> } | null = null;
-    let failure: string | null = null;
-    try {
-      found = await invoke('chroma_detect_silences', {
-        path: clip.source_path,
-        startSecs: range.startSecs,
-        durationSecs: range.durationSecs,
-        minSilenceMs,
-      });
-    } catch (e) {
-      failure = String(e);
-    }
-    setBusy(null);
-    if (failure !== null) {
-      setError(failure);
-      return;
-    }
-
-    const rows: Candidate[] = (found?.silences ?? [])
-      .map((s, i) => ({
-        id: `sil-${i}`,
-        kind: 'silence' as const,
-        span: spanToFrames(clip, s.start_secs, s.end_secs, fps),
-      }))
-      .filter((r) => r.span.endFrame > r.span.startFrame);
-    setCandidates(rows);
-    if (rows.length === 0) setNotice(`No silence of ${minSilenceMs}ms or longer in this clip.`);
+    return {
+      kind,
+      clip,
+      fps,
+      source: clip.source_path,
+      startSecs: range.startSecs,
+      durationSecs: range.durationSecs,
+      minSilenceMs,
+      key: null,
+    };
   };
 
-  const findRetakes = async () => {
+  const findSilences = () => {
     reset();
-    if (!timeline || !clip?.source_path) return;
-    const source = clip.source_path;
-    const fps = timelineFps(timeline);
-    const range = clipSourceRangeSecs(clip, fps);
+    const job = beginJob('silence');
+    if (!job) return;
+    const args: SilenceDetectionArgs = {
+      path: job.source,
+      startSecs: job.startSecs,
+      durationSecs: job.durationSecs,
+      minSilenceMs: job.minSilenceMs,
+    };
+    // `force` so the button always means "run it again", the way a human
+    // expects a button to. The cache is there for the agent's repeated tool
+    // calls, not to make a click do nothing.
+    useMediaUnderstandingStore.getState().startSilenceDetection(args, true);
+    setPending({ ...job, key: silenceKey(args) });
+  };
 
-    const status = useMediaUnderstandingStore.getState().transcriptStatus(source);
+  const findRetakes = () => {
+    reset();
+    const job = beginJob('retake');
+    if (!job) return;
+    const status = useMediaUnderstandingStore.getState().transcriptStatus(job.source);
     if (status.phase === 'error') {
       setError(status.error ?? 'transcription failed');
       return;
     }
     if (status.phase !== 'done') {
-      useMediaUnderstandingStore.getState().startTranscript(source, { wordTimestamps: true });
-      setNotice('Transcribing this clip first — retakes need the words. Try again when it finishes.');
-      return;
+      // Kick the transcript and WAIT for it here — the effect below picks the
+      // run back up the moment the words land. Before D-321 this told the user
+      // to come back and click again, which is a poll implemented by a human.
+      useMediaUnderstandingStore.getState().startTranscript(job.source, { wordTimestamps: true });
+      setNotice('Transcribing this clip first — retakes need the words. This keeps running.');
     }
+    setPending(job);
+  };
 
-    const utterances = (status.result?.segments ?? [])
-      .filter((s) => s.end > range.startSecs && s.start < range.startSecs + range.durationSecs)
-      .map((s) => ({ start: s.start, end: s.end, text: s.text }));
-
-    setBusy('retake');
-    let found: { groups?: RetakeGroupWire[] } | null = null;
-    let failure: string | null = null;
-    try {
-      found = await invoke('chroma_detect_retakes', { utterances });
-    } catch (e) {
-      failure = String(e);
-    }
-    setBusy(null);
-    if (failure !== null) {
+  /** A retake job whose transcript has just landed: turn the words into a
+   *  detection. Runs again on every transcript-map change until it fires. */
+  useEffect(() => {
+    if (!pending || pending.kind !== 'retake' || pending.key !== null) return;
+    const transcript = transcripts[pending.source];
+    const failure = transcriptErrors[pending.source];
+    if (failure) {
       setError(failure);
+      setPending(null);
+      return;
+    }
+    if (!transcript) return;
+
+    const end = pending.startSecs + pending.durationSecs;
+    const utterances = (transcript.segments ?? [])
+      .filter((s) => s.end > pending.startSecs && s.start < end)
+      .map((s) => ({ start: s.start, end: s.end, text: s.text }));
+    const args: RetakeDetectionArgs = {
+      path: pending.source,
+      startSecs: pending.startSecs,
+      durationSecs: pending.durationSecs,
+      utterances,
+    };
+    useMediaUnderstandingStore.getState().startRetakeDetection(args, true);
+    setNotice(null);
+    setPending({ ...pending, key: retakeKey(args) });
+  }, [pending, transcripts, transcriptErrors]);
+
+  /** A started detection that has reached a terminal state: build the rows. */
+  useEffect(() => {
+    if (!pending?.key) return;
+    const key = pending.key;
+    const failure = pending.kind === 'silence' ? silenceErrors[key] : retakeErrors[key];
+    if (failure) {
+      setError(failure);
+      setPending(null);
       return;
     }
 
+    const { clip: snapshot, fps } = pending;
+    if (pending.kind === 'silence') {
+      const found = silences[key];
+      if (!found) return;
+      const rows: Candidate[] = found.silences
+        .map((s, i) => ({
+          id: `sil-${i}`,
+          kind: 'silence' as const,
+          span: spanToFrames(snapshot, s.start_secs, s.end_secs, fps),
+        }))
+        .filter((r) => r.span.endFrame > r.span.startFrame);
+      setCandidates(rows);
+      if (rows.length === 0) {
+        setNotice(`No silence of ${pending.minSilenceMs}ms or longer in this clip.`);
+      }
+      setPending(null);
+      return;
+    }
+
+    const found = retakes[key];
+    if (!found) return;
     const rows: Candidate[] = [];
-    (found?.groups ?? []).forEach((g, gi) => {
+    found.groups.forEach((g, gi) => {
       g.members.forEach((m, mi) => {
-        const span = spanToFrames(clip, m.start_secs, m.end_secs, fps);
+        const span = spanToFrames(snapshot, m.start_secs, m.end_secs, fps);
         if (span.endFrame <= span.startFrame) return;
         rows.push({
           id: `ret-${gi}-${mi}`,
@@ -190,7 +274,8 @@ export function RecutPanel() {
     });
     setCandidates(rows);
     if (rows.length === 0) setNotice('No retakes found in this clip.');
-  };
+    setPending(null);
+  }, [pending, silences, silenceErrors, retakes, retakeErrors]);
 
   /** Tick every take a group suggests dropping, leaving its keeper alone. */
   const tickSuggested = () => {

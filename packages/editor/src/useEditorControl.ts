@@ -217,7 +217,16 @@ import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
 // D-256 — the baked Colorist grade for each clip, behind `editor_get_grade_status`.
 import { warmGradeLuts } from './gradeLuts';
-import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
+import {
+  retakeKey,
+  silenceKey,
+  useMediaUnderstandingStore,
+  type AnalysisStatus,
+  type RetakeDetection,
+  type RetakeDetectionArgs,
+  type SilenceDetection,
+  type SilenceDetectionArgs,
+} from './mediaUnderstandingStore';
 // D-238 — auto-captioning from the D-189 transcript. The grouping algorithm
 // and the seconds->frames conversion are the ONE new thing this feature
 // needed; both the GUI button and this hook's own op call them, then dispatch
@@ -292,6 +301,15 @@ function resolveClip(
   if (!c) return { error: `no clip ${clip} on track ${track} (0..${tr.clips.length - 1})` };
   return { track, clip, tr, c };
 }
+
+/** [`resolveClip`]'s success branch, named so the helpers that pass one around
+ *  don't have to restate its shape. */
+type ResolvedClip = Exclude<ReturnType<typeof resolveClip>, { error: string }>;
+
+/** The raw argument bag an op handler is handed off the wire. Untrusted and
+ *  unvalidated by construction — every field is `unknown` until the handler
+ *  checks it, which is what the `resolve*`/`num` helpers below are for. */
+type OpArgs = Record<string, unknown> | undefined;
 
 /** D-216 — one resolved `editor_set_selection` entry: the `{track, id}` pair
  *  the store's `selection` actually holds, plus the clip's index, its name and
@@ -511,6 +529,37 @@ function analysisResult(path: string) {
     // cap, so raise `maxCandidates` and re-run.
     truncated: a?._meta?.truncated ?? false,
   };
+}
+
+/** How long a `editor_detect_*` start op will wait for its own detection
+ *  before handing the caller a poll handle instead (B-188/D-321).
+ *
+ *  Comfortably inside `chroma::control`'s 20 s `BRIDGE_TIMEOUT`, so the op
+ *  always answers rather than 504-ing. The point of the window is that a
+ *  normal recut — a few seconds of decode plus VAD — still completes in ONE
+ *  call, exactly as it did before this became pollable; only a detection that
+ *  genuinely runs long falls through to `state: "running"`. */
+const DETECT_GRACE_MS = 12_000;
+
+/** How often the grace window re-reads the store. Fine-grained on purpose:
+ *  unlike the sidecar's minute-scale jobs, a detection that lands at 900 ms
+ *  should return at ~900 ms, not at the next coarse tick. */
+const DETECT_POLL_MS = 50;
+
+/** Wait up to `ms` for a store-backed job to leave `running`, then report
+ *  wherever it got to. Never rejects: a failure is already recorded in the
+ *  store and comes back as `phase: 'error'`. */
+async function settleWithin<T>(
+  read: () => AnalysisStatus<T>,
+  ms: number,
+): Promise<AnalysisStatus<T>> {
+  const deadline = Date.now() + ms;
+  let status = read();
+  while (status.phase === 'running' && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, DETECT_POLL_MS));
+    status = read();
+  }
+  return status;
 }
 
 /** The exact clip-fade shape `get_timeline` (pre-D-183, `useChromaControl
@@ -844,6 +893,214 @@ function captionAnimationPatch(a: any, baseAnim?: CaptionAnimation | null): Capt
     touched = true;
   }
   return touched ? next : null;
+}
+
+/** Everything `editor_detect_silences` and its `_status` twin both need,
+ *  resolved once (B-188/D-321).
+ *
+ *  The start op and the status op MUST derive the same cache key from the same
+ *  arguments or a poll would look up a detection nobody started, so the
+ *  resolution lives here rather than being written twice. */
+function resolveSilenceArgs(
+  a: OpArgs,
+):
+  | { error: string }
+  | {
+      found: ResolvedClip;
+      c: Clip;
+      fps: number;
+      args: SilenceDetectionArgs;
+      key: string;
+      minSilenceMs: number;
+    } {
+  const tl = useEditorTimelineStore.getState().timeline;
+  if (!tl) return noTimeline();
+  const found = resolveClip(tl, a?.track, a?.clip);
+  if ('error' in found) return found;
+  const c = found.c;
+  if (!c.source_path) {
+    return { error: 'that clip is generated (a title or adjustment) and has no audio to analyse' };
+  }
+
+  const requested = a?.minSilenceMs === undefined ? undefined : Number(a.minSilenceMs);
+  if (requested !== undefined && (!Number.isFinite(requested) || requested <= 0)) {
+    return { error: 'minSilenceMs must be a positive number of milliseconds' };
+  }
+
+  const fps = timelineFps(tl);
+  const range = clipSourceRangeSecs(c, fps);
+  const args: SilenceDetectionArgs = {
+    path: c.source_path,
+    startSecs: range.startSecs,
+    durationSecs: range.durationSecs,
+    minSilenceMs: requested,
+  };
+  return {
+    found,
+    c,
+    fps,
+    args,
+    key: silenceKey(args),
+    minSilenceMs: requested ?? DEFAULT_MIN_SILENCE_MS,
+  };
+}
+
+/** The silence-detection response, shared by the start op and its status op so
+ *  the two can never report the same detection differently — the same contract
+ *  [`transcriptResult`] establishes for D-189's pair. */
+function silenceEnvelope(
+  status: AnalysisStatus<SilenceDetection>,
+  found: ResolvedClip,
+  c: Clip,
+  fps: number,
+  minSilenceMs: number,
+) {
+  if (status.phase === 'error') return { error: status.error ?? 'silence detection failed' };
+  const head = {
+    ok: true as const,
+    track: found.track,
+    clip: found.clip,
+    clipId: c.id,
+    source: c.source_path,
+    minSilenceMs,
+  };
+  if (status.phase !== 'done') {
+    return {
+      ...head,
+      state: status.phase,
+      note:
+        status.phase === 'running'
+          ? 'still analysing this clip — poll editor_detect_silences_status'
+          : 'nothing has been started for this clip — call editor_detect_silences',
+    };
+  }
+  const silences = (status.result?.silences ?? []).map((s) =>
+    spanToFrames(c, s.start_secs, s.end_secs, fps),
+  );
+  return {
+    ...head,
+    state: 'done',
+    silences,
+    note:
+      silences.length === 0
+        ? 'no silence found in this clip at that threshold'
+        : 'nothing was cut — pass these ranges to editor_ripple_delete_ranges to apply them',
+  };
+}
+
+/** [`resolveSilenceArgs`]'s retake twin. Carries a third outcome the silence
+ *  one cannot have: retakes are a fact about WORDS, so when the transcript is
+ *  not ready yet there is nothing to key a detection on and the caller is sent
+ *  to `editor_get_transcript_status` — the pre-existing D-318 behaviour, kept
+ *  verbatim rather than folded into the new job vocabulary, because "the
+ *  transcript isn't ready" and "the detection is still running" are genuinely
+ *  different states with different things to poll. */
+function resolveRetakeArgs(
+  a: OpArgs,
+):
+  | { error: string }
+  | { pending: Record<string, unknown> }
+  | {
+      found: ResolvedClip;
+      c: Clip;
+      fps: number;
+      args: RetakeDetectionArgs;
+      key: string;
+    } {
+  const tl = useEditorTimelineStore.getState().timeline;
+  if (!tl) return noTimeline();
+  const found = resolveClip(tl, a?.track, a?.clip);
+  if ('error' in found) return found;
+  const c = found.c;
+  if (!c.source_path) {
+    return { error: 'that clip is generated (a title or adjustment) and has no speech to analyse' };
+  }
+
+  const transcript = useMediaUnderstandingStore.getState().transcriptStatus(c.source_path);
+  if (transcript.phase === 'error') {
+    return { error: transcript.error ?? 'transcription failed' };
+  }
+  if (transcript.phase !== 'done') {
+    useMediaUnderstandingStore.getState().startTranscript(c.source_path, { wordTimestamps: true });
+    return {
+      pending: {
+        ok: true,
+        source: c.source_path,
+        state: transcript.phase === 'idle' ? 'running' : transcript.phase,
+        note: 'a transcript is needed first — poll editor_get_transcript_status, then call this again',
+      },
+    };
+  }
+
+  const fps = timelineFps(tl);
+  const range = clipSourceRangeSecs(c, fps);
+  // Only what this clip actually shows: a source trimmed to its second half
+  // must not report retakes from material nobody will ever see.
+  const utterances = (transcript.result?.segments ?? [])
+    .filter((s) => s.end > range.startSecs && s.start < range.startSecs + range.durationSecs)
+    .map((s) => ({ start: s.start, end: s.end, text: s.text }));
+
+  const num = (v: unknown): number | undefined => {
+    if (v === undefined || v === null) return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const args: RetakeDetectionArgs = {
+    path: c.source_path,
+    startSecs: range.startSecs,
+    durationSecs: range.durationSecs,
+    utterances,
+    similarity: num(a?.similarity),
+    windowSecs: num(a?.windowSecs),
+    minWords: a?.minWords === undefined ? undefined : Math.round(Number(a.minWords)),
+  };
+  return { found, c, fps, args, key: retakeKey(args) };
+}
+
+/** [`silenceEnvelope`]'s retake twin. */
+function retakeEnvelope(
+  status: AnalysisStatus<RetakeDetection>,
+  found: ResolvedClip,
+  c: Clip,
+  fps: number,
+  utterances: number,
+) {
+  if (status.phase === 'error') return { error: status.error ?? 'retake detection failed' };
+  const head = {
+    ok: true as const,
+    track: found.track,
+    clip: found.clip,
+    clipId: c.id,
+    source: c.source_path,
+    utterances,
+  };
+  if (status.phase !== 'done') {
+    return {
+      ...head,
+      state: status.phase,
+      note:
+        status.phase === 'running'
+          ? 'still analysing this clip — poll editor_detect_retakes_status'
+          : 'nothing has been started for this clip — call editor_detect_retakes',
+    };
+  }
+  const groups = (status.result?.groups ?? []).map((g) => ({
+    similarity: g.similarity,
+    keep: g.keep,
+    takes: g.members.map((m) => ({
+      text: m.text,
+      ...spanToFrames(c, m.start_secs, m.end_secs, fps),
+    })),
+  }));
+  return {
+    ...head,
+    state: 'done',
+    groups,
+    note:
+      groups.length === 0
+        ? 'no retakes found in this clip'
+        : 'nothing was cut — `keep` is a SUGGESTION (the last take); cut the others with editor_ripple_delete_ranges',
+  };
 }
 
 function noTimeline(): { error: string } {
@@ -3822,116 +4079,59 @@ export function useEditorControl(): void {
       // cutting is `editor_ripple_delete_ranges` below, which the human's
       // Recut panel drives through the same store op, so neither interface has
       // a capability the other lacks (CLAUDE.md).
+      //
+      // **Both are START-then-POLL (B-188/D-321), with a fast path.** They run
+      // the detection through the `mediaUnderstanding` store — the same place
+      // transcripts live — and wait up to `DETECT_GRACE_MS` for it. A normal
+      // recut finishes inside that window and comes back `state: "done"` in
+      // one call; one that does not comes back `state: "running"` with its
+      // answer still being computed INTO THE STORE, where the matching
+      // `_status` op will find it. Before D-321 the op simply `await`ed the
+      // detection inside the bridge round trip, so a detection that outran the
+      // caller's timeout had its result thrown away with nowhere to land —
+      // which is exactly what B-188 hit on a real 16-minute 4K file.
       editor_detect_silences: async (a) => {
-        const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline();
-        const found = resolveClip(tl, a?.track, a?.clip);
-        if ('error' in found) return found;
-        const c = found.c;
-        if (!c.source_path) {
-          return { error: 'that clip is generated (a title or adjustment) and has no audio to analyse' };
-        }
+        const resolved = resolveSilenceArgs(a);
+        if ('error' in resolved) return resolved;
+        const { found, c, fps, args, key, minSilenceMs } = resolved;
 
-        const minSilenceMs = a?.minSilenceMs === undefined ? undefined : Number(a.minSilenceMs);
-        if (minSilenceMs !== undefined && (!Number.isFinite(minSilenceMs) || minSilenceMs <= 0)) {
-          return { error: 'minSilenceMs must be a positive number of milliseconds' };
-        }
-
-        const fps = timelineFps(tl);
-        const range = clipSourceRangeSecs(c, fps);
-        const detected = await invoke<{ silences?: Array<{ start_secs: number; end_secs: number }> }>(
-          'chroma_detect_silences',
-          {
-            path: c.source_path,
-            startSecs: range.startSecs,
-            durationSecs: range.durationSecs,
-            minSilenceMs: minSilenceMs ?? null,
-          },
+        useMediaUnderstandingStore.getState().startSilenceDetection(args, !!a?.force);
+        const status = await settleWithin(
+          () => useMediaUnderstandingStore.getState().silenceDetectionStatus(key),
+          DETECT_GRACE_MS,
         );
+        return silenceEnvelope(status, found, c, fps, minSilenceMs);
+      },
 
-        const silences = (detected?.silences ?? []).map((s) => spanToFrames(c, s.start_secs, s.end_secs, fps));
-        return {
-          ok: true,
-          track: found.track,
-          clip: found.clip,
-          clipId: c.id,
-          source: c.source_path,
-          minSilenceMs: minSilenceMs ?? DEFAULT_MIN_SILENCE_MS,
-          silences,
-          note:
-            silences.length === 0
-              ? 'no silence found in this clip at that threshold'
-              : 'nothing was cut — pass these ranges to editor_ripple_delete_ranges to apply them',
-        };
+      editor_detect_silences_status: (a) => {
+        const resolved = resolveSilenceArgs(a);
+        if ('error' in resolved) return resolved;
+        const { found, c, fps, key, minSilenceMs } = resolved;
+        const status = useMediaUnderstandingStore.getState().silenceDetectionStatus(key);
+        return silenceEnvelope(status, found, c, fps, minSilenceMs);
       },
 
       editor_detect_retakes: async (a) => {
-        const tl = useEditorTimelineStore.getState().timeline;
-        if (!tl) return noTimeline();
-        const found = resolveClip(tl, a?.track, a?.clip);
-        if ('error' in found) return found;
-        const c = found.c;
-        if (!c.source_path) {
-          return { error: 'that clip is generated (a title or adjustment) and has no speech to analyse' };
-        }
+        const resolved = resolveRetakeArgs(a);
+        if ('error' in resolved) return resolved;
+        if ('pending' in resolved) return resolved.pending;
+        const { found, c, fps, args, key } = resolved;
 
-        // Retakes are a fact about WORDS, so this one genuinely needs the
-        // transcript. Reuse the cached one and report the same
-        // `state`/`note` shape the transcript ops do rather than inventing a
-        // second vocabulary for "not ready yet".
-        const status = useMediaUnderstandingStore.getState().transcriptStatus(c.source_path);
-        if (status.phase === 'error') return { error: status.error ?? 'transcription failed' };
-        if (status.phase !== 'done') {
-          useMediaUnderstandingStore.getState().startTranscript(c.source_path, { wordTimestamps: true });
-          return {
-            ok: true,
-            source: c.source_path,
-            state: status.phase === 'idle' ? 'running' : status.phase,
-            note: 'a transcript is needed first — poll editor_get_transcript_status, then call this again',
-          };
-        }
+        useMediaUnderstandingStore.getState().startRetakeDetection(args, !!a?.force);
+        const status = await settleWithin(
+          () => useMediaUnderstandingStore.getState().retakeDetectionStatus(key),
+          DETECT_GRACE_MS,
+        );
+        return retakeEnvelope(status, found, c, fps, args.utterances.length);
+      },
 
-        const fps = timelineFps(tl);
-        const range = clipSourceRangeSecs(c, fps);
-        // Only what this clip actually shows: a source trimmed to its second
-        // half must not report retakes from material nobody will ever see.
-        const utterances = (status.result?.segments ?? [])
-          .filter((s) => s.end > range.startSecs && s.start < range.startSecs + range.durationSecs)
-          .map((s) => ({ start: s.start, end: s.end, text: s.text }));
-
-        const num = (v: unknown): number | undefined => {
-          const n = Number(v);
-          return Number.isFinite(n) ? n : undefined;
-        };
-        const detected = await invoke<{ groups?: RetakeGroupWire[] }>('chroma_detect_retakes', {
-          utterances,
-          similarity: num(a?.similarity) ?? null,
-          windowSecs: num(a?.windowSecs) ?? null,
-          minWords: a?.minWords === undefined ? null : Math.round(Number(a.minWords)),
-        });
-
-        const groups = (detected?.groups ?? []).map((g) => ({
-          similarity: g.similarity,
-          keep: g.keep,
-          takes: g.members.map((m) => ({
-            text: m.text,
-            ...spanToFrames(c, m.start_secs, m.end_secs, fps),
-          })),
-        }));
-
-        return {
-          ok: true,
-          track: found.track,
-          clip: found.clip,
-          clipId: c.id,
-          source: c.source_path,
-          utterances: utterances.length,
-          groups,
-          note:
-            groups.length === 0
-              ? 'no retakes found in this clip'
-              : 'nothing was cut — `keep` is a SUGGESTION (the last take); cut the others with editor_ripple_delete_ranges',
-        };
+      editor_detect_retakes_status: (a) => {
+        const resolved = resolveRetakeArgs(a);
+        if ('error' in resolved) return resolved;
+        if ('pending' in resolved) return resolved.pending;
+        const { found, c, fps, args, key } = resolved;
+        const status = useMediaUnderstandingStore.getState().retakeDetectionStatus(key);
+        return retakeEnvelope(status, found, c, fps, args.utterances.length);
       },
 
       editor_ripple_delete_ranges: (a) => {

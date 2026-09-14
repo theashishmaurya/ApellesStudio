@@ -49,7 +49,7 @@ Set `CHROMA_CONTROL_PORT` in the env if you overrode it on the app side
 
 > **This server is being replaced (D-312, 2026-09-12).** The Rust reimplementation
 > is `crates/apelles-mcp` — same tool names, same descriptions, same
-> control-server contract, one binary instead of a venv. **All 166 tools are
+> control-server contract, one binary instead of a venv. **All 168 tools are
 > ported and pass its parity harness**, which is captured from *this* file, tool
 > by tool; both servers publish an identical tool set over a real MCP session.
 >
@@ -169,8 +169,10 @@ debug-build-only and documented in `../docs/notes/debug-screenshot-tool.md` and
 | `editor_get_transcript_status(path?, media_id?, source_path?)` | poll it — `running` / `done` (with `text`, `segments`, per-word `start`/`end`) / `idle` |
 | `editor_analyze_video(path?, media_id?, source_path?, question?, scene_threshold?, min_gap_s?, max_candidates?, force=False)` | start a visual analysis — "what CHANGED on screen, and when." ffmpeg scene-detect gives the exact timing, Qwen3-VL only describes each before/after frame pair. Finds nothing in a continuous uncut shot — use the transcript there (D-189) |
 | `editor_analyze_video_status(path?, media_id?, source_path?)` | poll it — `running` / `done` (with `events: [{time_s, event}]` + `truncated`) / `idle` |
-| `editor_detect_silences(track, clip, min_silence_ms?)` | find where **nobody is speaking** in a timeline clip — a real on-device VAD (Silero, D-319) over the clip's own audio, so no transcript and seconds not minutes. Each span comes back in source seconds, the clip's source frames AND timeline frames. **Read-only** — nothing is cut (D-318) |
-| `editor_detect_retakes(track, clip, similarity?, window_secs?, min_words?)` | group the places the speaker **said the same line twice** — the flubbed take, the stumble. Needs the transcript (a retake is a fact about words); starts one and returns `state: "running"` if there is none yet. `keep` suggests the LAST take. **Read-only** (D-318) |
+| `editor_detect_silences(track, clip, min_silence_ms?, force=False)` | find where **nobody is speaking** in a timeline clip — a real on-device VAD (Silero, D-319) over the clip's own audio, so no transcript. Each span comes back in source seconds, the clip's source frames AND timeline frames. Returns `state: "done"` with the answer if it lands inside the call, else `state: "running"` — poll the status tool (D-321). **Read-only** — nothing is cut (D-318) |
+| `editor_detect_silences_status(track, clip, min_silence_ms?)` | poll it — `running` / `done` (with `silences`) / `idle`. Pass the SAME arguments you started it with; a detection is cached per clip range and threshold (D-321) |
+| `editor_detect_retakes(track, clip, similarity?, window_secs?, min_words?, force=False)` | group the places the speaker **said the same line twice** — the flubbed take, the stumble. Needs the transcript (a retake is a fact about words); starts one and returns `state: "running"` if there is none yet. Same start-then-poll contract as the silence pair once the words exist (D-321). `keep` suggests the LAST take. **Read-only** (D-318) |
+| `editor_detect_retakes_status(track, clip, similarity?, window_secs?, min_words?)` | poll it — `running` / `done` (with `groups`) / `idle`, or the transcript's own state if there are still no words (D-321) |
 | `editor_ripple_delete_ranges(track, ranges)` | the apply half: cut N `{startFrame, endFrame}` timeline ranges and close every gap, as **one undo entry**. Sorts, merges and applies back-to-front for you (D-318) |
 | `ai_env_status()` | has the shared Python environment every AI feature runs from finished building? `{phase, packagesDone, packagesTotal, attempt, retryInSecs, lastError, venv, elapsedSecs}`. Branch on `phase`: `ready`, one of five working phases (wait and poll), `failed` (another attempt is already scheduled), or `unavailable` (cannot be built here — waiting will not help) (D-315) |
 | `ai_env_retry()` | build it now instead of waiting out the backoff. Returns the same snapshot plus `started`; `started: false` means there was nothing to trigger, which is a normal answer (D-315) |

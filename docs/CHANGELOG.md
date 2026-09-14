@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-14** — **D-321 fixes B-188: the recut slowdown was an O(n²)
+  resample, not the VAD, the packet loop, or a debug build.** All three
+  suspects B-188 named are ruled out by measurement (2.46s of `next_packet()`,
+  5.0s of VAD, and `[profile.dev]` is already `opt-level = 2`). The real cause
+  was `RateConverter::push_interleaved` — written for playback's one-packet
+  pushes, quadratic when `decode_mono_at_rate` hands it a whole clip, because it
+  drained the accumulator per chunk. A cursor plus one reclaim per call takes
+  the owner's 989s 4K file from **243.6s to 4.9s** (686s file: 169.5s → 3.0s)
+  with bit-identical VAD output. Separately, both detectors are now
+  **start-then-poll** on the same store and vocabulary the transcript tools use
+  — new `editor_detect_silences_status` / `editor_detect_retakes_status` (MCP
+  **168 tools**, parity recapture clean) — so a detection that outruns its
+  caller's timeout is held instead of discarded, which no amount of speed
+  guarantees on its own. `RECUT_TIMEOUT_MS` deleted; the Recut panel polls the
+  store rather than blocking, and a retake run resumes itself once its
+  transcript lands.
+
 - **2026-09-14** — **B-188 filed: `editor_detect_silences` blows its own 180s
   budget on real 4K camera footage, and the result is then unrecoverable.** The
   very first real use of D-318's detector — the owner's own 4.48 GB HEVC 4K
