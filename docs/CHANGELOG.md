@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-14** — **B-188 filed: `editor_detect_silences` blows its own 180s
+  budget on real 4K camera footage, and the result is then unrecoverable.** The
+  very first real use of D-318's detector — the owner's own 4.48 GB HEVC 4K
+  clip — timed out; the app kept working several minutes past the timeout
+  (VAD itself is fast, so `decode_mono_range`'s packet loop over a huge
+  interleaved container is the leading suspect) and then went idle with no
+  completion or error logged anywhere. Not fixed yet — needs real profiling.
+
 - **2026-09-14** — **D-318 (cont.): the Recut panel, three MCP tools, and an
   atomic `ripple_delete_ranges`.** The GUI half and the agent half landed
   together because CLAUDE.md requires it. `ripple_delete_ranges` exists because
