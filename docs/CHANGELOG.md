@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-14** — **D-322 fixes B-189: the transcribe "subprocess" was a
+  plain function call.** `server.py` imported `transcribe.py` and called it, so
+  every job's mlx-whisper weights and Metal buffers landed in the long-lived
+  uvicorn process — the exact thing the module's own header comment said was
+  structurally impossible. No MLX exotica involved. `transcribe_subprocess()`
+  now runs the file as `__main__` through `sys.executable`, the same shape
+  `video_understand` already used for the VLM. Measured: a fresh process went
+  **10 MB → 4,387 MB** on one 9-second clip the old way; the fixed sidecar
+  holds **47 MB with zero `IOAccelerator`** across two real jobs over real
+  HTTP. Transcript output is byte-identical, the `/transcribe` contract and the
+  `_GPU` serialisation are untouched, and B-119's error sentence still crosses
+  the new process boundary verbatim. New `test_transcribe_subprocess.py` pins
+  the wiring so the import can't come back.
+
 - **2026-09-14** — **B-189 filed: the `ai-media` sidecar leaks GPU/Metal
   memory per transcription job, unbounded.** Caught via Activity Monitor
   showing the same process grow 5.87GB → 11.18GB across two real

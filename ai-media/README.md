@@ -123,6 +123,12 @@ released weights; this design makes that failure mode structurally impossible
 here instead of re-solving it. The cost is a model reload per call (seconds),
 which is noise against a multi-minute job.
 
+The transcribe path only started obeying that rule in **D-322** — it was an
+ordinary in-process function call until then, and leaked every job's GPU
+memory into the server (B-189). If you are checking this claim yourself, use
+`footprint <pid>`, not `ps`/`top`: the leak was ~4 GB per job in
+`IOAccelerator (graphics)` while RSS read ~35 MB.
+
 ## Known limit (real, documented, not yet mitigated)
 
 Sustained action within one shot produces **semantically repetitive**

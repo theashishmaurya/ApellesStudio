@@ -3211,7 +3211,7 @@ status: **fixed** (2026-09-14, **D-321**) · severity: high (the feature was unu
 
 ## B-189 — `ai-media` sidecar (mlx-whisper) leaks GPU/Metal memory per transcription job, unbounded, contradicting its own documented process-isolation design
 
-status: **open** · severity: high (unbounded growth, contributed to 21GB/22.5GB system swap in one session) · area: `ai-media/server.py` (port 8766), mlx-whisper transcription path
+status: **fixed** (2026-09-14, D-322) · severity: high (unbounded growth, contributed to 21GB/22.5GB system swap in one session) · area: `ai-media/server.py` (port 8766), mlx-whisper transcription path
 
 - **found:** 2026-09-14, running two real transcriptions back-to-back (C038 ~16.5min, C040 ~11.4min audio) for D-318's retake detection, then noticed via Activity Monitor that "Python" was showing 5.87GB, then 11.18GB minutes later after the second transcription — the SAME process (PID confirmed identical both times) growing, not two different processes.
 - **`ps`'s RSS metric is blind to this and reported the process as fine (~35-39MB) the entire time** — the leaked memory is 100% in the `IOAccelerator (graphics)` category (Metal/GPU-resident), confirmed via macOS's own `footprint` tool (the same accounting Activity Monitor uses):
@@ -3221,5 +3221,34 @@ status: **open** · severity: high (unbounded growth, contributed to 21GB/22.5GB
   ```
   Anyone diagnosing this with `ps`/`top` alone will conclude — wrongly — that the process is fine. `footprint <pid>` (or Activity Monitor's Memory tab, not CPU/RSS) is the only way to see it.
 - **directly contradicts the module's own documented design.** `ai-media/server.py`'s header comment states plainly: *"No model weights are ever resident in this process... every model call is a subprocess (`transcribe.py` as a whole)... so the OS reclaims its multi-GB working set on exit. That is deliberate: `ai/server.py` had to grow a TTL idle-unloader (D-084) because its lazily-loaded singletons never released weights, and this design makes that failure mode structurally impossible here rather than re-solving it."* The doc's premise — that subprocess isolation makes GPU memory reclaim structurally guaranteed — is false in practice: the LONG-LIVED PARENT uvicorn process itself is accumulating the GPU memory, not the short-lived subprocess. Either MLX's Metal allocator/IOAccelerator connection is being set up or shared at the parent level (so a child's GPU allocations get attributed back to it), or the "subprocess" isolation for GPU/Metal resources specifically doesn't behave the same as it does for ordinary heap memory. Not yet root-caused to the exact mechanism — needs an investigation into how `transcribe.py` is actually invoked (real subprocess with `subprocess.run`/`Popen`, vs. some form of in-process call) and whether MLX's Metal command queue/device handle is created once at parent startup and reused by "subprocess" calls that aren't truly separate OS processes for GPU purposes.
-- **not fixed here.** Immediate mitigation is restarting the sidecar process (kills and reclaims all of it; the app's `sidecar` supervisor module treats an already-running instance as external/unmanaged and will spawn a fresh one on next need, so this is safe and non-destructive to app state). Real fix needs the root-cause investigation above before choosing between: (a) verifying/fixing true OS-process isolation for the subprocess call so its Metal context genuinely dies with it, (b) explicitly releasing MLX's Metal memory pool after each job if the parent does hold it directly, or (c) as a fallback matching `ai/server.py`'s own precedent, giving this sidecar a TTL idle-unloader too (D-084) — despite the header comment's claim that this "makes that failure mode structurally impossible," it demonstrably has not.
+- **root cause (D-322): there was no subprocess.** The header comment describes a
+  boundary the transcribe path never crossed. `ai-media/server.py:62` did
+  `import transcribe as transcribe_mod`, and `:216` called
+  `transcribe_mod.transcribe(...)` — an ordinary in-process function call, so
+  `mlx_whisper` loaded its weights and allocated its Metal buffers inside the
+  long-lived uvicorn process, where nothing ever exits to reclaim them. Nothing
+  exotic about MLX's Metal context or about "subprocess isolation not applying
+  to GPU resources" (both hypothesised above) turned out to be involved:
+  `video_understand.py` really does spawn `sys.executable -m mlx_vlm.generate`
+  and really does release everything; transcription simply never did the same
+  thing. Reproduced from clean before touching anything — a fresh process at
+  **10 MB** grew to **4,387 MB** (3,866 MB of it `IOAccelerator (graphics)`)
+  after ONE 9-second in-process transcription, and stayed there.
+- **fixed:** `transcribe.transcribe_subprocess()` runs `transcribe.py` as
+  `__main__` through `sys.executable` — the sibling pattern already proven in
+  this same file for the VLM — and `POST /transcribe` calls that. The HTTP
+  contract, the transcript shape and the `_GPU` serialisation are unchanged;
+  the subprocess result was compared against the in-process result for the same
+  input and is **identical**. Verified with `footprint` on a real sidecar over
+  real HTTP: the uvicorn parent sat at **47 MB with no `IOAccelerator` line at
+  all** before, between and after two real transcriptions. `UserFacingError`
+  crosses the new boundary as exit code 3 + a marked stderr line, so B-119's
+  sentence still reaches the Edit tab verbatim (checked end to end against the
+  running sidecar). `ai-media/test_transcribe_subprocess.py` covers the argv,
+  the result round-trip, both error paths, the timeout, a real spawned child,
+  and — the actual regression — that `POST /transcribe` reaches
+  `transcribe_subprocess` and never `transcribe`.
+- **for anyone diagnosing something similar:** `ps`/`top` cannot see this class
+  of leak at all. Use `footprint <pid>`.
+- **(pre-fix note) mitigation while it was open.** Restarting the sidecar process (kills and reclaims all of it; the app's `sidecar` supervisor module treats an already-running instance as external/unmanaged and will spawn a fresh one on next need, so this is safe and non-destructive to app state). Real fix needs the root-cause investigation above before choosing between: (a) verifying/fixing true OS-process isolation for the subprocess call so its Metal context genuinely dies with it, (b) explicitly releasing MLX's Metal memory pool after each job if the parent does hold it directly, or (c) as a fallback matching `ai/server.py`'s own precedent, giving this sidecar a TTL idle-unloader too (D-084) — despite the header comment's claim that this "makes that failure mode structurally impossible," it demonstrably has not.
 

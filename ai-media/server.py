@@ -22,11 +22,21 @@ runs with `HF_HUB_OFFLINE=1`). It returns facts about a file on disk and
 nothing else — deciding what to DO with a moment is the Edit tab's job.
 
 **No model weights are ever resident in this process.** Every model call is a
-subprocess (`transcribe.py` as a whole; `mlx_vlm.generate` from inside
-`video_understand.py`), so the OS reclaims its multi-GB working set on exit.
-That is deliberate: `ai/server.py` had to grow a TTL idle-unloader (D-084)
-because its lazily-loaded singletons never released weights, and this design
-makes that failure mode structurally impossible here rather than re-solving it.
+subprocess — `transcribe.transcribe_subprocess` (this file run as `__main__`)
+and `mlx_vlm.generate` from inside `video_understand.py` — so the OS reclaims
+its multi-GB working set on exit. That is deliberate: `ai/server.py` had to
+grow a TTL idle-unloader (D-084) because its lazily-loaded singletons never
+released weights, and this design makes that failure mode structurally
+impossible here rather than re-solving it.
+
+**This paragraph was a false claim about the transcribe path until D-322**
+(B-189). `transcribe.py` was imported and called as an ordinary function, so
+every job's weights and GPU buffers accumulated in this long-lived process and
+were never released — 11 GB of `IOAccelerator (graphics)` after two real jobs,
+invisible to `ps`/`top` (which showed ~35 MB RSS the whole time; only
+`footprint <pid>` sees it). The rule above is the design; the lesson is that
+a design rule about process boundaries needs a call site that actually crosses
+one, so if you add a third capability here, spawn it — never import it.
 
 Endpoints
   GET  /health                      -> {ok, sidecar, models, content_sha256, ffmpeg}
@@ -213,7 +223,9 @@ def start_transcribe(req: TranscribeReq) -> dict:
 
     return _start(
         "transcribe",
-        lambda: transcribe_mod.transcribe(
+        # `transcribe_subprocess`, never `transcribe` — B-189. The in-process
+        # call left ~5 GB of Metal buffers per job in THIS process, forever.
+        lambda: transcribe_mod.transcribe_subprocess(
             req.path,
             model=req.model,
             language=req.language,

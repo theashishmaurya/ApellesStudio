@@ -30857,3 +30857,82 @@ retake run and holding a finished detection (`RecutPanel.dom.test.tsx`,
 3 tests). The 180 s timing itself is not a test — a wall-clock assertion is not
 reliable CI — which is why the equivalence property is tested instead and the
 numbers live in this entry.
+
+## D-322 — the transcribe job gets the real subprocess boundary its own docs already claimed (fixes B-189)
+
+**Context.** `ai-media/server.py` documents one rule for itself: no model
+weights are ever resident in the FastAPI process, because every model call is a
+subprocess, so the OS reclaims the multi-GB working set on exit. That rule
+exists because `ai/server.py` had to grow a whole TTL idle-unloader (D-084)
+when its lazily-loaded singletons never released weights, and this sidecar was
+built to make that failure mode structurally impossible rather than re-solve it.
+
+`video_understand.py` obeyed it (`sys.executable -m mlx_vlm.generate`).
+`transcribe.py` never did: `server.py:62` imported it and called
+`transcribe_mod.transcribe(...)` like any other function. So mlx-whisper's
+weights AND — much larger — its Metal buffers loaded into the long-lived
+uvicorn process and stayed there, since nothing ever exited to reclaim them.
+Measured live (B-189): 11 GB of `IOAccelerator (graphics)` in the sidecar after
+two real jobs, growing roughly linearly per job, and reproduced from clean in
+this session at **10 MB → 4,387 MB after a single 9-second clip**. `ps`/`top`
+are blind to it — they reported ~35 MB RSS throughout, because the memory is
+GPU-resident, not ordinary heap. Only `footprint <pid>` (Activity Monitor's own
+accounting) shows it. It contributed to 21 GB of system swap in one session.
+
+**Options.**
+1. **Free MLX's cache in-process** — `mx.clear_cache()` / `mx.metal` cache
+   limits after each job. Rejected: it makes the server's correctness depend on
+   knowing MLX's allocator internals, it is a knob to re-tune every time that
+   library changes, and it leaves the module's own stated design still untrue.
+2. **A TTL idle-unloader**, copying `ai/server.py`'s D-084 answer. Rejected for
+   the reason this sidecar exists: D-084 is the workaround for a process that
+   cannot exit. This one can.
+3. **Actually spawn the subprocess** — the sibling pattern in this same file,
+   already proven for the VLM. Chosen.
+
+**Choice.** `transcribe.transcribe_subprocess()` runs `transcribe.py` as
+`__main__` through `sys.executable`, and `POST /transcribe` calls that instead.
+Deliberately *not* a new mechanism: same `sys.executable`, same
+`subprocess.run(capture_output=True, text=True, timeout=…)`, same
+"non-zero exit → raise with the child's stderr tail" as
+`video_understand.describe_frames`. Three things it does differently, each for a
+stated reason:
+
+- **The result travels in a temp file (`--output`), not stdout.** Stdout belongs
+  to the child's own libraries — mlx-whisper's progress bar and any warning it
+  prints. `--output` is the CLI's own already-documented flag, so the server
+  runs exactly what a human at a terminal runs; no private side-channel.
+- **`UserFacingError` survives the boundary explicitly** (B-119): exit code 3
+  plus one marked stderr line, which the parent turns back into a
+  `UserFacingError`. An exception type does not cross a process boundary, and
+  that sentence is what the Edit tab renders verbatim.
+- **No `HF_HUB_OFFLINE=1`**, unlike the VLM subprocess. B-174 deliberately
+  solved the same problem without that global: `_local_snapshot_or_repo` hands
+  `load_model` a resolved local path, so a cached model never touches the
+  network *and* a genuine first-run download still works.
+
+The HTTP contract is untouched — same `{job_id, state, elapsed_s, result |
+error}` envelope, same transcript shape. Verified by comparing the subprocess
+result against the in-process result for the same input: **identical**.
+Concurrency is untouched too: the call still runs inside `_run_job`'s `_GPU`
+lock, so a transcript and a video analysis still cannot stack their working
+sets — the lock now serialises two real subprocesses instead of one subprocess
+and one in-process call, which is what its own comment always claimed.
+
+A timeout is new (`TRANSCRIBE_TIMEOUT_S`, 1 h). Before this there was none at
+all, which is how B-174's dead-TCP hang could sit at 0% CPU forever; an hour
+covers roughly five hours of audio at real MLX speed, so it can only fire on a
+job that is genuinely stuck.
+
+**Why this is worth a decision entry and not just a bug fix.** The lesson is not
+"transcribe leaked." It is that a documented process-boundary rule was enforced
+by nothing but the prose stating it, and drifted the moment someone wrote the
+obvious import. The header comments in `server.py` and `transcribe.py` now say
+which call site crosses the boundary, `test_transcribe_subprocess.py` asserts
+that `POST /transcribe` reaches `transcribe_subprocess` and never `transcribe`,
+and the rule for a third capability here is: spawn it, never import it.
+
+**Cost, stated.** A model reload per job (~3 GB read from the HF cache). On the
+9-second fixture a job takes 5-6 s end to end including that load; against a
+multi-minute transcript it is noise, and it is the same trade `video_understand`
+has always made.

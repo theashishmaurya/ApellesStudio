@@ -33,17 +33,31 @@ guard that matters on exactly the long single-take footage an editor works
 with.
 
 **Why this runs as a SUBPROCESS of `server.py` and not in-process** (D-189):
-`large-v3` weights are ~3 GB. `ai/server.py` had to grow a whole TTL
-idle-unloader (D-084) because its lazily-loaded singletons never released
-theirs. Running each job as its own process means the OS reclaims every byte
-on exit, so this sidecar's idle footprint stays at roughly the FastAPI process
-itself and the D-084 problem cannot recur here.
+`large-v3` weights are ~3 GB, and the Metal buffers a run allocates are several
+times that again. `ai/server.py` had to grow a whole TTL idle-unloader (D-084)
+because its lazily-loaded singletons never released theirs. Running each job as
+its own process means the OS reclaims every byte on exit, so this sidecar's
+idle footprint stays at roughly the FastAPI process itself and the D-084
+problem cannot recur here.
+
+**That was the design from day one; until D-322 it was not the code** (B-189).
+`server.py` imported this module and called [`transcribe`] like any other
+function, so every job's weights and Metal buffers landed in the long-lived
+uvicorn process and were never released — measured at 11 GB of
+`IOAccelerator (graphics)` after two real jobs, growing roughly linearly per
+job. [`transcribe_subprocess`] below is the real process boundary that claim
+always described: it runs THIS FILE as `__main__` through `sys.executable`,
+exactly as `video_understand.describe_frames` runs `mlx_vlm.generate`. Call it
+from any long-lived process. [`transcribe`] itself is unchanged and still the
+in-process implementation — right for the CLI below (which IS the short-lived
+process) and for a caller that already is one, wrong for a server.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -66,6 +80,27 @@ MLX_MODEL_REPOS = {
     "large": "mlx-community/whisper-large-v3-mlx",
     "distil-large-v3": "mlx-community/distil-whisper-large-v3",
 }
+
+# --------------------------------------------------------------------------- #
+# the process boundary (B-189 / D-322)
+# --------------------------------------------------------------------------- #
+
+# A ceiling, not a schedule. Before D-322 a transcribe job had no timeout at all,
+# which is how B-174's dead-TCP hang could sit at 0% CPU forever with nothing to
+# report; a subprocess that is killed at least ends as a job error the poller can
+# see. One hour covers roughly five hours of audio at `large-v3`'s real MLX
+# speed, so it can only fire on a job that is genuinely stuck — killing a real
+# long take would be the worse failure of the two.
+TRANSCRIBE_TIMEOUT_S = 3600
+
+# A `UserFacingError` is a SENTENCE written for the person reading it (B-119),
+# and `server.py` records it verbatim. An exception type does not survive a
+# process boundary, so the child re-states that one bit explicitly: this exit
+# code plus one marked stderr line. Everything else exits non-zero the ordinary
+# way and is reported as the raw stderr tail, exactly as `video_understand`
+# reports a failed `mlx_vlm.generate`.
+USER_FACING_EXIT = 3
+USER_FACING_MARKER = "apelles-user-facing-error: "
 
 
 # What `ffmpeg` prints when the INPUT has no audio stream to map into the WAV
@@ -246,7 +281,137 @@ def transcribe(
     return output
 
 
-def main() -> None:
+def _subprocess_cmd(
+    audio_path: str,
+    model: str,
+    language: str | None,
+    word_timestamps: bool,
+    out_path: str,
+) -> list[str]:
+    """The child's argv — this file, run as `__main__`, through the SAME
+    interpreter the caller is running on.
+
+    `sys.executable` is correct by construction and for the same reason
+    `video_understand` relies on it: whatever interpreter imported this module
+    is the one whose environment has `mlx_whisper` (D-314 — both sidecars share
+    `ai-env/.venv`, and `/health` reports the prefix so that is externally
+    visible). `__file__` is resolved rather than passed bare so the child's
+    implicit `sys.path[0]` is this directory and its `from errors import
+    UserFacingError` resolves regardless of the parent's cwd.
+
+    Every argument is one of the CLI flags `main()` already documents — no
+    private side-channel, so running a job by hand reproduces exactly what the
+    server runs."""
+    cmd = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--audio", audio_path,
+        "--model", model,
+        "--output", out_path,
+    ]
+    if language and language != "auto":
+        cmd += ["--language", language]
+    if not word_timestamps:
+        cmd.append("--no-word-timestamps")
+    return cmd
+
+
+def _user_facing_message(stderr: str) -> str | None:
+    """The child's marked line, un-marked — or `None` if it never wrote one.
+    Scanned from the end: `mlx_whisper`'s own progress bar owns stderr too."""
+    for line in reversed(stderr.splitlines()):
+        line = line.strip()
+        if line.startswith(USER_FACING_MARKER):
+            return line[len(USER_FACING_MARKER):].strip() or None
+    return None
+
+
+def transcribe_subprocess(
+    path: str,
+    model: str = DEFAULT_MODEL,
+    language: str | None = None,
+    word_timestamps: bool = True,
+    timeout_s: int = TRANSCRIBE_TIMEOUT_S,
+) -> dict:
+    """[`transcribe`], run as its own OS process — same arguments, same return
+    value, no model weights and no Metal buffers left in the caller (B-189).
+
+    This is what a long-lived process must call. `mlx_whisper` loads ~3 GB of
+    weights and allocates several GB more of GPU-resident buffers per run, and
+    MLX's Metal allocator keeps them: measured at 11 GB of
+    `IOAccelerator (graphics)` in the uvicorn parent after two real jobs, which
+    `ps`/`top` cannot see at all (they reported ~35 MB RSS throughout — only
+    `footprint <pid>` shows it). Letting the OS reclaim it at process exit is
+    the same fix `video_understand` has always had, and it needs no unloader,
+    no cache-trim call and no knowledge of MLX's allocator internals.
+
+    The result travels through a temp file, not stdout, because stdout belongs
+    to the child's own libraries — the run's progress bar and any warning
+    `mlx_whisper` decides to print. `--output` is the CLI's own already-
+    documented way to say "put the JSON here," so the parent's contract with
+    the child is the same one a human at a terminal gets.
+
+    Failures: a `UserFacingError` in the child arrives here as a
+    `UserFacingError` with the identical message (B-119 — `server.py` shows it
+    to the user verbatim); a timeout becomes one too, because "this took too
+    long and was stopped" is a sentence the user can act on; anything else
+    becomes a `RuntimeError` carrying the child's stderr tail, so a crash,
+    an OOM kill or an MLX fault is diagnosable instead of silent."""
+    src = Path(path)
+    if not src.exists():
+        raise FileNotFoundError(path)
+    if model not in MLX_MODEL_REPOS:
+        raise ValueError(
+            f"no HF repo mapped for model {model!r}. Supported: {', '.join(MLX_MODEL_REPOS)}"
+        )
+
+    out_dir = tempfile.mkdtemp(prefix="apelles_transcript_")
+    out_path = str(Path(out_dir) / "transcript.json")
+    try:
+        try:
+            proc = subprocess.run(
+                _subprocess_cmd(str(src), model, language, word_timestamps, out_path),
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+        except subprocess.TimeoutExpired as e:
+            # `subprocess.run` has already killed the child and reaped it, so
+            # its GPU memory is gone with it — the reason a timeout is safe to
+            # have here at all.
+            raise UserFacingError(
+                f"transcribing “{src.name}” took longer than {timeout_s // 60} minutes "
+                "and was stopped. Try a shorter clip, or a smaller model."
+            ) from e
+
+        if proc.returncode == USER_FACING_EXIT:
+            message = _user_facing_message(proc.stderr)
+            if message:
+                raise UserFacingError(message)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"transcribe subprocess failed (exit {proc.returncode}): "
+                f"{proc.stderr[-2000:].strip()}"
+            )
+
+        try:
+            return json.loads(Path(out_path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise RuntimeError(
+                f"transcribe subprocess exited 0 but wrote no readable result ({e}): "
+                f"{proc.stderr[-2000:].strip()}"
+            ) from e
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+
+def main() -> int:
+    """The CLI, and — since D-322 — the body of every server job as well
+    ([`transcribe_subprocess`] spawns exactly this). Both callers get the same
+    treatment of a predicted failure: the sentence alone, no traceback. The
+    marker prefix is meaningless to a human reading a terminal and load-bearing
+    for a parent process reading stderr, which is why it is on stderr and not
+    mixed into the JSON on stdout."""
     parser = argparse.ArgumentParser(description="Word-level transcript via mlx-whisper (local, Apple Silicon)")
     parser.add_argument("--audio", required=True, help="Audio or video file path")
     parser.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(MLX_MODEL_REPOS))
@@ -255,19 +420,25 @@ def main() -> None:
     parser.add_argument("--output", default=None, help="Save JSON to this path")
     args = parser.parse_args()
 
-    result = transcribe(
-        args.audio,
-        model=args.model,
-        language=args.language,
-        word_timestamps=not args.no_word_timestamps,
-    )
+    try:
+        result = transcribe(
+            args.audio,
+            model=args.model,
+            language=args.language,
+            word_timestamps=not args.no_word_timestamps,
+        )
+    except UserFacingError as e:
+        print(f"{USER_FACING_MARKER}{' '.join(str(e).splitlines())}", file=sys.stderr)
+        return USER_FACING_EXIT
+
     text = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
         Path(args.output).write_text(text, encoding="utf-8")
         print(f"Transcript saved to {args.output}", file=sys.stderr)
     else:
         print(text)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
