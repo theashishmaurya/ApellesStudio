@@ -40,7 +40,7 @@
 
 use std::path::{Path, PathBuf};
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::Value;
 
 /// Current schema tag. `chroma.grade/<major>` — bump the major only on a
