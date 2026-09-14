@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-14** — **B-189 filed: the `ai-media` sidecar leaks GPU/Metal
+  memory per transcription job, unbounded.** Caught via Activity Monitor
+  showing the same process grow 5.87GB → 11.18GB across two real
+  transcriptions; `ps`'s RSS metric is blind to it entirely (shows ~35MB) —
+  only `footprint`/Activity Monitor's own accounting sees the ~11GB sitting
+  in `IOAccelerator (graphics)`. Contradicts the sidecar's own documented
+  "subprocess isolation makes this structurally impossible" design. Not
+  fixed yet — needs root-causing why MLX's Metal context outlives the
+  subprocess boundary.
+
 - **2026-09-14** — **D-321 fixes B-188: the recut slowdown was an O(n²)
   resample, not the VAD, the packet loop, or a debug build.** All three
   suspects B-188 named are ruled out by measurement (2.46s of `next_packet()`,
