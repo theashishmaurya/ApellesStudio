@@ -2383,6 +2383,8 @@ pub fn run() {
             chroma::media_understanding::chroma_transcribe_status,
             chroma::media_understanding::chroma_analyze_video,
             chroma::media_understanding::chroma_analyze_video_status,
+            chroma::speech::chroma_detect_silences,
+            chroma::speech::chroma_detect_retakes,
             apply_adjustments,
             generate_preview_for_path,
             generate_preset_preview,

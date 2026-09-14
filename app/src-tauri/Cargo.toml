@@ -39,6 +39,7 @@ apelles-types = { path = "../../crates/apelles-types" }
 apelles-gpu = { path = "../../crates/apelles-gpu" }
 apelles-ai = { path = "../../crates/apelles-ai" }
 apelles-media = { path = "../../crates/apelles-media" }
+apelles-speech = { path = "../../crates/apelles-speech" }
 apelles-project = { path = "../../crates/apelles-project" }
 # Apelles editor-tab audio playback (D-049) — decode (symphonia) → resample
 # (rubato) → format-convert (dasp_sample) → device output (cpal). Pure Rust,

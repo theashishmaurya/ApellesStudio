@@ -127,6 +127,7 @@ pub mod project;
 pub mod relight;
 pub mod session;
 pub mod sidecar;
+pub mod speech;
 pub mod state;
 pub mod subtitles;
 pub mod text;

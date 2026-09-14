@@ -150,6 +150,7 @@ dependencies = [
  "apelles-media",
  "apelles-motion",
  "apelles-project",
+ "apelles-speech",
  "apelles-timeline",
  "apelles-types",
  "base64 0.23.1",
