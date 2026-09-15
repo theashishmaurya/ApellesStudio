@@ -93,6 +93,30 @@ pub struct DebugFrameTimingArgs {
     pub limit: Option<i64>,
     #[serde(default = "default_debug_frame_timing_reset")]
     pub reset: bool,
+    #[serde(default)]
+    pub window_ms: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DebugSetFpsOverlayArgs {
+    pub enabled: bool,
+    #[serde(default)]
+    pub corner: Option<String>,
+    #[serde(default)]
+    pub update_ms: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DebugRecordVideoArgs {
+    pub duration_secs: f64,
+    #[serde(default)]
+    pub out_path: Option<String>,
+    #[serde(default)]
+    pub fps: Option<i64>,
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub window: Option<String>,
 }
 
 #[tool_router(router = debug_router, vis = "pub")]
@@ -450,7 +474,11 @@ impl ApellesMcp {
 
     Args:
         limit: how many raw samples to return per channel. Default 60.
-        reset: clear all four buffers first (and return the now-empty report)."#
+        reset: clear all four buffers first (and return the now-empty report).
+        window_ms: derive every channel from only the last N milliseconds of
+            samples instead of the whole 240-sample ring buffer. Omit for the
+            whole buffer (the historical behaviour). Pass 2000 to read exactly
+            what `debug_set_fps_overlay`'s on-screen readout is showing."#
     )]
     pub async fn debug_frame_timing(
         &self,
@@ -459,8 +487,156 @@ impl ApellesMcp {
         let args = WireArgs::new()
             .put("limit", p.limit)
             // Presence-signalled: sent only when true, never as `false`.
-            .put_if("reset", p.reset);
+            .put_if("reset", p.reset)
+            // D-330 — the wire key is camelCase while the tool argument is
+            // snake_case, matching how `out_path`/`maxDepth` already differ
+            // across this boundary.
+            .put("windowMs", p.window_ms);
         let env = self.op("debug_frame_timing", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "debug_set_fps_overlay",
+        description = r#"Burn a live frame-rate readout into the app's own window, so a
+    screenshot or a recording carries its own measurement in the picture.
+
+    The overlay shows the SAME `paint` and `raf` numbers `debug_frame_timing`
+    reports — it formats those ring buffers, it does not measure anything of
+    its own. That is the point: a number in a recording is only evidence if it
+    is the same number the tooling answers. Read it back with
+    `debug_frame_timing(window_ms=2000)` and the two agree exactly.
+
+    WHY YOU WOULD USE IT: to show a performance change instead of asserting
+    one. Turn it on, record with `debug_record_video`, and the footage proves
+    its own frame rate. A before/after pair made this way is checkable by
+    someone who was not there.
+
+    What it shows, updated 4x a second (fast enough to track a stall, slow
+    enough that the digits stay readable on camera):
+        PAINT 12.4 fps      <- frames actually put on screen
+        RAF   24.1 fps      <- how often the play loop got to run at all
+        2.0s window · 3 hitches
+
+    Read those exactly as you read `debug_frame_timing`: a near-zero `RAF`
+    beside a healthy `PAINT` means the window is backgrounded and throttled,
+    not that rendering is slow. `--` instead of a number means nothing has
+    painted yet, which is different from painting at zero.
+
+    It is fixed-position and cannot affect layout or swallow a click, and it
+    is plain DOM on a timer rather than a React component — a readout that
+    re-rendered the app four times a second would change the very frame rate
+    it is reporting.
+
+    NOT captured: the Colorist tab's picture is a native surface behind the
+    webview, so a recording of that tab shows the overlay over an empty
+    canvas. This is for the Edit tab.
+
+    Args:
+        enabled: True to show the readout, False to remove it.
+        corner: top-left, top-right, bottom-left or bottom-right. Default
+            top-right (the one corner that is never the subject of a
+            performance recording). Kept from the previous call if omitted.
+        update_ms: how often to refresh the number. Default 250, clamped to
+            16..2000. The reply echoes what was actually applied."#
+    )]
+    pub async fn debug_set_fps_overlay(
+        &self,
+        Parameters(p): Parameters<DebugSetFpsOverlayArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            // Always sent — it is the one required argument, and `false` is a
+            // real instruction here rather than an absent one.
+            .set("enabled", Value::Bool(p.enabled))
+            .put("corner", p.corner)
+            .put("updateMs", p.update_ms);
+        let env = self.op("debug_set_fps_overlay", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "debug_record_video",
+        description = r#"Record the running Apelles window to a real, playable video file. This
+    is `debug_screenshot` over TIME — how you SHOW behaviour that only exists
+    in motion (stutter, a lagging scrub, a slow first frame).
+
+    THE WORKFLOW this exists for:
+        1. debug_set_fps_overlay(enabled=True)   -> the readout is on screen
+        2. editor_set_playing(True)              -> start the thing to record
+        3. debug_record_video(duration_secs=10)  -> record it
+        4. editor_set_playing(False)
+        5. debug_frame_timing(window_ms=2000)    -> cross-check the number
+    The result is footage with the app's own measured frame rate burned into
+    it. Do the same on a fix branch and the two files are a real before/after.
+
+    IT CAPTURES THE WEBVIEW, NOT THE SCREEN — same mechanism and same limits
+    as `debug_screenshot` (no macOS Screen Recording permission is involved or
+    needed). Native window chrome, menus and dialogs are invisible to it, and
+    the Colorist tab's picture is a native surface behind the webview, so it
+    does NOT appear. This is for the Edit tab. No audio is recorded.
+
+    PUT THE WINDOW IN FRONT FIRST. A backgrounded macOS window has its
+    requestAnimationFrame throttled to a stop, so playback does not really
+    run and the recording measures the throttling instead of the app. The
+    reply's `windowFocused` says which you got; if it is false, the footage is
+    not evidence of anything.
+
+    READ THE REPLY BEFORE TRUSTING THE FOOTAGE. Every number in it is
+    measured, not requested:
+      * `framesCaptured` / `framesDuplicated` — the recorder holds a fixed
+        cadence so the video's wall clock matches real time. When a capture
+        misses its slot the previous frame is repeated rather than letting the
+        recording drift into slow motion, and that padding is COUNTED here. A
+        large `framesDuplicated` means the capture could not keep up.
+      * `capturedFps` — the capture rate genuinely achieved.
+      * `captureMsMedian` / `captureMsP95` — what each capture cost the app
+        being recorded. This is the observer cost; compare `debug_frame_timing`
+        with and without a recording running before trusting a recorded fps.
+
+    This call BLOCKS the app's whole control server for its full duration (the
+    server answers one request at a time), so nothing else can be driven while
+    it runs. Duration is capped at 120s for that reason.
+
+    Args:
+        duration_secs: how long to record, 0.1 to 120.
+        out_path: absolute path for the .mp4. Default: a timestamped file in
+            the same directory `debug_screenshot` writes to.
+        fps: capture cadence, 1..60. Default 15 — above what this preview
+            actually achieves, without stealing time from it.
+        width: width of the finished video, in real pixels. Default 1280.
+            WebKit rasterises at this size rather than the frame being
+            downscaled afterwards, so it genuinely reduces what each capture
+            costs the app: measured on a 2x display, 58.7ms per capture at
+            native 2560px against 15.0ms at 1280. Pass 0 for native.
+        window: which window by Tauri label. Default: the focused one."#
+    )]
+    pub async fn debug_record_video(
+        &self,
+        Parameters(p): Parameters<DebugRecordVideoArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // The recording really does take `duration_secs`, and this op is
+        // answered natively in the app rather than forwarded, so the budget
+        // must cover the whole capture plus ffmpeg's final mux. Without it a
+        // successful recording comes back as a client-side timeout — the
+        // B-153 failure mode, in a tool whose runtime is knowable up front.
+        // `as i64` truncates toward zero, which is what Python's `int()` does
+        // — the two servers must put the same number on the wire. The floor
+        // at zero is this side's own: the budget is unsigned here, and a
+        // duration negative enough to underflow it is refused by the app
+        // anyway (`debug_record::validate_duration`).
+        let timeout_ms = ((p.duration_secs * 1000.0) as i64 + 60_000).max(0) as u64;
+        let args = WireArgs::new()
+            .set(
+                "duration_secs",
+                serde_json::Number::from_f64(p.duration_secs)
+                    .map(Value::Number)
+                    .unwrap_or(Value::Null),
+            )
+            .put("out_path", p.out_path)
+            .put("fps", p.fps)
+            .put("width", p.width)
+            .put("window", p.window);
+        let env = self.op_with("debug_record_video", timeout_ms, args).await?;
         Ok(render::json_text(&env))
     }
 }

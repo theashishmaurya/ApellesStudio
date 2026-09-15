@@ -4,6 +4,32 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-16** — **D-330: a performance change you can WATCH — a live fps
+  overlay burned into the window, plus a webview video recorder.** Debug
+  tooling piece 6, built so the decode-pipe/rendering fix in flight can be shown
+  as before/after footage instead of asserted. `debug_set_fps_overlay` displays
+  the *same* `paint`/`raf` ring buffers `debug_frame_timing` reads — a formatter,
+  never a second measurement, because two "fps" numbers that could disagree are
+  worth nothing as evidence. Both gained a `windowMs` (default 2 s): the 240-
+  sample ring is 10–48 s of history at this preview's real rates, so an
+  unwindowed average would spend a whole demo still showing the old number.
+  `debug_record_video` repeats D-210's `takeSnapshot` mechanism and pipes RAW
+  pixels into ffmpeg (PNG per frame would mostly measure its own encoder), holds
+  a fixed cadence so the file's wall clock matches reality, and *counts* the
+  padding when a capture misses its slot rather than drifting into slow motion.
+  Overlay is plain DOM on a 250 ms timer, not React — a readout re-rendering the
+  app four times a second would change the frame rate it reports. Both MCP
+  surfaces, parity corpus re-captured, debug-only gate re-measured (release
+  publishes 160 tools vs 171; 0 occurrences of every new symbol in a real
+  `vite build`). Found and fixed **B-200** while live-verifying.
+- **2026-09-16** — **B-200: `debug_record_video`'s `width` silently did
+  nothing.** `WKSnapshotConfiguration.snapshotWidth` is in POINTS, so asking a
+  1280-point window for "1280" requested exactly its native size — 2560 real
+  pixels on a 2× display, at 58.7 ms per capture. `width` now means the output
+  video's pixel width and is divided by the scale factor first: re-measured at
+  1280×720 and 15.0 ms, a 3.5× cut in what each capture costs the app being
+  recorded. Caught by reading the first live run's numbers rather than trusting
+  the parameter.
 - **2026-09-15** — **B-199: the transport bar's timecode no longer jitters,
   and drops the frame field.** `tabular-nums` alone only fixes digit widths;
   `font-mono` on the whole readout makes every character (colons, `/`, space)

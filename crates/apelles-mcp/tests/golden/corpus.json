@@ -597,7 +597,7 @@
     },
     {
       "name": "debug_frame_timing",
-      "description": "Read what the Edit tab's preview playback loop ACTUALLY did: the real\n    frame-to-frame intervals, in the webview, as measured by the app itself.\n\n    Use it to answer \"is playback smooth?\" \u2014 a question no Rust-side timing and\n    no screenshot can answer. Two CADENCE channels, and the difference between\n    them is the diagnosis:\n      * `paint` \u2014 frames actually put on screen. Low fps here = decode/\n        composite is too slow.\n      * `raf`   \u2014 requestAnimationFrame ticks, i.e. how often the play loop got\n        to run at all. Near-zero here with healthy `paint` means the WINDOW is\n        throttled (backgrounded/occluded), not that rendering is slow. Bring\n        the window to the front and measure again.\n\n    Each returns {samples, intervalsMs, minMs, medianMs, p95Ms, maxMs, fps,\n    hitches} \u2014 `hitches` counts intervals over twice the median, which is the\n    \"stutter\" a human reports. min/median/p95/max/fps cover the whole ring\n    buffer (240 samples); `intervalsMs` is just the tail.\n\n    Plus two COST channels (D-282), which answer the next question \u2014 \"the loop\n    is at 40 fps, so where did the 25 ms GO?\":\n      * `fetch` \u2014 the `chroma_timeline_frame` round trip: Tauri IPC plus all of\n        Rust's decode + composite + JPEG. Everything below the webview.\n      * `tick`  \u2014 one whole pass of the play loop.\n    Each returns {samples, msLatest, minMs, medianMs, p95Ms, maxMs, meanMs} \u2014\n    costs, so no fps and no hitches. Read them by SUBTRACTION:\n      * `fetch.medianMs`                  \u2192 Rust + IPC\n      * `tick.medianMs - fetch.medianMs`  \u2192 the loop's own JavaScript\n      * `raf.medianMs  - tick.medianMs`   \u2192 React's render/commit + the wait\n                                            for the next animation frame\n    D-282's own profile of the owner's project, for comparison: 25.0 ms a\n    frame, of which only ~3.5 ms was Rust \u2014 the preview's frame-rate ceiling is\n    set on the webview side, not by the decoder.\n\n    Measure properly: `debug_frame_timing(reset=True)` to clear, then\n    `editor_set_playing(True)`, wait a few seconds, `editor_set_playing(False)`,\n    then read. Numbers from before a reset mix scrubbing in with playback.\n    Two traps worth knowing, both hit live while D-282 was profiling: a\n    playhead already parked on the LAST frame makes playback stop instantly\n    (one raf sample, no movement \u2014 check `editor_get_state`'s playhead against\n    the timeline's length), and a stretch of timeline with a GAP under it\n    decodes nothing at all, so it measures the loop's floor rather than real\n    playback. Both look exactly like \"it stalled\" in the numbers.\n\n    Args:\n        limit: how many raw samples to return per channel. Default 60.\n        reset: clear all four buffers first (and return the now-empty report).",
+      "description": "Read what the Edit tab's preview playback loop ACTUALLY did: the real\n    frame-to-frame intervals, in the webview, as measured by the app itself.\n\n    Use it to answer \"is playback smooth?\" \u2014 a question no Rust-side timing and\n    no screenshot can answer. Two CADENCE channels, and the difference between\n    them is the diagnosis:\n      * `paint` \u2014 frames actually put on screen. Low fps here = decode/\n        composite is too slow.\n      * `raf`   \u2014 requestAnimationFrame ticks, i.e. how often the play loop got\n        to run at all. Near-zero here with healthy `paint` means the WINDOW is\n        throttled (backgrounded/occluded), not that rendering is slow. Bring\n        the window to the front and measure again.\n\n    Each returns {samples, intervalsMs, minMs, medianMs, p95Ms, maxMs, fps,\n    hitches} \u2014 `hitches` counts intervals over twice the median, which is the\n    \"stutter\" a human reports. min/median/p95/max/fps cover the whole ring\n    buffer (240 samples); `intervalsMs` is just the tail.\n\n    Plus two COST channels (D-282), which answer the next question \u2014 \"the loop\n    is at 40 fps, so where did the 25 ms GO?\":\n      * `fetch` \u2014 the `chroma_timeline_frame` round trip: Tauri IPC plus all of\n        Rust's decode + composite + JPEG. Everything below the webview.\n      * `tick`  \u2014 one whole pass of the play loop.\n    Each returns {samples, msLatest, minMs, medianMs, p95Ms, maxMs, meanMs} \u2014\n    costs, so no fps and no hitches. Read them by SUBTRACTION:\n      * `fetch.medianMs`                  \u2192 Rust + IPC\n      * `tick.medianMs - fetch.medianMs`  \u2192 the loop's own JavaScript\n      * `raf.medianMs  - tick.medianMs`   \u2192 React's render/commit + the wait\n                                            for the next animation frame\n    D-282's own profile of the owner's project, for comparison: 25.0 ms a\n    frame, of which only ~3.5 ms was Rust \u2014 the preview's frame-rate ceiling is\n    set on the webview side, not by the decoder.\n\n    Measure properly: `debug_frame_timing(reset=True)` to clear, then\n    `editor_set_playing(True)`, wait a few seconds, `editor_set_playing(False)`,\n    then read. Numbers from before a reset mix scrubbing in with playback.\n    Two traps worth knowing, both hit live while D-282 was profiling: a\n    playhead already parked on the LAST frame makes playback stop instantly\n    (one raf sample, no movement \u2014 check `editor_get_state`'s playhead against\n    the timeline's length), and a stretch of timeline with a GAP under it\n    decodes nothing at all, so it measures the loop's floor rather than real\n    playback. Both look exactly like \"it stalled\" in the numbers.\n\n    Args:\n        limit: how many raw samples to return per channel. Default 60.\n        reset: clear all four buffers first (and return the now-empty report).\n        window_ms: derive every channel from only the last N milliseconds of\n            samples instead of the whole 240-sample ring buffer. Omit for the\n            whole buffer (the historical behaviour). Pass 2000 to read exactly\n            what `debug_set_fps_overlay`'s on-screen readout is showing.",
       "inputSchema": {
         "properties": {
           "limit": {
@@ -616,10 +616,87 @@
             "default": false,
             "title": "Reset",
             "type": "boolean"
+          },
+          "window_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window Ms"
           }
         },
         "type": "object",
         "title": "debug_frame_timingArguments"
+      }
+    },
+    {
+      "name": "debug_record_video",
+      "description": "Record the running Apelles window to a real, playable video file. This\n    is `debug_screenshot` over TIME \u2014 how you SHOW behaviour that only exists\n    in motion (stutter, a lagging scrub, a slow first frame).\n\n    THE WORKFLOW this exists for:\n        1. debug_set_fps_overlay(enabled=True)   -> the readout is on screen\n        2. editor_set_playing(True)              -> start the thing to record\n        3. debug_record_video(duration_secs=10)  -> record it\n        4. editor_set_playing(False)\n        5. debug_frame_timing(window_ms=2000)    -> cross-check the number\n    The result is footage with the app's own measured frame rate burned into\n    it. Do the same on a fix branch and the two files are a real before/after.\n\n    IT CAPTURES THE WEBVIEW, NOT THE SCREEN \u2014 same mechanism and same limits\n    as `debug_screenshot` (no macOS Screen Recording permission is involved or\n    needed). Native window chrome, menus and dialogs are invisible to it, and\n    the Colorist tab's picture is a native surface behind the webview, so it\n    does NOT appear. This is for the Edit tab. No audio is recorded.\n\n    PUT THE WINDOW IN FRONT FIRST. A backgrounded macOS window has its\n    requestAnimationFrame throttled to a stop, so playback does not really\n    run and the recording measures the throttling instead of the app. The\n    reply's `windowFocused` says which you got; if it is false, the footage is\n    not evidence of anything.\n\n    READ THE REPLY BEFORE TRUSTING THE FOOTAGE. Every number in it is\n    measured, not requested:\n      * `framesCaptured` / `framesDuplicated` \u2014 the recorder holds a fixed\n        cadence so the video's wall clock matches real time. When a capture\n        misses its slot the previous frame is repeated rather than letting the\n        recording drift into slow motion, and that padding is COUNTED here. A\n        large `framesDuplicated` means the capture could not keep up.\n      * `capturedFps` \u2014 the capture rate genuinely achieved.\n      * `captureMsMedian` / `captureMsP95` \u2014 what each capture cost the app\n        being recorded. This is the observer cost; compare `debug_frame_timing`\n        with and without a recording running before trusting a recorded fps.\n\n    This call BLOCKS the app's whole control server for its full duration (the\n    server answers one request at a time), so nothing else can be driven while\n    it runs. Duration is capped at 120s for that reason.\n\n    Args:\n        duration_secs: how long to record, 0.1 to 120.\n        out_path: absolute path for the .mp4. Default: a timestamped file in\n            the same directory `debug_screenshot` writes to.\n        fps: capture cadence, 1..60. Default 15 \u2014 above what this preview\n            actually achieves, without stealing time from it.\n        width: width of the finished video, in real pixels. Default 1280.\n            WebKit rasterises at this size rather than the frame being\n            downscaled afterwards, so it genuinely reduces what each capture\n            costs the app: measured on a 2x display, 58.7ms per capture at\n            native 2560px against 15.0ms at 1280. Pass 0 for native.\n        window: which window by Tauri label. Default: the focused one.",
+      "inputSchema": {
+        "properties": {
+          "duration_secs": {
+            "title": "Duration Secs",
+            "type": "number"
+          },
+          "out_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Out Path"
+          },
+          "fps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fps"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Width"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Window"
+          }
+        },
+        "required": [
+          "duration_secs"
+        ],
+        "type": "object",
+        "title": "debug_record_videoArguments"
       }
     },
     {
@@ -720,6 +797,47 @@
         ],
         "type": "object",
         "title": "debug_set_editor_inspectorArguments"
+      }
+    },
+    {
+      "name": "debug_set_fps_overlay",
+      "description": "Burn a live frame-rate readout into the app's own window, so a\n    screenshot or a recording carries its own measurement in the picture.\n\n    The overlay shows the SAME `paint` and `raf` numbers `debug_frame_timing`\n    reports \u2014 it formats those ring buffers, it does not measure anything of\n    its own. That is the point: a number in a recording is only evidence if it\n    is the same number the tooling answers. Read it back with\n    `debug_frame_timing(window_ms=2000)` and the two agree exactly.\n\n    WHY YOU WOULD USE IT: to show a performance change instead of asserting\n    one. Turn it on, record with `debug_record_video`, and the footage proves\n    its own frame rate. A before/after pair made this way is checkable by\n    someone who was not there.\n\n    What it shows, updated 4x a second (fast enough to track a stall, slow\n    enough that the digits stay readable on camera):\n        PAINT 12.4 fps      <- frames actually put on screen\n        RAF   24.1 fps      <- how often the play loop got to run at all\n        2.0s window \u00b7 3 hitches\n\n    Read those exactly as you read `debug_frame_timing`: a near-zero `RAF`\n    beside a healthy `PAINT` means the window is backgrounded and throttled,\n    not that rendering is slow. `--` instead of a number means nothing has\n    painted yet, which is different from painting at zero.\n\n    It is fixed-position and cannot affect layout or swallow a click, and it\n    is plain DOM on a timer rather than a React component \u2014 a readout that\n    re-rendered the app four times a second would change the very frame rate\n    it is reporting.\n\n    NOT captured: the Colorist tab's picture is a native surface behind the\n    webview, so a recording of that tab shows the overlay over an empty\n    canvas. This is for the Edit tab.\n\n    Args:\n        enabled: True to show the readout, False to remove it.\n        corner: top-left, top-right, bottom-left or bottom-right. Default\n            top-right (the one corner that is never the subject of a\n            performance recording). Kept from the previous call if omitted.\n        update_ms: how often to refresh the number. Default 250, clamped to\n            16..2000. The reply echoes what was actually applied.",
+      "inputSchema": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "corner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corner"
+          },
+          "update_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Update Ms"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "type": "object",
+        "title": "debug_set_fps_overlayArguments"
       }
     },
     {
@@ -10211,16 +10329,72 @@
       "case": "full",
       "arguments": {
         "limit": 78,
-        "reset": true
+        "reset": true,
+        "window_ms": 53
       },
       "requests": [
         {
           "op": "debug_frame_timing",
           "args": {
             "limit": 78,
-            "reset": true
+            "reset": true,
+            "windowMs": 53
           },
           "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_record_video",
+      "case": "minimal",
+      "arguments": {
+        "duration_secs": -13.49
+      },
+      "requests": [
+        {
+          "op": "debug_record_video",
+          "args": {
+            "duration_secs": -13.49
+          },
+          "timeout_ms": 46510
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_record_video",
+      "case": "full",
+      "arguments": {
+        "duration_secs": -13.49,
+        "out_path": "v_debug_record_video.out_path",
+        "fps": 5,
+        "width": 94,
+        "window": "v_debug_record_video.window"
+      },
+      "requests": [
+        {
+          "op": "debug_record_video",
+          "args": {
+            "duration_secs": -13.49,
+            "out_path": "v_debug_record_video.out_path",
+            "fps": 5,
+            "width": 94,
+            "window": "v_debug_record_video.window"
+          },
+          "timeout_ms": 46510
         }
       ],
       "isError": false,
@@ -10342,6 +10516,56 @@
           "op": "debug_set_editor_inspector",
           "args": {
             "open": true
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_set_fps_overlay",
+      "case": "minimal",
+      "arguments": {
+        "enabled": false
+      },
+      "requests": [
+        {
+          "op": "debug_set_fps_overlay",
+          "args": {
+            "enabled": false
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_set_fps_overlay",
+      "case": "full",
+      "arguments": {
+        "enabled": false,
+        "corner": "v_debug_set_fps_overlay.corner",
+        "update_ms": 9
+      },
+      "requests": [
+        {
+          "op": "debug_set_fps_overlay",
+          "args": {
+            "enabled": false,
+            "corner": "v_debug_set_fps_overlay.corner",
+            "updateMs": 9
           },
           "timeout_ms": 20000
         }

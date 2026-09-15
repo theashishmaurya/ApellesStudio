@@ -9,9 +9,12 @@
 //!  Internal debug tooling must be compiled OUT of a production build through a real
 //!  compile-time gate — never a runtime flag, never "just don't call it in prod."
 //!  That is the same gate `control.rs`'s `native_op` uses on its own side (B-100 /
-//!  D-219), and it is why a release build of this server publishes 152 tools where a
-//!  debug build publishes 161. The Python server had no equivalent gate at all: it
-//!  defined all nine unconditionally and relied on the app-side half being absent,
+//!  D-219), and it is why a release build of this server publishes 160 tools where a
+//!  debug build publishes 171 (D-330 added the eleventh and tenth debug tools,
+//!  `debug_record_video` and `debug_set_fps_overlay`; both counts re-measured, not
+//!  adjusted by arithmetic — see `docs/notes/debug-tooling.md`'s gate verification).
+//!  The Python server had no equivalent gate at all: it
+//!  defined them all unconditionally and relied on the app-side half being absent,
 //!  which advertised tools a release build could never answer. Closing that is a
 //!  deliberate, documented improvement of the port, not an accident of it — see the
 //!  divergence list in `docs/notes/mcp-rust-port.md`.

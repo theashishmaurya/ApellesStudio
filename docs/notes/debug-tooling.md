@@ -167,6 +167,76 @@ several rounds of the owner's own screenshots before an agent could even confirm
    loop's floor rather than real playback. Check `editor_get_state`'s playhead
    against the timeline length, and pick a range you know has a clip under it.
 
+6. **Live fps overlay + window video recording** — **DONE (D-330, 2026-09-15).**
+   The pair that lets a performance change be *shown* rather than asserted.
+   Built because D-325 left the preview measurably slow and the next fix needed
+   before/after footage the owner could watch and share — and because the only
+   honest way to do that is to put the app's own measured number inside the
+   picture.
+
+   - **`debug_set_fps_overlay {enabled, corner?, updateMs?}`** — a small
+     fixed-position readout in the window itself:
+     ```
+     PAINT 12.4 fps
+     RAF   24.1 fps
+     2.0s window · 3 hitches
+     ```
+     It **formats piece 5's ring buffers; it does not measure anything of its
+     own** (`@apelles/editor`'s `previewLiveFps`). That is the load-bearing
+     property: a second, independently-derived fps on screen could disagree
+     with `debug_frame_timing`, and a viewer with no way to tell which was
+     right would be correct to trust neither. `debug_frame_timing` gained a
+     matching **`windowMs`** in the same pass, so an agent can read back
+     exactly the number the overlay is displaying.
+   - **Why a window at all:** the ring buffer is 240 samples, which at this
+     preview's real rates (4–25 fps, D-290/D-325) is **10–48 seconds** of
+     history. Averaged whole, a fix that doubled the frame rate would take half
+     a minute to show up — so a recording made to demonstrate it would spend
+     most of its length displaying the old number. 2 s is the default.
+   - **Why 250 ms updates:** readability, not cost. A number redrawn every
+     frame is unreadable on camera; slower than ~500 ms visibly lags the stall
+     the recording exists to show.
+   - **Why plain DOM, not React:** an overlay that re-rendered four times a
+     second would add commits to the very render path it is reporting on
+     (D-325 measured what an extra per-frame subscriber costs this tree). It is
+     `document.createElement` + `setInterval` + `textContent`, `position:
+     fixed`, `pointer-events: none` — it cannot reflow anything or swallow a
+     click. It is also the one deliberate exception to "all theming flows from
+     the `--color-*` vars": it must stay legible over arbitrary video and must
+     not change appearance mid-recording when the theme or tab changes.
+   - **`debug_record_video {duration_secs, out_path?, fps?, width?, window?}`**
+     — piece 1's mechanism over time. Repeated `takeSnapshotWithConfiguration:`
+     calls piped straight into `ffmpeg` as **raw pixels** (`CapturedRaw`), no
+     image codec in the path: PNG-encoding a 2560×1440 frame costs far more
+     than WebKit spends drawing it, so a PNG-based recorder would mostly be
+     measuring its own encoder — and stealing enough main-thread time to make
+     the recorded frame rate worse than the truth. `width` (default 1280) uses
+     WebKit's own `snapshotWidth` so it **rasterises smaller** rather than
+     downscaling afterwards.
+   - **Real-time accuracy, and the shortfall reported not hidden.** Fixed
+     cadence: frame `i` is due at `start + i/fps`. A capture that overruns its
+     slot does not make the recorder drift into slow motion — the previous
+     frame fills the missed slot and the schedule holds, so the file always has
+     `fps × duration` frames and its wall clock matches reality. That padding
+     is **counted** (`framesDuplicated`) rather than left for the viewer to
+     guess at, alongside `capturedFps`, `captureMsMedian`/`captureMsP95` (the
+     observer cost the recorded app paid) and `windowFocused`.
+   - **`windowFocused` matters more than it looks.** A non-frontmost macOS
+     window has its `requestAnimationFrame` throttled to a stop (the standing
+     B-124/D-217 condition this whole doc keeps running into), so a recording
+     made that way measures the throttling and looks entirely plausible doing
+     it. The field exists so that footage cannot be mistaken for evidence.
+   - **Not captured:** the Colorist tab's picture. It is a native wgpu surface
+     behind the webview (B-151); `debug_screenshot` composites it in on demand,
+     but doing that per frame would mean a full decode/re-encode per frame and
+     would wreck the timing being recorded. This pair is for the Edit tab. No
+     audio either.
+   - **Blocks the control server for its whole duration** — that server answers
+     one request at a time — which is why the duration is capped at 120 s.
+     Read `debug_frame_timing` *after* a recording, not during: the ring buffer
+     still holds the run, and not competing for the server keeps the
+     measurement clean.
+
 ## Two different levels — don't conflate them
 
 - **Component level** (a single component in isolation, e.g. `PreviewPane`/
@@ -320,6 +390,61 @@ vite on 1421), a real project, a real 4K clip on the timeline. Numbers, not clai
   (no Screen Recording / Accessibility permission, and a `decorations: false` window
   exposes no Accessibility target).
 
+### D-330, live — the numbers, and what could not be verified here
+
+A real `tauri dev` instance from an isolated worktree (`CHROMA_CONTROL_PORT=19791`,
+vite on 1421, the owner's own app on 19788 untouched), with the real `storm-clip`
+project D-325 used as its own single-clip baseline.
+
+- **The overlay is a real element, where it claims to be.** `debug_dom_tree` on
+  `#chroma-debug-fps-overlay`: `204.8 × 65` CSS px at `x 1063.2, y 12` in a
+  `1280 × 720` viewport — top-right, 12 px inset — with `position: fixed`,
+  `pointer-events: none`, `z-index: 2147483000`, `color: rgb(0, 255, 102)`.
+  Screenshotted and looked at: three legible lines of green monospace on a dark
+  panel.
+- **The overlay's number IS the tool's number.** Read back-to-back after a
+  scrub burst: `debug_frame_timing(windowMs=2000)` → **paint fps 12.06, 3
+  hitches**; the overlay's own live text → **`PAINT 12.1 fps · 3 hitches`**.
+  (An earlier run on the same build: 16.65 against `16.6`, hitches 2 and 2.)
+  That agreement is the whole feature, so it is also a unit test.
+- **The window genuinely narrows.** Same instant, same buffers: windowed
+  **12.06 fps over 22 samples** against the whole ring's **11.33 fps over 35**.
+  `windowMs` is echoed in the report (`2000` vs `null`) so a reader can never
+  mistake one for the other.
+- **A real, playable video with the readout burned in.** `debug_record_video`
+  → `ffprobe`: **h264, 1280×720, 15/1 fps, 75 packets, duration exactly
+  5.000000 s**. Frames extracted from a 4 s clip read `PAINT 8.6 fps` at frame
+  1, `8.5 fps` at frame 14, and `-- fps` at frame 55 — the readout updating
+  live, then blanking honestly once the 2 s window emptied past the last
+  painted frame.
+- **Cadence held, with the observer cost measured.** 5 s at the default 15 fps:
+  **75 frames captured, 0 duplicated, capturedFps 15.13**, capture cost
+  **15.0 ms median / 16.45 ms p95**. Under a heavier app state the same call
+  reported up to ~34 ms median and still held 15 fps with 0 padding.
+- **B-200, found here.** The first live run came back `2560×1440` at
+  **58.7 ms/capture** with 6 of 75 frames padded — `width` was inert because
+  `snapshotWidth` is in points. Fixed and re-measured to the numbers above.
+  Found only because the result reports what it *did*, not what it was asked.
+- **`windowFocused` reported `false` throughout, correctly, and that is a real
+  limit of this environment rather than of the tool.** This process cannot
+  bring the window frontmost — `System Events` has Accessibility permission and
+  `set frontmost` returns success, but focus stays with the calling terminal —
+  so `requestAnimationFrame` remained throttled to a stop for every run, the
+  raf channel reported `samples: 0` (rendered `--`), and **real playback never
+  ticked**: `editor_set_playing(true)` for 8 s produced 0 paint and 0 raf
+  samples. Every live number above therefore comes from the SCRUB path, which
+  needs no rAF and does record paints (D-219 established exactly this).
+  Recording real playback needs a frontmost window; that is what
+  `windowFocused` is in the result for, and the owner running this on their own
+  machine with the window in front is the case it is built for.
+- **One HMR trap worth knowing, hit live.** Hot-editing `previewTiming.ts`
+  mid-session replaces the module holding the ring buffers, while the already-
+  mounted `PreviewPane` keeps writing to the old instance — after which every
+  channel reads `samples: 0` forever and the overlay correctly shows `--` for a
+  perfectly healthy app. It looks exactly like "the instrumentation broke".
+  Restart the instance after editing that module rather than trusting a
+  hot-reloaded reading.
+
 ## Running a second instance (for an agent, alongside the owner's own app)
 
 Recorded because two separate agents have now had to rediscover it. No committed file
@@ -373,11 +498,35 @@ checked is how B-100 happened in the first place.
 - **Rust.** `cargo check -p apelles --release --lib` compiles clean with the whole
   `debug_capture` module and both commands cfg'd out (release turns `debug_assertions`
   off), which also proves nothing outside the gate still references them.
+  Re-run 2026-09-15 for **D-330**: clean with `debug_capture` **and** the new
+  `debug_record` module cfg'd out, and its `chroma_debug_record_video` command with
+  them.
+- **Re-run 2026-09-15, frontend, for D-330's new op and overlay.** A real
+  `npm run build --workspace app`, then grepping `app/dist/assets/` — `debug_set_fps_overlay`,
+  `debug_record_video`, `fpsOverlay`, `setFpsOverlay`, `fpsOverlayState`, `overlayText`,
+  `previewLiveFps` and the overlay's own element id `chroma-debug-fps-overlay`: **0
+  occurrences each**, as are `debug_frame_timing` and `debug_screenshot` on the same
+  build. Still ONE `index-*.js` chunk — no separate `debugOps`/`fpsOverlay` chunk was
+  emitted. `editor_set_selection` was grepped in the same pass as a control and found
+  **1**, so the grep was reading a real bundle. (`recordPreviewTiming` is **0** too, and
+  must be: D-219 already established that its `PreviewPane` call sites are themselves
+  `import.meta.env.DEV`-gated, so the whole timing module tree-shakes away with them —
+  which is also why the overlay, a pure formatter of those buffers, has nothing to
+  format in a production build even in principle.)
+- **MCP tool surface, measured rather than asserted (D-330).** `cargo test -p
+  apelles-mcp --release --test http_transport` reports the live release server
+  publishing **160** tools against the debug build's **171** — a difference of exactly
+  the 11 `debug_*` tools, which is the whole `tools/debug` router being absent. (That
+  test failing under `--release` is the gate working, not a regression: the assertion
+  pins the debug-build count on purpose, and the same check on `main` before D-330 read
+  152 against 169.)
 
 ## Status
 
 Pieces 1–5 are all built as of 2026-09-08 (D-210 for 1 and 3; D-219 for 2, 4, 5; B-100
-for the gate; D-252 extending piece 2 with `debug_set_popover_open`). Stated remaining
+for the gate; D-252 extending piece 2 with `debug_set_popover_open`). **Piece 6 landed
+2026-09-16 (D-330** — the live fps overlay and the window video recorder, plus `windowMs`
+on `debug_frame_timing`; **B-200** found and fixed in the same pass). Stated remaining
 gaps: the **Colorist tab's** own panel/visibility/settings state, and `MarkerStrip`'s
 `editingId`-keyed marker editor — see piece 2 above for why each is a real design call
 rather than a missing line of code. (`EditLibraryRail`'s uncontrolled rail popovers

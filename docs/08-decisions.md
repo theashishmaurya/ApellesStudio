@@ -32106,3 +32106,126 @@ second file spliced between them, and word-timed transcripts for both.
 decision 1); the list does not auto-scroll to the highlighted row, so on a long
 sequence the active row can be off-screen during playback; B-146 stays open with
 nine reactive-`playhead` subscribers remaining.
+
+## D-330 — a performance change you can WATCH: a live fps overlay burned into the window, and a webview video recorder to capture it
+
+**decided (2026-09-15)** · debug tooling piece 6 (`docs/notes/debug-tooling.md`)
+· extends D-210 (webview screenshot) and D-219/D-290 (frame timing) · uses
+D-325's numbers · new bug found and fixed in the same pass: **B-200**
+
+**Context.** D-325 left the Edit preview measurably slow and a decode-pipe +
+rendering optimisation in flight on its own branch. The owner wants the current
+and fixed behaviour as two video files, each showing real live fps on screen, to
+see and share the difference. Nothing in the repo could produce that: piece 1
+(`debug_screenshot`) is one still frame, piece 5 (`debug_frame_timing`) is a
+number in a JSON blob an agent reads, and macOS screen recording is behind the
+TCC permission this process has never had (the wall that created D-210 in the
+first place). Stutter is the one class of defect that does not survive being
+described — it has to be watched.
+
+**Decision 1 — the on-screen number is a FORMATTER of the existing
+instrumentation, never a second measurement.** `debug_set_fps_overlay` displays
+`previewLiveFps`, a thin projection of the exact ring buffers
+`debug_frame_timing` reads. The alternative considered and rejected was a
+self-contained HUD with its own rAF counter, which is less code and would have
+been quicker. It is also worthless for this purpose: two independently-derived
+"fps" numbers — one in the footage, one in the tool — can disagree, and a
+viewer with no way to tell which is right is correct to trust neither. The
+whole value of the artefact is that the number in the picture is checkable, so
+it has to be the same number by construction. The unit test that pins this
+asserts `previewLiveFps(w).paintFps === previewTimingReport(1, w).paint.fps`.
+
+**Decision 2 — a time WINDOW, added to both halves together.** The ring buffer
+is 240 samples, which at this preview's real rates (4–25 fps, D-290/D-325) is
+**10 to 48 seconds** of history. Averaged whole — which is what
+`previewTimingReport` did — it answers "what did this playback run do" and is
+badly wrong for "what is it doing right now": a fix that doubled the frame rate
+would take half a minute to appear, so a recording made to demonstrate it would
+spend most of its length displaying the old number. `previewTimingReport` gained
+an optional `windowMs` (omitted ⇒ byte-identical to its old behaviour, so every
+existing caller is untouched) and `debug_frame_timing` gained the matching
+argument, so an agent can read back exactly what the overlay is showing. Default
+2 s: ~20 intervals at 10 fps, so one slow frame does not swing the readout,
+while a real change appears within about a second.
+The cost channels (`fetch`/`tick`) now carry a timestamp alongside each
+duration purely so the window narrows all four channels over the same real
+span — a report whose halves silently covered different spans would be the same
+class of quietly-wrong number this whole decision is about avoiding.
+
+**Decision 3 — the overlay is plain DOM on a timer, not a React component.**
+D-325 measured what one extra per-frame subscriber costs this tree (up to
+22.8 ms/commit at 200 clips). A React overlay re-rendering four times a second
+would add commits to the very render path `raf`/`paint` measure — an observer
+that changes the observation. It is `createElement` + `setInterval` +
+`textContent`, `position: fixed`, `pointer-events: none`, `contain: layout
+style paint`: it cannot reflow anything, swallow a click, or cost a frame.
+**250 ms** updates is a readability decision, not a performance one — a number
+redrawn every frame is unreadable on camera, and slower than ~500 ms visibly
+lags the stall the recording exists to show.
+This is also the one deliberate exception to CLAUDE.md's "all theming flows
+from the `--color-*` vars": the readout must stay legible over arbitrary video
+and must not change appearance mid-recording when the theme or tab changes, so
+its high-contrast pair is fixed and documented as such in `fpsOverlay.ts`.
+
+**Decision 4 — record by repeating the screenshot mechanism, with RAW pixels.**
+`debug_record_video` repeats `takeSnapshotWithConfiguration:` and pipes frames
+straight into `ffmpeg` over stdin. Two rejected alternatives: system screen
+capture (the permission wall — the same reason D-210 exists), and repeating
+`debug_screenshot` itself. The second is the interesting one: PNG-encoding a
+2560×1440 frame costs far more than WebKit spends drawing it, so a PNG-based
+recorder would mostly be measuring its own encoder — and would steal enough
+main-thread time to make the recorded frame rate worse than the truth. So the
+capture hands back `CapturedRaw` (`NSBitmapImageRep`'s own buffer, row-padding
+stripped) and names its byte order for ffmpeg instead of swizzling it here.
+`ffmpeg_run.rs` grew `FfmpegStdinSink` beside its one-shot `run_ffmpeg` rather
+than a second place in the app spawning ffmpeg; while there, its hard-coded
+`"ffmpeg"` was unified onto the `CHROMA_FFMPEG` override the other three call
+sites already used.
+
+**Decision 5 — real-time accuracy, with the shortfall reported rather than
+hidden.** Fixed cadence: frame `i` is due at `start + i/fps`. The obvious
+alternative — capture as fast as possible, then encode at the measured mean —
+makes a recording that played faster or slower than reality whenever the
+capture rate moved, which silently destroys the one property a before/after
+comparison depends on. Instead a capture that overruns its slot is filled with
+the previous frame and the schedule holds, so the file always has `fps ×
+duration` frames and its wall clock always matches real time. The padding is
+**counted** (`framesDuplicated`) rather than left for a viewer to guess at,
+beside `capturedFps`, `captureMsMedian`/`captureMsP95` (the observer cost the
+recorded app paid) and `windowFocused` — because a recording made on a
+backgrounded window measures rAF throttling (B-124/D-217) and looks entirely
+plausible doing it.
+
+**B-200, found by measuring instead of assuming.** The recorder's first live
+run came back `2560x1440` with a **58.7 ms median capture** despite a default
+`width` of 1280 — the setting had done nothing. `WKSnapshotConfiguration.
+snapshotWidth` is in **points**, so asking a 1280-point window for "1280"
+requests exactly its native size, and on a 2× display that is 2560 real pixels.
+`width` now means the output video's real pixel width and is divided by the
+scale factor before it reaches WebKit. Re-measured after the fix: **1280×720 at
+15.0 ms median**, a 3.9× reduction in what each capture costs the app being
+recorded. Filed as B-200 rather than quietly corrected because it is exactly
+the failure mode this tool exists to prevent — a plausible-looking number that
+is not what it claims to be.
+
+**Gate.** Both tools are `#[cfg(debug_assertions)]` (module, Tauri command,
+`control.rs` native op) and `import.meta.env.DEV` + dynamic `import()` on the
+frontend, per CLAUDE.md's standing rule. Verified, not asserted: a release
+`cargo check` compiles with `debug_record` cfg'd out; a real `vite build`
+contains **0** occurrences of every new symbol (with `editor_set_selection` at 1
+as the control); and the MCP server publishes **160** tools in release against
+**171** in debug — measured by running the release test, not by arithmetic. All
+numbers in `docs/notes/debug-tooling.md`.
+
+**Both surfaces**, per CLAUDE.md's human-AND-AI rule: `mcp/server.py` and
+`crates/apelles-mcp` both carry `debug_set_fps_overlay` and
+`debug_record_video`, and `debug_frame_timing`'s new `window_ms`. The parity
+corpus was re-captured and `ported.json` updated in the same commit; the Rust
+descriptions were injected from the captured corpus rather than hand-copied,
+since that gate compares them byte-for-byte and has been tripped by
+transcription twice before.
+
+**Live-verified** on a real `tauri dev` instance from this worktree
+(`CHROMA_CONTROL_PORT=19791`, vite on 1421, the owner's own app untouched),
+with the real `storm-clip` project D-325 used as its baseline — see the
+"D-330, live" section of `docs/notes/debug-tooling.md` for the numbers.

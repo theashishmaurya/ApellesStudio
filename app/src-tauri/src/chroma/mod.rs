@@ -62,6 +62,10 @@
 //!   (B-100/D-219), along with its two Tauri commands and the two
 //!   `control.rs` native ops that reach it. Internal debug tooling is never
 //!   shipped (CLAUDE.md)
+//! - `debug_record` — the same mechanism over TIME (D-330): repeated raw
+//!   webview snapshots piped into `ffmpeg` to produce a real video file of
+//!   the running window, with the app's own measured frame rate burned in by
+//!   the `debug_set_fps_overlay` half. Gated identically
 //! - `caption_render` — rasterise a subtitle cue into an RGBA layer the
 //!   compositor draws OVER the finished frame (D-229). Multi-line, and
 //!   line-for-line identical to what the ffmpeg export's `drawtext` draws;
@@ -108,6 +112,11 @@ pub mod control;
 /// code path to a webview screenshot at all.
 #[cfg(debug_assertions)]
 pub mod debug_capture;
+/// D-330 — the moving-picture half of `debug_capture`: record the window to a
+/// real video file, so a performance fix can be shown rather than asserted.
+/// Gated identically and for the same reason; see `debug_capture` above.
+#[cfg(debug_assertions)]
+pub mod debug_record;
 pub mod decode_pipe;
 pub mod depth;
 pub mod edit;

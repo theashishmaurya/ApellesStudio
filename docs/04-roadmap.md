@@ -3420,6 +3420,18 @@ is not screen capture), removing the wall that had forced every live UI verifica
 onto indirect signals. MCP `debug_screenshot` (shoot → `Read` the path → look) +
 `debug_sample_pixel`; Cmd/Ctrl+Shift+D for a human. `docs/notes/debug-screenshot-tool.md`.
 
+**An agent can RECORD the app, with its real frame rate in the picture (2026-09-16,
+D-330):** `debug_set_fps_overlay` burns the live `paint`/`raf` readout
+`debug_frame_timing` already measures into the window itself — the same ring buffers, a
+formatter rather than a second measurement — and `debug_record_video` repeats D-210's
+`takeSnapshot` mechanism into a real H.264 file, so a performance change can be *watched*
+and shared instead of asserted. Both tools on both MCP surfaces, both compiled out of a
+release build (measured: 160 tools in release vs 171 in debug). `debug_frame_timing`
+gained `window_ms` in the same pass so an agent can read exactly the number the footage
+is showing. Built for the decode-pipe/rendering before-after pair; **B-200** was found
+and fixed by reading the recorder's own reported numbers on its first live run.
+`docs/notes/debug-tooling.md` piece 6.
+
 **Deliberately deferred, not abandoned:** the deeper crate-extraction migration
 (`apelles-gpu`/`apelles-media`/`apelles-project`, eventually `apelles-compositor`) — the
 roadmap's own "Then" section already flags it as a bigger, no-urgency structural bet

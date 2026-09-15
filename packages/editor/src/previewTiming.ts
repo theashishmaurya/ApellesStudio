@@ -58,9 +58,25 @@
 export const TIMING_CAPACITY = 240;
 
 /** How many intervals a report returns when the caller names no limit.
- *  Everything derived (min/median/p95/max/fps) is computed over the WHOLE
- *  buffer regardless — the limit only trims the raw list. */
+ *  Everything derived (min/median/p95/max/fps) is computed over the whole
+ *  buffer unless a `windowMs` narrows it (see {@link previewTimingReport});
+ *  the limit only ever trims the raw list. */
 export const DEFAULT_REPORT_LIMIT = 60;
+
+/** The default time window for a LIVE readout (D-330).
+ *
+ *  Why a window exists at all: the ring buffer holds {@link TIMING_CAPACITY}
+ *  samples, which at the frame rates this preview actually hits (5–25 fps,
+ *  per D-290/D-325) is **10 to 48 seconds** of history. Averaged whole, that
+ *  is the right number for "what did this playback run do" and the WRONG one
+ *  for "what is it doing right now": a fix that doubles the frame rate would
+ *  take half a minute to show up, and a recording made to demonstrate it
+ *  would spend most of its length displaying the old number.
+ *
+ *  2 s is the compromise the on-screen overlay uses: long enough to hold ~20
+ *  intervals at 10 fps (so one slow frame does not swing the readout), short
+ *  enough that a real change appears within about a second of happening. */
+export const DEFAULT_TIMING_WINDOW_MS = 2000;
 
 export type PreviewTimingChannel = 'raf' | 'paint';
 
@@ -70,7 +86,21 @@ export type PreviewTimingChannel = 'raf' | 'paint';
 export type PreviewSpanChannel = 'fetch' | 'tick';
 
 const buffers: Record<PreviewTimingChannel, number[]> = { raf: [], paint: [] };
-const spans: Record<PreviewSpanChannel, number[]> = { fetch: [], tick: [] };
+
+/** One recorded duration, and WHEN it was recorded (D-330).
+ *
+ *  The `at` is not reported anywhere; it exists so a `windowMs` can narrow
+ *  the cost channels by the same real time span as the cadence channels. A
+ *  duration alone has no position in time, so without this a windowed report
+ *  could only narrow two of its four channels — and two channels silently
+ *  covering a different span from the other two is exactly the kind of
+ *  quietly-wrong number this module must not produce. */
+interface Span {
+  at: number;
+  ms: number;
+}
+
+const spans: Record<PreviewSpanChannel, Span[]> = { fetch: [], tick: [] };
 
 /** Record one event. `at` defaults to `performance.now()` and is a parameter
  *  purely so the tests can drive a deterministic clock. */
@@ -85,10 +115,14 @@ export function recordPreviewTiming(channel: PreviewTimingChannel, at: number = 
  *  as `now - start`, so anything else is a caller bug, and silently poisoning
  *  the median with it would make the readout untrustworthy — which is the one
  *  thing this module cannot afford to be. */
-export function recordPreviewSpan(channel: PreviewSpanChannel, ms: number): void {
+export function recordPreviewSpan(
+  channel: PreviewSpanChannel,
+  ms: number,
+  at: number = performance.now(),
+): void {
   if (!Number.isFinite(ms) || ms < 0) return;
   const buf = spans[channel];
-  buf.push(ms);
+  buf.push({ at, ms });
   if (buf.length > TIMING_CAPACITY) buf.shift();
 }
 
@@ -146,6 +180,11 @@ export interface PreviewTimingReport {
    *  animation frame. */
   tick: SpanTimingReport;
   capacity: number;
+  /** D-330 — the time window every channel above was derived over, in ms, or
+   *  `null` for "the whole ring buffer" (the default, and what every report
+   *  before D-330 did). Always reported, so a number read out of this object
+   *  can never be mistaken for covering a different span than it does. */
+  windowMs: number | null;
 }
 
 function round2(n: number): number {
@@ -194,6 +233,47 @@ function channelReport(stamps: number[], limit: number): ChannelTimingReport {
   };
 }
 
+/** The tail of `items` that falls within `windowMs` of `anchor` (D-330).
+ *
+ *  **Two anchors, for two genuinely different questions**, and picking the
+ *  wrong one produces a number that is not false so much as answering
+ *  something nobody asked:
+ *
+ *  * `anchor === null` — the NEWEST sample. This is what `debug_frame_timing`
+ *    uses, because the buffers are normally read *after the fact* (play,
+ *    stop, then read; the tool's own docstring prescribes exactly that), and
+ *    anchoring on the clock would report an empty window for every such call.
+ *  * an explicit `anchor` (in practice `performance.now()`) — what the
+ *    on-screen overlay uses. A live readout must describe the present, and a
+ *    newest-anchored one *freezes* on its last value the moment frames stop,
+ *    so a recording would go on displaying "17.1 fps" over an app that has
+ *    not painted for thirty seconds. Found doing exactly that during D-330's
+ *    own live verification.
+ *
+ *  The two do not disagree about any measurement: while frames are flowing,
+ *  `now ≈ newest` and both select the same samples (measured live: the
+ *  overlay's 16.6 against the tool's 16.65 read back-to-back). The only
+ *  difference is that the live anchor additionally goes EMPTY — rendered as
+ *  `--`, never as `0.0` — rather than asserting a stale number.
+ *
+ *  Windowing by TIME, not by count: a count-based window covers a different
+ *  real span at every frame rate, which is precisely the comparison this is
+ *  used for (before/after a performance fix). */
+function withinWindow<T>(
+  items: T[],
+  windowMs: number | null,
+  at: (item: T) => number,
+  anchor: number | null,
+): T[] {
+  if (windowMs === null || !items.length) return items;
+  const cutoff = (anchor ?? at(items[items.length - 1])) - windowMs;
+  // The buffers are append-only in time order, so the kept set is a suffix;
+  // scanning back from the end stops as soon as it leaves the window.
+  let start = items.length;
+  while (start > 0 && at(items[start - 1]) >= cutoff) start -= 1;
+  return items.slice(start);
+}
+
 function spanReport(durations: number[], limit: number): SpanTimingReport {
   const tail = durations.slice(Math.max(0, durations.length - limit)).map(round2);
   if (!durations.length) {
@@ -212,13 +292,85 @@ function spanReport(durations: number[], limit: number): SpanTimingReport {
   };
 }
 
-export function previewTimingReport(limit: number = DEFAULT_REPORT_LIMIT): PreviewTimingReport {
+/** Turn the four ring buffers into one report.
+ *
+ *  `limit` trims the raw `intervalsMs`/`msLatest` lists only. `windowMs`
+ *  (D-330) narrows what everything DERIVED is computed over, to the samples
+ *  within that many ms of the newest one — `null`/omitted means the whole
+ *  buffer, which is exactly what this function did before D-330, so every
+ *  existing caller is unchanged.
+ *
+ *  One edge effect worth knowing when reading a windowed cadence channel: the
+ *  window selects SAMPLES, and intervals are measured between the samples it
+ *  kept, so the one interval straddling the cutoff is dropped rather than
+ *  half-counted. At the default 2 s window that is one interval in ~20 — far
+ *  below the run-to-run spread — and the alternative (keeping a sample from
+ *  outside the window) would mean reporting an interval that mostly covers
+ *  time the window claims to exclude. */
+export function previewTimingReport(
+  limit: number = DEFAULT_REPORT_LIMIT,
+  windowMs: number | null = null,
+  anchor: number | null = null,
+): PreviewTimingReport {
   const capped = Math.min(Math.max(Math.round(limit), 1), TIMING_CAPACITY);
+  const win = windowMs === null || !Number.isFinite(windowMs) || windowMs <= 0 ? null : windowMs;
+  const stampAt = (n: number) => n;
+  const spanAt = (s: Span) => s.at;
   return {
-    raf: channelReport(buffers.raf, capped),
-    paint: channelReport(buffers.paint, capped),
-    fetch: spanReport(spans.fetch, capped),
-    tick: spanReport(spans.tick, capped),
+    raf: channelReport(withinWindow(buffers.raf, win, stampAt, anchor), capped),
+    paint: channelReport(withinWindow(buffers.paint, win, stampAt, anchor), capped),
+    fetch: spanReport(
+      withinWindow(spans.fetch, win, spanAt, anchor).map((s) => s.ms),
+      capped,
+    ),
+    tick: spanReport(
+      withinWindow(spans.tick, win, spanAt, anchor).map((s) => s.ms),
+      capped,
+    ),
     capacity: TIMING_CAPACITY,
+    windowMs: win,
+  };
+}
+
+/** Just the two live frame rates, for the on-screen overlay (D-330).
+ *
+ *  A thin projection of {@link previewTimingReport} rather than a second
+ *  measurement — that is the whole point. The overlay burning a number into a
+ *  recording and `debug_frame_timing` answering an agent MUST be the same
+ *  number computed the same way over the same window, or the recording is not
+ *  evidence of anything. Passing the same `windowMs` to both makes them agree
+ *  by construction; the overlay displays the window it used so the two can be
+ *  checked against each other. */
+export interface PreviewLiveFps {
+  paintFps: number | null;
+  rafFps: number | null;
+  paintSamples: number;
+  rafSamples: number;
+  /** `paint` intervals over twice the median — visible stutter, in-window. */
+  hitches: number;
+  windowMs: number;
+}
+
+export function previewLiveFps(
+  windowMs: number = DEFAULT_TIMING_WINDOW_MS,
+  now: number = performance.now(),
+): PreviewLiveFps {
+  const win = !Number.isFinite(windowMs) || windowMs <= 0 ? DEFAULT_TIMING_WINDOW_MS : windowMs;
+  // `limit: 1` — the overlay needs no raw interval list, and asking for the
+  // default 60 would allocate two arrays four times a second for nothing.
+  //
+  // `now` as the anchor, unlike `debug_frame_timing`'s newest-sample one: a
+  // readout burned into a recording has to describe the present, so when
+  // nothing has painted for a whole window it must go blank rather than keep
+  // displaying the last number it saw. See `withinWindow`. Injectable so the
+  // staleness behaviour is testable on a deterministic clock.
+  const report = previewTimingReport(1, win, now);
+  return {
+    paintFps: report.paint.fps,
+    rafFps: report.raf.fps,
+    paintSamples: report.paint.samples,
+    rafSamples: report.raf.samples,
+    hitches: report.paint.hitches,
+    windowMs: win,
   };
 }

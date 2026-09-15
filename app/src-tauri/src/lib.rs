@@ -2368,6 +2368,10 @@ pub fn run() {
             chroma::debug_capture::chroma_debug_screenshot,
             #[cfg(debug_assertions)]
             chroma::debug_capture::chroma_debug_sample_pixel,
+            // D-330 — the video recorder, gated the same way for the same
+            // reason as the two above.
+            #[cfg(debug_assertions)]
+            chroma::debug_record::chroma_debug_record_video,
             chroma::grade::chroma_save_grade,
             chroma::grade::chroma_load_grade,
             chroma::motion::chroma_motion_get_manifest,

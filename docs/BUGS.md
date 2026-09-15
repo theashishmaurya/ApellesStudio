@@ -3340,6 +3340,18 @@ status: **open** · severity: **medium** (total loss of the user's preset librar
 - **not automatic**, unlike B-194: it needs the user to add, rename or reorder a preset while the list is wrongly empty. When that happens it is total loss.
 - **fix:** an error state that is not an empty value — refuse to save while the last load failed, the way `packages/editor/src/timelineStore.ts` already does (`status: 'error'`, and `applyOp` early-returns on a null timeline) and the way B-058/D-150 fixed the Motion tab.
 
+## B-200 — `debug_record_video`'s `width` silently did nothing, because `snapshotWidth` is in POINTS and it was being handed pixels
+
+status: **fixed** (2026-09-16) · severity: medium (nothing was wrong in the output file — but the parameter whose entire job is to keep the recorder from perturbing the app it records was inert, so every recording cost ~4x what it should and the number burned into it was correspondingly further from the truth) · area: `app/src-tauri/src/chroma/debug_record.rs`, D-330
+
+- **found:** 2026-09-16, on the recorder's very FIRST live run, by reading the result's own reported numbers rather than trusting the parameter. The reply came back `width: 2560, height: 1440` — the native backing size — despite a default `width` of 1280, with `captureMsMedian: 58.73` and 6 of 75 frames padded because the capture could not hold a 15fps cadence.
+- **expected:** `width: 1280` produces a 1280-pixel-wide recording.
+- **actual:** the setting had no effect whatsoever; every recording was full native resolution.
+- **cause:** `WKSnapshotConfiguration.snapshotWidth` is expressed in **points**, not pixels. The window here is 1280 points wide, so asking for "1280" requested exactly its existing width — and on a 2x display that rasterises at 2560 real pixels. The value was being passed through verbatim on the assumption that the two units were the same. Nothing errors in this situation; WebKit honours the request precisely, and the request happens to mean "no change".
+- **fix:** `debug_record::snapshot_width` now takes the window's scale factor and divides by it, so the argument means the output video's real pixel width — which is the unit a caller recording a video is actually thinking in, and the only one they can specify without knowing the display's scale. Unit-tested (`the_requested_width_is_output_pixels_converted_into_snapshot_points`) including the degenerate scale factors, since the failure mode is silent. `debug_capture::capture_webview_raw`'s own doc now states the unit explicitly at the point the value crosses into WebKit.
+- **verification:** re-measured on the same instance, same project, same 5s duration — **2560x1440 / 58.73ms median / 69 captured + 6 padded** before, **1280x720 / 15.0ms median / 75 captured + 0 padded** after. A 3.9x reduction in what each capture costs the app being recorded, and the target cadence now fully sustained.
+- **worth keeping in mind:** this is precisely the class of defect D-330's tooling exists to catch — a plausible-looking number that is not what it claims to be — and it was caught only because the tool reports what it actually did rather than echoing what it was asked for. Had `debug_record_video` returned just `{ok: true, path}`, it would have shipped.
+
 ## B-199 — the transport bar's `current / total` timecode visibly jittered the rest of the transport on every frame tick
 
 status: **fixed** (2026-09-15) · severity: low (cosmetic — nothing was mis-seeked or mis-measured, but a readout that visibly nudges every tick reads as a bug and drew attention away from the numbers themselves) · area: `packages/player/src/Player.tsx`

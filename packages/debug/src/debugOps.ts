@@ -49,7 +49,17 @@
  *   `debug_frame_timing`          — the Edit-tab preview's real paint
  *                                   intervals, and since D-290 the per-phase
  *                                   COSTS behind them (see `@apelles/editor`'s
- *                                   `previewTiming.ts`).
+ *                                   `previewTiming.ts`). D-330 added an
+ *                                   optional `windowMs`, so the same numbers
+ *                                   can be read over the same recent window
+ *                                   the on-screen overlay displays.
+ *   `debug_set_fps_overlay`       — D-330. Burn that live paint/raf readout
+ *                                   into the window itself, so a screenshot
+ *                                   or a `debug_record_video` recording
+ *                                   carries its own measurement in-frame.
+ *                                   Formats the SAME buffers `debug_frame_
+ *                                   timing` reads — never a second, parallel
+ *                                   fps number (see `fpsOverlay.ts`).
  *
  * NOT here, deliberately: the Colorist tab's own panel/visibility/settings
  * state. It lives in `app/src/store/useUIStore.ts` — inside the vendored
@@ -71,6 +81,13 @@ import {
 } from '@apelles/editor';
 
 import { describeOpenDialogs, serializeDomTree } from './domTree';
+import {
+  fpsOverlayState,
+  OVERLAY_CORNERS,
+  parseOverlayCorner,
+  setFpsOverlay,
+  type OverlayCorner,
+} from './fpsOverlay';
 import { isParseError, parseBool, parseShellTab, SHELL_TABS } from './uiState';
 
 /** One op's arguments, straight off the untyped `chroma://request` payload —
@@ -127,6 +144,12 @@ function uiStateSnapshot() {
     },
     // Read off the document, not off a store — see `describeOpenDialogs`.
     openDialogs: describeOpenDialogs(),
+    // D-330 — whether the live fps readout is currently burned into the
+    // window, and with what settings. Reported here because it changes what
+    // a screenshot or a `debug_record_video` of this app CONTAINS, which is
+    // the same reason `libraryMode` above is reported; `mounted` is read off
+    // the real document, not a flag, so a hand-removed node shows as gone.
+    fpsOverlay: fpsOverlayState(),
   };
 }
 
@@ -201,15 +224,54 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
   },
 
   debug_frame_timing: (a) => {
+    // D-330 — an optional time window. Omitted, this is byte-for-byte the
+    // pre-D-330 whole-ring-buffer report; given, it narrows every channel to
+    // the last `windowMs` so an agent can read exactly the number the
+    // on-screen overlay is displaying beside it.
+    let windowMs: number | null = null;
+    if (a?.windowMs !== undefined) {
+      const n = Math.round(Number(a.windowMs));
+      if (!Number.isFinite(n) || n < 1) {
+        return { error: "'windowMs' must be a positive integer number of milliseconds" };
+      }
+      windowMs = n;
+    }
     if (a?.reset === true) {
       resetPreviewTiming();
-      return { ok: true, reset: true, ...previewTimingReport() };
+      return { ok: true, reset: true, ...previewTimingReport(undefined, windowMs) };
     }
     const limit = a?.limit === undefined ? undefined : Math.round(Number(a.limit));
     if (limit !== undefined && (!Number.isFinite(limit) || limit < 1)) {
       return { error: "'limit' must be a positive integer" };
     }
-    return previewTimingReport(limit);
+    return previewTimingReport(limit, windowMs);
+  },
+
+  debug_set_fps_overlay: (a) => {
+    const enabled = parseBool(a?.enabled, 'enabled');
+    if (isParseError(enabled)) return enabled;
+
+    let corner: OverlayCorner | undefined;
+    if (a?.corner !== undefined) {
+      const parsed = parseOverlayCorner(a.corner);
+      // D-216's rule — recognise or refuse by name. A typo'd corner must not
+      // silently land the readout somewhere else in a recording.
+      if (parsed === null) {
+        return {
+          error: `unknown corner ${JSON.stringify(a.corner)} — expected one of ${OVERLAY_CORNERS.join(', ')}`,
+        };
+      }
+      corner = parsed;
+    }
+
+    // `updateMs` is CLAMPED rather than refused (see `clampUpdateMs`), and the
+    // echoed state reports what was actually applied, so a caller that asked
+    // for 2 ms can see it got 16.
+    const state = setFpsOverlay(enabled.value, {
+      corner,
+      updateMs: a?.updateMs === undefined ? undefined : a.updateMs,
+    });
+    return { ok: true, ...state };
   },
 };
 

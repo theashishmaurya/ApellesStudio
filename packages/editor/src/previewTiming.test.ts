@@ -10,7 +10,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_REPORT_LIMIT,
+  DEFAULT_TIMING_WINDOW_MS,
   TIMING_CAPACITY,
+  previewLiveFps,
   previewTimingReport,
   recordPreviewSpan,
   recordPreviewTiming,
@@ -177,5 +179,123 @@ describe('previewTimingReport — the duration channels', () => {
     expect(tick.msLatest).toHaveLength(5);
     expect(tick.maxMs).toBe(400);
     expect(tick.samples).toBe(101);
+  });
+});
+
+/**
+ * D-330 — the time window. These exist because a windowed number is the one
+ * the on-screen overlay burns into a recording, so "what span does this fps
+ * actually cover" has to be exact rather than roughly right.
+ */
+describe('previewTimingReport — the D-330 time window', () => {
+  it('defaults to the whole ring buffer, exactly as it did before D-330', () => {
+    record('paint', 5, 100);
+    const report = previewTimingReport();
+    expect(report.windowMs).toBeNull();
+    expect(report.paint.samples).toBe(5);
+    expect(report.paint.fps).toBe(10);
+  });
+
+  it('derives only from samples inside the window', () => {
+    // Ten slow frames (100ms) then ten fast ones (20ms). Whole-buffer fps
+    // averages the two; a 200ms window must see only the fast ones.
+    record('paint', 10, 100, 0);
+    record('paint', 10, 20, 1000);
+
+    expect(previewTimingReport(60).paint.fps).toBeLessThan(25);
+
+    const windowed = previewTimingReport(60, 200);
+    expect(windowed.windowMs).toBe(200);
+    expect(windowed.paint.fps).toBe(50);
+  });
+
+  it('anchors the window on the NEWEST sample, not on wall-clock now', () => {
+    // The normal way this readout is used is play, stop, then read — by
+    // which time every sample is "old" relative to `performance.now()`.
+    // Anchoring on now would report an empty window for every such call.
+    record('paint', 6, 50, 0);
+    const report = previewTimingReport(60, 200);
+    expect(report.paint.samples).toBeGreaterThan(1);
+    expect(report.paint.fps).toBe(20);
+  });
+
+  it('windows the COST channels over the same real span as the cadence ones', () => {
+    // Cheap fetches long ago, expensive ones just now. A window that only
+    // narrowed the cadence channels would report current fps beside stale
+    // costs — two halves of one report silently covering different spans.
+    for (let i = 0; i < 10; i += 1) recordPreviewSpan('fetch', 2, i * 10);
+    for (let i = 0; i < 10; i += 1) recordPreviewSpan('fetch', 40, 1000 + i * 10);
+
+    // Nearest-rank median over all twenty samples lands on the cheap half;
+    // the windowed one sees only the expensive ten.
+    expect(previewTimingReport(60).fetch.medianMs).toBe(2);
+    expect(previewTimingReport(60).fetch.samples).toBe(20);
+    expect(previewTimingReport(60, 100).fetch.medianMs).toBe(40);
+    expect(previewTimingReport(60, 100).fetch.samples).toBe(10);
+  });
+
+  it('treats a zero, negative or non-finite window as no window at all', () => {
+    record('paint', 4, 100);
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const report = previewTimingReport(60, bad);
+      expect(report.windowMs).toBeNull();
+      expect(report.paint.samples).toBe(4);
+    }
+  });
+});
+
+describe('previewLiveFps', () => {
+  it('reports the same fps the windowed report does, over the window it names', () => {
+    // Both channels end at the same instant, so one `now` anchor is current
+    // for both and the live readout and the tool are directly comparable.
+    record('paint', 10, 100, 0);
+    record('paint', 11, 20, 1000); // last paint at t = 1200
+    record('raf', 21, 20, 1000); // last raf   at t = 1200
+
+    const live = previewLiveFps(200, 1200);
+    expect(live.windowMs).toBe(200);
+    // The load-bearing property of the whole feature: the number the overlay
+    // burns into a recording IS the number the tool answers, not a parallel
+    // measurement that could drift from it.
+    expect(live.paintFps).toBe(previewTimingReport(1, 200).paint.fps);
+    expect(live.rafFps).toBe(previewTimingReport(1, 200).raf.fps);
+    expect(live.paintFps).toBe(50);
+  });
+
+  it('reports null rather than zero when nothing has painted', () => {
+    // A recording must show "nothing is being drawn" distinctly from
+    // "drawing at 0 fps" — only one of those is a bug.
+    const live = previewLiveFps();
+    expect(live.paintFps).toBeNull();
+    expect(live.paintSamples).toBe(0);
+  });
+
+  it('falls back to the default window for a nonsense one', () => {
+    expect(previewLiveFps(0).windowMs).toBe(DEFAULT_TIMING_WINDOW_MS);
+    expect(previewLiveFps(Number.NaN).windowMs).toBe(DEFAULT_TIMING_WINDOW_MS);
+  });
+
+  it('goes BLANK once nothing has painted for a whole window', () => {
+    // The wart this fixes was caught in D-330's own live verification: a
+    // newest-anchored readout freezes on its last value, so a recording kept
+    // displaying "17.1 fps" over an app that had stopped painting entirely.
+    // An overlay in footage has to describe the present or it is not
+    // evidence.
+    record('paint', 10, 50, 1000); // last sample at t=1450
+
+    expect(previewLiveFps(2000, 1500).paintFps).toBe(20);
+    expect(previewLiveFps(2000, 3000).paintFps).toBe(20); // still in window
+    expect(previewLiveFps(2000, 9000).paintFps).toBeNull(); // long stale
+    expect(previewLiveFps(2000, 9000).paintSamples).toBe(0);
+  });
+
+  it('agrees with the tool exactly while frames are flowing', () => {
+    // The two anchors differ ONLY in staleness. While samples are arriving,
+    // `now` and `newest` select the same ones and the numbers must be equal —
+    // this is the property the whole overlay rests on.
+    record('paint', 20, 40, 0); // last sample at t=760
+    const live = previewLiveFps(2000, 760);
+    expect(live.paintFps).toBe(previewTimingReport(1, 2000).paint.fps);
+    expect(live.hitches).toBe(previewTimingReport(1, 2000).paint.hitches);
   });
 });

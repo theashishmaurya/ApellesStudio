@@ -122,7 +122,13 @@ export type { PanelId } from './panelRegistry';
  *  reads them; `PreviewPane` writes them. Both writes and the reader are
  *  compile-time gated out of a production build (see `previewTiming.ts`), so
  *  this export tree-shakes away with them. */
+/** D-330 adds `previewLiveFps` to the same export: the on-screen overlay
+ *  (`@apelles/debug`'s `fpsOverlay.ts`) is a FORMATTER of these buffers, not
+ *  a second measurement, so the number burned into a recording and the number
+ *  `debug_frame_timing` answers are the same number by construction. */
 export {
+  DEFAULT_TIMING_WINDOW_MS,
+  previewLiveFps,
   previewTimingReport,
   recordPreviewSpan,
   recordPreviewTiming,
@@ -133,6 +139,7 @@ export type {
   PreviewTimingReport,
   ChannelTimingReport,
   PreviewTimingChannel,
+  PreviewLiveFps,
   PreviewSpanChannel,
   SpanTimingReport,
 } from './previewTiming';

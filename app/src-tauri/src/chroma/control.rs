@@ -28,14 +28,20 @@
 //!   - `debug_screenshot` / `debug_sample_pixel` (D-210) — a screenshot is a
 //!     picture of the webview, not a fact about the store, and the single most
 //!     valuable time to take one is when the frontend is too wedged to reply.
+//!   - `debug_record_video` (D-330) — the same argument over time: a recording
+//!     of the window is a capture from outside the frontend, and routing it
+//!     through the frontend would mean the render loop being measured also had
+//!     to drive the measurement. Unlike every other op here it BLOCKS this
+//!     server for its whole duration (seconds), since the loop below serves one
+//!     request at a time; `debug_record::MAX_RECORD_SECS` bounds that.
 //!   - `ai_env_status` / `ai_env_retry` (D-315) — the AI-environment bootstrap
 //!     is a Rust state machine (`apelles_ai::ai_env`) with no store copy, and it
 //!     is running at its most interesting *during* startup, before the frontend
 //!     registries have subscribed at all.
 //!
-//! Only the `debug_*` pair is `#[cfg(debug_assertions)]`
+//! Only the `debug_*` ops are `#[cfg(debug_assertions)]`
 //! (B-100/D-219): internal debug tooling is never shipped, so a release build
-//! has no [`debug_native_op`] arms at all and forwards those two onward; the
+//! has no [`debug_native_op`] arms at all and forwards them onward; the
 //! AI-env pair ships, because "why can't I use the AI features yet" is a
 //! user-facing answer. The FRONTEND-side `debug_*` ops (D-219's UI-state /
 //! DOM-tree / frame-timing registry, `@apelles/debug`) need no special handling
@@ -430,6 +436,24 @@ fn debug_native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -
             super::debug_capture::sample_png_pixel(&path, x, y)
                 .and_then(|sample| serde_json::to_value(sample).map_err(|e| e.to_string()))
         }),
+        // D-330. Native for the same reason a screenshot is: it is a capture
+        // of the webview from outside it, not a question about the app's
+        // state. Note this one BLOCKS this server for the whole recording —
+        // the loop below serves one request at a time — which is why the
+        // duration is bounded (`debug_record::MAX_RECORD_SECS`).
+        "debug_record_video" => {
+            record_video_args(args).and_then(|(duration_secs, out_path, window, fps, width)| {
+                super::debug_record::record_window_video(
+                    app,
+                    window.as_deref(),
+                    out_path.as_deref(),
+                    duration_secs,
+                    fps,
+                    width,
+                )
+                .and_then(|rec| serde_json::to_value(rec).map_err(|e| e.to_string()))
+            })
+        }
         _ => return None,
     };
 
@@ -452,6 +476,54 @@ fn debug_native_op(
     _args: &serde_json::Value,
 ) -> Option<String> {
     None
+}
+
+/// `{duration_secs, out_path?, window?, fps?, width?}` for
+/// `debug_record_video` (D-330). Only `duration_secs` is required, and it is
+/// named in the error rather than silently defaulted: a recording whose
+/// length the caller did not actually choose is not a useful artefact.
+///
+/// Range checking lives in `debug_record` (`validate_duration`/`clamp_fps`),
+/// not here — this function's job is the JSON shape, and splitting it that
+/// way is what lets the range rules be unit-tested without a control server.
+#[cfg(debug_assertions)]
+#[allow(clippy::type_complexity)]
+fn record_video_args(
+    args: &serde_json::Value,
+) -> Result<
+    (
+        f64,
+        Option<String>,
+        Option<String>,
+        Option<u32>,
+        Option<u32>,
+    ),
+    String,
+> {
+    let duration_secs = args
+        .get("duration_secs")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| {
+            "debug_record_video needs a 'duration_secs' (how many seconds to record)".to_string()
+        })?;
+    let text = |name: &str| args.get(name).and_then(|v| v.as_str()).map(str::to_string);
+    let count = |name: &str| -> Result<Option<u32>, String> {
+        match args.get(name) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => v
+                .as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .map(Some)
+                .ok_or_else(|| format!("debug_record_video needs a non-negative integer '{name}'")),
+        }
+    };
+    Ok((
+        duration_secs,
+        text("out_path"),
+        text("window"),
+        count("fps")?,
+        count("width")?,
+    ))
 }
 
 /// `{path, x, y}` for `debug_sample_pixel`, with a real message naming the

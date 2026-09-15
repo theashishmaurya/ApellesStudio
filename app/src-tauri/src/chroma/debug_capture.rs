@@ -79,6 +79,80 @@ pub struct CapturedFrame {
     pub height: u32,
 }
 
+/// One captured webview frame as tightly-packed RAW pixels (D-330).
+///
+/// Why this exists next to [`CapturedFrame`]: the video recorder needs tens
+/// of frames per second, and PNG encoding is by far the most expensive step
+/// of a screenshot — compressing a 2560×1440 frame costs far more than
+/// WebKit spends rendering it. A recorder that went through PNG would be
+/// measuring its own encoder, and worse, would steal enough main-thread time
+/// to make the app's frame rate — the thing being recorded — visibly worse.
+/// These bytes go straight down `ffmpeg`'s stdin instead, so nothing is
+/// encoded twice and nothing is compressed on this side at all.
+///
+/// `rows` are already stripped of any `bytesPerRow` padding, so
+/// `bytes.len() == width * height * bytes_per_pixel` exactly, which is what
+/// `-f rawvideo` requires.
+#[derive(Debug, Clone)]
+pub struct CapturedRaw {
+    pub bytes: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    /// The ffmpeg `-pixel_format` name that describes `bytes`' byte order
+    /// EXACTLY as AppKit laid it out — see [`ffmpeg_pix_fmt`]. Carried
+    /// rather than normalised because telling the encoder the real layout is
+    /// free, whereas swizzling every pixel on this side is not.
+    pub pix_fmt: &'static str,
+}
+
+/// Bytes per pixel for the pixel formats [`ffmpeg_pix_fmt`] can return.
+pub(crate) fn pix_fmt_bytes_per_pixel(pix_fmt: &str) -> usize {
+    match pix_fmt {
+        "rgb24" => 3,
+        _ => 4,
+    }
+}
+
+/// Map an `NSBitmapImageRep`'s declared layout onto the ffmpeg
+/// `-pixel_format` name for the same byte order (D-330). Pure integer/flag
+/// logic, split out from the AppKit call so the mapping — the one part of
+/// the raw path that is easy to get subtly, silently wrong — is unit-tested
+/// without a window.
+///
+/// The flags describe MEMORY order. Without `ThirtyTwoBitLittleEndian` the
+/// samples sit in their natural order (alpha-first ⇒ `ARGB`, otherwise
+/// `RGBA`); with it, each 32-bit word is byte-swapped, so the same two cases
+/// become `BGRA` and `ABGR`. Getting this backwards does not fail — it
+/// produces a recording with the red and blue channels swapped, which is
+/// exactly the kind of quietly-wrong output this tool must not emit.
+///
+/// `None` means "a layout this fast path does not claim to understand"
+/// (floating-point samples, 16-bit channels, anything planar), and the caller
+/// falls back to a real decode rather than guessing.
+pub(crate) fn ffmpeg_pix_fmt(
+    bits_per_pixel: i64,
+    samples_per_pixel: i64,
+    alpha_first: bool,
+    little_endian: bool,
+    floating_point: bool,
+) -> Option<&'static str> {
+    if floating_point {
+        return None;
+    }
+    match (bits_per_pixel, samples_per_pixel) {
+        (32, 4) => Some(match (little_endian, alpha_first) {
+            (false, true) => "argb",
+            (false, false) => "rgba",
+            (true, true) => "bgra",
+            (true, false) => "abgr",
+        }),
+        // 24bpp has no alpha to place and no 32-bit word to swap, so the
+        // endianness flag cannot apply to it.
+        (24, 3) if !little_endian => Some("rgb24"),
+        _ => None,
+    }
+}
+
 /// What a caller gets back after the frame has been written to disk.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -166,21 +240,18 @@ fn resolve_window<R: Runtime>(
         .ok_or_else(|| "no window is open — nothing to capture".to_string())
 }
 
-/// Capture `window`'s webview and write it to `out_path` (or a generated
-/// path under [`shots_dir`]). Blocks the calling thread until WebKit's
-/// completion handler fires, so it must NOT be called on the main thread —
-/// the snapshot itself is dispatched there. The Tauri command and the
-/// control-server route both call this from a background thread.
-pub fn screenshot_to_file<R: Runtime>(
+/// [`resolve_window`] plus the checks that make a capture worth attempting
+/// at all: a minimised or hidden window has no rendered web content, and an
+/// honest error about that beats a black rectangle the caller then has to
+/// diagnose. Shared by the screenshot and the D-330 video recorder — the
+/// recorder needs exactly the same guarantee, and needs it BEFORE it spends
+/// N seconds recording nothing.
+pub(crate) fn resolve_capturable_window<R: Runtime>(
     app: &tauri::AppHandle<R>,
     window_label: Option<&str>,
-    out_path: Option<&str>,
-) -> Result<DebugScreenshot, String> {
+) -> Result<tauri::WebviewWindow<R>, String> {
     let window = resolve_window(app, window_label)?;
     let label = window.label().to_string();
-
-    // An honest error beats a black rectangle: a minimised or hidden window
-    // has no rendered web content to snapshot.
     if window.is_minimized().unwrap_or(false) {
         return Err(format!(
             "window '{label}' is minimised — restore it before capturing"
@@ -191,7 +262,21 @@ pub fn screenshot_to_file<R: Runtime>(
             "window '{label}' is hidden — show it before capturing"
         ));
     }
+    Ok(window)
+}
 
+/// Capture `window`'s webview and write it to `out_path` (or a generated
+/// path under [`shots_dir`]). Blocks the calling thread until WebKit's
+/// completion handler fires, so it must NOT be called on the main thread —
+/// the snapshot itself is dispatched there. The Tauri command and the
+/// control-server route both call this from a background thread.
+pub fn screenshot_to_file<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    window_label: Option<&str>,
+    out_path: Option<&str>,
+) -> Result<DebugScreenshot, String> {
+    let window = resolve_capturable_window(app, window_label)?;
+    let label = window.label().to_string();
     let scale_factor = window.scale_factor().unwrap_or(1.0);
     let mut frame = capture_webview_png(&window)?;
     composite_wgpu_overlay(app, &mut frame);
@@ -427,12 +512,54 @@ pub fn sample_png_pixel(path: &str, x: u32, y: u32) -> Result<PixelSample, Strin
 pub fn capture_webview_png<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
 ) -> Result<CapturedFrame, String> {
+    capture_webview_with(window, None, png_from_ns_image)
+}
+
+/// Capture the webview as raw, tightly-packed pixels (D-330).
+///
+/// `snapshot_width` is WebKit's own `WKSnapshotConfiguration.snapshotWidth`,
+/// **in points** — the supported way to ask for a SMALLER snapshot, which
+/// makes WebKit rasterise less rather than making us downscale a full-size
+/// one afterwards. That distinction is the whole reason the parameter is
+/// plumbed through: for a recorder the cost of the capture is charged to the
+/// app being recorded, so asking for fewer pixels up front is the difference
+/// between measuring the app and measuring the measurement. `None` means the
+/// native backing size, exactly as [`capture_webview_png`] takes it.
+///
+/// **Points, not pixels** — the resulting image comes back at
+/// `snapshot_width × scaleFactor` real pixels, so passing a window's own
+/// point width changes nothing at all on a Retina display. Callers that mean
+/// an output resolution must divide by the scale factor first;
+/// `debug_record::snapshot_width` is where that conversion lives, and its
+/// doc records the live measurement that caught it.
+#[cfg(target_os = "macos")]
+pub fn capture_webview_raw<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    snapshot_width: Option<f64>,
+) -> Result<CapturedRaw, String> {
+    capture_webview_with(window, snapshot_width, raw_from_ns_image)
+}
+
+/// The shared snapshot plumbing behind [`capture_webview_png`] and
+/// [`capture_webview_raw`] — dispatch to the main thread, ask WebKit for a
+/// snapshot, and let its completion block send `convert`'s output back over
+/// a channel this (background) thread waits on.
+///
+/// `convert` is a plain `fn` pointer rather than a closure on purpose: the
+/// completion block must be `Send + 'static`, and a function pointer is both
+/// without dragging any captured state across the thread boundary.
+#[cfg(target_os = "macos")]
+fn capture_webview_with<R: Runtime, T: Send + 'static>(
+    window: &tauri::WebviewWindow<R>,
+    snapshot_width: Option<f64>,
+    convert: fn(&objc2_app_kit::NSImage) -> Result<T, String>,
+) -> Result<T, String> {
     use block2::RcBlock;
     use objc2_app_kit::NSImage;
     use objc2_foundation::NSError;
     use objc2_web_kit::WKWebView;
 
-    let (tx, rx) = mpsc::channel::<Result<CapturedFrame, String>>();
+    let (tx, rx) = mpsc::channel::<Result<T, String>>();
 
     window
         .with_webview(move |platform| {
@@ -451,7 +578,7 @@ pub fn capture_webview_png<R: Runtime>(
                 let result = if !image.is_null() {
                     // SAFETY: WebKit hands the block a valid, autoreleased
                     // NSImage; we only borrow it for this call.
-                    png_from_ns_image(unsafe { &*image })
+                    convert(unsafe { &*image })
                 } else if !error.is_null() {
                     // SAFETY: as above, for the error branch.
                     let description = unsafe { &*error }.localizedDescription();
@@ -462,13 +589,31 @@ pub fn capture_webview_png<R: Runtime>(
                 let _ = tx.send(result);
             });
 
-            // SAFETY: a plain AppKit call on the main thread; a `nil`
-            // configuration means "the whole visible viewport at its native
-            // backing scale", which is exactly what we want. WebKit copies
+            // A `nil` configuration means "the whole visible viewport at its
+            // native backing scale", which is what a screenshot wants. A
+            // caller that named a `snapshot_width` gets a real
+            // `WKSnapshotConfiguration` instead, so WebKit rasterises at that
+            // width rather than us shrinking a full-size image afterwards.
+            // `afterScreenUpdates` is deliberately left at its default (YES):
+            // the point of a recording is what was actually on screen, and
+            // turning it off trades that for speed we do not need.
+            let config = snapshot_width.and_then(|width| {
+                // `WKSnapshotConfiguration::new` demands proof we are on the
+                // main thread. We are — `with_webview` dispatches there — but
+                // the checked constructor is still the right way to say so.
+                let mtm = objc2_foundation::MainThreadMarker::new()?;
+                let config = unsafe { objc2_web_kit::WKSnapshotConfiguration::new(mtm) };
+                let number = objc2_foundation::NSNumber::new_f64(width);
+                unsafe { config.setSnapshotWidth(Some(&number)) };
+                Some(config)
+            });
+
+            // SAFETY: a plain AppKit call on the main thread. WebKit copies
             // the completion block, so dropping our `RcBlock` afterwards is
             // correct.
             unsafe {
-                webview.takeSnapshotWithConfiguration_completionHandler(None, &handler);
+                webview
+                    .takeSnapshotWithConfiguration_completionHandler(config.as_deref(), &handler);
             }
         })
         .map_err(|e| format!("could not reach the window's webview: {e}"))?;
@@ -518,6 +663,106 @@ fn png_from_ns_image(image: &objc2_app_kit::NSImage) -> Result<CapturedFrame, St
         width,
         height,
     })
+}
+
+/// `NSImage` → tightly-packed raw pixels (D-330), with no image codec in the
+/// path at all on the fast route.
+///
+/// Two routes, and which one ran is worth knowing when a recording looks
+/// wrong:
+///  * **Fast** — the rep's own buffer is already 8-bit, non-planar, and in a
+///    layout [`ffmpeg_pix_fmt`] recognises, so this copies it row by row
+///    (stripping any `bytesPerRow` padding) and names the layout for ffmpeg.
+///    No decode, no encode, no channel swizzle.
+///  * **Fallback** — anything else (planar, 16-bit, floating point). Decodes
+///    the TIFF properly with the `image` crate and hands back RGBA8. Slower,
+///    but correct, and it reports itself through `pix_fmt` rather than
+///    guessing at a layout and silently swapping the colour channels.
+#[cfg(target_os = "macos")]
+fn raw_from_ns_image(image: &objc2_app_kit::NSImage) -> Result<CapturedRaw, String> {
+    use objc2_app_kit::{NSBitmapFormat, NSBitmapImageRep};
+
+    let tiff = image
+        .TIFFRepresentation()
+        .ok_or_else(|| "the snapshot had no bitmap representation".to_string())?;
+    let rep = NSBitmapImageRep::imageRepWithData(&tiff)
+        .ok_or_else(|| "could not read the snapshot's bitmap representation".to_string())?;
+
+    let width = rep.pixelsWide().max(0) as u32;
+    let height = rep.pixelsHigh().max(0) as u32;
+    if width == 0 || height == 0 {
+        return Err("the snapshot came back empty (0x0)".to_string());
+    }
+
+    let format = rep.bitmapFormat();
+    let pix_fmt = if rep.isPlanar() {
+        None
+    } else {
+        ffmpeg_pix_fmt(
+            rep.bitsPerPixel() as i64,
+            rep.samplesPerPixel() as i64,
+            format.contains(NSBitmapFormat::AlphaFirst),
+            format.contains(NSBitmapFormat::ThirtyTwoBitLittleEndian),
+            format.contains(NSBitmapFormat::FloatingPointSamples),
+        )
+    };
+
+    if let Some(pix_fmt) = pix_fmt {
+        let bpp = pix_fmt_bytes_per_pixel(pix_fmt);
+        let stride = rep.bytesPerRow().max(0) as usize;
+        let row_bytes = width as usize * bpp;
+        let data = rep.bitmapData();
+        if !data.is_null() && stride >= row_bytes {
+            let mut bytes = Vec::with_capacity(row_bytes * height as usize);
+            for row in 0..height as usize {
+                // SAFETY: `bitmapData` is the rep's own buffer, which is
+                // `bytesPerRow * pixelsHigh` bytes long and alive for as long
+                // as `rep` is; every read below is inside that, and the rep
+                // outlives this loop.
+                let slice =
+                    unsafe { std::slice::from_raw_parts(data.add(row * stride), row_bytes) };
+                bytes.extend_from_slice(slice);
+            }
+            return Ok(CapturedRaw {
+                bytes,
+                width,
+                height,
+                pix_fmt,
+            });
+        }
+    }
+
+    // Fallback: a layout the fast path does not claim to understand. Decode
+    // it properly rather than reinterpreting the bytes and hoping.
+    log::debug!(
+        "[chroma::debug_capture] snapshot layout not on the raw fast path \
+         (bpp {}, spp {}, planar {}) — decoding the TIFF instead",
+        rep.bitsPerPixel(),
+        rep.samplesPerPixel(),
+        rep.isPlanar(),
+    );
+    let decoded = image::load_from_memory(&tiff.to_vec())
+        .map_err(|e| format!("could not decode the snapshot: {e}"))?
+        .to_rgba8();
+    let (width, height) = decoded.dimensions();
+    Ok(CapturedRaw {
+        bytes: decoded.into_raw(),
+        width,
+        height,
+        pix_fmt: "rgba",
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn capture_webview_raw<R: Runtime>(
+    _window: &tauri::WebviewWindow<R>,
+    _snapshot_width: Option<f64>,
+) -> Result<CapturedRaw, String> {
+    Err(
+        "webview snapshot is implemented for macOS only (WKWebView takeSnapshot) — see \
+         docs/notes/debug-screenshot-tool.md"
+            .to_string(),
+    )
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -662,6 +907,51 @@ mod tests {
             1000,
         );
         assert!(p.is_none());
+    }
+
+    // -- ffmpeg_pix_fmt (D-330) ------------------------------------------
+
+    #[test]
+    fn natural_order_32bit_maps_to_argb_or_rgba_by_alpha_position() {
+        assert_eq!(ffmpeg_pix_fmt(32, 4, true, false, false), Some("argb"));
+        assert_eq!(ffmpeg_pix_fmt(32, 4, false, false, false), Some("rgba"));
+    }
+
+    #[test]
+    fn little_endian_32bit_byte_swaps_each_word() {
+        // The whole reason this mapping is a tested function: getting the
+        // swap backwards does not fail, it silently records with red and
+        // blue exchanged.
+        assert_eq!(ffmpeg_pix_fmt(32, 4, true, true, false), Some("bgra"));
+        assert_eq!(ffmpeg_pix_fmt(32, 4, false, true, false), Some("abgr"));
+    }
+
+    #[test]
+    fn packed_24bit_rgb_is_recognised() {
+        assert_eq!(ffmpeg_pix_fmt(24, 3, false, false, false), Some("rgb24"));
+    }
+
+    #[test]
+    fn layouts_the_fast_path_does_not_understand_are_refused_not_guessed() {
+        // Floating point samples, 16-bit channels, and a 24bpp rep that
+        // somehow claims 32-bit-little-endian are all "fall back and decode
+        // properly", never "reinterpret these bytes and hope".
+        assert_eq!(ffmpeg_pix_fmt(32, 4, false, false, true), None);
+        assert_eq!(ffmpeg_pix_fmt(64, 4, false, false, false), None);
+        assert_eq!(ffmpeg_pix_fmt(48, 3, false, false, false), None);
+        assert_eq!(ffmpeg_pix_fmt(24, 3, false, true, false), None);
+        // 32bpp with only three samples (an ignored padding byte, `xRGB`) is
+        // real on macOS but is NOT one of the four cases above, so it must
+        // take the honest fallback rather than being mapped to `rgba`.
+        assert_eq!(ffmpeg_pix_fmt(32, 3, false, false, false), None);
+    }
+
+    #[test]
+    fn bytes_per_pixel_matches_every_format_the_mapper_can_return() {
+        for fmt in ["argb", "rgba", "bgra", "abgr"] {
+            assert_eq!(pix_fmt_bytes_per_pixel(fmt), 4, "{fmt}");
+        }
+        assert_eq!(pix_fmt_bytes_per_pixel("rgb24"), 3);
     }
 
     fn temp_dir(tag: &str) -> PathBuf {
