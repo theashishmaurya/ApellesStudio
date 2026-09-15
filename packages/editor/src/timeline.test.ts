@@ -23,6 +23,8 @@ import {
   clipFromDraggedMedia,
   computeInsertion,
   DEFAULT_MARKER_COLOR,
+  markerEndFrame,
+  normaliseMarkerDuration,
   endFrame,
   ensureAudioTrackWithRoom,
   EASE_PRESETS,
@@ -2635,6 +2637,115 @@ describe('newMarker / resolveMarkerColor (D-222)', () => {
 
   it('rejects a non-finite frame rather than writing NaN into the document', () => {
     expect(newMarker(Number.NaN)).toHaveProperty('error');
+  });
+});
+
+describe('marker duration — ranged markers (D-328)', () => {
+  const build = (duration?: number | null): Marker => {
+    const m = newMarker(100, 'red', 'shot', 'note', duration);
+    if ('error' in m) throw new Error(m.error);
+    return m;
+  };
+
+  it('a marker with no duration is a POINT marker: the key is ABSENT, not 0', () => {
+    const m = build();
+    // The invariant the whole feature rests on — `markerEndFrame` and every
+    // consumer treat absence as the only point-marker case, so a stored `0`
+    // would be a second spelling of the same thing.
+    expect(m.duration_frames).toBeUndefined();
+    expect('duration_frames' in m).toBe(false);
+    expect(markerEndFrame(m)).toBe(100);
+  });
+
+  it('a positive duration is stored and ends INCLUSIVELY, so 1 frame is not the same as 0', () => {
+    expect(build(48).duration_frames).toBe(48);
+    expect(markerEndFrame(build(48))).toBe(148);
+    // The reason the end is inclusive: a duration typed as 1 must visibly
+    // differ from a point marker, or the field would look like it did nothing.
+    expect(markerEndFrame(build(1))).toBe(101);
+    expect(markerEndFrame(build(1))).not.toBe(markerEndFrame(build()));
+  });
+
+  it('every non-positive or junk duration normalises to the SAME absent shape', () => {
+    // Four spellings of "no span" must produce one representation, or
+    // `project.json` would grow variants that compare unequal.
+    for (const d of [0, -5, Number.NaN, null, undefined]) {
+      const m = build(d as number | null | undefined);
+      expect(m.duration_frames).toBeUndefined();
+      expect(markerEndFrame(m)).toBe(100);
+    }
+    expect(normaliseMarkerDuration(0)).toBeUndefined();
+    expect(normaliseMarkerDuration(-1)).toBeUndefined();
+    expect(normaliseMarkerDuration('nonsense')).toBeUndefined();
+    expect(normaliseMarkerDuration(12.6)).toBe(13);
+  });
+
+  it('set_marker patches the span: absent leaves it, a number sets it, null/0 clears it', () => {
+    const start = tl(backToBack());
+    const ranged = newMarker(10, 'red', 'a', 'b', 30);
+    if ('error' in ranged) throw new Error(ranged.error);
+    const withMarker = applyOp(start, { kind: 'add_marker', marker: ranged });
+
+    // absent → untouched (and the rest of the patch still applies)
+    const recoloured = applyOp(withMarker, {
+      kind: 'set_marker',
+      id: ranged.id,
+      patch: { color: 'green' },
+    });
+    expect(recoloured.markers?.[0].duration_frames).toBe(30);
+
+    // a number → set
+    const widened = applyOp(recoloured, {
+      kind: 'set_marker',
+      id: ranged.id,
+      patch: { duration_frames: 75 },
+    });
+    expect(widened.markers?.[0].duration_frames).toBe(75);
+
+    // null → cleared back to a point marker, key removed rather than zeroed
+    const cleared = applyOp(widened, {
+      kind: 'set_marker',
+      id: ranged.id,
+      patch: { duration_frames: null },
+    });
+    expect(cleared.markers?.[0].duration_frames).toBeUndefined();
+    expect('duration_frames' in cleared.markers![0]).toBe(false);
+
+    // 0 clears too — the spelling the MCP tools document, since the Python
+    // layer drops `None` and so cannot send an explicit null.
+    const reranged = applyOp(cleared, {
+      kind: 'set_marker',
+      id: ranged.id,
+      patch: { duration_frames: 20 },
+    });
+    expect(reranged.markers?.[0].duration_frames).toBe(20);
+    const zeroed = applyOp(reranged, {
+      kind: 'set_marker',
+      id: ranged.id,
+      patch: { duration_frames: 0 },
+    });
+    expect(zeroed.markers?.[0].duration_frames).toBeUndefined();
+  });
+
+  it('a pre-D-328 marker (no duration key) survives a patch of some OTHER field as a point marker', () => {
+    // The upgrade path for a real saved project: markers written before D-328
+    // have no duration key, and editing one's title must not invent a span.
+    const legacy: Marker = { id: 'm1', frame: 5, color: DEFAULT_MARKER_COLOR, name: 'old' };
+    const start = { ...tl(backToBack()), markers: [legacy] };
+    const after = applyOp(start, {
+      kind: 'set_marker',
+      id: 'm1',
+      patch: { name: 'renamed' },
+    });
+    expect(after.markers?.[0].name).toBe('renamed');
+    expect(after.markers?.[0].duration_frames).toBeUndefined();
+    expect(markerEndFrame(after.markers![0])).toBe(5);
+  });
+
+  it('markerEndFrame never reports an end BEFORE the start, even for a hand-built bad record', () => {
+    // A `project.json` an MCP client wrote by hand can hold anything; the
+    // geometry this feeds (the ruler bar's width) must not go negative.
+    expect(markerEndFrame({ id: 'x', frame: 40, color: '#FFF', duration_frames: -9 })).toBe(40);
   });
 });
 

@@ -142,6 +142,7 @@ import {
   ADJUSTMENT_PARAMS,
   newCaptionClipFields,
   MARKER_COLORS,
+  markerEndFrame,
   markersOf,
   mediaSourceFacts,
   newAdjustmentClipFields,
@@ -653,7 +654,21 @@ function timelineDto(tl: Timeline) {
  *  `name`/`note` are normalised to an explicit `null` rather than omitted, so
  *  a caller reading a response never has to distinguish absent from empty. */
 function markerDto(m: Marker) {
-  return { id: m.id, frame: m.frame, color: m.color, name: m.name ?? null, note: m.note ?? null };
+  return {
+    id: m.id,
+    frame: m.frame,
+    color: m.color,
+    // D-328 — the span, normalised the same way `name`/`note` are: an absent
+    // duration is reported as an explicit `0`, and `endFrame` is derived here
+    // rather than left to the caller so an agent never has to know whether the
+    // end is inclusive (it is — see `markerEndFrame`). A point marker is
+    // therefore `durationFrames: 0, endFrame === frame`, which reads correctly
+    // without the caller special-casing absence.
+    durationFrames: m.duration_frames ?? 0,
+    endFrame: markerEndFrame(m),
+    name: m.name ?? null,
+    note: m.note ?? null,
+  };
 }
 
 /** D-222 — "no marker with that id", with the ids that DO exist, so a caller
@@ -3800,7 +3815,9 @@ export function useEditorControl(): void {
         // button/`M` shortcut does, so "put a marker here" needs no argument
         // once the agent has seeked.
         const frame = a?.frame == null ? useEditorTimelineStore.getState().playhead : Math.round(Number(a.frame));
-        const marker = newMarker(frame, a?.color, a?.name, a?.note);
+        // D-328 — `durationFrames` is optional and defaults to a POINT marker,
+        // so every pre-D-328 caller keeps working unchanged.
+        const marker = newMarker(frame, a?.color, a?.name, a?.note, a?.durationFrames);
         if ('error' in marker) return marker;
         useEditorTimelineStore.getState().applyOp({ kind: 'add_marker', marker });
         return { ok: true, marker: markerDto(marker) };
@@ -3822,7 +3839,13 @@ export function useEditorControl(): void {
         const id = String(a?.id ?? '');
         if (!(tl.markers ?? []).some((m) => m.id === id)) return { error: markerNotFound(tl, id) };
 
-        const patch: { frame?: number; color?: string; name?: string | null; note?: string | null } = {};
+        const patch: {
+          frame?: number;
+          color?: string;
+          duration_frames?: number | null;
+          name?: string | null;
+          note?: string | null;
+        } = {};
         if (a?.frame != null) {
           const frame = Math.round(Number(a.frame));
           if (!Number.isFinite(frame)) return { error: 'frame must be a finite number of timeline frames' };
@@ -3841,8 +3864,24 @@ export function useEditorControl(): void {
         // own convention, passed straight through.
         if (a?.name !== undefined) patch.name = a.name == null ? null : String(a.name);
         if (a?.note !== undefined) patch.note = a.note == null ? null : String(a.note);
+        // D-328 — same three-way convention: absent leaves the span alone,
+        // `null` (or 0, or a negative) clears it back to a point marker. A
+        // non-numeric value is rejected here rather than silently normalised to
+        // "point", for the reason the colour check above spells out: an agent
+        // that mistyped needs telling, not `ok: true` and a marker it did not
+        // mean. `null` is the one non-number that is a real instruction.
+        if (a?.durationFrames !== undefined) {
+          if (a.durationFrames === null) patch.duration_frames = null;
+          else {
+            const d = Number(a.durationFrames);
+            if (!Number.isFinite(d)) {
+              return { error: 'durationFrames must be a finite number of frames, or null to clear it' };
+            }
+            patch.duration_frames = d;
+          }
+        }
         if (Object.keys(patch).length === 0) {
-          return { error: 'nothing to set — pass at least one of frame, color, name, note' };
+          return { error: 'nothing to set — pass at least one of frame, color, durationFrames, name, note' };
         }
 
         useEditorTimelineStore.getState().applyOp({ kind: 'set_marker', id, patch });

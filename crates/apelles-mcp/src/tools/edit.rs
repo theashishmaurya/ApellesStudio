@@ -657,6 +657,12 @@ pub struct EditorAddMarkerArgs {
     pub name: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
+    /// D-328 — the optional span. Named `duration_frames` to match the Python
+    /// parameter (the published schema's property name comes from it, and the
+    /// parity harness compares the two schemas); the WIRE arg the app's own op
+    /// takes is `durationFrames`, camelCase like every other multi-word op arg.
+    #[serde(default)]
+    pub duration_frames: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -670,6 +676,12 @@ pub struct EditorSetMarkerArgs {
     pub name: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
+    /// D-328 — the optional span, patched with the same three-way convention
+    /// as `name`/`note`: absent leaves it alone, a positive number sets it, `0`
+    /// clears it back to a point marker. See [`EditorAddMarkerArgs`] on why the
+    /// field is snake_case here but `durationFrames` on the wire.
+    #[serde(default)]
+    pub duration_frames: Option<i64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -3111,8 +3123,12 @@ impl ApellesMcp {
     They are pure annotation — nothing in the live preview or in
     `editor_export`'s output is affected by one.
 
-    Each entry is `{id, frame, color, name, note}`; `name`/`note` are `null`
-    when unset. `id` is what `editor_set_marker`/`editor_remove_marker` take.
+    Each entry is `{id, frame, color, durationFrames, endFrame, name, note}`;
+    `name`/`note` are `null` when unset. A marker may span a RANGE rather than
+    flag one frame: `durationFrames` is 0 for a point marker (the default, and
+    what every marker made before ranges existed is) and `endFrame` is the
+    derived last frame it covers, inclusive — equal to `frame` for a point
+    marker. `id` is what `editor_set_marker`/`editor_remove_marker` take.
     Also returns `palette`, the marker colour names `editor_add_marker` and
     `editor_set_marker` accept. `editor_get_timeline` reports the same list
     under its own `markers` key, so this tool is the cheap way to re-read just
@@ -3138,6 +3154,14 @@ impl ApellesMcp {
     `name` is the short title shown next to the flag on the ruler; `note` is
     longer free text visible only in the marker's own popover.
 
+    `duration_frames` makes the marker span a RANGE rather than flag a single
+    frame: omitted (or 0) is a point marker, the default and what every marker
+    made before this parameter existed is. A ranged marker covers
+    `frame` through `frame + duration_frames` inclusive and draws as a bar on
+    the ruler instead of a pin. The response reports `durationFrames` and the
+    derived `endFrame` for both kinds, so a point marker reads back as
+    `durationFrames: 0` with `endFrame` equal to `frame`.
+
     A marker is real document content: it is written into `project.json` and
     a GUI undo (⌘Z) removes it, unlike `editor_set_selection` /
     `editor_set_preview_zoom`, which change only what the user is looking at.
@@ -3152,21 +3176,27 @@ impl ApellesMcp {
             .put("frame", p.frame)
             .put("color", p.color)
             .put("name", p.name)
-            .put("note", p.note);
+            .put("note", p.note)
+            .put("durationFrames", p.duration_frames);
         let env = self.op("editor_add_marker", args).await?;
         Ok(render::json_text(&env))
     }
 
     #[tool(
         name = "editor_set_marker",
-        description = r#"Change an existing marker's frame, colour, title or note. `id` comes
-    from `editor_list_markers` (or from `editor_add_marker`'s own response).
+        description = r#"Change an existing marker's frame, colour, span, title or note. `id`
+    comes from `editor_list_markers` (or from `editor_add_marker`'s response).
 
     A PATCH, not a full replace: every argument you omit keeps its current
     value, so recolouring a marker needs no restating of its note. To CLEAR a
     title or a note, pass the empty string `""` for it — omitting it leaves it
     alone. `color` takes the same palette name or hex `editor_add_marker`
     does, and an unrecognised one is an error rather than a silent no-change.
+
+    `duration_frames` follows the same convention: omitted leaves the span
+    untouched, a positive number makes the marker span `frame` through
+    `frame + duration_frames` inclusive, and **0 clears it back to a point
+    marker** — the span's equivalent of passing `""` to clear a title.
 
     Moving a marker's `frame` re-sorts it into place; the list this and
     `editor_list_markers` report is always in frame order. Returns the marker
@@ -3181,7 +3211,8 @@ impl ApellesMcp {
             .put("frame", p.frame)
             .put("color", p.color)
             .put("name", p.name)
-            .put("note", p.note);
+            .put("note", p.note)
+            .put("durationFrames", p.duration_frames);
         let env = self.op("editor_set_marker", args).await?;
         Ok(render::json_text(&env))
     }

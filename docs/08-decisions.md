@@ -31613,3 +31613,238 @@ detector leaves it out. That **under-cuts rather than over-cuts**, the safe
 direction for something that only ever proposes (D-318), and it is pinned by its
 own test so nobody reads the headline result as claiming more than it does.
 Word-accurate boundaries are option (d) above, on the roadmap.
+
+## D-328 — markers gain a DURATION, and the Edit tab gains an Index panel that navigates the edit instead of adding to it
+
+**decided (2026-09-15)** · revisits D-222's deliberate scope-out · obeys D-325/B-146 ·
+extends D-263's library rail
+
+**Context.** The owner asked for two Edit-tab surfaces, shown as three screenshots
+of a competitor (Palmier) that is itself built on Premiere Pro's shipped patterns:
+a real marker EDIT popover with Time/Duration/Name/Comments/colour/remove, and an
+"Index" side panel with Markers and Transcript sub-views. Explicit instruction:
+build our own version of the functionality, **not** a copy of their visual design.
+
+Per CLAUDE.md's "research the real pattern first" rule, the reference scraped was
+Premiere's own shipped UI rather than the competitor's rendering of it — Adobe's
+helpx pages 403 automated fetches, so the material is third-party documentation of
+the real product (ProVideo Coalition on extended-duration markers, PremiumBeat on
+the Markers panel, Larry Jordan on the Text panel), kept in
+`scratch/premiere-index-reference/`. What that scrape actually settled, and what it
+changed about the plan:
+
+- Premiere's marker dialog orders its fields **Duration → colour → Name →
+  Comments**, and Duration is precisely the mechanism by which a marker becomes a
+  *span* rather than a point ("an extended duration marker").
+- Its Markers **panel** rows carry an **inline-editable comment box** and
+  single-click-to-seek — so the panel is not a read-only list, and the inline edit
+  is a real part of the pattern rather than an embellishment.
+- Its Text panel's core interaction is **"as you move the playhead, the
+  corresponding text highlights"** — which in this codebase collides head-on with
+  D-325/B-146, and is the constraint that shaped the implementation.
+- Its marker **types** (Comment / Chapter / Segmentation / Web Link / Flash Cue)
+  were **deliberately not adopted**: a legacy DVD/Flash-authoring concept with
+  type-specific extra fields and no Apelles equivalent. Colour already carries
+  "what kind of marker is this". Keyword stays out too, as D-222 left it.
+
+---
+
+### Decision 1 — `Marker.duration_frames`, reversing D-222's scope-out
+
+D-222 built markers and explicitly deferred duration, giving two reasons. Both were
+re-examined rather than ignored, because reversing a deliberate decision without
+answering it is how a codebase accumulates contradictions.
+
+> *"a duration in particular would put a second time-extent concept into a model
+> where `Clip` already owns one"*
+
+**This is the one that does not survive contact.** A `Clip`'s duration is an *edit*
+extent: it decides what composites, what ripples, what a transition bridges, what
+lands in the export. A marker's duration is an *annotation* extent that participates
+in **none** of that — nothing in the preview or in `editor_export`'s output reads a
+marker at all, which D-222's own MCP docstring already states ("They are pure
+annotation"). The two share the word "duration" and nothing else. Concretely: no
+code path outside the marker strip, the marker popover and the Index panel reads
+`duration_frames`, and the type is `Option<i64>` on a struct the timeline crate
+only round-trips.
+
+> *"and would want its own drag affordance on the strip"*
+
+**This one was right, and is honoured rather than argued away** — a duration you
+can only type is a duration you cannot see. A ranged marker now **draws as a bar**
+across the frames it covers, in its own colour at low alpha with a solid right edge
+on the end frame, with its flag still at the left edge as the single hit target.
+Every existing marker gesture is unchanged (the bar is `pointer-events-none`), so
+this cost no gesture-coexistence work. **Disclosed limit:** the bar is not yet
+*draggable* — Premiere's `OPTION+drag`-to-extend has no equivalent here, and
+duration is set numerically in the popover. That is a real remaining gap, named on
+the roadmap rather than implied done.
+
+**Shape.** `duration_frames: Option<i64>` on the Rust `Marker`,
+`duration_frames?: number` on the TS one, `#[serde(default,
+skip_serializing_if = "Option::is_none")]`.
+
+**The invariant that made everything else simple: a point marker is an ABSENT
+duration, never a zero one.** Two spellings of "no span" would mean every consumer
+testing both, and `project.json` growing records that compare unequal while meaning
+the same thing. `normaliseMarkerDuration` is the single gate every writer passes
+through (`newMarker` and the `set_marker` reducer are the only ones), turning `0`,
+a negative, `NaN`, `null` and `undefined` all into the same absent field. That is
+the same rule D-222 already applied to `name`/`note` ("an empty/whitespace name is
+dropped rather than stored as `""`, so 'unnamed' has exactly one representation") —
+applied to a number rather than reinvented. It is what lets `markerEndFrame` treat
+absence as the only point case, and it is directly tested.
+
+`markerEndFrame` is **inclusive** (`frame + duration_frames`), for one reason worth
+stating: if it were exclusive, a duration typed as `1` would be indistinguishable
+from a point marker and the field would look like it had done nothing.
+
+**No schema bump, no migration function.** `#[serde(default)]` on an `Option` is
+exactly the case `apelles-project`'s `SCHEMA` constant documents as *not* needing
+the version gate (that gate is for changes serde cannot express). A pre-D-328
+`project.json` loads as all-point-markers, and — pinned by its own test —
+**loading and re-saving one does not introduce the key**, so opening an old project
+in a new build does not silently rewrite every marker on disk.
+
+**Patch semantics needed no new mechanism.** D-222 made `set_marker` a patch where
+absent leaves a field alone and `null` clears it. `duration_frames` joins with
+exactly those three-way semantics: absent leaves the span, a positive number sets
+it, `null`/`0`/negative clears it back to a point marker. "Make this a point marker
+again" is the same gesture as "clear the title", so it got the same spelling.
+
+---
+
+### Decision 2 — the Index panel is a library MODE, not a new dock
+
+`EditLibraryMode` (D-263) already is "what the one docked left-hand column is
+showing", and the rail already is the switcher. Adding `index` to that closed set
+cost one entry in three `Record<EditLibraryMode, …>`s the compiler then forced, and
+inherited the resizable column, the rail button, the collapse gesture and
+`debug_ui_state`'s `libraryMode` reporting for free. A second dock would have been a
+second answer to a question already answered.
+
+It sorts last, after `recut`, on the axis that list is already ordered by: `sources`
+/`titles`/`effects`/`subtitles` offer things to ADD, `recut` CUTS what is already
+there, and `index` does neither — it only navigates.
+
+The two sub-views use the kit's `Tabs` **nested inside** the mode, which is
+`CaptionLibrary`'s existing precedent. The top-level mode switch deliberately is not
+a `Tabs` (B-124 — a deselected Base UI `Tabs.Panel` painting in a non-frontmost
+window), but the kit component carries the `[&[inert]]:hidden` fix for that, so the
+nested use is safe and gets real tab a11y.
+
+---
+
+### Decision 3 — the transcript highlight is a store SUBSCRIPTION that sets state only on a boundary crossing
+
+This is the part the reference's "as you move the playhead, the corresponding text
+highlights" would have gotten wrong by default, and the reason it did not:
+
+D-325 (continuing B-146) measured that a reactive `useEditorTimelineStore((s) =>
+s.playhead)` selector re-renders its component on **every displayed frame** during
+playback, removed exactly that from `TimelinePane`, and named ten other subscribers
+it left in place. A list of transcript rows is precisely the per-row render body
+that must not run 24 times a second.
+
+So `useActiveTranscriptRow` follows D-325's pattern and sharpens it: read the
+playhead once via `getState()`, subscribe to the raw store directly (no
+`subscribeWithSelector` middleware, so the listener filters for itself), and call
+`setState` **only when the resulting row INDEX changes** — not when the playhead
+does. A tick that stays inside the same sentence costs one integer comparison and
+zero React work; a re-render happens only when the highlight genuinely has to move,
+which is a few times a minute rather than 24 times a second.
+
+**Measured, and verified against the forbidden implementation first**
+(`EditIndexPanel.dom.test.tsx`, the `React.Profiler` instrument D-290/D-325
+established): 30 playhead ticks inside one segment cost **0 commits**, a single
+boundary crossing costs **exactly 1**, and the Markers view costs **0** for any
+tick. Temporarily swapping in the naive reactive selector scores **30** on both cost
+tests. Note that the *correctness* test (the highlight is on the right row) passes
+on **both** implementations — which is the whole point of asserting cost
+separately: correctness alone would not have caught the regression.
+
+**One pre-existing subscriber fixed in passing, because this feature needed it.**
+`EditLibraryPanel` — the Index panel's own parent, and one of the ten D-325 left —
+held a reactive `playhead` selector used by nothing but a single click handler.
+A parent that re-renders per frame re-renders its children, so leaving it would have
+made the new panel pay a playback cost for a value it does not use. Fixed with
+D-325's own read-at-the-point-of-use pattern (`getState().playhead` inside
+`addAtPlayhead`). B-146 remains open with nine such subscribers left.
+
+---
+
+### Decision 4 — no new MCP tool, verified rather than assumed
+
+CLAUDE.md requires the agent half of every feature in the same pass. The marker half
+is a real surface change: `editor_add_marker` and `editor_set_marker` gain
+`duration_frames`, and `editor_list_markers`/`editor_get_timeline` now report
+`durationFrames` plus a derived, inclusive `endFrame` so a caller never has to know
+the end convention. A point marker reads back as `durationFrames: 0, endFrame ===
+frame`, which is correct without special-casing absence. Both MCP surfaces were
+changed together (`mcp/server.py` and `crates/apelles-mcp`) and the parity corpus
+regenerated; the diff was checked to touch **exactly** the three marker tools and no
+others, with the tool count unchanged at 168.
+
+For the **Index panel**, the brief asked me to verify rather than assume that no new
+tool is needed. Checked, and true: every capability the panel exposes already has an
+agent equivalent driving the same store action — `editor_list_markers` returns
+exactly the rows the Markers view draws, `editor_set_marker` writes the inline
+comment, `editor_remove_marker` deletes, `editor_set_playhead` is the row-click
+seek, and `editor_get_transcript`/`_status` return the very segments the Transcript
+view lists (it reads them out of the same store those ops write into). The only
+genuinely new state is *which sub-view is showing*, which is panel chrome rather
+than a capability — and it is already visible to the debug-only surface through
+`debug_ui_state`'s `libraryMode` plus a `data-chroma-index-view` attribute. That
+matches the existing posture: there is deliberately no `debug_set_library_mode`
+either.
+
+---
+
+### Two extractions this pass made, rather than copy-pasting
+
+- **`parseTimecode`** (`@apelles/player/timecode.ts`) — the Time and Duration fields
+  are timecode text, not frame integers, because a number field makes the user do
+  the frames-per-second arithmetic themselves. No parser existed anywhere; it went
+  beside `fmtTimecode`, the documented single source of truth for `HH:MM:SS:FF`,
+  because a formatter and parser that disagree is a bug that only shows up as a
+  marker on the wrong frame. It reads short forms right-anchored (`12` = 12 frames,
+  `4:12` = 4s 12f), so a bare number still means frames and nothing the old numeric
+  field accepted stopped working, and it returns `null` rather than `0` for junk —
+  a field that turns a typo into "seek to the start" is worse than one that refuses.
+  The round trip is pinned by a property test over four frame rates.
+- **`clipThumbs.ts`** — `getThumbs` and its cache were private to `Filmstrip.tsx`;
+  the Index panel's marker rows became a second consumer. Extracted rather than
+  duplicated (CLAUDE.md: "if two places need it, extract it"), so the two share one
+  cache and a marker sitting on a frame the filmstrip already drew costs no second
+  decode. Behaviour unchanged.
+
+**One React Compiler trap worth recording**, since it cost a real debugging cycle:
+the first draft of both new hooks used a `useMemo` whose object result was an effect
+dependency. The compiler reports that as "Existing memoization could not be
+preserved", which switches auto-memoization off for the **whole file** —
+`reactCompiler.test.ts` (D-201) catches it. Both now compute inside the effect on
+primitive dependencies. `Filmstrip.tsx` documents the same trap from its own
+encounter with it.
+
+**Verification.** `cargo test -p apelles-timeline` 259/259 (2 new: the round-trip
+now covers a ranged marker and asserts a point marker omits the key, plus
+`pre_d328_markers_load_as_point_markers`, which loads a real pre-D-328 manifest with
+tracks/clips/markers and asserts re-saving does not add the key). `cargo test
+--workspace` green, zero failures, including all five `apelles-mcp` parity tests.
+`cargo fmt --all --check` clean; `cargo clippy -p apelles-timeline -p apelles-mcp
+--all-targets` no errors and no new warnings. `npx vitest run packages/editor
+packages/player` — **1901 passed, 1 failed**, that one being the pre-existing,
+already-disclosed B-184 (`reactCompiler.test.ts`'s `TimelinePane.tsx` bailout, open,
+untouched by this pass); 27 new tests across `timeline.test.ts` (7, the duration
+model), `timecode.test.ts` (6, new file) and `EditIndexPanel.dom.test.tsx` (14, new
+file). `npx tsc --noEmit` clean on every `packages/*` project, with `app/`'s 65
+pre-existing errors unchanged.
+
+**Disclosed, not fixed:** the ranged-marker bar cannot be dragged to resize (see
+decision 1); the Transcript view is scoped to one selected clip rather than the
+whole sequence, matching how `editor_get_transcript` is keyed (per source path, no
+per-clip form) and how `RecutPanel` already behaves; B-146 stays open with nine
+reactive-`playhead` subscribers remaining.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

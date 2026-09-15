@@ -1211,7 +1211,7 @@
     },
     {
       "name": "editor_add_marker",
-      "description": "Pin a marker to a timeline frame \u2014 the same action the GUI's Marker\n    button and its `M` shortcut perform.\n\n    `frame` omitted means \"at the playhead\", exactly like the GUI's own\n    button, so `editor_set_playhead(...)` then `editor_add_marker()` is the\n    natural pair. `color` is a palette NAME (blue, cyan, green, yellow, red,\n    pink, purple, fuchsia, rose, lavender, sky, mint, lemon, sand, cocoa,\n    cream \u2014 `editor_list_markers` returns the live list) or a raw `#RGB` /\n    `#RRGGBB` hex; omitted gives blue, the same default DaVinci Resolve uses.\n    `name` is the short title shown next to the flag on the ruler; `note` is\n    longer free text visible only in the marker's own popover.\n\n    A marker is real document content: it is written into `project.json` and\n    a GUI undo (\u2318Z) removes it, unlike `editor_set_selection` /\n    `editor_set_preview_zoom`, which change only what the user is looking at.\n    Any frame is legal, including one past the last clip. Returns the created\n    marker including its generated `id`.",
+      "description": "Pin a marker to a timeline frame \u2014 the same action the GUI's Marker\n    button and its `M` shortcut perform.\n\n    `frame` omitted means \"at the playhead\", exactly like the GUI's own\n    button, so `editor_set_playhead(...)` then `editor_add_marker()` is the\n    natural pair. `color` is a palette NAME (blue, cyan, green, yellow, red,\n    pink, purple, fuchsia, rose, lavender, sky, mint, lemon, sand, cocoa,\n    cream \u2014 `editor_list_markers` returns the live list) or a raw `#RGB` /\n    `#RRGGBB` hex; omitted gives blue, the same default DaVinci Resolve uses.\n    `name` is the short title shown next to the flag on the ruler; `note` is\n    longer free text visible only in the marker's own popover.\n\n    `duration_frames` makes the marker span a RANGE rather than flag a single\n    frame: omitted (or 0) is a point marker, the default and what every marker\n    made before this parameter existed is. A ranged marker covers\n    `frame` through `frame + duration_frames` inclusive and draws as a bar on\n    the ruler instead of a pin. The response reports `durationFrames` and the\n    derived `endFrame` for both kinds, so a point marker reads back as\n    `durationFrames: 0` with `endFrame` equal to `frame`.\n\n    A marker is real document content: it is written into `project.json` and\n    a GUI undo (\u2318Z) removes it, unlike `editor_set_selection` /\n    `editor_set_preview_zoom`, which change only what the user is looking at.\n    Any frame is legal, including one past the last clip. Returns the created\n    marker including its generated `id`.",
       "inputSchema": {
         "properties": {
           "frame": {
@@ -1261,6 +1261,18 @@
             ],
             "default": null,
             "title": "Note"
+          },
+          "duration_frames": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration Frames"
           }
         },
         "type": "object",
@@ -2868,7 +2880,7 @@
     },
     {
       "name": "editor_list_markers",
-      "description": "Every marker on the current timeline, in frame order \u2014 a marker is a\n    colour-coded, optionally titled flag pinned to a TIMELINE frame (\"client\n    wants a cut here\", \"sync point\", \"VFX shot start\").\n\n    Markers belong to the TIMELINE, not to any clip or track: there is no\n    `track` argument on any of the four marker tools, and a marker survives\n    the clip beneath it being trimmed, moved to another track, or deleted.\n    They are pure annotation \u2014 nothing in the live preview or in\n    `editor_export`'s output is affected by one.\n\n    Each entry is `{id, frame, color, name, note}`; `name`/`note` are `null`\n    when unset. `id` is what `editor_set_marker`/`editor_remove_marker` take.\n    Also returns `palette`, the marker colour names `editor_add_marker` and\n    `editor_set_marker` accept. `editor_get_timeline` reports the same list\n    under its own `markers` key, so this tool is the cheap way to re-read just\n    the markers after writing one.",
+      "description": "Every marker on the current timeline, in frame order \u2014 a marker is a\n    colour-coded, optionally titled flag pinned to a TIMELINE frame (\"client\n    wants a cut here\", \"sync point\", \"VFX shot start\").\n\n    Markers belong to the TIMELINE, not to any clip or track: there is no\n    `track` argument on any of the four marker tools, and a marker survives\n    the clip beneath it being trimmed, moved to another track, or deleted.\n    They are pure annotation \u2014 nothing in the live preview or in\n    `editor_export`'s output is affected by one.\n\n    Each entry is `{id, frame, color, durationFrames, endFrame, name, note}`;\n    `name`/`note` are `null` when unset. A marker may span a RANGE rather than\n    flag one frame: `durationFrames` is 0 for a point marker (the default, and\n    what every marker made before ranges existed is) and `endFrame` is the\n    derived last frame it covers, inclusive \u2014 equal to `frame` for a point\n    marker. `id` is what `editor_set_marker`/`editor_remove_marker` take.\n    Also returns `palette`, the marker colour names `editor_add_marker` and\n    `editor_set_marker` accept. `editor_get_timeline` reports the same list\n    under its own `markers` key, so this tool is the cheap way to re-read just\n    the markers after writing one.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -4314,7 +4326,7 @@
     },
     {
       "name": "editor_set_marker",
-      "description": "Change an existing marker's frame, colour, title or note. `id` comes\n    from `editor_list_markers` (or from `editor_add_marker`'s own response).\n\n    A PATCH, not a full replace: every argument you omit keeps its current\n    value, so recolouring a marker needs no restating of its note. To CLEAR a\n    title or a note, pass the empty string `\"\"` for it \u2014 omitting it leaves it\n    alone. `color` takes the same palette name or hex `editor_add_marker`\n    does, and an unrecognised one is an error rather than a silent no-change.\n\n    Moving a marker's `frame` re-sorts it into place; the list this and\n    `editor_list_markers` report is always in frame order. Returns the marker\n    as it now stands.",
+      "description": "Change an existing marker's frame, colour, span, title or note. `id`\n    comes from `editor_list_markers` (or from `editor_add_marker`'s response).\n\n    A PATCH, not a full replace: every argument you omit keeps its current\n    value, so recolouring a marker needs no restating of its note. To CLEAR a\n    title or a note, pass the empty string `\"\"` for it \u2014 omitting it leaves it\n    alone. `color` takes the same palette name or hex `editor_add_marker`\n    does, and an unrecognised one is an error rather than a silent no-change.\n\n    `duration_frames` follows the same convention: omitted leaves the span\n    untouched, a positive number makes the marker span `frame` through\n    `frame + duration_frames` inclusive, and **0 clears it back to a point\n    marker** \u2014 the span's equivalent of passing `\"\"` to clear a title.\n\n    Moving a marker's `frame` re-sorts it into place; the list this and\n    `editor_list_markers` report is always in frame order. Returns the marker\n    as it now stands.",
       "inputSchema": {
         "properties": {
           "id": {
@@ -4368,6 +4380,18 @@
             ],
             "default": null,
             "title": "Note"
+          },
+          "duration_frames": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration Frames"
           }
         },
         "required": [
@@ -10773,7 +10797,8 @@
         "frame": 89,
         "color": "v_editor_add_marker.color",
         "name": "v_editor_add_marker.name",
-        "note": "v_editor_add_marker.note"
+        "note": "v_editor_add_marker.note",
+        "duration_frames": 78
       },
       "requests": [
         {
@@ -10782,7 +10807,8 @@
             "frame": 89,
             "color": "v_editor_add_marker.color",
             "name": "v_editor_add_marker.name",
-            "note": "v_editor_add_marker.note"
+            "note": "v_editor_add_marker.note",
+            "durationFrames": 78
           },
           "timeout_ms": 20000
         }
@@ -13087,7 +13113,8 @@
         "frame": 85,
         "color": "v_editor_set_marker.color",
         "name": "v_editor_set_marker.name",
-        "note": "v_editor_set_marker.note"
+        "note": "v_editor_set_marker.note",
+        "duration_frames": 73
       },
       "requests": [
         {
@@ -13097,7 +13124,8 @@
             "frame": 85,
             "color": "v_editor_set_marker.color",
             "name": "v_editor_set_marker.name",
-            "note": "v_editor_set_marker.note"
+            "note": "v_editor_set_marker.note",
+            "durationFrames": 73
           },
           "timeout_ms": 20000
         }

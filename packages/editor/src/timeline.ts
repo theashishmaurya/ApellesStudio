@@ -52,6 +52,16 @@
  * construction path the ruler's flag strip and the `editor_*_marker` MCP ops
  * both go through.
  *
+ * D-328 (ranged markers): `Marker.duration_frames` — the optional span D-222
+ * deliberately scoped out, now that a real edit surface (the marker popover's
+ * Time/Duration fields and the Index panel's marker list) needs to show and set
+ * one. `markerEndFrame`/`normaliseMarkerDuration` are its two shared helpers:
+ * one derives the span's last frame for every consumer, the other enforces the
+ * "a point marker is an ABSENT duration, never a zero one" invariant at every
+ * write. Absent stays the default, so a pre-D-328 `project.json` is already a
+ * valid post-D-328 one — see that entry for why this is not the second
+ * time-extent concept D-222 feared.
+ *
  * D-226 (transitions, roadmap item 27, `docs/notes/transitions.md`):
  * `Track.transitions` + `add_transition`/`remove_transition`/`set_transition`,
  * mirroring `apelles_timeline::Transition`. A transition bridges a CUT — the two
@@ -1727,8 +1737,42 @@ export interface Marker {
   frame: number;
   /** CSS colour string; the GUI writes a `#RRGGBB` from [`MARKER_COLORS`]. */
   color: string;
+  /** D-328 — how many timeline frames this marker SPANS. Absent is a POINT
+   *  marker (a flag on one frame), which is every marker written before D-328
+   *  and still what a new one is until a duration is typed. Present makes it a
+   *  range covering `frame ..= frame + duration_frames`.
+   *
+   *  **Absent and `0` must never both occur**: "a point marker" has exactly one
+   *  representation, the same rule `name`/`note` follow for "unset" (an empty
+   *  string is dropped, never stored). [`newMarker`] and the `set_marker`
+   *  reducer are the only writers and both normalise a non-positive duration
+   *  away — so `duration_frames === 0` never reaches a consumer, and
+   *  [`markerEndFrame`] can treat absent as the only point-marker case. */
+  duration_frames?: number;
   name?: string;
   note?: string;
+}
+
+/** The LAST timeline frame a marker covers — its own `frame` for a point
+ *  marker, `frame + duration_frames` for a ranged one (D-328).
+ *
+ *  Inclusive, deliberately: a 0-duration marker and a 1-frame-duration marker
+ *  must not both be "one frame", or a duration typed as `1` would look like it
+ *  did nothing. The one place the span is derived, shared by the ruler strip's
+ *  bar geometry, the Index panel's time-range column and the MCP DTO, so those
+ *  three can never disagree about where a marker ends. */
+export function markerEndFrame(m: Marker): number {
+  return m.frame + Math.max(0, m.duration_frames ?? 0);
+}
+
+/** Normalise a duration into the ONE representation a point marker has (D-328).
+ *  A non-finite, negative or zero duration is `undefined` — absent, not `0` —
+ *  so [`Marker.duration_frames`]'s "absent and 0 never both occur" invariant
+ *  holds no matter which writer (GUI popover, `set_marker` patch, MCP op) ran.
+ *  Rounded, since a fraction of a frame is not a position a user can mean. */
+export function normaliseMarkerDuration(duration: unknown): number | undefined {
+  const n = Math.round(Number(duration));
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 /** The marker swatch palette — DaVinci Resolve's own sixteen marker colours,
@@ -1798,6 +1842,7 @@ export function newMarker(
   color?: string | null,
   name?: string | null,
   note?: string | null,
+  durationFrames?: number | null,
 ): Marker | { error: string } {
   const hex = resolveMarkerColor(color);
   if (typeof hex !== 'string') return hex;
@@ -1807,6 +1852,12 @@ export function newMarker(
     frame: Math.max(0, Math.round(frame)),
     color: hex,
   };
+  // D-328 — a point marker is the default and has exactly one representation:
+  // the key is absent, never `0`. `normaliseMarkerDuration` is the single
+  // gate every writer goes through, so a caller passing 0/-5/NaN/undefined all
+  // land on the same shape rather than four near-identical ones.
+  const duration = normaliseMarkerDuration(durationFrames);
+  if (duration !== undefined) marker.duration_frames = duration;
   const trimmedName = name?.trim();
   if (trimmedName) marker.name = trimmedName;
   const trimmedNote = note?.trim();
@@ -3576,11 +3627,23 @@ export type EditOp =
    *  omitted field there would silently RESET a real value; there is no such
    *  hazard in a merge.) An explicit `null` for `name`/`note` CLEARS it —
    *  the popover's own "clear the title" gesture — which `undefined` cannot
-   *  express in a patch. */
+   *  express in a patch.
+   *
+   *  D-328 — `duration_frames` joins the patch with exactly the same three-way
+   *  semantics, which is why it needed no new mechanism: absent leaves the span
+   *  alone, a positive number sets it, and `null` (or `0`, or a negative)
+   *  CLEARS it back to a point marker. "Make this a point marker again" is the
+   *  same gesture as "clear the title", so it gets the same spelling. */
   | {
       kind: 'set_marker';
       id: string;
-      patch: { frame?: number; color?: string; name?: string | null; note?: string | null };
+      patch: {
+        frame?: number;
+        color?: string;
+        duration_frames?: number | null;
+        name?: string | null;
+        note?: string | null;
+      };
     }
   /** D-226 — place a transition at an edit point on `track`. The caller builds
    *  the whole `Transition` (via [`newTransition`], which owns id generation and
@@ -4530,6 +4593,17 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // `resolveMarkerColor` itself for the real message (same posture
       // `set_text_clip` takes for a failed `newTextLayer`).
       if (typeof hex === 'string') m.color = hex;
+    }
+    // D-328 — `null`/`0`/negative all clear the span back to a POINT marker,
+    // absent leaves it alone. Routed through the same `normaliseMarkerDuration`
+    // gate `newMarker` uses, so the "absent, never 0" invariant on
+    // `Marker.duration_frames` holds for a patched marker exactly as it does
+    // for a freshly built one — the reason `markerEndFrame` can treat absent as
+    // the only point-marker case.
+    if (op.patch.duration_frames !== undefined) {
+      const d = normaliseMarkerDuration(op.patch.duration_frames);
+      if (d !== undefined) m.duration_frames = d;
+      else delete m.duration_frames;
     }
     // `null` clears, `undefined` (absent) leaves alone — see the op's doc.
     // A whitespace-only string clears too, so "unnamed" has one

@@ -2997,8 +2997,12 @@ def editor_list_markers() -> str:
     They are pure annotation — nothing in the live preview or in
     `editor_export`'s output is affected by one.
 
-    Each entry is `{id, frame, color, name, note}`; `name`/`note` are `null`
-    when unset. `id` is what `editor_set_marker`/`editor_remove_marker` take.
+    Each entry is `{id, frame, color, durationFrames, endFrame, name, note}`;
+    `name`/`note` are `null` when unset. A marker may span a RANGE rather than
+    flag one frame: `durationFrames` is 0 for a point marker (the default, and
+    what every marker made before ranges existed is) and `endFrame` is the
+    derived last frame it covers, inclusive — equal to `frame` for a point
+    marker. `id` is what `editor_set_marker`/`editor_remove_marker` take.
     Also returns `palette`, the marker colour names `editor_add_marker` and
     `editor_set_marker` accept. `editor_get_timeline` reports the same list
     under its own `markers` key, so this tool is the cheap way to re-read just
@@ -3014,6 +3018,7 @@ def editor_add_marker(
     color: str | None = None,
     name: str | None = None,
     note: str | None = None,
+    duration_frames: int | None = None,
 ) -> str:
     """Pin a marker to a timeline frame — the same action the GUI's Marker
     button and its `M` shortcut perform.
@@ -3027,6 +3032,14 @@ def editor_add_marker(
     `name` is the short title shown next to the flag on the ruler; `note` is
     longer free text visible only in the marker's own popover.
 
+    `duration_frames` makes the marker span a RANGE rather than flag a single
+    frame: omitted (or 0) is a point marker, the default and what every marker
+    made before this parameter existed is. A ranged marker covers
+    `frame` through `frame + duration_frames` inclusive and draws as a bar on
+    the ruler instead of a pin. The response reports `durationFrames` and the
+    derived `endFrame` for both kinds, so a point marker reads back as
+    `durationFrames: 0` with `endFrame` equal to `frame`.
+
     A marker is real document content: it is written into `project.json` and
     a GUI undo (⌘Z) removes it, unlike `editor_set_selection` /
     `editor_set_preview_zoom`, which change only what the user is looking at.
@@ -3035,7 +3048,13 @@ def editor_add_marker(
     import json
 
     args: dict = {}
-    for key, val in (("frame", frame), ("color", color), ("name", name), ("note", note)):
+    for key, val in (
+        ("frame", frame),
+        ("color", color),
+        ("name", name),
+        ("note", note),
+        ("durationFrames", duration_frames),
+    ):
         if val is not None:
             args[key] = val
     return json.dumps(_op("editor_add_marker", **args), indent=2, default=str)
@@ -3048,9 +3067,10 @@ def editor_set_marker(
     color: str | None = None,
     name: str | None = None,
     note: str | None = None,
+    duration_frames: int | None = None,
 ) -> str:
-    """Change an existing marker's frame, colour, title or note. `id` comes
-    from `editor_list_markers` (or from `editor_add_marker`'s own response).
+    """Change an existing marker's frame, colour, span, title or note. `id`
+    comes from `editor_list_markers` (or from `editor_add_marker`'s response).
 
     A PATCH, not a full replace: every argument you omit keeps its current
     value, so recolouring a marker needs no restating of its note. To CLEAR a
@@ -3058,13 +3078,24 @@ def editor_set_marker(
     alone. `color` takes the same palette name or hex `editor_add_marker`
     does, and an unrecognised one is an error rather than a silent no-change.
 
+    `duration_frames` follows the same convention: omitted leaves the span
+    untouched, a positive number makes the marker span `frame` through
+    `frame + duration_frames` inclusive, and **0 clears it back to a point
+    marker** — the span's equivalent of passing `""` to clear a title.
+
     Moving a marker's `frame` re-sorts it into place; the list this and
     `editor_list_markers` report is always in frame order. Returns the marker
     as it now stands."""
     import json
 
     args: dict = {"id": id}
-    for key, val in (("frame", frame), ("color", color), ("name", name), ("note", note)):
+    for key, val in (
+        ("frame", frame),
+        ("color", color),
+        ("name", name),
+        ("note", note),
+        ("durationFrames", duration_frames),
+    ):
         if val is not None:
             args[key] = val
     return json.dumps(_op("editor_set_marker", **args), indent=2, default=str)

@@ -301,13 +301,20 @@ pub struct Timeline {
 /// One timeline marker (D-222) — see [`Timeline::markers`] for why these hang
 /// off the timeline rather than off a clip.
 ///
-/// Deliberately **flat and dumb**: an id, a frame, a colour string, and two
-/// optional strings. There is no duration (Resolve's own marker dialog has one,
-/// for a range marker; out of scope for this pass — see D-222) and no keyword
-/// field. `color` is a plain string rather than an enum so the palette can grow
-/// without a schema migration, and so an MCP caller can pass a raw hex; the
-/// GUI's own swatch row is `@apelles/editor/timeline.ts`'s `MARKER_COLORS`, the
-/// one place the named palette is defined.
+/// Deliberately **flat and dumb**: an id, a frame, a colour string, an optional
+/// duration and two optional strings. There is no keyword field (Resolve's own
+/// marker dialog has one; still out of scope — see D-222). `color` is a plain
+/// string rather than an enum so the palette can grow without a schema
+/// migration, and so an MCP caller can pass a raw hex; the GUI's own swatch row
+/// is `@apelles/editor/timeline.ts`'s `MARKER_COLORS`, the one place the named
+/// palette is defined.
+///
+/// D-328 added [`Marker::duration_frames`], which D-222 had deliberately scoped
+/// out. See that entry for why the objection it raised ("a second time-extent
+/// concept in a model where `Clip` already owns one") does not survive contact:
+/// an ANNOTATION's extent participates in nothing — no compositing, no ripple,
+/// no export — so it shares only the word "duration" with a clip's, not the
+/// behaviour.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Marker {
     /// Stable id — how the `remove_marker`/`set_marker` edit ops name one.
@@ -320,6 +327,19 @@ pub struct Marker {
     /// document content the user chose and that must mean the same thing in
     /// every theme, not app chrome — see D-222.
     pub color: String,
+    /// How many timeline frames this marker SPANS (D-328). `None`/absent is a
+    /// point marker — a flag on one frame, which is every marker written before
+    /// D-328 and still the default for a new one. `Some(n)` makes it a range:
+    /// the marker covers `frame ..= frame + n`.
+    ///
+    /// **`None` and `Some(0)` must never both reach disk.** "A point marker" has
+    /// exactly one representation here, the same rule [`Marker::name`] follows
+    /// for "unnamed" (an empty string is dropped rather than stored) — the
+    /// normalisation lives in `@apelles/editor`'s `newMarker`/`set_marker`,
+    /// which own every write, and `#[serde(default)]` is what makes a pre-D-328
+    /// `project.json` load as all-point-markers with no migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_frames: Option<i64>,
     /// Short title, shown next to the flag. `None`/absent is a perfectly
     /// ordinary unnamed marker (`skip_serializing_if`, matching
     /// [`Clip::shot_id`]'s own convention for an absent optional).
@@ -4889,6 +4909,7 @@ mod tests {
                     id: "m1".into(),
                     frame: 120,
                     color: "#D9434E".into(),
+                    duration_frames: Some(48),
                     name: Some("cut here".into()),
                     note: Some("client note".into()),
                 },
@@ -4896,6 +4917,7 @@ mod tests {
                     id: "m2".into(),
                     frame: 5,
                     color: "#3B8FE3".into(),
+                    duration_frames: None,
                     name: None,
                     note: None,
                 },
@@ -4911,6 +4933,56 @@ mod tests {
         assert!(
             !m2_json.contains("name") && !m2_json.contains("note"),
             "an unnamed marker omits both optional keys entirely: {m2_json}"
+        );
+        // D-328 — a POINT marker omits the duration key too, so "no span" has
+        // exactly one on-disk representation and a pre-D-328 file and a
+        // freshly-written point marker are byte-identical.
+        assert!(
+            !m2_json.contains("duration_frames"),
+            "a point marker omits duration_frames entirely: {m2_json}"
+        );
+        assert!(
+            json.contains("\"duration_frames\":48"),
+            "a ranged marker writes its span: {json}"
+        );
+    }
+
+    /// D-328's backward-compatibility guarantee, and the one that matters most
+    /// for real users: a `project.json` written between D-222 and D-328 holds
+    /// markers with `id`/`frame`/`color`/`name`/`note` and **no
+    /// `duration_frames` key at all**. Every one of them must load as an
+    /// ordinary POINT marker rather than failing to deserialize — which is what
+    /// `#[serde(default)]` on an `Option` buys, and why D-328 needed no schema
+    /// bump or migration function (see `apelles-project`'s `SCHEMA` doc: the
+    /// version gate is for changes serde cannot express, and this is not one).
+    #[test]
+    fn pre_d328_markers_load_as_point_markers() {
+        let j = r##"{"id":"t","name":"T","rate":{"num":24,"den":1},"tracks":[
+            {"kind":"video","clips":[{"id":"c1","name":"A","source_path":"/a.mov",
+             "source_start":0,"duration":40,"source_len":40,"start_frame":0}]}],
+            "markers":[
+            {"id":"m1","frame":10,"color":"#D9434E","name":"fix this","note":"client"},
+            {"id":"m2","frame":90,"color":"#3B8FE3"}]}"##;
+        let tl: Timeline = serde_json::from_str(j).expect("a pre-D-328 project must still load");
+
+        assert_eq!(tl.markers.len(), 2);
+        // The whole point: absent means point marker, not a deserialize error
+        // and not some non-`None` default.
+        assert!(tl.markers.iter().all(|m| m.duration_frames.is_none()));
+        // …and the rest of the record survived intact, so this cannot be
+        // passing because the markers were dropped or blanked.
+        assert_eq!(tl.markers[0].name.as_deref(), Some("fix this"));
+        assert_eq!(tl.markers[0].note.as_deref(), Some("client"));
+        assert_eq!(tl.markers[1].frame, 90);
+        assert_eq!(tl.tracks[0].clips.len(), 1);
+
+        // Re-saving an untouched pre-D-328 project must not ADD the key —
+        // otherwise opening a project in a new build would silently rewrite
+        // every marker on disk.
+        let round = serde_json::to_string(&tl).unwrap();
+        assert!(
+            !round.contains("duration_frames"),
+            "loading and re-saving a pre-D-328 project must not introduce the key: {round}"
         );
     }
 
