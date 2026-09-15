@@ -35,7 +35,7 @@ import { design } from '@apelles/motion-engine/src/design';
 import { deviceBodyRect } from '@apelles/motion-engine/src/lib/device';
 import { sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
 import type { Selection } from './LayerList';
-import { catalogEntry, defaultLayerFor, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
+import { catalogEntry, defaultLayerFor, DEFAULT_CAMERA_2D, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
 import { positionFields, sizeFields } from './propCatalog';
 import { screenToWorld, worldDelta, type RectLike, type WorldMap } from './canvasGeometry';
 
@@ -1407,6 +1407,47 @@ export function setCamera3d(manifest: Manifest, sceneIndex: number, keys: Cam3dK
  *  for a similar "this just needs to not collide in practice" case. */
 function genLayerId(): string {
   return Math.random().toString(36).slice(2, 10);
+}
+
+/**
+ * D-331 — give a scene a 2D camera it does not have yet, and select it.
+ *
+ * **Why this exists as its own function.** `setCamera2d` below already
+ * creates `scene.camera` when absent, and that is what `motion_set_camera_2d`
+ * has always used — so an AGENT could bring a 2D camera into being while a
+ * human could not, because the layer list only renders a Camera row when
+ * `scene.camera` is already there and nothing else in the GUI ever wrote the
+ * field. That is a direct inversion of CLAUDE.md's "every feature is built
+ * for a human AND an AI": the affordance existed on the AI side only.
+ *
+ * This is the create half, kept separate from `setCamera2d`'s replace half
+ * for the same reason `addLayer` is separate from `setLayerField` — "bring
+ * one into existence with a sensible default" and "overwrite the key array
+ * wholesale" are different acts with different callers, and folding them
+ * together would mean the GUI button had to invent a key array to pass.
+ *
+ * **Idempotent by design:** a scene that already has a camera is returned
+ * unchanged (`next === manifest`), the same no-op contract every caller in
+ * `LayerList.tsx` already checks before committing. The button is hidden in
+ * that state anyway, but the raw-JSON textarea can add a camera under a
+ * stale render at any moment, so this does not assume it.
+ *
+ * No new MCP tool ships with this: `motion_set_camera_2d` already reaches the
+ * identical end state (`keys=[{at: 0, zoom: 1}]`), so the capability was never
+ * missing on the agent side — only the human one was. Adding a second tool
+ * that duplicates an existing one would be surface for its own sake.
+ */
+export function addCamera2d(
+  manifest: Manifest,
+  sceneIndex: number,
+): { manifest: Manifest; selection: Selection | null } {
+  const scene = manifest.scenes[sceneIndex];
+  if (!scene) return { manifest, selection: null };
+  if (scene.camera) return { manifest, selection: null };
+
+  const next = clone(manifest);
+  next.scenes[sceneIndex].camera = DEFAULT_CAMERA_2D();
+  return { manifest: next, selection: { sceneIndex, target: { kind: 'camera' } } };
 }
 
 export function addLayer(

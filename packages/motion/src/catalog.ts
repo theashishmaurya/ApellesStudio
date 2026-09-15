@@ -136,6 +136,24 @@ export const DEFAULT_SCENE3D_CAMERA = (): { at: number; pos: [number, number, nu
 ];
 
 /**
+ * The 2D camera a scene gets when a human adds one from the layer list
+ * (D-331). Deliberately a SINGLE neutral key rather than a ready-made move:
+ * `sample.ts`'s own first camera key is exactly `{at: 0, zoom: 1}`, and a
+ * camera that started by pushing in would change the picture the moment it
+ * was added — the opposite of what "add a camera" means. One key at t=0 is
+ * the identity camera; the second key (the one that actually animates) is
+ * the user's, added from the Inspector's own `+ Add keyframe`.
+ *
+ * Note this is the one place the 2D and 3D defaults genuinely differ in
+ * kind: `cam3dKey` requires `pos` and `scene3d.camera` is `.min(1)`
+ * (`schema.ts` L90, L239), so a 3D container cannot exist without a real
+ * camera; `camera` (2D) is a plain optional array with no `.min`, so an
+ * absent 2D camera is a normal, valid state and adding one is a real,
+ * separate act.
+ */
+export const DEFAULT_CAMERA_2D = (): { at: number; zoom: number }[] => [{ at: 0, zoom: 1 }];
+
+/**
  * A fresh, schema-valid manifest fragment for one primitive, with defaults
  * chosen so the inserted layer *renders something visible immediately* —
  * the whole point of "get it on our current thing." That is a stronger bar

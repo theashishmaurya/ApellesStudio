@@ -115,10 +115,11 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { CopyIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
+import { CopyIcon, PlusIcon, TrashIcon, VideoCameraIcon } from '@phosphor-icons/react';
 import type { Manifest, Layer } from '@apelles/motion-engine/src/engine/schema';
 import { layerKeyCount, cameraKeyCount, scene3dCameraKeyCount } from './keyframeVisibility';
 import {
+  addCamera2d,
   addScene,
   canDeleteScene,
   deleteLayer,
@@ -485,6 +486,18 @@ export function LayerList({
     if (selection) onSelect(selection);
   };
 
+  /** D-331 — the human half of "this scene gets a 2D camera". Selecting the
+   *  new camera afterwards is the point, not a flourish: the Inspector's
+   *  camera keyframe editor is the reason to add one, so landing on it is
+   *  what makes the next click obvious. */
+  const doAddCamera2d = (sceneIndex: number) => {
+    if (!onCommit) return;
+    const { manifest: next, selection } = addCamera2d(manifest, sceneIndex);
+    if (next === manifest) return;
+    onCommit(next, 'Add camera');
+    if (selection) onSelect(selection);
+  };
+
   /**
    * D-259 — the scene row's trailing actions, and the one place in this list
    * with a confirm step.
@@ -518,6 +531,19 @@ export function LayerList({
     const armed = armedSceneDelete === sceneIndex;
     return (
       <>
+        {/* D-331 — shown only while the scene HAS no 2D camera, so the action
+           and the resulting Camera row are never both on screen: this is a
+           create affordance, not a toggle. Hidden rather than disabled for
+           the same reason the last-scene delete is (above) — once a camera
+           exists there is no state in which "add camera" becomes meaningful
+           again, so a greyed button would be a question with no answer.
+           Undo (Cmd/Ctrl+Z) covers an accidental click, which is why this
+           needs no confirm step under D-259's own proportionality rule. */}
+        {!manifest.scenes[sceneIndex]?.camera && (
+          <RowAction label="Add camera" onClick={() => doAddCamera2d(sceneIndex)}>
+            <VideoCameraIcon size={11} />
+          </RowAction>
+        )}
         <RowAction label="Duplicate scene" onClick={() => doDuplicateScene(sceneIndex)}>
           <CopyIcon size={11} />
         </RowAction>

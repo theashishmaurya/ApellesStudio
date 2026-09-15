@@ -32229,3 +32229,170 @@ transcription twice before.
 (`CHROMA_CONTROL_PORT=19791`, vite on 1421, the owner's own app untouched),
 with the real `storm-clip` project D-325 used as its baseline — see the
 "D-330, live" section of `docs/notes/debug-tooling.md` for the numbers.
+---
+
+## D-331 — a scene's 2D camera gets a GUI "Add camera", closing an inverted human/AI parity gap
+
+**decided (2026-09-16)** · obeys CLAUDE.md's "every feature is built for a
+human AND an AI" · found by a firsthand Motion-tab UX audit, not by reading
+the tool list
+
+**Context.** A Motion-tab audit driven through the real GUI (D-165's Motion
+harness in a real Chromium tab, a fresh Vite on its own port in this
+worktree — the shared `npm run tauri:dev` instance untouched) selected the
+`stack` scene of the sample manifest and found the Inspector offering Fill
+and Timing and nothing else. There is no "Add camera" control anywhere in
+`packages/motion`: `LayerList.tsx` renders a `Camera` row **only when
+`scene.camera` already exists** (`{scene.camera && row(...)}`), and the
+Inspector's 2D-camera editor is reachable only from that row. Nothing else in
+the GUI has ever written the field, so the affordance is circular — you can
+edit a camera you already have, and you can never get one.
+
+Meanwhile `setCamera2d` writes `next.scenes[i].camera = keys`
+**unconditionally**, creating the field when it is absent — and
+`motion_set_camera_2d` has exposed exactly that to an agent since D-257.
+
+So the gap is the standing rule's own violation, inverted from the usual
+direction: not a GUI control missing its tool, but **a capability an agent
+has had all along and a human never did.** That inversion is why reading the
+MCP surface alone would not have found it — every tool had a GUI story on
+paper; only clicking the GUI showed one of them did not.
+
+This was one of four findings from that audit. The other three are recorded
+at the end of this entry, including one the audit **withdrew** after checking
+the code rather than trusting its own first impression.
+
+**Options.**
+
+1. **Let the Inspector create the camera** — show the 2D-camera editor for
+   every scene and have the first `+ Add keyframe` bring `scene.camera` into
+   being. Rejected: it makes "this scene has no camera" and "this scene has a
+   camera with no keys" indistinguishable in the layer list, and the layer
+   list is where this tab's object model is expressed. A scene either has a
+   camera or it does not, and the tree should say which.
+2. **A `+ Add camera` button in the Catalog panel**, beside the primitives.
+   Rejected: the Catalog's entire contract is "primitives that go in
+   `scene.layers`/`scene3d.children`" (`CATALOG` is typed
+   `Record<Layer['use'], CatalogEntry>` precisely so the engine's own enum
+   gates it). A camera is not a layer, has no `use`, and is one-per-scene —
+   putting it there would break the exhaustiveness guarantee that file exists
+   to hold.
+3. **A hover-revealed row action on the SCENE row**, next to Duplicate and
+   Delete. **Chosen** — the camera belongs to the scene, so the scene's own
+   action cluster is where it goes, and D-259 already established that
+   cluster as this tab's place for per-object structural verbs.
+
+**Decision — `addCamera2d` in `manifestEdit.ts`, one row action, no new MCP
+tool.**
+
+`addCamera2d(manifest, sceneIndex)` is the create half, deliberately separate
+from `setCamera2d`'s replace half for the same reason `addLayer` is separate
+from `setLayerField`: "bring one into existence with a sensible default" and
+"overwrite the key array wholesale" are different acts with different callers,
+and folding them together would force the GUI button to invent a key array to
+pass. It is idempotent — a scene that already has a camera comes back
+unchanged (`next === manifest`), the no-op contract every caller in
+`LayerList.tsx` already checks before committing. The button is hidden in that
+state anyway, but the raw-JSON textarea can add a camera under a stale render
+at any moment, so it does not assume it.
+
+**The default is one neutral key, not a ready-made move.** `DEFAULT_CAMERA_2D()`
+is `[{at: 0, zoom: 1}]` — byte-identical to `sample.ts`'s own first camera
+key. This is a deliberate departure from `defaultLayerFor`'s stated bar
+("renders something visible immediately"): for a *layer* that bar is right,
+but a camera that started by pushing in would change the picture the moment it
+was added, which is the opposite of what "add a camera" means. One key at t=0
+is the identity camera; the second key — the one that actually animates — is
+the user's, added from the Inspector's own `+ Add keyframe`. Adding the camera
+selects it, so that next click is where the eye already is.
+
+**No new MCP tool, and that is the considered answer rather than an omission.**
+`motion_set_camera_2d(scene_index, keys=[{at: 0, zoom: 1}])` already reaches
+the byte-identical end state, so the capability was never missing on the agent
+side — only the human one was. A `motion_add_camera_2d` would be a second tool
+that duplicates an existing one, which is surface for its own sake and one more
+thing to keep in parity across `mcp/server.py`, `crates/apelles-mcp` and the
+golden corpus. The standing rule asks that a corresponding tool *exist*, not
+that every GUI button get a same-named twin. A test pins this claim rather than
+asserting it in prose (below).
+
+**Why the 3D camera is NOT part of this.** Checked, not assumed: `cam3dKey`
+requires `pos` and `scene3d.camera` is `.min(1)` (`schema.ts`), so a `scene3d`
+block cannot exist without a real camera — `addLayer` creates one with
+`DEFAULT_SCENE3D_CAMERA()` whenever a 3D primitive needs a container. A human
+gets a 3D camera by adding a 3D layer; so does an agent (`motion_set_camera_3d`
+refuses with "scene N has no scene3d block yet — add a 3D layer first"). That
+is symmetric, so there is no parity defect to fix, and inventing an "add 3D
+camera" path would create a scene3d container with no children — a valid but
+pointless state.
+
+**Verification.** 8 new tests in `manifestEdit.test.ts` (252 in that file, 640
+across `packages/motion`, all green; `tsc --noEmit` clean on the package). The
+load-bearing one is the last: `addCamera2d(sample, i)` must deep-equal
+`setCamera2d(sample, i, [{at: 0, zoom: 1}])` — the executable form of the "no
+new tool needed" claim above. If a future change gives the GUI path its own
+default, that test fails and the two paths are shown to have drifted, which is
+exactly the B-125 failure mode `motionOps.test.ts` already guards for ops. The
+camera-less scene index is read off the fixture (`findIndex(s => !s.camera)`)
+rather than hard-coded, so a change to `sample.ts` cannot quietly make the
+suite test nothing — with its own assertion that such a scene still exists.
+
+**Live-verified in real Chromium** on D-165's Motion harness, not inferred from
+the unit tests. Before: two `Add camera` buttons, for `stack` and `space` —
+and none on `hook`, which already has a camera. Clicking `stack`'s: a `Camera`
+row appeared in the layer list with a key count of **1**, the Inspector
+switched to the camera keyframe editor (`Key 1`, `At (s) 0`, `X`/`Y` at
+`(default)`, `Zoom 1`, `Ease` reading "Not set — defaults to Ease In Out" with
+the real bezier widget and its five presets, and `+ Add keyframe` below), a
+`stack · Camera` lane appeared in the keyframe timeline with one diamond at
+`00:00:00`, the toolbar went to `Scene manifest · unsaved`, and the remaining
+`Add camera` button count fell 2 → 1. `space` kept its own button and still
+showed only its `3D Camera` row, confirming the 2D/3D split above.
+
+**No confirm step**, per D-259's own proportionality rule: this is a routine,
+low-blast-radius create that goes through `onCommit` and is therefore undoable
+with Cmd/Ctrl+Z like every other mutation in this tab.
+
+### The other three findings from the same audit
+
+1. **No preset/component system for Motion layers — real, and the largest of
+   the four.** The Catalog offers exactly the 10 built-in primitives, each
+   inserting hard-coded `defaultLayerFor(use)` defaults; grep confirms no
+   preset/template/component/library concept anywhere in `packages/motion` or
+   `crates/apelles-motion`. So a tuned `matrix` or `graph` — the Inspector
+   edits both through raw-JSON textareas for `values`/`nodes`/`edges` — cannot
+   be kept. `duplicateLayer` only helps within one manifest. **Not built this
+   pass, and deliberately not half-built:** unlike D-243's caption presets
+   (hard-coded TS data, no storage — confirmed by reading
+   `captionPresets.ts`), a *user-saved* library needs real persistence, and
+   the right precedent is RapidRAW's own grading presets
+   (`file_management.rs`'s `load_presets`/`save_presets` over
+   `app_data_dir()/presets/presets.json`). That is a Rust storage module, two
+   Tauri commands, a GUI section, four `motion_*` ops and their twins in both
+   MCP implementations plus a regenerated golden corpus — a coherent feature,
+   but a whole one, and landing a fraction of it would leave exactly the
+   half-finished surface this audit exists to find. Named on the roadmap.
+2. **Manifest-level fields have no typed control and no tool at all.**
+   `manifestSchema` declares `title`, `width`, `height`, `fps`, `grain`,
+   `vignette`, `transparent`; there is no document-level selection target, no
+   `MANIFEST_FIELDS` in `propCatalog.ts`, and no `motion_*` op that writes
+   them. A human reaches them only through the raw-JSON textarea; an agent
+   cannot reach them at all. **Deferred as needing a product decision, not
+   effort:** the Edit tab already owns width/height through
+   `ProjectSettings` + `chroma_project_get_settings`/`chroma_project_set_settings`
+   (D-199), so the real question is whether a Motion manifest should keep its
+   own size/fps or inherit the project's — and picking the wrong one here
+   would be hard to walk back. Named on the roadmap.
+3. **The render → Sources handoff — investigated and WITHDRAWN as a finding.**
+   The audit's harness showed only a truncated `rendered 3 scenes → <dir>` line
+   after a render and it looked like a silent handoff. Reading the real app
+   instead of trusting that showed the opposite: `Root.tsx`'s
+   `onMotionRendered` already toasts `Rendered — added to Sources` (and
+   `Rendered — refreshed N Edit clips` when D-260's relink fires, and
+   `Rendered, but couldn't add to Sources: …` on failure) through
+   `react-toastify`, the app's one real notification system. The harness mounts
+   `MotionTab` standalone and never wires `onRendered`, so the missing toast
+   was the harness's, not the product's. Recorded here rather than dropped
+   silently, because "the isolated harness lacks a composition-root behaviour"
+   is a trap the next audit on this tier will hit too. Automatic PLACEMENT on
+   the Edit timeline stays manual on D-062/D-260's unchanged reasoning.

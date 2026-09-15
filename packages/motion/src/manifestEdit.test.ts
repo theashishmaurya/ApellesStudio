@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { sample } from '@apelles/motion-engine/src/engine/sample';
 import {
+  addCamera2d,
   selectedScene,
   selectedLayer,
   selectedCamera2d,
@@ -55,7 +56,7 @@ import {
 } from './manifestEdit';
 import { measureWorldMap } from './canvasGeometry';
 import type { Selection } from './LayerList';
-import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
+import { manifestSchema, type Manifest } from '@apelles/motion-engine/src/engine/schema';
 
 describe('selectedScene / selectedLayer / selectedCamera2d / selectedCamera3d', () => {
   it('resolves a real scene by index', () => {
@@ -2017,5 +2018,74 @@ describe('duplicateScene (D-259)', () => {
     const snapshot = JSON.stringify(sample);
     duplicateScene(sample, 0);
     expect(JSON.stringify(sample)).toBe(snapshot);
+  });
+});
+
+/**
+ * D-331 — the human half of "give this scene a 2D camera". The gap this
+ * closes was an inverted-parity one: `setCamera2d` (and therefore
+ * `motion_set_camera_2d`) has always created `scene.camera` when it was
+ * absent, so an agent could bring a 2D camera into being while a human
+ * could not — the layer list only ever rendered a Camera row for a scene
+ * that already had one.
+ *
+ * The load-bearing assertion here is the LAST one: adding a camera from the
+ * GUI must land on exactly the manifest the agent's existing tool produces.
+ * That is what keeps this from becoming a second, drifting way to make a
+ * camera, and it is the same op-vs-GUI equivalence rule `motionOps.test.ts`
+ * holds every mutating op to.
+ */
+describe('addCamera2d (D-331 — the GUI half of a capability only MCP had)', () => {
+  /** the first scene in the real sample manifest with no 2D camera of its
+   *  own — read off the fixture rather than hard-coded, so a change to
+   *  `sample.ts` cannot quietly make this suite test nothing. */
+  const noCamIndex = sample.scenes.findIndex((s) => !s.camera);
+
+  it('the fixture really does have a camera-less scene to act on', () => {
+    expect(noCamIndex).toBeGreaterThanOrEqual(0);
+  });
+
+  it('adds a single neutral key and selects the new camera', () => {
+    const { manifest, selection } = addCamera2d(sample, noCamIndex);
+    expect(manifest.scenes[noCamIndex].camera).toEqual([{ at: 0, zoom: 1 }]);
+    expect(selection).toEqual({ sceneIndex: noCamIndex, target: { kind: 'camera' } });
+  });
+
+  it('produces a manifest the engine schema still accepts', () => {
+    const { manifest } = addCamera2d(sample, noCamIndex);
+    expect(() => manifestSchema.parse(manifest)).not.toThrow();
+  });
+
+  it('changes nothing except that one scene camera', () => {
+    const { manifest } = addCamera2d(sample, noCamIndex);
+    const strip = (m: Manifest) =>
+      JSON.stringify({ ...m, scenes: m.scenes.map((s, i) => (i === noCamIndex ? { ...s, camera: null } : s)) });
+    expect(strip(manifest)).toBe(strip(sample));
+  });
+
+  it('is a no-op on a scene that already has a camera', () => {
+    const withCam = sample.scenes.findIndex((s) => !!s.camera);
+    expect(withCam).toBeGreaterThanOrEqual(0);
+    const { manifest, selection } = addCamera2d(sample, withCam);
+    expect(manifest).toBe(sample);
+    expect(selection).toBeNull();
+  });
+
+  it('is a no-op on an out-of-range scene index', () => {
+    const { manifest, selection } = addCamera2d(sample, 999);
+    expect(manifest).toBe(sample);
+    expect(selection).toBeNull();
+  });
+
+  it('never mutates the manifest it was given', () => {
+    const snapshot = JSON.stringify(sample);
+    addCamera2d(sample, noCamIndex);
+    expect(JSON.stringify(sample)).toBe(snapshot);
+  });
+
+  it('lands on the SAME manifest the agent path already produced', () => {
+    const viaGui = addCamera2d(sample, noCamIndex).manifest;
+    const viaAgent = setCamera2d(sample, noCamIndex, [{ at: 0, zoom: 1 }]);
+    expect(viaGui).toEqual(viaAgent);
   });
 });

@@ -30,6 +30,21 @@ One or two lines per session. Detail lives in the decision it references.
   1280×720 and 15.0 ms, a 3.5× cut in what each capture costs the app being
   recorded. Caught by reading the first live run's numbers rather than trusting
   the parameter.
+- **2026-09-16** — **D-331: a scene can be given a 2D camera from the GUI.** A
+  firsthand Motion-tab UX audit (D-165's harness, real Chromium) found the
+  standing human-AND-AI rule violated in the *inverted* direction:
+  `setCamera2d` creates `scene.camera` when absent, so `motion_set_camera_2d`
+  could bring a 2D camera into being, while the GUI only ever rendered a
+  Camera row for a scene that already had one — circular, and unreachable by
+  hand. New `addCamera2d` + a hover-revealed `Add camera` action on the scene
+  row, defaulting to one neutral key (`{at: 0, zoom: 1}`) and selecting the new
+  camera so the Inspector's `+ Add keyframe` is the obvious next click. No new
+  MCP tool: the agent path already reached the identical end state, and a test
+  pins the two paths to the same manifest. The audit's three other findings are
+  recorded in the same entry — the Motion preset/component library and
+  manifest-level fields are deferred to the roadmap with reasons, and the
+  "render → Sources is silent" suspicion was **withdrawn** after reading
+  `Root.tsx` (it already toasts; the harness just never wires `onRendered`).
 - **2026-09-15** — **B-199: the transport bar's timecode no longer jitters,
   and drops the frame field.** `tabular-nums` alone only fixes digit widths;
   `font-mono` on the whole readout makes every character (colons, `/`, space)

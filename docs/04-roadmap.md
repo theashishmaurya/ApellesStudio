@@ -1089,6 +1089,46 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       and the MCP side has the same granularity gap, so both halves land
       together), and auto-render on manifest save (investigated and rejected in
       D-260's own finding 4, not skipped).
+    - ~~**8. A scene's 2D camera could not be created by hand** — `setCamera2d`
+      creates `scene.camera` when it is absent, so `motion_set_camera_2d` could
+      make one and the GUI could not: `LayerList.tsx` renders a Camera row only
+      when the field already exists, and nothing else in the tab ever wrote it.
+      The standing human-AND-AI rule, violated in the inverted direction.~~
+      **DONE — D-331, 2026-09-16**: `addCamera2d` + a hover-revealed `Add
+      camera` action on the scene row, one neutral `{at: 0, zoom: 1}` key, the
+      new camera selected so the Inspector's `+ Add keyframe` is the next
+      click. No new MCP tool (the agent path already reached the identical end
+      state — a test pins the two to the same manifest). The 3D camera was
+      checked and found symmetric, so deliberately untouched.
+    - **9. A Motion layer preset / component library** — owner, 2026-09-16, and
+      the largest finding of D-331's audit: the Catalog offers exactly the 10
+      built-in primitives with hard-coded `defaultLayerFor` defaults, so a
+      tuned `matrix` or `graph` (both edited through raw-JSON textareas) cannot
+      be kept and must be retyped from scratch every time. `duplicateLayer`
+      only helps within one manifest. **Not started, and deliberately not
+      half-built.** Unlike D-243's caption presets (hard-coded TS data, no
+      storage), a user-SAVED library needs real persistence; the in-repo
+      precedent is RapidRAW's own grading presets — `file_management.rs`'s
+      `load_presets`/`save_presets` over `app_data_dir()/presets/presets.json`,
+      with `PresetItem`/`PresetFolder` already showing the folder-tree shape.
+      Full scope, both halves in one pass per the standing rule: a preset
+      module + two Tauri commands, a "Save as component" row action, a saved
+      section in `CatalogPanel`, and `motion_save_layer_preset` /
+      `motion_list_layer_presets` / `motion_add_layer_from_preset` /
+      `motion_delete_layer_preset` in `motionOps.ts`, `mcp/server.py` AND
+      `crates/apelles-mcp`, plus a regenerated golden corpus and the three tool
+      counts in `docs/notes/mcp-tool-coverage.md`.
+    - **10. Manifest-level fields are unreachable in a typed way, by either
+      side** — `manifestSchema` declares `title`/`width`/`height`/`fps`/
+      `grain`/`vignette`/`transparent`, but there is no document-level
+      selection target, no `MANIFEST_FIELDS` in `propCatalog.ts`, and no
+      `motion_*` op that writes them: a human reaches them only through the raw
+      JSON textarea and an agent cannot reach them at all. **Deferred on a
+      product question, not effort** (D-331): the Edit tab already owns
+      width/height via `ProjectSettings` + `chroma_project_get_settings`/
+      `chroma_project_set_settings` (D-199), so the real call is whether a
+      Motion manifest keeps its own size/fps or inherits the project's — and
+      the wrong choice is hard to walk back. Needs an owner decision first.
 17. **Show the export's real start/end bound in the Edit-tab timeline UI** — owner,
     2026-09-07, live, after B-076 (D-187): `editor_export` renders the WHOLE
     timeline only up to the furthest clip's own end (`-t <that>` — the `color=[base]`
