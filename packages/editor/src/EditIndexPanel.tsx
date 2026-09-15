@@ -172,6 +172,13 @@ function MarkerRow({ marker, fps, onSeek, onComment, onRemove }: MarkerRowProps)
   const ranged = !!marker.duration_frames;
 
   return (
+    // Two ROWS, not one line of five columns. The first draft put the comment
+    // box beside the name and delete, and in the real 288px column (verified in
+    // Chromium on D-142's harness, which is the only tier that has a layout
+    // engine at all) that squeezed every marker name down to a single letter
+    // and wrapped the time range onto three overlapping lines. The thumbnail
+    // spans both rows on the left; everything textual stacks to its right and
+    // gets the column's full remaining width.
     <li
       data-chroma-marker-index-item={marker.id}
       className="group flex items-start gap-2 rounded-md p-1.5 hover:bg-bg-primary"
@@ -185,39 +192,62 @@ function MarkerRow({ marker, fps, onSeek, onComment, onRemove }: MarkerRowProps)
         data-chroma-marker-index-seek
         onClick={onSeek}
         title={`Jump to ${fmtTimecode(marker.frame, fps)}`}
-        className="flex min-w-0 flex-1 items-start gap-2 text-left outline-none focus-visible:ring-1 focus-visible:ring-accent rounded"
+        className="shrink-0 overflow-hidden rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
-        <span
-          aria-hidden
-          className="mt-0.5 size-2.5 shrink-0 rounded-full"
-          style={{ background: marker.color }}
-        />
-        <span className="h-9 w-16 shrink-0 overflow-hidden rounded-sm bg-bg-primary">
+        <span className="block h-9 w-16 overflow-hidden rounded-sm bg-bg-primary">
           {thumb ? (
             <img src={thumb} alt="" className="h-full w-full object-cover" draggable={false} />
           ) : null}
         </span>
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="truncate text-[11px] text-text-primary">
-            {marker.name || <span className="text-text-secondary">Unnamed marker</span>}
-          </span>
-          <span className="tabular-nums text-[10px] text-text-secondary">
-            {/* Premiere's Markers panel shows in/out for a ranged marker and a
-                single time for a point one; that distinction is the useful part
-                of its row, so it is the part kept. */}
-            {ranged
-              ? `${fmtTimecode(marker.frame, fps)} → ${fmtTimecode(markerEndFrame(marker), fps)}`
-              : fmtTimecode(marker.frame, fps)}
-          </span>
-        </span>
       </button>
 
-      <div className="flex w-28 shrink-0 flex-col gap-1">
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex min-w-0 items-start gap-1.5">
+          <span
+            aria-hidden
+            className="mt-1 size-2.5 shrink-0 rounded-full"
+            style={{ background: marker.color }}
+          />
+          <button
+            type="button"
+            data-chroma-marker-index-seek-text
+            onClick={onSeek}
+            title={`Jump to ${fmtTimecode(marker.frame, fps)}`}
+            className="flex min-w-0 flex-1 flex-col gap-0.5 rounded text-left outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            <span className="truncate text-[11px] leading-tight text-text-primary">
+              {marker.name || <span className="text-text-secondary">Unnamed marker</span>}
+            </span>
+            {/* `whitespace-nowrap`: a ranged marker's `in → out` is one
+                indivisible fact, and letting it wrap mid-arrow was the second
+                thing the real-Chromium pass caught. */}
+            <span className="whitespace-nowrap tabular-nums text-[10px] leading-tight text-text-secondary">
+              {/* Premiere's Markers panel shows in/out for a ranged marker and a
+                  single time for a point one; that distinction is the useful part
+                  of its row, so it is the part kept. */}
+              {ranged
+                ? `${fmtTimecode(marker.frame, fps)} → ${fmtTimecode(markerEndFrame(marker), fps)}`
+                : fmtTimecode(marker.frame, fps)}
+            </span>
+          </button>
+          <Button
+            variant="ghost"
+            size="xs"
+            data-chroma-marker-index-remove
+            aria-label={`Delete ${marker.name || 'marker'}`}
+            title="Delete marker"
+            className="h-5 shrink-0 px-1 text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+            onClick={onRemove}
+          >
+            <TrashIcon className="size-3" />
+          </Button>
+        </div>
+
         <Input
           data-chroma-marker-index-note
           aria-label={`Comment for ${marker.name || 'marker'}`}
           placeholder="Comment"
-          className="h-6 text-[10px]"
+          className="h-6 w-full text-[10px]"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           // A whitespace-only comment CLEARS rather than storing `""` — the
@@ -225,18 +255,6 @@ function MarkerRow({ marker, fps, onSeek, onComment, onRemove }: MarkerRowProps)
           onBlur={() => onComment(draft.trim() ? draft : null)}
         />
       </div>
-
-      <Button
-        variant="ghost"
-        size="xs"
-        data-chroma-marker-index-remove
-        aria-label={`Delete ${marker.name || 'marker'}`}
-        title="Delete marker"
-        className="h-6 shrink-0 px-1 text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-        onClick={onRemove}
-      >
-        <TrashIcon className="size-3" />
-      </Button>
     </li>
   );
 }

@@ -31840,6 +31840,50 @@ model), `timecode.test.ts` (6, new file) and `EditIndexPanel.dom.test.tsx` (14, 
 file). `npx tsc --noEmit` clean on every `packages/*` project, with `app/`'s 65
 pre-existing errors unchanged.
 
+**Live-verified in real Chromium**, on D-142's permanent harness
+(`app/harness.html`, a fresh Vite on its own port **in this worktree** — the shared
+`npm run tauri:dev` instance was running from the main checkout throughout and was
+never touched, per CLAUDE.md's standing rule; it runs `main`'s code and could not
+have shown these features anyway). This is the tier jsdom cannot reach, and it
+earned its keep immediately:
+
+- **It caught a real layout defect the 14 jsdom tests could not**, because jsdom has
+  no layout engine. The marker row's first draft laid the thumbnail, colour, name,
+  time and comment box out as one line; in the real 288px column that squeezed every
+  marker name to a single letter ("F…", "B…", "S…") and wrapped a ranged marker's
+  `in → out` across three overlapping lines. Rebuilt as two rows with the thumbnail
+  spanning both — names now render in full at 141px and the time range is one
+  unwrapped line. **Worth stating plainly: the feature passed every unit test while
+  being visibly broken**, which is exactly what the "don't claim it works until it
+  renders" rule exists for.
+- **The ranged bar's geometry is pixel-exact, not merely close.** Measured: the bar's
+  left edge is `1086px`, *identical* to its own flag's — the same property D-222
+  verified for the flag against the playhead, now holding for the bar — and its width
+  is `450px` against a measured ruler scale of `3.75px/frame × 120 frames = 450`.
+  Only the ranged marker has a bar; the point marker has none.
+- **The whole duration round trip, driven through the real UI.** A point marker's
+  Duration field shows empty (absent, not `00:00:00:00`); typing the short form
+  `2:12` into it writes `duration_frames: 60` (2×24+12 — `parseTimecode`'s
+  right-anchored reading, live) and the bar appears at `225px` = 60 × 3.75; emptying
+  the field again removes the key entirely and the bar disappears, leaving the record
+  serialised as `{"id":"m1","frame":72,"color":"#D9434E","name":"Fix framing"}` —
+  **byte-identical to a pre-D-328 point marker**, which is the "absent, never zero"
+  invariant and the backward-compatibility guarantee confirmed on a live document
+  rather than only in a unit test.
+- **The Index panel driven end to end:** the rail's new button switches to it, the
+  Markers/Transcript tabs switch, clicking a marker row moved the playhead `0 → 600`,
+  and typing into a row's inline comment box wrote a real `set_marker` (the note
+  persisted, and the marker stayed a point marker). The Transcript view shows its
+  no-selection advice, then its transcribe offer once a clip is selected. Zero console
+  errors or React warnings on either harness page.
+
+Not reachable on the harness, and therefore still only unit-tested: real decoded
+thumbnails (the harness has no Tauri behind it, so `chroma_clip_thumbnails` returns
+nothing and rows draw their placeholder) and a real transcript's segment list, seek
+and playhead highlight (that needs the AI sidecar) — the 14 jsdom cases cover the
+segment→timeline-frame conversion and the highlight's cost, which are the parts with
+a right answer.
+
 **Disclosed, not fixed:** the ranged-marker bar cannot be dragged to resize (see
 decision 1); the Transcript view is scoped to one selected clip rather than the
 whole sequence, matching how `editor_get_transcript` is keyed (per source path, no
