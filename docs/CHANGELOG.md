@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-15** — **B-197 filed: `editor_ripple_delete_ranges` silently
+  dropped 2 of 87 ranges from a batch cut while reporting full success.**
+  Both ranges independently verified correct in an earlier 60-range call on
+  the same file — only failed once the batch grew larger/differently
+  composed. Confirmed by brute-forcing the true frame union against the
+  actual result (630 frames/26.25s survived that should have been cut, one
+  fewer clip boundary than requested). Not root-caused yet — likely
+  `rippleDeleteOneRange`'s silent early-return on a refused `remove` op,
+  but not confirmed. Worked around for tonight's real edit by splitting into
+  two smaller calls, each verified independently — not a fix, disclosed as
+  a workaround.
+
 - **2026-09-15** — **B-193 fixed (D-326): a manifest that fails to load is no
   longer mistaken for a project that doesn't exist.** `load_manifest` returns a
   typed `LoadManifestError` whose `NotFound` is a distinct variant (same
