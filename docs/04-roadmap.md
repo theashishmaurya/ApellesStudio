@@ -1570,12 +1570,39 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         surface is built and what `TransformOverlay`/`useContentBox` measure,
         and it cannot be verified in jsdom — it needs the real app. This and the
         next item are where the remaining ~19 ms lives.
-      - ⬜ **Still open — `playhead` lives in the store slice eight panels
-        subscribe to**, so every displayed frame re-renders the Inspector, the
-        timeline, the library panel and the overlays. Measured shape of the
-        cost: closing the Inspector alone moved the loop 25.0 → 23.0 ms. The fix
-        is a transient-subscription / separate-slice refactor across those
-        components, not something to bolt onto a perf fix.
+      - ⬜ **Partly fixed 2026-09-15 (D-325, B-146 continuation) — `playhead`
+        lives in the store slice (at least) ELEVEN components subscribe to
+        reactively** (`CaptionLibrary`, `ClipCurveEditor`,
+        `CaptionsFromTranscriptButton`, `CaptionTransformOverlay`,
+        `EditLibraryPanel`, `EditorInspectorPanel`, `PreviewPane`,
+        `ScrubWaveform`, `TimelinePane`, `TransformOverlay`,
+        `useCanvasClipPick` — more than D-290's own "eight" count, not fewer;
+        this pass counted them directly rather than trusting the old number).
+        **`TimelinePane` — by far the worst of the eleven, and the one this
+        pass fixed** — is not just "a re-render": it is a ~4500-line component
+        that also fails its own React Compiler coverage test (B-184, still
+        open) and walks every clip on every track to build its output, so its
+        playhead-driven re-render cost SCALES WITH CLIP COUNT, a dimension
+        D-290's original "closing the Inspector alone moved the loop 25→23ms"
+        measurement never exercised (that project had a handful of clips).
+        Measured on `main` before this fix: 3.75ms/commit at 2 clips,
+        15.0ms/commit at 96, 27.1ms/commit at 200 — TWO commits per tick (the
+        reactive selector's own render, plus the same effect's imperative
+        `editorRef.current.setTime()` triggering a second one). Fixed by
+        reading `playhead` through `useEditorTimelineStore.getState()` at the
+        three places that actually need its value (an effect, two click
+        handlers) instead of a reactive selector — removes the redundant
+        top-level re-render (measured: exactly one commit per tick now, not
+        two — `TimelinePane.playheadCost.dom.test.tsx`), but does NOT
+        eliminate the remaining per-commit cost, which lives inside
+        `@xzdarcy/react-timeline-editor`'s own internal re-render of its
+        virtualized rows/cursor and legitimately still scales with clip count
+        (a real third-party-library cost, not a redesign for this pass). The
+        other ten components are the same anti-pattern, unfixed — most of
+        them don't render per-timeline-clip, so likely cost closer to D-290's
+        original ~2ms-Inspector-alone shape than TimelinePane's clip-count-
+        scaling one, but that is an assumption, not yet measured the same way.
+        Real follow-up work, still not something to bolt onto a perf fix.
 26. ~~**`editor_set_selection` — the Edit tab's selection is READABLE over MCP and
     not WRITABLE, so the whole on-canvas surface is agent-unreachable.**~~
     **BUILT 2026-09-08 (D-216).** Found

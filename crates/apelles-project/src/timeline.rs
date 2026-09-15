@@ -321,4 +321,82 @@ mod tests {
         assert_eq!(tl.id, "t2");
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    /// D-325's own measurement of lead (C) from the B-146 continuation
+    /// investigation: `resolve_timeline_and_settings`'s unconditional
+    /// `.clone()` of the active `Timeline` (this function's own doc already
+    /// flagged it: "a second call would still clone a whole manifest") DOES
+    /// scale with clip count, real and confirmed here — but the absolute cost
+    /// stays microseconds even at 200 clips, three-plus orders of magnitude
+    /// below D-290's own measured ~21.5ms/frame webview floor. Real, not the
+    /// dominant cost, and deliberately NOT optimised further this pass — see
+    /// D-325 for why (measuring first is what told the difference between
+    /// "real" and "matters").
+    ///
+    /// A regression guard, not a benchmark left to bit-rot: if this clone
+    /// path is ever made to do something that actually costs real
+    /// milliseconds (a deep JSON clone inside `chroma_keyframes`, say), this
+    /// fails loudly instead of quietly becoming the next per-frame surprise.
+    #[test]
+    fn resolve_timeline_and_settings_clone_cost_stays_microseconds_even_at_200_clips() {
+        fn build(tag: &str, n: usize) -> std::path::PathBuf {
+            let root = tmp(tag);
+            let (dir, mut manifest) = new_project_in(&root, "Measure", &[]).unwrap();
+            let mut clips = Vec::with_capacity(n);
+            for i in 0..n {
+                clips.push(Clip {
+                    id: format!("clip-{i}"),
+                    name: format!("clip number {i} with a reasonably long name"),
+                    source_path: format!("/some/reasonably/long/media/path/clip_{i}.mov"),
+                    duration: 48,
+                    source_len: 48,
+                    start_frame: (i as i64) * 48,
+                    ..Default::default()
+                });
+            }
+            manifest.timelines.push(Timeline {
+                id: "t1".into(),
+                name: "Measure".into(),
+                rate: None,
+                tracks: vec![Track {
+                    kind: TrackKind::Video,
+                    clips,
+                    ..Default::default()
+                }],
+                markers: Vec::new(),
+            });
+            manifest.active_timeline = 0;
+            save_manifest(&dir, &manifest).unwrap();
+            dir
+        }
+
+        const N: u32 = 2000;
+        // D-290's own measured webview-side floor was ~21.5ms/frame. 200us —
+        // two orders of magnitude below that — is a generous ceiling: real
+        // enough to catch a genuine regression, nowhere close to tripping on
+        // ordinary machine noise.
+        const CEILING_PER_CALL: std::time::Duration = std::time::Duration::from_micros(200);
+
+        for clip_count in [1usize, 96, 200] {
+            let dir = build(&format!("clone_cost_{clip_count}"), clip_count);
+            // Warm the D-114 cache — isolate the clone cost, not the read+parse.
+            resolve_timeline_and_settings(&dir, false).unwrap();
+
+            let start = std::time::Instant::now();
+            for _ in 0..N {
+                let _ = resolve_timeline_and_settings(&dir, false).unwrap();
+            }
+            let elapsed = start.elapsed();
+            let per_call = elapsed / N;
+            println!("clip_count={clip_count}: {N} calls, {elapsed:?} total, {per_call:?}/call");
+            assert!(
+                per_call < CEILING_PER_CALL,
+                "resolve_timeline_and_settings got real-costly at clip_count={clip_count}: \
+                 {per_call:?}/call >= {CEILING_PER_CALL:?} ceiling — this is the D-325 \
+                 investigation's lead (C); re-measure against D-290's webview floor before \
+                 assuming it is now the dominant per-frame cost"
+            );
+            let _ = std::fs::remove_dir_all(dir.parent().unwrap_or(&dir));
+        }
+    }
 }

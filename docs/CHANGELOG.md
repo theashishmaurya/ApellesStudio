@@ -4,6 +4,27 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-15** — **D-325, B-146 continuation: `TimelinePane`'s reactive
+  `playhead` subscription was scaling preview cost with clip count.** Live
+  testing after D-323/D-324 still showed a heavily recut 96-clip project at
+  218ms/frame vs. a 1-clip baseline's 94ms — both far above D-290's ~21.5ms
+  ceiling. Measured and ruled out two leads first (a Rust timeline clone,
+  D-324's own prefetch keep-list — both real O(clip-count) but microseconds,
+  not milliseconds). Found: `TimelinePane.tsx`, one of D-290's "eight
+  components that re-render on every displayed frame" (actually eleven,
+  recounted this pass), is a ~4500-line component that also fails its own
+  React Compiler test (B-184) and walks every clip to render — so its
+  playhead-driven re-render cost scaled with clip count, and it double-
+  committed every tick on top of that. Fixed: reads `playhead` via
+  `getState()` at the three call sites that need it instead of a reactive
+  selector — one commit per tick now, not two, at every clip count
+  (`TimelinePane.playheadCost.dom.test.tsx`). Honestly scoped: the remaining
+  per-commit cost still scales with clip count (now inside
+  `@xzdarcy/react-timeline-editor`'s own internal re-render), the other ten
+  subscribers are untouched, and this pass could not re-take live
+  `debug_frame_timing` numbers against the real app (worktree isolation) — see
+  D-325 and `docs/04-roadmap.md` item 25.
+
 - **2026-09-14** — **D-324 fixes B-191: every cut of a recut timeline cost a
   ~300 ms ffmpeg keyframe seek in the playback hot path.** A ripple-delete's
   boundaries are arbitrary source-frame jumps, so all 95–155 of them forced a

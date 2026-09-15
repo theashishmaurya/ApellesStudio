@@ -1165,7 +1165,17 @@ function TrackDropZone({ track, top, height }: { track: number; top: number; hei
 
 export function TimelinePane() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
+  // D-325 — deliberately NOT `useEditorTimelineStore((s) => s.playhead)`. This
+  // is the only component in the codebase where that selector's ordinary
+  // per-frame re-render cost (D-290's own "eight components subscribe to
+  // playhead" finding) is paid by a ~4500-line, Compiler-bailed-out (B-184)
+  // component whose render body walks every clip on every track. Measured:
+  // `TimelinePane.playheadCost.measure.dom.test.tsx` — 3.75ms/commit at 2
+  // clips, 15.0ms/commit at 96, 27.1ms/commit at 200, scaling with clip count
+  // because there is nothing in this file that reads a subscribed playhead
+  // reactively — see the effect below and the three `getState().playhead`
+  // reads at the split/marker/zoom-anchor call sites, none of which need a
+  // re-render to do their job, only the value at the moment they run.
   const setPlayhead = useEditorTimelineStore((s) => s.setPlayhead);
   // D-232 — grabbing the playhead during playback pauses it, the way every
   // reference NLE does and the way the player's own position bar already did.
@@ -1345,9 +1355,28 @@ export function TimelinePane() {
 
   // keep the editor's own cursor in step with the store playhead (step buttons,
   // the play loop, clicks in the preview transport)
+  //
+  // D-325 — a direct store subscription, not a reactive `playhead` selector.
+  // This effect (and the `getState().playhead` reads at the split/marker/
+  // zoom-anchor handlers below) are the ONLY things in this whole file that
+  // ever needed the live playhead value, and none of them need a component
+  // re-render to get it — an imperative `setTime` call and a few
+  // read-at-the-moment-of-the-click handlers both work identically off
+  // `useEditorTimelineStore.getState()`. Subscribing to the raw store (this
+  // one has no `subscribeWithSelector` middleware, so the listener gets the
+  // whole state and filters for itself) instead of selecting `playhead`
+  // through the hook is what stops this ~4500-line component from
+  // re-rendering on every displayed frame during playback — see the D-325
+  // decision doc for the measured cost this removed.
   useEffect(() => {
-    editorRef.current?.setTime(playhead / fps);
-  }, [playhead, fps]);
+    editorRef.current?.setTime(useEditorTimelineStore.getState().playhead / fps);
+    let last = useEditorTimelineStore.getState().playhead;
+    return useEditorTimelineStore.subscribe((state) => {
+      if (state.playhead === last) return;
+      last = state.playhead;
+      editorRef.current?.setTime(last / fps);
+    });
+  }, [fps]);
 
   // D-232 — unmounting mid-drag (a tab switch, a project close) still ends the
   // scrub gesture. `onCursorDragEnd` cannot fire for a component that is gone,
@@ -2890,7 +2919,14 @@ export function TimelinePane() {
   const doSplit = () => {
     for (const s of selection) {
       const at = locateClip(s.id);
-      if (at) applyOp({ kind: 'split', track: at.track, clip: at.clip, atFrame: playhead });
+      if (at) {
+        applyOp({
+          kind: 'split',
+          track: at.track,
+          clip: at.clip,
+          atFrame: useEditorTimelineStore.getState().playhead,
+        });
+      }
     }
   };
 
@@ -2918,7 +2954,7 @@ export function TimelinePane() {
    *  `newMarker` owns id generation and the default colour, so this button and
    *  `editor_add_marker` build an identical marker. */
   const doAddMarker = () => {
-    const marker = newMarker(playhead);
+    const marker = newMarker(useEditorTimelineStore.getState().playhead);
     // `newMarker` only rejects a caller-supplied colour or a non-finite frame;
     // this call site passes neither, so the guard is a type narrow, not a real
     // branch.
@@ -3627,7 +3663,14 @@ export function TimelinePane() {
     const viewportX =
       anchorClientX !== null && rect
         ? anchorClientX - rect.left
-        : buttonZoomAnchorX(playhead, fps, pxPerSec, scrollLeft, START_LEFT_PX, width);
+        : buttonZoomAnchorX(
+            useEditorTimelineStore.getState().playhead,
+            fps,
+            pxPerSec,
+            scrollLeft,
+            START_LEFT_PX,
+            width,
+          );
     zoomAnchorRef.current = {
       frame: frameAtViewportX(viewportX, fps, pxPerSec, scrollLeft, START_LEFT_PX),
       viewportX,

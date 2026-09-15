@@ -31170,3 +31170,171 @@ tightly budgeted, matching `b040_multi_layer_preview_throughput`.
 **Not done.** The ~21.5 ms/frame that lives on the webview side of the IPC
 (D-290/B-146) is untouched and is still the preview's real frame-rate ceiling —
 this entry removes a per-cut stall, not that ceiling.
+
+---
+
+## D-325 — the B-146 continuation: `TimelinePane`'s own reactive `playhead` subscription, not the Rust timeline clone, is what scales preview cost with clip count
+
+**decided (2026-09-15)** · continues D-290/B-146 · touches B-184 (still open)
+
+**Context.** After D-323/D-324 landed (audio-at-a-cut and the decode-pipe
+prefetch, both verified fixed), a live `debug_frame_timing` pass against the
+running app found the *overall* preview still far below 24fps: a clean
+single-clip baseline (`storm-clip`) painted at **94ms/frame (10.5fps)**, and a
+heavily recut 96-clip project (`2026-09-12-c040`, D-318/D-321's silence/
+retake detector) at **218ms/frame (4.3fps)** — both far worse than D-290's own
+documented ceiling of ~21.5-25ms/frame (~38.5-46fps). An earlier Opus pass died
+mid-investigation with one lead flagged as the strongest suspect: `crates/
+apelles-project/src/timeline.rs`'s `resolve_timeline_and_settings` clones the
+whole active `Timeline` unconditionally on every call, and it's called once
+per displayed frame. Three leads were named to check, in order, with the
+explicit instruction to measure before fixing and not stop at the first
+plausible-looking one: (C) that Rust clone, (B) whether D-324's new prefetch/
+keep-list logic scales with clip count, (A) whether something regressed since
+D-290 or the webview floor itself is worse than documented.
+
+**(C) — measured, real, NOT the dominant cost. Ruled out.**
+`resolve_timeline_and_settings_clone_cost_stays_microseconds_even_at_200_clips`
+(`crates/apelles-project/src/timeline.rs`) builds real projects at 1/96/200
+clips and times 2000 warm-cache calls each: **5.5µs/call at 1 clip, 37.1µs/call
+at 96, 67.4µs/call at 200.** Real and genuinely O(clip-count) — the function's
+own doc already named it ("a second call would still clone a whole manifest")
+— but three-plus orders of magnitude below the ~21.5ms/frame webview floor
+D-290 measured, let alone the 94-218ms this investigation was chasing. Fixing
+it would not be wrong, but CLAUDE.md's own instruction here was explicit
+("don't blind-fix all three... fix what you measure to matter") — a ~60µs
+saving is not worth the code it would take (extending D-114's manifest cache
+to also cache the cloned `Timeline`, invalidated the same way), so it was left
+alone and turned into a permanent regression guard instead (asserts the cost
+stays under 200µs/call — two orders of magnitude of headroom before this
+becomes worth revisiting, not a tight budget that would flap on machine
+noise).
+
+**(B) — traced, not the dominant cost either. Ruled out.**
+`decode_pipe::retain_pipe_slots`'s own `keep` list is built from
+`timeline_frame_image`'s `layers` (the currently-visible video layers) plus
+`upcoming_boundary_targets`'s prefetch targets — both bounded by TRACK count
+(at most one or two entries per track: the visible clip, plus a transition
+partner), never by total clip count on a track, so `retain_pipe_slots` itself
+does not scale with clip count. What DOES scale with clip count is one level
+further down: `Track::clip_at`'s `self.clips.iter().find(...)` linear scan
+(called by `resolve_visible_video_layers_at`, which both `timeline_frame_image`
+and `upcoming_boundary_targets` call once per frame — two scans per video
+track per frame). Real, but the same class of operation as (C)'s clone
+benchmark — cheap integer/float comparisons, zero allocation, strictly
+cheaper per-clip than a full `Clip` clone — so by the same measured order of
+magnitude this is microseconds, not milliseconds, even at 200 clips. Not
+given its own dedicated benchmark (the mechanism and cost class are already
+pinned down by (C)'s numbers), but traced and reasoned through rather than
+assumed clean.
+
+**(A) — confirmed, measured, and the closest thing to a dominant, clip-count-
+scaling cause this pass found: `TimelinePane.tsx`'s own reactive `playhead`
+subscription.** D-290 already named "eight components subscribe to `playhead`
+and every one re-renders on every displayed frame" as known, deferred work
+(`docs/04-roadmap.md` item 25) — but its own cost measurement (~2ms, from
+closing the Inspector) came from a project with a handful of clips, and it
+never singled out which of the eight was worst. This pass counted the actual
+subscribers directly (`grep`, not the old count): **eleven**, not eight —
+`CaptionLibrary`, `ClipCurveEditor`, `CaptionsFromTranscriptButton`,
+`CaptionTransformOverlay`, `EditLibraryPanel`, `EditorInspectorPanel`,
+`PreviewPane`, `ScrubWaveform`, `TimelinePane`, `TransformOverlay`,
+`useCanvasClipPick`. `TimelinePane.tsx` is categorically different from the
+other ten: a ~4500-line component that (a) already fails its own React
+Compiler coverage test (B-184, filed 2026-09-13, still open — "Cannot access
+refs during render" at `:3685` defeats auto-memoization for the WHOLE file)
+and (b) walks every clip on every track to build `editorData` and the rest of
+its render output. A reactive `playhead` selector on a component with that
+shape doesn't cost a flat few ms — it re-executes an un-memoized, per-clip
+render body on every displayed frame, and the cost scales with clip count.
+
+**Measured directly** (`TimelinePane.playheadCost.dom.test.tsx`, a
+`React.Profiler`-instrumented jsdom mount — the same instrument and the same
+honest jsdom-tier limits D-290's own `PreviewPane.playbackCost.dom.test.tsx`
+established: this proves the commit-count/cost shape, not real-app
+milliseconds), on `main` before this fix, 30 playhead ticks each:
+
+| clip count | commits | ms/commit | commits/tick |
+|---|---|---|---|
+| 2 | 60 | 3.75-5.38 | **2** |
+| 96 | 60 | 12.8-15.0 | **2** |
+| 200 | 60 | 22.8-27.1 | **2** |
+
+Two commits per tick, not one: the reactive `useEditorTimelineStore((s) =>
+s.playhead)` selector's own re-render, PLUS a second commit from the SAME
+effect's imperative `editorRef.current?.setTime(playhead / fps)` call, which
+pokes `@xzdarcy/react-timeline-editor`'s own internal state and triggers its
+own re-render. Read carefully: every actual use of the reactive `playhead`
+value in this file was either that one imperative effect, or a handful of
+click handlers (split-at-playhead, drop-marker-at-playhead, the zoom button's
+anchor) that only need the CURRENT value at the moment they fire — none of
+them need the component to re-render reactively, and the file already has the
+right pattern for exactly this elsewhere (`locateClip`'s own
+`useEditorTimelineStore.getState()` read).
+
+**Fix.** Removed the reactive `playhead` selector. The effect now reads
+`useEditorTimelineStore.getState().playhead` once and additionally subscribes
+directly to the (plain, no `subscribeWithSelector` middleware) store via
+`useEditorTimelineStore.subscribe(...)`, filtering for an actual playhead
+change itself and calling `setTime` from the subscription callback — a
+listener, not a component re-render. The three click handlers now read
+`useEditorTimelineStore.getState().playhead` at the point of use instead of
+closing over the render-scope variable. **After the fix, same measurement:
+exactly one commit per tick, at every clip count** —
+`TimelinePane.playheadCost.dom.test.tsx` asserts this directly (`commits.length
+=== TICKS`) and was verified to fail on the pre-fix code first (60 commits,
+not 30 — confirmed by temporarily reverting the file and rerunning, the same
+discipline D-290's own "38 commits → 22" verification used).
+
+**Honest limit of this pass — the fix is real, but does not close B-146.**
+Two things this entry does NOT claim:
+
+1. **The remaining per-commit cost still scales with clip count** — from
+   12.8ms/commit at 96 clips to 22.8ms at 200 — because it now lives entirely
+   inside `@xzdarcy/react-timeline-editor`'s own internal re-render of its
+   virtualized rows/cursor when `setTime` moves the playhead marker. That is
+   real work a third-party library does when told to redraw more rows, not a
+   bug this pass introduced or found a clean way to eliminate without
+   patching or replacing the library — out of scope for this pass, named
+   honestly in `docs/04-roadmap.md` item 25 rather than implied fixed.
+2. **This does not fully account for the live-app 94ms→218ms gap.** Halving
+   TimelinePane's per-frame commit count is a real, measured win, but this
+   pass could not connect to the shared running Apelles instance to re-take
+   live `debug_frame_timing` numbers before/after: CLAUDE.md's standing rule
+   is that a worktree-isolated agent never touches the shared dev server
+   (`npm run tauri:dev` in the main checkout), and driving its live
+   `debug_frame_timing`/`open_project` MCP surface would do exactly that —
+   change the shared instance's open project and playhead state out from
+   under whoever else is using it. Standing up a second, fully independent
+   Apelles+control-server+MCP instance from this worktree (a different
+   `CHROMA_CONTROL_PORT`, a second MCP client wired to it) was judged out of
+   scope for this pass's budget. So every number in this entry is a direct
+   jsdom/Rust measurement, not a live-app one — real, and the right
+   before/after for the specific defect fixed, but not a substitute for the
+   owner re-running `debug_frame_timing` against the real app on `storm-clip`
+   and `2026-09-12-c040` after this lands, which is the number that actually
+   closes the loop on the original 94/218ms report. Ten of the eleven known
+   reactive-`playhead` subscribers, and any other clip-count-scaling cost this
+   pass did not find, remain exactly as open as they were.
+
+**Why B-146 stays open, updated rather than closed.** This is a real,
+measured, partial fix to the same root cause B-146/D-290 already named, not a
+new, independent defect — see `docs/BUGS.md`'s B-146 entry, updated in place
+with this finding rather than filed as a new bug.
+
+**Verification.** `TimelinePane.playheadCost.dom.test.tsx` (3 new tests, one
+per clip count, each asserting the exact one-commit-per-tick property, printed
+per-commit costs for the record) — confirmed to fail on the pre-fix file
+(60 commits, not 30) before confirming it passes on the fix. `npx vitest run
+packages/editor` — no new failures beyond the one pre-existing, disclosed
+B-184 case (`reactCompiler.test.ts`, unrelated to this fix and untouched by
+it). `resolve_timeline_and_settings_clone_cost_stays_microseconds_even_at_200_clips`
+(new, `apelles-project`) for lead (C)'s permanent guard. `cargo test
+--workspace`, `cargo fmt --check`, `cargo clippy --all-targets` clean.
+`npm run typecheck` — zero new errors against a `main` baseline built the same
+session. No Rust production code changed by this entry — the fix is entirely
+`packages/editor/src/TimelinePane.tsx`'s playhead-read pattern; `timeline.rs`
+gained only the permanent regression test for the ruled-out lead.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
