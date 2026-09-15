@@ -225,6 +225,16 @@ export interface PlayerProps {
  * so the popover's own state does not re-render the whole transport on every
  * open — this bar re-renders on every playhead tick during playback.
  */
+
+/** Strips `fmtTimecode`'s trailing `:FF` field for a display that wants
+ *  seconds precision, not frame precision — the transport bar's own
+ *  current/total readout. A plain slice, not a `fmtTimecode` mode: the
+ *  fallback `f123` (no-fps) form has no frame field to strip and is
+ *  returned as-is. */
+function dropFrameField(timecode: string): string {
+  return timecode.startsWith('f') ? timecode : timecode.slice(0, timecode.lastIndexOf(':'));
+}
+
 function RateControl({
   rate,
   onRateChange,
@@ -517,8 +527,30 @@ export function Player({
             </Button>
           )}
 
-          <span className="ml-2 text-xs tabular-nums text-text-secondary">
-            {fmtTimecode(frame, fps)} / {fmtTimecode(total, fps)}
+          {/* `fmtTimecode` always returns exactly "HH:MM:SS:FF" (zero-padded,
+              D-328's `fmtTimecode`), so the STRING's length never changes —
+              but `tabular-nums` alone only fixes DIGIT advance widths in
+              whatever proportional UI font this app uses; the colons and the
+              " / " still ride that font's normal (non-fixed-pitch) metrics,
+              which is enough sub-pixel drift per glyph combination to
+              visibly jitter the rest of the transport bar on every frame
+              tick. `font-mono` (a real fixed-pitch stack) makes EVERY
+              character the same advance width, so the whole string's
+              rendered width is now a true constant — no explicit
+              width/ch hack needed, and none of the earlier attempt's
+              per-half boxes, which mis-measured against this font and
+              left a gap instead of removing one.
+
+              This transport readout drops the trailing `:FF` frame field —
+              the owner doesn't want frame-level precision cluttering this
+              specific glance-at-it readout. `fmtTimecode` itself keeps
+              returning the full, frame-accurate string unchanged (the marker
+              popover and every other caller still need exact frame
+              round-tripping); only this display strips it, via a plain
+              string slice rather than a new `fmtTimecode` mode, since
+              nothing else needs a frameless variant yet. */}
+          <span className="ml-2 flex h-8 items-center font-mono text-xs tabular-nums text-text-secondary">
+            {dropFrameField(fmtTimecode(frame, fps))} / {dropFrameField(fmtTimecode(total, fps))}
           </span>
 
           {/* D-280 — the playback-rate control, in the LEFT cluster with the

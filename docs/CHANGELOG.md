@@ -4,6 +4,12 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-15** — **B-199: the transport bar's timecode no longer jitters,
+  and drops the frame field.** `tabular-nums` alone only fixes digit widths;
+  `font-mono` on the whole readout makes every character (colons, `/`, space)
+  the same advance width, so `current / total` is a true constant width. Also
+  drops the trailing `:FF` per the owner's request — `fmtTimecode` itself is
+  unchanged, only this one display strips it.
 - **2026-09-15** — **D-329: the Transcript panel reads the WHOLE timeline, and
   follows the spoken word.** D-328 scoped it to one selected clip and disclosed
   that as a limit; the owner rejected it ("i should be able to transcribe the
