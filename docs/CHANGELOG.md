@@ -4,6 +4,17 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-15** — **B-193 filed, critical: `chroma_project_save` silently
+  wipes a project to empty if `load_manifest` fails for ANY reason, not just
+  "doesn't exist yet."** Destroyed a real edited project live tonight during
+  an app crash/restart under severe memory pressure — recovered only because
+  the coordinating agent happened to have the exact cut ranges saved
+  separately. No distinction between "new project" and "existing project that
+  failed to read" in either `load_manifest`'s error type or the autosave
+  fallback that trusts it. No backup, no versioning, nothing to catch this the
+  next time. Not fixed yet — needs a real fix (typed not-found vs. real error,
+  atomic writes, possibly a rolling backup), dispatched separately.
+
 - **2026-09-15** — **D-325, B-146 continuation: `TimelinePane`'s reactive
   `playhead` subscription was scaling preview cost with clip count.** Live
   testing after D-323/D-324 still showed a heavily recut 96-clip project at
