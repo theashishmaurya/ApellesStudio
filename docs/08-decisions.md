@@ -31338,3 +31338,154 @@ gained only the permanent regression test for the ruled-out lead.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-326 — a manifest that fails to load is not a project that doesn't exist: a typed `LoadManifestError`, a refusing save, and a rolling `project.json.bak` (fixes B-193)
+
+**Context.** B-193, the worst bug this project has had. `chroma_project_save`
+— which runs on **every debounced autosave tick** — did:
+
+```rust
+let mut manifest = load_manifest(&dir).unwrap_or_else(|_| ProjectManifest::fresh(…));
+```
+
+`load_manifest` returned `Result<ProjectManifest, String>`, so "there is no
+`project.json` here yet" and "there is one and I could not read it" were the
+same value. Any transient I/O error, torn read, parse failure or unsupported
+schema therefore meant *this must be a brand-new project*, and the
+`save_manifest` two lines later wrote an empty manifest over the real one.
+Silently. On 2026-09-15 that destroyed the owner's `2026-09-12-c040` project —
+a real 96→61-clip edit — during an app crash/restart under severe memory
+pressure. It was recovered only because the coordinating session happened to
+have saved the exact cut ranges elsewhere; this app has no versioning, no
+backup, and (confirmed live) no Time Machine on the machine it runs on.
+
+### The error type: an enum, not a sentinel string
+
+**Options.** (a) String-match the message for "No such file or directory" at
+the call site. (b) Return `Option<ProjectManifest>` and lose every other
+error's detail. (c) A real `thiserror` enum with `NotFound` as its own variant.
+(d) Return `Result<Option<ProjectManifest>, String>` — `Ok(None)` for absent.
+
+**Chosen: (c).** (a) is the same bug wearing a disguise: the distinction stays
+invisible to the compiler and breaks the first time an OS reworded a message.
+(b) throws away exactly the information a user needs to recover. (d) is what
+`chroma_motion_get_manifest` already does and is genuinely fine for a *reader*,
+but it makes the dangerous case (`None`) the ergonomic one — `unwrap_or_default`
+on an `Option` is a one-keystroke way back into B-193. An enum with a named
+`is_not_found()` predicate makes the safe branch the one you have to write out.
+`thiserror` is already the house pattern (`apelles_types::ChromaError`,
+`apelles_timeline`, `apelles_speech::vad::VadError` from D-318 the same week)
+and already a workspace dependency, so this adds no third-party code.
+
+Two deliberate constraints on it. **`Display` is byte-identical to the old
+strings** — `packages/editor/src/timelineStore.test.ts` and the Edit tab's
+B-034 "No project open" handling both key off `parse project.json: …`, and
+rewording them would have been an invisible second change riding along with a
+data-loss fix. And **`impl From<LoadManifestError> for String`** keeps all ~90
+existing `?` call sites in `Result<_, String>` functions compiling untouched,
+so the diff is confined to the places that genuinely had to branch. The one
+call site that needed real thought is `load_manifest_cached`, whose `stat` used
+to produce its own error: it now falls through to the real read instead of
+classifying separately, so there is exactly one place the B-193 distinction is
+made rather than two that can drift apart.
+
+**Scope of the audit, and what was deliberately left.** Every persisted-document
+read in the repo was swept for the same read-swallow-then-overwrite shape. The
+Apelles-native document layer is clean: `grade.json`, the motion scene manifest,
+the Edit and Motion tab stores, and all ~20 other `load_manifest` call sites all
+propagate properly — `project.rs:517` was the single outlier. Five real
+instances do exist in RapidRAW-inherited code (`settings.json`, the `.rrdata`
+image sidecars and their eleven write-back sites, `presets.json`) and are filed
+as **B-194/B-195/B-196** rather than fixed here: different subsystems, different
+types, and folding them in would have made a critical data-loss fix
+unreviewable. They are real and should be fixed next.
+
+### `fsync`: yes on the file, no on the directory
+
+B-193's own point 3 asked for temp-file-then-rename. **It was already there** —
+B-034/D-112 landed it on 2026-09-04; the bug report was written without
+checking and is wrong on that. What was actually missing is the `fsync` that
+completes the pattern: `rename(2)` orders the *name*, not the data, so without
+it the kernel may publish the new name while the new file's blocks are still
+unwritten — a power loss then leaves `project.json` present but zero-length,
+which is strictly worse than keeping the old content.
+
+Measured on this machine (APFS, 400 KB manifest, 50 iterations):
+
+| | per save |
+|---|---|
+| write + rename (before) | 1.11 ms |
+| + `fsync(file)` | 6.87 ms |
+| + `fsync(file)` + `fsync(dir)` | 11.92 ms |
+| hard-link `.bak` (link + rename) | 1.72 ms |
+
+**The file `fsync` is taken; the directory `fsync` is not.** The file one buys
+the difference between "old content" and "garbage"; the directory one only
+buys durability of the rename itself, whose worst case without it is that a
+crash leaves the complete *previous* manifest — a safe outcome, and one the
+`.bak` covers anyway. ~5.8 ms on a 400 ms debounce is 1.5% duty and well inside
+a frame budget; another ~5 ms for a strictly weaker guarantee is not worth it
+under this repo's performance-first ordering. Note also what `fsync` does *not*
+buy: it is irrelevant to the actual B-193 incident, since an OOM **process**
+kill does not lose page-cache data — only a kernel panic or power loss does.
+It is insurance against a different failure, taken on its merits, not the fix.
+
+### The backup: yes, and why hard-link
+
+**Options.** (a) No backup — (1) and (2) close the known cause. (b) `.bak` via
+`fs::copy` of the current file before each save. (c) `.bak` via `hard_link`.
+(d) `rename(project.json → .bak)` then rename the new file into place.
+(e) Full versioning / an undo history on disk.
+
+**Chosen: (c).** (a) is the tempting answer and it is wrong here: (1) and (2)
+close the *mechanism found*, not the risk class, and this app's recovery path
+for a lost project file of *any* cause is currently nothing at all — no
+versioning, no backup, no Time Machine. One O(1) link is a very cheap floor
+under that. **(d) is actively dangerous and worth recording**: it leaves a
+window in which `project.json` does not exist, and a concurrent reader landing
+in that window sees exactly the `NotFound` that B-193 turns into "this must be
+a new project" — it would have *re-created* the bug in a new form. (b) is
+correct but O(file size) forever; (c) is O(1) (measured the same 1–1.7 ms
+today, but it does not grow with the project) with `fs::copy` kept as the
+fallback for a filesystem without hard links. (e) is a real feature with a real
+design — autosave versioning is worth its own decision later, and this is not
+a substitute for it, just a floor.
+
+Three properties make it safe rather than merely present: the link is taken
+**before** the new content is renamed in (so `.bak` can never be a copy of the
+new file); a backup failure is logged and swallowed, never fails the save
+(losing the safety net must not cost the user the write it was protecting); and
+the name is the visible `project.json.bak`, not a dotfile — its entire job is
+to be found by a human who has just lost a project. Recovery is deliberately
+**manual**: `load_manifest` does not silently fall back to `.bak`, because an
+automatic fallback is its own silent-wrong-data risk. Instead the refusal
+message from `chroma_project_save` names the `.bak` path outright.
+
+**Verification.** `chroma_project_save_refuses_to_overwrite_an_unreadable_project_json`
+(writes a real truncated `project.json`, calls the real command, asserts both
+`Err` *and* byte-identical file on disk) — confirmed to fail on the pre-fix
+call site first, where it returns `Ok(ProjectSaveDto{…})`, i.e. the silent
+wipe. `save_manifest_keeps_the_previous_good_manifest_in_a_bak` — likewise
+confirmed failing with the backup call removed.
+`chroma_project_save_still_creates_a_fresh_manifest_when_there_is_none` pins
+the one case that had to keep working;
+`only_a_genuinely_absent_project_json_is_not_found` classifies all five failure
+modes; `load_manifest_error_messages_are_unchanged` pins the `Display`
+constraint above. End-to-end demonstration against a real project directory
+with a truncated `project.json`: the save returned the refusal error, the 143
+original bytes were still on disk unchanged, and `project.json.bak` was
+present. `cargo build --workspace`, `cargo test --workspace`, `cargo fmt
+--all --check`, `cargo clippy --all-targets` clean. No TS touched.
+
+**Honest limit, disclosed rather than implied by a green check:** the `fsync`
+itself is not covered by any test. Verifying it needs the machine to lose power
+mid-write; on a live kernel the page cache serves the same bytes whether they
+reached the device or not, so there is no in-process way to observe the
+difference. It rests on the documented semantics of `rename(2)`/`fsync(2)`, not
+on this suite — the same disclosure D-290 made about its jsdom tiers. What the
+suite *does* cover is the visible atomicity contract (no torn read, no stray
+`.tmp`, exact bytes), which D-112's `concurrent_saves_never_expose_a_torn_manifest`
+already pinned and which still passes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn

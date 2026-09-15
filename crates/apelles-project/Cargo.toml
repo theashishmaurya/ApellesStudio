@@ -22,6 +22,10 @@ base64 = "0.23"
 chrono = "0.4"
 log = "0.4"
 once_cell = "1.21"
+# D-326 (B-193) — `LoadManifestError` is a real typed error, the same
+# `thiserror` shape `apelles-types`/`apelles-timeline`/`apelles-speech`
+# already use. Already a workspace dependency; no new third-party code.
+thiserror = { workspace = true }
 uuid = { version = "1.25", features = ["v4", "serde"] }
 
 [dev-dependencies]

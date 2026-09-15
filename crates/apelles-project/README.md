@@ -7,13 +7,19 @@ opinion about Tauri, the GPU, or which project happens to be open right now
 
 - **Deps:** `apelles-types` (`Resolution`), `apelles-timeline` (`Timeline` /
   `Clip` / `Track`), **`apelles-media`** (probe + thumbnail extraction),
-  `serde`/`serde_json`, `base64`, `chrono`, `log`, `once_cell`, `uuid`.
+  `serde`/`serde_json`, `base64`, `chrono`, `log`, `once_cell`, `thiserror`,
+  `uuid`.
   **No `tauri`, no `wgpu`, no `AppState`, no fork types.**
 - **Modules:**
   - `manifest` — the model, re-exported at the crate root because it *is* the
     crate: `ProjectManifest` / `ProjectSettings` / `MediaItem` / `ProjectShot`,
-    `load_manifest` (+ the D-114 mtime-validated `load_manifest_cached`),
-    the atomic `save_manifest` (B-034/D-112), every schema migration
+    `load_manifest` (+ the D-114 mtime-validated `load_manifest_cached`) and
+    its typed `LoadManifestError` — D-326/B-193: `NotFound` (there is no
+    project here yet) is a distinct variant from every other failure, and it
+    is the **only** one on which a caller may substitute a fresh manifest and
+    go on to write it,
+    the atomic-and-fsynced `save_manifest` (B-034/D-112, completed by D-326)
+    with its rolling `project.json.bak` (`MANIFEST_BACKUP_NAME`), every schema migration
     (`migrate_legacy_timeline`, `migrate_legacy_shots`, the D-136 normalised-
     geometry pass), the media pool + bins (D-044/D-045/D-059) including its two probed source
     kinds (`MediaItem.video` / `MediaItem.image`, mutually exclusive — D-292),

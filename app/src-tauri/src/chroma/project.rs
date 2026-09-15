@@ -514,13 +514,32 @@ pub async fn chroma_project_save(
         .or_else(|| state::current_project().map(|p| p.path))
         .ok_or("no project loaded — create or open one first")?;
 
-    let mut manifest = load_manifest(&dir).unwrap_or_else(|_| {
-        ProjectManifest::fresh(
+    let mut manifest = match load_manifest(&dir) {
+        Ok(m) => m,
+        // The ONE case where "start from a fresh manifest and write it" is
+        // correct: there is genuinely no project.json here yet.
+        Err(e) if e.is_not_found() => ProjectManifest::fresh(
             &dir.file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default(),
-        )
-    });
+        ),
+        // B-193/D-326 — every other failure means a project.json IS on disk
+        // and we could not read it (a transient I/O error, a torn read, a
+        // corrupt file, an unsupported schema). This used to fall into the
+        // branch above and then `save_manifest` over the top of it, replacing
+        // a real edited project with an empty one, silently, on an autosave
+        // tick. Refuse instead: a failed save the user can see beats a
+        // successful one that destroys their work.
+        Err(e) => {
+            return Err(format!(
+                "refusing to save over {}: its project.json exists but could not be \
+                 read ({e}). Your work on disk has NOT been modified. The previous \
+                 good manifest may also be recoverable from {}.",
+                dir.display(),
+                dir.join(apelles_project::MANIFEST_BACKUP_NAME).display(),
+            ));
+        }
+    };
     let now = now_rfc3339();
     if manifest.created.is_empty() {
         manifest.created = now.clone();
@@ -1876,6 +1895,116 @@ mod tests {
         .unwrap();
         let reloaded2 = load_manifest(&dir).unwrap();
         assert_eq!(reloaded2.active_clip_id, None);
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **B-193 / D-326 — the regression test for the worst bug this project
+    /// has had: an autosave tick silently replacing a real edited project
+    /// with an empty manifest.**
+    ///
+    /// `chroma_project_save` used to do
+    /// `load_manifest(&dir).unwrap_or_else(|_| ProjectManifest::fresh(…))` —
+    /// so ANY load failure (a transient I/O error, a torn read, a corrupt
+    /// file, an unsupported schema) was read as "this must be a brand-new
+    /// project", and the `save_manifest` two lines later wrote an empty
+    /// manifest over hours of real work, with no error and no prompt. That
+    /// destroyed the owner's `2026-09-12-c040` project live on 2026-09-15.
+    ///
+    /// The fixture is the cheapest honest stand-in for "the file is there but
+    /// unreadable": a truncated `project.json`. It exercises the same code
+    /// path a transient read failure does — `load_manifest` returns an error
+    /// that is *not* `NotFound` — and unlike a real I/O fault it can be
+    /// produced deterministically in a unit test.
+    ///
+    /// Asserts both halves, because only asserting the error would pass on a
+    /// fix that errored *after* already clobbering the file: the call must
+    /// return `Err`, AND the original bytes must still be on disk, unchanged.
+    #[test]
+    fn chroma_project_save_refuses_to_overwrite_an_unreadable_project_json() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("b193_refuse");
+        let (dir, manifest) = new_project_in(&root, "b193-refuse", &[]).unwrap();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "b193-refuse".into(),
+        }));
+
+        // A real project.json, then truncated mid-object — exactly what a
+        // torn read or a half-written file looks like to `load_manifest`.
+        let mp = dir.join("project.json");
+        let good = std::fs::read_to_string(&mp).unwrap();
+        let corrupt = good[..good.len() / 2].to_string();
+        std::fs::write(&mp, &corrupt).unwrap();
+        let before = std::fs::read(&mp).unwrap();
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let err = rt
+            .block_on(chroma_project_save(
+                Some(dir.to_string_lossy().to_string()),
+                Some("clip-xyz".into()),
+            ))
+            .expect_err("saving over an unreadable project.json must fail, not succeed");
+        assert!(
+            err.contains("refusing to save over"),
+            "the error must say the save was refused, got: {err}"
+        );
+
+        let after = std::fs::read(&mp).unwrap();
+        assert_eq!(
+            after, before,
+            "the on-disk project.json must be byte-identical — B-193 replaced it \
+             with a fresh empty manifest here"
+        );
+        assert!(
+            !String::from_utf8_lossy(&after).contains("\"activeClipId\": \"clip-xyz\""),
+            "nothing from the refused save may have reached the file"
+        );
+
+        state::set_project(None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The other half of D-326's branch, and the one case that must keep
+    /// working exactly as before: a project directory with no `project.json`
+    /// at all is genuinely new, so `chroma_project_save` still builds a fresh
+    /// manifest and writes it. If this regressed, the B-193 fix would have
+    /// broken first-save instead.
+    #[test]
+    fn chroma_project_save_still_creates_a_fresh_manifest_when_there_is_none() {
+        let _guard = PROJECT_STATE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let root = tmp("b193_fresh");
+        let (dir, manifest) = new_project_in(&root, "b193-fresh", &[]).unwrap();
+        save_manifest(&dir, &manifest).unwrap();
+        state::set_project(Some(ProjectRef {
+            path: dir.clone(),
+            name: "b193-fresh".into(),
+        }));
+
+        let mp = dir.join("project.json");
+        std::fs::remove_file(&mp).unwrap();
+        // D-326's `.bak` would otherwise be a second copy lying around; the
+        // point of this test is the genuinely-empty-directory case.
+        let _ = std::fs::remove_file(dir.join(apelles_project::MANIFEST_BACKUP_NAME));
+        assert!(!mp.exists());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(chroma_project_save(
+            Some(dir.to_string_lossy().to_string()),
+            Some("clip-fresh".into()),
+        ))
+        .expect("a genuinely missing project.json is still a fresh save");
+
+        let reloaded = load_manifest(&dir).unwrap();
+        assert_eq!(reloaded.active_clip_id.as_deref(), Some("clip-fresh"));
+        assert_eq!(reloaded.name, "b193-fresh");
+        assert!(!reloaded.created.is_empty(), "a fresh manifest is stamped");
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);

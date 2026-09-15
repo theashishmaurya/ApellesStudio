@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-15** — **B-193 fixed (D-326): a manifest that fails to load is no
+  longer mistaken for a project that doesn't exist.** `load_manifest` returns a
+  typed `LoadManifestError` whose `NotFound` is a distinct variant (same
+  `Display` text as before, so nothing downstream reworded), and
+  `chroma_project_save` substitutes a fresh manifest **only** on a genuine
+  not-found — every other failure now refuses to save and says so, naming the
+  recovery file. `save_manifest` (already atomic since B-034/D-112, contrary to
+  the bug report) gained the `fsync` that completes the pattern and a rolling
+  `project.json.bak`, taken by O(1) hard-link before the new content lands.
+  Measured fsync/backup costs and the rejected `rename(project.json → .bak)`
+  variant — which would have re-created B-193 in a new form — are in D-326.
+  Regression tests confirmed failing on the pre-fix code first. The audit also
+  found the same read-swallow-then-overwrite shape in five places in
+  RapidRAW-inherited code (`settings.json`, the `.rrdata` sidecars and their
+  eleven write-back sites, `presets.json`) — filed as **B-194/B-195/B-196**,
+  deliberately not folded into this commit.
+
 - **2026-09-15** — **B-193 filed, critical: `chroma_project_save` silently
   wipes a project to empty if `load_manifest` fails for ANY reason, not just
   "doesn't exist yet."** Destroyed a real edited project live tonight during

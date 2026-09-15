@@ -1720,55 +1720,158 @@ fn migrate_legacy_shots(raw: &mut Value) {
 static MANIFEST_CACHE: Lazy<Mutex<Option<(PathBuf, std::time::SystemTime, ProjectManifest)>>> =
     Lazy::new(|| Mutex::new(None));
 
+/// Why [`load_manifest`] could not produce a manifest (D-326, fixing B-193).
+///
+/// **What it is:** a *typed* distinction between the one failure that
+/// legitimately means "this is a brand-new project" — [`Self::NotFound`], i.e.
+/// `project.json` genuinely is not on disk — and every other failure, all of
+/// which mean *a project file exists and we could not read it*, so there is
+/// real user work on disk that the caller must not overwrite.
+///
+/// **Why it is a type and not a string.** B-193: `chroma_project_save` did
+/// `load_manifest(&dir).unwrap_or_else(|_| ProjectManifest::fresh(…))` and then
+/// saved — so a transient I/O error, a torn read, a parse failure or an
+/// unsupported schema all silently became "must be a new project", and the
+/// autosave tick that followed replaced hours of real editing with an empty
+/// manifest. That destroyed a real project live on 2026-09-15. The fix has to
+/// be something a caller *cannot* get wrong by accident, which a
+/// `Result<_, String>` (match the message text and hope) is not.
+///
+/// **What it does NOT do:** change any message text. `Display` renders exactly
+/// the strings this function produced when it returned `Result<_, String>` —
+/// `packages/editor/src/timelineStore.test.ts` and the Edit tab's own
+/// "No project open" handling (B-034) key off `parse project.json: …`, and the
+/// `From<LoadManifestError> for String` below keeps every `?` call site in the
+/// ~90 `Result<_, String>` functions above and in `app/src-tauri` compiling
+/// unchanged. Only the callers that must actually *branch* on "not found" look
+/// at the variant.
+#[derive(Debug, thiserror::Error)]
+pub enum LoadManifestError {
+    /// `project.json` is genuinely not there (`io::ErrorKind::NotFound`). The
+    /// **only** variant on which substituting [`ProjectManifest::fresh`] is
+    /// correct.
+    #[error("read {path}: {source}")]
+    NotFound {
+        path: String,
+        source: std::io::Error,
+    },
+    /// A real I/O failure reading it — permissions, a bad descriptor, a
+    /// transient failure under memory pressure. The file may well exist and
+    /// be perfectly good; we just could not read it this time.
+    #[error("read {path}: {source}")]
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
+    /// It exists and was read, but is not JSON (truncated, half-written by a
+    /// non-atomic writer, corrupted).
+    #[error("parse {path}: {source}")]
+    Parse {
+        path: String,
+        source: serde_json::Error,
+    },
+    /// It exists and parses, but its `schema` tag is one this build refuses
+    /// (newer major, or unrecognised).
+    #[error("{0}")]
+    Schema(String),
+    /// It exists and parses as JSON, but not as a [`ProjectManifest`].
+    #[error("project.json shape: {0}")]
+    Shape(#[source] serde_json::Error),
+}
+
+impl LoadManifestError {
+    /// Classify a `std::io::Error` from reading `project.json`: a `NotFound`
+    /// becomes [`Self::NotFound`], everything else [`Self::Io`].
+    fn io(path: &Path, source: std::io::Error) -> Self {
+        let path = path.display().to_string();
+        if source.kind() == std::io::ErrorKind::NotFound {
+            Self::NotFound { path, source }
+        } else {
+            Self::Io { path, source }
+        }
+    }
+
+    /// True only when `project.json` genuinely does not exist — the single
+    /// case in which a caller may legitimately substitute a fresh manifest
+    /// and go on to write it. Everything else means "there is a real file
+    /// here": refuse, don't overwrite (B-193).
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::NotFound { .. })
+    }
+}
+
+impl From<LoadManifestError> for String {
+    fn from(e: LoadManifestError) -> Self {
+        e.to_string()
+    }
+}
+
 /// Cached equivalent of [`load_manifest`] for read-only hot-path callers
 /// (`chroma::edit::resolve_timeline`'s `persist: false` case). Callers that
 /// need to mutate-then-persist should keep using plain `load_manifest` +
 /// [`save_manifest`], which already keeps this cache in sync on every write.
-pub fn load_manifest_cached(project_dir: &Path) -> Result<ProjectManifest, String> {
+pub fn load_manifest_cached(project_dir: &Path) -> Result<ProjectManifest, LoadManifestError> {
     let mp = project_dir.join("project.json");
-    let mtime = std::fs::metadata(&mp)
-        .and_then(|m| m.modified())
-        .map_err(|e| format!("stat {}: {e}", mp.display()))?;
-
-    {
-        let cache = MANIFEST_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((dir, cached_mtime, manifest)) = cache.as_ref() {
-            if dir == project_dir && *cached_mtime == mtime {
+    // D-326 — a failed `stat` is deliberately NOT classified here. It falls
+    // through to the real read below, which produces the properly typed
+    // `NotFound`/`Io`; duplicating the classification (and the old "stat …"
+    // message) would be a second place for the B-193 distinction to drift.
+    if let Ok(mtime) = std::fs::metadata(&mp).and_then(|m| m.modified()) {
+        {
+            let cache = MANIFEST_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((dir, cached_mtime, manifest)) = cache.as_ref()
+                && dir == project_dir
+                && *cached_mtime == mtime
+            {
                 return Ok(manifest.clone());
             }
         }
+        let manifest = load_manifest(project_dir)?;
+        *MANIFEST_CACHE.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((project_dir.to_path_buf(), mtime, manifest.clone()));
+        return Ok(manifest);
     }
-
-    let manifest = load_manifest(project_dir)?;
-    *MANIFEST_CACHE.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some((project_dir.to_path_buf(), mtime, manifest.clone()));
-    Ok(manifest)
+    load_manifest(project_dir)
 }
 
-pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
+/// Read `<project_dir>/project.json` into a [`ProjectManifest`], running every
+/// schema migration on the way.
+///
+/// D-326 (B-193) — returns [`LoadManifestError`], not a bare `String`, so a
+/// caller can tell "there is no project here yet" from "there is a project
+/// here and something went wrong reading it." Anything that goes on to
+/// **write** the manifest back must branch on [`LoadManifestError::is_not_found`]
+/// rather than treating any error as "must be new"; see `chroma_project_save`.
+pub fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, LoadManifestError> {
     let mp = project_dir.join("project.json");
-    let txt = std::fs::read_to_string(&mp).map_err(|e| format!("read {}: {e}", mp.display()))?;
-    let mut raw: Value =
-        serde_json::from_str(&txt).map_err(|e| format!("parse {}: {e}", mp.display()))?;
+    let txt = std::fs::read_to_string(&mp).map_err(|e| LoadManifestError::io(&mp, e))?;
+    let mut raw: Value = serde_json::from_str(&txt).map_err(|e| LoadManifestError::Parse {
+        path: mp.display().to_string(),
+        source: e,
+    })?;
 
     let schema = raw.get("schema").and_then(|s| s.as_str()).unwrap_or("");
     let (major, minor) = parse_schema(schema);
     match major {
         None | Some(1) => {}
         Some(m) if m > CURRENT_MAJOR => {
-            return Err(format!(
+            return Err(LoadManifestError::Schema(format!(
                 "project.json is schema '{schema}' — newer than this build supports \
                  (chroma.project/{CURRENT_MAJOR}). Upgrade Apelles."
-            ));
+            )));
         }
-        Some(m) => return Err(format!("unknown project.json schema major: {m}")),
+        Some(m) => {
+            return Err(LoadManifestError::Schema(format!(
+                "unknown project.json schema major: {m}"
+            )));
+        }
     }
 
     migrate_legacy_timeline(&mut raw);
     migrate_legacy_shots(&mut raw);
 
     let mut manifest: ProjectManifest =
-        serde_json::from_value(raw).map_err(|e| format!("project.json shape: {e}"))?;
+        serde_json::from_value(raw).map_err(LoadManifestError::Shape)?;
     // D-136 — **unconditionally** the current schema, not "only if empty."
     // The position migration below is version-gated and NOT idempotent
     // (dividing twice is silently wrong, not a no-op), so a file that was
@@ -1865,7 +1968,33 @@ fn migration_composition_size(manifest: &ProjectManifest) -> (u32, u32) {
 /// complete new one, never a partial file. The temp name carries the process
 /// id and a counter so two concurrent savers can't clobber each other's
 /// staging file.
+///
+/// **D-326 (B-193) completes the pattern with two additions.**
+///
+/// 1. *`fsync` before the rename.* Temp-then-rename on its own only orders the
+///    *name*; without an `fsync` the kernel may publish the new name while the
+///    new file's data blocks are still unwritten, so a power loss or kernel
+///    panic can leave `project.json` present but zero-length or garbage —
+///    strictly worse than keeping the old content. Measured on this machine
+///    (APFS, 400 KB manifest): write+rename 1.11 ms, +`fsync(file)` 6.87 ms.
+///    The *directory* `fsync` (which would make the rename itself durable) is
+///    deliberately NOT done: it costs another ~5 ms (11.92 ms total) and its
+///    worst case without it is that a crash leaves the complete *previous*
+///    manifest, which is a safe outcome — see the D-326 entry.
+/// 2. *A rolling `project.json.bak`.* Before the new content is renamed into
+///    place, the current `project.json` is given a second name via
+///    `hard_link` (O(1), no data copy — measured 1.72 ms including the rename;
+///    `fs::copy` as the fallback for a filesystem without hard links). The
+///    subsequent `rename` of the new file over `project.json` replaces the
+///    *name*, not the inode, so `.bak` keeps the previous good bytes.
+///    Deliberately a link/copy and never `rename(project.json → .bak)`: that
+///    would leave a window with no `project.json` at all, and a concurrent
+///    reader landing in it would see exactly the `NotFound` that B-193 turns
+///    into "this must be a new project."
+///    A backup failure never fails the save — losing the safety net must not
+///    cost the user the write it was protecting.
 pub fn save_manifest(project_dir: &Path, manifest: &ProjectManifest) -> Result<(), String> {
+    use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -1874,14 +2003,22 @@ pub fn save_manifest(project_dir: &Path, manifest: &ProjectManifest) -> Result<(
     let pretty = serde_json::to_string_pretty(manifest).map_err(|e| e.to_string())?;
 
     let final_path = project_dir.join("project.json");
-    let tmp_path = project_dir.join(format!(
-        ".project.json.{}.{}.tmp",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp_path = project_dir.join(format!(".project.json.{}.{}.tmp", std::process::id(), seq));
 
-    std::fs::write(&tmp_path, format!("{pretty}\n"))
-        .map_err(|e| format!("write {}: {e}", tmp_path.display()))?;
+    // Write + flush + fsync the staging file, so the rename below can only
+    // ever publish bytes that are actually on the device.
+    let write_staging = |path: &Path| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(path)?;
+        f.write_all(pretty.as_bytes())?;
+        f.write_all(b"\n")?;
+        f.sync_all()?;
+        Ok(())
+    };
+    write_staging(&tmp_path).map_err(|e| format!("write {}: {e}", tmp_path.display()))?;
+
+    back_up_manifest(project_dir, &final_path, seq);
+
     if let Err(e) = std::fs::rename(&tmp_path, &final_path) {
         // Don't leave the staging file behind if the swap itself failed.
         let _ = std::fs::remove_file(&tmp_path);
@@ -1901,6 +2038,45 @@ pub fn save_manifest(project_dir: &Path, manifest: &ProjectManifest) -> Result<(
             Some((project_dir.to_path_buf(), mtime, manifest.clone()));
     }
     Ok(())
+}
+
+/// The file name [`save_manifest`] keeps the previous good manifest under
+/// (D-326). Visible, not a dotfile, on purpose: its whole job is to be found
+/// by a human who has just lost a project.
+pub const MANIFEST_BACKUP_NAME: &str = "project.json.bak";
+
+/// Point `project.json.bak` at whatever `project.json` currently holds, so the
+/// caller can then rename new content over `project.json` without the previous
+/// bytes becoming unreachable (D-326, defence-in-depth for B-193).
+///
+/// Best-effort by design — every failure path here is logged and swallowed. A
+/// missing or unwritable backup is a lost safety net; failing the save because
+/// of it would lose the very work the net exists to protect.
+///
+/// `hard_link` first (O(1), no data copy) with `copy` as the fallback for a
+/// filesystem that has no hard links; both stage under a unique temp name and
+/// `rename` into place, so a reader never sees a half-written `.bak` either.
+fn back_up_manifest(project_dir: &Path, final_path: &Path, seq: u64) {
+    if !final_path.is_file() {
+        // Nothing to back up — a genuinely new project's first save.
+        return;
+    }
+    let bak_tmp = project_dir.join(format!(
+        ".project.json.bak.{}.{}.tmp",
+        std::process::id(),
+        seq
+    ));
+    let _ = std::fs::remove_file(&bak_tmp);
+    let staged = std::fs::hard_link(final_path, &bak_tmp)
+        .or_else(|_| std::fs::copy(final_path, &bak_tmp).map(|_| ()));
+    if let Err(e) = staged {
+        log::warn!("could not stage {MANIFEST_BACKUP_NAME}: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::rename(&bak_tmp, project_dir.join(MANIFEST_BACKUP_NAME)) {
+        log::warn!("could not update {MANIFEST_BACKUP_NAME}: {e}");
+        let _ = std::fs::remove_file(&bak_tmp);
+    }
 }
 
 /// Sanitise a user-typed project name into a directory-safe stem.
@@ -2724,7 +2900,187 @@ mod tests {
         )
         .unwrap();
         let err = load_manifest(&dir).unwrap_err();
-        assert!(err.contains("newer than this build"), "{err}");
+        assert!(err.to_string().contains("newer than this build"), "{err}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// **D-326 / B-193 — the type-level half of the fix.** Every way
+    /// `load_manifest` can fail on a project that *does* have a `project.json`
+    /// must report `is_not_found() == false`, and the one way it can fail on a
+    /// project that genuinely doesn't must report `true`. This is what
+    /// `chroma_project_save` branches on before it is allowed to substitute a
+    /// fresh manifest and write it, so getting any row of this wrong is the
+    /// data-loss bug again.
+    #[test]
+    fn only_a_genuinely_absent_project_json_is_not_found() {
+        let root = tmp("b193_classify");
+        let dir = root.join("c.chroma");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mp = dir.join("project.json");
+
+        // 1. No file at all — the ONE case a fresh manifest is correct for.
+        let err = load_manifest(&dir).unwrap_err();
+        assert!(
+            matches!(err, LoadManifestError::NotFound { .. }) && err.is_not_found(),
+            "an absent project.json is NotFound, got {err:?}"
+        );
+
+        // 2. Present but not JSON (truncated / half-written / corrupt).
+        std::fs::write(&mp, r#"{"schema":"chroma.project/1","name":"c","sh"#).unwrap();
+        let err = load_manifest(&dir).unwrap_err();
+        assert!(
+            matches!(err, LoadManifestError::Parse { .. }) && !err.is_not_found(),
+            "a truncated project.json is a Parse error, never NotFound, got {err:?}"
+        );
+
+        // 3. Present, zero-length — what a non-atomic writer left mid-write.
+        std::fs::write(&mp, "").unwrap();
+        let err = load_manifest(&dir).unwrap_err();
+        assert!(
+            !err.is_not_found(),
+            "an EMPTY project.json is not an absent one, got {err:?}"
+        );
+
+        // 4. Present, valid JSON, schema this build refuses.
+        std::fs::write(&mp, r#"{"schema":"chroma.project/99","name":"c"}"#).unwrap();
+        let err = load_manifest(&dir).unwrap_err();
+        assert!(
+            matches!(err, LoadManifestError::Schema(_)) && !err.is_not_found(),
+            "an unsupported schema is not NotFound, got {err:?}"
+        );
+
+        // 5. Present, valid JSON, wrong shape for a manifest.
+        std::fs::write(&mp, r#"{"schema":"chroma.project/1","timelines":42}"#).unwrap();
+        let err = load_manifest(&dir).unwrap_err();
+        assert!(
+            !err.is_not_found(),
+            "a JSON document that isn't a manifest is not NotFound, got {err:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// D-326 — `Display` is unchanged from the pre-fix `Result<_, String>`
+    /// messages. `packages/editor/src/timelineStore.test.ts` and the Edit
+    /// tab's B-034 "No project open" handling both key off this exact text, so
+    /// the typed error must not quietly reword it.
+    #[test]
+    fn load_manifest_error_messages_are_unchanged() {
+        let root = tmp("b193_msg");
+        let dir = root.join("m.chroma");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mp = dir.join("project.json");
+
+        let err = load_manifest(&dir).unwrap_err().to_string();
+        assert!(
+            err.starts_with(&format!("read {}: ", mp.display())),
+            "missing-file message unchanged, got: {err}"
+        );
+
+        std::fs::write(&mp, "{").unwrap();
+        let err = load_manifest(&dir).unwrap_err().to_string();
+        assert!(
+            err.starts_with(&format!("parse {}: ", mp.display())),
+            "parse-failure message unchanged, got: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// D-326 — the rolling backup. The save that *replaces* a manifest must
+    /// leave the previous good bytes reachable at `project.json.bak`, because
+    /// this app has no other recovery path of any kind for a project file.
+    ///
+    /// Also pins the two properties that make it safe rather than just
+    /// present: the backup is written BEFORE the new content lands (so it can
+    /// never be a copy of the new file), and a project's very first save
+    /// creates no `.bak` at all (there is nothing to preserve).
+    #[test]
+    fn save_manifest_keeps_the_previous_good_manifest_in_a_bak() {
+        let root = tmp("b193_bak");
+        let (dir, mut manifest) = new_project_in(&root, "Backup Me", &[]).unwrap();
+        let bak = dir.join(MANIFEST_BACKUP_NAME);
+
+        // `new_project_in` has already written project.json once — that first
+        // write had nothing to back up.
+        assert!(
+            !bak.exists(),
+            "a project's first save creates no .bak — there is no previous good file"
+        );
+        let first = std::fs::read(dir.join("project.json")).unwrap();
+
+        manifest.active_clip_id = Some("second-write".into());
+        save_manifest(&dir, &manifest).unwrap();
+        let second = std::fs::read(dir.join("project.json")).unwrap();
+
+        assert!(bak.is_file(), "the second save leaves a .bak behind");
+        assert_eq!(
+            std::fs::read(&bak).unwrap(),
+            first,
+            ".bak holds the PREVIOUS manifest, byte-for-byte"
+        );
+        assert_ne!(second, first, "project.json really did change");
+
+        // A third save rolls the backup forward to the second write, not the
+        // first — it is the previous good manifest, not the original one.
+        manifest.active_clip_id = Some("third-write".into());
+        save_manifest(&dir, &manifest).unwrap();
+        assert_eq!(
+            std::fs::read(&bak).unwrap(),
+            second,
+            ".bak rolls forward to the most recent previous write"
+        );
+
+        // The backup is a real, loadable manifest, not an opaque blob — the
+        // whole point is that a human can recover from it by hand.
+        std::fs::copy(&bak, dir.join("project.json")).unwrap();
+        let recovered = load_manifest(&dir).unwrap();
+        assert_eq!(recovered.active_clip_id.as_deref(), Some("second-write"));
+
+        // No staging files left over from either the manifest or the backup.
+        let strays: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(strays.is_empty(), "temp files left behind: {strays:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// D-326 — what is and is not testable about `save_manifest`'s durability,
+    /// stated honestly rather than implied by a green check.
+    ///
+    /// **Tested here and in `concurrent_saves_never_expose_a_torn_manifest`:**
+    /// the *visible* atomicity property — a concurrent reader only ever sees a
+    /// complete manifest, the staging file is cleaned up, and `project.json`
+    /// is never observed half-written. That is the property a reader depends
+    /// on, and it is fully covered.
+    ///
+    /// **NOT tested, and not honestly testable at this tier:** that the
+    /// `fsync` before the rename actually makes the bytes survive a power
+    /// loss or kernel panic. Verifying it needs the machine to lose power
+    /// mid-write; there is no in-process way to observe the difference,
+    /// because on a live kernel the page cache serves the same bytes whether
+    /// they reached the device or not. The `fsync` is justified by the
+    /// documented semantics of `rename(2)` + `fsync(2)`, not by this suite —
+    /// same disclosure style as D-290's jsdom caveats.
+    ///
+    /// What this test *can* pin is that the durability change did not break
+    /// the visible contract: the file written is exactly the bytes asked for,
+    /// trailing newline and all, and it round-trips.
+    #[test]
+    fn save_manifest_writes_exactly_the_bytes_it_promises() {
+        let root = tmp("b193_bytes");
+        let (dir, manifest) = new_project_in(&root, "Bytes", &[]).unwrap();
+        let raw = std::fs::read_to_string(dir.join("project.json")).unwrap();
+
+        let expected = format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap());
+        assert_eq!(raw, expected, "written bytes are the pretty JSON + one \\n");
+        assert!(raw.ends_with("}\n"), "exactly one trailing newline");
+        load_manifest(&dir).expect("and it round-trips");
+
         let _ = std::fs::remove_dir_all(&root);
     }
 
