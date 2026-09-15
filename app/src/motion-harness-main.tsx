@@ -79,6 +79,12 @@ function setStatus(text: string): void {
  *  without a real `.chroma` project on disk. */
 let savedManifest: unknown = null;
 
+/** D-332 — the in-memory stand-in for the saved-component library the real
+ *  backend keeps at `<app_data_dir>/motion/layer-presets.json`. Held here so a
+ *  save → insert round trip really round-trips in the harness, the same way
+ *  `savedManifest` above lets a Save survive a reload. */
+let savedLayerPresets: unknown[] = [];
+
 /** A stand-in for `@tauri-apps/api/core`'s `invoke`, stubbing exactly
  *  `window.__TAURI_INTERNALS__.invoke` — same contract as `harness-main.tsx`'s
  *  own `installInvokeStub`. Every command `MotionTab` can call
@@ -95,6 +101,11 @@ function installInvokeStub(): void {
       outputPath: '/harness/fake-project.chroma/motion/render.mp4',
       stdoutTail: '(harness stub — no real render ran)',
     }),
+    chroma_motion_load_layer_presets: () => savedLayerPresets,
+    chroma_motion_save_layer_presets: (args) => {
+      savedLayerPresets = (args as { presets: unknown[] }).presets;
+      return '/harness/app-data/motion/layer-presets.json';
+    },
   };
   (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args?: unknown) => {
@@ -186,6 +197,12 @@ render();
   },
   get savedManifest() {
     return savedManifest;
+  },
+  /** D-332 — the component library as the stubbed backend holds it, so a CDP
+   *  check can assert what was actually persisted rather than only what the
+   *  panel happens to render. */
+  get savedLayerPresets() {
+    return savedLayerPresets;
   },
   setStrictMode(next: boolean) {
     strict = next;

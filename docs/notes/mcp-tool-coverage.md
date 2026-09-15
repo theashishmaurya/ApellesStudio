@@ -239,16 +239,27 @@ inclusion, no longer a silent video).
 > preserve. Results are cached, so a repeat ask returns `state: "done"`
 > immediately; `force=True` re-runs.
 
-## Motion tab — CLOSED, 37 tools (D-257, 2026-09-09; +4 D-259; +1 D-260)
+## Motion tab — CLOSED, 41 tools (D-257, 2026-09-09; +4 D-259; +1 D-260; +4 D-332)
 
 > **This section used to be headed "Gap: Motion tab — 0 tools" and called it
 > "arguably the highest-value gap to close… the one place 'an agent driving this
 > app' and 'the manifest-authoring workflow this app is *for*' directly meet."**
 > It is closed. Count:
-> `grep -c '^def motion_' mcp/server.py` returns **37** (D-257's 32, D-259's
-> +4 delete/duplicate tools, D-260's `motion_get_edit_links`), and a
-> cross-language check confirms those 37 Python wire names and the 37 op keys
-> in `packages/motion/src/motionOps.ts` agree exactly.
+> `grep -c '^def motion_' mcp/server.py` returns **41** (D-257's 32, D-259's
+> +4 delete/duplicate tools, D-260's `motion_get_edit_links`, D-332's +4
+> saved-component tools), and a cross-language check confirms those 41 Python
+> wire names and the 41 op keys in `packages/motion/src/motionOps.ts` agree
+> exactly.
+>
+> **D-332 (+4) added the saved-component library**:
+> `motion_list_layer_presets`, `motion_save_layer_preset`,
+> `motion_add_layer_from_preset`, `motion_delete_layer_preset`. These are the
+> first `motion_*` tools that read and write state OUTSIDE the manifest — the
+> library is user-level, stored in the app data directory and shared across
+> projects — which is why the first and last of them deliberately work with no
+> project open. Both halves landed together per the standing rule: the GUI is
+> the Inspector's "Save as component" box and the Catalog tab's Components
+> section.
 >
 > **D-259 (+4) closed the one gap D-257 left open on purpose**:
 > `motion_delete_layer`, `motion_delete_scene`, `motion_duplicate_layer`,

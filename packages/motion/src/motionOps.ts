@@ -88,6 +88,7 @@
  */
 import {
   addLayer,
+  addLayerFromPreset,
   addScene,
   alignSelections,
   canDeleteScene,
@@ -137,6 +138,13 @@ import {
   type KeyMoveTarget,
 } from './manifestEdit';
 import { catalogEntries, type PrimitiveUse } from './catalog';
+import {
+  presetFromLayer,
+  presetsForDisplay,
+  removePreset,
+  upsertPreset,
+  type MotionLayerPreset,
+} from './layerPresets';
 import {
   CAM2D_KEY_FIELDS,
   CAM3D_KEY_FIELDS,
@@ -199,6 +207,34 @@ export interface MotionOpsContext {
    *  Same one value drives the GUI's per-scene badge and the
    *  `motion_get_edit_links` MCP tool, so the two can never disagree. */
   editLinks?: () => MotionEditLinks;
+  /** D-332 — the saved-component library, or `undefined` when nothing supplies
+   *  one (the pre-D-332 behaviour, and what a test that does not care about
+   *  presets passes; the four preset ops then refuse cleanly rather than
+   *  throwing).
+   *
+   *  **Injected, not imported**, for the same reason `editLinks` is: the
+   *  library is disk-backed state reached through Tauri, and `motionOps.ts` is
+   *  a pure, React-free, Tauri-free factory that this package's `node` vitest
+   *  environment has to be able to call. An import would drag
+   *  `@tauri-apps/api/core` into every one of those tests.
+   *
+   *  `now` is injected for the same reason the render path forbids a
+   *  wall-clock read: it makes a preset's `createdAt` a value the caller
+   *  supplies, so the op is deterministic and its test does not have to mock
+   *  a global. */
+  presets?: () => MotionPresetAccess;
+}
+
+/** D-332 — the ops layer's window onto the saved-component library. */
+export interface MotionPresetAccess {
+  /** the CURRENT library, read fresh per call — never captured, same rule as
+   *  `api()` above. */
+  list: () => MotionLayerPreset[];
+  /** persist a replacement library; resolves `false` when the write failed,
+   *  which the op reports rather than claiming a save that did not happen. */
+  commit: (next: readonly MotionLayerPreset[]) => Promise<boolean>;
+  /** ISO-8601 timestamp for a newly created preset. */
+  now: () => string;
 }
 
 /** D-260 — one Edit-tab clip fed by a Motion scene's rendered file. */
@@ -1946,6 +1982,121 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      *  the whole per-scene loop; see `useMotionControl.ts`'s own module doc
      *  comment for the `control.rs` 20s bridge-timeout caveat this does not
      *  paper over. */
+    /**
+     * D-332 — the saved-component library, read half. Needs no project open
+     * and no manifest: the library is user-level state, not project state, so
+     * an agent can survey what is available before deciding to open anything.
+     * That is why this one does NOT call `requireManifest`.
+     */
+    motion_list_layer_presets: () => {
+      const access = ctx.presets?.();
+      if (!access) return { error: 'the saved-component library is unavailable in this context' };
+      return {
+        presets: presetsForDisplay(access.list()).map((p) => ({
+          id: p.id,
+          name: p.name,
+          use: p.use,
+          createdAt: p.createdAt,
+          layer: p.layer,
+        })),
+      };
+    },
+
+    /**
+     * D-332 — save one existing layer as a named, reusable component. The
+     * GUI half is the Inspector's "Save as component" section; both go
+     * through `presetFromLayer` so a preset an agent saved and a preset a
+     * human saved are the same object.
+     */
+    motion_save_layer_preset: async (a) => {
+      const access = ctx.presets?.();
+      if (!access) return { error: 'the saved-component library is unavailable in this context' };
+
+      const cur = ctx.api();
+      const guard = requireManifest(cur, 'save a preset from');
+      if (isErr(guard)) return guard;
+      const manifest = guard.manifest;
+
+      const resolved = resolveLayerTarget(manifest, a, 'save_layer_preset');
+      if (isErr(resolved)) return resolved;
+
+      const found = selectedLayer(manifest, resolved);
+      if (!found) return { error: 'that layer no longer exists' };
+
+      const name = typeof a.name === 'string' ? a.name : '';
+      const preset = presetFromLayer(
+        name,
+        found.use,
+        found.raw as Record<string, unknown>,
+        access.now(),
+      );
+      if (!preset) {
+        return { error: `cannot save a preset named "${name}" for use="${found.use}" — the name must be non-empty and the primitive must be one the engine knows` };
+      }
+
+      const ok = await access.commit(upsertPreset(access.list(), preset));
+      if (!ok) return { error: 'could not write the component library to disk' };
+      return { preset: { id: preset.id, name: preset.name, use: preset.use, createdAt: preset.createdAt } };
+    },
+
+    /**
+     * D-332 — insert a saved component into a scene. Placement (2D layer vs
+     * `scene3d` child) is decided by the primitive, not by the caller, exactly
+     * as `motion_add_layer` does — see `addLayerFromPreset`.
+     */
+    motion_add_layer_from_preset: (a) => {
+      const access = ctx.presets?.();
+      if (!access) return { error: 'the saved-component library is unavailable in this context' };
+
+      const cur = ctx.api();
+      const guard = requireManifest(cur, 'add a layer to');
+      if (isErr(guard)) return guard;
+      const manifest = guard.manifest;
+
+      const sceneIndex = a.scene_index;
+      if (typeof sceneIndex !== 'number' || !Number.isInteger(sceneIndex)) {
+        return { error: 'scene_index must be an integer' };
+      }
+      if (!manifest.scenes[sceneIndex]) {
+        return { error: `no scene at index ${sceneIndex} (the manifest has ${manifest.scenes.length})` };
+      }
+
+      const presetId = a.preset_id;
+      if (typeof presetId !== 'string' || presetId.length === 0) {
+        return { error: 'preset_id must be a non-empty string' };
+      }
+      const preset = access.list().find((p) => p.id === presetId);
+      if (!preset) return { error: `no saved component with id "${presetId}"` };
+
+      const { manifest: next, selection } = addLayerFromPreset(manifest, sceneIndex, preset);
+      if (next === manifest) return { error: 'no change' };
+      cur.commit(next, `Add ${preset.name}`);
+      return { sceneIndex, presetId, selection };
+    },
+
+    /**
+     * D-332 — remove one saved component. Deleting a component does NOT touch
+     * layers already inserted from it: the insert is a copy, and nothing links
+     * back (see `layerPresets.ts`'s header). So this is safe in a way that
+     * deleting a Figma component is not, and needs no cascade warning.
+     */
+    motion_delete_layer_preset: async (a) => {
+      const access = ctx.presets?.();
+      if (!access) return { error: 'the saved-component library is unavailable in this context' };
+
+      const presetId = a.preset_id;
+      if (typeof presetId !== 'string' || presetId.length === 0) {
+        return { error: 'preset_id must be a non-empty string' };
+      }
+      const list = access.list();
+      const next = removePreset(list, presetId);
+      if (next === list) return { error: `no saved component with id "${presetId}"` };
+
+      const ok = await access.commit(next);
+      if (!ok) return { error: 'could not write the component library to disk' };
+      return { deleted: presetId, remaining: next.length };
+    },
+
     motion_render: async () => {
       const cur = ctx.api();
       const guard = requireManifest(cur, 'render');

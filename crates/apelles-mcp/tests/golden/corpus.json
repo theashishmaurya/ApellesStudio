@@ -5425,6 +5425,28 @@
       }
     },
     {
+      "name": "motion_add_layer_from_preset",
+      "description": "Insert a saved component into a scene \u2014 the \"+ Add to scene\" button on a\n    row of the Catalog tab's Components section.\n\n    Get `preset_id` from `motion_list_layer_presets`. The new layer reproduces\n    the component exactly, keyframes included, with a fresh `id`.\n\n    Placement is decided by the PRIMITIVE, not by you: a `particleflow`,\n    `labelbox` or `layerstack` component goes into `scene3d.children` (creating\n    that container, with a default camera, if the scene has none); every other\n    kind is appended to `scene.layers`. This is the same rule\n    `motion_add_layer` follows.\n\n    The insert is a COPY. Nothing links the new layer back to the component:\n    changing the component later does not restyle this layer, and deleting the\n    component does not remove it. Edit the result with\n    `motion_set_layer_field` / `motion_set_layer_position` like any other\n    layer.\n\n    Returns the `selection` addressing the new layer.\n\n    Args:\n        scene_index: which scene to add it to.\n        preset_id: the component's `id` from `motion_list_layer_presets`.",
+      "inputSchema": {
+        "properties": {
+          "scene_index": {
+            "title": "Scene Index",
+            "type": "integer"
+          },
+          "preset_id": {
+            "title": "Preset Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scene_index",
+          "preset_id"
+        ],
+        "type": "object",
+        "title": "motion_add_layer_from_presetArguments"
+      }
+    },
+    {
       "name": "motion_add_layer_keyframe",
       "description": "Add (or overwrite) ONE position keyframe at a moment \u2014 the auto-keyframe\n    a canvas drag performs, without replacing the rest of the animation the\n    way `motion_set_layer_transform_keys` does.\n\n    With `x`/`y` omitted it keys the layer WHERE IT ALREADY IS at `at` \u2014\n    interpolating its current animation if it has one. That is how you author\n    a hold: key the current position at two times, then move only the later\n    one. With `x`/`y` given they are used verbatim.\n\n    An existing key at the same frame is overwritten IN PLACE, preserving its\n    other properties (`scale`/`rot`/`opacity`) and only changing `x`/`y`.\n\n    `ease` is applied to the same key in the SAME undo step (a bezier\n    `[x1,y1,x2,y2]`; same clamping rules as\n    `motion_set_layer_transform_keys`).\n\n    Refused for a primitive with no draggable position unless you pass\n    explicit `x` and `y`.\n\n    Args:\n        scene_index: which scene.\n        target: which layer.\n        at: SECONDS from the scene's start.\n        x: optional explicit world-pixel x.\n        y: optional explicit world-pixel y.\n        ease: optional [x1, y1, x2, y2].",
       "inputSchema": {
@@ -5935,6 +5957,23 @@
       }
     },
     {
+      "name": "motion_delete_layer_preset",
+      "description": "Remove one saved component from the library \u2014 the trash button on its\n    Catalog row.\n\n    This is safe in a way that deleting a component in a design tool is not:\n    layers already inserted from it are ordinary layers and are left completely\n    alone, in this project and every other one. Only the library entry goes.\n\n    Needs no project open, for the same reason `motion_list_layer_presets`\n    does not: the library is user-level state, not part of any manifest.\n\n    Args:\n        preset_id: the component's `id` from `motion_list_layer_presets`.",
+      "inputSchema": {
+        "properties": {
+          "preset_id": {
+            "title": "Preset Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "preset_id"
+        ],
+        "type": "object",
+        "title": "motion_delete_layer_presetArguments"
+      }
+    },
+    {
       "name": "motion_delete_scene",
       "description": "Delete a whole scene \u2014 every layer in it, its camera and its 3D block go\n    with it. The same action the layer panel's own per-scene delete button\n    performs (which asks for a confirming second click; this tool does not).\n\n    **Refused for the last remaining scene**: a manifest must have at least one\n    (the schema enforces it), so there is no \"empty composition\" state to reach\n    this way. Delete the layers instead, or add another scene first.\n\n    Every LATER scene's index shifts down by one, so any `scene_index` you were\n    holding is stale afterwards \u2014 re-read `motion_get_state`. The live GUI\n    selection is moved to the scene that took the deleted one's place, since the\n    old one no longer exists.\n\n    Undoable in the app (Cmd/Ctrl+Z), like any other Motion edit.\n\n    Args:\n        scene_index: which scene to delete.",
       "inputSchema": {
@@ -6233,6 +6272,15 @@
         "properties": {},
         "type": "object",
         "title": "motion_get_stateArguments"
+      }
+    },
+    {
+      "name": "motion_list_layer_presets",
+      "description": "List the user's saved COMPONENTS \u2014 layers they tuned once and kept for\n    reuse. The Catalog tab's \"Components\" section, as data.\n\n    A component is a named, frozen copy of one layer fragment: every field it\n    had when it was saved, INCLUDING its `transform` and its keyframes. It is\n    not a new kind of object \u2014 inserting one produces an ordinary layer, and\n    nothing links the two afterwards.\n\n    These are USER-level and shared across projects, unlike the manifest. This\n    tool needs no project open, so it is a safe thing to call while deciding\n    what to build.\n\n    Each entry carries `id` (pass it to `motion_add_layer_from_preset`),\n    `name`, `use`, `createdAt`, and the full `layer` fragment so you can see\n    what you would be inserting before you insert it. Newest first.\n\n    Distinct from `motion_list_primitives`, which lists the ten BUILT-IN\n    primitives and their fields. That one is what the engine can draw; this one\n    is what this user has already made.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "motion_list_layer_presetsArguments"
       }
     },
     {
@@ -6767,6 +6815,109 @@
         ],
         "type": "object",
         "title": "motion_reorder_layersArguments"
+      }
+    },
+    {
+      "name": "motion_save_layer_preset",
+      "description": "Save one existing layer to the component library under `name` \u2014 the\n    Inspector's \"Save as component\" box.\n\n    The whole fragment is captured as it stands, keyframes and all, minus the\n    layer's `id`. Use this when a layer has been tuned into something worth\n    having again: a `matrix` set up as a real attention heatmap, a `graph`\n    wired to a specific architecture, a `text` with the exact size and entrance\n    you want. Rebuilding one of those from `motion_add_layer` is five or ten\n    `motion_set_layer_field` calls; inserting the saved one is a single call.\n\n    The library is user-level and shared across projects, so a component saved\n    while working on one project is available in every other one.\n\n    Editing the layer afterwards does NOT change the component, and editing the\n    component does not change layers already inserted from it. It is a copy,\n    deliberately \u2014 see `motion_add_layer_from_preset`.\n\n    Args:\n        scene_index: which scene the layer is in.\n        target: {kind, index?, id?} \u2014 kind is \"layer\" or \"scene3d-child\".\n        name: what to call it in the library. Leading/trailing whitespace is\n            trimmed and interior runs collapsed; an empty name is refused.",
+      "inputSchema": {
+        "properties": {
+          "scene_index": {
+            "title": "Scene Index",
+            "type": "integer"
+          },
+          "target": {
+            "$ref": "#/$defs/MotionTarget"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scene_index",
+          "target",
+          "name"
+        ],
+        "type": "object",
+        "$defs": {
+          "MotionTarget": {
+            "additionalProperties": true,
+            "description": "What a Motion op acts on \u2014 a layer, a card, a scene or a camera.\n\nOne shape parses every `target` argument (`parseSelectionArg`, motionOps.ts); what\ndiffers per tool is which `kind` values are meaningful afterwards, which the\nhandler reports by name. All six are modelled so this never rejects a target a\ntool actually resolves.\n\n- kind \"scene\" / \"camera\" / \"scene3d-camera\": `kind` alone; index/id are ignored.\n- kind \"layer\" / \"scene3d-child\": needs `index` or `id` (id wins, and keeps naming\n  the same layer after something moves).\n- kind \"layer-item\": needs `index` (the parent layer) AND `item_index` (the card).\n\n`scene_index` is a SIBLING of `target`, never a key inside it.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "scene",
+                  "camera",
+                  "scene3d-camera",
+                  "layer",
+                  "scene3d-child",
+                  "layer-item"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Position in the layer list.",
+                "title": "Index"
+              },
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Stable layer id. Wins over `index`.",
+                "title": "Id"
+              },
+              "item_index": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Card index, for kind 'layer-item'.",
+                "title": "Item Index"
+              },
+              "itemIndex": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Alias for item_index \u2014 accepted by the handler (`target.item_index ?? target.itemIndex`) but undocumented before D-310.",
+                "title": "Itemindex"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "MotionTarget",
+            "type": "object"
+          }
+        },
+        "title": "motion_save_layer_presetArguments"
       }
     },
     {
@@ -14465,6 +14616,31 @@
       ]
     },
     {
+      "tool": "motion_add_layer_from_preset",
+      "case": "minimal",
+      "arguments": {
+        "scene_index": 45,
+        "preset_id": "v_motion_add_layer_from_preset.preset_id"
+      },
+      "requests": [
+        {
+          "op": "motion_add_layer_from_preset",
+          "args": {
+            "scene_index": 45,
+            "preset_id": "v_motion_add_layer_from_preset.preset_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_add_layer_keyframe",
       "case": "minimal",
       "arguments": {
@@ -14726,6 +14902,29 @@
       ]
     },
     {
+      "tool": "motion_delete_layer_preset",
+      "case": "minimal",
+      "arguments": {
+        "preset_id": "v_motion_delete_layer_preset.preset_id"
+      },
+      "requests": [
+        {
+          "op": "motion_delete_layer_preset",
+          "args": {
+            "preset_id": "v_motion_delete_layer_preset.preset_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_delete_scene",
       "case": "minimal",
       "arguments": {
@@ -14902,6 +15101,25 @@
       "requests": [
         {
           "op": "motion_get_state",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_list_layer_presets",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "motion_list_layer_presets",
           "args": {},
           "timeout_ms": 20000
         }
@@ -15336,6 +15554,45 @@
             "from_index": 68,
             "to_index": 33,
             "kind": "v_motion_reorder_layers.kind"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_save_layer_preset",
+      "case": "minimal",
+      "arguments": {
+        "scene_index": 6,
+        "target": {
+          "kind": "scene3d-camera",
+          "index": 71,
+          "id": "v_motion_save_layer_preset.target.id",
+          "item_index": 67,
+          "itemIndex": 12
+        },
+        "name": "v_motion_save_layer_preset.name"
+      },
+      "requests": [
+        {
+          "op": "motion_save_layer_preset",
+          "args": {
+            "scene_index": 6,
+            "target": {
+              "kind": "scene3d-camera",
+              "index": 71,
+              "id": "v_motion_save_layer_preset.target.id",
+              "item_index": 67,
+              "itemIndex": 12
+            },
+            "name": "v_motion_save_layer_preset.name"
           },
           "timeout_ms": 20000
         }

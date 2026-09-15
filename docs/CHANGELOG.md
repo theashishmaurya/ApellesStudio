@@ -30,6 +30,24 @@ One or two lines per session. Detail lives in the decision it references.
   1280×720 and 15.0 ms, a 3.5× cut in what each capture costs the app being
   recorded. Caught by reading the first live run's numbers rather than trusting
   the parameter.
+- **2026-09-16** — **D-332: Motion layers can be saved as reusable
+  components.** Closes D-331's largest audit finding: the Motion tab could
+  create everything and keep nothing, so a tuned `matrix` or `graph` had to be
+  retyped from memory every time (`duplicateLayer` only helps inside one
+  manifest). A component is a named, frozen copy of one layer fragment —
+  keyframes included, layer `id` stripped — living in a user-level library at
+  `<app_data_dir>/motion/layer-presets.json`, shared across projects, following
+  RapidRAW's own `load_presets`/`save_presets` pattern rather than D-243's
+  hard-coded caption presets (which have no storage at all). Inserting one is a
+  COPY with no live link back, which is deliberate and stated on the tools.
+  Both halves in one pass: the Inspector's "Save as component" box and the
+  Catalog's Components section, and `motion_save_layer_preset` /
+  `motion_list_layer_presets` / `motion_add_layer_from_preset` /
+  `motion_delete_layer_preset` (Motion 37 → **41 tools**; the server 171 → 175).
+  The Rust tool descriptions were generated from the Python docstrings rather
+  than transcribed, so the byte-for-byte parity check cannot fail on a
+  copy-paste slip. 48 new tests; live-verified in real Chromium including the
+  save → insert → delete round trip.
 - **2026-09-16** — **D-331: a scene can be given a 2D camera from the GUI.** A
   firsthand Motion-tab UX audit (D-165's harness, real Chromium) found the
   standing human-AND-AI rule violated in the *inverted* direction:

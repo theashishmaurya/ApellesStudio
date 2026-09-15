@@ -47,9 +47,12 @@
  * every other file in this package works around — see `Button.tsx` and
  * `resizable.tsx`.
  */
+import { TrashIcon } from '@phosphor-icons/react';
 import type { PrimitiveUse } from './catalog';
 import { catalogEntries } from './catalog';
 import { PrimitiveGlyph } from './PrimitiveGlyph';
+import type { MotionLayerPreset } from './layerPresets';
+import { presetsForDisplay } from './layerPresets';
 
 /**
  * `sceneLabel` names the insert target in the panel header, so "Add" is
@@ -61,10 +64,26 @@ import { PrimitiveGlyph } from './PrimitiveGlyph';
 export function CatalogPanel({
   targetSceneId,
   onAdd,
+  presets = [],
+  presetError = null,
+  onAddPreset,
+  onDeletePreset,
 }: {
   targetSceneId: string | null;
   onAdd: (use: PrimitiveUse) => void;
+  /** D-332 — the user's saved components. Defaulted so a caller that has no
+   *  library wired (a test, or a future embedding) renders the built-in
+   *  catalog exactly as before rather than crashing. */
+  presets?: readonly MotionLayerPreset[];
+  /** a load/save failure worth showing: a library that silently failed to
+   *  load is indistinguishable from an empty one, and the user would rebuild
+   *  components they already have. */
+  presetError?: string | null;
+  onAddPreset?: (presetId: string) => void;
+  onDeletePreset?: (presetId: string) => void;
 }) {
+  const saved = presetsForDisplay(presets);
+
   return (
     <div className="h-full w-full flex flex-col min-h-0">
       <div className="shrink-0 px-2 py-2 border-b border-border-color">
@@ -76,6 +95,74 @@ export function CatalogPanel({
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2 flex flex-col gap-1.5">
+        {/* D-332 — the user's own saved components, ABOVE the built-in
+           primitives. Order is deliberate: someone who has built a library is
+           reaching for their own tuned pieces far more often than for a raw
+           `matrix` with default rows, so the thing they made goes first. The
+           section is hidden entirely when the library is empty rather than
+           showing an empty-state box, so the panel is unchanged for anyone who
+           has never saved one. */}
+        {presetError && (
+          <p className="text-[10px] text-red-400 border border-red-500/40 rounded px-2 py-1">
+            Components: {presetError}
+          </p>
+        )}
+
+        {saved.length > 0 && (
+          <>
+            <p className="text-[10px] uppercase tracking-wide text-text-secondary/60 px-0.5">
+              Components
+            </p>
+            {saved.map((preset) => (
+              <div
+                key={preset.id}
+                className="group rounded border border-border-color p-2 flex flex-col gap-1.5 hover:border-accent/60 transition-colors"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="shrink-0 text-text-secondary group-hover:text-accent transition-colors">
+                    <PrimitiveGlyph use={preset.use} />
+                  </span>
+                  <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                    <span className="text-[11px] font-medium text-text-primary leading-tight break-words">
+                      {preset.name}
+                    </span>
+                    <span className="text-[10px] text-text-secondary/70 font-mono leading-tight">
+                      {preset.use}
+                    </span>
+                  </div>
+                  {/* No confirm step: deleting a component cannot damage a
+                     project, because an insert is a COPY and nothing links
+                     back to the preset (D-332). The same proportionality rule
+                     D-259 applied to a layer delete. */}
+                  {onDeletePreset && (
+                    <button
+                      type="button"
+                      title={`Delete the "${preset.name}" component`}
+                      aria-label={`Delete component ${preset.name}`}
+                      onClick={() => onDeletePreset(preset.id)}
+                      className="shrink-0 h-5 px-1 flex items-center rounded text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-red-500/15 transition-colors"
+                    >
+                      <TrashIcon size={11} />
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  disabled={targetSceneId === null || !onAddPreset}
+                  className="h-6 rounded border border-dashed border-border-color text-[10px] text-text-secondary hover:text-text-primary hover:border-accent disabled:opacity-40 disabled:hover:text-text-secondary disabled:hover:border-border-color transition-colors"
+                  onClick={() => onAddPreset?.(preset.id)}
+                >
+                  + Add to scene
+                </button>
+              </div>
+            ))}
+            <p className="text-[10px] uppercase tracking-wide text-text-secondary/60 px-0.5 mt-1">
+              Primitives
+            </p>
+          </>
+        )}
+
         {catalogEntries.map((entry) => (
           <div
             key={entry.use}

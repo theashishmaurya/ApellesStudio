@@ -105,6 +105,8 @@ import { InspectorEmptyState, InspectorSection } from '@apelles/inspector';
 import { useNumberField } from '@apelles/ui/number-scrub';
 import { EaseFieldControl } from './EaseCurveEditor';
 import { layerLabel, type Selection } from './LayerList';
+import type { PrimitiveUse } from './catalog';
+import { PRESET_NAME_MAX, normalizePresetName, suggestedPresetName } from './layerPresets';
 import {
   selectedScene,
   selectedLayer,
@@ -622,6 +624,81 @@ function SnapToLayerControl({
   );
 }
 
+/**
+ * D-332 — "save this layer as a reusable component."
+ *
+ * **Why the Inspector and not a layer-list row action.** Saving needs a NAME,
+ * and a name needs a real text field. The layer list's actions are 11px
+ * hover-revealed icon buttons in a dense tree — D-259 could put delete and
+ * duplicate there precisely because neither takes an argument. This one does,
+ * and the Inspector is where this tab already puts labelled inputs with room
+ * to type.
+ *
+ * The field is prefilled from the layer itself (`suggestedPresetName`), so the
+ * common case is click → Enter. `key`ed by the selection at the call site so
+ * switching layers re-seeds the suggestion rather than leaving the previous
+ * layer's name sitting in the box.
+ *
+ * Enter submits and Escape restores the suggestion — the standard behaviour
+ * for an inline name field, and the same Escape-backs-out convention
+ * `LayerList.tsx`'s armed delete and reorder drag already use.
+ */
+function SaveAsComponentControl({
+  use,
+  raw,
+  onSave,
+}: {
+  use: string;
+  raw: Record<string, unknown>;
+  onSave: (name: string) => void;
+}) {
+  const suggestion = suggestedPresetName(use as PrimitiveUse, raw);
+  const [name, setName] = useState(suggestion);
+  const clean = normalizePresetName(name);
+
+  const submit = () => {
+    if (clean === null) return;
+    onSave(clean);
+  };
+
+  return (
+    <InspectorSection label="Save as component">
+      <div className="flex flex-col gap-1.5">
+        <input
+          type="text"
+          className={inputBase}
+          value={name}
+          maxLength={PRESET_NAME_MAX}
+          placeholder="Component name"
+          aria-label="Component name"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              submit();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              setName(suggestion);
+            }
+          }}
+        />
+        <button
+          type="button"
+          disabled={clean === null}
+          title="Save this layer, with its current values and keyframes, to your component library"
+          className="h-7 rounded border border-border-color text-[11px] text-text-primary hover:border-accent hover:text-accent disabled:opacity-40 disabled:hover:border-border-color disabled:hover:text-text-primary"
+          onClick={submit}
+        >
+          Save to library
+        </button>
+        <p className="text-[10px] text-text-secondary/70 leading-snug">
+          Saved components appear in the Catalog tab and are shared across projects.
+        </p>
+      </div>
+    </InspectorSection>
+  );
+}
+
 /** D-158, Phase 3 — the alignment/distribute toolbar. Real pure functions
  *  (`manifestEdit.ts`'s `alignSelections`/`distributeSelections`), a
  *  minimal, un-fancy button row per the task's own "keep it simple"
@@ -738,6 +815,7 @@ export function InspectorPanel({
   selections,
   onChange,
   onSnapToLayer,
+  onSaveAsComponent,
 }: {
   manifest: Manifest;
   /** D-158 — the whole live selection (was `Selection | null`). 0 entries:
@@ -751,6 +829,11 @@ export function InspectorPanel({
    *  embed, say) just omits it and the emphasis "Snap to layer" section
    *  simply doesn't render. */
   onSnapToLayer?: (targetLayerIndex: number) => void;
+  /** D-332 — save the single selected layer to the component library under
+   *  this name. Optional for the same reason `onSnapToLayer` is: a caller
+   *  with no library wired simply doesn't get the section, rather than
+   *  getting one that silently does nothing. */
+  onSaveAsComponent?: (name: string) => void;
 }) {
   if (selections.length === 0) {
     return <InspectorEmptyState>Select a scene, camera, or layer to edit its properties.</InspectorEmptyState>;
@@ -891,6 +974,19 @@ export function InspectorPanel({
           manifest={manifest}
           selection={selection}
           onSnap={onSnapToLayer}
+        />
+      )}
+      {/* D-332 — offered for a 3D child as much as a 2D layer: a tuned
+         `particleflow` is exactly as worth keeping, and `addLayerFromPreset`
+         routes it back to `scene3d.children` on its own. `key`ed by the
+         selection so the suggested name re-seeds when the user moves to
+         another layer instead of carrying the previous one's name over. */}
+      {onSaveAsComponent && (
+        <SaveAsComponentControl
+          key={`${selection.sceneIndex}.${target.kind}.${'index' in target ? target.index : ''}`}
+          use={found.use}
+          raw={found.raw as Record<string, unknown>}
+          onSave={onSaveAsComponent}
         />
       )}
     </div>

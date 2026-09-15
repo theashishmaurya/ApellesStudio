@@ -81,7 +81,17 @@ import { LayerList, sameSelectionArray, type Selection } from './LayerList';
 import { InspectorPanel } from './InspectorPanel';
 import { CatalogPanel } from './CatalogPanel';
 import { ManifestEditor } from './ManifestEditor';
-import { addLayer, snapEmphasisToRect, resolveSelections, sceneIndexAtFrame, layerVisibleFrameRange } from './manifestEdit';
+import {
+  addLayer,
+  addLayerFromPreset,
+  selectedLayer,
+  snapEmphasisToRect,
+  resolveSelections,
+  sceneIndexAtFrame,
+  layerVisibleFrameRange,
+} from './manifestEdit';
+import { presetFromLayer, removePreset, upsertPreset } from './layerPresets';
+import { useMotionLayerPresetStore } from './layerPresetIO';
 import type { PrimitiveUse } from './catalog';
 import { useMotionManifest, type SceneRenderResult } from './useMotionManifest';
 import { useMotionControl } from './useMotionControl';
@@ -147,6 +157,20 @@ export function MotionTab({
   // resolve-on-manifest-change effect below.
   const [selections, setSelections] = useState<Selection[]>([]);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('layers');
+  // D-332 — the saved-component library. Read here, ABOVE the `loadState`
+  // early returns below, because these are hooks: reading them further down
+  // beside the handlers that use them put them after those returns and broke
+  // the Rules of Hooks outright ("rendered more hooks than during the previous
+  // render") the moment the tab rendered its loading state first. Caught live
+  // in the harness, by neither `tsc` nor the unit suites.
+  //
+  // Loaded once on mount — it is USER-level state, not project state, so it
+  // deliberately does not reload when the project or manifest changes. The MCP
+  // preset ops write through the same store, so a component an agent saves
+  // shows up in this panel with no extra plumbing between the two.
+  const presets = useMotionLayerPresetStore((s) => s.presets);
+  const presetError = useMotionLayerPresetStore((s) => s.error);
+  const presetsLoaded = useMotionLayerPresetStore((s) => s.loaded);
   // D-156, Phase 0b — a Phase 1 drag's in-flight preview override; `null`
   // outside a drag. See `MotionPreview.tsx`'s own doc comment for why this
   // is kept separate from `m.manifest` rather than written into it directly.
@@ -213,6 +237,16 @@ export function MotionTab({
       return sameSelectionArray(resolved, prev) ? prev : resolved;
     });
   }, [m.manifest]);
+
+  // D-332 — pull the component library in once. Deliberately does NOT depend
+  // on the project or the manifest: the library is user-level state shared
+  // across projects, so re-reading it on a project change would be pointless
+  // disk work. Guarded on the store's own `loaded` flag rather than a mount
+  // ref so a remount (tab switch) does not re-read a library already in
+  // memory. Same "before the early returns" rule as the effect above.
+  useEffect(() => {
+    if (!presetsLoaded) void useMotionLayerPresetStore.getState().reload();
+  }, [presetsLoaded]);
 
   // B-058 — this screen is now driven by the app's own "a project is open"
   // signal (`motionProjectStore.openProjectPath`) and nothing else, so it can no
@@ -355,6 +389,44 @@ export function MotionTab({
     const { manifest: next, selection: added } = addLayer(m.manifest, targetSceneIndex, use);
     m.setText(JSON.stringify(next, null, 2));
     if (added) onSelect(added);
+  };
+
+  /** Save the single selected layer under `name`. Goes through the same
+   *  `presetFromLayer` the `motion_save_layer_preset` op uses, so a component
+   *  saved by hand and one saved by an agent are the same object. */
+  const onSaveAsComponent = (name: string) => {
+    if (!m.manifest || selections.length !== 1) return;
+    const found = selectedLayer(m.manifest, selections[0]);
+    if (!found) return;
+    const preset = presetFromLayer(
+      name,
+      found.use,
+      found.raw as Record<string, unknown>,
+      new Date().toISOString(),
+    );
+    if (!preset) return;
+    void useMotionLayerPresetStore.getState().commit(upsertPreset(presets, preset));
+  };
+
+  /** Insert a saved component into the same target scene the Catalog's
+   *  primitives go to. Uses `m.commit`, NOT the `setText` path `onCatalogAdd`
+   *  uses: that path's un-undoable-ness is a disclosed D-151/D-155 wart, and
+   *  there is no reason to reproduce it in new code — an insert here is
+   *  undoable with Cmd/Ctrl+Z like every other commit in this tab. */
+  const onAddPreset = (presetId: string) => {
+    if (!m.manifest || targetSceneIndex === null) return;
+    const preset = presets.find((p) => p.id === presetId);
+    if (!preset) return;
+    const { manifest: next, selection: added } = addLayerFromPreset(m.manifest, targetSceneIndex, preset);
+    if (next === m.manifest) return;
+    m.commit(next, `Add ${preset.name}`);
+    if (added) onSelect(added);
+  };
+
+  const onDeletePreset = (presetId: string) => {
+    const next = removePreset(presets, presetId);
+    if (next === presets) return;
+    void useMotionLayerPresetStore.getState().commit(next);
   };
 
   // D-157 — "snap to layer": the Inspector's own target-picker (rendered
@@ -535,7 +607,16 @@ export function MotionTab({
                       editLinks={editLinks}
                     />
                   )
-                : <CatalogPanel targetSceneId={targetSceneId} onAdd={onCatalogAdd} />}
+                : (
+                  <CatalogPanel
+                    targetSceneId={targetSceneId}
+                    onAdd={onCatalogAdd}
+                    presets={presets}
+                    presetError={presetError}
+                    onAddPreset={onAddPreset}
+                    onDeletePreset={onDeletePreset}
+                  />
+                )}
             </div>
           </div>
         </ResizablePanel>
@@ -548,6 +629,7 @@ export function MotionTab({
                 selections={selections}
                 onChange={onInspectorChange}
                 onSnapToLayer={onSnapToLayer}
+                onSaveAsComponent={onSaveAsComponent}
               />
             )}
           </div>

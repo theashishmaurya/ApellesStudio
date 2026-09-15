@@ -6743,6 +6743,131 @@ def motion_get_edit_links() -> str:
 
 
 @mcp.tool()
+def motion_list_layer_presets() -> str:
+    """List the user's saved COMPONENTS — layers they tuned once and kept for
+    reuse. The Catalog tab's "Components" section, as data.
+
+    A component is a named, frozen copy of one layer fragment: every field it
+    had when it was saved, INCLUDING its `transform` and its keyframes. It is
+    not a new kind of object — inserting one produces an ordinary layer, and
+    nothing links the two afterwards.
+
+    These are USER-level and shared across projects, unlike the manifest. This
+    tool needs no project open, so it is a safe thing to call while deciding
+    what to build.
+
+    Each entry carries `id` (pass it to `motion_add_layer_from_preset`),
+    `name`, `use`, `createdAt`, and the full `layer` fragment so you can see
+    what you would be inserting before you insert it. Newest first.
+
+    Distinct from `motion_list_primitives`, which lists the ten BUILT-IN
+    primitives and their fields. That one is what the engine can draw; this one
+    is what this user has already made."""
+    import json
+
+    return json.dumps(_op("motion_list_layer_presets"), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_save_layer_preset(scene_index: int, target: MotionTarget, name: str) -> str:
+    """Save one existing layer to the component library under `name` — the
+    Inspector's "Save as component" box.
+
+    The whole fragment is captured as it stands, keyframes and all, minus the
+    layer's `id`. Use this when a layer has been tuned into something worth
+    having again: a `matrix` set up as a real attention heatmap, a `graph`
+    wired to a specific architecture, a `text` with the exact size and entrance
+    you want. Rebuilding one of those from `motion_add_layer` is five or ten
+    `motion_set_layer_field` calls; inserting the saved one is a single call.
+
+    The library is user-level and shared across projects, so a component saved
+    while working on one project is available in every other one.
+
+    Editing the layer afterwards does NOT change the component, and editing the
+    component does not change layers already inserted from it. It is a copy,
+    deliberately — see `motion_add_layer_from_preset`.
+
+    Args:
+        scene_index: which scene the layer is in.
+        target: {kind, index?, id?} — kind is "layer" or "scene3d-child".
+        name: what to call it in the library. Leading/trailing whitespace is
+            trimmed and interior runs collapsed; an empty name is refused."""
+    import json
+
+    return json.dumps(
+        _op(
+            "motion_save_layer_preset",
+            scene_index=scene_index,
+            target=to_wire(target),
+            name=name,
+        ),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def motion_add_layer_from_preset(scene_index: int, preset_id: str) -> str:
+    """Insert a saved component into a scene — the "+ Add to scene" button on a
+    row of the Catalog tab's Components section.
+
+    Get `preset_id` from `motion_list_layer_presets`. The new layer reproduces
+    the component exactly, keyframes included, with a fresh `id`.
+
+    Placement is decided by the PRIMITIVE, not by you: a `particleflow`,
+    `labelbox` or `layerstack` component goes into `scene3d.children` (creating
+    that container, with a default camera, if the scene has none); every other
+    kind is appended to `scene.layers`. This is the same rule
+    `motion_add_layer` follows.
+
+    The insert is a COPY. Nothing links the new layer back to the component:
+    changing the component later does not restyle this layer, and deleting the
+    component does not remove it. Edit the result with
+    `motion_set_layer_field` / `motion_set_layer_position` like any other
+    layer.
+
+    Returns the `selection` addressing the new layer.
+
+    Args:
+        scene_index: which scene to add it to.
+        preset_id: the component's `id` from `motion_list_layer_presets`."""
+    import json
+
+    return json.dumps(
+        _op(
+            "motion_add_layer_from_preset",
+            scene_index=scene_index,
+            preset_id=preset_id,
+        ),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def motion_delete_layer_preset(preset_id: str) -> str:
+    """Remove one saved component from the library — the trash button on its
+    Catalog row.
+
+    This is safe in a way that deleting a component in a design tool is not:
+    layers already inserted from it are ordinary layers and are left completely
+    alone, in this project and every other one. Only the library entry goes.
+
+    Needs no project open, for the same reason `motion_list_layer_presets`
+    does not: the library is user-level state, not part of any manifest.
+
+    Args:
+        preset_id: the component's `id` from `motion_list_layer_presets`."""
+    import json
+
+    return json.dumps(
+        _op("motion_delete_layer_preset", preset_id=preset_id),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
 def motion_render() -> str:
     """Render the Motion manifest to REAL video files, via Remotion — the one
     Motion tool that produces something outside the app. Saves first if dirty.

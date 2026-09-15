@@ -35,7 +35,8 @@ import { design } from '@apelles/motion-engine/src/design';
 import { deviceBodyRect } from '@apelles/motion-engine/src/lib/device';
 import { sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
 import type { Selection } from './LayerList';
-import { catalogEntry, defaultLayerFor, DEFAULT_CAMERA_2D, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
+import { catalogEntries, catalogEntry, defaultLayerFor, DEFAULT_CAMERA_2D, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
+import type { MotionLayerPreset } from './layerPresets';
 import { positionFields, sizeFields } from './propCatalog';
 import { screenToWorld, worldDelta, type RectLike, type WorldMap } from './canvasGeometry';
 
@@ -1463,6 +1464,57 @@ export function addLayer(
   const fragment = { ...defaultLayerFor(use), id } as unknown as Layer;
 
   if (catalogEntry(use).in3d) {
+    if (!scene.scene3d) scene.scene3d = { camera: DEFAULT_SCENE3D_CAMERA(), children: [] };
+    scene.scene3d.children.push(fragment);
+    return {
+      manifest: next,
+      selection: { sceneIndex, target: { kind: 'scene3d-child', index: scene.scene3d.children.length - 1, id } },
+    };
+  }
+
+  if (!scene.layers) scene.layers = [];
+  scene.layers.push(fragment);
+  return {
+    manifest: next,
+    selection: { sceneIndex, target: { kind: 'layer', index: scene.layers.length - 1, id } },
+  };
+}
+
+/**
+ * D-332 — insert a saved component (`layerPresets.ts`) into a scene.
+ *
+ * The preset's fragment is deep-cloned and given a fresh `id`, so two inserts
+ * of one preset never share a mutable array (the same footgun
+ * `defaultLayerFor`'s "every call builds its literals fresh" note guards
+ * against) and never share an id (the same reason `duplicateLayer` re-mints
+ * one). Nothing links the new layer back to the preset — see
+ * `layerPresets.ts`'s header for why the copy semantics are deliberate.
+ *
+ * Placement is decided by `catalogEntry(preset.use).in3d`, NOT by the caller
+ * and NOT by anything stored in the preset: a `particleflow` belongs in
+ * `scene3d.children` because of what it is, and a library file that claimed
+ * otherwise would insert a three.js object into `scene.layers` where the
+ * registry cannot render it. Reusing the catalog's own answer is what keeps
+ * this in step with `addLayer` for free.
+ *
+ * An unknown `use` is a no-op rather than a throw — `sanitizeLoadedPresets`
+ * already drops those on load, so reaching here means a caller built a preset
+ * by hand, and the rest of the library should not be lost to it.
+ */
+export function addLayerFromPreset(
+  manifest: Manifest,
+  sceneIndex: number,
+  preset: MotionLayerPreset,
+): { manifest: Manifest; selection: Selection | null } {
+  if (!manifest.scenes[sceneIndex]) return { manifest, selection: null };
+  if (!catalogEntries.some((e) => e.use === preset.use)) return { manifest, selection: null };
+
+  const next = clone(manifest);
+  const scene = next.scenes[sceneIndex];
+  const id = genLayerId();
+  const fragment = { ...clone(preset.layer), use: preset.use, id } as unknown as Layer;
+
+  if (catalogEntry(preset.use).in3d) {
     if (!scene.scene3d) scene.scene3d = { camera: DEFAULT_SCENE3D_CAMERA(), children: [] };
     scene.scene3d.children.push(fragment);
     return {

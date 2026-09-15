@@ -104,6 +104,7 @@ import { runAsAgent } from '@apelles/history';
 import type { PlayerRef } from '@remotion/player';
 
 import { createMotionOps, type MotionOpsApi, type MotionEditLinks } from './motionOps';
+import { useMotionLayerPresetStore } from './layerPresetIO';
 import type { Selection } from './LayerList';
 import type { MotionCanvasMeasureApi } from './MotionPreview';
 import type { useMotionManifest } from './useMotionManifest';
@@ -215,6 +216,17 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       setSelections,
       player: () => playerRef.current,
       editLinks: () => linksRef.current ?? {},
+      // D-332 — the saved-component library. Read through `getState()` rather
+      // than a subscribed hook value for the same reason every other accessor
+      // here is a function: this registry is built once at mount and called
+      // much later, so a captured list would go stale the moment the user (or
+      // another op) saved a component. `commit` writes through to disk and
+      // updates the store, so the Catalog panel re-renders on its own.
+      presets: () => ({
+        list: () => useMotionLayerPresetStore.getState().presets,
+        commit: (next) => useMotionLayerPresetStore.getState().commit(next),
+        now: () => new Date().toISOString(),
+      }),
     });
 
     const unlistenP = listen('chroma://request', async (ev: { payload?: unknown }) => {

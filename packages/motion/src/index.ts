@@ -19,10 +19,18 @@
  * a bezier curve/easing editor). See `docs/notes/motion-visual-builder-
  * research.md` and `docs/notes/motion-keyframe-timeline-research.md` for
  * the full scoping, and `docs/08-decisions.md`'s D-150 through D-164 for
- * what actually shipped vs. what's still disclosed as open. No MCP surface
- * yet — still queued as roadmap item 16. `app/motion-harness.html` (D-165)
- * is a standalone browser harness for exercising this tab's real pointer
- * gestures outside the full Tauri app.
+ * what actually shipped vs. what's still disclosed as open.
+ *
+ * Since then: a real MCP surface (**D-257**, 41 `motion_*` ops in
+ * `motionOps.ts` — this doc comment claimed "no MCP surface yet" long after
+ * that shipped; corrected by D-332), layer/scene delete + duplicate (D-259),
+ * Motion→Edit auto-relink (D-260), a GUI "Add camera" (D-331), and a
+ * user-level saved-component library (**D-332** — `layerPresets.ts` +
+ * `layerPresetIO.ts`, persisted outside any project through
+ * `chroma_motion_{load,save}_layer_presets`).
+ *
+ * `app/motion-harness.html` (D-165) is a standalone browser harness for
+ * exercising this tab's real pointer gestures outside the full Tauri app.
  */
 
 export { MotionTab } from './MotionTab';

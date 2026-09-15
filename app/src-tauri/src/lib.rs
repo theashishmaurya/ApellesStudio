@@ -2377,6 +2377,8 @@ pub fn run() {
             chroma::motion::chroma_motion_get_manifest,
             chroma::motion::chroma_motion_save_manifest,
             chroma::motion::chroma_motion_render,
+            chroma::motion_presets::chroma_motion_load_layer_presets,
+            chroma::motion_presets::chroma_motion_save_layer_presets,
             chroma::sidecar::chroma_ai_status,
             chroma::sidecar::chroma_ai_media_status,
             chroma::sidecar::chroma_mcp_status,

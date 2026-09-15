@@ -1100,24 +1100,26 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       click. No new MCP tool (the agent path already reached the identical end
       state — a test pins the two to the same manifest). The 3D camera was
       checked and found symmetric, so deliberately untouched.
-    - **9. A Motion layer preset / component library** — owner, 2026-09-16, and
-      the largest finding of D-331's audit: the Catalog offers exactly the 10
-      built-in primitives with hard-coded `defaultLayerFor` defaults, so a
+    - ~~**9. A Motion layer preset / component library** — owner, 2026-09-16,
+      and the largest finding of D-331's audit: the Catalog offers exactly the
+      10 built-in primitives with hard-coded `defaultLayerFor` defaults, so a
       tuned `matrix` or `graph` (both edited through raw-JSON textareas) cannot
       be kept and must be retyped from scratch every time. `duplicateLayer`
-      only helps within one manifest. **Not started, and deliberately not
-      half-built.** Unlike D-243's caption presets (hard-coded TS data, no
-      storage), a user-SAVED library needs real persistence; the in-repo
-      precedent is RapidRAW's own grading presets — `file_management.rs`'s
-      `load_presets`/`save_presets` over `app_data_dir()/presets/presets.json`,
-      with `PresetItem`/`PresetFolder` already showing the folder-tree shape.
-      Full scope, both halves in one pass per the standing rule: a preset
-      module + two Tauri commands, a "Save as component" row action, a saved
-      section in `CatalogPanel`, and `motion_save_layer_preset` /
-      `motion_list_layer_presets` / `motion_add_layer_from_preset` /
-      `motion_delete_layer_preset` in `motionOps.ts`, `mcp/server.py` AND
-      `crates/apelles-mcp`, plus a regenerated golden corpus and the three tool
-      counts in `docs/notes/mcp-tool-coverage.md`.
+      only helps within one manifest.~~ **DONE — D-332, 2026-09-16.** A
+      component is a named, frozen COPY of one layer fragment (keyframes
+      included, layer `id` stripped) in a user-level library at
+      `<app_data_dir>/motion/layer-presets.json`, shared across projects —
+      following RapidRAW's own `load_presets`/`save_presets` precedent, NOT
+      D-243's caption presets, which turned out to be hard-coded TS with no
+      storage at all. Both halves in one pass: the Inspector's "Save as
+      component" box + the Catalog's Components section, and four `motion_*`
+      tools (Motion 37 → **41**, the whole server 171 → 175) in `motionOps.ts`,
+      `mcp/server.py` and `crates/apelles-mcp`, with the golden corpus
+      regenerated and diffed to confirm it adds exactly those four and changes
+      no other contract. Insertion is a copy with **no live link** back —
+      component instances/overrides are deliberately out of scope and reasoned
+      about in D-332, along with folders, import/export, rename-after-save, and
+      per-component thumbnails.
     - **10. Manifest-level fields are unreachable in a typed way, by either
       side** — `manifestSchema` declares `title`/`width`/`height`/`fps`/
       `grain`/`vignette`/`transparent`, but there is no document-level

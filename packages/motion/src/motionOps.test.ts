@@ -28,6 +28,7 @@ import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 
 import {
   addLayer,
+  addLayerFromPreset,
   addScene,
   alignSelections,
   deleteLayer,
@@ -70,6 +71,7 @@ import {
   type MotionPlayer,
 } from './motionOps';
 import type { Selection } from './LayerList';
+import type { MotionLayerPreset } from './layerPresets';
 
 // ---------------------------------------------------------------------------
 // harness
@@ -126,6 +128,16 @@ function harness(initial: Manifest = sample) {
   // `motion_get_edit_links` reports as `available: false`.
   const links: { current: MotionEditLinks | undefined } = { current: undefined };
 
+  // D-332 — the saved-component library, held in memory here instead of on
+  // disk. `presetWrites` counts real persistence attempts so a test can prove
+  // an op wrote (or, for a refusal, did NOT write); `presetCommitOk` lets a
+  // test simulate a failed disk write, which the ops must report rather than
+  // claiming a save that did not happen.
+  const presetLib: { current: MotionLayerPreset[] } = { current: [] };
+  const presetWrites: MotionLayerPreset[][] = [];
+  const presetCommitOk = { value: true };
+  const presetNow = { value: '2026-09-16T00:00:00.000Z' };
+
   const ops: MotionOps = createMotionOps({
     api: () => api,
     selections: () => state.selections,
@@ -134,6 +146,16 @@ function harness(initial: Manifest = sample) {
     },
     player: () => player,
     editLinks: () => links.current as MotionEditLinks,
+    presets: () => ({
+      list: () => presetLib.current,
+      commit: async (next) => {
+        presetWrites.push([...next]);
+        if (!presetCommitOk.value) return false;
+        presetLib.current = [...next];
+        return true;
+      },
+      now: () => presetNow.value,
+    }),
   });
 
   return {
@@ -144,6 +166,10 @@ function harness(initial: Manifest = sample) {
     seeks,
     save,
     render,
+    presetLib,
+    presetWrites,
+    presetCommitOk,
+    presetNow,
     unmountPlayer: () => {
       player = null;
     },
@@ -204,16 +230,20 @@ const ALL_OPS = [
   'motion_seek',
   'motion_save_manifest',
   'motion_render',
+  'motion_list_layer_presets',
+  'motion_save_layer_preset',
+  'motion_add_layer_from_preset',
+  'motion_delete_layer_preset',
 ];
 
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 37 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 41 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(37);
+    expect(names).toHaveLength(41);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 
@@ -225,11 +255,22 @@ describe('the registry itself', () => {
    *  first triggering an error. */
   const ORIENTATION_OPS = ['motion_get_manifest', 'motion_get_state', 'motion_list_primitives'];
 
-  it('every op except the orientation reads refuses cleanly with no project open, and never commits', async () => {
+  /** D-332 — the two ops that act on the user's COMPONENT LIBRARY rather than
+   *  on a project. The library lives in the app data directory and is shared
+   *  across projects, so "no project open" is simply not a relevant refusal
+   *  for them: surveying or tidying your own toolbox before opening anything
+   *  is a legitimate thing to do, and forcing a project open first would be a
+   *  refusal with no reason behind it. The other two preset ops
+   *  (`motion_save_layer_preset`, `motion_add_layer_from_preset`) DO touch a
+   *  manifest, so they stay in the sweep below. */
+  const LIBRARY_OPS = ['motion_list_layer_presets', 'motion_delete_layer_preset'];
+
+  it('every op except the orientation reads and the library ops refuses cleanly with no project open, and never commits', async () => {
     const h = harness();
     h.state.loadState = 'no-project';
     for (const op of ALL_OPS) {
       if (ORIENTATION_OPS.includes(op)) continue;
+      if (LIBRARY_OPS.includes(op)) continue;
       // `motion_save_manifest`/`motion_render` are async — awaiting every op
       // keeps this sweep honest rather than reading `.error` off a Promise.
       const r = await h.runAsync(op, {});
@@ -1405,5 +1446,188 @@ describe('motion_get_edit_links', () => {
     expect(h.commits).toHaveLength(0);
     expect(h.save).not.toHaveBeenCalled();
     expect(h.render).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D-332 — saved components (the layer-preset library)
+// ---------------------------------------------------------------------------
+
+describe('saved components (D-332)', () => {
+  /** save the sample's first text layer under `name`, returning the harness
+   *  and the op result — the setup nearly every case below starts from. */
+  const saveFirstText = async (h: ReturnType<typeof harness>, name = 'my text') =>
+    await h.runAsync('motion_save_layer_preset', { ...sel(TEXT_L0), name });
+
+  it('the library ops work with no project open — the library is not project state', async () => {
+    const h = harness();
+    h.state.loadState = 'no-project';
+    expect(h.run('motion_list_layer_presets').error).toBeUndefined();
+    // deleting a component that is not there is still a real "not found", not
+    // a project refusal — which is the point: the op got as far as the library.
+    const r = await h.runAsync('motion_delete_layer_preset', { preset_id: 'nope' });
+    expect(r.error).toBe('no saved component with id "nope"');
+  });
+
+  it('refuses cleanly when nothing supplies a library at all', async () => {
+    // the pre-D-332 context shape: no `presets` accessor
+    const bare = createMotionOps({
+      api: () => ({
+        loadState: 'ready',
+        manifest: sample,
+        parseError: null,
+        dirty: false,
+        saveError: null,
+        commit: () => {},
+        save: (async () => ({ ok: true })) as unknown as MotionOpsApi['save'],
+        render: (async () => ({ ok: true })) as unknown as MotionOpsApi['render'],
+      }),
+      selections: () => [],
+      setSelections: () => {},
+      player: () => null,
+    });
+    const msg = 'the saved-component library is unavailable in this context';
+    expect((bare.motion_list_layer_presets({}) as Record<string, unknown>).error).toBe(msg);
+    expect(((await bare.motion_save_layer_preset({})) as Record<string, unknown>).error).toBe(msg);
+    expect(((await bare.motion_add_layer_from_preset({})) as Record<string, unknown>).error).toBe(msg);
+    expect(((await bare.motion_delete_layer_preset({})) as Record<string, unknown>).error).toBe(msg);
+  });
+
+  it('motion_save_layer_preset stores the layer and reports the new preset', async () => {
+    const h = harness();
+    const r = await saveFirstText(h, '  hero  headline ');
+    expect(r.error).toBeUndefined();
+    const p = r.preset as Record<string, unknown>;
+    expect(p.name).toBe('hero headline');
+    expect(p.use).toBe('text');
+    expect(p.createdAt).toBe('2026-09-16T00:00:00.000Z');
+    expect(h.presetLib.current).toHaveLength(1);
+    expect(h.presetWrites).toHaveLength(1);
+  });
+
+  it('saving captures the layer as it stands, not a catalog default', async () => {
+    const h = harness();
+    await saveFirstText(h);
+    const stored = h.presetLib.current[0];
+    const live = sample.scenes[0].layers![0] as unknown as Record<string, unknown>;
+    // every field of the real layer survives except its manifest id
+    const { id, ...rest } = live;
+    void id;
+    expect(stored.layer).toEqual({ ...rest });
+    expect('id' in stored.layer).toBe(false);
+  });
+
+  it('refuses an empty name and writes nothing', async () => {
+    const h = harness();
+    const r = await saveFirstText(h, '   ');
+    expect(typeof r.error).toBe('string');
+    expect(h.presetLib.current).toHaveLength(0);
+    expect(h.presetWrites).toHaveLength(0);
+  });
+
+  it('reports a failed disk write instead of claiming a save', async () => {
+    const h = harness();
+    h.presetCommitOk.value = false;
+    const r = await saveFirstText(h);
+    expect(r.error).toBe('could not write the component library to disk');
+    expect(h.presetWrites).toHaveLength(1);
+    expect(h.presetLib.current).toHaveLength(0);
+  });
+
+  it('motion_list_layer_presets lists newest first with the stored fragment', async () => {
+    const h = harness();
+    h.presetNow.value = '2026-01-01T00:00:00.000Z';
+    await saveFirstText(h, 'older');
+    h.presetNow.value = '2026-09-01T00:00:00.000Z';
+    await h.runAsync('motion_save_layer_preset', { ...sel(EMPH_L1), name: 'newer' });
+
+    const listed = h.run('motion_list_layer_presets').presets as Record<string, unknown>[];
+    expect(listed.map((p) => p.name)).toEqual(['newer', 'older']);
+    expect(listed[0].use).toBe('emphasis');
+    expect(listed[0].layer).toBeTruthy();
+  });
+
+  it('motion_add_layer_from_preset inserts a real copy and commits once', async () => {
+    const h = harness();
+    await saveFirstText(h, 'hero');
+    const presetId = h.presetLib.current[0].id;
+    const before = h.current().scenes[1].layers!.length;
+
+    const r = await h.runAsync('motion_add_layer_from_preset', { scene_index: 1, preset_id: presetId });
+    expect(r.error).toBeUndefined();
+    expect(h.current().scenes[1].layers).toHaveLength(before + 1);
+    expect(h.commits).toHaveLength(1);
+    expect(h.commits[0].label).toBe('Add hero');
+    const added = h.current().scenes[1].layers!.at(-1) as unknown as Record<string, unknown>;
+    expect(added.use).toBe('text');
+  });
+
+  /**
+   * The op-vs-GUI equivalence this file exists to enforce: the op must land on
+   * exactly what the Catalog's own insert path produces from the same preset.
+   */
+  it('lands on the same manifest the GUI insert path produces', async () => {
+    const h = harness();
+    await saveFirstText(h, 'hero');
+    const preset = h.presetLib.current[0];
+    const base = h.current();
+
+    await h.runAsync('motion_add_layer_from_preset', { scene_index: 1, preset_id: preset.id });
+    const viaOp = h.current();
+    const viaGui = addLayerFromPreset(base, 1, preset).manifest;
+
+    // ids are freshly minted per insert, so compare everything else
+    const strip = (m: Manifest) =>
+      JSON.stringify(m, (k, v) => (k === 'id' && typeof v === 'string' && v.length === 8 ? '<id>' : v));
+    expect(strip(viaOp)).toBe(strip(viaGui));
+  });
+
+  it('refuses an unknown preset id, a bad scene index and a missing id', async () => {
+    const h = harness();
+    await saveFirstText(h, 'hero');
+    const id = h.presetLib.current[0].id;
+
+    expect((await h.runAsync('motion_add_layer_from_preset', { scene_index: 0, preset_id: 'nope' })).error)
+      .toBe('no saved component with id "nope"');
+    expect((await h.runAsync('motion_add_layer_from_preset', { scene_index: 99, preset_id: id })).error)
+      .toContain('no scene at index 99');
+    expect((await h.runAsync('motion_add_layer_from_preset', { scene_index: 0 })).error)
+      .toBe('preset_id must be a non-empty string');
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('motion_delete_layer_preset removes it and leaves inserted layers alone', async () => {
+    const h = harness();
+    await saveFirstText(h, 'hero');
+    const id = h.presetLib.current[0].id;
+    await h.runAsync('motion_add_layer_from_preset', { scene_index: 1, preset_id: id });
+    const afterInsert = h.current().scenes[1].layers!.length;
+
+    const r = await h.runAsync('motion_delete_layer_preset', { preset_id: id });
+    expect(r.deleted).toBe(id);
+    expect(r.remaining).toBe(0);
+    expect(h.presetLib.current).toHaveLength(0);
+    // the copy stays — an insert is a copy, nothing links back (D-332)
+    expect(h.current().scenes[1].layers).toHaveLength(afterInsert);
+  });
+
+  it('a failed delete write is reported and the library is untouched', async () => {
+    const h = harness();
+    await saveFirstText(h, 'hero');
+    const id = h.presetLib.current[0].id;
+    h.presetCommitOk.value = false;
+    const r = await h.runAsync('motion_delete_layer_preset', { preset_id: id });
+    expect(r.error).toBe('could not write the component library to disk');
+    expect(h.presetLib.current).toHaveLength(1);
+  });
+
+  it('round-trips a 3D primitive into scene3d.children', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_save_layer_preset', { ...sel(CHILD_3D), name: 'particles' });
+    expect(r.error).toBeUndefined();
+    const id = h.presetLib.current[0].id;
+    await h.runAsync('motion_add_layer_from_preset', { scene_index: 2, preset_id: id });
+    const kids = h.current().scenes[2].scene3d!.children;
+    expect(kids.at(-1)).toMatchObject({ use: 'particleflow' });
   });
 });

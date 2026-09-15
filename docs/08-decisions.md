@@ -32396,3 +32396,187 @@ with Cmd/Ctrl+Z like every other mutation in this tab.
    silently, because "the isolated harness lacks a composition-root behaviour"
    is a trap the next audit on this tier will hit too. Automatic PLACEMENT on
    the Edit timeline stays manual on D-062/D-260's unchanged reasoning.
+
+---
+
+## D-332 — Motion layers can be saved as reusable COMPONENTS, in a user-level library shared across projects
+
+**decided (2026-09-16)** · closes the largest finding of D-331's Motion-tab
+audit · obeys CLAUDE.md's "every feature is built for a human AND an AI"
+
+**Context.** D-331's firsthand audit found the Motion tab could create
+everything and keep nothing. The Catalog offers exactly the ten built-in
+primitives, and every insert writes the hard-coded `defaultLayerFor(use)`
+fragment. So tuning a `matrix` into a real attention heatmap — and the
+Inspector edits `values`, `nodes`, `edges` and `items` through raw-JSON
+textareas, because those are structural — produced something that existed
+only in that manifest, at that moment. Wanting it again tomorrow, or in
+another project, meant retyping all of it from memory, including the exact
+`use` string and the per-primitive required props.
+
+`duplicateLayer` (D-259) does not help: it copies within one manifest, which
+is the case that was already easy. The owner named this directly, contrasting
+it with the Edit tab's caption presets, which solved the same "keep a look you
+like" problem for captions in D-243.
+
+**Why D-243's caption presets are NOT the model, though they look like it.**
+Read rather than assumed: `captionPresets.ts` is hard-coded TypeScript, eight
+entries, and its own header says it has "no storage of its own" — "a preset is
+nothing but a `CaptionStyle`", shipped in the binary because *we* author those
+looks. Nothing there is user-saved, and there is no "save this style as a
+preset" anywhere in the Edit tab. It is a curated catalogue, which is what
+`catalog.ts` already is for Motion. The thing actually missing here is the
+other kind: a library the USER writes at runtime. So the real in-repo
+precedent is RapidRAW's own grading presets — `file_management.rs`'s
+`load_presets`/`save_presets` over a JSON file in the app data directory —
+and that is what this follows.
+
+**Options for where the library lives.**
+
+1. **In the manifest** (`manifest.presets`). Rejected: it scopes reuse to one
+   project, and within-project reuse is `duplicateLayer`. It would also put
+   library edits in the undo stack and mark the document dirty, conflating
+   "I changed my toolbox" with "I changed this video."
+2. **A field on `AppSettings`** (`settings.json`). Rejected: that file is
+   re-serialised and rewritten on every settings change, and a library that
+   grows with use does not belong in that write path. The grading presets made
+   the same call for the same reason.
+3. **Its own file in the app data directory.** Chosen —
+   `<app_data_dir>/motion/layer-presets.json`, two Tauri commands, whole-list
+   read and whole-list write, exactly mirroring `load_presets`/`save_presets`.
+
+**Decision — a component is a named, frozen COPY of one layer fragment.**
+
+`MotionLayerPreset` is `{id, name, use, layer, createdAt}` where `layer` is the
+manifest fragment minus its `id`. Inserting one produces an ordinary layer with
+a fresh id; **nothing links the two afterwards.**
+
+That copy semantics is the one real product choice here, and it is deliberate
+rather than a shortcut. A live component graph — Figma's model, where editing
+the component restyles every instance — needs every inserted layer to carry a
+preset id, an override model for the fields the user then changed, and a
+reconciliation pass on every load. That is a much larger feature, and the
+asymmetry matters: its ABSENCE is invisible (a copy behaves exactly as you
+expect), whereas a half-built version of it would be a trap. Worth revisiting
+if the owner asks for instances; not worth inventing unasked.
+
+Two consequences fall out and are stated on the tools: deleting a component
+does not touch layers already made from it, and editing a layer does not change
+the component it came from.
+
+**The whole fragment is captured, keyframes included.** `transform` and
+`transform.keys` come along, because the per-layer animation is most of what
+makes a tuned setup worth keeping — capturing only the static fields would
+answer a question nobody asked. The layer `id` is stripped: ids are
+per-manifest identity, so carrying one in a library would hand the same id to
+every insert and break `resolveSelection`'s id-first matching the moment two
+copies shared a scene.
+
+**The layering.** `layerPresets.ts` is pure — the model, the name rules, the
+list surgery, and `sanitizeLoadedPresets`. `layerPresetIO.ts` is the I/O
+boundary plus the zustand store. `manifestEdit.ts` gains only
+`addLayerFromPreset`, which decides placement from `catalogEntry(use).in3d`
+exactly as `addLayer` does — so a `particleflow` component lands in
+`scene3d.children` because of what it IS, never because of anything the library
+file claimed. The same split `manifestIO.ts`/`manifestEdit.ts` already keep,
+and the reason the model is testable with no React, no Tauri and no disk.
+
+**A hand-editable file is never trusted.** The library is plain JSON in the
+user's app-data directory: hand-editable, half-writable by a crash, and
+portable between builds whose primitive sets differ. `sanitizeLoadedPresets`
+drops a bad row rather than throwing, so one corrupt entry cannot cost the user
+a library they spent real time building — the same "degrade to the valid
+subset" stance `load_presets` takes by returning an empty list for a missing
+file. The check that earns its keep is unknown `use`: that is what a renamed or
+retired primitive looks like, and an un-dropped row would insert a layer the
+registry cannot render. Rust reports a PARSE failure as a real error rather
+than an empty list, though — quietly saying "you have no components" would
+invite the user to overwrite a recoverable file with their next save.
+
+**Both halves, same pass, same functions underneath.**
+
+| | human | agent |
+|---|---|---|
+| save | Inspector's "Save as component" (name field + button) | `motion_save_layer_preset` |
+| list | Catalog tab's Components section | `motion_list_layer_presets` |
+| insert | "+ Add to scene" on a component row | `motion_add_layer_from_preset` |
+| delete | trash button on a component row | `motion_delete_layer_preset` |
+
+Both paths go through `presetFromLayer` and `addLayerFromPreset`, so a
+component saved by hand and one saved by an agent are the same object, and a
+test asserts the op lands on the manifest the GUI path produces.
+
+**Why the save UI is in the Inspector, not a layer-list row action.** Saving
+needs a NAME, and a name needs a real text field. D-259 could put delete and
+duplicate on layer rows precisely because neither takes an argument; those are
+11px hover-revealed icon buttons in a dense tree. The Inspector is where this
+tab already puts labelled inputs with room to type. The field is prefilled from
+the layer itself (`suggestedPresetName`, which reuses a `text` layer's own text
+— the same identity the layer list labels it with), so the common case is click
+→ Enter.
+
+**Two `motion_*` tools deliberately work with no project open.**
+`motion_list_layer_presets` and `motion_delete_layer_preset` are the first
+Motion tools that touch state outside the manifest, and "no project open" is
+simply not a relevant refusal for them — surveying or tidying your own toolbox
+before opening anything is legitimate. The ops test encodes this as its own
+`LIBRARY_OPS` exemption beside the existing `ORIENTATION_OPS`, rather than
+quietly dropping them from the refusal sweep. The other two do touch a manifest
+and stay in it.
+
+**Verification.**
+
+- **48 new tests**, all green: 35 in the new `layerPresets.test.ts` (the model,
+  the sanitizer's seven degradation cases, and an `addLayerFromPreset`
+  round-trip asserting a catalog layer → component → inserted layer is
+  identical apart from its id) and 13 added to `motionOps.test.ts` (now 108),
+  including the op-vs-GUI equivalence assertion and a simulated failed disk
+  write, which the ops must report rather than claim a save that did not
+  happen. `packages/motion` is 688/688. `tsc --noEmit` clean.
+- **Rust:** `cargo check`/`cargo clippy -p apelles` clean on the new module
+  (the 6 warnings in `ai_processing.rs` are pre-existing and untouched);
+  `cargo fmt --check` clean.
+- **The parity gate, the part that matters most.** The four Rust tool
+  descriptions were **generated from the Python docstrings by a script**
+  rather than transcribed, because `every_ported_tool_publishes_the_same_
+  contract_as_the_python_one` compares them byte-for-byte and a hand-copy is
+  exactly where that fails. Corpus regenerated with `parity/capture.py`; the
+  diff was checked programmatically and adds **exactly** 4 tools and their 4
+  cases, with **zero** changed contracts, zero removals, and identical server
+  instructions. All 5 parity tests pass. `http_transport.rs`'s hard-coded
+  `TOOL_COUNT` needed bumping (171 → 175 after this rebased onto D-330) — it is a second, independent pin on
+  the same number and it caught the omission on the first run.
+- **Live-verified in real Chromium** on D-165's Motion harness (its invoke stub
+  extended with the two new commands, so a save really round-trips). Selected
+  the sample's text layer; the Inspector's new section was prefilled `Text —
+  EVERY call re-sends the whole prompt`; renamed it and saved. The persisted
+  row carried `use: "text"`, **no layer `id`**, and the full
+  `transform.keys` — both keys, including the bezier `ease: [0.22, 1, 0.36, 1]`
+  — which is the whole point of the feature. The Catalog then showed a
+  **COMPONENTS** section above a **PRIMITIVES** heading. Inserting it produced
+  a second layer whose JSON is **identical to the original ignoring `id`**
+  (checked by stripping ids and comparing strings), with a distinct fresh id,
+  and a second keyframe lane appeared in the timeline. Deleting the component
+  emptied the library, hid the section, and **left the inserted layer in
+  place** — the copy-semantics guarantee, observed rather than asserted.
+
+**One real bug this pass introduced and fixed, worth recording** because
+neither `tsc` nor 689 unit tests caught it: the first draft read the preset
+store with hooks placed beside the handlers that use them, which is *after*
+`MotionTab`'s `loadState` early returns — a Rules-of-Hooks violation that threw
+"Rendered more hooks than during the previous render" the moment the tab
+rendered its loading state first. Only running it surfaced this. The hooks now
+sit at the top beside the other state, and the effect beside the existing
+resolve effect, which already carries a comment explaining exactly this rule.
+A reminder that the live tier is not ceremony for UI work.
+
+**Deliberately not built**, each named rather than left implicit: component
+instances/overrides (see the copy-semantics reasoning above), folders or tags
+in the library (`PresetItem`/`PresetFolder` on the grading side show the shape
+if it is ever wanted), import/export of a library file, renaming a component
+after the fact (the name is set at save time; a first draft carried a pure
+`renamePreset` with tests, and it was **deleted before commit** rather than
+shipped unreachable — no surface called it, and this repo does not keep dead
+code "just in case"), and thumbnails on component rows (they reuse
+`PrimitiveGlyph`, the same WebGL-context reasoning D-151 recorded for the
+Catalog).
