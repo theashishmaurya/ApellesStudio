@@ -2385,6 +2385,21 @@
       }
     },
     {
+      "name": "editor_get_timeline_transcript",
+      "description": "Read what the WHOLE TIMELINE says, in timeline order and in TIMELINE\n    frames \u2014 \"what does this sequence say?\" (D-329).\n\n    **Use this, not `editor_get_transcript`, for any question about the\n    sequence.** `editor_get_transcript` answers per FILE, in that file's own\n    source seconds. A timeline is a set of trimmed, reordered windows onto one\n    or more files, so a file's transcript contains speech you CUT OUT and gives\n    times that are not where the words land in the edit. This tool does that\n    mapping for you: it walks the clips in timeline order, keeps only the\n    speech each clip actually shows, and converts every row to the timeline\n    frame it plays at \u2014 at the clip's own `source_fps`, which is the step that\n    is easy to get wrong by hand (a clip's `duration`/`source_start` are its\n    OWN native frames while `start_frame` is a timeline frame; see B-077).\n\n    It is the same stitch the Edit tab's Index panel renders, so what you read\n    here is exactly what the user is looking at.\n\n    Returns `rows`, in timeline order, each `{clipId, track, sourcePath,\n    startFrame, endFrame, sourceStart, sourceEnd, text}`. `startFrame` is what\n    to pass to `editor_set_playhead` to jump to that line. Also `fps`, and\n    `sources`: one entry per distinct source FILE with `{path, clipCount,\n    state}` \u2014 `clipCount` is how many clips play from it, and `state` is\n    `\"done\"` / `\"running\"` / `\"idle\"` / `\"error\"`.\n\n    **Transcription is per FILE, and a timeline usually reuses one file many\n    times** (a silence cut makes dozens of clips from one `.MOV`), so a\n    sequence of 40 clips typically needs one or two jobs, not 40. Pass\n    `start=True` to kick off the missing ones \u2014 one per file, cached files\n    skipped, and a previous failure retried. Then poll this same tool until\n    `pending` is `0`. Each job is a full mlx-whisper run: tens of seconds to\n    minutes per file.\n\n    **`rows` is always usable, even while `pending > 0`** \u2014 it covers every\n    file that IS transcribed, so a partly-transcribed timeline gives you real\n    rows now rather than nothing. Finds nothing in silent or music-only\n    footage, which is normal and not an error.\n\n    Reads video tracks only (hidden tracks, title/adjustment clips and still\n    images are skipped, and a still has no audio to transcribe).",
+      "inputSchema": {
+        "properties": {
+          "start": {
+            "default": false,
+            "title": "Start",
+            "type": "boolean"
+          }
+        },
+        "type": "object",
+        "title": "editor_get_timeline_transcriptArguments"
+      }
+    },
+    {
       "name": "editor_get_transcript",
       "description": "Start a word-level transcript of an audio/video file \u2014 \"what was SAID,\n    and when.\" Use this to find a moment by its SPOKEN content: a talking-head\n    take where nothing changes visually but every content move is in the\n    speech. Returns immediately with `state`; poll\n    `editor_get_transcript_status` until `state` is `\"done\"`, then read\n    `words` / `segments` / `text` off that response.\n\n    **`state: \"done\"` can come back on this very first call** \u2014 results are\n    cached per file, so a repeat ask costs nothing. `force=True` re-runs anyway\n    (use it when the file on disk changed).\n\n    Identify the file with `path` (any absolute path \u2014 it does NOT have to\n    be imported first, since \"what's in this file?\" is usually the question you\n    want answered BEFORE importing), or with `media_id`/`source_path` for an\n    item already in the project's media pool.\n\n    `language` is an ISO code (\"en\", \"hi\") or omitted to auto-detect\n    (code-switched speech auto-detects fine). `word_timestamps=True` (the\n    default) gives per-word start/end times \u2014 the format you need to cut to an\n    exact word; `False` is faster but segment-level only.\n\n    Complements `editor_analyze_video`, does not overlap it: this finds NOTHING\n    in silent or music-only footage. Roughly 12 s for a short clip, longer for\n    a long one (mlx-whisper large-v3, local).",
       "inputSchema": {
@@ -11688,6 +11703,48 @@
         {
           "op": "editor_get_state",
           "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_get_timeline_transcript",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "editor_get_timeline_transcript",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_get_timeline_transcript",
+      "case": "full",
+      "arguments": {
+        "start": true
+      },
+      "requests": [
+        {
+          "op": "editor_get_timeline_transcript",
+          "args": {
+            "start": true
+          },
           "timeout_ms": 20000
         }
       ],

@@ -31892,3 +31892,217 @@ reactive-`playhead` subscribers remaining.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-329 — the Transcript panel reads the whole TIMELINE, not one selected clip, and highlights the word being spoken
+
+**decided (2026-09-15)** · extends D-328 decision 3 · obeys D-325/B-146 ·
+respects B-077
+
+**Context.** D-328 shipped the Index panel's Transcript view scoped to a single
+selected clip, and disclosed that as a limit ("the Transcript view is scoped to
+one selected clip rather than the whole sequence, matching how
+`editor_get_transcript` is keyed"). The owner used it and rejected the scoping
+in as many words: *"i should be able to transcribe the whole main timeline not
+just one clip."* A follow-up, with reference screenshots of Premiere's own Text
+panel, added two more: the single **word** under the playhead should highlight
+karaoke-style, and clicking a **word** should seek to that word.
+
+That is the right complaint, and the disclosed limit was a worse call than it
+looked. A cut sequence is not one clip — a silence/retake cut produces dozens
+of small clips — so "select one clip" made the only question anyone actually
+asks of a transcript panel ("what does my sequence say?") unanswerable.
+
+---
+
+### Decision 1 — a timeline transcript is a STITCH over clips, keyed per file for fetching only
+
+The tension that made D-328 scope this out is real: a transcript is produced
+**per source file**, in that file's own absolute source seconds, while a
+timeline is a set of trimmed, reordered, possibly speed-ramped windows onto one
+or more of those files. Two facts follow, and they pull in opposite directions:
+
+- **Fetching must dedupe by FILE.** A silence cut makes forty clips against one
+  `.MOV`; forty transcription jobs for one file would be absurd.
+  `whisper large-v3` takes tens of seconds to minutes per file.
+- **Reading must walk CLIPS, in timeline order.** A per-file walk reads the
+  material out in the order it was *shot*, not the order it *plays* — and it
+  includes the speech the edit CUT OUT, which is worse than useless: clicking
+  such a row would seek to material that is not on the timeline.
+
+So the two are split. `transcriptSources(timeline)` returns the distinct source
+paths (with a clip count) — the fetch list. `stitchTimelineTranscript(timeline,
+transcripts)` walks clips in timeline order, filters each clip's transcript to
+the segments overlapping that clip's own trimmed source window, and converts
+each kept segment into TIMELINE frames. Both live in a new pure module,
+`packages/editor/src/timelineTranscript.ts`.
+
+**The frame math is NOT re-derived — and the obvious formula is wrong.** The
+brief for this work stated the mapping as `timelineFrame = clip.startFrame +
+(sourceFrame - clip.sourceStart)`. That is exactly the bug **B-077** shipped: a
+clip's `duration`/`source_start` are its own NATIVE frames while `start_frame`
+is a TIMELINE frame, so the subtraction needs converting at `source_fps` before
+it is added. The stitch therefore delegates to `recut.ts`'s existing
+`spanToFrames`, which already owns that conversion plus speed ramps plus the
+clamp back inside the clip. Pinned by a deliberate 48fps-source-on-a-24fps-
+timeline fixture whose naive answer (`196`) is the row's own correct END frame
+while its correct answer is `148` — a fixture that passes on both
+implementations would have been worthless, so this one does not.
+
+**What is excluded, and why.** Video tracks only; hidden tracks, title/
+adjustment clips (no file) and D-292 stills (a `.png` has no audio) are skipped.
+Audio tracks are excluded **deliberately**: on this model a clip carries its own
+embedded audio, so walking audio tracks too would double-count every A/V-linked
+pair — same file, same timeline span, twice. **Disclosed limit:** a voice-over
+on its own audio track with no video therefore does not appear. That is a real
+gap, named here rather than implied away.
+
+---
+
+### Decision 2 — per-FILE progress, and partial rows, rather than one spinner
+
+Multi-file transcription needed real UI state, not a blocking spinner: the owner
+sat through minutes-long `whisper large-v3` runs this session. So the panel
+shows a count (`1 of 2 files transcribed`), one row per not-yet-done file with
+its basename, its clip count (`· 4 clips` — the dedupe, made visible) and its
+own state, and a live elapsed clock on a running one. The button says
+`Transcribe 2`, because each file is a separate minutes-long job and a bare
+"Transcribe" would understate it.
+
+**Rows for files that ARE done render immediately, underneath.** Partial is the
+normal state, not an error state, and it is what makes a slow second file
+tolerable. The progress block disappears entirely once nothing is pending.
+
+The elapsed clock is a 1 Hz interval that exists **only while a job is actually
+in flight**. Called out because it looks like a D-325 violation and is not: that
+rule is about the 24 Hz playhead, and this ticks once a second during a job that
+would otherwise look wedged.
+
+---
+
+### Decision 3 — the word highlight EXTENDS the one subscription; it does not add a second
+
+D-328's `useActiveTranscriptRow` was the D-325/B-146-safe pattern: `getState()`
+inside a store subscription, `setState` only on a row-boundary crossing. The
+word highlight is the same problem one level finer, and the tempting
+implementation — a second subscription, or a reactive `playhead` selector for
+the word — would have been wrong twice over: two subscriptions each wake on
+every tick, and they can disagree about which frame they are describing.
+
+So `locateTimelineFrame` returns **both** indices from one scan, the hook became
+`useActivePosition`, and the guard compares both. The honest cost change is
+stated rather than hidden: a re-render now happens once per spoken WORD rather
+than once per sentence — a few times a second during speech instead of a few
+times a minute — which is the price of the feature and still an order of
+magnitude under the 24 Hz a reactive selector costs. Both halves are measured:
+**ticks inside one word cost 0 commits, a word boundary costs exactly 1**, with
+the row-level pair from D-328 unchanged.
+
+A word is `-1` during a pause between words, which highlights the row and no
+word. Highlighting the nearest word through a pause would be a lie about where
+the playhead is.
+
+**Word-level degrades, it does not fail.** A transcript with no word timings
+(`wordTimestamps: false`) yields rows whose `words` is empty; the row renders as
+plain text and row-level seek still works. Every caller in this repo asks for
+word timings, but a cached transcript from one that did not must not blank the
+panel.
+
+**Rendering.** Each word is a real `<button>`, so a word is keyboard-reachable
+and the click is a real activation. That forced the row to stop being one big
+`<button>` (a button inside a button is invalid HTML) — the row is now an `<li>`
+whose click handler is a mouse convenience, with the timecode as the row's own
+focusable seek target. Nothing is reachable only by the `<li>` handler.
+
+---
+
+### Decision 4 — this one DID need a new MCP tool, unlike D-328
+
+D-328 checked and correctly found no new tool was needed. The same check here
+gives the opposite answer, and it is worth stating why rather than inheriting
+the earlier conclusion. `editor_get_transcript` answers per FILE in source
+seconds. An agent asked "what does this sequence say?" would have to fetch each
+file, filter each clip's window, and convert source seconds to timeline frames
+itself — that last step being precisely the arithmetic B-077 got wrong in
+shipped code. Leaving the agent to re-derive a conversion the GUI does for the
+human is exactly the half-a-feature CLAUDE.md's parity rule forbids.
+
+So `editor_get_timeline_transcript` exists, on **both** MCP surfaces
+(`mcp/server.py` and `crates/apelles-mcp`), returning `rows` (timeline-ordered,
+in timeline frames), `fps`, `sources` (per-file `{path, clipCount, state}`) and
+`pending`; `start=true` kicks the missing jobs, one per file. It is served by
+the **same** `stitchTimelineTranscript` the panel renders, so the human and the
+agent cannot be told different things about the same timeline.
+
+**A Rust change WAS needed** — noted because the brief asked me to verify rather
+than assume, and the expected answer was "probably not". It was the MCP tool
+only; no timeline/model/render change. Tool count 168 → 169, with
+`http_transport.rs`'s `TOOL_COUNT` and the crate README updated to match, and
+the regenerated parity corpus diffed to confirm it adds **exactly** one tool and
+its two cases and changes no other tool's contract.
+
+---
+
+### One harness gap closed, because this feature needed it
+
+D-328 had to report the Transcript view as unverifiable on D-142's harness
+("that needs the AI sidecar"). That was true of the JOB and not of the DATA: a
+transcript is cached state, and the parts worth checking on a real layout engine
+— how a stitched transcript wraps in a 288px column, whether the word highlight
+is legible, whether the progress list fits — need the data, not the sidecar. So
+`window.__chromaHarness.mediaStore` now exposes the media-understanding store,
+the same way D-204's `setClipNatural` hands the page a fact the backend would
+have produced. This closes a disclosed gap rather than adding a capability.
+
+**Verification.** `npx vitest run packages/editor packages/player` — **1945
+passed, 1 failed**, that one being the pre-existing, already-disclosed B-184
+(`reactCompiler.test.ts`'s `TimelinePane.tsx` bailout, open, untouched by this
+pass and disclosed identically by D-328). 44 new tests: 26 in
+`timelineTranscript.test.ts` (new, pure — ordering, the per-file dedupe, the
+exclusion rules, the B-077 mixed-fps case, straddling/boundary clamps, the
+word-level equivalent of each, and `locateTimelineFrame`) and 18 added to
+`EditIndexPanel.dom.test.tsx` (now 31). `npx tsc --noEmit` clean on every
+`packages/*` project. `cargo test -p apelles-mcp` green including all 5 parity
+tests; `cargo fmt --all --check` clean.
+
+One process note worth recording: a full-suite run mid-pass showed 8 failures in
+`TimelinePane.zoom.dom.test.tsx`, a file this change does not touch. Run alone
+it passed 8/8, and a repeat full run passed it too — a parallelism flake under
+the heavier suite, not a regression. Chased rather than assumed, because "a file
+I didn't touch started failing" is exactly the report that should never be
+waved through.
+
+**Live-verified in real Chromium** on D-142's harness — a fresh Vite on its own
+port **in this worktree**, the shared `npm run tauri:dev` instance untouched per
+CLAUDE.md's standing rule. Seeded a realistic post-cut fixture: FIVE clips from
+one `.MOV` with cut-out gaps between their source ranges, plus one clip from a
+second file spliced between them, and word-timed transcripts for both.
+
+- **Six rows, one continuous list, no selection**, in timeline order across both
+  files: `00:00:00:05 → 00:00:03:02 → 00:00:06:02 → 00:00:08:02 → 00:00:10:05 →
+  00:00:12:02`. Every one was checked against hand arithmetic rather than
+  eyeballed as "increasing" — e.g. the broll row is `144 + round(0.1×24) = 146 =
+  00:00:06:02`, and the second row of clip `a3` is `192 + (413 − 360) = 245 =
+  00:00:10:05`. The line sitting in the cut-out silence appeared **nowhere**.
+- **Word highlight and word seek, live**: at frame 76 the highlighted word was
+  `is` in the right row; clicking ` underneath` in the broll row seeked to
+  **180** (`144 + 1.5×24`) and *not* to that row's start (146) — which is what
+  proves the word click is not merely bubbling to the row handler. The row's own
+  timecode still seeks to 146.
+- **Two real visual defects the layout engine caught that jsdom could not**, in
+  the same pass — the reason this tier exists. (1) The first draft put each
+  word's leading space INSIDE its button, so the active word's background box
+  extended left and butted straight against the previous word; the space is now
+  rendered outside the button. (2) The `px-[1px]` added while fixing (1) applied
+  to every word, which loosened the whole paragraph's spacing and pushed a line
+  that had fit onto a second one — removed. Every unit test passed throughout
+  both.
+- **Progress state, live**: with one file done and one running, the header read
+  `1 of 2 files transcribed`, the pending row read `interview-take2.MOV · 4
+  clips — transcribing 1s` and the clock advanced (1s → 11s → 17s), while the
+  done file's row was already readable below it. Zero console errors and zero
+  React warnings (the only 404 is the harness page's own favicon).
+
+**Disclosed, not fixed:** dialogue on a video-less audio track is not read (see
+decision 1); the list does not auto-scroll to the highlighted row, so on a long
+sequence the active row can be off-screen during playback; B-146 stays open with
+nine reactive-`playhead` subscribers remaining.

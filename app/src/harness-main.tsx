@@ -83,6 +83,7 @@ import {
   useEditorTimelineStore,
   type ClipInspectorTab,
   type EditLibraryMode,
+  useMediaUnderstandingStore,
   type EditOp,
   type Timeline,
 } from '@apelles/editor';
@@ -617,6 +618,21 @@ render();
    *  action directly (`createTimeline`, `setActiveTimeline`, `_flushSave`,
    *  etc.) without this file growing a bespoke wrapper for every one. */
   store: useEditorTimelineStore,
+  /** D-329 — the media-understanding store, for the same reason `store` above
+   *  is exposed.
+   *
+   *  **This closes a gap D-328 disclosed rather than adding a new capability.**
+   *  That entry had to report the Index panel's Transcript view as "not
+   *  reachable on the harness… that needs the AI sidecar", because a
+   *  transcript arrives only from a real `ai-media/` job and this page has no
+   *  Tauri behind it. But a transcript is just cached DATA in this store, and
+   *  the parts worth checking on a real layout engine — how a long stitched
+   *  transcript wraps in a 288px column, whether the per-word highlight is
+   *  legible, whether the per-file progress list fits — need the data, not the
+   *  job. Seeding `transcripts` here is the same thing `setClipNatural` (D-204)
+   *  does for clip geometry: hand the page the fact the sidecar would have
+   *  produced, then verify the rendering that fact drives. */
+  mediaStore: useMediaUnderstandingStore,
   setStrictMode(next: boolean) {
     strict = next;
     render();

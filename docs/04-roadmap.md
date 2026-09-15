@@ -2063,15 +2063,32 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       with Markers and Transcript sub-views — **D-328**. Markers: one row per
       marker with its colour, a poster frame, its name, its time (in → out for
       a ranged one), an inline comment box that writes a real `set_marker`, a
-      delete, and click-to-seek. Transcript: the selected clip's segments with
-      timecode + duration badge + word-wrapped text, click-to-seek, and the row
-      under the playhead highlighted as playback runs — implemented per D-325
-      (a `getState()` read inside a store subscription that sets state only on
-      a row-BOUNDARY crossing), so 30 ticks inside one segment cost **0**
-      React commits rather than 30. No new MCP tool needed, verified rather
-      than assumed (see D-328 decision 4). Fixed `EditLibraryPanel`'s own
-      reactive `playhead` subscriber in passing, since the new panel is its
-      child — B-146 still open with nine subscribers left.
+      delete, and click-to-seek. Transcript: segments with timecode + duration
+      badge + word-wrapped text, click-to-seek, and the row under the playhead
+      highlighted as playback runs — implemented per D-325 (a `getState()` read
+      inside a store subscription that sets state only on a BOUNDARY crossing),
+      so 30 ticks inside one segment cost **0** React commits rather than 30.
+      Fixed `EditLibraryPanel`'s own reactive `playhead` subscriber in passing,
+      since the new panel is its child — B-146 still open with nine subscribers
+      left.
+      - ✅ **Transcript reads the WHOLE timeline, and follows the spoken
+        word** — **D-329**, superseding D-328's one-selected-clip scoping after
+        the owner rejected it. `timelineTranscript.ts` (new, pure) dedupes the
+        fetch per SOURCE FILE while walking CLIPS in timeline order, so a
+        silence cut's forty clips cost one whisper job and speech the edit cut
+        out never appears; the source-seconds → timeline-frames conversion goes
+        through `spanToFrames` rather than the naive subtraction, which is
+        B-077's exact bug (pinned by a 48fps-source fixture). Per-FILE progress
+        with partial rendering, not one spinner. Each word is a real button:
+        the spoken one highlights and clicking one seeks to its own frame, on
+        the SAME subscription as the row highlight (0 commits inside a word, 1
+        on a word boundary). Selecting a clip is a locator, never a gate. New
+        MCP tool `editor_get_timeline_transcript` on both surfaces (168 → 169),
+        served by the same stitch — unlike D-328, this one genuinely needed
+        one, since an agent would otherwise re-derive B-077's arithmetic.
+        Exposed `__chromaHarness.mediaStore`, closing the harness gap D-328
+        disclosed. **Still open:** dialogue on a video-less audio track is not
+        read, and the list does not auto-scroll to the highlighted row.
     - ✅ Subtitles / captions — **D-229**, `docs/notes/subtitles.md`.
       `TrackKind::Subtitle` (a track kind, deliberately the opposite call from
       D-211's title-as-a-clip-variant — a caption composites over the finished

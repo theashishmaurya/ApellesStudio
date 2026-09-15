@@ -3937,6 +3937,55 @@ def editor_get_transcript_status(
 
 
 @mcp.tool()
+def editor_get_timeline_transcript(start: bool = False) -> str:
+    """Read what the WHOLE TIMELINE says, in timeline order and in TIMELINE
+    frames — "what does this sequence say?" (D-329).
+
+    **Use this, not `editor_get_transcript`, for any question about the
+    sequence.** `editor_get_transcript` answers per FILE, in that file's own
+    source seconds. A timeline is a set of trimmed, reordered windows onto one
+    or more files, so a file's transcript contains speech you CUT OUT and gives
+    times that are not where the words land in the edit. This tool does that
+    mapping for you: it walks the clips in timeline order, keeps only the
+    speech each clip actually shows, and converts every row to the timeline
+    frame it plays at — at the clip's own `source_fps`, which is the step that
+    is easy to get wrong by hand (a clip's `duration`/`source_start` are its
+    OWN native frames while `start_frame` is a timeline frame; see B-077).
+
+    It is the same stitch the Edit tab's Index panel renders, so what you read
+    here is exactly what the user is looking at.
+
+    Returns `rows`, in timeline order, each `{clipId, track, sourcePath,
+    startFrame, endFrame, sourceStart, sourceEnd, text}`. `startFrame` is what
+    to pass to `editor_set_playhead` to jump to that line. Also `fps`, and
+    `sources`: one entry per distinct source FILE with `{path, clipCount,
+    state}` — `clipCount` is how many clips play from it, and `state` is
+    `"done"` / `"running"` / `"idle"` / `"error"`.
+
+    **Transcription is per FILE, and a timeline usually reuses one file many
+    times** (a silence cut makes dozens of clips from one `.MOV`), so a
+    sequence of 40 clips typically needs one or two jobs, not 40. Pass
+    `start=True` to kick off the missing ones — one per file, cached files
+    skipped, and a previous failure retried. Then poll this same tool until
+    `pending` is `0`. Each job is a full mlx-whisper run: tens of seconds to
+    minutes per file.
+
+    **`rows` is always usable, even while `pending > 0`** — it covers every
+    file that IS transcribed, so a partly-transcribed timeline gives you real
+    rows now rather than nothing. Finds nothing in silent or music-only
+    footage, which is normal and not an error.
+
+    Reads video tracks only (hidden tracks, title/adjustment clips and still
+    images are skipped, and a still has no audio to transcribe)."""
+    import json
+
+    args: dict = {}
+    if start:
+        args["start"] = True
+    return json.dumps(_op("editor_get_timeline_transcript", **args), indent=2, default=str)
+
+
+@mcp.tool()
 def editor_analyze_video(
     path: str | None = None,
     media_id: str | None = None,

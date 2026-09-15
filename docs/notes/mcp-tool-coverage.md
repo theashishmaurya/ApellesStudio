@@ -186,6 +186,7 @@ inclusion, no longer a silent video).
 > |---|---|
 > | `editor_get_transcript` | Start a word-level transcript (mlx-whisper large-v3) — "what was SAID, and when." Per-word `start`/`end` in source seconds, i.e. enough to cut to an exact word. |
 > | `editor_get_transcript_status` | Poll it. `state` is `running` / `done` (result attached) / `idle`. |
+> | `editor_get_timeline_transcript` | **(D-329, 2026-09-15 — a 5th tool in this section, so the "4 media-understanding tools" arithmetic above is correct only as of its own 2026-09-08 date.)** What the WHOLE TIMELINE says, in timeline order and TIMELINE frames. The two above answer per FILE in source seconds; a timeline is trimmed, reordered windows onto those files, so their answer contains speech you cut out and times that are not where the words land. This walks the clips, filters each to what it shows, and converts at the clip's own `source_fps` — the step B-077 got wrong by hand. `start=true` kicks the missing jobs, one per FILE (a silence cut's forty clips cost one job). Same stitch the Index panel renders. |
 > | `editor_analyze_video` | Start a visual analysis — "what CHANGED on screen, and when." ffmpeg scene-detect supplies the (exact, deterministic) timing; Qwen3-VL only describes a before/after frame pair at each moment. |
 > | `editor_analyze_video_status` | Poll it. Carries `truncated` — candidates hit the cap and were dropped, so raise `max_candidates` and re-run. |
 >

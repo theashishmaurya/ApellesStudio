@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "The porting ledger for D-312: which of the Python server's 163 tools this Rust",
+    "The porting ledger for D-312: which of the Python server's tools this Rust",
     "server has taken over. `tests/parity.rs` checks the live server's advertised set",
     "against this list in BOTH directions, and checks every name here is a tool the",
     "golden corpus actually has — so a tool cannot be silently dropped, silently added,",
@@ -53,6 +53,7 @@
     "editor_get_state",
     "editor_get_transcript",
     "editor_get_transcript_status",
+    "editor_get_timeline_transcript",
     "editor_get_waveform",
     "editor_import_media",
     "editor_import_subtitles",

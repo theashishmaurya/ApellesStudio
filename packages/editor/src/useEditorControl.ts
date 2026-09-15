@@ -217,6 +217,9 @@ const SPEED_RANGE_HELP =
   `to play that run in reverse (1 = normal, -1 = backwards at recorded speed)`;
 import { buildFcpxml, type ClipSourceInfo } from './timelineInterchange';
 import { runEditorExport } from './editorExport';
+// D-329 — the whole timeline's transcript, the same stitch the Index panel
+// renders, so `editor_get_timeline_transcript` and the GUI cannot disagree.
+import { stitchTimelineTranscript, transcriptSources } from './timelineTranscript';
 // D-256 — the baked Colorist grade for each clip, behind `editor_get_grade_status`.
 import { warmGradeLuts } from './gradeLuts';
 import {
@@ -4096,6 +4099,74 @@ export function useEditorControl(): void {
         const path = resolveMediaPath(a);
         if ('error' in path) return path;
         return transcriptResult(path.path);
+      },
+
+      // D-329 — the whole timeline's speech, in TIMELINE frames.
+      //
+      // This exists because `editor_get_transcript` above answers per FILE in
+      // source seconds, and a timeline is a reordered set of trimmed windows
+      // onto those files. Without this an agent asking "what does this
+      // sequence say?" would have to fetch each file, filter each clip's
+      // window and convert source seconds to timeline frames itself — which is
+      // precisely the arithmetic B-077 shipped wrong (a clip's `duration`/
+      // `source_start` are its OWN native frames, so the conversion needs
+      // `source_fps`). The Index panel gets this from
+      // `stitchTimelineTranscript`; so does this op, deliberately the same
+      // function, so the human and the agent can never be told different
+      // things about the same timeline.
+      editor_get_timeline_transcript: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return { error: 'no timeline is open' };
+
+        const store = useMediaUnderstandingStore.getState();
+        const sources = transcriptSources(tl);
+        if (sources.length === 0) {
+          return {
+            ok: true,
+            fps: timelineFps(tl),
+            sources: [],
+            rows: [],
+            pending: 0,
+            note: 'no dialogue-bearing video clips on this timeline',
+          };
+        }
+
+        // `start: true` kicks a job for every file that has none — one per
+        // FILE, never one per clip. Cached files short-circuit inside the
+        // store, so this is free for anything already done, and a previous
+        // failure is not sticky, so it doubles as the retry.
+        if (a?.start) {
+          for (const s of sources) {
+            if (store.transcriptStatus(s.path).phase === 'done') continue;
+            store.startTranscript(s.path, { wordTimestamps: true });
+          }
+        }
+
+        const fresh = useMediaUnderstandingStore.getState();
+        const reported = sources.map((s) => {
+          const status = fresh.transcriptStatus(s.path);
+          return {
+            path: s.path,
+            clipCount: s.clipCount,
+            state: status.phase,
+            ...(status.phase === 'error' ? { error: status.error } : {}),
+          };
+        });
+
+        const rows = stitchTimelineTranscript(tl, fresh.transcripts);
+        const pending = reported.filter((s) => s.state !== 'done').length;
+        return {
+          ok: true,
+          fps: timelineFps(tl),
+          sources: reported,
+          rows,
+          pending,
+          ...(pending > 0
+            ? {
+                note: `${pending} of ${reported.length} source files have no transcript yet — rows cover only the ones that do. Call again with start=true to transcribe them, then poll this tool until pending is 0`,
+              }
+            : {}),
+        };
       },
 
       editor_analyze_video: (a) => {

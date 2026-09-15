@@ -4,6 +4,27 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-15** — **D-329: the Transcript panel reads the WHOLE timeline, and
+  follows the spoken word.** D-328 scoped it to one selected clip and disclosed
+  that as a limit; the owner rejected it ("i should be able to transcribe the
+  whole main timeline not just one clip") — a cut sequence is dozens of clips,
+  so "select one clip" made the only real question unanswerable. New pure module
+  `timelineTranscript.ts` splits the two halves that pull opposite ways: fetch
+  deduped per FILE (forty clips off one `.MOV` is one whisper job), but read by
+  walking CLIPS in timeline order, so speech the edit cut out never appears. The
+  conversion delegates to `spanToFrames` rather than the obvious
+  `startFrame + (sourceFrame - sourceStart)`, which is **B-077's exact bug** —
+  pinned by a 48fps-source fixture whose naive answer is the row's own END
+  frame. Per-FILE progress (count, basename, clip count, live elapsed) with the
+  done files' rows rendering while others run, not one opaque spinner. Words are
+  real buttons: the spoken one highlights karaoke-style and clicking one seeks
+  to its own frame — riding the SAME store subscription as the row highlight,
+  never a second one (measured: 0 commits inside a word, exactly 1 on a word
+  boundary). Unlike D-328 this **did** need an MCP tool —
+  `editor_get_timeline_transcript` on both surfaces (168 → 169), served by the
+  same stitch the panel renders. Real-Chromium pass caught two spacing defects
+  every unit test missed, and closed D-328's own disclosed harness gap by
+  exposing `mediaStore`.
 - **2026-09-15** — **D-328: markers can span a RANGE, and the Edit tab has an
   Index panel.** `Marker.duration_frames` reverses D-222's deliberate
   scope-out — its "a second time-extent concept" objection does not survive
