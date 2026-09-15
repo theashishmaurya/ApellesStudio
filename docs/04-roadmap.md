@@ -2127,6 +2127,27 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         that outruns its caller is held rather than discarded; `RECUT_TIMEOUT_MS`
         is deleted. The Recut panel polls the same store instead of blocking, and
         a retake run now waits for its transcript and resumes itself.
+        **Followed up 2026-09-15 by D-327 (fixes B-198):** the first real use of
+        retake detection on the owner's own footage missed a line the speaker
+        said **three times** — Whisper's segment boundaries straddle the
+        restarts, so no pair of utterances was ever a duplicate of another (best
+        0.857; every pair carrying repeats two and three 0.18-0.28). A retake is
+        now a **span** of up to `max_span_utterances` adjacent utterances, which
+        scores the same material 0.905 and finds all three deliveries; groups
+        gained `takes`, and the panel and MCP op now build one cut candidate per
+        *delivery* rather than per utterance. An on-device sentence-embedding
+        model was built and **rejected on measurement** — it ranks a sentence
+        against its own negation above every genuine retake
+        (`docs/notes/retake-detection.md`).
+        **Still open from this pass:** *word-accurate take boundaries.* A
+        restart can begin mid-utterance, and a take made of whole utterances
+        cannot claim the fragment before it without also claiming the next
+        delivery's words — so the detector leaves such a fragment out
+        (under-cutting, the safe direction). Fixing it properly means plumbing
+        per-word timings from the transcript store through
+        `chroma_detect_retakes`, which today deliberately asks for
+        `start`/`end`/`text` only, and a take shape that is no longer
+        utterance-indexed. Not scoped yet.
     - ~~**The Edit tab's left library — one docked, switchable browser**~~ —
       **DONE, 2026-09-09 (D-263).** D-248 gave the tab an icon rail whose
       buttons opened floating popovers, rendered (because Sources is

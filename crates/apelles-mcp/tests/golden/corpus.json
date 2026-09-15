@@ -1651,7 +1651,7 @@
     },
     {
       "name": "editor_detect_retakes",
-      "description": "Group the places in a timeline clip where the speaker **said the same\n    line more than once** \u2014 the flubbed take, the stumble, the third attempt.\n\n    Unlike `editor_detect_silences` this needs the transcript, because a retake\n    is a fact about words. If one has not been made yet this starts it and\n    returns `state: \"running\"` with a `note` \u2014 poll\n    `editor_get_transcript_status`, then call this again.\n\n    Once the words exist, the grouping itself follows the same start-then-poll\n    contract as `editor_detect_silences` (D-321): `state: \"done\"` with `groups`\n    if it finished inside this call, otherwise `state: \"running\"` \u2014 poll\n    `editor_detect_retakes_status` with the same arguments. `force` re-runs a\n    grouping that is already cached for this clip range and these thresholds.\n\n    - `track` / `clip` \u2014 which clip to analyse, by index. Only its own trimmed\n      range is considered.\n    - `similarity` \u2014 how alike two utterances must be to count as the same line\n      (0..1, default 0.82).\n    - `window_secs` \u2014 how far apart two takes may be (default 30). A line\n      repeated half an hour later is a callback, not a retake.\n    - `min_words` \u2014 utterances shorter than this are never grouped (default 3),\n      which is what stops every \"Yeah.\" pairing with every other one.\n\n    Each group has `takes` (each with its `text` and the same three frame\n    spaces `editor_detect_silences` returns), a `similarity` score, and `keep` \u2014\n    the index of the take this **suggests** keeping, which is the last one,\n    normally what the speaker settled on. `keep` is a suggestion and nothing\n    more: text alone cannot always tell a retake from a later line that merely\n    extends an earlier one, so read the `text` before cutting.\n\n    **Nothing is cut.** Pass the takes you want gone to\n    `editor_ripple_delete_ranges`.",
+      "description": "Group the places in a timeline clip where the speaker **said the same\n    line more than once** \u2014 the flubbed take, the stumble, the third attempt.\n\n    Unlike `editor_detect_silences` this needs the transcript, because a retake\n    is a fact about words. If one has not been made yet this starts it and\n    returns `state: \"running\"` with a `note` \u2014 poll\n    `editor_get_transcript_status`, then call this again.\n\n    Once the words exist, the grouping itself follows the same start-then-poll\n    contract as `editor_detect_silences` (D-321): `state: \"done\"` with `groups`\n    if it finished inside this call, otherwise `state: \"running\"` \u2014 poll\n    `editor_detect_retakes_status` with the same arguments. `force` re-runs a\n    grouping that is already cached for this clip range and these thresholds.\n\n    - `track` / `clip` \u2014 which clip to analyse, by index. Only its own trimmed\n      range is considered.\n    - `similarity` \u2014 how alike two utterances must be to count as the same line\n      (0..1, default 0.82).\n    - `window_secs` \u2014 how far apart two takes may be (default 30). A line\n      repeated half an hour later is a callback, not a retake.\n    - `min_words` \u2014 a take with fewer than this many DISTINCT words is never\n      grouped (default 3), which is what stops every \"Yeah.\" pairing with every\n      other one.\n    - `max_span_utterances` \u2014 how many adjacent transcript utterances may be\n      joined into one take (default 3). This is what finds a restart Whisper cut\n      on boundaries of its own, which do not line up with the speaker's (D-327):\n      a take is a SPAN of utterances, so one delivery can cover several. 1\n      restores the old utterance-to-utterance behaviour.\n\n    Each group has `takes` (each with its `text` and the same three frame\n    spaces `editor_detect_silences` returns), a `similarity` score, and `keep` \u2014\n    the index of the take this **suggests** keeping, which is the last one,\n    normally what the speaker settled on. `keep` is a suggestion and nothing\n    more: text alone cannot always tell a retake from a later line that merely\n    extends an earlier one, so read the `text` before cutting.\n\n    **Nothing is cut.** Pass the takes you want gone to\n    `editor_ripple_delete_ranges`.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -1697,6 +1697,18 @@
             ],
             "default": null,
             "title": "Min Words"
+          },
+          "max_span_utterances": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Span Utterances"
           },
           "force": {
             "default": false,
@@ -1760,6 +1772,18 @@
             ],
             "default": null,
             "title": "Min Words"
+          },
+          "max_span_utterances": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Span Utterances"
           }
         },
         "required": [
@@ -11100,6 +11124,7 @@
         "similarity": 40.12,
         "window_secs": -8.35,
         "min_words": 75,
+        "max_span_utterances": 13,
         "force": false
       },
       "requests": [
@@ -11110,7 +11135,8 @@
             "clip": 11,
             "similarity": 40.12,
             "windowSecs": -8.35,
-            "minWords": 75
+            "minWords": 75,
+            "maxSpanUtterances": 13
           },
           "timeout_ms": 20000
         }
@@ -11156,7 +11182,8 @@
         "clip": 78,
         "similarity": -36.78,
         "window_secs": 35.75,
-        "min_words": 80
+        "min_words": 80,
+        "max_span_utterances": 31
       },
       "requests": [
         {
@@ -11166,7 +11193,8 @@
             "clip": 78,
             "similarity": -36.78,
             "windowSecs": 35.75,
-            "minWords": 80
+            "minWords": 80,
+            "maxSpanUtterances": 31
           },
           "timeout_ms": 20000
         }

@@ -192,18 +192,29 @@ pub struct TranscriptUtterance {
 ///
 /// Every group carries a recommended `keep` index — the **last** take, normally
 /// the one the speaker settled on — as a *suggestion*. Nothing is cut (D-318).
+///
+/// A take is a **span** of adjacent utterances, not a single one, because
+/// Whisper's segment boundaries do not line up with a speaker's restarts
+/// (D-327, fixes B-198). Each group's `takes` say which of its `members` form
+/// each delivery, and `keep` indexes `takes` — a caller that cuts "every member
+/// except `keep`" rather than "every take except `keep`" will eat words the
+/// speaker meant to keep.
 #[tauri::command]
 pub async fn chroma_detect_retakes(
     utterances: Vec<TranscriptUtterance>,
     similarity: Option<f64>,
     window_secs: Option<f64>,
     min_words: Option<usize>,
+    max_span_utterances: Option<usize>,
 ) -> Result<serde_json::Value, String> {
     let defaults = RetakeParams::default();
     let params = RetakeParams {
         similarity: similarity.unwrap_or(defaults.similarity),
         window_secs: window_secs.unwrap_or(defaults.window_secs),
         min_words: min_words.unwrap_or(defaults.min_words),
+        max_span_utterances: max_span_utterances
+            .unwrap_or(defaults.max_span_utterances)
+            .max(1),
     };
 
     let utterances: Vec<Utterance> = utterances
@@ -223,6 +234,7 @@ pub async fn chroma_detect_retakes(
         "similarity": params.similarity,
         "window_secs": params.window_secs,
         "min_words": params.min_words,
+        "max_span_utterances": params.max_span_utterances,
         "utterances": utterances.len(),
         "groups": groups,
     }))

@@ -80,6 +80,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   DEFAULT_MIN_SILENCE_MS,
   clipSourceRangeSecs,
+  groupTakes,
   spanToFrames,
   type RetakeGroupWire,
 } from './recut';
@@ -1053,6 +1054,10 @@ function resolveRetakeArgs(
     similarity: num(a?.similarity),
     windowSecs: num(a?.windowSecs),
     minWords: a?.minWords === undefined ? undefined : Math.round(Number(a.minWords)),
+    maxSpanUtterances:
+      a?.maxSpanUtterances === undefined
+        ? undefined
+        : Math.max(1, Math.round(Number(a.maxSpanUtterances))),
   };
   return { found, c, fps, args, key: retakeKey(args) };
 }
@@ -1084,12 +1089,16 @@ function retakeEnvelope(
           : 'nothing has been started for this clip — call editor_detect_retakes',
     };
   }
+  // One entry per DELIVERY, via `groupTakes` — a delivery can span several
+  // transcript utterances since D-327, and `keep` indexes takes. Building one
+  // entry per member here (which is what this did before) would make `keep`
+  // point at a fragment and invite an agent to cut the rest of the keeper.
   const groups = (status.result?.groups ?? []).map((g) => ({
     similarity: g.similarity,
     keep: g.keep,
-    takes: g.members.map((m) => ({
-      text: m.text,
-      ...spanToFrames(c, m.start_secs, m.end_secs, fps),
+    takes: groupTakes(g).map((t) => ({
+      text: t.text,
+      ...spanToFrames(c, t.startSecs, t.endSecs, fps),
     })),
   }));
   return {

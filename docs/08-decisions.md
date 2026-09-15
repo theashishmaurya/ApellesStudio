@@ -31489,3 +31489,127 @@ already pinned and which still passes.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01C1trnqtFvUratfss4Cytyn
+
+## D-327 — a retake is a SPAN of utterances, and the embedding model that looked like the answer is measurably the wrong tool (fixes B-198)
+
+**decided (2026-09-15)** · fixes **B-198** · extends D-318 / D-320
+
+**Context.** B-198: on the owner's own footage the retake detector found one
+group of two and missed a line the speaker delivered **three times**, leaving
+~22 s of duplicated speech unflagged. The obvious diagnosis — "edit distance is
+lexical, so use meaning instead" — turned out to be wrong twice over: the real
+cause is not lexical-vs-semantic at all, and the semantic fix makes the detector
+measurably *less* safe. Both halves are recorded here because the wrong one is
+the one a future session will reach for again.
+
+### The real cause: Whisper's boundaries are not the speaker's
+
+Whisper segments on its own acoustic/length heuristics and has no idea a speaker
+restarted, so **its segment boundaries do not line up with the restart
+boundaries**. In the live case one segment held the *tail* of one delivery
+concatenated with the *head* of the next. Comparing utterance to utterance —
+all `detect_retakes` did — no pair of the six segments was a duplicate of any
+other. Measured over all fifteen pairs: best 0.857, and every pair involving the
+two segments carrying repeats two and three scored **0.18–0.28**. The detector
+was not mis-scoring anything; the repeats were simply not inside any single
+string it compared.
+
+**Options.** (a) Lower the threshold — rejected outright, 0.28 is noise and
+0.82 is already near the false-positive floor. (b) A semantic signal — see
+below, rejected on measurement. (c) **Sliding window over concatenated adjacent
+utterances (chosen)** — compare *spans* of up to `max_span_utterances` (default
+3) adjacent utterances, joined back into one string. (d) A word-level token
+stream with word-accurate take boundaries — genuinely the most correct model,
+deferred: it needs per-word timings plumbed through the bridge and a wire shape
+that is no longer utterance-indexed. See "the honest limit" below.
+
+**Chosen: (c).** Sliding the window puts the repeat boundaries back inside a
+comparable string even though the utterance boundaries never did. The same
+material that scored 0.18–0.28 as utterances scores **0.905** as spans. Measured
+after: the detector finds one group of **three takes** covering 142.38–179.92 s,
+where the old one found two members and stopped at 157.48 s.
+
+A take is therefore a **`TakeSpan`** — an inclusive range over a group's
+`members` — and `keep` indexes `takes`, not `members`. That is a wire-shape
+change with a sharp edge: the Recut panel and `retakeEnvelope` both built one
+cut candidate per *member* and marked `members[keep]` the keeper, which with
+multi-utterance takes would have offered half a delivery for cutting while
+calling the other half the keeper. Both were fixed in this pass, through one
+shared `groupTakes()` so the human's list and the agent's `takes` cannot drift.
+`max_span_utterances: 1` reproduces the pre-D-327 detector exactly and is pinned
+by a test, so the old behaviour stays readable next to the new one.
+
+Two guards were needed once spans existed, both found by tests rather than
+reasoning:
+
+- **`min_words` now counts DISTINCT words.** Joining three "Yeah."s into one
+  span clears a *total*-word bar of 3. Counting distinct words suppresses filler
+  at any span length and leaves every real line untouched.
+- **A span may only be glued if every utterance in it shares ≥50% of its own
+  vocabulary with the anchor.** `containment` scores a span by its best matching
+  window and ignores the rest, so without this "The cat sat on the mat" matches
+  the span "Sorry, let me start that again." + "The cat sat on the mat" at a
+  perfect 1.00 and the aside gets swept into the take — and into the cut. On the
+  real footage every utterance that genuinely belongs scores 0.93–1.00 and an
+  unrelated aside scores 0.00, so the bar sits in the middle of a large gap.
+
+Two smaller rules, both fixing measured misbehaviour: at each position the chain
+takes the **shortest** span that clears the bar rather than the best-scoring one
+(containment can only score a longer candidate the same or higher, so "best
+wins" grows every take until it swallows its neighbours), and among candidate
+chains the **shortest anchor** outranks coverage (coverage counts the anchor's
+own utterances, so a bloated anchor inflates it mechanically — which is exactly
+how the aside case was being won).
+
+### The rejected option: an on-device sentence-embedding model
+
+Built first, in full, and thrown away. `all-MiniLM-L6-v2` (upstream's own ONNX
+export, Apache-2.0, 90.4 MB, pinned to commit `1110a243`, run through the same
+`ort` path as D-319's Silero, with `tokenizers` — already in this workspace for
+CLIP) produced attention-masked mean-pooled, L2-normalised 384-d vectors at
+~12.5 ms per span batched, ~15.7 ms alone. The implementation was **verified
+correct** against upstream's own reference `sentence-transformers` snippet run
+on the same pinned weights under `torch`: cosine agreed to four decimals on
+every probe (0.7722, 0.9813, 0.1193, 0.7251). So the numbers below are the
+model's behaviour, not a runner bug.
+
+They are disqualifying. Must-group and must-not-group pairs **overlap almost
+completely**, and the overlap is not random — it is concentrated in negation and
+antonymy, the one distinction a cut must never get wrong:
+
+| pair | cosine | must group? |
+|---|---|---|
+| "…gives that part **less** weight" vs "…**more** weight" | **0.981** | **no** |
+| "the model weighs every part equally" vs "…does **not** weigh every part equally" | **0.946** | **no** |
+| "this is the **encoder** side" vs "this is the **decoder** side" | 0.832 | no |
+| "first we will look at what attention **does**" vs "then…what it **cannot** do" | 0.801 | no |
+| "attention is how a transformer decides what matters" vs "attention is the mechanism that makes transformers work" | 0.765 | no |
+| real restart, spans #0–1 vs #2–4 (live footage) | 0.772 | **yes** |
+| real restart, spans #0–1 vs #4 (live footage) | 0.663 | **yes** |
+| "the model just under-weighs it" vs "the model gives that part less weight" | 0.591 | **yes** |
+
+Positives span 0.591–1.000, negatives 0.578–0.981, and **five of six
+must-not-group pairs outscore the weakest genuine retake**. There is no
+threshold. Used as an OR arm it admits the antonym pairs; used as an AND arm it
+only cuts recall, and B-198 is a recall bug. A detector that proposes deleting
+the clause carrying the "not" is worse than one that proposes nothing, so the
+model is not in the tree — CLAUDE.md's "no dead code left just in case", and a
+90 MB download for a capability that makes the feature worse fails the
+dependency bar on its own.
+
+The happy accident is that edit distance ranks these *correctly*: the negation
+pair scores 0.843, below every real span-level retake (0.88–0.90). That ordering
+is now a test, so the finding cannot quietly stop being true.
+
+Full method, commands and raw numbers: `docs/notes/retake-detection.md`.
+
+### The honest limit this does not fix
+
+Delivery two *begins inside* segment #2 and delivery three *begins inside*
+segment #3 — the restart boundaries fall mid-utterance. A take expressed as a
+range of whole utterances cannot claim the fragment "just under waves it." for
+delivery one without also claiming material belonging to the next, so the
+detector leaves it out. That **under-cuts rather than over-cuts**, the safe
+direction for something that only ever proposes (D-318), and it is pinned by its
+own test so nobody reads the headline result as claiming more than it does.
+Word-accurate boundaries are option (d) above, on the roadmap.

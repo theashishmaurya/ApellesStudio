@@ -4,6 +4,28 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-15** — **B-198 fixed (D-327): a retake is a SPAN of utterances, and
+  the embedding model that looked like the answer is measurably the wrong
+  tool.** On the owner's own footage the detector found one group of two and
+  missed a line the speaker delivered three times, leaving ~22s of duplicated
+  speech unflagged — because Whisper's segment boundaries straddle the restarts,
+  so no pair of utterances was ever a duplicate of another (measured: best 0.857,
+  every pair carrying repeats two and three 0.18-0.28). `detect_retakes` now
+  compares spans of up to `max_span_utterances` (default 3) adjacent utterances:
+  the same material scores 0.905, and the detector finds three takes reaching
+  179.92s where the old one stopped at 157.48s. Groups gained `takes` (inclusive
+  ranges over `members`; `keep` indexes them), which also fixed an unreported
+  latent defect — the Recut panel and the MCP op both built one cut candidate
+  per member, which with multi-utterance takes would have offered half a
+  delivery for cutting while marking the other half the keeper. The obvious
+  semantic fix was built in full (`all-MiniLM-L6-v2`, on-device ONNX, verified
+  to four decimals against upstream's own reference implementation) and
+  **rejected on measurement**: cosine scores a sentence against its own negation
+  0.946 and an antonym pair 0.981, above every genuine retake (0.59-0.77), with
+  five of six must-not-group probes outscoring the weakest true one. No
+  threshold separates them; edit distance ranks the same pairs correctly. Full
+  numbers: `docs/notes/retake-detection.md`.
+
 - **2026-09-15** — **B-197 filed: `editor_ripple_delete_ranges` silently
   dropped 2 of 87 ranges from a batch cut while reporting full success.**
   Both ranges independently verified correct in an earlier 60-range call on

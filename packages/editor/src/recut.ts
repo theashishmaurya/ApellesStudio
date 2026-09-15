@@ -44,11 +44,64 @@ export interface DetectedSpan {
   endFrame: number;
 }
 
-/** A retake group as `chroma_detect_retakes` puts it on the wire. */
+/** One member of a retake group — a single transcript utterance. */
+export interface RetakeMemberWire {
+  index: number;
+  start_secs: number;
+  end_secs: number;
+  text: string;
+}
+
+/** A retake group as `chroma_detect_retakes` puts it on the wire.
+ *
+ *  `takes` is the unit that matters, not `members`: since D-327 a single
+ *  delivery can span several utterances (Whisper's segment boundaries do not
+ *  line up with a speaker's restarts), and `keep` indexes `takes`. Cutting
+ *  "every member except `members[keep]`" — which is what this panel did before
+ *  D-327, when every take was exactly one utterance — would now eat the tail of
+ *  the delivery the speaker meant to keep. Use [`groupTakes`]. */
 export interface RetakeGroupWire {
-  members: Array<{ index: number; start_secs: number; end_secs: number; text: string }>;
+  members: RetakeMemberWire[];
+  /** Inclusive `members` index ranges, one per delivery, in spoken order. */
+  takes: Array<{ first: number; last: number }>;
+  /** Index into `takes` of the delivery the detector suggests keeping. */
   keep: number;
   similarity: number;
+}
+
+/** One delivery, flattened to the range a cut needs. */
+export interface RetakeTake {
+  /** Index into the group's `takes`. */
+  index: number;
+  startSecs: number;
+  endSecs: number;
+  /** Every member's text, joined — what the speaker actually said this time. */
+  text: string;
+  /** This is the group's suggested keeper. */
+  suggestedKeep: boolean;
+}
+
+/** Flatten a group's `takes` into the spans a reviewer ticks and a cut removes.
+ *
+ *  Tolerates a group with no `takes` (a detector older than D-327, or a hand-
+ *  written fixture) by treating every member as its own delivery, which is
+ *  exactly what `takes` meant before it existed. */
+export function groupTakes(g: RetakeGroupWire): RetakeTake[] {
+  const ranges =
+    g.takes && g.takes.length > 0
+      ? g.takes
+      : g.members.map((_, i) => ({ first: i, last: i }));
+
+  return ranges.map((t, index) => {
+    const slice = g.members.slice(t.first, t.last + 1);
+    return {
+      index,
+      startSecs: slice[0].start_secs,
+      endSecs: slice[slice.length - 1].end_secs,
+      text: slice.map((m) => m.text.trim()).join(' '),
+      suggestedKeep: index === g.keep,
+    };
+  });
 }
 
 /** The clip's source rate, falling back to the timeline's (a clip with no

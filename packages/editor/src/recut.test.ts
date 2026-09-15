@@ -6,7 +6,13 @@
 // rounded duration), and no span can escape the clip it was found in.
 import { describe, expect, it } from 'vitest';
 
-import { clipSourceRangeSecs, cuttableSpans, spanToFrames } from './recut';
+import {
+  clipSourceRangeSecs,
+  cuttableSpans,
+  groupTakes,
+  spanToFrames,
+  type RetakeGroupWire,
+} from './recut';
 import type { Clip } from './timeline';
 
 const FPS = 24;
@@ -86,5 +92,71 @@ describe('cuttableSpans', () => {
 
   it('is empty for empty input', () => {
     expect(cuttableSpans([])).toEqual([]);
+  });
+});
+
+describe('groupTakes (D-327)', () => {
+  /** Three deliveries of one line, where the middle one spans TWO transcript
+   *  utterances — the shape Whisper produces when its segment boundaries do not
+   *  line up with the speaker's restarts (B-198). */
+  function straddling(): RetakeGroupWire {
+    return {
+      similarity: 0.9,
+      keep: 2,
+      takes: [
+        { first: 0, last: 0 },
+        { first: 1, last: 2 },
+        { first: 3, last: 3 },
+      ],
+      members: [
+        { index: 0, start_secs: 1.0, end_secs: 2.5, text: 'The cat sat—' },
+        { index: 1, start_secs: 3.0, end_secs: 4.0, text: 'The cat sat' },
+        { index: 2, start_secs: 4.0, end_secs: 5.0, text: 'on the mat.' },
+        { index: 3, start_secs: 6.0, end_secs: 8.0, text: 'The cat sat on the mat!' },
+      ],
+    };
+  }
+
+  it('makes one entry per DELIVERY, not per utterance', () => {
+    const takes = groupTakes(straddling());
+    expect(takes).toHaveLength(3);
+    expect(takes.map((t) => [t.startSecs, t.endSecs])).toEqual([
+      [1.0, 2.5],
+      [3.0, 5.0],
+      [6.0, 8.0],
+    ]);
+  });
+
+  it('joins a multi-utterance delivery back into one readable line', () => {
+    expect(groupTakes(straddling())[1].text).toBe('The cat sat on the mat.');
+  });
+
+  /** The defect this function exists to prevent. `keep` indexes TAKES; reading
+   *  it as a member index would mark utterance #2 — the second half of the
+   *  middle delivery — as the keeper, and offer the real last take for
+   *  deletion. */
+  it('marks exactly the delivery `keep` names, and only that one', () => {
+    const takes = groupTakes(straddling());
+    expect(takes.map((t) => t.suggestedKeep)).toEqual([false, false, true]);
+    expect(takes.filter((t) => t.suggestedKeep)).toHaveLength(1);
+  });
+
+  /** Cutting every non-keeper must never reach into the keeper. */
+  it('leaves the keeper untouched when every other delivery is cut', () => {
+    const takes = groupTakes(straddling());
+    const keeper = takes.find((t) => t.suggestedKeep);
+    expect(keeper).toBeDefined();
+    for (const c of takes.filter((t) => !t.suggestedKeep)) {
+      expect(c.endSecs).toBeLessThanOrEqual(keeper!.startSecs);
+    }
+  });
+
+  /** A detector older than D-327 sends no `takes`; every member was its own
+   *  delivery, which is what the fallback must reproduce. */
+  it('treats a group with no `takes` as one delivery per member', () => {
+    const legacy: RetakeGroupWire = { ...straddling(), takes: [], keep: 3 };
+    const takes = groupTakes(legacy);
+    expect(takes).toHaveLength(4);
+    expect(takes.map((t) => t.suggestedKeep)).toEqual([false, false, false, true]);
   });
 });

@@ -4073,6 +4073,7 @@ def editor_detect_retakes(
     similarity: float | None = None,
     window_secs: float | None = None,
     min_words: int | None = None,
+    max_span_utterances: int | None = None,
     force: bool = False,
 ) -> str:
     """Group the places in a timeline clip where the speaker **said the same
@@ -4095,8 +4096,14 @@ def editor_detect_retakes(
       (0..1, default 0.82).
     - `window_secs` — how far apart two takes may be (default 30). A line
       repeated half an hour later is a callback, not a retake.
-    - `min_words` — utterances shorter than this are never grouped (default 3),
-      which is what stops every "Yeah." pairing with every other one.
+    - `min_words` — a take with fewer than this many DISTINCT words is never
+      grouped (default 3), which is what stops every "Yeah." pairing with every
+      other one.
+    - `max_span_utterances` — how many adjacent transcript utterances may be
+      joined into one take (default 3). This is what finds a restart Whisper cut
+      on boundaries of its own, which do not line up with the speaker's (D-327):
+      a take is a SPAN of utterances, so one delivery can cover several. 1
+      restores the old utterance-to-utterance behaviour.
 
     Each group has `takes` (each with its `text` and the same three frame
     spaces `editor_detect_silences` returns), a `similarity` score, and `keep` —
@@ -4116,6 +4123,8 @@ def editor_detect_retakes(
         args["windowSecs"] = window_secs
     if min_words is not None:
         args["minWords"] = min_words
+    if max_span_utterances is not None:
+        args["maxSpanUtterances"] = max_span_utterances
     if force:
         args["force"] = True
     return json.dumps(_op("editor_detect_retakes", **args), indent=2, default=str)
@@ -4128,6 +4137,7 @@ def editor_detect_retakes_status(
     similarity: float | None = None,
     window_secs: float | None = None,
     min_words: int | None = None,
+    max_span_utterances: int | None = None,
 ) -> str:
     """Poll a retake grouping started by `editor_detect_retakes` (D-321).
 
@@ -4148,6 +4158,8 @@ def editor_detect_retakes_status(
         args["windowSecs"] = window_secs
     if min_words is not None:
         args["minWords"] = min_words
+    if max_span_utterances is not None:
+        args["maxSpanUtterances"] = max_span_utterances
     return json.dumps(_op("editor_detect_retakes_status", **args), indent=2, default=str)
 
 

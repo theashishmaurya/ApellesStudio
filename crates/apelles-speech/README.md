@@ -9,7 +9,7 @@ find the retakes.
 |---|---|---|
 | `vad` | is anyone talking, right now? | silero-vad v6.2.1 ONNX (D-319), 16 kHz mono, one probability per 512-sample hop |
 | `silence` | where are the gaps worth cutting? | hysteresis over those probabilities → spans in seconds |
-| `retake` | did they say this line already? | normalised edit distance + containment over transcript text (D-320) |
+| `retake` | did they say this line already? | normalised edit distance + containment over **spans** of adjacent utterances (D-320, D-327) |
 
 ## The boundary
 
@@ -37,7 +37,8 @@ known-correct answers, with no model in the loop.
 
 L2, alongside `apelles-timeline`. Depends on `serde`, `thiserror`, `ort` +
 `ndarray` (the workspace's existing ONNX stack) and `strsim`. It deliberately
-does **not** depend on `apelles-media` — nothing here decodes.
+does **not** depend on `apelles-media` — nothing here decodes, and it carries no
+sentence-embedding model: that was built, measured and rejected (D-327, below).
 
 ## The model file
 
@@ -57,8 +58,9 @@ and D-319 for why the version is pinned.
 cargo test -p apelles-speech
 ```
 
-33 tests, no model required — `tests/real_model_output.rs` replays a probability
-track captured from the real model over a real speech clip.
+38 tests, no model required — `tests/real_model_output.rs` replays a probability
+track captured from the real model over a real speech clip, and `retake.rs`
+carries the real six transcript segments from **B-198** as a regression test.
 
 The one test that *does* drive the model is `#[ignore]`d, because it needs the
 downloaded artifact and a located ONNX Runtime library (and see **B-187** for
@@ -72,3 +74,23 @@ APELLES_SILERO_PCM=/path/to/clip.f32 \
 ```
 
 `ffmpeg -i clip.wav -f f32le -ac 1 -ar 16000 clip.f32` produces the PCM.
+
+## Why a retake is a span, and why there is no embedding model (D-327)
+
+Whisper segments on its own heuristics and has no idea a speaker restarted, so
+**its boundaries do not line up with the restart boundaries**. On real footage a
+line delivered three times produced six segments in which no pair was a
+duplicate of any other (best 0.857; every pair carrying repeats two and three
+scored 0.18-0.28) — so the detector found one group of two and missed ~22s of
+duplicated speech. `retake` therefore compares **spans** of up to
+`max_span_utterances` adjacent utterances, which scores the same material 0.905.
+A group reports `takes` (inclusive ranges over its `members`) and `keep` indexes
+`takes`, not `members`.
+
+The obvious fix — an on-device sentence-embedding model — was built in full,
+verified correct to four decimals against upstream's own reference
+implementation, and **rejected on the numbers**: cosine ranks a sentence against
+its own negation at 0.946 and an antonym pair at 0.981, above every genuine
+retake in that footage (0.59-0.77). Edit distance ranks the same pairs
+correctly. Do not re-add it without reading `docs/notes/retake-detection.md`,
+which has the full table.

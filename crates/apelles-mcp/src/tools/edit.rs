@@ -946,6 +946,8 @@ pub struct EditorDetectRetakesArgs {
     pub window_secs: Option<f64>,
     #[serde(default)]
     pub min_words: Option<i64>,
+    #[serde(default)]
+    pub max_span_utterances: Option<i64>,
     #[serde(default = "default_editor_detect_retakes_force")]
     pub force: bool,
 }
@@ -961,6 +963,8 @@ pub struct EditorDetectRetakesStatusArgs {
     pub window_secs: Option<f64>,
     #[serde(default)]
     pub min_words: Option<i64>,
+    #[serde(default)]
+    pub max_span_utterances: Option<i64>,
 }
 
 /// The schema for a parameter the Python tool declares as a bare `list`.
@@ -4065,8 +4069,14 @@ impl ApellesMcp {
       (0..1, default 0.82).
     - `window_secs` — how far apart two takes may be (default 30). A line
       repeated half an hour later is a callback, not a retake.
-    - `min_words` — utterances shorter than this are never grouped (default 3),
-      which is what stops every "Yeah." pairing with every other one.
+    - `min_words` — a take with fewer than this many DISTINCT words is never
+      grouped (default 3), which is what stops every "Yeah." pairing with every
+      other one.
+    - `max_span_utterances` — how many adjacent transcript utterances may be
+      joined into one take (default 3). This is what finds a restart Whisper cut
+      on boundaries of its own, which do not line up with the speaker's (D-327):
+      a take is a SPAN of utterances, so one delivery can cover several. 1
+      restores the old utterance-to-utterance behaviour.
 
     Each group has `takes` (each with its `text` and the same three frame
     spaces `editor_detect_silences` returns), a `similarity` score, and `keep` —
@@ -4087,7 +4097,8 @@ impl ApellesMcp {
             .set("clip", p.clip)
             .put("similarity", p.similarity)
             .put("windowSecs", p.window_secs)
-            .put("minWords", p.min_words);
+            .put("minWords", p.min_words)
+            .put("maxSpanUtterances", p.max_span_utterances);
         if p.force {
             args = args.set("force", true);
         }
@@ -4117,7 +4128,8 @@ impl ApellesMcp {
             .set("clip", p.clip)
             .put("similarity", p.similarity)
             .put("windowSecs", p.window_secs)
-            .put("minWords", p.min_words);
+            .put("minWords", p.min_words)
+            .put("maxSpanUtterances", p.max_span_utterances);
         let env = self.op("editor_detect_retakes_status", args).await?;
         Ok(render::json_text(&env))
     }

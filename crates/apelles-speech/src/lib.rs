@@ -7,8 +7,10 @@
 //! - **Silence**, from a real acoustic VAD ([`vad`] + [`silence`]). Speech
 //!   probabilities from silero-vad's ONNX export, run on-device, turned into
 //!   spans by a hysteresis state machine.
-//! - **Retakes**, from the transcript ([`retake`]). Near-duplicate utterances
-//!   grouped by normalised edit distance, with the last take recommended.
+//! - **Retakes**, from the transcript ([`retake`]). Near-duplicate *spans* of
+//!   adjacent utterances — not single utterances, because Whisper's segment
+//!   boundaries do not line up with a speaker's restarts (D-327) — grouped by
+//!   normalised edit distance, with the last take recommended.
 //!
 //! **What this crate does NOT do — and this is the whole design (D-318).**
 //!
@@ -35,7 +37,7 @@ pub mod retake;
 pub mod silence;
 pub mod vad;
 
-pub use retake::{RetakeGroup, RetakeParams, Utterance, detect_retakes};
+pub use retake::{RetakeGroup, RetakeParams, TakeSpan, Utterance, detect_retakes};
 pub use silence::{SilenceParams, Span, silence_spans, speech_spans};
 pub use vad::{
     FRAME_SECS, MODEL_FILENAME, MODEL_SHA256, MODEL_URL, SAMPLE_RATE, SileroVad, VadError,

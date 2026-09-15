@@ -40,6 +40,7 @@ import { Button } from '@apelles/ui';
 import {
   DEFAULT_MIN_SILENCE_MS,
   clipSourceRangeSecs,
+  groupTakes,
   spanToFrames,
   type DetectedSpan,
 } from './recut';
@@ -255,20 +256,24 @@ export function RecutPanel() {
 
     const found = retakes[key];
     if (!found) return;
+    // One row per TAKE, not per member: since D-327 a delivery can span several
+    // utterances, and a row per member would offer half a delivery for cutting
+    // while marking the other half as the keeper.
     const rows: Candidate[] = [];
     found.groups.forEach((g, gi) => {
-      g.members.forEach((m, mi) => {
-        const span = spanToFrames(snapshot, m.start_secs, m.end_secs, fps);
+      const takes = groupTakes(g);
+      takes.forEach((t) => {
+        const span = spanToFrames(snapshot, t.startSecs, t.endSecs, fps);
         if (span.endFrame <= span.startFrame) return;
         rows.push({
-          id: `ret-${gi}-${mi}`,
+          id: `ret-${gi}-${t.index}`,
           kind: 'retake',
           span,
-          text: m.text,
-          suggestedKeep: mi === g.keep,
+          text: t.text,
+          suggestedKeep: t.suggestedKeep,
           groupIndex: gi,
-          takeIndex: mi,
-          takeCount: g.members.length,
+          takeIndex: t.index,
+          takeCount: takes.length,
         });
       });
     });

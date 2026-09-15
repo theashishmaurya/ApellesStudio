@@ -124,6 +124,7 @@ export interface RetakeDetection {
   similarity: number;
   window_secs: number;
   min_words: number;
+  max_span_utterances: number;
   utterances: number;
   groups: RetakeGroupWire[];
 }
@@ -146,6 +147,7 @@ export interface RetakeDetectionArgs {
   similarity?: number;
   windowSecs?: number;
   minWords?: number;
+  maxSpanUtterances?: number;
 }
 
 /** The cache key for one silence detection (B-188/D-321).
@@ -179,6 +181,7 @@ export function retakeKey(a: RetakeDetectionArgs): string {
     a.similarity ?? '',
     a.windowSecs ?? '',
     a.minWords ?? '',
+    a.maxSpanUtterances ?? '',
   ].join('|');
 }
 
@@ -513,6 +516,7 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
         similarity: args.similarity ?? null,
         windowSecs: args.windowSecs ?? null,
         minWords: args.minWords ?? null,
+        maxSpanUtterances: args.maxSpanUtterances ?? null,
       });
       set((s) => ({ retakes: { ...s.retakes, [key]: detection } }));
       return detection;
