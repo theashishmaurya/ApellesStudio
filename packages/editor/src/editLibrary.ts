@@ -27,7 +27,7 @@
 /** Every mode the Edit tab's library column can be showing, in the order the
  *  rail renders them top-to-bottom. `sources` first: it is the shared media
  *  pool, the one every tab has and the one an edit starts from. */
-export const EDIT_LIBRARY_MODES = ['sources', 'titles', 'effects', 'subtitles', 'recut'] as const;
+export const EDIT_LIBRARY_MODES = ['sources', 'titles', 'effects', 'subtitles', 'recut', 'index'] as const;
 
 export type EditLibraryMode = (typeof EDIT_LIBRARY_MODES)[number];
 
@@ -45,6 +45,11 @@ export const EDIT_LIBRARY_MODE_LABELS: Record<EditLibraryMode, string> = {
   // D-318 — last, because it is the only mode that acts on what is ALREADY on
   // the timeline rather than offering something to add to it.
   recut: 'Recut',
+  // D-328 — after Recut, for the same reason and one step further: Index does
+  // not act on the edit at all, it NAVIGATES one. It is the only mode whose
+  // content is a read-out of the timeline (its markers) and of the selected
+  // clip's speech (its transcript) rather than a palette of things to add.
+  index: 'Index',
 };
 
 /** Parse an untyped library-mode id, or say why it is not one. Recognise or

@@ -17,8 +17,20 @@
  * diamonds drawn on a track, which is Premiere's per-clip marker treatment and
  * would wrongly imply a marker belongs to the clip beneath it. Its dialog's
  * own fields are Time / Duration / Name / Notes / Keyword / a colour swatch
- * row; this popover carries Time, Name, Notes and the swatches. Duration
- * (range markers) and Keyword are deliberately out of scope — see D-222.
+ * row; this popover carries Time, Duration, Name, Comments and the swatches.
+ * Keyword remains deliberately out of scope — see D-222.
+ *
+ * **D-328 — Duration, and what a ranged marker looks like here.** D-222 built
+ * the popover without a Duration field and drew every marker as a pin. Both
+ * changed: `Marker.duration_frames` is real, the popover's Time and Duration
+ * sit side by side as TIMECODE fields (typed, not frame integers — see
+ * `parseTimecode`), and a marker that has a span draws as a BAR across the
+ * frames it covers with its flag at the left edge, so the duration is visible
+ * on the ruler rather than only inside the popover. A point marker is still
+ * exactly the pin D-222 drew. Premiere's own marker dialog orders its fields
+ * Duration → colour → Name → Comments and its Markers panel shows in/out for
+ * ranged markers (`scratch/premiere-index-reference/`); the field SET is that,
+ * the look is this repo's own.
  *
  * **What it does NOT do.** It owns no state that outlives a gesture: every
  * commit goes straight to `useEditorTimelineStore.applyOp`, so a marker edit
@@ -44,7 +56,17 @@ import {
   TooltipTrigger,
 } from '@apelles/ui';
 
-import { MARKER_COLORS, markersOf, type Marker, type Timeline } from './timeline';
+import { fmtTimecode, parseTimecode } from '@apelles/player';
+
+import {
+  MARKER_COLORS,
+  markerEndFrame,
+  markersOf,
+  normaliseMarkerDuration,
+  type EditOp,
+  type Marker,
+  type Timeline,
+} from './timeline';
 import { formatTimecode, RULER_HEIGHT_PX } from './ruler';
 
 /** Height of the marker strip, in px — and, because the strip lives in the
@@ -74,6 +96,24 @@ export function markerLeftPx(frame: number, fps: number, pxPerSec: number, scrol
   return startLeftPx + (frame / fps) * pxPerSec - scrollLeft;
 }
 
+/** How wide a ranged marker's bar is, in px (D-328) — the distance between its
+ *  own frame and [`markerEndFrame`], in the same space [`markerLeftPx`] works
+ *  in, so the bar's right edge lands exactly on the end frame's own x rather
+ *  than on a second, nearly-equal derivation of it.
+ *
+ *  `0` for a point marker, which is what makes "draw a bar at all?" a single
+ *  truthiness check at the call site instead of a duplicated
+ *  `duration_frames != null` test. */
+export function markerSpanWidthPx(marker: Marker, fps: number, pxPerSec: number): number {
+  return ((markerEndFrame(marker) - marker.frame) / fps) * pxPerSec;
+}
+
+/** The `set_marker` patch, as the strip and its popover pass one up. Exactly
+ *  the `EditOp`'s own `patch` shape (D-328 added `duration_frames`) — named
+ *  rather than repeated inline at the three prop sites that take it, so a
+ *  future field is added in one place and the compiler finds the rest. */
+export type MarkerPatch = Extract<EditOp, { kind: 'set_marker' }>['patch'];
+
 export interface MarkerStripProps {
   timeline: Timeline;
   fps: number;
@@ -83,7 +123,10 @@ export interface MarkerStripProps {
   /** Jump the playhead to a marker's frame (the store's own `setPlayhead`). */
   onJump: (frame: number) => void;
   /** Commit a `set_marker` patch (the store's own `applyOp`). */
-  onPatch: (id: string, patch: { frame?: number; color?: string; name?: string | null; note?: string | null }) => void;
+  onPatch: (
+    id: string,
+    patch: MarkerPatch,
+  ) => void;
   /** Commit a `remove_marker`. */
   onRemove: (id: string) => void;
 }
@@ -135,13 +178,55 @@ export function MarkerStrip({
       className="pointer-events-none absolute left-0 right-0 z-40 overflow-hidden"
       style={{ top: RULER_HEIGHT_PX, height: MARKER_STRIP_HEIGHT }}
     >
+      {/* D-328 — the span bars, drawn BEFORE the flags so a flag always sits on
+          top of its own bar (and of a neighbouring one it overlaps). Each is
+          `pointer-events-none`: the flag at the bar's left edge stays the one
+          hit target for the marker, so adding ranges changed no gesture. A
+          point marker has zero width here and renders nothing. */}
+      {markers.map((m) => {
+        const width = markerSpanWidthPx(m, fps, pxPerSec);
+        if (width <= 0) return null;
+        return (
+          <div
+            key={`${m.id}-span`}
+            data-chroma-marker-span={m.id}
+            aria-hidden
+            className="pointer-events-none absolute top-0.5 rounded-sm"
+            style={{
+              left: markerLeftPx(m.frame, fps, pxPerSec, scrollLeft, startLeftPx),
+              width,
+              height: MARKER_STRIP_HEIGHT - 4,
+              // The marker's own colour at low alpha, with a solid right edge
+              // marking the end frame — the bar has to read as "this marker,
+              // extended" rather than as a separate object, and the end needs
+              // to be locatable to the frame. `color-mix` keeps this derived
+              // from the one stored colour instead of a second palette of
+              // washed-out variants (CLAUDE.md's one-token-source reasoning
+              // applied to document content: see D-222 decision 3).
+              background: `color-mix(in srgb, ${m.color} 28%, transparent)`,
+              borderRight: `2px solid ${m.color}`,
+            }}
+          />
+        );
+      })}
+
       {markers.map((m) => (
         <button
           key={m.id}
           type="button"
           data-chroma-marker={m.id}
-          aria-label={`Marker ${m.name ?? ''} at ${formatTimecode(m.frame / fps, fps, 0)}`.replace(/\s+/g, ' ')}
-          title={`${m.name ? `${m.name} — ` : ''}${formatTimecode(m.frame / fps, fps, 0)}\nClick to jump · double-click to edit`}
+          // D-328 — a ranged marker says so in both labels: its span is the
+          // thing a user most needs confirmed without opening the popover
+          // (Premiere's own ruler markers expose their data on hover for the
+          // same reason), and a screen-reader user has no bar to look at.
+          aria-label={`Marker ${m.name ?? ''} at ${formatTimecode(m.frame / fps, fps, 0)}${
+            m.duration_frames ? ` lasting ${formatTimecode(m.duration_frames / fps, fps, 0)}` : ''
+          }`.replace(/\s+/g, ' ')}
+          title={`${m.name ? `${m.name} — ` : ''}${formatTimecode(m.frame / fps, fps, 0)}${
+            m.duration_frames
+              ? ` → ${formatTimecode(markerEndFrame(m) / fps, fps, 0)} (${formatTimecode(m.duration_frames / fps, fps, 0)})`
+              : ''
+          }\nClick to jump · double-click to edit`}
           className="pointer-events-auto absolute top-0.5 cursor-pointer border-0 p-0 outline-none focus-visible:ring-1 focus-visible:ring-accent"
           style={{
             left: markerLeftPx(m.frame, fps, pxPerSec, scrollLeft, startLeftPx),
@@ -226,7 +311,7 @@ export function MarkerStrip({
 interface MarkerEditorProps {
   marker: Marker;
   fps: number;
-  onPatch: (patch: { frame?: number; color?: string; name?: string | null; note?: string | null }) => void;
+  onPatch: (patch: MarkerPatch) => void;
   onRemove: () => void;
   onDone: () => void;
 }
@@ -244,40 +329,108 @@ interface MarkerEditorProps {
 function MarkerEditor({ marker, fps, onPatch, onRemove, onDone }: MarkerEditorProps) {
   const [name, setName] = useState(marker.name ?? '');
   const [note, setNote] = useState(marker.note ?? '');
-  const [frameText, setFrameText] = useState(String(marker.frame));
+  // D-328 — Time and Duration are TIMECODE text, not frame integers. A number
+  // field made the user do the frames-per-second arithmetic themselves for
+  // anything past a couple of seconds, which is why every NLE's marker dialog
+  // (Premiere's included) uses timecode here. `parseTimecode` still accepts a
+  // bare frame count, so nothing the old numeric field took stopped working.
+  const [timeText, setTimeText] = useState(fmtTimecode(marker.frame, fps));
+  const [durationText, setDurationText] = useState(
+    marker.duration_frames ? fmtTimecode(marker.duration_frames, fps) : '',
+  );
+
+  // Re-seed whenever the stored marker changes underneath (an undo, an MCP
+  // write, a swatch click's own round trip) so the fields can never show a
+  // stale draft — `CaptionInspectorPanel`'s own draft convention.
+  useEffect(() => {
+    setName(marker.name ?? '');
+    setNote(marker.note ?? '');
+    setTimeText(fmtTimecode(marker.frame, fps));
+    setDurationText(marker.duration_frames ? fmtTimecode(marker.duration_frames, fps) : '');
+  }, [marker.id, marker.frame, marker.duration_frames, marker.name, marker.note, fps]);
 
   const commit = () => {
-    const frame = Math.round(Number(frameText));
-    onPatch({
+    const patch: MarkerPatch = {
       name: name.trim() ? name : null,
       note: note.trim() ? note : null,
-      ...(Number.isFinite(frame) && frame !== marker.frame ? { frame } : {}),
-    });
+    };
+
+    // An unreadable timecode leaves the field alone rather than moving the
+    // marker somewhere arbitrary — `parseTimecode` returns null for exactly
+    // that case, and the re-seed effect above then puts the real value back.
+    const frame = parseTimecode(timeText, fps);
+    if (frame !== null && frame !== marker.frame) patch.frame = frame;
+
+    // An EMPTY duration field is a real instruction ("make this a point
+    // marker"), which is why it is handled separately from an unparseable one:
+    // `null` clears, a bad string is ignored.
+    const trimmedDuration = durationText.trim();
+    if (!trimmedDuration) {
+      if (marker.duration_frames !== undefined) patch.duration_frames = null;
+    } else {
+      const parsed = parseTimecode(trimmedDuration, fps);
+      if (parsed !== null) {
+        const next = normaliseMarkerDuration(parsed) ?? null;
+        if (next !== (marker.duration_frames ?? null)) patch.duration_frames = next;
+      }
+    }
+
+    onPatch(patch);
   };
+
+  const ranged = !!marker.duration_frames;
 
   return (
     <div className="flex flex-col gap-3 text-xs">
       <div className="flex items-center justify-between">
         <span className="font-medium">Marker</span>
-        <span className="tabular-nums text-text-secondary">{formatTimecode(marker.frame / fps, fps, 0)}</span>
+        {/* The end of the span, the one fact neither field shows directly —
+            and the quickest confirmation that a typed duration did what the
+            user meant. Hidden for a point marker, where it would just repeat
+            the Time field. */}
+        {ranged && (
+          <span className="tabular-nums text-text-secondary" data-chroma-marker-endtime>
+            ends {fmtTimecode(markerEndFrame(marker), fps)}
+          </span>
+        )}
       </div>
 
-      <label className="flex items-center gap-2">
-        <span className="w-12 shrink-0 text-text-secondary">Frame</span>
-        <Input
-          type="number"
-          min={0}
-          className="h-7 text-right"
-          value={frameText}
-          onChange={(e) => setFrameText(e.target.value)}
-          onBlur={commit}
-        />
-      </label>
+      {/* Time and Duration side by side: they are one statement ("from here,
+          for this long"), and stacking them would read as two unrelated
+          fields. */}
+      <div className="flex items-start gap-2">
+        <label className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="text-text-secondary">Time</span>
+          <Input
+            className="h-7 text-right tabular-nums"
+            data-chroma-marker-time
+            aria-label="Marker time"
+            value={timeText}
+            onChange={(e) => setTimeText(e.target.value)}
+            onBlur={commit}
+          />
+        </label>
+        <label className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="text-text-secondary">Duration</span>
+          <Input
+            className="h-7 text-right tabular-nums"
+            data-chroma-marker-duration
+            aria-label="Marker duration"
+            // An empty field IS the point-marker state, so the placeholder
+            // shows what empty means rather than an example value.
+            placeholder="00:00:00:00"
+            value={durationText}
+            onChange={(e) => setDurationText(e.target.value)}
+            onBlur={commit}
+          />
+        </label>
+      </div>
 
-      <label className="flex items-center gap-2">
-        <span className="w-12 shrink-0 text-text-secondary">Name</span>
+      <label className="flex flex-col gap-1">
+        <span className="text-text-secondary">Name</span>
         <Input
           className="h-7"
+          data-chroma-marker-name
           placeholder="e.g. cut here"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -286,10 +439,14 @@ function MarkerEditor({ marker, fps, onPatch, onRemove, onDone }: MarkerEditorPr
       </label>
 
       <label className="flex flex-col gap-1">
-        <span className="text-text-secondary">Notes</span>
+        <span className="text-text-secondary">Comments</span>
         <Textarea
-          className="min-h-14 text-xs"
-          placeholder="Anything worth remembering about this frame"
+          // Taller than D-222's Notes box: this is the field the Index panel's
+          // marker rows also edit, and the reference treats it as the marker's
+          // main body of text rather than an afterthought.
+          className="min-h-20 text-xs"
+          data-chroma-marker-note
+          placeholder="Anything worth remembering about this range"
           value={note}
           onChange={(e) => setNote(e.target.value)}
           onBlur={commit}
@@ -317,7 +474,7 @@ function MarkerEditor({ marker, fps, onPatch, onRemove, onDone }: MarkerEditorPr
       <div className="flex items-center justify-between gap-2 pt-1">
         <Button variant="ghost" size="xs" className="h-6 px-2 text-[11px] text-red-400" onClick={onRemove}>
           <TrashIcon className="size-3" />
-          Delete
+          Remove Marker
         </Button>
         <Button
           size="xs"

@@ -54,6 +54,11 @@ export { EditLibraryPanel } from './EditLibraryPanel';
  *  other library panels are (`@apelles/debug` drives it, and a composition root
  *  may want to mount it directly). */
 export { RecutPanel } from './RecutPanel';
+/** D-328 — the Index library mode's panel: the timeline's markers and the
+ *  selected clip's transcript, as two lists you navigate the edit from.
+ *  Exported alongside `RecutPanel` for the same reason it is: `EditLibraryPanel`
+ *  composes it, and the harness mounts it standalone. */
+export { EditIndexPanel } from './EditIndexPanel';
 export {
   DEFAULT_MIN_SILENCE_MS,
   clipSourceRangeSecs,
@@ -151,8 +156,19 @@ export type {
   VideoAnalysis,
   VideoEvent,
 } from './mediaUnderstandingStore';
-export type { Timeline, Track, Clip, EditOp, DraggedMedia, EaseCurve } from './timeline';
+export type { Timeline, Track, Clip, EditOp, DraggedMedia, EaseCurve, Marker } from './timeline';
 export {
+  // D-328 — the ranged-marker helpers. `markerEndFrame` is the one derivation
+  // of a marker's last frame (the ruler bar, the Index panel's time-range
+  // column and the MCP DTO all call it rather than each adding `frame +
+  // duration`); `normaliseMarkerDuration` is the one gate that keeps "a point
+  // marker" spelled as an ABSENT duration rather than a zero one.
+  markerEndFrame,
+  normaliseMarkerDuration,
+  markersOf,
+  newMarker,
+  resolveMarkerColor,
+  MARKER_COLORS,
   // D-147 — fade curve presets + the curve→preset-name match, exported for
   // the MCP bridge: `useChromaControl`'s `set_clip_fade` accepts a preset name
   // and `get_timeline` reports one back.

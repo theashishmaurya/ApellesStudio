@@ -256,7 +256,7 @@ describe('timeline markers — real DOM (D-222)', () => {
     expect(markers().find((m) => m.id === 'later')?.color).toBe(DEFAULT_MARKER_COLOR);
   });
 
-  it('7. right-clicking a flag opens the same editor, whose Delete removes the marker', async () => {
+  it('7. right-clicking a flag opens the same editor, whose Remove Marker removes the marker', async () => {
     await mountWith(buildFixture());
 
     fireMouse(flagFor('later'), 'contextmenu');
@@ -264,7 +264,12 @@ describe('timeline markers — real DOM (D-222)', () => {
     const popover = editorPopover();
     expect(popover).not.toBeNull();
 
-    const del = Array.from(popover!.querySelectorAll('button')).find((b) => b.textContent?.includes('Delete'));
+    // D-328 renamed this button from "Delete" to "Remove Marker" when the
+    // popover gained its Time/Duration fields — the reference's own wording,
+    // and clearer beside a Done button than a bare "Delete".
+    const del = Array.from(popover!.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Remove Marker'),
+    );
     expect(del).toBeDefined();
     fireMouse(del!, 'click');
     await waitFrames(2);

@@ -38,16 +38,11 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+// D-328 — the thumbnail fetch and its cache moved to `clipThumbs.ts` when the
+// Index panel's marker rows became a second consumer of the same command; this
+// file keeps only the LOD/window policy, which is genuinely its own.
+import { getThumbs, thumbWindowKey, type ClipThumb } from './clipThumbs';
 
-interface ClipThumb {
-  frame: number;
-  secs: number;
-  dataUrl: string;
-}
-
-const MAX_CACHE = 200;
-const thumbCache = new Map<string, Promise<ClipThumb[]>>();
 
 /** ~1 tile per this many px of on-screen clip width — matches the reference
  *  screenshot's real tiling density (Palmier: roughly every 40-60px). Unlike
@@ -144,37 +139,6 @@ export function requestWindow(
   return { startSecs: start, durationSecs: end - start, stepSecs };
 }
 
-function cacheKey(sourcePath: string, w: RequestWindow): string {
-  return `${sourcePath}|${w.stepSecs}|${w.startSecs.toFixed(3)}|${w.durationSecs.toFixed(3)}`;
-}
-
-function getThumbs(sourcePath: string, w: RequestWindow): Promise<ClipThumb[]> {
-  const key = cacheKey(sourcePath, w);
-  let p = thumbCache.get(key);
-  if (!p) {
-    if (thumbCache.size > MAX_CACHE) thumbCache.clear();
-    p = invoke<{ frame: number; secs: number; dataUrl: string }[]>('chroma_clip_thumbnails', {
-      sourcePath,
-      startSecs: w.startSecs,
-      durationSecs: w.durationSecs,
-      stepSecs: w.stepSecs,
-    })
-      .then((rows) => rows.map((r) => ({ frame: r.frame, secs: r.secs, dataUrl: r.dataUrl })))
-      .catch((err) => {
-        // Real failure, not silently dropped — a clip with genuinely no
-        // filmstrip and zero trace of why is undiagnosable (D-124 found
-        // exactly that live). A missing filmstrip stays a soft failure for
-        // the UI; this only makes it a loud one in devtools.
-        console.error('[Filmstrip] chroma_clip_thumbnails failed for', sourcePath, err);
-        // Evict, so a transient failure is not cached for the life of the page.
-        thumbCache.delete(key);
-        return [];
-      });
-    thumbCache.set(key, p);
-  }
-  return p;
-}
-
 export interface FilmstripProps {
   sourcePath: string;
   /** clip's `source_start` in seconds (frames / fps) */
@@ -229,7 +193,7 @@ export function Filmstrip({
   // Depend on the *serialised* window, not the object — `requestWindow`
   // returns a fresh object every render, and the whole point of snapping it
   // is that an unchanged window must not re-fire this effect.
-  const windowKey = window_ ? cacheKey(sourcePath, window_) : '';
+  const windowKey = window_ ? thumbWindowKey(sourcePath, window_) : '';
 
   // D-201 — the effect below must fire on the SNAPPED window (`windowKey`),
   // never on `window_`'s object identity, for the reason stated just above.

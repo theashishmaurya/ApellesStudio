@@ -8,7 +8,7 @@
 
 export { Player } from './Player';
 export type { PlayerProps } from './Player';
-export { fmtTimecode } from './timecode';
+export { fmtTimecode, parseTimecode } from './timecode';
 // D-280 — the transport's playback-rate model. Exported because the tab that
 // owns the value needs the same bounds, presets and formatting the control
 // renders with; a second copy in the tab is the drift this prevents.

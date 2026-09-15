@@ -4,6 +4,30 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-15** — **D-328: markers can span a RANGE, and the Edit tab has an
+  Index panel.** `Marker.duration_frames` reverses D-222's deliberate
+  scope-out — its "a second time-extent concept" objection does not survive
+  contact (an annotation's extent participates in no compositing, ripple or
+  export), while its "wants its own drag affordance" objection was right and is
+  answered by drawing a ranged marker as a BAR on the ruler rather than a pin.
+  A point marker is an ABSENT duration, never a zero one — one gate
+  (`normaliseMarkerDuration`) enforces that at every write, which is what lets
+  a pre-D-328 `project.json` load untouched and re-save without gaining the
+  key (tested). The popover now carries Time + Duration as real timecode
+  fields (`parseTimecode`, new, beside `fmtTimecode` so formatter and parser
+  cannot disagree), a bigger Comments box and Remove Marker. The new **Index**
+  library mode lists every marker (colour, poster frame, in → out, an inline
+  comment that writes a real `set_marker`, delete, click-to-seek) and the
+  selected clip's transcript (click-to-seek, with the row under the playhead
+  highlighted). That highlight is the D-325/B-146 trap: it subscribes to the
+  store and sets state only on a row-BOUNDARY crossing, so 30 ticks inside one
+  segment cost **0** React commits where the naive reactive selector costs 30
+  — measured both ways. `EditLibraryPanel`'s own reactive `playhead`
+  subscriber was fixed in passing (the new panel is its child); B-146 stays
+  open with nine left. Both MCP surfaces gained `duration_frames` together,
+  parity corpus regenerated and diffed to exactly the three marker tools; no
+  new tool was needed for the panel, verified rather than assumed.
+
 - **2026-09-15** — **B-198 fixed (D-327): a retake is a SPAN of utterances, and
   the embedding model that looked like the answer is measurably the wrong
   tool.** On the owner's own footage the detector found one group of two and

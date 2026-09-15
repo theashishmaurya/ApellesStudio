@@ -2041,9 +2041,37 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       widens to fit), click-to-jump / double-click-to-edit, an `M` shortcut
       + toolbar button, a jump-to dropdown, and
       `editor_add_marker`/`_list_markers`/`_set_marker`/`_remove_marker`.
-      **Deferred, deliberately:** marker DURATION (Resolve's range marker)
-      and its Keyword field — see D-222 for why neither is needed to flag a
-      frame and what a duration would cost the model.
+      ~~**Deferred, deliberately:** marker DURATION (Resolve's range marker)~~
+      — **DONE, 2026-09-15 (D-328).** `Marker.duration_frames`
+      (`Option<i64>`, absent = a point marker, so a pre-D-328 `project.json`
+      needs no migration and re-saving one does not add the key), a ranged
+      marker drawing as a BAR on the ruler strip rather than a pin, Time +
+      Duration timecode fields in the popover, and `duration_frames` on
+      `editor_add_marker`/`editor_set_marker` with `durationFrames`/`endFrame`
+      reported back by `editor_list_markers`/`editor_get_timeline`. D-328
+      answers D-222's two objections directly: the "second time-extent
+      concept" one does not survive contact (an annotation's extent
+      participates in no compositing, ripple or export), and the "wants its own
+      drag affordance" one was right and is honoured by the bar.
+      - ⬜ **The bar is not DRAGGABLE yet** — duration is set numerically in
+        the popover, and Premiere's `OPTION+drag`-to-extend has no equivalent
+        here. The geometry it needs already exists (`markerSpanWidthPx`); what
+        is missing is the pointer gesture and its coexistence with the marquee
+        (D-137) and the flag's own click/double-click split (D-222 decision 5).
+      **Still deferred:** the marker Keyword field — see D-222.
+    - ✅ **Index panel** — the Edit tab's sixth library mode (D-263's rail),
+      with Markers and Transcript sub-views — **D-328**. Markers: one row per
+      marker with its colour, a poster frame, its name, its time (in → out for
+      a ranged one), an inline comment box that writes a real `set_marker`, a
+      delete, and click-to-seek. Transcript: the selected clip's segments with
+      timecode + duration badge + word-wrapped text, click-to-seek, and the row
+      under the playhead highlighted as playback runs — implemented per D-325
+      (a `getState()` read inside a store subscription that sets state only on
+      a row-BOUNDARY crossing), so 30 ticks inside one segment cost **0**
+      React commits rather than 30. No new MCP tool needed, verified rather
+      than assumed (see D-328 decision 4). Fixed `EditLibraryPanel`'s own
+      reactive `playhead` subscriber in passing, since the new panel is its
+      child — B-146 still open with nine subscribers left.
     - ✅ Subtitles / captions — **D-229**, `docs/notes/subtitles.md`.
       `TrackKind::Subtitle` (a track kind, deliberately the opposite call from
       D-211's title-as-a-clip-variant — a caption composites over the finished

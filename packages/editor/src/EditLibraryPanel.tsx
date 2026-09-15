@@ -49,6 +49,7 @@ import { Button, TooltipProvider } from '@apelles/ui';
 
 import { CaptionLibrary } from './CaptionLibrary';
 import { RecutPanel } from './RecutPanel';
+import { EditIndexPanel } from './EditIndexPanel';
 import { CaptionsFromTranscriptButton } from './CaptionsFromTranscriptButton';
 import { EDIT_LIBRARY_MODE_LABELS } from './editLibrary';
 import { useEditorTimelineStore } from './timelineStore';
@@ -130,7 +131,16 @@ export function EditLibraryPanel() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
   const setSelection = useEditorTimelineStore((s) => s.setSelection);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
+  // D-328/D-325 — deliberately NOT `useEditorTimelineStore((s) => s.playhead)`.
+  // The only thing in this component that ever wanted the playhead is
+  // `addAtPlayhead` below, a click handler that needs the CURRENT value at the
+  // moment it fires — never a re-render to get it. D-325 removed exactly this
+  // pattern from `TimelinePane` after measuring what it cost; this component
+  // was one of the other ten subscribers it named and left, and it became worth
+  // fixing here the moment the Index panel (a child of this one) started
+  // rendering per-row lists: a parent that re-renders on every displayed frame
+  // re-renders its children too, so leaving it would have made the new panel
+  // pay a playback cost for a value it does not use.
   const [error, setError] = useState<string | null>(null);
 
   /** Place a generator at the playhead on a **brand-new video track above
@@ -170,7 +180,15 @@ export function EditLibraryPanel() {
       setError(built.error);
       return;
     }
-    applyOp({ kind: 'add_clip', track: 0, clip: built, startFrame: playhead, onNewVideoTrack: true });
+    applyOp({
+      kind: 'add_clip',
+      track: 0,
+      clip: built,
+      // D-325's read-at-the-point-of-use pattern — the same thing the reactive
+      // selector used to hand this line, without the per-frame re-render.
+      startFrame: useEditorTimelineStore.getState().playhead,
+      onNewVideoTrack: true,
+    });
     // The new track is index 0 by construction, so the clip is always there —
     // but this reads it back rather than asserting, for the same reason
     // `selectDroppedGenerator` does: pointing the Inspector at a clip that was
@@ -221,6 +239,11 @@ export function EditLibraryPanel() {
             timeline: it finds silences and retakes in the selected clip and
             cuts the ones the user accepts. */}
         {mode === 'recut' && <RecutPanel />}
+
+        {/* D-328 — the one library that NAVIGATES the edit rather than adding
+            to or cutting it: every marker on the timeline, and the selected
+            clip's transcript. */}
+        {mode === 'index' && <EditIndexPanel />}
 
         {mode === 'subtitles' && (
           <div className="flex min-h-0 flex-1 flex-col">
