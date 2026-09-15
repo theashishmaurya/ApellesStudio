@@ -3547,3 +3547,21 @@ note.
 | Speed accrues cleanup debt | `CLAUDE.md`'s "Standards — no shortcuts" hard rule exists specifically for this; verify before reporting done, every time |
 | AGPL blocks a direction wanted later | decide licence intent explicitly when D-002 is picked up; AGPL is fine for "open project," accept the SaaS limitation |
 | The "open + local + agentic" window keeps narrowing (competitors emerging weekly) | the defensible wedge is colour-science depth + Rust-native perf, not the category label — see `product-direction.md` §7 |
+
+**Explainer motion graphics, and an 11th primitive that can draw a curve (2026-09-16,
+D-333):** four Motion scenes each cut onto the c038 and c040 talking-head timelines at
+the beats a visual genuinely earns, read from `editor_get_timeline_transcript` (D-329)
+and placed at its reported TIMELINE frames against `duration` in the render's own source
+frames — the B-077 pairing, stated explicitly because these two rates differ (24.0 vs
+30). New `plot` primitive (`packages/motion-engine/src/primitives/Plot.tsx`): one
+series, one dashed reference baseline revealed BEFORE the curve so the curve visibly
+sinks onto it, direct annotations, no legend — built because `graph` is node-link and
+`matrix` is a cell grid, so neither could express "the shape of this curve, read against
+this line." Registered at all six integration points with no Rust or Python change
+(both MCP layers are thin proxies), so the GUI catalog and `motion_list_primitives`
+gained it from one source. Style grammar researched first and kept in
+`scratch/mgfx-reference/`. Three silent-failure defects found on the way: **B-201**
+(preview/export `position_x` divergence — the reason these overlays are full-frame),
+**B-202** (a partially-failed `motion_render` reports nothing anywhere), **B-203**
+(`box_width`/`box_height` are settable and persisted but absent from
+`editor_get_timeline`).

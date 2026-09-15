@@ -13,6 +13,7 @@ import { ParticleFlow } from "../primitives/ParticleFlow";
 import { LabelBox, LayerStack } from "../primitives/Scene3D";
 import { DeviceFrame } from "../primitives/DeviceFrame";
 import { ClaudeChat } from "../primitives/ClaudeChat";
+import { Plot } from "../primitives/Plot";
 import { resolveActiveStep } from "../lib/chatLayout";
 import type { Active, Layer } from "./schema";
 
@@ -106,6 +107,10 @@ const REGISTRY: Record<
   },
 
   deviceframe: { component: DeviceFrame as React.FC<Record<string, unknown>>, adapt: generic },
+  // D-333 — `generic` is right here: `at`/`dur` are the only timing this
+  // primitive takes, and its internal phases are fractions of `dur`, so no
+  // nested seconds→frames conversion is needed.
+  plot: { component: Plot as React.FC<Record<string, unknown>>, adapt: generic },
 
   /**
    * D-258. Two conversions beyond the generic adapter:

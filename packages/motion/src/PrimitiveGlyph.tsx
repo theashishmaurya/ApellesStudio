@@ -99,6 +99,14 @@ export function PrimitiveGlyph({ use }: { use: PrimitiveUse }) {
           <path d="M7.2 15.8h5" opacity="0.45" />
         </svg>
       );
+    case 'plot':
+      return (
+        <svg {...common}>
+          <path d="M4.5 4v15.5h15" />
+          <path d="M7 9.5c2.4 5.2 4.2 6.6 5.6 6.6s3.4-2 5.4-8" />
+          <path d="M7 17h11" opacity="0.55" strokeDasharray="2.2 2" />
+        </svg>
+      );
     case 'labelbox':
       return (
         <svg {...common}>

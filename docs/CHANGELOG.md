@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-16** — **D-333: explainer motion graphics for c038/c040, and a new
+  `plot` primitive.** Read both talking-head timelines with
+  `editor_get_timeline_transcript` (D-329) on throwaway `-mgfx` copies, picked
+  the moments a visual genuinely earns its place, and built four Motion scenes
+  each in one consistent style — researched first from 3Blue1Brown/manim,
+  Alammar, Liu et al., the FT's own chart palettes and BBC/Netflix legibility
+  numbers, all kept in `scratch/mgfx-reference/`. Took the researched *grammar*
+  (assemble in narration order, dim-don't-delete, direct labels not legends, one
+  thing moves at a time, no bounce) but NOT its palette, since the engine's
+  `design.ts` is already the one token source. The catalog had no way to draw a
+  plotted curve — `graph` is node-link, `matrix` is a cell grid — so `plot`
+  is the 11th primitive: one series, one dashed reference baseline revealed
+  BEFORE the curve so the curve visibly sinks onto it, direct annotations, no
+  legend. No Rust or Python change was needed for it to reach MCP. Overlays are
+  full-frame cutaways rather than the researched side-by-side, because
+  `position_x` means different things in the preview and the export — filed as
+  **B-201** and flagged as a workaround, not fixed.
 - **2026-09-16** — **D-330: a performance change you can WATCH — a live fps
   overlay burned into the window, plus a webview video recorder.** Debug
   tooling piece 6, built so the decode-pipe/rendering fix in flight can be shown

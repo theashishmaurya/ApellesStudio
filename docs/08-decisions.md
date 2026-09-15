@@ -32580,3 +32580,104 @@ shipped unreachable — no surface called it, and this repo does not keep dead
 code "just in case"), and thumbnails on component rows (they reuse
 `PrimitiveGlyph`, the same WebGL-context reasoning D-151 recorded for the
 Catalog).
+
+
+## D-333 — explainer motion graphics for c038/c040, and a `plot` primitive because no existing one could draw a curve
+
+**decided (2026-09-16)** · adds the 11th primitive · respects B-077 · files B-201
+
+**Context.** Two talking-head explainers needed motion graphics cut onto their
+timelines at the moments a visual genuinely earns its place: `2026-09-12-c040`
+(attention/transformers) and `2026-09-12-c038` (the economics of inference).
+Both were read via `editor_get_timeline_transcript` (D-329) on throwaway
+`-mgfx` copies, so the real projects were never touched.
+
+**Research first, per CLAUDE.md.** Reference pulled and kept in
+`scratch/mgfx-reference/`: 23 real frames from 3Blue1Brown's *Attention in
+transformers* plus manim's own `default_config.yml`/`rate_functions.py`, 20
+diagrams from Jay Alammar's *Illustrated Transformer* (with per-frame timings
+measured off his decoding GIF), Liu et al.'s *Lost in the Middle* Figure 1, the
+FT's production `universalStyles.js`, BBC/Netflix subtitle legibility numbers,
+and Material 3's easing/duration tokens. The load-bearing findings: colour is a
+type system held for the whole piece, not decoration; an attention matrix is
+grey discs sized by magnitude, never a rainbow heatmap; diagrams assemble piece
+by piece in narration order and previous elements **dim rather than vanish**;
+direct labels, never a legend; one thing moves at a time; no overshoot or
+bounce anywhere.
+
+### Decision 1 — take the researched GRAMMAR, not the researched palette
+
+The engine already has a locked look (`design.ts`: dark ground, hand-drawn
+roughjs strokes, Kalam) and CLAUDE.md's "one token source" rule. Importing the
+researched 9-token data-viz palette wholesale would have created a second
+parallel theme and made these scenes look unlike every other primitive. So the
+*grammar and timing* were adopted (assembly order, 300ms element beat / 900ms
+structure beat / 450ms holds, dim-don't-delete, direct labels, three role
+colours max) and the *look* stayed the engine's own.
+
+### Decision 2 — a new `plot` primitive, because the alternative was a force-fit
+
+c040's payoff beat is "lost in the middle" — a U-shaped accuracy curve — and
+c038's is the compounding reread cost of generating one reply. Both are beats
+where the SHAPE of a curve is the argument. Nothing in the catalog could draw
+one: `graph` is a d3-force node-link diagram, `matrix` is a grid of cells,
+`layers` is a card stack. Building a U-curve out of `matrix` cells would have
+been exactly the awkward substitute the owner ruled out.
+
+`plot` (`packages/motion-engine/src/primitives/Plot.tsx`) is deliberately not a
+charting library: one series, one optional dashed reference baseline, direct
+annotations, no legend, no bars, no stacking. The baseline is the point, not a
+decoration — Liu et al.'s own figure only lands because the curve visibly sinks
+onto the "with no documents at all" line, so the default fragment ships with
+one set and the reveal order puts the baseline on screen BEFORE the curve.
+The y axis is not zero-based by default, because in this class of graphic the
+effect lives in a narrow band.
+
+Determinism: frame-driven only, roughjs seeded, and the draw-on uses SVG
+`pathLength` normalisation rather than a DOM `getTotalLength()` measurement, so
+it never touches layout. Catmull-Rom→bezier smoothing is ~20 lines of pure
+maths inline rather than a charting dependency, per CLAUDE.md's own carve-out
+for "a genuinely small, stable need."
+
+Registered at the six real integration points — `engine/schema.ts` (the `use`
+enum), `engine/registry.ts` (what makes it render), `primitives/index.ts`,
+`motion/src/catalog.ts`, `motion/src/propCatalog.ts` (what
+`motion_list_primitives` returns, plus its drag/resize handles),
+`PrimitiveGlyph.tsx` and `catalog.test.ts`. **No Rust and no Python change was
+needed**: `crates/apelles-mcp` and `mcp/server.py` are thin proxies with zero
+hardcoded primitive names, so the new `use` and its fields reach MCP
+automatically — the GUI catalog and `motion_list_primitives` read the same
+source, which is CLAUDE.md's "human AND an AI" rule satisfied in one pass.
+
+### Decision 3 — full-frame cutaways, not a half-frame side-by-side
+
+The researched house style prefers speaker-one-half/graphics-the-other. That is
+not safely buildable today: `position_x`/`position_y` mean a **centre offset**
+in the Rust live preview and the **top-left corner** in the ffmpeg export, so
+any half-width overlay sits 960px from where it was verified (B-201). The two
+engines agree exactly only at full width. Full-frame was therefore chosen —
+also explicitly sanctioned by the same research as "a deliberate cutaway", and
+what 3Blue1Brown and Vox actually do during a technical beat. Sizing uses
+`box_width`/`box_height` (canvas fractions, real parity) rather than `scale`,
+whose meaning also diverges between the two engines.
+
+Fixing B-201 instead was rejected as out of scope and too blunt to take
+unilaterally: changing the export breaks the stacked-comparison recipe a
+shipped skill depends on, and changing the preview breaks the GUI's on-canvas
+drag, `transformGeometry.ts`, and every stored transform.
+
+### Decision 4 — placement frames come from the transcript, never from source time
+
+`editor_get_timeline_transcript` reports each row's `startFrame` in TIMELINE
+frames alongside its `sourceStart`, and only the former is used. These
+timelines make the distinction unmissable: c040's second clip begins at
+timeline frame 64 but source frame 144. `editor_add_clip`'s `duration` is in
+the clip's OWN source frames, and a motion render carries the manifest's fps
+(30), not the timeline's (24.0) — so an 8s graphic is `duration: 240` occupying
+192 timeline frames. Conflating the two is B-077 exactly.
+
+**Scenes.** c040: `selfattn` (matrix), `qkv` (graph), `encdec` (graph),
+`lostmiddle` (**plot**). c038: `share` (a 10×10 unit chart — the claim is "55
+cents of every dollar", and a 100-cell grid is the one shape you can literally
+count), `oncevsforever` (text + emphasis), `rereads` (**plot**), `tricks`
+(layers, stepping through batching/quantization/speculative decoding).

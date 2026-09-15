@@ -17,3 +17,5 @@ export { ParticleFlow } from "./ParticleFlow";
 export { DeviceFrame } from "./DeviceFrame";
 export { ClaudeChat } from "./ClaudeChat";
 export type { RevealPreset } from "./ClaudeChat";
+export { Plot } from "./Plot";
+export type { PlotPoint } from "./Plot";

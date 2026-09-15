@@ -195,6 +195,11 @@ const layer = z
       // full-bleed or inside a frame, and neither requires the other.
       "deviceframe",
       "claudechat",
+      // D-333 — a plotted curve with a labelled reference baseline. Distinct
+      // from `graph` (a d3-force node-link diagram) and `matrix` (a cell
+      // grid): neither can express "the shape of this curve, read against
+      // this line", which is what an accuracy/loss/scaling beat needs.
+      "plot",
       // scene3d children:
       "particleflow",
       "labelbox",

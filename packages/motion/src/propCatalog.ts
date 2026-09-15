@@ -125,6 +125,26 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'x', label: 'X', kind: 'number', group: 'layout' },
     { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
   ],
+  plot: [
+    { key: 'values', label: 'Values', kind: 'json', group: 'content' },
+    { key: 'xLabels', label: 'X labels', kind: 'json', group: 'content' },
+    { key: 'title', label: 'Title', kind: 'string', group: 'content' },
+    { key: 'xTitle', label: 'X axis title', kind: 'string', group: 'content' },
+    { key: 'yTitle', label: 'Y axis title', kind: 'string', group: 'content' },
+    { key: 'yMin', label: 'Y min', kind: 'number', group: 'source' },
+    { key: 'yMax', label: 'Y max', kind: 'number', group: 'source' },
+    { key: 'baseline', label: 'Baseline', kind: 'number', group: 'source' },
+    { key: 'baselineLabel', label: 'Baseline label', kind: 'string', group: 'content' },
+    { key: 'annotate', label: 'Annotations', kind: 'json', group: 'content' },
+    { key: 'markers', label: 'Markers', kind: 'boolean', group: 'source' },
+    { key: 'color', label: 'Series color', kind: 'color', group: 'fill' },
+    { key: 'baselineColor', label: 'Baseline color', kind: 'color', group: 'fill' },
+    { key: 'seed', label: 'Seed', kind: 'number', group: 'source' },
+    { key: 'x', label: 'X', kind: 'number', group: 'layout' },
+    { key: 'y', label: 'Y', kind: 'number', group: 'layout' },
+    { key: 'width', label: 'Width', kind: 'number', group: 'layout' },
+    { key: 'height', label: 'Height', kind: 'number', group: 'layout' },
+  ],
   graph: [
     { key: 'nodes', label: 'Nodes', kind: 'json', group: 'content' },
     { key: 'edges', label: 'Edges', kind: 'json', group: 'content' },
@@ -311,7 +331,8 @@ export const CAM3D_KEY_FIELDS: FieldSpec[] = [
 export type PositionKind = 'xy' | 'box-xy';
 
 export function positionFields(use: string): PositionKind | undefined {
-  if (use === 'text' || use === 'matrix' || use === 'layers') return 'xy';
+  // D-333 — `plot`'s `x`/`y` are its top-left in world px, the same shape.
+  if (use === 'text' || use === 'matrix' || use === 'layers' || use === 'plot') return 'xy';
   // D-258 — both new primitives carry plain world-px `x`/`y` fields, so they
   // take the existing `'xy'` shape unchanged. (`deviceframe`'s pair is the
   // body's CENTRE and `claudechat`'s is its screen rect's TOP-LEFT, which
@@ -367,6 +388,7 @@ export type SizeKind =
 export function sizeFields(use: string): SizeKind | undefined {
   if (use === 'layers') return { kind: 'wh', w: 'cardW', h: 'cardH' };
   if (use === 'graph') return { kind: 'wh', w: 'width', h: 'height' };
+  if (use === 'plot') return { kind: 'wh', w: 'width', h: 'height' };
   // D-258 — `claudechat` has real px `width`/`height` fields, so it takes the
   // plain two-field shape; `deviceframe`'s only size knob is its uniform
   // `scale` over a fixed model body, which is what `'scale'` exists for.

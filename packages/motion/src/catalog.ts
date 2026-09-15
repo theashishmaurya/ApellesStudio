@@ -99,6 +99,13 @@ const CATALOG: Record<PrimitiveUse, CatalogEntry> = {
     description: 'The Claude mobile app screen: header, message thread, tool and document cards, input bar. Animates through several conversations over one scene.',
     in3d: false,
   },
+  plot: {
+    use: 'plot',
+    name: 'Plot',
+    description:
+      'A line plot that draws on left to right, with a dashed reference baseline and direct labels. For a beat where the SHAPE of a curve is the argument — an accuracy dip, a loss curve, a scaling trend.',
+    in3d: false,
+  },
   particleflow: {
     use: 'particleflow',
     name: 'Particle flow',
@@ -208,6 +215,23 @@ export function defaultLayerFor(use: PrimitiveUse): Record<string, unknown> {
     // the Inspector to move either layer independently.
     case 'deviceframe':
       return { use: 'deviceframe', at: 0, model: 'iphone-15-pro', scale: 1 };
+    // D-333. Ships with a baseline and one annotation already set, because
+    // the reference line IS the point of this primitive — a bare curve would
+    // show the shape but not the argument. Fresh literals per call so two
+    // inserts never share a mutable array.
+    case 'plot':
+      return {
+        use: 'plot',
+        at: 0,
+        dur: 2.7,
+        values: [72, 62, 57, 59, 68],
+        xLabels: ['1st', '5th', '10th', '15th', '20th'],
+        baseline: 56,
+        baselineLabel: 'no documents at all',
+        annotate: [{ i: 2, text: 'buried here' }],
+        x: 220,
+        y: 260,
+      };
     // Two conversations and an `active` schedule out of the box, so the
     // primitive's actual point — animating THROUGH conversations — is visible
     // on the first click rather than needing to be authored to be seen.
