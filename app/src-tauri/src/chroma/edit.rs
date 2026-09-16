@@ -1904,10 +1904,11 @@ fn plate_transform(alpha: f64) -> ClipTransform {
 ///
 /// **The canvas is the COMPOSITION** (`comp`, in pixels — see
 /// [`composition_size`]), downscaled to `max_long_edge` for the preview.
-/// Each layer is placed at its own **natural footprint in composition
+/// Each layer is sized at its own **natural footprint in composition
 /// space** — its source pixel dimensions measured against the composition's
-/// — times `scale`, centred, then offset by `position_x`/`position_y` as
-/// fractions of the canvas. Not scaled to fill the canvas by default: a
+/// — times `scale`, and its TOP-LEFT corner is placed at
+/// `position_x`/`position_y` as fractions of the canvas (D-338, fixes
+/// B-201 — see [`composite_layer_onto`]). Not scaled to fill the canvas by default: a
 /// lower-priority layer showing through at its own native size, like a
 /// picture-in-picture, is the more useful default than a silent full-bleed
 /// stretch, and that intent is unchanged from D-088 — what changed (D-136)
@@ -2161,7 +2162,8 @@ fn crop_pixel_rect(w: u32, h: u32, t: &ClipTransform) -> Option<(u32, u32, u32, 
 }
 
 /// Crop → scale → rotate → apply opacity (as an alpha multiply) → overlay
-/// `layer` onto `canvas`, centered plus `transform`'s position offset. Real
+/// `layer` onto `canvas`, with its TOP-LEFT corner at `transform`'s
+/// `position_x`/`position_y` (canvas fractions). Real
 /// arbitrary-angle rotation via `imageproc::geometric_transformations::
 /// rotate_about_center` — the exact same function + transparent-border
 /// pattern `image_processing.rs`'s own `apply_rotation` already uses for
@@ -2188,6 +2190,38 @@ fn crop_pixel_rect(w: u32, h: u32, t: &ClipTransform) -> Option<(u32, u32, u32, 
 /// 960-px cap isn't downscaled at all, so it was two thirds of a 4K-derived
 /// canvas at one quality and the entire canvas at another). The decoded
 /// buffer's size now only affects sharpness.
+///
+/// **`position_x`/`position_y` are the layer's TOP-LEFT corner, as a fraction
+/// of the canvas** — `(0, 0)` puts the layer in the canvas's top-left corner,
+/// `(0.5, 0.5)` starts it at the canvas's midpoint. **D-338 changed this**
+/// (fixes B-201): until then this function centred the layer and treated
+/// `position_*` as an offset FROM that centre (`cw/2 - sw/2 + position_x*cw`),
+/// while the ffmpeg exporter has always compiled the same field to
+/// `overlay=x='<position_x>*W'`, i.e. the top-left corner. The two engines
+/// therefore disagreed by exactly `(1 - box_fraction)/2` per axis on every
+/// non-full-frame layer, silently, with each side self-consistent. The
+/// export's reading is ffmpeg's own external convention and is depended on by
+/// the stacked comparison recipe `capabilities.json` documents, so the preview
+/// moved to meet it.
+///
+/// Consequences worth stating, because they follow from the formula and not
+/// from any extra code here:
+/// - a layer that exactly covers the canvas (`box_width`/`box_height` `1.0`,
+///   or a source whose footprint is the whole composition) renders
+///   byte-identically to before at `position (0, 0)` — both readings give
+///   `x = 0`. That is why every existing project keeps rendering as it did;
+///   see D-338 for the verification against the real saved projects.
+/// - a **text** layer is generated at exactly canvas size with `scale` pinned
+///   to `1.0` (see `resolve_text_clip_transform` and `composite_video_frame`'s
+///   text arm), so it is the same identity: `cw/2 - cw/2 + px*cw == px*cw`.
+///   Titles are untouched by this change, and still agree with `drawtext`'s
+///   own centred-plus-offset placement on the export side.
+/// - `scale` now grows a layer about its top-left corner rather than about the
+///   canvas centre — which is what the exporter has always done, so this is
+///   the same divergence being closed rather than a new one. The GUI's corner
+///   drag keeps growing a box about its own centre by writing the
+///   compensating `position_*` (`transformGeometry.ts`'s
+///   `dragCornerReposition`), so the gesture is unchanged for a human.
 pub(super) fn composite_layer_onto(
     canvas: &mut image::RgbaImage,
     layer: &image::RgbaImage,
@@ -2227,11 +2261,13 @@ pub(super) fn composite_layer_onto(
     // filtering that a naive bilinear sample would alias against.
     if t.rotation == 0.0 && sw >= lw && sh >= lh {
         let (cw, ch) = canvas.dimensions();
-        // Same placement arithmetic as the general path's `overlay` call below,
-        // with `(sw, sh)` standing in for the work buffer's size (identical
-        // when there is no rotation, which is this branch's own condition).
-        let x = (cw as f64) / 2.0 - (sw as f64) / 2.0 + t.position_x * cw as f64;
-        let y = (ch as f64) / 2.0 - (sh as f64) / 2.0 + t.position_y * ch as f64;
+        // Same placement arithmetic as the general path's `overlay` call below
+        // — the layer's TOP-LEFT corner at `position_*` of the canvas (D-338,
+        // fixes B-201; see this function's own doc). The work buffer's size
+        // does not enter into it, which is exactly why the two paths agree
+        // without this branch having to reconstruct `(ww, wh)`.
+        let x = t.position_x * cw as f64;
+        let y = t.position_y * ch as f64;
         blend_layer_sampled(
             canvas,
             layer,
@@ -2284,13 +2320,20 @@ pub(super) fn composite_layer_onto(
     }
 
     let (cw, ch) = canvas.dimensions();
-    let (ww, wh) = work.dimensions();
     // D-136 — `position_*` is a fraction of the composition, so it scales
     // with the canvas: the same stored value lands on the same part of the
     // picture at every preview quality. Per-axis (x against the width, y
     // against the height), matching the crop insets' own convention.
-    let x = (cw as f64) / 2.0 - (ww as f64) / 2.0 + t.position_x * cw as f64;
-    let y = (ch as f64) / 2.0 - (wh as f64) / 2.0 + t.position_y * ch as f64;
+    //
+    // D-338 (fixes B-201) — and it names the layer's TOP-LEFT corner, not an
+    // offset from the canvas centre, so this is `position * canvas` and
+    // nothing else: literally ffmpeg's `overlay=x='<position_x>*W'`, which is
+    // what the exporter has always compiled. The work buffer's own size no
+    // longer appears in the placement at all, which is the whole point — it
+    // is what made the old formula disagree with the export by half the
+    // layer's size.
+    let x = t.position_x * cw as f64;
+    let y = t.position_y * ch as f64;
     image::imageops::overlay(canvas, &work, x.round() as i64, y.round() as i64);
 }
 
@@ -2651,26 +2694,30 @@ mod composite_tests {
             canvas
         };
 
-        // Frame 0: scale 1 -> a 4x4 box centred in the 20x20 canvas.
+        // Frame 0: scale 1 -> a 4x4 box at the canvas's top-left (D-338),
+        // i.e. (0,0)-(3,3).
         let first = paint(0);
-        assert_eq!(*first.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
+        assert_eq!(*first.get_pixel(3, 3), Rgba([255, 0, 0, 255]));
         assert_eq!(*first.get_pixel(6, 6), Rgba([0, 0, 0, 255]));
 
         // Frame 25: scale interpolates 1 -> 5 across 0..100, so 2.0 here ->
         // an 8x8 box that now really covers (6,6). Held at 1.0 pre-fix, this
         // pixel stayed black and the "zoom" never happened on screen.
         let mid = paint(25);
-        assert_eq!(*mid.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
+        assert_eq!(*mid.get_pixel(3, 3), Rgba([255, 0, 0, 255]));
         assert_eq!(
             *mid.get_pixel(6, 6),
             Rgba([255, 0, 0, 255]),
             "scale must really animate between its own keys, across an unrelated key"
         );
 
-        // Still centred throughout — `position_x` is keyed nowhere, so it
-        // stayed at its static 0.0 while `scale` animated past it.
+        // The box's top-left stays pinned at the canvas origin throughout —
+        // `position_x`/`position_y` are keyed nowhere, so they stayed at their
+        // static 0.0 while `scale` animated past them, and D-338's anchor is
+        // that corner. Both canvases therefore still end short of the right
+        // edge (4 px wide, then 8, against a 20 px canvas).
         for canvas in [&first, &mid] {
-            assert_eq!(*canvas.get_pixel(0, 10), Rgba([0, 0, 0, 255]));
+            assert_eq!(*canvas.get_pixel(0, 0), Rgba([255, 0, 0, 255]));
             assert_eq!(*canvas.get_pixel(19, 10), Rgba([0, 0, 0, 255]));
         }
     }
@@ -2851,22 +2898,27 @@ mod composite_tests {
         assert!(r > 20 && r < 235, "expected a real mid-blend, got {r}");
     }
 
-    /// `position_x`/`position_y` offset from center — a layer smaller than
-    /// the canvas, nudged, must land where expected and leave the
-    /// untouched canvas area alone.
+    /// `position_x`/`position_y` place the layer's TOP-LEFT corner (D-338,
+    /// fixes B-201) — a layer smaller than the canvas must land exactly there
+    /// and leave the untouched canvas area alone.
     #[test]
     fn composite_layer_onto_respects_position_offset() {
         let mut canvas = flat(10, 10, [0, 0, 0, 255]);
         let layer = flat(2, 2, [255, 0, 0, 255]);
-        // centered would place the 2x2 layer at (4,4)-(5,5); shift +0.3 of
-        // the canvas width = +3 px, +0 (D-136 — a FRACTION, not pixels).
+        // x = 0.3 × 10 = 3, y = 0.0 × 10 = 0 (D-136 — a FRACTION, not pixels;
+        // D-338 — the layer's top-left corner, not an offset from centre), so
+        // the 2×2 layer covers (3,0)-(4,1).
         let t = ClipTransform {
             position_x: 0.3,
             ..identity_transform()
         };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
-        assert_eq!(*canvas.get_pixel(7, 4), Rgba([255, 0, 0, 255]));
-        assert_eq!(*canvas.get_pixel(4, 4), Rgba([0, 0, 0, 255])); // the un-shifted spot is untouched
+        assert_eq!(*canvas.get_pixel(3, 0), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(4, 1), Rgba([255, 0, 0, 255]));
+        // one past the box on each axis, and the pre-D-338 centred spot
+        assert_eq!(*canvas.get_pixel(5, 0), Rgba([0, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(3, 2), Rgba([0, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(7, 4), Rgba([0, 0, 0, 255]));
     }
 
     /// `scale` actually changes the painted footprint size, not just a
@@ -2875,13 +2927,18 @@ mod composite_tests {
     fn composite_layer_onto_respects_scale() {
         let mut canvas = flat(20, 20, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 0, 0, 255]);
+        // -> 12x12 with its top-left at position (0,0), i.e. (0,0)-(11,11)
+        // (D-338: `scale` grows a layer about its own top-left corner, which
+        // is exactly what `overlay=x='0*W'` after a `scale=` does on the
+        // export side).
         let t = ClipTransform {
             scale: 3.0,
             ..identity_transform()
-        }; // -> 12x12, centered at (4,4)-(15,15)
+        };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
-        assert_eq!(*canvas.get_pixel(10, 10), Rgba([255, 0, 0, 255]));
-        assert_eq!(*canvas.get_pixel(1, 1), Rgba([0, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(0, 0), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(11, 11), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(12, 12), Rgba([0, 0, 0, 255]));
     }
 
     /// **D-217's safety claim, checked.** The sampled fast path must produce
@@ -2922,8 +2979,11 @@ mod composite_tests {
                 }
             }
             let (cw, ch) = reference.dimensions();
-            let x = cw as f64 / 2.0 - sw as f64 / 2.0 + t.position_x * cw as f64;
-            let y = ch as f64 / 2.0 - sh as f64 / 2.0 + t.position_y * ch as f64;
+            // D-338 — the top-left placement both real paths now use; the
+            // work buffer's size no longer enters into the placement at all
+            // (see `composite_layer_onto`'s own doc).
+            let x = t.position_x * cw as f64;
+            let y = t.position_y * ch as f64;
             image::imageops::overlay(&mut reference, &work, x.round() as i64, y.round() as i64);
             reference
         };
@@ -3050,17 +3110,21 @@ mod composite_tests {
     fn composite_layer_onto_respects_independent_box_width_and_box_height() {
         let mut canvas = flat(20, 10, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 0, 0, 255]);
-        // full canvas width, half its height -> 20x5, centered at (0,2.5)-(20,7.5)
+        // full canvas width, half its height -> 20x5, top-left at (0,0)
+        // (D-338), i.e. covering y ∈ [0,5). This is the TOP half of the
+        // stacked comparison layout, exactly as `timelineExport.ts` compiles
+        // it: `scale=w=W*1.0:h=H*0.5` then `overlay=x='0*W':y='0*H'`.
         let t = ClipTransform {
             box_width: Some(1.0),
             box_height: Some(0.5),
             ..identity_transform()
         };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
-        assert_eq!(*canvas.get_pixel(10, 5), Rgba([255, 0, 0, 255]));
-        assert_eq!(*canvas.get_pixel(0, 5), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(10, 0), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(0, 4), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(19, 4), Rgba([255, 0, 0, 255]));
         assert_eq!(
-            *canvas.get_pixel(10, 0),
+            *canvas.get_pixel(10, 5),
             Rgba([0, 0, 0, 255]),
             "outside the half-height box"
         );
@@ -3068,6 +3132,114 @@ mod composite_tests {
             *canvas.get_pixel(10, 9),
             Rgba([0, 0, 0, 255]),
             "outside the half-height box"
+        );
+    }
+
+    /// **D-338 / B-201 — the CROSS-ENGINE placement parity pair, Rust half.**
+    ///
+    /// Its twin is `'D-338/B-201 — placement parity with the live-preview
+    /// compositor'` in `packages/editor/src/timelineExport.ffmpeg.test.ts`,
+    /// which renders the SAME transform through REAL ffmpeg and asserts the
+    /// SAME rectangle. Neither test knows the other exists at run time; that
+    /// is the point. A change to either engine's placement math fails a test
+    /// in that engine's own language, against a number written down
+    /// independently of both formulas.
+    ///
+    /// **Why a pair rather than one test.** The two engines are a Rust image
+    /// compositor and a spawned ffmpeg process, in two toolchains with two
+    /// test runners; a single test spanning them would have to build and run
+    /// this crate from vitest, or re-implement that file's fixture generation
+    /// under `cargo test`. Two tests plus one hard-coded shared rectangle buy
+    /// the same regression protection with each half runnable on its own.
+    ///
+    /// **Why it exists at all.** B-201's own write-up names the missing
+    /// cross-engine test as the root cause of the bug surviving: the preview
+    /// read `position_*` as a centre offset and the export as the top-left
+    /// corner, each side self-consistent and separately tested, disagreeing by
+    /// `(1 - box_fraction)/2` of the canvas — a divergence that vanishes at
+    /// full frame, which was the only geometry anyone had checked end to end.
+    /// The transform below is deliberately neither full-frame NOR centred, so
+    /// it could not pass under the old convention.
+    #[test]
+    fn composite_layer_onto_agrees_with_the_exporter_on_the_parity_rectangle() {
+        // The canvas both engines render into; every number below is an exact
+        // integer in both, so a failure is never about rounding.
+        const CANVAS: (u32, u32) = (320, 240);
+        // The one transform under test, spelled identically in the twin:
+        // box_width 0.5, box_height 0.5, position 0.25, 0.25.
+        let t = ClipTransform {
+            box_width: Some(0.5),
+            box_height: Some(0.5),
+            position_x: 0.25,
+            position_y: 0.25,
+            ..identity_transform()
+        };
+        // The rectangle it MUST cover, half-open, as literals rather than
+        // recomputed from the transform — a test must not be able to follow a
+        // broken formula. x from 0.25 × 320 = 80 for 0.5 × 320 = 160;
+        // y from 0.25 × 240 = 60 for 0.5 × 240 = 120.
+        const EXPECTED: (u32, u32, u32, u32) = (80, 60, 240, 180);
+
+        let mut canvas = flat(CANVAS.0, CANVAS.1, [0, 0, 0, 255]);
+        let layer = flat(160, 120, [255, 0, 255, 255]);
+        composite_layer_onto(&mut canvas, &layer, &t, (160.0, 120.0));
+
+        let (x0, y0, x1, y1) = EXPECTED;
+        for (x, y) in [(x0, y0), (x1 - 1, y0), (x0, y1 - 1), (x1 - 1, y1 - 1)] {
+            assert_eq!(
+                *canvas.get_pixel(x, y),
+                Rgba([255, 0, 255, 255]),
+                "({x},{y}) is a corner of the parity rectangle and must be painted"
+            );
+        }
+        for (x, y, why) in [
+            (x0 - 1, y0, "left of the box"),
+            (x1, y0, "right of the box"),
+            (x0, y0 - 1, "above the box"),
+            (x0, y1, "below the box"),
+        ] {
+            assert_eq!(
+                *canvas.get_pixel(x, y),
+                Rgba([0, 0, 0, 255]),
+                "({x},{y}) is {why} and must be untouched"
+            );
+        }
+        // And explicitly NOT where the pre-D-338 centre-offset formula put it:
+        // cw/2 - sw/2 + 0.25*cw = 160 - 80 + 80 = 160 in x, 120 - 60 + 60 =
+        // 120 in y. That box would have covered (160,120)-(319,239), so its
+        // far corner is a pixel this convention must leave black.
+        assert_eq!(
+            *canvas.get_pixel(CANVAS.0 - 1, CANVAS.1 - 1),
+            Rgba([0, 0, 0, 255]),
+            "the pre-D-338 centre-offset placement would have reached the canvas's far corner"
+        );
+    }
+
+    /// **The other half of the stacked comparison layout** (D-338 / B-201):
+    /// the same half-height box moved to the BOTTOM with `position_y: 0.5`.
+    /// This is the recipe `capabilities.json` documents and the
+    /// `chroma-comparison-reel` skill emits, and before D-338 it worked in the
+    /// export and landed a quarter of a canvas too high in the preview — the
+    /// single most-used non-full-frame geometry in this project, and the exact
+    /// case that had no cross-engine test.
+    #[test]
+    fn a_half_height_box_at_position_y_half_fills_the_bottom_half() {
+        let mut canvas = flat(20, 10, [0, 0, 0, 255]);
+        let layer = flat(4, 4, [255, 0, 0, 255]);
+        let t = ClipTransform {
+            box_width: Some(1.0),
+            box_height: Some(0.5),
+            position_y: 0.5,
+            ..identity_transform()
+        };
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
+        // y = 0.5 × 10 = 5, height 5 -> y ∈ [5,10)
+        assert_eq!(*canvas.get_pixel(10, 5), Rgba([255, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(10, 9), Rgba([255, 0, 0, 255]));
+        assert_eq!(
+            *canvas.get_pixel(10, 4),
+            Rgba([0, 0, 0, 255]),
+            "the top half must stay clear for the other clip"
         );
     }
 
@@ -3087,14 +3259,14 @@ mod composite_tests {
         };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
         assert_eq!(
-            *canvas.get_pixel(10, 9),
+            *canvas.get_pixel(10, 3),
             Rgba([255, 0, 0, 255]),
-            "18x4 box, y in [8,12)"
+            "20x4 box with its top-left at (0,0) — y in [0,4)"
         );
         assert_eq!(
             *canvas.get_pixel(10, 5),
             Rgba([0, 0, 0, 255]),
-            "above the 4px-tall box"
+            "below the 4px-tall box"
         );
     }
 
@@ -3192,9 +3364,15 @@ mod composite_tests {
     fn geometry_is_identical_at_every_render_scale() {
         let layer = flat(40, 40, [255, 0, 0, 255]);
         let red = Rgba([255, 0, 0, 255]);
+        // D-338 — both offsets positive and small enough that the 60 %-wide
+        // box stays wholly on the canvas. The pre-D-338 version of this test
+        // used `position_y: -0.2`, which under the top-left convention would
+        // push the box's top edge off the canvas and clamp BOTH renders'
+        // measured `y0` to exactly 0 — an artefact that would make the
+        // invariance assertion below pass vacuously.
         let t = ClipTransform {
             position_x: 0.1,
-            position_y: -0.2,
+            position_y: 0.2,
             scale: 1.5,
             ..identity_transform()
         };
@@ -3218,9 +3396,10 @@ mod composite_tests {
             "same transform, different render scale: {a:?} vs {b:?}"
         );
         // and it's the right place, not just consistently the wrong one:
-        // 1.5× of a 40 %-wide layer = 60 %, centred then nudged +10 % / −20 %.
-        assert!(close(a.0, 0.30) && close(a.2, 0.90), "x span {a:?}");
-        assert!(close(a.1, 0.00) && close(a.3, 0.60), "y span {a:?}");
+        // 1.5× of a 40 %-wide layer = 60 %, with its top-left corner at
+        // (0.10, 0.20) (D-338), so it spans 0.10–0.70 and 0.20–0.80.
+        assert!(close(a.0, 0.10) && close(a.2, 0.70), "x span {a:?}");
+        assert!(close(a.1, 0.20) && close(a.3, 0.80), "y span {a:?}");
     }
 
     /// A layer whose source is smaller than the composition sits in the frame
@@ -3238,8 +3417,9 @@ mod composite_tests {
         let (x0, y0, x1, y1) = painted_fraction(&canvas, Rgba([0, 200, 255, 255]));
         assert!((x1 - x0 - 1.0 / 3.0).abs() < 0.01, "width {}", x1 - x0);
         assert!((y1 - y0 - 1.0 / 3.0).abs() < 0.01, "height {}", y1 - y0);
-        // centred, since `position_*` are zero
-        assert!((x0 - 1.0 / 3.0).abs() < 0.01 && (y0 - 1.0 / 3.0).abs() < 0.01);
+        // D-338 — in the canvas's top-left corner, since `position_*` are zero
+        // and that is where `overlay=x='0*W':y='0*H'` puts it too.
+        assert!(x0.abs() < 0.01 && y0.abs() < 0.01, "origin {x0},{y0}");
     }
 
     /// `position_x` is a fraction of the **width** and `position_y` of the
@@ -3256,10 +3436,14 @@ mod composite_tests {
             ..identity_transform()
         };
         composite_layer_onto(&mut canvas, &layer, &t, (2.0, 2.0));
-        // centre (100,50) → top-left (99,49), + 0.25 × 200 = +50 px in x,
-        // + 0.25 × 100 = +25 px in y → the 2×2 covers (149,74)-(150,75).
-        assert_eq!(*canvas.get_pixel(149, 74), Rgba([255, 255, 255, 255]));
-        assert_eq!(*canvas.get_pixel(149, 99), Rgba([0, 0, 0, 255]));
+        // D-338 — top-left corner at 0.25 × 200 = 50 px in x and
+        // 0.25 × 100 = 25 px in y, so the 2×2 covers (50,25)-(51,26). The
+        // same numeric 0.25 therefore lands 50 px along one axis and 25 px
+        // along the other, which is the per-axis property under test.
+        assert_eq!(*canvas.get_pixel(50, 25), Rgba([255, 255, 255, 255]));
+        assert_eq!(*canvas.get_pixel(51, 26), Rgba([255, 255, 255, 255]));
+        assert_eq!(*canvas.get_pixel(50, 50), Rgba([0, 0, 0, 255]));
+        assert_eq!(*canvas.get_pixel(25, 25), Rgba([0, 0, 0, 255]));
     }
 
     // ---------------------------------------------------------------- //
@@ -3381,15 +3565,19 @@ mod composite_tests {
     fn crop_composes_with_scale() {
         let mut canvas = flat(20, 20, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 0, 0, 255]);
-        // scale 2 -> an 8x8 footprint centred at (6,6)-(13,13); left half cropped
+        // D-338 — scale 2 -> an 8x8 footprint with its top-left at (0,0), so
+        // (0,0)-(7,7); crop_left 0.5 clears x in [0,4) of that footprint and
+        // keeps x in [4,8), WITHOUT moving the footprint (D-132's own rule:
+        // a crop zeroes alpha, it does not shrink or re-place the layer).
         let t = ClipTransform {
             scale: 2.0,
             crop_left: 0.5,
             ..identity_transform()
         };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
-        assert_eq!(*canvas.get_pixel(7, 10), Rgba([0, 0, 0, 255])); // cropped (left) half
-        assert_eq!(*canvas.get_pixel(12, 10), Rgba([255, 0, 0, 255])); // kept (right) half
+        assert_eq!(*canvas.get_pixel(2, 4), Rgba([0, 0, 0, 255])); // cropped (left) half
+        assert_eq!(*canvas.get_pixel(6, 4), Rgba([255, 0, 0, 255])); // kept (right) half
+        assert_eq!(*canvas.get_pixel(9, 4), Rgba([0, 0, 0, 255])); // past the footprint entirely
     }
 
     /// An uncropped layer takes the untouched pre-D-132 path — proved by

@@ -4,6 +4,31 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-16** — **D-338 (fixes B-201, files B-208 and B-209): one placement
+  convention for `position_x`/`position_y` — the export's TOP-LEFT corner, with
+  the live preview moved to meet it.** The preview centred a layer and read
+  `position_*` as an offset from that centre; ffmpeg's `overlay` has always read
+  it as the overlay's top-left corner. The two agree only at full frame, which
+  is why nobody caught it and why D-333's motion-graphics overlays had to be
+  placed full-frame as a disclosed workaround. Changed the preview, not the
+  export: `overlay`'s reading is ffmpeg's own external convention and the
+  documented stacked-comparison recipe (and the `chroma-comparison-reel` skill)
+  depends on it. Audited every real saved project clip by clip: **two** carry
+  non-default geometry, both in one old unrelated project, and exactly **one**
+  of them actually moves — its equivalent new-convention position is written
+  down in D-338 rather than corrected by a migration pass built for one number.
+  Both `-mgfx` projects and both `c038`/`c040` cuts are fully default.
+  The missing cross-engine test B-201 named as the real root cause
+  now exists as a duplicated PAIR (`edit.rs` + `timelineExport.ffmpeg.test.ts`),
+  both asserting one hard-coded rectangle for one named non-full-frame
+  transform. Two spin-offs filed rather than carried quietly: **B-208** (the
+  separate `scale` unit divergence, still open) and **B-209** (the `apelles`
+  crate's `--lib` test build had not compiled since `chroma_timeline_get` became
+  `async` — fixed here; 331 tests were unrunnable). A third, found the same way
+  and left open with its exact diagnosis: **B-210**, `TimelinePane.tsx` has been
+  losing all React Compiler auto-memoization to a ref read during render, with
+  D-201's guard test red on `main` rather than preventing it.
+
 - **2026-09-16** — **D-337: measured four faster transcription backends and kept
   `mlx-whisper large-v3`.** Owner asked for a genuinely faster local model
   without trading accuracy. Ran `large-v3`, `large-v3-turbo`, `turbo` 4-bit,

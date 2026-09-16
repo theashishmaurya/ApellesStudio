@@ -33210,3 +33210,129 @@ contended box, not clean benchmarks** — the 1.5-3.2× speedup range is real, t
 absolute seconds are not. `docs/notes/performance-instrumentation.md` already
 carries the "check `uptime` before trusting a number" finding from 2026-09-04;
 this is its second live confirmation.
+
+## D-338 — one placement convention for a clip's `position_x`/`position_y`: the export's TOP-LEFT corner, and the live preview moves to meet it (fixes B-201)
+
+**decided (2026-09-16)** · owner-directed · touches `app/src-tauri/src/chroma/edit.rs`,
+`packages/editor/src/{transformGeometry,TransformBox,TransformOverlay,dynamicZoom,timelineExport}.ts(x)`,
+`crates/apelles-mcp/src/tools/edit/capabilities.json`, `mcp/server.py`
+
+**Context.** B-201: `position_x`/`position_y` meant two different things in the
+two renderers. The live preview (Rust, `composite_layer_onto`) centred a layer
+on the canvas and read `position_*` as an offset *from that centre*
+(`x = cw/2 - sw/2 + position_x*cw`). The export (`timelineExport.ts`) compiled
+the same field to ffmpeg's `overlay=x='<position_x>*W'`, i.e. the overlay's
+**top-left corner**. The two agree only when the layer exactly covers the
+canvas — both give `x = 0` — and disagree by `(1 - box_fraction)/2` per axis
+everywhere else. Nothing errored and each side was self-consistent and
+separately tested, so it survived six days and forced D-333's motion-graphics
+overlays to be placed full-frame as a disclosed workaround rather than at the
+inset size they were designed for.
+
+**Options.**
+
+1. **Move the export to the preview's centre convention.** Rejected. `overlay`'s
+   `x`/`y` being the overlay's top-left corner is ffmpeg's own long-standing,
+   external convention — reinterpreting it here means every future reader of
+   the filtergraph has to know we did. It also breaks the stacked
+   full-width/half-height comparison recipe that `capabilities.json` documents
+   and that the `chroma-comparison-reel` skill emits (`position_y: 0.5` for the
+   bottom half is only correct under the top-left reading), which is the single
+   most-used non-full-frame geometry in this project.
+2. **Keep both and convert at the boundary.** Rejected outright. Two
+   conventions with a shim between them is exactly the structure that produced
+   the bug; a converted value is one more thing to get wrong, and `grade.json`/
+   `Clip` being the single source of truth means the stored number has to mean
+   one thing.
+3. **Move the preview to the export's top-left convention.** Chosen.
+
+**Why.** The export's reading is the external one, the documented one, and the
+one the only real multi-clip layout in use depends on. The preview is ours to
+change, and changing it is a two-line arithmetic edit plus its consequences —
+where changing the export would be a two-line edit plus a broken published
+recipe and a skill.
+
+**The change.** Both placement computations in `composite_layer_onto` (the
+D-217 sampled fast path and the general `overlay` path) become
+`x = position_x * cw`, `y = position_y * ch`. The layer's own size no longer
+appears in the placement at all, which is precisely the term that diverged.
+`transformGeometry.ts`'s `clipBoxFraction` — the drawn on-canvas box, and via
+`canvasPick.ts` the click hit-rect — drops the same `0.5 - size/2` term, so the
+box a human drags, the frame they preview and the file they export are now one
+rectangle.
+
+**Verified against the real saved projects, and the audit found one thing the
+first pass over them had missed — recorded rather than smoothed over.** Every
+`.chroma` project under `~/Movies/Chroma` was re-read programmatically, every
+clip of every timeline, comparing `position_*`, `box_width`/`box_height` and
+`scale` against their defaults. Of ~5 projects, exactly **two** clips carry any
+non-default geometry at all, both in the one old, unrelated `2026-09-09-edit`:
+
+- `be7fd4e7…` — `position (-0.00015, 0.00026)`, `scale 1.0`, a 3840×2160 source
+  in a 3840×2160 composition. Its natural footprint IS the canvas, so
+  `0.5 - 0.5 + px == px`: **renders byte-identically**, and it is drag noise
+  rather than an intended offset anyway.
+- `f921b019…` (`A001_09091143_C030.MOV`) — `scale 0.8583`, `position 0,0`.
+  This one **does move**: it was centred with a 7.08% margin and is now flush
+  to the composition's top-left corner. The equivalent placement under the new
+  convention is `position_x = position_y = (1 - 0.8583)/2 = 0.070827`.
+
+So the honest statement is "one clip, in one project that is not the work in
+hand, changes where it sits", not "nothing changes". **No migration was written
+anyway, and that is the deliberate call:** a migration pass or a compat shim
+that exists to correct a single stored number in a single old project is more
+code, and more permanent surface, than the number is worth — and this repo does
+not keep machinery for a case that does not generalise. The value is written
+down here instead, so whoever wants that clip back where it was can set it in
+one call. Every clip in both `-mgfx` projects and both `c038`/`c040` cuts is
+fully default, so the current work is unaffected.
+
+**Three consequences, each handled rather than left to be discovered.**
+
+- **Text clips and dip-to-colour plates are untouched, provably.** A title is
+  rasterised at exactly canvas size with `scale` pinned to `1.0`
+  (`resolve_text_clip_transform`), so `cw/2 - cw/2 + px*cw == px*cw` — the two
+  formulas are literally the same expression for it. It still agrees with
+  `drawtext`'s own centred-ink-box-plus-offset placement on the export side.
+- **`scale` now grows a layer about its top-left corner** in the preview,
+  because the anchor is the top-left. That is what the exporter has always
+  done (`scale=` then `overlay=x='<position_x>*W'`), so this closes the same
+  divergence rather than opening a new one. The GUI's corner drag keeps growing
+  a box about its own centre — `transformGeometry.ts`'s new
+  `dragCornerReposition` writes the compensating half-a-size-delta `position`
+  alongside the new `scale`, and `TransformOverlay`'s commit now persists both.
+  `defaultDynamicZoomEnd` does NOT compensate: holding a centre still needs the
+  clip's unscaled footprint, which a `DynamicZoomFraming` does not carry and
+  `editor_set_dynamic_zoom` cannot probe, and giving the agent path and the GUI
+  path two different defaults would be worse than one documented one. A real
+  anchor-point field is the fix; it is on the roadmap.
+- **The capabilities document was wrong either way and is now right.**
+  `position_and_crop_units` claimed "0,0 = top-left" unconditionally, which was
+  true of the export only — an agent reading it and trusting it authored for
+  the wrong engine. Both copies (the Rust `capabilities.json` and
+  `mcp/server.py`'s `EDITOR_CAPABILITIES`) now state the convention, the date it
+  became true of both engines, and the top-left-growth consequence. The Rust
+  copy was regenerated by dumping the Python dict, the way it was first
+  created, and the golden parity corpus re-captured, so the two surfaces cannot
+  drift.
+
+**The test that should have existed, and now does.** B-201's own write-up names
+the missing cross-engine test as the real root cause — "the two engines have
+never actually been compared on the same frame." There is now a deliberately
+duplicated PAIR: `composite_layer_onto_agrees_with_the_exporter_on_the_parity_rectangle`
+(`edit.rs`) and `'D-338/B-201 — placement parity with the live-preview compositor'`
+(`timelineExport.ffmpeg.test.ts`). Both render `box_width: 0.5, box_height: 0.5,
+position_x: 0.25, position_y: 0.25` onto a 320×240 canvas and both assert the
+same hard-coded rectangle — `x ∈ [80, 240), y ∈ [60, 180)` — written out as
+literals rather than recomputed, so neither test can follow a broken formula.
+The Rust half also asserts the canvas's far corner stays black, which is exactly
+where the old centre-offset formula would have reached. A single test spanning
+the two would have to build the Tauri crate from vitest or re-implement that
+file's ffmpeg fixture generation under `cargo test`; two halves with one shared
+number buy the same protection and each half actually runs.
+
+**Not fixed here, split out rather than quietly carried:** `scale`'s own unit
+still differs between the engines (a fraction of the canvas in the export, the
+clip's native footprint in the composition in the preview). That is B-208 now,
+with its own entry, instead of a paragraph inside a bug marked fixed.
+`box_width`/`box_height` remain the only size mechanism with exact parity.

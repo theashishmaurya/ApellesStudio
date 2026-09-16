@@ -902,6 +902,19 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       Apelles has no anchor point and both references do) **and
       non-uniform scale** (needs `scale_x`/`scale_y` replacing `scale`,
       with a migration). **Still scoped, not built.**
+      - **The anchor point got a second, concrete reason to exist (D-338,
+        2026-09-16).** Since `position_x`/`position_y` name the box's
+        TOP-LEFT corner in both renderers, `scale` alone grows a box down
+        and to the right — so "push in about the centre" is now an explicit
+        position compensation rather than a property of the formula. The
+        GUI's corner drag does that compensation
+        (`transformGeometry.ts`'s `dragCornerReposition`), but
+        `defaultDynamicZoomEnd` cannot: holding a centre needs the clip's
+        unscaled footprint, which a `DynamicZoomFraming` does not carry and
+        `editor_set_dynamic_zoom` cannot probe. A real anchor-point field
+        removes the compensation from both. Until then, an omitted `end` on
+        `editor_set_dynamic_zoom` is a top-left-anchored push (which is what
+        it always exported as); name an explicit `end` for a centred one.
     - **Phase 3 — crop — ✅ BUILT (D-132, 2026-09-04), except its
       on-canvas mode.** Four normalised (0–1) edge insets on `Clip`
       (`crop_left`/`crop_top`/`crop_right`/`crop_bottom`, relative to the
