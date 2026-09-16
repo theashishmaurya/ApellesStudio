@@ -4,6 +4,29 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **`2026-09-12-c040-mgfx`: the attention explainer's motion-graphics
+  set rebuilt and roughly quadrupled (content, not code; files B-211, B-212, B-213).**
+  Seven of a planned nine scenes built through the `motion_*`/`editor_*` MCP surface
+  against the live app: `c040-hook` and `c040-whatisattention` new, `c040-qkv` and
+  `c040-encdec` rebuilt in place (they were near-identical 3-circle `graph` templates —
+  qkv is now a real query→keys→value diagram with labelled word nodes, encdec drops
+  `graph` entirely for a `matrix` "picture" + token-by-token decoder column),
+  `c040-lostmiddle` extended in place (three `annotate` callouts, markers, a scribble on
+  the dip), plus new `c040-thefix` (the `layers` card stack) and `c040-payoff` (a
+  two-conversation `claudechat` before/after that bookends the hook). Copy is the
+  speaker's own transcript, not generic explainer filler. Overlay coverage of the 4:11
+  cut goes from **38.0s (15.1%)** to **142.5s (56.6%)**; all eight clips sit on the same
+  top overlay track at the established 0.35×0.35 @ 0.03,0.06 inset, placed by mapping
+  raw-file transcript seconds through each source clip's own `source_start` into edited
+  timeline frames. Nothing exported, deliberately. Three real defects found live and
+  filed rather than worked around quietly: **B-211** (a transient dangling graph-node
+  ref permanently wedges the Motion still-preview — survived a project reload; the whole
+  build was reviewed off `motion_render` output instead), **B-212** (`emphasis`'s
+  `pulse`/`glow` presets render nothing from a manifest) and **B-213** (`matrix`'s
+  scalar-size op contradicts its own `motion_list_primitives` contract).
+  Deliberately NOT done: the `graph`-schema self-attention word-mesh and the recap
+  scene, both out of this pass's scope.
+
 - **2026-09-16** — **D-338 (fixes B-201, files B-208 and B-209): one placement
   convention for `position_x`/`position_y` — the export's TOP-LEFT corner, with
   the live preview moved to meet it.** The preview centred a layer and read

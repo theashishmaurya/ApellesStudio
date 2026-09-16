@@ -3341,6 +3341,37 @@ status: **open** · severity: **medium** (total loss of the user's preset librar
 - **not automatic**, unlike B-194: it needs the user to add, rename or reorder a preset while the list is wrongly empty. When that happens it is total loss.
 - **fix:** an error state that is not an empty value — refuse to save while the last load failed, the way `packages/editor/src/timelineStore.ts` already does (`status: 'error'`, and `applyOp` early-returns on a null timeline) and the way B-058/D-150 fixed the Motion tab.
 
+## B-213 — `motion_set_layer_size` on a `matrix` writes `cell = w / cols`, while `motion_list_primitives` describes `w` AS the cell
+
+status: **open** · severity: low (wrong size, immediately visible, trivially worked around) · area: the Motion size op's scalar-size branch vs `motion_list_primitives`' `size: {key: "cell", kind: "scalar"}` contract for `matrix`
+
+- **found:** 2026-09-17, building the `c040` motion-graphics set. `motion_set_layer_size(w=62, h=62)` on a 7-column `matrix` stored `cell: 8` (≈ 62/7), so the grid rendered at roughly a ninth of the intended size and read as a small smudge rather than a diagram.
+- **why it is a contract bug, not just a surprise:** `motion_list_primitives` reports `matrix`'s size as `{key: "cell", kind: "scalar"}` — i.e. "the resizable field IS `cell`". An agent reading that reference (which is exactly what it is for) computes a cell size and passes it as `w`. The op instead treats `w` as the grid's TOTAL width and divides. Both readings are defensible; only one is written down, and it is not the one implemented.
+- **workaround used:** set `cell` directly with `motion_set_layer_field`, which is unambiguous.
+- **fix:** pick one reading and make the other match — either have the scalar branch write `w` through verbatim, or change `motion_list_primitives` to describe the field as the total width (and say so per-primitive, since `text`'s `w-only` `maxWidth` genuinely IS the value written through).
+
+## B-212 — `emphasis`'s `pulse` and `glow` presets render NOTHING from a manifest: both are children-only wrappers, and a manifest layer has no children
+
+status: **open** · severity: medium (two of four documented presets are silently inert from the one authoring surface that matters; no error, no warning, just an invisible layer) · area: `packages/motion-engine/src/primitives/Emphasis.tsx` (the `pulse` and `glow` branches, ~L51–72)
+
+- **found:** 2026-09-17, building the `c040` motion-graphics set — a `glow` layer authored to be a moving spotlight rendered as nothing at all.
+- **cause:** `pulse` returns `<div style={{transform: scale(...)}}>{children}</div>` and `glow` returns `<div style={{filter: drop-shadow(...)}}>{children}</div>`. Both decorate `children` and draw nothing themselves. `ring` and `scribble`, by contrast, draw their own SVG from `box` and work fine. A manifest layer is constructed by `registry.ts`'s adapter from JSON props only — there is no way to give a primitive `children` from a manifest — so `pulse` and `glow` are reachable only from hand-written React (the `compositions/` demos), never from the scene manifest.
+- **why it is not caught:** `motion_list_primitives` advertises all four presets for `emphasis` with no note, and `motion_set_layer_field` accepts `preset: "glow"` without a warning because it IS a legal enum value. The layer then renders an empty `div`.
+- **workaround used:** `ring` (an expanding ping — note it draws a CIRCLE of radius `max(w,h)*0.55`, ignoring the box's aspect) and `scribble` (a hand-drawn ellipse `w*1.18 × h*1.5` around the box) carry every emphasis beat in the `c040` set.
+- **fix:** either give `pulse`/`glow` a `box`-driven self-drawn form like their two siblings, or drop them from the manifest-facing preset enum and say in `motion_list_primitives` that they are React-composition-only.
+
+## B-211 — a transient dangling graph-node reference permanently wedges the Motion tab's still-preview; it survives a tab switch AND a project reload, while the Remotion render path stays healthy
+
+status: **open** · severity: **high** (the Motion tab's only visual feedback loop dies for the rest of the app session, with no error text anywhere — an agent or a human editing a manifest is left authoring blind) · area: the Motion tab's still-preview fetch path (frame-by-frame rendered stills, per `debug_frame_timing`'s `scrub`/`fetch` counters); manifest data itself is fine
+
+- **found:** 2026-09-17, building the `c040` motion-graphics set.
+- **how to reproduce:** on a `graph` layer, shrink `nodes` (drop an id) BEFORE narrowing the `edges`/`pulses`/`highlight` arrays that still reference it. For one render pass the manifest is internally inconsistent, and `Graph.tsx` dereferences `layout[id]` for a node that no longer exists (`at()`, ~L123 — `p.x` of `undefined`).
+- **what wedges:** from that moment every frame of EVERY scene comes back as a broken image — the preview canvas is black with a broken-image glyph, at any playhead, including scenes never touched. `debug_dom_tree` finds no error text and `motion_get_state` reports `parseError: null`, so nothing names the failure.
+- **proved it is not the data:** the offending arrays were restored to the exact values that had rendered correctly minutes earlier, and the preview stayed dead. `motion_save_manifest` + a full `open_project` reload (which does re-load the manifest — `Save` greyed out afterwards) did not clear it either. A `debug_set_active_tab` round trip did not clear it.
+- **proved it is only the preview:** `motion_render` rendered all 8 scenes of that same manifest successfully throughout, the Sources panel's per-scene thumbnails (drawn from those renders) were correct, and the EDIT tab's own compositing preview rendered the same clips correctly. Only the Motion tab's still-preview is stuck.
+- **worked around, not fixed** (flagged per CLAUDE.md rather than presented as done): the rest of that session reviewed scenes by `motion_render` + `ffmpeg -ss … -frames:v 1` on the rendered MP4s. That is a strictly better artefact than a preview still — it is the real output — but it costs a full multi-scene render per look instead of a sub-second scrub, which is not a workable authoring loop.
+- **fix, two halves:** (1) make `Graph.tsx` tolerate a node id it cannot resolve — skip that edge/pulse/highlight rather than throw, the same way `deviceSpec` already falls back for an unknown model "so a hand-authored manifest with a typo still renders something rather than throwing mid-render"; (2) make the preview recoverable — whatever caches the failure needs to retry on the next manifest change, and a failed still needs to surface its error somewhere readable instead of a bare broken-image glyph.
+
 ## B-210 — `TimelinePane.tsx` silently lost ALL React Compiler auto-memoization to a ref read during render, and D-201's own guard test has been failing on `main` rather than preventing it
 
 status: **open** · severity: medium (no wrong pixels and no wrong data — but this is the Edit tab's highest-update-frequency surface, the one D-201 and D-325 both exist to keep cheap, and it has been re-rendering unmemoized; CLAUDE.md's priority order puts performance first) · area: `packages/editor/src/TimelinePane.tsx` (~L3746), guard: `packages/editor/src/reactCompiler.test.ts`
