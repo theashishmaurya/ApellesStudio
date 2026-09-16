@@ -3341,6 +3341,16 @@ status: **open** · severity: **medium** (total loss of the user's preset librar
 - **not automatic**, unlike B-194: it needs the user to add, rename or reorder a preset while the list is wrongly empty. When that happens it is total loss.
 - **fix:** an error state that is not an empty value — refuse to save while the last load failed, the way `packages/editor/src/timelineStore.ts` already does (`status: 'error'`, and `applyOp` early-returns on a null timeline) and the way B-058/D-150 fixed the Motion tab.
 
+## B-210 — `TimelinePane.tsx` silently lost ALL React Compiler auto-memoization to a ref read during render, and D-201's own guard test has been failing on `main` rather than preventing it
+
+status: **open** · severity: medium (no wrong pixels and no wrong data — but this is the Edit tab's highest-update-frequency surface, the one D-201 and D-325 both exist to keep cheap, and it has been re-rendering unmemoized; CLAUDE.md's priority order puts performance first) · area: `packages/editor/src/TimelinePane.tsx` (~L3746), guard: `packages/editor/src/reactCompiler.test.ts`
+
+- **found:** 2026-09-16, by the D-338 pass, running `@apelles/editor`'s full vitest suite. Pre-existing on `main` at `431bd22`; D-338 touches no line of `TimelinePane.tsx`.
+- **the exact diagnosis**, from the compiler's own logger rather than a guess: `Refs / Cannot access refs during render`, at `const clipDragPress = trimPressRef.current;` and the `isSlipOrSlideDrag` expression immediately below it. Introduced by B-144's fix (`8573e00`), whose own comment states the intent plainly — *"Read `trimPressRef` directly rather than the live `trimArmed` state"* — which is correct React for what it needs and is exactly what the compiler refuses to compile around.
+- **what it costs:** a bailout is whole-FILE and silent. The compiler logs the reason and emits the file uncompiled, so nothing errors and the component just quietly re-renders the old-fashioned way — the failure mode `reactCompiler.test.ts`'s own header describes in full, for this exact file.
+- **the guard was doing its job and was simply red:** `reactCompiler.test.ts` fails on `TimelinePane.tsx` and has been. A failing guard nobody acts on is the same as no guard, which is the second half of this entry.
+- **not fixed here, deliberately.** The fix is to stop reading the press during render — resolve the gesture's mode into state when the drag starts, or move the decision into the `DragOverlay` child — which is real work in the drag path with real behavioural risk (B-144 is precisely the bug that lives there), and squarely D-250/B-144 territory rather than a placement fix's. Filed with the line and the reason so whoever takes it starts from the diagnosis rather than the symptom.
+
 ## B-209 — the `apelles` crate's own `--lib` test build stopped compiling, because sixteen test call sites did not follow `chroma_timeline_get` becoming `async`
 
 status: **fixed** (2026-09-16, in D-338's pass) · severity: **high** (not a rendering defect — a *verification* one: `cargo test -p apelles --lib` failed at COMPILE time, so every one of that crate's 331 tests was unrunnable and nothing in it could be checked at all) · area: `app/src-tauri/src/chroma/project.rs` (test module)
