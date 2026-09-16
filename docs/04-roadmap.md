@@ -235,6 +235,54 @@ lives in the `D-NNN` / `docs/notes/*.md` referenced. Sequenced because they shar
 files (`App.tsx`, `Shell.tsx`, `useUIStore.ts`) — one subagent at a time until the
 crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
+0. **Preview scrub: a backward step costs an ffmpeg respawn + keyframe seek (D-336, continues B-146)**
+   — owner-reported 2026-09-16 ("preview takes like hell"), root-caused and instrumented
+   in D-336 but **deliberately not fixed there**. `FramePipe::can_serve`
+   (`crates/apelles-media/src/decode_pipe.rs`) serves only FORWARD targets within
+   `MAX_FORWARD_SKIP = 48`, so any backward scrub step pays the kill-and-respawn its own
+   module doc measures at **248-337 ms** against **6.7 ms** sequential, on the owner's 4K
+   footage. The paused path also forgoes D-324's prefetch (`FrameIntent::Single` primes
+   nothing), keeps **no cache of the finished frame**, and does **not cancel superseded
+   requests** — so the visible frame lags the pointer by a full round trip by
+   construction. Three candidate fixes, in the order D-336 recommends:
+   1. **A bounded ring of recently decoded RAW frames inside `FramePipe`**, keyed on
+      `(path, scale, frame index)`. Recommended first because that key is immutable given
+      the file's identity, so unlike a composited-frame cache it cannot go stale against a
+      manifest or grade edit. Sizing is the real question: 960×540 RGB8 is ~1.55 MB/frame.
+   2. **Cancellation / a generation counter** in `PreviewPane.fetchFrame`, so a superseded
+      frame is dropped rather than decoded, transported and painted before the newer one
+      is even requested.
+   3. **An LRU of finished composited frames** — the biggest win and the riskiest, because
+      it must be keyed on everything that changes the picture. A wrong key here is B-088
+      again (a stale preview), which is a correctness bug, not a perf trade. Do not land
+      this without a real invalidation test.
+   Measure it with `debug_frame_timing`'s **`scrub`** channel (added by D-336 for exactly
+   this): move the playhead while PAUSED, then compare `scrub.medianMs` to `fetch.medianMs`.
+
+0b. **Waveform peaks are cached per CLIP RANGE, not per source file (D-336, B-206)** — so a
+   cold open of a heavily recut project pays one `symphonia` decode per visible clip
+   instead of one per source, and any trim/move invalidates that clip's entry. Premiere's
+   `.pek` peak files are per source file ("PEK files are created for all audio-containing
+   files on import",
+   https://helpx.adobe.com/premiere/desktop/organize-media/import-files/audio-conforming-specifications.html),
+   and the machinery to match that already exists here: `cached_peaks` would key on
+   `source_key` alone and store a whole-file envelope (686 s at `CACHED_PEAKS_PER_SEC = 128`
+   is ~88k pairs, well under `MAX_CACHED_PEAKS`), with the existing `rebucket_peaks`
+   re-slicing per clip for free. The one real trade to weigh: the FIRST request would block
+   on decoding the whole file rather than one clip's range, which is why Premiere generates
+   them on import in the background rather than on demand.
+
+0c. **`TimelinePane` still has neither compiler nor manual memoization (B-184, open)** —
+   one React Compiler bailout (`Cannot access refs during render`) disables
+   auto-memoization for the WHOLE file, and D-201 deliberately removed the hand-written
+   `useMemo`/`useCallback`s on the assumption the compiler would cover them. D-336's
+   survey also found scroll position living in un-throttled React state
+   (`setScrollLeft`/`setScrollTop` per scroll tick → a full pane re-render → a re-render of
+   every mounted action, since the library memoizes nothing), and `getActionRender` doing
+   an O(clips) `findIndex` per action (O(clips²) per render). None of these were the
+   dominant cost D-336 measured, so none were touched; recorded so the next pass in this
+   file has the list.
+
 0. **Finish the MCP server's port to Rust (D-312)** — owner-directed, 2026-09-12,
    started the same day. `crates/apelles-mcp` replaces `mcp/server.py`: one binary, one
    toolchain, no venv in the connect command. **The parity harness is done and is the

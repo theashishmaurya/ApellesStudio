@@ -543,9 +543,23 @@ pub(crate) fn resolve_track_duck(
 /// saves keep it. Unchanged signature/behaviour from D-041 for a
 /// single-timeline project — "active timeline" is invisible here unless the
 /// caller has made more than one (`chroma_timeline_create`).
+///
+/// **B-205 / D-334 — `(async)` is load-bearing, not decoration.** Tauri's own
+/// documentation is explicit that "commands without the _async_ keyword are
+/// executed on the main thread", and this command's body is not cheap: it
+/// reads and parses the project manifest UNCACHED (212 KB of JSON on the
+/// owner's real project), runs every schema migration, back-fills legacy clip
+/// positions across all 150 clips, and may write the manifest back out. It
+/// also fires on every window focus. Doing that inline on the UI thread froze
+/// the window for the duration — the "app becomes unresponsive" half of the
+/// report, as distinct from the merely-slow async work around it. The body is
+/// synchronous blocking I/O, so `spawn_blocking` is what it needs; `(async)`
+/// alone would only move it to a runtime worker it would then block.
 #[tauri::command]
-pub fn chroma_timeline_get() -> Result<Timeline, String> {
-    resolve_timeline(true)
+pub async fn chroma_timeline_get() -> Result<Timeline, String> {
+    tokio::task::spawn_blocking(|| resolve_timeline(true))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Replace the open project's **active** timeline and persist it to

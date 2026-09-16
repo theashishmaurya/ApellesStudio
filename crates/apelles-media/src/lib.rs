@@ -55,6 +55,7 @@
 pub mod audio;
 pub mod conform;
 pub mod decode_pipe;
+pub mod ffmpeg_gate;
 pub mod filmstrip;
 pub mod media_cache;
 pub mod probe;

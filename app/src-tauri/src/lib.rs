@@ -2374,6 +2374,7 @@ pub fn run() {
             chroma::debug_record::chroma_debug_record_video,
             chroma::grade::chroma_save_grade,
             chroma::grade::chroma_load_grade,
+            chroma::grade::chroma_load_grades,
             chroma::motion::chroma_motion_get_manifest,
             chroma::motion::chroma_motion_save_manifest,
             chroma::motion::chroma_motion_render,

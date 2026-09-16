@@ -23,6 +23,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
+import { isClipVisible } from './clipVisibility';
+
 /** One amplitude bucket: `[min, max]`, both in `-1..1`. Mirrors the `(f32, f32)`
  *  pairs `chroma_audio_waveform` returns. */
 export type Peak = [number, number];
@@ -76,9 +78,24 @@ export interface WaveformProps {
   /** on-screen pixel width to render at — also how many buckets are requested */
   width: number;
   height: number;
+  /** D-334 — the visible slice of this clip, in px from its own left edge, in
+   *  exactly the base `Filmstrip` takes them in. Omitted means "assume
+   *  visible", which is what the non-timeline caller (`ScrubWaveform`, whose
+   *  strip is always fully on screen) wants and what keeps this prop from
+   *  being load-bearing for anyone who does not have a viewport to report. */
+  visibleStartPx?: number;
+  visibleEndPx?: number;
 }
 
-export function Waveform({ sourcePath, startSecs, durationSecs, width, height }: WaveformProps) {
+export function Waveform({
+  sourcePath,
+  startSecs,
+  durationSecs,
+  width,
+  height,
+  visibleStartPx,
+  visibleEndPx,
+}: WaveformProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [peaks, setPeaks] = useState<Peak[] | null>(null);
 
@@ -86,17 +103,33 @@ export function Waveform({ sourcePath, startSecs, durationSecs, width, height }:
   // the request small even for a long, zoomed-out clip.
   const buckets = Math.max(1, Math.min(600, Math.round(width / 2)));
 
+  // D-334/B-204 — is any of this clip actually on screen? The timeline library
+  // mounts every clip on a track regardless of horizontal scroll, so without
+  // this a 150-clip recut fired ~150 `chroma_audio_waveform` decodes to fill a
+  // viewport showing about ten of them, and every one of those was a real
+  // `symphonia` decode on a cold cache. `Filmstrip` has defended itself this
+  // way since D-128; this is the same test, shared (`clipVisibility.ts`).
+  //
+  // Deliberately gates the FETCH only, and deliberately does not narrow WHAT
+  // is fetched: the backend's envelope cache is keyed on the whole clip range,
+  // so asking for a visible sub-range instead would fragment that cache and
+  // turn one reusable entry per clip into one per scroll position.
+  const onScreen =
+    visibleStartPx === undefined || visibleEndPx === undefined
+      ? width > 0
+      : isClipVisible(width, visibleStartPx, visibleEndPx);
+
   useEffect(() => {
     let cancelled = false;
     setPeaks(null);
-    if (!sourcePath || durationSecs <= 0 || width <= 0) return;
+    if (!sourcePath || durationSecs <= 0 || width <= 0 || !onScreen) return;
     getPeaks(sourcePath, startSecs, durationSecs, buckets).then((p) => {
       if (!cancelled) setPeaks(p);
     });
     return () => {
       cancelled = true;
     };
-  }, [sourcePath, startSecs, durationSecs, buckets, width]);
+  }, [sourcePath, startSecs, durationSecs, buckets, width, onScreen]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

@@ -417,9 +417,20 @@ fn regen_thumb(project_dir: &Path) -> bool {
 // tauri commands
 // --------------------------------------------------------------------------- //
 
+/// Every project in the projects directory, for the launcher grid.
+///
+/// **B-205 / D-334 — `spawn_blocking`, because this is real disk work on the
+/// UI thread otherwise.** Per Tauri's own docs a command without `async` runs
+/// on the main thread, and this one scans the whole projects directory,
+/// `load_manifest`s each project found, and reads plus base64-encodes every
+/// one of their `thumb.jpg` files. That is O(projects) file I/O paid inline at
+/// launcher mount — the first thing the app does, and so the first thing that
+/// can make it look hung.
 #[tauri::command]
-pub fn chroma_project_list() -> Vec<ProjectSummary> {
-    list_projects_in(&projects_dir())
+pub async fn chroma_project_list() -> Result<Vec<ProjectSummary>, String> {
+    tokio::task::spawn_blocking(|| list_projects_in(&projects_dir()))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

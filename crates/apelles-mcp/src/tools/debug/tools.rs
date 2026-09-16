@@ -462,6 +462,16 @@ impl ApellesMcp {
     frame, of which only ~3.5 ms was Rust — the preview's frame-rate ceiling is
     set on the webview side, not by the decoder.
 
+    `scrub` (D-336) is a FIFTH channel and a separate question. `fetch`/`tick`/
+    `raf` are recorded only inside the play loop; `scrub` times the same
+    `chroma_timeline_frame` round trip on the PAUSED path, which the play
+    numbers never covered. Compare the two directly: `scrub.medianMs` far above
+    `fetch.medianMs` means the cost is the decode pipe being asked for frames
+    BEHIND its read head — a kill-and-respawn plus an ffmpeg keyframe seek,
+    measured at 248-337 ms against 6.7 ms for a sequential read — and not a
+    slow webview. To fill this channel, move the playhead while PAUSED
+    (`editor_set_playhead`) rather than playing.
+
     Measure properly: `debug_frame_timing(reset=True)` to clear, then
     `editor_set_playing(True)`, wait a few seconds, `editor_set_playing(False)`,
     then read. Numbers from before a reset mix scrubbing in with playback.

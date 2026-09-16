@@ -42,6 +42,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 // Index panel's marker rows became a second consumer of the same command; this
 // file keeps only the LOD/window policy, which is genuinely its own.
 import { getThumbs, thumbWindowKey, type ClipThumb } from './clipThumbs';
+import { isClipVisible } from './clipVisibility';
 
 
 /** ~1 tile per this many px of on-screen clip width — matches the reference
@@ -119,9 +120,11 @@ export function requestWindow(
   visibleEndPx: number,
 ): RequestWindow | null {
   if (!(durationSecs > 0) || !(width > 0)) return null;
+  // D-334 — the same on-screen test `Waveform` now applies, shared rather
+  // than kept in two places; see `clipVisibility.ts` for why it moved out.
+  if (!isClipVisible(width, visibleStartPx, visibleEndPx)) return null;
   const visLeft = Math.max(0, Math.min(width, visibleStartPx));
   const visRight = Math.max(0, Math.min(width, visibleEndPx));
-  if (!(visRight > visLeft)) return null;
 
   const stepSecs = quantizeStepSecs(desiredStepSecs(durationSecs, width));
   const secsPerPx = durationSecs / width;

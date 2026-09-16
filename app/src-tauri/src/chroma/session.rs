@@ -194,10 +194,12 @@ pub async fn chroma_session_thumbnail(index: usize, height: Option<u32>) -> Resu
         .ok_or_else(|| format!("shot index {index} out of range"))?
         .clone();
     let h = height.unwrap_or(96);
-    tokio::task::spawn_blocking(move || video::extract_thumb(&shot.path, &shot.info, shot.frame, h))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    // D-334/B-204 — cached and concurrency-bounded. This is called once per
+    // shot from the strip's mount effect, so on a 75-clip recut it used to
+    // spawn 75 uncached, unbounded 4K `ffmpeg` processes on every open; see
+    // `extract_thumb_cached` for the full account. The `spawn_blocking` moved
+    // inside it, next to the only part that actually blocks.
+    video::extract_thumb_cached(&shot.path, &shot.info, shot.frame, h).await
 }
 
 /// Decode `shot`'s frame (persistent pipe, D-030; falls back to a single-frame

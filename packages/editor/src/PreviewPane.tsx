@@ -526,10 +526,31 @@ export function PreviewPane() {
     while (next !== null) {
       const at = next;
       try {
+        // D-334 — the paused path had NO timing of its own: `fetch`/`tick`
+        // were only ever recorded inside the rAF play loop below, so
+        // `debug_frame_timing` could report a scrub's paint cadence but not
+        // how much of a scrub frame was Rust and how much was the webview.
+        // That is the one split the "preview is slow as hell while paused"
+        // report needs, because the paused path asks the decode pipe for
+        // frames BEHIND its read head, which costs a respawn + keyframe seek
+        // (`decode_pipe.rs` measures 248-337 ms against 6.7 ms sequential)
+        // rather than D-290's ~3.5 ms. Same `import.meta.env.DEV` compile-time
+        // gate as every other call site here.
+        //
+        // A plain `const` + an `if`, NOT `DEV ? now() : 0`. This sits inside a
+        // `try`, and the React Compiler cannot lower a value block (a ternary
+        // or `&&`) within a `try/catch` — a single bailout anywhere disables
+        // auto-memoization for this WHOLE component, which re-renders on every
+        // displayed frame during playback. Writing it the compact way cost
+        // exactly that and was caught by `reactCompiler.test.ts`; this is the
+        // same shape the play loop's own `fetch` span already uses, for the
+        // same reason (see the D-201 note above).
+        const began = performance.now();
         const bytes = await invoke<ArrayBuffer>('chroma_timeline_frame', {
           pos: Math.max(0, Math.round(at)),
           maxLongEdge: longEdge,
         });
+        if (import.meta.env.DEV) recordPreviewSpan('scrub', performance.now() - began);
         showFrame(bytes, at);
         setDecodeErr(null);
       } catch (e) {

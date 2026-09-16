@@ -32889,3 +32889,324 @@ acted on, because it is a separate measurement and a separate change.
   frame**. B-184 was explicitly out of scope for this pass and is untouched.
 - The adaptive lead only has a measurement once a source has crossed one cut cold.
   A session's very first cut on a new file still uses the 0.5 s bootstrap.
+
+---
+
+## D-336 — "opening takes forever, timeline takes forever, preview like hell, app becomes unresponsive" is FOUR different defects, and only one of them is the playback path five entries already fixed
+
+**decided (2026-09-16)** · fixes B-206, B-207 · continues B-146 · follows D-321/D-323/D-324/D-325/D-334
+
+**Context.** The owner: *"There is serious perf issue when i open a project it
+takes forever, timeline takes forever, and preview takes like hell, make it all
+under 1s and app becomes unresponsive, set up for all the actions running a perf
+metric and work against it to improve it, do a google search and understand how
+others are tackling [this]."*
+
+Five real perf investigations had already landed the same night (D-321 the
+O(n²) resample, D-323 audio-at-a-cut, D-324 the decode-pipe prefetch, D-325
+`TimelinePane`'s reactive `playhead`, D-334 the decode-pipe chain-prefetch and
+webview subscriber cleanup), all of them on the **playback** path. The first thing this pass had to establish
+was whether the report was a sixth symptom of that same root cause or something
+else. **It was something else — three something-elses.** Treating the four
+complaints as one problem would have been the diagnostic error here.
+
+The measurement target throughout is the owner's real `2026-09-12-c040`: **150
+clips (75 linked A/V pairs) cut out of ONE 3840×2160, 686-second, 24 fps MOV**,
+with a 212 KB `project.json`. That shape matters — the project file is small
+(parsing it is not the cost) and the source is one very large 4K file (touching
+it repeatedly is).
+
+### What the research said (real sources, not a mental model of "how NLEs work")
+
+Per CLAUDE.md's standing "research the real pattern first" rule. The load-bearing findings:
+
+- **Premiere's peak files are per SOURCE FILE, not per clip.** "PEK files are
+  created for all audio-containing files on import and are used to draw
+  waveforms in Timeline panels"
+  (https://helpx.adobe.com/premiere/desktop/organize-media/import-files/audio-conforming-specifications.html).
+  Its media cache keeps them in a separate tree with its own database, and
+  deleted entries are "recreated whenever the source media requires them"
+  (https://helpx.adobe.com/premiere/desktop/troubleshooting/media-issues/manage-media-cache.html).
+- **Resolve makes detail a function of zoom, explicitly.** Filmstrip: "The
+  number of frames displayed depends on the current zoom level"; tracks resized
+  below the minimum height "automatically collapse into Simple view"; audio
+  waveform display is a toggle (*DaVinci Resolve 20 Reference Manual*, pp.
+  704–705, 961–962). Its Optimized Media is shared across projects and
+  regenerated on demand; background caching runs "during periods of user
+  inactivity" (p. 202).
+- **Final Cut does the expensive work AFTER the UI is usable:** "the files are
+  transcoded in the background, **after the import process is complete**"
+  (https://support.apple.com/guide/final-cut-pro/create-optimized-and-proxy-files-verb8e5f6fd/mac).
+- **One DOM node per item has a documented cliff.** Lighthouse warns past ~800
+  nodes in `<body>` and errors past ~1,400, because "the browser must
+  constantly recompute the position and styling of nodes"
+  (https://developer.chrome.com/docs/lighthouse/performance/dom-size). At ~8-10
+  nodes per clip, 150 clips is already past the error threshold.
+- **Tauri's own docs settle the unresponsiveness question:** "commands without
+  the _async_ keyword are executed on the main thread"
+  (https://v2.tauri.app/develop/calling-rust/).
+- **A negative finding worth recording:** the base64/JSON-IPC theory is already
+  dead here. The frame path uses `tauri::ipc::Response` raw bytes, and D-217
+  measured base64 at 0.01 ms/frame. Ruled out before any time was spent on it.
+- **A limit of this environment, not of the app:** WebKit — the webview Tauri
+  uses on macOS — **does not implement the Long Tasks API**, so `longtask` /
+  Long Animation Frames observers are unavailable and `requestAnimationFrame`
+  frame-gap sampling is the only option. That is precisely what
+  `previewTiming.ts` already does, which is why this pass extended it rather
+  than reaching for a standard API that would silently record nothing.
+
+### Part 1 — the harness, because the owner asked for the metric, not just the fix
+
+`docs/notes/performance-instrumentation.md` already inventoried what exists
+(`app/bench/`, scattered Rust `Instant::now()`, the sidecar's own timings,
+D-325/D-330's `debug_frame_timing`). Two real gaps were closed rather than a
+sixth mechanism invented:
+
+1. **`TimelinePane.mountCost.dom.test.tsx`** (new) — counts the per-clip IPC
+   fan-out of a mount at 8/150/300 clips. It counts calls rather than timing
+   them, deliberately: in jsdom every `invoke` resolves on a microtask so the
+   wall-clock is meaningless, but *how many decodes a mount asks a real backend
+   for* is the same number in jsdom and in production, and it is the number the
+   fix changes. The existing `playheadCost` harness could never have seen this —
+   it stubs `chroma_audio_waveform` to `[]`, which is right for its question and
+   is exactly what hid this one.
+2. **A `scrub` span channel** in `previewTiming.ts`, surfaced through
+   `debug_frame_timing`. `fetch`/`tick`/`raf` are recorded **only inside the
+   play loop**, so the paused path — the one the "preview like hell" report is
+   about — had no cost instrumentation at all. It is a separate channel, not
+   more samples in `fetch`, because the two measure genuinely different regimes
+   (streaming forward vs. seeking backward) and averaging them would hide the
+   difference the channel exists to expose.
+
+### Part 2 — the four defects
+
+**(1) The timeline asked for one audio decode per clip, on or off screen — B-206.**
+The library virtualizes rows but not actions, so every clip mounts; `Waveform`
+had no visibility gate where `Filmstrip` has had one since D-128. **Measured:
+75 `chroma_audio_waveform` calls at 150 clips and 150 at 300 clips (exactly
+linear) → 5 and 5 after (constant).** Total mount IPC 155 → 10 at 300 clips.
+The on-screen test is now shared (`clipVisibility.ts`) rather than duplicated.
+
+*A half-fix this pass made and the harness caught:* gating only the video
+track's waveform changed the number not at all, because an A/V-linked pair
+resolves to one shared cache key and the audio track's ungated fetch still
+covered the whole fan-out. Recorded because reading the diff would not have
+revealed it.
+
+**(2) Opening a project fanned out uncached, unbounded 4K ffmpeg spawns — B-206's backend twin.**
+`chroma_session_thumbnail` had **no cache of any kind and no concurrency
+bound**, and the Colorist shot strip fires it once per shot from a mount
+effect — so opening this project spawned **75 concurrent `ffmpeg` processes
+against a 4K HEVC source**, on every open, from a tab the user need not have
+visited (all three tabs stay mounted). This is byte-for-byte the B-037 incident
+(11 simultaneous `ffmpeg`, system load past 200) that D-121 fixed **for the
+filmstrip only**. Now three-tier cached (memory → `media_cache` on disk → real
+extraction) and hardware-decoded with a software fallback, matching what the
+filmstrip already did.
+
+The concurrency bound moved to a new `crates/apelles-media/src/ffmpeg_gate.rs`
+and is now **process-wide**, because the budget belongs to the machine: two
+per-feature semaphores of 3 permit 6 processes, and a third would permit 9.
+
+**(3) Grades loaded one clip at a time, with the `await` inside the loop.**
+75 strictly sequential IPC round trips, **72 of which were for files that do
+not exist** and so resolved as thrown errors serialized back across the bridge
+— and nothing downstream could begin until the last one landed (the Edit
+timeline, the media pool and the Motion manifest all wait on the store write
+that follows it). Replaced by one `chroma_load_grades` round trip that reads
+them all on a blocking thread. A clip with no grade is simply absent from the
+result; a grade that **exists but cannot be read** is now reported instead of
+being silently flattened into "ungraded", which is the one behaviour this
+deliberately changes.
+
+**(4) "Unresponsive" was literal: three commands ran on the UI thread — B-207.**
+This is the finding that most needed separating from the rest. Per Tauri's own
+docs a command without `async` runs on the main thread, and `chroma_timeline_get`
+— which parses the 212 KB manifest **uncached**, migrates it, back-fills 150
+clips, may rewrite it, and re-fires **on every window focus** — was one.
+`chroma_project_list` (directory scan + per-project manifest load + base64 of
+every thumbnail, at launcher mount) was another. Both are now `async` **and**
+on `spawn_blocking`; `async` alone would merely have moved the block onto a
+runtime worker. `chroma_session_list` was audited and deliberately left — its
+body is a vec clone with no I/O.
+
+### The preview: investigated fully, root-caused, and NOT fixed in this pass
+
+The honest part of this entry. The static/scrub preview is **not** the playback
+path D-290/D-324/D-325/D-334 covered — it is the same Rust function with one
+boolean flipped, and that boolean turns off D-324's prefetch. The mechanism:
+`FramePipe::can_serve` (`decode_pipe.rs`) will only serve a target that is
+**forward** of its read head and within `MAX_FORWARD_SKIP = 48`. **Any backward
+step forces a kill-and-respawn plus an ffmpeg keyframe seek**, which that
+module's own doc measures at **248-337 ms against 6.7 ms for a sequential
+read** on exactly this 4K footage. A scrub drags backward constantly, and the
+paused path explicitly forgoes the prefetch that makes the playback path
+survive the same cost. There is also **no cache of the finished frame
+anywhere**, so nudging back and forth over the same two positions re-decodes
+both every time, and **no cancellation** of superseded requests — the visible
+frame lags the pointer by a full round trip by construction.
+
+**Why no fix landed here, stated plainly rather than implied done.** The
+obvious fix — an LRU of finished composited frames — has to be keyed on
+everything that can change the picture (the persisted manifest, the grade LUTs,
+the source files). Getting that key wrong produces a *stale preview frame*,
+which is the exact class of defect B-088 already was, and a wrong picture is a
+correctness bug, not a performance trade. This pass did not have the budget to
+prove that invalidation correct, and shipping a cache I could not prove correct
+would have been worse than shipping nothing. The safer variant (a bounded ring
+of recently decoded **raw source frames** inside `FramePipe`, keyed on
+`(path, scale, frame index)` — immutable given the file identity, so no
+manifest or grade staleness is possible) is the recommended next move and is
+named in `docs/04-roadmap.md`.
+
+So: **symptom 3 is measured, root-caused, newly instrumented, and open.** The
+`scrub` channel added here is what will show the before/after when it is fixed.
+
+### Against the owner's "under 1 second" target
+
+Honestly: **not claimed, and not measured end to end.** What is measured is the
+work removed from the open path — 75 → 5 audio decodes, 75 → 0 uncached 4K
+ffmpeg spawns on a warm cache (and at most 3 concurrent on a cold one), 75 → 1
+IPC round trips for grades, and two UI-thread blocks removed. Those are large,
+real reductions in the dominant costs, but a wall-clock "project opens in under
+1 s" figure on the owner's machine is not something this pass can assert, for
+the reason D-325 already recorded: a worktree-isolated agent must not drive the
+shared instance holding the owner's real project, and the numbers above come
+from a counting harness and from code-level cost accounting, not from a
+stopwatch on the owner's own app. Re-running the open against the real project
+is the measurement that closes the loop, and it is the owner's to take.
+
+### One regression this pass introduced and caught, worth recording
+
+Adding the `scrub` span the compact way — `const began = import.meta.env.DEV ?
+performance.now() : 0;` — put a **value block inside a `try/catch`**, which the
+React Compiler cannot lower. That is a bailout, and one bailout anywhere
+disables auto-memoization for the WHOLE component; `PreviewPane` re-renders on
+every displayed frame during playback, so a perf pass had quietly introduced a
+perf regression. `reactCompiler.test.ts` (D-201) caught it, the diff would not
+have. Rewritten as a plain `const` plus an `if` — the exact shape the play
+loop's own `fetch` span already uses, and for exactly this reason. The file's
+D-201 header note already explains that two of its constructs exist solely to
+stay compiler-legible; this is now a third.
+
+### Verification
+
+`TimelinePane.mountCost.dom.test.tsx` (4 new tests) — confirmed to **fail on
+the pre-fix code first** (75 and 150 against a ceiling of 24), then pass at 5
+and 5, the same before/after discipline D-325 used. Full `packages/editor`
+suite, `cargo fmt`/`clippy`/`check` and `npm run typecheck` results are
+recorded in `docs/CHANGELOG.md` for this session.
+
+**Numbering.** Drafted against `main` at `1cf08a0` (D-333 the latest entry).
+Two sibling worktrees were active during this pass; if one of them also lands a
+`D-336`, this is the one to renumber.
+
+---
+
+## D-337 — measured four faster transcription backends against `mlx-whisper large-v3` and kept it: the fastest credible one silently drops real speech
+
+**decided (2026-09-16)** · owner-directed · touches `ai-media/transcribe.py` (one doc fix only)
+
+**Context.** Owner asked, alongside D-336's perf work, for a real search for a
+faster local transcription model than the current `mlx-whisper large-v3`, with
+an explicit constraint: **don't trade away much accuracy for speed.** The repo
+already lists `distil-large-v3` in `MLX_MODEL_REPOS` but had never tested it on
+real content. The instruction was to measure, not to recommend from leaderboards
+— and that instruction is what produced the answer, because the disqualifying
+defect is invisible in every published benchmark.
+
+**The measurement.** All five runs went through `ai-media/transcribe.py`'s own
+`transcribe()` — the shipped code path, `word_timestamps=True`,
+`condition_on_previous_text=False` — against the real `2026-09-12-c040` source
+(`A001_09122356_C040.MOV`, 686.31 s), with the audio extracted once by the same
+ffmpeg call the module itself makes, so every model saw byte-identical input.
+Output was deterministic per model (two `large-v3` runs byte-identical, three
+`turbo` runs byte-identical), which matters given this repo's determinism
+invariant.
+
+| model | wall clock (back-to-back batch) | WER vs `large-v3` | word-start p90 |
+|---|---|---|---|
+| **`large-v3` (current)** | **762 s** | — | — |
+| `large-v3-turbo` | 498 s | 11.70% | 240 ms |
+| `large-v3-turbo` 4-bit | 494 s | 15.34% | 300 ms |
+| `distil-large-v3` | 241 s | 12.47% | 380 ms |
+| `distil-large-v3.5` (MLX) | 266 s | 24.39% | **11.08 s** |
+
+**The finding that decided it.** `large-v3-turbo` — the fastest *multilingual*
+candidate, and the one the Open ASR Leaderboard makes look nearly free (6.36 vs
+5.78 avg WER) — **silently omitted 19.4 seconds of real speech**, the entire
+outro (29 words), reproducibly across three runs. The audio is present and at
+normal level (−23.5 dB over that window, against −24.1 dB over a known-speech
+window). Fed only that slice in isolation it transcribes it perfectly, so this
+is a long-form sequential-decode seek artifact, not a capability limit — which
+makes it **worse**, not better: it is silent, deterministic, and
+content-dependent. In this codebase that is missing captions and a retake group
+`apelles-speech` cannot see, with no signal that anything went wrong.
+
+**Three more reasons, each measured rather than assumed:**
+
+- **4-bit quantization buys nothing here.** 494 s vs 498 s — no speed win at
+  all — for 15.34% vs 11.70% divergence. The workload is encoder/bandwidth-bound,
+  not weight-bound, which also undercuts the quantization half of whisper.cpp's
+  pitch before any port is attempted.
+- **`distil-large-v3.5` has no trustworthy MLX build.** The only one on the Hub
+  is an unvetted 6-download conversion, and it produced **147 zero-or-negative-
+  length words** and an 11 s p90 timestamp error — a hard disqualifier for
+  `captionsFromTranscript.ts`, which reads per-word `start`/`end`.
+- **The technical vocabulary is where the loss lands.** On this transformer
+  explainer, `turbo` produced "each word **squarely** against every other word
+  **scheme**" for "each word's **query** against every other word's **key**",
+  and "ex **selfmertention**" for "self-attention". Not one-directional in
+  fairness — the faster models are right where `large-v3` is wrong in places —
+  but the domain nouns go one way.
+
+**A hypothesis that did NOT hold, recorded because it was the expected risk.**
+Going in, the concern was that a faster model would have sloppier segment
+boundaries and so degrade D-320/D-327's retake detection. Measured on B-198's
+own region, `turbo`'s boundaries are **better** than `large-v3`'s — they land on
+the speaker's restarts where `large-v3`'s straddle them, exactly as
+`retake.rs`'s docstring describes. `turbo`'s real failure is dropped content,
+not smeared boundaries. Also corrected in passing: **D-318's silence detector
+does not use Whisper timestamps at all** (it is silero-vad over PCM, and D-319
+explicitly rejected transcript word-gaps), so the timestamp exposure is narrower
+than assumed — captions and retake segments only.
+
+**Options considered and rejected on Apple Silicon grounds**, since that is this
+runtime's actual hardware target and the reason `mlx-whisper` exists:
+`faster-whisper`/CTranslate2 is CPU-INT8 and CUDA only — no Metal or MPS path
+anywhere in its docs, so its headline "4× faster" does not transfer.
+**NVIDIA Parakeet/Canary lead the leaderboard outright** (4.70 avg WER, 6025
+RTFx) but the official models need NeMo + CUDA and do not run on Apple Silicon
+as shipped; recommending them means abandoning on-device inference or making a
+cloud call, which violates the local-first invariant. `parakeet-mlx`
+(Apache-2.0, real word timestamps) is a genuine Apple Silicon path and is the
+most interesting thing found — but it was **not measured** here, and neither
+Parakeet v2 (English) nor v3 (25 European languages) covers Hindi, so it cannot
+be the default while the Hinglish case matters.
+
+**Decision: keep `large-v3` as `DEFAULT_MODEL`.** No backend change. The only
+code change is a documentation-correctness fix, per the docs hard rule: the
+`distil-large-v3` entry in `MLX_MODEL_REPOS` now says in place that it is
+**English only**, because the module docstring and `transcribe()` both promise
+Hinglish auto-detection and anyone selecting that model was silently losing it.
+
+**Two real proposals, deliberately not built:**
+
+1. **Speculative decoding** (`distil` as draft model for `large-v3`) is the only
+   option in this space offering ~2× with outputs *mathematically guaranteed
+   identical* to `large-v3` alone
+   (https://huggingface.co/blog/whisper-speculative-decoding). Blocked on
+   `mlx-whisper` 0.4.3 not implementing it — an upstream contribution or a local
+   decode loop, not a config change.
+2. **`parakeet-mlx` as an opt-in English fast path**, after its own measurement
+   pass on this hardware. Never the default while Hindi matters.
+
+**A caveat that applies to every number above, and to D-336's.** These runs were
+taken on a machine at load average **130** with four concurrent `rustc` builds
+from sibling agents. Identical work varied 215 s → 498 s for the same model with
+byte-identical output. The WER and timestamp comparisons are unaffected (same
+input, deterministic output), but **the wall-clock figures are ratios on a
+contended box, not clean benchmarks** — the 1.5-3.2× speedup range is real, the
+absolute seconds are not. `docs/notes/performance-instrumentation.md` already
+carries the "check `uptime` before trusting a number" finding from 2026-09-04;
+this is its second live confirmation.
