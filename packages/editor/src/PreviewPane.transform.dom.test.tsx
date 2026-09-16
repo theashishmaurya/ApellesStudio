@@ -236,16 +236,18 @@ describe('B-093 — the transform box on a keyframed clip', () => {
   it('is drawn at the INTERPOLATED transform for the playhead, not the static fields', async () => {
     const box = boxRect(await mountWithSelected(keyedClip()));
 
-    // scale 0.75 of a full-frame source, centred at 0.5 + 0.125.
+    // scale 0.75 of a full-frame source, with its TOP-LEFT corner at the
+    // interpolated position (D-338 — `position_*` is that corner in the box,
+    // the preview and the export alike).
     expect(box.width).toBeCloseTo(KEYED_SCALE_AT_PLAYHEAD * CANVAS_W, 3);
     expect(box.height).toBeCloseTo(KEYED_SCALE_AT_PLAYHEAD * CANVAS_H, 3);
-    expect(box.left).toBeCloseTo((0.5 - KEYED_SCALE_AT_PLAYHEAD / 2 + KEYED_POSITION_X_AT_PLAYHEAD) * CANVAS_W, 3);
-    expect(box.top).toBeCloseTo((0.5 - KEYED_SCALE_AT_PLAYHEAD / 2) * CANVAS_H, 3);
+    expect(box.left).toBeCloseTo(KEYED_POSITION_X_AT_PLAYHEAD * CANVAS_W, 3);
+    expect(box.top).toBeCloseTo(0, 3);
 
     // And explicitly NOT the pre-fix static box, so this fails for the real
     // reason if the static read ever comes back.
     expect(box.width).not.toBeCloseTo(STATIC_SCALE * CANVAS_W, 3);
-    expect(box.left).not.toBeCloseTo((0.5 - STATIC_SCALE / 2 + STATIC_POSITION_X) * CANVAS_W, 3);
+    expect(box.left).not.toBeCloseTo(STATIC_POSITION_X * CANVAS_W, 3);
   });
 
   it('follows the playhead — moving it redraws the box at that frame’s value', async () => {
@@ -258,7 +260,8 @@ describe('B-093 — the transform box on a keyframed clip', () => {
 
     const moved = boxRect(box);
     expect(moved.width).toBeCloseTo(0.5 * CANVAS_W, 3);
-    expect(moved.left).toBeCloseTo((0.5 - 0.25 + 0.25) * CANVAS_W, 3);
+    expect(moved.left).toBeCloseTo(0.25 * CANVAS_W, 3); // D-338 — the top-left corner IS position_x
+
   });
 });
 

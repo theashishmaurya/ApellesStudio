@@ -127,6 +127,13 @@ import type { Clip, Timeline, Track } from './timeline';
 
 const FPS = 24;
 
+/** D-338 (B-201) — the quarter-size PIP fixture's inset, as a TOP-LEFT
+ *  corner: its box spans 0.05-0.30 on both axes, so a press at fraction
+ *  (0.2, 0.2) is inside it and (0.8, 0.8) is not. Pre-D-338 the same placement
+ *  was spelled `position_x: -0.3` — a NEGATIVE offset from the canvas centre,
+ *  which is the clearest single tell of the old convention. */
+const PIP_INSET = 0.05;
+
 function clip(id: string, extra: Partial<Clip> = {}): Clip {
   return {
     id,
@@ -264,7 +271,7 @@ describe('canvas click-to-select (D-204 / B-085)', () => {
     // track 0 is a quarter-size PIP parked up and left; track 1 fills the frame.
     const surface = await mountWith(
       timelineOf([
-        { kind: 'video', clips: [clip('pip', { scale: 0.25, position_x: -0.3, position_y: -0.3 })] },
+        { kind: 'video', clips: [clip('pip', { scale: 0.25, position_x: PIP_INSET, position_y: PIP_INSET })] },
         { kind: 'video', clips: [clip('bg')] },
       ]),
     );
@@ -308,8 +315,10 @@ describe('canvas click-to-select (D-204 / B-085)', () => {
     );
     expect(selection()).toHaveLength(1);
 
-    // Far corner: outside the centred quarter-size box entirely.
-    firePointerEvent(surface, 'pointerdown', at(0.02, 0.02));
+    // Far corner: outside the quarter-size box entirely. D-338 — that box now
+    // sits at the composition's TOP-LEFT (0..0.25 on both axes), so the point
+    // that misses it is the far corner, not the near one.
+    firePointerEvent(surface, 'pointerdown', at(0.9, 0.9));
     await waitFrames(1);
 
     expect(selection()).toEqual([]);
@@ -319,7 +328,7 @@ describe('canvas click-to-select (D-204 / B-085)', () => {
   it('replaces the previous selection rather than extending it', async () => {
     const surface = await mountWith(
       timelineOf([
-        { kind: 'video', clips: [clip('pip', { scale: 0.25, position_x: -0.3, position_y: -0.3 })] },
+        { kind: 'video', clips: [clip('pip', { scale: 0.25, position_x: PIP_INSET, position_y: PIP_INSET })] },
         { kind: 'video', clips: [clip('bg')] },
       ]),
       [{ track: 1, id: 'bg' }],
@@ -368,7 +377,7 @@ describe('canvas click-to-select (D-204 / B-085)', () => {
       // sit over a different layer's picture; a corner grab must still resize.
       await mountWith(
         timelineOf([
-          { kind: 'video', clips: [clip('pip', { scale: 0.25, position_x: -0.3, position_y: -0.3 })] },
+          { kind: 'video', clips: [clip('pip', { scale: 0.25, position_x: PIP_INSET, position_y: PIP_INSET })] },
           { kind: 'video', clips: [clip('bg')] },
         ]),
         [{ track: 1, id: 'bg' }],
@@ -389,7 +398,7 @@ describe('canvas click-to-select (D-204 / B-085)', () => {
       // capture-phase decision can, and this is that case exactly.
       await mountWith(
         timelineOf([
-          { kind: 'video', clips: [clip('pip', { scale: 0.25, position_x: -0.3, position_y: -0.3 })] },
+          { kind: 'video', clips: [clip('pip', { scale: 0.25, position_x: PIP_INSET, position_y: PIP_INSET })] },
           { kind: 'video', clips: [clip('bg')] },
         ]),
         [{ track: 1, id: 'bg' }],

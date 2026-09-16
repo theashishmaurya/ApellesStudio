@@ -26,6 +26,8 @@
  * than re-derived in either component.
  */
 
+import type { Clip } from './timeline';
+
 export interface ContentBoxLike {
   offsetX: number;
   offsetY: number;
@@ -35,8 +37,11 @@ export interface ContentBoxLike {
 
 /** A clip's placement box in COMPOSITION-FRACTION space — mirrors exactly
  *  what `chroma::edit::composite_layer_onto` computes in canvas pixels
- *  (`x = cw/2 - ww/2 + position_x*cw`, `y` likewise), just undivided by the
- *  canvas size.
+ *  (`x = position_x*cw`, `y` likewise) and what `timelineExport.ts` compiles
+ *  to `overlay=x='<position_x>*W'`, just undivided by the canvas size.
+ *  D-338 (fixes B-201) — `position_*` is the box's TOP-LEFT corner in all
+ *  three; it used to be a centre offset here and in the Rust compositor while
+ *  already being the top-left corner in the exporter.
  *
  *  Crop is deliberately not accounted for here: `composite_layer_onto` crops
  *  a layer's PIXELS in place, without shrinking its footprint (D-132's own
@@ -61,21 +66,66 @@ export interface FractionBox {
  *  by typing). */
 export const MIN_DRAG_SCALE = 0.02;
 
+/** What `position_x`/`position_y` names for one clip's box (D-338).
+ *
+ *  - `'top-left'` — the box's own top-left corner, as a fraction of the
+ *    composition. Every media layer. Mirrors `composite_layer_onto`'s
+ *    `x = position_x * cw` and the exporter's `overlay=x='<position_x>*W'`.
+ *  - `'composition-centre'` — an offset from the composition's centre, with
+ *    the box centred there at `position 0,0`. **A TEXT clip only**, and not a
+ *    leftover: a title's layer is RASTERISED AT CANVAS SIZE with its ink
+ *    centred inside it (`chroma::text::render_text_layer`), and only then
+ *    offset by `position_*`. So the ink a user sees really does start centred
+ *    and move from there, which is exactly what ffmpeg's `drawtext` does on
+ *    the export side too (`x='(w-text_w)/2+w*(position_x)'`). Both engines
+ *    already agreed about titles before D-338 and still do — a title's
+ *    canvas-sized layer makes `cw/2 - cw/2 + px*cw` and `px*cw` the same
+ *    expression — so this is the one place where drawing a centre-anchored
+ *    box is CORRECT rather than the B-201 bug. B-130 is the regression test. */
+export type BoxAnchor = 'top-left' | 'composition-centre';
+
+/** Which anchor a clip's box uses — the ONE place that decision lives, so the
+ *  drawn overlay box (`TransformOverlay`) and the click hit-rect
+ *  (`canvasPick.ts`) can never disagree about it. Same reasoning as
+ *  [`resolvedBoxSize`]'s own extraction (D-204/B-085). */
+export function clipBoxAnchor(clip: Pick<Clip, 'text'>): BoxAnchor {
+  return clip.text ? 'composition-centre' : 'top-left';
+}
+
 /** The clip's bounding box, in composition fractions, at its current
- *  `position`/`scale` and (unscaled) `natural` footprint. */
+ *  `position`/`scale` and (unscaled) `natural` footprint.
+ *
+ *  D-338 — under the default `'top-left'` anchor `position` IS the box's
+ *  top-left corner, so `left`/`top` are that position verbatim and the box's
+ *  size never moves it. That is what makes a drawn box, a click hit-rect
+ *  (`canvasPick.ts`), the Rust preview and the ffmpeg export all agree on one
+ *  rectangle; see the interface doc above. See [`BoxAnchor`] for the one kind
+ *  of clip that is genuinely centre-anchored and why. */
 export function clipBoxFraction(
   natural: { width: number; height: number },
   position: { x: number; y: number },
   scale: number,
+  anchor: BoxAnchor = 'top-left',
 ): FractionBox {
   const width = natural.width * scale;
   const height = natural.height * scale;
-  return {
-    left: 0.5 - width / 2 + position.x,
-    top: 0.5 - height / 2 + position.y,
-    width,
-    height,
-  };
+  return anchor === 'composition-centre'
+    ? { left: 0.5 - width / 2 + position.x, top: 0.5 - height / 2 + position.y, width, height }
+    : { left: position.x, top: position.y, width, height };
+}
+
+/** The box's own centre, in composition fractions — the pivot a corner drag
+ *  scales about (see [`dragCornerScale`]). Per anchor, because the centre of a
+ *  top-left-anchored box moves with its size and the centre of a
+ *  composition-centred one does not. */
+export function boxCentre(
+  natural: { width: number; height: number },
+  position: { x: number; y: number },
+  scale: number,
+  anchor: BoxAnchor = 'top-left',
+): { x: number; y: number } {
+  const box = clipBoxFraction(natural, position, scale, anchor);
+  return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 }
 
 /** The clip's box SIZE (composition fractions) at rest, i.e. with no drag in
@@ -193,15 +243,17 @@ export function dragReposition(
   };
 }
 
-/** Corner drag: uniform scale about the BOX'S OWN centre (`center`, in
- *  composition fractions — `0.5 + position.x`, `0.5 + position.y`, exactly
- *  where `clipBoxFraction` centres it, for any `scale`). That centre is the
- *  only pivot a single `scale` field can express: there is no anchor point
- *  yet (Phase 2), and the compositor itself always scales a layer's
- *  footprint about that same point regardless of `position_*` — see
- *  `clipBoxFraction`'s own doc: `left = 0.5 - width/2 + position.x`, so
- *  `left + width/2` (the centre) never depends on `width`, i.e. never on
- *  `scale`.
+/** Corner drag, the SCALE half: uniform scale about the box's own centre
+ *  (`center`, in composition fractions — `position + size/2`, where `size` is
+ *  the box's own `natural * scale`; `clipBoxFraction`'s `left`/`top` are the
+ *  position verbatim since D-338, so the centre is no longer the constant
+ *  `0.5 + position` it was while the box was centre-anchored).
+ *
+ *  The centre is still the only pivot the gesture uses — there is no anchor
+ *  point field yet (Phase 2) and all four handles drive the same uniform math
+ *  — but since D-338 the compositor anchors a layer at its TOP-LEFT, so
+ *  holding the centre still takes a compensating `position` write as well:
+ *  that is [`dragCornerReposition`], and the two are always used as a pair.
  *
  *  The new scale is the ratio of the pointer's current distance from
  *  `center` to its distance when the drag started — corner-distance-from-
@@ -218,4 +270,41 @@ export function dragCornerScale(
   if (startDist <= 0) return startScale;
   const currentDist = Math.hypot(currentPoint.x - center.x, currentPoint.y - center.y);
   return Math.max(MIN_DRAG_SCALE, startScale * (currentDist / startDist));
+}
+
+/** Corner drag, the POSITION half (D-338): the top-left `position` that keeps
+ *  the box's centre exactly where it was while its scale goes from
+ *  `startScale` to `scale`.
+ *
+ *  **Why this exists at all.** Before D-338 a box was drawn centred on
+ *  `0.5 + position`, so growing `scale` alone already grew it about its own
+ *  centre and a corner drag never had to touch `position`. `position` is now
+ *  the box's top-left corner in both renderers (B-201 — the exporter always
+ *  read it that way), which means `scale` alone grows a box down and to the
+ *  right. Keeping the corner-drag gesture itself unchanged for a human —
+ *  every reference NLE scales about the anchor, and ours sits at the centre
+ *  until there is a real anchor-point field — therefore takes this explicit
+ *  half-a-size-delta shift, which the caller commits alongside the new scale.
+ *
+ *  Pure: `natural` is the box's UNSCALED footprint, so `natural * s` is its
+ *  size at scale `s` and the centre is `position + natural * s / 2`. Setting
+ *  the two centres equal and solving for the new position gives exactly the
+ *  shift below. */
+export function dragCornerReposition(
+  startPosition: { x: number; y: number },
+  natural: { width: number; height: number },
+  startScale: number,
+  scale: number,
+  anchor: BoxAnchor = 'top-left',
+): { x: number; y: number } {
+  // A composition-centred box (a title — see `BoxAnchor`) already grows about
+  // its own centre with `position` untouched, so there is nothing to
+  // compensate; returning `startPosition` keeps this one function total
+  // rather than making every caller remember the exception.
+  if (anchor === 'composition-centre') return startPosition;
+  const delta = scale - startScale;
+  return {
+    x: startPosition.x - (natural.width * delta) / 2,
+    y: startPosition.y - (natural.height * delta) / 2,
+  };
 }

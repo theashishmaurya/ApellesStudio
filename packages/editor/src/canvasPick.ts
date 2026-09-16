@@ -66,7 +66,13 @@
 
 import { resolveClipBoxTransform } from './clipKeyframes';
 import { clipAt, clipCoversFrame, timelineFps, type Clip, type Timeline } from './timeline';
-import { clipBoxFraction, fractionBoxContains, resolvedBoxSize, type FractionBox } from './transformGeometry';
+import {
+  clipBoxAnchor,
+  clipBoxFraction,
+  fractionBoxContains,
+  resolvedBoxSize,
+  type FractionBox,
+} from './transformGeometry';
 
 /** One video layer visible at some frame, identified the way every per-clip
  *  command on this surface already identifies one: by track index + clip
@@ -132,6 +138,11 @@ export function layerBoxFraction(
     resolvedBoxSize(natural, t.scale, { width: t.box_width, height: t.box_height }),
     { x: t.position_x, y: t.position_y },
     1,
+    // D-338 — the SAME anchor rule `TransformOverlay` draws its box from, so a
+    // click can never select a clip whose handles then appear elsewhere (the
+    // property D-204/B-085 extracted `resolvedBoxSize` for, now covering the
+    // anchor too — a title is composition-centred, everything else top-left).
+    clipBoxAnchor(clip),
   );
 }
 

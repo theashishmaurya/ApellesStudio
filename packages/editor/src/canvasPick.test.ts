@@ -91,9 +91,12 @@ describe('layerBoxFraction', () => {
     expect(layerBoxFraction(clip('a', 0, 10), FULL_FRAME, 0)).toEqual({ left: 0, top: 0, width: 1, height: 1 });
   });
 
-  it('applies scale about the clip centre and then position', () => {
+  // D-338 (B-201) — `position_*` is the box's TOP-LEFT corner, in the hit
+  // rect exactly as in both renderers, so `scale` sizes the box and
+  // `position` places its corner with no centring term between them.
+  it('sizes the box by scale and puts its top-left corner at position', () => {
     const box = layerBoxFraction(clip('a', 0, 10, { scale: 0.5, position_x: 0.25 }), FULL_FRAME, 0);
-    expect(box).toEqual({ left: 0.5, top: 0.25, width: 0.5, height: 0.5 });
+    expect(box).toEqual({ left: 0.25, top: 0, width: 0.5, height: 0.5 });
   });
 
   it('honours an independent box_width/box_height override per axis (D-193)', () => {
@@ -117,9 +120,12 @@ describe('layerBoxFraction', () => {
     expect(layerBoxFraction(keyed, FULL_FRAME, 0)).toEqual({ left: 0, top: 0, width: 1, height: 1 });
     // ...and halfway along it is three-quarter size, shifted right — neither
     // of which is the static 0.25 / -0.4 box the pre-fix code tested against.
+    // D-338 — `left` is the interpolated `position_x` itself (0 -> 0.25 at
+    // the halfway point = 0.125), not that plus a size-dependent centring
+    // term.
     const mid = layerBoxFraction(keyed, FULL_FRAME, 50);
     expect(mid.width).toBeCloseTo(0.75);
-    expect(mid.left).toBeCloseTo(0.5 - 0.375 + 0.125);
+    expect(mid.left).toBeCloseTo(0.125);
   });
 
   it('resolves each property over only its OWN keys (D-208), so a foreign key never freezes one', () => {
@@ -181,8 +187,11 @@ describe('pickTopmostLayer', () => {
   });
 
   it('returns null for a point outside every layer box', () => {
+    // D-338 — a 0.2-scale box at position 0,0 occupies the composition's
+    // top-left fifth, so the point that misses it is now one further OUT,
+    // not one nearer the corner.
     const small = clip('a', 0, 10, { scale: 0.2 });
-    expect(pickTopmostLayer({ x: 0.05, y: 0.05 }, [candidate(0, small, FULL_FRAME)])).toBeNull();
+    expect(pickTopmostLayer({ x: 0.5, y: 0.5 }, [candidate(0, small, FULL_FRAME)])).toBeNull();
   });
 
   it('hits a layer whose box contains the point', () => {
@@ -202,7 +211,11 @@ describe('pickTopmostLayer', () => {
 
   it('falls through to a lower layer when the topmost one does not cover the point', () => {
     // A quarter-size PIP parked in the upper-left, over a full-frame layer.
-    const pip = clip('pip', 0, 10, { scale: 0.25, position_x: -0.3, position_y: -0.3 });
+    // D-338 — the upper-left inset is now just `position 0.05, 0.05` (the
+    // box spans 0.05–0.30 on both axes); pre-D-338 the same placement took a
+    // NEGATIVE position, which is the clearest single sign of the old
+    // centre-offset convention.
+    const pip = clip('pip', 0, 10, { scale: 0.25, position_x: 0.05, position_y: 0.05 });
     const candidates = [candidate(0, pip, FULL_FRAME), candidate(1, clip('bg', 0, 10), FULL_FRAME)];
     expect(pickTopmostLayer({ x: 0.2, y: 0.2 }, candidates)?.clip.id).toBe('pip');
     expect(pickTopmostLayer({ x: 0.8, y: 0.8 }, candidates)?.clip.id).toBe('bg');
@@ -215,8 +228,11 @@ describe('pickTopmostLayer', () => {
 
   it('is half-open on the right/bottom edge, so abutting boxes never both claim a point', () => {
     // Left half and right half of the frame, exactly touching at x = 0.5.
-    const left = clip('left', 0, 10, { box_width: 0.5, position_x: -0.25 });
-    const right = clip('right', 0, 10, { box_width: 0.5, position_x: 0.25 });
+    // D-338 — under the top-left convention these are the same numbers the
+    // exporter takes (`overlay=x='0*W'` and `overlay=x='0.5*W'`), which is
+    // the whole point of B-201's fix.
+    const left = clip('left', 0, 10, { box_width: 0.5, position_x: 0 });
+    const right = clip('right', 0, 10, { box_width: 0.5, position_x: 0.5 });
     const candidates = [candidate(0, left, FULL_FRAME), candidate(1, right, FULL_FRAME)];
     expect(pickTopmostLayer({ x: 0.49999, y: 0.5 }, candidates)?.clip.id).toBe('left');
     expect(pickTopmostLayer({ x: 0.5, y: 0.5 }, candidates)?.clip.id).toBe('right');

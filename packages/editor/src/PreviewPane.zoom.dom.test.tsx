@@ -122,6 +122,13 @@ import type { Clip, Timeline, Track } from './timeline';
  *  `{offsetX: -250, offsetY: -125, width: 2000, height: 1000}`. */
 const ZOOMED_PANNED: PreviewView = { zoom: 2, panX: 0.25, panY: 0.25 };
 
+/** D-338 (B-201) — the quarter-size PIP fixture's inset, as a TOP-LEFT
+ *  corner: its box spans 0.05-0.30 on both axes, so a press at fraction
+ *  (0.2, 0.2) is inside it and (0.8, 0.8) is not. Pre-D-338 the same placement
+ *  was spelled `position_x: -0.3` — a NEGATIVE offset from the canvas centre,
+ *  which is the clearest single tell of the old convention. */
+const PIP_INSET = 0.05;
+
 function clip(id: string, extra: Partial<Clip> = {}): Clip {
   return {
     id,
@@ -406,15 +413,24 @@ describe('canvas click-to-select at a NON-fit zoom (D-204 must survive D-218)', 
    */
   const pipOverBg = () =>
     timelineOf([
-      { kind: 'video', clips: [clip('pip', { scale: 0.25, position_x: -0.3, position_y: -0.3 })] },
+      { kind: 'video', clips: [clip('pip', { scale: 0.25, position_x: PIP_INSET, position_y: PIP_INSET })] },
       { kind: 'video', clips: [clip('bg')] },
     ]);
 
   it('resolves the clip through the ZOOMED, PANNED box — not the pre-zoom one', async () => {
     const surface = await mountWith(pipOverBg());
 
+    // The one screen point that discriminates, worked out from both mappings
+    // (D-338 moved the PIP's box to 0.05-0.30 on each axis, so the old
+    // 350,175 now lands exactly ON its half-open right/bottom edge, i.e.
+    // outside it, and would have made this test pass for the wrong reason):
+    //   at FIT     -> (320/1000, 160/500)          = (0.320, 0.320)  -> bg
+    //   ZOOMED_PANNED (content box {-250,-125,2000,1000})
+    //              -> ((320+250)/2000, (160+125)/1000) = (0.285, 0.285) -> pip
+    const DISCRIMINATING = { x: 320, y: 160 };
+
     // Baseline: at fit, this exact point is on the background.
-    firePointerEvent(surface, 'pointerdown', { x: 350, y: 175 });
+    firePointerEvent(surface, 'pointerdown', DISCRIMINATING);
     await waitFrames(1);
     expect(selection()).toEqual([{ track: 1, id: 'bg' }]);
 
@@ -422,7 +438,7 @@ describe('canvas click-to-select at a NON-fit zoom (D-204 must survive D-218)', 
     await waitFrames(1);
 
     // Zoomed and panned, the same point is on the PIP.
-    firePointerEvent(surface, 'pointerdown', { x: 350, y: 175 });
+    firePointerEvent(surface, 'pointerdown', DISCRIMINATING);
     await waitFrames(1);
     expect(selection()).toEqual([{ track: 0, id: 'pip' }]);
   });
@@ -447,7 +463,9 @@ describe('canvas click-to-select at a NON-fit zoom (D-204 must survive D-218)', 
     await waitFrames(1);
 
     // Content box is {-500, -250, 2000, 1000}; screen (0, 0) → fraction
-    // (0.25, 0.25), outside the centred quarter-size clip (0.375..0.625).
+    // (0.25, 0.25). D-338 — the quarter-size clip's box is 0..0.25 on both
+    // axes, and `fractionBoxContains` is half-open on the right/bottom edge,
+    // so exactly 0.25 is outside it.
     firePointerEvent(surface, 'pointerdown', { x: 0, y: 0 });
     await waitFrames(1);
 
@@ -464,9 +482,11 @@ describe('the transform handles at a NON-fit zoom (D-136/D-209 must survive D-21
     await waitFrames(2);
 
     const rect = boxRect(transformBox());
-    // A half-scale full-frame clip: fraction box left/top 0.25, size 0.5.
-    expect(rect.left).toBeCloseTo(-250 + 0.25 * 2000, 6);
-    expect(rect.top).toBeCloseTo(-125 + 0.25 * 1000, 6);
+    // A half-scale full-frame clip: size 0.5, with its top-left corner at its
+    // own `position` of 0,0 (D-338), so the box starts at the content box's
+    // own origin rather than a quarter of the way in.
+    expect(rect.left).toBeCloseTo(-250 + 0 * 2000, 6);
+    expect(rect.top).toBeCloseTo(-125 + 0 * 1000, 6);
     expect(rect.width).toBeCloseTo(0.5 * 2000, 6);
     expect(rect.height).toBeCloseTo(0.5 * 1000, 6);
   });
@@ -519,7 +539,19 @@ describe('the transform handles at a NON-fit zoom (D-136/D-209 must survive D-21
 
     const after = useEditorTimelineStore.getState().timeline?.tracks[0].clips[0];
     expect(after?.scale ?? 1).toBeCloseTo(1, 6);
-    expect(after?.position_x ?? 0).toBeCloseTo(0, 6);
+    // D-338 (B-201) — a corner drag now commits the compensating `position`
+    // alongside the new `scale`. `position_*` names the box's TOP-LEFT corner
+    // in both renderers, so a box that grew about its own centre really did
+    // move that corner; writing only `scale` would leave the picture anchored
+    // where it was and the box would no longer be around it. This clip's
+    // natural footprint is the full frame, so 0.5 -> 1 moves the corner by
+    // half the size change: -(1 × (1 - 0.5)) / 2 = -0.25 on each axis. The
+    // box's CENTRE is still exactly where it was, which is the invariant the
+    // gesture actually promises.
+    expect(after?.position_x ?? 0).toBeCloseTo(-0.25, 6);
+    expect(after?.position_y ?? 0).toBeCloseTo(-0.25, 6);
+    const boxCentreX = (position: number, scale: number) => position + scale / 2;
+    expect(boxCentreX(after?.position_x ?? 0, after?.scale ?? 1)).toBeCloseTo(boxCentreX(0, 0.5), 6);
   });
 });
 

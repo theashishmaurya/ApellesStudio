@@ -41,13 +41,16 @@
 import { useEffect, useRef, useState } from 'react';
 
 import {
+  boxCentre,
   boxToScreenRect,
   clipBoxFraction,
+  dragCornerReposition,
   dragCornerScale,
   dragReposition,
   scaleFractionBoxAbout,
   screenToFraction,
   translateFractionBox,
+  type BoxAnchor,
   type ContentBoxLike,
   type FractionBox,
 } from './transformGeometry';
@@ -66,7 +69,18 @@ const CORNERS: Corner[] = ['nw', 'ne', 'sw', 'se'];
  *  active. */
 type DragState =
   | { kind: 'move'; startPoint: { x: number; y: number }; startPosition: { x: number; y: number } }
-  | { kind: 'scale'; startPoint: { x: number; y: number }; center: { x: number; y: number }; startScale: number };
+  | {
+      kind: 'scale';
+      startPoint: { x: number; y: number };
+      center: { x: number; y: number };
+      startScale: number;
+      /** D-338 — the box is top-left-anchored now, so holding its centre
+       *  still while `scale` changes means writing a compensating `position`
+       *  too (`dragCornerReposition`). That shift is measured from where the
+       *  gesture started, not from the last frame of it, so it stays exact
+       *  over a long drag instead of accumulating. */
+      startPosition: { x: number; y: number };
+    };
 
 /** The box's live, uncommitted geometry mid-drag — what it RENDERS from while
  *  a gesture is in flight, and the exact value the consumer is handed on
@@ -114,6 +128,7 @@ export function TransformBox({
   scale,
   natural,
   restSize,
+  anchor = 'top-left',
   model,
   moveEnabled,
   scaleEnabled,
@@ -139,6 +154,13 @@ export function TransformBox({
    *  an on-canvas resize a deliberately simpler gesture than the Inspector's
    *  (see `TransformOverlay`'s own doc). */
   restSize: { width: number; height: number } | null;
+  /** D-338 — what `position` NAMES for this box: its top-left corner (the
+   *  default, every media layer) or an offset from the composition centre (a
+   *  title). Geometry, not clip knowledge — the consumer decides which, via
+   *  `transformGeometry.ts`'s `clipBoxAnchor`, and this file only applies it.
+   *  Ignored when `model` is given, which supplies its own rectangle and
+   *  pivot outright. */
+  anchor?: BoxAnchor;
   /** D-316 — an explicit rectangle + scale pivot, for a consumer whose box is
    *  measured rather than derived from `natural`/`scale`/`position`. When
    *  given it supersedes `natural`/`restSize` entirely (pass `natural` as the
@@ -227,8 +249,21 @@ export function TransformBox({
     // the same uniform math (Phase 1, unchanged since D-136). D-316 — a
     // `model` consumer names its own pivot instead, because its box does not
     // grow about its centre (a caption grows about its style's anchor).
-    const center = model ? model.pivot : { x: 0.5 + position.x, y: 0.5 + position.y };
-    dragRef.current = { kind: 'scale', startPoint: localPoint(e), center, startScale: scale };
+    //
+    // D-338 — the video-clip centre is `position + natural*scale/2`, not the
+    // old constant `0.5 + position`: `position` is the box's TOP-LEFT corner
+    // now (B-201), so the centre genuinely depends on the box's size. Use
+    // `natural * scale` rather than `restSize` deliberately — a drag always
+    // falls back to the uniform formula (see `restSize`'s own doc), so this is
+    // the centre of the box that will actually be DRAWN for the gesture.
+    const center = model ? model.pivot : boxCentre(natural, position, scale, anchor);
+    dragRef.current = {
+      kind: 'scale',
+      startPoint: localPoint(e),
+      center,
+      startScale: scale,
+      startPosition: position,
+    };
     setDraft({ position, scale });
   };
 
@@ -240,7 +275,19 @@ export function TransformBox({
     if (drag.kind === 'move') {
       setDraft({ position: dragReposition(drag.startPoint, point, drag.startPosition), scale });
     } else {
-      setDraft({ position, scale: dragCornerScale(drag.center, drag.startPoint, point, drag.startScale) });
+      const nextScale = dragCornerScale(drag.center, drag.startPoint, point, drag.startScale);
+      // D-338 — a top-left-anchored box grows down and to the right from
+      // `position` alone, so the compensating shift is what keeps the gesture
+      // feeling like the centre-anchored scale it has always been. A `model`
+      // consumer (a caption) is exempt: its box scales about its own style
+      // anchor and its `position` means that anchor, which a font-size change
+      // does not move — see `TransformBoxModel`.
+      setDraft({
+        position: model
+          ? position
+          : dragCornerReposition(drag.startPosition, natural, drag.startScale, nextScale, anchor),
+        scale: nextScale,
+      });
     }
   };
 
@@ -263,9 +310,10 @@ export function TransformBox({
   // `position`, and scaled about the model's own pivot by however much it has
   // grown `scale`. BOTH are applied unconditionally rather than switched on
   // the gesture kind, because each is the identity for the other's gesture (a
-  // move never changes `scale`, a corner drag never changes `position`) — so
-  // there is no kind to get wrong here, and the render needs no access to the
-  // in-flight `dragRef`.
+  // move never changes `scale`, and a corner drag never changes a CAPTION's
+  // `position` — D-338's compensating shift is applied only to the video-clip
+  // parameterization, see `handlePointerMove`) — so there is no kind to get
+  // wrong here, and the render needs no access to the in-flight `dragRef`.
   //
   // Otherwise (the video-clip parameterization): while a drag is live the box
   // always follows the uniform `natural * scale` formula; at rest an
@@ -282,8 +330,8 @@ export function TransformBox({
         scale !== 0 ? liveScale / scale : 1,
       )
     : draft || !restSize
-      ? clipBoxFraction(natural, livePosition, liveScale)
-      : clipBoxFraction(restSize, livePosition, 1);
+      ? clipBoxFraction(natural, livePosition, liveScale, anchor)
+      : clipBoxFraction(restSize, livePosition, 1, anchor);
   const rect = boxToScreenRect(box, contentBox);
 
   return (

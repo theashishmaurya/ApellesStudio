@@ -6,6 +6,7 @@ import {
   MIN_DRAG_SCALE,
   boxToScreenRect,
   clipBoxFraction,
+  dragCornerReposition,
   dragCornerScale,
   dragReposition,
   fractionBoxContains,
@@ -16,38 +17,50 @@ import {
 } from './transformGeometry';
 
 describe('clipBoxFraction', () => {
-  it('centres a full-frame, unscaled, unoffset clip exactly on the composition', () => {
+  it('places a full-frame, unscaled, unoffset clip exactly over the composition', () => {
     const box = clipBoxFraction({ width: 1, height: 1 }, { x: 0, y: 0 }, 1);
     expect(box).toEqual({ left: 0, top: 0, width: 1, height: 1 });
   });
 
-  it('a smaller source sits centred, with equal margin on every side', () => {
+  // D-338 (B-201) — `position` IS the box's top-left corner, so a smaller
+  // source at position 0,0 sits in the composition's top-left corner rather
+  // than centred. That is what ffmpeg's `overlay=x='0*W':y='0*H'` does, and
+  // since D-338 what `composite_layer_onto` does too.
+  it('a smaller source sits at the composition origin, not centred', () => {
     // a 0.4-wide, 0.3-tall natural footprint, unscaled, unoffset
     const box = clipBoxFraction({ width: 0.4, height: 0.3 }, { x: 0, y: 0 }, 1);
     expect(box.width).toBeCloseTo(0.4);
     expect(box.height).toBeCloseTo(0.3);
-    expect(box.left).toBeCloseTo(0.3); // (1 - 0.4) / 2
-    expect(box.top).toBeCloseTo(0.35); // (1 - 0.3) / 2
+    expect(box.left).toBeCloseTo(0);
+    expect(box.top).toBeCloseTo(0);
   });
 
-  it('scale grows the box about its own centre, not the composition corner', () => {
+  it('scale grows the box about its own TOP-LEFT corner, which never moves', () => {
     const natural = { width: 0.5, height: 0.5 };
-    const position = { x: 0.1, y: -0.1 };
+    const position = { x: 0.1, y: 0.1 };
     const a = clipBoxFraction(natural, position, 1);
     const b = clipBoxFraction(natural, position, 2);
-    const centerA = { x: a.left + a.width / 2, y: a.top + a.height / 2 };
-    const centerB = { x: b.left + b.width / 2, y: b.top + b.height / 2 };
-    expect(centerB.x).toBeCloseTo(centerA.x);
-    expect(centerB.y).toBeCloseTo(centerA.y);
+    expect(b.left).toBeCloseTo(a.left);
+    expect(b.top).toBeCloseTo(a.top);
     expect(b.width).toBeCloseTo(a.width * 2);
     expect(b.height).toBeCloseTo(a.height * 2);
   });
 
-  it('position offsets the box by exactly that fraction, on top of centring', () => {
-    const box = clipBoxFraction({ width: 0.2, height: 0.2 }, { x: 0.25, y: -0.1 }, 1);
-    // centred would be left=0.4,top=0.4; offset by +0.25 x, -0.1 y
-    expect(box.left).toBeCloseTo(0.65);
-    expect(box.top).toBeCloseTo(0.3);
+  it('position is the box corner verbatim, with no centring term', () => {
+    const box = clipBoxFraction({ width: 0.2, height: 0.2 }, { x: 0.25, y: 0.1 }, 1);
+    expect(box.left).toBeCloseTo(0.25);
+    expect(box.top).toBeCloseTo(0.1);
+  });
+
+  it('the box size never enters into where the box starts', () => {
+    // The pre-D-338 formula had `left = 0.5 - width/2 + position.x`, so a
+    // wider box started further left for the same position. B-201 is exactly
+    // that term; this pins its absence.
+    const position = { x: 0.2, y: 0.3 };
+    const narrow = clipBoxFraction({ width: 0.1, height: 0.1 }, position, 1);
+    const wide = clipBoxFraction({ width: 0.9, height: 0.8 }, position, 1);
+    expect(narrow.left).toBeCloseTo(wide.left);
+    expect(narrow.top).toBeCloseTo(wide.top);
   });
 });
 
@@ -136,6 +149,55 @@ describe('dragCornerScale', () => {
     // the drag can't have started ON the pivot in practice (nothing to grab
     // there), but this guards the division rather than producing NaN/Infinity.
     expect(dragCornerScale(center, center, { x: 0.9, y: 0.9 }, 1.5)).toBe(1.5);
+  });
+});
+
+// D-338 (B-201) — the position half of the same gesture. A box is anchored at
+// its top-left corner now, so holding its centre still while `scale` changes
+// takes an explicit compensating shift; without one, every corner drag would
+// slide the picture down and to the right by half the size change.
+describe('dragCornerReposition', () => {
+  const natural = { width: 0.4, height: 0.2 };
+
+  it('is exactly a no-op when the scale did not change', () => {
+    const start = { x: 0.3, y: 0.25 };
+    expect(dragCornerReposition(start, natural, 1.5, 1.5)).toEqual(start);
+  });
+
+  it('keeps the box centre exactly where it was, growing and shrinking', () => {
+    const start = { x: 0.3, y: 0.25 };
+    const centreOf = (position: { x: number; y: number }, scale: number) => ({
+      x: position.x + (natural.width * scale) / 2,
+      y: position.y + (natural.height * scale) / 2,
+    });
+    const before = centreOf(start, 1);
+    for (const scale of [2, 0.5, 1.37]) {
+      const after = centreOf(dragCornerReposition(start, natural, 1, scale), scale);
+      expect(after.x).toBeCloseTo(before.x);
+      expect(after.y).toBeCloseTo(before.y);
+    }
+  });
+
+  it('shifts each axis by half that axis own size change, per axis', () => {
+    // 1 -> 2 on a 0.4 x 0.2 footprint: x by -0.2, y by -0.1. Per axis, like
+    // every other geometry field here (see `position_is_normalised_per_axis`
+    // on the Rust side).
+    const moved = dragCornerReposition({ x: 0, y: 0 }, natural, 1, 2);
+    expect(moved.x).toBeCloseTo(-0.2);
+    expect(moved.y).toBeCloseTo(-0.1);
+  });
+
+  it('telescopes: the same end scale lands in the same place however it was reached', () => {
+    // `TransformBox` calls this from the GESTURE's start on every pointermove,
+    // never from the last frame's values. This pins that the two are equivalent
+    // — a drag through 1.5 on the way to 2 ends exactly where a drag straight
+    // to 2 does — so a caller that re-bases mid-gesture cannot drift the
+    // picture, and the accumulate-twice bug has no room to exist.
+    const start = { x: 0.3, y: 0.25 };
+    const direct = dragCornerReposition(start, natural, 1, 2);
+    const viaMidpoint = dragCornerReposition(dragCornerReposition(start, natural, 1, 1.5), natural, 1.5, 2);
+    expect(viaMidpoint.x).toBeCloseTo(direct.x);
+    expect(viaMidpoint.y).toBeCloseTo(direct.y);
   });
 });
 

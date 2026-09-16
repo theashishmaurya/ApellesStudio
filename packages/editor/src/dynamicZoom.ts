@@ -119,15 +119,30 @@ export function dynamicZoomFramings(
   return { start: dynamicZoomFramingAt(clip, span.first), end: dynamicZoomFramingAt(clip, span.last) };
 }
 
-/** `framing` pushed in by [`DYNAMIC_ZOOM_DEFAULT_PUSH`] about its own centre —
- *  the default END box for a clip that has no zoom yet, and what an omitted
- *  `end` argument means to `editor_set_dynamic_zoom`.
+/** `framing` pushed in by [`DYNAMIC_ZOOM_DEFAULT_PUSH`] — the default END box
+ *  for a clip that has no zoom yet, and what an omitted `end` argument means
+ *  to `editor_set_dynamic_zoom`.
  *
- *  Position is unchanged, deliberately: `scale` in this model always grows the
- *  box about the point `0.5 + position`, whatever its size (see
- *  `transformGeometry.ts`'s `clipBoxFraction` — `left + width/2` does not
- *  depend on `width`), so a pure scale change IS a centred push-in and moving
- *  `position` too would drift the framing off the subject. */
+ *  **The push is anchored at the box's TOP-LEFT corner**, because `position`
+ *  is that corner in both renderers (D-338, fixes B-201) and this function
+ *  leaves `position` alone. It is worth being exact about what changed: the
+ *  pre-D-338 doc here claimed a pure `scale` change was a *centred* push-in,
+ *  which was true of the live preview only — the ffmpeg exporter has always
+ *  compiled `scale=` + `overlay=x='<position_x>*W'`, i.e. grown the box down
+ *  and to the right. So a default dynamic zoom has never actually rendered as
+ *  a centred push in the file it exports; D-338 makes the preview show what
+ *  the export was already doing rather than changing what it does.
+ *
+ *  **Why it is not compensated here** (the way `transformGeometry.ts`'s
+ *  `dragCornerReposition` compensates the on-canvas corner drag): holding the
+ *  centre still takes the clip's unscaled footprint in composition fractions,
+ *  and a [`DynamicZoomFraming`] is only the three animated numbers. The two
+ *  callers do not both have that footprint — `editor_set_dynamic_zoom` works
+ *  from the stored `Clip` alone, with no source-resolution probe — and giving
+ *  the agent path and the GUI path two different defaults would be worse than
+ *  one honest, documented one. A real anchor-point field is the fix and is on
+ *  `docs/04-roadmap.md`; until then, name an explicit `end` framing (or drag
+ *  the end box) for a centred push. */
 export function defaultDynamicZoomEnd(framing: DynamicZoomFraming): DynamicZoomFraming {
   return { ...framing, scale: framing.scale * DYNAMIC_ZOOM_DEFAULT_PUSH };
 }

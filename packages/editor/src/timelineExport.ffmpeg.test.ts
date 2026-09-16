@@ -1142,3 +1142,118 @@ describe.skipIf(!FFMPEG_AVAILABLE)('per-clip parametric EQ — real frequency re
     expect(Math.abs(highDrop)).toBeLessThan(1.5);
   }, 90000);
 });
+
+// ---------------------------------------------------------------------- //
+// D-338 / B-201 — the CROSS-ENGINE placement parity pair.
+// ---------------------------------------------------------------------- //
+//
+// **This is one half of a deliberately duplicated pair of tests.** Its twin is
+// `composite_layer_onto_agrees_with_the_exporter_on_the_parity_rectangle` in
+// `app/src-tauri/src/chroma/edit.rs`. Both render the SAME named transform —
+// `PARITY_TRANSFORM` below, spelled identically in both files — onto a canvas
+// of the SAME size, and both assert the SAME hard-coded on-canvas rectangle.
+// Neither test knows the other exists at run time; the point is precisely that
+// a change to either engine's placement math fails a test IN THAT ENGINE'S OWN
+// LANGUAGE, against a number written down independently of it.
+//
+// **Why a pair and not one test.** The two engines are a Rust image
+// compositor and a spawned ffmpeg process, in two toolchains with two test
+// runners. A single test spanning them would have to build and run the Tauri
+// crate from vitest (or drive ffmpeg from `cargo test` and re-implement this
+// file's fixture generation there); either direction buys a shared assertion
+// at the cost of a test almost nobody can run. Two tests plus one shared,
+// hard-coded expected rectangle buys the same regression protection with each
+// half runnable on its own.
+//
+// **Why it exists.** B-201: `position_x`/`position_y` meant a CENTRE OFFSET in
+// the preview and the TOP-LEFT CORNER in the export. Each engine's own tests
+// passed; they disagreed by `(1 - box_fraction)/2` of the canvas on every
+// non-full-frame overlay, and the divergence vanished at full frame — which is
+// the only geometry anyone had ever checked end to end. B-201's own write-up
+// names the missing cross-engine test as the actual root cause of the bug
+// surviving. This is that test.
+describe.skipIf(!FFMPEG_AVAILABLE)('D-338/B-201 — placement parity with the live-preview compositor', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'chroma-parity-export-test-'));
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** The canvas both engines render into. Chosen so every number below is an
+   *  exact integer in both — no rounding to argue about when a test fails. */
+  const CANVAS = { width: 320, height: 240 };
+
+  /** The one transform under test, spelled identically in `edit.rs`.
+   *  Deliberately NOT full-frame and NOT centred: those are exactly the two
+   *  geometries where the old and new conventions coincide, i.e. the ones
+   *  that could never have caught B-201. */
+  const PARITY_TRANSFORM = { box_width: 0.5, box_height: 0.5, position_x: 0.25, position_y: 0.25 };
+
+  /** The rectangle that transform MUST cover, in canvas pixels, half-open:
+   *  x from `0.25 * 320 = 80` for `0.5 * 320 = 160`, y from `0.25 * 240 = 60`
+   *  for `0.5 * 240 = 120`. Written out as literals rather than recomputed
+   *  from the transform, so a test cannot follow a broken formula. */
+  const EXPECTED = { x0: 80, y0: 60, x1: 240, y1: 180 };
+
+  it('lands the parity transform on exactly the rectangle edit.rs asserts', () => {
+    // Solid magenta, so "the overlay" and "the black base" cannot be
+    // confused for each other at any sampled pixel.
+    const src = join(dir, 'magenta.mp4');
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'color=c=magenta:size=160x120:duration=2:rate=24',
+      '-pix_fmt', 'yuv420p', src,
+    ]);
+    const c = clip('parity', {
+      source_path: src,
+      source_fps: 24,
+      duration: 48,
+      source_len: 48,
+      ...PARITY_TRANSFORM,
+    });
+    const out = join(dir, 'parity.mp4');
+    execFileSync(
+      'ffmpeg',
+      ['-y', ...buildExportFfmpegArgs(timeline([track('video', [c])]), out, { fps: 24, ...CANVAS })],
+      { stdio: 'pipe' },
+    );
+
+    // `INSET` keeps every sample clear of the edge itself: h.264 at yuv420p
+    // subsamples chroma 2x2 and the encoder softens a hard colour boundary
+    // over a pixel or two, so a sample ON the boundary is legitimately a
+    // blend. Four pixels is far inside that and far outside the ~80/60 px
+    // error the old convention would have produced, which is the difference
+    // this test has to be able to see.
+    const INSET = 4;
+    const magenta = (p: [number, number, number]) => p[0] > 150 && p[2] > 150 && p[1] < 90;
+    const black = (p: [number, number, number]) => Math.max(...p) < 50;
+    const at = (x: number, y: number) => pixelAt(out, 1.0, x, y);
+
+    // inside all four corners of the expected rect
+    for (const [x, y] of [
+      [EXPECTED.x0 + INSET, EXPECTED.y0 + INSET],
+      [EXPECTED.x1 - INSET, EXPECTED.y0 + INSET],
+      [EXPECTED.x0 + INSET, EXPECTED.y1 - INSET],
+      [EXPECTED.x1 - INSET, EXPECTED.y1 - INSET],
+    ]) {
+      const p = at(x, y);
+      expect(magenta(p), `(${x},${y}) should be inside the overlay, got ${p}`).toBe(true);
+    }
+
+    // and OUTSIDE it on all four sides — including the two places the
+    // pre-D-338 preview would have put it (it centred the 160x120 box, i.e.
+    // x from 80 and y from 60 PLUS the position offset, landing at 160,120)
+    for (const [x, y, why] of [
+      [EXPECTED.x0 - INSET, EXPECTED.y0 + INSET, 'left of the box'],
+      [EXPECTED.x1 + INSET, EXPECTED.y0 + INSET, 'right of the box'],
+      [EXPECTED.x0 + INSET, EXPECTED.y0 - INSET, 'above the box'],
+      [EXPECTED.x0 + INSET, EXPECTED.y1 + INSET, 'below the box'],
+    ] as Array<[number, number, string]>) {
+      const p = at(x, y);
+      expect(black(p), `(${x},${y}) is ${why} and should be the black base, got ${p}`).toBe(true);
+    }
+  }, 60000);
+});

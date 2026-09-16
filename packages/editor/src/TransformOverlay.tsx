@@ -140,7 +140,7 @@ import { findClip, timelineFps, type ClipTransformParam } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 import { TransformBox, type TransformDraft, type TransformGestureKind } from './TransformBox';
-import { resolvedBoxSize } from './transformGeometry';
+import { clipBoxAnchor, resolvedBoxSize } from './transformGeometry';
 
 export function TransformOverlay({ container }: { container: HTMLElement | null }) {
   const timeline = useEditorTimelineStore((s) => s.timeline);
@@ -290,13 +290,26 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   const commit = (next: TransformDraft, kind: TransformGestureKind) => {
     if (!primary || !clip || clipIndex < 0) return;
     const keyframes = clip.chroma_keyframes;
+    // D-338 (B-201) — a corner drag now commits `position_x`/`position_y` as
+    // well as `scale`. `position_*` is the box's TOP-LEFT corner in both
+    // renderers since D-338, so a box that grew about its own centre really
+    // did move its top-left corner, and `TransformBox` has already computed
+    // exactly where to (`dragCornerReposition`). Writing only `scale` would
+    // leave the picture anchored at its old top-left — i.e. the box the user
+    // just dragged and the frame they get would differ by half the size
+    // change, which is precisely the class of "the box lies" defect D-209 and
+    // B-093 closed from the other direction.
     const dragged: Array<[ClipTransformParam, number]> =
       kind === 'move'
         ? [
             ['position_x', next.position.x],
             ['position_y', next.position.y],
           ]
-        : [['scale', next.scale]];
+        : [
+            ['scale', next.scale],
+            ['position_x', next.position.x],
+            ['position_y', next.position.y],
+          ];
 
     const keyed: Record<string, number> = {};
     const statics: Partial<Record<ClipTransformParam, number>> = {};
@@ -383,6 +396,7 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
         scale={committedScale}
         natural={natural}
         restSize={restSize}
+        anchor={clipBoxAnchor(clip)}
         moveEnabled={!trackLocked}
         scaleEnabled={!trackLocked && !isText}
         strokeClassName="border-accent"

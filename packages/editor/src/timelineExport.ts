@@ -1551,10 +1551,11 @@ function buildClipFilterChain(
   // `'stretch'` keeps the pre-B-074 behavior of forcing both dimensions to
   // canvas-relative fractions (always canvas-shaped, any `scale`).
   // `position_y` always just places the resulting box's top-left corner
-  // (D-136's convention, unchanged either way) — the CALLER computes where
-  // to put it, e.g. centering a shorter-than-its-slot 'fit' box within one
-  // canvas-half using the clip's own known aspect ratio from
-  // `editor_import_media`'s probe result.
+  // (ffmpeg's own `overlay` convention — and, since D-338, the live
+  // preview's too; B-201 is the six days the two disagreed about this) — so
+  // the CALLER computes where to put it, e.g. centering a
+  // shorter-than-its-slot 'fit' box within one canvas-half using the clip's
+  // own known aspect ratio from `editor_import_media`'s probe result.
   //
   // D-193 — `box_height`, when the clip has one, is the same kind of direct
   // canvas-fraction override as `box_width` above and takes priority over
