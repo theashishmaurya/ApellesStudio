@@ -5707,6 +5707,13 @@ def motion_list_primitives() -> str:
     `layerTransformFields` (for `motion_set_layer_transform_field`),
     `layerTransformKeyFields`, and the 2D/3D camera key fields.
 
+    Several `fields` are `kind: "json"` — the primitive's own CONTENT, an array
+    of objects rather than a scalar knob. Their labels spell out the item shape,
+    because that shape is not otherwise discoverable: `graph`'s `edges`, for
+    one, take `{from, to, directed?, weight?}`, where `weight` (0-1, default 1)
+    scales how bright and how thick that edge draws — which is what lets a full
+    mesh show WHICH connections matter rather than drawing every one the same.
+
     Without this, a legal `use` value or a field key is only discoverable by
     reading the app's source. `motion_set_layer_field` will still WRITE an
     unknown key (a hand-authored manifest may legitimately carry one) but

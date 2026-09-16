@@ -10,11 +10,11 @@
  * A 3D version belongs in Scene3D later; this covers the flat-diagram case.
  *
  * Props:
- *   nodes     [{ id, label?, x?, y? }]         — give x/y to pin, else force-laid
- *   edges     [{ from, to, directed? }]
- *   pulses    [{ from, to, at, dur?, color? }] — a dot travels from→to over dur frames
- *   highlight [{ id, at, dur? }]               — node glows/rings on its schedule
- *   enter     { at, stagger }                  — node pop-in schedule (edges follow)
+ *   nodes     [{ id, label?, x?, y? }]                  — give x/y to pin, else force-laid
+ *   edges     [{ from, to, directed?, weight? }]        — `weight` 0..1, default 1 (D-340)
+ *   pulses    [{ from, to, at, dur?, color? }]          — a dot travels from→to over dur frames
+ *   highlight [{ id, at, dur? }]                        — node glows/rings on its schedule
+ *   enter     { at, stagger }                           — node pop-in schedule (edges follow)
  */
 import React, { useMemo } from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
@@ -32,7 +32,65 @@ import { mulberry32 } from "../lib/rng";
 import { roughEllipse, roughLine } from "../lib/rough";
 
 export type GraphNode = { id: string; label?: string; x?: number; y?: number };
-export type GraphEdge = { from: string; to: string; directed?: boolean };
+
+/**
+ * D-340 — `weight` is how STRONG this connection is, `0..1`, default `1`.
+ *
+ * Without it every edge in a mesh renders identically no matter how much the
+ * two nodes actually relate, which defeats the point of drawing the mesh (the
+ * self-attention case this was added for: a full mesh over the words of a
+ * sentence, where the whole message is WHICH pairs matter).
+ *
+ * It scales BOTH opacity and stroke width, between the floors below and the
+ * primitive's own pre-existing full-strength values — not opacity alone
+ * (a merely faint line reads as "further away", not "weaker") and not width
+ * alone (a hairline at these widths is nearly invisible against the ground).
+ *
+ * Absent ⇒ `1` ⇒ exactly the stroke this primitive always drew, so every
+ * manifest already using `graph` is unaffected.
+ */
+export type GraphEdge = {
+  from: string;
+  to: string;
+  directed?: boolean;
+  /** 0..1, default 1. Clamped. */
+  weight?: number;
+};
+
+/** The weight-1 stroke width — this primitive's own pre-D-340 constant. */
+const EDGE_STROKE_FULL = 2.5;
+/**
+ * The weight-0 floor, deliberately NOT zero: "these two barely relate" is a
+ * fact worth seeing, and an edge that vanishes entirely is indistinguishable
+ * from one the author forgot to write.
+ */
+const EDGE_STROKE_MIN = 0.9;
+const EDGE_OPACITY_MIN = 0.12;
+
+/**
+ * `weight` → the stroke this edge draws with. Exported as a pure function so
+ * the mapping is directly unit-testable (`@apelles/motion`'s `graphEdge.test.ts`
+ * — this package has no test runner of its own), the same split
+ * `Camera.tsx`'s `cameraDrift` already uses.
+ *
+ * `undefined` and `1` must return the identical result, and that result must
+ * be the primitive's own pre-D-340 stroke — that is the whole no-regression
+ * guarantee for every manifest already using `graph`.
+ */
+export const graphEdgeStroke = (
+  weight: number | undefined,
+): { strokeWidth: number; opacity: number } => {
+  // A `graph` layer is `.passthrough()` in the manifest schema, so `edges` is
+  // never validated item by item — a hand-authored `"weight": "0.4"` really
+  // does arrive here as a non-number. A non-finite value falls back to the
+  // full-strength default rather than propagating `NaN` into an SVG attribute,
+  // where it would silently drop the whole stroke.
+  const w = Number.isFinite(weight) ? Math.max(0, Math.min(1, weight as number)) : 1;
+  return {
+    strokeWidth: EDGE_STROKE_MIN + (EDGE_STROKE_FULL - EDGE_STROKE_MIN) * w,
+    opacity: EDGE_OPACITY_MIN + (1 - EDGE_OPACITY_MIN) * w,
+  };
+};
 export type GraphPulse = {
   from: string;
   to: string;
@@ -165,10 +223,13 @@ export const Graph: React.FC<{
           Math.max(nodeIndex[e.from], nodeIndex[e.to]) * enter.stagger +
           6;
         const draw = inAt(frame, drawStart, drawStart + 14);
+        // D-340 — see `GraphEdge.weight`. `w === 1` (the default) reproduces
+        // the exact `2.5` / full-opacity stroke this primitive always drew.
+        const { strokeWidth, opacity } = graphEdgeStroke(e.weight);
         const d = roughLine([a.x, a.y], [b.x, b.y], {
           seed: 100 + i,
           color: theme.strokeSoft,
-          strokeWidth: 2.5,
+          strokeWidth,
           roughness: theme.roughness,
           bowing: theme.bowing,
         });
@@ -178,7 +239,8 @@ export const Graph: React.FC<{
             d={d}
             fill="none"
             stroke={theme.strokeSoft}
-            strokeWidth={2.5}
+            strokeWidth={strokeWidth}
+            strokeOpacity={opacity}
             strokeLinecap="round"
             pathLength={1}
             strokeDasharray={1}

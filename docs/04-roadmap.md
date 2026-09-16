@@ -3612,6 +3612,15 @@ surfaces; `motion_list_primitives` publishes the registry. Still open: no GUI
 theme picker — `theme`, like `title`/`width`/`height`/`fps`, is a manifest-level
 field a human edits in the raw-JSON editor.
 
+**`graph` edges carry a weight (2026-09-17, D-340):** `{from, to, directed?,
+weight?}` — `weight` 0-1, default 1, scaling both the edge's stroke width and
+its opacity, with a deliberately non-zero floor so a near-zero edge still draws.
+Added so an attention mesh over the real words of a sentence can show WHICH
+connections matter, replacing the `matrix` heatmap that was rejected as the
+genre's most overused visual. Purely additive: absent `weight` renders
+byte-identically. Documented on both MCP surfaces and in the Inspector's own
+field label.
+
 **Deferred, not abandoned — build LAST, right before launch, per the owner's own
 sequencing (2026-09-08):** fal.ai media generation (auto-added to the timeline),
 a lightweight backend for sign-in/credits/payment/usage tracking, an opt-in

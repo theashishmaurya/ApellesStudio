@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **D-340: a `graph` edge carries a `weight`.** The
+  self-attention scene's `matrix` heatmap was rejected as the most overused
+  visual in the AI-explainer genre; the replacement is a `graph` mesh over the
+  real words of a sentence — which only works if an edge can say how strong it
+  is. `{from, to, directed?, weight?}`, 0-1, default 1, scaling BOTH stroke
+  width and opacity (opacity alone reads as "further away", width alone is
+  invisible at 2.5px). The weight-0 floor is deliberately non-zero: "these two
+  barely relate" is worth seeing, and a vanished edge is indistinguishable from
+  a forgotten one. Absent `weight` renders byte-identically (verified with real
+  `remotion still` renders at two frames). The test caught a real `NaN` path on
+  its first run — a hand-authored `"weight": "0.4"` reaches an unvalidated
+  `.passthrough()` field and would have silently dropped the stroke.
 - **2026-09-17** — **D-339: the motion engine's locked look becomes a theme
   registry.** `design.ts`'s one flat `design` constant (19 files imported it
   directly, so no manifest could ever choose a different look) is now a named

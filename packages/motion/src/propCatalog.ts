@@ -146,8 +146,12 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'height', label: 'Height', kind: 'number', group: 'layout' },
   ],
   graph: [
-    { key: 'nodes', label: 'Nodes', kind: 'json', group: 'content' },
-    { key: 'edges', label: 'Edges', kind: 'json', group: 'content' },
+    { key: 'nodes', label: 'Nodes [{id, label?, x?, y?}]', kind: 'json', group: 'content' },
+    // D-340 — the label carries the item shape because `weight` is the whole
+    // point of the field and a bare "Edges" makes it undiscoverable (the same
+    // reason `CAM3D_KEY_FIELDS` spells out `[x,y,z]`). `weight` is 0..1,
+    // default 1, and scales the edge's opacity AND stroke width.
+    { key: 'edges', label: 'Edges [{from, to, directed?, weight? 0-1}]', kind: 'json', group: 'content' },
     { key: 'pulses', label: 'Pulses', kind: 'json', group: 'content' },
     { key: 'highlight', label: 'Highlight', kind: 'json', group: 'content' },
     { key: 'enter', label: 'Enter schedule', kind: 'json', group: 'timing' },

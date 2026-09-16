@@ -33480,3 +33480,68 @@ drifted by NINE tools before this one (D-318's recut surface, D-329's timeline
 transcript, D-330's two debug tools, D-332's four layer-preset tools);
 `crates/apelles-mcp`'s own "175 tools" / "160 release vs 171 debug" comments
 were four behind for the same reason. Both re-counted against the real files.
+
+---
+
+## D-340 — a `graph` edge carries a `weight`, so a mesh can show WHICH connections matter
+
+**decided (2026-09-17)** · extends D-151's primitive catalog · unblocks the
+self-attention scene's move off `matrix`
+
+**Context.** The self-attention scene used the `matrix` (heatmap grid)
+primitive to show attention weights. Reviewed live and rejected — technically
+accurate, but the single most overused visual in the whole AI-explainer genre.
+The approved replacement is a `graph` mesh over the real words of a sentence,
+with edge brightness encoding attention strength and `pulses` animating the
+"glancing back" motion.
+
+`graph`'s edge shape was `{from, to, directed?}` — **no strength field at all**,
+so every edge rendered identically no matter how strong that connection was,
+which defeats the entire point of drawing the mesh.
+
+**Options.**
+
+1. **A per-edge `color`.** Rejected: colour in this engine already means "which
+   accent role", and a full mesh would need a hand-authored colour per edge.
+2. **A parallel `edgeWeights` map keyed by `from`/`to`.** Rejected: a second
+   structure to keep in sync with `edges`, and it breaks the moment two nodes
+   have more than one edge between them.
+3. **A `weight` field on the edge object itself.** Chosen.
+
+**Decision.** `{from, to, directed?, weight?}` — `weight` a number `0..1`,
+default `1`, clamped. It scales **both** the edge's stroke width and its
+opacity, between a floor and the primitive's own pre-existing full-strength
+values.
+
+- **Both channels, not one.** Opacity alone reads as "further away" rather than
+  "weaker" at a glance; width alone is nearly invisible at the widths this
+  primitive draws at (2.5px on a 1080p canvas).
+- **The floor is deliberately non-zero** (`0.9px` / `0.12` opacity). In an
+  attention mesh "these two words barely attend to each other" is a fact worth
+  seeing, and an edge that vanishes entirely is indistinguishable from an edge
+  the author forgot to write.
+- **A non-finite weight falls back to `1`, not to `NaN`.** A `graph` layer is
+  `.passthrough()` in the schema, so `edges` is never validated item by item and
+  a hand-authored `"weight": "0.4"` really does arrive as a non-number;
+  `Math.max(0, Math.min(1, NaN))` is `NaN`, which in an SVG attribute silently
+  drops the whole stroke. Found by `graphEdge.test.ts` on its first run and
+  fixed, rather than asserted away.
+- The mapping lives in an exported pure `graphEdgeStroke(weight)` so it is
+  directly unit-testable — the same split `Camera.tsx`'s `cameraDrift` uses,
+  since this package has no test runner of its own.
+
+**No schema change was needed.** `layer` is `.passthrough()`, so per-primitive
+props are not re-declared in `engine/schema.ts`. What *did* need updating is the
+capability documentation an agent reads instead of the source: `propCatalog.ts`'s
+`edges` label now spells out the item shape (the same thing `CAM3D_KEY_FIELDS`
+already does with `[x,y,z]`), `catalog.ts`'s description says what `weight` is
+for, and `motion_list_primitives` explains the `kind: "json"` content fields'
+shapes on both MCP surfaces. The parity corpus was regenerated a second time for
+that description change — this commit's regeneration covers it.
+
+**Verification.** `remotion still` of a 7-node / 8-edge `graph` scene with **no
+`weight` anywhere**, at frames 70 and 150 (edge draw-on mid-flight, and a
+travelling pulse with a node highlight), before and after: byte-identical
+(sha256 `bb511e2e…`, `69c9e133…`). A weighted mesh rendered for real reads the
+way it should — the `weight: 1` and `0.9` edges are plainly the thick bright
+ones, the `0.05`–`0.12` ones are faint but present hairlines.

@@ -91,6 +91,20 @@ A theme's own webfaces load through `themeFonts.ts`: the default theme's face at
 module scope (exactly where `Video.tsx` used to call `loadFont()`), any other
 theme's the first time a render resolves to it.
 
+## `graph` edge weights (D-340)
+
+A `graph` edge is `{from, to, directed?, weight?}`. `weight` is `0..1`,
+**default `1`**, and scales both the edge's stroke width and its opacity —
+both channels, because opacity alone reads as "further away" rather than
+"weaker" and width alone is nearly invisible at 2.5px on a 1080p canvas.
+
+The weight-`0` end is a **floor, not a disappearance**: in an attention mesh
+"these two barely relate" is a fact worth seeing, and an edge that vanishes is
+indistinguishable from one the author forgot to write. Absent `weight` ⇒ `1` ⇒
+exactly the stroke this primitive always drew (verified byte-identical). The
+mapping is the exported pure `graphEdgeStroke(weight)`, unit-tested in
+`@apelles/motion`'s `graphEdge.test.ts`.
+
 ## Determinism rules
 
 Remotion renders each frame independently — same frame must produce same pixels.
