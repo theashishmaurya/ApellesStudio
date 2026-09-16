@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **D-339: the motion engine's locked look becomes a theme
+  registry.** `design.ts`'s one flat `design` constant (19 files imported it
+  directly, so no manifest could ever choose a different look) is now a named
+  `THEMES` registry resolved per render through a React context, off a new
+  optional top-level `manifest.theme`. The locked "dark Excalidraw" values are
+  kept unchanged to the byte as the `dark-excalidraw` preset and stay the
+  engine default — a manifest with no `theme` key renders exactly as before,
+  proved with byte-identical `remotion still` renders at four frames covering
+  2D, roughjs and the 3D scene. Second preset `apelles-studio` is
+  apelles.studio's own editorial look, sourced field-by-field from
+  `website/src/styles/tokens.css`: basalt ground, marble ink, ochre as the ONE
+  working colour (terracotta fails contrast on basalt — the site's own rule),
+  Newsreader / Instrument Sans / IBM Plex Mono, and `roughness: 0` so the
+  existing roughjs path emits exact geometry rather than needing a second
+  renderer. New `motion_set_project_theme` on both MCP surfaces (175 → 176),
+  `motion_list_primitives` now publishes the registry, and the website's tool
+  counts were re-counted after three tools of pre-existing drift.
 - **2026-09-16** — **D-338 (fixes B-201, files B-208 and B-209): one placement
   convention for `position_x`/`position_y` — the export's TOP-LEFT corner, with
   the live preview moved to meet it.** The preview centred a layer and read

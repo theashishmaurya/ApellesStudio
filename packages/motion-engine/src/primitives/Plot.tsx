@@ -34,7 +34,7 @@
  */
 import React, { useMemo } from "react";
 import { useCurrentFrame } from "remotion";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { inAt } from "../lib/draw";
 import { roughLine } from "../lib/rough";
 
@@ -123,8 +123,10 @@ export const Plot: React.FC<{
   baseline,
   baselineLabel,
   annotate = [],
-  color = design.accentBlue,
-  baselineColor = design.accentRed,
+  // D-339 — the theme-sourced defaults resolve INSIDE the body (a default
+  // parameter cannot call `useTheme()`); explicit props still win.
+  color: colorProp,
+  baselineColor: baselineColorProp,
   markers = true,
   start = 0,
   dur = 81,
@@ -135,6 +137,9 @@ export const Plot: React.FC<{
   height = 520,
 }) => {
   const frame = useCurrentFrame();
+  const theme = useTheme();
+  const color = colorProp ?? theme.accentSignal;
+  const baselineColor = baselineColorProp ?? theme.accent;
 
   const top = title ? MARGIN.titleTop : MARGIN.top;
   const plotW = width - MARGIN.left - MARGIN.right;
@@ -161,16 +166,23 @@ export const Plot: React.FC<{
     () => ({
       xAxis: roughLine([MARGIN.left, top + plotH], [MARGIN.left + plotW, top + plotH], {
         seed,
-        color: design.strokeSoft,
+        color: theme.strokeSoft,
         strokeWidth: 2,
+        roughness: theme.roughness,
+        bowing: theme.bowing,
       }),
       yAxis: roughLine([MARGIN.left, top], [MARGIN.left, top + plotH], {
         seed: seed + 1,
-        color: design.strokeSoft,
+        color: theme.strokeSoft,
         strokeWidth: 2,
+        roughness: theme.roughness,
+        bowing: theme.bowing,
       }),
     }),
-    [seed, top, plotW, plotH],
+    // D-339 — the axes' colour and stroke feel now come from the theme, so a
+    // theme change must rebuild this memo (a manifest's theme is fixed for a
+    // render, so in practice it never re-runs mid-composition).
+    [seed, top, plotW, plotH, theme.strokeSoft, theme.roughness, theme.bowing],
   );
 
   const at = (a: number, b: number) => inAt(frame, start + dur * a, start + dur * b);
@@ -194,9 +206,9 @@ export const Plot: React.FC<{
         <text
           x={MARGIN.left}
           y={36}
-          fill={design.textDim}
+          fill={theme.textDim}
           opacity={axesP}
-          fontFamily={design.fontHand}
+          fontFamily={theme.fontUi}
           fontSize={28}
           letterSpacing="0.06em"
         >
@@ -205,8 +217,8 @@ export const Plot: React.FC<{
       ) : null}
 
       {/* scaffolding: thin and bright, never thick and dim */}
-      <path d={axes.yAxis} fill="none" stroke={design.strokeSoft} strokeWidth={2} opacity={axesP} />
-      <path d={axes.xAxis} fill="none" stroke={design.strokeSoft} strokeWidth={2} opacity={axesP} />
+      <path d={axes.yAxis} fill="none" stroke={theme.strokeSoft} strokeWidth={2} opacity={axesP} />
+      <path d={axes.xAxis} fill="none" stroke={theme.strokeSoft} strokeWidth={2} opacity={axesP} />
 
       {yTitle ? (
         <text
@@ -214,9 +226,9 @@ export const Plot: React.FC<{
           y={30}
           transform="rotate(-90)"
           textAnchor="middle"
-          fill={design.textDim}
+          fill={theme.textDim}
           opacity={axesP}
-          fontFamily={design.fontHand}
+          fontFamily={theme.fontUi}
           fontSize={24}
           letterSpacing="0.06em"
         >
@@ -229,9 +241,9 @@ export const Plot: React.FC<{
           x={MARGIN.left + plotW / 2}
           y={height - 16}
           textAnchor="middle"
-          fill={design.textDim}
+          fill={theme.textDim}
           opacity={axesP}
-          fontFamily={design.fontHand}
+          fontFamily={theme.fontUi}
           fontSize={24}
           letterSpacing="0.06em"
         >
@@ -246,9 +258,9 @@ export const Plot: React.FC<{
           x={px(i)}
           y={top + plotH + 34}
           textAnchor="middle"
-          fill={design.textDim}
+          fill={theme.textDim}
           opacity={axesP}
-          fontFamily={design.fontHand}
+          fontFamily={theme.fontUi}
           fontSize={24}
         >
           {xLabels?.[i] ?? String(i + 1)}
@@ -280,7 +292,7 @@ export const Plot: React.FC<{
               textAnchor="start"
               fill={baselineColor}
               opacity={baseP}
-              fontFamily={design.fontHand}
+              fontFamily={theme.fontUi}
               fontSize={26}
             >
               {baselineLabel}
@@ -294,7 +306,7 @@ export const Plot: React.FC<{
         d={curveD}
         fill="none"
         stroke={color}
-        strokeWidth={design.strokeWidth}
+        strokeWidth={theme.strokeWidth}
         strokeLinecap="round"
         strokeLinejoin="round"
         pathLength={1}
@@ -337,9 +349,9 @@ export const Plot: React.FC<{
             x={p.x}
             y={isTrough ? p.y - 82 : p.y - 26}
             textAnchor="middle"
-            fill={design.text}
+            fill={theme.text}
             opacity={labelP}
-            fontFamily={design.fontHand}
+            fontFamily={theme.fontUi}
             fontSize={26}
           >
             {a.text}

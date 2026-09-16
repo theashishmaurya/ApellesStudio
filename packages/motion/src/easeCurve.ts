@@ -24,7 +24,7 @@
  * — so this widget's drag math MUST clamp an `x` handle to `[0,1]`; letting
  * it go negative or past `1` would not just look wrong, it would crash the
  * render the moment that key is reached. `y1`/`y2` carry no such
- * constraint at all — `design.ease.anticipate` (`motion-engine/src/
+ * constraint at all — `motion.ease.anticipate` (`motion-engine/src/
  * design.ts`, already shipping) overshoots to `y1:-0.55`/`y2:1.55` — so the
  * widget's own vertical viewport is deliberately taller than the unit
  * square (`EASE_Y_MIN`/`EASE_Y_MAX` below) to give an overshoot curve room
@@ -48,13 +48,13 @@
  * wrong `[x1,y1,x2,y2]` to the manifest would render a visibly different
  * animation than what the widget appeared to show.
  */
-import { design } from '@apelles/motion-engine/src/design';
+import { motion } from '@apelles/motion-engine/src/design';
 
 /** The same 4-tuple shape as `schema.ts`'s own exported `EaseCurve`
  *  (`z.infer` of a `z.tuple` of four numbers, so MUTABLE there) — declared
  *  locally as `readonly` instead of imported, deliberately: every value
  *  this module actually receives (a manifest's own `ease` field, or one of
- *  `design.ease.*`'s own `as const` presets, which ARE readonly tuples of
+ *  `motion.ease.*`'s own `as const` presets, which ARE readonly tuples of
  *  literal numbers) is happily assignable to a `readonly` parameter either
  *  way, while the reverse (a `readonly` design-token preset assigned to a
  *  MUTABLE local type) is not — matching `interpolateKeys.ts`'s own
@@ -74,7 +74,7 @@ export interface PixelSize {
 /**
  * The widget's own vertical viewport, in curve-value units — NOT a schema
  * bound (`schema.ts` places no limit on `ease`'s y values at all) and
- * deliberately wider than `[0,1]` so `design.ease.anticipate`'s own
+ * deliberately wider than `[0,1]` so `motion.ease.anticipate`'s own
  * `y1:-0.55`/`y2:1.55` sit comfortably inside it, with room to grab the
  * handle, rather than flush against the widget's own edge. **A disclosed
  * widget-only limit, not a hidden one:** a curve needing a MORE extreme
@@ -174,21 +174,21 @@ export interface EasePreset {
 
 /**
  * Quick-select presets — the task's own instruction: "linear, ease-in,
- * ease-out, ease-in-out, and whatever `design.ease.*` already defines,"
+ * ease-out, ease-in-out, and whatever `motion.ease.*` already defines,"
  * checked against that module's REAL exports (`motion-engine/src/
- * design.ts`) rather than inventing a parallel set. `design.ease` only
+ * design.ts`) rather than inventing a parallel set. `motion.ease` only
  * defines `out`/`inOut`/`anticipate` (no plain `in`) — `Linear` and
  * `Ease In` are the two standard CSS curves this engine has never needed a
- * named token for; `Ease Out`/`Ease In Out`/`Anticipate` are `design.ease`'s
+ * named token for; `Ease Out`/`Ease In Out`/`Anticipate` are `motion.ease`'s
  * own values, referenced directly (not retyped as literals) so this list
  * can never silently drift from the engine's own tokens.
  */
 export const EASE_PRESETS: EasePreset[] = [
   { label: 'Linear', value: [0, 0, 1, 1] },
   { label: 'Ease In', value: [0.42, 0, 1, 1] },
-  { label: 'Ease Out', value: design.ease.out },
-  { label: 'Ease In Out', value: design.ease.inOut },
-  { label: 'Anticipate', value: design.ease.anticipate },
+  { label: 'Ease Out', value: motion.ease.out },
+  { label: 'Ease In Out', value: motion.ease.inOut },
+  { label: 'Anticipate', value: motion.ease.anticipate },
 ];
 
 /**
@@ -197,9 +197,9 @@ export const EASE_PRESETS: EasePreset[] = [
  * the literal curve `interpolateKeys.ts`'s own `fallbackEase` argument
  * already resolves to at BOTH of its real call sites today
  * (`manifestEdit.ts`'s `layerTransformKeyDelta` and, per D-159's own
- * write-up, `Camera.tsx`/`Video.tsx`'s renders) — `design.ease.inOut`. So
+ * write-up, `Camera.tsx`/`Video.tsx`'s renders) — `motion.ease.inOut`. So
  * "not yet set, defaults to Ease In Out" (the Inspector's own label, see
  * `EaseCurveEditor.tsx`) is a statement of FACT about what the manifest
  * already renders, not a widget convenience.
  */
-export const DEFAULT_EASE: EaseCurve = design.ease.inOut;
+export const DEFAULT_EASE: EaseCurve = motion.ease.inOut;

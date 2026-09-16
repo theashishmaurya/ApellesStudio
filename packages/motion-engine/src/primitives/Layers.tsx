@@ -15,7 +15,7 @@
  */
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { inAt, pop } from "../lib/draw";
 import { roughLine } from "../lib/rough";
 
@@ -58,6 +58,7 @@ export const Layers: React.FC<{
 }) => {
   const frame = useCurrentFrame();
   const { width, height, fps } = useVideoConfig();
+  const theme = useTheme();
   const cx = x ?? width / 2;
   const cy = y ?? height / 2;
   const n = items.length;
@@ -102,22 +103,22 @@ export const Layers: React.FC<{
                 top: topOffset,
                 transform: `translateZ(${isActive ? 90 : 0}px) translateX(${isActive ? 40 : 0}px) scale(${s})`,
                 opacity: appear,
-                background: design.bgDeep,
-                border: `3px solid ${isActive ? design.accentRed : design.strokeSoft}`,
+                background: theme.bgDeep,
+                border: `3px solid ${isActive ? theme.accent : theme.strokeSoft}`,
                 borderRadius: 14,
-                boxShadow: isActive ? `0 0 40px ${design.accentRed}66` : "none",
+                boxShadow: isActive ? `0 0 40px ${theme.accent}66` : "none",
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
-                fontFamily: design.fontHand,
+                fontFamily: theme.fontUi,
               }}
             >
-              <div style={{ fontSize: 40, color: isActive ? design.text : design.textDim }}>
+              <div style={{ fontSize: 40, color: isActive ? theme.text : theme.textDim }}>
                 {it.label}
               </div>
               {it.sublabel && (
-                <div style={{ fontSize: 24, color: design.textDim, marginTop: 4 }}>
+                <div style={{ fontSize: 24, color: theme.textDim, marginTop: 4 }}>
                   {it.sublabel}
                 </div>
               )}
@@ -149,14 +150,17 @@ const Callout: React.FC<{
   start: number;
 }> = ({ text, side, cardW, fromY, start }) => {
   const frame = useCurrentFrame();
+  const theme = useTheme();
   const draw = inAt(frame, start, start + 14);
   const show = inAt(frame, start + 8, start + 22);
   const len = 220;
   const dir = side === "right" ? 1 : -1;
   const d = roughLine([0, 0], [len * dir, 0], {
     seed: 12,
-    color: design.accentRed,
+    color: theme.accent,
     strokeWidth: 3,
+    roughness: theme.roughness,
+    bowing: theme.bowing,
   });
   return (
     <div
@@ -170,7 +174,7 @@ const Callout: React.FC<{
         <path
           d={d}
           fill="none"
-          stroke={design.accentRed}
+          stroke={theme.accent}
           strokeWidth={3}
           strokeLinecap="round"
           pathLength={1}
@@ -185,9 +189,9 @@ const Callout: React.FC<{
           right: dir === 1 ? undefined : len + 34,
           top: -18,
           whiteSpace: "nowrap",
-          fontFamily: design.fontHand,
+          fontFamily: theme.fontUi,
           fontSize: 34,
-          color: design.text,
+          color: theme.text,
           opacity: show,
           transform: `translateX(${(1 - show) * -12 * dir}px)`,
         }}

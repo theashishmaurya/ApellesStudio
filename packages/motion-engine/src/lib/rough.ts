@@ -4,28 +4,51 @@
  * roughjs randomises each call — that breaks Remotion's "same frame = same pixels".
  * We pass a fixed `seed` so a given shape always renders identically, then optionally
  * advance the seed by frame for a subtle "redrawn" boil (use sparingly).
+ *
+ * D-339 — these are pure functions with no React in them, so they cannot read
+ * the active theme themselves: `roughness`/`bowing`/`color`/`strokeWidth` are
+ * now explicit options every caller passes from `useTheme()`, alongside the
+ * `seed` it already passed. They fall back to the DEFAULT theme's stroke feel
+ * when omitted, which is what they always used, so a caller that does not care
+ * (a standalone demo, a test) is unchanged.
+ *
+ * A theme is free to ask for `roughness: 0` / `bowing: 0` — roughjs then emits
+ * exact geometry (a straight line, a true ellipse) rather than a hand-drawn
+ * approximation of it, which is how `apelles-studio` gets a clean editorial
+ * look out of this same path instead of needing a second, non-roughjs one.
  */
 import rough from "roughjs";
-import { design } from "../design";
+import { DEFAULT_THEME } from "../design";
 
 type Pt = [number, number];
 
 const svgNS = "http://www.w3.org/2000/svg";
+
+/** the stroke-feel half of a `Theme`, which is all these helpers need */
+export interface RoughOpts {
+  seed?: number;
+  color?: string;
+  strokeWidth?: number;
+  roughness?: number;
+  bowing?: number;
+}
 
 function generator() {
   // rough's generator works without a DOM node
   return rough.generator();
 }
 
-const baseOpts = (
-  seed: number,
-  color: string = design.stroke,
-  strokeWidth: number = design.strokeWidth,
-) => ({
+const baseOpts = ({
+  seed = 1,
+  color = DEFAULT_THEME.stroke,
+  strokeWidth = DEFAULT_THEME.strokeWidth,
+  roughness = DEFAULT_THEME.roughness,
+  bowing = DEFAULT_THEME.bowing,
+}: RoughOpts) => ({
   stroke: color,
   strokeWidth,
-  roughness: design.roughness,
-  bowing: design.bowing,
+  roughness,
+  bowing,
   seed,
 });
 
@@ -46,30 +69,24 @@ function opsToPath(drawable: ReturnType<ReturnType<typeof generator>["rectangle"
 
 export function roughRect(
   x: number, y: number, w: number, h: number,
-  { seed = 1, color, strokeWidth }: { seed?: number; color?: string; strokeWidth?: number } = {},
+  opts: RoughOpts = {},
 ): string {
-  return opsToPath(generator().rectangle(x, y, w, h, baseOpts(seed, color, strokeWidth)));
+  return opsToPath(generator().rectangle(x, y, w, h, baseOpts(opts)));
 }
 
-export function roughLine(
-  p1: Pt, p2: Pt,
-  { seed = 1, color, strokeWidth }: { seed?: number; color?: string; strokeWidth?: number } = {},
-): string {
-  return opsToPath(generator().line(p1[0], p1[1], p2[0], p2[1], baseOpts(seed, color, strokeWidth)));
+export function roughLine(p1: Pt, p2: Pt, opts: RoughOpts = {}): string {
+  return opsToPath(generator().line(p1[0], p1[1], p2[0], p2[1], baseOpts(opts)));
 }
 
 export function roughEllipse(
   cx: number, cy: number, w: number, h: number,
-  { seed = 1, color, strokeWidth }: { seed?: number; color?: string; strokeWidth?: number } = {},
+  opts: RoughOpts = {},
 ): string {
-  return opsToPath(generator().ellipse(cx, cy, w, h, baseOpts(seed, color, strokeWidth)));
+  return opsToPath(generator().ellipse(cx, cy, w, h, baseOpts(opts)));
 }
 
-export function roughPath(
-  d: string,
-  { seed = 1, color, strokeWidth }: { seed?: number; color?: string; strokeWidth?: number } = {},
-): string {
-  return opsToPath(generator().path(d, baseOpts(seed, color, strokeWidth)));
+export function roughPath(d: string, opts: RoughOpts = {}): string {
+  return opsToPath(generator().path(d, baseOpts(opts)));
 }
 
 export { svgNS };

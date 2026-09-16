@@ -1,13 +1,12 @@
 import React from "react";
 import { AbsoluteFill } from "remotion";
-import { loadFont } from "@remotion/google-fonts/Kalam";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { Scene3D, ParticleFlow, Text, FilmGrain, Vignette } from "../primitives";
 
-loadFont();
-
-export const ParticleDemo: React.FC = () => (
-  <AbsoluteFill style={{ backgroundColor: design.bg }}>
+export const ParticleDemo: React.FC = () => {
+  const theme = useTheme();
+  return (
+  <AbsoluteFill style={{ backgroundColor: theme.bg }}>
     <Scene3D
       camera={[
         { at: 0, pos: [0, 0, 12], look: [0, 0, 0] },
@@ -15,7 +14,7 @@ export const ParticleDemo: React.FC = () => (
         { at: 180, pos: [-2, -1, 9], look: [0, 0, 0] },
       ]}
     >
-      <ParticleFlow preset="stream" from={[-6, 0, 0]} to={[6, 0, 0]} count={1400} color={design.accentBlue} />
+      <ParticleFlow preset="stream" from={[-6, 0, 0]} to={[6, 0, 0]} count={1400} color={theme.accentSignal} />
       <ParticleFlow
         preset="converge"
         shape="sphere"
@@ -24,7 +23,7 @@ export const ParticleDemo: React.FC = () => (
         start={60}
         dur={70}
         count={1600}
-        color={design.accentRed}
+        color={theme.accent}
         seed={4}
       />
     </Scene3D>
@@ -34,4 +33,5 @@ export const ParticleDemo: React.FC = () => (
     <Vignette strength={0.4} />
     <FilmGrain />
   </AbsoluteFill>
-);
+  );
+};

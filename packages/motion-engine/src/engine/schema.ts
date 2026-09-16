@@ -5,6 +5,7 @@
  *
  * {
  *   "title": "Prompt caching, explained",
+ *   "theme": "apelles-studio",          // optional; omit for the default look
  *   "grain": true,
  *   "scenes": [
  *     { "id": "hook", "dur": 4,
@@ -23,6 +24,7 @@
  * }
  */
 import { z } from "zod";
+import { THEME_NAMES, type ThemeName } from "../design";
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const timed = z.object({ at: z.number(), i: z.number() });
@@ -30,7 +32,7 @@ const timed = z.object({ at: z.number(), i: z.number() });
 const activeSchema = z.union([z.number(), z.array(timed)]);
 
 /** a bezier easing curve, `Easing.bezier(x1,y1,x2,y2)`'s own four control
- *  points — the SAME shape `design.ease.*`'s presets already are. Shared by
+ *  points — the SAME shape `motion.ease.*`'s presets already are. Shared by
  *  `cam2dKey`, `cam3dKey`, and `transformKey` below (all three interpolate
  *  through `motion-engine/src/lib/interpolateKeys.ts`'s one shared
  *  `interpolateKeys`, D-159/B-059).
@@ -38,7 +40,7 @@ const activeSchema = z.union([z.number(), z.array(timed)]);
  * B-062 fix (`docs/BUGS.md`) — `remotion`'s own `Easing.bezier(mX1,mY1,mX2,
  * mY2)` (`node_modules/remotion/dist/cjs/bezier.js`) THROWS
  * `'bezier x values must be in [0, 1] range'` unless `0 <= mX1,mX2 <= 1`;
- * `y1`/`y2` carry no such constraint (`design.ease.anticipate` legitimately
+ * `y1`/`y2` carry no such constraint (`motion.ease.anticipate` legitimately
  * overshoots to `y1:-0.55`/`y2:1.55` for its anticipation curve). Before this
  * fix the tuple's shape was declared (four numbers) but not this one real
  * semantic constraint the consuming function enforces at its own call
@@ -59,11 +61,11 @@ const easeCurve = z
 
 /**
  * B-059 fix (`docs/BUGS.md`) — `ease` was genuinely supported by `Camera.tsx`
- * (`CameraKey.ease`, read at `k.ease ?? design.ease.inOut`) but this object
+ * (`CameraKey.ease`, read at `k.ease ?? motion.ease.inOut`) but this object
  * was a plain `z.object`, and zod strips unknown keys by default, so an
  * authored `ease` was silently dropped before `Video.tsx` (which already
  * spreads the key through verbatim, `{ ...k, at: … }`) ever saw it — every
- * camera move in every manifest was stuck on `design.ease.inOut` with no way
+ * camera move in every manifest was stuck on `motion.ease.inOut` with no way
  * to say otherwise. Declaring `ease` explicitly (rather than reaching for
  * `.passthrough()`, which would also silently accept a typo'd field name —
  * exactly what the strict object was buying in the first place) fixes it:
@@ -82,7 +84,7 @@ const cam2dKey = z.object({
  * write-up in `docs/BUGS.md` assumed this one was "harmless... since
  * Scene3D has no ease concept" — reading `Scene3D.tsx`'s `CameraRig` this
  * pass shows that's wrong: `CamKey.ease` exists there too and is read the
- * identical way, `cb(b.ease ?? design.ease.inOut)`. `Video.tsx`'s `ThreeD`
+ * identical way, `cb(b.ease ?? motion.ease.inOut)`. `Video.tsx`'s `ThreeD`
  * already spreads a 3D camera key through verbatim (`{ ...k, at: … }`, the
  * same as the 2D case), so declaring `ease` here is the whole fix — no
  * `Scene3D.tsx`/`Video.tsx` change needed on top.
@@ -249,11 +251,32 @@ const scene = z.object({
   transition: z.number().optional(),
 });
 
+/**
+ * D-339 — which registered look (`../design.ts`'s `THEMES`) the whole
+ * document renders in. Read once per render by `Video.tsx`, which resolves it
+ * and publishes it to every primitive through `../ThemeContext.tsx`.
+ *
+ * `.optional()`, deliberately NOT `.default()` like `width`/`height`/`fps`
+ * directly above: a `.default()` would make `manifestSchema.parse()` MATERIALISE
+ * a `theme` key that the author never wrote, and this schema's parse output is
+ * what the app commits and saves back (`@apelles/motion`'s `manifestIO.ts`) —
+ * so every existing project file on disk would silently gain a line the first
+ * time it was opened and saved. Absent means absent; `resolveTheme(undefined)`
+ * supplies the default at the one point that actually needs a value.
+ *
+ * A z.enum (rather than a bare `z.string()`) so a typo is a parse error
+ * pointing at the field, not a silent fall back to the default look several
+ * scenes into a render.
+ */
+const themeName = z.enum(THEME_NAMES as [ThemeName, ...ThemeName[]]);
+
 export const manifestSchema = z.object({
   title: z.string(),
   width: z.number().default(1920),
   height: z.number().default(1080),
   fps: z.number().default(30),
+  /** D-339 — see `themeName` above. Absent ⇒ the engine default look. */
+  theme: themeName.optional(),
   grain: z.boolean().optional(),
   vignette: z.union([z.boolean(), z.number()]).optional(),
   /** render with no background paint — for a ProRes4444 overlay to composite in Palmier */
@@ -262,6 +285,7 @@ export const manifestSchema = z.object({
 });
 
 export type Manifest = z.infer<typeof manifestSchema>;
+export type { ThemeName } from "../design";
 export type Scene = z.infer<typeof scene>;
 export type Layer = z.infer<typeof layer>;
 export type LayerTransform = z.infer<typeof layerTransform>;

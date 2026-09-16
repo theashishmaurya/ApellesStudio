@@ -59,6 +59,7 @@ import {
   setLayerSize,
   setLayerTransformField,
   setLayerTransformKeys,
+  setProjectTheme,
   setSceneField,
   setTransformFieldOnSelections,
   upsertLayerTransformKeyXY,
@@ -201,6 +202,7 @@ const ALL_OPS = [
   'motion_add_scene',
   'motion_delete_scene',
   'motion_duplicate_scene',
+  'motion_set_project_theme',
   'motion_set_scene_field',
   'motion_set_camera_2d',
   'motion_set_camera_3d',
@@ -239,11 +241,11 @@ const ALL_OPS = [
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 41 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 42 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(41);
+    expect(names).toHaveLength(42);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 
@@ -453,6 +455,39 @@ describe('scenes', () => {
     h.run('motion_add_scene');
     expect(h.current().scenes).toHaveLength(4);
     expect(h.run('motion_add_scene', { after_scene_index: 'nope' }).error).toMatch(/must be an integer/);
+  });
+
+  // D-339 — the document-level theme setter.
+  it('motion_set_project_theme === setProjectTheme, and reports the effective look', () => {
+    const h = harness();
+    const r = h.run('motion_set_project_theme', { theme: 'apelles-studio' });
+    expect(h.current()).toEqual(setProjectTheme(sample, 'apelles-studio'));
+    expect(h.current().theme).toBe('apelles-studio');
+    expect(r).toMatchObject({
+      theme: 'apelles-studio',
+      effectiveTheme: 'apelles-studio',
+      defaultTheme: 'dark-excalidraw',
+    });
+  });
+
+  it('motion_set_project_theme with null DELETES the key rather than writing the default name', () => {
+    const h = harness();
+    h.run('motion_set_project_theme', { theme: 'apelles-studio' });
+    const r = h.run('motion_set_project_theme', { theme: null });
+    expect('theme' in h.current()).toBe(false);
+    expect(r).toMatchObject({ theme: null, effectiveTheme: 'dark-excalidraw' });
+    // back to exactly the shape the sample manifest shipped with
+    expect(h.current()).toEqual(sample);
+  });
+
+  it('motion_set_project_theme rejects an unregistered name outright, listing the real ones', () => {
+    const h = harness();
+    const r = h.run('motion_set_project_theme', { theme: 'neon-vaporwave' });
+    expect(r.error).toMatch(/unknown theme/);
+    expect(r.error).toMatch(/dark-excalidraw/);
+    expect(r.error).toMatch(/apelles-studio/);
+    expect(h.commits).toHaveLength(0);
+    expect(h.run('motion_set_project_theme', {}).error).toMatch(/theme is required/);
   });
 
   it('motion_set_scene_field === setSceneField, and warns on an unknown key', () => {

@@ -2,7 +2,7 @@
  * Shared frame helpers used by every primitive.
  */
 import { interpolate, spring, Easing } from "remotion";
-import { design } from "../design";
+import { DEFAULT_THEME, motion } from "../design";
 
 const cb = (c: readonly [number, number, number, number]) =>
   Easing.bezier(c[0], c[1], c[2], c[3]);
@@ -12,7 +12,7 @@ export const inAt = (frame: number, from: number, to: number) =>
   interpolate(frame, [from, to], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
-    easing: cb(design.ease.out),
+    easing: cb(motion.ease.out),
   });
 
 /** 1→0 over [from,to] frames, clamped. */
@@ -20,7 +20,7 @@ export const outAt = (frame: number, from: number, to: number) =>
   interpolate(frame, [from, to], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
-    easing: cb(design.ease.inOut),
+    easing: cb(motion.ease.inOut),
   });
 
 /** a value that eases in, holds, eases out — for a whole element's lifetime */
@@ -37,17 +37,30 @@ export const lifetime = (
  *
  * B-060 fix (`docs/BUGS.md`) — `fps` is now a required parameter, the
  * composition's REAL frame rate (`useVideoConfig().fps` at each call site),
- * not `design.fps` (a fixed authoring-default TOKEN, `30`). Before this fix
- * both `x`/`y` divided `frame` by `design.fps` regardless of the actual
+ * not `motion.fps` (a fixed authoring-default TOKEN, `30`). Before this fix
+ * both `x`/`y` divided `frame` by `motion.fps` regardless of the actual
  * render fps, so the same manifest's drift oscillated at a different
  * perceived wall-clock rate at 60fps (twice as fast) or 24fps (20% slower)
- * than at the 30fps the token happened to match. `design.fps` itself is
+ * than at the 30fps the token happened to match. `motion.fps` itself is
  * untouched — it stays the authoring default a NEW manifest gets — this
  * helper simply stops reading it as a runtime constant. Same shape as this
  * file's own neighbour `pop(frame, fps, delay)` below, which already took
- * `fps` as a parameter for the identical reason. */
-export const ambientDrift = (frame: number, fps: number, seed = 0) => {
-  const a = design.ambientDriftPx;
+ * `fps` as a parameter for the identical reason.
+ *
+ * D-339 — `amplitudePx` is the active theme's `ambientDriftPx`, passed in by
+ * the calling component (which has `useTheme()`; this helper does not). It
+ * defaults to the DEFAULT theme's value, the constant this read before, so a
+ * caller that omits it drifts exactly as it always did. A theme that sets it
+ * to `0` — `apelles-studio` does — makes this return a hard `{x:0,y:0}`,
+ * which is the point: "nothing sits perfectly still" is one look's rule, not
+ * the engine's. */
+export const ambientDrift = (
+  frame: number,
+  fps: number,
+  seed = 0,
+  amplitudePx: number = DEFAULT_THEME.ambientDriftPx,
+) => {
+  const a = amplitudePx;
   return {
     x: a * Math.sin((frame / fps) * 0.7 + seed * 1.3),
     y: a * Math.sin((frame / fps) * 0.5 + seed * 2.1),

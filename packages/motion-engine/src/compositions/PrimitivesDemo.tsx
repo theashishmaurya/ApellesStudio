@@ -1,30 +1,30 @@
 import React from "react";
 import { AbsoluteFill, Sequence, useVideoConfig } from "remotion";
-import { loadFont } from "@remotion/google-fonts/Kalam";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { Camera, push, Text, Emphasis, Matrix } from "../primitives";
 
-const { fontFamily } = loadFont();
-
 /**
- * Exercises the cheap-4 primitives end to end (Text / Camera / Emphasis / Matrix).
+ * Exercises the cheap-4 primitives end to end (Text / Camera / Emphasis / Matrix)
+ * in whichever theme is active (D-339 — the engine default when rendered
+ * standalone, since nothing wraps it in a `<ThemeProvider>`).
  * Not a real video — a checkpoint render for /video-review.
  */
 export const PrimitivesDemo: React.FC = () => {
   const { width, height } = useVideoConfig();
+  const theme = useTheme();
 
   return (
-    <AbsoluteFill style={{ backgroundColor: design.bg, fontFamily }}>
+    <AbsoluteFill style={{ backgroundColor: theme.bg, fontFamily: theme.fontUi }}>
       {/* 0–90: text presets */}
       <Sequence durationInFrames={90}>
         <AbsoluteFill style={{ padding: 120, gap: 40, justifyContent: "center" }}>
           <Text preset="fade-up" start={4} size={72}>
             fade-up reveal
           </Text>
-          <Text preset="mask-up" start={16} size={72} color={design.accentBlue}>
+          <Text preset="mask-up" start={16} size={72} color={theme.accentSignal}>
             mask-up reveal
           </Text>
-          <Text preset="type" start={28} size={64} caret color={design.textDim}>
+          <Text preset="type" start={28} size={64} caret color={theme.textDim}>
             typewriter with a caret…
           </Text>
           <Text preset="stroke-on" start={44} size={80}>
@@ -46,12 +46,12 @@ export const PrimitivesDemo: React.FC = () => {
               top: height * 0.4,
               width: width * 0.2,
               height: height * 0.2,
-              border: `4px solid ${design.stroke}`,
+              border: `4px solid ${theme.stroke}`,
               borderRadius: 12,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              color: design.text,
+              color: theme.text,
               fontSize: 44,
             }}
           >
@@ -75,7 +75,7 @@ export const PrimitivesDemo: React.FC = () => {
           preset="ripple"
           start={0}
           dur={45}
-          accent={design.accentRed}
+          accent={theme.accent}
         />
         <Text preset="fade-up" start={6} size={48} x={width / 2} y={height * 0.12} align="center">
           Matrix · ripple

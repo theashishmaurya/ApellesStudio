@@ -33336,3 +33336,147 @@ still differs between the engines (a fraction of the canvas in the export, the
 clip's native footprint in the composition in the preview). That is B-208 now,
 with its own entry, instead of a paragraph inside a bug marked fixed.
 `box_width`/`box_height` remain the only size mechanism with exact parity.
+---
+
+## D-339 — the motion engine's locked look becomes a THEME REGISTRY, with `apelles-studio` as the second preset
+
+**decided (2026-09-17)** · supersedes the "locked look" framing of
+`packages/motion-engine/src/design.ts` without reversing it · sources its second
+preset from D-264/D-284 (`website/src/styles/tokens.css`)
+
+**Context.** `packages/motion-engine/src/design.ts` exported ONE flat `design`
+object, documented in its own header as *"the locked 'dark Excalidraw / tldraw'
+look… every primitive pulls from here; content varies via props, the look does
+not."* That was a real, deliberate prior decision, and 19 files imported the
+constant directly (20 after D-333's `plot` landed mid-rebase). The owner, reviewing the four live compositions while
+building two AI-explainer videos, asked for exactly one thing and phrased the
+tension himself: *"We should have a way to setup a theme for any of them should
+be dynamic but for our video please lock the design while developing."*
+
+The bare module constant cannot answer that: a value imported at module scope is
+the same for every render in the process, so "which look does THIS manifest use"
+has nowhere to live.
+
+**Options.**
+
+1. **A second locked constant, swapped by hand.** Rejected outright — it is the
+   same problem twice, and the owner explicitly asked for dynamic.
+2. **Prop-drill a theme from `Video.tsx` into every primitive.** Rejected: every
+   layer's props pass through `engine/registry.ts`'s deliberately generic
+   `adapt(raw, fps, frame) → Record<string, unknown>` boundary, which exists so
+   the engine need not know each primitive's prop shape. A theme prop would have
+   to be smuggled through that untyped bag and then defended against a manifest
+   that sets `theme:` on a layer.
+3. **A named registry + a React context, resolved once per render.** Chosen.
+
+**Decision.**
+
+- `design.ts` is now a **theme registry**: a `Theme` interface, a `THEMES`
+  record, `resolveTheme(name?)`, `DEFAULT_THEME_NAME`. The old values are
+  **unchanged to the byte** as the `dark-excalidraw` preset, and it remains the
+  engine default — a manifest with no `theme` key renders exactly as it always
+  did. The lock was not reversed; it was made selectable.
+- **`apelles-studio`** is the second preset, every value sourced from
+  `website/src/styles/tokens.css` (D-264's Alexander Mosaic palette, D-284's ink
+  signature): basalt `#1c1a17` ground, marble `#f4efe6` ink, **ochre `#b4823a`
+  as the one working colour**, `Newsreader` / `Instrument Sans` / `IBM Plex
+  Mono`, and `roughness` / `bowing` / `ambientDriftPx` all `0`.
+- **`manifest.theme`** (`engine/schema.ts`) — top-level, optional, a `z.enum` of
+  the registry's names.
+- **`ThemeContext.tsx`** — `ThemeProvider` + `useTheme()`. `engine/Video.tsx`
+  resolves the manifest's theme once and provides it; all 20 consuming files now
+  read the ACTIVE theme, with no old-style imports left.
+- **MCP**: a new `motion_set_project_theme` on both surfaces, and
+  `motion_list_primitives` gained `themes` / `defaultTheme` so the vocabulary is
+  discoverable from the one static-reference call an agent already makes.
+
+**Why these specific calls, where a different one was available.**
+
+- **`dark-excalidraw` stays the global default, rather than being replaced.** It
+  is a reasonable general-purpose look for any Motion project by any user, every
+  manifest in existence was authored against it, and silently re-skinning them
+  all is not what "make the theme selectable" was asked to mean.
+  `apelles-studio` is explicitly selectable, never imposed.
+- **Ochre in BOTH accent slots, and no terracotta at all.** `tokens.css` states
+  the rule itself: terracotta is 2.9:1 on basalt and fails even large-text
+  contrast, while ochre reaches 5.1:1 there, so inside a basalt section ochre
+  takes over the link/emphasis role and terracotta is not used. This palette
+  genuinely has ONE working colour on dark; splitting it into two competing hues
+  to fill a token slot would be inventing a palette the site does not have.
+  (`--danger-inverse` was considered for the second slot and rejected — no
+  primitive here has a danger role, so it would be a dead token.)
+- **The accent tokens were renamed to their ROLES** — `accentRed` → `accent`
+  (emphasis/active state), `accentBlue` → `accentSignal` (data/pulse/energy). A
+  registry whose second preset has no red in it cannot keep a colour name in the
+  token. Values unchanged.
+- **`fontHand` → `fontDisplay`, plus a new `fontUi`.** The old single face served
+  both headlines (`text`) and labels (`layers`, `graph`); the site has three real
+  faces with three jobs. In `dark-excalidraw` both slots resolve to the same
+  Kalam stack, so those two primitives render identically.
+- **`ease` and `fps` are NOT part of a `Theme`.** They moved to a separate
+  `motion` export. `ease` is read by pure, component-less helpers (`lib/draw.ts`)
+  and is the documented contract behind the manifest's own `easeCurve` field and
+  `@apelles/motion`'s ease-preset picker; `fps` is an authoring default, never a
+  render-time value (B-060). Neither is a property of the LOOK, and threading a
+  theme into every frame helper to make them per-theme would buy nothing today —
+  both presets want the same curves. If a future theme needs its own motion feel
+  that is a separate decision, recorded here as deliberate rather than left as an
+  accident of the split.
+- **`theme` is `.optional()`, not `.default()`** like its neighbours
+  `width`/`height`/`fps`. A `.default()` would make `manifestSchema.parse()`
+  materialise the key, and the app writes its parse output back on save — so
+  every project file on disk would silently gain a line the first time it was
+  opened. Absent means absent; `resolveTheme(undefined)` supplies the value at
+  the one point that needs one.
+- **roughjs was NOT replaced to get the clean look.** The brief asked for this to
+  be flagged if the rendering path structurally assumed a sketch style. It does
+  not: `roughness: 0` / `bowing: 0` make roughjs emit exact geometry — a straight
+  line, a true ellipse, a square-cornered cell — so one path serves both looks.
+  Confirmed in a real render, not reasoned about.
+- **`strokeAt()` was deleted** rather than given a theme argument: it was
+  exported, referenced nowhere in the repo, and would otherwise have needed a
+  parameter for a caller that does not exist (CLAUDE.md, "no dead code").
+- **`--ink-inverse-soft` is pre-flattened to an opaque hex** (`#afaba4`) rather
+  than carried as the site's `color-mix(… 68%, transparent)`. These tokens are
+  read by an SVG `stroke`, a CSS `border` AND a three.js material, and three.js
+  discards alpha — a translucent token would render as full-strength marble in 3D
+  while reading correctly in 2D. `theme.test.ts` recomputes the flattening from
+  the real `tokens.css` values rather than trusting the transcription.
+
+**Verification — real renders, not reasoning.** `remotion still Animation` on
+the engine's own `sample` manifest at frames **30, 60, 200 and 380** (covering
+text + camera + a roughjs scribble, the `layers` stack with its callout, and the
+3D `particleflow` scene), rendered before and after the whole refactor. All four
+**byte-identical** (`cmp` clean; sha256 `f8d4732b…`, `7b4157a2…`, `96521c7a…`,
+`4cc59ee8…`). `theme.test.ts` additionally pins every `dark-excalidraw` field
+against an independently transcribed copy of the pre-change `design` object, and
+checks the new preset against the real `tokens.css` the way
+`website/tests/palette.test.ts` already does for the site.
+
+**What `apelles-studio` actually looks like** (rendered stills, four scenes): a
+warm-black basalt field; `text` in outlined Newsreader with a clean ochre ellipse
+around it; `layers` cards as thin marble-soft hairline rectangles with Instrument
+Sans labels, the active one carrying an ochre border and a soft ochre bloom;
+`graph` as true circles joined by straight hairlines with an ochre pulse dot and
+an ochre highlight ring; `matrix` as exact squares with ochre heat fills. It
+reads like the website — editorial and quiet — rather than like the same
+hand-drawn shapes recoloured.
+
+**Disclosed, not fixed.** `apelles-studio` sets `bgDeep` equal to `bg`: a basalt
+section on the site has one ground and separates panels with a marble hairline,
+not with a second darker fill, and inventing one would add a literal the palette
+does not contain. The visible consequence is that `layers` cards and `graph` node
+discs read as ground-coloured shapes held by their borders — the intended
+editorial look, but it means a scene that overrides `bg` to something else will
+show those fills as patches. Separately, the Motion tab still has no GUI control
+dedicated to manifest-level fields: `theme`, like `title`/`width`/`height`/`fps`,
+is edited by a human through the raw-JSON manifest editor — and now, unlike them,
+through a real MCP tool. A small theme picker in the Motion toolbar is the
+obvious follow-up.
+
+**Also corrected in the same pass, all found by re-counting rather than by
+arithmetic off a stale figure:** `website/src/data/mcp.ts`'s tool totals had
+drifted by NINE tools before this one (D-318's recut surface, D-329's timeline
+transcript, D-330's two debug tools, D-332's four layer-preset tools);
+`crates/apelles-mcp`'s own "175 tools" / "160 release vs 171 debug" comments
+were four behind for the same reason. Both re-counted against the real files.

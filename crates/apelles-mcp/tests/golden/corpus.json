@@ -6307,7 +6307,7 @@
     },
     {
       "name": "motion_list_primitives",
-      "description": "Static reference: every primitive the motion engine can render, and the\n    fields each one accepts. The Motion counterpart of\n    `editor_get_capabilities` \u2014 call it once before your first\n    `motion_add_layer` / `motion_set_layer_field`.\n\n    Per primitive: the `use` string `motion_add_layer` requires, a one-line\n    description of what it is for, `in3d` (whether it is a three.js object\n    that must live in `scene.scene3d.children` rather than `scene.layers` \u2014\n    `motion_add_layer` places it correctly for you either way, and\n    `container` states which target kind addresses it), the editable `fields`\n    (key, label, kind) `motion_set_layer_field` accepts, and whether it has a\n    draggable `position` / resizable `size` at all.\n\n    Also returns `sceneFields` (for `motion_set_scene_field`),\n    `layerTransformFields` (for `motion_set_layer_transform_field`),\n    `layerTransformKeyFields`, and the 2D/3D camera key fields.\n\n    Without this, a legal `use` value or a field key is only discoverable by\n    reading the app's source. `motion_set_layer_field` will still WRITE an\n    unknown key (a hand-authored manifest may legitimately carry one) but\n    warns \u2014 so check here first if something you set has no visible effect.",
+      "description": "Static reference: every primitive the motion engine can render, and the\n    fields each one accepts. The Motion counterpart of\n    `editor_get_capabilities` \u2014 call it once before your first\n    `motion_add_layer` / `motion_set_layer_field`.\n\n    Per primitive: the `use` string `motion_add_layer` requires, a one-line\n    description of what it is for, `in3d` (whether it is a three.js object\n    that must live in `scene.scene3d.children` rather than `scene.layers` \u2014\n    `motion_add_layer` places it correctly for you either way, and\n    `container` states which target kind addresses it), the editable `fields`\n    (key, label, kind) `motion_set_layer_field` accepts, and whether it has a\n    draggable `position` / resizable `size` at all.\n\n    Also returns `themes` (the registered looks, for\n    `motion_set_project_theme`) and the `defaultTheme` a manifest with no\n    `theme` key renders in, `sceneFields` (for `motion_set_scene_field`),\n    `layerTransformFields` (for `motion_set_layer_transform_field`),\n    `layerTransformKeyFields`, and the 2D/3D camera key fields.\n\n    Without this, a legal `use` value or a field key is only discoverable by\n    reading the app's source. `motion_set_layer_field` will still WRITE an\n    unknown key (a hand-authored manifest may legitimately carry one) but\n    warns \u2014 so check here first if something you set has no visible effect.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -8453,6 +8453,28 @@
           }
         },
         "title": "motion_set_layer_transform_keysArguments"
+      }
+    },
+    {
+      "name": "motion_set_project_theme",
+      "description": "Set the DOCUMENT's theme \u2014 which registered look the whole manifest renders\n    in (`manifest.theme`). The Motion tab's only project-level setting: it is\n    not per scene and not per layer.\n\n    `motion_list_primitives` lists the registered `themes` and names the\n    `defaultTheme`. Today there are two:\n\n      - `dark-excalidraw` (the default) \u2014 flat dark slate, off-white\n        hand-drawn roughjs strokes, Kalam lettering, one red and one blue\n        accent, everything drifting very slightly.\n      - `apelles-studio` \u2014 apelles.studio's own editorial look: warm-black\n        basalt ground, marble ink, ONE ochre working colour, Newsreader /\n        Instrument Sans / IBM Plex Mono, exact (non-sketch) geometry and no\n        ambient drift.\n\n    A theme supplies DEFAULTS only. A scene's own `bg`, and a layer's own\n    `color` / `font` / `accent`, still win over it \u2014 so re-theming never\n    silently discards a colour that was set deliberately, and a layer pinned\n    to a literal colour will NOT follow the new palette.\n\n    Pass null to clear the field back to the default look. That DELETES the\n    key rather than writing the default's name into it, which is the shape\n    every manifest authored before themes existed already has.\n\n    An unregistered name is rejected outright, unlike `motion_set_scene_field`\n    (which warns and writes anyway): the manifest schema declares this field\n    as an enum, so a name outside the registry would not parse at all.\n\n    Undoable in the app (Cmd/Ctrl+Z), like any other Motion edit.\n\n    Args:\n        theme: the theme name, or null to clear it back to the default.",
+      "inputSchema": {
+        "properties": {
+          "theme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Theme"
+          }
+        },
+        "type": "object",
+        "title": "motion_set_project_themeArguments"
       }
     },
     {
@@ -16440,6 +16462,50 @@
                 ]
               }
             ]
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_set_project_theme",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "motion_set_project_theme",
+          "args": {
+            "theme": null
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_set_project_theme",
+      "case": "full",
+      "arguments": {
+        "theme": "v_motion_set_project_theme.theme"
+      },
+      "requests": [
+        {
+          "op": "motion_set_project_theme",
+          "args": {
+            "theme": "v_motion_set_project_theme.theme"
           },
           "timeout_ms": 20000
         }

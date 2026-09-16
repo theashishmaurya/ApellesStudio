@@ -275,7 +275,7 @@ export function scrollOffset(
   const to = resting(last);
   if (from === to) return to;
   const t = Math.min(1, Math.max(0, (frame - reveals[last]) / Math.max(1, revealFrames_)));
-  // smoothstep — matches the "gentle settle" feel of design.ease.out without
+  // smoothstep — matches the "gentle settle" feel of motion.ease.out without
   // pulling Remotion's interpolate into this DOM-free module.
   const e = t * t * (3 - 2 * t);
   return from + (to - from) * e;

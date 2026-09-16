@@ -19,7 +19,7 @@
  */
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { inAt, outAt, lifetime } from "../lib/draw";
 import { roughEllipse } from "../lib/rough";
 
@@ -37,13 +37,17 @@ export const Emphasis: React.FC<{
   preset = "pulse",
   start = 0,
   dur = 24,
-  color = design.accentRed,
+  // D-339 — resolved in the body, not the parameter list: a default parameter
+  // cannot call `useTheme()`. An explicit `color` prop still wins.
+  color: colorProp,
   box,
   children,
   seed = 3,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const theme = useTheme();
+  const color = colorProp ?? theme.accent;
   const local = frame - start;
   const active = local >= 0 && local <= dur;
 
@@ -81,7 +85,13 @@ export const Emphasis: React.FC<{
     const fade = outAt(frame, start + dur * 0.4, start + dur);
     const r0 = Math.max(box.w, box.h) * 0.55;
     const r = r0 * (0.6 + p * 0.9);
-    const d = roughEllipse(cx, cy, r * 2, r * 2, { seed, color, strokeWidth: 5 });
+    const d = roughEllipse(cx, cy, r * 2, r * 2, {
+      seed,
+      color,
+      strokeWidth: 5,
+      roughness: theme.roughness,
+      bowing: theme.bowing,
+    });
     return (
       <svg
         style={{ position: "absolute", inset: 0, overflow: "visible" }}
@@ -100,6 +110,8 @@ export const Emphasis: React.FC<{
     seed,
     color,
     strokeWidth: 5,
+    roughness: theme.roughness,
+    bowing: theme.bowing,
   });
   return (
     <svg

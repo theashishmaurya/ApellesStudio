@@ -9,10 +9,13 @@
 //!  Internal debug tooling must be compiled OUT of a production build through a real
 //!  compile-time gate — never a runtime flag, never "just don't call it in prod."
 //!  That is the same gate `control.rs`'s `native_op` uses on its own side (B-100 /
-//!  D-219), and it is why a release build of this server publishes 160 tools where a
-//!  debug build publishes 171 (D-330 added the eleventh and tenth debug tools,
-//!  `debug_record_video` and `debug_set_fps_overlay`; both counts re-measured, not
-//!  adjusted by arithmetic — see `docs/notes/debug-tooling.md`'s gate verification).
+//!  D-219), and it is why a release build of this server publishes 165 tools where a
+//!  debug build publishes 176 (D-330 added the eleventh and tenth debug tools,
+//!  `debug_record_video` and `debug_set_fps_overlay`; the ELEVEN gated tools are the
+//!  whole difference, counted off the `#[tool(...)]` attributes in this module versus
+//!  the rest of `tools/`, not adjusted by arithmetic from a stale figure — the pair
+//!  said 160/171 until D-339 re-counted them, four tools after D-332 had moved them
+//!  — see `docs/notes/debug-tooling.md`'s gate verification).
 //!  The Python server had no equivalent gate at all: it
 //!  defined them all unconditionally and relied on the app-side half being absent,
 //!  which advertised tools a release build could never answer. Closing that is a

@@ -1,10 +1,7 @@
 import React from "react";
 import { AbsoluteFill } from "remotion";
-import { loadFont } from "@remotion/google-fonts/Kalam";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { Graph, Text } from "../primitives";
-
-const { fontFamily } = loadFont();
 
 const nodes = [
   { id: "q", label: "your question" },
@@ -27,8 +24,15 @@ const edges = [
   { from: "llm", to: "a" },
 ];
 
-export const GraphDemo: React.FC = () => (
-  <AbsoluteFill style={{ backgroundColor: design.bg, fontFamily }}>
+// D-339 — the demos read the ACTIVE theme (`useTheme()`), not a module
+// constant. Rendered on their own, with no `<ThemeProvider>` above them, that
+// is the engine default — i.e. exactly the look they always had — but wrapping
+// one in a provider now re-skins it, which is what makes them living
+// references for the registry rather than for one hardcoded palette.
+export const GraphDemo: React.FC = () => {
+  const theme = useTheme();
+  return (
+  <AbsoluteFill style={{ backgroundColor: theme.bg, fontFamily: theme.fontUi }}>
     <Text preset="fade-up" start={4} size={44} x={960} y={80} align="center">
       Graph · signal propagation
     </Text>
@@ -44,7 +48,7 @@ export const GraphDemo: React.FC = () => (
         { from: "d1", to: "llm", at: 120 },
         { from: "d2", to: "llm", at: 120 },
         { from: "d3", to: "llm", at: 120 },
-        { from: "llm", to: "a", at: 150, color: design.accentRed },
+        { from: "llm", to: "a", at: 150, color: theme.accent },
       ]}
       highlight={[
         { id: "r", at: 66, dur: 30 },
@@ -54,4 +58,5 @@ export const GraphDemo: React.FC = () => (
       seed={7}
     />
   </AbsoluteFill>
-);
+  );
+};

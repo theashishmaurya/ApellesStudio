@@ -26,7 +26,7 @@ import {
   forceCollide,
   type SimulationNodeDatum,
 } from "d3-force";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { inAt, ambientDrift, pop } from "../lib/draw";
 import { mulberry32 } from "../lib/rng";
 import { roughEllipse, roughLine } from "../lib/rough";
@@ -68,6 +68,7 @@ export const Graph: React.FC<{
 }) => {
   const frame = useCurrentFrame();
   const { width: cw, height: ch, fps } = useVideoConfig();
+  const theme = useTheme();
   const W = width ?? cw;
   const H = height ?? ch;
 
@@ -123,7 +124,9 @@ export const Graph: React.FC<{
 
   const at = (id: string, drift = true) => {
     const p = layout[id];
-    const d = drift ? ambientDrift(frame, fps, nodeIndex[id] + 1) : { x: 0, y: 0 };
+    const d = drift
+      ? ambientDrift(frame, fps, nodeIndex[id] + 1, theme.ambientDriftPx)
+      : { x: 0, y: 0 };
     return { x: p.x + d.x, y: p.y + d.y };
   };
 
@@ -164,15 +167,17 @@ export const Graph: React.FC<{
         const draw = inAt(frame, drawStart, drawStart + 14);
         const d = roughLine([a.x, a.y], [b.x, b.y], {
           seed: 100 + i,
-          color: design.strokeSoft,
+          color: theme.strokeSoft,
           strokeWidth: 2.5,
+          roughness: theme.roughness,
+          bowing: theme.bowing,
         });
         return (
           <path
             key={`e${i}`}
             d={d}
             fill="none"
-            stroke={design.strokeSoft}
+            stroke={theme.strokeSoft}
             strokeWidth={2.5}
             strokeLinecap="round"
             pathLength={1}
@@ -189,7 +194,7 @@ export const Graph: React.FC<{
         if (t <= 0 || t >= 1) return null;
         const a = at(p.from);
         const b = at(p.to);
-        const col = p.color ?? design.accentBlue;
+        const col = p.color ?? theme.accentSignal;
         return (
           <circle
             key={`p${i}`}
@@ -211,24 +216,26 @@ export const Graph: React.FC<{
         const g = glowFor(n.id);
         const ring = roughEllipse(0, 0, nodeR * 2, nodeR * 2, {
           seed: 200 + nodeIndex[n.id],
-          color: g > 0.02 ? design.accentBlue : design.stroke,
+          color: g > 0.02 ? theme.accentSignal : theme.stroke,
           strokeWidth: 3,
+          roughness: theme.roughness,
+          bowing: theme.bowing,
         });
         return (
           <g
             key={n.id}
             transform={`translate(${c.x} ${c.y}) scale(${s})`}
             opacity={appear}
-            style={{ filter: g > 0.02 ? `drop-shadow(0 0 ${10 + g * 26}px ${design.accentBlue})` : undefined }}
+            style={{ filter: g > 0.02 ? `drop-shadow(0 0 ${10 + g * 26}px ${theme.accentSignal})` : undefined }}
           >
-            <circle r={nodeR} fill={design.bgDeep} />
-            <path d={ring} fill="none" stroke={g > 0.02 ? design.accentBlue : design.stroke} strokeWidth={3} />
+            <circle r={nodeR} fill={theme.bgDeep} />
+            <path d={ring} fill="none" stroke={g > 0.02 ? theme.accentSignal : theme.stroke} strokeWidth={3} />
             {n.label && (
               <text
                 y={nodeR + 34}
                 textAnchor="middle"
-                fill={design.textDim}
-                fontFamily={design.fontHand}
+                fill={theme.textDim}
+                fontFamily={theme.fontUi}
                 fontSize={30}
               >
                 {n.label}

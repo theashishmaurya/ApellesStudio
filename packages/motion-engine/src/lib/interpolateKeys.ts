@@ -43,7 +43,7 @@ const cb = (c: readonly [number, number, number, number]) =>
  *                   doesn't specify it (`Camera.tsx`'s own `x: k.x ?? cx`
  *                   pattern, generalized).
  * @param fallbackEase  the easing curve used when a key doesn't specify its
- *                   own `ease` — `design.ease.inOut` for the camera.
+ *                   own `ease` — `motion.ease.inOut` for the camera.
  * @returns         one resolved value per field in `fields`, at `frame`.
  */
 export function interpolateKeys<

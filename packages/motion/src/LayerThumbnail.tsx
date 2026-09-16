@@ -143,7 +143,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Thumbnail } from '@remotion/player';
 import type { Layer, Manifest } from '@apelles/motion-engine/src/engine/schema';
 import { lookup } from '@apelles/motion-engine/src/engine/registry';
-import { design } from '@apelles/motion-engine/src/design';
+import { resolveTheme } from '@apelles/motion-engine/src/design';
+import { ThemeProvider } from '@apelles/motion-engine/src/ThemeContext';
 import { catalogEntry, type PrimitiveUse } from './catalog';
 import { PrimitiveGlyph } from './PrimitiveGlyph';
 
@@ -171,13 +172,28 @@ const LIVE_PREVIEW_USES: ReadonlySet<PrimitiveUse> = new Set(['matrix', 'layers'
  *  `<Sequence>` for timeline/devtools bookkeeping this one-off static
  *  render has no use for) — avoids adding `remotion` itself as a new direct
  *  dependency of this package for one wrapper div. */
-function SingleLayerComposition({ layer, fps }: { layer: Layer; fps: number }) {
+function SingleLayerComposition({
+  layer,
+  fps,
+  theme: themeName,
+}: {
+  layer: Layer;
+  fps: number;
+  /** D-339 — the OWNING manifest's `theme`, threaded in so a thumbnail is
+   *  drawn in the same look as the composition the row belongs to. Absent
+   *  (every manifest with no `theme` key) resolves to the engine default,
+   *  which is the constant this used to read. */
+  theme?: string;
+}) {
   const { component: Component, adapt } = lookup(layer.use);
   const props = adapt(layer as unknown as Record<string, unknown>, fps, THUMBNAIL_FRAME);
+  const theme = resolveTheme(themeName);
   return (
-    <div style={{ position: 'absolute', inset: 0, background: design.bg, overflow: 'hidden' }}>
-      <Component {...props} />
-    </div>
+    <ThemeProvider theme={theme}>
+      <div style={{ position: 'absolute', inset: 0, background: theme.bg, overflow: 'hidden' }}>
+        <Component {...props} />
+      </div>
+    </ThemeProvider>
   );
 }
 
@@ -233,7 +249,7 @@ export function LayerThumbnail({ layer, manifest }: { layer: Layer; manifest: Ma
       {visible && (
         <Thumbnail
           component={SingleLayerComposition}
-          inputProps={{ layer, fps: manifest.fps }}
+          inputProps={{ layer, fps: manifest.fps, theme: manifest.theme }}
           compositionWidth={manifest.width}
           compositionHeight={manifest.height}
           durationInFrames={THUMBNAIL_FRAME + 1}
