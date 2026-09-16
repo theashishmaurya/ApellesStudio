@@ -622,28 +622,53 @@ pub fn extract_thumb_chunk(
 pub fn extract_thumb(path: &Path, info: &VideoInfo, frame: u64, height: u32) -> Result<String> {
     let frame = frame.min(info.frame_count.saturating_sub(1));
     let ts = info.frame_to_secs(frame);
-    let out = Command::new(ffmpeg_bin())
-        .args(["-hide_banner", "-loglevel", "error", "-ss"])
-        .arg(format!("{ts:.6}"))
-        .args(["-i"])
-        .arg(path)
-        .args([
-            "-frames:v",
-            "1",
-            "-vf",
-            &format!("scale=-2:{}", height.max(2)),
-            "-q:v",
-            "5",
-            "-f",
-            "image2pipe",
-            "-c:v",
-            "mjpeg",
-            "-",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| format!("running ffmpeg thumb on {}", path.display()))?;
+
+    // D-334 — hardware decode, with a real software fallback, exactly as
+    // `extract_thumb_chunk` has done since D-121. This is the same 4K HEVC
+    // footage the filmstrip measured 393% CPU / ~5s software against 38% CPU /
+    // ~3s hardware on; there was no reason for the shot strip to be the one
+    // extraction path still paying the software price.
+    let run = |hwaccel: bool| -> Result<std::process::Output> {
+        let mut cmd = Command::new(ffmpeg_bin());
+        cmd.args(["-hide_banner", "-loglevel", "error"]);
+        if hwaccel {
+            cmd.args(["-hwaccel", "videotoolbox"]);
+        }
+        cmd.arg("-ss")
+            .arg(format!("{ts:.6}"))
+            .args(["-i"])
+            .arg(path)
+            .args([
+                "-frames:v",
+                "1",
+                "-vf",
+                &format!("scale=-2:{}", height.max(2)),
+                "-q:v",
+                "5",
+                "-f",
+                "image2pipe",
+                "-c:v",
+                "mjpeg",
+                "-",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        cmd.output()
+            .with_context(|| format!("running ffmpeg thumb on {}", path.display()))
+    };
+
+    let mut out = run(true)?;
+    if !out.status.success() || out.stdout.is_empty() {
+        // `-hwaccel videotoolbox` does not cover every codec/pixel format, and
+        // a thumbnail is a nice-to-have: degrade to software rather than leave
+        // a shot with no picture and no trace of why.
+        log::warn!(
+            "chroma_session_thumbnail: hwaccel decode failed for {}, retrying in software: {}",
+            path.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        out = run(false)?;
+    }
     if !out.status.success() || out.stdout.is_empty() {
         return Err(anyhow!(
             "ffmpeg thumb failed: {}",
@@ -655,6 +680,94 @@ pub fn extract_thumb(path: &Path, info: &VideoInfo, frame: u64, height: u32) -> 
         "data:image/jpeg;base64,{}",
         b64.encode(&out.stdout)
     ))
+}
+
+/// `media_cache` namespace for shot-strip thumbnails (D-334).
+const NS_SHOT_THUMB: &str = "shotthumb";
+
+/// In-process shot thumbnails, in front of the disk cache. Small (a 96 px-tall
+/// JPEG data URL is a few KB) and capped, cleared wholesale rather than
+/// LRU-evicted — the same discipline the peaks cache uses, for the same
+/// reason: the simplest thing that cannot leak over a long session.
+static SHOT_THUMB_MEM: once_cell::sync::Lazy<
+    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<String>>>,
+> = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+const MAX_SHOT_THUMB_MEM: usize = 512;
+
+/// [`extract_thumb`], but cached and concurrency-bounded (D-334, fixes B-204).
+///
+/// **The defect this closes.** `chroma_session_thumbnail` had no cache of any
+/// kind and no concurrency bound, and the Colorist shot strip fires it once
+/// per shot from a mount effect. Opening the owner's real 75-clip recut
+/// therefore spawned **75 concurrent `ffmpeg` processes against a 4K HEVC
+/// source** — and it did so on every open, because nothing was kept, and from
+/// a tab the user need not even have visited (all three tabs stay mounted).
+/// That is precisely the B-037 incident D-121 fixed for the filmstrip and only
+/// for the filmstrip: 11 simultaneous `ffmpeg` processes, system load past
+/// 200.
+///
+/// **Three layers, cheapest first**, the same shape `filmstrip` and
+/// `audio::cached_peaks` already use: process memory → the on-disk
+/// `media_cache` (so the second open of a project, in a new process tomorrow,
+/// pays nothing) → a real extraction, holding a permit from the process-wide
+/// [`crate::ffmpeg_gate`].
+///
+/// Keyed on [`crate::media_cache::source_key`] — `blake3(path ‖ mtime ‖ len)`
+/// — plus the frame and the height, so replacing a source file in place
+/// invalidates its thumbnails rather than serving the old picture forever
+/// (B-056/B-127's lesson, applied here from the start rather than after the
+/// fact). A source that cannot be `stat`ed has no stable identity, so it is
+/// extracted uncached rather than cached under a key that could collide.
+pub async fn extract_thumb_cached(
+    path: &Path,
+    info: &VideoInfo,
+    frame: u64,
+    height: u32,
+) -> Result<String, String> {
+    let frame = frame.min(info.frame_count.saturating_sub(1));
+    let key = crate::media_cache::source_key(path)
+        .ok()
+        .map(|sk| format!("{sk}-f{frame}-h{height}"));
+
+    if let Some(key) = key.as_deref()
+        && let Some(hit) = SHOT_THUMB_MEM
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(key)
+    {
+        return Ok(hit.as_ref().clone());
+    }
+    if let Some(key) = key.as_deref()
+        && let Some(bytes) = crate::media_cache::read_blob(NS_SHOT_THUMB, key)
+        && let Ok(url) = String::from_utf8(bytes)
+    {
+        remember_shot_thumb(key, &url);
+        return Ok(url);
+    }
+
+    // Only now is a real subprocess involved, so only now is a permit needed.
+    // Taking it earlier would serialise cache hits behind decodes.
+    let _permit = crate::ffmpeg_gate::acquire().await;
+    let (owned_path, owned_info) = (path.to_path_buf(), info.clone());
+    let url = tokio::task::spawn_blocking(move || {
+        extract_thumb(&owned_path, &owned_info, frame, height).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    if let Some(key) = key.as_deref() {
+        crate::media_cache::write_blob(NS_SHOT_THUMB, key, url.as_bytes());
+        remember_shot_thumb(key, &url);
+    }
+    Ok(url)
+}
+
+fn remember_shot_thumb(key: &str, url: &str) {
+    let mut mem = SHOT_THUMB_MEM.lock().unwrap_or_else(|e| e.into_inner());
+    if mem.len() > MAX_SHOT_THUMB_MEM {
+        mem.clear();
+    }
+    mem.insert(key.to_string(), std::sync::Arc::new(url.to_string()));
 }
 
 /// Split a concatenated MJPEG byte stream into individual JPEG frames on the

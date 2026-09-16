@@ -78,6 +78,15 @@ MLX_MODEL_REPOS = {
     "large-v2": "mlx-community/whisper-large-v2-mlx",
     "large-v3": "mlx-community/whisper-large-v3-mlx",
     "large": "mlx-community/whisper-large-v3-mlx",
+    # ENGLISH ONLY (D-335). Every distil-whisper release is `language: en`
+    # (https://huggingface.co/distil-whisper/distil-large-v3.5), so selecting
+    # this model silently voids the Hinglish auto-detection this module's own
+    # docstring and `transcribe()`'s promise below. ~2.1-3.2x faster than
+    # `large-v3` and a legitimate opt-in for English-only work; never a default.
+    # Measured 2026-09-16: 12.47% WER divergence from `large-v3`, and the WORST
+    # segment boundaries of the three candidates tried on D-327's own B-198
+    # retake region — which matters, because `apelles-speech`'s retake detector
+    # reads exactly those boundaries.
     "distil-large-v3": "mlx-community/distil-whisper-large-v3",
 }
 

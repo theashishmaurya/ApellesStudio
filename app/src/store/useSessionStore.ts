@@ -696,14 +696,37 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         .filter((s) => s.offline)
         .map((s) => ({ id: s.id, sourcePath: s.sourcePath, name: s.name }));
 
+      // D-334 — ONE round trip for every shot's grade, not one per shot with
+      // the `await` inside the loop. On the owner's real 75-clip recut that
+      // was 75 strictly sequential IPC calls, 72 of which were for files that
+      // do not exist and so came back as thrown errors; nothing below could
+      // start until the last one landed. `chroma_load_grades` reads them all
+      // on one blocking thread and answers once. A shot with no grade file is
+      // simply absent from `grades` — the same "neutral" the per-shot `catch`
+      // meant — while a grade that exists but cannot be read now lands in
+      // `errors` and gets said out loud instead of silently reading as
+      // ungraded, which is the one behaviour this deliberately changes.
       const grades: Record<string, Adjustments> = {};
-      for (const s of dto.shots) {
-        if (s.offline) continue;
-        try {
-          const g: any = await invoke('chroma_load_grade', { path: `${dto.gradeDir}/${s.id}.grade.json` });
-          grades[s.id] = normalizeLoadedAdjustments(g?.adjustments ?? INITIAL_ADJUSTMENTS);
-        } catch {
-          /* no grade.json for this shot/clip yet — neutral */
+      const online = dto.shots.filter((s) => !s.offline);
+      if (online.length > 0) {
+        // `adjustments` is typed as `Adjustments` rather than `unknown` because
+        // that is what it is — `normalizeLoadedAdjustments` is precisely the
+        // function that tolerates an older/partial on-disk shape, and it takes
+        // `Adjustments`. Typing it `unknown` here would only push an `any` cast
+        // onto the call below, which is what the per-shot `const g: any` this
+        // replaced used to do.
+        const loaded = await invoke<{
+          grades: Record<string, { adjustments?: Adjustments } | null>;
+          errors: Record<string, string>;
+        }>('chroma_load_grades', {
+          gradeDir: dto.gradeDir,
+          clipIds: online.map((s) => s.id),
+        });
+        for (const [id, g] of Object.entries(loaded.grades)) {
+          grades[id] = normalizeLoadedAdjustments(g?.adjustments ?? INITIAL_ADJUSTMENTS);
+        }
+        for (const [id, message] of Object.entries(loaded.errors)) {
+          console.error(`[chroma] grade for clip ${id} exists but could not be loaded: ${message}`);
         }
       }
 

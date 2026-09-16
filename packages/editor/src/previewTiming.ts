@@ -82,8 +82,18 @@ export type PreviewTimingChannel = 'raf' | 'paint';
 
 /** The D-290 duration channels. Unlike {@link PreviewTimingChannel} these hold
  *  already-measured spans in ms, not moments in time — see the module doc for
- *  what each one covers and which subtraction it is meant for. */
-export type PreviewSpanChannel = 'fetch' | 'tick';
+ *  what each one covers and which subtraction it is meant for.
+ *
+ *  `scrub` is D-334's addition and is deliberately a THIRD channel rather than
+ *  more samples in `fetch`. Both time the same `chroma_timeline_frame` round
+ *  trip, but they are not the same measurement: `fetch` is only ever recorded
+ *  inside the play loop, where the decode pipe is streaming forward and D-290
+ *  measured ~3.5 ms of Rust; `scrub` is the paused path, where the requested
+ *  frame is frequently BEHIND the pipe and so costs a kill-and-respawn plus a
+ *  keyframe seek instead. Averaging the two together would hide exactly the
+ *  difference this channel exists to expose, and would silently change what
+ *  every pre-D-334 `fetch` number meant. */
+export type PreviewSpanChannel = 'fetch' | 'tick' | 'scrub';
 
 const buffers: Record<PreviewTimingChannel, number[]> = { raf: [], paint: [] };
 
@@ -100,7 +110,7 @@ interface Span {
   ms: number;
 }
 
-const spans: Record<PreviewSpanChannel, Span[]> = { fetch: [], tick: [] };
+const spans: Record<PreviewSpanChannel, Span[]> = { fetch: [], tick: [], scrub: [] };
 
 /** Record one event. `at` defaults to `performance.now()` and is a parameter
  *  purely so the tests can drive a deterministic clock. */
@@ -131,6 +141,7 @@ export function resetPreviewTiming(): void {
   buffers.paint = [];
   spans.fetch = [];
   spans.tick = [];
+  spans.scrub = [];
 }
 
 export interface ChannelTimingReport {
@@ -179,6 +190,12 @@ export interface PreviewTimingReport {
    *  tick.medianMs` is React's render/commit plus the wait for the next
    *  animation frame. */
   tick: SpanTimingReport;
+  /** D-334 — the same `chroma_timeline_frame` round trip as `fetch`, but
+   *  measured on the PAUSED/scrub path, where the decode pipe is usually being
+   *  asked for a frame behind its read head. A `scrub.medianMs` far above
+   *  `fetch.medianMs` is the signature of the respawn-and-keyframe-seek cost,
+   *  not of a slow webview. Empty while nothing has scrubbed. */
+  scrub: SpanTimingReport;
   capacity: number;
   /** D-330 — the time window every channel above was derived over, in ms, or
    *  `null` for "the whole ring buffer" (the default, and what every report
@@ -325,6 +342,10 @@ export function previewTimingReport(
     ),
     tick: spanReport(
       withinWindow(spans.tick, win, spanAt, anchor).map((s) => s.ms),
+      capped,
+    ),
+    scrub: spanReport(
+      withinWindow(spans.scrub, win, spanAt, anchor).map((s) => s.ms),
       capped,
     ),
     capacity: TIMING_CAPACITY,

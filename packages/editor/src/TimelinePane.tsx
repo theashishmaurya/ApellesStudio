@@ -2673,12 +2673,19 @@ export function TimelinePane() {
                 }
               />
               <div className="absolute inset-x-0 bottom-0" style={{ height: ROW_HEIGHT * 0.4 }}>
+                {/* D-334/B-204 — the same visible slice the filmstrip above
+                    gets. Without it this fetched a real audio decode for every
+                    clip on the track, on-screen or not. */}
                 <Waveform
                   sourcePath={clip.source_path}
                   startSecs={clip.source_start / (clip.source_fps ?? fps)}
                   durationSecs={clip.duration / (clip.source_fps ?? fps)}
                   width={pxWidth}
                   height={ROW_HEIGHT * 0.4}
+                  visibleStartPx={filmstripScrollLeft - (START_LEFT_PX + action.start * pxPerSec)}
+                  visibleEndPx={
+                    filmstripScrollLeft + viewportWidth - (START_LEFT_PX + action.start * pxPerSec)
+                  }
                 />
               </div>
             </>
@@ -2693,12 +2700,23 @@ export function TimelinePane() {
               D-124's filmstrip decode is exactly the cost not to pay twice
               per linked pair. */}
           {clip && track?.kind === 'audio' && (
+            /* D-334/B-204 — the visible slice, same as the video track's two
+               strips above. This one is the more important of the pair to
+               gate: an audio clip has no filmstrip, so its waveform is the
+               ONLY per-clip fetch on this track, and an A/V-linked pair
+               resolves to a single shared cache key — so leaving this
+               ungated left the whole fan-out in place even after the video
+               side was culled. Measured exactly that way (see D-334). */
             <Waveform
               sourcePath={clip.source_path}
               startSecs={clip.source_start / (clip.source_fps ?? fps)}
               durationSecs={clip.duration / (clip.source_fps ?? fps)}
               width={pxWidth}
               height={ROW_HEIGHT}
+              visibleStartPx={filmstripScrollLeft - (START_LEFT_PX + action.start * pxPerSec)}
+              visibleEndPx={
+                filmstripScrollLeft + viewportWidth - (START_LEFT_PX + action.start * pxPerSec)
+              }
             />
           )}
           {/* D-058/B-013: `pointer-events-none` is load-bearing, not

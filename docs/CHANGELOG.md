@@ -4,6 +4,54 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-16** — **D-335: measured four faster transcription backends and kept
+  `mlx-whisper large-v3`.** Owner asked for a genuinely faster local model
+  without trading accuracy. Ran `large-v3`, `large-v3-turbo`, `turbo` 4-bit,
+  `distil-large-v3` and `distil-large-v3.5` through the shipped `transcribe.py`
+  path on the real `c040` source (686 s), deterministic per model. **The fastest
+  credible candidate, `large-v3-turbo`, silently drops 19.4 s / 29 words of real
+  speech** — reproducibly, with the audio present at normal level, and it
+  transcribes that same slice perfectly in isolation (a long-form seek artifact,
+  i.e. silent and content-dependent). 4-bit quantization bought **zero** speed
+  (494 s vs 498 s) for worse accuracy; `distil-large-v3.5`'s only MLX build
+  produces 147 zero-length words. Parakeet leads the leaderboard but needs CUDA;
+  `faster-whisper` has no Apple Silicon GPU path. **No backend change** — the
+  one code change is a doc fix marking `distil-large-v3` English-only, which the
+  module's own Hinglish promise contradicted. Two proposals recorded, not built:
+  speculative decoding (~2×, provably identical output, blocked on `mlx-whisper`)
+  and `parakeet-mlx` as an opt-in English path. Caveat on the record: these runs
+  were taken at load average 130 from sibling agents, so the speedup *ratios*
+  are real and the absolute seconds are not.
+
+- **2026-09-16** — **D-334 (+ B-204, B-205): the project-open/timeline perf pass
+  — four distinct defects, not one.** Owner: *"open a project it takes forever,
+  timeline takes forever, preview takes like hell ... app becomes
+  unresponsive."* Established first that this is NOT the playback path D-321/
+  D-323/D-324/D-325/D-330 already fixed. **(1)** `Waveform` fetched for every
+  clip on a track regardless of scroll position (the timeline library
+  virtualizes rows but not actions) — **75 audio decodes at 150 clips and 150
+  at 300, now 5 and 5**, via a shared `clipVisibility.ts` the filmstrip already
+  had privately. **(2)** `chroma_session_thumbnail` had no cache and no
+  concurrency bound, so opening the owner's 75-clip recut spawned 75 concurrent
+  4K `ffmpeg` processes — B-037 again, from the one call site D-121's fix never
+  covered; now three-tier cached + hwaccel, behind a new **process-wide**
+  `ffmpeg_gate`. **(3)** Grades loaded with `await` inside a `for` — 75
+  sequential round trips, 72 of them for files that do not exist; now one
+  `chroma_load_grades`. **(4)** "Unresponsive" was literal: `chroma_timeline_get`
+  (uncached 212 KB manifest parse + migration + 150-clip backfill, re-fired on
+  every window focus) and `chroma_project_list` ran **on the UI thread**, since
+  a Tauri command without `async` does. Harness: a new
+  `TimelinePane.mountCost.dom.test.tsx` that counts per-clip IPC fan-out
+  (verified failing first), and a new `scrub` span channel in `previewTiming`/
+  `debug_frame_timing` because the paused preview path had no cost
+  instrumentation at all. **The preview symptom is root-caused but deliberately
+  NOT fixed** — any backward scrub step forces an ffmpeg respawn + keyframe seek
+  (248-337 ms vs 6.7 ms sequential), and the obvious frame-cache fix needs an
+  invalidation key this pass could not prove correct; three sequenced candidates
+  are in `docs/04-roadmap.md`. The "under 1s" target is not claimed end-to-end:
+  the numbers here are fan-out counts and code-level cost accounting, not a
+  stopwatch on the owner's own app.
+
 - **2026-09-16** — **D-333: explainer motion graphics for c038/c040, and a new
   `plot` primitive.** Read both talking-head timelines with
   `editor_get_timeline_transcript` (D-329) on throwaway `-mgfx` copies, picked

@@ -93,7 +93,7 @@
 //! be cached ([`derive_from_finer`]) — which is exactly the zoom-out case.
 //!
 //! And the chunks of one request are now loaded **concurrently**, bounded by
-//! the same [`EXTRACT_SEMAPHORE`]: D-128 awaited them one at a time, so a cold
+//! the same [`crate::ffmpeg_gate`]: D-128 awaited them one at a time, so a cold
 //! 5-chunk window paid 5 × 2.2s in series while two of the three permits sat
 //! idle.
 
@@ -337,11 +337,11 @@ impl Drop for ChunkLockGuard {
     }
 }
 
-/// Bounds how many `ffmpeg` child processes may run at once (D-121). Found
-/// live, not theorized: the owner's real machine hit 11 simultaneous `ffmpeg`
-/// processes opening a multi-clip project, and system load spiked past 200.
-static EXTRACT_SEMAPHORE: Lazy<tokio::sync::Semaphore> =
-    Lazy::new(|| tokio::sync::Semaphore::new(3));
+// D-334 — the process-wide `ffmpeg` concurrency bound this module used to own
+// privately now lives in `crate::ffmpeg_gate`, because the budget belongs to
+// the machine and not to one feature: a second per-feature semaphore of 3
+// permits 6 processes. `video::extract_thumb` (the Colorist shot strip) was
+// never covered by the local one and re-created B-037 from its own call site.
 
 /// Measured keyframe interval per source path, in-process — paired with the
 /// source's identity ([`media_cache::source_key`]) at the moment it was
@@ -626,10 +626,7 @@ async fn extract(
     // keyframe gap every sample still lands on its own keyframe.
     let keyframe_only = step >= keyframe_interval(path, source_key);
 
-    let _permit = EXTRACT_SEMAPHORE
-        .acquire()
-        .await
-        .map_err(|e| e.to_string())?;
+    let _permit = crate::ffmpeg_gate::acquire().await;
 
     let (path, info) = (path.to_path_buf(), info.clone());
     tokio::task::spawn_blocking(move || {
@@ -699,7 +696,7 @@ pub async fn clip_thumbnails(
 
     // Concurrently, not one at a time: D-128 awaited each chunk in turn, so a
     // cold 5-chunk window cost 5 x ~2.2s in series while two of
-    // `EXTRACT_SEMAPHORE`'s three permits sat idle. The semaphore is still
+    // `ffmpeg_gate`'s three permits sat idle. The semaphore is still
     // what bounds real `ffmpeg` processes; this only stops the request itself
     // from being the bottleneck. Cache hits resolve immediately either way.
     // B-055 — drop chunks with no real frame in them. `ffmpeg -ss` at or past

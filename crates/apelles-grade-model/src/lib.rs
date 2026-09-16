@@ -165,6 +165,50 @@ pub fn save_grade(path: &str, grade: Value) -> Result<SaveResult, String> {
 // load
 // --------------------------------------------------------------------------- //
 
+/// Load every `<grade_dir>/<id>.grade.json` that EXISTS, in one call (D-334).
+///
+/// **Why this exists.** Opening a project loaded grades one clip at a time,
+/// with the `await` inside the loop — 75 strictly sequential IPC round trips
+/// on the owner's real recut, of which 72 were for files that do not exist and
+/// so resolved as thrown errors serialized back across the bridge. Nothing
+/// downstream could start until the last one landed: the Edit timeline, the
+/// media pool and the Motion manifest all wait on the store write that follows
+/// it. Sequential-by-accident, and paying the most for the clips that had
+/// nothing to load.
+///
+/// **A missing file is not an error here, and that is the point.** A clip with
+/// no grade yet is the ordinary case, not a failure, so it is simply absent
+/// from the returned map — the caller reads "no entry" as "neutral", exactly
+/// what its old per-clip `catch` meant. A file that exists but is corrupt or
+/// carries a schema this build cannot read is a DIFFERENT thing and must not
+/// be silently flattened into the same "neutral" answer, so its `Err` is
+/// returned against that id for the caller to report. That distinction is the
+/// whole reason this returns a map of `Result` rather than a map of `Value`
+/// (and the reason it is not just `load_grade` in a loop that swallows).
+pub fn load_grades(
+    grade_dir: &str,
+    ids: &[String],
+) -> std::collections::HashMap<String, Result<Value, String>> {
+    let dir = Path::new(grade_dir);
+    let mut out = std::collections::HashMap::with_capacity(ids.len());
+    for id in ids {
+        let path = dir.join(format!("{id}.grade.json"));
+        // `try_exists` rather than `exists`: a permissions or I/O problem
+        // reading the directory is a real failure to report, not the same
+        // answer as "this clip has no grade".
+        match path.try_exists() {
+            Ok(false) => continue,
+            Ok(true) => {}
+            Err(e) => {
+                out.insert(id.clone(), Err(format!("stat {}: {e}", path.display())));
+                continue;
+            }
+        }
+        out.insert(id.clone(), load_grade(&path.to_string_lossy()));
+    }
+    out
+}
+
 /// Read + parse `grade.json`, migrate its schema to the current version, inline
 /// the `$matte` sidecars back to base64 and resolve `$trackDir` to an absolute
 /// path. Returns the grade JSON with a plain `adjustments` object ready to apply.
