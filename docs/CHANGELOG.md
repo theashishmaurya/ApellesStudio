@@ -24,7 +24,11 @@ One or two lines per session. Detail lives in the decision it references.
   transform. Two spin-offs filed rather than carried quietly: **B-208** (the
   separate `scale` unit divergence, still open) and **B-209** (the `apelles`
   crate's `--lib` test build had not compiled since `chroma_timeline_get` became
-  `async` — fixed here; 331 tests were unrunnable). A third, found the same way
+  `async` — fixed here; 331 tests were unrunnable). With the convention fixed,
+  D-333's workaround is lifted: all eight motion-graphics overlays in the two
+  `-mgfx` projects come down from full-frame to a `0.35` upper-left inset card
+  over the dark side of the shot, placed against the real frames. Nothing
+  exported. A third bug, found the same way
   and left open with its exact diagnosis: **B-210**, `TimelinePane.tsx` has been
   losing all React Compiler auto-memoization to a ref read during render, with
   D-201's guard test red on `main` rather than preventing it.
