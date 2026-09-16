@@ -1134,6 +1134,25 @@ mod tests {
     /// project-opening test in `chroma::*` shares it.
     use super::super::PROJECT_STATE_LOCK;
 
+    /// `chroma_timeline_get`, driven from a synchronous test (B-209).
+    ///
+    /// It became `async` + `spawn_blocking` in B-205/D-334 (a Tauri command
+    /// without the `async` keyword runs on the UI thread, and that one does
+    /// real blocking I/O) — and the sixteen call sites in this module did not
+    /// follow, so the crate's whole `--lib` test build stopped compiling. The
+    /// tests themselves are about what the command PERSISTS, not about which
+    /// thread it runs on, so they stay synchronous and drive it on a tiny
+    /// current-thread runtime: the same pattern this module already uses for
+    /// `chroma_project_save` rather than pulling `tokio::test` into an
+    /// otherwise-sync test module. `new_current_thread` still carries a
+    /// blocking pool, which is what `spawn_blocking` needs.
+    fn timeline_get() -> Result<apelles_timeline::Timeline, String> {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a current-thread test runtime")
+            .block_on(super::super::edit::chroma_timeline_get())
+    }
+
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(
             "chroma_project_test_{tag}_{}_{:?}",
@@ -1482,7 +1501,7 @@ mod tests {
         assert_eq!(active_now, vec![alt.id.clone()]);
 
         // chroma_timeline_get/_set operate on whichever is active
-        let got = super::super::edit::chroma_timeline_get().unwrap();
+        let got = timeline_get().unwrap();
         assert_eq!(got.id, alt.id);
 
         // switch back to the original by id
@@ -1494,17 +1513,11 @@ mod tests {
             .map(|t| t.id.clone())
             .collect();
         assert_eq!(active_now2, vec![main_id.clone()]);
-        assert_eq!(
-            super::super::edit::chroma_timeline_get().unwrap().id,
-            main_id
-        );
+        assert_eq!(timeline_get().unwrap().id, main_id);
 
         // an unknown id errors, active timeline unchanged
         assert!(super::super::edit::chroma_timeline_set_active("no-such-id".into()).is_err());
-        assert_eq!(
-            super::super::edit::chroma_timeline_get().unwrap().id,
-            main_id
-        );
+        assert_eq!(timeline_get().unwrap().id, main_id);
 
         state::set_project(None);
         let _ = std::fs::remove_dir_all(&root);
@@ -1534,7 +1547,7 @@ mod tests {
             name: "single-tl".into(),
         }));
 
-        let tl = super::super::edit::chroma_timeline_get().unwrap();
+        let tl = timeline_get().unwrap();
         assert_eq!(
             tl.tracks[0].clips.len(),
             1,
@@ -1545,7 +1558,7 @@ mod tests {
         edited.name = "renamed".into();
         super::super::edit::chroma_timeline_set(edited.clone()).unwrap();
 
-        let refetched = super::super::edit::chroma_timeline_get().unwrap();
+        let refetched = timeline_get().unwrap();
         assert_eq!(refetched.id, edited.id, "id is preserved across set/get");
         assert_eq!(refetched.name, "renamed");
         assert_eq!(refetched.tracks[0].clips.len(), 1);
@@ -1580,7 +1593,7 @@ mod tests {
         }));
 
         // one video track, its clip placed explicitly above (B-171)
-        let tl = super::super::edit::chroma_timeline_get().unwrap();
+        let tl = timeline_get().unwrap();
         assert_eq!(tl.tracks.len(), 1);
         let clip_id = tl.tracks[0].clips[0].id.clone();
 
@@ -1589,7 +1602,7 @@ mod tests {
             super::super::edit::chroma_timeline_add_track(apelles_timeline::TrackKind::Audio)
                 .unwrap();
         assert_eq!(new_idx, 1);
-        let tl2 = super::super::edit::chroma_timeline_get().unwrap();
+        let tl2 = timeline_get().unwrap();
         assert_eq!(tl2.tracks.len(), 2);
         assert_eq!(tl2.tracks[1].kind, apelles_timeline::TrackKind::Audio);
 
@@ -1602,7 +1615,7 @@ mod tests {
         // Rust-side ones, which have been red on `main` ever since. Stale
         // assertion brought up to the shipped contract, not a behaviour change.
         super::super::edit::chroma_timeline_move_clip(0, 0, 1, 500, false).unwrap();
-        let tl3 = super::super::edit::chroma_timeline_get().unwrap();
+        let tl3 = timeline_get().unwrap();
         assert_eq!(tl3.tracks.len(), 1, "the emptied source track 0 was pruned");
         assert_eq!(tl3.tracks[0].kind, apelles_timeline::TrackKind::Audio);
         assert_eq!(tl3.tracks[0].clips.len(), 1, "landed on the audio track");
@@ -1611,7 +1624,7 @@ mod tests {
 
         // an out-of-range move errors and leaves the persisted timeline unchanged
         assert!(super::super::edit::chroma_timeline_move_clip(9, 0, 0, 0, false).is_err());
-        let tl4 = super::super::edit::chroma_timeline_get().unwrap();
+        let tl4 = timeline_get().unwrap();
         assert_eq!(
             tl4.tracks[0].clips.len(),
             1,
@@ -1620,7 +1633,7 @@ mod tests {
 
         // remove_track (including the clip now sitting on it)
         super::super::edit::chroma_timeline_remove_track(0).unwrap();
-        let tl5 = super::super::edit::chroma_timeline_get().unwrap();
+        let tl5 = timeline_get().unwrap();
         assert!(
             tl5.tracks.is_empty(),
             "the audio track (and its clip) is gone"
@@ -1669,7 +1682,7 @@ mod tests {
         // whatever is sent verbatim, the same "the frontend owns clip
         // creation" contract `add_clip`'s own doc names (this crate has no
         // clip-creation op of its own).
-        let mut tl = super::super::edit::chroma_timeline_get().unwrap();
+        let mut tl = timeline_get().unwrap();
         assert_eq!(tl.tracks.len(), 1);
         let video_id = tl.tracks[0].clips[0].id.clone();
         tl.tracks.push(apelles_timeline::Track {
@@ -1690,7 +1703,7 @@ mod tests {
         // link — persists a shared group on both real clips, resolved
         // against whatever timeline is active, not a bare in-memory one.
         let group = super::super::edit::chroma_timeline_link_clips(0, 0, 1, 0).unwrap();
-        let after_link = super::super::edit::chroma_timeline_get().unwrap();
+        let after_link = timeline_get().unwrap();
         assert_eq!(
             after_link.tracks[0].clips[0].link_group.as_deref(),
             Some(group.as_str())
@@ -1704,7 +1717,7 @@ mod tests {
         // untouched — not merged, not partially applied.
         let err = super::super::edit::chroma_timeline_link_clips(0, 0, 1, 0).unwrap_err();
         assert!(err.contains("already linked"), "unexpected error: {err}");
-        let unchanged = super::super::edit::chroma_timeline_get().unwrap();
+        let unchanged = timeline_get().unwrap();
         assert_eq!(
             unchanged.tracks[0].clips[0].link_group.as_deref(),
             Some(group.as_str())
@@ -1717,7 +1730,7 @@ mod tests {
         // playback path for the video clip (nothing here exercises audio
         // playback, just the `link_group` field `chroma_audio_play` reads).
         super::super::edit::chroma_timeline_unlink_clip(0, 0).unwrap();
-        let after_unlink = super::super::edit::chroma_timeline_get().unwrap();
+        let after_unlink = timeline_get().unwrap();
         assert_eq!(after_unlink.tracks[0].clips[0].link_group, None);
         assert_eq!(after_unlink.tracks[1].clips[0].link_group, None);
         assert_eq!(
@@ -1781,7 +1794,7 @@ mod tests {
 
         // placed explicitly above (B-171): track 0 has A (short) at [0, durA)
         // then B (long) at [durA, durA+durB), back to back.
-        let tl = super::super::edit::chroma_timeline_get().unwrap();
+        let tl = timeline_get().unwrap();
         assert_eq!(tl.tracks.len(), 1);
         assert_eq!(tl.tracks[0].clips.len(), 2);
         let dur_a = tl.tracks[0].clips[0].duration;
@@ -1800,7 +1813,7 @@ mod tests {
         assert_eq!(new_idx, 1);
         super::super::edit::chroma_timeline_move_clip(0, 1, 1, 0, false).unwrap();
 
-        let tl2 = super::super::edit::chroma_timeline_get().unwrap();
+        let tl2 = timeline_get().unwrap();
         assert_eq!(tl2.tracks[0].clips.len(), 1, "only A left on track 0");
         assert_eq!(tl2.tracks[1].clips.len(), 1, "B landed on track 1");
 

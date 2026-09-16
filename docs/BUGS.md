@@ -3341,6 +3341,16 @@ status: **open** · severity: **medium** (total loss of the user's preset librar
 - **not automatic**, unlike B-194: it needs the user to add, rename or reorder a preset while the list is wrongly empty. When that happens it is total loss.
 - **fix:** an error state that is not an empty value — refuse to save while the last load failed, the way `packages/editor/src/timelineStore.ts` already does (`status: 'error'`, and `applyOp` early-returns on a null timeline) and the way B-058/D-150 fixed the Motion tab.
 
+## B-209 — the `apelles` crate's own `--lib` test build stopped compiling, because sixteen test call sites did not follow `chroma_timeline_get` becoming `async`
+
+status: **fixed** (2026-09-16, in D-338's pass) · severity: **high** (not a rendering defect — a *verification* one: `cargo test -p apelles --lib` failed at COMPILE time, so every one of that crate's 331 tests was unrunnable and nothing in it could be checked at all) · area: `app/src-tauri/src/chroma/project.rs` (test module)
+
+- **found:** 2026-09-16, by the D-338 pass, on its first `cargo test -p apelles --lib` — 16 `error[E0599]: no method named 'unwrap' found for opaque type 'impl Future<…>'`. Pre-existing on `main` at `431bd22`; nothing in D-338 touched `project.rs`.
+- **cause:** B-205/D-334 made `chroma_timeline_get` `pub async fn` + `spawn_blocking` (correctly — a `#[tauri::command]` without `async` runs on the UI thread, and that body does real blocking I/O). Its sixteen call sites in `project.rs`'s **test** module still called it synchronously, so they now `.unwrap()` a `Future`. The library itself compiles fine; only the test build breaks, which is why it shipped: a `cargo build`, a `cargo clippy` on the lib, and a `tauri dev` all stay green.
+- **fix:** one `timeline_get()` helper in that test module, driving the command on a tiny `new_current_thread` runtime and `block_on` — the same pattern the module already used for the async `chroma_project_save`, rather than pulling `tokio::test` into an otherwise-sync test module. The tests are about what the command *persists*, not which thread it runs on, so they stay synchronous. `new_current_thread` still carries a blocking pool, which is what `spawn_blocking` needs.
+- **verification:** `cargo test -p apelles --lib chroma::` → **331 passed, 0 failed**.
+- **worth keeping in mind:** adding `async` to a `#[tauri::command]` is a source-compatible change for the *app* and a breaking one for every synchronous caller in a test. Nothing in the frontend or in a lib build can tell you; only the test build can, and only if someone runs it.
+
 ## B-202 — a `motion_render` that fails partway through reports the failure NOWHERE: the loop stops, the op has already timed out, and nothing is logged
 
 status: **open** · severity: medium (no data loss — but a partial render is indistinguishable from a slow one, and the reason is unrecoverable after the fact) · area: `packages/motion/src/useMotionManifest.ts` (the per-scene render loop) + `app/src-tauri/src/chroma/control.rs`'s 20s `BRIDGE_TIMEOUT`
