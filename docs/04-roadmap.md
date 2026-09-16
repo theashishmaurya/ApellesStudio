@@ -1612,6 +1612,22 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         surface is built and what `TransformOverlay`/`useContentBox` measure,
         and it cannot be verified in jsdom — it needs the real app. This and the
         next item are where the remaining ~19 ms lives.
+      - ⚠️ **Re-prioritised 2026-09-15 by D-334's live measurement — read this
+        before picking up the `createImageBitmap` item above.** Measured in the
+        real app on the owner's `2026-09-12-c040`, on a settled machine:
+        `fetch` (Tauri IPC + all of Rust — decode, composite, JPEG encode) is
+        **26-33 ms of a 41 ms frame**, leaving the entire webview side ~12 ms.
+        That is the OPPOSITE of D-290's ~3.5 ms Rust / ~21.5 ms webview split,
+        which was measured on a much simpler project. Sequential decode is only
+        6.8 ms of it, so the ~20 ms remainder is **composite + JPEG encode** —
+        which is now the larger target, and it is Rust-side, not webview-side.
+        D-334 also found that removing four reactive `playhead` subscribers cut
+        their React commits to zero (proven) while moving the live frame time
+        **not at all** (40 ms without the fixes vs 41.5 ms with), so the
+        remaining subscribers should not be assumed worth fixing until a
+        measurement says so. And the same build measures 40 ms at load ~10
+        against 86 ms at load ~133: **record `getloadavg` beside any preview
+        number here, or it means very little.**
       - ⬜ **Partly fixed 2026-09-15 (D-325, B-146 continuation) — `playhead`
         lives in the store slice (at least) ELEVEN components subscribe to
         reactively** (`CaptionLibrary`, `ClipCurveEditor`,

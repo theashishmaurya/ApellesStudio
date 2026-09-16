@@ -45,7 +45,13 @@ export function CaptionsFromTranscriptButton() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const selection = useEditorTimelineStore((s) => s.selection);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
+  // D-330 — deliberately NOT `useEditorTimelineStore((s) => s.playhead)`. The
+  // only thing this component does with the playhead is read it once, inside
+  // the click handler below, to decide where to drop the generated cues. A
+  // reactive selector re-rendered this button (and re-ran its `useAiEnv`
+  // subtree) on every displayed frame of playback to produce identical markup.
+  // D-325's read-at-the-point-of-use pattern, third application after
+  // `TimelinePane` and `EditLibraryPanel`.
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,7 +81,10 @@ export function CaptionsFromTranscriptButton() {
 
     // Dropped at the playhead, not 0:00 — the same convention
     // `SubtitleImportButton` uses. Computed before the `try` for the same
-    // React Compiler reason that file's own comment gives (D-201).
+    // React Compiler reason that file's own comment gives (D-201), and read
+    // non-reactively (D-330) — the value is only needed at the moment the
+    // click happens, which is exactly what `getState()` gives.
+    const playhead = useEditorTimelineStore.getState().playhead;
     const offsetFrames = playhead > 0 ? playhead : 0;
     const fps = timelineFps(timeline);
     const stem = sourcePath.split(/[/\\]/).pop()?.replace(/\.[^./\\]+$/, '') ?? 'transcript';

@@ -185,7 +185,11 @@ function fontWeightFor(key: string): number {
 export function CaptionLibrary() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
+  // D-330 — deliberately NOT `useEditorTimelineStore((s) => s.playhead)`; the
+  // value is read once inside `importFile` below and never during render, so a
+  // reactive selector re-rendered the whole subtitles library on every
+  // displayed frame of playback for nothing. D-325's read-at-the-point-of-use
+  // pattern.
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -206,7 +210,9 @@ export function CaptionLibrary() {
     // Computed BEFORE the `try`, deliberately: the React Compiler bails out of
     // a whole function containing a conditional "value block" inside a
     // try/catch, and D-201 keeps this package at zero bailouts (enforced by
-    // `reactCompiler.test.ts`).
+    // `reactCompiler.test.ts`). Read non-reactively (D-330) — the picker has
+    // just returned, so "the playhead now" is exactly what this wants.
+    const playhead = useEditorTimelineStore.getState().playhead;
     const offsetFrames = playhead > 0 ? playhead : null;
     setBusy(true);
     let res: { cues: ImportedCaption[]; source_name: string } | null = null;

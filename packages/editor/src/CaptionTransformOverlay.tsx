@@ -97,6 +97,8 @@
  *   already lets a click select only an on-screen cue, so a box that outlived
  *   its cue's span was the one way the two halves could disagree.
  */
+import { useEffect, useState } from 'react';
+
 import {
   captionSizeAfterDrag,
   clipCoversFrame,
@@ -104,6 +106,8 @@ import {
   resolveCaptionStyle,
   timelineFps,
   type CaptionStyle,
+  type Clip,
+  type Track,
 } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { TransformBox, type TransformDraft, type TransformGestureKind } from './TransformBox';
@@ -129,12 +133,6 @@ export function CaptionTransformOverlay({
   const timeline = useEditorTimelineStore((s) => s.timeline);
   const selection = useEditorTimelineStore((s) => s.selection);
   const applyOp = useEditorTimelineStore((s) => s.applyOp);
-  // B-185/D-317 — the box may only exist while its cue is on screen, so this
-  // component re-renders as the playhead moves. Same cost `TransformOverlay`
-  // already documents for its own D-209 playhead dependency, and the same
-  // reason: what the canvas shows is a function of the playhead.
-  const playhead = useEditorTimelineStore((s) => s.playhead);
-
   // The same Phase-1 multi-select fallback every single-clip-only consumer in
   // this tab applies (`docs/notes/multi-select.md`).
   const primary = selection.length === 1 ? selection[0] : null;
@@ -150,8 +148,16 @@ export function CaptionTransformOverlay({
   // so the box a click can produce and the box this draws are answers to one
   // question rather than two. A hidden track draws nothing either, which is
   // why that is part of the same test.
-  const onScreen =
-    !!clip && !!track && !track.hidden && clipCoversFrame(clip, playhead, timelineFps(timeline));
+  //
+  // **D-329 — subscribed on the BOOLEAN, not on the playhead.** This used to be
+  // a reactive `useEditorTimelineStore((s) => s.playhead)` selector, whose own
+  // comment called the resulting per-frame re-render unavoidable "because what
+  // the canvas shows is a function of the playhead". Only this one boolean is,
+  // and it flips at most twice for a given cue — once on, once off — so a
+  // subscription that sets state only when it actually changes costs nothing for
+  // the whole time the cue is on screen, and nothing at all for the whole time
+  // it is not. D-328's `useActiveTranscriptRow` shape (B-146).
+  const onScreen = useCueOnScreen(clip, track, timelineFps(timeline));
 
   // The resolved style — the cue's own override, else the track's, else the
   // defaults — which is what the preview actually drew with
@@ -241,4 +247,38 @@ export function CaptionTransformOverlay({
       />
     </div>
   );
+}
+
+/** Whether the selected cue is on screen at the playhead — **re-rendered only
+ *  when that answer changes** (D-329, B-146).
+ *
+ *  D-328's `useActiveTranscriptRow` pattern. The predicate is
+ *  `clipCoversFrame`, exactly as `visibleCaptionsAt` applies it, so the box this
+ *  gates and the box a canvas click can produce stay answers to one question.
+ *
+ *  The derived boolean is computed INSIDE the effect rather than in a `useMemo`
+ *  it depends on — the shape the React Compiler cannot preserve (D-201). */
+function useCueOnScreen(clip: Clip | null, track: Track | null, fps: number): boolean {
+  const [onScreen, setOnScreen] = useState(false);
+
+  useEffect(() => {
+    const at = (frame: number) =>
+      !!clip && !!track && !track.hidden && clipCoversFrame(clip, frame, fps);
+
+    // Seed rather than wait for the next tick, so selecting a cue while paused
+    // draws its box immediately.
+    let last = at(useEditorTimelineStore.getState().playhead);
+    setOnScreen(last);
+
+    return useEditorTimelineStore.subscribe((state) => {
+      const next = at(state.playhead);
+      // The whole point: every tick for which the cue stays on (or stays off)
+      // screen does no React work at all.
+      if (next === last) return;
+      last = next;
+      setOnScreen(next);
+    });
+  }, [clip, track, fps]);
+
+  return onScreen;
 }

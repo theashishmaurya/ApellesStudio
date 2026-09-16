@@ -83,6 +83,7 @@
 //!   footprint is `pub mod edit;` in `chroma/mod.rs` + the `generate_handler!`
 //!   lines in `lib.rs`. Divergence logged in `docs/09-engine-notes.md`.
 
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
@@ -1105,13 +1106,28 @@ pub(crate) fn timeline_frame_image(
     Ok(Some(img))
 }
 
-/// Hand every resolved [`PrefetchTarget`] to `decode_pipe::prefetch` (D-324).
-/// Its own `can_serve` check makes each call a no-op unless a respawn is
-/// genuinely coming, so this is cheap on every ordinary mid-clip frame.
+/// Hand the resolved [`PrefetchTarget`]s to `decode_pipe::sync_prefetch`
+/// (D-324, made declarative by D-330).
+///
+/// **Must be called on every frame, including with an empty `targets`.** That
+/// call is the only thing that releases a standby in the normal course of play:
+/// `sync_prefetch` is told the complete set of boundaries still worth holding a
+/// process open for, and drops everything else. So a scrub (which predicts
+/// nothing, and therefore wants nothing primed) has to say so rather than
+/// simply not calling — otherwise the standbys playback left behind would sit
+/// holding `ffmpeg` processes until the slot went away.
 fn prime(targets: &[PrefetchTarget]) {
-    for t in targets {
-        decode_pipe::prefetch(t.slot, &t.path, &t.info, t.target, t.scale);
-    }
+    let specs: Vec<decode_pipe::PrefetchSpec<'_>> = targets
+        .iter()
+        .map(|t| decode_pipe::PrefetchSpec {
+            slot: t.slot,
+            path: &t.path,
+            info: &t.info,
+            target: t.target,
+            scale: t.scale,
+        })
+        .collect();
+    decode_pipe::sync_prefetch(&specs);
 }
 
 /// D-229 — alpha-composite every caption showing at `pos` onto `frame`.
@@ -1163,40 +1179,73 @@ fn draw_captions_onto(
     Ok(DynamicImage::ImageRgba8(canvas))
 }
 
-/// **D-324 — how far ahead of the playhead to look for the next cut.**
+/// **D-324/D-330 — how far ahead of the playhead to look for the next cut, when
+/// this source has never been measured.**
 ///
-/// Measured, not guessed. On the owner's real 4K HEVC footage a decode-pipe
-/// respawn takes 248-337 ms before its first frame appears, essentially all of
-/// it ffmpeg's keyframe seek. Priming the pipe that far ahead of the boundary
-/// and then reading it measured: 200 ms of lead → 103 ms still to wait, 400 ms
-/// → 1.0 ms, 800 ms → 2.6 ms. So 400 ms is where the curve has already
-/// flattened, and 500 ms is that with headroom for a slower file or a busier
-/// machine, at the cost of one `ffmpeg` process starting half a second early.
+/// D-324 derived 0.5 s from a lead-time curve measured on one file
+/// (`…C038.MOV`, respawn 248-337 ms): 200 ms of lead → 103 ms still to wait,
+/// 400 ms → 1.0 ms, 800 ms → 2.6 ms. D-330 re-ran that measurement on the
+/// owner's `…C040.MOV` and got a materially different curve — 200 ms → 450 ms,
+/// **400 ms → 51 ms**, 500 ms → 1.6 ms — because a respawn on that file costs a
+/// median **723 ms** (min 460, max 2372 over 16 of its own cut points). Half a
+/// second sat exactly on the knee for that footage, which is why cuts still
+/// hitched after D-324.
+///
+/// So this constant is now only the **bootstrap**: the value used for a source
+/// that has not yet paid a single un-hidden respawn, and therefore has nothing
+/// measured. Once one has been paid, [`prefetch_lead_secs`] uses that source's
+/// own measurement instead. It is kept at D-324's 0.5 s because that is a real
+/// measured figure for real footage, not a guess.
 ///
 /// **Why a duration and not a frame count**: the thing being hidden is wall
 /// clock (a seek), so the lead has to be wall clock too — 12 frames is half a
 /// second at 24 fps and a fifth of one at 60.
-///
-/// Capped below `apelles_media::decode_pipe`'s own forward-skip threshold on
-/// purpose. Beyond that, a lookahead frame inside the *current* clip would stop
-/// looking servable by the live pipe, and every ordinary mid-clip frame would
-/// start priming a standby it was never going to adopt.
-const PREFETCH_LOOKAHEAD_SECS: f64 = 0.5;
+const DEFAULT_PREFETCH_LEAD_SECS: f64 = 0.5;
 
-/// [`PREFETCH_LOOKAHEAD_SECS`] in timeline frames at `fps`, clamped to a range
-/// that stays useful without tipping into the pathological case its own doc
-/// describes. The floor of 1 keeps a nonsense or missing fps from turning the
-/// lookahead into "this very frame", which would prime nothing.
-fn prefetch_lookahead_frames(fps: f64) -> u64 {
+/// How much longer than the measured seek to give a prefetch (D-330).
+///
+/// The measurement is a median over a source whose own spread is wide (460 ms
+/// to 2372 ms on `C040`), and being late is far worse than being early: late
+/// means the user sees the whole remaining stall, early means one `ffmpeg`
+/// started sooner than it had to. 1.5× puts the median comfortably past the
+/// knee of the lead curve without pinning processes open for seconds.
+const PREFETCH_LEAD_SAFETY: f64 = 1.5;
+
+/// Hard bounds on the adaptive lead. The ceiling is what
+/// [`upcoming_boundary_targets`] actually scans, so it also bounds that walk's
+/// cost; the floor keeps a source that once seeked suspiciously fast (a warm
+/// page cache, a tiny fixture) from losing the lead entirely.
+const MIN_PREFETCH_LEAD_SECS: f64 = 0.5;
+const MAX_PREFETCH_LEAD_SECS: f64 = 2.0;
+
+/// **D-330 — how much lead THIS source needs, from what it has been measured to
+/// cost.**
+///
+/// Every un-hidden respawn times itself (`decode_pipe::record_seek_cost`), so a
+/// source that has crossed one cold cut has told us how expensive its keyframe
+/// seek is. A source that has not falls back to [`DEFAULT_PREFETCH_LEAD_SECS`].
+///
+/// Self-correcting in the right direction: the estimate only exists because a
+/// seek was paid in full, and paying one is exactly the event that means the
+/// lead was too short.
+fn prefetch_lead_secs(path: &Path) -> f64 {
+    match decode_pipe::estimated_seek_ms(path) {
+        Some(ms) => (ms / 1000.0 * PREFETCH_LEAD_SAFETY)
+            .clamp(MIN_PREFETCH_LEAD_SECS, MAX_PREFETCH_LEAD_SECS),
+        None => DEFAULT_PREFETCH_LEAD_SECS,
+    }
+}
+
+/// The widest window [`upcoming_boundary_targets`] ever walks, in timeline
+/// frames at `fps` — [`MAX_PREFETCH_LEAD_SECS`]' worth. Boundaries found inside
+/// it are then filtered against *their own* source's lead, so a slow file gets
+/// primed early and a fast one is not primed until it needs to be.
+fn prefetch_scan_frames(fps: f64) -> u64 {
     if !fps.is_finite() || fps <= 0.0 {
         return 1;
     }
-    ((PREFETCH_LOOKAHEAD_SECS * fps).round() as u64).clamp(1, MAX_PREFETCH_LOOKAHEAD_FRAMES)
+    ((MAX_PREFETCH_LEAD_SECS * fps).round() as u64).max(1)
 }
-
-/// The clamp in [`prefetch_lookahead_frames`]. Must stay strictly under
-/// `decode_pipe`'s `MAX_FORWARD_SKIP` (48) — see [`PREFETCH_LOOKAHEAD_SECS`].
-const MAX_PREFETCH_LOOKAHEAD_FRAMES: u64 = 36;
 
 /// Whether a preview-frame request is one step of continuous playback or a
 /// one-off picture — the only thing that decides whether it is worth priming a
@@ -1234,6 +1283,28 @@ pub(crate) enum FrameIntent {
 /// handful of frames after it are the ordinary forward-skip the pipe already
 /// does, so a dropped frame either side changes nothing.
 ///
+/// **D-330 — a CHAIN of boundaries, not the one clip visible at a single
+/// instant.** D-324 resolved the timeline once, at `pos + lookahead`, and
+/// primed whatever was there. On a timeline whose clips are shorter than the
+/// lookahead that is actively wrong: while playback is still approaching clip
+/// `N+1`, the layer at `pos + lookahead` is already clip `N+2`, so `N+1`'s
+/// standby was replaced before it was ever adopted and its boundary paid the
+/// full respawn anyway. This walks the window instead and primes every boundary
+/// in it, in order, which is what lets a run of short clips overlap its
+/// respawns rather than serialise them.
+///
+/// **D-330 — a clip already under the playhead is skipped outright.** D-324
+/// clamped its target to `max(clip.start_frame, pos)` and relied on
+/// `decode_pipe::prefetch` to no-op for it. It does not: `prime` runs AFTER the
+/// frame is decoded, so the live pipe's `next_index` is already `source_frame +
+/// 1` and `can_serve`'s `target >= next_index` fails by exactly one. Every
+/// ordinary mid-clip frame therefore spawned an `ffmpeg`, killed it on the next
+/// frame, and never adopted it — the precise opposite of the module doc's "one
+/// extra timeline walk per frame and no processes". Measured harmless
+/// (a spawn-and-kill per frame alongside a live read moved its median 7.13 ms →
+/// 6.62 ms, i.e. not at all) but wasteful and wrong, so the condition is now
+/// explicit rather than delegated.
+///
 /// Never fails the frame. Every step that could error (an unprobeable source, a
 /// clip whose media has gone offline) simply skips that layer: the fallback is
 /// the respawn that would have happened anyway.
@@ -1243,37 +1314,65 @@ fn upcoming_boundary_targets(
     max_long_edge: Option<u32>,
 ) -> Vec<PrefetchTarget> {
     let fps = timeline.fps();
-    let ahead = pos + prefetch_lookahead_frames(fps);
-    let mut out = Vec::new();
+    let scan = prefetch_scan_frames(fps);
+    let mut out: Vec<PrefetchTarget> = Vec::new();
+    let mut per_slot: HashMap<decode_pipe::PipeSlot, usize> = HashMap::new();
 
-    for layer in timeline.resolve_visible_video_layers_at(ahead as i64) {
-        let Some(slot) = layer_pipe_slot(&layer) else {
-            continue; // text, adjustment, colour plate, still — never a pipe
-        };
-        let LayerSource::Clip { clip, .. } = &layer.source else {
-            continue;
-        };
-        // A clip already under the playhead is mid-stream, not a boundary; its
-        // own live pipe is already there and `decode_pipe::prefetch` will
-        // no-op. Clamping rather than skipping keeps that decision in one
-        // place — `prefetch`'s own `can_serve` check.
-        let boundary = clip.start_frame.max(pos as i64);
-        let source_frame = clip.source_frame_at(boundary, fps);
-        if source_frame < 0 {
-            continue;
+    // Walk the window one frame at a time. A one-frame clip is a real thing on
+    // this timeline (the owner's recut has one), so a coarser step would miss
+    // boundaries outright; and the walk stops early once every slot it has seen
+    // is already full, which mid-clip is immediately.
+    for ahead in (pos + 1)..=(pos + scan) {
+        for layer in timeline.resolve_visible_video_layers_at(ahead as i64) {
+            let Some(slot) = layer_pipe_slot(&layer) else {
+                continue; // text, adjustment, colour plate, still — never a pipe
+            };
+            let LayerSource::Clip { clip, .. } = &layer.source else {
+                continue;
+            };
+            // Not a boundary: this clip is already under the playhead, so the
+            // live pipe is mid-stream in it and will reach every frame of it by
+            // reading forward. See the "off by exactly one" note above.
+            if clip.start_frame <= pos as i64 {
+                continue;
+            }
+            let primed = per_slot.entry(slot).or_default();
+            if *primed >= decode_pipe::MAX_STANDBY_PER_SLOT {
+                continue;
+            }
+            let source_frame = clip.source_frame_at(clip.start_frame, fps);
+            if source_frame < 0 {
+                continue;
+            }
+            let path = PathBuf::from(&clip.source_path);
+            // Only prime once this boundary is inside ITS OWN source's lead —
+            // a slow file is primed early, a fast one is left until it needs to
+            // be, and neither is decided by a constant that happens to suit one
+            // of them.
+            let lead = prefetch_lead_secs(&path);
+            if fps > 0.0 && (clip.start_frame - pos as i64) as f64 / fps > lead {
+                continue;
+            }
+            let target = source_frame as u64;
+            if out
+                .iter()
+                .any(|t| t.slot == slot && t.path == path && t.target == target)
+            {
+                continue; // the same boundary, seen again a frame later
+            }
+            let (Ok(size), Ok(info)) = (clip_source_size(&clip.source_path), probe_cached(&path))
+            else {
+                continue;
+            };
+            *primed += 1;
+            out.push(PrefetchTarget {
+                slot,
+                path,
+                info,
+                target,
+                scale: decode_scale(size, max_long_edge),
+            });
         }
-        let path = PathBuf::from(&clip.source_path);
-        let (Ok(size), Ok(info)) = (clip_source_size(&clip.source_path), probe_cached(&path))
-        else {
-            continue;
-        };
-        out.push(PrefetchTarget {
-            slot,
-            path,
-            info,
-            target: source_frame as u64,
-            scale: decode_scale(size, max_long_edge),
-        });
     }
     out
 }
@@ -4437,6 +4536,100 @@ mod preview_throughput_tests {
                  without dropping it would leak an ffmpeg per cut, at frame {pos}"
             );
         }
+
+        apelles_media::decode_pipe::reset();
+        super::state::set_project(None);
+    }
+
+    /// **D-330, half one — a mid-clip playback frame primes NOTHING.**
+    ///
+    /// D-324 delegated this to `decode_pipe::prefetch`'s own `can_serve` check
+    /// and documented the result as "one extra timeline walk per frame and no
+    /// processes". It was not: `prime` runs *after* the frame is decoded, so
+    /// the live pipe's `next_index` was already `source_frame + 1` while the
+    /// scheduler's clamped target was `source_frame` — off by exactly one, so
+    /// `can_serve` was false on every ordinary frame and each one spawned an
+    /// `ffmpeg`, killed it on the next frame, and never adopted it.
+    ///
+    /// The existing D-324 test could not catch this: it asserts
+    /// `standby_pipe_count() <= 1`, and one wasted standby per frame satisfies
+    /// that. This asserts **zero**, which is the real contract.
+    ///
+    /// Uses one long clip so that no part of the scan window contains a
+    /// boundary — any standby at all here is a spawn nothing will ever adopt.
+    #[test]
+    fn a_mid_clip_playback_frame_primes_nothing() {
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp_src = tempfile::tempdir().expect("tempdir");
+        // One clip, far longer than the widest lookahead the scheduler scans.
+        let video = synth_long_fixture(tmp_src.path(), 600);
+        let _project = open_ripple_cut_project(&video, 1, 500, 0);
+
+        apelles_media::decode_pipe::reset();
+        for pos in 10..40u64 {
+            super::timeline_frame(pos, Some(640), super::FrameIntent::Playing)
+                .unwrap_or_else(|e| panic!("play frame {pos}: {e}"));
+            assert_eq!(
+                apelles_media::decode_pipe::standby_pipe_count(),
+                0,
+                "mid-clip frame {pos} has no boundary ahead of it, so it must spawn \
+                 no ffmpeg at all — a standby here is D-330's off-by-one back again"
+            );
+        }
+
+        apelles_media::decode_pipe::reset();
+        super::state::set_project(None);
+    }
+
+    /// **D-330, half two (B-200) — a run of clips SHORTER than the lead time
+    /// keeps every one of its boundaries primed.**
+    ///
+    /// The bug: with one standby per slot and a single-instant lookahead, the
+    /// layer resolved at `pos + lookahead` is already clip `N+2` while playback
+    /// is still approaching `N+1`, so priming `N+2` evicted `N+1`'s standby
+    /// before it was ever adopted. Every such boundary then paid the full
+    /// respawn it was meant to hide.
+    ///
+    /// Asserts the property that fails under that design: while playing a run
+    /// of 4-frame clips, the pipeline is primed for more than one boundary at a
+    /// time, and no boundary is ever reached cold.
+    #[test]
+    fn a_run_of_clips_shorter_than_the_lead_keeps_its_chain_primed() {
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp_src = tempfile::tempdir().expect("tempdir");
+        const N_CLIPS: i64 = 8;
+        // 4 frames ≈ 0.17 s at 24 fps — comfortably shorter than even the
+        // minimum lead, which is the shape that defeated D-324.
+        const CLIP_FRAMES: i64 = 4;
+        const JUMP: i64 = 200; // >> MAX_FORWARD_SKIP, so each cut is a real seek
+        let video = synth_long_fixture(tmp_src.path(), N_CLIPS * JUMP + CLIP_FRAMES + 24);
+        let _project = open_ripple_cut_project(&video, N_CLIPS, CLIP_FRAMES, JUMP);
+
+        apelles_media::decode_pipe::reset();
+        let mut max_primed = 0usize;
+        for pos in 0..(N_CLIPS * CLIP_FRAMES) as u64 {
+            super::timeline_frame(pos, Some(640), super::FrameIntent::Playing)
+                .unwrap_or_else(|e| panic!("play frame {pos}: {e}"));
+            let primed = apelles_media::decode_pipe::standby_pipe_count();
+            max_primed = max_primed.max(primed);
+            assert!(
+                primed <= apelles_media::decode_pipe::MAX_STANDBY_PER_SLOT,
+                "the chain must stay capped — {primed} primed at frame {pos}"
+            );
+        }
+
+        // The whole point: at some moment more than ONE boundary was primed
+        // together. Under D-324's one-per-slot map this is 1, always, and the
+        // short clips' boundaries each paid a full respawn.
+        assert!(
+            max_primed > 1,
+            "a run of clips shorter than the lead time must overlap its respawns \
+             — only ever {max_primed} primed at once, so the chain is not working"
+        );
 
         apelles_media::decode_pipe::reset();
         super::state::set_project(None);

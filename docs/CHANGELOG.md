@@ -4,6 +4,39 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-15** — **D-334: the preview stutter was two unrelated defects, and the
+  theory this pass started from was neither.** Measured first: mid-clip decode is
+  **6.8 ms/frame (146 fps)**, so the decoder was never the baseline cost, and the
+  measured 10 s window held only 3 cuts — a *median* of 200 ms/frame cannot be a
+  per-cut cost, so the baseline is **B-146** (webview) and the p95 620 ms hitches
+  are the decoder. Two plausible hypotheses died on measurement and are recorded
+  rather than discarded: "4K decode can't keep up" (killed: 6× real time) and "the
+  mid-clip prefetch churn is the stutter" (killed: a spawn-and-kill per frame beside
+  a live read moved its median 7.13 → 6.62 ms, i.e. not at all). Decoder side
+  (**B-199**): a clip shorter than the lookahead had its standby **evicted by the
+  clip after it**, so its cut paid the full seek it was meant to hide — `standby`
+  becomes a list per slot (cap 3), `prefetch` becomes the declarative
+  `sync_prefetch(wanted)`, and the scheduler walks a CHAIN of boundaries instead of
+  sampling one instant. D-324's fixed 0.5 s lead was tuned on a file whose seek cost
+  248-337 ms; this one's costs a median **723 ms**, so the lead is now measured per
+  source (every un-hidden respawn times itself) rather than constant. Also fixed an
+  off-by-one that spawned an `ffmpeg` **every mid-clip frame** and never adopted it.
+  Result on the owner's own footage: **436.8 ms → 35.6 ms at a cut**. Webview side:
+  three more reactive `playhead` subscribers gone (`CaptionLibrary`,
+  `CaptionsFromTranscriptButton`, `CaptionTransformOverlay`, and `useCanvasClipPick`
+  — whose re-render *is* `PreviewPane`'s), **30 commits → 0** over 30 ticks, measured
+  both ways. **Live-verified, and the verification overturned the easy story:** on a
+  settled machine this build plays the owner's project at **41.5 ms/frame, 24.0 fps,
+  zero hitches** (budget is 41.7 ms) — but reverting just the frontend fixes measures
+  **40 ms**, i.e. they moved nothing live, and the same build measures **86 ms at
+  load ~133 vs 40 ms at load ~10**, so much of the original 200 ms was machine
+  contention rather than a ceiling. `fetch` (IPC + Rust) is now **26-33 ms of the
+  41 ms frame**, reversing D-290's split — composite + JPEG encode, not
+  `createImageBitmap`, is the next target. A
+  Blender-style decoder pool was evaluated seriously and rejected on data: we have
+  had that fix since D-125, and **37 of this project's 74 cuts already cost nothing**
+  because of it. B-146 stays open with six subscribers and the main-thread JPEG
+  decode remaining.
 - **2026-09-16** — **D-333: explainer motion graphics for c038/c040, and a new
   `plot` primitive.** Read both talking-head timelines with
   `editor_get_timeline_transcript` (D-329) on throwaway `-mgfx` copies, picked

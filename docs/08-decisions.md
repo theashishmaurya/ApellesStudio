@@ -32681,3 +32681,211 @@ the clip's OWN source frames, and a motion render carries the manifest's fps
 cents of every dollar", and a 100-cell grid is the one shape you can literally
 count), `oncevsforever` (text + emphasis), `rereads` (**plot**), `tricks`
 (layers, stepping through batching/quantization/speculative decoding).
+---
+
+## D-334 — the preview's stutter was two unrelated defects, and the short-clip prefetch theory that started this pass was not either of them
+
+**Decided 2026-09-15. Fixes B-204. Corrects D-324's mid-clip claim and its fixed
+lead-time constant. Continues B-146/D-325. Re-rejects a decoder POOL redesign and,
+for a third time, proxy media (D-030, D-128).**
+
+### Context
+
+The owner, on the build with D-321/D-323/D-324/D-325 landed, on the real recut
+`2026-09-12-c040` (75 clips, all from one 3840×2160 HEVC source): playback "still
+doesn't feel smooth." A `debug_frame_timing` pass from ~frame 1345 measured
+**paint.fps 4.11, median frame interval ~200 ms, p95 620 ms, max 678 ms, 5
+hitches**, against the ~41 ms this timeline's 24 fps allows.
+
+The hypothesis handed to this pass was that clips shorter than D-324's 0.5 s
+prefetch lookahead defeat the prefetch. That is a real defect — it is B-204 below
+— but **it is not what the owner felt**, and the discipline this entry most wants
+to record is that two plausible, well-argued theories died on measurement before
+the real causes were found.
+
+### What was measured, including the things that turned out to be wrong
+
+All against the owner's own `A001_09122356_C040.MOV` at the preview's real 960 px
+scale, replicating `decode_pipe`'s exact `ffmpeg` invocation.
+
+| measurement | result | what it killed or confirmed |
+|---|---|---|
+| sequential mid-clip read | **6.8 ms/frame (146 fps)** | **killed** "4K decode can't keep up" — decode is 6× real time |
+| time-to-first-frame after a seek | **median 723 ms** (min 460, max 2372, n=16 real cut points) | 2.2-2.9× D-324's own 248-337 ms on a *different* file |
+| a spawn-and-kill `ffmpeg` per frame beside a live read | 7.13 ms → **6.62 ms** | **killed** "the mid-clip prefetch churn is the stutter" — it costs nothing |
+| lead-time curve on this file | 0 ms→571, 200→450, **400→51**, 500→1.6, 800→1.0 | D-324's 0.5 s sat exactly on the knee HERE |
+| source-frame gap at each of the 74 cuts | **37 already free** (gap ≤ 48), 37 a genuine seek (median 211, max 985) | the pool redesign is already in place; see below |
+
+**The median is not the decoder.** In the measured 10 s window the playhead
+travels ~240 frames (the rAF loop is wall-clock driven and frame-drops), crossing
+only **3 cuts, none of them short**. A median of 200 ms is a steady-state cost, and
+3 cuts cannot produce one. It is **B-146**, already open, whose own D-325 status
+note records this very number ("a heavily recut 96-clip project at 218ms/frame").
+So the complaint splits cleanly:
+
+- **median ~200 ms** → B-146, the webview side.
+- **5 hitches, p95 620 ms** → the decoder, and those *are* prefetch failures.
+
+### The decisions
+
+**1. The standby set becomes a LIST per slot, reconciled declaratively.**
+D-324 kept one standby per slot and aimed it at a single instant, `pos + lookahead`.
+For a clip shorter than the lookahead the layer resolved at that instant is already
+clip `N+2` while playback is still approaching `N+1`, so priming `N+2` **evicted**
+`N+1`'s standby before it was ever adopted (B-204). `prefetch(one boundary)` is now
+`sync_prefetch(wanted)`: the Edit tab passes the complete set it wants primed and
+anything else is dropped. That also removes D-324's "drop a standby that cannot
+serve the frame in hand" cleanup, which was itself what made a chain impossible —
+the standby for `N+2` cannot serve `N+1` by construction. Capped at
+`MAX_STANDBY_PER_SLOT = 3`; the cap is affordable because of the churn measurement
+above.
+
+**2. The lead time is measured per source, not a constant.** D-324 derived 0.5 s
+from a curve measured on `…C038.MOV`. It does not transfer (table above). Rather
+than pick a second magic constant the next file invalidates, every un-hidden
+respawn now times itself (`record_seek_cost`, EWMA per path) and the scheduler
+derives that source's lead from it — 1.5× measured, clamped 0.5-2.0 s, with D-324's
+0.5 s kept as the never-yet-measured bootstrap. Self-correcting in the right
+direction: the estimate exists only because a seek was paid in full, which is
+exactly the event meaning the lead was too short.
+
+**3. `upcoming_boundary_targets` had an off-by-one that spawned an `ffmpeg` per
+mid-clip frame.** It clamped its target to `max(clip.start_frame, pos)` and relied
+on `prefetch` to no-op for a clip already under the playhead. It never did: `prime`
+runs *after* the frame is decoded, so the live pipe's `next_index` is already
+`source_frame + 1` and `can_serve`'s `target >= next_index` fails by exactly one.
+Every ordinary mid-clip frame spawned a standby, killed it on the next frame, and
+never adopted it — the precise opposite of the module doc's "one extra timeline
+walk per frame and no processes". **Measured harmless** (row 3 above), so this is a
+correctness and waste fix, not the smoothness fix; it is fixed because it is wrong,
+and because it is what let the scan window be widened safely.
+
+**4. Four more reactive `playhead` subscribers leave the per-frame path.**
+`CaptionLibrary` and `CaptionsFromTranscriptButton` read the value only inside a
+click handler → D-325's `getState()` pattern. `useCanvasClipPick` is the
+high-leverage one: it is called from `PreviewPane`, so its re-render *is* the
+preview's, and it now subscribes to the visible SET at clip boundaries (D-328's
+`useActiveTranscriptRow` shape). `CaptionTransformOverlay` joins them on a boolean
+on/off-screen subscription — its own comment called that per-frame re-render
+unavoidable, and only the boolean is a function of the playhead. `useCanvasClipPick`'s
+per-frame half got **more** correct in the process — the `pointerdown` handler recomputes candidates at the live playhead
+instead of reading a ref filled during the last render, which matters for a
+keyframed clip whose hit box really does move every frame.
+
+### What was considered and rejected
+
+**A Blender-style shared decoder pool, keyed by source + proximity.** Blender 5.3
+hit a visibly identical bug (frame drops right around cuts, worst when cuts are
+close together) because strips owned decoders 1:1, so crossing a cut destroyed a
+decoder positioned *right next to* the frame the next strip needed. **We already
+have that fix and have since D-125**: `PipeSlot::Track(usize)` keys a pipe by
+track, not clip. The measurement settles it — **37 of this project's 74 boundaries
+already cost nothing**, their source gaps being 0-48 frames, i.e. exactly the
+"reuse the warm decoder" case. The other 37 need a genuine 58-985 frame seek, and a
+pool has no warm pipe there either; on a single-track single-source timeline
+"nearest open decoder" degenerates to "the one pipe we already have". Rejected on
+data, not on principle.
+
+**Raising `MAX_FORWARD_SKIP` from 48.** Break-even against this file's seek is
+723/6.8 ≈ **106 frames**, so there is real headroom — but only 3 of the 37 seeking
+gaps fall in it, and the cheapest still costs 394 ms synchronously, i.e. still a
+visible hitch. Not worth the change.
+
+**Proxy media, a third time** (D-030, D-128). The bottleneck is the seek, not
+throughput — sequential decode is already 6× real time. A proxy reseeks at every
+cut too.
+
+**Resolve-style Smart Cache** (background-render idle timeline regions to a flat
+file after ~5 s). Genuinely orthogonal and genuinely good for repeated scrubbing of
+one region; a real subsystem, not a first-pass fix. Deferred, noted here rather
+than smuggled in.
+
+### Measured result
+
+Real preview path, owner's own `C040`, 10-clip recut paced at 24 fps
+(`ripple_cut_playback_throughput`):
+
+| | at a cut | mid-clip |
+|---|---|---|
+| without prefetch | **436.8 ms** | 12.7 ms |
+| with prefetch | **35.6 ms** | 12.8 ms |
+
+React commits over 30 playhead ticks, measured both ways
+(`playheadCost.dom.test.tsx`, 5 tests): `CaptionLibrary` **30 → 0**,
+`CaptionsFromTranscriptButton` **30 → 0**, `CaptionTransformOverlay` **30 → 0** while
+its cue stays on (or off) screen, and `useCanvasClipPick` **30 → 0** inside a clip
+with exactly 1 commit on a real cut (settling at 2 once the newly visible clip's
+geometry fetch lands — measured, not assumed).
+
+Note what the live pass below then found about these four: the commits are genuinely
+gone, and removing them **did not move the live frame time**. Both are true, and the
+second is the one a future pass needs to know.
+
+### Live verification, and what it did NOT show
+
+Run against a second, isolated instance of this worktree's own build (D-142's
+recipe: vite 1433, `CHROMA_CONTROL_PORT=19805`, `CHROMA_MCP_PORT=19895`, its own
+`identifier`; identity confirmed with `ps eww` on the port's owning PID before any
+number was believed), on the owner's real `2026-09-12-c040`, playhead 1345,
+`debug_frame_timing` reset -> play 10 s -> stop, four runs.
+
+| | paint median | p95 | fps | hitches |
+|---|---|---|---|---|
+| this build, machine settled (load <= 12) | **41.5 ms** (48/42/41/39) | 52-70 | **24.0** | **0** |
+| owner's original report | ~200 ms | 620 | 4.11 | 5 |
+
+41.5 ms IS this timeline's frame budget (41.7 ms at 24.005 fps), with no hitches.
+
+**But this entry does not claim that improvement.** Two controls were run, and both
+refuse to support the obvious attribution:
+
+1. **Reverting only this pass's four frontend files** (main's versions, hot-reloaded,
+   same Rust binary, same settled machine) measured **40 ms** - statistically
+   identical. The React-commit reduction is real and proven in jsdom (30 -> 0), but
+   the preview was **not commit-bound** in this scenario, so removing those commits
+   bought nothing measurable here.
+2. **Disabling the prefetch live** (`PreviewPane`'s `playing` flag -> `false`, i.e.
+   `FrameIntent::Single`, pre-D-324 behaviour) measured **62 ms median with ZERO
+   hitches and a 95-110 ms max** - no 400 ms+ stall at all. Two things explain that,
+   and both are honest limits on the experiment: the loads did not match (62-100
+   against 15-24), and by then the source file's pages were hot after a dozen
+   playthroughs of the same range, which makes a keyframe seek far cheaper than the
+   cold 723 ms measured above. The prefetch's benefit is therefore established by
+   `ripple_cut_playback_throughput` (436.8 -> 35.6 ms, pool reset per run, distinct
+   cut points), **not** by the live A/B, which was inconclusive.
+
+**What the live pass did establish, and it matters more than it looks:** the
+dominant variable in that median is **machine load**, not a fixed code ceiling. The
+same build measured **40 ms at load ~10, 62 ms at load ~80, and 86 ms at load ~133**
+- the machine was concurrently running another agent's worktree at 128% CPU, macOS
+MediaAnalysis at 114%, and the owner's own second instance of the app decoding the
+same 4K file. The owner's 4.11 fps baseline was taken under exactly that kind of
+contention. So an unknown but large share of both that 200 ms and D-325's 218 ms is
+contention rather than a ceiling, and **any future preview measurement has to record
+`getloadavg` beside the number or it means very little.**
+
+**And the bottleneck has moved.** At low load `fetch` (Tauri IPC + all of Rust -
+decode, composite, JPEG encode) is **26-33 ms of the 41 ms frame**, leaving the whole
+webview side ~12 ms. D-290 measured the opposite split (~3.5 ms Rust against ~21.5 ms
+webview) on a different, much simpler project. Since sequential decode is only 6.8 ms
+of that, the ~20 ms remainder is composite + JPEG encode. **That, not
+`createImageBitmap`, is the next real target** - which reverses the priority
+`docs/04-roadmap.md` item 25 and B-146 currently state. Left as a finding rather than
+acted on, because it is a separate measurement and a separate change.
+
+
+### Honest gaps
+
+- **The live A/B could not be run cleanly**, for the two reasons above (matched load
+  and a hot page cache). Re-running it on a quiet machine, from a cold page cache,
+  is the one measurement this entry still owes.
+- **`CaptionTransformOverlay` makes four of the nine**, not three — it moved to a
+  boolean on/off-screen subscription in the same pass.
+- **The ~200 ms median is not fixed by this entry.** B-146 stays open. Five reactive
+  `playhead` subscribers remain (`TransformOverlay`, `EditorInspectorPanel`,
+  `ScrubWaveform`, `ClipCurveEditor`, and `PreviewPane`'s own, which legitimately
+  draws a moving position bar), and the preview picture
+  still goes `Blob` → object URL → `<img>` → **main-thread JPEG decode per displayed
+  frame**. B-184 was explicitly out of scope for this pass and is untouched.
+- The adaptive lead only has a measurement once a source has crossed one cut cold.
+  A session's very first cut on a new file still uses the 0.5 s bootstrap.

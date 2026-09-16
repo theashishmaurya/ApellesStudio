@@ -75,18 +75,20 @@
  *     and a re-render on the preview's hottest surface; a real, separate
  *     affordance to weigh, not a freebie.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   pickTopmostCaption,
   pickTopmostLayer,
   visibleCaptionsAt,
   visibleVideoLayersAt,
+  type CanvasCaption,
+  type CanvasLayer,
   type CaptionPickCandidate,
   type PickCandidate,
 } from './canvasPick';
 import { screenToFraction } from './transformGeometry';
-import { resolveCaptionStyle } from './timeline';
+import { resolveCaptionStyle, type Timeline } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { clipGeometryKey, useClipGeometries } from './useClipGeometry';
 import { captionGeometryKey, useCaptionGeometries } from './useCaptionGeometry';
@@ -114,39 +116,26 @@ import type { CompositionSize } from './useCompositionSize';
  */
 export function useCanvasClipPick(container: HTMLElement | null, size: CompositionSize | null): void {
   const timeline = useEditorTimelineStore((s) => s.timeline);
-  const playhead = useEditorTimelineStore((s) => s.playhead);
 
-  // Rebuilt every render on purpose — `useClipGeometries` keys its fetch on
-  // the request list's CONTENT, not this array's identity, so the playhead
-  // advancing a frame within the same set of clips refetches nothing.
-  const layers = visibleVideoLayersAt(timeline, playhead);
-
-  // **D-290 — held in a ref, and NOT a dependency of the effect below.**
-  // `layers` is a brand-new array on every render by design (above), and the
-  // effect used to list it, so the capture-phase `pointerdown` listener on the
-  // preview's hottest surface was torn down and re-added once per RENDER —
-  // which during playback means once per displayed frame, up to ~46 times a
-  // second, on top of the `visibleVideoLayersAt` walk itself. The listener
-  // never needed to be rebuilt for this: it only reads `layers` when a press
-  // actually arrives, and a ref hands it the current value at that moment just
-  // as well as a closure does. Exactly the split `PreviewPane`'s own wheel
-  // listener already makes and documents (`fitRef` / `viewRef`) — same reason,
-  // same surface, so this is that established pattern rather than a new one,
-  // down to the ref being filled in an EFFECT rather than during render: a
-  // render-phase `ref.current = …` is a React Compiler bailout ("Cannot access
-  // refs during render"), and one bailout anywhere switches auto-memoization
-  // off for this whole file, which would cost more than it saved (D-201,
-  // `docs/notes/react-compiler-coverage.md`; `reactCompiler.test.ts` enforces
-  // it and did catch exactly this).
-  const layersRef = useRef(layers);
-  useEffect(() => {
-    layersRef.current = layers;
-  }, [layers]);
-
-  // D-316 — the captions showing at the playhead, resolved and measured the
-  // same way. Same ref discipline as `layers` above, for the same D-290 reason:
-  // a fresh array every render must not re-register the capture-phase listener.
-  const captions = visibleCaptionsAt(timeline, playhead);
+  // **D-330 — the visible SET, subscribed at clip boundaries, not the
+  // playhead.**
+  //
+  // This hook is called from `PreviewPane`, so its re-render IS `PreviewPane`'s
+  // re-render — and a reactive `useEditorTimelineStore((s) => s.playhead)` here
+  // therefore re-rendered the preview's whole subtree on every displayed frame
+  // of playback. What the hook actually needs from the playhead during render
+  // is only *which* clips and captions are on screen, so that their natural
+  // sizes can be fetched; that set changes at a cut, not at a frame.
+  // `useVisibleAtPlayhead` below is D-328's `useActiveTranscriptRow` pattern
+  // applied to that set — it `setState`s only when the identity of the set
+  // really changes, so a tick inside one clip costs zero React work.
+  //
+  // The per-frame half — a keyframed clip's box, which genuinely does move
+  // every frame — is not lost: the `pointerdown` handler recomputes the
+  // candidates at `getState().playhead` when a press actually arrives, which is
+  // the only moment the exact box matters. That is strictly more correct than
+  // the refs this replaces, which held whatever the last *rendered* frame was.
+  const { layers, captions } = useVisibleAtPlayhead(timeline);
   // Measured from the style the STORE holds right now, not from the persisted
   // timeline — see `useCaptionGeometry`'s own doc for why that distinction is
   // load-bearing (B-088's debounce). Resolved here the same way
@@ -161,15 +150,6 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
     },
   }));
   const captionGeometries = useCaptionGeometries(captionRequests);
-  // Paired with its own request list rather than re-derived inside the handler,
-  // so a candidate and the key its measurement was filed under cannot drift.
-  const captionsRef = useRef<CaptionPickCandidate[]>([]);
-  useEffect(() => {
-    captionsRef.current = captions.map((c, i) => ({
-      ...c,
-      box: captionGeometries.get(captionGeometryKey(captionRequests[i].id, captionRequests[i].req)) ?? null,
-    }));
-  }, [captions, captionRequests, captionGeometries]);
   const geometries = useClipGeometries(
     layers.map((l) => ({ track: l.track, clipIndex: l.clipIndex, sourcePath: l.clip.source_path })),
     // A clip's natural footprint is a fraction OF THE COMPOSITION, so a
@@ -197,13 +177,35 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
 
       const rect = container.getBoundingClientRect();
       const point = screenToFraction({ x: e.clientX - rect.left, y: e.clientY - rect.top }, contentBox);
+      // **D-330 — resolved at the playhead this press happened at.**
+      // Everything below used to read a ref filled during render, which meant
+      // the hit test ran against the last frame React had rendered rather than
+      // the one on screen. Recomputing here is both cheaper (nothing at all
+      // happens until a press arrives) and more correct for a keyframed clip,
+      // whose box genuinely moves every frame — `layerBoxFraction` resolves it
+      // at `sourceFrame`, so `sourceFrame` has to be current.
+      const frame = useEditorTimelineStore.getState().playhead;
       // D-316 — captions first, unconditionally: `draw_captions_onto` paints
       // every visible cue OVER the finished picture, so a caption is above
       // every video layer by construction and there is no interleaving to
       // resolve. A press inside a caption's measured box is a press on the
       // caption, even where a clip's picture fills the frame behind it.
-      const captionHit = pickTopmostCaption(point, captionsRef.current);
-      const candidates: PickCandidate[] = layersRef.current.map((l) => {
+      //
+      // The measured box still comes from `captionGeometries`, keyed exactly as
+      // the request that filled it was — a cue whose measurement has not landed
+      // yet has `box: null` and is skipped, the same `null`-means-"not yet"
+      // fallback this module already uses for a clip's natural size.
+      const captionCandidates: CaptionPickCandidate[] = visibleCaptionsAt(timeline, frame).map((c) => {
+        const id = `${c.track}:${c.clip.id}`;
+        const req = {
+          text: c.clip.caption?.text ?? '',
+          style: resolveCaptionStyle(c.clip.caption?.style, timeline?.tracks[c.track]?.caption_style),
+          size,
+        };
+        return { ...c, box: captionGeometries.get(captionGeometryKey(id, req)) ?? null };
+      });
+      const captionHit = pickTopmostCaption(point, captionCandidates);
+      const candidates: PickCandidate[] = visibleVideoLayersAt(timeline, frame).map((l) => {
         const g = geometries.get(clipGeometryKey(l.track, l.clipIndex, l.clip.source_path));
         return { ...l, natural: g ? { width: g.naturalWidth, height: g.naturalHeight } : null };
       });
@@ -236,5 +238,61 @@ export function useCanvasClipPick(container: HTMLElement | null, size: Compositi
 
     container.addEventListener('pointerdown', onPointerDownCapture, { capture: true });
     return () => container.removeEventListener('pointerdown', onPointerDownCapture, { capture: true });
-  }, [container, ready, contentBox, geometries]);
+  }, [container, ready, contentBox, geometries, captionGeometries, timeline, size]);
+}
+
+/** The video layers and captions on screen at the playhead — **recomputed only
+ *  when that SET changes**, not on every frame (D-330).
+ *
+ *  D-328's `useActiveTranscriptRow` pattern, applied to the preview's pick
+ *  candidates. The hook it replaces subscribed to `playhead` reactively, so
+ *  `PreviewPane` — its caller — re-rendered on every displayed frame of
+ *  playback to produce, in the overwhelmingly common case, the identical set of
+ *  clips it already had.
+ *
+ *  The identity key is `track:clipIndex:id` per layer and `track:id` per
+ *  caption, which is exactly what the two geometry fetches downstream key on.
+ *  Anything finer would defeat the purpose (a keyframed clip's transform
+ *  changes every frame); anything the key misses is a timeline EDIT, which
+ *  replaces the `timeline` object and so re-runs the effect outright.
+ *
+ *  Both derived arrays are computed INSIDE the effect rather than in a `useMemo`
+ *  it depends on — the shape the React Compiler cannot preserve (D-201, and see
+ *  `useActiveTranscriptRow`'s own note). */
+function useVisibleAtPlayhead(timeline: Timeline | null): {
+  layers: CanvasLayer[];
+  captions: CanvasCaption[];
+} {
+  const [visible, setVisible] = useState<{ layers: CanvasLayer[]; captions: CanvasCaption[] }>({
+    layers: [],
+    captions: [],
+  });
+
+  useEffect(() => {
+    const at = (frame: number) => ({
+      layers: visibleVideoLayersAt(timeline, frame),
+      captions: visibleCaptionsAt(timeline, frame),
+    });
+    const keyOf = (v: { layers: CanvasLayer[]; captions: CanvasCaption[] }) =>
+      `${v.layers.map((l) => `${l.track}:${l.clipIndex}:${l.clip.id}`).join('|')}` +
+      `#${v.captions.map((c) => `${c.track}:${c.clip.id}`).join('|')}`;
+
+    // Seed from the current value rather than waiting for the next tick, so a
+    // preview that mounts mid-playback can hit-test immediately.
+    let next = at(useEditorTimelineStore.getState().playhead);
+    let lastKey = keyOf(next);
+    setVisible(next);
+
+    return useEditorTimelineStore.subscribe((state) => {
+      next = at(state.playhead);
+      const key = keyOf(next);
+      // The whole point: a tick that stays inside the same clips does no React
+      // work at all.
+      if (key === lastKey) return;
+      lastKey = key;
+      setVisible(next);
+    });
+  }, [timeline]);
+
+  return visible;
 }
