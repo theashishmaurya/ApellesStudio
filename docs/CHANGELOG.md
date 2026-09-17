@@ -4,6 +4,20 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **Local speech-enhancement research (not yet a feature) —
+  see `docs/notes/speech-enhancement-research.md`.** Real bake-off against
+  `2026-09-12-c040-mgfx-recut`'s actual final-cut audio: DeepFilterNet3 hits
+  0.066x realtime (well inside the 0.5-0.7x target), Resemble Enhance is the
+  best-sounding local option but 3.11x — misses the target by 4-6x. The
+  initial theory (match Resemble's own presence-lift EQ curve) was overturned
+  once Adobe Podcast's REAL output was obtained (manually, via its own web
+  tool) and measured: Adobe's actual spectral fingerprint is nearly flat with
+  a gentle high-frequency roll-off, much closer to DeepFilterNet3 than to
+  Resemble's dramatic lift. Owner-verified by ear: Adobe's real output is
+  clean, "no issue," now the target to match. Also surfaced a reproducible
+  `editor_add_clip` defect (auto-links a duplicate audio clip for a
+  pure-audio media item placed directly on an audio track) — noted in the
+  research doc, not yet filed as its own `B-NNN`.
 - **2026-09-17 (follow-up pass)** — **`2026-09-12-c040-mgfx-recut`: the owner's 4
   follow-up markers all closed — 97 more frames cut, the `c040-recap` SCENE
   re-authored from 12 s to 18.6 s against the real narration, and three new
