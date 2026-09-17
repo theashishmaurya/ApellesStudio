@@ -3428,7 +3428,7 @@ impl ApellesMcp {
     escape hatch for the one field pair where "explicitly go back to
     scale" is itself a real, distinct thing you might want to say).
 
-    `corner_radius` (D-330) rounds the clip's placement box, in OUTPUT-CANVAS
+    `corner_radius` (D-344) rounds the clip's placement box, in OUTPUT-CANVAS
     PIXELS — not a fraction, unlike every geometry field above it. `0` (the
     default) is square corners and renders byte-identically to a build without
     this feature. It is applied AFTER crop and scale and BEFORE rotation, so a

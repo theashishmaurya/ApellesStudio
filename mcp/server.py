@@ -762,16 +762,20 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "to plan around: because position_* is the top-left corner, "
             "raising `scale` alone grows the box DOWN and to the RIGHT in "
             "both engines — to zoom about a box's own centre, move "
-            "position_x/position_y by half the size change yourself."
+            "position_x/position_y by half the size change yourself. B-218 "
+            "(open, found 2026-09-17) additionally means `crop_*` and `scale` "
+            "do NOT compose in the documented order in the live preview — "
+            "verify a combined crop+scale placement empirically before "
+            "trusting this recipe's own crop-then-scale math for it."
         ),
         "corner_radius": (
-            "corner_radius (D-330) rounds a clip's placement box, and is the "
+            "corner_radius (D-344) rounds a clip's placement box, and is the "
             "one geometry field measured in OUTPUT-CANVAS PIXELS rather than "
             "as a fraction of it — a human means '16 px of round', and does "
             "not want that rescaled when the box moves or resizes, which is "
             "the same unit every reference uses (CSS border-radius, Premiere's "
             "Rounded Corners, Resolve's Rounded Corner). 0 (the default, and "
-            "every pre-D-330 clip) is square corners and renders "
+            "every pre-D-344 clip) is square corners and renders "
             "byte-identically to a build without the feature in BOTH engines — "
             "neither emits any masking work for it. Applied AFTER crop and "
             "scale and BEFORE rotation, so a rotated clip's rounded corners "
@@ -3354,7 +3358,7 @@ def editor_set_clip_transform(
     escape hatch for the one field pair where "explicitly go back to
     scale" is itself a real, distinct thing you might want to say).
 
-    `corner_radius` (D-330) rounds the clip's placement box, in OUTPUT-CANVAS
+    `corner_radius` (D-344) rounds the clip's placement box, in OUTPUT-CANVAS
     PIXELS — not a fraction, unlike every geometry field above it. `0` (the
     default) is square corners and renders byte-identically to a build without
     this feature. It is applied AFTER crop and scale and BEFORE rotation, so a
