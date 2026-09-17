@@ -130,13 +130,16 @@ import {
   setLayerSize,
   setLayerTransformField,
   setLayerTransformKeys,
+  setProjectSettings,
   setProjectTheme,
   setSceneField,
   setTransformFieldOnSelections,
   upsertLayerTransformKeyXY,
+  PROJECT_SETTINGS_KEYS,
   type ActiveKey,
   type AlignEdge,
   type KeyMoveTarget,
+  type ProjectSettingsKey,
 } from './manifestEdit';
 import { catalogEntries, type PrimitiveUse } from './catalog';
 import {
@@ -153,6 +156,7 @@ import {
   LAYER_TRANSFORM_FIELDS,
   LAYER_TRANSFORM_KEY_FIELDS,
   positionFields,
+  PROJECT_FIELDS,
   SCENE_FIELDS,
   sizeFields,
 } from './propCatalog';
@@ -358,6 +362,50 @@ export function parseSelectionArg(a: Record<string, unknown>): Selection | { err
   };
 }
 
+/**
+ * D-345 — what a project-settings change did to the scenes already rendered.
+ *
+ * Changing `width`/`height`/`fps` does not invalidate anything in the
+ * manifest — it invalidates every FILE already on disk, because each was
+ * rendered at the old spec and every Edit-tab clip reading one is now showing
+ * the wrong resolution (or the wrong duration, for `fps`). This reports that
+ * as a fact and nothing more: it does **not** re-render. A render is the one
+ * expensive, explicit action in this tab (`motion_render`, D-180) and is
+ * never a side effect of something else.
+ *
+ * Deliberately the same source and the same two-kinds-of-"no" as
+ * `motion_get_edit_links` (D-260): `linkDataAvailable: false` means no link
+ * data reached the tab at all (no project open, nothing wired) and is NOT the
+ * same answer as "nothing has been rendered yet", which is
+ * `linkDataAvailable: true` with `scenes: 0`.
+ */
+function renderStaleness(
+  ctx: MotionOpsContext,
+  manifest: Manifest,
+  changed: ProjectSettingsKey[],
+): Record<string, unknown> {
+  const pixelKeys = changed.filter((k) => k !== 'title');
+  if (pixelKeys.length === 0) return { stale: false };
+
+  const reason = `${pixelKeys.join('/')} changed — every existing scene render was produced at the old spec; re-run motion_render to catch them up`;
+  const links = ctx.editLinks?.();
+  if (links === undefined) {
+    // Every count is `null`, not `0`/`[]`: "we cannot see the Edit tab from
+    // here" must not read as "nothing is rendered".
+    return { stale: true, reason, linkDataAvailable: false, scenes: null, clips: null, sceneIds: null };
+  }
+  const rendered = manifest.scenes.filter((s) => links[s.id] !== undefined);
+  const clips = rendered.reduce((n, s) => n + links[s.id].clips.length, 0);
+  return {
+    stale: rendered.length > 0,
+    ...(rendered.length > 0 ? { reason } : {}),
+    linkDataAvailable: true,
+    scenes: rendered.length,
+    clips,
+    sceneIds: rendered.map((s) => s.id),
+  };
+}
+
 /** the `selections` (plural) wire shape — an array of `parseSelectionArg`'s. */
 export function parseSelectionsArg(a: Record<string, unknown>): Selection[] | { error: string } {
   const list = a?.selections;
@@ -506,6 +554,10 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         totalFrames: manifest ? totalFrames(manifest) : null,
         width: manifest?.width ?? null,
         height: manifest?.height ?? null,
+        // D-345 — the document's own name, alongside the other three fields
+        // `motion_set_project_settings` writes, so the round trip is readable
+        // from the orientation call instead of the whole manifest.
+        title: manifest?.title ?? null,
         // D-339 — the document's look. `null` means the manifest carries no
         // `theme` key at all, which renders as `defaultTheme`; the two are
         // reported separately rather than collapsed so an agent can tell
@@ -642,6 +694,10 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         default: name === DEFAULT_THEME_NAME,
       })),
       defaultTheme: DEFAULT_THEME_NAME,
+      // D-345 — the manifest's own top-level fields, for
+      // `motion_set_project_settings`, discoverable from the same one static
+      // reference call `sceneFields` is.
+      projectFields: PROJECT_FIELDS,
       sceneFields: SCENE_FIELDS,
       layerTransformFields: LAYER_TRANSFORM_FIELDS,
       layerTransformKeyFields: LAYER_TRANSFORM_KEY_FIELDS,
@@ -787,6 +843,59 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         theme: next.theme ?? null,
         effectiveTheme: next.theme ?? DEFAULT_THEME_NAME,
         defaultTheme: DEFAULT_THEME_NAME,
+      };
+    },
+
+    /**
+     * D-345 — set the manifest's OWN top-level output spec (`title`,
+     * `width`, `height`, `fps`). The Motion twin of the Colorist tab's
+     * `set_project_settings`, and the second manifest-level writer here
+     * after D-339's theme.
+     *
+     * **Partial merge, one commit.** `width` and `height` are a pair — a
+     * resize sent as two separate calls would pass through a wrong aspect
+     * ratio, push two undo entries and answer the staleness question twice.
+     * So this takes all four at once and commits once, the same shape
+     * `set_project_settings` (Colorist) already uses.
+     *
+     * Validation lives in `setProjectSettings` (`manifestEdit.ts`), shared
+     * with the Inspector's Project section, and is a hard REJECT rather than
+     * `motion_set_scene_field`'s warn-and-write: these four are read by
+     * Remotion itself, which throws on a non-positive/non-integer dimension
+     * and takes the live preview down with it.
+     *
+     * Reports `renders` — which already-rendered scenes a dimension/fps
+     * change just invalidated — and renders nothing itself; see
+     * `renderStaleness`.
+     */
+    motion_set_project_settings: (a) => {
+      const cur = ctx.api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      const manifest = guard.manifest;
+
+      const patch: Record<string, unknown> = {};
+      for (const key of PROJECT_SETTINGS_KEYS) {
+        const value = a?.[key];
+        if (value !== undefined && value !== null) patch[key] = value;
+      }
+      if (Object.keys(patch).length === 0) {
+        return { error: `pass at least one of ${PROJECT_SETTINGS_KEYS.join(', ')}` };
+      }
+
+      const result = setProjectSettings(manifest, patch);
+      if (!result.ok) return { error: result.error };
+      if (result.changed.length > 0) cur.commit(result.manifest, 'Project settings');
+
+      const next = result.manifest;
+      return {
+        title: next.title,
+        width: next.width,
+        height: next.height,
+        fps: next.fps,
+        changed: result.changed,
+        renders: renderStaleness(ctx, next, result.changed),
+        ...(result.warnings.length > 0 ? { warning: result.warnings.join('; ') } : {}),
       };
     },
 

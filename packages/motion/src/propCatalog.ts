@@ -283,6 +283,23 @@ export const SCENE_FIELDS: FieldSpec[] = [
   { key: 'transition', label: 'Transition in (s)', kind: 'number', group: 'timing' },
 ];
 
+/** D-345 — the manifest's OWN top-level fields (`manifestSchema`'s `title`/
+ *  `width`/`height`/`fps`), rendered by the Inspector's Project section when
+ *  nothing is selected and listed by `motion_list_primitives` as
+ *  `projectFields`, the way `SCENE_FIELDS` above is listed as `sceneFields`.
+ *
+ *  NOT here: `theme` (an enum with its own clear-to-default semantics — the
+ *  Inspector renders it as its own "Look" section off the theme registry,
+ *  and `motion_set_project_theme` writes it), and `grain`/`vignette`/
+ *  `transparent`, which are document-level render flags rather than the
+ *  output spec and have no MCP writer yet. */
+export const PROJECT_FIELDS: FieldSpec[] = [
+  { key: 'title', label: 'Title', kind: 'string', group: 'content' },
+  { key: 'width', label: 'Width (px)', kind: 'number', group: 'layout' },
+  { key: 'height', label: 'Height (px)', kind: 'number', group: 'layout' },
+  { key: 'fps', label: 'FPS', kind: 'number', group: 'timing' },
+];
+
 /** a 2D camera keyframe's own fields (`cam2dKey` in `schema.ts`) — used by
  *  the Camera/3D-Camera keyframe-list editor, not the generic field form.
  *  `at` is labelled "At (s)" (B-061, `docs/BUGS.md` — fixed 2026-09-09):

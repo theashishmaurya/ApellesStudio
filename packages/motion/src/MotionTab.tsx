@@ -109,7 +109,9 @@ type SidebarTab = 'layers' | 'catalog';
  *  whole `FieldGroup`/`CameraKeyList`/`MultiLayerInspector` call chain for
  *  this pass. */
 function labelForSelections(selections: Selection[]): string {
-  if (selections.length === 0) return 'Edit';
+  // D-345 — an Inspector edit with nothing selected is a PROJECT edit now
+  // (`ProjectInspector`), not an unidentifiable "Edit".
+  if (selections.length === 0) return 'Edit project';
   if (selections.length > 1) return `Edit ${selections.length} layers`;
   switch (selections[0].target.kind) {
     case 'scene':

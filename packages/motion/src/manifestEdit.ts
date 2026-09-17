@@ -1371,6 +1371,115 @@ export function setProjectTheme(manifest: Manifest, theme: ThemeName | undefined
   return next;
 }
 
+/** D-345 — the manifest's own top-level OUTPUT SPEC: the four scalar fields
+ *  that describe the document rather than anything inside it. `theme` is
+ *  deliberately not one of them — it is an enum with its own clear-to-default
+ *  semantics and already has `setProjectTheme` above. */
+export interface ProjectSettings {
+  title: string;
+  width: number;
+  height: number;
+  fps: number;
+}
+
+export type ProjectSettingsKey = keyof ProjectSettings;
+
+/** the legal keys, in the order a form/report should show them. */
+export const PROJECT_SETTINGS_KEYS: ProjectSettingsKey[] = ['title', 'width', 'height', 'fps'];
+
+export type ProjectSettingsResult =
+  | {
+      ok: true;
+      /** the new manifest — the SAME reference as the input when nothing
+       *  changed, matching this file's own no-op convention. */
+      manifest: Manifest;
+      /** only the fields whose value actually differs from the old manifest. */
+      changed: ProjectSettingsKey[];
+      /** non-blocking notes: a value that is legal but renders differently
+       *  from what was asked for (see the odd-dimension note below). */
+      warnings: string[];
+    }
+  | { ok: false; error: string };
+
+/**
+ * D-345 — validate and apply a partial patch of the manifest's top-level
+ * output spec. The one code path behind BOTH the Inspector's Project section
+ * and the `motion_set_project_settings` MCP tool, per CLAUDE.md's
+ * human-AND-AI rule.
+ *
+ * **Why this validates where `setSceneField`/`setLayerField` do not.** Those
+ * write into `.passthrough()` objects where an unknown key is legitimately
+ * an author's own extension. These four are not: they are read by Remotion
+ * itself, which validates them and THROWS — `validateDimension` (remotion's
+ * `ResolveCompositionConfig`) requires `width`/`height` to be a finite,
+ * positive INTEGER and `validateFps` requires `fps` finite and positive. A
+ * bad value here does not render badly, it takes down the live
+ * `@remotion/player` preview and the render alike, so it is rejected at this
+ * boundary rather than written and discovered later.
+ *
+ * **Odd dimensions are a warning, not an error.** `@remotion/renderer`'s
+ * `validateEvenDimensionsWithCodec` silently rounds an odd width/height DOWN
+ * to even for h264/h265/av1 — and the Motion render writes `.mp4` — so 1081
+ * is legal, renders as 1080, and says so rather than being rejected or
+ * quietly accepted.
+ *
+ * Non-integer `fps` is allowed on purpose: 23.976/29.97 are real frame rates
+ * and Remotion accepts them (`totalFrames` already rounds each scene's frame
+ * count, so the composition's own `durationInFrames` stays an integer).
+ */
+export function setProjectSettings(manifest: Manifest, patch: Record<string, unknown>): ProjectSettingsResult {
+  const warnings: string[] = [];
+  const applied: Partial<ProjectSettings> = {};
+
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (!(PROJECT_SETTINGS_KEYS as string[]).includes(key)) {
+      return {
+        ok: false,
+        error: `unknown project field ${JSON.stringify(key)} — known fields: ${PROJECT_SETTINGS_KEYS.join(', ')}`,
+      };
+    }
+    if (key === 'title') {
+      if (typeof value !== 'string' || value.trim() === '') {
+        return { ok: false, error: 'title must be a non-empty string' };
+      }
+      applied.title = value.trim();
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return { ok: false, error: `${key} must be a finite number` };
+    }
+    if (key === 'fps') {
+      if (value <= 0) return { ok: false, error: 'fps must be positive (Remotion rejects anything else)' };
+      applied.fps = value;
+      continue;
+    }
+    // width / height
+    if (!Number.isInteger(value) || value <= 0) {
+      return {
+        ok: false,
+        error: `${key} must be a positive integer — Remotion's <Composition> rejects anything else (got ${value})`,
+      };
+    }
+    if (value % 2 !== 0) {
+      warnings.push(
+        `${key} ${value} is odd — the h264 render rounds it down to ${value - 1} (@remotion/renderer's validateEvenDimensionsWithCodec); prefer an even number`,
+      );
+    }
+    applied[key as 'width' | 'height'] = value;
+  }
+
+  const changed = PROJECT_SETTINGS_KEYS.filter((k) => applied[k] !== undefined && applied[k] !== manifest[k]);
+  if (changed.length === 0) return { ok: true, manifest, changed, warnings };
+
+  const next = clone(manifest);
+  for (const key of changed) {
+    if (key === 'title') next.title = applied.title as string;
+    else next[key] = applied[key] as number;
+  }
+  return { ok: true, manifest: next, changed, warnings };
+}
+
 export function setCamera2d(manifest: Manifest, sceneIndex: number, keys: Cam2dKey[]): Manifest {
   if (!manifest.scenes[sceneIndex]) return manifest;
   const next = clone(manifest);
