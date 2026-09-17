@@ -4,6 +4,24 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-18** — **B-216's dropped-speech failure is root-caused and its
+  proposed detector is validated — research only, no product code touched. See
+  `docs/notes/whisper-dark-region-research.md`.** It is none of the paths it
+  looked like (no-speech skip, temperature fallback, chunk stitching — all ruled
+  out by per-window decode telemetry): whisper simply declines to transcribe an
+  utterance inside a window it is otherwise decoding confidently at temperature
+  0.0, and the loss is **biased towards retakes** — the calibration case's dropped
+  region is the flubbed take of the very pair B-216 was opened over. Reproduced on
+  a second, previously untested video (c038: 7 confirmed drops in 989 s). The
+  detector works but B-216's literal wording misses >half the cases (a stretched
+  word covers the gap); with a >2.0 s non-covering-word rule plus a per-file RMS
+  gate it reaches **90-100 % precision at 100 % recall** over 111 labelled windows,
+  reusing `apelles-speech`'s existing Silero runner with no new dependency.
+- **2026-09-18** — **B-224: transcription is not reproducible** — the same file
+  gives a different transcript every run (925/923/913 words), because
+  `mlx_whisper` samples on an unseeded MLX RNG above temperature 0. Breaks the
+  determinism invariant; two-line fix, not applied in that research pass.
+
 - **2026-09-18** — **Two mid-session blocker theories for the c040 rebuild
   corrected, `docs/notes/c040-split-screen-layout.md` fixed in place.** (1) The
   original "MCP server predates D-345, restart it" reading was disproved by a
