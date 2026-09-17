@@ -13,6 +13,19 @@ One or two lines per session. Detail lives in the decision it references.
   over the graphic; 54 of 75 camera clips carry the PIP (18 keyframed 12-frame
   ease-in-out ramps, 36 static holds) at one owner-pinned value, `scale 0.22` at
   `(0.76, 0.025)`, measured clear of every scene's content.
+- **2026-09-17** — **D-343 fixes B-216: `clip` is now OPTIONAL on both recut
+  detectors — omit it and you sweep the whole track in one call.** Not four new
+  `*_all` tools: an agent that already knows `editor_detect_retakes` gets the
+  sweep by leaving an argument out. Root-caused why a client-side loop would
+  not have fixed it — `control.rs`'s `serve()` is a single-threaded,
+  one-request-at-a-time HTTP loop, so N calls queue there regardless and the
+  round trips, not the analysis, are the cost. Measured by counting, per
+  `performance-instrumentation.md`: **20 clips = 1 dispatch, vs 20** the old
+  way (88 ms vs 1066 ms in jsdom, a floor on the real gap). The response
+  separates `flagged` (full detail) from `clean` (bare indices) so a 75-clip
+  sweep is readable. GUI half landed in the same pass: `RecutPanel`'s "select
+  one clip" is replaced by a "This clip / Whole track" scope toggle. Both MCP
+  surfaces updated, corpus regenerated, parity green.
 
 - **2026-09-17** — **B-216 filed: retake/silence detection has no "sweep the whole
   timeline" mode.** Root-caused why several real retakes and a 5-10s silence

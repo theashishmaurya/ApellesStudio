@@ -67,6 +67,18 @@ export {
   spanToFrames,
 } from './recut';
 export type { DetectedSpan, RetakeGroupWire } from './recut';
+/** D-342 (fixes B-216) — the whole-track sweep behind `editor_detect_*` with
+ *  `clip` omitted, and the Recut panel's "Whole track" mode. Pure: what a
+ *  sweep looks at, and how N per-clip answers fold into one report. */
+export { RETAKE_SWEEP, SILENCE_SWEEP, sweepReport, sweepTargets } from './recutSweep';
+export type {
+  SweepClipResult,
+  SweepClipState,
+  SweepKind,
+  SweepReport,
+  SweepSkip,
+  SweepTarget,
+} from './recutSweep';
 /** D-274 — the project-level output-spec form (Resolution/Frame Rate/Colour
  *  Space), shared between this package's own docked `ProjectSettingsPanel`
  *  (`EditorInspectorPanel`'s "nothing selected" branch) and `app/src`'s

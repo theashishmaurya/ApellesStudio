@@ -84,6 +84,16 @@ import {
   spanToFrames,
   type RetakeGroupWire,
 } from './recut';
+// D-342/B-216 — the whole-track half of those two detectors: what a sweep
+// looks at, and how N per-clip answers fold into one readable report.
+import {
+  RETAKE_SWEEP,
+  SILENCE_SWEEP,
+  sweepReport,
+  sweepTargets,
+  type SweepClipResult,
+  type SweepTarget,
+} from './recutSweep';
 import { listen, emit } from '@tauri-apps/api/event';
 
 import { useMediaPoolStore, type MediaItem } from '@apelles/bridge';
@@ -993,9 +1003,7 @@ function silenceEnvelope(
           : 'nothing has been started for this clip — call editor_detect_silences',
     };
   }
-  const silences = (status.result?.silences ?? []).map((s) =>
-    spanToFrames(c, s.start_secs, s.end_secs, fps),
-  );
+  const silences = silenceSpansDto(status, c, fps);
   return {
     ...head,
     state: 'done',
@@ -1080,6 +1088,32 @@ function resolveRetakeArgs(
   return { found, c, fps, args, key: retakeKey(args) };
 }
 
+/** Every retake group in one detection, as a caller sees it: one entry per
+ *  DELIVERY via `groupTakes` — a delivery can span several transcript
+ *  utterances since D-327, and `keep` indexes takes. Building one entry per
+ *  member (which is what this did before D-327) would make `keep` point at a
+ *  fragment and invite an agent to cut the rest of the keeper.
+ *
+ *  Shared by the single-clip envelope and the whole-track sweep (D-342) so the
+ *  two cannot report the same group differently. */
+function retakeGroupsDto(status: AnalysisStatus<RetakeDetection>, c: Clip, fps: number) {
+  return (status.result?.groups ?? []).map((g) => ({
+    similarity: g.similarity,
+    keep: g.keep,
+    takes: groupTakes(g).map((t) => ({
+      text: t.text,
+      ...spanToFrames(c, t.startSecs, t.endSecs, fps),
+    })),
+  }));
+}
+
+/** Every silence in one detection, in the three frame spaces a caller needs.
+ *  Shared by the single-clip envelope and the sweep, for the same reason
+ *  [`retakeGroupsDto`] is. */
+function silenceSpansDto(status: AnalysisStatus<SilenceDetection>, c: Clip, fps: number) {
+  return (status.result?.silences ?? []).map((s) => spanToFrames(c, s.start_secs, s.end_secs, fps));
+}
+
 /** [`silenceEnvelope`]'s retake twin. */
 function retakeEnvelope(
   status: AnalysisStatus<RetakeDetection>,
@@ -1107,18 +1141,7 @@ function retakeEnvelope(
           : 'nothing has been started for this clip — call editor_detect_retakes',
     };
   }
-  // One entry per DELIVERY, via `groupTakes` — a delivery can span several
-  // transcript utterances since D-327, and `keep` indexes takes. Building one
-  // entry per member here (which is what this did before) would make `keep`
-  // point at a fragment and invite an agent to cut the rest of the keeper.
-  const groups = (status.result?.groups ?? []).map((g) => ({
-    similarity: g.similarity,
-    keep: g.keep,
-    takes: groupTakes(g).map((t) => ({
-      text: t.text,
-      ...spanToFrames(c, t.startSecs, t.endSecs, fps),
-    })),
-  }));
+  const groups = retakeGroupsDto(status, c, fps);
   return {
     ...head,
     state: 'done',
@@ -1128,6 +1151,195 @@ function retakeEnvelope(
         ? 'no retakes found in this clip'
         : 'nothing was cut — `keep` is a SUGGESTION (the last take); cut the others with editor_ripple_delete_ranges',
   };
+}
+
+/** Is this call a whole-track SWEEP rather than a single-clip question?
+ *
+ *  D-342/B-216 — `clip` became optional on both detectors and both of their
+ *  `_status` twins rather than four new `*_all` tool names, so an agent that
+ *  already knows `editor_detect_retakes` gets the sweep by leaving one
+ *  argument out instead of by learning a second tool. Omitting `clip` was a
+ *  plain error before this (`resolveClip` reported `no clip NaN on track 0`),
+ *  so nothing that used to work changes meaning. */
+function isSweep(a: OpArgs): boolean {
+  return a?.clip === undefined || a?.clip === null;
+}
+
+/** The track a sweep runs over, parsed and range-checked with the SAME error
+ *  string `resolveClip` gives, so "no track 7" reads identically whether you
+ *  named a clip or not. */
+function resolveSweepTrack(
+  a: OpArgs,
+): { error: string } | { tl: Timeline; track: number; tr: Timeline['tracks'][number]; fps: number } {
+  const tl = useEditorTimelineStore.getState().timeline;
+  if (!tl) return noTimeline();
+  const track = Math.round(Number(a?.track));
+  const tr = tl.tracks[track];
+  if (!tr) return { error: `no track ${track} (0..${tl.tracks.length - 1})` };
+  return { tl, track, tr, fps: timelineFps(tl) };
+}
+
+/** One clip's place in a sweep: which clip, and the cache key its detection
+ *  will land under. `key` is `null` for a retake clip whose transcript has not
+ *  arrived — there is nothing to key a grouping on until there are words. */
+interface SweepJob {
+  target: SweepTarget;
+  key: string | null;
+  /** Set when the clip itself failed before any detection could start (a
+   *  transcript that errored), so the sweep reports the real reason rather
+   *  than an eternal `running`. */
+  failure?: string;
+}
+
+/** Wait for a whole sweep the same way `settleWithin` waits for one clip.
+ *
+ *  Deliberately ONE shared grace window for the batch, not `DETECT_GRACE_MS`
+ *  per clip: the budget exists to stay inside `chroma::control`'s 20 s bridge
+ *  timeout, and a per-clip budget would blow it on the second clip. Anything
+ *  still going when the window closes comes back `state: "running"` with its
+ *  answer still being computed INTO THE STORE, exactly as a single-clip call
+ *  does (D-321) — which is what makes the sweep pollable instead of a request
+ *  that can time out and throw N answers away. */
+async function settleSweep(anyRunning: () => boolean): Promise<void> {
+  await settleWithin(() => ({ phase: anyRunning() ? 'running' : 'done' }), DETECT_GRACE_MS);
+}
+
+/** `editor_detect_silences` / `_status` with `clip` omitted: every analysable
+ *  clip on one track, in ONE dispatch (D-342). */
+async function silenceSweep(a: OpArgs, start: boolean) {
+  const resolved = resolveSweepTrack(a);
+  if ('error' in resolved) return resolved;
+  const { track, tr, fps } = resolved;
+
+  const requested = a?.minSilenceMs === undefined ? undefined : Number(a.minSilenceMs);
+  if (requested !== undefined && (!Number.isFinite(requested) || requested <= 0)) {
+    return { error: 'minSilenceMs must be a positive number of milliseconds' };
+  }
+
+  const { targets, skipped } = sweepTargets(tr);
+  const jobs = targets.map((target) => {
+    const range = clipSourceRangeSecs(target.c, fps);
+    const args: SilenceDetectionArgs = {
+      path: target.source,
+      startSecs: range.startSecs,
+      durationSecs: range.durationSecs,
+      minSilenceMs: requested,
+    };
+    // Two clips trimmed to the same range of the same file share a key, so the
+    // store already collapses them into one detection — a sweep of a track cut
+    // out of one source does not re-decode anything twice.
+    if (start) useMediaUnderstandingStore.getState().startSilenceDetection(args, !!a?.force);
+    return { target, key: silenceKey(args), args };
+  });
+
+  const read = (key: string) =>
+    useMediaUnderstandingStore.getState().silenceDetectionStatus(key);
+  if (start) await settleSweep(() => jobs.some((j) => read(j.key).phase === 'running'));
+
+  const results: SweepClipResult[] = jobs.map(({ target, key }) => {
+    const status = read(key);
+    return {
+      clip: target.clip,
+      clipId: target.c.id,
+      source: target.source,
+      state: status.phase,
+      findings: status.phase === 'done' ? silenceSpansDto(status, target.c, fps) : [],
+      ...(status.phase === 'error' ? { error: status.error ?? 'silence detection failed' } : {}),
+    };
+  });
+
+  return {
+    ...sweepReport(SILENCE_SWEEP, track, results, skipped),
+    minSilenceMs: requested ?? DEFAULT_MIN_SILENCE_MS,
+  };
+}
+
+/** [`silenceSweep`]'s retake twin.
+ *
+ *  The extra state it has to carry is the transcript. A retake is a fact about
+ *  WORDS, and on a 75-clip talking-head track those words come from a handful
+ *  of source FILES — so the transcript is started once per file (the store
+ *  keys it by path), never once per clip, exactly as
+ *  `editor_get_timeline_transcript` does (D-329). A clip whose file is still
+ *  being transcribed reports `transcribing` and the rest of the sweep carries
+ *  on: one missing transcript must not cost the caller the other 74 answers,
+ *  which is the whole failure B-216 is about. */
+async function retakeSweep(a: OpArgs, start: boolean) {
+  const resolved = resolveSweepTrack(a);
+  if ('error' in resolved) return resolved;
+  const { track, tr, fps } = resolved;
+
+  const num = (v: unknown): number | undefined => {
+    if (v === undefined || v === null) return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const tuning = {
+    similarity: num(a?.similarity),
+    windowSecs: num(a?.windowSecs),
+    minWords: a?.minWords === undefined ? undefined : Math.round(Number(a.minWords)),
+    maxSpanUtterances:
+      a?.maxSpanUtterances === undefined
+        ? undefined
+        : Math.max(1, Math.round(Number(a.maxSpanUtterances))),
+  };
+
+  const { targets, skipped } = sweepTargets(tr);
+
+  // One transcript per FILE, started before anything is grouped, so N clips off
+  // one source cost one transcription rather than N.
+  if (start) {
+    for (const source of new Set(targets.map((t) => t.source))) {
+      const phase = useMediaUnderstandingStore.getState().transcriptStatus(source).phase;
+      if (phase === 'done' || phase === 'running') continue;
+      useMediaUnderstandingStore.getState().startTranscript(source, { wordTimestamps: true });
+    }
+  }
+
+  const jobs: SweepJob[] = targets.map((target) => {
+    const transcript = useMediaUnderstandingStore.getState().transcriptStatus(target.source);
+    if (transcript.phase === 'error') {
+      return { target, key: null, failure: transcript.error ?? 'transcription failed' };
+    }
+    if (transcript.phase !== 'done') return { target, key: null };
+
+    const range = clipSourceRangeSecs(target.c, fps);
+    // Only what this clip actually shows — the same filter the single-clip
+    // path applies, so one clip's answer inside a sweep is the answer it would
+    // have given on its own.
+    const utterances = (transcript.result?.segments ?? [])
+      .filter((s) => s.end > range.startSecs && s.start < range.startSecs + range.durationSecs)
+      .map((s) => ({ start: s.start, end: s.end, text: s.text }));
+    const args: RetakeDetectionArgs = {
+      path: target.source,
+      startSecs: range.startSecs,
+      durationSecs: range.durationSecs,
+      utterances,
+      ...tuning,
+    };
+    if (start) useMediaUnderstandingStore.getState().startRetakeDetection(args, !!a?.force);
+    return { target, key: retakeKey(args) };
+  });
+
+  const read = (key: string) => useMediaUnderstandingStore.getState().retakeDetectionStatus(key);
+  if (start) await settleSweep(() => jobs.some((j) => j.key !== null && read(j.key).phase === 'running'));
+
+  const results: SweepClipResult[] = jobs.map(({ target, key, failure }) => {
+    const head = { clip: target.clip, clipId: target.c.id, source: target.source };
+    if (failure) return { ...head, state: 'error' as const, findings: [], error: failure };
+    // No key means no words yet: the grouping has not been asked for, and the
+    // thing to wait on is the transcript.
+    if (key === null) return { ...head, state: 'transcribing' as const, findings: [] };
+    const status = read(key);
+    return {
+      ...head,
+      state: status.phase,
+      findings: status.phase === 'done' ? retakeGroupsDto(status, target.c, fps) : [],
+      ...(status.phase === 'error' ? { error: status.error ?? 'retake detection failed' } : {}),
+    };
+  });
+
+  return sweepReport(RETAKE_SWEEP, track, results, skipped);
 }
 
 function noTimeline(): { error: string } {
@@ -4209,7 +4421,17 @@ export function useEditorControl(): void {
       // detection inside the bridge round trip, so a detection that outran the
       // caller's timeout had its result thrown away with nowhere to land —
       // which is exactly what B-188 hit on a real 16-minute 4K file.
+      //
+      // **`clip` is OPTIONAL on all four** (D-342, fixes B-216). Omit it and
+      // the op sweeps every analysable clip on `track` — inside THIS ONE
+      // dispatch, not as N calls. That is not a convenience: `control.rs`'s
+      // `serve()` is a single-threaded, one-request-at-a-time HTTP loop, so a
+      // client-side loop over 75 clips queues 75 round trips no matter how
+      // concurrently the caller issues them, while the per-clip analysis
+      // itself is cheap. Naming a `clip` keeps the exact single-clip
+      // behaviour, byte for byte.
       editor_detect_silences: async (a) => {
+        if (isSweep(a)) return await silenceSweep(a, true);
         const resolved = resolveSilenceArgs(a);
         if ('error' in resolved) return resolved;
         const { found, c, fps, args, key, minSilenceMs } = resolved;
@@ -4222,7 +4444,8 @@ export function useEditorControl(): void {
         return silenceEnvelope(status, found, c, fps, minSilenceMs);
       },
 
-      editor_detect_silences_status: (a) => {
+      editor_detect_silences_status: async (a) => {
+        if (isSweep(a)) return await silenceSweep(a, false);
         const resolved = resolveSilenceArgs(a);
         if ('error' in resolved) return resolved;
         const { found, c, fps, key, minSilenceMs } = resolved;
@@ -4231,6 +4454,7 @@ export function useEditorControl(): void {
       },
 
       editor_detect_retakes: async (a) => {
+        if (isSweep(a)) return await retakeSweep(a, true);
         const resolved = resolveRetakeArgs(a);
         if ('error' in resolved) return resolved;
         if ('pending' in resolved) return resolved.pending;
@@ -4244,7 +4468,8 @@ export function useEditorControl(): void {
         return retakeEnvelope(status, found, c, fps, args.utterances.length);
       },
 
-      editor_detect_retakes_status: (a) => {
+      editor_detect_retakes_status: async (a) => {
+        if (isSweep(a)) return await retakeSweep(a, false);
         const resolved = resolveRetakeArgs(a);
         if ('error' in resolved) return resolved;
         if ('pending' in resolved) return resolved.pending;
