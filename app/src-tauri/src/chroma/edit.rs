@@ -1635,6 +1635,16 @@ pub(super) struct ClipTransform {
     crop_top: f64,
     crop_right: f64,
     crop_bottom: f64,
+    /// D-344 — the placement box's corner radius, in **the canvas actually
+    /// being rendered into**, not in output-composition pixels. `Clip::
+    /// corner_radius` is authored in OUTPUT pixels (see its own doc); the
+    /// preview renders the same composition into a smaller buffer, so
+    /// [`Self::scaled_to_render`] converts it exactly once, at the only two
+    /// places that know `render_scale`. Every other field here is a ratio and
+    /// needs no such step — this one is the single exception, which is why it
+    /// gets a named conversion rather than an ad-hoc multiply at the point of
+    /// use.
+    corner_radius: f64,
 }
 
 impl ClipTransform {
@@ -1671,6 +1681,11 @@ impl ClipTransform {
             && self.crop_top <= 0.0
             && self.crop_right <= 0.0
             && self.crop_bottom <= 0.0
+            // D-344 — a NEGATIVE radius counts as no rounding, matching
+            // `corner_coverage`'s own clamp, for the crop insets' reason
+            // directly above: this predicate has to agree with what would
+            // actually be painted.
+            && self.corner_radius <= 0.0
     }
 
     /// D-294 — the same geometry with the **blend** neutralised: opacity back
@@ -1682,6 +1697,29 @@ impl ClipTransform {
     /// place this neutralising happens is named.
     pub(super) fn without_blend(mut self) -> Self {
         self.opacity = 1.0;
+        self
+    }
+
+    /// D-344 — convert `corner_radius` from the OUTPUT-composition pixels it
+    /// is authored in into the pixels of the canvas this render is actually
+    /// producing (`canvas_width / comp_width`, the same single uniform ratio
+    /// `composite_video_frame` already derives for `natural`).
+    ///
+    /// **Why this exists at all.** Every other geometry field on this struct
+    /// is a ratio of the composition, so it survives the preview's
+    /// 960-while-scrubbing / 640-while-playing decode cap for free — that is
+    /// B-043's whole lesson, and D-136 restructured the compositor around it.
+    /// A corner radius is deliberately NOT a ratio (see `Clip::corner_radius`
+    /// for why a human means "16 px of round", not "1.5% of the width"), so it
+    /// is the one field that has to be converted explicitly. Doing it here, in
+    /// one named method called by the two functions that own a `render_scale`,
+    /// is what keeps that conversion from being re-derived — differently —
+    /// inside the compositor.
+    ///
+    /// A zero radius stays exactly zero at every scale, so an un-rounded clip
+    /// is byte-identical through this method.
+    pub(super) fn scaled_to_render(mut self, render_scale: f64) -> Self {
+        self.corner_radius *= render_scale;
         self
     }
 
@@ -1777,6 +1815,11 @@ fn resolve_text_clip_transform(clip: &Clip, source_frame: i64) -> ClipTransform 
         crop_top: 0.0,
         crop_right: 0.0,
         crop_bottom: 0.0,
+        // D-344 — pinned for this function's own stated reason: the export
+        // compiles a title to `drawtext`, which cannot mask its own corners,
+        // so a preview that rounded one would be showing a picture the export
+        // cannot produce.
+        corner_radius: 0.0,
     }
 }
 
@@ -1797,6 +1840,7 @@ pub(super) fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> 
         crop_top: clip.crop_top,
         crop_right: clip.crop_right,
         crop_bottom: clip.crop_bottom,
+        corner_radius: clip.corner_radius,
     };
     let Some(kf_value) = &clip.chroma_keyframes else {
         return base;
@@ -1850,6 +1894,13 @@ pub(super) fn resolve_clip_transform_unfaded(clip: &Clip, source_frame: i64) -> 
         crop_top: f64_or("crop_top", base.crop_top),
         crop_right: f64_or("crop_right", base.crop_right),
         crop_bottom: f64_or("crop_bottom", base.crop_bottom),
+        // D-344 — keyframeable through the same D-034 engine as every field
+        // above, and for the same reason it is a flat scalar rather than
+        // anything richer. The exporter's own `geq` mask expression is
+        // re-evaluated per frame, so an animated radius is a picture BOTH
+        // engines can produce — which is the test D-211's pinned text fields
+        // fail and this one passes.
+        corner_radius: f64_or("corner_radius", base.corner_radius),
     }
 }
 
@@ -1891,6 +1942,11 @@ fn plate_transform(alpha: f64) -> ClipTransform {
         crop_top: 0.0,
         crop_right: 0.0,
         crop_bottom: 0.0,
+        // D-344 — a plate covers the whole frame; rounding its corners would
+        // let the picture beneath show through at them, which is not what a
+        // dip-to-colour is. The export overlays a full-frame `color` source
+        // with no mask, so this pin is also what keeps the two engines equal.
+        corner_radius: 0.0,
     }
 }
 
@@ -2024,6 +2080,10 @@ fn composite_video_frame(
         if let Some(text_layer) = &clip.text {
             decoded.push(Step::Paint {
                 img: text::render_text_layer(text_layer, canvas_w, canvas_h)?,
+                // No `scaled_to_render` (D-344): a text clip's radius is pinned
+                // to zero by `resolve_text_clip_transform`, and zero is
+                // scale-invariant — stating the conversion here would only
+                // suggest there is something to convert.
                 transform: with_transition_alpha(
                     resolve_text_clip_transform(clip, *source_frame),
                     layer.alpha,
@@ -2075,8 +2135,14 @@ fn composite_video_frame(
         }
         decoded.push(Step::Paint {
             img: rgba,
+            // D-344 — `corner_radius` is the one geometry field authored in
+            // OUTPUT pixels rather than as a ratio, so it is the one that has
+            // to ride `render_scale` explicitly; see
+            // `ClipTransform::scaled_to_render`. Exactly the same `render_scale`
+            // `natural` below is built from, so a rounded box and its rounding
+            // can never disagree about which canvas they are in.
             transform: with_transition_alpha(
-                resolve_clip_transform(clip, *source_frame),
+                resolve_clip_transform(clip, *source_frame).scaled_to_render(render_scale),
                 layer.alpha,
             ),
             // The layer's **source** size, not its decoded size — that is the
@@ -2161,9 +2227,54 @@ fn crop_pixel_rect(w: u32, h: u32, t: &ClipTransform) -> Option<(u32, u32, u32, 
     (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
 }
 
-/// Crop → scale → rotate → apply opacity (as an alpha multiply) → overlay
-/// `layer` onto `canvas`, with its TOP-LEFT corner at `transform`'s
-/// `position_x`/`position_y` (canvas fractions). Real
+/// D-344 — how much of the pixel whose top-left corner is `(x, y)` a
+/// `w`×`h` placement box rounded to radius `r` covers: `1.0` well inside,
+/// `0.0` well outside, a linear one-pixel ramp across the corner arc.
+/// All four arguments are in the placement box's OWN pixel space.
+///
+/// **This is the canonical rounded-box signed distance field** (the
+/// `sdRoundedBox` every SDF reference states — `q = |p| - (half - r)`,
+/// `length(max(q, 0)) + min(max(q.x, q.y), 0) - r`), not a hand-derived
+/// corner test, per CLAUDE.md's "don't hand-roll what a known-good formula
+/// already solves". Using the real SDF rather than the obvious
+/// "distance from the corner circle's centre" is not pedantry: the naive form
+/// has no defined value on the straight edges, so it needs a special case
+/// there — and that special case is exactly what broke `r == 0`, which under
+/// the naive expression silently halved the alpha of the ENTIRE layer instead
+/// of doing nothing (caught against real ffmpeg before either engine was
+/// written; see `docs/notes/rounded-corners.md`). The SDF form needs no
+/// special case and is an exact identity at `r == 0` by construction, which is
+/// what makes this feature's "zero is byte-identical" guarantee hold for a
+/// KEYFRAMED radius passing through zero too, not just for a clip that never
+/// sets one.
+///
+/// `+ 0.5` on both the pixel centre and the coverage threshold is the
+/// half-pixel convention that makes the box span `0..w` (full pixel coverage)
+/// rather than `0..w-1` (pixel centres): without it the outermost row and
+/// column would come back half-covered even at `r == 0`.
+///
+/// `r` is clamped to `0 ..= min(w, h) / 2` here, at the point of use, exactly
+/// as [`crop_pixel_rect`] clamps the crop insets and for the same stated
+/// reason — the model stores what the UI wrote, the consumer decides what it
+/// means. An over-large radius therefore becomes a pill or a circle (what CSS
+/// `border-radius` does with one) rather than a degenerate shape.
+///
+/// **The ffmpeg exporter computes this identical expression** in its `geq`
+/// alpha mask (`timelineExport.ts`'s `cornerRadiusMaskExpr`) — same formula,
+/// same clamp, same half-pixel convention — which is what makes the two
+/// engines agree to within ffmpeg's own 1/255 quantisation rather than
+/// "approximately".
+fn corner_coverage(x: f64, y: f64, w: f64, h: f64, r: f64) -> f32 {
+    let r = r.max(0.0).min((w.min(h)) / 2.0);
+    let qx = (x + 0.5 - w / 2.0).abs() - (w / 2.0 - r);
+    let qy = (y + 0.5 - h / 2.0).abs() - (h / 2.0 - r);
+    let sd = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+    (0.5 - sd).clamp(0.0, 1.0) as f32
+}
+
+/// Crop → scale → **round the corners** → rotate → apply opacity (as an alpha
+/// multiply) → overlay `layer` onto `canvas`, with its TOP-LEFT corner at
+/// `transform`'s `position_x`/`position_y` (canvas fractions). Real
 /// arbitrary-angle rotation via `imageproc::geometric_transformations::
 /// rotate_about_center` — the exact same function + transparent-border
 /// pattern `image_processing.rs`'s own `apply_rotation` already uses for
@@ -2222,6 +2333,20 @@ fn crop_pixel_rect(w: u32, h: u32, t: &ClipTransform) -> Option<(u32, u32, u32, 
 ///   drag keeps growing a box about its own centre by writing the
 ///   compensating `position_*` (`transformGeometry.ts`'s
 ///   `dragCornerReposition`), so the gesture is unchanged for a human.
+///
+/// **D-344 — the corner-radius mask sits between `scale` and `rotate`**, and
+/// that position is the whole of its definition. Rounding is a property of the
+/// layer's PLACEMENT BOX, so it has to be applied once the box's real
+/// on-canvas size `(sw, sh)` is known (after `scale`/`box_*`) and while the box
+/// is still axis-aligned (before `rotate`) — a rotated clip's rounded corners
+/// then rotate with it, which is the only reading of "this clip has rounded
+/// corners" that survives a rotation. It multiplies the alpha plane rather than
+/// replacing it, exactly as `opacity` does below, so a cropped, rounded,
+/// half-opaque, dissolving clip is all four at once. `corner_radius <= 0.0`
+/// emits no work at all — not a pass over the buffer, not a branch inside one —
+/// which is what makes the default byte-identical to the pre-D-344 path.
+/// `timelineExport.ts` puts its own `geq` mask node at the matching point in
+/// the export chain (after `scale`, before `rotate`), for the same reasons.
 pub(super) fn composite_layer_onto(
     canvas: &mut image::RgbaImage,
     layer: &image::RgbaImage,
@@ -2275,6 +2400,7 @@ pub(super) fn composite_layer_onto(
             (sw, sh),
             (x, y),
             opacity,
+            t.corner_radius,
         );
         return;
     }
@@ -2299,6 +2425,26 @@ pub(super) fn composite_layer_onto(
     } else {
         layer.clone()
     };
+
+    // D-344 — round the placement box's corners, here: `work` is now exactly
+    // the box at its real on-canvas size `(sw, sh)` and is still axis-aligned,
+    // which is the only point in this pipeline where both are true. See this
+    // function's own doc for why that position is the definition rather than a
+    // convenience, and [`corner_coverage`] for the formula and its clamp.
+    //
+    // A multiply into the existing alpha, never a replace, so this composes
+    // with the crop mask above it exactly the way `opacity` below composes with
+    // both: a cropped-away pixel is already alpha 0 and must not be un-hidden.
+    if t.corner_radius > 0.0 {
+        let (ww, wh) = work.dimensions();
+        let (fw, fh) = (ww as f64, wh as f64);
+        for (x, y, px) in work.enumerate_pixels_mut() {
+            let cov = corner_coverage(x as f64, y as f64, fw, fh, t.corner_radius);
+            if cov < 1.0 {
+                px[3] = (px[3] as f32 * cov).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
 
     if t.rotation != 0.0 {
         let rgba32f = DynamicImage::ImageRgba8(work).to_rgba32f();
@@ -2356,6 +2502,15 @@ pub(super) fn composite_layer_onto(
 /// a clip does not shift by a pixel depending on which path it took. The sample
 /// position `(o + 0.5) * ratio - 0.5` is the one `image::imageops::resize`
 /// itself uses, so at ratio ≥ 1 the two agree pixel for pixel.
+///
+/// `corner_radius` (D-344) is folded into the same fused pass rather than
+/// costing a second one — this path exists precisely to avoid materialising a
+/// full-size intermediate buffer, and masking one into existence just to round
+/// its corners would give that back. It is evaluated in the destination box's
+/// own space (`px - ox`, `py - oy` against `dest_size`), which is the identical
+/// grid the general path's `work` buffer uses, so the two paths produce the
+/// same coverage for the same clip — `ox`/`oy` are the same rounded origin
+/// `overlay` would have placed that buffer at.
 fn blend_layer_sampled(
     canvas: &mut image::RgbaImage,
     layer: &image::RgbaImage,
@@ -2363,6 +2518,7 @@ fn blend_layer_sampled(
     dest_size: (u32, u32),
     origin: (f64, f64),
     opacity: f32,
+    corner_radius: f64,
 ) {
     use image::Pixel as _;
 
@@ -2381,6 +2537,16 @@ fn blend_layer_sampled(
     if vx1 <= vx0 || vy1 <= vy0 {
         return;
     }
+
+    // D-344 — resolved once for the whole window, not per pixel: an un-rounded
+    // clip (every clip in every pre-D-344 project) never evaluates the SDF at
+    // all, it multiplies by a constant `1.0` the optimiser folds away.
+    let rounding = |bx: i64, by: i64| -> f32 {
+        if corner_radius <= 0.0 {
+            return 1.0;
+        }
+        corner_coverage(bx as f64, by as f64, sw as f64, sh as f64, corner_radius)
+    };
 
     let (cx0, cy0, cx1, cy1) = crop;
     let rx = lw as f64 / sw as f64;
@@ -2456,7 +2622,14 @@ fn blend_layer_sampled(
                 let bot = p01[ch] + (p11[ch] - p01[ch]) * c.fx;
                 out[ch] = top + (bot - top) * fy;
             }
-            let a = (out[3] * opacity).round().clamp(0.0, 255.0) as u8;
+            // D-344 — the rounded-box coverage for this destination pixel, in
+            // the placement box's own space. `rounding` is `1.0` for every
+            // un-rounded clip (the guard above computes nothing at all then),
+            // so this multiply is an exact no-op and the pre-D-344 arithmetic
+            // is preserved bit for bit.
+            let a = (out[3] * opacity * rounding(px - ox, py - oy))
+                .round()
+                .clamp(0.0, 255.0) as u8;
             if a == 0 {
                 continue; // fully transparent sample — nothing to blend
             }
@@ -2508,6 +2681,7 @@ mod composite_tests {
             crop_top: 0.0,
             crop_right: 0.0,
             crop_bottom: 0.0,
+            corner_radius: 0.0,
         }
     }
 
@@ -3556,6 +3730,279 @@ mod composite_tests {
         assert_eq!(*canvas.get_pixel(9, 5), Rgba([0, 0, 0, 255])); // cropped right
         assert_eq!(*canvas.get_pixel(5, 9), Rgba([255, 0, 0, 255])); // bottom kept
         assert_eq!(*canvas.get_pixel(0, 5), Rgba([255, 0, 0, 255])); // left kept
+    }
+
+    // --- D-344, rounded corners ------------------------------------------ //
+
+    /// **The regression guarantee, proved for every input rather than for one
+    /// fixture.** `corner_radius == 0` must be byte-identical to the pre-D-344
+    /// path, and the mechanism by which that holds is that the coverage is
+    /// EXACTLY `1.0` at radius zero — so even where the mask does run (a
+    /// keyframed radius passing through zero, where the caller cannot skip the
+    /// pass) multiplying by it changes no alpha byte. Exact `==` on purpose,
+    /// not an epsilon: `alpha * 1.0f32` is exact, `alpha * 0.999f32` is not.
+    ///
+    /// This is also the exact property the obvious "distance from the corner
+    /// circle's centre" formulation FAILS — it returns `0.5` here and would
+    /// silently halve the whole layer's alpha. See [`corner_coverage`].
+    #[test]
+    fn corner_coverage_is_exactly_one_everywhere_at_zero_radius() {
+        for (w, h) in [(1.0, 1.0), (16.0, 9.0), (100.0, 100.0), (7.0, 33.0)] {
+            for y in 0..(h as u32) {
+                for x in 0..(w as u32) {
+                    let cov = corner_coverage(x as f64, y as f64, w, h, 0.0);
+                    assert_eq!(cov, 1.0, "radius 0 must cover ({x},{y}) of {w}x{h} fully");
+                }
+            }
+        }
+    }
+
+    /// A negative radius is "no rounding", matching [`ClipTransform::
+    /// is_identity`]'s own `<= 0.0` test — the two have to agree about what
+    /// gets painted, exactly as the crop insets' clamp and predicate do.
+    #[test]
+    fn corner_coverage_treats_a_negative_radius_as_no_rounding() {
+        assert_eq!(corner_coverage(0.0, 0.0, 8.0, 8.0, -5.0), 1.0);
+    }
+
+    /// **Cross-engine parity, pinned as real numbers.** These are the actual
+    /// alpha bytes REAL ffmpeg produced for the exporter's own
+    /// `cornerRadiusMaskExpr` on a 100×100 opaque layer at radius 20
+    /// (`docs/notes/rounded-corners.md` records the probe). The Rust
+    /// compositor must reproduce them to within ffmpeg's own 1/255 alpha
+    /// quantisation — which is the difference between the two engines
+    /// "agreeing" and merely "both looking rounded", and is the test B-201's
+    /// postmortem says should have existed on the first day of a two-engine
+    /// field rather than the day after the divergence was noticed.
+    #[test]
+    fn corner_coverage_matches_real_ffmpegs_own_measured_alpha() {
+        // (x, y, the byte real ffmpeg wrote)
+        const MEASURED: &[(u32, u32, u8)] = &[
+            (0, 0, 0),
+            (3, 0, 0),
+            (7, 4, 149),
+            (6, 5, 175),
+            (7, 5, 255),
+            (5, 6, 175),
+            (4, 7, 149),
+            (50, 0, 255),
+            (0, 50, 255),
+            (50, 50, 255),
+        ];
+        for &(x, y, expected) in MEASURED {
+            let cov = corner_coverage(x as f64, y as f64, 100.0, 100.0, 20.0);
+            let got = (cov * 255.0).round() as i32;
+            assert!(
+                (got - expected as i32).abs() <= 1,
+                "({x},{y}): preview {got} vs real ffmpeg {expected} — more than \
+                 one quantisation step apart, the two engines have diverged",
+            );
+        }
+    }
+
+    /// An over-large radius becomes a pill/circle rather than a degenerate
+    /// shape — the clamp to `min(w, h) / 2`, which both engines apply at the
+    /// point of use. On a square box that means a circle: the centre is solid,
+    /// all four corners are gone, and the edge MIDPOINTS survive (a circle
+    /// inscribed in the square touches them).
+    #[test]
+    fn corner_coverage_clamps_an_over_large_radius_to_a_circle() {
+        let (w, h) = (64.0, 64.0);
+        assert_eq!(corner_coverage(32.0, 32.0, w, h, 10_000.0), 1.0);
+        assert_eq!(corner_coverage(0.0, 0.0, w, h, 10_000.0), 0.0);
+        assert!(
+            corner_coverage(31.0, 0.0, w, h, 10_000.0) > 0.5,
+            "edge midpoint kept"
+        );
+    }
+
+    /// The **fast (sampled, magnifying, un-rotated) compositing path** really
+    /// rounds: the layer's own corner on the canvas is gone, its centre and its
+    /// edge midpoints are not. `scale: 2.0` on a 10×10 layer keeps this on
+    /// `blend_layer_sampled` (the `sw >= lw` branch), which is the path that
+    /// computes the mask per DESTINATION pixel rather than over a buffer.
+    #[test]
+    fn composite_layer_onto_rounds_corners_on_the_sampled_path() {
+        let mut canvas = flat(20, 20, [0, 0, 0, 255]);
+        let layer = flat(10, 10, [255, 0, 0, 255]);
+        let t = ClipTransform {
+            scale: 2.0,
+            corner_radius: 6.0,
+            ..identity_transform()
+        };
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
+        // The 10x10 layer at scale 2 exactly fills the 20x20 canvas.
+        assert_eq!(
+            *canvas.get_pixel(0, 0),
+            Rgba([0, 0, 0, 255]),
+            "corner rounded off"
+        );
+        assert_eq!(
+            *canvas.get_pixel(19, 0),
+            Rgba([0, 0, 0, 255]),
+            "corner rounded off"
+        );
+        assert_eq!(
+            *canvas.get_pixel(0, 19),
+            Rgba([0, 0, 0, 255]),
+            "corner rounded off"
+        );
+        assert_eq!(
+            *canvas.get_pixel(19, 19),
+            Rgba([0, 0, 0, 255]),
+            "corner rounded off"
+        );
+        assert_eq!(
+            *canvas.get_pixel(10, 10),
+            Rgba([255, 0, 0, 255]),
+            "centre kept"
+        );
+        assert_eq!(
+            *canvas.get_pixel(10, 0),
+            Rgba([255, 0, 0, 255]),
+            "top edge kept"
+        );
+        assert_eq!(
+            *canvas.get_pixel(0, 10),
+            Rgba([255, 0, 0, 255]),
+            "left edge kept"
+        );
+    }
+
+    /// The **general (buffer) path** rounds identically — and the mask is
+    /// applied BEFORE the rotation, so at 90° the rounded corners have rotated
+    /// with the picture instead of staying axis-aligned. A 90° turn maps the
+    /// box onto itself, so "still rounded at all four corners, still solid in
+    /// the middle" is exactly the assertion that distinguishes the two orders
+    /// from a mask applied after.
+    #[test]
+    fn composite_layer_onto_rounds_corners_before_rotating() {
+        let mut canvas = flat(20, 20, [0, 0, 0, 255]);
+        let layer = flat(20, 20, [255, 0, 0, 255]);
+        let t = ClipTransform {
+            rotation: 90.0,
+            corner_radius: 6.0,
+            ..identity_transform()
+        };
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
+        assert_eq!(
+            *canvas.get_pixel(0, 0),
+            Rgba([0, 0, 0, 255]),
+            "corner rounded off"
+        );
+        assert_eq!(
+            *canvas.get_pixel(19, 19),
+            Rgba([0, 0, 0, 255]),
+            "corner rounded off"
+        );
+        assert_eq!(
+            *canvas.get_pixel(10, 10),
+            Rgba([255, 0, 0, 255]),
+            "centre kept"
+        );
+    }
+
+    /// Rounding MULTIPLIES the alpha the crop already wrote rather than
+    /// replacing it — a cropped-away pixel must not be un-hidden by a rounded
+    /// clip, the same composition rule `opacity` follows.
+    #[test]
+    fn corner_radius_composes_with_crop_rather_than_replacing_it() {
+        let mut canvas = flat(20, 20, [0, 0, 0, 255]);
+        let layer = flat(20, 20, [255, 0, 0, 255]);
+        let t = ClipTransform {
+            crop_left: 0.5,
+            corner_radius: 4.0,
+            ..identity_transform()
+        };
+        composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
+        // Cropped side stays empty; the kept side is still rounded at its own
+        // (uncropped) bottom-right corner.
+        assert_eq!(
+            *canvas.get_pixel(2, 10),
+            Rgba([0, 0, 0, 255]),
+            "crop still hides this"
+        );
+        assert_eq!(
+            *canvas.get_pixel(19, 19),
+            Rgba([0, 0, 0, 255]),
+            "and it is still rounded"
+        );
+        assert_eq!(
+            *canvas.get_pixel(15, 10),
+            Rgba([255, 0, 0, 255]),
+            "kept side painted"
+        );
+    }
+
+    /// D-344 — `corner_radius` is authored in OUTPUT pixels, so rendering the
+    /// same composition into a half-size preview buffer must halve it; every
+    /// other field is a ratio and is untouched. Zero stays exactly zero at
+    /// every scale, which is what keeps the default free.
+    #[test]
+    fn scaled_to_render_converts_output_pixels_into_canvas_pixels() {
+        let t = ClipTransform {
+            corner_radius: 24.0,
+            scale: 1.5,
+            position_x: 0.25,
+            ..identity_transform()
+        }
+        .scaled_to_render(0.5);
+        assert_eq!(t.corner_radius, 12.0);
+        assert_eq!(t.scale, 1.5, "a ratio must not be rescaled");
+        assert_eq!(t.position_x, 0.25, "a ratio must not be rescaled");
+        assert_eq!(
+            identity_transform().scaled_to_render(0.5).corner_radius,
+            0.0
+        );
+    }
+
+    /// A rounded clip is NOT the identity, so `timeline_frame`'s single-layer
+    /// plain-decode fast path cannot silently discard the rounding — which is
+    /// exactly the D-132/B-053 defect this predicate exists to prevent.
+    #[test]
+    fn a_rounded_clip_is_not_the_identity_transform() {
+        assert!(identity_transform().is_identity());
+        assert!(
+            !ClipTransform {
+                corner_radius: 1.0,
+                ..identity_transform()
+            }
+            .is_identity()
+        );
+    }
+
+    /// `corner_radius` rides the same D-034 keyframe engine as every other
+    /// transform field — the exporter's `geq` mask is re-evaluated per frame,
+    /// so an animated radius is a picture BOTH engines can produce.
+    #[test]
+    fn resolve_clip_transform_resolves_a_keyframed_corner_radius() {
+        let clip = Clip {
+            corner_radius: 0.0,
+            chroma_keyframes: Some(serde_json::json!([
+                {"frame": 0, "params": {"corner_radius": 0.0}},
+                {"frame": 10, "params": {"corner_radius": 20.0}},
+            ])),
+            ..Clip::default()
+        };
+        assert_eq!(resolve_clip_transform(&clip, 0).corner_radius, 0.0);
+        assert_eq!(resolve_clip_transform(&clip, 10).corner_radius, 20.0);
+        let mid = resolve_clip_transform(&clip, 5).corner_radius;
+        assert!(mid > 0.0 && mid < 20.0, "expected a real ramp, got {mid}");
+    }
+
+    /// A TEXT clip's radius is pinned to zero: the export compiles a title to
+    /// `drawtext`, which cannot mask its own corners, so a preview that
+    /// rounded one would be showing a picture the export cannot produce — the
+    /// same parity reasoning that pins `scale`/`rotation`/`crop_*` there.
+    #[test]
+    fn a_text_clips_corner_radius_is_pinned_to_zero() {
+        let clip = Clip {
+            corner_radius: 30.0,
+            text: Some(apelles_timeline::TextLayer::default()),
+            ..Clip::default()
+        };
+        assert_eq!(resolve_text_clip_transform(&clip, 0).corner_radius, 0.0);
+        assert_eq!(plate_transform(1.0).corner_radius, 0.0);
     }
 
     /// Crop composes with the rest of the transform rather than replacing

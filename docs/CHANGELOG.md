@@ -342,6 +342,23 @@ One or two lines per session. Detail lives in the decision it references.
   manifest-level fields are deferred to the roadmap with reasons, and the
   "render → Sources is silent" suspicion was **withdrawn** after reading
   `Root.tsx` (it already toasts; the harness just never wires `onRendered`).
+- **2026-09-17** — **D-344: a clip can have ROUNDED CORNERS, in both engines.**
+  New per-clip `corner_radius`, in OUTPUT-CANVAS PIXELS (the one geometry field
+  that is not a canvas fraction — a human means "16 px of round" and does not
+  want it rescaled; the preview pays for the exception in one named conversion,
+  `ClipTransform::scaled_to_render`). Masked after `scale` and before `rotate`
+  in both engines, so a rotated clip's rounding rotates with it, and it
+  MULTIPLIES alpha so crop/opacity/fade/dissolve still compose. The formula is
+  the canonical rounded-box SDF, chosen because the obvious
+  distance-from-the-corner form was **measured broken** against real ffmpeg
+  first: at `r == 0` it evaluates to 0.5 and silently halves the whole layer's
+  alpha, which a keyframed radius passing through zero would have hit live. The
+  two engines are pinned to one canonical table of real-ffmpeg alpha bytes that
+  BOTH suites assert — max divergence 1/255 on 0.6 % of pixels, and the visible
+  arc is identical on every row. `corner_radius: 0` emits no masking work at
+  all. Lands with the Inspector row (it joins `ClipTransformParam`, so it gets
+  the diamond, reset and curve editor) and both MCP surfaces in the same pass.
+
 - **2026-09-15** — **B-199: the transport bar's timecode no longer jitters,
   and drops the frame field.** `tabular-nums` alone only fixes digit widths;
   `font-mono` on the whole readout makes every character (colons, `/`, space)

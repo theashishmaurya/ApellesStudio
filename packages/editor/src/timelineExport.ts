@@ -1667,7 +1667,18 @@ function buildClipFilterChain(
     : String(rotation);
   const needsRotation = hasRotationKeyframes || rotation !== 0;
 
-  // Ordered chain from here: scale -> [format+rotate+alpha, if either is
+  // D-344 — rounded corners, static AND keyframed, in exactly `scaleExpr`'s
+  // own identity-when-default shape: a clip with neither a static radius nor a
+  // `corner_radius` keyframe emits no node at all, so every pre-D-344 clip
+  // compiles byte-identically. `bigTVar` because the node is a `geq`.
+  const cornerRadius = clip.corner_radius ?? 0;
+  const hasCornerRadiusKeyframes = hasKeyframesFor(clip, 'corner_radius');
+  const cornerRadiusExpr = hasCornerRadiusKeyframes
+    ? keyframeExprAt(rebaseKeyframesToClipInput(clip), 'corner_radius', cornerRadius, clipFps, bigTVar)
+    : String(cornerRadius);
+  const needsCornerRadius = hasCornerRadiusKeyframes || cornerRadius > 0;
+
+  // Ordered chain from here: scale -> [format+corner+rotate+alpha, if any is
   // real] -> [tpad, if freezing]. Each step's OUTPUT label is `label` itself
   // only if it's the LAST one that actually runs — everything before that
   // gets its own tagged intermediate label. This is what keeps a plain clip
@@ -1675,12 +1686,37 @@ function buildClipFilterChain(
   // the exact same single `scale=...[label]` line as before B-095.
   type Step = (inLabel: string) => string;
   const after: { tag: string; build: Step }[] = [];
-  if (needsRotation || needsAlpha || dissolveInSec !== null) {
+  if (needsRotation || needsAlpha || needsCornerRadius || dissolveInSec !== null) {
     // `format=rgba` first: a plain decoded video frame (yuv420p, no alpha
     // plane) makes `rotate`'s transparent `fillcolor`, `geq`'s alpha
     // read/write and (D-226) `fade`'s own `alpha=1` all silently no-op.
-    // Needed for any one of the three alone.
+    // Needed for any one of the three alone — and (D-344) for the corner-radius
+    // mask, which is a fourth alpha writer with the identical requirement.
     after.push({ tag: 'fmt', build: (inLabel) => `[${inLabel}]format=rgba` });
+  }
+  // D-344 — the corner-radius mask, **after `scale` and before `rotate`**, and
+  // that position is the whole of its definition rather than a convenience.
+  // Rounding is a property of the layer's PLACEMENT BOX, so it has to be
+  // applied once the box's real output size is known (which after `scale` is
+  // simply `geq`'s own `W`/`H`) and while the box is still axis-aligned — so a
+  // rotated clip's rounded corners rotate with it, the only reading of "this
+  // clip has rounded corners" that survives a rotation. `chroma::edit::
+  // composite_layer_onto` puts its own mask at exactly the matching point for
+  // the same reasons; putting this one after `rotate` instead would give the
+  // export axis-aligned rounding on a rotated clip while the preview showed
+  // rotated rounding — precisely the two-engine divergence class B-090/B-094/
+  // B-095 each closed.
+  //
+  // MULTIPLIES `alpha(X,Y)` rather than overwriting it, exactly as the opacity
+  // `geq` below does, so this composes with the crop mask above it: a
+  // cropped-away pixel is already alpha 0 there and must not be un-hidden.
+  if (needsCornerRadius) {
+    const cov = cornerRadiusMaskExpr(cornerRadiusExpr);
+    after.push({
+      tag: 'cr',
+      build: (inLabel) =>
+        `[${inLabel}]geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*(${cov})'`,
+    });
   }
   if (needsRotation) {
     // `angle` is in RADIANS; `t.rotation`/keyframes are stored in DEGREES
@@ -1758,6 +1794,52 @@ function buildClipFilterChain(
   });
 
   return steps.join(';');
+}
+
+/**
+ * D-344 — an ffmpeg expression giving the rounded-box COVERAGE of the pixel
+ * `(X, Y)` of the current frame, for corner radius `rExpr` (itself an
+ * expression, so a keyframed radius animates): `1` well inside, `0` well
+ * outside, a linear one-pixel ramp across the corner arc.
+ *
+ * **The canonical rounded-box signed distance field**, not a hand-derived
+ * corner test: `q = |p| - (half - r)`, `length(max(q,0)) + min(max(q.x,q.y),0)
+ * - r`, thresholded at half a pixel. That choice is load-bearing rather than
+ * stylistic. The obvious alternative — "distance from the corner circle's
+ * centre, thresholded at `r`" — has no defined value along the straight edges
+ * and therefore needs a special case there, and that special case is exactly
+ * what breaks `r == 0`: with no corner arc to be outside of, the naive
+ * expression evaluates to `clip(0.5 - 0, 0, 1) == 0.5` and silently HALVES THE
+ * ALPHA OF THE ENTIRE LAYER. That was measured against real ffmpeg before
+ * either engine was written (`docs/notes/rounded-corners.md`); the SDF form is
+ * an exact identity at `r == 0` by construction, with no special case, which is
+ * what makes the "zero is byte-identical" guarantee hold for a KEYFRAMED radius
+ * passing through zero and not merely for a clip that never sets one.
+ *
+ * `W`/`H` are `geq`'s own per-frame frame dimensions, so this tracks a
+ * keyframed `scale` for free. The `+ 0.5` on the pixel centre makes the box
+ * span `0..W` (full pixel coverage) rather than `0..W-1` (pixel centres) —
+ * without it the outermost row and column would come back half-covered even at
+ * `r == 0`. The radius is clamped to `0 .. min(W,H)/2` here, at the point of
+ * use, so an over-large radius becomes a pill or circle (what CSS
+ * `border-radius` does with one) rather than a degenerate shape.
+ *
+ * `chroma::edit::corner_coverage` computes this identical formula — same SDF,
+ * same clamp, same half-pixel convention — which is what makes the live preview
+ * and this exporter agree to within ffmpeg's own 1/255 alpha quantisation
+ * rather than "approximately"; `timelineExportCornerRadius.ffmpeg.test.ts`
+ * measures exactly that against both engines' real output.
+ *
+ * Uppercase `X`/`Y`/`W`/`H`/`T` throughout: `geq` is the one filter here whose
+ * time variable is `T` and which rejects lowercase `t` outright — see
+ * `alphaExpr`'s own note.
+ */
+function cornerRadiusMaskExpr(rExpr: string): string {
+  const R = `min(max((${rExpr}),0),min(W,H)/2)`;
+  const qx = `(abs(X+0.5-W/2)-(W/2-${R}))`;
+  const qy = `(abs(Y+0.5-H/2)-(H/2-${R}))`;
+  const sd = `(hypot(max(${qx},0),max(${qy},0))+min(max(${qx},${qy}),0)-${R})`;
+  return `clip(0.5-${sd},0,1)`;
 }
 
 function hasKeyframesFor(clip: Clip, param: string): boolean {

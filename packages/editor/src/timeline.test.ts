@@ -142,7 +142,7 @@ describe('labelForOp', () => {
     expect(labelForOp({ kind: 'move_track', from: 0, to: 1 }, before)).toBe('Reorder track 1');
     expect(
       labelForOp(
-        { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0, ...NO_CROP, ...NO_BOX_OVERRIDE },
+        { kind: 'set_clip_transform', track: 0, clip: 0, opacity: 1, position_x: 0, position_y: 0, scale: 1, rotation: 0, ...NO_CROP, ...NO_BOX_OVERRIDE, ...SQUARE_CORNERS },
         before,
       ),
     ).toBe('Adjust "Intro"');
@@ -1066,8 +1066,12 @@ const NO_CROP = { crop_left: 0, crop_top: 0, crop_right: 0, crop_bottom: 0 } as 
  *  why `null` and not omission). Same one-liner convenience `NO_CROP` gives. */
 const NO_BOX_OVERRIDE = { box_width: null, box_height: null } as const;
 
+/** D-344 — square corners, the radius `set_clip_transform` now also requires.
+ *  Same one-liner convenience `NO_CROP` / `NO_BOX_OVERRIDE` give. */
+const SQUARE_CORNERS = { corner_radius: 0 } as const;
+
 describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
-  it('set_clip_transform writes all eleven transform fields together (D-088/D-132/D-193)', () => {
+  it('set_clip_transform writes all twelve transform fields together (D-088/D-132/D-193/D-344)', () => {
     const before = tl(backToBack());
     const after = applyOp(before, {
       kind: 'set_clip_transform',
@@ -1079,6 +1083,7 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
       scale: 1.5,
       box_width: 0.6,
       box_height: 0.25,
+      corner_radius: 18,
       rotation: 90,
       crop_left: 0.1,
       crop_top: 0.2,
@@ -1097,6 +1102,30 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
     expect(c.crop_top).toBe(0.2);
     expect(c.crop_right).toBe(0.3);
     expect(c.crop_bottom).toBe(0.4);
+    expect(c.corner_radius).toBe(18);
+  });
+
+  /** D-344 — the radius is floored at zero on the way in (the UI's own writes
+   *  should be well-formed at rest, the crop insets' own rule) but deliberately
+   *  NOT capped: the real upper bound is half the clip's resolved on-canvas
+   *  box, which only the renderers know. Both clamp again at the point of use
+   *  (`corner_coverage` / `cornerRadiusMaskExpr`), so a large value is stored
+   *  verbatim and rendered as a pill. */
+  it('set_clip_transform floors a negative corner_radius at zero and stores a large one verbatim (D-344)', () => {
+    const base = {
+      kind: 'set_clip_transform',
+      track: 0,
+      clip: 0,
+      opacity: 1,
+      position_x: 0,
+      position_y: 0,
+      scale: 1,
+      rotation: 0,
+      ...NO_CROP,
+      ...NO_BOX_OVERRIDE,
+    } as const;
+    expect(applyOp(tl(backToBack()), { ...base, corner_radius: -5 }).tracks[0].clips[0].corner_radius).toBe(0);
+    expect(applyOp(tl(backToBack()), { ...base, corner_radius: 9999 }).tracks[0].clips[0].corner_radius).toBe(9999);
   });
 
   /** D-193 — an explicit `null` on either axis clears a previously-set
@@ -1114,6 +1143,7 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
       scale: 1,
       box_width: 0.6,
       box_height: 0.25,
+      ...SQUARE_CORNERS,
       rotation: 0,
       ...NO_CROP,
     });
@@ -1127,6 +1157,7 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
       scale: 1,
       box_width: null,
       box_height: 0.25,
+      ...SQUARE_CORNERS,
       rotation: 0,
       ...NO_CROP,
     });
@@ -1149,6 +1180,7 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
       position_y: 0,
       scale: 1,
       ...NO_BOX_OVERRIDE,
+      ...SQUARE_CORNERS,
       rotation: 0,
       crop_left: -0.5,
       crop_top: 4,
@@ -1179,6 +1211,7 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
       position_y: 0,
       scale: 1,
       ...NO_BOX_OVERRIDE,
+      ...SQUARE_CORNERS,
       rotation: 0,
       ...NO_CROP,
     });
@@ -1198,6 +1231,7 @@ describe('set_clip_transform / set_clip_keyframes (D-088/D-089/D-132)', () => {
         position_y: 0,
         scale: 1,
         ...NO_BOX_OVERRIDE,
+        ...SQUARE_CORNERS,
         rotation: 0,
         ...NO_CROP,
       }),
@@ -1543,6 +1577,7 @@ describe('track lock enforcement (D-086/D-089) — mirrors apelles_timeline::Tim
         position_y: 0,
         scale: 1,
         ...NO_BOX_OVERRIDE,
+        ...SQUARE_CORNERS,
         rotation: 0,
         ...NO_CROP,
       }),

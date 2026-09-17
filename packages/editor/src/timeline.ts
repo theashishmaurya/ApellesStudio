@@ -297,6 +297,26 @@ export interface Clip {
   crop_top?: number;
   crop_right?: number;
   crop_bottom?: number;
+  /** Rounded corners (D-344) — mirrors `apelles_timeline::Clip::corner_radius`.
+   *  The corner radius of this clip's PLACEMENT BOX, in **output-composition
+   *  PIXELS**. `0`/absent (every pre-D-344 clip) is square corners and is a
+   *  guaranteed byte-identical no-op in both engines — neither emits any
+   *  masking work for it at all.
+   *
+   *  **Pixels, deliberately, where `position_*`/`scale`/`box_*` are canvas
+   *  fractions.** Those are geometry, and a fraction is what makes them
+   *  invariant under the preview's own decode-scale knob (B-043/D-136). A
+   *  corner radius is a *finish* on the box rather than geometry, and every
+   *  reference that exposes one states it in pixels (CSS `border-radius`,
+   *  Premiere's Rounded Corners, Resolve's Rounded Corner) because "16 px of
+   *  round" is what a human means and does not want rescaled when the box
+   *  moves. The composition's pixel size is a render parameter both engines
+   *  already hold, so this carries no Rust/TS parity gap: the live preview
+   *  multiplies it by its own `render_scale` once
+   *  (`ClipTransform::scaled_to_render`), and the exporter is already in
+   *  output pixels. See the Rust field's own doc and `docs/notes/
+   *  rounded-corners.md`. */
+  corner_radius?: number;
   /** D-086/D-132 — `[{frame, params: {opacity?, position_x?, position_y?,
    *  scale?, rotation?, crop_left?, crop_top?, crop_right?, crop_bottom?}}]`,
    *  the exact shape `utils/maskKeyframes.ts` already writes
@@ -868,7 +888,7 @@ export function newCaptionClipFields(
   };
 }
 
-/** The nine scalar `Clip` fields that are BOTH independently keyframeable
+/** The ten scalar `Clip` fields that are BOTH independently keyframeable
  *  (`chroma_keyframes[].params` names them verbatim — `chroma::edit::
  *  resolve_clip_transform` reads each one out by exactly this string) and
  *  independently resettable from the Inspector (D-208).
@@ -877,7 +897,11 @@ export function newCaptionClipFields(
  *  resolver can interpolate them: they are a nullable, *paired* override
  *  fronted by a ratio lock (D-193), so neither "keyframe just this one axis"
  *  nor "reset just this one axis" is a well-defined single-field action —
- *  clearing them is what `Scale`'s own field already does. See D-208. */
+ *  clearing them is what `Scale`'s own field already does. See D-208.
+ *
+ *  `corner_radius` (D-344) IS here, unlike `box_width`/`box_height`: it is a
+ *  single, non-nullable, unpaired scalar, so "keyframe just this" and "reset
+ *  just this" are both well-defined — the exact test those two fail. */
 export type ClipTransformParam =
   | 'opacity'
   | 'position_x'
@@ -887,7 +911,8 @@ export type ClipTransformParam =
   | 'crop_left'
   | 'crop_top'
   | 'crop_right'
-  | 'crop_bottom';
+  | 'crop_bottom'
+  | 'corner_radius';
 
 /** Each keyframeable transform field's rest value — the ONE source of truth
  *  for the `?? 1` / `?? 0` fallbacks scattered through the Inspector and for
@@ -907,6 +932,9 @@ export const CLIP_TRANSFORM_DEFAULTS: Readonly<Record<ClipTransformParam, number
   crop_top: 0,
   crop_right: 0,
   crop_bottom: 0,
+  // D-344 — zero really is "square corners", so this needs no non-zero
+  // migration default the way `opacity`/`scale` do.
+  corner_radius: 0,
 };
 
 /** D-223 — the per-clip AUDIO properties, keyframeable and resettable exactly
@@ -3299,6 +3327,11 @@ export type EditOp =
       crop_top: number;
       crop_right: number;
       crop_bottom: number;
+      /** D-344 — output-composition PIXELS, `0` = square corners. Required,
+       *  not optional, for the same reason every scalar above it is: this op
+       *  replaces the full set, so an omittable field would silently un-round
+       *  a clip on any caller that forgot to restate it. */
+      corner_radius: number;
     }
   /** D-089 — replace a clip's keyframe track outright (add/move/remove a
    *  keyframe is "recompute the array, then set it" client-side — mirrors
@@ -4737,6 +4770,14 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     nc.crop_top = clamp01(op.crop_top);
     nc.crop_right = clamp01(op.crop_right);
     nc.crop_bottom = clamp01(op.crop_bottom);
+    // D-344 — floored at zero on the way in for the crop insets' reason
+    // directly above (the UI's own writes should be well-formed at rest), but
+    // NOT capped: the upper bound is `min(box_w, box_h) / 2`, which depends on
+    // the clip's resolved on-canvas box size and so is only knowable at render
+    // time. Both renderers therefore clamp again at the point of use — see
+    // `corner_coverage` in `edit.rs` and `cornerRadiusMaskExpr` in
+    // `timelineExport.ts`, which apply the identical clamp.
+    nc.corner_radius = Math.max(0, op.corner_radius);
     return next;
   }
   if (op.kind === 'set_clip_keyframes') {

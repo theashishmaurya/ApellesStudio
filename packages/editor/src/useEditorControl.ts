@@ -3187,6 +3187,7 @@ export function useEditorControl(): void {
               ['crop_bottom', a?.crop_bottom, 0],
               ['box_width', a?.box_width, null],
               ['box_height', a?.box_height, null],
+              ['corner_radius', a?.corner_radius, 0],
             ] as const
           )
             .filter(([, v, dflt]) => v !== undefined && v !== null && Number(v) !== dflt)
@@ -3218,6 +3219,7 @@ export function useEditorControl(): void {
               ['crop_bottom', a?.crop_bottom, 0],
               ['box_width', a?.box_width, null],
               ['box_height', a?.box_height, null],
+              ['corner_radius', a?.corner_radius, 0],
             ] as const
           )
             .filter(([, v, dflt]) => v !== undefined && v !== null && Number(v) !== dflt)
@@ -3250,6 +3252,7 @@ export function useEditorControl(): void {
           crop_top: num(a?.crop_top, c.crop_top ?? 0),
           crop_right: num(a?.crop_right, c.crop_right ?? 0),
           crop_bottom: num(a?.crop_bottom, c.crop_bottom ?? 0),
+          corner_radius: num(a?.corner_radius, c.corner_radius ?? 0),
         });
         return { ok: true, track: found.track, clip: found.clip };
       },
@@ -3520,6 +3523,9 @@ export function useEditorControl(): void {
             crop_top: c.crop_top ?? 0,
             crop_right: c.crop_right ?? 0,
             crop_bottom: c.crop_bottom ?? 0,
+            // D-344 — restated, not reset: this op clears the box override
+            // only, and every other field has to survive it unchanged.
+            corner_radius: c.corner_radius ?? 0,
           });
         }
 

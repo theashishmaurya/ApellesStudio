@@ -346,6 +346,9 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
         crop_top: clip.crop_top ?? 0,
         crop_right: clip.crop_right ?? 0,
         crop_bottom: clip.crop_bottom ?? 0,
+        // D-344 — restated like every other field the gesture didn't touch: an
+        // on-canvas move or resize must not un-round a rounded clip.
+        corner_radius: clip.corner_radius ?? 0,
       });
     }
 

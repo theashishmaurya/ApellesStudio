@@ -764,6 +764,8 @@ pub struct EditorSetClipTransformArgs {
     pub crop_right: Option<f64>,
     #[serde(default)]
     pub crop_bottom: Option<f64>,
+    #[serde(default)]
+    pub corner_radius: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -3424,7 +3426,20 @@ impl ApellesMcp {
     from "clear it", since `None` is already this tool's own "not
     mentioned" convention for every other field — these two flags are the
     escape hatch for the one field pair where "explicitly go back to
-    scale" is itself a real, distinct thing you might want to say)."#
+    scale" is itself a real, distinct thing you might want to say).
+
+    `corner_radius` (D-344) rounds the clip's placement box, in OUTPUT-CANVAS
+    PIXELS — not a fraction, unlike every geometry field above it. `0` (the
+    default) is square corners and renders byte-identically to a build without
+    this feature. It is applied AFTER crop and scale and BEFORE rotation, so a
+    rotated clip's rounded corners rotate with it, and it multiplies the
+    existing alpha rather than replacing it, so it composes with crop, opacity,
+    fades and dissolves. A radius larger than half the box's shorter side
+    clamps to that, giving a pill or a circle rather than a degenerate shape.
+    Keyframeable via `editor_set_clip_keyframes` under the same
+    `corner_radius` name. Does NOT apply to a text/title clip or an adjustment
+    clip — both are refused rather than silently ignored, for the same reason
+    `scale` is."#
     )]
     pub async fn editor_set_clip_transform(
         &self,
@@ -3441,7 +3456,8 @@ impl ApellesMcp {
             .put("crop_left", p.crop_left)
             .put("crop_top", p.crop_top)
             .put("crop_right", p.crop_right)
-            .put("crop_bottom", p.crop_bottom);
+            .put("crop_bottom", p.crop_bottom)
+            .put("corner_radius", p.corner_radius);
         // The box size is the one pair with a CLEAR that outranks the value: the flag
         // sends an explicit null ("no box"), which an omitted argument cannot express,
         // and it wins over a value given in the same call.

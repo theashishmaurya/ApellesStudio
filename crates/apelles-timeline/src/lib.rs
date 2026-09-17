@@ -1249,6 +1249,40 @@ pub struct Clip {
     /// Fraction of the source height cropped off the BOTTOM edge (0.0–1.0).
     #[serde(default)]
     pub crop_bottom: f64,
+
+    // --- Rounded corners (D-344) ------------------------------------------ //
+    /// Corner radius of this clip's **placement box**, in OUTPUT-COMPOSITION
+    /// PIXELS. `0.0` (the default, and every pre-D-344 clip) means square
+    /// corners and is a guaranteed byte-identical no-op in both engines —
+    /// neither the live-preview compositor nor the ffmpeg exporter emits any
+    /// masking work at all for it.
+    ///
+    /// **Why pixels, when `position_*` / `scale` / `box_*` are all canvas
+    /// FRACTIONS (D-136/D-193):** those three are *geometry* — where the box
+    /// is and how big — and a fraction is what makes them invariant under the
+    /// preview's own decode-scale knob (B-043). A corner radius is not
+    /// geometry in that sense, it is a *finish* on the box, and every
+    /// reference that exposes one (CSS `border-radius`, Premiere's Rounded
+    /// Corners, Resolve's Rounded Corner) states it in pixels because "16 px
+    /// of round" is the thing a human actually means and does not want
+    /// rescaled when the box moves or resizes. The composition's own pixel
+    /// size is fixed and known to both engines (it is a render parameter on
+    /// both sides, exactly as `box_width`'s doc notes above), so this carries
+    /// NO Rust/TS parity gap either: the preview multiplies it by its own
+    /// `render_scale` when it renders the same composition into a smaller
+    /// buffer, which is the one and only place the preview's decode quality
+    /// may touch it.
+    ///
+    /// Stored verbatim, **clamped by the consumer** (to `0 ..= min(w, h) / 2`
+    /// of the placement box, which makes an over-large radius a pill/circle
+    /// rather than a degenerate shape) — the same division of labour
+    /// `opacity` and the crop insets above already use.
+    ///
+    /// Applied to the box AFTER crop and scale and BEFORE rotation, so a
+    /// rotated clip's rounded corners rotate with it. Keyframeable through
+    /// `chroma_keyframes` below like every field above it.
+    #[serde(default)]
+    pub corner_radius: f64,
     /// D-034-shaped keyframes for the nine fields above — `[{frame, params:
     /// {opacity?, position_x?, position_y?, scale?, rotation?, crop_left?,
     /// crop_top?, crop_right?, crop_bottom?}}, …]`, the
@@ -1567,6 +1601,9 @@ impl Default for Clip {
             crop_top: 0.0,
             crop_right: 0.0,
             crop_bottom: 0.0,
+            // D-344 — zero radius is genuinely "square corners", the same
+            // no-migration-needed zero the crop insets above have.
+            corner_radius: 0.0,
             chroma_keyframes: None,
             // D-147 — zero frames really is "no fade", so unlike
             // `opacity`/`scale` these two need no non-zero migration default.

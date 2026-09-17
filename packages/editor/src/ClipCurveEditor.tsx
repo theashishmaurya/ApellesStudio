@@ -107,6 +107,7 @@ const PARAM_LABELS: Record<ClipKeyframeParam, string> = {
   crop_top: 'Crop Top',
   crop_right: 'Crop Right',
   crop_bottom: 'Crop Bottom',
+  corner_radius: 'Corner Radius',
   volume: 'Volume',
   pan: 'Pan',
 };

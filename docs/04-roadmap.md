@@ -2152,6 +2152,24 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       Inspector panel + `editor_add_adjustment_clip` /
       `editor_set_adjustment_clip`. Matched real-pixel suites on both sides.
       Design detail: `docs/notes/adjustment-clips.md`.
+    - ~~**Rounded corners on a clip**~~ — **DONE, 2026-09-17 (D-344).**
+      `Clip.corner_radius`, in OUTPUT-CANVAS PIXELS — the one geometry field
+      that is deliberately not a canvas fraction (a human means "16 px of
+      round"; the preview converts once, in `ClipTransform::scaled_to_render`).
+      Masked after `scale` and before `rotate` in BOTH engines so a rotated
+      clip's rounding rotates with it, multiplying alpha so crop/opacity/fade/
+      dissolve still compose. The canonical rounded-box SDF, chosen after the
+      obvious distance-from-the-corner form was measured broken against real
+      ffmpeg (at `r == 0` it halves the whole layer's alpha). `0` emits no
+      masking work at all in either engine. Pinned by one shared table of real
+      ffmpeg alpha bytes both suites assert — 1/255 max divergence, identical
+      visible arc. Inspector row (it joins `ClipTransformParam`, so diamond +
+      reset + curve editor come free) and both MCP surfaces landed in the same
+      pass. Refused on text/adjustment clips, where neither engine can render
+      it. **Deferred, deliberately:** per-corner radii (one radius for all
+      four today), and a rounded on-canvas transform box (the overlay is a
+      manipulation handle, not a preview — every NLE draws it square).
+      Design detail: `docs/notes/rounded-corners.md`.
     - ~~**Markers** — colour-coded, titled, timeline-anchored (ref:
       `markers.jpg`)~~ — **DONE, 2026-09-08 (D-222).** `Timeline.markers`
       (not `Clip` — a marker survives the clip under it being trimmed/moved/

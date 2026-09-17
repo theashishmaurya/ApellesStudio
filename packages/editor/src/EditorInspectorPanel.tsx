@@ -179,6 +179,7 @@ export function EditorInspectorPanel() {
       crop_top: patch.crop_top ?? selectedClip.crop_top ?? 0,
       crop_right: patch.crop_right ?? selectedClip.crop_right ?? 0,
       crop_bottom: patch.crop_bottom ?? selectedClip.crop_bottom ?? 0,
+      corner_radius: patch.corner_radius ?? selectedClip.corner_radius ?? 0,
     });
   };
 

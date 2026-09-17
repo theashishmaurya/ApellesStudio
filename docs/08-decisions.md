@@ -33808,3 +33808,128 @@ FILE rather than per clip, and clips asking an identical question collapsing to
 one detection. 13 pure cases in `recutSweep.test.ts`, 14 op-level cases
 (5 of them the single-clip regression guarantee), 5 new GUI cases. Parity
 corpus regenerated (176 tools, 260 cases) and `cargo test -p apelles-mcp` green.
+---
+
+## D-344 — a clip can have rounded corners, in both engines, held together by one measured parity table
+
+**decided (2026-09-17)** · new capability · obeys D-136/B-043 (units) ·
+obeys D-211 (what a title cannot do) · answers B-090/B-094/B-095's shared
+postmortem · detail: `docs/notes/rounded-corners.md`
+
+**Context.** A clip on the Edit timeline had no way to render with rounded
+corners, in either engine. Grepping the whole codebase for "rounded corner"
+before this work returned exactly one hit, and it was a disclaimer: the
+animated-caption capability entry explaining that a caption *cannot* have one,
+because `drawbox has neither a corner radius nor a per-frame alpha expression`.
+Neither `composite_layer_onto` (the live preview) nor `buildClipFilterChain`
+(the ffmpeg export) had any masking concept beyond D-132's rectangular crop
+insets. This is genuinely new capability, not a bug fix.
+
+---
+
+### Decision 1 — the unit is OUTPUT-CANVAS PIXELS, breaking the local pattern on purpose
+
+Every other geometry field on a `Clip` is a **fraction** of the output
+composition — `position_x`/`position_y` (D-136), `scale`, `box_width`/
+`box_height` (D-193), the four crop insets (D-132). That is B-043's fix, not a
+preference: the preview renders the same composition into a 960-px buffer while
+scrubbing and a 640-px one while playing, so a canvas-pixel field silently
+changes meaning with the preview quality.
+
+**Options.** (a) A fraction of the canvas, consistent with its neighbours.
+(b) Output-canvas pixels.
+
+**Chose (b).** A corner radius is a *finish* on the box, not the box's
+geometry: a human means "16 px of round" and specifically does not want that
+rescaled when the box moves or resizes — which is why every reference states it
+in pixels (CSS `border-radius`, Premiere's Rounded Corners, Resolve's Rounded
+Corner). It costs exactly one conversion, in one named place
+(`ClipTransform::scaled_to_render`), called by the two functions that own a
+`render_scale`; a zero radius stays exactly zero at every scale, so the default
+is free. And unlike `scale` it opens **no** Rust/TS parity gap, because the
+composition's pixel size is a render parameter both engines already hold —
+`scale`'s gap needs the clip's SOURCE resolution, which the pure, no-I/O ffmpeg
+compiler cannot probe (B-074/D-184, deliberately not reopened).
+
+### Decision 2 — the canonical rounded-box SDF, not the obvious corner test
+
+Both engines compute the standard `sdRoundedBox` signed distance field,
+thresholded at half a pixel, with the radius clamped to `min(w, h) / 2` and a
+`+0.5` pixel-centre convention. The full formula and its two load-bearing
+details are in the note.
+
+**Options.** (a) The obvious "distance from the corner circle's centre,
+thresholded at `r`". (b) The SDF.
+
+**Chose (b), because (a) was measured broken against real ffmpeg before either
+engine was written.** At `r == 0` the naive form has no corner arc to be
+outside of, so both corner distances are zero everywhere and its coverage
+evaluates to `clamp(0.5 - 0, 0, 1) == 0.5` — it silently **halves the alpha of
+the entire layer**. The probe reported `r=0 -> all alpha 255: False`. It is
+patchable with a special case, but the special case *is* the defect: it makes
+"zero is byte-identical" a property of the callers skipping the mask rather
+than of the formula, and under a **keyframed** radius passing through zero the
+callers cannot skip it. The SDF needs no special case and is an exact identity
+at `r == 0` by construction. This is also CLAUDE.md's "don't hand-roll what a
+known-good formula already solves" applied to maths rather than to a dependency.
+
+### Decision 3 — the parity test is the point, and it landed with the feature
+
+`corner_radius` is rendered twice by two engines sharing no code. That is the
+shape of B-090 (a keyframed `scale` compiling to a static resize), B-094 and
+B-095 — and every one of their postmortems says the missing test was a real,
+both-engines, real-pixel comparison, not a string match on the generated
+filtergraph.
+
+So the two engines are held together by **one canonical table of alpha bytes**,
+recorded from real ffmpeg output, that both engines' real suites assert
+against: `corner_coverage_matches_real_ffmpegs_own_measured_alpha` (Rust) and
+`CORNER_PROFILE_100x100_R20` in `timelineExportCornerRadius.ffmpeg.test.ts`
+(real exporter, real ffmpeg, real pixel readback). A change to either formula
+that the other does not get fails one of the two.
+
+**Measured, not asserted** — real ffmpeg against the preview's formula over a
+whole 100×100 frame at radius 20: max difference **1/255**, on 56 of 10 000
+pixels (0.6 %), none worse; mean 0.0056/255; and the *visible* boundary — where
+each row's coverage crosses 50 % — is identical on **all 20** arc rows (0 px
+disagreement). The residual is ffmpeg's own alpha quantisation (`geq` truncates
+where the reference rounds), not a difference in the mask. At radius 0, ffmpeg
+leaves all 10 000 pixels at alpha 255 and the preview's coverage is exactly
+`1.0`.
+
+### Decision 4 — masked after `scale`, before `rotate`, multiplying alpha
+
+Rounding is a property of the **placement box**, so it is applied once the
+box's real on-canvas size is known and while the box is still axis-aligned.
+Both engines use that same point, and it is the whole of the field's
+definition rather than a convenience: a rotated clip's rounded corners rotate
+*with* it. Masking after `rotate` would give the export axis-aligned rounding
+on a rotated clip while the preview showed rotated rounding — exactly the
+divergence class above. Both engines **multiply** the existing alpha rather
+than replacing it, as `opacity` already does, so crop, rounding, opacity, fade
+and dissolve compose instead of overriding one another.
+
+### Decision 5 — keyframeable, and in the GUI in the same pass
+
+`corner_radius` joins `ClipTransformParam` — unlike `box_width`/`box_height`,
+which are a nullable *paired* override fronted by a ratio lock, so neither
+"keyframe just this one" nor "reset just this one" is well defined for them
+(D-208). A single unpaired scalar passes that test, and the exporter's `geq`
+mask is re-evaluated per frame, so an animated radius is a picture **both**
+engines can genuinely produce — the test D-211's pinned text fields fail.
+
+Joining that type made the GUI half a one-line addition to
+`ClipInspectorPanel`'s `TRANSFORM_FIELDS`, which brings the scrubbable number
+field, the keyframe diamond, the per-property reset and the curve editor with
+it — so this shipped with both interfaces per CLAUDE.md's human-AND-AI rule,
+not with the GUI deferred. Text clips hide it automatically via the existing
+`TEXT_CLIP_TRANSFORM_PARAMS` filter.
+
+**Refused, not ignored, where it cannot render:** a text/title clip (the export
+compiles one to `drawtext`, which cannot mask its corners), an adjustment clip
+(full-frame by definition), and a dip-to-colour plate (rounding it would let
+the picture beneath show through at the corners).
+
+**Disclosed, not fixed:** one radius for all four corners, not four; and the
+on-canvas transform box stays rectangular for a rounded clip (it is a
+manipulation handle, not a preview of the picture — every NLE draws it square).
