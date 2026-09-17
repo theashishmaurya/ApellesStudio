@@ -53,6 +53,8 @@ import {
   setLayerItemOffset,
   setLayerItemField,
   resetLayerItemPosition,
+  setProjectSettings,
+  PROJECT_SETTINGS_KEYS,
 } from './manifestEdit';
 import { measureWorldMap } from './canvasGeometry';
 import type { Selection } from './LayerList';
@@ -2087,5 +2089,81 @@ describe('addCamera2d (D-331 — the GUI half of a capability only MCP had)', ()
     const viaGui = addCamera2d(sample, noCamIndex).manifest;
     const viaAgent = setCamera2d(sample, noCamIndex, [{ at: 0, zoom: 1 }]);
     expect(viaGui).toEqual(viaAgent);
+  });
+});
+
+/**
+ * D-345 (fixes B-222) — the manifest's own top-level output spec. The pure
+ * half, shared by the Inspector's Project section and
+ * `motion_set_project_settings`; the op-level behaviour (partial merge,
+ * commit labelling, render staleness) is in `motionOps.test.ts`.
+ */
+describe('setProjectSettings', () => {
+  const ok = (r: ReturnType<typeof setProjectSettings>) => {
+    if (!r.ok) throw new Error(`expected ok, got: ${r.error}`);
+    return r;
+  };
+
+  it('writes a partial patch and reports exactly what changed', () => {
+    const r = ok(setProjectSettings(sample, { width: 1080, height: 1920 }));
+    expect(r.changed).toEqual(['width', 'height']);
+    expect(r.manifest).toEqual({ ...sample, width: 1080, height: 1920 });
+    expect(r.manifest.fps).toBe(sample.fps);
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('produces a manifest the engine schema still accepts', () => {
+    const r = ok(setProjectSettings(sample, { title: 'Retitled', width: 1080, height: 1920, fps: 24 }));
+    expect(() => manifestSchema.parse(r.manifest)).not.toThrow();
+  });
+
+  it('never mutates the manifest it was given, and is a no-op when nothing differs', () => {
+    const snapshot = JSON.stringify(sample);
+    const r = ok(setProjectSettings(sample, { width: sample.width, title: sample.title }));
+    expect(r.changed).toEqual([]);
+    // this file's own no-op convention: the SAME reference back
+    expect(r.manifest).toBe(sample);
+    expect(JSON.stringify(sample)).toBe(snapshot);
+  });
+
+  it('rejects the values Remotion itself throws on, rather than clamping them', () => {
+    for (const bad of [0, -1, 1920.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(setProjectSettings(sample, { width: bad }).ok).toBe(false);
+    }
+    expect(setProjectSettings(sample, { fps: 0 }).ok).toBe(false);
+    expect(setProjectSettings(sample, { fps: -30 }).ok).toBe(false);
+    expect(setProjectSettings(sample, { title: '' }).ok).toBe(false);
+    expect(setProjectSettings(sample, { title: 7 }).ok).toBe(false);
+  });
+
+  it('allows a fractional fps, because 23.976/29.97 are real frame rates', () => {
+    const r = ok(setProjectSettings(sample, { fps: 29.97 }));
+    expect(r.manifest.fps).toBe(29.97);
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('warns — but still writes — an odd dimension, which h264 rounds down', () => {
+    const r = ok(setProjectSettings(sample, { width: 1081 }));
+    expect(r.manifest.width).toBe(1081);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toMatch(/1080/);
+  });
+
+  it('trims a title and refuses a whitespace-only one', () => {
+    expect(ok(setProjectSettings(sample, { title: '  Spaced  ' })).manifest.title).toBe('Spaced');
+    expect(setProjectSettings(sample, { title: '   ' }).ok).toBe(false);
+  });
+
+  it('refuses a key that is not part of the output spec, naming the ones that are', () => {
+    const r = setProjectSettings(sample, { theme: 'apelles-studio' });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/unknown project field/);
+    for (const key of PROJECT_SETTINGS_KEYS) expect(r.error).toContain(key);
+  });
+
+  it('ignores an explicitly undefined value, so a form can send one field at a time', () => {
+    const r = ok(setProjectSettings(sample, { width: undefined, fps: 60 }));
+    expect(r.changed).toEqual(['fps']);
   });
 });

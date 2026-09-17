@@ -98,6 +98,18 @@ pub struct MotionSetProjectThemeArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionSetProjectSettingsArgs {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub width: Option<i64>,
+    #[serde(default)]
+    pub height: Option<i64>,
+    #[serde(default)]
+    pub fps: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct MotionDeleteSceneArgs {
     pub scene_index: i64,
 }
@@ -355,7 +367,9 @@ impl ApellesMcp {
       * `selection` — what is selected right now, as `[{sceneIndex, target}]`,
         the exact shape `motion_set_selection` takes back.
       * `playheadFrame` / `playerMounted` — where the preview is parked.
-      * `fps`, `totalFrames`, `width`, `height`.
+      * `fps`, `totalFrames`, `width`, `height`, `title` — the document's own
+        output spec, all four of them written by
+        `motion_set_project_settings`.
       * `scenes` — one row per scene: `index`, `id`, `dur` (SECONDS), its
         absolute `startFrame` in the combined timeline, `layerCount`,
         `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.
@@ -477,7 +491,9 @@ impl ApellesMcp {
 
     Also returns `themes` (the registered looks, for
     `motion_set_project_theme`) and the `defaultTheme` a manifest with no
-    `theme` key renders in, `sceneFields` (for `motion_set_scene_field`),
+    `theme` key renders in, `projectFields` (the manifest's own top-level
+    fields, for `motion_set_project_settings`), `sceneFields` (for
+    `motion_set_scene_field`),
     `layerTransformFields` (for `motion_set_layer_transform_field`),
     `layerTransformKeyFields`, and the 2D/3D camera key fields.
 
@@ -502,8 +518,10 @@ impl ApellesMcp {
     #[tool(
         name = "motion_set_project_theme",
         description = r#"Set the DOCUMENT's theme — which registered look the whole manifest renders
-    in (`manifest.theme`). The Motion tab's only project-level setting: it is
-    not per scene and not per layer.
+    in (`manifest.theme`). A project-level setting: not per scene, not per
+    layer. The document's other project-level fields (`title`/`width`/
+    `height`/`fps`) are `motion_set_project_settings`; this one is separate
+    because it is an enum that CLEARS to a default rather than a value.
 
     `motion_list_primitives` lists the registered `themes` and names the
     `defaultTheme`. Today there are two:
@@ -540,6 +558,68 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new().set("theme", p.theme);
         let env = self.op("motion_set_project_theme", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_set_project_settings",
+        description = r#"Set the manifest's OWN top-level fields — the document's name and its
+    output spec. The Motion twin of `set_project_settings` (Colorist), and
+    until this existed these four were reachable only by hand-editing the
+    raw-JSON manifest (B-222).
+
+    `width`/`height` are the pixel size EVERY scene renders at; `fps` is the
+    timebase every `at`/`dur` in SECONDS is converted against; `title` is the
+    document's own label. Read them back from `motion_get_state`.
+
+    Partial merge — only the arguments you pass are changed — and ONE commit
+    (one Cmd/Ctrl+Z) for all of them, which is why `width` and `height` are
+    arguments of the same tool rather than two calls: a resize sent in two
+    steps passes through a wrong aspect ratio on the way.
+
+    **Validation is a refusal, not a clamp.** Remotion validates these itself
+    and throws: `width`/`height` must be positive INTEGERS, `fps` a positive
+    number (fractional is fine — 23.976/29.97 are real). A bad value does not
+    render badly, it takes down the live preview, so it is rejected here and
+    the manifest is left alone. An ODD width/height is legal and returns a
+    `warning`: the h264 render silently rounds it DOWN to even.
+
+    **Changing `width`/`height`/`fps` makes every EXISTING scene render stale**
+    — those files were produced at the old spec, and any Edit-tab clip reading
+    one is now the wrong size (or the wrong length). The reply says so in
+    `renders`: `stale`, how many `scenes` have a render and how many `clips`
+    read them, and `sceneIds`. It does NOT re-render — a render is explicit,
+    `motion_render`, never a side effect. `linkDataAvailable: false` means no
+    link data reached the tab at all, which is not the same answer as
+    "nothing has been rendered yet" (see `motion_get_edit_links`).
+
+    `theme` is NOT set here — it is an enum with its own clear-to-default
+    semantics: `motion_set_project_theme`.
+
+    Args:
+        title: the document's name. Trimmed; an empty one is refused.
+        width: output width in px — a positive integer.
+        height: output height in px — a positive integer.
+        fps: frames per second — positive, fractional allowed."#
+    )]
+    pub async fn motion_set_project_settings(
+        &self,
+        Parameters(p): Parameters<MotionSetProjectSettingsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("title", p.title)
+            .put("width", p.width)
+            .put("height", p.height)
+            .put("fps", p.fps);
+        if args.is_empty() {
+            // Same shape as `set_project_settings` (Colorist): a partial merge of
+            // nothing is refused here rather than sent, with a bare `{error}` and no
+            // `ok` key — what the Python answers.
+            return Ok(render::json_text(&serde_json::json!({
+                "error": "pass at least one of title, width, height, fps",
+            })));
+        }
+        let env = self.op("motion_set_project_settings", args).await?;
         Ok(render::json_text(&env))
     }
 

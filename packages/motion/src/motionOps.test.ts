@@ -59,6 +59,7 @@ import {
   setLayerSize,
   setLayerTransformField,
   setLayerTransformKeys,
+  setProjectSettings,
   setProjectTheme,
   setSceneField,
   setTransformFieldOnSelections,
@@ -203,6 +204,7 @@ const ALL_OPS = [
   'motion_delete_scene',
   'motion_duplicate_scene',
   'motion_set_project_theme',
+  'motion_set_project_settings',
   'motion_set_scene_field',
   'motion_set_camera_2d',
   'motion_set_camera_3d',
@@ -241,11 +243,11 @@ const ALL_OPS = [
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 42 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 43 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(42);
+    expect(names).toHaveLength(43);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 
@@ -488,6 +490,115 @@ describe('scenes', () => {
     expect(r.error).toMatch(/apelles-studio/);
     expect(h.commits).toHaveLength(0);
     expect(h.run('motion_set_project_theme', {}).error).toMatch(/theme is required/);
+  });
+
+  // D-345 (fixes B-222) — the manifest's OWN top-level fields.
+  it('motion_set_project_settings === setProjectSettings, and the round trip reads back through motion_get_state', () => {
+    const h = harness();
+    const r = h.run('motion_set_project_settings', { title: 'Split screen', width: 1080, height: 1920, fps: 60 });
+
+    const direct = setProjectSettings(sample, { title: 'Split screen', width: 1080, height: 1920, fps: 60 });
+    expect(direct.ok).toBe(true);
+    if (!direct.ok) throw new Error(direct.error);
+    expect(h.current()).toEqual(direct.manifest);
+
+    expect(r).toMatchObject({ title: 'Split screen', width: 1080, height: 1920, fps: 60 });
+    expect(r.changed).toEqual(['title', 'width', 'height', 'fps']);
+    // one commit for all four — a resize is not two undo entries
+    expect(h.commits).toHaveLength(1);
+    expect(h.commits[0].label).toBe('Project settings');
+
+    // the actual round trip: set, then re-read, and get the new values back
+    expect(h.run('motion_get_state')).toMatchObject({ title: 'Split screen', width: 1080, height: 1920, fps: 60 });
+    expect(h.run('motion_get_manifest').manifest).toMatchObject({
+      title: 'Split screen',
+      width: 1080,
+      height: 1920,
+      fps: 60,
+    });
+  });
+
+  it('motion_set_project_settings is a partial merge that touches nothing else', () => {
+    const h = harness();
+    const r = h.run('motion_set_project_settings', { fps: 24 });
+    expect(r.changed).toEqual(['fps']);
+    expect(h.current()).toEqual({ ...sample, fps: 24 });
+    expect(h.run('motion_set_project_settings', {}).error).toMatch(/at least one of title, width, height, fps/);
+  });
+
+  it('motion_set_project_settings REJECTS a non-positive or non-integer dimension rather than clamping it', () => {
+    const h = harness();
+    expect(h.run('motion_set_project_settings', { width: 0 }).error).toMatch(/width must be a positive integer/);
+    expect(h.run('motion_set_project_settings', { height: -1080 }).error).toMatch(/height must be a positive integer/);
+    expect(h.run('motion_set_project_settings', { width: 1920.5 }).error).toMatch(/width must be a positive integer/);
+    expect(h.run('motion_set_project_settings', { fps: 0 }).error).toMatch(/fps must be positive/);
+    expect(h.run('motion_set_project_settings', { title: '   ' }).error).toMatch(/title must be a non-empty string/);
+    expect(h.run('motion_set_project_settings', { width: 'wide' }).error).toMatch(/width must be a finite number/);
+    // every one of those left the manifest exactly as it was
+    expect(h.commits).toHaveLength(0);
+    expect(h.current()).toEqual(sample);
+  });
+
+  it('motion_set_project_settings warns (but writes) an odd dimension the h264 render will round down', () => {
+    const h = harness();
+    const r = h.run('motion_set_project_settings', { width: 1081 });
+    expect(r.warning).toMatch(/odd/);
+    expect(r.warning).toMatch(/1080/);
+    expect(h.current().width).toBe(1081);
+  });
+
+  it('motion_set_project_settings reports which renders a dimension change just made stale — and renders nothing', () => {
+    const h = harness();
+    h.links.current = {
+      [sample.scenes[0].id]: {
+        mediaId: 'm1',
+        sourcePath: '/p/.chroma/motion/renders/s0.mp4',
+        clips: [{ track: 0, clip: 0, clipId: 'c1', name: 's0.mp4' }],
+      },
+      [sample.scenes[1].id]: { mediaId: 'm2', sourcePath: '/p/.chroma/motion/renders/s1.mp4', clips: [] },
+    };
+
+    const resized = h.run('motion_set_project_settings', { width: 1080, height: 1920 });
+    expect(resized.renders).toEqual({
+      stale: true,
+      reason: expect.stringMatching(/width\/height changed/),
+      linkDataAvailable: true,
+      scenes: 2,
+      clips: 1,
+      sceneIds: [sample.scenes[0].id, sample.scenes[1].id],
+    });
+    // a title change invalidates no pixels
+    expect(h.run('motion_set_project_settings', { title: 'Renamed' }).renders).toEqual({ stale: false });
+    // and nothing here ever triggers a render itself
+    expect(h.render).not.toHaveBeenCalled();
+  });
+
+  it('motion_set_project_settings tells "no link data" apart from "nothing rendered yet"', () => {
+    const noLinks = harness();
+    expect(noLinks.run('motion_set_project_settings', { width: 1080 }).renders).toMatchObject({
+      stale: true,
+      linkDataAvailable: false,
+      scenes: null,
+      clips: null,
+      sceneIds: null,
+    });
+
+    const empty = harness();
+    empty.links.current = {};
+    expect(empty.run('motion_set_project_settings', { width: 1080 }).renders).toMatchObject({
+      stale: false,
+      linkDataAvailable: true,
+      scenes: 0,
+      clips: 0,
+    });
+  });
+
+  it('motion_set_project_settings makes no commit when every value is already what was asked for', () => {
+    const h = harness();
+    const r = h.run('motion_set_project_settings', { width: sample.width, fps: sample.fps });
+    expect(r.changed).toEqual([]);
+    expect(h.commits).toHaveLength(0);
+    expect(r.renders).toEqual({ stale: false });
   });
 
   it('motion_set_scene_field === setSceneField, and warns on an unknown key', () => {

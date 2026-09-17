@@ -93,7 +93,8 @@
  * change, marquee gesture, and align/distribute functions.
  */
 import { useState } from 'react';
-import type { Manifest, Cam2dKey, Cam3dKey, TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import type { Manifest, Cam2dKey, Cam3dKey, ThemeName, TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import { THEME_NAMES } from '@apelles/motion-engine/src/design';
 import { InspectorEmptyState, InspectorSection } from '@apelles/inspector';
 // D-253 — the SUBPATH, never `@apelles/ui`'s barrel: that barrel exports
 // `Text`, whose polymorphic `as`-prop typing breaks once
@@ -127,10 +128,13 @@ import {
   parseJsonField,
   selectedLayerItem,
   setLayerItemField,
+  setProjectSettings,
+  setProjectTheme,
   resetLayerItemPosition,
 } from './manifestEdit';
 import {
   fieldsForPrimitive,
+  PROJECT_FIELDS,
   SCENE_FIELDS,
   CAM2D_KEY_FIELDS,
   CAM3D_KEY_FIELDS,
@@ -810,6 +814,76 @@ function MultiLayerInspector({
   );
 }
 
+/**
+ * D-345 — the PROJECT form: the manifest's own top-level fields, shown where
+ * the "nothing selected" empty state used to be alone.
+ *
+ * **Why the empty state is the right home.** Deselecting to reach document
+ * properties is the established pattern in the tools this repo builds against
+ * (Figma shows Page properties on an empty canvas selection; Resolve/Premiere
+ * put the same thing behind a Project Settings dialog). The Motion tab has no
+ * dialog layer and one Inspector, and "nothing selected" was previously dead
+ * space with a sentence in it — so the document is what the Inspector shows
+ * when you are not pointing at anything inside it. The sentence stays,
+ * underneath, because selecting something is still the thing to do next.
+ *
+ * Until this existed, `title`/`width`/`height`/`fps` were reachable by a human
+ * ONLY through the raw-JSON manifest textarea — the gap D-339 disclosed
+ * ("the Motion tab still has no GUI control dedicated to manifest-level
+ * fields") and B-222 filed. `theme` gets its own section here for the same
+ * reason, closing the other half of that gap.
+ *
+ * Validation is `setProjectSettings`' — the SAME function
+ * `motion_set_project_settings` calls — so a width of 0 is refused with the
+ * identical message in both interfaces rather than being clamped in one and
+ * rejected in the other. A rejected edit leaves the manifest alone and shows
+ * the reason; the field re-reads the last good value on the next render.
+ */
+function ProjectInspector({ manifest, onChange }: { manifest: Manifest; onChange: (next: Manifest) => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+
+  const commit = (key: string, value: unknown) => {
+    const result = setProjectSettings(manifest, { [key]: value });
+    if (!result.ok) {
+      setError(result.error);
+      setWarning(null);
+      return;
+    }
+    setError(null);
+    setWarning(result.warnings.length > 0 ? result.warnings.join(' ') : null);
+    if (result.changed.length > 0) onChange(result.manifest);
+  };
+
+  return (
+    <div className="h-full w-full overflow-y-auto p-3 flex flex-col gap-4">
+      <FieldGroup fields={PROJECT_FIELDS} raw={manifest as unknown as Record<string, unknown>} onCommit={commit} />
+      {error && <span className="text-[10px] text-red-400">{error}</span>}
+      {!error && warning && <span className="text-[10px] text-text-secondary">{warning}</span>}
+      <InspectorSection label="Look">
+        <FieldControl
+          spec={THEME_FIELD}
+          value={manifest.theme}
+          onCommit={(v) => onChange(setProjectTheme(manifest, v as ThemeName | undefined))}
+        />
+      </InspectorSection>
+      <InspectorEmptyState>Select a scene, camera, or layer to edit its properties.</InspectorEmptyState>
+    </div>
+  );
+}
+
+/** D-345 — the document theme as an Inspector control. Built here rather than
+ *  in `PROJECT_FIELDS` because its options come from the engine's live theme
+ *  registry and its writer is `setProjectTheme` (an empty pick DELETES the
+ *  key — see that function), not the shared `setProjectSettings` path. */
+const THEME_FIELD: FieldSpec = {
+  key: 'theme',
+  label: 'Theme',
+  kind: 'select',
+  options: [...THEME_NAMES],
+  group: 'fill',
+};
+
 export function InspectorPanel({
   manifest,
   selections,
@@ -835,8 +909,9 @@ export function InspectorPanel({
    *  getting one that silently does nothing. */
   onSaveAsComponent?: (name: string) => void;
 }) {
+  // D-345 — nothing selected means the DOCUMENT is what is being inspected.
   if (selections.length === 0) {
-    return <InspectorEmptyState>Select a scene, camera, or layer to edit its properties.</InspectorEmptyState>;
+    return <ProjectInspector manifest={manifest} onChange={onChange} />;
   }
 
   if (selections.length > 1) {

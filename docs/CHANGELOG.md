@@ -81,6 +81,18 @@ One or two lines per session. Detail lives in the decision it references.
   says so nowhere, so removing "both halves" of a linked pair by index deleted a
   NEIGHBOURING clip (`c040-payoff`, both tracks) with two `{ok: true}`
   responses; caught only by re-reading the timeline, and fully recovered.
+- **2026-09-17** — **The Motion manifest's own top-level fields become editable
+  by both a human and an agent (D-345, fixes B-222).** New
+  `motion_set_project_settings(title?, width?, height?, fps?)` on both MCP
+  surfaces (177 tools) — a partial merge committed once, validated against what
+  Remotion itself enforces (positive-integer dimensions, positive fps; an odd
+  dimension is a warning, since h264 rounds it down), and a new **Project** form
+  in the Inspector's previously-dead "nothing selected" state, carrying the
+  theme picker D-339 had left open. Both go through one
+  `setProjectSettings`. A `width`/`height`/`fps` change reports which existing
+  scene renders it just made stale (`renders`, off D-260's own edit-link map)
+  and deliberately does not re-render them.
+
 - **2026-09-17** — **`2026-09-12-c040-mgfx-recut`: the owner's 10 markers worked
   through on a COPY, 342 frames (14.25 s) cut, all 9 Motion overlays re-timed.**
   New project is a filesystem copy of `2026-09-12-c040-mgfx`, which is verified

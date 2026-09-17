@@ -3626,9 +3626,23 @@ is the website's own editorial palette sourced from `website/src/styles/tokens.c
 — basalt ground, marble ink, ochre as the one working colour, Newsreader /
 Instrument Sans / IBM Plex Mono, `roughness: 0` (roughjs emits exact geometry, so
 no second renderer was needed). New `motion_set_project_theme` on both MCP
-surfaces; `motion_list_primitives` publishes the registry. Still open: no GUI
+surfaces; `motion_list_primitives` publishes the registry. ~~Still open: no GUI
 theme picker — `theme`, like `title`/`width`/`height`/`fps`, is a manifest-level
-field a human edits in the raw-JSON editor.
+field a human edits in the raw-JSON editor.~~ — **closed by D-345** (below),
+which gave the whole manifest level a Project form in the Inspector.
+
+**The manifest's own top-level fields, in both interfaces (2026-09-17, D-345,
+fixes B-222):** `motion_set_project_settings(title?, width?, height?, fps?)` on
+both MCP surfaces — a partial merge, one commit, validated against what Remotion
+actually enforces (positive-integer `width`/`height`, positive `fps`; an odd
+dimension is a warning, since the h264 render rounds it down) — plus a **Project**
+form in the Inspector where the "nothing selected" empty state used to sit alone,
+including the theme picker D-339 left open. One `setProjectSettings`
+(`manifestEdit.ts`) behind both. A `width`/`height`/`fps` change additionally
+reports which already-rendered scenes it just made stale (`renders`, computed off
+D-260's edit-link map) and deliberately does NOT re-render them. Still raw-JSON-
+only, deliberately: `grain` / `vignette` / `transparent`, which are render flags
+rather than the output spec.
 
 **`graph` edges carry a weight (2026-09-17, D-340):** `{from, to, directed?,
 weight?}` — `weight` 0-1, default 1, scaling both the edge's stroke width and
