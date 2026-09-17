@@ -5701,9 +5701,18 @@ def motion_list_primitives() -> str:
     (key, label, kind) `motion_set_layer_field` accepts, and whether it has a
     draggable `position` / resizable `size` at all.
 
-    Also returns `sceneFields` (for `motion_set_scene_field`),
+    Also returns `themes` (the registered looks, for
+    `motion_set_project_theme`) and the `defaultTheme` a manifest with no
+    `theme` key renders in, `sceneFields` (for `motion_set_scene_field`),
     `layerTransformFields` (for `motion_set_layer_transform_field`),
     `layerTransformKeyFields`, and the 2D/3D camera key fields.
+
+    Several `fields` are `kind: "json"` — the primitive's own CONTENT, an array
+    of objects rather than a scalar knob. Their labels spell out the item shape,
+    because that shape is not otherwise discoverable: `graph`'s `edges`, for
+    one, take `{from, to, directed?, weight?}`, where `weight` (0-1, default 1)
+    scales how bright and how thick that edge draws — which is what lets a full
+    mesh show WHICH connections matter rather than drawing every one the same.
 
     Without this, a legal `use` value or a field key is only discoverable by
     reading the app's source. `motion_set_layer_field` will still WRITE an
@@ -5712,6 +5721,45 @@ def motion_list_primitives() -> str:
     import json
 
     return json.dumps(_op("motion_list_primitives"), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_set_project_theme(theme: str | None = None) -> str:
+    """Set the DOCUMENT's theme — which registered look the whole manifest renders
+    in (`manifest.theme`). The Motion tab's only project-level setting: it is
+    not per scene and not per layer.
+
+    `motion_list_primitives` lists the registered `themes` and names the
+    `defaultTheme`. Today there are two:
+
+      - `dark-excalidraw` (the default) — flat dark slate, off-white
+        hand-drawn roughjs strokes, Kalam lettering, one red and one blue
+        accent, everything drifting very slightly.
+      - `apelles-studio` — apelles.studio's own editorial look: warm-black
+        basalt ground, marble ink, ONE ochre working colour, Newsreader /
+        Instrument Sans / IBM Plex Mono, exact (non-sketch) geometry and no
+        ambient drift.
+
+    A theme supplies DEFAULTS only. A scene's own `bg`, and a layer's own
+    `color` / `font` / `accent`, still win over it — so re-theming never
+    silently discards a colour that was set deliberately, and a layer pinned
+    to a literal colour will NOT follow the new palette.
+
+    Pass null to clear the field back to the default look. That DELETES the
+    key rather than writing the default's name into it, which is the shape
+    every manifest authored before themes existed already has.
+
+    An unregistered name is rejected outright, unlike `motion_set_scene_field`
+    (which warns and writes anyway): the manifest schema declares this field
+    as an enum, so a name outside the registry would not parse at all.
+
+    Undoable in the app (Cmd/Ctrl+Z), like any other Motion edit.
+
+    Args:
+        theme: the theme name, or null to clear it back to the default."""
+    import json
+
+    return json.dumps(_op("motion_set_project_theme", theme=theme), indent=2, default=str)
 
 
 @mcp.tool()

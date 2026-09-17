@@ -14,7 +14,7 @@
  *     to the chat.
  *
  * The coral ground is the reference screenshot's own background colour
- * (#da7758, sampled), which is also why this demo does not use `design.bg` —
+ * (#da7758, sampled), which is also why this demo does not use the theme's own ground —
  * the point of the frame is to read the way the reference reads.
  */
 import React from "react";

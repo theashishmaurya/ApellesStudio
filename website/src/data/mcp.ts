@@ -16,7 +16,7 @@
  * media-understanding ones; `motion_*`; `debug_*`; the remainder is Colorist).
  */
 
-export const VERIFIED_ON = '2026-09-10';
+export const VERIFIED_ON = '2026-09-17';
 
 export interface ToolGroup {
   /** Short label used as the group's heading. */
@@ -56,17 +56,29 @@ export interface ToolGroup {
  * was never added here. It re-probes a stuck pool item by id on demand, which
  * is also why the first `GAPS` entry below is narrowed rather than left
  * claiming there is still no way to re-probe one.
+ *
+ * 166 → 176 on 2026-09-17 (D-339). Exactly ONE of those ten is this pass's own
+ * `motion_set_project_theme` (the Motion tab's document-level theme); the other
+ * nine are drift these numbers had already accumulated across four earlier
+ * passes that nobody re-counted — D-318's recut surface
+ * (`editor_detect_silences` / `editor_detect_retakes` and their status polls,
+ * `editor_ripple_delete_ranges`) and D-329's `editor_get_timeline_transcript`
+ * moved Edit 72 → 75; D-330's `debug_set_fps_overlay` / `debug_record_video`
+ * moved debugOnly 9 → 11; D-332's four layer-preset tools moved Motion
+ * 37 → 41, and this pass's own makes it 42. Re-counted against the real file,
+ * not adjusted by the delta of the one tool this pass added — which is exactly
+ * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 166,
-  shipped: 157,
-  debugOnly: 9,
+  all: 176,
+  shipped: 165,
+  debugOnly: 11,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 72,
+    count: 75,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [
@@ -119,7 +131,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: 'Motion',
-    count: 37,
+    count: 42,
     blurb:
       'The motion-graphics room, closed as a gap on 2026-09-09 (D-257/D-259/D-260) after a year of being this surface’s sharpest shortfall. Scenes and layers from a real primitive catalog, per-layer keyframes with bezier easing, 2D and 3D cameras, align and distribute, and a Remotion render that emits one video file per scene.',
     sample: [
@@ -131,6 +143,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'motion_set_layer_position',
       'motion_add_layer_keyframe',
       'motion_set_keyframe_ease',
+      'motion_set_project_theme',
       'motion_set_camera_3d',
       'motion_align_layers',
       'motion_distribute_layers',

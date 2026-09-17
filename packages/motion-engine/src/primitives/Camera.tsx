@@ -10,7 +10,8 @@
  */
 import React from "react";
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
-import { design } from "../design";
+import { DEFAULT_THEME, motion } from "../design";
+import { useTheme } from "../ThemeContext";
 import { interpolateKeys } from "../lib/interpolateKeys";
 
 export type CameraKey = {
@@ -31,17 +32,25 @@ export type CameraKey = {
  * to change that, only the fps source both read from.
  *
  * `fps` must be the COMPOSITION'S real frame rate (`useVideoConfig().fps`),
- * not `design.fps` (a fixed authoring-default token, `30`) — before this fix
- * `Camera` divided `frame` by `design.fps` regardless of the actual render
+ * not `motion.fps` (a fixed authoring-default token, `30`) — before this fix
+ * `Camera` divided `frame` by `motion.fps` regardless of the actual render
  * fps, so the same manifest's camera drift ran at a different perceived
  * wall-clock rate at 60fps (twice as fast) vs 24fps (20% slower) than at the
- * 30fps the token happened to match. `design.fps` itself is untouched — it
+ * 30fps the token happened to match. `motion.fps` itself is untouched — it
  * stays the authoring default a NEW manifest gets.
+ *
+ * D-339 — `amplitudePx` is the active theme's `ambientDriftPx`, defaulting to
+ * the DEFAULT theme's value (the constant this used to read), exactly as
+ * `../lib/draw.ts`'s `ambientDrift` now does.
  */
-export function cameraDrift(frame: number, fps: number): { dx: number; dy: number } {
+export function cameraDrift(
+  frame: number,
+  fps: number,
+  amplitudePx: number = DEFAULT_THEME.ambientDriftPx,
+): { dx: number; dy: number } {
   return {
-    dx: design.ambientDriftPx * 2 * Math.sin((frame / fps) * 0.6),
-    dy: design.ambientDriftPx * 2 * Math.sin((frame / fps) * 0.43 + 1.7),
+    dx: amplitudePx * 2 * Math.sin((frame / fps) * 0.6),
+    dy: amplitudePx * 2 * Math.sin((frame / fps) * 0.43 + 1.7),
   };
 }
 
@@ -53,6 +62,7 @@ export const Camera: React.FC<{
 }> = ({ keys, children, drift = true }) => {
   const frame = useCurrentFrame();
   const { width, height, fps } = useVideoConfig();
+  const theme = useTheme();
   const cx = width / 2;
   const cy = height / 2;
 
@@ -67,10 +77,12 @@ export const Camera: React.FC<{
     frame,
     ["x", "y", "zoom"] as const,
     { x: cx, y: cy, zoom: 1 },
-    design.ease.inOut,
+    motion.ease.inOut,
   );
 
-  const { dx, dy } = drift ? cameraDrift(frame, fps) : { dx: 0, dy: 0 };
+  const { dx, dy } = drift
+    ? cameraDrift(frame, fps, theme.ambientDriftPx)
+    : { dx: 0, dy: 0 };
 
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>

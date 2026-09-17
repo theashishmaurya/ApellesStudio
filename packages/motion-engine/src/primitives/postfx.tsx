@@ -6,7 +6,7 @@
  */
 import React from "react";
 import { AbsoluteFill, useCurrentFrame } from "remotion";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 
 /** animated film grain via seeded SVG turbulence — re-randomised each frame */
 export const FilmGrain: React.FC<{ opacity?: number; scale?: number }> = ({
@@ -33,13 +33,16 @@ export const FilmGrain: React.FC<{ opacity?: number; scale?: number }> = ({
   );
 };
 
-/** soft vignette — radial darkening at the edges */
-export const Vignette: React.FC<{ strength?: number }> = ({ strength = 0.55 }) => (
-  <AbsoluteFill
-    style={{
-      pointerEvents: "none",
-      background: `radial-gradient(ellipse at center, transparent 45%, ${design.bgDeep} 130%)`,
-      opacity: strength,
-    }}
-  />
-);
+/** soft vignette — radial darkening at the edges, in the theme's second ground */
+export const Vignette: React.FC<{ strength?: number }> = ({ strength = 0.55 }) => {
+  const theme = useTheme();
+  return (
+    <AbsoluteFill
+      style={{
+        pointerEvents: "none",
+        background: `radial-gradient(ellipse at center, transparent 45%, ${theme.bgDeep} 130%)`,
+        opacity: strength,
+      }}
+    />
+  );
+};

@@ -5,14 +5,13 @@
  */
 import React from "react";
 import { AbsoluteFill, Series, useCurrentFrame } from "remotion";
-import { loadFont } from "@remotion/google-fonts/Kalam";
 import { Camera } from "../primitives/Camera";
 import { interpolateKeys } from "../lib/interpolateKeys";
-
-loadFont();
 import { Scene3D } from "../primitives/Scene3D";
 import { FilmGrain, Vignette } from "../primitives/postfx";
-import { design } from "../design";
+import { motion, resolveTheme } from "../design";
+import { ThemeProvider, useTheme } from "../ThemeContext";
+import { ensureThemeFonts } from "../themeFonts";
 import { lookup } from "./registry";
 import type { Manifest, Scene as SceneT } from "./schema";
 
@@ -83,7 +82,7 @@ const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, scen
         frame,
         ["x", "y", "scale", "rot", "opacity"] as const,
         { x: 0, y: 0, scale: 0, rot: 0, opacity: 0 },
-        design.ease.inOut,
+        motion.ease.inOut,
       );
       tx += delta.x;
       ty += delta.y;
@@ -171,9 +170,12 @@ const OneScene: React.FC<{
   vignette: boolean | number;
   transparent: boolean;
 }> = ({ scene, sceneIndex, fps, grain, vignette, transparent }) => {
+  const theme = useTheme();
   const showGrain = scene.grain ?? grain;
   const vig = scene.vignette ?? vignette;
-  const bg = scene.bg ?? (transparent ? "transparent" : design.bg);
+  // The scene's OWN `bg` still wins over the theme's ground, exactly as it
+  // won over the old module constant (D-339).
+  const bg = scene.bg ?? (transparent ? "transparent" : theme.bg);
   return (
     <AbsoluteFill style={{ backgroundColor: bg }}>
       {scene.scene3d ? (
@@ -210,10 +212,31 @@ const OneScene: React.FC<{
   );
 };
 
-/** props ARE the manifest (so `--props=manifest.json` works directly) */
+/**
+ * props ARE the manifest (so `--props=manifest.json` works directly)
+ *
+ * D-339 — this is the one place a manifest's optional top-level `theme` is
+ * turned into a real `Theme` and published to every primitive below
+ * (`ThemeProvider`, `../ThemeContext.tsx`). It is the right place because it
+ * is already where a scene manifest is consumed per render, and because a
+ * theme is a property of the DOCUMENT: everything under here — 2D layers, the
+ * camera, the 3D scene, the post-FX — is inside exactly one manifest.
+ *
+ * `theme` absent ⇒ `resolveTheme(undefined)` ⇒ the engine default, i.e. every
+ * manifest written before this pass renders exactly as it did.
+ *
+ * `ensureThemeFonts` runs here rather than at module scope so a theme nobody
+ * selected never pays for its webfonts; it is idempotent per theme per
+ * process, and the default theme's own face is still loaded eagerly at
+ * `../themeFonts.ts`'s module scope, which is where this file's old
+ * unconditional `loadFont()` (Kalam) moved to.
+ */
 export const Video: React.FC<Manifest> = (manifest) => {
   const { fps } = manifest;
+  const theme = resolveTheme(manifest.theme);
+  ensureThemeFonts(theme.name);
   return (
+    <ThemeProvider theme={theme}>
     <Series>
       {manifest.scenes.map((scene, sceneIndex) => (
         <Series.Sequence
@@ -231,5 +254,6 @@ export const Video: React.FC<Manifest> = (manifest) => {
         </Series.Sequence>
       ))}
     </Series>
+    </ThemeProvider>
   );
 };

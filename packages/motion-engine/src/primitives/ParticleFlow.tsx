@@ -17,7 +17,8 @@
 import React, { useMemo } from "react";
 import { useCurrentFrame, useVideoConfig, interpolate, Easing } from "remotion";
 import * as THREE from "three";
-import { design } from "../design";
+import { motion } from "../design";
+import { useTheme } from "../ThemeContext";
 import { mulberry32 } from "../lib/rng";
 
 type Vec3 = [number, number, number];
@@ -119,12 +120,16 @@ export const ParticleFlow: React.FC<{
   shapeSize = 2,
   center = [0, 0, 0],
   scatter = 6,
-  color = design.accentBlue,
+  // D-339 — resolved in the body (a default parameter cannot call
+  // `useTheme()`); an explicit `color` prop still wins.
+  color: colorProp,
   size = 5,
   seed = 1,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const theme = useTheme();
+  const color = colorProp ?? theme.accentSignal;
 
   const geom = useMemo(() => {
     const rnd = mulberry32(seed);
@@ -163,7 +168,7 @@ export const ParticleFlow: React.FC<{
     : interpolate(frame, [start, start + dur], [0, 1], {
         extrapolateLeft: "clamp",
         extrapolateRight: "clamp",
-        easing: Easing.bezier(...design.ease.inOut),
+        easing: Easing.bezier(...motion.ease.inOut),
       });
 
   const uniforms = useMemo(

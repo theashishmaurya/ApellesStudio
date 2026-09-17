@@ -29,9 +29,9 @@
  * through `Record<string, unknown>`, the same cast `LayerList.tsx`'s
  * `layerLabel` already uses.
  */
-import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey, TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey, TransformKey, ThemeName } from '@apelles/motion-engine/src/engine/schema';
 import { interpolateKeys } from '@apelles/motion-engine/src/lib/interpolateKeys';
-import { design } from '@apelles/motion-engine/src/design';
+import { motion } from '@apelles/motion-engine/src/design';
 import { deviceBodyRect } from '@apelles/motion-engine/src/lib/device';
 import { sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
 import type { Selection } from './LayerList';
@@ -1053,10 +1053,10 @@ export function moveKeysAt<T extends { at: number }>(
  *  doc comment warns "getting this wrong is silent" about). `{x:0,y:0}` for
  *  an empty `keys` array — `interpolateKeys` already returns the supplied
  *  defaults in that case; this function exists so callers never construct
- *  the `['x','y']`/defaults/`design.ease.inOut` call themselves. */
+ *  the `['x','y']`/defaults/`motion.ease.inOut` call themselves. */
 export function layerTransformKeyDelta(keys: TransformKey[], frame: number, fps: number): { x: number; y: number } {
   const frameKeys = keys.map((k) => ({ ...k, at: Math.round(k.at * fps) }));
-  return interpolateKeys(frameKeys, frame, ['x', 'y'] as const, { x: 0, y: 0 }, design.ease.inOut);
+  return interpolateKeys(frameKeys, frame, ['x', 'y'] as const, { x: 0, y: 0 }, motion.ease.inOut);
 }
 
 /**
@@ -1350,6 +1350,24 @@ export function setSceneField(manifest: Manifest, sceneIndex: number, key: strin
   const raw = next.scenes[sceneIndex] as unknown as Raw;
   if (value === undefined) delete raw[key];
   else raw[key] = value;
+  return next;
+}
+
+/**
+ * D-339 — set (or clear) the DOCUMENT's theme, `manifest.theme`.
+ *
+ * The first manifest-level (not scene-level, not layer-level) setter in this
+ * file, because `theme` is the first manifest-level field anything other than
+ * the raw-JSON textarea can write. `undefined` DELETES the key rather than
+ * writing the default name into it — a manifest with no `theme` and one that
+ * says `"dark-excalidraw"` render identically (`resolveTheme`), and the
+ * absent form is what every project on disk already has, so "reset to the
+ * default look" must be able to get back to it exactly.
+ */
+export function setProjectTheme(manifest: Manifest, theme: ThemeName | undefined): Manifest {
+  const next = clone(manifest);
+  if (theme === undefined) delete (next as unknown as Raw).theme;
+  else next.theme = theme;
   return next;
 }
 

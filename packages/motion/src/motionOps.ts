@@ -130,6 +130,7 @@ import {
   setLayerSize,
   setLayerTransformField,
   setLayerTransformKeys,
+  setProjectTheme,
   setSceneField,
   setTransformFieldOnSelections,
   upsertLayerTransformKeyXY,
@@ -158,7 +159,8 @@ import {
 import { clampEaseCurve, resolveEaseCurve, type EaseCurve } from './easeCurve';
 import { layerLabel, type Selection } from './LayerList';
 import { sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/build';
-import type { Cam2dKey, Cam3dKey, Manifest, TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import type { Cam2dKey, Cam3dKey, Manifest, ThemeName, TransformKey } from '@apelles/motion-engine/src/engine/schema';
+import { DEFAULT_THEME_NAME, THEMES, THEME_NAMES } from '@apelles/motion-engine/src/design';
 import type { LoadState, RenderOutcome, SaveOutcome } from './useMotionManifest';
 
 /**
@@ -504,6 +506,12 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         totalFrames: manifest ? totalFrames(manifest) : null,
         width: manifest?.width ?? null,
         height: manifest?.height ?? null,
+        // D-339 — the document's look. `null` means the manifest carries no
+        // `theme` key at all, which renders as `defaultTheme`; the two are
+        // reported separately rather than collapsed so an agent can tell
+        // "never set" from "explicitly set to the default".
+        theme: manifest?.theme ?? null,
+        defaultTheme: DEFAULT_THEME_NAME,
         scenes: manifest
           ? manifest.scenes.map((scene, i) => ({
               index: i,
@@ -625,6 +633,15 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         position: positionFields(e.use) ?? null,
         size: sizeFields(e.use) ?? null,
       })),
+      // D-339 — the theme registry, so `motion_set_project_theme`'s legal
+      // values are discoverable from the same one static reference call
+      // every other Motion vocabulary comes from.
+      themes: THEME_NAMES.map((name) => ({
+        name,
+        description: THEMES[name].description,
+        default: name === DEFAULT_THEME_NAME,
+      })),
+      defaultTheme: DEFAULT_THEME_NAME,
       sceneFields: SCENE_FIELDS,
       layerTransformFields: LAYER_TRANSFORM_FIELDS,
       layerTransformKeyFields: LAYER_TRANSFORM_KEY_FIELDS,
@@ -721,6 +738,55 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         sceneIndex: selection?.sceneIndex,
         sceneId: selection ? next.scenes[selection.sceneIndex].id : undefined,
         sceneCount: next.scenes.length,
+      };
+    },
+
+    /**
+     * D-339 — set (or clear, `theme: null`) the DOCUMENT's theme, the one
+     * manifest-level field anything other than the raw-JSON textarea can
+     * write. `setProjectTheme`, the same function the raw editor's own parse
+     * would produce from typing the key by hand.
+     *
+     * `null` DELETES the key rather than writing the default name into it:
+     * an absent `theme` and an explicit `"dark-excalidraw"` render
+     * identically, and absent is the form every existing project file has,
+     * so "put it back the way it was" has to be reachable exactly.
+     *
+     * A name outside the registry is a hard error listing the legal ones —
+     * unlike `motion_set_scene_field`/`motion_set_layer_field`, which warn
+     * and write anyway because a hand-authored manifest may legitimately
+     * carry a field the Inspector does not know. There is no equivalent here:
+     * `manifestSchema` declares `theme` as an enum, so an unregistered name
+     * does not parse at all, and writing one would break the document rather
+     * than extend it.
+     */
+    motion_set_project_theme: (a) => {
+      const cur = ctx.api();
+      const guard = requireManifest(cur);
+      if (isErr(guard)) return guard;
+      const manifest = guard.manifest;
+
+      if (!a || !('theme' in a)) {
+        return { error: 'theme is required (use JSON null to clear it back to the default)' };
+      }
+      const raw = a.theme;
+      let theme: ThemeName | undefined;
+      if (raw === null || raw === undefined) {
+        theme = undefined;
+      } else if (typeof raw === 'string' && (THEME_NAMES as string[]).includes(raw)) {
+        theme = raw as ThemeName;
+      } else {
+        return {
+          error: `unknown theme ${JSON.stringify(raw)} — known themes: ${THEME_NAMES.join(', ')}`,
+        };
+      }
+
+      const next = setProjectTheme(manifest, theme);
+      cur.commit(next, theme ? `Theme: ${theme}` : 'Theme: default');
+      return {
+        theme: next.theme ?? null,
+        effectiveTheme: next.theme ?? DEFAULT_THEME_NAME,
+        defaultTheme: DEFAULT_THEME_NAME,
       };
     },
 

@@ -1,8 +1,8 @@
 # @apelles/motion-engine
 
 The Remotion motion engine for Apelles' **Motion tab** — data-driven motion
-primitives + a JSON scene-manifest compiler, in the locked "dark Excalidraw"
-look.
+primitives + a JSON scene-manifest compiler, in one of a small registry of
+named looks (D-339; the "dark Excalidraw" look is still the default).
 
 ## Provenance
 
@@ -17,14 +17,20 @@ were not copied; port or re-point them if that knowledge is needed in Apelles.
 
 ```
 src/
-  design.ts            ← locked design tokens (colours, stroke feel, type, easing)
+  design.ts            ← the THEME REGISTRY (D-339): the `Theme` shape, `THEMES`,
+                         `resolveTheme`, `DEFAULT_THEME_NAME` — plus `motion`,
+                         the deliberately UN-themed fps/easing constants
+  ThemeContext.tsx     ← `ThemeProvider` / `useTheme()` — how a resolved theme
+                         reaches every primitive
+  themeFonts.ts        ← each theme's webfaces, loaded once per theme per process
   engine/
     build.ts           ← the JSON scene-manifest compiler
     schema.ts / registry.ts / Video.tsx / sample.ts
   primitives/          ← text, emphasis, matrix, graph, layers, scene3d, particleflow,
                          deviceframe, claudechat (D-258 — the phone chrome and the
                          Claude app UI, decoupled: they agree on a screen rect,
-                         neither requires the other)
+                         neither requires the other), plot (D-333 — one series,
+                         one reference baseline, direct labels; not a chart library)
   compositions/        ← *Demo compositions (living primitive references)
   lib/  helpers/        ← deterministic roughjs + frame helpers, device geometry
                          (device.ts) and chat thread layout/scheduling (chatLayout.ts)
@@ -44,6 +50,60 @@ npx tsc --noEmit                               # typecheck
 Moved in verbatim (minus `node_modules` / `out/` / `.git` / its own
 `package-lock.json` — the workspace install uses the root lock). Not yet wired
 to `@apelles/motion` or the Tauri app — that is a later migration step.
+
+## Themes (D-339)
+
+The look is a **named preset**, not a hardcoded constant. `design.ts` holds the
+registry; a manifest picks one with an optional top-level `theme`:
+
+```json
+{ "title": "…", "theme": "apelles-studio", "scenes": [ … ] }
+```
+
+| name | what it is |
+|---|---|
+| `dark-excalidraw` | **the default.** Flat dark slate ground, off-white roughjs strokes, Kalam lettering, one red (emphasis) and one blue (signal) accent, a constant faint drift. Value-for-value the look this engine shipped with — see the note below. |
+| `apelles-studio` | apelles.studio's own editorial look, sourced from `website/src/styles/tokens.css` (D-264/D-284): warm-black basalt ground, marble ink, **ochre as the single working colour**, `Newsreader` / `Instrument Sans` / `IBM Plex Mono`, exact (non-sketch) geometry, no drift. |
+
+How it reaches a primitive: `engine/Video.tsx` calls `resolveTheme(manifest.theme)`
+once and wraps the whole composition in `<ThemeProvider>`; every primitive calls
+`useTheme()`. A primitive's own props still WIN over the theme (`text`'s `color`
+/ `font`, `emphasis`'s `color`, `matrix`'s `accent`, a scene's `bg`), so
+re-theming never discards a colour someone set deliberately — and a layer pinned
+to a literal colour will not follow the new palette.
+
+Three things worth knowing before adding a preset:
+
+- **`theme` is `.optional()`, never `.default()`.** A default would make
+  `manifestSchema.parse()` materialise the key, and the app writes its parse
+  output back on save — every project file on disk would silently gain a line.
+  Absent means absent; `resolveTheme(undefined)` supplies the value.
+- **Absent `theme` renders byte-identically to the pre-registry engine.**
+  Verified with real `remotion still` renders of the sample manifest at frames
+  30/60/200/380 before and after D-339 (all four `cmp`-clean), and pinned in
+  `@apelles/motion`'s `theme.test.ts` against an independently transcribed copy
+  of the old `design` object.
+- **`motion` (fps + the three easing presets) is NOT part of a `Theme`.** It is
+  read by pure, component-less helpers (`lib/draw.ts`) and is the documented
+  contract behind the manifest's own `ease` field. Deliberate — see D-339.
+
+A theme's own webfaces load through `themeFonts.ts`: the default theme's face at
+module scope (exactly where `Video.tsx` used to call `loadFont()`), any other
+theme's the first time a render resolves to it.
+
+## `graph` edge weights (D-340)
+
+A `graph` edge is `{from, to, directed?, weight?}`. `weight` is `0..1`,
+**default `1`**, and scales both the edge's stroke width and its opacity —
+both channels, because opacity alone reads as "further away" rather than
+"weaker" and width alone is nearly invisible at 2.5px on a 1080p canvas.
+
+The weight-`0` end is a **floor, not a disappearance**: in an attention mesh
+"these two barely relate" is a fact worth seeing, and an edge that vanishes is
+indistinguishable from one the author forgot to write. Absent `weight` ⇒ `1` ⇒
+exactly the stroke this primitive always drew (verified byte-identical). The
+mapping is the exported pure `graphEdgeStroke(weight)`, unit-tested in
+`@apelles/motion`'s `graphEdge.test.ts`.
 
 ## Determinism rules
 

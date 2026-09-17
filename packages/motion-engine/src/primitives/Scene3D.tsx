@@ -31,7 +31,8 @@ import {
 import { ThreeCanvas } from "@remotion/three";
 import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { design } from "../design";
+import { motion } from "../design";
+import { useTheme } from "../ThemeContext";
 
 export type CamKey = {
   at: number;
@@ -69,7 +70,7 @@ const CameraRig: React.FC<{ keys: CamKey[] }> = ({ keys }) => {
       : interpolate(frame, [a.at, b.at], [0, 1], {
           extrapolateLeft: "clamp",
           extrapolateRight: "clamp",
-          easing: cb(b.ease ?? design.ease.inOut),
+          easing: cb(b.ease ?? motion.ease.inOut),
         });
 
   const pos = lerp3(a.pos, b.pos, t);
@@ -86,18 +87,19 @@ export const Scene3D: React.FC<{
   fov?: number;
 }> = ({ camera, children, fov = 45 }) => {
   const { width, height } = useVideoConfig();
+  const theme = useTheme();
   return (
-    <AbsoluteFill style={{ backgroundColor: design.bg }}>
+    <AbsoluteFill style={{ backgroundColor: theme.bg }}>
       <ThreeCanvas
         width={width}
         height={height}
         camera={{ fov, position: camera[0]?.pos ?? [0, 0, 8] }}
         gl={{ toneMapping: THREE.ACESFilmicToneMapping }}
       >
-        <color attach="background" args={[design.bg]} />
+        <color attach="background" args={[theme.bg]} />
         <ambientLight intensity={0.6} />
         <directionalLight position={[5, 8, 6]} intensity={1.4} />
-        <pointLight position={[-6, -3, -4]} intensity={0.5} color={design.accentBlue} />
+        <pointLight position={[-6, -3, -4]} intensity={0.5} color={theme.accentSignal} />
         <CameraRig keys={camera} />
         {children}
       </ThreeCanvas>
@@ -130,18 +132,21 @@ export const Glow: React.FC<{
   radius?: number;
   color?: string;
   strength?: number;
-}> = ({ position = [0, 0, 0], radius = 1.6, color = design.accentBlue, strength = 0.6 }) => (
+}> = ({ position = [0, 0, 0], radius = 1.6, color, strength = 0.6 }) => {
+  const theme = useTheme();
+  return (
   <sprite position={position} scale={[radius * 2.6, radius * 2.6, 1]}>
     <spriteMaterial
       map={glowTexture() ?? undefined}
-      color={color}
+      color={color ?? theme.accentSignal}
       opacity={strength}
       transparent
       blending={THREE.AdditiveBlending}
       depthWrite={false}
     />
   </sprite>
-);
+  );
+};
 
 /** a labelled rounded box — the workhorse 3D "thing" */
 export const LabelBox: React.FC<{
@@ -153,10 +158,16 @@ export const LabelBox: React.FC<{
 }> = ({
   position = [0, 0, 0],
   size = [2, 1.2, 0.4],
-  color = design.bgDeep,
-  emissive = design.accentBlue,
+  // D-339 — resolved in the body (a default parameter cannot call
+  // `useTheme()`); explicit props still win.
+  color: colorProp,
+  emissive: emissiveProp,
   emissiveIntensity = 0,
-}) => (
+}) => {
+  const theme = useTheme();
+  const color = colorProp ?? theme.bgDeep;
+  const emissive = emissiveProp ?? theme.accentSignal;
+  return (
   <group position={position}>
     {emissiveIntensity > 0 && (
       <Glow radius={Math.max(size[0], size[1]) * 0.9} color={emissive} strength={emissiveIntensity * 0.5} />
@@ -172,7 +183,8 @@ export const LabelBox: React.FC<{
       />
     </mesh>
   </group>
-);
+  );
+};
 
 /** a stack of planes — model architecture / the caching stack */
 export const LayerStack: React.FC<{
@@ -191,6 +203,7 @@ export const LayerStack: React.FC<{
   active = -1,
   lift = 0.4,
 }) => {
+  const theme = useTheme();
   const total = (count - 1) * gap;
   return (
     <group position={position}>
@@ -199,12 +212,12 @@ export const LayerStack: React.FC<{
         const y = -total / 2 + i * gap + (isActive ? lift : 0);
         return (
           <group key={i} position={[0, y, 0]}>
-            {isActive && <Glow radius={size[0] * 0.6} color={design.accentRed} strength={0.5} />}
+            {isActive && <Glow radius={size[0] * 0.6} color={theme.accent} strength={0.5} />}
             <mesh rotation={[-Math.PI / 2.6, 0, 0]}>
               <planeGeometry args={size} />
               <meshStandardMaterial
-                color={design.bgDeep}
-                emissive={isActive ? design.accentRed : design.strokeSoft}
+                color={theme.bgDeep}
+                emissive={isActive ? theme.accent : theme.strokeSoft}
                 emissiveIntensity={isActive ? 0.9 : 0.06}
                 side={THREE.DoubleSide}
                 transparent

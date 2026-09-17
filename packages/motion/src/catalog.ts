@@ -78,7 +78,7 @@ const CATALOG: Record<PrimitiveUse, CatalogEntry> = {
   graph: {
     use: 'graph',
     name: 'Graph',
-    description: 'Nodes, edges and travelling signal pulses. Neural nets, knowledge graphs, agent memory, RAG, attention.',
+    description: 'Nodes, edges and travelling signal pulses. Neural nets, knowledge graphs, agent memory, RAG, attention. An edge takes an optional `weight` (0-1) that scales how bright and how thick it draws, so a full mesh can show WHICH connections matter.',
     in3d: false,
   },
   layers: {

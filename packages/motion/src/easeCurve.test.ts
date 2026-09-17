@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { design } from '@apelles/motion-engine/src/design';
+import { motion } from '@apelles/motion-engine/src/design';
 import {
   clamp,
   clampEaseCurve,
@@ -112,8 +112,8 @@ describe('clampEaseCurve', () => {
     expect(clampEaseCurve([0.5, -100, 0.5, 100])).toEqual([0.5, EASE_Y_MIN, 0.5, EASE_Y_MAX]);
   });
 
-  it('does not clamp design.ease.anticipate — its overshoot fits the viewport by design', () => {
-    expect(clampEaseCurve(design.ease.anticipate)).toEqual(design.ease.anticipate);
+  it('does not clamp motion.ease.anticipate — its overshoot fits the viewport by design', () => {
+    expect(clampEaseCurve(motion.ease.anticipate)).toEqual(motion.ease.anticipate);
   });
 });
 
@@ -155,29 +155,29 @@ describe('curvePath', () => {
   it('produces a different path string for a different curve at the same size (a real function of its input, not a constant)', () => {
     const size = { w: 100, h: 100 };
     const a = curvePath([0, 0, 1, 1], size);
-    const b = curvePath(design.ease.anticipate, size);
+    const b = curvePath(motion.ease.anticipate, size);
     expect(a).not.toBe(b);
   });
 });
 
-describe('EASE_PRESETS / DEFAULT_EASE — sourced from design.ease.*, never a hardcoded duplicate', () => {
-  it('includes Linear and a standard Ease In not defined by design.ease', () => {
+describe('EASE_PRESETS / DEFAULT_EASE — sourced from motion.ease.*, never a hardcoded duplicate', () => {
+  it('includes Linear and a standard Ease In not defined by motion.ease', () => {
     const linear = EASE_PRESETS.find((p) => p.label === 'Linear');
     const easeIn = EASE_PRESETS.find((p) => p.label === 'Ease In');
     expect(linear?.value).toEqual([0, 0, 1, 1]);
     expect(easeIn?.value).toEqual([0.42, 0, 1, 1]);
   });
 
-  it('Ease Out / Ease In Out / Anticipate are the SAME reference as design.ease.*, not a retyped copy', () => {
+  it('Ease Out / Ease In Out / Anticipate are the SAME reference as motion.ease.*, not a retyped copy', () => {
     const out = EASE_PRESETS.find((p) => p.label === 'Ease Out');
     const inOut = EASE_PRESETS.find((p) => p.label === 'Ease In Out');
     const anticipate = EASE_PRESETS.find((p) => p.label === 'Anticipate');
-    expect(out?.value).toBe(design.ease.out);
-    expect(inOut?.value).toBe(design.ease.inOut);
-    expect(anticipate?.value).toBe(design.ease.anticipate);
+    expect(out?.value).toBe(motion.ease.out);
+    expect(inOut?.value).toBe(motion.ease.inOut);
+    expect(anticipate?.value).toBe(motion.ease.anticipate);
   });
 
-  it('DEFAULT_EASE is design.ease.inOut — the exact fallbackEase interpolateKeys.ts already renders with when ease is absent', () => {
-    expect(DEFAULT_EASE).toBe(design.ease.inOut);
+  it('DEFAULT_EASE is motion.ease.inOut — the exact fallbackEase interpolateKeys.ts already renders with when ease is absent', () => {
+    expect(DEFAULT_EASE).toBe(motion.ease.inOut);
   });
 });

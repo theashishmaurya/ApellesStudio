@@ -1,5 +1,6 @@
 /**
- * Text — house text reveals in the dark-Excalidraw look.
+ * Text — house text reveals, in the active theme's own display face and ink
+ * (D-339; `color`/`font` props still win over the theme when set).
  *
  * presets:
  *   fade-up   — opacity + rise (default, safest)
@@ -12,7 +13,7 @@
  */
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { inAt } from "../lib/draw";
 
 export type TextPreset = "fade-up" | "mask-up" | "type" | "stroke-on";
@@ -39,9 +40,12 @@ export const Text: React.FC<{
   start = 0,
   dur = 18,
   size = 64,
-  color = design.text,
+  // D-339 — the theme-sourced defaults (`color`, `font`) resolve INSIDE the
+  // body rather than in the parameter list: a default parameter cannot call
+  // `useTheme()`. An explicitly-passed prop still wins, exactly as before.
+  color,
   weight = 700,
-  font = design.fontHand,
+  font,
   align = "left",
   letterSpacing = "0.01em",
   x,
@@ -51,6 +55,9 @@ export const Text: React.FC<{
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const theme = useTheme();
+  const ink = color ?? theme.text;
+  const face = font ?? theme.fontDisplay;
   const p = inAt(frame, start, start + dur);
 
   const positioned = x !== undefined || y !== undefined;
@@ -71,10 +78,10 @@ export const Text: React.FC<{
     : { maxWidth, textAlign: align };
 
   const base: React.CSSProperties = {
-    fontFamily: font,
+    fontFamily: face,
     fontSize: size,
     fontWeight: weight,
-    color,
+    color: ink,
     letterSpacing,
     lineHeight: 1.15,
     whiteSpace: "pre-wrap",
@@ -93,7 +100,7 @@ export const Text: React.FC<{
         <span style={base}>
           {children.slice(0, shown)}
           {blink && (
-            <span style={{ color: design.accentRed, fontWeight: 400 }}>▏</span>
+            <span style={{ color: theme.accent, fontWeight: 400 }}>▏</span>
           )}
         </span>
       </div>
@@ -122,7 +129,7 @@ export const Text: React.FC<{
           style={{
             ...base,
             color: "transparent",
-            WebkitTextStroke: `1.5px ${color}`,
+            WebkitTextStroke: `1.5px ${ink}`,
             clipPath: `inset(0 ${(1 - p) * 100}% 0 0)`,
           }}
         >

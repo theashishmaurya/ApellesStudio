@@ -1,10 +1,7 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame } from "remotion";
-import { loadFont } from "@remotion/google-fonts/Kalam";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { Scene3D, LayerStack, LabelBox, Text, FilmGrain, Vignette } from "../primitives";
-
-loadFont();
 
 /** which layer is "active" as the camera flies down the stack */
 const activeLayer = (frame: number) => {
@@ -16,8 +13,9 @@ const activeLayer = (frame: number) => {
 
 export const Scene3DDemo: React.FC = () => {
   const frame = useCurrentFrame();
+  const theme = useTheme();
   return (
-    <AbsoluteFill style={{ backgroundColor: design.bg }}>
+    <AbsoluteFill style={{ backgroundColor: theme.bg }}>
       <Scene3D
         camera={[
           { at: 0, pos: [0, 0.5, 13], look: [0, 0, 0] },
@@ -30,7 +28,7 @@ export const Scene3DDemo: React.FC = () => {
         <LabelBox
           position={[0, 2.6, 0]}
           size={[2.6, 0.7, 0.3]}
-          emissive={design.accentBlue}
+          emissive={theme.accentSignal}
           emissiveIntensity={0.6}
         />
       </Scene3D>

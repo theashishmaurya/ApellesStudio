@@ -19,7 +19,7 @@
  */
 import React, { useMemo } from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { inAt } from "../lib/draw";
 import { roughRect } from "../lib/rough";
 
@@ -51,12 +51,16 @@ export const Matrix: React.FC<{
   values,
   highlight = [],
   fillDir = "row",
-  accent = design.accentBlue,
+  // D-339 — resolved in the body (a default parameter cannot call
+  // `useTheme()`); an explicit `accent` prop still wins.
+  accent: accentProp,
   x,
   y,
 }) => {
   const frame = useCurrentFrame();
   const { width: cw, height: ch } = useVideoConfig();
+  const theme = useTheme();
+  const accent = accentProp ?? theme.accentSignal;
   const step = cell + gap;
   const w = cols * step - gap;
   const h = rows * step - gap;
@@ -72,8 +76,10 @@ export const Matrix: React.FC<{
           key: `${r}-${c}`,
           d: roughRect(0, 0, cell, cell, {
             seed: r * cols + c + 1,
-            color: design.strokeSoft,
+            color: theme.strokeSoft,
             strokeWidth: 2,
+            roughness: theme.roughness,
+            bowing: theme.bowing,
           }),
           cx: c * step,
           cy: r * step,
@@ -81,7 +87,10 @@ export const Matrix: React.FC<{
       }
     }
     return out;
-  }, [rows, cols, cell, step]);
+    // D-339 — the borders' colour and stroke feel now come from the theme,
+    // so a theme change must rebuild this memo (a manifest's theme is fixed
+    // for a render, so in practice this never re-runs mid-composition).
+  }, [rows, cols, cell, step, theme.strokeSoft, theme.roughness, theme.bowing]);
 
   const cellFill = (r: number, c: number): number => {
     if (preset === "heatmap") {
@@ -122,7 +131,7 @@ export const Matrix: React.FC<{
         return (
           <g key={b.key} transform={`translate(${b.cx} ${b.cy})`}>
             <rect width={cell} height={cell} rx={4} fill={accent} opacity={f * 0.9} />
-            <path d={b.d} fill="none" stroke={design.strokeSoft} strokeWidth={2} />
+            <path d={b.d} fill="none" stroke={theme.strokeSoft} strokeWidth={2} />
           </g>
         );
       })}

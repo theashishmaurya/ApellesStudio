@@ -1,6 +1,6 @@
 import "./index.css";
 import { Composition } from "remotion";
-import { design } from "./design";
+import { motion } from "./design";
 import { Video } from "./engine/Video";
 import { metadataFromManifest } from "./engine/build";
 import { sample } from "./engine/sample";
@@ -29,7 +29,7 @@ export const RemotionRoot: React.FC = () => {
         defaultProps={sample}
         calculateMetadata={({ props }) => metadataFromManifest(props)}
         durationInFrames={300}
-        fps={design.fps}
+        fps={motion.fps}
         width={1920}
         height={1080}
       />
@@ -38,7 +38,7 @@ export const RemotionRoot: React.FC = () => {
         id="HelloWorld"
         component={HelloWorld}
         durationInFrames={90}
-        fps={design.fps}
+        fps={motion.fps}
         width={1920}
         height={1080}
       />
@@ -46,7 +46,7 @@ export const RemotionRoot: React.FC = () => {
         id="PrimitivesDemo"
         component={PrimitivesDemo}
         durationInFrames={320}
-        fps={design.fps}
+        fps={motion.fps}
         width={1920}
         height={1080}
       />
@@ -54,7 +54,7 @@ export const RemotionRoot: React.FC = () => {
         id="GraphDemo"
         component={GraphDemo}
         durationInFrames={210}
-        fps={design.fps}
+        fps={motion.fps}
         width={1920}
         height={1080}
       />
@@ -62,7 +62,7 @@ export const RemotionRoot: React.FC = () => {
         id="Scene3DDemo"
         component={Scene3DDemo}
         durationInFrames={210}
-        fps={design.fps}
+        fps={motion.fps}
         width={1920}
         height={1080}
       />
@@ -70,7 +70,7 @@ export const RemotionRoot: React.FC = () => {
         id="LayersDemo"
         component={LayersDemo}
         durationInFrames={200}
-        fps={design.fps}
+        fps={motion.fps}
         width={1920}
         height={1080}
       />
@@ -78,7 +78,7 @@ export const RemotionRoot: React.FC = () => {
         id="ParticleDemo"
         component={ParticleDemo}
         durationInFrames={200}
-        fps={design.fps}
+        fps={motion.fps}
         width={1920}
         height={1080}
       />
@@ -88,7 +88,7 @@ export const RemotionRoot: React.FC = () => {
         id="ClaudeChatDemo"
         component={ClaudeChatDemo}
         durationInFrames={480}
-        fps={design.fps}
+        fps={motion.fps}
         width={1920}
         height={1080}
       />

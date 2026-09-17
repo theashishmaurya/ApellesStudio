@@ -1,10 +1,7 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame } from "remotion";
-import { loadFont } from "@remotion/google-fonts/Kalam";
-import { design } from "../design";
+import { useTheme } from "../ThemeContext";
 import { Layers, Text, Vignette } from "../primitives";
-
-loadFont();
 
 const activeItem = (f: number) => {
   if (f < 70) return -1;
@@ -15,8 +12,9 @@ const activeItem = (f: number) => {
 
 export const LayersDemo: React.FC = () => {
   const frame = useCurrentFrame();
+  const theme = useTheme();
   return (
-    <AbsoluteFill style={{ backgroundColor: design.bg }}>
+    <AbsoluteFill style={{ backgroundColor: theme.bg }}>
       <Text preset="fade-up" start={4} size={44} x={960} y={90} align="center">
         Layers · the prompt stack
       </Text>

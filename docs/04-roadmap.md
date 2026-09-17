@@ -3596,6 +3596,31 @@ panel and from `motion_add_layer` with no new MCP tool. Living reference:
 `conversations` array (same fallback `layers.items` uses) — a purpose-built
 thread editor is open polish.
 
+**Motion themes — the locked look becomes a registry (2026-09-17, D-339):**
+`packages/motion-engine/src/design.ts`'s single flat `design` constant is now a
+named `THEMES` registry, resolved once per render from a new optional top-level
+`manifest.theme` and published to every primitive through a React context
+(`ThemeContext.tsx`). The original "dark Excalidraw" values are kept **unchanged
+to the byte** as the `dark-excalidraw` preset and remain the engine default, so
+every existing manifest renders identically (verified with byte-identical
+`remotion still` renders at four frames). The second preset, **`apelles-studio`**,
+is the website's own editorial palette sourced from `website/src/styles/tokens.css`
+— basalt ground, marble ink, ochre as the one working colour, Newsreader /
+Instrument Sans / IBM Plex Mono, `roughness: 0` (roughjs emits exact geometry, so
+no second renderer was needed). New `motion_set_project_theme` on both MCP
+surfaces; `motion_list_primitives` publishes the registry. Still open: no GUI
+theme picker — `theme`, like `title`/`width`/`height`/`fps`, is a manifest-level
+field a human edits in the raw-JSON editor.
+
+**`graph` edges carry a weight (2026-09-17, D-340):** `{from, to, directed?,
+weight?}` — `weight` 0-1, default 1, scaling both the edge's stroke width and
+its opacity, with a deliberately non-zero floor so a near-zero edge still draws.
+Added so an attention mesh over the real words of a sentence can show WHICH
+connections matter, replacing the `matrix` heatmap that was rejected as the
+genre's most overused visual. Purely additive: absent `weight` renders
+byte-identically. Documented on both MCP surfaces and in the Inspector's own
+field label.
+
 **Deferred, not abandoned — build LAST, right before launch, per the owner's own
 sequencing (2026-09-08):** fal.ai media generation (auto-added to the timeline),
 a lightweight backend for sign-in/credits/payment/usage tracking, an opt-in

@@ -26,7 +26,35 @@ One or two lines per session. Detail lives in the decision it references.
   scalar-size op contradicts its own `motion_list_primitives` contract).
   Deliberately NOT done: the `graph`-schema self-attention word-mesh and the recap
   scene, both out of this pass's scope.
-
+- **2026-09-17** — **D-340: a `graph` edge carries a `weight`.** The
+  self-attention scene's `matrix` heatmap was rejected as the most overused
+  visual in the AI-explainer genre; the replacement is a `graph` mesh over the
+  real words of a sentence — which only works if an edge can say how strong it
+  is. `{from, to, directed?, weight?}`, 0-1, default 1, scaling BOTH stroke
+  width and opacity (opacity alone reads as "further away", width alone is
+  invisible at 2.5px). The weight-0 floor is deliberately non-zero: "these two
+  barely relate" is worth seeing, and a vanished edge is indistinguishable from
+  a forgotten one. Absent `weight` renders byte-identically (verified with real
+  `remotion still` renders at two frames). The test caught a real `NaN` path on
+  its first run — a hand-authored `"weight": "0.4"` reaches an unvalidated
+  `.passthrough()` field and would have silently dropped the stroke.
+- **2026-09-17** — **D-339: the motion engine's locked look becomes a theme
+  registry.** `design.ts`'s one flat `design` constant (19 files imported it
+  directly, so no manifest could ever choose a different look) is now a named
+  `THEMES` registry resolved per render through a React context, off a new
+  optional top-level `manifest.theme`. The locked "dark Excalidraw" values are
+  kept unchanged to the byte as the `dark-excalidraw` preset and stay the
+  engine default — a manifest with no `theme` key renders exactly as before,
+  proved with byte-identical `remotion still` renders at four frames covering
+  2D, roughjs and the 3D scene. Second preset `apelles-studio` is
+  apelles.studio's own editorial look, sourced field-by-field from
+  `website/src/styles/tokens.css`: basalt ground, marble ink, ochre as the ONE
+  working colour (terracotta fails contrast on basalt — the site's own rule),
+  Newsreader / Instrument Sans / IBM Plex Mono, and `roughness: 0` so the
+  existing roughjs path emits exact geometry rather than needing a second
+  renderer. New `motion_set_project_theme` on both MCP surfaces (175 → 176),
+  `motion_list_primitives` now publishes the registry, and the website's tool
+  counts were re-counted after three tools of pre-existing drift.
 - **2026-09-16** — **D-338 (fixes B-201, files B-208 and B-209): one placement
   convention for `position_x`/`position_y` — the export's TOP-LEFT corner, with
   the live preview moved to meet it.** The preview centred a layer and read
