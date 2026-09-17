@@ -12,7 +12,11 @@ One or two lines per session. Detail lives in the decision it references.
   pixels with no design-space normalisation. Camera track moved to index 0 to paint
   over the graphic; 54 of 75 camera clips carry the PIP (18 keyframed 12-frame
   ease-in-out ramps, 36 static holds) at one owner-pinned value, `scale 0.22` at
-  `(0.76, 0.025)`, measured clear of every scene's content.
+  `(0.76, 0.755)` — bottom-right, the owner's explicit corner. The measured-optimal
+  slot was the top-right mirror of it (`0.025`), clear on all nine scenes; the
+  bottom-right puts content under the PIP on six of nine (worst `lostmiddle` 0.081)
+  and no clean shared slot exists in that corner at this size. Applied uniformly
+  rather than split into per-scene exceptions; tradeoff recorded in D-342.
 - **2026-09-17** — **D-343 fixes B-216: `clip` is now OPTIONAL on both recut
   detectors — omit it and you sweep the whole track in one call.** Not four new
   `*_all` tools: an agent that already knows `editor_detect_retakes` gets the

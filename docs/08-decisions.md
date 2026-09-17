@@ -33674,15 +33674,32 @@ animates only `opacity`/`position_x`/`position_y`/`scale`/`rotation`/`crop_*`/
 here and not a compromise: the camera source is 3840x2160, the same 16:9 as the
 canvas, so `scale` alone yields an exactly proportional box.
 
-**Placement, chosen by measurement rather than by eye.** Each scene's render was
-sampled at 16 frames across its full duration and reduced to a union
-"content" mask (so a layer's entry-animation travel path counts as occupied,
-not just its resting position); candidate PIP rectangles were then scored by
-how much scene content they would cover. The owner reviewed a live frame from
-the `c040-hook` window and pinned that exact placement as the standard, so the
-final value is one slot for all nine windows: **`scale 0.22` at
-`position (0.76, 0.025)`** — measured occlusion 0.000 on eight scenes and 0.0075
-on `c040-hook` (antialiasing halo, not glyphs). No scene needed an exception.
+**Placement, measured rather than eyeballed — then overridden by the owner.**
+Each scene's render was sampled at 16 frames across its full duration and
+reduced to a union "content" mask (so a layer's entry-animation travel path
+counts as occupied, not just its resting position); candidate PIP rectangles
+were scored by how much scene content they would cover. That search picked the
+**top-right** — `scale 0.22` at `(0.76, 0.025)`, occlusion 0.000 on eight scenes
+and 0.0075 on `c040-hook`. The owner then chose the **bottom-right** instead, so
+the shipped value is one slot for all nine windows: **`scale 0.22` at
+`position (0.76, 0.755)`** — the exact vertical mirror (`1 − 0.025 − 0.22`),
+giving the same 0.025 bottom margin the top-right had at the top. The box-height
+fraction it depends on was verified empirically, not assumed: a camera-hidden
+frame diffed against a camera-visible one, measured against the preview `<img>`'s
+own DOM rect, gives `position_x` 0.7596 / `position_y` 0.0251 / width 0.2241 /
+height 0.2261 against the 0.76 / 0.025 / 0.22 that were set — i.e. height does
+equal `scale`, as a 16:9 clip on a 16:9 canvas must.
+
+**The bottom-right is measurably worse, and that is a known, accepted tradeoff.**
+Six of the nine scenes put content under it, because most carry a full-width
+caption line low in frame: `lostmiddle` 0.081, `hook` 0.070, `qkv` 0.049,
+`whatisattention` 0.023, `recap` 0.020, `encdec` 0.012 (vs. 0.000 for all six in
+the top-right). A joint search over the whole bottom-right region found **no**
+clean shared slot at this size — the best achievable worst case there is 0.069,
+and it is limited horizontally, so no amount of vertical nudging fixes it. The
+corner is the owner's explicit call and is applied uniformly rather than split
+into six per-scene exceptions, which would have defeated the "one standard
+position" goal. Recorded here so the tradeoff is visible rather than rediscovered.
 
 **Motion.** Each window gets a 12-frame (0.5 s at this timeline's 24 fps)
 shrink ending as the graphic starts and a 12-frame grow beginning as it ends,
