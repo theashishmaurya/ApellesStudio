@@ -4,6 +4,83 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17 (follow-up pass)** — **`2026-09-12-c040-mgfx-recut`: the owner's 4
+  follow-up markers all closed — 97 more frames cut, the `c040-recap` SCENE
+  re-authored from 12 s to 18.6 s against the real narration, and three new
+  app bugs found doing it (B-219/B-220/B-221).** 3m57.6s → **3m53.5s** (5702 →
+  5605 frames @24). The original `2026-09-12-c040-mgfx` is verified
+  **byte-identical** (sha256 over all 27 files, snapshot taken at the start of
+  the pass and re-diffed at the end).
+  **The three cut markers, each confirmed from an isolated re-transcription plus
+  a per-50 ms amplitude envelope before cutting, never from the whole-file
+  transcript alone:** (1) two orphan "Constantly." pickup takes live on the
+  timeline as clips 22/23 — Whisper's whole-file pass reports NOTHING across
+  268.3-271.2 s, a **fifth** dark region in this source (see B-216), while the
+  RMS shows two clean bursts and a 2.4 s isolated extract reads them instantly;
+  cut 36 frames. (2) a duplicated "constantly" at the recap seam, a textbook
+  straddling pair — the complete word ends clip 63 and a partial second one
+  opens clip 64 — closed by removing 6 frames from clip 64's head so the join
+  reads "…the reply while constantly / glancing back at it."; verified by
+  rebuilding the spliced audio with `ffmpeg` and re-transcribing it, which now
+  returns the sentence once. (3) 2.25 s of dead air at clip 65's head (RMS
+  ~150-200 vs 2000-5000 speech), cut 54 frames leaving a 0.60 s beat. Plus one
+  UNMARKED defect found in the same sweep: a 1-frame orphan (clip 20) that was
+  41 ms of a word's onset spliced between two unrelated shots — an audible tick;
+  cut. **B-197 did not bite** (4-range batch: −97 frames exactly, tracks 0/2
+  coverage 5704 → 5607, and tracks 1/3 rippled with them, so all 8 unchanged
+  overlays kept their narration sync with no action).
+  **The recap scene, the part the previous pass explicitly left undone.** Its
+  own marker note claimed the render was stale against the manifest; that claim
+  was **wrong**, and the reason is worth knowing: a layer's `transform.keys`
+  `opacity` is an additive DELTA on the layer's own opacity (`Video.tsx`
+  `topacity = (t.opacity ?? 1) + delta.opacity`), so `{at:4.6, opacity:0} →
+  {at:5.1, opacity:-1}` is a fade-OUT, not the fade-IN it was read as. Frames
+  pulled from the old render confirm it matched its manifest exactly. The real
+  defect was only the second one: the beats ran ahead of the post-cut narration.
+  Re-timed against measured transcript positions — caption 1 t=1.0 → **6.0**
+  ("matching each word's query…" starts t=6.25), caption 2 t=5.2 → **10.6**
+  ("the encoder builds a picture…" t=10.46-12.96), caption 3 t=7.8 → **12.9**
+  ("the decoder writes the reply… glancing back at it." t=12.96-18.33), with the
+  graph/matrix/rings/fades moved to match and 7 pulses + 3 highlights added so
+  the graph is not static through the 5.5 s window the longer scene opened up.
+  Scene `dur` 12 → **18.6 s**, which fits: the next line starts at t=18.88 and
+  `c040-payoff` does not move (it sits at 5257, 210 frames clear).
+  **Two things the re-render then exposed that nothing warned about.** The
+  timeline's overlay clips all pointed into the ORIGINAL project's renders
+  directory (B-219) — a filesystem-copied project keeps absolute `source_path`s
+  — so `motion_render` refreshed nothing and `motion_get_edit_links` reported
+  `rendered: true, clipCount: 2` for every scene anyway. Fixed by repointing all
+  18 overlay clips to the copy's own pool items; the project is self-contained
+  now. And the camera's PIP-out ramp still fired at the OLD recap end (tl
+  4889-4901), so the extended graphic played behind a full-frame camera for its
+  last 146 frames — moved to 5047-5059 (the head of clip 62), with clips 60/61
+  held at PIP. Every one of the 16 other ramps was cross-checked against its own
+  graphic window and is correct to the frame.
+  **Verified:** all 9 overlay windows screenshotted in the Edit tab at a content
+  beat and matched against what is being said at that exact frame; the three
+  recap beats confirmed landing on their words.
+  **Left open, deliberately, as the copy's only marker:** six captions elsewhere
+  in the piece are wide enough that their last words sit behind the bottom-right
+  camera PIP. Measured from each scene's own render (no PIP) as the rightmost
+  text pixel vs the PIP's 0.760 edge — worst `c040-lostmiddle` at 0.902, which
+  visibly reads "…in the middle of a" and stops. That is the downstream cost of
+  D-342's owner-pinned corner, which was chosen on a geometric overlap metric
+  rather than on whether caption WORDS survive, so it is an owner decision, not
+  an edit fix. The recap's own third caption WAS shortened ("…glancing back at
+  it the whole way." → "…glancing back at it.") since it both overran and
+  matched the narration less well; all three recap captions now clear the PIP
+  (0.731 / 0.671 / 0.638).
+- **2026-09-17** — **B-219, B-220, B-221 filed, all three hit live in the pass
+  above and all three destructive-or-silent.** B-219: a copied project's
+  absolute `source_path`s make `motion_render`'s documented Edit-refresh a
+  no-op, with `motion_get_edit_links` confirming the wrong answer. B-220:
+  `editor_trim_clip(edge:"end", delta:-198)` collapsed a 360-frame clip to
+  **1** frame instead of extending it to 558, and the next call on that clip
+  hard-errored and closed the project — same op as B-215, different and worse
+  symptom. B-221: `editor_remove_clip` propagates across the A/V link group and
+  says so nowhere, so removing "both halves" of a linked pair by index deleted a
+  NEIGHBOURING clip (`c040-payoff`, both tracks) with two `{ok: true}`
+  responses; caught only by re-reading the timeline, and fully recovered.
 - **2026-09-17** — **`2026-09-12-c040-mgfx-recut`: the owner's 10 markers worked
   through on a COPY, 342 frames (14.25 s) cut, all 9 Motion overlays re-timed.**
   New project is a filesystem copy of `2026-09-12-c040-mgfx`, which is verified
