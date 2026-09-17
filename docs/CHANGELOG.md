@@ -4,6 +4,38 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **`2026-09-12-c040-mgfx`: the apelles-studio theme pass, plus the two
+  scenes D-339/D-340 were built to unblock (content, not code, except the three fixes
+  below).** Pinning `theme: "apelles-studio"` had changed fonts and stroke geometry but
+  almost no colour, because all eight scenes were authored before the theme registry
+  existed and every accent was a hardcoded hex that legitimately wins over a theme
+  default. All 28 colour literals were triaged: generic accent uses (the `matrix`
+  heatmap/`fill-in` accent, `graph` pulses, `plot`'s series, four `emphasis` marks, two
+  callout labels) deleted so they inherit the theme's ochre; genuinely SEMANTIC warnings
+  ("…never answered.", "↑ underweighed" and its scribble, the buried-ask mark, the "lost
+  in the middle" dip, "before") re-pointed at the site's own `--danger-inverse`
+  (`#c17f6d`) rather than flattened to ochre, so "this one is wrong" keeps a colour of its
+  own; `plot`'s baseline demoted to the dim ink token, since a reference line is not the
+  subject. `claudechat` deliberately keeps its own Claude-brand palette — it depicts a
+  real product, not our page. **`c040-selfattn` rebuilt** as the D-340 payoff: a 7-word
+  full mesh (21 edges) over the video's own example sentence, weighted so "anything"↔"off"
+  and "pull"↔"items" are plainly the strong ones and "this"↔"the" is a hairline, with
+  pulses glancing back and forth along them. **`c040-recap` added** (new, 9th scene,
+  placed between `thefix` and `payoff` per the real transcript beat order — timeline
+  frames 4985-5345, mapped from raw-file seconds through the main track's own
+  `source_start`): a fast-cut of the established motifs, not new art — the mesh again at a
+  smaller scale, the `matrix` "picture" callback, and two ring "glances" back at it.
+  `c040-qkv` fixed on review: the garbled node label "off ?" is now "off", and the
+  abstract "value" no longer sits in the mesh as if it were another word in the sentence
+  (three ochre role captions — query / keys / value — head their groups, and the value
+  node carries a phrase rather than a word). `c040-lostmiddle`'s callout no longer crosses
+  its own curve. Nothing exported, deliberately. Three real defects found live: **D-341**
+  (a `plot` annotation needs a `dy`), **B-214** (`emphasis`'s `ring` drew a fully opaque
+  ring for the whole scene BEFORE its `at` — visible in already-approved output, older
+  than this pass, exposed by it) and **B-211's real root cause** — d3-force's own
+  `forceLink` throws on a dangling link *before* the render-side guards that half 1 of
+  that fix added, which is why the preview wedged again on the identical reproduction;
+  now filtered at source and covered by tests, where half 1 had none.
 - **2026-09-17** — **B-211 half-fixed: `graph`'s `at()` no longer throws on a dangling
   node reference.** `edges`/`pulses` naming an id `nodes` doesn't carry used to
   dereference `layout[id]` and crash the whole frame, wedging the Motion tab's

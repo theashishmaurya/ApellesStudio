@@ -81,6 +81,17 @@ export const Emphasis: React.FC<{
   const cy = box.y + box.h / 2;
 
   if (preset === "ring") {
+    // B-214 — draw NOTHING outside this layer's own [at, at+dur] window.
+    // `fade` below is `outAt(...)`, which clamps to 1 to the LEFT of its
+    // range, so before `start` this branch used to emit a fully opaque ring
+    // at 60% radius — parked on screen from frame 0 of the scene, pointing at
+    // something that had not appeared yet. (After `start + dur` it emitted an
+    // invisible `opacity: 0` path instead, so only the "before" half was ever
+    // visible.) `scribble` below already gates itself correctly via
+    // `lifetime()`; this makes `ring` agree with it and with its own
+    // documented `at`/`dur`. `active` is computed above and is exactly this
+    // window, so every in-window pixel is unchanged.
+    if (!active) return null;
     const p = inAt(frame, start, start + dur);
     const fade = outAt(frame, start + dur * 0.4, start + dur);
     const r0 = Math.max(box.w, box.h) * 0.55;

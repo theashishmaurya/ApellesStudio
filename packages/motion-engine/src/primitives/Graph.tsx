@@ -91,6 +91,33 @@ export const graphEdgeStroke = (
     opacity: EDGE_OPACITY_MIN + (1 - EDGE_OPACITY_MIN) * w,
   };
 };
+
+/**
+ * The edges d3-force may safely be handed — those whose BOTH endpoints exist
+ * in `nodes` (B-211, second root cause).
+ *
+ * d3-force's `forceLink.initialize` throws outright (`node not found: <id>`,
+ * `d3-force/src/link.js`) on a link naming an id the node list does not carry,
+ * and it does so inside `Graph`'s layout `useMemo` — i.e. before any of the
+ * render-side `at()` null-guards can help. A manifest reaches that state
+ * routinely and legitimately mid-edit: writing `nodes` and `edges` is two
+ * separate ops, so for one render pass between them the old edges name node ids
+ * that no longer exist.
+ *
+ * Exported as a pure function so the guard is directly unit-testable
+ * (`@apelles/motion`'s `graphEdge.test.ts` — this package has no test runner of
+ * its own), the same split `graphEdgeStroke` above already uses. The first half
+ * of B-211's fix shipped with no test, which is exactly why this second root
+ * cause went unnoticed until it wedged the preview again.
+ */
+export const resolvableEdges = <T extends { from: string; to: string }>(
+  nodes: { id: string }[],
+  edges: T[],
+): T[] => {
+  const ids = new Set(nodes.map((n) => n.id));
+  return edges.filter((e) => ids.has(e.from) && ids.has(e.to));
+};
+
 export type GraphPulse = {
   from: string;
   to: string;
@@ -138,7 +165,24 @@ export const Graph: React.FC<{
       ...(n.x !== undefined ? { fx: n.x } : {}),
       ...(n.y !== undefined ? { fy: n.y } : {}),
     }));
-    const links = edges.map((e) => ({ source: e.from, target: e.to }));
+    // B-211 (second root cause, found 2026-09-17) — d3-force's own
+    // `forceLink.initialize` THROWS (`node not found: <id>`, d3-force/src/link.js)
+    // on any link naming an id `nodes` does not carry. That throw happens here,
+    // inside this memo, BEFORE the render-side `at()` guards below ever run —
+    // so guarding those alone (the first half of B-211's fix) did not stop a
+    // transient dangling reference from crashing the frame and wedging the
+    // Motion tab's still-preview. Hit again live while rebuilding
+    // `c040-selfattn`: setting `nodes` to a new id set leaves the previous
+    // `edges` dangling for exactly one render pass, which is enough.
+    //
+    // Dropping the unresolvable links is the right answer rather than
+    // substituting a placeholder node: the edge is skipped at draw time anyway
+    // (see `edges.map` below), and an invented node would move the real ones by
+    // joining the force simulation.
+    const links = resolvableEdges(nodes, edges).map((e) => ({
+      source: e.from,
+      target: e.to,
+    }));
     const s = forceSimulation(sim)
       .randomSource(mulberry32(seed))
       .force("charge", forceManyBody().strength(-2600))

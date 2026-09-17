@@ -9,7 +9,7 @@
  * function across the package boundary the same established way.
  */
 import { describe, it, expect } from 'vitest';
-import { graphEdgeStroke } from '@apelles/motion-engine/src/primitives/Graph';
+import { graphEdgeStroke, resolvableEdges } from '@apelles/motion-engine/src/primitives/Graph';
 
 /** The stroke `Graph.tsx` drew for EVERY edge before this field existed. */
 const PRE_D331 = { strokeWidth: 2.5, opacity: 1 };
@@ -73,5 +73,55 @@ describe('D-340 — out-of-range and malformed weights are clamped, never thrown
     }
     // and the fallback is full strength, not a silently weakened edge
     expect(graphEdgeStroke(Number.NaN)).toEqual(PRE_D331);
+  });
+});
+
+/**
+ * B-211, second root cause (2026-09-17). The first half of that fix guarded the
+ * render-side `layout[id]` dereference and shipped with no test — so it was not
+ * noticed that d3-force throws FIRST, from inside the layout memo, and the
+ * preview kept wedging. These pin the guard that actually stops it.
+ */
+describe('B-211 — edges naming a missing node never reach d3-force', () => {
+  const nodes = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+
+  it('keeps every edge whose endpoints both exist', () => {
+    const edges = [
+      { from: 'a', to: 'b' },
+      { from: 'b', to: 'c' },
+    ];
+    expect(resolvableEdges(nodes, edges)).toEqual(edges);
+  });
+
+  it('drops an edge whose source, target, or both are missing', () => {
+    expect(
+      resolvableEdges(nodes, [
+        { from: 'a', to: 'b' },
+        { from: 'a', to: 'GONE' },
+        { from: 'GONE', to: 'c' },
+        { from: 'GONE', to: 'ALSO_GONE' },
+      ]),
+    ).toEqual([{ from: 'a', to: 'b' }]);
+  });
+
+  it('survives the real mid-edit state: nodes replaced wholesale, edges stale', () => {
+    // Exactly what wedged the preview live — `motion_set_layer_field` writes
+    // `nodes` and `edges` as two separate ops, so between them every edge
+    // dangles. d3-force would throw on the first of these.
+    const newNodes = [{ id: 'w_sum' }, { id: 'w_off' }];
+    const staleEdges = [
+      { from: 'n1', to: 'n2' },
+      { from: 'n2', to: 'n3' },
+    ];
+    expect(resolvableEdges(newNodes, staleEdges)).toEqual([]);
+  });
+
+  it('carries each kept edge through untouched, weight included', () => {
+    const weighted = [{ from: 'a', to: 'b', weight: 0.4, directed: true }];
+    expect(resolvableEdges(nodes, weighted)[0]).toEqual(weighted[0]);
+  });
+
+  it('an empty node list drops everything rather than throwing', () => {
+    expect(resolvableEdges([], [{ from: 'a', to: 'b' }])).toEqual([]);
   });
 });

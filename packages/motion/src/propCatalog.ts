@@ -135,7 +135,11 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'yMax', label: 'Y max', kind: 'number', group: 'source' },
     { key: 'baseline', label: 'Baseline', kind: 'number', group: 'source' },
     { key: 'baselineLabel', label: 'Baseline label', kind: 'string', group: 'content' },
-    { key: 'annotate', label: 'Annotations', kind: 'json', group: 'content' },
+    // D-341 — the label carries the item shape because `dy` is the only way to
+    // move a label off the automatic placement, and a bare "Annotations" left
+    // the whole escape hatch undiscoverable from the Inspector or from
+    // `motion_list_primitives`. Same reasoning as `graph.edges` below.
+    { key: 'annotate', label: 'Annotations [{i, text, dy? px}]', kind: 'json', group: 'content' },
     { key: 'markers', label: 'Markers', kind: 'boolean', group: 'source' },
     { key: 'color', label: 'Series color', kind: 'color', group: 'fill' },
     { key: 'baselineColor', label: 'Baseline color', kind: 'color', group: 'fill' },

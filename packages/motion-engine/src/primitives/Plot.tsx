@@ -57,7 +57,60 @@ const MARGIN = { left: 96, right: 32, top: 28, bottom: 76, titleTop: 72 } as con
 /** Marker radius in px at 1080p. */
 const MARKER_R = 7;
 
-export type PlotPoint = { i: number; text: string };
+/**
+ * One direct label. `dy` (D-341) nudges it vertically off the automatic
+ * placement below, in px at 1080p, negative = further from the curve.
+ *
+ * The automatic placement is a two-case heuristic and cannot be right for
+ * every curve: it assumes a trough's bend is tall enough to hold the label
+ * inside it, which a SHALLOW, WIDE trough is not — there the 82px lift lands
+ * the text on the arms it was meant to clear, and the label crosses the line.
+ * Dropping it below instead is not available on such a curve either: a shallow
+ * trough sits right on the baseline and the x axis by construction (that is
+ * the whole point of the graphic). So the escape hatch is an author-supplied
+ * offset rather than a smarter rule — the layout that actually reads depends
+ * on the label's own length and the curve's own shape, which only the author
+ * can see together.
+ */
+export type PlotPoint = { i: number; text: string; dy?: number };
+
+/**
+ * How far a direct label sits above its own data point, in px at 1080p.
+ *
+ * A trough gets the LARGER lift so the text sits in the open space inside the
+ * bend, clear of both arms. Nudging it downward instead would drop it onto the
+ * baseline and the x axis, which sit immediately under a trough by
+ * construction.
+ */
+const LABEL_LIFT = 26;
+const TROUGH_LABEL_LIFT = 82;
+
+/**
+ * A direct label's `y`, from its data point's own `y`. Exported as a pure
+ * function so the placement is directly unit-testable (`@apelles/motion`'s
+ * `plotLabel.test.ts` — this package has no test runner of its own), the same
+ * split `Graph.tsx`'s `graphEdgeStroke` and `Camera.tsx`'s `cameraDrift`
+ * already use.
+ *
+ * `dy` (D-341) is the author's own nudge on top of the automatic placement,
+ * negative = further from the curve. `undefined` must return exactly the
+ * pre-D-341 placement — that is the whole no-regression guarantee for every
+ * manifest already using `annotate`.
+ */
+export const plotLabelY = (
+  pointY: number,
+  isTrough: boolean,
+  dy?: number,
+): number => {
+  // `annotate` reaches this through a `.passthrough()` layer and is never
+  // validated item by item, so a hand-authored `"dy": "-60"` really does
+  // arrive as a non-number. Fall back to no offset rather than propagating
+  // `NaN` into the `y` attribute, where it would silently drop the whole
+  // label — the same guard `graphEdgeStroke` needs for `weight` (D-340), for
+  // exactly the same reason.
+  const d = Number.isFinite(dy) ? (dy as number) : 0;
+  return pointY - (isTrough ? TROUGH_LABEL_LIFT : LABEL_LIFT) + d;
+};
 
 /**
  * Catmull-Rom through the points, emitted as cubic beziers. ~20 lines of pure
@@ -336,10 +389,6 @@ export const Plot: React.FC<{
       {annotate.map((a) => {
         const p = pts[a.i];
         if (!p) return null;
-        // A trough gets a LARGER upward offset so the text sits in the open
-        // space inside the bend, clear of both arms. Nudging it downward
-        // instead would drop it onto the baseline and the x axis, which sit
-        // immediately under a trough by construction.
         const lo = values[a.i - 1] ?? values[a.i];
         const hi = values[a.i + 1] ?? values[a.i];
         const isTrough = values[a.i] <= lo && values[a.i] <= hi;
@@ -347,7 +396,7 @@ export const Plot: React.FC<{
           <text
             key={`a-${a.i}`}
             x={p.x}
-            y={isTrough ? p.y - 82 : p.y - 26}
+            y={plotLabelY(p.y, isTrough, a.dy)}
             textAnchor="middle"
             fill={theme.text}
             opacity={labelP}

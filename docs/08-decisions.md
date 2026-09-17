@@ -33545,3 +33545,71 @@ travelling pulse with a node highlight), before and after: byte-identical
 (sha256 `bb511e2e…`, `69c9e133…`). A weighted mesh rendered for real reads the
 way it should — the `weight: 1` and `0.9` edges are plainly the thick bright
 ones, the `0.05`–`0.12` ones are faint but present hairlines.
+
+---
+
+## D-341 — a `plot` annotation carries a `dy`, because the automatic label placement cannot be right for every curve
+
+**decided (2026-09-17)** · extends D-333's `plot` primitive · sibling of D-340
+(same shape of gap, same fix)
+
+**Context.** `c040-lostmiddle`'s callout "buried here = mostly ignored" was
+reviewed live and rejected: it sits on top of the plotted curve, crossing the
+line it is annotating. The manifest had no way to move it — `annotate`'s item
+shape was `{i, text}` and nothing else, so the label's `y` came entirely from a
+two-case heuristic inside `Plot.tsx`.
+
+That heuristic is not wrong so much as **not universal**. It lifts a trough's
+label by 82px (vs. 26px elsewhere) on the assumption that the bend is deep
+enough to hold the text inside it. A **shallow, wide** trough — which is exactly
+what a "lost in the middle" accuracy curve is — has no such pocket: 82px lands
+the text back on the arms it was meant to clear. Nor can the label simply drop
+below instead, the way the code comment suggests: on a shallow trough the
+baseline and the x axis sit immediately underneath by construction, because a
+curve *sinking onto its baseline* is the whole argument of the graphic.
+
+**Options.**
+
+1. **Rewrite the text shorter so it fits the pocket.** Rejected: it does not
+   fix the placement, it just makes this one collision smaller, and it lets the
+   graphic dictate the copy.
+2. **A smarter automatic rule** — measure the curve under the label's own
+   x-extent and lift clear of it. Rejected as over-fitting: the placement that
+   actually reads depends on the label's rendered width, the curve's local
+   shape, the baseline's position AND what else is on the canvas. Deriving that
+   correctly needs a text measurement, which the primitive deliberately does not
+   do (D-333: the draw-on uses SVG `pathLength` normalisation rather than a DOM
+   `getTotalLength()`, precisely so it never touches layout — a measurement here
+   would put layout back in the render path and put determinism at risk).
+3. **An author-supplied offset.** Chosen.
+
+**Decision.** `{i, text, dy?}` — `dy` a number in px at 1080p, added to the
+automatic placement, negative = further from the curve. Absent `dy` renders
+exactly as before.
+
+- **An escape hatch, not a replacement.** The two-case heuristic stays and is
+  still what every existing annotation gets; `dy` only exists for the cases it
+  cannot see.
+- **A non-finite `dy` falls back to `0`, not to `NaN`.** Identical reasoning to
+  D-340's `weight`: a `plot` layer is `.passthrough()` in the schema, so
+  `annotate` is never validated item by item, and `NaN` in an SVG `y` silently
+  drops the whole label.
+- The two lifts stop being magic numbers (`LABEL_LIFT` / `TROUGH_LABEL_LIFT`),
+  and the placement moves into an exported pure `plotLabelY(pointY, isTrough,
+  dy)` so it is directly unit-testable — the same split `graphEdgeStroke`
+  (D-340) and `cameraDrift` use, since `@apelles/motion-engine` has no test
+  runner of its own.
+
+**Both interfaces, per CLAUDE.md.** No new MCP tool is needed — `annotate` is
+already a `kind: "json"` field that `motion_set_layer_field` writes and the
+Inspector edits — but a bare label "Annotations" left the escape hatch
+undiscoverable from either. `propCatalog.ts`'s label now spells out the item
+shape, `Annotations [{i, text, dy? px}]`, exactly as D-340 did for
+`Edges [{from, to, directed?, weight? 0-1}]`.
+
+**Verification.** `plotLabel.test.ts` (8 cases) pins that `undefined` and `0`
+both reproduce the pre-D-341 lifts exactly, that `dy` composes additively on
+both branches, and that a malformed `dy` cannot produce a non-finite `y`. Full
+`@apelles/motion` suite green (727 tests), `tsc --noEmit` clean in both
+packages. Applied live to `c040-lostmiddle` at `dy: -72`: the callout now clears
+the curve with real daylight around it.
