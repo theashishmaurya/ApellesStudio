@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **B-215 filed: `editor_trim_clip(edge: "end")` silently no-ops** on
+  at least one real clip — returns `{ok: true}`, changes nothing, no error/note.
+  Found trying to close a 105-frame gap between `c040-thefix` and `c040-recap` on
+  `2026-09-12-c040-mgfx`'s overlay track; worked around by leaving `c040-recap` at its
+  original placement rather than risk the overlap the failed trim caused once already.
+  The sync gap (recap's graphic lands ~4.4s after its own narration starts) is left
+  unfixed, disclosed rather than silently shipped.
+
 - **2026-09-17** — **`2026-09-12-c040-mgfx`: the apelles-studio theme pass, plus the two
   scenes D-339/D-340 were built to unblock (content, not code, except the three fixes
   below).** Pinning `theme: "apelles-studio"` had changed fonts and stroke geometry but
