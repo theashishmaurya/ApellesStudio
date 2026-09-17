@@ -764,6 +764,33 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "both engines — to zoom about a box's own centre, move "
             "position_x/position_y by half the size change yourself."
         ),
+        "corner_radius": (
+            "corner_radius (D-330) rounds a clip's placement box, and is the "
+            "one geometry field measured in OUTPUT-CANVAS PIXELS rather than "
+            "as a fraction of it — a human means '16 px of round', and does "
+            "not want that rescaled when the box moves or resizes, which is "
+            "the same unit every reference uses (CSS border-radius, Premiere's "
+            "Rounded Corners, Resolve's Rounded Corner). 0 (the default, and "
+            "every pre-D-330 clip) is square corners and renders "
+            "byte-identically to a build without the feature in BOTH engines — "
+            "neither emits any masking work for it. Applied AFTER crop and "
+            "scale and BEFORE rotation, so a rotated clip's rounded corners "
+            "rotate with it; it MULTIPLIES the existing alpha rather than "
+            "replacing it, so it composes with crop, opacity, fades and "
+            "dissolves rather than overriding any of them. A radius larger "
+            "than half the box's shorter side clamps to that — a pill, or a "
+            "circle on a square box — rather than degenerating. Keyframeable "
+            "under the same name via editor_set_clip_keyframes (the exporter's "
+            "mask is re-evaluated per frame, so an animated radius is a "
+            "picture both engines can genuinely produce — unlike a title's "
+            "scale, see text_title_clips). It does NOT apply to a text/title "
+            "clip or an adjustment clip and editor_set_clip_transform refuses "
+            "a non-default value for one rather than storing something that "
+            "renders nothing. The live preview and the ffmpeg export agree to "
+            "within ffmpeg's own 1/255 alpha quantisation, measured against "
+            "real output on both sides rather than asserted — see "
+            "docs/notes/rounded-corners.md."
+        ),
         "z_order": (
             "Track index 0 is painted LAST — topmost, on top of every other "
             "track — in both the live preview and export. Higher track "
@@ -3282,6 +3309,7 @@ def editor_set_clip_transform(
     crop_top: float | None = None,
     crop_right: float | None = None,
     crop_bottom: float | None = None,
+    corner_radius: float | None = None,
 ) -> str:
     """Set a clip's BASE (unkeyframed) compositing transform — e.g. to place
     it in one half of a stacked before/after comparison layout.
@@ -3324,7 +3352,20 @@ def editor_set_clip_transform(
     from "clear it", since `None` is already this tool's own "not
     mentioned" convention for every other field — these two flags are the
     escape hatch for the one field pair where "explicitly go back to
-    scale" is itself a real, distinct thing you might want to say)."""
+    scale" is itself a real, distinct thing you might want to say).
+
+    `corner_radius` (D-330) rounds the clip's placement box, in OUTPUT-CANVAS
+    PIXELS — not a fraction, unlike every geometry field above it. `0` (the
+    default) is square corners and renders byte-identically to a build without
+    this feature. It is applied AFTER crop and scale and BEFORE rotation, so a
+    rotated clip's rounded corners rotate with it, and it multiplies the
+    existing alpha rather than replacing it, so it composes with crop, opacity,
+    fades and dissolves. A radius larger than half the box's shorter side
+    clamps to that, giving a pill or a circle rather than a degenerate shape.
+    Keyframeable via `editor_set_clip_keyframes` under the same
+    `corner_radius` name. Does NOT apply to a text/title clip or an adjustment
+    clip — both are refused rather than silently ignored, for the same reason
+    `scale` is."""
     import json
 
     args: dict = {"track": track, "clip": clip}
@@ -3338,6 +3379,7 @@ def editor_set_clip_transform(
         ("crop_top", crop_top),
         ("crop_right", crop_right),
         ("crop_bottom", crop_bottom),
+        ("corner_radius", corner_radius),
     ):
         if val is not None:
             args[key] = val
