@@ -155,6 +155,7 @@
     "motion_set_layer_size",
     "motion_set_layer_transform_field",
     "motion_set_layer_transform_keys",
+    "motion_set_project_settings",
     "motion_set_project_theme",
     "motion_set_scene_field",
     "motion_set_selection",

@@ -6307,7 +6307,7 @@
     },
     {
       "name": "motion_get_state",
-      "description": "Orientation for the Motion tab \u2014 call this FIRST. The Motion analogue of\n    `editor_get_state`, and the read half of `motion_select`/\n    `motion_set_selection`.\n\n    Returns:\n      * `loadState` / `dirty` / `parseError` / `saveError` \u2014 is this tab usable\n        at all. A Motion manifest lives inside a project, so `\"no-project\"`\n        means open one in the Colorist tab first. This tool ANSWERS in that\n        case rather than erroring, which is how you find it out.\n      * `selection` \u2014 what is selected right now, as `[{sceneIndex, target}]`,\n        the exact shape `motion_set_selection` takes back.\n      * `playheadFrame` / `playerMounted` \u2014 where the preview is parked.\n      * `fps`, `totalFrames`, `width`, `height`.\n      * `scenes` \u2014 one row per scene: `index`, `id`, `dur` (SECONDS), its\n        absolute `startFrame` in the combined timeline, `layerCount`,\n        `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.\n\n    **Times in this tab are SECONDS, per scene, not absolute frames.** A\n    keyframe's `at` is seconds from its own scene's start; `startFrame` here is\n    what converts between the two (`frame = startFrame + at * fps`), and\n    `motion_seek` accepts either form so you rarely have to do it yourself.",
+      "description": "Orientation for the Motion tab \u2014 call this FIRST. The Motion analogue of\n    `editor_get_state`, and the read half of `motion_select`/\n    `motion_set_selection`.\n\n    Returns:\n      * `loadState` / `dirty` / `parseError` / `saveError` \u2014 is this tab usable\n        at all. A Motion manifest lives inside a project, so `\"no-project\"`\n        means open one in the Colorist tab first. This tool ANSWERS in that\n        case rather than erroring, which is how you find it out.\n      * `selection` \u2014 what is selected right now, as `[{sceneIndex, target}]`,\n        the exact shape `motion_set_selection` takes back.\n      * `playheadFrame` / `playerMounted` \u2014 where the preview is parked.\n      * `fps`, `totalFrames`, `width`, `height`, `title` \u2014 the document's own\n        output spec, all four of them written by\n        `motion_set_project_settings`.\n      * `scenes` \u2014 one row per scene: `index`, `id`, `dur` (SECONDS), its\n        absolute `startFrame` in the combined timeline, `layerCount`,\n        `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.\n\n    **Times in this tab are SECONDS, per scene, not absolute frames.** A\n    keyframe's `at` is seconds from its own scene's start; `startFrame` here is\n    what converts between the two (`frame = startFrame + at * fps`), and\n    `motion_seek` accepts either form so you rarely have to do it yourself.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -6347,7 +6347,7 @@
     },
     {
       "name": "motion_list_primitives",
-      "description": "Static reference: every primitive the motion engine can render, and the\n    fields each one accepts. The Motion counterpart of\n    `editor_get_capabilities` \u2014 call it once before your first\n    `motion_add_layer` / `motion_set_layer_field`.\n\n    Per primitive: the `use` string `motion_add_layer` requires, a one-line\n    description of what it is for, `in3d` (whether it is a three.js object\n    that must live in `scene.scene3d.children` rather than `scene.layers` \u2014\n    `motion_add_layer` places it correctly for you either way, and\n    `container` states which target kind addresses it), the editable `fields`\n    (key, label, kind) `motion_set_layer_field` accepts, and whether it has a\n    draggable `position` / resizable `size` at all.\n\n    Also returns `themes` (the registered looks, for\n    `motion_set_project_theme`) and the `defaultTheme` a manifest with no\n    `theme` key renders in, `sceneFields` (for `motion_set_scene_field`),\n    `layerTransformFields` (for `motion_set_layer_transform_field`),\n    `layerTransformKeyFields`, and the 2D/3D camera key fields.\n\n    Several `fields` are `kind: \"json\"` \u2014 the primitive's own CONTENT, an array\n    of objects rather than a scalar knob. Their labels spell out the item shape,\n    because that shape is not otherwise discoverable: `graph`'s `edges`, for\n    one, take `{from, to, directed?, weight?}`, where `weight` (0-1, default 1)\n    scales how bright and how thick that edge draws \u2014 which is what lets a full\n    mesh show WHICH connections matter rather than drawing every one the same.\n\n    Without this, a legal `use` value or a field key is only discoverable by\n    reading the app's source. `motion_set_layer_field` will still WRITE an\n    unknown key (a hand-authored manifest may legitimately carry one) but\n    warns \u2014 so check here first if something you set has no visible effect.",
+      "description": "Static reference: every primitive the motion engine can render, and the\n    fields each one accepts. The Motion counterpart of\n    `editor_get_capabilities` \u2014 call it once before your first\n    `motion_add_layer` / `motion_set_layer_field`.\n\n    Per primitive: the `use` string `motion_add_layer` requires, a one-line\n    description of what it is for, `in3d` (whether it is a three.js object\n    that must live in `scene.scene3d.children` rather than `scene.layers` \u2014\n    `motion_add_layer` places it correctly for you either way, and\n    `container` states which target kind addresses it), the editable `fields`\n    (key, label, kind) `motion_set_layer_field` accepts, and whether it has a\n    draggable `position` / resizable `size` at all.\n\n    Also returns `themes` (the registered looks, for\n    `motion_set_project_theme`) and the `defaultTheme` a manifest with no\n    `theme` key renders in, `projectFields` (the manifest's own top-level\n    fields, for `motion_set_project_settings`), `sceneFields` (for\n    `motion_set_scene_field`),\n    `layerTransformFields` (for `motion_set_layer_transform_field`),\n    `layerTransformKeyFields`, and the 2D/3D camera key fields.\n\n    Several `fields` are `kind: \"json\"` \u2014 the primitive's own CONTENT, an array\n    of objects rather than a scalar knob. Their labels spell out the item shape,\n    because that shape is not otherwise discoverable: `graph`'s `edges`, for\n    one, take `{from, to, directed?, weight?}`, where `weight` (0-1, default 1)\n    scales how bright and how thick that edge draws \u2014 which is what lets a full\n    mesh show WHICH connections matter rather than drawing every one the same.\n\n    Without this, a legal `use` value or a field key is only discoverable by\n    reading the app's source. `motion_set_layer_field` will still WRITE an\n    unknown key (a hand-authored manifest may legitimately carry one) but\n    warns \u2014 so check here first if something you set has no visible effect.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -8496,8 +8496,66 @@
       }
     },
     {
+      "name": "motion_set_project_settings",
+      "description": "Set the manifest's OWN top-level fields \u2014 the document's name and its\n    output spec. The Motion twin of `set_project_settings` (Colorist), and\n    until this existed these four were reachable only by hand-editing the\n    raw-JSON manifest (B-219).\n\n    `width`/`height` are the pixel size EVERY scene renders at; `fps` is the\n    timebase every `at`/`dur` in SECONDS is converted against; `title` is the\n    document's own label. Read them back from `motion_get_state`.\n\n    Partial merge \u2014 only the arguments you pass are changed \u2014 and ONE commit\n    (one Cmd/Ctrl+Z) for all of them, which is why `width` and `height` are\n    arguments of the same tool rather than two calls: a resize sent in two\n    steps passes through a wrong aspect ratio on the way.\n\n    **Validation is a refusal, not a clamp.** Remotion validates these itself\n    and throws: `width`/`height` must be positive INTEGERS, `fps` a positive\n    number (fractional is fine \u2014 23.976/29.97 are real). A bad value does not\n    render badly, it takes down the live preview, so it is rejected here and\n    the manifest is left alone. An ODD width/height is legal and returns a\n    `warning`: the h264 render silently rounds it DOWN to even.\n\n    **Changing `width`/`height`/`fps` makes every EXISTING scene render stale**\n    \u2014 those files were produced at the old spec, and any Edit-tab clip reading\n    one is now the wrong size (or the wrong length). The reply says so in\n    `renders`: `stale`, how many `scenes` have a render and how many `clips`\n    read them, and `sceneIds`. It does NOT re-render \u2014 a render is explicit,\n    `motion_render`, never a side effect. `linkDataAvailable: false` means no\n    link data reached the tab at all, which is not the same answer as\n    \"nothing has been rendered yet\" (see `motion_get_edit_links`).\n\n    `theme` is NOT set here \u2014 it is an enum with its own clear-to-default\n    semantics: `motion_set_project_theme`.\n\n    Args:\n        title: the document's name. Trimmed; an empty one is refused.\n        width: output width in px \u2014 a positive integer.\n        height: output height in px \u2014 a positive integer.\n        fps: frames per second \u2014 positive, fractional allowed.",
+      "inputSchema": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Height"
+          },
+          "fps": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fps"
+          }
+        },
+        "type": "object",
+        "title": "motion_set_project_settingsArguments"
+      }
+    },
+    {
       "name": "motion_set_project_theme",
-      "description": "Set the DOCUMENT's theme \u2014 which registered look the whole manifest renders\n    in (`manifest.theme`). The Motion tab's only project-level setting: it is\n    not per scene and not per layer.\n\n    `motion_list_primitives` lists the registered `themes` and names the\n    `defaultTheme`. Today there are two:\n\n      - `dark-excalidraw` (the default) \u2014 flat dark slate, off-white\n        hand-drawn roughjs strokes, Kalam lettering, one red and one blue\n        accent, everything drifting very slightly.\n      - `apelles-studio` \u2014 apelles.studio's own editorial look: warm-black\n        basalt ground, marble ink, ONE ochre working colour, Newsreader /\n        Instrument Sans / IBM Plex Mono, exact (non-sketch) geometry and no\n        ambient drift.\n\n    A theme supplies DEFAULTS only. A scene's own `bg`, and a layer's own\n    `color` / `font` / `accent`, still win over it \u2014 so re-theming never\n    silently discards a colour that was set deliberately, and a layer pinned\n    to a literal colour will NOT follow the new palette.\n\n    Pass null to clear the field back to the default look. That DELETES the\n    key rather than writing the default's name into it, which is the shape\n    every manifest authored before themes existed already has.\n\n    An unregistered name is rejected outright, unlike `motion_set_scene_field`\n    (which warns and writes anyway): the manifest schema declares this field\n    as an enum, so a name outside the registry would not parse at all.\n\n    Undoable in the app (Cmd/Ctrl+Z), like any other Motion edit.\n\n    Args:\n        theme: the theme name, or null to clear it back to the default.",
+      "description": "Set the DOCUMENT's theme \u2014 which registered look the whole manifest renders\n    in (`manifest.theme`). A project-level setting: not per scene, not per\n    layer. The document's other project-level fields (`title`/`width`/\n    `height`/`fps`) are `motion_set_project_settings`; this one is separate\n    because it is an enum that CLEARS to a default rather than a value.\n\n    `motion_list_primitives` lists the registered `themes` and names the\n    `defaultTheme`. Today there are two:\n\n      - `dark-excalidraw` (the default) \u2014 flat dark slate, off-white\n        hand-drawn roughjs strokes, Kalam lettering, one red and one blue\n        accent, everything drifting very slightly.\n      - `apelles-studio` \u2014 apelles.studio's own editorial look: warm-black\n        basalt ground, marble ink, ONE ochre working colour, Newsreader /\n        Instrument Sans / IBM Plex Mono, exact (non-sketch) geometry and no\n        ambient drift.\n\n    A theme supplies DEFAULTS only. A scene's own `bg`, and a layer's own\n    `color` / `font` / `accent`, still win over it \u2014 so re-theming never\n    silently discards a colour that was set deliberately, and a layer pinned\n    to a literal colour will NOT follow the new palette.\n\n    Pass null to clear the field back to the default look. That DELETES the\n    key rather than writing the default's name into it, which is the shape\n    every manifest authored before themes existed already has.\n\n    An unregistered name is rejected outright, unlike `motion_set_scene_field`\n    (which warns and writes anyway): the manifest schema declares this field\n    as an enum, so a name outside the registry would not parse at all.\n\n    Undoable in the app (Cmd/Ctrl+Z), like any other Motion edit.\n\n    Args:\n        theme: the theme name, or null to clear it back to the default.",
       "inputSchema": {
         "properties": {
           "theme": {
@@ -16496,6 +16554,48 @@
                 ]
               }
             ]
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_set_project_settings",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"error\": \"pass at least one of title, width, height, fps\"}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_set_project_settings",
+      "case": "full",
+      "arguments": {
+        "title": "v_motion_set_project_settings.title",
+        "width": 81,
+        "height": 41,
+        "fps": 25.72
+      },
+      "requests": [
+        {
+          "op": "motion_set_project_settings",
+          "args": {
+            "title": "v_motion_set_project_settings.title",
+            "width": 81,
+            "height": 41,
+            "fps": 25.72
           },
           "timeout_ms": 20000
         }

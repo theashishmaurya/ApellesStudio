@@ -24,7 +24,7 @@ cannot be silently dropped, silently added, or listed under a name that never ex
 
 **Every tool is ported and passing the gate.** What that means precisely: all 166
 publish the same name, the same byte-for-byte description and a structurally identical
-schema; all 239 recorded calls emit the same ops with the same arguments and the same
+schema; all 262 recorded calls emit the same ops with the same arguments and the same
 timeout budgets, and render the same content. `python: 166 / rust: 166 / IDENTICAL` over
 a real stdio MCP session against each server.
 

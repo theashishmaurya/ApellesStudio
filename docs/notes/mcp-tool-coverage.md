@@ -252,17 +252,18 @@ inclusion, no longer a silent video).
 > preserve. Results are cached, so a repeat ask returns `state: "done"`
 > immediately; `force=True` re-runs.
 
-## Motion tab — CLOSED, 42 tools (D-257, 2026-09-09; +4 D-259; +1 D-260; +4 D-332; +1 D-339)
+## Motion tab — CLOSED, 43 tools (D-257, 2026-09-09; +4 D-259; +1 D-260; +4 D-332; +1 D-339; +1 D-345)
 
 > **This section used to be headed "Gap: Motion tab — 0 tools" and called it
 > "arguably the highest-value gap to close… the one place 'an agent driving this
 > app' and 'the manifest-authoring workflow this app is *for*' directly meet."**
 > It is closed. Count:
-> `grep -c '^def motion_' mcp/server.py` returns **41** (D-257's 32, D-259's
+> `grep -c '^def motion_' mcp/server.py` returns **43** (D-257's 32, D-259's
 > +4 delete/duplicate tools, D-260's `motion_get_edit_links`, D-332's +4
-> saved-component tools), and a cross-language check confirms those 41 Python
-> wire names and the 41 op keys in `packages/motion/src/motionOps.ts` agree
-> exactly.
+> saved-component tools, D-339's `motion_set_project_theme`, D-345's
+> `motion_set_project_settings`), and a cross-language check confirms those 43
+> Python wire names and the 43 op keys in `packages/motion/src/motionOps.ts`
+> agree exactly.
 >
 > **D-332 (+4) added the saved-component library**:
 > `motion_list_layer_presets`, `motion_save_layer_preset`,
@@ -300,7 +301,8 @@ inclusion, no longer a silent video).
 | `motion_delete_scene` (new, D-259) | The scene row's own delete button. Takes every layer, the camera and the `scene3d` block with it, and shifts every later scene's index down by one. **Refused for the last remaining scene** (`scenes.min(1)` — a zero-scene manifest does not parse), naming the constraint rather than silently producing a broken document. Moves the live GUI selection to the scene that took its place, since `resolveSelection` alone cannot tell that a scene index now means a *different* scene. |
 | `motion_duplicate_scene` (new, D-259) | The scene row's duplicate button — the whole scene copied in directly after itself, with a fresh scene id and fresh `id`s on every layer inside. The practical way to build "the same shot again, with one thing changed" in a manifest where each scene renders to its own file. |
 | `motion_set_scene_field` | One field on the scene itself — most often `dur`, the length in SECONDS that every keyframe in it is clamped to. |
-| `motion_set_project_theme` (new, D-339) | The DOCUMENT's theme — which registered look the whole manifest renders in (`manifest.theme`). The Motion tab's only project-level setting, and the first manifest-level field anything other than the raw-JSON editor can write (`title`/`width`/`height`/`fps` still have no tool). `motion_list_primitives` lists the registry and names the default. A theme supplies DEFAULTS only: a scene's `bg` and a layer's `color`/`font`/`accent` still win. `null` CLEARS the key (back to the default look) rather than writing the default's name. An unregistered name is a hard error, not a warn-and-write — the schema declares the field as an enum, so a bad name would not parse. |
+| `motion_set_project_theme` (new, D-339) | The DOCUMENT's theme — which registered look the whole manifest renders in (`manifest.theme`). A project-level setting, and the first manifest-level field anything other than the raw-JSON editor could write (the other four followed in D-345, below). `motion_list_primitives` lists the registry and names the default. A theme supplies DEFAULTS only: a scene's `bg` and a layer's `color`/`font`/`accent` still win. `null` CLEARS the key (back to the default look) rather than writing the default's name. An unregistered name is a hard error, not a warn-and-write — the schema declares the field as an enum, so a bad name would not parse. |
+| `motion_set_project_settings` (new, D-345, fixes B-219) | The manifest's OWN top-level fields — `title`/`width`/`height`/`fps`, the document's name and its output spec. A partial merge committed ONCE (`width` and `height` are one edit, not two), the same shape Colorist's `set_project_settings` already uses, down to the `pass at least one of ...` refusal. **Rejects rather than warn-and-writes**, unlike its scene/layer neighbours: these four are handed to Remotion, whose `validateDimension`/`validateFps` throw on a non-positive or non-integer dimension and take the live preview down with them. An ODD dimension is a `warning`, not an error — h264 silently rounds it DOWN to even. A `width`/`height`/`fps` change also reports which already-rendered scenes it just made stale (`renders`, computed off D-260's edit-link map, with the same two kinds of "no") and never re-renders them itself. GUI half: the Inspector's Project form, shown when nothing is selected. |
 | `motion_set_camera_2d` / `_3d` | Replace a scene's camera animation WHOLESALE. The only way to change a camera key's VALUES — `manifestEdit.ts` has no granular per-key camera write, stated on both tools rather than worked around. |
 | `motion_add_layer` | The Catalog panel's insert (D-151) — a schema-valid default instance of a primitive, placed into `scene.layers` or `scene.scene3d.children` automatically by its own `in3d` flag. |
 | `motion_delete_layer` (new, D-259) | The layer row's own delete button. **Address it by `id`** for anything beyond a single delete — removing a layer shifts every index after it, so a multi-delete plan written against bare indices deletes the wrong layers after the first. Selection moves to the layer that slid into the slot, or to the parent scene when it was the last one. |

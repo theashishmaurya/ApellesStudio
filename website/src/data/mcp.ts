@@ -57,6 +57,10 @@ export interface ToolGroup {
  * is also why the first `GAPS` entry below is narrowed rather than left
  * claiming there is still no way to re-probe one.
  *
+ * 176 → 177 on 2026-09-17 (D-345): `motion_set_project_settings`, the
+ * manifest's own top-level fields (Motion 42 → 43). Re-counted against the real
+ * file, as always, not derived from the previous line's total.
+ *
  * 166 → 176 on 2026-09-17 (D-339). Exactly ONE of those ten is this pass's own
  * `motion_set_project_theme` (the Motion tab's document-level theme); the other
  * nine are drift these numbers had already accumulated across four earlier
@@ -70,8 +74,8 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 176,
-  shipped: 165,
+  all: 177,
+  shipped: 166,
   debugOnly: 11,
 } as const;
 
@@ -131,7 +135,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: 'Motion',
-    count: 42,
+    count: 43,
     blurb:
       'The motion-graphics room, closed as a gap on 2026-09-09 (D-257/D-259/D-260) after a year of being this surface’s sharpest shortfall. Scenes and layers from a real primitive catalog, per-layer keyframes with bezier easing, 2D and 3D cameras, align and distribute, and a Remotion render that emits one video file per scene.',
     sample: [
@@ -144,6 +148,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
       'motion_add_layer_keyframe',
       'motion_set_keyframe_ease',
       'motion_set_project_theme',
+      'motion_set_project_settings',
       'motion_set_camera_3d',
       'motion_align_layers',
       'motion_distribute_layers',

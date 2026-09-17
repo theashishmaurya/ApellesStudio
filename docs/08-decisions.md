@@ -33933,3 +33933,89 @@ the picture beneath show through at the corners).
 **Disclosed, not fixed:** one radius for all four corners, not four; and the
 on-canvas transform box stays rectangular for a rounded clip (it is a
 manipulation handle, not a preview of the picture — every NLE draws it square).
+
+## D-345 — the Motion manifest's own top-level fields get a real tool and a real form, and a dimension change ANSWERS about stale renders rather than re-rendering
+
+**decided (2026-09-17)** · fixes B-219 · completes D-339's disclosed gap
+("the Motion tab still has no GUI control dedicated to manifest-level fields")
+· mirrors D-260's `motion_get_edit_links` for the staleness signal
+
+**Context.** The Motion scene manifest is `{title, width, height, fps, theme?,
+scenes: [...]}`. Every field INSIDE `scenes` had an MCP tool and an Inspector
+control; the five at the top had neither, except `theme`, which D-339 gave a
+tool but no GUI. Both halves of that gap were hit live in one night: setting a
+project's `theme` was worked around by hand-editing the manifest JSON on disk
+(and flagged as a workaround at the time), and a split-screen redesign that
+needed a different render resolution was blocked outright — correctly, since
+the only route left was a direct file write. B-219 records both.
+
+**Options.**
+
+1. **`motion_set_project_field(key, value)`**, mirroring
+   `motion_set_scene_field` / `motion_set_layer_field`. Rejected: `width` and
+   `height` are one edit, not two. Sent separately they commit a wrong aspect
+   ratio in between, push two undo entries, and answer the render-staleness
+   question twice with different numbers.
+2. **Fold the fields into `motion_set_project_theme`** and rename it. Rejected:
+   `theme` is an enum whose `null` CLEARS the key to a default; the other four
+   are required values with no "unset". One tool would need two argument
+   conventions.
+3. **`motion_set_project_settings(title?, width?, height?, fps?)`** — a partial
+   merge, one commit. Chosen. It is also the shape this repo already uses for
+   exactly this job one tab over: Colorist's `set_project_settings(width,
+   height, fps, color_space)`, down to the `pass at least one of ...` refusal
+   when no argument is given.
+
+**Decision.**
+
+- **`setProjectSettings`** (`packages/motion/src/manifestEdit.ts`) — one pure,
+  validating function, returning `{manifest, changed, warnings}` or an error.
+  The SAME function behind both interfaces, per CLAUDE.md's one-source-of-truth
+  pattern, so a value the tool refuses is a value the form refuses, with the
+  identical message.
+- **`motion_set_project_settings`** on both MCP surfaces (177 tools;
+  `motion_list_primitives` gains `projectFields` beside its existing
+  `sceneFields`, and `motion_get_state` now also reports `title`).
+- **A Project form in the Inspector** where the "nothing selected" empty state
+  used to sit alone: `title`/`width`/`height`/`fps`, plus a **Look** section
+  with the theme picker D-339 left open. Deselecting to reach document
+  properties is Figma's own pattern; Resolve and Premiere put the same thing in
+  a Project Settings dialog, and this tab has no dialog layer and exactly one
+  Inspector. The "select a scene, camera, or layer" sentence stays underneath.
+
+**Validation is a REFUSAL, not the warn-and-write the neighbouring field
+setters use.** `motion_set_scene_field`/`motion_set_layer_field` write an
+unknown key on purpose — those objects are `.passthrough()` and a hand-authored
+manifest may legitimately carry a field the Inspector does not know. These four
+are not that: they are handed to Remotion, which validates them itself and
+THROWS. Its `validateDimension` requires `width`/`height` to be a finite,
+positive INTEGER and `validateFps` requires `fps` finite and positive (read out
+of the installed `remotion` build, not assumed). A bad value there does not
+render badly — it takes down the live `@remotion/player` preview and the render
+alike. So the rule was taken from the real downstream consumer rather than
+invented: reject, leave the manifest untouched, say which rule was broken.
+
+**One case is a warning instead, for the same reason:** an ODD width or height
+is legal — `@remotion/renderer`'s `validateEvenDimensionsWithCodec` silently
+rounds it DOWN to even for h264/h265/av1, and the Motion render writes `.mp4`.
+So 1081 is accepted, renders as 1080, and says so. A fractional `fps` is
+accepted outright: 23.976/29.97 are real frame rates, Remotion allows them, and
+`totalFrames` already rounds each scene's frame count.
+
+**Changing `width`/`height`/`fps` invalidates every file already rendered**, and
+the reply says so instead of acting on it. Each scene renders to its own video
+file (D-180) and an Edit-tab clip may be reading it; after a resize those files
+are the wrong size, and after an fps change the wrong length. The response
+carries `renders: {stale, reason, linkDataAvailable, scenes, clips, sceneIds}`,
+computed from the same `editLinks` map D-260's `motion_get_edit_links` and the
+GUI's own "N in Edit" badge read — including its two different kinds of "no":
+`linkDataAvailable: false` (no link data reached the tab at all) is not the
+same answer as `scenes: 0` (nothing has been rendered yet). It does **not**
+re-render: a render is the one expensive, explicit action in this tab and
+`motion_render`'s own contract is that nothing triggers it as a side effect.
+
+**Disclosed, not fixed.** `grain` / `vignette` / `transparent` are also
+top-level manifest fields and still have no tool and no form field — they are
+render flags rather than the output spec, nobody has been blocked by them, and
+adding them would have meant inventing their semantics rather than mirroring a
+known consumer. The raw-JSON editor still reaches them, as it always did.
