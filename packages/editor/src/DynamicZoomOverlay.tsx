@@ -140,6 +140,9 @@ export function DynamicZoomOverlay({ container }: { container: HTMLElement | nul
         crop_top: clip.crop_top ?? 0,
         crop_right: clip.crop_right ?? 0,
         crop_bottom: clip.crop_bottom ?? 0,
+        // D-344 — restated, not reset: this op clears the box override only,
+        // and every other field has to survive it unchanged.
+        corner_radius: clip.corner_radius ?? 0,
       });
     }
 

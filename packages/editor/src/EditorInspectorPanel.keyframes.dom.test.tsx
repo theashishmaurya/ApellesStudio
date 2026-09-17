@@ -406,6 +406,12 @@ describe('the whole-clip Keyframes section (D-208 — kept, and now merging)', (
     await waitFrames(1);
 
     expect(animatedParams()).toEqual([
+      // D-344 — `corner_radius` joined `ClipTransformParam`, so "key all"
+      // genuinely keys ten properties now. That is the correct behaviour, not
+      // drift: the point of this button is "every keyframeable transform
+      // field", and a new one that silently sat outside it would be exactly
+      // the half-landed-feature gap this repo's own rules warn about.
+      'corner_radius',
       'crop_bottom',
       'crop_left',
       'crop_right',
@@ -416,7 +422,7 @@ describe('the whole-clip Keyframes section (D-208 — kept, and now merging)', (
       'rotation',
       'scale',
     ]);
-    for (const label of ['Opacity', 'Position X', 'Scale', 'Rotation', 'Left', 'Bottom']) {
+    for (const label of ['Opacity', 'Position X', 'Scale', 'Rotation', 'Corner Radius', 'Left', 'Bottom']) {
       expect(button(`Toggle ${label} keyframes`).getAttribute('aria-pressed')).toBe('true');
     }
   });

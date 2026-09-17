@@ -183,6 +183,7 @@ function setPositionY(positionY: number): void {
     crop_top: 0,
     crop_right: 0,
     crop_bottom: 0,
+    corner_radius: 0,
   });
 }
 

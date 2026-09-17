@@ -418,6 +418,71 @@ describe('buildExportFfmpegArgs', () => {
     expect(filterComplex).toContain("scale=w='1080*(0.5)':h='1920*0.9'[v0]");
   });
 
+  /** **D-344's regression guarantee, stated as a compiler assertion.** An
+   *  un-rounded clip must compile to byte-identically the filtergraph it did
+   *  before rounded corners existed: no `geq` mask node, and — since the mask
+   *  is the only reason such a clip would need an alpha plane at all — no
+   *  `format=rgba` either. `corner_radius: 0` and an absent field must both
+   *  produce that same string, character for character. */
+  it('D-344: corner_radius 0 and an absent corner_radius compile to the identical, un-masked filtergraph', () => {
+    const fc = (c: Clip) => {
+      const args = buildExportFfmpegArgs(timeline([track('video', [c])]), '/out.mp4', opts30);
+      return args[args.indexOf('-filter_complex') + 1];
+    };
+    const absent = fc(clip('c1', { scale: 0.5 }));
+    const explicitZero = fc(clip('c1', { scale: 0.5, corner_radius: 0 }));
+
+    expect(explicitZero).toBe(absent);
+    expect(absent).not.toContain('geq');
+    expect(absent).not.toContain('format=rgba');
+  });
+
+  it('D-344: a non-zero corner_radius emits a geq alpha mask AFTER scale and BEFORE rotate', () => {
+    const c = clip('c1', { corner_radius: 24, rotation: 10 });
+    const tl = timeline([track('video', [c])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    // An alpha plane has to exist before anything writes one.
+    expect(filterComplex).toContain('format=rgba');
+    // The mask MULTIPLIES the existing alpha rather than replacing it, so it
+    // composes with the crop mask and with opacity.
+    expect(filterComplex).toContain("a='alpha(X,Y)*(");
+    // The literal clamp, half-pixel centre and SDF that `chroma::edit::
+    // corner_coverage` computes — if either engine's formula is edited without
+    // the other, this is the line that says so.
+    expect(filterComplex).toContain('min(max((24),0),min(W,H)/2)');
+    expect(filterComplex).toContain('abs(X+0.5-W/2)');
+    expect(filterComplex).toContain('hypot(');
+
+    // Order is the whole of the feature's definition: mask the axis-aligned
+    // box, THEN rotate, so the rounding turns with the picture.
+    const scaleAt = filterComplex.indexOf('scale=w=');
+    const maskAt = filterComplex.indexOf('geq=');
+    const rotateAt = filterComplex.indexOf('rotate=');
+    expect(scaleAt).toBeGreaterThanOrEqual(0);
+    expect(maskAt).toBeGreaterThan(scaleAt);
+    expect(rotateAt).toBeGreaterThan(maskAt);
+  });
+
+  it('D-344: a keyframed corner_radius compiles to a time-varying radius, not a frozen one (the B-090 trap)', () => {
+    const c = clip('c1', {
+      corner_radius: 0,
+      chroma_keyframes: [
+        { frame: 0, params: { corner_radius: 0 } },
+        { frame: 30, params: { corner_radius: 40 } },
+      ],
+    });
+    const tl = timeline([track('video', [c])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain('geq=');
+    // `geq`'s time variable is uppercase `T`; a radius expression that never
+    // mentions it would be B-090 in a new field.
+    expect(filterComplex).toMatch(/a='alpha\(X,Y\)\*\(.*\bT\b/);
+  });
+
   it('D-193: a clip with no box_width/box_height behaves the same as the plain scale-only path (pre-D-193 shape, now safely quoted per B-090)', () => {
     const c = clip('c1', { scale: 0.5 });
     const tl = timeline([track('video', [c])]);

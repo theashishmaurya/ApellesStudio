@@ -260,6 +260,8 @@ export type TransformPatch = Partial<{
   crop_top: number;
   crop_right: number;
   crop_bottom: number;
+  /** D-344 — output-composition pixels, `0` = square corners. */
+  corner_radius: number;
 }>;
 
 /** D-147 — what the Fade section's controls hand back. Partial for the same
@@ -332,6 +334,15 @@ const TRANSFORM_FIELDS: Array<{
   { param: 'position_y', label: 'Position Y', step: CROP_STEP },
   { param: 'scale', label: 'Scale', step: 0.05, min: 0 },
   { param: 'rotation', label: 'Rotation', step: 1 },
+  // D-344 — output-composition PIXELS, so it steps by 1 like `rotation`'s
+  // degrees and unlike the fraction-valued rows above it. `min: 0` and no
+  // `max`: the real upper bound is half the clip's resolved on-canvas box,
+  // which this form does not know and both renderers clamp to at the point of
+  // use anyway (see `corner_coverage` / `cornerRadiusMaskExpr`), so capping it
+  // here would only invent a second, wronger limit. Hidden for a text clip by
+  // `TEXT_CLIP_TRANSFORM_PARAMS` like `scale`/`rotation` already are — the
+  // export compiles a title to `drawtext`, which cannot mask its corners.
+  { param: 'corner_radius', label: 'Corner Radius', step: 1, min: 0 },
 ];
 
 /** D-223 — the per-clip audio rows, in Resolve's own order (Clip Volume above

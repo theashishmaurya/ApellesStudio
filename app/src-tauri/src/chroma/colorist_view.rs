@@ -155,6 +155,12 @@ impl ClipView {
         // `scale_target`'s even-dimension rounding become a visible
         // anisotropic squash.
         let render_scale = canvas_w as f64 / comp_w as f64;
+        // D-344 — `corner_radius` is authored in OUTPUT-composition pixels, so
+        // it is converted into this canvas's pixels here, the same way (and
+        // from the same ratio) `natural` below is. Every other field on the
+        // transform is a ratio and needs no such step; see
+        // `edit::ClipTransform::scaled_to_render`.
+        let t = t.scaled_to_render(render_scale);
         let natural = (
             info.resolution.width as f64 * render_scale,
             info.resolution.height as f64 * render_scale,
