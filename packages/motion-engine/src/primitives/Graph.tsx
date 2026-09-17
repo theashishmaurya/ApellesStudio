@@ -180,8 +180,16 @@ export const Graph: React.FC<{
   const nodeIndex: Record<string, number> = {};
   nodes.forEach((n, i) => (nodeIndex[n.id] = i));
 
+  // B-211 — `edges`/`pulses` reference node ids by string, and a manifest can
+  // (even transiently, mid-edit) name one that `nodes` doesn't carry. Before
+  // this fix that threw (`p.x` of `undefined`) and wedged every future still
+  // render of the whole Motion tab, not just this layer — so this returns
+  // `null` and every caller below skips drawing that one edge/pulse rather
+  // than crash the frame. `nodes.map` never hits this branch: it only ever
+  // asks `at()` for an id it just took from `nodes` itself.
   const at = (id: string, drift = true) => {
     const p = layout[id];
+    if (!p) return null;
     const d = drift
       ? ambientDrift(frame, fps, nodeIndex[id] + 1, theme.ambientDriftPx)
       : { x: 0, y: 0 };
@@ -218,6 +226,7 @@ export const Graph: React.FC<{
       {edges.map((e, i) => {
         const a = at(e.from);
         const b = at(e.to);
+        if (!a || !b) return null; // B-211 — dangling `from`/`to`, skip this edge
         const drawStart =
           enter.at +
           Math.max(nodeIndex[e.from], nodeIndex[e.to]) * enter.stagger +
@@ -256,6 +265,7 @@ export const Graph: React.FC<{
         if (t <= 0 || t >= 1) return null;
         const a = at(p.from);
         const b = at(p.to);
+        if (!a || !b) return null; // B-211 — dangling `from`/`to`, skip this pulse
         const col = p.color ?? theme.accentSignal;
         return (
           <circle
@@ -272,7 +282,10 @@ export const Graph: React.FC<{
 
       {/* nodes */}
       {nodes.map((n) => {
-        const c = at(n.id);
+        // Always safe — `n.id` came from `nodes`, which is exactly what
+        // `layout` was built from above — but `at()`'s return type is now
+        // nullable (B-211), so this satisfies that without changing behavior.
+        const c = at(n.id) ?? { x: W / 2, y: H / 2 };
         const appear = nodeAppear(n.id);
         const s = pop(frame, fps, enter.at + nodeIndex[n.id] * enter.stagger) * appear;
         const g = glowFor(n.id);

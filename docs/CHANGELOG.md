@@ -4,6 +4,12 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **B-211 half-fixed: `graph`'s `at()` no longer throws on a dangling
+  node reference.** `edges`/`pulses` naming an id `nodes` doesn't carry used to
+  dereference `layout[id]` and crash the whole frame, wedging the Motion tab's
+  still-preview for the rest of the session. Now returns `null` and the caller skips
+  that one edge/pulse — every other element still renders. The other half (making an
+  already-wedged preview recoverable) is a different area and still open.
 - **2026-09-17** — **`2026-09-12-c040-mgfx`: the attention explainer's motion-graphics
   set rebuilt and roughly quadrupled (content, not code; files B-211, B-212, B-213).**
   Seven of a planned nine scenes built through the `motion_*`/`editor_*` MCP surface
