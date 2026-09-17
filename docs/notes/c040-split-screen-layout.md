@@ -190,9 +190,36 @@ one environment refresh**, not on a missing capability:
    reflow's own output over this manifest has already been computed and checked:
    `sx 0.6521`, `sy 0.9407`, `su 0.6521`, **82 layers / 327 fields** moved, no
    `scene3d` to skip.
-   **Blocker:** `motion_set_project_settings` shipped in D-345 on 2026-09-17 and
-   is not in the tool list this session's MCP client holds — the server process
-   it is talking to predates it. A restart of the app / MCP server exposes it.
+   **Blocker (re-diagnosed twice, 2026-09-18 — read this whole note before
+   trusting either theory).** First reading: "the MCP server process predates
+   D-345/D-347; a restart exposes it." A follow-up pass then disproved that by
+   probing `mcp/server.py` directly over stdio — `motion_set_project_settings`
+   really is present with `['fps','height','reflow','title','width']` — and
+   proposed instead that a subagent dispatched with `isolation: "worktree"`
+   structurally cannot reach the `chroma` MCP server at all, since it's
+   registered project-scoped by literal cwd in `~/.claude-personal/.claude.json`
+   and a worktree's cwd is a different key.
+
+   **That second theory does not survive its own night's evidence and should
+   NOT be treated as settled.** The FIRST agent to work on this exact task was
+   also dispatched with `isolation: "worktree"` and had extensive, successful
+   `chroma` MCP access for a full hour — 280 tool calls, live screenshots, real
+   on-app measurements (that's how the geometry in this very document was
+   derived). A worktree that structurally cannot connect would not have been
+   able to do any of that. The far simpler explanation for the SECOND agent's
+   total connection failure: the coordinating session killed the one running
+   `mcp/server.py` process between the two dispatches (trying, badly, to force
+   its own stale tool list to refresh — it does not auto-respawn, see
+   `feedback_chroma_mcp_restart_risk` in the assistant's own memory) — a dead
+   shared server explains a total failure far more parsimoniously than a
+   project-scoping rule that the first agent's own hour of real tool calls
+   already falsifies. **Treat "worktree dispatch cannot reach chroma" as
+   unconfirmed and likely wrong** until someone actually tests a worktree
+   dispatch against a KNOWN-healthy, freshly-started server and it still fails.
+
+   **What to actually do:** before dispatching anything for this task, confirm
+   a live `chroma` connection works AT ALL first (a trivial read-only call from
+   wherever you're about to dispatch from) — don't assume either failure mode.
    It was NOT worked around with a direct manifest file write: that is exactly
    the practice **B-222** was filed against, and the app holds the document in
    memory anyway.
@@ -209,8 +236,22 @@ one environment refresh**, not on a missing capability:
 3. **`motion_render`**, then rebuild the Edit compositing with the table above:
    the 9 overlay clips to the right-panel box, and the camera's 18 ramps +
    36 holds re-pointed from the PIP corner to the left-panel slot.
-4. **Verify by EXPORT, not only by preview**, until the app is rebuilt off
-   D-346 — the running build still has B-218, so a cropped camera panel will
-   look wrong in its preview while exporting correctly. (This is also why
-   B-218's own recorded "workaround" must not be used: it was measured in the
-   preview only.)
+4. **Verify by EXPORT, not only by preview**, until the running app is
+   confirmed rebuilt off D-346 — the pre-fix build still has B-218, so a
+   cropped camera panel will look wrong in its preview while exporting
+   correctly. (This is also why B-218's own recorded "workaround" must not be
+   used: it was measured in the preview only.)
+
+   **D-346's actual compositing fix is Rust** (`app/src-tauri/src/chroma/
+   edit.rs`, `composite_layer_onto`/`effective_size`/`blend_layer_sampled` —
+   496 lines, verified by reading the merged diff directly), not "frontend TS
+   with no Rust" as one pass here briefly claimed — that pass was looking at
+   the GUI's box-drawing/hit-testing mirror of the fix
+   (`transformGeometry.ts`/`canvasPick.ts`/`clipKeyframes.ts`), which IS TS,
+   but is not what renders the live preview's actual pixels. The Rust fix
+   needs the Tauri app's own binary rebuilt, not just Vite's frontend
+   hot-reload. `target/debug/apelles` did relink at 00:38 on 2026-09-18, after
+   the D-346 merge at 00:35, so the currently-running app very likely has it —
+   but that is still an inference from a build timestamp, not an observed
+   preview. Confirm with a real export before trusting the preview for
+   anything crop-related.

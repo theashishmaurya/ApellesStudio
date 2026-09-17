@@ -4,6 +4,23 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-18** — **Two mid-session blocker theories for the c040 rebuild
+  corrected, `docs/notes/c040-split-screen-layout.md` fixed in place.** (1) The
+  original "MCP server predates D-345, restart it" reading was disproved by a
+  follow-up pass, which then overclaimed a NEW theory — that `isolation:
+  "worktree"` dispatch structurally cannot reach the `chroma` MCP server at
+  all. That overclaim does not survive the SAME night's own evidence: a prior
+  agent, dispatched with the identical worktree isolation, had a full hour of
+  successful `chroma` tool use (280 calls) doing exactly this task. The far
+  simpler explanation: the coordinating session had just killed the one
+  running `mcp/server.py` process trying to force its own stale tool list to
+  refresh (it does not auto-respawn) — a dead shared server, not a structural
+  per-worktree limitation. (2) A second claim in that same pass — "D-346's
+  preview fix is entirely frontend TS, no Rust" — is also wrong: the actual
+  compositing fix is 496 lines of Rust in `edit.rs`, verified by reading the
+  merged diff directly; the TS files are the GUI's separate box-drawing mirror
+  of it. Both corrected in the notes file so the next pass doesn't inherit
+  either wrong belief.
 - **2026-09-18** — **c040's composite is redesigned as a two-panel split screen
   (D-348) — geometry designed, researched and ffmpeg-verified; the content
   rebuild itself is blocked and the timeline is UNCHANGED.** The owner's answer
