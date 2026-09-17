@@ -100,11 +100,22 @@ beyond "the direction is right."
 
 ## What's on the timeline right now
 
-For the owner's own A/B listening, `2026-09-12-c040-mgfx-recut`'s real Adobe
-Podcast output (`out_adobe_podcast_enhanced.mp3`) is placed on a new audio
-track (track 4) spanning the full cut, and the original dialogue track
-(track 2) is muted (gain 0) so what plays back is the enhanced version — pure
-comparison setup, not a decision to ship Adobe's cloud tool as part of the
-pipeline (the whole point of this research is a LOCAL alternative). Revert by
-setting track 2's gain back to 1 and track 4's to 0 (or removing the track)
-whenever this A/B is no longer needed.
+`2026-09-12-c040-mgfx-recut`'s real Adobe Podcast output
+(`out_adobe_podcast_enhanced.mp3`) is placed on a new audio track (track 4)
+spanning the full cut, and the original dialogue track (track 2) is muted
+(gain 0). This started as a pure A/B comparison setup — but after listening
+to both, **the owner decided to ship the Adobe-enhanced audio for this
+specific video** (2026-09-17). Track 4 is therefore the real, final audio for
+this deliverable, not a temporary comparison; track 2 stays muted rather than
+removed, so the original is still there if this ever needs revisiting.
+
+**This is a one-off editorial call for this one video, not a reversal of the
+"local-first" research goal above.** The whole point of everything else in
+this document is still finding a local, in-Chroma alternative — that work is
+explicitly parked for later. Shipping Adobe's output here happened through a
+human manually using Adobe's own web tool once, outside Chroma entirely; it
+is not a cloud call Chroma's own pipeline made, so it does not touch this
+project's "local-first, zero network calls in the grade path" invariant —
+it's simply an externally-sourced media asset, the same as any other imported
+audio would be. Worth recording so a future contributor doesn't wonder why
+this one video's dialogue doesn't match its camera audio.

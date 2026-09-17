@@ -4,6 +4,14 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **`2026-09-12-c040-mgfx-recut` ships with Adobe
+  Podcast-enhanced dialogue, a one-off editorial call, not a pipeline
+  change.** After hearing both live, the owner chose Adobe's real output
+  over the original camera audio for this video specifically. Track 4
+  (Adobe-enhanced) is the real audio now; track 2 (original) stays muted
+  rather than removed. See `docs/notes/speech-enhancement-research.md`'s
+  "What's on the timeline right now" — the local-first in-Chroma
+  speech-enhancement research below is unaffected and still parked for later.
 - **2026-09-17** — **Local speech-enhancement research (not yet a feature) —
   see `docs/notes/speech-enhancement-research.md`.** Real bake-off against
   `2026-09-12-c040-mgfx-recut`'s actual final-cut audio: DeepFilterNet3 hits
