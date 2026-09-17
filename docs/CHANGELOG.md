@@ -4,6 +4,52 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **`2026-09-12-c040-mgfx-recut`: the owner's 10 markers worked
+  through on a COPY, 342 frames (14.25 s) cut, all 9 Motion overlays re-timed.**
+  New project is a filesystem copy of `2026-09-12-c040-mgfx`, which is verified
+  byte-identical afterwards (only `name`/`modified` differ). 4m11.8s → 3m57.6s.
+  **Used D-343's new whole-track sweep** (`clip` omitted) for both detectors —
+  75 clips in one dispatch each — which found the 5-10 s dead air (marker 9)
+  and one retake group, and **that is the finding**: the per-clip detectors can
+  only see inside one clip's trimmed range, so on a 75-clip talking-head cut
+  almost every real retake straddles a clip boundary and is invisible to them.
+  The other 8 were found by mapping each marker to raw source seconds and
+  re-transcribing the disputed windows in isolation — Whisper's whole-file pass
+  silently swallowed four multi-second regions (365.7-370.1, 518.2-521.6,
+  615.7-618.0, 638.9-645.4 s), stretching one word across each, and three of
+  those hid an entire flubbed take. **The abrupt cut (marker 7) was two
+  defects, not one**: a junk restart fragment ("constantly … the enco–") left on
+  the timeline, and clip 69's in-point set 0.8 s into "And that's exactly why",
+  so the sentence began on "exactly". Fixed by cutting the fragment and
+  ripple-extending the clip's head 184 frames to pull in the complete final take
+  of the preceding sentence ("glancing back at it."), then cutting the 3.05 s
+  pause that came with it — all three splices verified to land in measured
+  silence. **B-197 did NOT bite** (8-range batch applied exactly: −453 frames on
+  tracks 0 and 2, source coverage down by exactly 453). **B-215 reproduced a
+  second time** — `editor_trim_clip(edge:"end")` returned `{ok:true}` and changed
+  nothing on an overlay clip; worked around by position, disclosed not fixed.
+  The 18 PIP ramps re-timed themselves correctly for 6 of 9 windows with no
+  action (keyframes are stored in clip source-frame space, so they travel with
+  their clip) — only the 3 windows with an internal cut, plus the recap window
+  whose OUT-ramp clip was deleted outright, needed re-keying. Marker 6's recap
+  sync (B-215's known-unfixed 105-frame gap) is fixed: the graphic now lands on
+  the words "quick recap" instead of 4.5 s after them. Left open and recorded as
+  the copy's only remaining marker: the recap SCENE's own internal beats still
+  run ahead of the narration, and its rendered mp4 is stale against the
+  manifest's own schedule — a Motion re-author + `motion_render`, not edit work.
+- **2026-09-17** — **B-216/D-343's sweep has a real blind spot worth knowing
+  before trusting it for a cleanup pass**: it sweeps every clip on a track in
+  one dispatch, but each clip is still analysed only within its own trimmed
+  range. On an already-tightly-cut timeline that is most of the timeline's real
+  retakes. Noted here from live use; no code change made this session.
+- **2026-09-17** — **The long-lived `mcp/server.py` process was 3 days stale**
+  (started Mon 15:54, `server.py` last written Thu 19:13 by D-342), so this
+  session's `chroma` tool list still had `clip` REQUIRED on both detectors and
+  no `_status` twins at all. The app itself was current (the sweep is frontend
+  TS, HMR-live), so the sweep was reached through the control server the wrapper
+  itself posts to — disclosed as a workaround, not a fix. The real fix is a
+  `chroma` MCP reconnect in the coordinating session; a subagent must not kill
+  its parent's MCP server.
 - **2026-09-17** — **B-217 filed: Vite/HMR silently duplicated a store instance,
   wedging the Edit tab into one project's timeline under another's identity.**
   After hours of continuous HMR, `Root.tsx`'s session-store bridge held a
