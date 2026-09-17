@@ -1781,7 +1781,7 @@
     },
     {
       "name": "editor_detect_retakes",
-      "description": "Group the places in a timeline clip where the speaker **said the same\n    line more than once** \u2014 the flubbed take, the stumble, the third attempt.\n\n    Unlike `editor_detect_silences` this needs the transcript, because a retake\n    is a fact about words. If one has not been made yet this starts it and\n    returns `state: \"running\"` with a `note` \u2014 poll\n    `editor_get_transcript_status`, then call this again.\n\n    Once the words exist, the grouping itself follows the same start-then-poll\n    contract as `editor_detect_silences` (D-321): `state: \"done\"` with `groups`\n    if it finished inside this call, otherwise `state: \"running\"` \u2014 poll\n    `editor_detect_retakes_status` with the same arguments. `force` re-runs a\n    grouping that is already cached for this clip range and these thresholds.\n\n    - `track` / `clip` \u2014 which clip to analyse, by index. Only its own trimmed\n      range is considered.\n    - `similarity` \u2014 how alike two utterances must be to count as the same line\n      (0..1, default 0.82).\n    - `window_secs` \u2014 how far apart two takes may be (default 30). A line\n      repeated half an hour later is a callback, not a retake.\n    - `min_words` \u2014 a take with fewer than this many DISTINCT words is never\n      grouped (default 3), which is what stops every \"Yeah.\" pairing with every\n      other one.\n    - `max_span_utterances` \u2014 how many adjacent transcript utterances may be\n      joined into one take (default 3). This is what finds a restart Whisper cut\n      on boundaries of its own, which do not line up with the speaker's (D-327):\n      a take is a SPAN of utterances, so one delivery can cover several. 1\n      restores the old utterance-to-utterance behaviour.\n\n    Each group has `takes` (each with its `text` and the same three frame\n    spaces `editor_detect_silences` returns), a `similarity` score, and `keep` \u2014\n    the index of the take this **suggests** keeping, which is the last one,\n    normally what the speaker settled on. `keep` is a suggestion and nothing\n    more: text alone cannot always tell a retake from a later line that merely\n    extends an earlier one, so read the `text` before cutting.\n\n    **Nothing is cut.** Pass the takes you want gone to\n    `editor_ripple_delete_ranges`.",
+      "description": "Group the places in a timeline clip \u2014 or across a WHOLE TRACK \u2014 where the\n    speaker **said the same line more than once**: the flubbed take, the\n    stumble, the third attempt.\n\n    Unlike `editor_detect_silences` this needs the transcript, because a retake\n    is a fact about words. If one has not been made yet this starts it and\n    returns `state: \"running\"` with a `note` \u2014 poll\n    `editor_get_transcript_status`, then call this again. A transcript is made\n    once per SOURCE FILE, so a sweep of fifty clips cut from one recording\n    costs one transcription, not fifty.\n\n    Once the words exist, the grouping itself follows the same start-then-poll\n    contract as `editor_detect_silences` (D-321): `state: \"done\"` with `groups`\n    if it finished inside this call, otherwise `state: \"running\"` \u2014 poll\n    `editor_detect_retakes_status` with the same arguments. `force` re-runs a\n    grouping that is already cached for this clip range and these thresholds.\n\n    - `track` \u2014 required.\n    - `clip` \u2014 **optional**. Name a clip index to ask about that one clip.\n      **Omit it to sweep every analysable clip on the track in a single call**\n      (D-342, fixes B-216) \u2014 do this for any cleanup pass. Asking one clip at a\n      time is exactly how real retakes survived to a final cut. Only each\n      clip's own trimmed range is considered, either way.\n    - `similarity` \u2014 how alike two utterances must be to count as the same line\n      (0..1, default 0.82).\n    - `window_secs` \u2014 how far apart two takes may be (default 30). A line\n      repeated half an hour later is a callback, not a retake.\n    - `min_words` \u2014 a take with fewer than this many DISTINCT words is never\n      grouped (default 3), which is what stops every \"Yeah.\" pairing with every\n      other one.\n    - `max_span_utterances` \u2014 how many adjacent transcript utterances may be\n      joined into one take (default 3). This is what finds a restart Whisper cut\n      on boundaries of its own, which do not line up with the speaker's (D-327):\n      a take is a SPAN of utterances, so one delivery can cover several. 1\n      restores the old utterance-to-utterance behaviour.\n\n    Each group has `takes` (each with its `text` and the same three frame\n    spaces `editor_detect_silences` returns), a `similarity` score, and `keep` \u2014\n    the index of the take this **suggests** keeping, which is the last one,\n    normally what the speaker settled on. `keep` is a suggestion and nothing\n    more: text alone cannot always tell a retake from a later line that merely\n    extends an earlier one, so read the `text` before cutting.\n\n    **A SWEEP (no `clip`) answers in a different, aggregate shape**: `flagged`\n    is the clips that found something, in full, each with its own `clip` index\n    and `groups`; `clean` is a bare list of clip indices with nothing in them;\n    `running` / `transcribing` / `notStarted` / `failed` / `skipped` say what\n    has not answered and why (`transcribing` is waiting on the words, not on\n    the grouping); `totals` counts all of it. Act on `flagged`.\n\n    **Nothing is cut**, by either form. Pass the takes you want gone to\n    `editor_ripple_delete_ranges`.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -1789,8 +1789,16 @@
             "type": "integer"
           },
           "clip": {
-            "title": "Clip",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clip"
           },
           "similarity": {
             "anyOf": [
@@ -1847,8 +1855,7 @@
           }
         },
         "required": [
-          "track",
-          "clip"
+          "track"
         ],
         "type": "object",
         "title": "editor_detect_retakesArguments"
@@ -1856,7 +1863,7 @@
     },
     {
       "name": "editor_detect_retakes_status",
-      "description": "Poll a retake grouping started by `editor_detect_retakes` (D-321).\n\n    Pass the SAME arguments you started it with \u2014 a grouping is cached per clip\n    range and per threshold set, so different arguments read as `state: \"idle\"`.\n\n    `state` is `running`, `done` (with `groups`, exactly as\n    `editor_detect_retakes` returns them) or `idle`. If the transcript itself is\n    still being made this reports that instead, with a `note` pointing at\n    `editor_get_transcript_status` \u2014 the same answer the start tool gives, since\n    there is nothing to group until there are words. A pure read.",
+      "description": "Poll a retake grouping started by `editor_detect_retakes` (D-321).\n\n    Pass the SAME arguments you started it with \u2014 a grouping is cached per clip\n    range and per threshold set, so different arguments read as `state: \"idle\"`.\n\n    `clip` is optional here for the same reason it is on the start tool (D-342):\n    **omit it to poll a whole-track sweep**, and the answer comes back in the\n    same aggregate shape the sweep returned, one request for the whole track.\n\n    `state` is `running`, `done` (with `groups`, exactly as\n    `editor_detect_retakes` returns them) or `idle`. If the transcript itself is\n    still being made this reports that instead, with a `note` pointing at\n    `editor_get_transcript_status` \u2014 the same answer the start tool gives, since\n    there is nothing to group until there are words. A pure read.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -1864,8 +1871,16 @@
             "type": "integer"
           },
           "clip": {
-            "title": "Clip",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clip"
           },
           "similarity": {
             "anyOf": [
@@ -1917,8 +1932,7 @@
           }
         },
         "required": [
-          "track",
-          "clip"
+          "track"
         ],
         "type": "object",
         "title": "editor_detect_retakes_statusArguments"
@@ -1926,7 +1940,7 @@
     },
     {
       "name": "editor_detect_silences",
-      "description": "Find the stretches of a timeline clip where **nobody is speaking** \u2014\n    \"where is the dead air.\" Uses a real on-device voice-activity model (Silero\n    VAD, D-319) over the clip's own audio, so it needs no transcript.\n\n    - `track` / `clip` \u2014 which clip to analyse, by index (`editor_get_timeline`\n      lists them). Only the clip's OWN trimmed range is analysed, so a source\n      trimmed to its second half never reports silence from material nobody\n      sees.\n    - `min_silence_ms` \u2014 the shortest gap worth reporting (default 600). Below\n      about 400 you start getting the pauses *inside* sentences, which are not\n      cut points.\n    - `force` \u2014 re-run even though this exact clip range and threshold has\n      already been analysed (the answer is cached per range+threshold).\n\n    **Reading the answer: check `state` first** (D-321). A normal clip finishes\n    inside this call and comes back `state: \"done\"` with `silences`. A long one\n    comes back `state: \"running\"` with no `silences` \u2014 the detection is still\n    going, so poll `editor_detect_silences_status` with the same `track`/`clip`/\n    `min_silence_ms` until it says `done`. The answer is held for you either\n    way; it is never computed and thrown away.\n\n    Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what\n    was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source\n    frames) and `startFrame`/`endFrame` \u2014 **timeline** frames, which is what\n    `editor_ripple_delete_ranges` takes. An empty list is a normal answer, not\n    an error: that clip has no gap that long.\n\n    **Nothing is cut.** This proposes; you decide. Pass the ranges you accept to\n    `editor_ripple_delete_ranges`.",
+      "description": "Find the stretches of a timeline clip \u2014 or of a WHOLE TRACK \u2014 where\n    **nobody is speaking**: \"where is the dead air.\" Uses a real on-device\n    voice-activity model (Silero VAD, D-319) over the audio, so it needs no\n    transcript.\n\n    - `track` \u2014 required.\n    - `clip` \u2014 **optional**. Name a clip index (`editor_get_timeline` lists\n      them) to ask about that one clip. **Omit it to sweep every analysable\n      clip on the track in a single call** (D-342, fixes B-216) \u2014 do this for\n      any cleanup pass, because asking one clip at a time is how whole stretches\n      of a long timeline get skipped. A sweep is one request no matter how many\n      clips it covers; calling this per clip is one request each.\n    - `min_silence_ms` \u2014 the shortest gap worth reporting (default 600). Below\n      about 400 you start getting the pauses *inside* sentences, which are not\n      cut points.\n    - `force` \u2014 re-run even though this exact clip range and threshold has\n      already been analysed (the answer is cached per range+threshold).\n\n    Either way only each clip's OWN trimmed range is analysed, so a source\n    trimmed to its second half never reports silence from material nobody sees.\n\n    **Reading the answer: check `state` first** (D-321). A normal clip finishes\n    inside this call and comes back `state: \"done\"` with `silences`. A long one\n    comes back `state: \"running\"` \u2014 the detection is still going, so poll\n    `editor_detect_silences_status` with the same arguments until it says\n    `done`. The answer is held for you either way; it is never computed and\n    thrown away.\n\n    Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what\n    was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source\n    frames) and `startFrame`/`endFrame` \u2014 **timeline** frames, which is what\n    `editor_ripple_delete_ranges` takes. An empty list is a normal answer, not\n    an error: that clip has no gap that long.\n\n    **A SWEEP (no `clip`) answers in a different, aggregate shape**, built so\n    the clips that need a decision are readable without scanning the rest:\n    `flagged` is the clips that found something, in full, each with its own\n    `clip` index and `silences`; `clean` is a bare list of clip indices that\n    came back with nothing; `running` / `notStarted` / `failed` / `skipped` say\n    what has not answered and why; `totals` counts all of it. Act on `flagged`.\n\n    **Nothing is cut**, by either form. This proposes; you decide. Pass the\n    ranges you accept to `editor_ripple_delete_ranges`.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -1934,8 +1948,16 @@
             "type": "integer"
           },
           "clip": {
-            "title": "Clip",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clip"
           },
           "min_silence_ms": {
             "anyOf": [
@@ -1956,8 +1978,7 @@
           }
         },
         "required": [
-          "track",
-          "clip"
+          "track"
         ],
         "type": "object",
         "title": "editor_detect_silencesArguments"
@@ -1965,7 +1986,7 @@
     },
     {
       "name": "editor_detect_silences_status",
-      "description": "Poll a silence detection started by `editor_detect_silences` (D-321).\n\n    Pass the SAME `track` / `clip` / `min_silence_ms` you started it with \u2014 a\n    detection is cached per clip range and threshold, so different arguments are\n    a different question and will read as `state: \"idle\"`.\n\n    `state` is `running` (still going \u2014 poll again), `done` (with `silences`,\n    exactly as `editor_detect_silences` returns them) or `idle` (nothing was\n    ever started for this clip at this threshold). Starting nothing itself, this\n    is a pure read and free to call.",
+      "description": "Poll a silence detection started by `editor_detect_silences` (D-321).\n\n    Pass the SAME `track` / `clip` / `min_silence_ms` you started it with \u2014 a\n    detection is cached per clip range and threshold, so different arguments are\n    a different question and will read as `state: \"idle\"`.\n\n    `clip` is optional here for the same reason it is on the start tool (D-342):\n    **omit it to poll a whole-track sweep**, and the answer comes back in the\n    same aggregate shape the sweep returned, one request for the whole track.\n\n    `state` is `running` (still going \u2014 poll again), `done` (with `silences`,\n    exactly as `editor_detect_silences` returns them) or `idle` (nothing was\n    ever started at this threshold). Starting nothing itself, this is a pure\n    read and free to call.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -1973,8 +1994,16 @@
             "type": "integer"
           },
           "clip": {
-            "title": "Clip",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clip"
           },
           "min_silence_ms": {
             "anyOf": [
@@ -1990,8 +2019,7 @@
           }
         },
         "required": [
-          "track",
-          "clip"
+          "track"
         ],
         "type": "object",
         "title": "editor_detect_silences_statusArguments"
@@ -11532,15 +11560,13 @@
       "tool": "editor_detect_retakes",
       "case": "minimal",
       "arguments": {
-        "track": 73,
-        "clip": 11
+        "track": 73
       },
       "requests": [
         {
           "op": "editor_detect_retakes",
           "args": {
-            "track": 73,
-            "clip": 11
+            "track": 73
           },
           "timeout_ms": 20000
         }
@@ -11591,15 +11617,13 @@
       "tool": "editor_detect_retakes_status",
       "case": "minimal",
       "arguments": {
-        "track": 12,
-        "clip": 78
+        "track": 12
       },
       "requests": [
         {
           "op": "editor_detect_retakes_status",
           "args": {
-            "track": 12,
-            "clip": 78
+            "track": 12
           },
           "timeout_ms": 20000
         }
@@ -11649,15 +11673,13 @@
       "tool": "editor_detect_silences",
       "case": "minimal",
       "arguments": {
-        "track": 92,
-        "clip": 68
+        "track": 92
       },
       "requests": [
         {
           "op": "editor_detect_silences",
           "args": {
-            "track": 92,
-            "clip": 68
+            "track": 92
           },
           "timeout_ms": 20000
         }
@@ -11702,15 +11724,13 @@
       "tool": "editor_detect_silences_status",
       "case": "minimal",
       "arguments": {
-        "track": 4,
-        "clip": 55
+        "track": 4
       },
       "requests": [
         {
           "op": "editor_detect_silences_status",
           "args": {
-            "track": 4,
-            "clip": 55
+            "track": 4
           },
           "timeout_ms": 20000
         }

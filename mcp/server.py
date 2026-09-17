@@ -4102,30 +4102,37 @@ def editor_analyze_video_status(
 @mcp.tool()
 def editor_detect_silences(
     track: int,
-    clip: int,
+    clip: int | None = None,
     min_silence_ms: float | None = None,
     force: bool = False,
 ) -> str:
-    """Find the stretches of a timeline clip where **nobody is speaking** —
-    "where is the dead air." Uses a real on-device voice-activity model (Silero
-    VAD, D-319) over the clip's own audio, so it needs no transcript.
+    """Find the stretches of a timeline clip — or of a WHOLE TRACK — where
+    **nobody is speaking**: "where is the dead air." Uses a real on-device
+    voice-activity model (Silero VAD, D-319) over the audio, so it needs no
+    transcript.
 
-    - `track` / `clip` — which clip to analyse, by index (`editor_get_timeline`
-      lists them). Only the clip's OWN trimmed range is analysed, so a source
-      trimmed to its second half never reports silence from material nobody
-      sees.
+    - `track` — required.
+    - `clip` — **optional**. Name a clip index (`editor_get_timeline` lists
+      them) to ask about that one clip. **Omit it to sweep every analysable
+      clip on the track in a single call** (D-342, fixes B-216) — do this for
+      any cleanup pass, because asking one clip at a time is how whole stretches
+      of a long timeline get skipped. A sweep is one request no matter how many
+      clips it covers; calling this per clip is one request each.
     - `min_silence_ms` — the shortest gap worth reporting (default 600). Below
       about 400 you start getting the pauses *inside* sentences, which are not
       cut points.
     - `force` — re-run even though this exact clip range and threshold has
       already been analysed (the answer is cached per range+threshold).
 
+    Either way only each clip's OWN trimmed range is analysed, so a source
+    trimmed to its second half never reports silence from material nobody sees.
+
     **Reading the answer: check `state` first** (D-321). A normal clip finishes
     inside this call and comes back `state: "done"` with `silences`. A long one
-    comes back `state: "running"` with no `silences` — the detection is still
-    going, so poll `editor_detect_silences_status` with the same `track`/`clip`/
-    `min_silence_ms` until it says `done`. The answer is held for you either
-    way; it is never computed and thrown away.
+    comes back `state: "running"` — the detection is still going, so poll
+    `editor_detect_silences_status` with the same arguments until it says
+    `done`. The answer is held for you either way; it is never computed and
+    thrown away.
 
     Each entry of `silences` carries `startSecs`/`endSecs` (source seconds, what
     was measured), `sourceStartFrame`/`sourceEndFrame` (the clip's own source
@@ -4133,11 +4140,20 @@ def editor_detect_silences(
     `editor_ripple_delete_ranges` takes. An empty list is a normal answer, not
     an error: that clip has no gap that long.
 
-    **Nothing is cut.** This proposes; you decide. Pass the ranges you accept to
-    `editor_ripple_delete_ranges`."""
+    **A SWEEP (no `clip`) answers in a different, aggregate shape**, built so
+    the clips that need a decision are readable without scanning the rest:
+    `flagged` is the clips that found something, in full, each with its own
+    `clip` index and `silences`; `clean` is a bare list of clip indices that
+    came back with nothing; `running` / `notStarted` / `failed` / `skipped` say
+    what has not answered and why; `totals` counts all of it. Act on `flagged`.
+
+    **Nothing is cut**, by either form. This proposes; you decide. Pass the
+    ranges you accept to `editor_ripple_delete_ranges`."""
     import json
 
-    args: dict = {"track": track, "clip": clip}
+    args: dict = {"track": track}
+    if clip is not None:
+        args["clip"] = clip
     if min_silence_ms is not None:
         args["minSilenceMs"] = min_silence_ms
     if force:
@@ -4148,7 +4164,7 @@ def editor_detect_silences(
 @mcp.tool()
 def editor_detect_silences_status(
     track: int,
-    clip: int,
+    clip: int | None = None,
     min_silence_ms: float | None = None,
 ) -> str:
     """Poll a silence detection started by `editor_detect_silences` (D-321).
@@ -4157,13 +4173,19 @@ def editor_detect_silences_status(
     detection is cached per clip range and threshold, so different arguments are
     a different question and will read as `state: "idle"`.
 
+    `clip` is optional here for the same reason it is on the start tool (D-342):
+    **omit it to poll a whole-track sweep**, and the answer comes back in the
+    same aggregate shape the sweep returned, one request for the whole track.
+
     `state` is `running` (still going — poll again), `done` (with `silences`,
     exactly as `editor_detect_silences` returns them) or `idle` (nothing was
-    ever started for this clip at this threshold). Starting nothing itself, this
-    is a pure read and free to call."""
+    ever started at this threshold). Starting nothing itself, this is a pure
+    read and free to call."""
     import json
 
-    args: dict = {"track": track, "clip": clip}
+    args: dict = {"track": track}
+    if clip is not None:
+        args["clip"] = clip
     if min_silence_ms is not None:
         args["minSilenceMs"] = min_silence_ms
     return json.dumps(_op("editor_detect_silences_status", **args), indent=2, default=str)
@@ -4172,20 +4194,23 @@ def editor_detect_silences_status(
 @mcp.tool()
 def editor_detect_retakes(
     track: int,
-    clip: int,
+    clip: int | None = None,
     similarity: float | None = None,
     window_secs: float | None = None,
     min_words: int | None = None,
     max_span_utterances: int | None = None,
     force: bool = False,
 ) -> str:
-    """Group the places in a timeline clip where the speaker **said the same
-    line more than once** — the flubbed take, the stumble, the third attempt.
+    """Group the places in a timeline clip — or across a WHOLE TRACK — where the
+    speaker **said the same line more than once**: the flubbed take, the
+    stumble, the third attempt.
 
     Unlike `editor_detect_silences` this needs the transcript, because a retake
     is a fact about words. If one has not been made yet this starts it and
     returns `state: "running"` with a `note` — poll
-    `editor_get_transcript_status`, then call this again.
+    `editor_get_transcript_status`, then call this again. A transcript is made
+    once per SOURCE FILE, so a sweep of fifty clips cut from one recording
+    costs one transcription, not fifty.
 
     Once the words exist, the grouping itself follows the same start-then-poll
     contract as `editor_detect_silences` (D-321): `state: "done"` with `groups`
@@ -4193,8 +4218,12 @@ def editor_detect_retakes(
     `editor_detect_retakes_status` with the same arguments. `force` re-runs a
     grouping that is already cached for this clip range and these thresholds.
 
-    - `track` / `clip` — which clip to analyse, by index. Only its own trimmed
-      range is considered.
+    - `track` — required.
+    - `clip` — **optional**. Name a clip index to ask about that one clip.
+      **Omit it to sweep every analysable clip on the track in a single call**
+      (D-342, fixes B-216) — do this for any cleanup pass. Asking one clip at a
+      time is exactly how real retakes survived to a final cut. Only each
+      clip's own trimmed range is considered, either way.
     - `similarity` — how alike two utterances must be to count as the same line
       (0..1, default 0.82).
     - `window_secs` — how far apart two takes may be (default 30). A line
@@ -4215,11 +4244,20 @@ def editor_detect_retakes(
     more: text alone cannot always tell a retake from a later line that merely
     extends an earlier one, so read the `text` before cutting.
 
-    **Nothing is cut.** Pass the takes you want gone to
+    **A SWEEP (no `clip`) answers in a different, aggregate shape**: `flagged`
+    is the clips that found something, in full, each with its own `clip` index
+    and `groups`; `clean` is a bare list of clip indices with nothing in them;
+    `running` / `transcribing` / `notStarted` / `failed` / `skipped` say what
+    has not answered and why (`transcribing` is waiting on the words, not on
+    the grouping); `totals` counts all of it. Act on `flagged`.
+
+    **Nothing is cut**, by either form. Pass the takes you want gone to
     `editor_ripple_delete_ranges`."""
     import json
 
-    args: dict = {"track": track, "clip": clip}
+    args: dict = {"track": track}
+    if clip is not None:
+        args["clip"] = clip
     if similarity is not None:
         args["similarity"] = similarity
     if window_secs is not None:
@@ -4236,7 +4274,7 @@ def editor_detect_retakes(
 @mcp.tool()
 def editor_detect_retakes_status(
     track: int,
-    clip: int,
+    clip: int | None = None,
     similarity: float | None = None,
     window_secs: float | None = None,
     min_words: int | None = None,
@@ -4247,6 +4285,10 @@ def editor_detect_retakes_status(
     Pass the SAME arguments you started it with — a grouping is cached per clip
     range and per threshold set, so different arguments read as `state: "idle"`.
 
+    `clip` is optional here for the same reason it is on the start tool (D-342):
+    **omit it to poll a whole-track sweep**, and the answer comes back in the
+    same aggregate shape the sweep returned, one request for the whole track.
+
     `state` is `running`, `done` (with `groups`, exactly as
     `editor_detect_retakes` returns them) or `idle`. If the transcript itself is
     still being made this reports that instead, with a `note` pointing at
@@ -4254,7 +4296,9 @@ def editor_detect_retakes_status(
     there is nothing to group until there are words. A pure read."""
     import json
 
-    args: dict = {"track": track, "clip": clip}
+    args: dict = {"track": track}
+    if clip is not None:
+        args["clip"] = clip
     if similarity is not None:
         args["similarity"] = similarity
     if window_secs is not None:
