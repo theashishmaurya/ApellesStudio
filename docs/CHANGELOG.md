@@ -4,6 +4,55 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-18** — **c040's composite is redesigned as a two-panel split screen
+  (D-348) — geometry designed, researched and ffmpeg-verified; the content
+  rebuild itself is blocked and the timeline is UNCHANGED.** The owner's answer
+  to the six captions running behind D-342's corner PIP was a fourth option none
+  of the marker's three offered: change the layout. Speaker camera left (1144 ×
+  2032 at (64,64), exactly 9:16, from a face-aware crop centred on the speaker's
+  measured head position rather than the frame's), Motion graphic + captions
+  right (2504 × 2032 at (1272,64)), 64-px margin and gutter, 14-px corners —
+  which removes the collision structurally instead of by tuning, since the two
+  can no longer overlap at any scale in any scene. Every edge was checked
+  through real ffmpeg with the exporter's own expressions before anything was
+  applied, and the research found that **no vendor publishes** a split ratio, a
+  radius or a gutter (Zoom's divider is draggable with no stated default; Loom
+  has no side-by-side layout at all), so those three are recorded as our calls —
+  while EBU R 95's 5% graphics-safe inset sets the graphic panel's internal
+  padding to the pixel and Final Cut Pro's Smart Conform is the authority for
+  cropping rather than letterboxing a 16:9 source into a vertical column. Full
+  derivation and reference trail: `docs/notes/c040-split-screen-layout.md`.
+  **Blocked, deliberately, at exactly one step:** the Motion canvas has to
+  become 1252 × 1016 with a reflow, and `motion_set_project_settings` (D-345,
+  shipped the day before) is not in the tool list the running MCP server process
+  advertises — a restart reaches it. Not worked around with a direct manifest
+  file write, which is the practice **B-222** was filed against and which that
+  entry already records a previous agent correctly stopping at. The project's
+  own marker now carries the decision, the geometry and this blocker.
+- **2026-09-18** — **The live preview finally crops the way the exporter and the
+  docs always said it did (D-346, fixes B-218 and the never-filed B-223), and a
+  Motion canvas resize now MOVES the layers with it (D-347, the missing half of
+  D-345).** B-218: `composite_layer_onto` applied a crop as an alpha mask over
+  the already-scaled full frame, so a cropped clip covered only the crop's own
+  fraction of its placement box while the export filled it — `crop 0.35/0.35,
+  scale 0.30` measured `0.091 × 0.302` against the documented, exported
+  `0.30 × <cropped height>`. The preview moved to ffmpeg's order (resize the
+  crop's sub-image), for the reason D-338 moved `position_*` and the one
+  first-party rule that exists on the question — Final Cut Pro's own *"The
+  cropped image automatically expands to fill the screen"*. Guarded by a real
+  **cross-engine parity pair** (Rust test + a real-ffmpeg twin over one
+  four-edge crop + scale + off-centre placement), which is exactly what B-218's
+  write-up said would have caught it. B-223 fell out of the same line: an
+  un-overridden height was the UNCROPPED aspect ratio in the preview and
+  ffmpeg's `-2` in the export, so `box_width` with no `box_height` rendered
+  20×4 in one engine and 20×20 in the other; both now use `width × cropped
+  aspect`, which reduces exactly to the old formula for every clip that exists.
+  The GUI's drawn transform box and click hit-rect follow. D-347:
+  `motion_set_project_settings(reflow=True)` remaps every layer onto the new
+  canvas in the same commit — built over `propCatalog.ts`'s existing
+  `positionFields`/`sizeFields` registries rather than a second description of
+  which fields are geometry, so a primitive added later reflows for free. Both
+  MCP surfaces, a GUI toggle, 12 unit tests, parity corpus regenerated.
 - **2026-09-17** — **`2026-09-12-c040-mgfx-recut` ships with Adobe
   Podcast-enhanced dialogue, a one-off editorial call, not a pipeline
   change.** After hearing both live, the owner chose Adobe's real output

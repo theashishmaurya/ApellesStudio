@@ -353,8 +353,8 @@ class ClipKeyframe(BaseModel):
     params: dict[str, float] = Field(
         description=(
             "Subset of opacity / position_x / position_y / scale / rotation / "
-            "crop_left / crop_top / crop_right / crop_bottom / volume / pan. Names "
-            "outside that set are stored but have no effect."
+            "corner_radius / crop_left / crop_top / crop_right / crop_bottom / "
+            "volume / pan. Names outside that set are stored but have no effect."
         )
     )
     ease: dict[str, BezierPoints] | None = Field(

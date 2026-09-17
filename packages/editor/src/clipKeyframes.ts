@@ -454,22 +454,30 @@ function round6(v: number): number {
 /** Exactly the fields a clip's on-canvas BOUNDING BOX is a function of, all
  *  resolved — no `undefined` left for a caller to guess a default for.
  *
- *  Deliberately five fields and not the resolver's full eleven: nothing that
- *  draws or hit-tests this box reads the other six. `opacity` does not move a
+ *  Deliberately nine fields and not the resolver's full eleven: nothing that
+ *  draws or hit-tests this box reads the other two. `opacity` does not move a
  *  box (a fully faded clip still has one and is still selectable, exactly as
- *  in the timeline); the four crop insets do not either — `composite_layer_
- *  onto` crops a layer's pixels IN PLACE and keeps its footprint (D-132), which
- *  is why `canvasPick.ts`'s own doc already records crop as correctly ignored;
- *  and `rotation` has no on-canvas affordance at all (Phase 2, unbuilt) and
- *  would need an oriented box rather than this axis-aligned one. Resolving
- *  them anyway would be six interpolations per render, on the preview's
- *  hottest surface, for values nobody reads. */
+ *  in the timeline), and `rotation` has no on-canvas affordance at all
+ *  (Phase 2, unbuilt) and would need an oriented box rather than this
+ *  axis-aligned one.
+ *
+ *  **The four crop insets ARE here, as of B-218**, and this doc used to say
+ *  the opposite for a reason that stopped being true: `composite_layer_onto`
+ *  cropped a layer's pixels in place and kept its full footprint (D-132), so
+ *  the box really was crop-independent. It now resizes the CROP's sub-image
+ *  into the box — ffmpeg's order, and the exporter's — so a cropped clip's box
+ *  carries the cropped aspect ratio. See [`resolvedBoxSize`] in
+ *  `transformGeometry.ts`, which is where the four values are consumed. */
 export interface ResolvedClipBoxTransform {
   position_x: number;
   position_y: number;
   scale: number;
   box_width: number | null;
   box_height: number | null;
+  crop_left: number;
+  crop_top: number;
+  crop_right: number;
+  crop_bottom: number;
 }
 
 /**
@@ -502,6 +510,10 @@ export function resolveClipBoxTransform(
     scale?: number;
     box_width?: number | null;
     box_height?: number | null;
+    crop_left?: number;
+    crop_top?: number;
+    crop_right?: number;
+    crop_bottom?: number;
     chroma_keyframes?: ClipKeyframe[];
   },
   sourceFrame: number,
@@ -515,6 +527,12 @@ export function resolveClipBoxTransform(
     scale: namedParamValueAt(kfs, 'scale', sourceFrame, clip.scale ?? 1),
     box_width: staticBoxWidth === null ? null : namedParamValueAt(kfs, 'box_width', sourceFrame, staticBoxWidth),
     box_height: staticBoxHeight === null ? null : namedParamValueAt(kfs, 'box_height', sourceFrame, staticBoxHeight),
+    // B-218 — keyframed like everything else here (a crop really does animate,
+    // B-098), and read by `resolvedBoxSize` to derive an unoverridden height.
+    crop_left: namedParamValueAt(kfs, 'crop_left', sourceFrame, clip.crop_left ?? 0),
+    crop_top: namedParamValueAt(kfs, 'crop_top', sourceFrame, clip.crop_top ?? 0),
+    crop_right: namedParamValueAt(kfs, 'crop_right', sourceFrame, clip.crop_right ?? 0),
+    crop_bottom: namedParamValueAt(kfs, 'crop_bottom', sourceFrame, clip.crop_bottom ?? 0),
   };
 }
 

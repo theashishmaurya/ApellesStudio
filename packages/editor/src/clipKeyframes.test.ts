@@ -258,7 +258,17 @@ describe('clipTimelineFrame (D-208)', () => {
 describe('resolveClipBoxTransform (D-209)', () => {
   it('is the static transform for a clip with no keyframes at all', () => {
     const t = resolveClipBoxTransform({ position_x: 0.25, scale: 0.5 }, 42);
-    expect(t).toEqual({ position_x: 0.25, position_y: 0, scale: 0.5, box_width: null, box_height: null });
+    expect(t).toEqual({
+      position_x: 0.25,
+      position_y: 0,
+      scale: 0.5,
+      box_width: null,
+      box_height: null,
+      crop_left: 0,
+      crop_top: 0,
+      crop_right: 0,
+      crop_bottom: 0,
+    });
   });
 
   it('fills every field with the engine defaults for a bare clip', () => {
@@ -268,6 +278,12 @@ describe('resolveClipBoxTransform (D-209)', () => {
       scale: 1,
       box_width: null,
       box_height: null,
+      // B-218 — the four crop insets are resolved here now too, because
+      // `resolvedBoxSize` derives an unoverridden height from them.
+      crop_left: 0,
+      crop_top: 0,
+      crop_right: 0,
+      crop_bottom: 0,
     });
   });
 

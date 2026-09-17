@@ -1257,3 +1257,106 @@ describe.skipIf(!FFMPEG_AVAILABLE)('D-338/B-201 — placement parity with the li
     }
   }, 60000);
 });
+
+// ---------------------------------------------------------------------- //
+// B-218 — the CROSS-ENGINE crop-then-scale parity pair.
+// ---------------------------------------------------------------------- //
+//
+// **Second half of a deliberately duplicated pair**, built exactly like
+// D-338's above. Its twin is
+// `composite_layer_onto_agrees_with_the_exporter_on_the_crop_parity_rectangle`
+// in `app/src-tauri/src/chroma/edit.rs`: same transform, same canvas, same
+// hard-coded rectangle, neither test aware of the other at run time.
+//
+// **Why it exists.** B-218: the live preview applied `scale` and then merely
+// alpha-masked the crop, so a cropped layer covered only the crop's own
+// fraction of its placement box, while this compiler has always emitted
+// `crop=` → `scale=` and filled the box. Measured live at
+// `crop_left 0.35, crop_right 0.35, scale 0.30`: the preview produced a
+// `0.091 × 0.302` box where the documented (and exported) answer is
+// `0.30 × <cropped height>`. B-218's own write-up names "a test rendering ONE
+// non-trivial crop+scale combination through both engines" as the thing that
+// would have caught it. This is that test.
+describe.skipIf(!FFMPEG_AVAILABLE)('B-218 — crop-then-scale parity with the live-preview compositor', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'chroma-crop-parity-export-test-'));
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const CANVAS = { width: 320, height: 240 };
+
+  /** Cropped on all four edges AND scaled AND placed off-centre — the
+   *  combination the pre-fix preview could not reproduce. Spelled identically
+   *  in `edit.rs`. */
+  const CROP_PARITY_TRANSFORM = {
+    crop_left: 0.25,
+    crop_right: 0.25,
+    crop_top: 0.25,
+    crop_bottom: 0.25,
+    scale: 0.5,
+    position_x: 0.25,
+    position_y: 0.25,
+  };
+
+  /** Literals, not recomputed from the transform:
+   *    crop  -> 160x120 of the 320x240 source at (80, 60)
+   *    scale -> width `320 * 0.5 = 160`; height from the CROPPED aspect ratio
+   *             (ffmpeg's `-2`), `160 * 120/160 = 120`
+   *    place -> top-left at `(0.25 * 320, 0.25 * 240) = (80, 60)` */
+  const EXPECTED = { x0: 80, y0: 60, x1: 240, y1: 180 };
+
+  it('lands the crop parity transform on exactly the rectangle edit.rs asserts', () => {
+    // Magenta with a green band exactly over the cropped-away top quarter, so
+    // a crop rectangle that is off by anything shows up as green in the
+    // output rather than needing a second assertion to notice.
+    const src = join(dir, 'banded.mp4');
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'color=c=magenta:size=320x240:duration=2:rate=24',
+      '-vf', 'drawbox=x=0:y=0:w=320:h=60:color=green@1:t=fill',
+      '-pix_fmt', 'yuv420p', src,
+    ]);
+    const c = clip('cropparity', {
+      source_path: src,
+      source_fps: 24,
+      duration: 48,
+      source_len: 48,
+      ...CROP_PARITY_TRANSFORM,
+    });
+    const out = join(dir, 'cropparity.mp4');
+    execFileSync(
+      'ffmpeg',
+      ['-y', ...buildExportFfmpegArgs(timeline([track('video', [c])]), out, { fps: 24, ...CANVAS })],
+      { stdio: 'pipe' },
+    );
+
+    const INSET = 4;
+    const magenta = (p: [number, number, number]) => p[0] > 150 && p[2] > 150 && p[1] < 90;
+    const black = (p: [number, number, number]) => Math.max(...p) < 50;
+    const at = (x: number, y: number) => pixelAt(out, 1.0, x, y);
+
+    for (const [x, y] of [
+      [EXPECTED.x0 + INSET, EXPECTED.y0 + INSET],
+      [EXPECTED.x1 - INSET, EXPECTED.y0 + INSET],
+      [EXPECTED.x0 + INSET, EXPECTED.y1 - INSET],
+      [EXPECTED.x1 - INSET, EXPECTED.y1 - INSET],
+    ]) {
+      const p = at(x, y);
+      expect(magenta(p), `(${x},${y}) should be inside the cropped overlay, got ${p}`).toBe(true);
+    }
+
+    for (const [x, y, why] of [
+      [EXPECTED.x0 - INSET, EXPECTED.y0 + INSET, 'left of the box'],
+      [EXPECTED.x1 + INSET, EXPECTED.y0 + INSET, 'right of the box'],
+      [EXPECTED.x0 + INSET, EXPECTED.y0 - INSET, 'above the box'],
+      [EXPECTED.x0 + INSET, EXPECTED.y1 + INSET, 'below the box'],
+    ] as Array<[number, number, string]>) {
+      const p = at(x, y);
+      expect(black(p), `(${x},${y}) is ${why} and should be the black base, got ${p}`).toBe(true);
+    }
+  }, 60000);
+});

@@ -434,9 +434,9 @@ pub struct ClipKeyframe {
     /// Clip SOURCE-frame-absolute. Strictly numeric: unlike most numeric arguments in
     /// the Edit tab this one is not string-coerced.
     pub frame: f64,
-    /// Subset of opacity / position_x / position_y / scale / rotation / crop_left /
-    /// crop_top / crop_right / crop_bottom / volume / pan. Names outside that set are
-    /// stored but have no effect.
+    /// Subset of opacity / position_x / position_y / scale / rotation / corner_radius /
+    /// crop_left / crop_top / crop_right / crop_bottom / volume / pan. Names outside that
+    /// set are stored but have no effect.
     pub params: Map<String, Value>,
     /// Per-param easing for the segment STARTING at this key, keyed by param name. Real
     /// and load-bearing — this is how `editor_set_keyframe_ease` persists — though no

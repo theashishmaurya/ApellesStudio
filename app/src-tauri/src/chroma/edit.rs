@@ -1723,12 +1723,39 @@ impl ClipTransform {
         self
     }
 
+    /// How much of each axis the crop insets KEEP, as a fraction — the same
+    /// `1 - near - far` per axis that [`crop_pixel_rect`] turns into pixels,
+    /// and clamped the same way so a nonsense inset can never make this
+    /// negative. `(1.0, 1.0)` for an un-cropped clip.
+    fn kept_fraction(&self) -> (f64, f64) {
+        let keep =
+            |near: f64, far: f64| (1.0 - near.clamp(0.0, 1.0) - far.clamp(0.0, 1.0)).max(0.0);
+        (
+            keep(self.crop_left, self.crop_right),
+            keep(self.crop_top, self.crop_bottom),
+        )
+    }
+
     /// This layer's placement box size, in `canvas`-pixel space (D-193).
     /// `box_width`/`box_height`, when set, are a fraction of `canvas`
     /// directly — bypassing `natural`/`scale` entirely for that axis, which
     /// is what gives this override zero Rust/TS-export parity gap (see
-    /// `Clip::box_width`'s own doc). An axis with no override falls back to
-    /// exactly the pre-D-193 formula: `natural.{0,1} * scale`.
+    /// `Clip::box_width`'s own doc).
+    ///
+    /// **WIDTH with no override is `natural.0 * scale`** — the pre-D-193
+    /// formula, unchanged, and deliberately NOT crop-adjusted: the exporter's
+    /// width is `canvas_width * scale` whatever the crop is
+    /// (`timelineExport.ts`'s `widthExpr`), so a crop must not enter here
+    /// either.
+    ///
+    /// **HEIGHT with no override is that width times the CROPPED aspect
+    /// ratio** — which is exactly what `buildClipFilterChain` asks ffmpeg for
+    /// in the same case (`heightExpr = '-2'`: "compute the height from the
+    /// real post-crop aspect ratio"). This is half of the B-218 fix. It used
+    /// to be `natural.1 * scale`, the UNCROPPED source's aspect — the same
+    /// number for every clip that is not cropped (every clip in every project
+    /// authored before B-218, which is why nothing had ever diverged), and a
+    /// wrong, too-short one for every clip that is.
     fn effective_size(&self, natural: (f64, f64), canvas: (u32, u32)) -> (f64, f64) {
         let scale = self.scale.max(0.0);
         let (cw, ch) = canvas;
@@ -1736,10 +1763,18 @@ impl ClipTransform {
             .box_width
             .map(|bw| bw * cw as f64)
             .unwrap_or(natural.0 * scale);
-        let h = self
-            .box_height
-            .map(|bh| bh * ch as f64)
-            .unwrap_or(natural.1 * scale);
+        let h = self.box_height.map(|bh| bh * ch as f64).unwrap_or_else(|| {
+            let (kept_w, kept_h) = self.kept_fraction();
+            let cropped_w = natural.0 * kept_w;
+            if cropped_w <= 0.0 {
+                // Cropped away on this axis — the caller's own
+                // `crop_pixel_rect` guard has already returned before any of
+                // this is painted; fall back to the uncropped formula rather
+                // than dividing by zero.
+                return natural.1 * scale;
+            }
+            w * (natural.1 * kept_h) / cropped_w
+        });
         (w, h)
     }
 }
@@ -2280,17 +2315,36 @@ fn corner_coverage(x: f64, y: f64, w: f64, h: f64, r: f64) -> f32 {
 /// pattern `image_processing.rs`'s own `apply_rotation` already uses for
 /// the Colorist's rotate adjustment, not a second rotation implementation.
 ///
-/// **Crop is first, and it does not move the picture** (D-132). The pixels
-/// cropped away have their **alpha** zeroed while the layer keeps its full
-/// footprint, rather than the buffer being physically shrunk to the kept
-/// rect. Two real consequences, both matching Premiere's Crop effect and
-/// Resolve's Crop mode: the remaining picture stays exactly where it was
-/// instead of re-centring as you drag an edge in, and `scale`/`rotation`
-/// keep acting about the layer's own full-frame centre (a shrunk buffer
-/// would silently move `rotate_about_center`'s pivot to the crop's centre).
-/// The cropped pixels keep their RGB and lose only alpha, so the resize
-/// filter below feathers the crop edge over a pixel instead of bleeding
-/// black into it.
+/// **Crop is first, and the crop is what gets scaled** (D-132, corrected by
+/// B-218). The crop insets select a sub-rectangle of the layer, and it is
+/// that sub-rectangle — not the whole layer with some of its alpha zeroed —
+/// that is resized into the placement box and placed at `position_*`. That
+/// is `crop` then `scale`, which is the order `capabilities.json` has always
+/// documented, the order the ffmpeg exporter has always compiled
+/// (`crop=...` → `scale=...` → `overlay=...`, `timelineExport.ts`'s
+/// `buildClipFilterChain`), and — until B-218 was fixed — NOT the order this
+/// function actually performed.
+///
+/// **What B-218 was.** This used to zero the alpha of the cropped-away pixels
+/// and resize the layer's FULL footprint into the box, on D-132's reasoning
+/// that a crop should behave like Premiere's Crop effect and Resolve's Crop
+/// mode — the remaining picture staying where it was rather than re-centring
+/// as an edge is dragged in. Self-consistent, but it means a cropped layer
+/// covers only the crop's own fraction of its box, while the export fills the
+/// box: `crop_left 0.35, crop_right 0.35, scale 0.30` measured `0.091 × 0.302`
+/// of canvas here against the `0.30 × <cropped height>` the docs promise and
+/// the export produces. The preview moved to meet the exporter for the same
+/// reason D-338 did with `position_*`: ffmpeg's is the external convention,
+/// the export is what actually ships, and the documented recipe for landing a
+/// clip in an exact box is built on it. A caller who wants the in-place
+/// reading still has it — shrink the box by the kept fraction and offset
+/// `position_*` by the crop — whereas under the old reading "fill this box
+/// with the cropped picture" was not expressible at all.
+///
+/// One consequence worth stating: `rotation` now pivots about the CROP's
+/// centre rather than the layer's full-frame centre, because the buffer it
+/// rotates is the crop. That matches the export, where `rotate` likewise acts
+/// on the cropped, scaled box.
 ///
 /// `natural` (D-136) is this layer's full-frame footprint on `canvas` at
 /// `scale == 1.0`, in canvas pixels — computed by the caller from the
@@ -2363,6 +2417,11 @@ pub(super) fn composite_layer_onto(
         return; // cropped away entirely — nothing to paint
     };
     let cropped = (cx0, cy0, cx1, cy1) != (0, 0, lw, lh);
+    // B-218 — the crop's own pixel size. This, not the layer's full size, is
+    // what gets resized into the placement box: crop happens BEFORE scale, the
+    // order `capabilities.json` has always documented and the exporter has
+    // always compiled (`crop=...` then `scale=...`).
+    let (crop_w, crop_h) = (cx1 - cx0, cy1 - cy0);
     // D-193 — `box_width`/`box_height` (canvas-fraction, when set) override
     // `natural * scale` per axis independently; see `ClipTransform::
     // effective_size`'s own doc for the full "why".
@@ -2384,7 +2443,7 @@ pub(super) fn composite_layer_onto(
     // output buffer is smaller than the source there, so the waste it can carry
     // is bounded anyway, and `Triangle`'s widening support is real area
     // filtering that a naive bilinear sample would alias against.
-    if t.rotation == 0.0 && sw >= lw && sh >= lh {
+    if t.rotation == 0.0 && sw >= crop_w && sh >= crop_h {
         let (cw, ch) = canvas.dimensions();
         // Same placement arithmetic as the general path's `overlay` call below
         // — the layer's TOP-LEFT corner at `position_*` of the canvas (D-338,
@@ -2408,17 +2467,23 @@ pub(super) fn composite_layer_onto(
     // The un-cropped branch is byte-for-byte the pre-D-132 path — no extra
     // buffer, no per-pixel pass — so an uncropped clip (every clip in every
     // existing project) costs exactly what it did before.
+    //
+    // B-218 — the cropped branch takes the crop's SUB-IMAGE and resizes THAT
+    // into the placement box, rather than alpha-masking the full layer and
+    // resizing the whole thing. Two things follow, both of which are the fix:
+    // the kept picture fills the box (crop-then-scale, ffmpeg's order and the
+    // documented one) instead of occupying only the sub-rectangle of it the
+    // crop happened to leave, and the crop edge is hard rather than feathered
+    // — which is what ffmpeg's own `crop` produces, so the two engines now
+    // agree there too. It is also strictly less work than the old path: no
+    // full-layer clone, no per-pixel alpha pass, and the resize input is the
+    // crop rather than the whole frame.
     let mut work: image::RgbaImage = if cropped {
-        let mut masked = layer.clone();
-        for (x, y, px) in masked.enumerate_pixels_mut() {
-            if x < cx0 || x >= cx1 || y < cy0 || y >= cy1 {
-                px[3] = 0;
-            }
-        }
-        if (sw, sh) != (lw, lh) {
-            image::imageops::resize(&masked, sw, sh, image::imageops::FilterType::Triangle)
+        let sub = image::imageops::crop_imm(layer, cx0, cy0, crop_w, crop_h).to_image();
+        if (sw, sh) != (crop_w, crop_h) {
+            image::imageops::resize(&sub, sw, sh, image::imageops::FilterType::Triangle)
         } else {
-            masked
+            sub
         }
     } else if (sw, sh) != (lw, lh) {
         image::imageops::resize(layer, sw, sh, image::imageops::FilterType::Triangle)
@@ -2488,9 +2553,15 @@ pub(super) fn composite_layer_onto(
 /// (D-217).
 ///
 /// What it is: the enlarge-and-blend inner loop of [`composite_layer_onto`]'s
-/// no-rotation, ratio-≥-1 fast path — crop mask, scale, opacity and
-/// source-over blend fused into one pass whose cost is bounded by the canvas
-/// rather than by the layer's (arbitrarily large) on-canvas footprint.
+/// no-rotation, ratio-≥-1 fast path — crop, scale, opacity and source-over
+/// blend fused into one pass whose cost is bounded by the canvas rather than
+/// by the layer's (arbitrarily large) on-canvas footprint.
+///
+/// `crop` is the SOURCE RECTANGLE this box samples, not a mask over the whole
+/// layer (B-218): `dest_size` maps onto `crop`'s extent, so the kept picture
+/// fills the box exactly as `crop=...`-then-`scale=...` does in the export.
+/// The caller's own ratio-≥-1 guard is therefore against the CROP's size, not
+/// the layer's.
 ///
 /// What it does NOT do: rotation (the caller keeps that on the general path,
 /// which needs a whole rotated buffer), and **minification** — a ratio below 1
@@ -2523,7 +2594,10 @@ fn blend_layer_sampled(
     use image::Pixel as _;
 
     let (cw, ch) = canvas.dimensions();
-    let (lw, lh) = layer.dimensions();
+    // Only the WIDTH of the layer is needed now (B-218): it is the row stride
+    // for the byte offsets below. The sampling extent is the CROP's, not the
+    // layer's — see this function's own doc.
+    let lw = layer.width();
     let (sw, sh) = dest_size;
     let (ox, oy) = (origin.0.round() as i64, origin.1.round() as i64);
 
@@ -2548,13 +2622,21 @@ fn blend_layer_sampled(
         corner_coverage(bx as f64, by as f64, sw as f64, sh as f64, corner_radius)
     };
 
+    // B-218 — the source rectangle this box samples is the CROP, not the whole
+    // layer: `rx`/`ry` map the destination box onto the crop's own extent and
+    // every tap is offset by, and clamped to, the crop's bounds. That is
+    // crop-then-scale — the kept picture fills the box — where this used to map
+    // the box onto the FULL layer and merely zero the alpha of taps that landed
+    // outside the crop, which left the kept picture occupying only the crop's
+    // own sub-fraction of the box. The general (minifying / rotated) path above
+    // does the same thing by resizing the crop's sub-image.
     let (cx0, cy0, cx1, cy1) = crop;
-    let rx = lw as f64 / sw as f64;
-    let ry = lh as f64 / sh as f64;
+    let rx = (cx1 - cx0) as f64 / sw as f64;
+    let ry = (cy1 - cy0) as f64 / sh as f64;
     let src = layer.as_raw();
     let stride = lw as usize * 4;
-    let last_x = lw as i64 - 1;
-    let last_y = lh as i64 - 1;
+    let last_x = cx1 as i64 - 1;
+    let last_y = cy1 as i64 - 1;
 
     // Per-column sample state, computed once for the whole window rather than
     // once per row — this loop runs up to canvas-many times.
@@ -2562,59 +2644,47 @@ fn blend_layer_sampled(
         i0: usize,
         i1: usize,
         fx: f32,
-        keep0: bool,
-        keep1: bool,
     }
-    // Both the byte offset and the crop test use the **clamped** index: a tap
-    // that falls outside the layer reads the edge texel, so it must carry that
-    // texel's mask too. (`resize` reaches the same place from the other side —
-    // it drops out-of-range taps and renormalises what is left.)
+    // A tap that falls outside the crop reads the crop's edge texel, exactly as
+    // `resize` reaches the same place from the other side (it drops
+    // out-of-range taps and renormalises what is left).
     let cols: Vec<Col> = (vx0..vx1)
         .map(|px| {
-            let u = ((px - ox) as f64 + 0.5) * rx - 0.5;
+            let u = ((px - ox) as f64 + 0.5) * rx - 0.5 + cx0 as f64;
             let ux = u.floor();
-            let x0 = (ux as i64).clamp(0, last_x);
-            let x1 = (ux as i64 + 1).clamp(0, last_x);
+            let x0 = (ux as i64).clamp(cx0 as i64, last_x);
+            let x1 = (ux as i64 + 1).clamp(cx0 as i64, last_x);
             Col {
                 i0: x0 as usize * 4,
                 i1: x1 as usize * 4,
                 fx: (u - ux) as f32,
-                keep0: (cx0 as i64..cx1 as i64).contains(&x0),
-                keep1: (cx0 as i64..cx1 as i64).contains(&x1),
             }
         })
         .collect();
 
     for py in vy0..vy1 {
-        let v = ((py - oy) as f64 + 0.5) * ry - 0.5;
+        let v = ((py - oy) as f64 + 0.5) * ry - 0.5 + cy0 as f64;
         let vy = v.floor();
         let fy = (v - vy) as f32;
-        let y0 = (vy as i64).clamp(0, last_y);
-        let y1 = (vy as i64 + 1).clamp(0, last_y);
+        let y0 = (vy as i64).clamp(cy0 as i64, last_y);
+        let y1 = (vy as i64 + 1).clamp(cy0 as i64, last_y);
         let row0 = y0 as usize * stride;
         let row1 = y1 as usize * stride;
-        let keep_y0 = (cy0 as i64..cy1 as i64).contains(&y0);
-        let keep_y1 = (cy0 as i64..cy1 as i64).contains(&y1);
 
         for (i, px) in (vx0..vx1).enumerate() {
             let c = &cols[i];
-            // The four taps, each with the crop's alpha mask applied *before*
-            // interpolation — that is what feathers a crop edge over a pixel
-            // instead of stepping it, exactly as the general path's
-            // mask-then-resize order does.
-            let tap = |base: usize, off: usize, keep: bool| -> [f32; 4] {
+            // The four taps. Every one of them is inside the crop by
+            // construction (B-218 — the indices above are clamped to it), so
+            // there is no mask to apply and the crop edge is hard, matching
+            // ffmpeg's own `crop` and the general path's sub-image resize.
+            let tap = |base: usize, off: usize| -> [f32; 4] {
                 let p = &src[base + off..base + off + 4];
-                [
-                    p[0] as f32,
-                    p[1] as f32,
-                    p[2] as f32,
-                    if keep { p[3] as f32 } else { 0.0 },
-                ]
+                [p[0] as f32, p[1] as f32, p[2] as f32, p[3] as f32]
             };
-            let p00 = tap(row0, c.i0, keep_y0 && c.keep0);
-            let p10 = tap(row0, c.i1, keep_y0 && c.keep1);
-            let p01 = tap(row1, c.i0, keep_y1 && c.keep0);
-            let p11 = tap(row1, c.i1, keep_y1 && c.keep1);
+            let p00 = tap(row0, c.i0);
+            let p10 = tap(row0, c.i1);
+            let p01 = tap(row1, c.i0);
+            let p11 = tap(row1, c.i1);
 
             let mut out = [0f32; 4];
             for ch in 0..4 {
@@ -3138,14 +3208,12 @@ mod composite_tests {
             let (sw, sh) = (raw_w.round().max(1.0) as u32, raw_h.round().max(1.0) as u32);
             let (cx0, cy0, cx1, cy1) =
                 crop_pixel_rect(layer.width(), layer.height(), t).expect("a non-empty crop");
-            let mut masked = layer.clone();
-            for (x, y, px) in masked.enumerate_pixels_mut() {
-                if x < cx0 || x >= cx1 || y < cy0 || y >= cy1 {
-                    px[3] = 0;
-                }
-            }
+            // B-218 — crop THEN scale: the reference resizes the crop's own
+            // sub-image, which is what the general path does and what ffmpeg's
+            // `crop=` → `scale=` pair does.
+            let sub = image::imageops::crop_imm(layer, cx0, cy0, cx1 - cx0, cy1 - cy0).to_image();
             let mut work =
-                image::imageops::resize(&masked, sw, sh, image::imageops::FilterType::Triangle);
+                image::imageops::resize(&sub, sw, sh, image::imageops::FilterType::Triangle);
             let opacity = t.opacity.clamp(0.0, 1.0) as f32;
             if opacity < 1.0 {
                 for p in work.pixels_mut() {
@@ -3309,6 +3377,68 @@ mod composite_tests {
         );
     }
 
+    /// **B-218's safety guarantee, stated as a property rather than a
+    /// fixture:** the new crop-aware height rule is EXACTLY the old
+    /// `natural.1 * scale` whenever the clip is not cropped — which is every
+    /// clip in every project authored before this fix. Exact `==`, not an
+    /// epsilon: `w * (h * 1.0) / (w * 1.0)` has to come back bit-identical,
+    /// and it does because the division is by the same value it multiplies.
+    #[test]
+    fn effective_size_is_unchanged_for_an_uncropped_clip() {
+        for (nw, nh) in [(1920.0, 1080.0), (640.0, 480.0), (3840.0, 2160.0)] {
+            for scale in [0.22, 0.5, 1.0, 1.75] {
+                let t = ClipTransform {
+                    scale,
+                    ..identity_transform()
+                };
+                assert_eq!(
+                    t.effective_size((nw, nh), (3840, 2160)),
+                    (nw * scale, nh * scale),
+                    "{nw}x{nh} at scale {scale}"
+                );
+            }
+        }
+    }
+
+    /// **B-218 — a cropped clip's height follows the CROPPED aspect ratio**,
+    /// which is what `timelineExport.ts` asks ffmpeg for with `h='-2'`. The
+    /// numbers: a 16:9 source cropped to a third of its width is 3x taller
+    /// than it is wide relative to the box, so a 0.25-scale box 480 px wide is
+    /// 852.6 px tall, not the 270 px the uncropped aspect would have given.
+    #[test]
+    fn effective_size_derives_height_from_the_cropped_aspect_ratio() {
+        let t = ClipTransform {
+            crop_left: 1.0 / 3.0,
+            crop_right: 1.0 / 3.0,
+            scale: 0.25,
+            ..identity_transform()
+        };
+        let (w, h) = t.effective_size((1920.0, 1080.0), (1920, 1080));
+        assert!((w - 480.0).abs() < 1e-9, "width is not crop-adjusted: {w}");
+        let kept_w = 1920.0 / 3.0;
+        assert!(
+            (h - 480.0 * 1080.0 / kept_w).abs() < 1e-6,
+            "height must follow the cropped aspect ratio, got {h}"
+        );
+    }
+
+    /// An explicit `box_height` is a MORE specific statement than any derived
+    /// aspect ratio, exactly as it is in the exporter (where it wins over
+    /// `-2`), so a crop must not move it.
+    #[test]
+    fn effective_size_lets_an_explicit_box_height_win_over_the_crop() {
+        let t = ClipTransform {
+            crop_top: 0.4,
+            box_width: Some(0.25),
+            box_height: Some(0.5),
+            ..identity_transform()
+        };
+        assert_eq!(
+            t.effective_size((1920.0, 1080.0), (1920, 1080)),
+            (480.0, 540.0)
+        );
+    }
+
     /// **D-338 / B-201 — the CROSS-ENGINE placement parity pair, Rust half.**
     ///
     /// Its twin is `'D-338/B-201 — placement parity with the live-preview
@@ -3417,15 +3547,21 @@ mod composite_tests {
         );
     }
 
-    /// An axis with no override still falls back to exactly the pre-D-193
-    /// `natural * scale` formula — `box_width`/`box_height` are additive,
-    /// they never change what an existing clip (or a clip that only sets
-    /// one of the two axes) already renders.
+    /// **B-223 (fixed alongside B-218) — `box_width` with no `box_height`
+    /// keeps the box's own ASPECT RATIO, it does not fall back to
+    /// `natural.1 * scale`.** D-193 wrote this the other way and the exporter
+    /// never agreed: `heightExpr` is ffmpeg's `-2` in exactly this case, which
+    /// computes the height from the resized width and the input's real aspect
+    /// ratio. So a 4x4 source forced to a 20-px-wide box is 20 px tall in the
+    /// export; the preview used to make it 4, and only a clip setting BOTH
+    /// axes (which is what every real caller does, and what
+    /// `capabilities.json`'s own recipes tell you to do) escaped the gap.
     #[test]
-    fn box_size_override_on_one_axis_leaves_the_other_on_the_scale_formula() {
+    fn box_size_override_on_one_axis_keeps_the_boxs_aspect_ratio() {
         let mut canvas = flat(20, 20, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 0, 0, 255]);
-        // width forced to the full canvas; height keeps scale's 1x4 = 4px.
+        // width forced to the full canvas; height follows from it and the
+        // source's own 1:1 aspect -> a 20x20 box at (0,0).
         let t = ClipTransform {
             box_width: Some(1.0),
             scale: 1.0,
@@ -3435,12 +3571,12 @@ mod composite_tests {
         assert_eq!(
             *canvas.get_pixel(10, 3),
             Rgba([255, 0, 0, 255]),
-            "20x4 box with its top-left at (0,0) — y in [0,4)"
+            "inside the box"
         );
         assert_eq!(
-            *canvas.get_pixel(10, 5),
-            Rgba([0, 0, 0, 255]),
-            "below the 4px-tall box"
+            *canvas.get_pixel(10, 19),
+            Rgba([255, 0, 0, 255]),
+            "a 1:1 source in a 20px-wide box is 20px tall, as `scale=w=20:h=-2` makes it"
         );
     }
 
@@ -3690,46 +3826,150 @@ mod composite_tests {
         assert_eq!(crop_pixel_rect(100, 100, &over), None);
     }
 
-    /// The real compositing behaviour: cropping the left half of a layer
-    /// clears the left half of its footprint back to the canvas underneath
-    /// and leaves the right half **exactly where it already was** — it does
-    /// NOT re-centre the remaining picture (Premiere's Crop effect and
-    /// Resolve's Crop mode both crop in place; see `composite_layer_onto`'s
-    /// own doc).
+    /// **B-218 — the crop is what gets scaled, so the KEPT picture fills the
+    /// box.** Cropping the left half away and leaving `scale` at 1.0 does not
+    /// leave the right half sitting where it was with a hole beside it (which
+    /// is what this function did until B-218 was fixed, and what the previous
+    /// version of this test asserted): the kept half is the picture now, and
+    /// it is resized into the placement box exactly as `crop=` → `scale=`
+    /// does in the export.
+    ///
+    /// The layer is two-toned on purpose. A flat one could not tell "the kept
+    /// half was stretched across the box" from "the whole layer was painted",
+    /// and the cropped-away colour appearing anywhere would mean the crop
+    /// rectangle itself was wrong.
     #[test]
-    fn composite_layer_onto_crops_in_place_without_recentring() {
+    fn composite_layer_onto_scales_the_crop_into_the_box() {
         let mut canvas = flat(10, 10, [0, 0, 0, 255]);
-        let layer = flat(10, 10, [255, 0, 0, 255]);
+        let mut layer = flat(10, 10, [255, 0, 0, 255]);
+        for y in 0..10 {
+            for x in 0..5 {
+                layer.put_pixel(x, y, Rgba([0, 255, 0, 255])); // cropped away
+            }
+        }
         let t = ClipTransform {
             crop_left: 0.5,
             ..identity_transform()
         };
+        // width  = natural.0 * scale                      = 10
+        // height = width * (natural.1 * 1.0) / (natural.0 * 0.5) = 20
+        // i.e. a 10x20 box at (0,0) — the visible half of it covers the whole
+        // 10x10 canvas, all of it the KEPT (red) half of the layer.
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
-        // cropped-away left half: the canvas shows through, untouched
-        assert_eq!(*canvas.get_pixel(1, 5), Rgba([0, 0, 0, 255]));
-        assert_eq!(*canvas.get_pixel(4, 5), Rgba([0, 0, 0, 255]));
-        // kept right half: still the layer, still at its original x
-        assert_eq!(*canvas.get_pixel(5, 5), Rgba([255, 0, 0, 255]));
-        assert_eq!(*canvas.get_pixel(9, 5), Rgba([255, 0, 0, 255]));
+        for (x, y) in [(0, 0), (4, 5), (9, 9), (0, 9), (9, 0)] {
+            assert_eq!(
+                *canvas.get_pixel(x, y),
+                Rgba([255, 0, 0, 255]),
+                "({x},{y}): the kept half fills the box; pre-B-218 the left half was black here"
+            );
+        }
     }
 
     /// Each edge crops its own side — a top crop must not take pixels off
     /// the bottom (the kind of thing an axis mix-up in `crop_pixel_rect`
     /// would produce and a single-edge test would miss).
+    ///
+    /// Post-B-218 the way to see that is what SURVIVES into the box rather
+    /// than what is missing from it: the layer is painted so that each cropped
+    /// edge carries its own unique colour, and neither may appear anywhere in
+    /// the result.
     #[test]
     fn composite_layer_onto_crops_each_edge_independently() {
         let mut canvas = flat(10, 10, [0, 0, 0, 255]);
-        let layer = flat(10, 10, [255, 0, 0, 255]);
+        let mut layer = flat(10, 10, [255, 0, 0, 255]);
+        for x in 0..10 {
+            for y in 0..3 {
+                layer.put_pixel(x, y, Rgba([0, 255, 0, 255])); // cropped by crop_top
+            }
+        }
+        for y in 0..10 {
+            for x in 8..10 {
+                layer.put_pixel(x, y, Rgba([0, 0, 255, 255])); // cropped by crop_right
+            }
+        }
         let t = ClipTransform {
             crop_top: 0.3,
             crop_right: 0.2,
             ..identity_transform()
         };
+        // crop rect = x 0..8, y 3..10 (8x7). width = 10, height = 10 * 7/8 =
+        // 8.75 -> 9, so the box is 10x9 at (0,0).
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
-        assert_eq!(*canvas.get_pixel(5, 1), Rgba([0, 0, 0, 255])); // cropped top
-        assert_eq!(*canvas.get_pixel(9, 5), Rgba([0, 0, 0, 255])); // cropped right
-        assert_eq!(*canvas.get_pixel(5, 9), Rgba([255, 0, 0, 255])); // bottom kept
-        assert_eq!(*canvas.get_pixel(0, 5), Rgba([255, 0, 0, 255])); // left kept
+        for y in 0..9 {
+            for x in 0..10 {
+                assert_eq!(
+                    *canvas.get_pixel(x, y),
+                    Rgba([255, 0, 0, 255]),
+                    "({x},{y}) is inside the box and must be the KEPT colour only"
+                );
+            }
+        }
+        assert_eq!(
+            *canvas.get_pixel(5, 9),
+            Rgba([0, 0, 0, 255]),
+            "row 9 is below the 9-px-tall box the cropped aspect ratio produces"
+        );
+    }
+
+    /// **B-218 — the CROSS-ENGINE crop-then-scale parity pair, Rust half.**
+    ///
+    /// Its twin is `'B-218 — crop-then-scale parity with the live-preview
+    /// compositor'` in `packages/editor/src/timelineExport.ffmpeg.test.ts`,
+    /// which pushes the SAME transform through REAL ffmpeg and asserts the
+    /// SAME rectangle, the same way D-338's own parity pair does for
+    /// `position_*`. B-218's write-up named the absence of exactly this test —
+    /// "one non-trivial crop+scale combination through both engines" — as what
+    /// let the divergence survive, so it is the fix's own regression guard.
+    ///
+    /// The transform is deliberately cropped on all four edges AND scaled AND
+    /// placed off-centre: under the pre-fix behaviour the box landed in the
+    /// same place but only its middle quarter carried any picture, so every
+    /// corner assertion below fails.
+    #[test]
+    fn composite_layer_onto_agrees_with_the_exporter_on_the_crop_parity_rectangle() {
+        // Every number here is an exact integer in both engines.
+        const CANVAS: (u32, u32) = (320, 240);
+        let t = ClipTransform {
+            crop_left: 0.25,
+            crop_right: 0.25,
+            crop_top: 0.25,
+            crop_bottom: 0.25,
+            scale: 0.5,
+            position_x: 0.25,
+            position_y: 0.25,
+            ..identity_transform()
+        };
+        // Written as literals, not recomputed from the transform:
+        //   crop  -> 160x120 out of the 320x240 source, offset (80, 60)
+        //   scale -> width 320 * 0.5 = 160; height follows the CROPPED aspect
+        //            ratio (ffmpeg's `-2`): 160 * 120/160 = 120
+        //   place -> top-left at (0.25 * 320, 0.25 * 240) = (80, 60)
+        const EXPECTED: (u32, u32, u32, u32) = (80, 60, 240, 180);
+
+        let mut canvas = flat(CANVAS.0, CANVAS.1, [0, 0, 0, 255]);
+        let layer = flat(320, 240, [255, 0, 255, 255]);
+        composite_layer_onto(&mut canvas, &layer, &t, (320.0, 240.0));
+
+        let (x0, y0, x1, y1) = EXPECTED;
+        for (x, y) in [(x0, y0), (x1 - 1, y0), (x0, y1 - 1), (x1 - 1, y1 - 1)] {
+            assert_eq!(
+                *canvas.get_pixel(x, y),
+                Rgba([255, 0, 255, 255]),
+                "({x},{y}) is a corner of the crop parity rectangle and must be painted"
+            );
+        }
+        for (x, y, why) in [
+            (x0 - 1, y0, "left of the box"),
+            (x1, y0, "right of the box"),
+            (x0, y0 - 1, "above the box"),
+            (x0, y1, "below the box"),
+        ] {
+            assert_eq!(
+                *canvas.get_pixel(x, y),
+                Rgba([0, 0, 0, 255]),
+                "({x},{y}) is {why} and must be untouched"
+            );
+        }
     }
 
     // --- D-344, rounded corners ------------------------------------------ //
@@ -3906,31 +4146,41 @@ mod composite_tests {
     /// replacing it — a cropped-away pixel must not be un-hidden by a rounded
     /// clip, the same composition rule `opacity` follows.
     #[test]
-    fn corner_radius_composes_with_crop_rather_than_replacing_it() {
+    fn corner_radius_rounds_the_cropped_box_not_the_uncropped_layer() {
         let mut canvas = flat(20, 20, [0, 0, 0, 255]);
         let layer = flat(20, 20, [255, 0, 0, 255]);
+        // The right half of the layer, landed 1:1 in a 10x20 box at the
+        // canvas's top-left, rounded. B-218 — the rounding follows the box the
+        // CROP produces, so both of its own corners are rounded away; before
+        // the fix the box was the uncropped 20x20 one and these two pixels
+        // were square (and the painted area was the other half of the canvas).
         let t = ClipTransform {
             crop_left: 0.5,
+            box_width: Some(0.5),
+            box_height: Some(1.0),
             corner_radius: 4.0,
             ..identity_transform()
         };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
-        // Cropped side stays empty; the kept side is still rounded at its own
-        // (uncropped) bottom-right corner.
         assert_eq!(
-            *canvas.get_pixel(2, 10),
-            Rgba([0, 0, 0, 255]),
-            "crop still hides this"
+            *canvas.get_pixel(5, 10),
+            Rgba([255, 0, 0, 255]),
+            "the box's interior is painted"
         );
         assert_eq!(
-            *canvas.get_pixel(19, 19),
+            *canvas.get_pixel(0, 0),
             Rgba([0, 0, 0, 255]),
-            "and it is still rounded"
+            "the cropped box's own top-left corner is rounded away"
+        );
+        assert_eq!(
+            *canvas.get_pixel(9, 19),
+            Rgba([0, 0, 0, 255]),
+            "and so is its bottom-right"
         );
         assert_eq!(
             *canvas.get_pixel(15, 10),
-            Rgba([255, 0, 0, 255]),
-            "kept side painted"
+            Rgba([0, 0, 0, 255]),
+            "nothing is painted outside the box"
         );
     }
 
@@ -4005,26 +4255,30 @@ mod composite_tests {
         assert_eq!(plate_transform(1.0).corner_radius, 0.0);
     }
 
-    /// Crop composes with the rest of the transform rather than replacing
-    /// it: scaled ×2, the kept half of a 4×4 layer still lands on the
-    /// scaled footprint's own right half, and the cropped side stays clear.
+    /// Crop composes with the rest of the transform rather than replacing it —
+    /// **and B-218 fixed which way round they compose.** `scale` sets the
+    /// box's WIDTH from the canvas exactly as before (`natural.0 * scale`,
+    /// crop-independent, mirroring the exporter's `widthExpr`); the CROP then
+    /// decides what fills that width and how tall it is.
     #[test]
     fn crop_composes_with_scale() {
         let mut canvas = flat(20, 20, [0, 0, 0, 255]);
         let layer = flat(4, 4, [255, 0, 0, 255]);
-        // D-338 — scale 2 -> an 8x8 footprint with its top-left at (0,0), so
-        // (0,0)-(7,7); crop_left 0.5 clears x in [0,4) of that footprint and
-        // keeps x in [4,8), WITHOUT moving the footprint (D-132's own rule:
-        // a crop zeroes alpha, it does not shrink or re-place the layer).
+        // scale 2 -> width 4 * 2 = 8, unchanged by the crop. crop_left 0.5
+        // keeps a 2x4 sub-image, whose 1:2 aspect makes the box 8x16 with its
+        // top-left at (0,0). Before B-218 the same transform produced an 8x8
+        // box with only its right half painted — the exporter's own
+        // `crop=2:4:2:0, scale=8:-2` has always produced this one.
         let t = ClipTransform {
             scale: 2.0,
             crop_left: 0.5,
             ..identity_transform()
         };
         composite_layer_onto(&mut canvas, &layer, &t, natural_of(&layer));
-        assert_eq!(*canvas.get_pixel(2, 4), Rgba([0, 0, 0, 255])); // cropped (left) half
-        assert_eq!(*canvas.get_pixel(6, 4), Rgba([255, 0, 0, 255])); // kept (right) half
-        assert_eq!(*canvas.get_pixel(9, 4), Rgba([0, 0, 0, 255])); // past the footprint entirely
+        assert_eq!(*canvas.get_pixel(0, 0), Rgba([255, 0, 0, 255])); // the crop fills the box
+        assert_eq!(*canvas.get_pixel(7, 15), Rgba([255, 0, 0, 255])); // ...all 8x16 of it
+        assert_eq!(*canvas.get_pixel(8, 4), Rgba([0, 0, 0, 255])); // past the box's width
+        assert_eq!(*canvas.get_pixel(4, 16), Rgba([0, 0, 0, 255])); // past its height
     }
 
     /// An uncropped layer takes the untouched pre-D-132 path — proved by

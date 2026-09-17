@@ -842,22 +842,33 @@ function MultiLayerInspector({
 function ProjectInspector({ manifest, onChange }: { manifest: Manifest; onChange: (next: Manifest) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  // D-346 — ON by default, which is the opposite of how a new option usually
+  // arrives here, and deliberate: changing the canvas WITHOUT moving the
+  // layers is the surprising outcome (every coordinate in a manifest is a raw
+  // world pixel, so the composition is simply left in a corner of the new
+  // frame), and the reason B-222's own fix shipped a footgun. The toggle
+  // exists so the raw behaviour is still reachable, not so it stays the
+  // default.
+  const [reflow, setReflow] = useState(true);
 
   const commit = (key: string, value: unknown) => {
-    const result = setProjectSettings(manifest, { [key]: value });
+    const result = setProjectSettings(manifest, { [key]: value }, { reflow });
     if (!result.ok) {
       setError(result.error);
       setWarning(null);
       return;
     }
     setError(null);
-    setWarning(result.warnings.length > 0 ? result.warnings.join(' ') : null);
+    const moved = result.reflow ? `${result.reflow.layersMoved} layer(s) reflowed.` : '';
+    const notes = [moved, ...result.warnings].filter(Boolean).join(' ');
+    setWarning(notes === '' ? null : notes);
     if (result.changed.length > 0) onChange(result.manifest);
   };
 
   return (
     <div className="h-full w-full overflow-y-auto p-3 flex flex-col gap-4">
       <FieldGroup fields={PROJECT_FIELDS} raw={manifest as unknown as Record<string, unknown>} onCommit={commit} />
+      <FieldControl spec={REFLOW_FIELD} value={reflow} onCommit={(v) => setReflow(v === true)} />
       {error && <span className="text-[10px] text-red-400">{error}</span>}
       {!error && warning && <span className="text-[10px] text-text-secondary">{warning}</span>}
       <InspectorSection label="Look">
@@ -882,6 +893,18 @@ const THEME_FIELD: FieldSpec = {
   kind: 'select',
   options: [...THEME_NAMES],
   group: 'fill',
+};
+
+/** D-346 — not a manifest field (nothing persists it): it is what the next
+ *  Width/Height commit should DO to the layers, so it lives beside the form
+ *  rather than inside `PROJECT_FIELDS`. The MCP half is
+ *  `motion_set_project_settings`' own `reflow` argument, which defaults the
+ *  same way for the same reason. */
+const REFLOW_FIELD: FieldSpec = {
+  key: 'reflow',
+  label: 'Reflow layers with the canvas',
+  kind: 'boolean',
+  group: 'layout',
 };
 
 export function InspectorPanel({

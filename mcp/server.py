@@ -702,12 +702,20 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "tracks that remaining unit divergence (split out of B-201 when "
             "D-338 fixed the POSITION half of it); `box_width`/`box_height` "
             "are canvas fractions in BOTH engines and are the only size "
-            "mechanism with exact parity today. The overlay's HEIGHT is "
+            "mechanism with exact parity today (D-346 closed the one case "
+            "where that was false — see B-223). The overlay's HEIGHT is "
             "the interesting part: in the live preview (Rust "
             "`composite_layer_onto`, D-136, app/src-tauri/src/chroma/edit.rs) "
-            "it is the clip's own fit-to-canvas footprint's height times "
-            "`scale` (uniform on both axes — the preview has no 'stretch' "
-            "concept at all). In export (`timelineExport.ts`'s "
+            "it is the overlay's WIDTH times the clip's own POST-CROP aspect "
+            "ratio, which is exactly what the export's default `'fit'` asks "
+            "ffmpeg for (`h='-2'`), so the two agree. D-346 (fixes "
+            "B-218/B-223, 2026-09-18) made that true: it used to be the "
+            "clip's fit-to-canvas footprint's height times `scale`, i.e. the "
+            "UNCROPPED aspect ratio — the same number only for an uncropped "
+            "clip that sets neither `box_width` nor `box_height`, which is "
+            "every clip in every project before that date and why nothing "
+            "had diverged. The preview still has no 'stretch' concept at "
+            "all; it always behaves as `'fit'`. In export (`timelineExport.ts`'s "
             "`buildClipFilterChain`) it depends on `editor_export`'s "
             "`fit_overrides` (D-184, fixing B-074): the default, `'fit'`, "
             "lets ffmpeg auto-compute height from the clip's own real "
@@ -762,11 +770,19 @@ EDITOR_CAPABILITIES: dict[str, Any] = {
             "to plan around: because position_* is the top-left corner, "
             "raising `scale` alone grows the box DOWN and to the RIGHT in "
             "both engines — to zoom about a box's own centre, move "
-            "position_x/position_y by half the size change yourself. B-218 "
-            "(open, found 2026-09-17) additionally means `crop_*` and `scale` "
-            "do NOT compose in the documented order in the live preview — "
-            "verify a combined crop+scale placement empirically before "
-            "trusting this recipe's own crop-then-scale math for it."
+            "position_x/position_y by half the size change yourself. "
+            "CROP-THEN-SCALE is true of the live preview as well, since D-346 "
+            "(fixes B-218, 2026-09-18): it resizes the crop's SUB-IMAGE into "
+            "the placement box, so the kept picture FILLS the box and the "
+            "box's height follows the cropped aspect ratio — the same picture "
+            "the export has always produced. Until that date the preview "
+            "applied the crop as an alpha mask over the already-scaled full "
+            "frame, so a cropped clip covered only the crop's own fraction of "
+            "its box there; distrust any crop+scale placement worked out "
+            "against a preview older than that, and note that B-218's own "
+            "recorded 'workaround' (`scale: 1.0` plus a compensating "
+            "`position_x`) was preview-only and exports completely "
+            "differently."
         ),
         "corner_radius": (
             "corner_radius (D-344) rounds a clip's placement box, and is the "
@@ -3570,8 +3586,8 @@ def editor_set_clip_keyframes(track: int, clip: int, keyframes: list[ClipKeyfram
     `keyframes` REPLACES the clip's entire keyframe list — pass all of them
     every time, not just the one you're adding. Each entry is
     `{"frame": <source-frame-absolute int>, "params": {<subset of
-    opacity/position_x/position_y/scale/rotation/crop_left/crop_top/
-    crop_right/crop_bottom/volume/pan>: <number>}}`. Values are
+    opacity/position_x/position_y/scale/rotation/corner_radius/crop_left/
+    crop_top/crop_right/crop_bottom/volume/pan>: <number>}}`. Values are
     piecewise-linearly interpolated between keyframes, held constant before
     the first and after the last.
 
@@ -3614,8 +3630,8 @@ def editor_set_keyframe_ease(
     keyframe.
 
     `param` is one of opacity / position_x / position_y / scale / rotation /
-    crop_left / crop_top / crop_right / crop_bottom / volume / pan — the same
-    names `editor_set_clip_keyframes` writes.
+    corner_radius / crop_left / crop_top / crop_right / crop_bottom / volume /
+    pan — the same names `editor_set_clip_keyframes` writes.
 
     `frame` is a clip SOURCE-frame-absolute number and must be an EXISTING
     keyframe of that property; if it is not, this reports the frames that do
@@ -5864,6 +5880,7 @@ def motion_set_project_settings(
     width: int | None = None,
     height: int | None = None,
     fps: float | None = None,
+    reflow: bool = True,
 ) -> str:
     """Set the manifest's OWN top-level fields — the document's name and its
     output spec. The Motion twin of `set_project_settings` (Colorist), and
@@ -5895,6 +5912,37 @@ def motion_set_project_settings(
     link data reached the tab at all, which is not the same answer as
     "nothing has been rendered yet" (see `motion_get_edit_links`).
 
+    **`reflow` (D-346, DEFAULT TRUE) moves the LAYERS with the canvas**, and
+    is the thing to understand before resizing anything. A layer's `x`/`y`/
+    `size` are RAW WORLD PIXELS — there is no design-space normalisation
+    anywhere between the manifest and the rendered DOM — so changing
+    `width`/`height` on its own leaves every layer at its old coordinates in a
+    differently-shaped frame: the composition sits in one corner with dead
+    space around it, at the wrong relative size. Doubling a 1920x1080 manifest
+    to 4K that way does NOT give you a 4K graphic, it gives you a broken one
+    (which is why `Config.setScale(2)` renders at 4K instead, D-342).
+
+    With `reflow` on, the whole layout is remapped onto the new canvas in the
+    same commit: x-positions and widths by `newW/oldW`, y-positions and
+    heights by `newH/oldH`, and anything that cannot stretch per axis without
+    distorting (a font `size`, a `nodeR`, a `matrix` `cell`/`gap`, a
+    `deviceframe` `scale`) by `min` of the two. A `graph`'s own node
+    coordinates, an `emphasis` box's `[x,y,w,h]`, a plot annotation's `dy` and
+    every `transform` key's pixel offset move with it. The reply reports
+    `scaleX`/`scaleY`/`scaleUniform` and how many `layersMoved`.
+
+    It is a proportional remap, NOT a layout engine: it does not know that
+    text wraps. A reflow that changes the ASPECT RATIO puts everything in the
+    right place at the right relative size and can still leave a caption that
+    was one line sitting on three — expect to fix the overflows afterwards,
+    not to re-place every layer. Timing (`at`/`dur`/`stagger`), content (a
+    `plot`'s `values`/`baseline`, an edge's `weight`, `rows`/`cols`, any
+    `seed`) and `scene3d` children (3D world units, not canvas pixels) are
+    deliberately untouched; skipped 3D scenes are named in `warning`.
+
+    Pass `reflow=False` for the raw behaviour — write the dimensions, move
+    nothing — e.g. when the layers were already authored for the new canvas.
+
     `theme` is NOT set here — it is an enum with its own clear-to-default
     semantics: `motion_set_project_theme`.
 
@@ -5902,7 +5950,9 @@ def motion_set_project_settings(
         title: the document's name. Trimmed; an empty one is refused.
         width: output width in px — a positive integer.
         height: output height in px — a positive integer.
-        fps: frames per second — positive, fractional allowed."""
+        fps: frames per second — positive, fractional allowed.
+        reflow: remap every layer onto the new canvas (default True). Ignored,
+            with a `warning`, when neither width nor height changes."""
     import json
 
     args: dict[str, Any] = {}
@@ -5916,6 +5966,7 @@ def motion_set_project_settings(
         args["fps"] = fps
     if not args:
         return json.dumps({"error": "pass at least one of title, width, height, fps"})
+    args["reflow"] = reflow
     return json.dumps(_op("motion_set_project_settings", **args), indent=2, default=str)
 
 

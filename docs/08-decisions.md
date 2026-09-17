@@ -34019,3 +34019,238 @@ top-level manifest fields and still have no tool and no form field — they are
 render flags rather than the output spec, nobody has been blocked by them, and
 adding them would have meant inventing their semantics rather than mirroring a
 known consumer. The raw-JSON editor still reaches them, as it always did.
+
+## D-346 — the live preview adopts the exporter's crop-then-scale order, and a crop now decides the box's height (fixes B-218, B-223)
+
+**decided (2026-09-18)** · touches `app/src-tauri/src/chroma/edit.rs`
+(`composite_layer_onto`, `ClipTransform::effective_size`, `blend_layer_sampled`)
+and, for the box the GUI draws and hit-tests, `packages/editor/src/
+{transformGeometry,canvasPick,clipKeyframes}.ts` + `TransformOverlay.tsx`
+
+**Context.** B-218 (open, high): `editor_get_capabilities` has always documented
+`crop_*` as applied BEFORE `scale`, the ffmpeg exporter has always compiled it
+that way (`crop=` → `scale=` → `overlay=`), and the live preview did the
+opposite — it zeroed the alpha of the cropped-away pixels and resized the
+layer's FULL footprint into the placement box, so the kept picture covered only
+the crop's own fraction of that box. Measured: `crop_left 0.35, crop_right 0.35,
+scale 0.30` produced a `0.091 × 0.302` box in the preview against the
+`0.30 × <cropped height>` the docs promise and the export renders. The bug was
+found while working out a crop-based side-panel composite, and it blocks that
+work outright — a speaker column cropped out of a 16:9 source cannot be placed
+correctly in both engines until one of them moves.
+
+**Options.**
+1. **Make the exporter crop in place too** — keep D-132's Premiere/Resolve "a
+   crop does not move the remaining picture" reading and teach ffmpeg to
+   reproduce it (`scale` by the box size times the kept fraction, then offset
+   the overlay by the crop). Rejected: it would break the documented
+   `full_width_half_height_recipe`, every agent-facing doc built on it, and the
+   `chroma-comparison-reel` skill — all of which already assume crop-then-scale
+   — to preserve a reading nothing had ever depended on.
+2. **Leave both and document the divergence.** Rejected outright: this is the
+   exact shape of B-201, where two self-consistent engines disagreed silently.
+3. **Move the preview to the exporter's order.** Chosen.
+
+**Choice: 3, for the same reason D-338 moved `position_*`.** ffmpeg's is the
+external convention, the export is what actually ships, and the documented
+recipe for landing a clip in an exact box is built on it. It is also what the
+one first-party vendor documentation that states a rule says: Final Cut Pro's
+own "Crop clips" page — *"The cropped image automatically expands to fill the
+screen"* — and iMovie's split-screen page (*"cropped versions of both clips
+appear in the viewer"*). The in-place reading is still expressible by a caller
+(shrink the box by the kept fraction and offset `position_*`); "fill this box
+with the cropped picture" was not expressible at all before.
+
+**What changed, concretely.** `composite_layer_onto` takes the crop's SUB-IMAGE
+and resizes that into the box (the sampled fast path maps `dest_size` onto the
+crop's extent instead of masking taps against it, and its ratio-≥-1 guard is now
+against the crop's size). Two side effects fall out and are both improvements:
+the crop edge is hard, exactly as ffmpeg's `crop` makes it, instead of feathered;
+and the path does strictly less work — no full-layer clone, no per-pixel alpha
+pass. `corner_radius` is fixed for free, since the box it rounds is now the
+visible one. `rotation` now pivots about the crop's centre, which is what the
+export does.
+
+**And a second, never-filed divergence on the same line — B-223.**
+`effective_size`'s height for an axis with no `box_height` was `natural.1 *
+scale`, the UNCROPPED source's aspect. The exporter asks ffmpeg for `h='-2'`
+there, which computes the height from the resized width and the *input's* real
+aspect ratio. Those are the same number for an uncropped clip with no
+`box_width` — every clip in every project until now, which is why nothing had
+diverged — and different both for a cropped clip and for a clip with a
+`box_width` and no `box_height`. The height is now `width × cropped aspect
+ratio` in both engines.
+
+**Why this is safe for existing projects.** The new height rule reduces to the
+old one exactly (not approximately) at zero crop with no `box_width`, which is
+pinned by a property test over a grid of naturals and scales rather than one
+fixture; the sub-image resize is identical when the crop rect is the whole
+layer. Every saved project's clips are in that case.
+
+**Verification: a real cross-engine parity PAIR**, which is what B-218's own
+write-up named as the thing that would have caught it — `composite_layer_onto_
+agrees_with_the_exporter_on_the_crop_parity_rectangle` (Rust) and `'B-218 —
+crop-then-scale parity with the live-preview compositor'` (`timelineExport.
+ffmpeg.test.ts`, **real ffmpeg**), the same shape D-338's pair already uses:
+one transform cropped on all four edges, scaled, and placed off-centre, and one
+hard-coded rectangle written down independently of either formula. Both pass;
+the pre-fix compositor fails every corner assertion in the Rust half. Plus
+353/353 `cargo test -p apelles --lib` and the `@apelles/editor` suite.
+
+**The GUI half.** `resolvedBoxSize` (the one rule `TransformOverlay`'s drawn box
+and `canvasPick`'s hit rect share, D-204/B-085) takes the four insets and
+mirrors `effective_size`, and `resolveClipBoxTransform` resolves them — a
+cropped clip's box was previously drawn and hit-tested at the wrong size, which
+was correct before this change and would have been wrong after it.
+
+## D-347 — changing a Motion manifest's canvas MOVES the layers with it (`reflow`, the missing half of D-345)
+
+**decided (2026-09-18)** · touches `packages/motion/src/manifestReflow.ts`
+(new), `manifestEdit.ts`, `motionOps.ts`, `InspectorPanel.tsx`, `mcp/server.py`,
+`crates/apelles-mcp/src/tools/motion.rs`
+
+**Context.** D-345 shipped `motion_set_project_settings` so `width`/`height`/
+`fps`/`title` stopped being reachable only by hand-editing the raw JSON (B-222).
+It writes those fields and nothing else — correct for what it says, and a
+footgun for what a caller means. A layer's `x`/`y`/`size` are RAW WORLD PIXELS
+with no design-space normalisation anywhere between the manifest and the DOM
+(D-342 established exactly this while rejecting "just double the manifest to get
+4K"), so changing the canvas alone leaves every layer at its old coordinates in
+a differently-shaped frame: the composition in one corner, dead space around it.
+D-342 recorded that as a reason not to resize a manifest; it is better treated
+as a missing operation.
+
+The trigger was this session's own work: moving nine `c040-*` scenes from a full
+16:9 frame into the 70%-wide right panel of a split screen (D-348). Without a
+reflow that is ~180 hand-computed per-layer writes, and — the reason it matters
+beyond one video — it has to be redone from scratch the next time the split
+ratio, or the panel, or the target frame changes.
+
+**Options.**
+1. **Hand-place every layer for this one panel shape.** Rejected by the owner
+   for exactly that reason: the layout is then non-reusable by construction.
+2. **A scene-level "content area" primitives address in fractions** — a real
+   normalised design space. Rejected as over-engineering *for this*: it is a
+   coordinate-system change across every primitive, the Inspector, the canvas
+   overlay and the schema, and it still would not re-flow text across a change
+   of aspect ratio, which is the actual hard part.
+3. **A proportional reflow, driven off the registries that already exist.**
+   Chosen.
+
+**Why 3 is small rather than a new abstraction.** `propCatalog.ts`'s
+`positionFields(use)` / `sizeFields(use)` are already this package's single
+source of truth for "which manifest key does a canvas drag or resize handle
+write for this primitive" — the visual builder (D-155/D-156/D-157) reads exactly
+these. The reflow reads them too, so it is a rule *over an existing registry*,
+not a second description of the same thing, and a primitive added later reflows
+correctly the moment it is registered there. Only a short explicit table of
+fields those two deliberately do not name (`text.size`, `matrix.gap`,
+`graph.nodeR`, `layers.gap`, `claudechat.radius`) is added on top, alongside the
+three nested cases (`graph.nodes[]`, `plot.annotate[].dx/dy`,
+`transform.keys[].x/y`).
+
+**The rules.** x-positions and widths by `newW/oldW`; y-positions and heights by
+`newH/oldH`; anything that cannot stretch per axis without distorting — a font
+size, a node radius, a square matrix cell, a `deviceframe`'s unitless multiplier
+— by `min` of the two, the factor that fits in both directions. A positive
+extent never rounds below 1; a zero or negative value (a `transform` key's
+`y: -60` is a 60-px lift) rounds freely, which is a real bug this found in its
+own first draft.
+
+**What it deliberately does not do, stated in the tool's own description
+because a caller will hit it:** it is a proportional remap, not a layout engine,
+and it does not know that text wraps. Across a change of ASPECT RATIO it lands
+the composition in the right places at the right relative sizes and can still
+leave a caption that was one line sitting on three. Timing, content (a `plot`'s
+`values`/`baseline`, an edge's `weight`, `rows`/`cols`, any `seed`) and
+`scene3d` children (3D world units, not canvas pixels) are untouched, and
+skipped 3D scenes are named in the reply rather than silently left behind.
+
+**Default ON, in both interfaces**, which is the opposite of how a new option
+usually arrives. Resizing a canvas and NOT moving the layers is the surprising
+outcome, and it is the footgun D-345 shipped; `reflow: false` keeps the raw
+behaviour for a caller whose layers are already authored for the new canvas.
+The GUI half is a toggle beside the Project form — not a field of
+`PROJECT_FIELDS`, because nothing persists it: it is what the next Width/Height
+commit should DO, not a property of the document.
+
+**Verified:** 12 unit tests over a fixture carrying one layer of every shape the
+reflow has a rule for plus the values it must not touch, including the identity
+property for a no-op resize and the "never collapses to zero" floor; the full
+`@apelles/motion` suite; both MCP surfaces with the parity corpus regenerated
+(177 tools, 262 cases) and `cargo test -p apelles-mcp` green.
+
+## D-348 — c040's composite becomes a two-panel split screen: speaker left, graphic right (supersedes D-342's corner PIP)
+
+**decided (2026-09-17, owner-directed)** · touches the
+`2026-09-12-c040-mgfx-recut` project document only · full geometry, derivations
+and reference trail: `docs/notes/c040-split-screen-layout.md`
+
+**Context.** D-342 put the Motion graphic full-frame with the camera as a
+keyframed bottom-right PIP. Its own entry recorded the cost and the owner
+accepted it then: **six of the nine scenes put caption content under that
+corner**, measured per scene as the rightmost text pixel against the PIP's
+`0.760` edge — worst `c040-lostmiddle` at 0.902, which visibly reads *"…in the
+middle of a"* and stops. A joint search over the whole bottom-right region found
+no clean shared slot at that size, so it is a layout problem, not a placement
+one.
+
+**Options.**
+1. **Shorten the six captions.** Rejected by the owner outright — the captions
+   are the script, and trimming them to fit a decoration is the wrong direction.
+2. **Move the PIP to the top-right**, which the original measurement pass
+   actually preferred (occlusion 0.000 on eight of nine scenes). Not revisited:
+   the owner had already chosen the bottom-right deliberately in D-342, and the
+   redesign request was for the wireframe below, not a re-litigation.
+3. **A two-panel split screen.** Chosen.
+
+**Choice: 3.** It removes the failure mode structurally rather than by tuning —
+the camera and the graphic occupy disjoint rectangles, so no caption can sit
+behind the camera at any position, at any scale, in any scene, and nothing has
+to be re-measured when a caption is later edited.
+
+**The geometry, and the parts of it that are our own call.** 3840×2160 canvas;
+outer margin 64, gutter 64, panel height 2032; left (speaker) panel 1144 wide —
+exactly 9:16, which is 30.8% of the content width and inside the owner's
+"~30%" — right (graphic) panel 2504 wide; 14 px corners. Every edge was
+verified through real ffmpeg with the exact expressions the exporter emits, not
+computed and trusted.
+
+Three of those numbers have no external authority and are recorded as ours,
+because the research found that **no vendor publishes them**: Zoom documents a
+draggable divider and states no default ratio, Loom has no side-by-side layout
+at all, and Screen Studio / Descript / Camtasia expose padding and roundness
+controls with no published values. The two numbers that ARE sourced: **EBU R 95**'s
+5% graphics-safe inset sets the graphic panel's own internal padding (64
+authoring px puts its content on x = 3648 = 0.95 × 3840, to the pixel), and
+**Final Cut Pro's Smart Conform** — a 16:9→vertical reframe is face-aware with a
+position nudge, never a letterbox — is why the camera's crop is centred on
+x = 0.535 (the speaker's measured head centre across six sampled frames) rather
+than on the frame's midpoint.
+
+**The camera is `scale` + `crop_*`, not `box_width`/`box_height`, and that is
+forced** — the same shape of constraint D-342 hit from the other side.
+`editor_set_clip_keyframes` cannot animate `box_*`, and the camera has to
+animate between full frame and the column. It can animate `scale`, the four
+crops, the two positions and `corner_radius`, which is exactly enough once the
+box's height follows the CROPPED aspect ratio — which it did not until
+**D-346**. The graphic, which never animates, uses `box_width`/`box_height`
+(canvas fractions with no unit divergence) and is rendered at exactly the box's
+size so it is placed 1:1 with no resampling.
+
+**The graphic is re-authored, not cropped.** The owner's explicit instruction
+was that the nine scenes be laid out for the right panel's real shape rather
+than scaled or cropped into it with dead space around them. The Motion canvas
+therefore becomes 1252×1016 (× `Config.setScale(2)` = the panel exactly), and
+the layout is carried across by **D-347**'s reflow — which is what keeps this
+reusable: the next change of split ratio is a parameter, not a nine-scene
+re-author.
+
+**Status: the engine half is done and committed; the content half is not.** It
+is blocked on `motion_set_project_settings` (D-345, shipped 2026-09-17) not
+being present in the tool list the running MCP server process advertises — a
+restart exposes it. A direct manifest file write was deliberately NOT used:
+that is the practice B-222 was filed against, and this project's own entry there
+records a previous agent correctly stopping at the same wall. The remaining
+steps, the already-computed reflow output, and the three scenes that need real
+re-composition rather than a nudge are enumerated in the note.

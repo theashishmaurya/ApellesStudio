@@ -385,10 +385,25 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   // override read here is the EFFECTIVE one (an override is itself
   // keyframeable on top of its static value), for the same reason the
   // position/scale above are.
+  // B-218 — a CROP also changes the rest box (the compositor resizes the
+  // crop's sub-image into it, so the box carries the cropped aspect ratio), so
+  // a cropped clip needs a resolved rest size even with no box override.
+  const crop = {
+    left: effective.crop_left,
+    top: effective.crop_top,
+    right: effective.crop_right,
+    bottom: effective.crop_bottom,
+  };
+  const cropped = crop.left !== 0 || crop.top !== 0 || crop.right !== 0 || crop.bottom !== 0;
   const restSize =
-    effective.box_width === null && effective.box_height === null
+    effective.box_width === null && effective.box_height === null && !cropped
       ? null
-      : resolvedBoxSize(natural, committedScale, { width: effective.box_width, height: effective.box_height });
+      : resolvedBoxSize(
+          natural,
+          committedScale,
+          { width: effective.box_width, height: effective.box_height },
+          crop,
+        );
 
   return (
     <div className="absolute inset-0 pointer-events-none z-30" data-transform-overlay>
