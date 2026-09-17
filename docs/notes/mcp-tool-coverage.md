@@ -207,6 +207,19 @@ inclusion, no longer a silent video).
 > > | `editor_detect_retakes_status` | Poll a started retake grouping. |
 > > | `editor_ripple_delete_ranges` | The apply half: cut N timeline ranges and close every gap, as **one undo entry**. |
 > >
+> > **`clip` is OPTIONAL on all four of the detectors (D-343, fixes B-216) —
+> > omit it and you sweep the whole track in ONE call.** Do that for any
+> > cleanup pass. Asking one clip at a time is how a 75-clip timeline ends up
+> > with whole stretches nobody ever checked, which is a real defect this
+> > project shipped: several genuine retakes and one 5-10s silence survived to
+> > a final cut that way, with the detector itself working correctly the whole
+> > time. A sweep is one bridge round trip however many clips it covers;
+> > calling the tool per clip is one round trip each, served strictly in
+> > sequence by `control.rs`'s single-threaded request loop. A sweep answers in
+> > an aggregate shape — `flagged` (the clips with something to decide about,
+> > in full), `clean` (bare indices), `running`/`transcribing`/`notStarted`/
+> > `failed`/`skipped`, and `totals`. Act on `flagged`.
+> >
 > > **The two detectors are not alternatives and do not overlap** — one is
 > > acoustic and one is textual. Silence detection deliberately does NOT use
 > > transcript word-gaps: that would make a purely acoustic question wait on a

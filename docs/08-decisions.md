@@ -33699,3 +33699,95 @@ grow starts 3 frames before its window ends (the nudge above), and `payoff`'s
 grow is pulled *inside* its window (`[w1-12, w1]` rather than `[w1, w1+12]`)
 because only 6 frames of timeline remain after it — otherwise the video would
 end on a shrunken camera floating on black.
+
+## D-343 — `clip` becomes OPTIONAL on both recut detectors, so "sweep this whole track" is the existing tool with one argument left out (fixes B-216)
+
+**Context.** B-216: `editor_detect_retakes` / `editor_detect_silences` both
+required a caller to name one `track`/`clip` per call, and `RecutPanel.tsx`
+literally instructed a human to "Select **one** clip." On a real ~75-clip
+timeline that means a cleanup pass covers whichever clip a bug report points at
+and stops there — nothing forces, or even reminds, anyone to re-sweep the rest
+after later edits reshape the cut. Several genuine retakes and one 5-10s
+silence survived to a final cut exactly that way.
+
+**The detector is not at fault, and that is the whole point.** B-216's own
+investigation ran the flagged pair through the real `similarity()`/
+`containment()` code: it scores **0.8413**, above the 0.82 default. It would
+have been caught if anything had ever pointed the tool at that clip. The defect
+is in the tool SURFACE, so the fix belongs there and `retake.rs` is untouched.
+
+**Why a client-side loop is not the fix.** `app/src-tauri/src/chroma/control.rs`'s
+`serve()` is a single-threaded, one-request-at-a-time HTTP loop — `for mut req in
+server.incoming_requests()`, with no per-request thread or task spawn. Every
+`editor_*` call goes through it. Seventy-five calls from a client therefore
+queue at that loop and are served strictly in sequence however "concurrently"
+the caller issues them, paying the full bridge round trip seventy-five times —
+while the per-clip work behind each one is cheap (a transcript cached per
+FILE plus string similarity; a short VAD pass). **The round trips are the cost,
+not the compute**, so the sweep has to be a native loop inside ONE dispatch.
+
+**Options.**
+1. `editor_detect_retakes_all` + `editor_detect_silences_all` — two new tools
+   mirroring the existing shapes 1:1.
+2. One `editor_sweep_timeline` returning both kinds of finding, halving the
+   round trips again for a caller that wants both.
+3. **Make `clip` optional on the four EXISTING tools** (both detectors and both
+   `_status` twins). Omitting it sweeps every analysable clip on `track`.
+
+**Choice: 3.** The others both grow the tool surface for a capability that is
+not a different question — "where is the dead air on this track" is the same
+question as "where is the dead air in this clip", asked of more material. An
+agent that already knows `editor_detect_retakes` gets the sweep by leaving an
+argument out; with option 1 it has to *discover a second tool name* first,
+which is the same discoverability failure B-216 is made of, one level up. Option
+2 additionally makes the response shape carry two unrelated finding types and
+forces a caller that wants only silences to pay for a transcript. The change is
+also safely additive: omitting `clip` was a plain error before this
+(`resolveClip` reported `no clip NaN on track 0`), so no existing call changes
+meaning — pinned by a regression block in `recutSweep.dom.test.tsx`.
+
+**The response shape is a real decision, not a detail.** A sweep's normal
+answer is mostly *nothing*: an empty finding list is a healthy clip, which is
+the convention the single-clip tools already keep. So a sweep reports **full
+detail only for the clips that flagged** (`flagged`), collapses every clean
+clip to a bare index (`clean`), and buckets the rest as `running` /
+`transcribing` / `notStarted` / `failed` / `skipped` with `totals` over all of
+it. On a 75-clip track that is the difference between a response a caller acts
+on and 75 sub-reports to scan for the three that matter. `state` keeps D-321's
+same three values in the same first field, so an agent reads it first either
+way. One more rule, in `sweepNote`: "no silences anywhere on this track" is a
+CLAIM and is only made once every analysable clip has actually answered —
+a confident all-clear over material nobody looked at is the failure mode this
+whole entry exists to remove.
+
+**Nothing is cut**, unchanged. Both forms propose; `editor_ripple_delete_ranges`
+still decides. (Note for whoever cuts a large swept batch: **B-197 is still
+open** — `ripple_delete_ranges` can silently drop ranges from a large batch.
+Orthogonal to this entry, but a sweep makes large batches easier to produce, so
+verify a big cut's result against its own frame arithmetic.)
+
+**Both interfaces, per CLAUDE.md.** `RecutPanel.tsx` gains the same capability
+on ONE control rather than a second pair of buttons — a "This clip / Whole
+track" scope toggle, mirroring the MCP side's "existing tool, one fewer
+argument" shape. With nothing selected and exactly one video track there is no
+ambiguity about which track a scan means, so the panel offers it instead of
+refusing; the old "select one clip" refusal is kept only for the genuinely
+ambiguous multi-video-track case. Both interfaces decide what is analysable
+through the same `sweepTargets`, so they cannot disagree about what a sweep
+covered, and a scan started from one selected clip still cuts everything it
+found as one op and one undo.
+
+**Verification — a COUNTER, not a stopwatch**, per
+`docs/notes/performance-instrumentation.md` (§4, and its standing rule that a
+number taken on a contended machine is a ratio at best). `recutSweep.dom.test
+.tsx` drives the real op registry through the real `chroma://request` path and
+counts dispatches: **20 clips sweep in exactly ONE dispatch; the same 20 clips
+named one at a time cost 20.** Wall-clock alongside it, at load average 1.80 on
+a 10-core box: **88 ms for the 20-clip sweep vs 1066 ms for the 20 per-clip
+calls** — and that is jsdom, where a "round trip" is a microtask and the HTTP,
+serialization and single-threaded-queue costs are all zero, so it is a floor on
+the real gap, not an estimate of it. Also pinned: one transcription per SOURCE
+FILE rather than per clip, and clips asking an identical question collapsing to
+one detection. 13 pure cases in `recutSweep.test.ts`, 14 op-level cases
+(5 of them the single-clip regression guarantee), 5 new GUI cases. Parity
+corpus regenerated (176 tools, 260 cases) and `cargo test -p apelles-mcp` green.
