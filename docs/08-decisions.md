@@ -33613,3 +33613,89 @@ both branches, and that a malformed `dy` cannot produce a non-finite `y`. Full
 `@apelles/motion` suite green (727 tests), `tsc --noEmit` clean in both
 packages. Applied live to `c040-lostmiddle` at `dy: -72`: the callout now clears
 the curve with real daylight around it.
+
+## D-342 — the c040 Motion/camera composite inverts: graphic full-frame, camera a keyframed corner PIP — and the graphics render at native 4K via Remotion's scale factor, not a bigger manifest
+
+**decided (2026-09-17)** · owner-directed · touches
+`packages/motion-engine/remotion.config.ts` and the
+`2026-09-12-c040-mgfx` project document (no other app code)
+
+**Context.** D-333 placed the nine `c040-*` Motion scenes full-frame as a
+disclosed workaround for B-201; D-338's follow-through then brought them down
+to a real `0.35 x 0.35` inset card on the top track, over full-frame camera
+footage. The owner reversed that framing outright: the *graphic* should own the
+whole screen while it is up, and the *camera* should shrink into a small
+picture-in-picture for exactly that window, animating in and out rather than
+cutting. Two things had to be true that were not: the graphics had to be real
+4K (composited full-frame on a 3840x2160 canvas they were being upscaled 2x
+from 1080p), and the PIP had to be a real animation.
+
+**The 4K half — options.**
+
+1. **Set the manifest's top-level `width`/`height` to 3840x2160.** Rejected,
+   and this is the one worth recording because it is the obvious move and it is
+   wrong. A layer's `x`/`y`/`size` are raw CSS pixels in world coordinates
+   (`primitives/TextLine.tsx`: "px, world coords" — `left: x`, `top: y`,
+   `fontSize: size`), and `engine/build.ts`'s `metadataFromManifest` hands the
+   manifest's dimensions to the `Animation` composition verbatim. There is no
+   design-space normalisation anywhere between them. Doubling the manifest
+   would therefore not produce a 4K graphic — it would leave every layer at its
+   1080p pixel coordinates in the top-left quadrant of a 4K frame, at half the
+   relative size, i.e. a broken render that still reports the right resolution.
+2. **Rescale every layer's coordinates alongside the manifest.** Rejected:
+   hundreds of hand-authored numbers across nine scenes, and it would break the
+   Motion tab's own authoring space, which every primitive and the Inspector
+   assume is ~1080.
+3. **`Config.setScale(2)` in `remotion.config.ts`.** Chosen. Remotion's scale
+   factor raises the headless browser's `deviceScaleFactor`, so text, SVG and
+   CSS rasterise *natively* at the output resolution while the authored layout
+   is untouched — the framework's own canonical answer to exactly this question,
+   and a config file that already carries three other render-policy settings.
+
+**Why global rather than a per-manifest `renderScale`.** Every composition in
+this engine is authored at 1920x1080 and the app's Edit canvas is 3840x2160, so
+"render at 2x the authored size" is a coherent project-level policy, not a
+per-document choice. A real per-manifest field (schema ->
+`useMotionManifest.render()` -> `apelles-motion`'s `RenderRequest`, the same
+route `frame_range` already takes) is the shape to reach for if a project ever
+needs its own value; nothing needs it today. Verified by `ffprobe`: all nine
+scenes re-rendered 3840x2160 with frame counts unchanged, so no Edit clip's
+length moved.
+
+**The composite half.** Track order swapped (`editor_move_track(1, 0)`) so the
+camera's video track is index 0 and paints on top of the Motion track — D-086's
+"index 0 paints last" is the whole mechanism. The nine overlay clips go to
+`box_width`/`box_height` `1.0` at `position 0,0`; D-338's top-left convention
+means that needs no further adjustment in either engine.
+
+**The PIP is `scale`, not `box_*`, and that is forced.** `editor_set_clip_keyframes`
+animates only `opacity`/`position_x`/`position_y`/`scale`/`rotation`/`crop_*`/
+`volume`/`pan` — `box_width`/`box_height` are not keyframeable. That is fine
+here and not a compromise: the camera source is 3840x2160, the same 16:9 as the
+canvas, so `scale` alone yields an exactly proportional box.
+
+**Placement, chosen by measurement rather than by eye.** Each scene's render was
+sampled at 16 frames across its full duration and reduced to a union
+"content" mask (so a layer's entry-animation travel path counts as occupied,
+not just its resting position); candidate PIP rectangles were then scored by
+how much scene content they would cover. The owner reviewed a live frame from
+the `c040-hook` window and pinned that exact placement as the standard, so the
+final value is one slot for all nine windows: **`scale 0.22` at
+`position (0.76, 0.025)`** — measured occlusion 0.000 on eight scenes and 0.0075
+on `c040-hook` (antialiasing halo, not glyphs). No scene needed an exception.
+
+**Motion.** Each window gets a 12-frame (0.5 s at this timeline's 24 fps)
+shrink ending as the graphic starts and a 12-frame grow beginning as it ends,
+both `ease-in-out` (`0.42, 0, 0.58, 1`) on all three animated properties —
+D-232's point that unequal-rate linear segments are what make a generated move
+read as generated. Keyframes are per clip on the clip's own source-frame
+numbering, so a window spanning several camera cuts gets its ramp on whichever
+clip actually contains it; two ramps that straddled a cut were nudged 2-3
+frames to sit inside one clip rather than being split. 54 of 75 camera clips
+carry the PIP (18 keyframed ramps, 36 static holds); 21 stay full-frame.
+
+**Two deliberate asymmetries**, both verified rather than accidental: `thefix`'s
+grow starts 3 frames before its window ends (the nudge above), and `payoff`'s
+grow is pulled *inside* its window (`[w1-12, w1]` rather than `[w1, w1+12]`)
+because only 6 frames of timeline remain after it — otherwise the video would
+end on a shrunken camera floating on black.

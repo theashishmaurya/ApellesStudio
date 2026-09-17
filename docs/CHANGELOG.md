@@ -4,6 +4,16 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **D-342: the `c040` composite inverts — Motion graphic full-frame,
+  camera a keyframed corner PIP.** Reverses D-333/D-338's inset-card framing on owner
+  direction. All nine scenes re-rendered at native 3840x2160 via `Config.setScale(2)`
+  (Remotion's scale factor) rather than a bigger manifest — the manifest route would
+  have produced a broken layout, since layer `x`/`y`/`size` are raw 1080-space CSS
+  pixels with no design-space normalisation. Camera track moved to index 0 to paint
+  over the graphic; 54 of 75 camera clips carry the PIP (18 keyframed 12-frame
+  ease-in-out ramps, 36 static holds) at one owner-pinned value, `scale 0.22` at
+  `(0.76, 0.025)`, measured clear of every scene's content.
+
 - **2026-09-17** — **B-216 filed: retake/silence detection has no "sweep the whole
   timeline" mode.** Root-caused why several real retakes and a 5-10s silence
   survived to the final `2026-09-12-c040` cut, from 10 owner-placed markers.
