@@ -1,15 +1,27 @@
 /**
  * @apelles/editor — the Edit tab's RECUT library (D-318).
  *
- * **What it is.** The human half of silence + retake detection: pick a clip,
- * run a detector, see what it found, tick the ones you agree with, cut them.
- * The GUI counterpart of `editor_detect_silences` / `editor_detect_retakes` /
- * `editor_ripple_delete_ranges`, and deliberately not a re-implementation of
- * any of them — both interfaces call the same two Tauri commands, convert
- * through the same `recut.ts` helpers, and cut with the same
- * `ripple_delete_ranges` store op. One detector, one rounding rule, one undo
- * entry, whichever asked (CLAUDE.md: every feature is built for a human AND an
- * AI).
+ * **What it is.** The human half of silence + retake detection: pick what to
+ * scan, run a detector, see what it found, tick the ones you agree with, cut
+ * them. The GUI counterpart of `editor_detect_silences` /
+ * `editor_detect_retakes` / `editor_ripple_delete_ranges`, and deliberately
+ * not a re-implementation of any of them — both interfaces call the same two
+ * Tauri commands, convert through the same `recut.ts` helpers, decide what is
+ * scannable with the same `recutSweep.ts` `sweepTargets`, and cut with the
+ * same `ripple_delete_ranges` store op. One detector, one rounding rule, one
+ * undo entry, whichever asked (CLAUDE.md: every feature is built for a human
+ * AND an AI).
+ *
+ * **Scope: this clip, or the whole track (D-342, fixes B-216).** The panel used
+ * to say "Select **one** clip" and mean it, which is the human half of the same
+ * hole the MCP tools had: on a 75-clip timeline a cleanup pass covers the clip
+ * you are looking at and never re-sweeps the rest, and real retakes survive to
+ * a final cut that way. The two detector buttons now run over either the
+ * selected clip or every analysable clip on its track, chosen on one control —
+ * not a second pair of buttons, for the same reason the MCP side made `clip`
+ * optional on the existing tools instead of adding `*_all` twins. With nothing
+ * selected and exactly one video track there is no ambiguity about WHICH
+ * track, so the panel offers the sweep rather than refusing.
  *
  * **Nothing is cut until you say so, and that is the whole design.** Detection
  * only ever *proposes*. Every candidate arrives unticked; the Cut button is
@@ -33,7 +45,7 @@
  * VAD is right; that is the Rust crate's own 33 tests and its live model check.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ScissorsIcon, SpinnerIcon, WaveformIcon, RepeatIcon } from '@phosphor-icons/react';
 import { Button } from '@apelles/ui';
 
@@ -44,6 +56,7 @@ import {
   spanToFrames,
   type DetectedSpan,
 } from './recut';
+import { sweepTargets } from './recutSweep';
 import { timelineFps, type Clip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import {
@@ -61,6 +74,11 @@ interface Candidate {
   id: string;
   kind: 'silence' | 'retake';
   span: DetectedSpan;
+  /** Which clip on the scanned track this came from. Always present — a
+   *  whole-track scan needs it to label the row, and a single-clip scan gets
+   *  it for free. */
+  clip: number;
+  clipName: string;
   /** Present for retakes: the words, so a human can see what they are cutting. */
   text?: string;
   /** Retakes only: this take is the group's suggested keeper. */
@@ -89,18 +107,34 @@ function stamp(secs: number): string {
  *
  *  `key` is `null` for a retake whose transcript has not landed yet — there is
  *  nothing to key a detection on until there are words. */
-interface PendingJob {
-  kind: 'silence' | 'retake';
+interface PendingClip {
+  /** The clip's index on the scanned track — what a cut is addressed by. */
+  index: number;
   /** The clip AS IT WAS when the run started: the detection describes that
    *  exact source range, so the frames must be derived from that snapshot and
    *  not from whatever is selected by the time the answer arrives. */
   clip: Clip;
-  fps: number;
   source: string;
   startSecs: number;
   durationSecs: number;
-  minSilenceMs: number;
   key: string | null;
+  /** Set when this one clip failed (a transcript that errored) — the rest of
+   *  the scan carries on, which is the point of a whole-track scan. */
+  failure?: string;
+}
+
+/** One run of one detector, over one clip or over a whole track (D-342).
+ *
+ *  A whole-track scan is N detections, not one — but it is ONE run from the
+ *  user's point of view, so it lives in one pending record with one spinner
+ *  and produces one candidate list. The per-clip snapshots are what let a
+ *  result arriving late still be converted against the clip it described. */
+interface PendingJob {
+  kind: 'silence' | 'retake';
+  track: number;
+  fps: number;
+  minSilenceMs: number;
+  clips: PendingClip[];
 }
 
 export function RecutPanel() {
@@ -114,6 +148,15 @@ export function RecutPanel() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [ticked, setTicked] = useState<Record<string, boolean>>({});
   const [minSilenceMs, setMinSilenceMs] = useState(DEFAULT_MIN_SILENCE_MS);
+  /** D-342 — what the next run covers. Defaults to the selected clip: a scan
+   *  is cheap but not free, and "the thing I am looking at" is what a click on
+   *  a selected clip means. `track` is one click away and is what a cleanup
+   *  pass wants. */
+  const [scope, setScope] = useState<'clip' | 'track'>('clip');
+  /** The track the CURRENT candidate list came from, kept separately from the
+   *  selection: a cut must go to the track that was scanned, not to whatever
+   *  the user clicked on while reading the results. */
+  const [resultTrack, setResultTrack] = useState<number | null>(null);
 
   // Subscribed as whole maps rather than through a key-dependent selector: the
   // key only exists once a run has started, and a map's identity changes
@@ -131,9 +174,32 @@ export function RecutPanel() {
   // Phase-1 multi-select fallback, the same one every single-clip consumer in
   // this package uses (docs/notes/multi-select.md).
   const primary = selection.length === 1 ? selection[0] : null;
-  const track = primary?.track ?? -1;
-  const clip = primary && timeline ? timeline.tracks[track]?.clips.find((c) => c.id === primary.id) : undefined;
-  const analysable = Boolean(clip?.source_path);
+  const selectedClip =
+    primary && timeline
+      ? timeline.tracks[primary.track]?.clips.find((c) => c.id === primary.id)
+      : undefined;
+  const analysable = Boolean(selectedClip?.source_path);
+
+  /** The one video track a whole-track scan would run over when nothing is
+   *  selected. `null` when that is genuinely ambiguous (two or more video
+   *  tracks), which is the only case still worth asking the user to pick. */
+  const loneVideoTrack = useMemo(() => {
+    if (!timeline) return null;
+    const video = timeline.tracks
+      .map((t, i) => ({ t, i }))
+      .filter(({ t }) => t.kind === 'video');
+    return video.length === 1 ? video[0].i : null;
+  }, [timeline]);
+
+  /** Which track the next run covers, and in which scope. `scope` is only
+   *  honoured when there is a selected clip to honour it with — with nothing
+   *  selected the only thing a scan CAN mean is the whole track. */
+  const effectiveScope: 'clip' | 'track' = primary && analysable ? scope : 'track';
+  const track = primary ? primary.track : loneVideoTrack;
+  const canScan =
+    timeline !== null &&
+    track !== null &&
+    (effectiveScope === 'track' ? true : analysable);
 
   const reset = () => {
     setCandidates([]);
@@ -141,22 +207,43 @@ export function RecutPanel() {
     setError(null);
     setNotice(null);
     setPending(null);
+    setResultTrack(null);
   };
 
-  /** The bit both buttons share: snapshot the clip and its source range. */
+  /** The bit both buttons share: work out which clips this run covers and
+   *  snapshot each one's source range.
+   *
+   *  `sweepTargets` is the SAME function the `editor_detect_*` sweep uses to
+   *  decide what is analysable, so the panel and the agent can never disagree
+   *  about which clips a whole-track scan covered. */
   const beginJob = (kind: PendingJob['kind']): PendingJob | null => {
-    if (!timeline || !clip?.source_path) return null;
+    if (!timeline || track === null) return null;
+    const tr = timeline.tracks[track];
+    if (!tr) return null;
     const fps = timelineFps(timeline);
-    const range = clipSourceRangeSecs(clip, fps);
+
+    const chosen =
+      effectiveScope === 'clip'
+        ? sweepTargets(tr).targets.filter((t) => t.c.id === primary?.id)
+        : sweepTargets(tr).targets;
+    if (chosen.length === 0) return null;
+
     return {
       kind,
-      clip,
+      track,
       fps,
-      source: clip.source_path,
-      startSecs: range.startSecs,
-      durationSecs: range.durationSecs,
       minSilenceMs,
-      key: null,
+      clips: chosen.map((t) => {
+        const range = clipSourceRangeSecs(t.c, fps);
+        return {
+          index: t.clip,
+          clip: t.c,
+          source: t.source,
+          startSecs: range.startSecs,
+          durationSecs: range.durationSecs,
+          key: null,
+        };
+      }),
     };
   };
 
@@ -164,121 +251,194 @@ export function RecutPanel() {
     reset();
     const job = beginJob('silence');
     if (!job) return;
-    const args: SilenceDetectionArgs = {
-      path: job.source,
-      startSecs: job.startSecs,
-      durationSecs: job.durationSecs,
-      minSilenceMs: job.minSilenceMs,
-    };
-    // `force` so the button always means "run it again", the way a human
-    // expects a button to. The cache is there for the agent's repeated tool
-    // calls, not to make a click do nothing.
-    useMediaUnderstandingStore.getState().startSilenceDetection(args, true);
-    setPending({ ...job, key: silenceKey(args) });
+    const store = useMediaUnderstandingStore.getState();
+    const clips = job.clips.map((c) => {
+      const args: SilenceDetectionArgs = {
+        path: c.source,
+        startSecs: c.startSecs,
+        durationSecs: c.durationSecs,
+        minSilenceMs: job.minSilenceMs,
+      };
+      // `force` so the button always means "run it again", the way a human
+      // expects a button to. The cache is there for the agent's repeated tool
+      // calls, not to make a click do nothing.
+      store.startSilenceDetection(args, true);
+      return { ...c, key: silenceKey(args) };
+    });
+    setPending({ ...job, clips });
   };
 
   const findRetakes = () => {
     reset();
     const job = beginJob('retake');
     if (!job) return;
-    const status = useMediaUnderstandingStore.getState().transcriptStatus(job.source);
-    if (status.phase === 'error') {
-      setError(status.error ?? 'transcription failed');
-      return;
+    const store = useMediaUnderstandingStore.getState();
+
+    // One transcript per SOURCE FILE, never one per clip — a whole-track scan
+    // of fifty clips cut from one recording costs one transcription. Same rule
+    // the `editor_detect_retakes` sweep follows (D-342) and the Transcript
+    // panel before it (D-329).
+    let waiting = 0;
+    for (const source of new Set(job.clips.map((c) => c.source))) {
+      const status = store.transcriptStatus(source);
+      if (status.phase === 'done') continue;
+      if (status.phase !== 'error') {
+        // Kick the transcript and WAIT for it here — the effect below picks the
+        // run back up the moment the words land. Before D-321 this told the user
+        // to come back and click again, which is a poll implemented by a human.
+        store.startTranscript(source, { wordTimestamps: true });
+      }
+      waiting += 1;
     }
-    if (status.phase !== 'done') {
-      // Kick the transcript and WAIT for it here — the effect below picks the
-      // run back up the moment the words land. Before D-321 this told the user
-      // to come back and click again, which is a poll implemented by a human.
-      useMediaUnderstandingStore.getState().startTranscript(job.source, { wordTimestamps: true });
-      setNotice('Transcribing this clip first — retakes need the words. This keeps running.');
+    if (waiting > 0) {
+      setNotice(
+        waiting === 1
+          ? 'Transcribing first — retakes need the words. This keeps running.'
+          : `Transcribing ${waiting} source files first — retakes need the words. This keeps running.`,
+      );
     }
     setPending(job);
   };
 
-  /** A retake job whose transcript has just landed: turn the words into a
-   *  detection. Runs again on every transcript-map change until it fires. */
+  /** A retake run whose transcripts are landing: turn each file's words into a
+   *  detection as it arrives. Runs again on every transcript-map change until
+   *  every clip has a key or a failure of its own. */
   useEffect(() => {
-    if (!pending || pending.kind !== 'retake' || pending.key !== null) return;
-    const transcript = transcripts[pending.source];
-    const failure = transcriptErrors[pending.source];
-    if (failure) {
-      setError(failure);
-      setPending(null);
-      return;
-    }
-    if (!transcript) return;
+    if (!pending || pending.kind !== 'retake') return;
+    if (pending.clips.every((c) => c.key !== null || c.failure)) return;
 
-    const end = pending.startSecs + pending.durationSecs;
-    const utterances = (transcript.segments ?? [])
-      .filter((s) => s.end > pending.startSecs && s.start < end)
-      .map((s) => ({ start: s.start, end: s.end, text: s.text }));
-    const args: RetakeDetectionArgs = {
-      path: pending.source,
-      startSecs: pending.startSecs,
-      durationSecs: pending.durationSecs,
-      utterances,
-    };
-    useMediaUnderstandingStore.getState().startRetakeDetection(args, true);
-    setNotice(null);
-    setPending({ ...pending, key: retakeKey(args) });
+    let changed = false;
+    const store = useMediaUnderstandingStore.getState();
+    const clips = pending.clips.map((c) => {
+      if (c.key !== null || c.failure) return c;
+      const failure = transcriptErrors[c.source];
+      if (failure) {
+        changed = true;
+        return { ...c, failure };
+      }
+      const transcript = transcripts[c.source];
+      if (!transcript) return c;
+
+      const end = c.startSecs + c.durationSecs;
+      const utterances = (transcript.segments ?? [])
+        .filter((s) => s.end > c.startSecs && s.start < end)
+        .map((s) => ({ start: s.start, end: s.end, text: s.text }));
+      const args: RetakeDetectionArgs = {
+        path: c.source,
+        startSecs: c.startSecs,
+        durationSecs: c.durationSecs,
+        utterances,
+      };
+      store.startRetakeDetection(args, true);
+      changed = true;
+      return { ...c, key: retakeKey(args) };
+    });
+
+    if (!changed) return;
+    if (clips.some((c) => c.key !== null)) setNotice(null);
+    setPending({ ...pending, clips });
   }, [pending, transcripts, transcriptErrors]);
 
-  /** A started detection that has reached a terminal state: build the rows. */
+  /** Every started detection has reached a terminal state: build the rows.
+   *
+   *  Deliberately all-or-nothing rather than streaming partial results in: a
+   *  half-filled list invites a human to tick and cut from it, and cutting
+   *  shifts every frame number the rest of the run is still computing
+   *  against. */
   useEffect(() => {
-    if (!pending?.key) return;
-    const key = pending.key;
-    const failure = pending.kind === 'silence' ? silenceErrors[key] : retakeErrors[key];
-    if (failure) {
-      setError(failure);
-      setPending(null);
-      return;
-    }
+    if (!pending) return;
+    const errors = pending.kind === 'silence' ? silenceErrors : retakeErrors;
+    const results: Record<string, { silences?: unknown; groups?: unknown }> =
+      pending.kind === 'silence' ? silences : retakes;
 
-    const { clip: snapshot, fps } = pending;
-    if (pending.kind === 'silence') {
-      const found = silences[key];
-      if (!found) return;
-      const rows: Candidate[] = found.silences
-        .map((s, i) => ({
-          id: `sil-${i}`,
-          kind: 'silence' as const,
-          span: spanToFrames(snapshot, s.start_secs, s.end_secs, fps),
-        }))
-        .filter((r) => r.span.endFrame > r.span.startFrame);
-      setCandidates(rows);
-      if (rows.length === 0) {
-        setNotice(`No silence of ${pending.minSilenceMs}ms or longer in this clip.`);
-      }
-      setPending(null);
-      return;
-    }
+    const settled = pending.clips.every(
+      (c) => c.failure || (c.key !== null && (results[c.key] || errors[c.key])),
+    );
+    if (!settled) return;
 
-    const found = retakes[key];
-    if (!found) return;
-    // One row per TAKE, not per member: since D-327 a delivery can span several
-    // utterances, and a row per member would offer half a delivery for cutting
-    // while marking the other half as the keeper.
+    const { fps } = pending;
     const rows: Candidate[] = [];
-    found.groups.forEach((g, gi) => {
-      const takes = groupTakes(g);
-      takes.forEach((t) => {
-        const span = spanToFrames(snapshot, t.startSecs, t.endSecs, fps);
-        if (span.endFrame <= span.startFrame) return;
-        rows.push({
-          id: `ret-${gi}-${t.index}`,
-          kind: 'retake',
-          span,
-          text: t.text,
-          suggestedKeep: t.suggestedKeep,
-          groupIndex: gi,
-          takeIndex: t.index,
-          takeCount: takes.length,
+    const failures: string[] = [];
+
+    for (const c of pending.clips) {
+      if (c.failure) {
+        failures.push(c.failure);
+        continue;
+      }
+      const key = c.key as string;
+      const failure = errors[key];
+      if (failure) {
+        failures.push(failure);
+        continue;
+      }
+
+      if (pending.kind === 'silence') {
+        const found = silences[key];
+        found.silences.forEach((s, i) => {
+          const span = spanToFrames(c.clip, s.start_secs, s.end_secs, fps);
+          if (span.endFrame <= span.startFrame) return;
+          rows.push({
+            id: `sil-${c.index}-${i}`,
+            kind: 'silence',
+            span,
+            clip: c.index,
+            clipName: c.clip.name,
+          });
+        });
+        continue;
+      }
+
+      // One row per TAKE, not per member: since D-327 a delivery can span
+      // several utterances, and a row per member would offer half a delivery
+      // for cutting while marking the other half as the keeper.
+      retakes[key].groups.forEach((g, gi) => {
+        const takes = groupTakes(g);
+        takes.forEach((t) => {
+          const span = spanToFrames(c.clip, t.startSecs, t.endSecs, fps);
+          if (span.endFrame <= span.startFrame) return;
+          rows.push({
+            id: `ret-${c.index}-${gi}-${t.index}`,
+            kind: 'retake',
+            span,
+            clip: c.index,
+            clipName: c.clip.name,
+            text: t.text,
+            suggestedKeep: t.suggestedKeep,
+            groupIndex: gi,
+            takeIndex: t.index,
+            takeCount: takes.length,
+          });
         });
       });
-    });
+    }
+
+    // A whole run that failed is an error; a run where SOME clips failed still
+    // has real answers in it, and burying them behind one red box would be the
+    // same "you only looked at part of it" failure this scan exists to fix.
+    if (failures.length === pending.clips.length) {
+      setError(failures[0] ?? 'detection failed');
+      setPending(null);
+      return;
+    }
+
+    // Sorted by where the cut lands, not by which clip answered first — the
+    // list reads along the timeline, which is how a human reviews it.
+    rows.sort((a, b) => a.span.startFrame - b.span.startFrame);
     setCandidates(rows);
-    if (rows.length === 0) setNotice('No retakes found in this clip.');
+    setResultTrack(pending.track);
+
+    const scanned = pending.clips.length - failures.length;
+    const where =
+      pending.clips.length === 1 ? 'this clip' : `${scanned} clips on this track`;
+    if (rows.length === 0) {
+      setNotice(
+        pending.kind === 'silence'
+          ? `No silence of ${pending.minSilenceMs}ms or longer in ${where}.`
+          : `No retakes found in ${where}.`,
+      );
+    } else if (failures.length > 0) {
+      setNotice(`${failures.length} clip(s) could not be analysed: ${failures[0]}`);
+    }
     setPending(null);
   }, [pending, silences, silenceErrors, retakes, retakeErrors]);
 
@@ -294,12 +454,15 @@ export function RecutPanel() {
   const chosen = candidates.filter((c) => ticked[c.id]);
 
   const cut = () => {
-    if (!timeline || chosen.length === 0 || track < 0) return;
+    // `resultTrack`, not the live selection: these candidates were measured
+    // against one track, and reading the results may well have moved the
+    // selection somewhere else.
+    if (!timeline || chosen.length === 0 || resultTrack === null) return;
     const ranges = chosen.map((c) => ({ startFrame: c.span.startFrame, endFrame: c.span.endFrame }));
     const before = timeline;
     applyOp({
       kind: 'ripple_delete_ranges',
-      track,
+      track: resultTrack,
       ranges: ranges.map((r) => ({ start: r.startFrame, end: r.endFrame })),
     });
     const after = useEditorTimelineStore.getState().timeline;
@@ -323,18 +486,48 @@ export function RecutPanel() {
           library mode shares, so switching to Recut reads as the same column
           changing what it holds. */}
       <div className="shrink-0 border-b border-border-color p-2">
-        {!primary && (
+        {!canScan && (
           <p className="text-[11px] leading-snug text-text-secondary">
-            Select one clip on the timeline to look for silences or retakes in it.
+            {primary
+              ? 'That clip is generated (a title or adjustment) — there is no audio to analyse. Choose Whole track to scan the rest of it.'
+              : 'Select a clip to scan it, or select nothing on a timeline with one video track to scan the whole track.'}
           </p>
         )}
-        {primary && !analysable && (
-          <p className="text-[11px] leading-snug text-text-secondary">
-            That clip is generated (a title or adjustment) — there is no audio to analyse.
-          </p>
-        )}
-        {primary && analysable && (
+        {canScan && (
           <div className="flex flex-col gap-2">
+            {/* D-342 — scope lives on ONE control rather than a second pair of
+                buttons, mirroring `clip` becoming optional on the MCP tools
+                rather than growing `*_all` twins. */}
+            <div
+              className="flex gap-1 rounded border border-border-color p-0.5"
+              role="radiogroup"
+              aria-label="What to scan"
+              data-chroma-recut-scope
+            >
+              {(['clip', 'track'] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  role="radio"
+                  aria-checked={effectiveScope === s}
+                  disabled={busy !== null || (s === 'clip' && !analysable)}
+                  data-chroma-recut-scope-option={s}
+                  onClick={() => setScope(s)}
+                  className={`flex-1 rounded px-1.5 py-1 text-[11px] disabled:opacity-40 ${
+                    effectiveScope === s
+                      ? 'bg-accent text-button-text'
+                      : 'text-text-secondary hover:bg-bg-primary'
+                  }`}
+                  title={
+                    s === 'clip'
+                      ? 'Scan only the selected clip'
+                      : 'Scan every clip on this track — what a cleanup pass wants, so nothing is left unchecked'
+                  }
+                >
+                  {s === 'clip' ? 'This clip' : 'Whole track'}
+                </button>
+              ))}
+            </div>
             <label className="flex items-center justify-between gap-2 text-[11px] text-text-secondary">
               <span>Min silence (ms)</span>
               <input
@@ -354,7 +547,11 @@ export function RecutPanel() {
                 disabled={busy !== null}
                 data-chroma-recut-find-silences
                 onClick={findSilences}
-                title="Find the stretches of this clip where nobody is speaking"
+                title={
+                  effectiveScope === 'clip'
+                    ? 'Find the stretches of this clip where nobody is speaking'
+                    : 'Find every stretch on this track where nobody is speaking'
+                }
               >
                 {busy === 'silence' ? (
                   <SpinnerIcon className="size-3.5 animate-spin" />
@@ -369,7 +566,11 @@ export function RecutPanel() {
                 disabled={busy !== null}
                 data-chroma-recut-find-retakes
                 onClick={findRetakes}
-                title="Group the places where this line was delivered more than once"
+                title={
+                  effectiveScope === 'clip'
+                    ? 'Group the places where this line was delivered more than once'
+                    : 'Group every line on this track that was delivered more than once'
+                }
               >
                 {busy === 'retake' ? (
                   <SpinnerIcon className="size-3.5 animate-spin" />
@@ -384,7 +585,7 @@ export function RecutPanel() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-2" data-chroma-recut-list>
-        {candidates.length === 0 && !notice && !error && primary && analysable && (
+        {candidates.length === 0 && !notice && !error && canScan && (
           <p className="text-[11px] leading-snug text-text-secondary">
             Nothing detected yet — run one of the two above.
           </p>
@@ -415,7 +616,13 @@ export function RecutPanel() {
                   {stamp(c.span.startSecs)}–{stamp(c.span.endSecs)}
                 </span>
               </span>
-              {c.text && <span className="mt-0.5 block truncate text-text-secondary">{c.text}</span>}
+              {/* Which clip this came from — a whole-track scan's rows are
+                  otherwise indistinguishable, and a reviewer needs to know
+                  where on the track they are about to cut. */}
+              <span className="mt-0.5 block truncate text-text-secondary">
+                <span className="tabular-nums opacity-70">#{c.clip}</span> {c.clipName}
+                {c.text && <span className="ml-1 opacity-100">· {c.text}</span>}
+              </span>
             </span>
           </label>
         ))}

@@ -108,16 +108,20 @@ async function click(el: Element | null): Promise<void> {
   await waitFrames(2);
 }
 
-async function mountPanel(selected: boolean): Promise<void> {
+async function mountPanel(
+  selected: boolean,
+  timeline: unknown = fixture(),
+  selectedId = 'a',
+): Promise<void> {
   actSync(() =>
     useEditorTimelineStore.setState({
-      timeline: fixture() as never,
+      timeline: timeline as never,
       openProjectKey: '/projects/recut.chroma',
       status: 'ready',
       error: null,
       playhead: 0,
       playing: false,
-      selection: selected ? [{ track: 0, id: 'a' }] : [],
+      selection: selected ? [{ track: 0, id: selectedId }] : [],
       selectedGap: null,
     }),
   );
@@ -148,10 +152,31 @@ afterEach(() => {
 });
 
 describe('RecutPanel (D-318)', () => {
-  it('1. asks for a selection before it will do anything', async () => {
+  /** **Changed deliberately by D-342 (fixes B-216).** This used to assert
+   *  "Select one clip" and a hidden detector — which was the human half of the
+   *  same hole: a panel that only ever scans the clip you are looking at is
+   *  how whole stretches of a 75-clip timeline go unchecked. With nothing
+   *  selected and exactly ONE video track there is no ambiguity about which
+   *  track a scan would mean, so the panel offers it in `track` scope instead
+   *  of refusing. The refusal is kept for the case that is genuinely
+   *  ambiguous, which the next test covers. */
+  it('1. with nothing selected and one video track, scans the WHOLE track rather than refusing', async () => {
     await mountPanel(false);
     expect(panel()).not.toBeNull();
-    expect(panel()!.textContent).toContain('Select one clip');
+    expect(q('[data-chroma-recut-find-silences]')).not.toBeNull();
+    expect(q('[data-chroma-recut-scope-option="track"]')?.getAttribute('aria-checked')).toBe('true');
+    // …and "this clip" is not offered, because there is no clip to mean.
+    expect(q('[data-chroma-recut-scope-option="clip"]')).toHaveProperty('disabled', true);
+  });
+
+  /** Two video tracks and no selection IS ambiguous — a scan would have to
+   *  guess which one, and guessing where to cut is not a thing this panel
+   *  does. */
+  it('1b. still asks for a selection when which track to scan is genuinely ambiguous', async () => {
+    const tl = fixture();
+    tl.tracks.push({ kind: 'video', clips: [], gain: 1, sync_locked: false });
+    await mountPanel(false, tl);
+    expect(panel()!.textContent).toContain('Select a clip');
     expect(q('[data-chroma-recut-find-silences]')).toBeNull();
   });
 
@@ -353,5 +378,110 @@ describe('RecutPanel (D-318)', () => {
 
     expect(useEditorTimelineStore.getState().timeline).toBe(before);
     expect(q('[data-chroma-recut-error]')!.textContent).toContain('locked');
+  });
+
+  /** D-342 (fixes B-216) — the human half of the whole-track sweep. The claim
+   *  worth testing is not that a loop runs, but that a scan the user started
+   *  from ONE selected clip covers the clips they did not select, labels which
+   *  clip each candidate came from, and cuts them all as one edit. */
+  describe('whole-track scope (D-342, fixes B-216)', () => {
+    /** Three back-to-back 5s clips off one source, the shape a first silence
+     *  pass leaves behind — the shape B-216 was found on.
+     *
+     *  The stub VAD answers with the SAME absolute source spans whatever range
+     *  it is handed (4.0-6.0s and 12.0-13.5s), and `spanToFrames` clamps each
+     *  to the clip it came from, so exactly one of the two lands inside each
+     *  of these three windows: clip 0 (0-5s) keeps 4-5, clip 1 (5-10s) keeps
+     *  5-6, clip 2 (10-15s) keeps 12-13.5. One candidate per clip, which is
+     *  what makes "did the clips I never selected get asked about?" readable
+     *  straight off the row count. */
+    function multiClip() {
+      const tl = fixture();
+      tl.tracks[0].clips = [0, 1, 2].map((i) => ({
+        id: `c${i}`,
+        name: `take ${i}`,
+        source_path: SOURCE,
+        source_start: i * 120,
+        duration: 120,
+        source_len: 360,
+        source_fps: 24,
+        start_frame: i * 120,
+      }));
+      return tl;
+    }
+
+    it('scans every clip on the track, not only the selected one', async () => {
+      await mountPanel(true, multiClip(), 'c0');
+      await click(q('[data-chroma-recut-scope-option="track"]'));
+      await click(q('[data-chroma-recut-find-silences]'));
+
+      // One candidate from each of the three clips — including the two the
+      // user never selected, which is the whole of B-216.
+      expect(rows()).toHaveLength(3);
+      expect(rows().map((r) => r.textContent!.match(/#(\d+)/)?.[1])).toEqual(['0', '1', '2']);
+    });
+
+    it('names the clip each candidate came from, so a reviewer knows where a cut lands', async () => {
+      await mountPanel(true, multiClip(), 'c0');
+      await click(q('[data-chroma-recut-scope-option="track"]'));
+      await click(q('[data-chroma-recut-find-silences]'));
+
+      expect(rows()[0].textContent).toContain('take 0');
+      expect(rows().at(-1)!.textContent).toContain('take 2');
+    });
+
+    it('still scans only the selected clip when the scope is left alone (the default is unchanged)', async () => {
+      await mountPanel(true, multiClip(), 'c1');
+      await click(q('[data-chroma-recut-find-silences]'));
+
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0].textContent).toContain('#1');
+    });
+
+    /** Cutting across several clips is still ONE op and therefore one undo —
+     *  the invariant test 5 pins for one clip, which a multi-clip scan must
+     *  not quietly break. */
+    it('cuts ranges from several clips as a single op, on the scanned track', async () => {
+      await mountPanel(true, multiClip(), 'c0');
+      await click(q('[data-chroma-recut-scope-option="track"]'));
+      await click(q('[data-chroma-recut-find-silences]'));
+
+      actSync(() => {
+        boxes()[0].click();
+        boxes()[2].click();
+      });
+      await waitFrames(2);
+
+      const before = useEditorTimelineStore.getState().timeline;
+      await click(q('[data-chroma-recut-cut]'));
+      const after = useEditorTimelineStore.getState().timeline;
+
+      expect(after).not.toBe(before);
+      expect(q('[data-chroma-recut-notice]')!.textContent).toContain('Cut 2 ranges');
+      expect(q('[data-chroma-recut-notice]')!.textContent).toContain('one undo');
+    });
+
+    /** A generated clip has no audio; it must be skipped rather than failing
+     *  the scan — the same `sweepTargets` rule the MCP sweep follows. */
+    it('skips a generated clip without failing the whole scan', async () => {
+      const tl = multiClip();
+      tl.tracks[0].clips.splice(1, 0, {
+        id: 'title',
+        name: 'Title',
+        source_path: null,
+        source_start: 0,
+        duration: 48,
+        source_len: 48,
+        start_frame: 360,
+      });
+      await mountPanel(true, tl, 'c0');
+      await click(q('[data-chroma-recut-scope-option="track"]'));
+      await click(q('[data-chroma-recut-find-silences]'));
+
+      // All three real clips answered; the title contributed nothing and broke
+      // nothing — and the indices skip over it rather than renumbering.
+      expect(rows().map((r) => r.textContent!.match(/#(\d+)/)?.[1])).toEqual(['0', '2', '3']);
+      expect(q('[data-chroma-recut-error]')).toBeNull();
+    });
   });
 });
