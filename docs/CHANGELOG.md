@@ -4,6 +4,22 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **B-217 filed: Vite/HMR silently duplicated a store instance,
+  wedging the Edit tab into one project's timeline under another's identity.**
+  After hours of continuous HMR, `Root.tsx`'s session-store bridge held a
+  different `useSessionStore` instance than the actual op handler read —
+  `open_project` reported success and Rust genuinely held `c040-mgfx`, but
+  `editor_get_state` reported `untitled:Untitled` while the Edit tab visibly
+  rendered the real timeline. Worked around with a full reload; not fixed —
+  stores have no guard against HMR re-instantiation.
+- **2026-09-17** — **B-218 filed: the live preview applies scale before crop**,
+  contradicting `editor_get_capabilities`' own documented crop-then-scale order
+  and its `full_width_half_height_recipe`. Measured: a `crop 0.35/0.35, scale
+  0.30` combination produces a `0.30×0.30` box, not the documented `0.30×full`
+  — crop is applied within the already-scaled box. Export's own order not yet
+  checked (never called `editor_export` to test it). Same shape of bug as
+  B-201: a missing preview/export parity test, not just a wrong doc.
+
 - **2026-09-17** — **D-342: the `c040` composite inverts — Motion graphic full-frame,
   camera a keyframed corner PIP.** Reverses D-333/D-338's inset-card framing on owner
   direction. All nine scenes re-rendered at native 3840x2160 via `Config.setScale(2)`
