@@ -100,9 +100,27 @@ describe('layerBoxFraction', () => {
   });
 
   it('honours an independent box_width/box_height override per axis (D-193)', () => {
-    const box = layerBoxFraction(clip('a', 0, 10, { scale: 0.5, box_width: 0.8 }), FULL_FRAME, 0);
-    expect(box.width).toBeCloseTo(0.8); // override wins on x
-    expect(box.height).toBeCloseTo(0.5); // scale still drives y
+    const box = layerBoxFraction(clip('a', 0, 10, { scale: 0.5, box_height: 0.5 }), FULL_FRAME, 0);
+    expect(box.width).toBeCloseTo(0.5); // scale still drives x
+    expect(box.height).toBeCloseTo(0.5); // override wins on y
+    // B-223 — a WIDTH override with no height keeps the box's own aspect
+    // ratio, the `scale=w=...:h=-2` the exporter compiles; it does not leave
+    // the other axis on `natural * scale`.
+    const wide = layerBoxFraction(clip('b', 0, 10, { scale: 0.5, box_width: 0.8 }), FULL_FRAME, 0);
+    expect(wide.width).toBeCloseTo(0.8);
+    expect(wide.height).toBeCloseTo(0.8);
+  });
+
+  // B-218 — the hit rect follows the CROPPED box, because that is the
+  // rectangle the compositor actually paints.
+  it('derives the hit rect height from the cropped aspect ratio (B-218)', () => {
+    const box = layerBoxFraction(
+      clip('a', 0, 10, { box_width: 0.3, crop_left: 0.35, crop_right: 0.35 }),
+      FULL_FRAME,
+      0,
+    );
+    expect(box.width).toBeCloseTo(0.3);
+    expect(box.height).toBeCloseTo(1.0); // 0.3 wide, kept fraction 0.3 -> 1:1 of the frame
   });
 
   // D-209/B-093 — the hit rect follows the ANIMATED transform, or a click on
@@ -231,8 +249,11 @@ describe('pickTopmostLayer', () => {
     // D-338 — under the top-left convention these are the same numbers the
     // exporter takes (`overlay=x='0*W'` and `overlay=x='0.5*W'`), which is
     // the whole point of B-201's fix.
-    const left = clip('left', 0, 10, { box_width: 0.5, position_x: 0 });
-    const right = clip('right', 0, 10, { box_width: 0.5, position_x: 0.5 });
+    // Both axes stated explicitly, which is what the half/half recipe in
+    // `capabilities.json` emits — and, since B-223, the only way to get a
+    // full-height box out of a half-width one in either engine.
+    const left = clip('left', 0, 10, { box_width: 0.5, box_height: 1, position_x: 0 });
+    const right = clip('right', 0, 10, { box_width: 0.5, box_height: 1, position_x: 0.5 });
     const candidates = [candidate(0, left, FULL_FRAME), candidate(1, right, FULL_FRAME)];
     expect(pickTopmostLayer({ x: 0.49999, y: 0.5 }, candidates)?.clip.id).toBe('left');
     expect(pickTopmostLayer({ x: 0.5, y: 0.5 }, candidates)?.clip.id).toBe('right');

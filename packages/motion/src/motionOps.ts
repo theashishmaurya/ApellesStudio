@@ -883,9 +883,16 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         return { error: `pass at least one of ${PROJECT_SETTINGS_KEYS.join(', ')}` };
       }
 
-      const result = setProjectSettings(manifest, patch);
+      // D-346 — `reflow` is not one of `PROJECT_SETTINGS_KEYS`: it is not a
+      // field of the document, it is what to DO to the document's layers when
+      // the canvas moves under them. Read separately for that reason, and
+      // `setProjectSettings` would reject it as an unknown project field.
+      const reflow = a?.reflow === true;
+      const result = setProjectSettings(manifest, patch, { reflow });
       if (!result.ok) return { error: result.error };
-      if (result.changed.length > 0) cur.commit(result.manifest, 'Project settings');
+      if (result.changed.length > 0) {
+        cur.commit(result.manifest, reflow ? 'Project settings + reflow' : 'Project settings');
+      }
 
       const next = result.manifest;
       return {
@@ -894,6 +901,15 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         height: next.height,
         fps: next.fps,
         changed: result.changed,
+        reflow: result.reflow
+          ? {
+              scaleX: result.reflow.factors.sx,
+              scaleY: result.reflow.factors.sy,
+              scaleUniform: result.reflow.factors.su,
+              layersMoved: result.reflow.layersMoved,
+              fieldsMoved: result.reflow.fieldsMoved,
+            }
+          : null,
         renders: renderStaleness(ctx, next, result.changed),
         ...(result.warnings.length > 0 ? { warning: result.warnings.join('; ') } : {}),
       };

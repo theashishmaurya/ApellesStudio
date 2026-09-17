@@ -3645,8 +3645,8 @@ impl ApellesMcp {
     `keyframes` REPLACES the clip's entire keyframe list — pass all of them
     every time, not just the one you're adding. Each entry is
     `{"frame": <source-frame-absolute int>, "params": {<subset of
-    opacity/position_x/position_y/scale/rotation/crop_left/crop_top/
-    crop_right/crop_bottom/volume/pan>: <number>}}`. Values are
+    opacity/position_x/position_y/scale/rotation/corner_radius/crop_left/
+    crop_top/crop_right/crop_bottom/volume/pan>: <number>}}`. Values are
     piecewise-linearly interpolated between keyframes, held constant before
     the first and after the last.
 
@@ -3687,8 +3687,8 @@ impl ApellesMcp {
     keyframe.
 
     `param` is one of opacity / position_x / position_y / scale / rotation /
-    crop_left / crop_top / crop_right / crop_bottom / volume / pan — the same
-    names `editor_set_clip_keyframes` writes.
+    corner_radius / crop_left / crop_top / crop_right / crop_bottom / volume /
+    pan — the same names `editor_set_clip_keyframes` writes.
 
     `frame` is a clip SOURCE-frame-absolute number and must be an EXISTING
     keyframe of that property; if it is not, this reports the frames that do

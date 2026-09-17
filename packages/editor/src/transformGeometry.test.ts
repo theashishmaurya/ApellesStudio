@@ -212,8 +212,32 @@ describe('resolvedBoxSize', () => {
   });
 
   it('lets an override win per axis, independently (D-193)', () => {
-    expect(resolvedBoxSize(natural, 2, { width: 0.8 })).toEqual({ width: 0.8, height: 0.5 });
+    // B-223 — a `box_width` with no `box_height` keeps the box's own ASPECT
+    // RATIO (0.8 wide × 0.5:0.25 → 0.4), which is what `scale=w=...:h=-2`
+    // produces in the export and what `ClipTransform::effective_size` now
+    // computes in the preview. It used to be `natural.height * scale` here,
+    // and that number was never what either engine rendered.
+    expect(resolvedBoxSize(natural, 2, { width: 0.8 })).toEqual({ width: 0.8, height: 0.4 });
     expect(resolvedBoxSize(natural, 2, { height: 0.1 })).toEqual({ width: 1, height: 0.1 });
+  });
+
+  it('derives an unoverridden height from the CROPPED aspect ratio (B-218)', () => {
+    // Half the width cropped away -> the kept picture is twice as tall
+    // relative to its width, so the same 1.0-wide box is 1.0 tall, not 0.5.
+    expect(resolvedBoxSize(natural, 2, {}, { left: 0.25, right: 0.25 })).toEqual({ width: 1, height: 1 });
+    // ...and an explicit `box_height` still wins outright over any crop.
+    expect(resolvedBoxSize(natural, 2, { height: 0.3 }, { left: 0.25, right: 0.25 })).toEqual({
+      width: 1,
+      height: 0.3,
+    });
+  });
+
+  it('is unchanged by absent/zero crop insets (B-218 safety)', () => {
+    expect(resolvedBoxSize(natural, 2, {}, {})).toEqual(resolvedBoxSize(natural, 2, {}));
+    expect(resolvedBoxSize(natural, 2, {}, { left: 0, top: 0, right: 0, bottom: 0 })).toEqual({
+      width: 1,
+      height: 0.5,
+    });
   });
 
   it('treats a null/undefined override as absent, not as zero', () => {

@@ -43,13 +43,14 @@ export interface ContentBoxLike {
  *  three; it used to be a centre offset here and in the Rust compositor while
  *  already being the top-left corner in the exporter.
  *
- *  Crop is deliberately not accounted for here: `composite_layer_onto` crops
- *  a layer's PIXELS in place, without shrinking its footprint (D-132's own
- *  documented reasoning — the remaining picture must not re-centre as an
- *  edge is cropped in), so the bounding box a transform overlay draws is the
- *  same size whether or not the clip is cropped. Phase 1 doesn't build crop
- *  handles at all (see the note's own phasing), so this never needs to know
- *  the four insets exist. */
+ *  Crop DOES reach this box, through [`resolvedBoxSize`]'s height (B-218):
+ *  `composite_layer_onto` resizes the crop's sub-image into the box, so a
+ *  cropped clip's box carries the CROPPED aspect ratio, not the source's.
+ *  (Until B-218 was fixed the preview cropped a layer's pixels in place
+ *  without shrinking its footprint, and this box correctly ignored the insets
+ *  for that reason — the comment that used to sit here.) Phase 1 still builds
+ *  no crop HANDLES (see the note's own phasing); the box just has to describe
+ *  the rectangle that is actually painted. */
 export interface FractionBox {
   left: number;
   top: number;
@@ -128,26 +129,57 @@ export function boxCentre(
   return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
 }
 
+/** A clip's four crop insets, each a fraction of the clip trimmed off that
+ *  edge — the shape [`resolvedBoxSize`] needs to derive an unoverridden
+ *  height. Every field optional so a caller with no crop concept (a title, a
+ *  caption) can pass nothing. */
+export interface CropInsets {
+  left?: number | null;
+  top?: number | null;
+  right?: number | null;
+  bottom?: number | null;
+}
+
 /** The clip's box SIZE (composition fractions) at rest, i.e. with no drag in
- *  flight — `natural * scale` per axis, except on an axis carrying an
- *  independent `box_width`/`box_height` override (D-193,
- *  `docs/notes/independent-clip-size.md`), which wins outright.
+ *  flight.
+ *
+ *  - **width** — `box_width` when the clip has one (D-193,
+ *    `docs/notes/independent-clip-size.md`), else `natural.width * scale`.
+ *    Crop-independent, matching both engines.
+ *  - **height** — `box_height` when the clip has one, else the WIDTH times
+ *    the clip's CROPPED aspect ratio (B-218). That is what
+ *    `timelineExport.ts` asks ffmpeg for in the same case (`h='-2'`) and what
+ *    `ClipTransform::effective_size` now computes in the Rust compositor. For
+ *    an uncropped clip with no `box_width` it is exactly `natural.height *
+ *    scale`, the pre-B-218 formula, which is why the overwhelming majority of
+ *    clips draw the same box they always did.
  *
  *  Mirrors `ClipTransform::effective_size` (Rust, `chroma::edit`) — the
- *  compositor's own per-axis resolution of the same two inputs. Extracted as
- *  its own function by D-204 because two frontend consumers now need exactly
- *  this: `TransformOverlay.tsx`'s static box, and `canvasPick.ts`'s
- *  click-to-select hit rect. A hit rect that disagreed with the drawn box by
- *  even one of these rules would let a click land "on" a clip the handles
- *  aren't drawn around, so this is the one place the rule lives. */
+ *  compositor's own per-axis resolution of the same inputs. Extracted as its
+ *  own function by D-204 because two frontend consumers need exactly this:
+ *  `TransformOverlay.tsx`'s static box, and `canvasPick.ts`'s click-to-select
+ *  hit rect. A hit rect that disagreed with the drawn box by even one of these
+ *  rules would let a click land "on" a clip the handles aren't drawn around,
+ *  so this is the one place the rule lives. */
 export function resolvedBoxSize(
   natural: { width: number; height: number },
   scale: number,
   override: { width?: number | null; height?: number | null },
+  crop?: CropInsets,
 ): { width: number; height: number } {
+  const width = override.width ?? natural.width * scale;
+  if (override.height != null) return { width, height: override.height };
+  // Clamped per edge exactly as `crop_pixel_rect` clamps them, so a nonsense
+  // inset can never make a kept fraction negative.
+  const kept = (near: number | null | undefined, far: number | null | undefined): number =>
+    Math.max(0, 1 - Math.min(Math.max(near ?? 0, 0), 1) - Math.min(Math.max(far ?? 0, 0), 1));
+  const croppedWidth = natural.width * kept(crop?.left, crop?.right);
   return {
-    width: override.width ?? natural.width * scale,
-    height: override.height ?? natural.height * scale,
+    width,
+    height:
+      croppedWidth > 0
+        ? (width * natural.height * kept(crop?.top, crop?.bottom)) / croppedWidth
+        : natural.height * scale,
   };
 }
 

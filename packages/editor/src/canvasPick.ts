@@ -135,7 +135,14 @@ export function layerBoxFraction(
 ): FractionBox {
   const t = resolveClipBoxTransform(clip, sourceFrame);
   return clipBoxFraction(
-    resolvedBoxSize(natural, t.scale, { width: t.box_width, height: t.box_height }),
+    // B-218 — the crop insets reach the box's height, so the hit rect has to
+    // carry them for the same reason the drawn box does.
+    resolvedBoxSize(
+      natural,
+      t.scale,
+      { width: t.box_width, height: t.box_height },
+      { left: t.crop_left, top: t.crop_top, right: t.crop_right, bottom: t.crop_bottom },
+    ),
     { x: t.position_x, y: t.position_y },
     1,
     // D-338 — the SAME anchor rule `TransformOverlay` draws its box from, so a

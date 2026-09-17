@@ -4,6 +4,30 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-18** — **The live preview finally crops the way the exporter and the
+  docs always said it did (D-346, fixes B-218 and the never-filed B-223), and a
+  Motion canvas resize now MOVES the layers with it (D-347, the missing half of
+  D-345).** B-218: `composite_layer_onto` applied a crop as an alpha mask over
+  the already-scaled full frame, so a cropped clip covered only the crop's own
+  fraction of its placement box while the export filled it — `crop 0.35/0.35,
+  scale 0.30` measured `0.091 × 0.302` against the documented, exported
+  `0.30 × <cropped height>`. The preview moved to ffmpeg's order (resize the
+  crop's sub-image), for the reason D-338 moved `position_*` and the one
+  first-party rule that exists on the question — Final Cut Pro's own *"The
+  cropped image automatically expands to fill the screen"*. Guarded by a real
+  **cross-engine parity pair** (Rust test + a real-ffmpeg twin over one
+  four-edge crop + scale + off-centre placement), which is exactly what B-218's
+  write-up said would have caught it. B-223 fell out of the same line: an
+  un-overridden height was the UNCROPPED aspect ratio in the preview and
+  ffmpeg's `-2` in the export, so `box_width` with no `box_height` rendered
+  20×4 in one engine and 20×20 in the other; both now use `width × cropped
+  aspect`, which reduces exactly to the old formula for every clip that exists.
+  The GUI's drawn transform box and click hit-rect follow. D-347:
+  `motion_set_project_settings(reflow=True)` remaps every layer onto the new
+  canvas in the same commit — built over `propCatalog.ts`'s existing
+  `positionFields`/`sizeFields` registries rather than a second description of
+  which fields are geometry, so a primitive added later reflows for free. Both
+  MCP surfaces, a GUI toggle, 12 unit tests, parity corpus regenerated.
 - **2026-09-17** — **`2026-09-12-c040-mgfx-recut` ships with Adobe
   Podcast-enhanced dialogue, a one-off editorial call, not a pipeline
   change.** After hearing both live, the owner chose Adobe's real output

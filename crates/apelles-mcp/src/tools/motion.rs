@@ -22,6 +22,10 @@ use crate::server::ApellesMcp;
 // Argument defaults — the Python signature's own, so an omitted argument reaches the
 // frontend with the value it always did. A `value` that defaults to null is how these
 // tools express "clear this field", so null is a real default here, not a missing one.
+fn default_motion_set_project_settings_reflow() -> bool {
+    true
+}
+
 fn default_motion_set_scene_field_value() -> Value {
     Value::Null
 }
@@ -107,6 +111,11 @@ pub struct MotionSetProjectSettingsArgs {
     pub height: Option<i64>,
     #[serde(default)]
     pub fps: Option<f64>,
+    /// D-346 — remap every layer onto the new canvas. Defaults TRUE; see the
+    /// tool's own description for why that is the safe default rather than the
+    /// surprising one.
+    #[serde(default = "default_motion_set_project_settings_reflow")]
+    pub reflow: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -593,6 +602,37 @@ impl ApellesMcp {
     link data reached the tab at all, which is not the same answer as
     "nothing has been rendered yet" (see `motion_get_edit_links`).
 
+    **`reflow` (D-346, DEFAULT TRUE) moves the LAYERS with the canvas**, and
+    is the thing to understand before resizing anything. A layer's `x`/`y`/
+    `size` are RAW WORLD PIXELS — there is no design-space normalisation
+    anywhere between the manifest and the rendered DOM — so changing
+    `width`/`height` on its own leaves every layer at its old coordinates in a
+    differently-shaped frame: the composition sits in one corner with dead
+    space around it, at the wrong relative size. Doubling a 1920x1080 manifest
+    to 4K that way does NOT give you a 4K graphic, it gives you a broken one
+    (which is why `Config.setScale(2)` renders at 4K instead, D-342).
+
+    With `reflow` on, the whole layout is remapped onto the new canvas in the
+    same commit: x-positions and widths by `newW/oldW`, y-positions and
+    heights by `newH/oldH`, and anything that cannot stretch per axis without
+    distorting (a font `size`, a `nodeR`, a `matrix` `cell`/`gap`, a
+    `deviceframe` `scale`) by `min` of the two. A `graph`'s own node
+    coordinates, an `emphasis` box's `[x,y,w,h]`, a plot annotation's `dy` and
+    every `transform` key's pixel offset move with it. The reply reports
+    `scaleX`/`scaleY`/`scaleUniform` and how many `layersMoved`.
+
+    It is a proportional remap, NOT a layout engine: it does not know that
+    text wraps. A reflow that changes the ASPECT RATIO puts everything in the
+    right place at the right relative size and can still leave a caption that
+    was one line sitting on three — expect to fix the overflows afterwards,
+    not to re-place every layer. Timing (`at`/`dur`/`stagger`), content (a
+    `plot`'s `values`/`baseline`, an edge's `weight`, `rows`/`cols`, any
+    `seed`) and `scene3d` children (3D world units, not canvas pixels) are
+    deliberately untouched; skipped 3D scenes are named in `warning`.
+
+    Pass `reflow=False` for the raw behaviour — write the dimensions, move
+    nothing — e.g. when the layers were already authored for the new canvas.
+
     `theme` is NOT set here — it is an enum with its own clear-to-default
     semantics: `motion_set_project_theme`.
 
@@ -600,7 +640,9 @@ impl ApellesMcp {
         title: the document's name. Trimmed; an empty one is refused.
         width: output width in px — a positive integer.
         height: output height in px — a positive integer.
-        fps: frames per second — positive, fractional allowed."#
+        fps: frames per second — positive, fractional allowed.
+        reflow: remap every layer onto the new canvas (default True). Ignored,
+            with a `warning`, when neither width nor height changes."#
     )]
     pub async fn motion_set_project_settings(
         &self,
@@ -619,6 +661,7 @@ impl ApellesMcp {
                 "error": "pass at least one of title, width, height, fps",
             })));
         }
+        let args = args.set("reflow", p.reflow);
         let env = self.op("motion_set_project_settings", args).await?;
         Ok(render::json_text(&env))
     }

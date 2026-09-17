@@ -38,6 +38,7 @@ import type { Selection } from './LayerList';
 import { catalogEntries, catalogEntry, defaultLayerFor, DEFAULT_CAMERA_2D, DEFAULT_SCENE3D_CAMERA, type PrimitiveUse } from './catalog';
 import type { MotionLayerPreset } from './layerPresets';
 import { positionFields, sizeFields } from './propCatalog';
+import { reflowManifest, type ReflowResult } from './manifestReflow';
 import { screenToWorld, worldDelta, type RectLike, type WorldMap } from './canvasGeometry';
 
 type Raw = Record<string, unknown>;
@@ -1398,6 +1399,10 @@ export type ProjectSettingsResult =
       /** non-blocking notes: a value that is legal but renders differently
        *  from what was asked for (see the odd-dimension note below). */
       warnings: string[];
+      /** D-346 — what the optional layout reflow moved, `undefined` when one
+       *  was not asked for (or was asked for with no dimension change, which
+       *  is a warning rather than an error). */
+      reflow?: ReflowResult;
     }
   | { ok: false; error: string };
 
@@ -1427,7 +1432,11 @@ export type ProjectSettingsResult =
  * and Remotion accepts them (`totalFrames` already rounds each scene's frame
  * count, so the composition's own `durationInFrames` stays an integer).
  */
-export function setProjectSettings(manifest: Manifest, patch: Record<string, unknown>): ProjectSettingsResult {
+export function setProjectSettings(
+  manifest: Manifest,
+  patch: Record<string, unknown>,
+  opts: { reflow?: boolean } = {},
+): ProjectSettingsResult {
   const warnings: string[] = [];
   const applied: Partial<ProjectSettings> = {};
 
@@ -1473,11 +1482,24 @@ export function setProjectSettings(manifest: Manifest, patch: Record<string, unk
   if (changed.length === 0) return { ok: true, manifest, changed, warnings };
 
   const next = clone(manifest);
+  // D-346 — the reflow reads the OLD canvas off `next` and must therefore run
+  // before the new dimensions are written into it.
+  const reflow =
+    opts.reflow && (changed.includes('width') || changed.includes('height'))
+      ? reflowManifest(next, {
+          width: applied.width ?? manifest.width,
+          height: applied.height ?? manifest.height,
+        })
+      : undefined;
   for (const key of changed) {
     if (key === 'title') next.title = applied.title as string;
     else next[key] = applied[key] as number;
   }
-  return { ok: true, manifest: next, changed, warnings };
+  if (opts.reflow && reflow === undefined) {
+    warnings.push('reflow was requested but neither width nor height changed — no layer moved');
+  }
+  if (reflow) warnings.push(...reflow.skipped.map((s) => `not reflowed — ${s}`));
+  return { ok: true, manifest: next, changed, warnings, reflow };
 }
 
 export function setCamera2d(manifest: Manifest, sceneIndex: number, keys: Cam2dKey[]): Manifest {
