@@ -4,6 +4,31 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-18** — **c040's composite is redesigned as a two-panel split screen
+  (D-348) — geometry designed, researched and ffmpeg-verified; the content
+  rebuild itself is blocked and the timeline is UNCHANGED.** The owner's answer
+  to the six captions running behind D-342's corner PIP was a fourth option none
+  of the marker's three offered: change the layout. Speaker camera left (1144 ×
+  2032 at (64,64), exactly 9:16, from a face-aware crop centred on the speaker's
+  measured head position rather than the frame's), Motion graphic + captions
+  right (2504 × 2032 at (1272,64)), 64-px margin and gutter, 14-px corners —
+  which removes the collision structurally instead of by tuning, since the two
+  can no longer overlap at any scale in any scene. Every edge was checked
+  through real ffmpeg with the exporter's own expressions before anything was
+  applied, and the research found that **no vendor publishes** a split ratio, a
+  radius or a gutter (Zoom's divider is draggable with no stated default; Loom
+  has no side-by-side layout at all), so those three are recorded as our calls —
+  while EBU R 95's 5% graphics-safe inset sets the graphic panel's internal
+  padding to the pixel and Final Cut Pro's Smart Conform is the authority for
+  cropping rather than letterboxing a 16:9 source into a vertical column. Full
+  derivation and reference trail: `docs/notes/c040-split-screen-layout.md`.
+  **Blocked, deliberately, at exactly one step:** the Motion canvas has to
+  become 1252 × 1016 with a reflow, and `motion_set_project_settings` (D-345,
+  shipped the day before) is not in the tool list the running MCP server process
+  advertises — a restart reaches it. Not worked around with a direct manifest
+  file write, which is the practice **B-222** was filed against and which that
+  entry already records a previous agent correctly stopping at. The project's
+  own marker now carries the decision, the geometry and this blocker.
 - **2026-09-18** — **The live preview finally crops the way the exporter and the
   docs always said it did (D-346, fixes B-218 and the never-filed B-223), and a
   Motion canvas resize now MOVES the layers with it (D-347, the missing half of

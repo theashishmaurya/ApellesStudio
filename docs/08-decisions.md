@@ -34179,3 +34179,78 @@ reflow has a rule for plus the values it must not touch, including the identity
 property for a no-op resize and the "never collapses to zero" floor; the full
 `@apelles/motion` suite; both MCP surfaces with the parity corpus regenerated
 (177 tools, 262 cases) and `cargo test -p apelles-mcp` green.
+
+## D-348 — c040's composite becomes a two-panel split screen: speaker left, graphic right (supersedes D-342's corner PIP)
+
+**decided (2026-09-17, owner-directed)** · touches the
+`2026-09-12-c040-mgfx-recut` project document only · full geometry, derivations
+and reference trail: `docs/notes/c040-split-screen-layout.md`
+
+**Context.** D-342 put the Motion graphic full-frame with the camera as a
+keyframed bottom-right PIP. Its own entry recorded the cost and the owner
+accepted it then: **six of the nine scenes put caption content under that
+corner**, measured per scene as the rightmost text pixel against the PIP's
+`0.760` edge — worst `c040-lostmiddle` at 0.902, which visibly reads *"…in the
+middle of a"* and stops. A joint search over the whole bottom-right region found
+no clean shared slot at that size, so it is a layout problem, not a placement
+one.
+
+**Options.**
+1. **Shorten the six captions.** Rejected by the owner outright — the captions
+   are the script, and trimming them to fit a decoration is the wrong direction.
+2. **Move the PIP to the top-right**, which the original measurement pass
+   actually preferred (occlusion 0.000 on eight of nine scenes). Not revisited:
+   the owner had already chosen the bottom-right deliberately in D-342, and the
+   redesign request was for the wireframe below, not a re-litigation.
+3. **A two-panel split screen.** Chosen.
+
+**Choice: 3.** It removes the failure mode structurally rather than by tuning —
+the camera and the graphic occupy disjoint rectangles, so no caption can sit
+behind the camera at any position, at any scale, in any scene, and nothing has
+to be re-measured when a caption is later edited.
+
+**The geometry, and the parts of it that are our own call.** 3840×2160 canvas;
+outer margin 64, gutter 64, panel height 2032; left (speaker) panel 1144 wide —
+exactly 9:16, which is 30.8% of the content width and inside the owner's
+"~30%" — right (graphic) panel 2504 wide; 14 px corners. Every edge was
+verified through real ffmpeg with the exact expressions the exporter emits, not
+computed and trusted.
+
+Three of those numbers have no external authority and are recorded as ours,
+because the research found that **no vendor publishes them**: Zoom documents a
+draggable divider and states no default ratio, Loom has no side-by-side layout
+at all, and Screen Studio / Descript / Camtasia expose padding and roundness
+controls with no published values. The two numbers that ARE sourced: **EBU R 95**'s
+5% graphics-safe inset sets the graphic panel's own internal padding (64
+authoring px puts its content on x = 3648 = 0.95 × 3840, to the pixel), and
+**Final Cut Pro's Smart Conform** — a 16:9→vertical reframe is face-aware with a
+position nudge, never a letterbox — is why the camera's crop is centred on
+x = 0.535 (the speaker's measured head centre across six sampled frames) rather
+than on the frame's midpoint.
+
+**The camera is `scale` + `crop_*`, not `box_width`/`box_height`, and that is
+forced** — the same shape of constraint D-342 hit from the other side.
+`editor_set_clip_keyframes` cannot animate `box_*`, and the camera has to
+animate between full frame and the column. It can animate `scale`, the four
+crops, the two positions and `corner_radius`, which is exactly enough once the
+box's height follows the CROPPED aspect ratio — which it did not until
+**D-346**. The graphic, which never animates, uses `box_width`/`box_height`
+(canvas fractions with no unit divergence) and is rendered at exactly the box's
+size so it is placed 1:1 with no resampling.
+
+**The graphic is re-authored, not cropped.** The owner's explicit instruction
+was that the nine scenes be laid out for the right panel's real shape rather
+than scaled or cropped into it with dead space around them. The Motion canvas
+therefore becomes 1252×1016 (× `Config.setScale(2)` = the panel exactly), and
+the layout is carried across by **D-347**'s reflow — which is what keeps this
+reusable: the next change of split ratio is a parameter, not a nine-scene
+re-author.
+
+**Status: the engine half is done and committed; the content half is not.** It
+is blocked on `motion_set_project_settings` (D-345, shipped 2026-09-17) not
+being present in the tool list the running MCP server process advertises — a
+restart exposes it. A direct manifest file write was deliberately NOT used:
+that is the practice B-222 was filed against, and this project's own entry there
+records a previous agent correctly stopping at the same wall. The remaining
+steps, the already-computed reflow output, and the three scenes that need real
+re-composition rather than a nudge are enumerated in the note.
