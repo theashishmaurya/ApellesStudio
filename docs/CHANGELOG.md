@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-17** — **B-216 filed: retake/silence detection has no "sweep the whole
+  timeline" mode.** Root-caused why several real retakes and a 5-10s silence
+  survived to the final `2026-09-12-c040` cut, from 10 owner-placed markers.
+  Verified the algorithm itself is sound (the flagged "encoder reads your whole
+  message" retake pair scores 0.8413 against the real code, above the 0.82
+  default threshold — it would be caught if run). The actual gap: every caller
+  requires one explicit `track`/`clip` per call, with no batch-all convenience,
+  so a cleanup pass naturally stops at the clip a report points at rather than
+  re-sweeping the whole timeline. Also surfaced a separate, pre-existing,
+  untested false-positive risk in `containment()`'s scoring (acknowledged in
+  the code's own doc comment) — noted but not the cause here.
+
 - **2026-09-17** — **B-215 filed: `editor_trim_clip(edge: "end")` silently no-ops** on
   at least one real clip — returns `{ok: true}`, changes nothing, no error/note.
   Found trying to close a 105-frame gap between `c040-thefix` and `c040-recap` on
