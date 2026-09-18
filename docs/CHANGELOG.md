@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-18** — **c040: a manually-fixed retake never made it into the narration audio, because that audio comes from a separately-rendered track.** The owner found (by ear) and cut the known "constantly...glancing" duplicate-take pair (B-216) out of the camera track, marking it for review. The project's real narration audio is a separate Adobe-Podcast-enhanced render (`track 4`) generated earlier from an un-cut snapshot, so it still played the flawed take in full under the now-silent video gap. Confirmed via an isolated re-transcription (same "one word stretched across a hole" signature B-216 root-caused) and fixed by cutting the identical frame range out of `track 4`, left as a matching gap rather than rippled so nothing downstream shifts out of sync. See B-216 in `docs/BUGS.md` for the process lesson: a track rendered from an earlier snapshot of an edit needs a retake fix re-applied to it separately — nothing tracks that it exists.
 - **2026-09-18** — **c040 split screen: three more real defects the owner
   caught by scrubbing, all now closed with a data-driven check instead of
   another round of eyeballing.** (1) Static crop applied unconditionally
