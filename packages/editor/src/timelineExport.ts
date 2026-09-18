@@ -1912,6 +1912,35 @@ export function textClipsMissingFonts(
   return missing;
 }
 
+/** B-230 — the TOTAL decoder frame-thread budget ONE export may spend, shared
+ *  across all of its video inputs rather than granted to each one separately.
+ *
+ *  ffmpeg's `-threads` default for a decoder is `auto` = the machine's logical
+ *  CPU count, applied PER INPUT, and each frame thread of a frame-threaded
+ *  decoder carries its own full-size frame buffers and reference pictures. One
+ *  `-i` per clip therefore costs (clip count) x (CPU count) x (one frame) — a
+ *  per-clip price that also grows with the machine it runs on. Bounding the SUM
+ *  makes a heavily-cut project's decode memory roughly flat in clip count,
+ *  which is the same argument B-229's `-filter_complex_threads` cap makes about
+ *  the filter half of the same graph. 8 is "about one machine's worth of decode
+ *  parallelism", deliberately a constant rather than anything read from the
+ *  host — this module compiles an argv and must stay a pure function of the
+ *  document (it is bundled into the app's frontend, where there is no `os`). */
+const TOTAL_DECODE_FRAME_THREADS = 8;
+
+/** The `-threads` value to put in front of each video `-i`, or `null` to leave
+ *  ffmpeg's own default alone.
+ *
+ *  A single-input export is left alone deliberately: one decoder's thread pool
+ *  is a bounded, one-off cost no matter how wide it is, and full frame
+ *  threading is the fastest way to decode one stream — the pathology is
+ *  strictly the per-input multiplication. This also keeps the argv of a
+ *  one-clip export byte-identical to what it has always been. */
+function perInputDecodeThreads(videoInputCount: number): number | null {
+  if (videoInputCount <= 1) return null;
+  return Math.max(1, Math.floor(TOTAL_DECODE_FRAME_THREADS / videoInputCount));
+}
+
 /**
  * Compile `timeline` into a single ffmpeg argv array rendering `outPath` at
  * `opts.fps`/`opts.width`/`opts.height`.
@@ -1954,6 +1983,18 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   const filterSteps: string[] = [];
   const chains: ClipChain[] = [];
   let inputIdx = 0;
+
+  // B-230 — how many real video DECODERS this export will open. Known before
+  // the loop below opens any of them because the skip rule is exactly "a text
+  // or adjustment clip has no media of its own" (the `clip.text ||
+  // clip.adjustment` branch further down), and a dip plate is a `color`
+  // source, not an `-i`.
+  const videoInputCount = videoTracks.reduce(
+    (n, { track }) => n + track.clips.filter((c) => !(c.text || c.adjustment)).length,
+    0,
+  );
+  const decodeThreads = perInputDecodeThreads(videoInputCount);
+  const decodeThreadArgs = decodeThreads === null ? [] : ['-threads', String(decodeThreads)];
 
   // Highest track index first (painted first/at the back), track 0 last
   // (painted last/on top) — see this function's own doc.
@@ -2110,8 +2151,13 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
       // for footage: a still under a cross dissolve has to keep being emitted
       // through the dissolve window. It never runs out of media doing so,
       // which is the one way a still is easier than footage here.
+      //
+      // B-230 — `decodeThreadArgs` (empty for a one-clip export) caps THIS
+      // input's own decoder thread pool; see `perInputDecodeThreads`. An input
+      // option, so it goes before the `-i` it belongs to, like `-ss`/`-t`.
       if (isStillSource(clip.source_path)) {
         inputs.push(
+          ...decodeThreadArgs,
           '-loop',
           '1',
           '-framerate',
@@ -2123,6 +2169,7 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
         );
       } else {
         inputs.push(
+          ...decodeThreadArgs,
           '-ss',
           String((clip.source_start - adjust.headSrcFrames) / clipFps),
           '-t',

@@ -249,6 +249,41 @@ describe('buildExportFfmpegArgs', () => {
     expect(idx).toBeLessThan(args.indexOf('-filter_complex'));
   });
 
+  it('B-230: caps EVERY video input\'s own decoder thread pool once there is more than one — ffmpeg\'s per-input `auto` default multiplied a full frame-thread pool by the clip count (14.3GB -> 7.7GB measured, 20 4K branches)', () => {
+    const tl = timeline([track('video', [clip('c1'), clip('c2', { start_frame: 48 }), clip('c3', { start_frame: 96 })])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+
+    // One `-threads` per video `-i`, each IMMEDIATELY before the input it
+    // belongs to — `-threads` is an input option, so a stray one would apply
+    // to the wrong decoder (or, at the end, to the encoder).
+    const inputIdxs = args.flatMap((a, i) => (a === '-i' ? [i] : []));
+    expect(inputIdxs).toHaveLength(3);
+    for (const i of inputIdxs) {
+      const own = args.lastIndexOf('-threads', i);
+      expect(own).toBeGreaterThan(-1);
+      // floor(TOTAL_DECODE_FRAME_THREADS / 3) — the budget is shared across
+      // the inputs, not handed to each of them.
+      expect(args[own + 1]).toBe('2');
+      // Nothing between it and its own `-i` but other input options.
+      expect(args.indexOf('-i', own)).toBe(i);
+    }
+  });
+
+  it('B-230: a one-clip export keeps ffmpeg\'s own decoder default — the pathology is strictly the per-input multiplication, and one pool is a bounded one-off cost', () => {
+    const tl = timeline([track('video', [clip('c1')])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+
+    expect(args).not.toContain('-threads');
+  });
+
+  it('B-230: the shared budget divides, so eight or more clips each decode single-threaded', () => {
+    const clips = Array.from({ length: 9 }, (_, i) => clip(`c${i}`, { start_frame: i * 48 }));
+    const args = buildExportFfmpegArgs(timeline([track('video', clips)]), '/out.mp4', opts30);
+
+    const values = args.flatMap((a, i) => (a === '-threads' ? [args[i + 1]] : []));
+    expect(values).toEqual(Array(9).fill('1'));
+  });
+
   it('chains crop then scale, in order, when the clip has a non-zero crop', () => {
     const c = clip('c1', { crop_left: 0.1, crop_top: 0, crop_right: 0.05, crop_bottom: 0, scale: 0.5 });
     const tl = timeline([track('video', [c])]);
