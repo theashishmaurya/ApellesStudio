@@ -6,6 +6,31 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-354 — `understand_video`'s model download stays explicit, never an implicit first-call fetch
+
+**decided (2026-09-18)** · closes **B-172** (blocked on this call) · relates to CLAUDE.md's "local-first... any cloud call is an explicit opt-in fallback, never a default"
+
+- **Context.** `HF_HUB_OFFLINE=1` is hardcoded on `understand_video`'s generate subprocess, so its own module doc's promise of a "first-run model download" is currently impossible — the call just fails on a fresh machine with no cached model. Two ways to close the gap: (1) drop `HF_HUB_OFFLINE` when the snapshot is absent, so the first real call silently triggers a ~2.9GB fetch; (2) keep hard-offline by default and add an explicit fetch step.
+- **Choice: option 2.** An agent (or a script) calling `understand_video` should never be the thing that silently starts a multi-gigabyte network download — that is squarely what CLAUDE.md's local-first rule means by "never a default." Add `ai-env/setup.sh --fetch-models` (or equivalent) as the one explicit command that fetches it, and make the offline failure name that command rather than fail opaquely.
+- **Why not option 1.** It reads as the more "convenient" fix, but it means a single tool call from an agent working on something unrelated could kick off a large, un-consented download — exactly the implicit-network-call shape the local-first rule exists to prevent.
+
+## D-353 — `scale`'s two meanings converge on the preview's reading; the export learns to read real source dimensions
+
+**decided (2026-09-18)** · closes **B-208** · relates to **B-201/B-218/B-223** (the same preview-vs-export convention split, other axes, already fixed)
+
+- **Context.** `scale` means two different things in the two engines: the preview's `effective_size` (`edit.rs`) treats it as a fraction of the clip's own native/source size; the export's `timelineExport.ts` `widthExpr` treats it as a fraction of the OUTPUT CANVAS. They coincide only when a clip's source resolution equals the composition's — true for same-camera single-resolution projects, false the moment a clip's source differs from the canvas.
+- **Choice: change the export, not the preview.** Feed the export compiler the media pool's already-probed source dimensions (`editor_import_media` stores them) so `timelineExport.ts` can compute the same "fraction of native size" reading the preview already uses.
+- **Why not the other direction.** Making the preview's `scale` a canvas fraction instead would silently resize every existing clip in every project that has ever set a non-default `scale` — a large, invisible behavior change on open of an old project. Changing the export's compiler is contained to render time and touches no stored project state.
+- **Known cost:** the parity tests this touches are currently vacuous for `scale` (both use a 320×240 source in a 320×240 canvas, the degenerate case where the two readings agree) — the fix must add a genuine non-degenerate case (source resolution ≠ composition) or it isn't actually verified.
+
+## D-352 — `editor_trim_clip`'s delta sign convention: the code is right, the docstrings are wrong
+
+**decided (2026-09-18)** · relates to **B-215/B-220** (the trim silent-no-op / clamp bugs, which are NOT this — see below)
+
+- **Context.** B-215 was filed against a suspected mixed-fps arithmetic bug in `timelineFramesToSource`. Re-verification found that theory false, and found instead that both engines (`packages/editor/src/timeline.ts`'s `clampedTrimEndDuration`, `crates/apelles-timeline/src/lib.rs`) consistently implement **"a positive delta moves that edge later in time"** — on `edge: "end"` this LENGTHENS the clip; on `edge: "start"` it shrinks it. Both MCP tool docstrings (`mcp/server.py`, `crates/apelles-mcp/src/tools/edit.rs`) instead claim **"positive delta shortens the clip, negative extends it"** — a statement that is only true for `edge: "start"`.
+- **Choice: the code's convention is correct; fix the docstrings.** Both engines already agree with each other, passing tests depend on the current behavior (`timeline.test.ts:440-442`, `:2634-2638`), and flipping the code would be a real, breaking behavior change to every existing caller (human or agent) that has already learned `editor_trim_clip`'s actual behavior by using it. The docstring was simply written for one edge and never checked against the other.
+- **Not this decision:** B-215's real remaining defect (a silent no-op with no error surfaced) and B-220's real remaining defect (the clamp bounds against absolute duration rather than the delta, so a clip whose duration already exceeds `maxDur` gets rewritten by ANY trim) are separate, still-open bugs — this decision only settles which direction is "correct" so those fixes don't also flip the sign.
+
 ## D-351 — the export compositor runs on every core, the live preview still runs on one; and frame-level `par_iter` is the wrong parallelism here
 
 **decided (2026-09-18)** · D-350 phase 2 · relates to **B-229/B-230** (bounded per-unit cost)
