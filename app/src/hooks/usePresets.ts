@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import debounce from 'lodash.debounce';
 import { Adjustments, COPYABLE_ADJUSTMENT_KEYS, ADJUSTMENT_GROUPS, INITIAL_ADJUSTMENTS } from '../utils/adjustments';
@@ -8,6 +8,19 @@ export enum PresetListType {
   Folder = 'folder',
   Preset = 'preset',
 }
+
+/** B-196 — the real state of the `presets.json` read, as an explicit machine.
+ *  Previously this was inferred from an `isLoading: boolean` + `presets: []`
+ *  pair, which cannot tell "the user genuinely has zero presets" apart from
+ *  "the read just failed" — both left `presets` as `[]`. That conflation is
+ *  what let a failed read look identical to an empty library: the very next
+ *  edit's debounced `savePresetsToBackend` would then write that `[]` back
+ *  over the real file on disk, destroying it permanently. Mirrors
+ *  `packages/editor/src/timelineStore.ts`'s `TimelineLoadStatus` (B-034/D-112),
+ *  the sibling pattern this was modelled on: `status` says only what the
+ *  *read* is doing, and a failed read must never be inferred from the data
+ *  it left behind. */
+export type PresetsLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface UserPreset {
   folder?: Folder;
@@ -36,15 +49,40 @@ function arrayMove(array: any, from: any, to: any) {
 export function usePresets(currentAdjustments: Adjustments) {
   const [presets, setPresets] = useState<Array<UserPreset>>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // B-196 — see `PresetsLoadStatus`'s own doc above.
+  const [loadStatus, setLoadStatus] = useState<PresetsLoadStatus>('idle');
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // `savePresetsToBackend` below is created once by `useCallback` (its
+  // identity must stay stable across renders — several call sites close over
+  // it directly), but its debounced body runs LATER, after `loadStatus` may
+  // well have changed. A ref is what lets that later-running body see the
+  // CURRENT status rather than whatever `loadStatus` was at creation time.
+  const loadStatusRef = useRef<PresetsLoadStatus>('idle');
+  useEffect(() => {
+    loadStatusRef.current = loadStatus;
+  }, [loadStatus]);
 
   const loadPresets = useCallback(async () => {
     setIsLoading(true);
+    setLoadStatus('loading');
     try {
       const loadedPresets: Array<UserPreset> = await invoke(Invokes.LoadPresets);
       setPresets(loadedPresets);
+      setLoadStatus('ready');
+      setLoadError(null);
     } catch (error) {
+      // B-196 — do NOT `setPresets([])` here. That used to make a failed read
+      // indistinguishable from "the user genuinely has zero presets," and the
+      // very next preset edit's debounced save would then persist that empty
+      // list over the real `presets.json`, destroying it permanently. Keep
+      // whatever is already in memory (the last known-good load, or the
+      // pre-first-load initial `[]`) and record the failure as a real status
+      // instead — `savePresetsToBackend` below refuses to persist until a
+      // load has actually succeeded again.
       console.error('Failed to load presets:', error);
-      setPresets([]);
+      setLoadStatus('error');
+      setLoadError(String(error));
     } finally {
       setIsLoading(false);
     }
@@ -52,6 +90,17 @@ export function usePresets(currentAdjustments: Adjustments) {
 
   const savePresetsToBackend = useCallback(
     debounce((presetsToSave: Array<UserPreset>) => {
+      // B-196 — refuse to persist while the in-memory list is not
+      // known-good. Checked here, inside the debounced body, rather than at
+      // each call site: `debounce` can fire well after the call that
+      // scheduled it, so the status at fire time — not at call time — is
+      // what matters.
+      if (loadStatusRef.current !== 'ready') {
+        console.error(
+          `Refusing to write presets.json: the preset list is not in a known-good state (status: "${loadStatusRef.current}"). Writing now would risk overwriting the real file on disk with an incomplete in-memory list.`,
+        );
+        return;
+      }
       invoke(Invokes.SavePresets, { presets: presetsToSave }).catch((err) =>
         console.error('Failed to save presets:', err),
       );
@@ -583,6 +632,13 @@ export function usePresets(currentAdjustments: Adjustments) {
       try {
         const updatedPresetList: Array<any> = await invoke(Invokes.HandleImportPresetsFromFile, { filePath });
         setPresets(updatedPresetList);
+        // B-196 — the backend re-read presets.json itself, merged, saved,
+        // and handed back the resulting on-disk list (`import_preset_file_
+        // into_library`), so this IS a confirmed-good load, exactly like a
+        // successful `loadPresets` — including recovering from a prior
+        // 'error' status.
+        setLoadStatus('ready');
+        setLoadError(null);
       } catch (error) {
         console.error('Failed to import presets from file:', error);
         throw error;
@@ -601,6 +657,10 @@ export function usePresets(currentAdjustments: Adjustments) {
           filePath,
         });
         setPresets(updatedPresetList);
+        // B-196 — same reasoning as `importPresetsFromFile` above: a
+        // confirmed-good, backend-returned on-disk list.
+        setLoadStatus('ready');
+        setLoadError(null);
       } catch (error) {
         console.error('Failed to import legacy presets from file:', error);
         throw error;
@@ -617,6 +677,10 @@ export function usePresets(currentAdjustments: Adjustments) {
       try {
         const result: PresetImportResult = await invoke(Invokes.HandleImportPresetsFromFiles, { filePaths });
         setPresets(result.presets);
+        // B-196 — same reasoning as `importPresetsFromFile` above: a
+        // confirmed-good, backend-returned on-disk list.
+        setLoadStatus('ready');
+        setLoadError(null);
         return result;
       } catch (error) {
         console.error('Failed to import presets from files:', error);
@@ -648,6 +712,13 @@ export function usePresets(currentAdjustments: Adjustments) {
     importPresetsFromFiles,
     importLegacyPresetsFromFile,
     isLoading,
+    // B-196 — the real state of the last `presets.json` read; distinct from
+    // `isLoading`, which is also true mid-import. A consumer that wants to
+    // tell "genuinely empty library" apart from "the read failed" (rather
+    // than the `isLoading && presets.length === 0` check `PresetsPanel.tsx`
+    // uses today) should read this instead.
+    loadStatus,
+    loadError,
     movePreset,
     overwritePreset,
     presets,

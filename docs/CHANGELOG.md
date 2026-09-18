@@ -4,6 +4,7 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 - **2026-09-18** — **D-356: fixed B-186, the on-canvas VIDEO transform box drawing over the wrong picture when the playhead sat off the selected clip** — the same `clipCoversFrame`/hidden-track gate D-317 already gave `CaptionTransformOverlay` for B-185, now also in `TransformOverlay.tsx`, confirmed against the Rust timeline resolvers not to conflict with D-209's separate "which frame to resolve" rule. 7 new DOM tests in `PreviewPane.transform.dom.test.tsx`.
 
 - **2026-09-18** — **B-184 (and its duplicate B-210) fixed: `TimelinePane.tsx` is React-Compiler-clean again, so the Edit tab's hottest surface gets its auto-memoization back.** One ref read in the render body (`trimPressRef.current`, added with B-144's slip/slide preview) was costing the whole ~3,400-line file every bit of D-201's auto-memoization, silently. D-355 snapshots that press into state in `onDndDragStart` — beside the `setClipGrab` that has done exactly this since B-137 — rather than the suggested "set state from the pointerdown listener", which would have re-rendered the entire pane on every click in the edit area. The raw capture-phase listener is untouched, so its never-re-binds contract holds by construction. Verified with a negative control: breaking the snapshot fails 4 of `slipSlidePreview`'s 6 real-`PointerEvent` cases (both Alt-armed and both tool-picked entrances) while its two "ghost must still show" controls stay green. `reactCompiler.test.ts` 99/99, 48 drag-gesture DOM tests green, full editor suite 2043/2043, `tsc` unchanged at 3 pre-existing errors.
@@ -765,6 +766,15 @@ One or two lines per session. Detail lives in the decision it references.
   Edit, or Motion) arrives, so dismissing never hides real new activity. New
   DOM-level test (`AgentActivityDock.dom.test.tsx`, jsdom +
   `@testing-library/react`) covers both the hide and the re-show.
+
+- **2026-09-18** — **B-196: a failed `presets.json` read can no longer wipe the
+  user's preset library.** `usePresets.ts` now tracks a real `PresetsLoadStatus`
+  (`idle`/`loading`/`ready`/`error`, mirroring `timelineStore.ts`'s
+  `TimelineLoadStatus`) instead of collapsing "load failed" into the same `[]`
+  as "genuinely no presets yet" — `savePresetsToBackend` refuses to persist
+  unless the last load actually succeeded. New `usePresets.dom.test.ts`
+  regression-tests the exact failure (a failed load followed by an edit no
+  longer writes an empty list back over the real file).
 - **2026-09-15** — **B-199: the transport bar's timecode no longer jitters,
   and drops the frame field.** `tabular-nums` alone only fixes digit widths;
   `font-mono` on the whole readout makes every character (colons, `/`, space)
