@@ -4,6 +4,34 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-18** — **c040 split screen: three more real defects the owner
+  caught by scrubbing, all now closed with a data-driven check instead of
+  another round of eyeballing.** (1) Static crop applied unconditionally
+  while position/scale were held via keyframe produced a brief "super
+  zoomed" frame — the crop's narrow sub-image got blown up to fill the
+  canvas before the ramp's first keyframe. Fixed by making
+  `crop_top`/`crop_left`/`crop_right`/`corner_radius` keyframed properties
+  too, synced to the same frames/ease as `position`/`scale`, on all 16 ramp
+  clips. (2) B-226's window-shrink fix had a side effect: 6 clips (4, 33,
+  34, 35, 36, 45) that were correctly cropped under the OLD, too-long
+  windows now sat outside the corrected windows but were still statically
+  cropped — a left-panel crop with black on the right during what should
+  be a plain full-frame segment. Reverted all 6 to full-frame defaults. (3)
+  `c040-payoff`'s exit ramp (the very last scene, ending on the video's own
+  final frame) completed 6 frames (0.25 s) before the graphic's real end,
+  so the camera briefly covered the last beat of the last graphic in the
+  video — fixed by moving the ramp's second keyframe to land on the clip's
+  true last frame. Answering the owner's own question — "how do we know
+  what's wrong without looking?" — built `scratch/c040-split-verify/
+  verify_split_screen.py`: reads `project.json` directly, computes real
+  track-1 (graphic) window coverage fresh each run, resolves every track-0
+  (camera) clip's effective transform at its own start/end (correctly
+  holding before-first/after-last keyframe), and flags any disagreement as
+  FAIL while correctly demoting a ramp's own legitimate boundary frame to a
+  non-failing NOTE. After the three fixes above it returns a clean PASS —
+  a repeatable data check to run after any future edit to these two
+  tracks, not another scrub-and-hope pass. Full writeup: B-226 in
+  `docs/BUGS.md`.
 - **2026-09-18** — **B-226: every one of c040's 9 Motion overlays had a
   multi-second BLACK-SCREEN tail, fixed for this project without losing any
   content.** Owner caught it live, scrubbing past `c040-qkv` and seeing black
