@@ -33,6 +33,21 @@ To build it by hand anyway (a headless checkout, or you would rather not wait):
 ./ai-env/setup.sh          # create or repair .venv from requirements.lock.txt
 ```
 
+**One model is never fetched by either route (B-172/D-354).**
+`ai-media/video_understand.py`'s VLM subprocess runs `HF_HUB_OFFLINE=1`
+unconditionally — correct per this repo's local-first rule, but it means
+nothing ever populates the HF cache for it either. Run this once, with network
+access, before the first `/understand_video` call on a fresh machine:
+
+```sh
+./ai-env/setup.sh --fetch-models   # one-time ~2.9 GB download, network on for
+                                    # this step only; every real call after
+                                    # this stays fully offline
+```
+
+Skipping it is not silently dangerous: `/understand_video` fails fast with a
+message naming this exact command, rather than an opaque subprocess dump.
+
 Both routes produce the same `.venv` in the same place from the same lock file, and
 both finish by running the same `verify.py`, so they cannot disagree about whether the
 environment is usable. `CHROMA_AI_ENV_NO_BOOTSTRAP=1` tells the app not to build it. The app finds `ai-env/.venv`

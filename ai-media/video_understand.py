@@ -9,9 +9,12 @@ timestamps and a natural-language description of what changed at each.
 **What it does NOT do:** it does not touch `grade.json`, the timeline, or any
 app state; it does not decide what to do with a moment (cut, mark, search) —
 that is the Edit tab's job. It does not answer "what was SAID" — that is
-`transcribe.py`, a genuinely different question (see below). It makes no
-network calls beyond a first-run model download (`HF_HUB_OFFLINE=1` is set on
-the model subprocess, so a cached model never reaches the network at all).
+`transcribe.py`, a genuinely different question (see below). It makes **zero**
+network calls, ever (`HF_HUB_OFFLINE=1` is hardcoded on the model subprocess,
+unconditionally — D-354). It does **not** download its own model on first use
+either, on purpose: that is an explicit, one-time step the operator runs, not
+something a tool call can silently trigger (B-172/D-354 — see
+"model download" below).
 
 Ported verbatim — logic, tuning and all — from the validated prototype at
 `~/my_projects/videoAgent/src/review/video_understand.py` (D-189; the scope is
@@ -77,6 +80,17 @@ exit, so this sidecar's idle footprint stays at roughly the FastAPI process
 itself — the D-084 problem cannot recur here. It also keeps the invocation
 byte-for-byte identical to the validated prototype's, whose tuning is
 expressed as those exact CLI flags.
+
+**Model download (B-172/D-354).** `HF_HUB_OFFLINE=1` stays hardcoded — that is
+correct per `CLAUDE.md`'s local-first rule, not the bug. The bug was that
+nothing could ever populate the cache in the first place, so a machine with no
+cached model just failed. The fix keeps the hard-offline guarantee and makes
+the download an EXPLICIT, one-time step instead: run
+`ai-env/setup.sh --fetch-models` once (network on, on purpose, for that one
+command only), then every real call stays fully offline. `describe_frames`
+recognizes huggingface_hub's own offline-guard failure and raises a
+`UserFacingError` naming that exact command, rather than the opaque
+`mlx_vlm.generate failed: ...` dump this used to surface.
 """
 
 from __future__ import annotations
@@ -89,6 +103,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+from errors import UserFacingError
 
 MODEL = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
 
@@ -106,6 +122,33 @@ SAMPLING_ARGS = [
 # Local-first (a Apelles project invariant): a cached model must never trigger a
 # network round-trip just to revalidate itself.
 _ENV_OFFLINE = {**os.environ, "HF_HUB_OFFLINE": "1"}
+
+# The one command that fetches this module's model, stated once so the error
+# message below and ai-env/setup.sh's own --help text can't drift apart
+# (B-172/D-354). Deliberately explicit, not automatic — see the module doc.
+_FETCH_MODELS_CMD = "ai-env/setup.sh --fetch-models"
+
+
+def _offline_download_error(stderr: str) -> UserFacingError | None:
+    """B-172/D-354 — recognize huggingface_hub's own offline-mode guard (the
+    failure `_ENV_OFFLINE`'s hardcoded `HF_HUB_OFFLINE=1` produces when the
+    model has never been fetched) and turn it into a message that names the
+    exact fix, instead of the opaque `mlx_vlm.generate failed: ...` dump a
+    caller previously had to decode by hand.
+
+    Returns `None` for any other failure (a real crash, a bad prompt, an
+    unrelated `mlx_vlm` error) so that stays an ordinary `RuntimeError` with
+    the real stderr attached — this only narrows the one specific, previously
+    undiagnosable case."""
+    if "HF_HUB_OFFLINE" in stderr and "offline mode is enabled" in stderr:
+        return UserFacingError(
+            f"{MODEL} has not been downloaded yet, and this sidecar never "
+            "fetches a model on its own — local-first, D-354. Run this once "
+            f"(it needs network access for that one step), then retry: "
+            f"{_FETCH_MODELS_CMD}"
+        )
+    return None
+
 
 # ffmpeg's scene-diff filter needs a PRIOR frame to compare against, so it
 # structurally cannot flag frame 0 as a change — no threshold fixes that, it is
@@ -204,7 +247,11 @@ def describe_frames(
             cmd, capture_output=True, text=True, timeout=timeout_s, env=_ENV_OFFLINE
         )
         if result.returncode != 0:
-            raise RuntimeError(f"mlx_vlm.generate failed: {result.stderr[-2000:]}")
+            stderr_tail = result.stderr[-2000:]
+            offline_error = _offline_download_error(stderr_tail)
+            if offline_error is not None:
+                raise offline_error
+            raise RuntimeError(f"mlx_vlm.generate failed: {stderr_tail}")
         return extract_json(result.stdout)
 
 

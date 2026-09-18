@@ -36,6 +36,13 @@ pydantic==2.13.5
 
 # Also required, NOT pip-installable: `ffmpeg` on PATH (scene detection and the
 # 16 kHz audio extract). `GET /health` reports where it found it, or null.
-# Models are pulled from the HF cache on first use:
-#   mlx-community/Qwen3-VL-4B-Instruct-4bit  ~2.9 GB
-#   mlx-community/whisper-large-v3-mlx       ~2.9 GB
+# Models:
+#   mlx-community/whisper-large-v3-mlx       ~2.9 GB  pulled from the HF cache
+#                                                      on first use
+#   mlx-community/Qwen3-VL-4B-Instruct-4bit  ~2.9 GB  NEVER pulled implicitly —
+#                                                      its subprocess runs
+#                                                      HF_HUB_OFFLINE=1 always
+#                                                      (local-first, D-354).
+#                                                      Fetch it once with
+#                                                      `ai-env/setup.sh
+#                                                      --fetch-models` (B-172)

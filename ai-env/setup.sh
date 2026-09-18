@@ -3,13 +3,20 @@
 # from (D-314). `ai/` and `ai-media/` stay two separate processes; they just stop
 # duplicating ~1.1 GB of identical torch/opencv/numpy/scipy wheels.
 #
-#   ./ai-env/setup.sh            install .venv from requirements.lock.txt
-#   ./ai-env/setup.sh --relock   re-resolve BOTH sidecar requirement files into a
-#                                fresh .venv and rewrite requirements.lock.txt
+#   ./ai-env/setup.sh                install .venv from requirements.lock.txt
+#   ./ai-env/setup.sh --relock       re-resolve BOTH sidecar requirement files
+#                                    into a fresh .venv and rewrite
+#                                    requirements.lock.txt
+#   ./ai-env/setup.sh --fetch-models one-time, EXPLICIT download of
+#                                    ai-media/video_understand.py's VLM weights
+#                                    (network on for this step only) — B-172/D-354
 #
 # What it does NOT do: install ffmpeg (a hard requirement of ai-media/, not
-# pip-installable) or download any model. Models pull from the HF cache on first
-# use. See ai-env/README.md.
+# pip-installable). Most models pull from the HF cache on first use; the one
+# exception is understand_video's Qwen3-VL, whose subprocess runs fully
+# offline always (D-354's local-first call) and so must be fetched explicitly
+# via --fetch-models — see ai-media/video_understand.py and docs/BUGS.md B-172.
+# See ai-env/README.md.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -20,11 +27,36 @@ LOCK="$HERE/requirements.lock.txt"
 PY="${PYTHON:-python3}"
 
 RELOCK=0
+FETCH_MODELS=0
 case "${1:-}" in
   --relock) RELOCK=1 ;;
+  --fetch-models) FETCH_MODELS=1 ;;
   "") ;;
-  *) echo "usage: $0 [--relock]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--relock|--fetch-models]" >&2; exit 2 ;;
 esac
+
+if [ "$FETCH_MODELS" = 1 ]; then
+  # B-172/D-354 — the one explicit, one-time step that populates the HF cache
+  # for understand_video's VLM. Deliberately its own early-exit branch: this
+  # does not touch the venv build/relock flow above or below it, it just needs
+  # that venv (and its huggingface_hub) to already exist.
+  if [ ! -x "$VENV/bin/python" ]; then
+    echo "error: no $VENV yet — run '$0' first to create it, then retry --fetch-models" >&2
+    exit 1
+  fi
+  echo "==> fetching understand_video's model (one-time, ~2.9 GB; network on for"
+  echo "    this step only — every real call after this stays HF_HUB_OFFLINE=1)"
+  env -u HF_HUB_OFFLINE "$VENV/bin/python" -c "
+import sys
+sys.path.insert(0, '$ROOT/ai-media')
+from huggingface_hub import snapshot_download
+from video_understand import MODEL
+print(f'downloading {MODEL} into the HF cache ...')
+snapshot_download(MODEL)
+print('done — understand_video will now run fully offline.')
+"
+  exit 0
+fi
 
 # The two sidecars' own requirement files are the human-edited source of truth
 # and the input to --relock. Resolving them in ONE pip invocation is the point:

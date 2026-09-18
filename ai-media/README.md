@@ -9,8 +9,9 @@ this footage" questions the app itself can't:
 | **what CHANGED on screen, and when** | `video_understand.py` — ffmpeg scene-detect for the timing + Qwen3-VL-4B for the description |
 
 Nothing here touches the network (models are local; the VLM subprocess runs
-with `HF_HUB_OFFLINE=1`), `grade.json`, or the timeline. It returns facts about
-a file on disk; deciding what to *do* with a moment is the Edit tab's job.
+with `HF_HUB_OFFLINE=1`, always — D-354), `grade.json`, or the timeline. It
+returns facts about a file on disk; deciding what to *do* with a moment is the
+Edit tab's job.
 
 **The two are complementary, not interchangeable.** `transcribe` finds nothing
 in silent/music-only footage; `understand_video` finds nothing in a single
@@ -108,13 +109,21 @@ second than that.
 
 ## Models
 
-| Model | Job | Size |
-|---|---|---|
-| `mlx-community/whisper-large-v3-mlx` | transcript | ~2.9 GB |
-| `mlx-community/Qwen3-VL-4B-Instruct-4bit` | frame-pair description | ~2.9 GB |
+| Model | Job | Size | Fetched |
+|---|---|---|---|
+| `mlx-community/whisper-large-v3-mlx` | transcript | ~2.9 GB | implicitly, on first use |
+| `mlx-community/Qwen3-VL-4B-Instruct-4bit` | frame-pair description | ~2.9 GB | **explicitly only** — `ai-env/setup.sh --fetch-models` |
 
 Qwen3-VL **4B, not 2B** — 2B was tested on real footage and produced garbage
 (hallucinated/truncated output). 4B is the empirical floor for usable quality.
+
+**Qwen3-VL is never pulled implicitly (B-172/D-354).** Its subprocess runs
+with `HF_HUB_OFFLINE=1` unconditionally — correct per this repo's local-first
+rule, since an agent calling `/understand_video` must never be the thing that
+silently kicks off a ~2.9 GB download. Run `ai-env/setup.sh --fetch-models`
+once (network on, on purpose, for that one command); after that every real
+call stays fully offline. Calling `/understand_video` before that step fails
+fast with a message naming that exact command, not an opaque subprocess dump.
 
 **No model weights are ever resident in this process.** Every model call is a
 subprocess, so the OS reclaims its multi-GB working set on exit. `ai/server.py`
