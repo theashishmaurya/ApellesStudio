@@ -756,6 +756,13 @@ One or two lines per session. Detail lives in the decision it references.
   all. Lands with the Inspector row (it joins `ClipTransformParam`, so it gets
   the diamond, reset and curve editor) and both MCP surfaces in the same pass.
 
+- **2026-09-18** — **B-159: the Agent Activity dock's "Hide" (X) button now
+  actually hides the dock**, instead of silently duplicating the caret-toggle
+  beside it. New `dockDismissed`/`dismissedAtRowKey` state on `useAgentStore`
+  re-shows the card the instant a genuinely new activity item (Colorist,
+  Edit, or Motion) arrives, so dismissing never hides real new activity. New
+  DOM-level test (`AgentActivityDock.dom.test.tsx`, jsdom +
+  `@testing-library/react`) covers both the hide and the re-show.
 - **2026-09-15** — **B-199: the transport bar's timecode no longer jitters,
   and drops the frame field.** `tabular-nums` alone only fixes digit widths;
   `font-mono` on the whole readout makes every character (colons, `/`, space)

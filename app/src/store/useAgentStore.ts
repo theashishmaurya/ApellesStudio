@@ -57,6 +57,18 @@ interface AgentState {
   activeShotKey: string | null;
   /** parked feeds for the non-active shots, keyed by clip path */
   shotFeeds: Record<string, AgentActivityEntry[]>;
+  /** B-159 — the activity-list card was hidden via its "Hide" (X) button.
+   *  Distinct from `feedOpen`, which only collapses the row list below the
+   *  header: this hides the whole card, header included. */
+  dockDismissed: boolean;
+  /** the newest activity row's key (see `AgentActivityDock`'s `rows[0].key`,
+   *  spanning both the Colorist feed here and the Edit/Motion entries read
+   *  off `@apelles/history`) at the moment "Hide" was clicked. The dock
+   *  compares this against the current newest row and re-shows itself the
+   *  instant they differ — i.e. on the next genuinely NEW activity item from
+   *  either source — so a dismissed-forever dock never hides real new
+   *  activity from the user. `null` when nothing has been dismissed. */
+  dismissedAtRowKey: string | null;
 
   recordActivity: (entry: AgentActivityEntry) => void;
   /** mark `id` and every *newer* (lower-index) entry as undone */
@@ -69,6 +81,10 @@ interface AgentState {
   postHumanRequest: (reason: string, roi: HumanRequest['roi']) => void;
   clearHumanRequest: () => void;
   setFeedOpen: (open: boolean) => void;
+  /** B-159 — dismiss the activity-list card. `topRowKey` is the newest row's
+   *  key at the moment of dismissal (or `null` if there was none), recorded
+   *  so the dock knows what "new activity" means for re-showing itself. */
+  dismissDock: (topRowKey: string | null) => void;
 }
 
 export const useAgentStore = create<AgentState>((set) => ({
@@ -77,6 +93,8 @@ export const useAgentStore = create<AgentState>((set) => ({
   feedOpen: true,
   activeShotKey: null,
   shotFeeds: {},
+  dockDismissed: false,
+  dismissedAtRowKey: null,
 
   recordActivity: (entry) =>
     set((s) => ({ activity: [entry, ...s.activity].slice(0, MAX_ENTRIES), feedOpen: true })),
@@ -113,4 +131,6 @@ export const useAgentStore = create<AgentState>((set) => ({
     })),
 
   setFeedOpen: (feedOpen) => set({ feedOpen }),
+
+  dismissDock: (topRowKey) => set({ dockDismissed: true, dismissedAtRowKey: topRowKey }),
 }));

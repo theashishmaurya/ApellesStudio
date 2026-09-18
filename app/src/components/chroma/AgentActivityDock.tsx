@@ -23,6 +23,13 @@
 //
 // Hidden entirely when there's no activity and no pending request. Styling
 // follows the sibling ColoristTransport (plain elements + the app's colour tokens).
+//
+// The activity-list card's own "Hide" (X) button dismisses just that card
+// (`dockDismissed` in `useAgentStore`, B-159) — separate from the caret
+// toggle beside it, which only collapses the row list and leaves the header
+// on screen. A dismissal is not forever: it clears itself the instant the
+// newest row (from either source) changes, i.e. on the next genuinely new
+// activity item, so dismissing never hides real new activity.
 // See docs/notes/agent-activity-feed.md.
 import { useState } from 'react';
 import {
@@ -182,6 +189,12 @@ export default function AgentActivityDock() {
   const setFeedOpen = useAgentStore((s) => s.setFeedOpen);
   const clearActivity = useAgentStore((s) => s.clearActivity);
   const pending = useAgentStore((s) => s.pendingHumanRequest);
+  // B-159 — the "Hide" (X) button dismisses the whole card (see below);
+  // `dismissedAtRowKey` is what makes that dismissal temporary rather than
+  // forever, see the store's own doc comment.
+  const dockDismissed = useAgentStore((s) => s.dockDismissed);
+  const dismissedAtRowKey = useAgentStore((s) => s.dismissedAtRowKey);
+  const dismissDock = useAgentStore((s) => s.dismissDock);
   // D-298 — the Edit/Motion half. `tab !== 'colorist'` because the D-051
   // bridge pushes Colorist grade edits onto this same stack, and those are
   // already listed (with their diff and their undo) from `useAgentStore`.
@@ -196,14 +209,19 @@ export default function AgentActivityDock() {
     ...tabActivity.map((e) => ({ ts: e.ts, key: `h-${e.id}`, node: <TabActivityRow key={`h-${e.id}`} entry={e} /> })),
   ].sort((a, b) => b.ts - a.ts);
 
+  // B-159 — "dismissed" means the newest row hasn't changed since "Hide" was
+  // clicked: the instant a different row (any source) becomes the newest
+  // one, this goes false on its own, no effect required.
+  const isDismissed = dockDismissed && (rows[0]?.key ?? null) === dismissedAtRowKey;
+
   const showBanner = !!pending && !pending.cleared;
-  if (rows.length === 0 && !showBanner) return null;
+  if (!showBanner && (rows.length === 0 || isDismissed)) return null;
 
   return (
     <div className="fixed left-3 bottom-3 z-40 w-[340px] max-w-[calc(100vw-24px)] flex flex-col gap-2">
       {showBanner && <RequestHumanBanner />}
 
-      {rows.length > 0 && (
+      {rows.length > 0 && !isDismissed && (
         <div className="rounded-lg border border-border-color bg-surface shadow-2xl overflow-hidden flex flex-col max-h-[45vh]">
           <div className="flex items-center gap-2 px-2.5 py-1.5 border-b border-border-color shrink-0">
             <button
@@ -227,9 +245,13 @@ export default function AgentActivityDock() {
               <TrashIcon size={12} />
             </button>
             <button
-              onClick={() => setFeedOpen(false)}
+              onClick={() => dismissDock(rows[0]?.key ?? null)}
               className="text-text-secondary hover:text-text-primary p-0.5"
-              title="Hide"
+              // B-159 — this used to call `setFeedOpen(false)`, which is what
+              // the caret toggle right next to it already does (collapses the
+              // row list, leaves this header on screen). This actually hides
+              // the whole card; it comes back on the next new activity item.
+              title="Hide (reappears on new activity)"
             >
               <XIcon size={12} />
             </button>

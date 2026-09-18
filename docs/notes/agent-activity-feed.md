@@ -192,9 +192,21 @@ so the fork diff stays localised — same rationale as `useChromaStore`, D-003):
 activity: AgentActivityEntry[]            // newest first, cap 50
 pendingHumanRequest: HumanRequest | null  // { reason, roi, ts, cleared }
 feedOpen: boolean                         // dock expand/collapse (per session)
+dockDismissed: boolean                    // B-159 — activity-list card hidden via "Hide" (X)
+dismissedAtRowKey: string | null          // B-159 — newest row's key when dismissed
 recordActivity(entry)  markUndoneFrom(id)  clearActivity()
-postHumanRequest(reason, roi)  clearHumanRequest()  setFeedOpen(b)
+postHumanRequest(reason, roi)  clearHumanRequest()  setFeedOpen(b)  dismissDock(topRowKey)
 ```
+
+`dockDismissed` is distinct from `feedOpen`: the caret toggle sets `feedOpen`
+and only collapses the row list, leaving the header (title, count, clear,
+hide) on screen; the "Hide" (X) button sets `dockDismissed` and hides the
+whole card. **B-159** was exactly this: the X button called `setFeedOpen`
+too, so it silently duplicated the caret and never visibly did anything with
+rows present. A dismissal is not permanent — `AgentActivityDock` derives
+`isDismissed = dockDismissed && rows[0]?.key === dismissedAtRowKey`, so it
+re-shows itself the instant the newest row (Colorist or Edit/Motion) changes,
+i.e. on the next genuinely new activity item, from either source.
 
 ## GUI
 
