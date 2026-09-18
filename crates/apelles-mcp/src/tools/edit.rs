@@ -863,6 +863,13 @@ pub struct EditorExportArgs {
     pub fit_overrides: Option<BTreeMap<String, FitMode>>,
     #[serde(default)]
     pub freeze_overrides: Option<BTreeMap<String, bool>>,
+    /// D-350 — which engine composites the PICTURE: `"compositor"` (the app's
+    /// own live-preview compositor, rendered headlessly and piped into one
+    /// ffmpeg process) or `"filter"` (the original one-`-i`-per-clip
+    /// `-filter_complex` graph). Omitted = `"filter"` while the render path is
+    /// phase 1. See the tool doc.
+    #[serde(default)]
+    pub renderer: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -3941,7 +3948,21 @@ impl ApellesMcp {
     entry for the one real caveat (an unprobed video source's embedded audio
     conservatively defaults to silent). Blocks until ffmpeg finishes; there
     is no progress reporting yet — use the Edit tab's own Export dialog
-    (D-198) for a real queued/backgrounded multi-export GUI flow instead."#
+    (D-198) for a real queued/backgrounded multi-export GUI flow instead.
+
+    **`renderer` (D-350) — which engine composites the picture.**
+    `"compositor"` renders every frame through the app's OWN live-preview
+    compositor and pipes it into one ffmpeg process that only compresses and
+    muxes; `"filter"` (the default, and everything described above) compiles the
+    whole composite into an ffmpeg `-filter_complex` graph with one `-i` per
+    clip. Prefer `"compositor"` for a HEAVILY CUT timeline — the filter path's
+    memory and thread use both scale with the clip count (B-228/B-229/B-230:
+    a real ~79-clip 4K project reached 56 GB and 3,065 threads on one process),
+    while the render path opens exactly one input whatever the clip count, and
+    it is by construction the same picture the Edit tab previews. It is opt-in
+    while it is phase 1: it does NOT yet support `speed_overrides`,
+    `fit_overrides` or `freeze_overrides` (all EXPORT-TIME-ONLY knobs the live
+    compositor has no notion of) and REFUSES rather than silently ignoring one."#
     )]
     pub async fn editor_export(
         &self,
@@ -3954,7 +3975,8 @@ impl ApellesMcp {
             .put("fps", p.fps)
             .put("speedOverrides", p.speed_overrides)
             .put("fitOverrides", p.fit_overrides)
-            .put("freezeOverrides", p.freeze_overrides);
+            .put("freezeOverrides", p.freeze_overrides)
+            .put("renderer", p.renderer);
         let mut env = self.op("editor_export", args).await?;
         // The result carries the whole ffmpeg argv, which is long, noisy and of no use
         // to a caller deciding what to do next — so it is dropped from the answer.

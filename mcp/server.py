@@ -46,6 +46,7 @@ from schemas import (
     CurveSpec,
     DynamicZoomFraming,
     EaseCurve,
+    ExportRenderer,
     FitMode,
     GapSelector,
     LayerTransformKey,
@@ -3778,6 +3779,7 @@ def editor_export(
     speed_overrides: dict[str, float] | None = None,
     fit_overrides: dict[str, FitMode] | None = None,
     freeze_overrides: dict[str, bool] | None = None,
+    renderer: ExportRenderer | None = None,
 ) -> str:
     """Render the open project's ENTIRE multi-track timeline — every visible
     video track/clip, composited in z-order (track 0 on top), cropped,
@@ -3840,7 +3842,22 @@ def editor_export(
     entry for the one real caveat (an unprobed video source's embedded audio
     conservatively defaults to silent). Blocks until ffmpeg finishes; there
     is no progress reporting yet — use the Edit tab's own Export dialog
-    (D-198) for a real queued/backgrounded multi-export GUI flow instead."""
+    (D-198) for a real queued/backgrounded multi-export GUI flow instead.
+
+    **`renderer` (D-350) — which engine composites the picture.**
+    `"compositor"` renders every frame through the app's OWN live-preview
+    compositor and pipes it into one ffmpeg process that only compresses and
+    muxes; `"filter"` (the default, and everything described above) compiles
+    the whole composite into an ffmpeg `-filter_complex` graph with one `-i`
+    per clip. Prefer `"compositor"` for a HEAVILY CUT timeline — the filter
+    path's memory and thread use both scale with the clip count
+    (B-228/B-229/B-230: a real ~79-clip 4K project reached 56 GB and 3,065
+    threads on one process), while the render path opens exactly one input
+    whatever the clip count, and it is by construction the same picture the
+    Edit tab previews. It is opt-in while it is phase 1: it does NOT yet
+    support `speed_overrides`, `fit_overrides` or `freeze_overrides` (all
+    EXPORT-TIME-ONLY knobs the live compositor has no notion of) and REFUSES
+    rather than silently ignoring one."""
     import json
 
     args: dict = {"outPath": out_path, "width": width, "height": height}
@@ -3852,6 +3869,8 @@ def editor_export(
         args["fitOverrides"] = fit_overrides
     if freeze_overrides is not None:
         args["freezeOverrides"] = freeze_overrides
+    if renderer is not None:
+        args["renderer"] = renderer
     env = _op("editor_export", **args)
     # B-091 — the compiled ffmpeg `args` (the FULL filter_complex, verbatim)
     # made this response grow with keyframe count/precision until it was
