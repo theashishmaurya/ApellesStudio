@@ -2,20 +2,23 @@
  * Emphasis — draw the eye to a thing.
  *
  * presets:
- *   pulse    — wraps children, gentle scale bob (loops for `dur`)
- *   glow     — wraps children, accent drop-shadow breathes
+ *   pulse    — rough ellipse around a box, gentle scale bob (loops for `dur`)
+ *   glow     — rough ellipse around a box, accent drop-shadow breathes
  *   ring     — expanding rough circle from a box centre, fades out (a "ping")
  *   scribble — rough ellipse hand-drawn around a box, left on screen
  *
- * ring/scribble need an explicit `box` (world px). pulse/glow wrap `children`
- * and don't need one.
+ * All four presets are self-drawn from an explicit `box` (world px) — none of
+ * them take `children` (B-212, `docs/BUGS.md`: `pulse`/`glow` used to be
+ * children-only wrappers, which drew nothing at all from a manifest layer,
+ * since `Video.tsx` renders every primitive `<C {...props} />` self-closing —
+ * a manifest has no way to give a primitive `children`. `ring`/`scribble`
+ * never had this problem because they already derived their shape from `box`;
+ * `pulse`/`glow` now follow the same pattern instead of a different one).
  *
  * `data-motion-box` (D-155, §3b of `docs/notes/motion-visual-builder-
- * research.md`) marks the `<path>` for ring/scribble — the whole `<svg>` is
- * `inset:0` (the full canvas, not a usable selection rect), but the path
- * itself IS the drawn shape's tight bounding box. pulse/glow have no `box`
- * concept at all and carry no hook — a caller finding none falls back to the
- * layer wrapper's own first child (§3b's documented "whole canvas" case).
+ * research.md`) marks the drawn `<path>` for every preset — the whole `<svg>`
+ * is `inset:0` (the full canvas, not a usable selection rect), but the path
+ * itself IS the drawn shape's tight bounding box.
  */
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
@@ -31,7 +34,6 @@ export const Emphasis: React.FC<{
   dur?: number;
   color?: string;
   box?: { x: number; y: number; w: number; h: number };
-  children?: React.ReactNode;
   seed?: number;
 }> = ({
   preset = "pulse",
@@ -41,7 +43,6 @@ export const Emphasis: React.FC<{
   // cannot call `useTheme()`. An explicit `color` prop still wins.
   color: colorProp,
   box,
-  children,
   seed = 3,
 }) => {
   const frame = useCurrentFrame();
@@ -51,34 +52,70 @@ export const Emphasis: React.FC<{
   const local = frame - start;
   const active = local >= 0 && local <= dur;
 
+  if (!box) return null;
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h / 2;
+
   if (preset === "pulse") {
-    const s = active ? 1 + 0.06 * Math.sin((local / fps) * Math.PI * 3) : 1;
+    // B-212 fix: self-drawn, box-driven, like `ring`/`scribble` below — was a
+    // children-only `<div style={{transform: scale(...)}}>{children}</div>`,
+    // which drew nothing from a manifest layer (no `children` to scale). The
+    // scale bob (`s`) now sizes a rough ellipse around `box` instead of
+    // scaling a wrapped child; only visible during this layer's own
+    // `[start, start+dur]` window, same gating every other preset here uses.
+    if (!active) return null;
+    const s = 1 + 0.06 * Math.sin((local / fps) * Math.PI * 3);
+    const d = roughEllipse(cx, cy, box.w * s, box.h * s, {
+      seed,
+      color,
+      strokeWidth: 5,
+      roughness: theme.roughness,
+      bowing: theme.bowing,
+    });
     return (
-      <div style={{ display: "inline-block", transform: `scale(${s})` }}>
-        {children}
-      </div>
+      <svg
+        style={{ position: "absolute", inset: 0, overflow: "visible" }}
+        width="100%"
+        height="100%"
+      >
+        <path data-motion-box d={d} fill="none" stroke={color} strokeWidth={5} strokeLinecap="round" />
+      </svg>
     );
   }
 
   if (preset === "glow") {
-    const g = active
-      ? 0.5 + 0.5 * Math.sin((local / fps) * Math.PI * 2)
-      : 0;
+    // B-212 fix: same shape as before was a bare accent `drop-shadow` filter
+    // wrapping `children` (again nothing, from a manifest layer). The exact
+    // same breathing formula (`12 + g * 22`px blur) now drives a drop-shadow
+    // filter on a real rough ellipse drawn around `box`, so there is a shape
+    // for the glow to actually surround.
+    if (!active) return null;
+    const g = 0.5 + 0.5 * Math.sin((local / fps) * Math.PI * 2);
+    const d = roughEllipse(cx, cy, box.w, box.h, {
+      seed,
+      color,
+      strokeWidth: 6,
+      roughness: theme.roughness,
+      bowing: theme.bowing,
+    });
     return (
-      <div
-        style={{
-          display: "inline-block",
-          filter: `drop-shadow(0 0 ${12 + g * 22}px ${color})`,
-        }}
+      <svg
+        style={{ position: "absolute", inset: 0, overflow: "visible" }}
+        width="100%"
+        height="100%"
       >
-        {children}
-      </div>
+        <path
+          data-motion-box
+          d={d}
+          fill="none"
+          stroke={color}
+          strokeWidth={6}
+          strokeLinecap="round"
+          style={{ filter: `drop-shadow(0 0 ${12 + g * 22}px ${color})` }}
+        />
+      </svg>
     );
   }
-
-  if (!box) return null;
-  const cx = box.x + box.w / 2;
-  const cy = box.y + box.h / 2;
 
   if (preset === "ring") {
     // B-214 — draw NOTHING outside this layer's own [at, at+dur] window.
