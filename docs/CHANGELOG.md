@@ -4,6 +4,32 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-18** — **B-226: every one of c040's 9 Motion overlays had a
+  multi-second BLACK-SCREEN tail, fixed for this project without losing any
+  content.** Owner caught it live, scrubbing past `c040-qkv` and seeing black
+  where the graphic should be. Root cause: all 9 scenes render at the
+  manifest's 30fps while the Edit timeline runs at the camera's native
+  ~24.005fps, and each overlay clip was placed on the timeline using its
+  30fps-native frame count directly as its timeline-frame span — no fps
+  conversion. The real content plays correctly and simply runs out ~20-25%
+  before the placement's declared end, and for that gap the clip is still
+  "placed" but has nothing left to show. Confirmed systemic (all 9 scenes,
+  not one), confirmed a corrected placement loses zero content (the black
+  region was never real content), and fixed at the root rather than the
+  symptom: changed the Motion manifest's `fps` to match the timeline
+  (animation timing is authored in seconds, so this doesn't shift anything)
+  and re-rendered — the existing re-render auto-refresh then set every
+  clip's duration to the exactly-correct value with no manual edit and no use
+  of `editor_trim_clip` (the tool with its own history of silent no-ops and a
+  destructive crash on this exact class of edit, B-215/B-220). Checked
+  whether the camera's 16 PIP-in/out ramps needed retiming against the
+  corrected boundaries — they didn't: every ramp already lined up with the
+  real content's correct end, since they were authored by ear/eye against
+  the always-correct visible content, not the buggy placement metadata.
+  Verified live at the exact frame that was solid black before the fix — now
+  correct. Root engine defect (fps-unaware duration derivation in
+  `editor_add_clip`/D-260's refresh path) is NOT fixed, only this project's
+  instance of it — see B-226 in `docs/BUGS.md`.
 - **2026-09-18** — **D-348's c040 split-screen rebuild finished end-to-end —
   the content half that two prior passes each hit a real `/mcp` connectivity
   wall on.** Reflow ran exactly as predicted (`sx 0.6521`/`sy 0.9407`, 82

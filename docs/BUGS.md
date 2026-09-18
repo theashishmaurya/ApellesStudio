@@ -27,6 +27,33 @@ Still real:
 
 ## Open
 
+## B-226 — a Motion scene rendered at 30fps and placed on a ~24fps Edit timeline plays its real content correctly, then goes BLACK for the last ~20-25% of its placed duration, on every overlay in a project
+
+status: **fixed for this project, 2026-09-18** (root cause in `editor_add_clip`/D-260's refresh path itself is NOT fixed — see the last bullet) · severity: **high** (every one of 9 overlay windows in the shipping video had a multi-second black-screen tail; entirely invisible from reading state, only found by scrubbing the live preview) · area: how `editor_add_clip`/D-260's re-render refresh derive a placed clip's Edit-timeline `duration` from a Motion render whose own `fps` differs from the timeline's
+
+- **found:** 2026-09-18, owner scrubbing `2026-09-12-c040-mgfx-recut` after the split-screen rebuild, expecting to see the `c040-qkv` graphic and instead seeing black canvas (with the camera's left-panel crop still correctly playing on top).
+- **root cause, confirmed by direct measurement, not inferred:** every Motion scene in this project renders at the manifest's own `fps: 30`. The Edit timeline itself runs at the camera's native rate, `24.005172586505743` (`Frame Rate: Match first clip`). Each of the 9 Motion overlay clips on track 1 is placed with `duration` (and `source_len`) equal to the render's OWN native frame count at 30fps — e.g. `c040-qkv` is a 25.0 s scene, rendered to a 750-frame file, placed with `duration: 750`. That `750` is then used directly as the clip's TIMELINE-frame span (`start_frame` to `start_frame + duration`), with no conversion for the 30-vs-24.005 fps difference. The clip's own CONTENT plays back correctly, at the right real-time speed, and genuinely runs out after `750 / 30 = 25.0` real seconds — which lands at timeline frame `start + round(25.0 * 24.005172586505743) = start + 600`, **150 timeline frames before** the placement's declared end at `start + 750`. For that 150-frame (6.25 s) gap, the clip is still "placed" (occupying the track) but has no more source frames to show, so it renders black.
+- **verified this is not one clip's mistake — it is systemic, same shape on all 9:**
+
+  | scene | placed `duration` (30fps-native) | correct duration (timeline fps) | overrun |
+  |---|---|---|---|
+  | c040-hook | 465 | 372 | 93 |
+  | c040-whatisattention | 525 | 420 | 105 |
+  | c040-selfattn | 240 | 192 | 48 |
+  | c040-qkv | 750 | 600 | 150 |
+  | c040-encdec | 750 | 600 | 150 |
+  | c040-lostmiddle | 510 | 408 | 102 |
+  | c040-thefix | 600 | 480 | 120 |
+  | c040-recap | 558 | 446 | 112 |
+  | c040-payoff | 435 | 348 | 87 |
+
+  Confirmed live for `c040-qkv` specifically: correct content at timeline frame 2580, still correct at 2586's neighbourhood, solid black at 2601 and 2615 (well inside the clip's placed span, ruling out a one-frame boundary glitch) — matching the predicted 2586 cutover to the frame.
+- **trimming the placement is NOT a content loss** — confirmed by the mechanism itself: the black region is not truncated real content, it is the ALREADY-EMPTY tail past where the real 25.0 s of animation had already finished playing. Shortening the placed `duration` to the corrected value only removes a span that was never showing anything.
+- **the fix applied: changed the ROOT CAUSE for this project, not the symptom.** Motion keyframe timing (`at`, `dur`) is authored entirely in SECONDS, not frames (confirmed: every scene and layer keyframe in this manifest uses seconds), so changing the manifest's `fps` from 30 to the timeline's own `24.005172586505743` via `motion_set_project_settings(fps=…, reflow=False)` and re-rendering all 9 scenes does not shift any animation timing — it only changes how many actual video frames get produced per second of real time. Re-rendered at the matching fps, each scene's native frame count became the ALREADY-CORRECT timeline-frame count directly, confirmed exactly matching the table above's "correct duration" column to the frame (372/420/192/600/600/408/480/446/348), via D-260's existing re-render auto-refresh — with no manual duration edit and, notably, without ever touching `editor_trim_clip`.
+- **camera ramp timing checked, needed NO changes.** All 16 of the camera's PIP-in/PIP-out keyframe ramps (see D-348's own note) turned out to already be timed against the CORRECT content boundaries, not the buggy padded ones — e.g. `c040-qkv`'s exit ramp starts at exactly timeline frame 2586, precisely matching the corrected window end, with no adjustment needed. This makes sense in hindsight: the ramps were authored by ear/eye against the real, always-correct visible content and narration, which the metadata bug never touched — only the invisible placement padding was ever wrong.
+- **verified live, at the exact frame that was solid black before the fix** (timeline frame 2600, inside `c040-qkv`'s old bogus tail): now shows the camera correctly back at full-frame, having ramped out on cue at 2586 — the black is gone with zero loss of real content, exactly as predicted.
+- **still open, deliberately:** why `editor_add_clip`/D-260 derive a clip's Edit-timeline duration from a differently-rated source's native frame count with no fps conversion in the first place — that is the actual engine defect underneath this bug, and fixing THIS project's instance of it (by matching the Motion project's fps to the timeline) works around it for this project rather than closing the underlying defect. A future Motion project whose scenes are rendered at a still-different fps than whatever Edit timeline places them onto would hit the identical bug. Whoever picks this up next should look at `editor_add_clip`'s and `motion_render`'s refresh-path source in `app/src-tauri`.
+
 ## B-225 — a canvas reflow (D-347) moves a `graph` layer's node POSITIONS but does not shrink its label FONT SIZE, so a comfortable label gap can become a collision after reflow
 
 status: **open** (worked around for one node, root cause not fixed) · severity: low (cosmetic — a real, visible label overlap, but content-specific and caught by eye, not a crash or data loss) · area: `packages/motion/src/manifestReflow.ts` (`graph` is not in `propCatalog`'s size-field registry, so its labels get no `su` scale-down), `packages/motion-engine/src/primitives/Graph.tsx` (renders labels at a fixed font size regardless of node spacing)
