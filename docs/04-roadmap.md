@@ -235,6 +235,44 @@ lives in the `D-NNN` / `docs/notes/*.md` referenced. Sequenced because they shar
 files (`App.tsx`, `Shell.tsx`, `useUIStore.ts`) — one subagent at a time until the
 crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
+0. **Export through the app's own compositor instead of an ffmpeg filter graph — D-350.**
+   Moved here from "Later" 2026-09-18 when **phase 1 shipped**. Origin: B-228/B-229/B-230
+   found and fixed three measured resource pathologies in `editor_export`'s ffmpeg
+   pipeline on a heavily-cut project (79 clips: 3,065 threads/56 GB → bounded, then the
+   same multiplication one layer down in the decoder threads, 38 GB → ~7.7 GB), but even
+   fully patched a real export floors around 14-16 GB — a cost tied to the GRAPH'S SHAPE
+   (≈80 sequential `overlay=` stages), not to anything those fixes touch. The decided fix
+   is to render the picture with the compositor the live preview already uses and hand one
+   ffmpeg process only finished frames. Design, measurements and deferrals:
+   `docs/notes/export-gpu-compositor.md`.
+   **Phase 1 SHIPPED (2026-09-18), opt-in via `editor_export`'s new `renderer` parameter
+   (`"compositor"` / `"filter"`, default `"filter"`), on both MCP surfaces and through the
+   Edit tab's export queue:** `chroma::edit_render` renders the timeline headlessly
+   through `edit::render_timeline_frame` (split out of `timeline_frame_image` so the
+   project manifest is resolved once, not per frame) and pipes one raw RGBA stream into a
+   single ffmpeg process that also carries D-197's existing audio mix, unchanged. The
+   render path emits **no video filter graph at all** and opens **one input** whatever the
+   clip count. Verified by a real old-vs-new pixel comparison at five timestamps covering
+   a keyframed slide, rounded corners and a crop — two frames bit-identical, every other
+   difference confined to a one-pixel boundary line (0.0000% solid difference after a 3x3
+   erosion, on every frame) — plus a same-frame-twice determinism check. Measured at
+   20 clips / 1080p: **peak RSS −18%** (1787 → 1463 MB) with the growth term removed
+   structurally, **threads +49%** (100 → 149), which is a real remaining cost, see below.
+   **Phase 2 — not built:**
+   - `speedOverrides`/`fitOverrides`/`freezeOverrides` (refused, not silently ignored, by
+     the render path today — the live compositor has no notion of them);
+   - capping `decode_pipe`'s per-pipe ffmpeg `-threads` the way B-230 capped the export's
+     — the +49% thread count above is entirely this, and it is bounded by concurrent
+     decoders rather than clip count, but the constant is bad. Deliberately not changed
+     blind because `decode_pipe` is also the LIVE PLAYBACK decoder;
+   - an end-to-end measurement at the real ~79-clip project (the slope is argued
+     structurally and asserted on the compiled argv, not yet measured at that size);
+   - real progress reporting (this path knows its frame number; the old one could only
+     parse ffmpeg stderr);
+   - ProRes / a quality knob (phase 1 is h.264 crf 18, matching the old path's default);
+   - **deleting the old filter-graph path and the temporary `renderer` parameter** — the
+     end state of D-350, once phase 2 closes the gaps above.
+
 0. **Preview scrub: a backward step costs an ffmpeg respawn + keyframe seek (D-336, continues B-146)**
    — owner-reported 2026-09-16 ("preview takes like hell"), root-caused and instrumented
    in D-336 but **deliberately not fixed there**. `FramePipe::can_serve`
@@ -2646,23 +2684,6 @@ flag itself).
 
 No urgency — each needs an earlier item to land first, or is a bigger bet.
 
-- **Export through the native GPU compositor instead of an ffmpeg filter graph — D-350.**
-  A real bug-fix session (B-228/B-229/B-230, 2026-09-18) found and fixed three
-  measured resource pathologies in `editor_export`'s ffmpeg pipeline on a heavily-cut
-  project (79 clips: 3,065 threads/56 GB → bounded, then the same multiplication one
-  layer down in the decoder threads, 38 GB → ~7.7 GB measured) — but even fully
-  patched, a real export still floors around 14-16 GB and takes minutes before its
-  first output byte, a cost tied to the GRAPH'S SHAPE (≈80 sequential `overlay=`
-  stages), not anything the three fixes touch. Checked how established tools actually
-  do this rather than guess (CLAUDE.md's own rule): Palmier Pro (the owner's own prior
-  NLE, confirmed by reading its binary) uses `AVAssetExportSession`/`AVFoundation`
-  directly, no ffmpeg at all; DaVinci Resolve runs its own GPU-native
-  render/compositing pipeline and reserves an external/hardware encoder for only the
-  final transcode. Apelles already has the matching piece — the live preview's own
-  GPU compositor (`crates/apelles-gpu`, `composite_layer_onto`) — just not reused for
-  export, which is also the direct, named cause of this project's preview/export
-  parity-bug lineage (B-201/B-208/B-218/B-223). Full write-up, options considered, and
-  why this is a real proposal rather than a same-night rewrite: **D-350**.
 - **XMEML/FCP7 XML interchange export (Premiere)** — D-196 shipped the
   FCPXML 1.7 half of "move a Apelles edit to another NLE" (DaVinci
   Resolve/Final Cut Pro), deliberately scoping XMEML out rather than guess at

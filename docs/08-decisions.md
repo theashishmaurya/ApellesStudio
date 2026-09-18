@@ -117,6 +117,55 @@ Status: `open` · `decided` · `revisit`
 - **Roadmap:** tracked in `docs/04-roadmap.md`'s "Later" section until the
   first phase lands, then moved to "Next".
 
+### What phase 1 actually shipped (appended 2026-09-18 — the rationale above is unchanged)
+
+Design note, measurements and full deferral list: **`docs/notes/export-gpu-compositor.md`**.
+
+- **Shipped, opt-in.** `editor_export` gains a `renderer` parameter
+  (`"compositor"` | `"filter"`, default `"filter"`), on the GUI export queue and
+  both MCP surfaces. `chroma::edit_render` walks the timeline frame by frame
+  through `edit::render_timeline_frame` — the live preview's own compositor,
+  split out of `timeline_frame_image` so the project manifest is resolved once
+  rather than on every frame — and pipes one raw RGBA stream into a single
+  ffmpeg process. The picture goes through **no ffmpeg filter graph at all**, and
+  the encoder opens **one input** whatever the clip count.
+- **Audio was reused, not touched**, as scoped: `timelineExportAudio.ts`'s
+  per-source construction (D-197) compiles the mix into that same single
+  invocation. One structural change only — embedded video-clip audio now opens
+  its own `-i` (the picture no longer opens one for it to share), at exactly the
+  clip's own window, which removes the `atrim` the shared input needed.
+- **Verified by real old-vs-new pixels**, not by inspection. Both argvs are
+  compiled by the live TypeScript compilers, frozen into one committed fixture
+  that a vitest test re-asserts on every run (so it cannot go stale), and
+  consumed by a Rust test that runs both paths through real ffmpeg and diffs five
+  decoded timestamps: a keyframed slide, rounded corners, a crop, over a base
+  layer. **Two frames are pixel-for-pixel identical**; every difference elsewhere
+  is a one-pixel boundary line (`overlay` truncates a fractional x where
+  `composite_layer_onto` rounds it) — 0.0000% solid difference after a 3x3
+  erosion, on every frame. Plus a same-frame-twice determinism check.
+- **Resource measurement (20 clips, 1080p): peak RSS 1787 → 1463 MB (−18%),
+  threads 100 → 149 (+49%).** Reported honestly: the memory win is real and the
+  *growth term* is gone structurally (one decoder per visible TRACK plus one
+  encoder, versus one decoder and one filter chain per CLIP), but the thread
+  count is currently WORSE in absolute terms because `decode_pipe` spawns each
+  ffmpeg at the default thread count. That is a known, bounded, fixable constant
+  — not a multiplication — and is phase-2 work, left alone here because
+  `decode_pipe` is also the live playback decoder. The slope at the real
+  ~79-clip project is argued structurally and asserted on the compiled argv; it
+  has **not** been measured end to end at that size.
+- **A correction to this entry's own wording:** `composite_layer_onto` is a
+  **CPU** compositor (`image`/`imageproc`) in `app/src-tauri/src/chroma/edit.rs`,
+  not `crates/apelles-gpu`, which is only the headless wgpu device used by the
+  grade path. None of the reasoning above depends on it — the argument is "one
+  compositor, not two, and hand the encoder only finished frames" — but the file
+  named was wrong. Moving the compositing itself to the GPU is a separate, later
+  question (`apelles-compositor`).
+- **Deferred, explicitly:** `speedOverrides`/`fitOverrides`/`freezeOverrides`
+  (export-time-only knobs the live compositor has no notion of — the render path
+  **refuses** rather than silently ignoring them); deleting the old path and the
+  temporary `renderer` parameter; progress reporting; ProRes/quality options;
+  the `decode_pipe` thread cap; a GPU compositor.
+
 ---
 
 ## D-001 — Engine base: fork RapidRAW
