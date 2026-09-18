@@ -4,6 +4,25 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-09-18** — **D-348's c040 split-screen rebuild finished end-to-end —
+  the content half that two prior passes each hit a real `/mcp` connectivity
+  wall on.** Reflow ran exactly as predicted (`sx 0.6521`/`sy 0.9407`, 82
+  layers/327 fields). Checking every scene against the LIVE rendered result
+  (not the pre-reflow static estimate) found the estimate had been wrong in
+  both directions: `c040-hook`/`c040-payoff` needed no stacking redesign after
+  all (the pre-reflow width sum had overstated the collision), while
+  `c040-whatisattention`'s word row genuinely overflowed and was fixed with a
+  small proportional compression instead of a two-row wrap. Found and fixed
+  one more defect the pre-reflow analysis couldn't have predicted:
+  `c040-qkv`'s graph had a disproportionately long node label that the
+  reflow's position-only compression put into collision with its neighbour —
+  filed as **B-225** (reflow doesn't scale a graph's label font size), worked
+  around by shortening the one label. All 9 scenes re-rendered, the camera's
+  38 PIP clips (a static per-clip transform, not the animated keyframe ramps
+  this decision's own entry originally described) moved to the new
+  left-panel geometry, the 9 Motion overlays got the new right-panel box, and
+  the whole timeline re-exported at native 3840×2160 to verify by real output
+  rather than preview alone. Full detail: `docs/notes/c040-split-screen-layout.md`.
 - **2026-09-18** — **B-216's dropped-speech failure is root-caused and its
   proposed detector is validated — research only, no product code touched. See
   `docs/notes/whisper-dark-region-research.md`.** It is none of the paths it

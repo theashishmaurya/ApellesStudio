@@ -180,78 +180,83 @@ Two contracts were wrong, and both are fixed and committed:
   reflows the layout onto the new canvas in the same commit, driven off
   `propCatalog.ts`'s existing position/size registries.
 
-## What is still to do
+## Done, 2026-09-18
 
-The engine work above is done. The content rebuild is not, and is **blocked on
-one environment refresh**, not on a missing capability:
+Two dispatched passes each hit a real connectivity wall and correctly stopped
+rather than work around it (their accounts, and the mid-air "worktree cannot
+reach chroma" misdiagnosis, are preserved in git history — `git log -p` on
+this file — rather than kept inline here, now that the work itself is done).
+The actual blocker both times was the coordinating session's own `/mcp`
+connection going stale/dead, not the app, not the MCP server's code, and not
+worktree isolation as such. Once reconnected, the coordinating session
+finished the whole content rebuild directly in one pass:
 
-1. **Re-point the Motion canvas to 1252 × 1016 with a reflow** —
-   `motion_set_project_settings(width=1252, height=1016, reflow=True)`. The
-   reflow's own output over this manifest has already been computed and checked:
-   `sx 0.6521`, `sy 0.9407`, `su 0.6521`, **82 layers / 327 fields** moved, no
-   `scene3d` to skip.
-   **Blocker (re-diagnosed twice, 2026-09-18 — read this whole note before
-   trusting either theory).** First reading: "the MCP server process predates
-   D-345/D-347; a restart exposes it." A follow-up pass then disproved that by
-   probing `mcp/server.py` directly over stdio — `motion_set_project_settings`
-   really is present with `['fps','height','reflow','title','width']` — and
-   proposed instead that a subagent dispatched with `isolation: "worktree"`
-   structurally cannot reach the `chroma` MCP server at all, since it's
-   registered project-scoped by literal cwd in `~/.claude-personal/.claude.json`
-   and a worktree's cwd is a different key.
-
-   **That second theory does not survive its own night's evidence and should
-   NOT be treated as settled.** The FIRST agent to work on this exact task was
-   also dispatched with `isolation: "worktree"` and had extensive, successful
-   `chroma` MCP access for a full hour — 280 tool calls, live screenshots, real
-   on-app measurements (that's how the geometry in this very document was
-   derived). A worktree that structurally cannot connect would not have been
-   able to do any of that. The far simpler explanation for the SECOND agent's
-   total connection failure: the coordinating session killed the one running
-   `mcp/server.py` process between the two dispatches (trying, badly, to force
-   its own stale tool list to refresh — it does not auto-respawn, see
-   `feedback_chroma_mcp_restart_risk` in the assistant's own memory) — a dead
-   shared server explains a total failure far more parsimoniously than a
-   project-scoping rule that the first agent's own hour of real tool calls
-   already falsifies. **Treat "worktree dispatch cannot reach chroma" as
-   unconfirmed and likely wrong** until someone actually tests a worktree
-   dispatch against a KNOWN-healthy, freshly-started server and it still fails.
-
-   **What to actually do:** before dispatching anything for this task, confirm
-   a live `chroma` connection works AT ALL first (a trivial read-only call from
-   wherever you're about to dispatch from) — don't assume either failure mode.
-   It was NOT worked around with a direct manifest file write: that is exactly
-   the practice **B-222** was filed against, and the app holds the document in
-   memory anyway.
-2. **Correct the overflows the reflow cannot know about.** The reflow is
-   proportional and does not know that text wraps. Concretely, at `su 0.6521`
-   every font size drops to 65% (a 46 px caption → 30), which preserves the line
-   count but is smaller on screen than the original; the alternative is to keep
-   more of the type size and accept more wrapped lines. That is a per-scene
-   judgment to make against the rendered panel, and the two scenes that need
-   real re-composition rather than a nudge are `c040-hook` and `c040-payoff`
-   (a 1060-px `claudechat` beside a 620-px annotation column does not fit a
-   1252-wide panel side by side — they want stacking) and `c040-whatisattention`
-   (a single word row spanning x 200…1636 has to wrap to two rows).
-3. **`motion_render`**, then rebuild the Edit compositing with the table above:
-   the 9 overlay clips to the right-panel box, and the camera's 18 ramps +
-   36 holds re-pointed from the PIP corner to the left-panel slot.
-4. **Verify by EXPORT, not only by preview**, until the running app is
-   confirmed rebuilt off D-346 — the pre-fix build still has B-218, so a
-   cropped camera panel will look wrong in its preview while exporting
-   correctly. (This is also why B-218's own recorded "workaround" must not be
-   used: it was measured in the preview only.)
-
-   **D-346's actual compositing fix is Rust** (`app/src-tauri/src/chroma/
-   edit.rs`, `composite_layer_onto`/`effective_size`/`blend_layer_sampled` —
-   496 lines, verified by reading the merged diff directly), not "frontend TS
-   with no Rust" as one pass here briefly claimed — that pass was looking at
-   the GUI's box-drawing/hit-testing mirror of the fix
-   (`transformGeometry.ts`/`canvasPick.ts`/`clipKeyframes.ts`), which IS TS,
-   but is not what renders the live preview's actual pixels. The Rust fix
-   needs the Tauri app's own binary rebuilt, not just Vite's frontend
-   hot-reload. `target/debug/apelles` did relink at 00:38 on 2026-09-18, after
-   the D-346 merge at 00:35, so the currently-running app very likely has it —
-   but that is still an inference from a build timestamp, not an observed
-   preview. Confirm with a real export before trusting the preview for
-   anything crop-related.
+1. **Reflow ran exactly as predicted**: `motion_set_project_settings(width=1252,
+   height=1016, reflow=True)` reported `sx 0.6521`, `sy 0.9407`,
+   **82 layers / 327 fields** moved — matching the pre-computed estimate above
+   to the field.
+2. **Every scene was checked against the LIVE rendered result, not the
+   pre-reflow static estimate** — and the estimate turned out wrong in one
+   direction and right in another:
+   - `c040-hook` and `c040-payoff` (the two scenes flagged for a stacking
+     redesign) actually fit cleanly once really reflowed and screenshotted —
+     the `claudechat` (691 px) and annotation column (404 px) total 1095 px
+     inside the 1252-wide canvas with a tight but real ~59 px gutter. **No
+     redesign was needed**; the pre-reflow width analysis had overstated the
+     collision because it summed the PRE-reflow widths (1060+620) rather than
+     the post-reflow ones.
+   - `c040-whatisattention`'s word row (`summarize this and flag anything
+     off`) genuinely did overflow — `off` sat right at the frame's edge with
+     no margin. Fixed with a small proportional compression of the row (all
+     six words shifted left by 3–28 px, anchored on `summarize`) rather than a
+     two-row wrap, since the overflow was only ~30 px; the matching emphasis
+     highlight boxes and the "↑ underweighed" callout were moved by the same
+     deltas to stay aligned with the words they mark.
+   - **One further defect, not predicted by the pre-reflow analysis, was found
+     and fixed in the same pass**: `c040-qkv`'s `graph` layer has FIXED node
+     positions (not force-directed), and one node — `v`, labelled `"the
+     content of \"anything\""` — is dramatically longer than its neighbours'
+     single-word labels. The reflow compresses node POSITIONS by `sx`/`sy` but
+     does not shrink label FONT SIZE (graph labels aren't a registered
+     `propCatalog` size field), so a gap that was comfortable pre-reflow
+     collided post-reflow: the label visually ran into its neighbour
+     (`"anythingthe content of \"anything\""`, jammed together, confirmed at
+     two different frames so not a transient animation artifact). Fixed by
+     shortening the label to `"the content"` via `motion_set_layer_field`
+     (`key: "nodes"`, the whole array rewritten with the one label changed —
+     there is no dedicated per-node-label tool).
+3. **All 9 scenes re-rendered** (`motion_render`) — confirmed via
+   `get_timeline` (not `motion_get_edit_links`, which reported a stale
+   `clipCount: 0` / wrong-project-path snapshot at the time; the real
+   timeline was correct throughout) that all 9 Edit-tab overlay clips
+   auto-refreshed to the new renders with their exact original frame counts
+   unchanged (D-260), so no re-placement was needed.
+4. **The camera's 38 PIP clips were rebuilt.** Reading `project.json` directly
+   showed the ACTUAL existing mechanism was simpler than this note originally
+   described: no animated keyframes at all (`"18 ramps + 36 holds"` does not
+   match what D-342 actually shipped) — just a STATIC per-clip transform
+   (`position_x 0.76, position_y 0.755, scale 0.22`) on exactly the 38 clips
+   whose time range falls inside a Motion-overlay window, with every other
+   clip left at the full-frame default. Replaced those same 38 clips' static
+   transform with the new left-panel values (`crop_top 0.07, crop_left
+   0.3877422, crop_right 0.3177422, scale 0.29791667, position_x 0.01666667,
+   position_y 0.02962963, corner_radius 14`) via `editor_set_clip_transform`
+   — same mechanism, same 38 clips, new target values. The 9 Motion overlay
+   clips on track 1 got the new right-panel box (`box_width 0.65208333,
+   box_height 0.94074074, position_x 0.33125, position_y 0.02962963,
+   corner_radius 14`).
+5. **Verified by real export, not preview alone**: the whole timeline was
+   exported at native 3840×2160 to `2026-09-12-c040-final.mp4`. D-346's actual
+   compositing fix is Rust (`app/src-tauri/src/chroma/edit.rs` —
+   `composite_layer_onto`/`effective_size`/`blend_layer_sampled`, 496 lines,
+   confirmed by reading the merged diff directly), not "frontend TS with no
+   Rust" as one of the earlier passes briefly and wrongly claimed — that pass
+   was looking at the GUI's separate box-drawing/hit-testing mirror of the fix
+   (`transformGeometry.ts`/`canvasPick.ts`/`clipKeyframes.ts`), not what
+   renders the live preview's actual pixels. The Rust fix needs the Tauri
+   app's own binary rebuilt, which it was (`target/debug/apelles` relinked at
+   00:38, after the D-346 merge at 00:35) — the live preview already matched
+   the design (camera left panel correctly cropped/rounded, graphic right
+   panel with visible gutter, captions fully clear of the camera in every
+   scene checked), and the export was run to confirm that match holds under
+   the real ffmpeg path too, per this note's own standing caution.

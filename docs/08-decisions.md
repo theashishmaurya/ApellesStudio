@@ -34246,11 +34246,28 @@ the layout is carried across by **D-347**'s reflow — which is what keeps this
 reusable: the next change of split ratio is a parameter, not a nine-scene
 re-author.
 
-**Status: the engine half is done and committed; the content half is not.** It
-is blocked on `motion_set_project_settings` (D-345, shipped 2026-09-17) not
-being present in the tool list the running MCP server process advertises — a
-restart exposes it. A direct manifest file write was deliberately NOT used:
-that is the practice B-222 was filed against, and this project's own entry there
-records a previous agent correctly stopping at the same wall. The remaining
-steps, the already-computed reflow output, and the three scenes that need real
-re-composition rather than a nudge are enumerated in the note.
+**Status: done, 2026-09-18.** Two dispatched passes hit the same tool
+correctly refusing a workaround (see the note's own account, corrected there
+in place — the real blocker both times was the coordinating session's own
+`/mcp` connection, not anything structural), so the coordinating session
+finished it directly once reconnected: the canvas reflow ran
+(`sx 0.6521`/`sy 0.9407`, 82 layers/327 fields moved, matching the
+already-computed prediction exactly), the three flagged scenes were checked
+against the LIVE rendered result rather than the pre-reflow static estimate —
+`c040-hook`/`c040-payoff` turned out to fit cleanly as reflowed (the
+pre-reflow width analysis had overstated the collision), so neither needed
+the stacking redesign originally proposed; `c040-whatisattention`'s word row
+did genuinely overflow and was corrected by a small proportional compression
+across the row (not a two-row wrap) plus repositioning its matching emphasis
+boxes and callout. One further, unplanned defect was found and fixed in the
+same pass: `c040-qkv`'s graph had a disproportionately long node label ("the
+content of \"anything\"") that the reflow's position-compression (not
+font-size compression, which the reflow does not touch for graph labels) put
+into direct collision with its neighbour; shortened to "the content". All 9
+scenes re-rendered, the camera's 38 clips carrying the old bottom-right PIP
+transform (`position 0.76/0.755, scale 0.22`, static per-clip values — not
+keyframed ramps, contrary to this entry's original description of "18
+ramps/36 holds") were moved to the new left-panel transform, the 9 Motion
+overlay clips got the new right-panel box, and the whole timeline was
+re-exported at native 3840×2160 to verify by real output rather than preview
+alone, per this entry's own standing caution.
