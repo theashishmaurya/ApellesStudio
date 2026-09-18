@@ -19,6 +19,7 @@ import {
   isEqBandActive,
   checkAddClip,
   checkLink,
+  checkRemoveGap,
   clipAt,
   clipFromDraggedMedia,
   computeInsertion,
@@ -1738,6 +1739,52 @@ describe('cross-track ripple sync (D-106)', () => {
     );
     const after = applyOp(before, { kind: 'remove_gap', track: 0, frame: 60 });
     expect(after).toBe(before); // whole op rejected, nothing moves anywhere
+  });
+
+  it('checkRemoveGap (B-227) reports WHY the same rejection happens, instead of the reducer\'s own silent no-op', () => {
+    // Same fixture as the test directly above — `applyOp` and `checkRemoveGap`
+    // must reject the identical case, but this is the one a caller (a command
+    // handler, an agent, `useEditorControl.ts`'s `editor_remove_gap`) can
+    // actually act on: before this existed, a rejection here was reported
+    // back to a caller as `{ok: true}` — a false success, the same class of
+    // bug as B-215/B-197, just for a THIRD function.
+    const before = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 80, duration: 50 })],
+      [clip('x', 'X', { start_frame: 20, duration: 180, source_len: 10_000 })],
+    );
+    const check = checkRemoveGap(before, 0, 60, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.reason).toContain('B-033');
+      expect(check.reason).toContain('track 1');
+    }
+  });
+
+  it('checkRemoveGap reports a real gap as ok, with the gap bounds `remove_gap` would use', () => {
+    const before = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 120, duration: 50 })],
+      [],
+    );
+    const check = checkRemoveGap(before, 0, 60, 24);
+    expect(check).toEqual({ ok: true, gap: { gapStart: 50, gapEnd: 120 } });
+  });
+
+  it('checkRemoveGap names a locked track and an out-of-range track, matching applyOp\'s own silent-reject cases', () => {
+    const before = twoTrack([clip('a', 'A', { start_frame: 0, duration: 50 })], []);
+    before.tracks[0].locked = true;
+    expect(checkRemoveGap(before, 0, 60, 24)).toEqual({ ok: false, reason: 'track 0 is locked' });
+    expect(checkRemoveGap(before, 5, 60, 24).ok).toBe(false);
+  });
+
+  it('checkRemoveGap and applyOp agree on a real, non-straddled gap: both say ok, and applying it actually shifts the clip', () => {
+    const before = twoTrack(
+      [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 120, duration: 50 })],
+      [],
+    );
+    expect(checkRemoveGap(before, 0, 60, 24).ok).toBe(true);
+    const after = applyOp(before, { kind: 'remove_gap', track: 0, frame: 60 });
+    expect(after).not.toBe(before);
+    expect(after.tracks[0].clips.find((c) => c.id === 'b')!.start_frame).toBe(50);
   });
 
   it('remove_gap ripple propagates without a matching gap on the synced track', () => {

@@ -4301,6 +4301,46 @@ export function checkEditIn(
   return { ok: true };
 }
 
+/** Pre-flight check for `remove_gap` (B-227) — the same three preconditions
+ *  `applyOp`'s own `case 'remove_gap'` enforces (a real gap at `frame`, the
+ *  track not locked, no clip straddling the gap's end on a sync-locked OTHER
+ *  track per B-033), factored into one place so `applyOp` and a command
+ *  handler (`useEditorControl.ts`'s `editor_remove_gap`) share the exact
+ *  same logic instead of it drifting between a reducer that silently
+ *  `return tl`s on rejection and a caller that needs to know WHY.
+ *
+ *  `frame`/`fps` mirror `gapAt`'s own contract: any frame strictly inside
+ *  the gap works, not just its exact start. */
+export function checkRemoveGap(
+  tl: Timeline,
+  track: number,
+  frame: number,
+  fps: number,
+): { ok: true; gap: { gapStart: number; gapEnd: number } } | { ok: false; reason: string } {
+  const tr = tl.tracks[track];
+  if (!tr) return { ok: false, reason: `no track ${track} (0..${tl.tracks.length - 1})` };
+  if (tr.locked) return { ok: false, reason: `track ${track} is locked` };
+  const gap = gapAt(tr, frame, fps);
+  if (!gap) {
+    return {
+      ok: false,
+      reason: `frame ${frame} on track ${track} is not inside a real, closeable gap (a gap needs a clip after it — trailing empty space past the last clip is not one)`,
+    };
+  }
+  const straddling = findStraddlingSyncLockedTrack(tl.tracks, track, gap.gapEnd, fps);
+  if (straddling !== null) {
+    return {
+      ok: false,
+      reason:
+        `remove_gap refused (B-033): closing this gap would ripple every sync-locked track, and track ` +
+        `${straddling} has a clip straddling the gap's end frame (${gap.gapEnd}) — a sync-locked track's clip ` +
+        `can't be split by a ripple. Unlink/unlock track ${straddling}, move or trim its straddling clip clear ` +
+        `of frame ${gap.gapEnd}, or unlink track ${track} from sync-lock, then retry.`,
+    };
+  }
+  return { ok: true, gap };
+}
+
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
   // B-077 — the project's own timeline-frame rate, needed by every op below
   // that combines a `start_frame`-space position with a `duration`/
@@ -5221,16 +5261,13 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       return next;
     }
     case 'remove_gap': {
-      // D-105 — mirrors `apelles-timeline::Timeline::remove_gap` exactly:
-      // find the real gap `frame` is inside (`gapAt`), reject as a no-op if
-      // there isn't one, otherwise shift every clip at/after the gap's end
-      // earlier by its width.
-      const gap = gapAt(tr, op.frame, fps);
-      if (!gap) return tl;
+      // D-105/B-033, factored into `checkRemoveGap` (B-227) so a command
+      // handler can run the identical precondition check BEFORE dispatching
+      // and report WHY, instead of this case's own silent `return tl`.
+      const check = checkRemoveGap(tl, op.track, op.frame, fps);
+      if (!check.ok) return tl;
+      const { gap } = check;
       const shift = gap.gapEnd - gap.gapStart;
-      // B-033 — reject upfront if a sync-locked track has a straddling
-      // clip, checked against the ORIGINAL (pre-clone) tracks.
-      if (findStraddlingSyncLockedTrack(tl.tracks, op.track, gap.gapEnd, fps) !== null) return tl;
       const next = clone(tl);
       shiftClipsAtOrAfter(next.tracks[op.track], gap.gapEnd, -shift);
       // D-106 — every OTHER sync-locked track ripples too, unconditionally

@@ -163,6 +163,7 @@ import {
   panGains,
   resolveMarkerColor,
   timelineFps,
+  checkRemoveGap,
   trackIndexAfterMove,
   checkTransition,
   cutFrames,
@@ -3157,7 +3158,20 @@ export function useEditorControl(): void {
         const track = Math.round(Number(a?.track));
         const frame = Math.round(Number(a?.frame));
         if (!Number.isFinite(frame)) return { error: 'frame must be a finite number' };
+        // B-227 — this used to call `applyOp` and report `{ok: true}`
+        // regardless, even on one of `applyOp`'s own silent `return tl`
+        // (unchanged) rejection paths — the same silent-no-op class as
+        // B-215/B-197, one level up. `checkRemoveGap` runs the identical
+        // precondition check the reducer itself uses BEFORE dispatching, so
+        // a rejection comes back as a real, specific `error` instead of a
+        // false success; the reference-equality check below is a backstop
+        // for any rejection path this pre-check doesn't (yet) mirror.
+        const check = checkRemoveGap(tl, track, frame, timelineFps(tl));
+        if (!check.ok) return { error: check.reason };
         useEditorTimelineStore.getState().applyOp({ kind: 'remove_gap', track, frame });
+        if (useEditorTimelineStore.getState().timeline === tl) {
+          return { error: 'remove_gap made no change for an unrecognised reason — this is a bug, please file it' };
+        }
         return { ok: true, track };
       },
 
