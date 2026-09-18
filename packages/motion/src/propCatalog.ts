@@ -402,11 +402,25 @@ export function positionFields(use: string): PositionKind | undefined {
  *                   the multiplier applies to, resolved per-layer by the
  *                   caller since it depends on the chosen `model`.
  *  `undefined` — no resizable field at all (every `in3d` primitive, and any
- *  future/unrecognized `use`). */
+ *  future/unrecognized `use`).
+ *
+ *  `note` (B-213, `docs/BUGS.md`) — an optional, per-primitive plain-English
+ *  statement of what the `w`/`h` a caller passes to `motion_set_layer_size`
+ *  actually mean, surfaced verbatim through `motion_list_primitives`. Added
+ *  because `{kind: 'scalar', key: 'cell'}` on its own reads as "the
+ *  resizable field IS `cell`" — which is exactly the wrong inference B-213
+ *  was filed over: `matrix`'s `w`/`h` are the grid's TOTAL footprint (the
+ *  same value `motion_list_layers` reports back, and what `Matrix.tsx`
+ *  itself computes as `w = cols*(cell+gap)-gap`), not the per-cell size —
+ *  `motion_set_layer_size`'s `'scalar'` branch in `manifestEdit.ts` inverts
+ *  that formula to derive `cell` rather than writing `w` through. Only
+ *  populated where the raw `kind`/`key` shape is genuinely ambiguous about
+ *  this; `'w-only'` (`text.maxWidth`) already IS the value written through,
+ *  with nothing to disambiguate. */
 export type SizeKind =
   | { kind: 'wh'; w: string; h: string }
   | { kind: 'box-wh' }
-  | { kind: 'scalar'; key: string }
+  | { kind: 'scalar'; key: string; note?: string }
   | { kind: 'w-only'; key: string }
   | { kind: 'scale'; key: string };
 
@@ -420,7 +434,17 @@ export function sizeFields(use: string): SizeKind | undefined {
   if (use === 'claudechat') return { kind: 'wh', w: 'width', h: 'height' };
   if (use === 'deviceframe') return { kind: 'scale', key: 'scale' };
   if (use === 'emphasis') return { kind: 'box-wh' };
-  if (use === 'matrix') return { kind: 'scalar', key: 'cell' };
+  if (use === 'matrix')
+    return {
+      kind: 'scalar',
+      key: 'cell',
+      note:
+        "w/h are the grid's TOTAL footprint in world px — cols*(cell+gap)-gap " +
+        'by rows*(cell+gap)-gap, the same value motion_list_layers reports back ' +
+        '— NOT the per-cell size. motion_set_layer_size inverts that formula to ' +
+        'derive `cell`; to set an exact per-cell size, use motion_set_layer_field ' +
+        '(key: "cell") directly instead.',
+    };
   if (use === 'text') return { kind: 'w-only', key: 'maxWidth' };
   return undefined;
 }

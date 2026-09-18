@@ -555,7 +555,16 @@ export function layerWorldSize(manifest: Manifest, selection: Selection): { w: n
  *  Every branch floors its result at `MIN_RESIZE_PX` so a drag can never
  *  push a field to zero/negative. No-op (same manifest reference back) for
  *  a selection that doesn't resolve, or a `use` with no size fields at all —
- *  the same defensive floor every function in this file already holds. */
+ *  the same defensive floor every function in this file already holds.
+ *
+ *  B-213 (`docs/BUGS.md`) was this `'scalar'` branch's `w`/`h` (the TOTAL
+ *  grid footprint, per the formula above) reading as contradicting
+ *  `motion_list_primitives`' `{kind: 'scalar', key: 'cell'}` for `matrix` —
+ *  it does not: `motion_list_layers`' own `size` for a `matrix` layer
+ *  already reports this same footprint (`layerWorldSize`'s `'scalar'`
+ *  branch, above), so this op was already the majority reading. Fixed by
+ *  adding `sizeFields`' new `note` (`propCatalog.ts`) rather than changing
+ *  this arithmetic. */
 export function setLayerSize(manifest: Manifest, selection: Selection, w: number, h: number): Manifest {
   const found = selectedLayer(manifest, selection);
   if (!found) return manifest;

@@ -64,6 +64,7 @@ import {
   setSceneField,
   setTransformFieldOnSelections,
   upsertLayerTransformKeyXY,
+  layerWorldSize,
 } from './manifestEdit';
 import {
   createMotionOps,
@@ -72,6 +73,7 @@ import {
   type MotionOpsApi,
   type MotionPlayer,
 } from './motionOps';
+import { sizeFields } from './propCatalog';
 import type { Selection } from './LayerList';
 import type { MotionLayerPreset } from './layerPresets';
 
@@ -1024,6 +1026,49 @@ describe('transform', () => {
     const h = harness();
     h.run('motion_set_layer_size', { ...sel(EMPH_L1), w: 640, h: 200 });
     expect(h.current()).toEqual(setLayerSize(sample, EMPH_L1, 640, 200));
+  });
+
+  it('B-213 — a matrix\'s `w`/`h` mean the same thing on every surface: the op, motion_list_layers, and motion_list_primitives\' catalog note', () => {
+    const h = harness();
+    const added = h.run('motion_add_layer', { scene_index: 0, use: 'matrix' });
+    const matrixSel = added.selection as Selection;
+    const afterAdd = h.current();
+
+    // `motion_set_layer_size`'s own request/response contract: w/h are the
+    // grid's TOTAL footprint, not the per-cell size — pick a target where
+    // both axes agree exactly so the averaging in the `'scalar'` branch
+    // isn't itself a source of imprecision for this assertion.
+    // rows=4, cols=6, gap=10 (addLayer's own matrix default, catalog.ts) —
+    // cellFromW=(578+10)/6-10=88; cellFromH=(382+10)/4-10=88.
+    h.run('motion_set_layer_size', { ...sel(matrixSel), w: 578, h: 382 });
+
+    // Surface 1: the op itself, via the real manifestEdit.ts function —
+    // already covered by the test above, re-derived here so this test is
+    // self-contained about what `cell` a (578, 382) target produces.
+    expect(setLayerSize(afterAdd, matrixSel, 578, 382)).toEqual(h.current());
+
+    // Surface 2: `motion_list_layers` (`layerWorldSize` under the hood) must
+    // report the SAME (578, 382) TOTAL footprint back, not the 88px cell —
+    // this is the "already agrees with the op" surface the bug report and
+    // a prior triage pass found.
+    const rows = h.run('motion_list_layers', { scene_index: 0 }).layers as Record<string, unknown>[];
+    const row = rows.find(
+      (r) => (r.target as { kind: string; index: number }).index === (matrixSel.target as { index: number }).index,
+    );
+    expect(row?.size).toEqual({ w: 578, h: 382 });
+    expect(row?.size).toEqual(layerWorldSize(h.current(), matrixSel));
+
+    // Surface 3: `motion_list_primitives`' catalog entry for `matrix` no
+    // longer leaves `w`/`h`'s meaning to be inferred from `{kind: 'scalar',
+    // key: 'cell'}` alone — it says explicitly that they are the total
+    // footprint, matching surfaces 1 and 2, not the per-cell size.
+    const primitives = h.run('motion_list_primitives').primitives as { use: string; size: unknown }[];
+    const matrixEntry = primitives.find((p) => p.use === 'matrix');
+    expect(matrixEntry?.size).toEqual(sizeFields('matrix'));
+    const note = (matrixEntry?.size as { note?: string } | null)?.note;
+    expect(note).toBeDefined();
+    expect(note).toMatch(/TOTAL footprint/);
+    expect(note).toMatch(/NOT the per-cell size/);
   });
 
   it('motion_set_layer_transform_field === setLayerTransformField (scale/rot/opacity)', () => {
