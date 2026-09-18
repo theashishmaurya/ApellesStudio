@@ -92,16 +92,27 @@ async fn call(what: &str, request: reqwest::RequestBuilder) -> Result<serde_json
 /// speech auto-detects fine on `large-v3`. `word_timestamps` defaults to true;
 /// false is faster but returns segment-level timings only, which is not enough to
 /// cut to a word.
+///
+/// `window` is `Some((start_secs, duration_secs))` to transcribe **one window**
+/// of the source rather than all of it (D-349). Timestamps come back in absolute
+/// source seconds either way, so a windowed result splices straight into a
+/// whole-file one — which is the point: an isolated pass reads the multi-second
+/// regions whisper's whole-file pass silently declines to transcribe (B-216).
 pub async fn transcribe(
     path: &str,
     language: Option<String>,
     word_timestamps: Option<bool>,
+    window: Option<(f64, f64)>,
 ) -> Result<serde_json::Value, String> {
-    log::info!("[media] transcribe: starting for {path} (language={language:?})");
+    log::info!(
+        "[media] transcribe: starting for {path} (language={language:?}, window={window:?})"
+    );
     let body = json!({
         "path": path,
         "language": language,
         "word_timestamps": word_timestamps.unwrap_or(true),
+        "start_secs": window.map(|(start, _)| start),
+        "duration_secs": window.map(|(_, duration)| duration),
     });
     let v = call(
         "transcribe",

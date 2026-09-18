@@ -61,7 +61,11 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 import { useEditorTimelineStore } from './timelineStore';
-import { useMediaUnderstandingStore } from './mediaUnderstandingStore';
+import {
+  darkKey,
+  recoveryKey,
+  useMediaUnderstandingStore,
+} from './mediaUnderstandingStore';
 import { RecutPanel } from './RecutPanel';
 
 /** One 480-frame (20s @24fps) talking-head clip on one video track. */
@@ -348,6 +352,126 @@ describe('RecutPanel (D-318)', () => {
       useMediaUnderstandingStore.getState().silenceDetectionStatus(key),
       'and reports done with its result, for any later poller',
     ).toMatchObject({ phase: 'done' });
+  });
+
+
+  // D-349 (fixes the transcription half of B-216) — the panel's half of the
+  // dark-region recovery. Two claims, and the second is the one that matters
+  // for trust: the grouping reads the speech whisper silently dropped, and the
+  // panel SAYS it did. Content appearing in a recut list that was not in the
+  // transcript five minutes ago is exactly the thing a human must not be
+  // blindsided by.
+  it('8d. scans for dropped speech, groups the recovered lines, and says it did', async () => {
+    await mountPanel(true);
+
+    // A transcript WITH word timings — the detector is defined against words,
+    // so this is what makes a scan possible at all (the fixtures above have
+    // none, which is why they take the degrade path and never scan).
+    const words = [
+      { word: ' The', start: 1.0, end: 1.4 },
+      { word: ' cat', start: 1.4, end: 1.8 },
+      { word: ' sat', start: 6.0, end: 6.4 },
+      { word: ' down', start: 6.4, end: 6.8 },
+    ];
+    const window = { startSecs: 6.8, durationSecs: 7.2 };
+    actSync(() =>
+      useMediaUnderstandingStore.setState({
+        transcripts: {
+          [SOURCE]: {
+            text: 'The cat sat down',
+            language: 'en',
+            model: 'test',
+            source: SOURCE,
+            segments: [
+              { start: 1.0, end: 1.8, text: 'The cat', words: words.slice(0, 2) },
+              { start: 6.0, end: 6.8, text: 'sat down', words: words.slice(2) },
+            ],
+            words,
+          },
+        },
+        // The scan's answer and the re-read's, both already landed — this test
+        // is about what the PANEL does with them, not about the poll loops,
+        // which `darkRecovery.test.ts` and the store cover.
+        dark: {
+          [darkKey({
+            path: SOURCE,
+            startSecs: 0,
+            durationSecs: 20,
+            words: words.map((w) => ({ start: w.start, end: w.end })),
+          })]: {
+            source: SOURCE,
+            start_secs: 0,
+            duration_secs: 20,
+            analysed_secs: 20,
+            min_dark_secs: 1.2,
+            max_word_secs: 2.0,
+            model: 'silero_vad_v6.2.1.onnx',
+            regions: [
+              {
+                start_secs: 9,
+                end_secs: 12,
+                duration_secs: 3,
+                stretch_start_secs: 6.8,
+                stretch_end_secs: 14.0,
+                stretch_speech_secs: 3,
+                rms_peak: 0.2,
+              },
+            ],
+            rms_floor: 0.1,
+            calibration_spans: 4,
+            gated_out: 0,
+            speech_secs: 12,
+            covered_secs: 8,
+          },
+        },
+        recoveries: {
+          [recoveryKey(SOURCE, window)]: {
+            window,
+            segments: [
+              {
+                start: 9.2,
+                end: 11.5,
+                text: 'The cat sat on the mat.',
+                words: [{ word: ' The', start: 9.2, end: 9.6 }],
+              },
+            ],
+          },
+        },
+      } as never),
+    );
+
+    await click(q('[data-chroma-recut-find-retakes]'));
+
+    // The grouping ran (the stub returns the same three takes either way) and
+    // the panel volunteers where the extra line came from.
+    expect(rows()).toHaveLength(3);
+    const notice = q('[data-chroma-recut-notice]')!.textContent ?? '';
+    expect(notice, `the panel must disclose the splice: ${notice}`).toContain('Recovered 1 line');
+    expect(notice).toContain('silently skipped');
+  });
+
+  /** The degrade path, which every clip on a pre-D-349 cached transcript takes:
+   *  no word timings means no scan is possible, and that must cost the human
+   *  nothing — the retakes still come back. */
+  it('8e. still groups normally when the transcript has no word timings to scan against', async () => {
+    await mountPanel(true);
+    actSync(() =>
+      useMediaUnderstandingStore.setState({
+        transcripts: {
+          [SOURCE]: {
+            text: 'x',
+            language: 'en',
+            model: 'test',
+            source: SOURCE,
+            segments: [{ start: 1.0, end: 2.5, text: 'The cat sat—', words: [] }],
+          },
+        },
+      } as never),
+    );
+    await click(q('[data-chroma-recut-find-retakes]'));
+
+    expect(rows()).toHaveLength(3);
+    expect(q('[data-chroma-recut-notice]')?.textContent ?? '').not.toContain('Recovered');
   });
 
   it('9. clears stale candidates after a cut, since their frame numbers moved', async () => {

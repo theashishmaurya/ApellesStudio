@@ -11,6 +11,13 @@
 //!   adjacent utterances — not single utterances, because Whisper's segment
 //!   boundaries do not line up with a speaker's restarts (D-327) — grouped by
 //!   normalised edit distance, with the last take recommended.
+//! - **Dark regions**, from both at once ([`dark`], D-349). Where the VAD hears
+//!   a voice and the transcript has no words, whisper silently dropped a
+//!   multi-second utterance — a real, measured, ~once-per-three-minutes failure
+//!   that is *biased towards retakes* and therefore blinds the detector above
+//!   (B-216). This one is a third detector rather than a note on the other two
+//!   precisely because neither can see it: the silence detector reads no
+//!   transcript, the retake detector reads no audio.
 //!
 //! **What this crate does NOT do — and this is the whole design (D-318).**
 //!
@@ -33,10 +40,15 @@
 //! *not* depend on `apelles-media`: taking `&[f32]` instead of a path is what
 //! makes the tests real, and nothing here needs a decoder.
 
+pub mod dark;
 pub mod retake;
 pub mod silence;
 pub mod vad;
 
+pub use dark::{
+    DarkInput, DarkParams, DarkRegion, DarkReport, RMS_HOP_SECS, WordSpan, detect_dark_regions,
+    rms_envelope,
+};
 pub use retake::{RetakeGroup, RetakeParams, TakeSpan, Utterance, detect_retakes};
 pub use silence::{SilenceParams, Span, silence_spans, speech_spans};
 pub use vad::{

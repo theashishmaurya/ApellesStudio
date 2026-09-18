@@ -32,6 +32,14 @@ surface (`CLAUDE.md`: no dead code):
 guard that matters on exactly the long single-take footage an editor works
 with.
 
+**Two things D-349 added, both of them about B-216/B-224 and both documented at
+their own definitions below:** [`MLX_RANDOM_SEED`] makes a run reproducible
+(B-224 — the fallback ladder was sampling on an unseeded global RNG), and
+[`transcribe`]'s `start_secs`/`duration_secs` transcribe one WINDOW of a source
+with its timestamps shifted back to absolute source seconds — the recovery
+primitive `apelles-speech`'s dark-region detector feeds, since an isolated pass
+reads the speech a whole-file pass silently drops.
+
 **Why this runs as a SUBPROCESS of `server.py` and not in-process** (D-189):
 `large-v3` weights are ~3 GB, and the Metal buffers a run allocates are several
 times that again. `ai/server.py` had to grow a whole TTL idle-unloader (D-084)
@@ -68,6 +76,33 @@ from errors import UserFacingError
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
 DEFAULT_MODEL = "large-v3"
+
+# The fixed seed for MLX's global RNG (B-224, fixed by D-349).
+#
+# `mlx_whisper` falls back through `temperature=(0.0, 0.2, …, 1.0)` when a window
+# trips `compression_ratio_threshold` or `logprob_threshold`, and at any
+# temperature > 0 it SAMPLES — `mlx_whisper/decoding.py`'s
+# `mx.random.categorical(logits / temp)`, on MLX's **global** RNG. Nothing here
+# ever seeded it, so the same file through the same pipeline returned a
+# different transcript every run: measured at 925 / 923 / 913 words over three
+# identical runs of `A001_09122356_C040.MOV`, all three `text` fields pairwise
+# unequal (`docs/notes/whisper-dark-region-research.md` §3).
+#
+# That breaks `CLAUDE.md`'s own determinism invariant ("no `rand()`, no
+# un-seeded anything"), and it breaks every consumer downstream of a transcript:
+# retake detection, silence detection, caption generation and
+# `editor_get_timeline_transcript` can all legitimately disagree with a cached
+# answer, and a bug report against a transcript may not reproduce — which is
+# exactly what happened to B-216's five-times-confirmed dark region.
+#
+# The VALUE is arbitrary and only has to be fixed; 0 is MLX's own documented
+# example seed. What matters is that it is set once, before every run, from a
+# named constant rather than from an incidental call site.
+#
+# This makes runs reproducible. It does NOT make them correct: B-216's
+# dropped-speech failure happens at temperature 0.0 and is untouched by it —
+# see [`transcribe`]'s own note and `docs/BUGS.md` B-216.
+MLX_RANDOM_SEED = 0
 
 # mlx-whisper loads weights from an HF repo, not a bare model name.
 MLX_MODEL_REPOS = {
@@ -130,9 +165,21 @@ def _last_ffmpeg_error(stderr: str) -> str:
     return lines[-1] if lines else "ffmpeg failed with no output"
 
 
-def extract_audio(video_path: str) -> str:
+def extract_audio(
+    video_path: str,
+    start_secs: float | None = None,
+    duration_secs: float | None = None,
+) -> str:
     """16 kHz mono WAV in a temp file — whisper's own native input rate, so the
     model never has to resample.
+
+    `start_secs` / `duration_secs` cut a WINDOW out of the source instead of the
+    whole thing (D-349). `-ss` goes **before** `-i` so ffmpeg seeks the input
+    rather than decoding and discarding everything up to the mark — on a 680 s
+    camera original that is the difference between a fraction of a second and
+    tens of them, and it has been frame-accurate for these containers since
+    ffmpeg 2.1. The caller is responsible for shifting the resulting timestamps
+    back to absolute source seconds; [`transcribe`] does.
 
     **Raises [`UserFacingError`] rather than `CalledProcessError`** (B-119).
     A source with no audio stream is not an exceptional condition — a screen
@@ -150,10 +197,14 @@ def extract_audio(video_path: str) -> str:
     correct on its own — for its CLI, and for any caller that is not that app.
     """
     tmp = tempfile.mktemp(suffix=".wav")
-    proc = subprocess.run(
-        ["ffmpeg", "-y", "-i", video_path, "-ar", "16000", "-ac", "1", tmp],
-        capture_output=True,
-    )
+    cmd = ["ffmpeg", "-y"]
+    if start_secs is not None and start_secs > 0:
+        cmd += ["-ss", f"{start_secs:.6f}"]
+    cmd += ["-i", video_path]
+    if duration_secs is not None and duration_secs > 0:
+        cmd += ["-t", f"{duration_secs:.6f}"]
+    cmd += ["-ar", "16000", "-ac", "1", tmp]
+    proc = subprocess.run(cmd, capture_output=True)
     if proc.returncode == 0:
         return tmp
 
@@ -203,11 +254,22 @@ def _local_snapshot_or_repo(repo: str) -> str:
         return repo
 
 
+def _shift(value: object, offset: float) -> object:
+    """A timestamp moved into absolute source seconds, or left alone if the
+    model did not emit one. `None` is a real possibility in mlx-whisper's word
+    entries and must not become `None + offset`."""
+    if offset == 0.0 or not isinstance(value, (int, float)) or isinstance(value, bool):
+        return value
+    return round(float(value) + offset, 6)
+
+
 def transcribe(
     path: str,
     model: str = DEFAULT_MODEL,
     language: str | None = None,
     word_timestamps: bool = True,
+    start_secs: float | None = None,
+    duration_secs: float | None = None,
 ) -> dict:
     """`{text, language, model, source, segments: [{start, end, text, words:
     [{word, start, end, probability?}]}], words: [...]}`.
@@ -219,7 +281,28 @@ def transcribe(
     `words` is the flattened per-word list across every segment: the shape a
     caller actually wants for "find the word at 12.4s" without walking the
     segment tree itself. Absent (rather than empty) when the model returned no
-    word timings at all."""
+    word timings at all.
+
+    **`start_secs` / `duration_secs` transcribe one WINDOW of the source**
+    (D-349, the recovery half of B-216's dark-region fix). The window is cut out
+    with ffmpeg and handed to whisper on its own, and **every timestamp coming
+    back is shifted by `start_secs`**, so a windowed result is in the same
+    absolute source seconds as a whole-file one and can be spliced straight into
+    it. `window` in the output records the range that was actually asked for.
+
+    Transcribing a window in ISOLATION is not merely a speed optimisation: it is
+    the one technique measured to recover the multi-second regions of real
+    speech that whisper's whole-file pass silently declines to transcribe
+    (B-216 — the model reads the audio and emits no tokens for an utterance
+    inside a window it is otherwise decoding confidently, at temperature 0.0
+    with every quality metric healthy). It recovered every confirmed case across
+    two real sources; `docs/notes/whisper-dark-region-research.md` has the
+    measurements.
+
+    **Deterministic since D-349** (B-224): MLX's global RNG is seeded from
+    [`MLX_RANDOM_SEED`] before every run, so the same file and the same
+    arguments give the same transcript. That is reproducibility, not
+    correctness — see the constant's own note."""
     src = Path(path)
     if not src.exists():
         raise FileNotFoundError(path)
@@ -230,15 +313,26 @@ def transcribe(
             f"no HF repo mapped for model {model!r}. Supported: {', '.join(MLX_MODEL_REPOS)}"
         )
 
+    offset = float(start_secs) if start_secs and start_secs > 0 else 0.0
+    windowed = offset > 0.0 or bool(duration_secs and duration_secs > 0)
+
     tmp_audio: str | None = None
-    if src.suffix.lower() in VIDEO_EXTS:
-        tmp_audio = extract_audio(str(src))
+    if windowed or src.suffix.lower() in VIDEO_EXTS:
+        # A window is cut out even from a plain WAV — whisper is handed the
+        # window and nothing else, which is the entire point.
+        tmp_audio = extract_audio(str(src), start_secs, duration_secs)
         audio_path = tmp_audio
     else:
         audio_path = str(src)
 
     try:
         import mlx_whisper
+        import mlx.core as mx
+
+        # B-224. Before the fallback ladder can sample, not after: this is the
+        # global RNG `mlx_whisper/decoding.py`'s `mx.random.categorical` draws
+        # from, and seeding it here is what makes a re-run reproduce.
+        mx.random.seed(MLX_RANDOM_SEED)
 
         kwargs: dict = {
             "path_or_hf_repo": _local_snapshot_or_repo(repo),
@@ -260,6 +354,11 @@ def transcribe(
         "model": model,
         "source": str(src),
     }
+    if windowed:
+        output["window"] = {
+            "start_secs": offset,
+            "duration_secs": float(duration_secs) if duration_secs else None,
+        }
 
     segments: list[dict] = []
     flat_words: list[dict] = []
@@ -270,15 +369,19 @@ def transcribe(
         for w in seg.get("words") or []:
             if not isinstance(w, dict):
                 continue
-            entry = {"word": w.get("word"), "start": w.get("start"), "end": w.get("end")}
+            entry = {
+                "word": w.get("word"),
+                "start": _shift(w.get("start"), offset),
+                "end": _shift(w.get("end"), offset),
+            }
             if "probability" in w:
                 entry["probability"] = round(w["probability"], 3)
             seg_words.append(entry)
             flat_words.append(entry)
         segments.append(
             {
-                "start": seg.get("start"),
-                "end": seg.get("end"),
+                "start": _shift(seg.get("start"), offset),
+                "end": _shift(seg.get("end"), offset),
                 "text": (seg.get("text") or "").strip(),
                 "words": seg_words,
             }
@@ -296,6 +399,8 @@ def _subprocess_cmd(
     language: str | None,
     word_timestamps: bool,
     out_path: str,
+    start_secs: float | None = None,
+    duration_secs: float | None = None,
 ) -> list[str]:
     """The child's argv — this file, run as `__main__`, through the SAME
     interpreter the caller is running on.
@@ -322,6 +427,10 @@ def _subprocess_cmd(
         cmd += ["--language", language]
     if not word_timestamps:
         cmd.append("--no-word-timestamps")
+    if start_secs is not None and start_secs > 0:
+        cmd += ["--start-secs", repr(float(start_secs))]
+    if duration_secs is not None and duration_secs > 0:
+        cmd += ["--duration-secs", repr(float(duration_secs))]
     return cmd
 
 
@@ -341,6 +450,8 @@ def transcribe_subprocess(
     language: str | None = None,
     word_timestamps: bool = True,
     timeout_s: int = TRANSCRIBE_TIMEOUT_S,
+    start_secs: float | None = None,
+    duration_secs: float | None = None,
 ) -> dict:
     """[`transcribe`], run as its own OS process — same arguments, same return
     value, no model weights and no Metal buffers left in the caller (B-189).
@@ -379,7 +490,15 @@ def transcribe_subprocess(
     try:
         try:
             proc = subprocess.run(
-                _subprocess_cmd(str(src), model, language, word_timestamps, out_path),
+                _subprocess_cmd(
+                    str(src),
+                    model,
+                    language,
+                    word_timestamps,
+                    out_path,
+                    start_secs,
+                    duration_secs,
+                ),
                 capture_output=True,
                 text=True,
                 timeout=timeout_s,
@@ -427,6 +546,18 @@ def main() -> int:
     parser.add_argument("--language", default=None, help="en, hi, … or omit for auto-detect")
     parser.add_argument("--no-word-timestamps", action="store_true", help="Segment-level timings only (faster)")
     parser.add_argument("--output", default=None, help="Save JSON to this path")
+    parser.add_argument(
+        "--start-secs",
+        type=float,
+        default=None,
+        help="Transcribe only from this point (absolute source seconds). Timestamps come back shifted to absolute source seconds.",
+    )
+    parser.add_argument(
+        "--duration-secs",
+        type=float,
+        default=None,
+        help="Transcribe only this many seconds from --start-secs.",
+    )
     args = parser.parse_args()
 
     try:
@@ -435,6 +566,8 @@ def main() -> int:
             model=args.model,
             language=args.language,
             word_timestamps=not args.no_word_timestamps,
+            start_secs=args.start_secs,
+            duration_secs=args.duration_secs,
         )
     except UserFacingError as e:
         print(f"{USER_FACING_MARKER}{' '.join(str(e).splitlines())}", file=sys.stderr)

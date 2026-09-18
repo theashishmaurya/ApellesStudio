@@ -203,11 +203,15 @@ inclusion, no longer a silent video).
 > > |---|---|
 > > | `editor_detect_silences` | Where nobody is speaking, from a real VAD (Silero v6.2.1 ONNX, on-device, D-319) over the clip's own audio. Needs **no transcript** — it answers an acoustic question acoustically. **Check `state`**: `done` with the answer, or `running` — then poll `editor_detect_silences_status` (D-321). |
 > > | `editor_detect_silences_status` | Poll a started silence detection. Same arguments you started it with. |
-> > | `editor_detect_retakes` | Where the speaker said the same line more than once. This one DOES need the transcript, because a retake is a fact about words; it starts one and says `state: "running"` if there is none yet. Same start-then-poll contract once the words exist (D-321). |
+> > | `editor_detect_retakes` | Where the speaker said the same line more than once. This one DOES need the transcript, because a retake is a fact about words; it starts one and says `state: "running"` if there is none yet. Same start-then-poll contract once the words exist (D-321). **Since D-349 it also scans for, re-reads and splices in the speech whisper silently dropped before grouping** — `recoverDarkRegions`, default true, and the answer carries `darkRegions` / `recoveredUtterances`. |
 > > | `editor_detect_retakes_status` | Poll a started retake grouping. |
+> > | `editor_detect_dark_regions` | **Where there is speech nobody transcribed** (D-349, fixes the transcription half of B-216). Crosses the VAD against the transcript's own word coverage: whisper's whole-file pass emits no tokens for some utterances inside windows it otherwise decodes confidently, ~1 per 3 minutes of raw footage, with no error and no low-confidence score to filter on. `clip` is REQUIRED here (no sweep — the sweep case is `editor_detect_retakes`, which runs this itself). Reports only; the retake tool is what recovers. |
+> > | `editor_detect_dark_regions_status` | Poll a started dark-region scan. |
 > > | `editor_ripple_delete_ranges` | The apply half: cut N timeline ranges and close every gap, as **one undo entry**. |
 > >
-> > **`clip` is OPTIONAL on all four of the detectors (D-343, fixes B-216) —
+> > **`clip` is OPTIONAL on all four of the silence/retake detectors (D-343,
+> > fixes B-216; the two D-349 dark-region tools are the exception and require
+> > it) —
 > > omit it and you sweep the whole track in ONE call.** Do that for any
 > > cleanup pass. Asking one clip at a time is how a 75-clip timeline ends up
 > > with whole stretches nobody ever checked, which is a real defect this

@@ -70,6 +70,19 @@ fn default_editor_detect_silences_force() -> bool {
     false
 }
 
+fn default_editor_detect_dark_regions_force() -> bool {
+    false
+}
+
+/// D-349 — dark-region recovery is ON by default on the retake tools.
+///
+/// Not a taste call: whisper's dropped speech is biased towards near-duplicate
+/// repeated material, so grouping the raw transcript is blind in exactly the
+/// place retake detection is looking (B-216).
+fn default_editor_recover_dark_regions() -> bool {
+    true
+}
+
 fn default_editor_get_transcript_force() -> bool {
     false
 }
@@ -980,6 +993,8 @@ pub struct EditorDetectRetakesArgs {
     pub min_words: Option<i64>,
     #[serde(default)]
     pub max_span_utterances: Option<i64>,
+    #[serde(default = "default_editor_recover_dark_regions")]
+    pub recover_dark_regions: bool,
     #[serde(default = "default_editor_detect_retakes_force")]
     pub force: bool,
 }
@@ -998,6 +1013,42 @@ pub struct EditorDetectRetakesStatusArgs {
     pub min_words: Option<i64>,
     #[serde(default)]
     pub max_span_utterances: Option<i64>,
+    #[serde(default = "default_editor_recover_dark_regions")]
+    pub recover_dark_regions: bool,
+}
+
+/// D-349 — the dark-region scan: where the VAD hears a voice and the transcript
+/// has no words.
+///
+/// `clip` is REQUIRED here, unlike the other two detectors. There is no
+/// whole-track sweep because the normal consumer of this answer is
+/// `editor_detect_retakes`, which runs the scan itself over every clip it
+/// groups; the standalone tool is for auditing one clip deliberately.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorDetectDarkRegionsArgs {
+    pub track: i64,
+    pub clip: i64,
+    #[serde(default)]
+    pub min_dark_secs: Option<f64>,
+    #[serde(default)]
+    pub max_word_secs: Option<f64>,
+    #[serde(default)]
+    pub rms_floor_scale: Option<f64>,
+    #[serde(default = "default_editor_detect_dark_regions_force")]
+    pub force: bool,
+}
+
+/// D-349 — the poll half. No `force`: a status read starts nothing.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorDetectDarkRegionsStatusArgs {
+    pub track: i64,
+    pub clip: i64,
+    #[serde(default)]
+    pub min_dark_secs: Option<f64>,
+    #[serde(default)]
+    pub max_word_secs: Option<f64>,
+    #[serde(default)]
+    pub rms_floor_scale: Option<f64>,
 }
 
 /// The schema for a parameter the Python tool declares as a bare `list`.
@@ -4219,6 +4270,23 @@ impl ApellesMcp {
       on boundaries of its own, which do not line up with the speaker's (D-327):
       a take is a SPAN of utterances, so one delivery can cover several. 1
       restores the old utterance-to-utterance behaviour.
+    - `recover_dark_regions` — **default true, and leave it that way** (D-349,
+      B-216). Whisper's whole-file pass silently declines to transcribe some
+      utterances inside windows it otherwise reads confidently: roughly one
+      dropped multi-second region per three minutes of raw footage, measured on
+      two independent camera originals, with no error and no low-confidence
+      score to filter on. The loss is **biased towards near-duplicate repeated
+      material** — i.e. towards retakes — so grouping the raw transcript is
+      blind in exactly the place this tool is looking. With this on, each clip's
+      range is scanned for stretches where the VAD hears a voice and the
+      transcript has no words, those windows are re-transcribed on their own,
+      and the recovered lines are spliced in before grouping. The answer then
+      carries `darkRegions` (how many holes were found) and
+      `recoveredUtterances` (how many grouped lines exist only because of it).
+      Set it false only when you already know the source is clean and want the
+      answer in one round trip: the scan and each re-read are extra passes, so a
+      first call typically returns `state: "transcribing"` once or twice more
+      than it would otherwise.
 
     Each group has `takes` (each with its `text` and the same three frame
     spaces `editor_detect_silences` returns), a `similarity` score, and `keep` —
@@ -4248,6 +4316,9 @@ impl ApellesMcp {
             .put("windowSecs", p.window_secs)
             .put("minWords", p.min_words)
             .put("maxSpanUtterances", p.max_span_utterances);
+        if !p.recover_dark_regions {
+            args = args.set("recoverDarkRegions", false);
+        }
         if p.force {
             args = args.set("force", true);
         }
@@ -4270,20 +4341,117 @@ impl ApellesMcp {
     `editor_detect_retakes` returns them) or `idle`. If the transcript itself is
     still being made this reports that instead, with a `note` pointing at
     `editor_get_transcript_status` — the same answer the start tool gives, since
-    there is nothing to group until there are words. A pure read."#
+    there is nothing to group until there are words. `state: "transcribing"` can
+    also mean the D-349 dark-region scan or one of its re-reads is still going;
+    the `note` says which. Keep `recover_dark_regions` the same as you started
+    with, for the same reason the thresholds must match. A pure read."#
     )]
     pub async fn editor_detect_retakes_status(
         &self,
         Parameters(p): Parameters<EditorDetectRetakesStatusArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let args = WireArgs::new()
+        let mut args = WireArgs::new()
             .set("track", p.track)
             .put("clip", p.clip)
             .put("similarity", p.similarity)
             .put("windowSecs", p.window_secs)
             .put("minWords", p.min_words)
             .put("maxSpanUtterances", p.max_span_utterances);
+        if !p.recover_dark_regions {
+            args = args.set("recoverDarkRegions", false);
+        }
         let env = self.op("editor_detect_retakes_status", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_detect_dark_regions",
+        description = r#"Find the stretches of a clip where **there is speech nobody transcribed**
+    (D-349, fixes the transcription half of B-216).
+
+    Whisper's whole-file pass does not merely mis-hear some utterances — it
+    emits no tokens for them, inside a 30-second window it is otherwise decoding
+    confidently, at temperature 0.0 with every quality metric healthy. There is
+    no error, no warning and no low-confidence score to filter on; the word
+    alignment then stretches whatever words survived across the hole, so the
+    transcript reads plausibly and is wrong. Measured rate on real footage:
+    roughly one dropped multi-second region per three minutes of raw source,
+    across two independent camera originals.
+
+    This tool crosses the two signals the app already has — the acoustic VAD
+    ("is anyone talking") and the transcript ("what was read") — and reports
+    where they disagree.
+
+    - `track` / `clip` — required. Only the clip's own trimmed source range is
+      scanned. (No whole-track sweep: unlike the other two detectors, the
+      answer here is normally consumed by `editor_detect_retakes`, which runs
+      this automatically over every clip it groups.)
+    - `min_dark_secs` — how much unaccounted-for speech a stretch must hold
+      before it is flagged (default 1.2). Measured on a plateau: 1.0 to 1.5 give
+      the same answer on both test files.
+    - `max_word_secs` — a transcript word LONGER than this contributes no
+      coverage (default 2.0, whisper's own anomaly bound). This is load-bearing,
+      not a refinement: the alignment smears one word across the hole, so a
+      naive "is there a word here" test misses more than half the real cases.
+    - `rms_floor_scale` — multiplier on the amplitude floor (default 1.0). The
+      floor is calibrated **per file** from the quietest speech this recording's
+      own transcript read correctly, never a constant — mic, gain and room
+      differ per shoot. Below 1.0 trades precision for recall.
+
+    `state: "done"` carries `regions`, each in the same three frame spaces
+    `editor_detect_silences` returns, plus the `stretch…` bounds it was found in
+    and its `rmsPeak`. It also carries `rmsFloor` / `calibrationSpans` /
+    `gatedOut`: **`rmsFloor: null` means the range held too few
+    well-transcribed utterances to calibrate a gate, so the answer is ungated**
+    and "no regions" is weaker evidence than usual. Otherwise start-then-poll
+    like the other two — `editor_detect_dark_regions_status` with the same
+    arguments.
+
+    **Nothing is cut and nothing is re-transcribed by this tool** — it reports.
+    `editor_detect_retakes` is what re-reads these windows in isolation and
+    splices the recovered words into the transcript it groups."#
+    )]
+    pub async fn editor_detect_dark_regions(
+        &self,
+        Parameters(p): Parameters<EditorDetectDarkRegionsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut args = WireArgs::new()
+            .set("track", p.track)
+            .set("clip", p.clip)
+            .put("minDarkSecs", p.min_dark_secs)
+            .put("maxWordSecs", p.max_word_secs)
+            .put("rmsFloorScale", p.rms_floor_scale);
+        if p.force {
+            args = args.set("force", true);
+        }
+        let env = self.op("editor_detect_dark_regions", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_detect_dark_regions_status",
+        description = r#"Poll a dark-region scan started by `editor_detect_dark_regions` (D-349).
+
+    Pass the SAME arguments you started it with — a scan is cached per clip
+    range and per threshold set, so different arguments read as `state: "idle"`.
+    `state` is `running`, `done` (with `regions`, exactly as the start tool
+    returns them) or `idle`. If the transcript itself is still being made this
+    reports that instead, with a `note` pointing at
+    `editor_get_transcript_status`: a dark region is defined against the
+    transcript's own words, so there is nothing to compare the audio to until
+    they exist. A pure read."#
+    )]
+    pub async fn editor_detect_dark_regions_status(
+        &self,
+        Parameters(p): Parameters<EditorDetectDarkRegionsStatusArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("clip", p.clip)
+            .put("minDarkSecs", p.min_dark_secs)
+            .put("maxWordSecs", p.max_word_secs)
+            .put("rmsFloorScale", p.rms_floor_scale);
+        let env = self.op("editor_detect_dark_regions_status", args).await?;
         Ok(render::json_text(&env))
     }
 

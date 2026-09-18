@@ -1,6 +1,6 @@
-//! Tauri bridge for silence + retake detection (D-318).
+//! Tauri bridge for silence + retake + dark-region detection (D-318, D-349).
 //!
-//! **What it is.** The app-side half of `apelles-speech`: two
+//! **What it is.** The app-side half of `apelles-speech`: three
 //! `#[tauri::command]`s that both the Edit tab's Recut panel and the
 //! `editor_detect_*` MCP ops go through, so the human and the agent are
 //! running literally the same detector rather than two that can drift.
@@ -28,9 +28,14 @@
 
 use std::sync::Mutex;
 
+use apelles_speech::dark::{
+    DarkInput, DarkParams, RMS_HOP_SECS, WordSpan, detect_dark_regions, rms_envelope,
+};
 use apelles_speech::retake::{RetakeParams, Utterance};
 use apelles_speech::silence::SilenceParams;
-use apelles_speech::vad::{MODEL_FILENAME, MODEL_SHA256, MODEL_URL, SAMPLE_RATE, SileroVad};
+use apelles_speech::vad::{
+    FRAME_SECS, MODEL_FILENAME, MODEL_SHA256, MODEL_URL, SAMPLE_RATE, SileroVad,
+};
 use serde::Deserialize;
 
 /// The one loaded VAD session, initialised on first use.
@@ -167,6 +172,170 @@ pub async fn chroma_detect_silences(
         "min_silence_ms": params.min_silence_ms,
         "model": MODEL_FILENAME,
         "silences": spans,
+    }))
+}
+
+/// One transcript word, as the frontend store holds it. Times are absolute
+/// SOURCE seconds — the same clock the transcript itself uses.
+#[derive(Debug, Deserialize)]
+pub struct TranscriptWordTime {
+    pub start: f64,
+    pub end: f64,
+}
+
+/// Find the stretches of `path` between `start_secs` and
+/// `start_secs + duration_secs` where the VAD hears a voice and `words` has
+/// nothing — the regions whisper's whole-file pass silently dropped (D-349,
+/// B-216).
+///
+/// **Takes the words rather than a path to them** for the same reason
+/// [`chroma_detect_retakes`] does: the transcript is cached in the
+/// `@apelles/editor` store, and asking for a path here would mean a second cache
+/// or a second multi-minute Whisper pass. It takes the AUDIO as a path because
+/// that is not cached anywhere and is cheap to decode.
+///
+/// Returns spans in **absolute source seconds**, offset already added back, the
+/// same convention [`chroma_detect_silences`] keeps. Nothing is cut and nothing
+/// is transcribed — recovering a region's words is an isolated re-transcription
+/// of it (`ai-media/transcribe.py`'s `--start-secs`/`--duration-secs`), which
+/// the op layer drives.
+///
+/// Refuses up front, with a readable message, when the source has no audio
+/// stream at all — the same `no_audio_message` pre-flight (B-119).
+// A Tauri command's arguments ARE its wire contract — they arrive as a flat JSON
+// object from the frontend — so the usual "group them into a struct" remedy
+// would change the contract rather than simplify it. Same allowance every other
+// wide command in this fork carries (`ai_commands.rs`, `lens_blur.rs`, …).
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn chroma_detect_dark_regions(
+    app: tauri::AppHandle,
+    path: String,
+    start_secs: f64,
+    duration_secs: f64,
+    words: Vec<TranscriptWordTime>,
+    min_dark_secs: Option<f64>,
+    max_word_secs: Option<f64>,
+    rms_floor_scale: Option<f64>,
+) -> Result<serde_json::Value, String> {
+    if !duration_secs.is_finite() || duration_secs <= 0.0 {
+        return Err("duration_secs must be a finite number greater than zero".to_string());
+    }
+    for (name, v) in [
+        ("min_dark_secs", min_dark_secs),
+        ("max_word_secs", max_word_secs),
+        ("rms_floor_scale", rms_floor_scale),
+    ] {
+        if v.is_some_and(|v| !v.is_finite() || v <= 0.0) {
+            return Err(format!("{name} must be a positive, finite number"));
+        }
+    }
+    let start = start_secs.max(0.0);
+
+    let probe_path = path.clone();
+    let refusal = tokio::task::spawn_blocking(move || {
+        super::media_understanding::no_audio_message(&probe_path)
+    })
+    .await
+    .map_err(|e| format!("probing {path} for an audio stream: {e}"))?;
+    if let Some(message) = refusal {
+        log::info!("[speech] detect_dark_regions: refusing {path} — no audio stream");
+        return Err(message);
+    }
+
+    let session = vad_session(&app).await?;
+
+    let decode_path = path.clone();
+    let samples = tokio::task::spawn_blocking(move || {
+        apelles_media::audio::decode_mono_at_rate(
+            std::path::Path::new(&decode_path),
+            start,
+            duration_secs,
+            SAMPLE_RATE,
+        )
+    })
+    .await
+    .map_err(|e| format!("decoding audio for the dark-region scan: {e}"))??;
+
+    let defaults = DarkParams::default();
+    let params = DarkParams {
+        min_dark_secs: min_dark_secs.unwrap_or(defaults.min_dark_secs),
+        max_word_secs: max_word_secs.unwrap_or(defaults.max_word_secs),
+        rms_floor_scale: rms_floor_scale.unwrap_or(defaults.rms_floor_scale),
+        ..defaults
+    };
+    let words: Vec<WordSpan> = words
+        .into_iter()
+        .map(|w| WordSpan {
+            start_secs: w.start,
+            end_secs: w.end,
+        })
+        .collect();
+
+    // The two knobs the response echoes back, read before `params` moves into
+    // the blocking closure below.
+    let (min_dark_secs, max_word_secs) = (params.min_dark_secs, params.max_word_secs);
+
+    // Inference and the envelope are both CPU-bound, and the first holds a
+    // `std::sync::Mutex` — neither belongs on the async runtime's workers.
+    let analysed_secs = samples.len() as f64 / SAMPLE_RATE as f64;
+    let report = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let probs = {
+            let mut vad = session.lock().map_err(|_| {
+                "the VAD session mutex was poisoned by an earlier panic".to_string()
+            })?;
+            vad.speech_probabilities(&samples)
+                .map_err(|e| e.to_string())?
+        };
+        let rms = rms_envelope(&samples, SAMPLE_RATE, RMS_HOP_SECS);
+        Ok(detect_dark_regions(
+            &DarkInput {
+                range_start_secs: start,
+                range_secs: analysed_secs,
+                words: &words,
+                speech_probs: &probs,
+                frame_secs: FRAME_SECS,
+                rms: &rms,
+                rms_hop_secs: RMS_HOP_SECS,
+            },
+            &params,
+        ))
+    })
+    .await
+    .map_err(|e| format!("running the dark-region scan: {e}"))??;
+
+    let regions: Vec<serde_json::Value> = report
+        .regions
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "start_secs": r.start_secs,
+                "end_secs": r.end_secs,
+                "duration_secs": r.duration_secs(),
+                "stretch_start_secs": r.stretch_start_secs,
+                "stretch_end_secs": r.stretch_end_secs,
+                "stretch_speech_secs": r.stretch_speech_secs,
+                "rms_peak": r.rms_peak,
+            })
+        })
+        .collect();
+
+    Ok(serde_json::json!({
+        "source": path,
+        "start_secs": start,
+        "duration_secs": duration_secs,
+        "analysed_secs": analysed_secs,
+        "min_dark_secs": min_dark_secs,
+        "max_word_secs": max_word_secs,
+        "model": MODEL_FILENAME,
+        "regions": regions,
+        // The gate's own workings, so a caller can tell "this file is clean"
+        // from "nothing here could be calibrated, so nothing was gated".
+        "rms_floor": report.rms_floor,
+        "calibration_spans": report.calibration_spans,
+        "gated_out": report.gated_out,
+        "speech_secs": report.speech_secs,
+        "covered_secs": report.covered_secs,
     }))
 }
 

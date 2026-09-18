@@ -73,6 +73,13 @@ pub(crate) fn no_audio_message(path: &str) -> Option<String> {
 /// `word_timestamps` defaults to true — false is faster but returns
 /// segment-level timings only, which is not enough to cut to an exact word.
 ///
+/// `start_secs` / `duration_secs` transcribe **one window** of the source rather
+/// than the whole file (D-349). Timestamps come back in absolute source seconds
+/// either way, so a windowed result splices straight into a whole-file one. This
+/// is how a dark region gets its words back: whisper's whole-file pass silently
+/// drops multi-second utterances, and an isolated pass over the same audio reads
+/// them (B-216).
+///
 /// Refuses up front, with a readable message, when the source has no audio
 /// stream at all — see [`no_audio_message`] (B-119).
 #[tauri::command]
@@ -80,6 +87,8 @@ pub async fn chroma_transcribe(
     path: String,
     language: Option<String>,
     word_timestamps: Option<bool>,
+    start_secs: Option<f64>,
+    duration_secs: Option<f64>,
 ) -> Result<serde_json::Value, String> {
     // `spawn_blocking` for the same reason every other `probe_cached` caller on
     // this surface uses it: a cold probe is two `ffprobe` spawns and must not
@@ -92,7 +101,29 @@ pub async fn chroma_transcribe(
         log::info!("[media] transcribe: refusing {path} — no audio stream");
         return Err(message);
     }
-    apelles_ai::media_understanding::transcribe(&path, language, word_timestamps).await
+    // A window needs both halves to mean anything: a `start_secs` with no
+    // duration would transcribe to the end of a 680 s camera original, which is
+    // never what a caller asking for a window wants.
+    let window = match (start_secs, duration_secs) {
+        (Some(start), Some(duration)) => {
+            if !start.is_finite() || start < 0.0 {
+                return Err("start_secs must be a finite, non-negative number".to_string());
+            }
+            if !duration.is_finite() || duration <= 0.0 {
+                return Err("duration_secs must be a finite number greater than zero".to_string());
+            }
+            Some((start, duration))
+        }
+        (None, None) => None,
+        _ => {
+            return Err(
+                "start_secs and duration_secs go together — pass both to transcribe one \
+                 window, or neither to transcribe the whole file"
+                    .to_string(),
+            );
+        }
+    };
+    apelles_ai::media_understanding::transcribe(&path, language, word_timestamps, window).await
 }
 
 /// Poll a transcript job started by [`chroma_transcribe`].

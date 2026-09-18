@@ -90,6 +90,7 @@ import {
   type TranscriptPosition,
   type TranscriptSourceRef,
 } from './timelineTranscript';
+import type { RecoveredWindow } from './darkRegions';
 import { thumbAtSourceSecs } from './clipThumbs';
 
 /** The two sub-views, in the order the tabs render them. Markers first: it is
@@ -97,6 +98,35 @@ import { thumbAtSourceSecs } from './clipThumbs';
  *  no transcription. */
 const INDEX_VIEWS = ['markers', 'transcript'] as const;
 type IndexView = (typeof INDEX_VIEWS)[number];
+
+/** The store's flat `recoveryKey -> RecoveredWindow` map, regrouped by source
+ *  file for `stitchTimelineTranscript` (D-349).
+ *
+ *  A module-level pure function rather than an inline block, deliberately: the
+ *  React Compiler bails out of a component whose memo body builds and mutates a
+ *  keyed object in place (`reactCompiler.test.ts` catches exactly that, and did
+ *  catch it here), and this has no business being inside the component anyway —
+ *  it is a reshape of one map into another. */
+function groupRecoveriesByPath(
+  recoveries: Readonly<Record<string, RecoveredWindow>>,
+): Record<string, RecoveredWindow[]> {
+  const byPath = new Map<string, RecoveredWindow[]>();
+  for (const [key, value] of Object.entries(recoveries)) {
+    // The key is `<path>|<start>|<duration>`, and a real absolute path cannot
+    // contain `|` — the same exact-prefix rule the store's own cache eviction
+    // relies on.
+    const path = key.slice(0, key.indexOf('|'));
+    const list = byPath.get(path);
+    if (list) list.push(value);
+    else byPath.set(path, [value]);
+  }
+  return Object.fromEntries(
+    Array.from(byPath, ([path, list]) => [
+      path,
+      [...list].sort((a, b) => a.window.startSecs - b.window.startSecs),
+    ]),
+  );
+}
 
 export function EditIndexPanel() {
   const [view, setView] = useState<IndexView>('markers');
@@ -369,11 +399,20 @@ function TranscriptView() {
   const transcripts = useMediaUnderstandingStore((s) => s.transcripts);
   const transcribing = useMediaUnderstandingStore((s) => s.transcribing);
   const transcriptErrors = useMediaUnderstandingStore((s) => s.transcriptErrors);
+  // D-349 — the recut pass's recovered windows, so this panel shows the speech
+  // whisper silently dropped rather than the hole it left. Subscribed to the
+  // raw map (not the `recoveriesFor` selector) so the memo below re-runs only
+  // when a recovery actually lands.
+  const recoveries = useMediaUnderstandingStore((s) => s.recoveries);
 
   const fps = timelineFps(timeline);
 
   const sources = useMemo(() => transcriptSources(timeline), [timeline]);
-  const rows = useMemo(() => stitchTimelineTranscript(timeline, transcripts), [timeline, transcripts]);
+  const byPath = useMemo(() => groupRecoveriesByPath(recoveries), [recoveries]);
+  const rows = useMemo(
+    () => stitchTimelineTranscript(timeline, transcripts, byPath),
+    [timeline, transcripts, byPath],
+  );
 
   // One status per FILE, so the progress list can say which of five files is
   // still running rather than showing one opaque spinner for all of them.
@@ -623,6 +662,20 @@ function TranscriptRow({
         <span className="rounded bg-bg-primary px-1 text-[9px] tabular-nums text-text-secondary">
           {formatRowDuration(row, fps)}
         </span>
+        {/* D-349 — these words are NOT in the transcript whisper returned: the
+            whole-file pass silently dropped this stretch and the app went back
+            and re-read it in isolation. Said out loud rather than folded in
+            invisibly, so a reader is never blindsided by content appearing in a
+            transcript that was not there before. */}
+        {row.recovered ? (
+          <span
+            data-chroma-transcript-recovered={index}
+            title="Recovered: the whole-file transcription silently skipped this speech, so it was re-transcribed on its own"
+            className="rounded bg-accent/20 px-1 text-[9px] uppercase tracking-wide text-accent"
+          >
+            recovered
+          </span>
+        ) : null}
       </span>
 
       {/* Word-wrapped, not truncated: the text is the content here, and a

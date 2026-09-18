@@ -10,6 +10,21 @@ and does the detector B-216 proposed actually work. **What it is NOT:** the fix.
 No product code was written or changed in this pass. Everything below was run in
 `scratch/whisper-dark-region/` (gitignored) against the real raw camera sources.
 
+> **THE FIX LANDED THE SAME DAY — D-349.** Every recommendation in §6 is now
+> product code: the detector is `crates/apelles-speech/src/dark.rs`, B-224 is
+> fixed (`ai-media/transcribe.py` seeds MLX's RNG, and three identical runs now
+> return byte-identical JSON), and §6.5's "consider it a transcript-quality
+> signal" went further than suggested — `editor_detect_retakes` re-transcribes
+> every located window in isolation and **splices the recovered words into the
+> transcript it groups**, by default. Two things the shipped work adds that this
+> note did not have, both from re-validating against these same two sources:
+> a located region shorter than 250 ms is not reported (an uncovered stretch is
+> bounded by transcript words, so its edge spans are slivers of the *neighbouring*
+> utterance, not findings), and **the recovery pass pins the language to the
+> whole-file pass's own detection** — auto-detect on a 12-second extract returned
+> an entirely different script for 2 of 10 real windows, and both read correctly
+> once pinned. D-349 has the full validation numbers.
+
 **The headline, up front.** The mechanism is *not* any of the skip/threshold
 paths it looks like from the outside, it is **not deterministic**, it happens on
 both videos tested, and it is **biased towards exactly the material retake

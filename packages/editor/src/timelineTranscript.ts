@@ -51,6 +51,7 @@
 import { spanToFrames } from './recut';
 import { isStillSource, timelineFps, type Clip, type Timeline } from './timeline';
 import type { Transcript, TranscriptSegment } from './mediaUnderstandingStore';
+import { spliceTranscript, type RecoveredWindow, type SplicedSegment } from './darkRegions';
 
 /** One WORD of the stitched transcript, located on the timeline.
  *
@@ -98,6 +99,12 @@ export interface TimelineTranscriptRow {
   /** This segment's words, each on the timeline. Empty when the transcript has
    *  no word-level timings. */
   words: TimelineTranscriptWord[];
+  /** This row exists because the app went back and re-transcribed a region the
+   *  whole-file pass silently dropped (D-349). Surfaced rather than folded in
+   *  invisibly: a reader is entitled to know which words appeared for that
+   *  reason, and `true` here is the difference between "whisper said this" and
+   *  "whisper missed this and we recovered it." */
+  recovered?: true;
 }
 
 /** One file the timeline needs a transcript for. */
@@ -187,6 +194,12 @@ export function transcriptSources(tl: Timeline | null): TranscriptSourceRef[] {
  * transcribed timeline renders the files that ARE done instead of blocking on
  * the slowest one.
  *
+ * `recoveries` is the store's `sourcePath -> RecoveredWindow[]` map (D-349).
+ * Every recovered window is spliced into its file's transcript before the walk,
+ * so a reader sees the speech whisper silently dropped — marked `recovered` on
+ * the row, never smuggled in as if the model had read it. Omitting the argument
+ * is the pre-D-349 behaviour exactly.
+ *
  * Within one clip the segments keep the transcript's own order (chronological
  * in the source, which for a single trimmed window is also chronological on
  * the timeline). Across clips the order is `dialogueClips`' timeline order.
@@ -195,19 +208,27 @@ export function transcriptSources(tl: Timeline | null): TranscriptSourceRef[] {
 export function stitchTimelineTranscript(
   tl: Timeline | null,
   transcripts: Readonly<Record<string, Transcript>>,
+  recoveries: Readonly<Record<string, readonly RecoveredWindow[]>> = {},
 ): TimelineTranscriptRow[] {
   if (!tl) return [];
   const fps = timelineFps(tl);
   const rows: TimelineTranscriptRow[] = [];
+  // D-349 — one spliced list per FILE, computed once rather than per clip: a
+  // silence cut produces dozens of clips against one source, and splicing per
+  // clip would redo the same merge dozens of times for an identical answer.
+  const spliced = new Map<string, SplicedSegment[]>();
 
   for (const { clip, track } of dialogueClips(tl)) {
     const path = clip.source_path as string;
     const transcript = transcripts[path];
     if (!transcript) continue;
+    if (!spliced.has(path)) {
+      spliced.set(path, spliceTranscript(transcript.segments ?? [], recoveries[path] ?? []));
+    }
 
     const window = clipWindowSecs(clip, fps);
 
-    for (const segment of clipSegments(clip, transcript.segments ?? [], fps)) {
+    for (const segment of clipSegments(clip, spliced.get(path) ?? [], fps)) {
       // `spanToFrames` owns the conversion AND the clamp into the clip's own
       // bounds, so a segment that straddles the cut point reports the part
       // that is actually on the timeline rather than running past it.
@@ -238,6 +259,7 @@ export function stitchTimelineTranscript(
               sourceEnd: w.end,
             };
           }),
+        ...(segment.recovered ? { recovered: true as const } : {}),
       });
     }
   }
@@ -257,7 +279,11 @@ export function stitchTimelineTranscript(
  * contributes no audible frame and is excluded. Same filter `RecutPanel` and
  * the pre-D-329 single-clip view already applied.
  */
-function clipSegments(clip: Clip, segments: readonly TranscriptSegment[], fps: number): TranscriptSegment[] {
+function clipSegments<T extends TranscriptSegment>(
+  clip: Clip,
+  segments: readonly T[],
+  fps: number,
+): T[] {
   const { startSecs, endSecs } = clipWindowSecs(clip, fps);
   return segments.filter((s) => s.end > startSecs && s.start < endSecs);
 }

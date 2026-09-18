@@ -1780,8 +1780,129 @@
       }
     },
     {
+      "name": "editor_detect_dark_regions",
+      "description": "Find the stretches of a clip where **there is speech nobody transcribed**\n    (D-349, fixes the transcription half of B-216).\n\n    Whisper's whole-file pass does not merely mis-hear some utterances \u2014 it\n    emits no tokens for them, inside a 30-second window it is otherwise decoding\n    confidently, at temperature 0.0 with every quality metric healthy. There is\n    no error, no warning and no low-confidence score to filter on; the word\n    alignment then stretches whatever words survived across the hole, so the\n    transcript reads plausibly and is wrong. Measured rate on real footage:\n    roughly one dropped multi-second region per three minutes of raw source,\n    across two independent camera originals.\n\n    This tool crosses the two signals the app already has \u2014 the acoustic VAD\n    (\"is anyone talking\") and the transcript (\"what was read\") \u2014 and reports\n    where they disagree.\n\n    - `track` / `clip` \u2014 required. Only the clip's own trimmed source range is\n      scanned. (No whole-track sweep: unlike the other two detectors, the\n      answer here is normally consumed by `editor_detect_retakes`, which runs\n      this automatically over every clip it groups.)\n    - `min_dark_secs` \u2014 how much unaccounted-for speech a stretch must hold\n      before it is flagged (default 1.2). Measured on a plateau: 1.0 to 1.5 give\n      the same answer on both test files.\n    - `max_word_secs` \u2014 a transcript word LONGER than this contributes no\n      coverage (default 2.0, whisper's own anomaly bound). This is load-bearing,\n      not a refinement: the alignment smears one word across the hole, so a\n      naive \"is there a word here\" test misses more than half the real cases.\n    - `rms_floor_scale` \u2014 multiplier on the amplitude floor (default 1.0). The\n      floor is calibrated **per file** from the quietest speech this recording's\n      own transcript read correctly, never a constant \u2014 mic, gain and room\n      differ per shoot. Below 1.0 trades precision for recall.\n\n    `state: \"done\"` carries `regions`, each in the same three frame spaces\n    `editor_detect_silences` returns, plus the `stretch\u2026` bounds it was found in\n    and its `rmsPeak`. It also carries `rmsFloor` / `calibrationSpans` /\n    `gatedOut`: **`rmsFloor: null` means the range held too few\n    well-transcribed utterances to calibrate a gate, so the answer is ungated**\n    and \"no regions\" is weaker evidence than usual. Otherwise start-then-poll\n    like the other two \u2014 `editor_detect_dark_regions_status` with the same\n    arguments.\n\n    **Nothing is cut and nothing is re-transcribed by this tool** \u2014 it reports.\n    `editor_detect_retakes` is what re-reads these windows in isolation and\n    splices the recovered words into the transcript it groups.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "clip": {
+            "title": "Clip",
+            "type": "integer"
+          },
+          "min_dark_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Min Dark Secs"
+          },
+          "max_word_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Word Secs"
+          },
+          "rms_floor_scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rms Floor Scale"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track",
+          "clip"
+        ],
+        "type": "object",
+        "title": "editor_detect_dark_regionsArguments"
+      }
+    },
+    {
+      "name": "editor_detect_dark_regions_status",
+      "description": "Poll a dark-region scan started by `editor_detect_dark_regions` (D-349).\n\n    Pass the SAME arguments you started it with \u2014 a scan is cached per clip\n    range and per threshold set, so different arguments read as `state: \"idle\"`.\n    `state` is `running`, `done` (with `regions`, exactly as the start tool\n    returns them) or `idle`. If the transcript itself is still being made this\n    reports that instead, with a `note` pointing at\n    `editor_get_transcript_status`: a dark region is defined against the\n    transcript's own words, so there is nothing to compare the audio to until\n    they exist. A pure read.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "clip": {
+            "title": "Clip",
+            "type": "integer"
+          },
+          "min_dark_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Min Dark Secs"
+          },
+          "max_word_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Word Secs"
+          },
+          "rms_floor_scale": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rms Floor Scale"
+          }
+        },
+        "required": [
+          "track",
+          "clip"
+        ],
+        "type": "object",
+        "title": "editor_detect_dark_regions_statusArguments"
+      }
+    },
+    {
       "name": "editor_detect_retakes",
-      "description": "Group the places in a timeline clip \u2014 or across a WHOLE TRACK \u2014 where the\n    speaker **said the same line more than once**: the flubbed take, the\n    stumble, the third attempt.\n\n    Unlike `editor_detect_silences` this needs the transcript, because a retake\n    is a fact about words. If one has not been made yet this starts it and\n    returns `state: \"running\"` with a `note` \u2014 poll\n    `editor_get_transcript_status`, then call this again. A transcript is made\n    once per SOURCE FILE, so a sweep of fifty clips cut from one recording\n    costs one transcription, not fifty.\n\n    Once the words exist, the grouping itself follows the same start-then-poll\n    contract as `editor_detect_silences` (D-321): `state: \"done\"` with `groups`\n    if it finished inside this call, otherwise `state: \"running\"` \u2014 poll\n    `editor_detect_retakes_status` with the same arguments. `force` re-runs a\n    grouping that is already cached for this clip range and these thresholds.\n\n    - `track` \u2014 required.\n    - `clip` \u2014 **optional**. Name a clip index to ask about that one clip.\n      **Omit it to sweep every analysable clip on the track in a single call**\n      (D-342, fixes B-216) \u2014 do this for any cleanup pass. Asking one clip at a\n      time is exactly how real retakes survived to a final cut. Only each\n      clip's own trimmed range is considered, either way.\n    - `similarity` \u2014 how alike two utterances must be to count as the same line\n      (0..1, default 0.82).\n    - `window_secs` \u2014 how far apart two takes may be (default 30). A line\n      repeated half an hour later is a callback, not a retake.\n    - `min_words` \u2014 a take with fewer than this many DISTINCT words is never\n      grouped (default 3), which is what stops every \"Yeah.\" pairing with every\n      other one.\n    - `max_span_utterances` \u2014 how many adjacent transcript utterances may be\n      joined into one take (default 3). This is what finds a restart Whisper cut\n      on boundaries of its own, which do not line up with the speaker's (D-327):\n      a take is a SPAN of utterances, so one delivery can cover several. 1\n      restores the old utterance-to-utterance behaviour.\n\n    Each group has `takes` (each with its `text` and the same three frame\n    spaces `editor_detect_silences` returns), a `similarity` score, and `keep` \u2014\n    the index of the take this **suggests** keeping, which is the last one,\n    normally what the speaker settled on. `keep` is a suggestion and nothing\n    more: text alone cannot always tell a retake from a later line that merely\n    extends an earlier one, so read the `text` before cutting.\n\n    **A SWEEP (no `clip`) answers in a different, aggregate shape**: `flagged`\n    is the clips that found something, in full, each with its own `clip` index\n    and `groups`; `clean` is a bare list of clip indices with nothing in them;\n    `running` / `transcribing` / `notStarted` / `failed` / `skipped` say what\n    has not answered and why (`transcribing` is waiting on the words, not on\n    the grouping); `totals` counts all of it. Act on `flagged`.\n\n    **Nothing is cut**, by either form. Pass the takes you want gone to\n    `editor_ripple_delete_ranges`.",
+      "description": "Group the places in a timeline clip \u2014 or across a WHOLE TRACK \u2014 where the\n    speaker **said the same line more than once**: the flubbed take, the\n    stumble, the third attempt.\n\n    Unlike `editor_detect_silences` this needs the transcript, because a retake\n    is a fact about words. If one has not been made yet this starts it and\n    returns `state: \"running\"` with a `note` \u2014 poll\n    `editor_get_transcript_status`, then call this again. A transcript is made\n    once per SOURCE FILE, so a sweep of fifty clips cut from one recording\n    costs one transcription, not fifty.\n\n    Once the words exist, the grouping itself follows the same start-then-poll\n    contract as `editor_detect_silences` (D-321): `state: \"done\"` with `groups`\n    if it finished inside this call, otherwise `state: \"running\"` \u2014 poll\n    `editor_detect_retakes_status` with the same arguments. `force` re-runs a\n    grouping that is already cached for this clip range and these thresholds.\n\n    - `track` \u2014 required.\n    - `clip` \u2014 **optional**. Name a clip index to ask about that one clip.\n      **Omit it to sweep every analysable clip on the track in a single call**\n      (D-342, fixes B-216) \u2014 do this for any cleanup pass. Asking one clip at a\n      time is exactly how real retakes survived to a final cut. Only each\n      clip's own trimmed range is considered, either way.\n    - `similarity` \u2014 how alike two utterances must be to count as the same line\n      (0..1, default 0.82).\n    - `window_secs` \u2014 how far apart two takes may be (default 30). A line\n      repeated half an hour later is a callback, not a retake.\n    - `min_words` \u2014 a take with fewer than this many DISTINCT words is never\n      grouped (default 3), which is what stops every \"Yeah.\" pairing with every\n      other one.\n    - `max_span_utterances` \u2014 how many adjacent transcript utterances may be\n      joined into one take (default 3). This is what finds a restart Whisper cut\n      on boundaries of its own, which do not line up with the speaker's (D-327):\n      a take is a SPAN of utterances, so one delivery can cover several. 1\n      restores the old utterance-to-utterance behaviour.\n    - `recover_dark_regions` \u2014 **default true, and leave it that way** (D-349,\n      B-216). Whisper's whole-file pass silently declines to transcribe some\n      utterances inside windows it otherwise reads confidently: roughly one\n      dropped multi-second region per three minutes of raw footage, measured on\n      two independent camera originals, with no error and no low-confidence\n      score to filter on. The loss is **biased towards near-duplicate repeated\n      material** \u2014 i.e. towards retakes \u2014 so grouping the raw transcript is\n      blind in exactly the place this tool is looking. With this on, each clip's\n      range is scanned for stretches where the VAD hears a voice and the\n      transcript has no words, those windows are re-transcribed on their own,\n      and the recovered lines are spliced in before grouping. The answer then\n      carries `darkRegions` (how many holes were found) and\n      `recoveredUtterances` (how many grouped lines exist only because of it).\n      Set it false only when you already know the source is clean and want the\n      answer in one round trip: the scan and each re-read are extra passes, so a\n      first call typically returns `state: \"transcribing\"` once or twice more\n      than it would otherwise.\n\n    Each group has `takes` (each with its `text` and the same three frame\n    spaces `editor_detect_silences` returns), a `similarity` score, and `keep` \u2014\n    the index of the take this **suggests** keeping, which is the last one,\n    normally what the speaker settled on. `keep` is a suggestion and nothing\n    more: text alone cannot always tell a retake from a later line that merely\n    extends an earlier one, so read the `text` before cutting.\n\n    **A SWEEP (no `clip`) answers in a different, aggregate shape**: `flagged`\n    is the clips that found something, in full, each with its own `clip` index\n    and `groups`; `clean` is a bare list of clip indices with nothing in them;\n    `running` / `transcribing` / `notStarted` / `failed` / `skipped` say what\n    has not answered and why (`transcribing` is waiting on the words, not on\n    the grouping); `totals` counts all of it. Act on `flagged`.\n\n    **Nothing is cut**, by either form. Pass the takes you want gone to\n    `editor_ripple_delete_ranges`.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -1847,6 +1968,11 @@
             ],
             "default": null,
             "title": "Max Span Utterances"
+          },
+          "recover_dark_regions": {
+            "default": true,
+            "title": "Recover Dark Regions",
+            "type": "boolean"
           },
           "force": {
             "default": false,
@@ -1863,7 +1989,7 @@
     },
     {
       "name": "editor_detect_retakes_status",
-      "description": "Poll a retake grouping started by `editor_detect_retakes` (D-321).\n\n    Pass the SAME arguments you started it with \u2014 a grouping is cached per clip\n    range and per threshold set, so different arguments read as `state: \"idle\"`.\n\n    `clip` is optional here for the same reason it is on the start tool (D-342):\n    **omit it to poll a whole-track sweep**, and the answer comes back in the\n    same aggregate shape the sweep returned, one request for the whole track.\n\n    `state` is `running`, `done` (with `groups`, exactly as\n    `editor_detect_retakes` returns them) or `idle`. If the transcript itself is\n    still being made this reports that instead, with a `note` pointing at\n    `editor_get_transcript_status` \u2014 the same answer the start tool gives, since\n    there is nothing to group until there are words. A pure read.",
+      "description": "Poll a retake grouping started by `editor_detect_retakes` (D-321).\n\n    Pass the SAME arguments you started it with \u2014 a grouping is cached per clip\n    range and per threshold set, so different arguments read as `state: \"idle\"`.\n\n    `clip` is optional here for the same reason it is on the start tool (D-342):\n    **omit it to poll a whole-track sweep**, and the answer comes back in the\n    same aggregate shape the sweep returned, one request for the whole track.\n\n    `state` is `running`, `done` (with `groups`, exactly as\n    `editor_detect_retakes` returns them) or `idle`. If the transcript itself is\n    still being made this reports that instead, with a `note` pointing at\n    `editor_get_transcript_status` \u2014 the same answer the start tool gives, since\n    there is nothing to group until there are words. `state: \"transcribing\"` can\n    also mean the D-349 dark-region scan or one of its re-reads is still going;\n    the `note` says which. Keep `recover_dark_regions` the same as you started\n    with, for the same reason the thresholds must match. A pure read.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -1929,6 +2055,11 @@
             ],
             "default": null,
             "title": "Max Span Utterances"
+          },
+          "recover_dark_regions": {
+            "default": true,
+            "title": "Recover Dark Regions",
+            "type": "boolean"
           }
         },
         "required": [
@@ -11632,6 +11763,120 @@
       ]
     },
     {
+      "tool": "editor_detect_dark_regions",
+      "case": "minimal",
+      "arguments": {
+        "track": 88,
+        "clip": 26
+      },
+      "requests": [
+        {
+          "op": "editor_detect_dark_regions",
+          "args": {
+            "track": 88,
+            "clip": 26
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_detect_dark_regions",
+      "case": "full",
+      "arguments": {
+        "track": 88,
+        "clip": 26,
+        "min_dark_secs": 42.09,
+        "max_word_secs": 43.96,
+        "rms_floor_scale": -14.26,
+        "force": true
+      },
+      "requests": [
+        {
+          "op": "editor_detect_dark_regions",
+          "args": {
+            "track": 88,
+            "clip": 26,
+            "minDarkSecs": 42.09,
+            "maxWordSecs": 43.96,
+            "rmsFloorScale": -14.26,
+            "force": true
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_detect_dark_regions_status",
+      "case": "minimal",
+      "arguments": {
+        "track": 60,
+        "clip": 59
+      },
+      "requests": [
+        {
+          "op": "editor_detect_dark_regions_status",
+          "args": {
+            "track": 60,
+            "clip": 59
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_detect_dark_regions_status",
+      "case": "full",
+      "arguments": {
+        "track": 60,
+        "clip": 59,
+        "min_dark_secs": -10.54,
+        "max_word_secs": 20.87,
+        "rms_floor_scale": 35.87
+      },
+      "requests": [
+        {
+          "op": "editor_detect_dark_regions_status",
+          "args": {
+            "track": 60,
+            "clip": 59,
+            "minDarkSecs": -10.54,
+            "maxWordSecs": 20.87,
+            "rmsFloorScale": 35.87
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_detect_retakes",
       "case": "minimal",
       "arguments": {
@@ -11664,6 +11909,7 @@
         "window_secs": -8.35,
         "min_words": 75,
         "max_span_utterances": 13,
+        "recover_dark_regions": false,
         "force": false
       },
       "requests": [
@@ -11675,7 +11921,8 @@
             "similarity": 40.12,
             "windowSecs": -8.35,
             "minWords": 75,
-            "maxSpanUtterances": 13
+            "maxSpanUtterances": 13,
+            "recoverDarkRegions": false
           },
           "timeout_ms": 20000
         }
@@ -11720,7 +11967,8 @@
         "similarity": -36.78,
         "window_secs": 35.75,
         "min_words": 80,
-        "max_span_utterances": 31
+        "max_span_utterances": 31,
+        "recover_dark_regions": true
       },
       "requests": [
         {

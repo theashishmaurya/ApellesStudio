@@ -2,23 +2,24 @@
 
 **What was said, and where nobody said anything.** (D-318)
 
-The analysis half of "clean up a talking-head recording": find the dead air, and
-find the retakes.
+The analysis half of "clean up a talking-head recording": find the dead air, find
+the retakes, and find the speech the transcription silently never read.
 
 | module | question it answers | how |
 |---|---|---|
 | `vad` | is anyone talking, right now? | silero-vad v6.2.1 ONNX (D-319), 16 kHz mono, one probability per 512-sample hop |
 | `silence` | where are the gaps worth cutting? | hysteresis over those probabilities → spans in seconds |
 | `retake` | did they say this line already? | normalised edit distance + containment over **spans** of adjacent utterances (D-320, D-327) |
+| `dark` | is there speech here that nobody transcribed? | VAD speech ∩ the gaps in transcript word coverage, gated on a per-file amplitude floor (D-349) |
 
 ## The boundary
 
-**In:** decoded PCM (`&[f32]`, mono, 16 kHz) and transcript utterances.
-**Out:** candidate spans and groups, in **seconds**.
+**In:** decoded PCM (`&[f32]`, mono, 16 kHz) and transcript utterances/words.
+**Out:** candidate spans, groups and regions, in **seconds**.
 
 That is the whole surface, and every exclusion below is deliberate:
 
-- **It never cuts anything.** Both detectors are read-only. They return
+- **It never cuts anything.** All three detectors are read-only. They return
   candidates; applying one is the timeline's job, through the split / remove /
   ripple ops that already existed. Apelles is not an auto-editor
   (`docs/00-vision.md`), and retake grouping has an honest false positive that
@@ -58,13 +59,16 @@ and D-319 for why the version is pinned.
 cargo test -p apelles-speech
 ```
 
-38 tests, no model required — `tests/real_model_output.rs` replays a probability
-track captured from the real model over a real speech clip, and `retake.rs`
-carries the real six transcript segments from **B-198** as a regression test.
+57 tests, no model required — `tests/real_model_output.rs` replays a probability
+track captured from the real model over a real speech clip, `retake.rs` carries
+the real six transcript segments from **B-198** as a regression test, and
+`dark.rs`'s fixtures are shaped like real speech (five utterances separated by
+real pauses, because a fixture that is one continuous span has no *other*
+utterance to calibrate the amplitude floor against).
 
-The one test that *does* drive the model is `#[ignore]`d, because it needs the
+The two tests that *do* drive the model are `#[ignore]`d, because they need the
 downloaded artifact and a located ONNX Runtime library (and see **B-187** for
-the teardown abort that makes it unfit for an unattended run):
+the teardown abort that makes them unfit for an unattended run):
 
 ```sh
 ORT_DYLIB_PATH=app/src-tauri/resources/libonnxruntime.dylib \
@@ -74,6 +78,32 @@ APELLES_SILERO_PCM=/path/to/clip.f32 \
 ```
 
 `ffmpeg -i clip.wav -f f32le -ac 1 -ar 16000 clip.f32` produces the PCM.
+
+`tests/dark_live.rs` is the same idea for the dark-region detector, against a
+real source **and its real transcript** — the thing fixtures cannot cover is
+whether the findings are the utterances a human can hear and the transcript does
+not contain. Its own module doc has the full command.
+
+## Dark regions, and why they need a detector at all (D-349, B-216)
+
+Whisper's whole-file pass does not merely mis-hear some utterances — it emits no
+tokens for them, inside a 30-second window it is otherwise decoding confidently,
+at temperature 0.0 with `no_speech_prob` 0.043-0.171 against a 0.6 threshold.
+Nothing in its machinery notices, so there is no error and no confidence score to
+filter on, and the DTW alignment then stretches the surviving words across the
+hole so the transcript reads plausibly and is wrong. Measured rate: roughly one
+dropped multi-second region per three minutes of raw footage, on two independent
+camera originals — and the loss is **biased towards near-duplicate repeats**,
+i.e. towards exactly what `retake` is looking for.
+
+`dark` is therefore a third detector rather than a note on the other two:
+`silence` reads no transcript and `retake` reads no audio, so neither can see
+this. Two of its rules are load-bearing and neither is obvious —
+a transcript word longer than 2.0 s contributes **no coverage** (without it the
+detector misses more than half the real cases), and the amplitude floor is
+calibrated **per file** from the quietest speech that file's own transcript read
+correctly (which is what takes precision from 72.7 % to 90-100 %). Full trail,
+with the 111-window scoring: `docs/notes/whisper-dark-region-research.md`.
 
 ## Why a retake is a span, and why there is no embedding model (D-327)
 

@@ -2330,23 +2330,34 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         `chroma_detect_retakes`, which today deliberately asks for
         `start`/`end`/`text` only, and a take shape that is no longer
         utterance-indexed. Not scoped yet.
-    - [ ] **A DARK-REGION detector — "there is speech here nobody has read"**
-      (B-216's transcription sub-finding; **research complete and the design
-      settled by measurement**, 2026-09-18 —
-      `docs/notes/whisper-dark-region-research.md`). Whisper's whole-file pass
+    - ✅ **A DARK-REGION detector — "there is speech here nobody has read" —
+      DONE, 2026-09-18 (D-349), and it went further than this item asked.**
+      (B-216's transcription sub-finding; research trail
+      `docs/notes/whisper-dark-region-research.md`.) Whisper's whole-file pass
       silently drops multi-second regions of real speech — ~10 confirmed in
       1676 s across two different sources — and the loss is **biased towards
-      retakes**, so the transcript is most likely to be missing exactly what the
-      retake grouper is looking for. Build: uncovered transcript stretch (a word
-      longer than 2.0 s contributes NO coverage — without that rule the detector
-      misses over half the real cases) → sum the overlapping Silero speech →
-      flag at ≥1.2 s → gate on a per-file-calibrated RMS floor → report the
-      VAD∩stretch intersections. Measured over 111 labelled windows at
-      **90-100 % precision, 100 % recall**. Needs no new dependency —
-      `crates/apelles-speech`'s `vad.rs` (Silero v6.2.1) and
-      `silence.rs::speech_spans` already exist. Both MCP surfaces and the GUI in
-      the same pass. See also **B-224** (transcripts are not reproducible),
-      which should land first or alongside.
+      retakes**, so the transcript was most likely to be missing exactly what
+      the retake grouper is looking for. Built as specified: uncovered
+      transcript stretch (a word longer than 2.0 s contributes NO coverage —
+      without that rule the detector misses over half the real cases) → sum the
+      overlapping Silero speech → flag at ≥1.2 s → gate on a
+      per-file-calibrated RMS floor → report the VAD∩stretch intersections. It
+      lives in `crates/apelles-speech/src/dark.rs` and needed no new dependency,
+      as predicted. Re-validated independently on both real sources through a
+      new `#[ignore]`d live test (`tests/dark_live.rs`): c040 4 regions / 1
+      gated out, c038 6 stretches / 1 gated out, and re-reading all 10 in
+      isolation recovered the speaker's own dropped content in 8.
+      **The part this item did not ask for and is the real fix:**
+      `editor_detect_retakes` re-transcribes every located window on its own
+      (windowed transcription now runs through the whole stack) and **splices
+      the recovered words into the transcript it groups**, by default — so the
+      grouper sees the dropped takes rather than being warned about them.
+      Both MCP surfaces (`editor_detect_dark_regions`/`_status`, plus
+      `recoverDarkRegions` on the retake tools) and both GUI halves (the Recut
+      panel says when a grouping read recovered lines; the Index panel marks a
+      recovered transcript row) landed in the same pass. **B-224 landed first**,
+      as this item said it should. **Still open:** B-216's clip-straddling
+      blindness, which this does not touch.
     - ~~**The Edit tab's left library — one docked, switchable browser**~~ —
       **DONE, 2026-09-09 (D-263).** D-248 gave the tab an icon rail whose
       buttons opened floating popovers, rendered (because Sources is

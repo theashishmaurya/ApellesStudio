@@ -16,7 +16,7 @@
  * media-understanding ones; `motion_*`; `debug_*`; the remainder is Colorist).
  */
 
-export const VERIFIED_ON = '2026-09-17';
+export const VERIFIED_ON = '2026-09-18';
 
 export interface ToolGroup {
   /** Short label used as the group's heading. */
@@ -61,6 +61,11 @@ export interface ToolGroup {
  * manifest's own top-level fields (Motion 42 → 43). Re-counted against the real
  * file, as always, not derived from the previous line's total.
  *
+ * 177 → 179 on 2026-09-18 (D-349): `editor_detect_dark_regions` and its status
+ * poll — the third recut detector, which finds the speech whisper's whole-file
+ * pass silently declined to transcribe (Edit 75 → 77). Re-counted against the
+ * real file, as always.
+ *
  * 166 → 176 on 2026-09-17 (D-339). Exactly ONE of those ten is this pass's own
  * `motion_set_project_theme` (the Motion tab's document-level theme); the other
  * nine are drift these numbers had already accumulated across four earlier
@@ -74,15 +79,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 177,
-  shipped: 166,
+  all: 179,
+  shipped: 168,
   debugOnly: 11,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 75,
+    count: 77,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [

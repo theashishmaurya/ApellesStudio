@@ -212,6 +212,13 @@ class TranscribeReq(BaseModel):
     language: Optional[str] = None
     word_timestamps: bool = True
     model: str = transcribe_mod.DEFAULT_MODEL
+    # One WINDOW of the source instead of the whole thing (D-349). Timestamps
+    # come back in absolute SOURCE seconds either way, so a windowed result
+    # splices straight into a whole-file one. This is the recovery half of
+    # B-216: an isolated pass reads the multi-second regions the whole-file pass
+    # silently drops.
+    start_secs: Optional[float] = None
+    duration_secs: Optional[float] = None
 
 
 @app.post("/transcribe")
@@ -220,6 +227,10 @@ def start_transcribe(req: TranscribeReq) -> dict:
         return {"error": f"file not found: {req.path}"}
     if req.model not in transcribe_mod.MLX_MODEL_REPOS:
         return {"error": f"unknown model {req.model!r} — one of {', '.join(sorted(transcribe_mod.MLX_MODEL_REPOS))}"}
+    if req.duration_secs is not None and req.duration_secs <= 0:
+        return {"error": "duration_secs must be greater than zero"}
+    if req.start_secs is not None and req.start_secs < 0:
+        return {"error": "start_secs cannot be negative"}
 
     return _start(
         "transcribe",
@@ -230,6 +241,8 @@ def start_transcribe(req: TranscribeReq) -> dict:
             model=req.model,
             language=req.language,
             word_timestamps=req.word_timestamps,
+            start_secs=req.start_secs,
+            duration_secs=req.duration_secs,
         ),
         path=req.path,
     )

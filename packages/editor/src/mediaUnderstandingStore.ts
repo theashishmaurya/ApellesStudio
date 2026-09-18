@@ -22,6 +22,15 @@
  * pass's scope). It does not own the polling *cadence* policy beyond a fixed
  * interval — see `POLL_MS`.
  *
+ * **Two of the caches here are not optimizations at all (D-349).** A
+ * dark-region scan says where whisper silently dropped speech, and a *recovery*
+ * is a whole extra Whisper pass over one window to get those words back. Every
+ * consumer of the transcript — retake grouping, the Transcript panel,
+ * `editor_get_timeline_transcript` — must read the SAME spliced result, or two
+ * callers disagree about what was said; caching the recovery by
+ * `path|window` is what makes that one answer rather than several. See
+ * `darkRegions.ts` for the splice itself.
+ *
  * **Why it polls rather than awaiting one call:** the sidecar runs both
  * capabilities as background jobs, because `chroma::control`'s bridge has a
  * hard 20 s ceiling and these run far longer (D-189). So each action here
@@ -32,6 +41,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { DEFAULT_MIN_SILENCE_MS, type RetakeGroupWire } from './recut';
+import type { DarkDetection, RecoveredWindow, RecoveryWindow } from './darkRegions';
 
 /** How often to poll a running sidecar job. Coarse on purpose: these jobs run
  *  for tens of seconds to minutes, so a tighter loop would just add IPC
@@ -148,6 +158,13 @@ export interface RetakeDetectionArgs {
   windowSecs?: number;
   minWords?: number;
   maxSpanUtterances?: number;
+  /** How many of `utterances` came from a dark-region recovery rather than from
+   *  the whole-file pass (D-349). Not sent to the detector — it is in the KEY,
+   *  because a splice can swap a stretched-word segment for a recovered one
+   *  without changing the count, and serving the pre-splice grouping to a caller
+   *  that now has the recovered words is exactly the stale answer
+   *  [`retakeKey`]'s utterance count exists to prevent. */
+  recovered?: number;
 }
 
 /** The cache key for one silence detection (B-188/D-321).
@@ -178,11 +195,48 @@ export function retakeKey(a: RetakeDetectionArgs): string {
     a.startSecs,
     a.durationSecs,
     a.utterances.length,
+    a.recovered ?? 0,
     a.similarity ?? '',
     a.windowSecs ?? '',
     a.minWords ?? '',
     a.maxSpanUtterances ?? '',
   ].join('|');
+}
+
+/** Everything that changes what `chroma_detect_dark_regions` would answer
+ *  (D-349). The WORDS are not in the key: they come from the file's own
+ *  transcript, which is cached by path and cannot differ between two calls for
+ *  the same path — and a key carrying 900 word times would be enormous. What
+ *  *is* in it is `transcriptWords`, the count, for the same reason
+ *  [`retakeKey`] carries the utterance count: a scan run before the transcript
+ *  arrived must not be served to a caller that now has the words. */
+export interface DarkDetectionArgs {
+  path: string;
+  startSecs: number;
+  durationSecs: number;
+  words: Array<{ start: number; end: number }>;
+  minDarkSecs?: number;
+  maxWordSecs?: number;
+  rmsFloorScale?: number;
+}
+
+export function darkKey(a: DarkDetectionArgs): string {
+  return [
+    a.path,
+    a.startSecs,
+    a.durationSecs,
+    a.words.length,
+    a.minDarkSecs ?? '',
+    a.maxWordSecs ?? '',
+    a.rmsFloorScale ?? '',
+  ].join('|');
+}
+
+/** The cache key for one recovery pass — an isolated re-transcription of one
+ *  window of one file. Same `<path>|…` prefix convention as every other key
+ *  here, so `clear(path)` drops these too. */
+export function recoveryKey(path: string, window: RecoveryWindow): string {
+  return [path, window.startSecs, window.durationSecs].join('|');
 }
 
 export interface TranscribeOptions {
@@ -240,6 +294,17 @@ interface MediaUnderstandingState {
   retakes: Record<string, RetakeDetection>;
   detectingRetakes: Record<string, boolean>;
   retakeErrors: Record<string, string>;
+  /** [`darkKey`] -> the dark-region scan, and its twins (D-349). */
+  dark: Record<string, DarkDetection>;
+  detectingDark: Record<string, boolean>;
+  darkErrors: Record<string, string>;
+  /** [`recoveryKey`] -> one window's isolated re-transcription, and its twins.
+   *  Cached as hard as a transcript is, and for a stronger reason: a recovery is
+   *  a whole Whisper pass, and the whole point of splicing is that every
+   *  consumer of the transcript sees the same recovered words. */
+  recoveries: Record<string, RecoveredWindow>;
+  recovering: Record<string, boolean>;
+  recoveryErrors: Record<string, string>;
 
   /** Run to completion. Resolves with the result (cached, if there is one).
    *  Callers that cannot wait minutes — anything reached through
@@ -269,10 +334,51 @@ interface MediaUnderstandingState {
   startRetakeDetection(args: RetakeDetectionArgs, force?: boolean): AnalysisPhase;
   retakeDetectionStatus(key: string): AnalysisStatus<RetakeDetection>;
 
+  /** The dark-region scan (D-349), in the same three shapes. */
+  detectDarkRegions(args: DarkDetectionArgs, force?: boolean): Promise<DarkDetection>;
+  startDarkDetection(args: DarkDetectionArgs, force?: boolean): AnalysisPhase;
+  darkDetectionStatus(key: string): AnalysisStatus<DarkDetection>;
+
+  /** Re-transcribe ONE window of a file in isolation and cache the result — the
+   *  recovery half of D-349. `language` should be the whole-file pass's own
+   *  detected language: auto-detection on a short window is unreliable and was
+   *  measured returning an entirely different script for 2 of 10 real windows,
+   *  where the same windows read correctly once the language was pinned. */
+  recoverWindow(
+    path: string,
+    window: RecoveryWindow,
+    language?: string,
+    force?: boolean,
+  ): Promise<RecoveredWindow>;
+  startRecovery(
+    path: string,
+    window: RecoveryWindow,
+    language?: string,
+    force?: boolean,
+  ): AnalysisPhase;
+  recoveryStatus(key: string): AnalysisStatus<RecoveredWindow>;
+  /** Every recovery held for one file, in time order — what [`spliceTranscript`]
+   *  takes. Pure read.
+   *
+   *  [`spliceTranscript`]: ./darkRegions.ts */
+  recoveriesFor(path: string): RecoveredWindow[];
+
   /** Drop a cached result (or everything, with no argument) — the escape hatch
    *  for "this file changed and I don't want to pass `force` at every call
    *  site." */
   clear(path?: string): void;
+
+  /** Forget every recorded FAILURE for one file (or for everything), keeping
+   *  every expensive result.
+   *
+   *  The retry a human means by clicking a button again, without [`clear`]'s
+   *  cost: `clear` would drop the transcript too and re-run a multi-minute
+   *  Whisper pass to retry a two-second VAD scan. Added with D-349, whose
+   *  `clipTranscriptView` deliberately does NOT auto-retry a failed scan —
+   *  auto-retrying it would spin a broken model forever instead of degrading to
+   *  the raw transcript, so "forget the failure" has to be something a caller
+   *  asks for. */
+  clearErrors(path?: string): void;
 }
 
 /** Start a sidecar job, then poll it to completion. Shared by both actions —
@@ -359,6 +465,12 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
   retakes: {},
   detectingRetakes: {},
   retakeErrors: {},
+  dark: {},
+  detectingDark: {},
+  darkErrors: {},
+  recoveries: {},
+  recovering: {},
+  recoveryErrors: {},
 
   getTranscript: async (path, options = {}) => {
     const cached = get().transcripts[path];
@@ -548,6 +660,117 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
     return { phase: 'idle' };
   },
 
+  detectDarkRegions: async (args, force = false) => {
+    const key = darkKey(args);
+    const cached = get().dark[key];
+    if (cached && !force) return cached;
+
+    set((s) => {
+      const { [key]: _cleared, ...darkErrors } = s.darkErrors;
+      return { detectingDark: { ...s.detectingDark, [key]: true }, darkErrors };
+    });
+    try {
+      const detection = await invoke<DarkDetection>('chroma_detect_dark_regions', {
+        path: args.path,
+        startSecs: args.startSecs,
+        durationSecs: args.durationSecs,
+        words: args.words,
+        minDarkSecs: args.minDarkSecs ?? null,
+        maxWordSecs: args.maxWordSecs ?? null,
+        rmsFloorScale: args.rmsFloorScale ?? null,
+      });
+      set((s) => ({ dark: { ...s.dark, [key]: detection } }));
+      return detection;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      set((s) => ({ darkErrors: { ...s.darkErrors, [key]: message } }));
+      throw e;
+    } finally {
+      set((s) => {
+        const { [key]: _dropped, ...rest } = s.detectingDark;
+        return { detectingDark: rest };
+      });
+    }
+  },
+
+  startDarkDetection: (args, force = false) => {
+    const key = darkKey(args);
+    const s = get();
+    return startJob(!!s.detectingDark[key], !!s.dark[key], s.darkErrors[key], force, () =>
+      get().detectDarkRegions(args, force),
+    );
+  },
+
+  darkDetectionStatus: (key) => {
+    const s = get();
+    if (s.dark[key]) return { phase: 'done', result: s.dark[key] };
+    if (s.detectingDark[key]) return { phase: 'running' };
+    if (s.darkErrors[key]) return { phase: 'error', error: s.darkErrors[key] };
+    return { phase: 'idle' };
+  },
+
+  recoverWindow: async (path, window, language, force = false) => {
+    const key = recoveryKey(path, window);
+    const cached = get().recoveries[key];
+    if (cached && !force) return cached;
+
+    set((s) => {
+      const { [key]: _cleared, ...recoveryErrors } = s.recoveryErrors;
+      return { recovering: { ...s.recovering, [key]: true }, recoveryErrors };
+    });
+    try {
+      const result = await runJob<Transcript>(
+        'chroma_transcribe',
+        'chroma_transcribe_status',
+        {
+          path,
+          // Pinned, not auto-detected — see the interface doc.
+          language: language ?? null,
+          wordTimestamps: true,
+          startSecs: window.startSecs,
+          durationSecs: window.durationSecs,
+        },
+        'recover',
+      );
+      const recovered: RecoveredWindow = { window, segments: result.segments ?? [] };
+      set((s) => ({ recoveries: { ...s.recoveries, [key]: recovered } }));
+      return recovered;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      set((s) => ({ recoveryErrors: { ...s.recoveryErrors, [key]: message } }));
+      throw e;
+    } finally {
+      set((s) => {
+        const { [key]: _dropped, ...rest } = s.recovering;
+        return { recovering: rest };
+      });
+    }
+  },
+
+  startRecovery: (path, window, language, force = false) => {
+    const key = recoveryKey(path, window);
+    const s = get();
+    return startJob(!!s.recovering[key], !!s.recoveries[key], s.recoveryErrors[key], force, () =>
+      get().recoverWindow(path, window, language, force),
+    );
+  },
+
+  recoveryStatus: (key) => {
+    const s = get();
+    if (s.recoveries[key]) return { phase: 'done', result: s.recoveries[key] };
+    if (s.recovering[key]) return { phase: 'running' };
+    if (s.recoveryErrors[key]) return { phase: 'error', error: s.recoveryErrors[key] };
+    return { phase: 'idle' };
+  },
+
+  recoveriesFor: (path) => {
+    const prefix = `${path}|`;
+    return Object.entries(get().recoveries)
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([, v]) => v)
+      .sort((a, b) => a.window.startSecs - b.window.startSecs);
+  },
+
   transcriptStatus: (path) => {
     const s = get();
     if (s.transcripts[path]) return { phase: 'done', result: s.transcripts[path] };
@@ -564,6 +787,33 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
     return { phase: 'idle' };
   },
 
+  clearErrors: (path) => {
+    if (path === undefined) {
+      set({
+        transcriptErrors: {},
+        analysisErrors: {},
+        silenceErrors: {},
+        retakeErrors: {},
+        darkErrors: {},
+        recoveryErrors: {},
+      });
+      return;
+    }
+    set((s) => {
+      const { [path]: _t, ...transcriptErrors } = s.transcriptErrors;
+      const { [path]: _a, ...analysisErrors } = s.analysisErrors;
+      return {
+        transcriptErrors,
+        analysisErrors,
+        // Detection and recovery keys are `<path>|…`, not the bare path.
+        silenceErrors: withoutPath(s.silenceErrors, path),
+        retakeErrors: withoutPath(s.retakeErrors, path),
+        darkErrors: withoutPath(s.darkErrors, path),
+        recoveryErrors: withoutPath(s.recoveryErrors, path),
+      };
+    });
+  },
+
   clear: (path) => {
     if (path === undefined) {
       set({
@@ -575,6 +825,10 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
         silenceErrors: {},
         retakes: {},
         retakeErrors: {},
+        dark: {},
+        darkErrors: {},
+        recoveries: {},
+        recoveryErrors: {},
       });
       return;
     }
@@ -595,6 +849,10 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
         silenceErrors: withoutPath(s.silenceErrors, path),
         retakes: withoutPath(s.retakes, path),
         retakeErrors: withoutPath(s.retakeErrors, path),
+        dark: withoutPath(s.dark, path),
+        darkErrors: withoutPath(s.darkErrors, path),
+        recoveries: withoutPath(s.recoveries, path),
+        recoveryErrors: withoutPath(s.recoveryErrors, path),
       };
     });
   },

@@ -79,6 +79,29 @@ export type {
   SweepSkip,
   SweepTarget,
 } from './recutSweep';
+/** D-349 (fixes the transcription half of B-216) — dark regions: where the VAD
+ *  hears a voice and the transcript has no words. `darkRegions` is the pure
+ *  half (plan the windows to re-read, splice the recovered words back in);
+ *  `darkRecovery` is the one store-driven step both `editor_detect_retakes`
+ *  and the Recut panel run, so the agent's recut and the human's cannot end up
+ *  grouping two different transcripts of one file. */
+export {
+  MAX_RECOVERY_WINDOW_SECS,
+  MIN_RECOVERY_WINDOW_SECS,
+  recoveredCount,
+  recoveryWindows,
+  spliceTranscript,
+  spliceTranscriptDoc,
+} from './darkRegions';
+export type {
+  DarkDetection,
+  DarkRegionWire,
+  RecoveredWindow,
+  RecoveryWindow,
+  SplicedSegment,
+} from './darkRegions';
+export { clipTranscriptView } from './darkRecovery';
+export type { ClipTranscriptView } from './darkRecovery';
 /** D-274 — the project-level output-spec form (Resolution/Frame Rate/Colour
  *  Space), shared between this package's own docked `ProjectSettingsPanel`
  *  (`EditorInspectorPanel`'s "nothing selected" branch) and `app/src`'s
@@ -169,6 +192,7 @@ export type { ExportJob, ExportJobStatus } from './exportQueueStore';
  *  panel will read, not just something the `editor_*` control ops consume. */
 export { useMediaUnderstandingStore } from './mediaUnderstandingStore';
 export type {
+  DarkDetectionArgs,
   Transcript,
   TranscriptSegment,
   TranscriptWord,

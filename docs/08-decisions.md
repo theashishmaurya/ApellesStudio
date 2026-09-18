@@ -34302,3 +34302,133 @@ clip whose timeline range overlaps ANY of the 9 overlay windows now resolves
 (statically or via its keyframes' end-state) to the new left-panel transform,
 with zero exceptions, checked programmatically rather than by further
 spot-checking.
+
+## D-349 — dark regions: the speech Whisper never read is found, recovered, and spliced into the transcript retake detection reads
+**decided (2026-09-18)** · fixes **B-224**, and the transcription half of **B-216** · supersedes nothing
+
+- **Context.** B-216's second and third real uses turned up a failure underneath the
+  one it was filed for: Whisper's whole-file pass **silently declines to transcribe
+  some utterances**, inside 30-second windows it is otherwise decoding confidently.
+  `docs/notes/whisper-dark-region-research.md` root-caused it with real per-window
+  decode telemetry — every affected window decoded at **temperature 0.0**, with
+  `no_speech_prob` 0.043-0.171 against a 0.6 threshold and `avg_logprob` -0.249 to
+  -0.460 against a -1.0 threshold, and the no-speech skip path fired **zero times in
+  the whole file**. So it is not VAD chunking (there is none), not the temperature
+  ladder, not hallucination suppression, not `condition_on_previous_text`. The model
+  reads the audio and emits no tokens for part of it; the DTW alignment then stretches
+  the surviving words across the hole, so the transcript reads plausibly and is wrong.
+  Two things make this a product problem rather than a curiosity: it is **not rare**
+  (~1 dropped multi-second region per 3 minutes of raw footage, confirmed on two
+  independent camera originals, ~10 confirmed drops in 1676 s), and it is **biased
+  towards immediately-repeated near-duplicate material** — i.e. towards retakes, which
+  is exactly what `editor_detect_retakes` exists to find. On the very pair B-216 was
+  opened over, the whole-file pass kept the good take and dropped the flubbed one.
+
+- **Options.**
+  - **(a) Report only.** Ship the detector as a tool and let a human or an agent
+    re-transcribe by hand. Honest, cheap, and leaves the retake grouper reading the
+    same blind transcript it always did — which is the actual defect.
+  - **(b) Replace the transcription backend** (faster-whisper, a different model, the
+    upstream PR mlx-whisper is missing). Large, unmeasured, and the research shows the
+    drop happens at temperature 0.0 with every quality metric healthy, so none of the
+    obvious knobs would touch it.
+  - **(c) Detect, re-read the located window in isolation, and splice the recovered
+    words back into the transcript every consumer reads.**
+  - **(d) Always re-transcribe every file in short windows.** Would avoid the whole
+    failure mode, at several times the cost per file and with worse context for every
+    sentence that straddles a window edge.
+
+- **Choice: (c)**, with the detector in `crates/apelles-speech` (a new `dark` module
+  alongside `silence` and `retake`) and the recovery driven by the op/panel layer.
+  Reasons, in order:
+  - **It needed no new dependency and no new model.** `vad.rs` (Silero v6.2.1) and
+    `silence.rs::speech_spans` were already there; a dark region is their output
+    crossed with the gaps in transcript word coverage. That is also why it is a third
+    detector in that crate rather than a bolt-on: `silence` reads no transcript and
+    `retake` reads no audio, so neither can see this.
+  - **Splicing fixes the input, not the output.** A report that says "there is unread
+    speech at 365.7 s" leaves the grouper blind; putting the words back means every
+    consumer — retake grouping, the Transcript panel, `editor_get_timeline_transcript`
+    — sees the same, more complete transcript.
+  - **(d) was rejected on cost and on context**, and (b) on the measurement above.
+
+- **The two rules that carry the detector, both measured, neither obvious.**
+  - **A transcript word longer than 2.0 s contributes NO coverage.** B-216's own
+    wording — "a stretch of ≥1.2 s with no transcript word in it" — misses more than
+    half the real cases, because the alignment smears one word across the hole so the
+    gap *does* contain a word. 2.0 s is whisper's own anomaly bound for a too-long
+    word (`mlx_whisper/transcribe.py`'s `if duration > 2.0`), not a number picked to
+    fit. Candidates: 2 → 4 on c040, 4 → 9 on c038.
+  - **The amplitude floor is calibrated PER FILE**, from the quietest speech that
+    file's own transcript read correctly — never a constant, because mic, gain and
+    room differ per shoot. Over the research's 111 labelled windows this took
+    precision from 72.7 % to 90-100 % at zero cost to recall.
+  Plus: flag on the **summed** VAD speech inside an uncovered stretch (a real case has
+  0.47 s, a 1.96 s pause, then 0.97 s — no single piece reaching 1.2 s), and **locate**
+  with the individual VAD∩stretch intersections, because a flagged stretch can be
+  coarse. When too few well-transcribed utterances exist to calibrate a floor the
+  report says so (`rmsFloor: null`) and applies **no gate**, rather than inventing one.
+
+- **Validated independently of the research, on the same two real sources.** The Rust
+  detector, run through `tests/dark_live.rs` against the real Silero model and the real
+  whole-file transcripts: **c040 — 4 regions, 1 gated out; c038 — 6 stretches, 1 gated
+  out.** Every one of the 10 flagged stretches was then re-read in isolation through
+  the real product entry point: **8 of 10 returned the speaker's own dropped content**,
+  including every case the research had confirmed by hand (`"the encoder reads your
+  whole message once and published a build"`, `"…tricks being used to bring that cost
+  back down"`, `"these models don't write your answer all at one"`, `"training cost is
+  the one time thing that…"`). The other 2 returned short off-topic room asides — real
+  audible speech, not retakes. That is ~80 % precision counted strictly, against the
+  research's 90 % on its own looser criterion, with the same recall behaviour.
+
+- **One design input came out of that validation and is not in the research.** Two of
+  the ten windows first came back in **entirely the wrong script** (Devanagari, Tamil)
+  because language auto-detection is unreliable on a 12-second extract. Both read
+  correctly once the language was **pinned to the whole-file pass's own detection** —
+  989 s of audio is far better evidence than 12 s of it. So the recovery pass always
+  inherits the file's language; it never auto-detects.
+
+- **Recovery is per STRETCH, not per region**, clamped to the clip's own trimmed range,
+  grown to at least 4 s of context (a bare 1.3 s extract is where whisper starts
+  inventing) and split at 30 s (whisper's own window — a longer extract would simply be
+  chunked again, reintroducing the behaviour this exists to escape).
+
+- **The splice replaces at WORD granularity.** A recovery window is an uncovered
+  stretch, so the only whole-file words inside it are the >2 s ones the detector already
+  refused to believe. Those are dropped and the recovered segments take their place;
+  everything outside the window survives, including the rest of a segment that merely
+  straddles the edge. Keeping the smeared fragment alongside the recovered sentence
+  would hand the grouper the same line twice and invite it to call one a retake of the
+  other. A transcript with no word timings falls back to all-or-nothing, and says so.
+
+- **`recoverDarkRegions` defaults to TRUE on `editor_detect_retakes`.** Reading the raw
+  transcript is not a neutral default for that tool specifically — the dropped material
+  is biased towards exactly what it is hunting. The cost is real and disclosed (a scan
+  plus one Whisper pass per hole, so a first call returns `state: "transcribing"` once
+  or twice more than before), and `false` opts out. Recovery is staged through the
+  **existing** `transcribing` state rather than a new one: in both cases the words are
+  not all here yet and the move is to poll, so an agent that handles one handles this.
+
+- **Both interfaces, one implementation.** `editor_detect_dark_regions` /
+  `_status` are new on both MCP surfaces (179 tools, parity-checked); the
+  `recoverDarkRegions` parameter is on both retake tools; `RecutPanel` runs the
+  identical `clipTranscriptView` the op runs and says out loud when a grouping read
+  recovered lines; the Index panel's Transcript view marks a recovered row
+  **recovered**. Surfacing it is not decoration — content appearing in a transcript
+  that was not there before is exactly the thing a human must not be blindsided by.
+
+- **B-224 was fixed first, and had to be.** `mlx_whisper` samples on MLX's unseeded
+  global RNG at any temperature > 0, so the same file gave a different transcript every
+  run (925 / 923 / 913 words, all three pairwise unequal) — which breaks this repo's own
+  determinism invariant and makes a detector built on the transcript untestable.
+  `ai-media/transcribe.py` now seeds it from a named constant before every run.
+  Verified in reverse against B-224's own repro: **three identical runs of the identical
+  file now return byte-identical JSON** (906 words, 5067 chars, 79 segments each).
+
+- **Still open, deliberately.** Seeding makes runs reproducible, not correct — the drop
+  happens at temperature 0.0 and is unaffected, which is why the detector exists. B-216's
+  clip-straddling blindness (a retake split across a cut point is invisible to per-clip
+  grouping) is untouched by this pass and remains open. So does its phantom-duplicate
+  finding. And there is no whole-track sweep for the dark-region tool: the sweep case is
+  served by `editor_detect_retakes`, which scans every clip it groups.
+

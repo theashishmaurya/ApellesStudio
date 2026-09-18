@@ -32,6 +32,17 @@
  * deleted by a checkbox nobody read is gone behind an undo the user has to
  * think to press.
  *
+ * **It reads the speech whisper silently dropped, too (D-349, B-216).** Before
+ * grouping, a retake run scans each clip's range for stretches where the VAD
+ * hears a voice and the transcript has no words, re-transcribes those windows on
+ * their own, and splices the result in. That is not a bonus feature bolted on
+ * here: the dropped speech is *biased towards near-duplicate repeats*, i.e.
+ * towards exactly the retakes this button exists to find, so grouping the raw
+ * transcript is blind in the one place it is looking. The panel says so when it
+ * happens — a recovered line appearing in a list is only trustworthy if the
+ * panel admits where it came from — and `clipTranscriptView` is literally the
+ * same function `editor_detect_retakes` runs, so the two cannot drift.
+ *
  * **What it does NOT do.** It does not transcribe (it asks
  * `mediaUnderstandingStore` for a cached transcript and reports honestly when
  * one is still running), it owns no timeline state, and it does not paint
@@ -66,6 +77,11 @@ import {
   type RetakeDetectionArgs,
   type SilenceDetectionArgs,
 } from './mediaUnderstandingStore';
+// D-349/B-216 — the shared step that scans for speech whisper silently dropped,
+// re-reads those windows and splices the words back in. The SAME function
+// `editor_detect_retakes` runs, so the human's recut and the agent's cannot end
+// up grouping two different transcripts of one file.
+import { clipTranscriptView } from './darkRecovery';
 
 /** One row the user can tick. A silence is its own candidate; a retake group
  *  contributes one candidate per take, with the suggested keep marked so the
@@ -121,6 +137,10 @@ interface PendingClip {
   /** Set when this one clip failed (a transcript that errored) — the rest of
    *  the scan carries on, which is the point of a whole-track scan. */
   failure?: string;
+  /** D-349 — how many of this clip's utterances came back only because the app
+   *  re-read a stretch whisper silently dropped. Carried on the pending record
+   *  so the finished list can say so; `undefined` until the words have landed. */
+  recovered?: number;
 }
 
 /** One run of one detector, over one clip or over a whole track (D-342).
@@ -168,6 +188,11 @@ export function RecutPanel() {
   const retakeErrors = useMediaUnderstandingStore((s) => s.retakeErrors);
   const transcripts = useMediaUnderstandingStore((s) => s.transcripts);
   const transcriptErrors = useMediaUnderstandingStore((s) => s.transcriptErrors);
+  // D-349 — the dark-region scan and its recoveries. Subscribed for the same
+  // reason as the maps above: the retake effect below has to re-run when a scan
+  // lands and again when the last re-read does.
+  const dark = useMediaUnderstandingStore((s) => s.dark);
+  const recoveries = useMediaUnderstandingStore((s) => s.recoveries);
 
   const busy = pending ? pending.kind : null;
 
@@ -280,6 +305,12 @@ export function RecutPanel() {
     // panel before it (D-329).
     let waiting = 0;
     for (const source of new Set(job.clips.map((c) => c.source))) {
+      // A click means "run it again", and that has to include retrying whatever
+      // failed last time — the D-349 scan and its re-reads do not auto-retry a
+      // failure (they degrade to the raw transcript instead, so a broken model
+      // cannot spin forever). Errors only, never results: `clear(source)` would
+      // throw away the transcript and cost a fresh multi-minute Whisper pass.
+      store.clearErrors(source);
       const status = store.transcriptStatus(source);
       if (status.phase === 'done') continue;
       if (status.phase !== 'error') {
@@ -308,6 +339,7 @@ export function RecutPanel() {
     if (pending.clips.every((c) => c.key !== null || c.failure)) return;
 
     let changed = false;
+    let pendingRecovery = false;
     const store = useMediaUnderstandingStore.getState();
     const clips = pending.clips.map((c) => {
       if (c.key !== null || c.failure) return c;
@@ -319,25 +351,52 @@ export function RecutPanel() {
       const transcript = transcripts[c.source];
       if (!transcript) return c;
 
-      const end = c.startSecs + c.durationSecs;
-      const utterances = (transcript.segments ?? [])
-        .filter((s) => s.end > c.startSecs && s.start < end)
-        .map((s) => ({ start: s.start, end: s.end, text: s.text }));
+      // D-349 — scan for the speech whisper silently dropped, re-read it, and
+      // splice it in BEFORE grouping. Not an optional extra: the dropped speech
+      // is biased towards near-duplicate repeats, i.e. towards exactly the
+      // retakes this button is looking for (B-216). The view reports `pending`
+      // while a scan or a re-read is in flight, and this effect runs again on
+      // the store change that resolves it.
+      // **`force` is deliberately NOT passed here**, unlike `findSilences`'
+      // `startSilenceDetection(args, true)`. This runs inside an effect that
+      // re-fires on every `dark`/`recoveries` change, and forcing would restart
+      // the scan on each pass and never settle. "Run it again" is expressed
+      // instead by `findRetakes` clearing this file's failures once per click,
+      // which is the part of `force` a human actually wants.
+      const view = clipTranscriptView(
+        c.source,
+        transcript,
+        c.startSecs,
+        c.durationSecs,
+        true,
+        true,
+      );
+      if (view.pending) {
+        if (view.pending === 'recovering') pendingRecovery = true;
+        return c;
+      }
+
       const args: RetakeDetectionArgs = {
         path: c.source,
         startSecs: c.startSecs,
         durationSecs: c.durationSecs,
-        utterances,
+        utterances: view.utterances,
+        recovered: view.recovered,
       };
       store.startRetakeDetection(args, true);
       changed = true;
-      return { ...c, key: retakeKey(args) };
+      return { ...c, key: retakeKey(args), recovered: view.recovered };
     });
 
+    if (pendingRecovery) {
+      setNotice(
+        'Found speech the transcription skipped — re-reading it before grouping. This keeps running.',
+      );
+    }
     if (!changed) return;
     if (clips.some((c) => c.key !== null)) setNotice(null);
     setPending({ ...pending, clips });
-  }, [pending, transcripts, transcriptErrors]);
+  }, [pending, transcripts, transcriptErrors, dark, recoveries]);
 
   /** Every started detection has reached a terminal state: build the rows.
    *
@@ -430,14 +489,25 @@ export function RecutPanel() {
     const scanned = pending.clips.length - failures.length;
     const where =
       pending.clips.length === 1 ? 'this clip' : `${scanned} clips on this track`;
+    // D-349 — say it out loud whenever the grouping read words the transcript
+    // did not originally contain. A human reading this list is entitled to know
+    // that, and a line of text is cheaper than being blindsided by a take
+    // appearing that was invisible five minutes ago.
+    const recovered = pending.clips.reduce((n, c) => n + (c.recovered ?? 0), 0);
+    const recoveredNote =
+      recovered > 0
+        ? ` Recovered ${recovered} line${recovered === 1 ? '' : 's'} the transcription had silently skipped, and grouped those too.`
+        : '';
     if (rows.length === 0) {
       setNotice(
-        pending.kind === 'silence'
+        (pending.kind === 'silence'
           ? `No silence of ${pending.minSilenceMs}ms or longer in ${where}.`
-          : `No retakes found in ${where}.`,
+          : `No retakes found in ${where}.`) + recoveredNote,
       );
     } else if (failures.length > 0) {
-      setNotice(`${failures.length} clip(s) could not be analysed: ${failures[0]}`);
+      setNotice(`${failures.length} clip(s) could not be analysed: ${failures[0]}${recoveredNote}`);
+    } else if (recoveredNote) {
+      setNotice(recoveredNote.trim());
     }
     setPending(null);
   }, [pending, silences, silenceErrors, retakes, retakeErrors]);

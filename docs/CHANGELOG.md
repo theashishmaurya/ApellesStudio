@@ -33,6 +33,42 @@ One or two lines per session. Detail lives in the decision it references.
   a repeatable data check to run after any future edit to these two
   tracks, not another scrub-and-hope pass. Full writeup: B-226 in
   `docs/BUGS.md`.
+- **2026-09-18** — **D-349: the speech Whisper silently never read is now
+  found, re-read and spliced into the transcript retake detection groups —
+  and B-224's non-determinism is fixed first, because the detector needed a
+  reproducible transcript to be testable at all.** B-216's research pass had
+  root-caused the failure (the model emits no tokens for an utterance inside a
+  window it is otherwise decoding at temperature 0.0 with every quality metric
+  healthy, ~1 dropped multi-second region per 3 minutes of raw footage, and
+  *biased towards retakes* — so the grouper is blind in exactly the place it is
+  looking) and validated a detector on 111 labelled windows. This pass built
+  it. **B-224 first:** `ai-media/transcribe.py` seeds MLX's global RNG from a
+  named constant, verified in reverse against that entry's own repro — three
+  identical runs of the same file now return byte-identical JSON, against
+  925/923/913 words and three unequal transcripts before. **The detector** is
+  `crates/apelles-speech`'s new `dark` module (no new dependency — `vad.rs` and
+  `silence.rs::speech_spans` already had everything), implementing the
+  research's recommendation exactly, with 18 unit tests including one written
+  to fail against B-216's own original wording. Re-validated independently on
+  both real sources through a new `#[ignore]`d live test: c040 4 regions / 1
+  gated, c038 6 stretches / 1 gated, and re-reading all 10 in isolation
+  recovered the speaker's own dropped content in 8 — every case the research
+  had confirmed by hand. **The recovery is the part that actually fixes the
+  workflow**, and is more than B-216 asked for: windowed transcription
+  (`--start-secs`/`--duration-secs`, timestamps shifted back to absolute source
+  seconds) runs through the whole stack, and `editor_detect_retakes` now
+  re-transcribes each located window on its own and splices the words into the
+  transcript it groups, by default. One design input came only from
+  validation — language auto-detection is unreliable on a short window (2 of 10
+  came back in the wrong script), so the recovery pins the file's own detected
+  language. Both interfaces as always: `editor_detect_dark_regions`/`_status`
+  on both MCP surfaces (179 tools, parity-checked), `recoverDarkRegions` on
+  both retake tools, the Recut panel running the identical shared step and
+  saying when a grouping read recovered lines, and the Index panel marking a
+  recovered transcript row **recovered** so nobody is blindsided by content
+  appearing that was not there before. **B-216's clip-straddling blindness is
+  untouched and remains the bigger open half** — this fixes what the grouper
+  reads, not what it reads it over.
 - **2026-09-18** — **B-226: every one of c040's 9 Motion overlays had a
   multi-second BLACK-SCREEN tail, fixed for this project without losing any
   content.** Owner caught it live, scrubbing past `c040-qkv` and seeing black

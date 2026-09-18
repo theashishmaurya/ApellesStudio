@@ -184,6 +184,8 @@
     "editor_detect_silences_status",
     "editor_detect_retakes",
     "editor_detect_retakes_status",
+    "editor_detect_dark_regions",
+    "editor_detect_dark_regions_status",
     "editor_ripple_delete_ranges"
   ]
 }
