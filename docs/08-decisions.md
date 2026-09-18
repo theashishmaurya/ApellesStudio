@@ -34264,10 +34264,41 @@ same pass: `c040-qkv`'s graph had a disproportionately long node label ("the
 content of \"anything\"") that the reflow's position-compression (not
 font-size compression, which the reflow does not touch for graph labels) put
 into direct collision with its neighbour; shortened to "the content". All 9
-scenes re-rendered, the camera's 38 clips carrying the old bottom-right PIP
-transform (`position 0.76/0.755, scale 0.22`, static per-clip values — not
-keyframed ramps, contrary to this entry's original description of "18
-ramps/36 holds") were moved to the new left-panel transform, the 9 Motion
-overlay clips got the new right-panel box, and the whole timeline was
-re-exported at native 3840×2160 to verify by real output rather than preview
-alone, per this entry's own standing caution.
+scenes re-rendered, and the camera's 38 clips carrying the old bottom-right
+PIP transform (`position 0.76/0.755, scale 0.22`) were moved to the new
+left-panel transform, the 9 Motion overlay clips got the new right-panel box,
+and the whole timeline was re-exported at native 3840×2160 to verify by real
+output rather than preview alone, per this entry's own standing caution.
+
+**Correction, same day, caught by the owner spot-checking the live result.**
+The paragraph above (and this entry's own first-pass account) claimed the 38
+clips were "static per-clip values — not keyframed ramps, contrary to this
+entry's original description of '18 ramps/36 holds'". **That claim was wrong,**
+and wrong for an avoidable reason: the scan that produced it searched
+`project.json`'s track-0 clips for a field literally named `keyframes` and
+found none. The real field is `chroma_keyframes` — a different name the scan
+never tried. Real animated ramps exist on **16 clips** (matching this entry's
+original "18 ramps" claim far more closely than the false "no keyframes at
+all" conclusion did), each interpolating `position_x`/`position_y`/`scale`
+between a full-frame hold and the corner-PIP target over a 12-frame
+`ease-in-out` window — exactly the "smooth animate in/out" this decision's own
+geometry section describes.
+
+Because `editor_set_clip_transform` only ever writes a clip's STATIC base
+value, and "a keyframe silently beats a static value" for any property it
+names (documented in `editor_set_clip_transform`'s own docstring, restated in
+`editor_get_capabilities`), updating only the 38+22 static clips left these
+16 clips' animated end-state still ramping to the OLD corner — invisible in
+spot-checks that happened not to land on one of the 16 windows, but visible
+the moment the owner scrubbed to one. Root-caused from the owner's own
+screenshots (two separate frames, two different scenes, both showing the old
+corner PIP where the new left-panel result was expected), confirmed by
+re-reading `project.json` directly rather than trusting the prior scan, and
+fixed by rewriting all 16 clips' `chroma_keyframes` via
+`editor_set_clip_keyframes` — same frames, same ease curves, only the
+target `position_x`/`position_y`/`scale` values changed from the old corner
+to the new left-panel geometry. Re-verified exhaustively afterward: EVERY
+clip whose timeline range overlaps ANY of the 9 overlay windows now resolves
+(statically or via its keyframes' end-state) to the new left-panel transform,
+with zero exceptions, checked programmatically rather than by further
+spot-checking.

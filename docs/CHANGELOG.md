@@ -17,12 +17,32 @@ One or two lines per session. Detail lives in the decision it references.
   `c040-qkv`'s graph had a disproportionately long node label that the
   reflow's position-only compression put into collision with its neighbour —
   filed as **B-225** (reflow doesn't scale a graph's label font size), worked
-  around by shortening the one label. All 9 scenes re-rendered, the camera's
-  38 PIP clips (a static per-clip transform, not the animated keyframe ramps
-  this decision's own entry originally described) moved to the new
-  left-panel geometry, the 9 Motion overlays got the new right-panel box, and
-  the whole timeline re-exported at native 3840×2160 to verify by real output
-  rather than preview alone. Full detail: `docs/notes/c040-split-screen-layout.md`.
+  around by shortening the one label. All 9 scenes re-rendered and the
+  camera's PIP clips moved to the new left-panel geometry. Full detail:
+  `docs/notes/c040-split-screen-layout.md`.
+- **2026-09-18 — correction to the entry above, caught by the owner
+  spot-checking the live result, not by any automated check.** The claim that
+  the camera's PIP was "a static per-clip transform, not animated keyframe
+  ramps" was WRONG, and wrong for an avoidable reason: the scan behind it
+  searched `project.json` for a field named `keyframes` and found none — the
+  real field is `chroma_keyframes`, a name the scan never tried. **16 clips
+  genuinely carry real animated ramps** (closer to this decision's original
+  "18 ramps" description than the false "none exist" conclusion). Because a
+  keyframe silently overrides a static value for any property it names,
+  fixing only the static transforms (60 clips, across two passes — a first
+  scan found 38, a second, broader one keyed off actual overlay-window
+  overlap rather than exact-value matching found 22 more) left these 16
+  clips' animated END-STATE still pointing at the old bottom-right corner —
+  invisible in spot-checks that missed those windows, visible the moment the
+  owner scrubbed to one, which happened twice. Fixed by rewriting all 16 via
+  `editor_set_clip_keyframes` (same frames, same ease curves, only the
+  target values changed). Re-verified programmatically afterward: zero clips
+  anywhere still resolve to the old corner, by static value or keyframe
+  end-state. The export mentioned as verification in the entry above was
+  itself interrupted mid-run at the owner's request before completion and so
+  verified nothing; the real verification here is the exhaustive
+  `project.json` re-scan plus live-preview spot-checks at the two exact
+  frames the owner flagged, both now confirmed correct.
 - **2026-09-18** — **B-216's dropped-speech failure is root-caused and its
   proposed detector is validated — research only, no product code touched. See
   `docs/notes/whisper-dark-region-research.md`.** It is none of the paths it

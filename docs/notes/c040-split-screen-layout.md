@@ -231,20 +231,55 @@ finished the whole content rebuild directly in one pass:
    timeline was correct throughout) that all 9 Edit-tab overlay clips
    auto-refreshed to the new renders with their exact original frame counts
    unchanged (D-260), so no re-placement was needed.
-4. **The camera's 38 PIP clips were rebuilt.** Reading `project.json` directly
-   showed the ACTUAL existing mechanism was simpler than this note originally
-   described: no animated keyframes at all (`"18 ramps + 36 holds"` does not
-   match what D-342 actually shipped) — just a STATIC per-clip transform
-   (`position_x 0.76, position_y 0.755, scale 0.22`) on exactly the 38 clips
-   whose time range falls inside a Motion-overlay window, with every other
-   clip left at the full-frame default. Replaced those same 38 clips' static
-   transform with the new left-panel values (`crop_top 0.07, crop_left
-   0.3877422, crop_right 0.3177422, scale 0.29791667, position_x 0.01666667,
-   position_y 0.02962963, corner_radius 14`) via `editor_set_clip_transform`
-   — same mechanism, same 38 clips, new target values. The 9 Motion overlay
-   clips on track 1 got the new right-panel box (`box_width 0.65208333,
-   box_height 0.94074074, position_x 0.33125, position_y 0.02962963,
-   corner_radius 14`).
+4. **The camera's PIP clips were rebuilt — in three passes, because the first
+   two were each caught wrong by direct owner spot-checking, not by any
+   automated check.**
+
+   **Pass 1** replaced the static base transform (`position_x 0.76,
+   position_y 0.755, scale 0.22`) on the 38 clips a first scan found carrying
+   it, with the new left-panel values (`crop_top 0.07, crop_left 0.3877422,
+   crop_right 0.3177422, scale 0.29791667, position_x 0.01666667, position_y
+   0.02962963, corner_radius 14`) via `editor_set_clip_transform`.
+
+   **Pass 2**, prompted by the owner seeing old-corner PIP still live in the
+   preview: re-scanning every clip whose timeline range overlaps ANY of the 9
+   overlay windows (not just clips with the exact old values) found **22
+   more** clips inside overlay windows sitting at the plain full-frame default
+   (`position 0,0, scale 1`) — never part of the original 38, and never fixed
+   by pass 1. These got the same new left-panel transform.
+
+   **Pass 3**, prompted by the owner seeing old-corner PIP AGAIN, in a THIRD
+   spot — this was the real miss. `editor_set_clip_transform` only ever
+   writes a clip's STATIC base value, and a keyframe silently overrides a
+   static value for any property it names. **16 clips genuinely do carry real
+   animated keyframes** — this note's ORIGINAL "18 ramps + 36 holds"
+   description was much closer to correct than the "no animated keyframes at
+   all, D-342 never shipped that" claim pass 1/2's investigation put in its
+   place. The miss: `project.json` stores them under the field
+   `chroma_keyframes`, and the scan that produced the "no keyframes exist"
+   conclusion searched for a field called `keyframes` — a name that was never
+   there to find. Each of the 16 ramps interpolates `position_x`/`position_y`/
+   `scale` between a full-frame hold and the PIP target over a 12-frame
+   `ease-in-out` — exactly the "smooth animate in/out" the geometry section
+   above describes. Fixed by rewriting all 16 via `editor_set_clip_keyframes`
+   (same frame numbers, same ease curves — only the target values changed
+   from the old corner to the new left-panel geometry).
+
+   **After all three passes**, re-verified exhaustively (every clip whose
+   range overlaps any overlay window, checked programmatically against BOTH
+   its static value and, where present, its keyframes' end-state — not by
+   further spot-checking) that zero clips anywhere still resolve to the old
+   corner transform. The 9 Motion overlay clips on track 1 got the new
+   right-panel box (`box_width 0.65208333, box_height 0.94074074, position_x
+   0.33125, position_y 0.02962963, corner_radius 14`) — this part was correct
+   on the first pass, since the graphic panel never animates.
+
+   **The lesson, stated plainly for whoever next greps this file for "how do I
+   check a clip's keyframes": grep `project.json` for `chroma_keyframes`, not
+   `keyframes`.** A scan that returns zero matches for a plausible-sounding
+   field name is not proof the field never held anything — it may be proof
+   the name was wrong. This cost three passes and two owner-caught misses that
+   a single correct grep would have prevented.
 5. **Verified by real export, not preview alone**: the whole timeline was
    exported at native 3840×2160 to `2026-09-12-c040-final.mp4`. D-346's actual
    compositing fix is Rust (`app/src-tauri/src/chroma/edit.rs` —
