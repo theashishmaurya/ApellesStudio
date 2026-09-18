@@ -1270,6 +1270,50 @@ function outputSourceFrames(clip: Clip, opts: TimelineExportOptions): number {
 }
 
 /**
+ * **How long this export actually runs**, in seconds — the furthest NATURAL end
+ * across every clip on the timeline, before any D-188 freeze padding (a frozen
+ * clip's padding target IS this number, so it can never extend it).
+ *
+ * This is what `buildExportFfmpegArgs` puts in its output `-t` (B-076: the
+ * `color=…[base]` backdrop is an endless `lavfi` source, so without it the
+ * exported file has no natural end at all) and what
+ * `timelinePipeExport.ts`'s `buildPipeExportPlan` derives its frame count from.
+ * **One definition, deliberately** (D-350): two export paths that disagreed
+ * about an export's own length by a rounding would produce two files of
+ * different durations from one document, which is precisely the class of silent
+ * preview/export divergence this project keeps closing.
+ *
+ * Counts:
+ * - every visible video track's clips, at their own output length
+ *   (`outputSourceFrames`, i.e. a speed ramp's real footprint), placed at
+ *   `start_frame`;
+ * - every transition plan's own window end (D-226) — which covers both a
+ *   dip-to-colour PLATE, a generated layer with no clip of its own, and an
+ *   outgoing clip whose composited window a dissolve widened past its media;
+ * - every audio track's clips, unconditionally (D-197). A timeline with audio
+ *   tracks and no video track previously computed `0` here, which capped the
+ *   whole output at `-t 0` — a real, silently zero-length export. Even a clip
+ *   `hasAudioOverrides` will later exclude from the mix still occupies real
+ *   timeline space and must not truncate the export it sits on.
+ */
+export function exportTotalDurationSec(timeline: Timeline, opts: TimelineExportOptions): number {
+  let max = 0;
+  const naturalEnd = (clip: Clip): number => {
+    const clipFps = clip.source_fps ?? opts.fps;
+    return clip.start_frame / opts.fps + outputSourceFrames(clip, opts) / clipFps;
+  };
+  for (const track of timeline.tracks) {
+    if (track.kind === 'video' && !track.hidden) {
+      for (const clip of track.clips) max = Math.max(max, naturalEnd(clip));
+      for (const plan of transitionPlansFor(track, opts)) max = Math.max(max, plan.endSec);
+    } else if (track.kind === 'audio') {
+      for (const clip of track.clips) max = Math.max(max, naturalEnd(clip));
+    }
+  }
+  return max;
+}
+
+/**
  * D-241 — the PICTURE half of reverse speed: one `trim`(+`reverse`)+`setpts`
  * branch per resolved run, spliced back together with `concat`.
  *
@@ -2252,17 +2296,12 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   // tests. Counted unconditionally (even a clip `hasAudioOverrides` will
   // later exclude from the actual mix still occupies real timeline space
   // and must not truncate the export it's sitting on).
-  const audioTrackEndSecs = timeline.tracks
-    .filter((t) => t.kind === 'audio')
-    .flatMap((t) => t.clips)
-    .map((c) => {
-      const clipFps = c.source_fps ?? opts.fps;
-      return c.start_frame / opts.fps + outputSourceFrames(c, opts) / clipFps;
-    });
-  const totalDurationSec = [...pending.map((p) => p.endSec), ...audioTrackEndSecs].reduce(
-    (max, end) => Math.max(max, end),
-    0,
-  );
+  // D-350 — one definition, shared with the render path's own compiler
+  // (`timelinePipeExport.ts`), so the two export paths cannot disagree about
+  // how long the same timeline is. `export_t_matches_exportTotalDurationSec` in
+  // `timelineExport.test.ts` asserts this call and the emitted `-t` stay the
+  // same number.
+  const totalDurationSec = exportTotalDurationSec(timeline, opts);
 
   // Pass 2 — real filter chains, now that `totalDurationSec` is known.
   for (const p of pending) {

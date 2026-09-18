@@ -2356,6 +2356,10 @@ pub fn run() {
             chroma::export::chroma_export_progress,
             chroma::export::chroma_bake_lut,
             chroma::ffmpeg_run::chroma_run_ffmpeg,
+            // D-350 — the Edit tab's headless timeline render path: composite
+            // through the live preview's own compositor, pipe raw frames to one
+            // ffmpeg process. See `chroma::edit_render`.
+            chroma::edit_render::chroma_render_timeline_export,
             chroma::write_text_file::chroma_write_text_file,
             // B-100/D-219 — internal debug tooling is never shipped
             // (CLAUDE.md). `tauri::generate_handler!` parses an outer

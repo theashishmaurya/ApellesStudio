@@ -30,9 +30,15 @@ import {
   captionClipsMissingFonts,
   captionClipsMissingMetrics,
   captionsForExport,
+  exportTotalDurationSec,
   textClipsMissingFonts,
   type TimelineExportOptions,
 } from './timelineExport';
+// D-350 — the render path: the picture is composited by the app's own
+// live-preview compositor and piped in, rather than re-expressed as an ffmpeg
+// filter graph. See `timelinePipeExport.ts` and
+// `docs/notes/export-gpu-compositor.md`.
+import { buildPipeExportPlan, pipeExportUnsupported, type PipeExportPlan } from './timelinePipeExport';
 import { loadTextFonts, textFontPaths } from './textFonts';
 // D-243 — the per-word advances an animated caption is laid out from.
 import { captionMetricsSnapshot, warmCaptionMetrics } from './captionMetrics';
@@ -53,10 +59,38 @@ interface FfmpegRunOutcome {
   stderr_tail: string;
 }
 
+/**
+ * D-350 — which engine composites this export's PICTURE.
+ *
+ * - `'filter'` — the original path: one ffmpeg process, one `-i` per clip, the
+ *   whole composite expressed as a `-filter_complex` graph
+ *   (`buildExportFfmpegArgs`).
+ * - `'compositor'` — the render path: the app's own live-preview compositor
+ *   renders every frame headlessly and pipes them, as one raw RGBA stream, into
+ *   one ffmpeg process that only compresses and muxes
+ *   (`buildPipeExportPlan` + `chroma_render_timeline_export`).
+ *
+ * **The parameter itself is temporary and is tracked as such** — D-350's whole
+ * point is that there should be ONE compositor, so `'filter'` exists only until
+ * the render path has full parity for the cases phase 1 deferred (see
+ * `pipeExportUnsupported`, and `docs/04-roadmap.md`'s D-350 phase-2 line for
+ * when the old path can be deleted). It is not a permanent user-facing choice.
+ */
+export type ExportRenderer = 'filter' | 'compositor';
+
+/** The default until the render path reaches full parity — phase 1 ships it
+ *  opt-in so a real project's export can be compared against the known-good
+ *  path rather than silently switched under it. */
+export const DEFAULT_EXPORT_RENDERER: ExportRenderer = 'filter';
+
 export interface CompiledExport {
   ok: true;
   outPath: string;
   args: string[];
+  renderer: ExportRenderer;
+  /** D-350 — how many frames of what size the compositor must write into the
+   *  pipe. Present only for `renderer: 'compositor'`. */
+  render?: { width: number; height: number; frames: number };
 }
 
 export interface CompileError {
@@ -175,9 +209,16 @@ export function compileEditorExportArgs(a: {
   speedOverrides?: unknown;
   fitOverrides?: unknown;
   freezeOverrides?: unknown;
+  renderer?: unknown;
 }): CompiledExport | CompileError {
   const tl = useEditorTimelineStore.getState().timeline;
   if (!tl) return { error: 'no timeline — open a project first' };
+
+  const renderer: ExportRenderer =
+    a?.renderer === undefined ? DEFAULT_EXPORT_RENDERER : a.renderer === 'compositor' ? 'compositor' : 'filter';
+  if (a?.renderer !== undefined && a.renderer !== 'compositor' && a.renderer !== 'filter') {
+    return { error: 'renderer must be "compositor" or "filter"' };
+  }
 
   const outPath = a?.outPath;
   if (typeof outPath !== 'string' || !outPath) return { error: 'outPath must be a non-empty absolute file path' };
@@ -313,8 +354,33 @@ export function compileEditorExportArgs(a: {
     captionMetrics,
     gradeLutPaths,
   };
+  if (renderer === 'compositor') {
+    // D-350 — refused, not silently ignored: each of these changes a clip's
+    // on-timeline footprint at EXPORT time only, and the compositor renders the
+    // document exactly as the Edit tab shows it. Honouring one in the sound
+    // (compiled here) while the picture ignored it would desync the two, which
+    // is the defect class this whole decision exists to close.
+    const unsupported = pipeExportUnsupported(opts);
+    if (unsupported.length > 0) {
+      return {
+        error:
+          `${unsupported.join(', ')} are not supported by the compositor render path yet (D-350 phase 1) — ` +
+          `they change a clip's timeline footprint at export time only, and the live-preview compositor has no ` +
+          `notion of them. Re-run with renderer: "filter", or remove the override.`,
+      };
+    }
+    const plan: PipeExportPlan = buildPipeExportPlan(tl, outPath, opts, exportTotalDurationSec(tl, opts));
+    return {
+      ok: true,
+      outPath,
+      args: plan.args,
+      renderer,
+      render: { width: plan.width, height: plan.height, frames: plan.frames },
+    };
+  }
+
   const args = buildExportFfmpegArgs(tl, outPath, opts);
-  return { ok: true, outPath, args };
+  return { ok: true, outPath, args, renderer };
 }
 
 /**
@@ -408,24 +474,59 @@ export async function runEditorExport(
   }
   const compiled = compileEditorExportArgs(a);
   if (!('ok' in compiled)) return compiled;
-  const outcome = await invoke<FfmpegRunOutcome>('chroma_run_ffmpeg', { args: compiled.args });
+  const outcome = await runCompiledExport(compiled.args, compiled.render);
   return {
     ok: outcome.ok,
-    error: outcome.ok ? null : outcome.stderr_tail || 'ffmpeg failed with no stderr output',
+    error: outcome.error,
     outPath: compiled.outPath,
-    stdoutTail: outcome.stdout_tail,
-    stderrTail: outcome.stderr_tail,
+    stdoutTail: outcome.stdoutTail,
+    stderrTail: outcome.stderrTail,
     args: compiled.args,
   };
+}
+
+/** Mirrors `chroma::edit_render::TimelineRenderOutcome` (D-350) — copied by
+ *  hand for the same reason `FfmpegRunOutcome` above already is. */
+interface TimelineRenderOutcome {
+  ok: boolean;
+  frames: number;
+  ms: number;
+  stderr_tail: string;
 }
 
 /** Run an ALREADY-COMPILED export's argv (from [`compileEditorExportArgs`])
  *  — what the export queue calls once a job reaches the front. Never
  *  re-reads the (possibly since-edited) timeline — the argv was frozen at
- *  enqueue time. */
+ *  enqueue time.
+ *
+ *  D-350 — `render` present routes to `chroma_render_timeline_export`, which
+ *  spawns the SAME argv but writes the picture into its stdin from the app's
+ *  own compositor instead of letting ffmpeg build it. The queue stores `render`
+ *  alongside `args` in a job, so a job frozen for the render path still runs on
+ *  it minutes later. */
 export async function runCompiledExport(
   args: string[],
+  render?: { width: number; height: number; frames: number },
 ): Promise<{ ok: boolean; error: string | null; stdoutTail: string; stderrTail: string }> {
+  if (render) {
+    try {
+      const outcome = await invoke<TimelineRenderOutcome>('chroma_render_timeline_export', {
+        req: { args, width: render.width, height: render.height, frames: render.frames },
+      });
+      return {
+        ok: outcome.ok,
+        error: outcome.ok ? null : outcome.stderr_tail || 'the timeline render failed with no output',
+        stdoutTail: '',
+        stderrTail: outcome.stderr_tail,
+      };
+    } catch (e) {
+      // A render-path failure comes back as a rejected `invoke` (the Rust side
+      // returns `Err(String)`), unlike `chroma_run_ffmpeg`'s `ok: false`
+      // outcome — surfaced as a real message rather than an unhandled rejection.
+      const msg = String((e as Error)?.message ?? e);
+      return { ok: false, error: msg, stdoutTail: '', stderrTail: msg };
+    }
+  }
   const outcome = await invoke<FfmpegRunOutcome>('chroma_run_ffmpeg', { args });
   return {
     ok: outcome.ok,

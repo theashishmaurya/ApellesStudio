@@ -38,6 +38,13 @@ export interface ExportJob {
   /** The compiled ffmpeg argv, frozen at enqueue time — see this module's
    *  own header doc for why. */
   args: string[];
+  /** D-350 — frozen alongside `args` when this job was compiled for the
+   *  compositor render path: the frame count and size the app's own compositor
+   *  must feed that argv's stdin. Absent for a job compiled for the old
+   *  filter-graph path, which needs no frames from us. Frozen for exactly the
+   *  reason `args` is — a job must run the path it was queued for, even if the
+   *  timeline or the dialog's choice has changed since. */
+  render?: { width: number; height: number; frames: number };
   status: ExportJobStatus;
   /** Populated only for `status === 'failed'` — ffmpeg's own stderr tail,
    *  or a compile-time validation error. */
@@ -73,7 +80,7 @@ function runNext(): void {
     jobs: s.jobs.map((j) => (j.id === next.id ? { ...j, status: 'running' as const, startedAt: Date.now() } : j)),
   }));
 
-  runCompiledExport(next.args)
+  runCompiledExport(next.args, next.render)
     .then((outcome) => {
       useExportQueueStore.setState((s) => ({
         jobs: s.jobs.map((j) =>
@@ -111,6 +118,7 @@ export const useExportQueueStore = create<ExportQueueState>((set) => ({
       name,
       outPath: compiled.outPath,
       args: compiled.args,
+      render: compiled.render,
       status: 'queued',
       error: null,
       enqueuedAt: Date.now(),

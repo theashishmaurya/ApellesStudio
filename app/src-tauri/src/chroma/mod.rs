@@ -46,6 +46,14 @@
 //!   lightweight decode→jpeg preview (D-041). Since D-148 the project's
 //!   *timeline lifecycle* (`ensure_timeline`/`resolve_timeline`) is
 //!   `apelles_project::timeline`, wrapped here to supply the open project's dir
+//! - `edit_render` — **the Edit tab's headless timeline renderer (D-350)**: the
+//!   picture half of `editor_export`, composited by `edit`'s OWN live-preview
+//!   compositor frame by frame and piped as one raw RGBA stream into a single
+//!   `ffmpeg` process that only compresses and muxes. Replaces the old
+//!   one-`-i`-per-clip `-filter_complex` picture path (B-228/B-229/B-230) and,
+//!   structurally, the preview-vs-export parity-bug class (B-201/B-208/B-218/
+//!   B-223) — there is one compositor now, not two. Builds no ffmpeg arguments
+//!   and mixes no audio; both come from `packages/editor/src/timelineExport.ts`
 //! - `playback` — fused decode+install+grade command for real-time playback (D-031)
 //! - `mask`     — subject matte via the AI sidecar (SAM 2 → ViTMatte, D-016)
 //! - `depth`    — per-frame temporally-consistent depth track (Video Depth Anything, D-036)
@@ -120,6 +128,7 @@ pub mod debug_record;
 pub mod decode_pipe;
 pub mod depth;
 pub mod edit;
+pub mod edit_render;
 pub mod export;
 pub mod ffmpeg_run;
 pub mod filmstrip;
