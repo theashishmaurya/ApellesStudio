@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -634,6 +634,95 @@ pub fn get_settings_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(settings_dir.join("settings.json"))
 }
 
+/// Why [`read_settings_file`] could not produce an [`AppSettings`] (B-194,
+/// mirroring D-326's `apelles_project::LoadManifestError` — read that one
+/// first, this is the same shape applied to `settings.json`).
+///
+/// **What it is:** a *typed* distinction between the one failure that
+/// legitimately means "first run, there is no settings file yet" —
+/// [`Self::NotFound`] — and every other failure, which mean *a settings file
+/// exists and we could not read it*, so there is real user configuration on
+/// disk a caller must not silently paper over with defaults.
+///
+/// **Why it is a type and not a string.** The pre-fix `load_settings` did
+/// `serde_json::from_str(&content).unwrap_or_default()` — so a transient read
+/// glitch or a half-written/corrupt `settings.json` silently became
+/// `AppSettings::default()`. Because a fresh default trips
+/// `is_first_migration` a few lines later, `load_settings` then wrote that
+/// default straight back over the user's real file before anyone could
+/// notice anything was wrong. See `docs/BUGS.md` B-194.
+#[derive(Debug, thiserror::Error)]
+pub enum LoadSettingsError {
+    /// `settings.json` genuinely is not there (`io::ErrorKind::NotFound`).
+    /// The **only** variant on which substituting [`AppSettings::default`] is
+    /// correct.
+    #[error("read {path}: {source}")]
+    NotFound {
+        path: String,
+        source: std::io::Error,
+    },
+    /// A real I/O failure reading it — permissions, a bad descriptor, a
+    /// transient failure under memory pressure. The file may well exist and
+    /// be perfectly good; we just could not read it this time.
+    #[error("read {path}: {source}")]
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
+    /// It exists and was read, but is not valid JSON, or does not match
+    /// [`AppSettings`]'s shape (truncated, half-written by a non-atomic
+    /// writer, corrupted, hand-edited into something invalid).
+    #[error("parse {path}: {source}")]
+    Parse {
+        path: String,
+        source: serde_json::Error,
+    },
+}
+
+impl LoadSettingsError {
+    /// Classify a `std::io::Error` from reading `settings.json`: a
+    /// `NotFound` becomes [`Self::NotFound`], everything else [`Self::Io`].
+    fn io(path: &Path, source: std::io::Error) -> Self {
+        let path = path.display().to_string();
+        if source.kind() == std::io::ErrorKind::NotFound {
+            Self::NotFound { path, source }
+        } else {
+            Self::Io { path, source }
+        }
+    }
+
+    /// True only when `settings.json` genuinely does not exist — the single
+    /// case in which a caller may legitimately substitute
+    /// [`AppSettings::default`] and go on to write it. Everything else means
+    /// "there is a real file here": refuse, don't overwrite (B-194).
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::NotFound { .. })
+    }
+}
+
+impl From<LoadSettingsError> for String {
+    fn from(e: LoadSettingsError) -> Self {
+        e.to_string()
+    }
+}
+
+/// Read and parse `settings.json` from `path`, with no defaulting and no
+/// migration — a caller decides what [`LoadSettingsError::NotFound`] means
+/// (first run: default) versus every other variant (a real file exists and
+/// failed to load: propagate, never overwrite). Split out of [`load_settings`]
+/// so it is testable without a real [`AppHandle`].
+///
+/// Reads directly rather than `path.exists()` then `read_to_string` (the
+/// pre-fix shape) so there is no separate stat to race against — the same
+/// reasoning as `apelles_project::load_manifest` (D-326).
+fn read_settings_file(path: &Path) -> Result<AppSettings, LoadSettingsError> {
+    let content = fs::read_to_string(path).map_err(|e| LoadSettingsError::io(path, e))?;
+    serde_json::from_str(&content).map_err(|e| LoadSettingsError::Parse {
+        path: path.display().to_string(),
+        source: e,
+    })
+}
+
 #[tauri::command]
 pub fn is_tethering_supported() -> bool {
     cfg!(feature = "tethering")
@@ -643,11 +732,15 @@ pub fn is_tethering_supported() -> bool {
 pub fn load_settings(app_handle: AppHandle) -> Result<AppSettings, String> {
     let path = get_settings_path(&app_handle)?;
 
-    let mut settings: AppSettings = if path.exists() {
-        let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        AppSettings::default()
+    // B-194: `NotFound` (first run) is the only failure a fresh default may
+    // stand in for. Any other error — a real I/O failure or a corrupt/
+    // unparseable file — propagates instead of silently defaulting, so the
+    // migration-driven write-back below can never fire over a real,
+    // unreadable settings file.
+    let mut settings: AppSettings = match read_settings_file(&path) {
+        Ok(settings) => settings,
+        Err(e) if e.is_not_found() => AppSettings::default(),
+        Err(e) => return Err(e.into()),
     };
 
     let all_current_keys = all_available_adjustments();
@@ -720,4 +813,85 @@ pub fn save_settings(settings: AppSettings, app_handle: AppHandle) -> Result<(),
         .unwrap()
         .set_capacity(cache_size);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// B-194: no `settings.json` at all is `NotFound` — the one case a
+    /// caller may substitute [`AppSettings::default`] for.
+    #[test]
+    fn missing_file_is_not_found() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("settings.json");
+
+        let err = read_settings_file(&path).expect_err("no file should not parse");
+
+        assert!(err.is_not_found(), "expected NotFound, got: {err:?}");
+    }
+
+    /// B-194's actual bug: a `settings.json` that EXISTS but is corrupt
+    /// (truncated / not valid JSON) must surface as a real error the caller
+    /// can see — not be swallowed into `AppSettings::default()`, which is
+    /// what the old `unwrap_or_default()` did, then had `load_settings`
+    /// write the default straight back over the real file.
+    #[test]
+    fn corrupt_file_is_a_parse_error_not_a_silent_default() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("settings.json");
+        // Deliberately not valid JSON at all — a torn/half-written write is
+        // exactly this shape, not "valid JSON of the wrong schema."
+        fs::write(&path, b"{\"theme\": \"dark\", \"thumbnailSize\": ").expect("write corrupt file");
+
+        let err = read_settings_file(&path).expect_err("corrupt file must not parse");
+
+        assert!(
+            !err.is_not_found(),
+            "a corrupt-but-present file must never be classified as NotFound: {err:?}"
+        );
+        assert!(
+            matches!(err, LoadSettingsError::Parse { .. }),
+            "expected Parse, got: {err:?}"
+        );
+        // The bug's own failure mode: never write a default over the file
+        // that failed to read. `read_settings_file` never writes at all, so
+        // pin that the corrupt bytes are still exactly what was there.
+        let on_disk = fs::read_to_string(&path).expect("re-read");
+        assert_eq!(on_disk, "{\"theme\": \"dark\", \"thumbnailSize\": ");
+    }
+
+    /// A real settings file still loads normally — the fix must not touch
+    /// the happy path.
+    #[test]
+    fn valid_file_loads_normally() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("settings.json");
+        fs::write(&path, r#"{"theme": "light"}"#).expect("write valid file");
+
+        let settings = read_settings_file(&path).expect("valid file should load");
+
+        assert_eq!(settings.theme, Some("light".to_string()));
+    }
+
+    /// A permission-style I/O failure (simulated here as a path whose parent
+    /// is a file, not a directory, so `read_to_string` fails with a real
+    /// non-`NotFound` `io::Error`) must classify as `Io`, not `NotFound` —
+    /// same "there is real state here, don't default over it" reasoning.
+    #[test]
+    fn unreadable_path_is_io_not_not_found() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let not_a_dir = tmp.path().join("settings.json");
+        fs::write(&not_a_dir, b"i am a file, not a directory").expect("write");
+        // Asking to read "<file>/settings.json" fails with NotADirectory on
+        // most platforms — a real I/O error distinct from NotFound.
+        let bogus_path = not_a_dir.join("settings.json");
+
+        let err = read_settings_file(&bogus_path).expect_err("must fail to read");
+
+        assert!(
+            !err.is_not_found(),
+            "a real I/O failure must not be classified as NotFound: {err:?}"
+        );
+    }
 }

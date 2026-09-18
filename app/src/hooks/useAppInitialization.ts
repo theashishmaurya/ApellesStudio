@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { toast } from 'react-toastify';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useUIStore, reconcileWorkspace } from '../store/useUIStore';
@@ -8,7 +9,7 @@ import { useEditorStore } from '../store/useEditorStore';
 import { useProcessStore } from '../store/useProcessStore';
 import { THEMES, DEFAULT_THEME_ID, ThemeProps } from '../utils/themes';
 import { COPYABLE_ADJUSTMENT_KEYS } from '../utils/adjustments';
-import { FilterCriteria, Invokes, RawStatus, EditedStatus, Theme, ThumbnailSize, ThumbnailAspectRatio } from '../components/ui/AppProperties';
+import { FilterCriteria, Invokes, RawStatus, EditedStatus, ThumbnailSize, ThumbnailAspectRatio } from '../components/ui/AppProperties';
 import { useTranslation } from 'react-i18next';
 
 // D-043: this used to also restore RapidRAW's folder-tree state on launch —
@@ -56,6 +57,7 @@ export const useAppInitialization = ({
     setAppSettings,
     setTheme,
     setSupportedTypes,
+    setSettingsLoadError,
     initPlatform,
     handleSettingsChange,
   } = useSettingsStore(
@@ -66,6 +68,7 @@ export const useAppInitialization = ({
       setAppSettings: state.setAppSettings,
       setTheme: state.setTheme,
       setSupportedTypes: state.setSupportedTypes,
+      setSettingsLoadError: state.setSettingsLoadError,
       initPlatform: state.initPlatform,
       handleSettingsChange: state.handleSettingsChange,
     })),
@@ -121,6 +124,10 @@ export const useAppInitialization = ({
   useEffect(() => {
     Promise.all([invoke(Invokes.LoadSettings), invoke<boolean>(Invokes.IsTetheringSupported).catch(() => false)])
       .then(async ([settings, isTetheringSupported]: [any, boolean]) => {
+        // A previous mount (e.g. hot reload during dev) may have left a
+        // stale load error set; a successful load here supersedes it.
+        setSettingsLoadError(null);
+
         if (
           !settings.copyPasteSettings ||
           !settings.copyPasteSettings.includedAdjustments ||
@@ -194,18 +201,34 @@ export const useAppInitialization = ({
           .catch((e) => console.error('Failed to notify backend of readiness:', e));
       })
       .catch((err) => {
+        // B-194: `LoadSettings` failing (a corrupt or briefly-unreadable
+        // settings.json, per `app_settings::LoadSettingsError`) must NOT be
+        // treated as "settings loaded, here are some defaults." The old code
+        // called `setAppSettings` with a synthetic three-field object here,
+        // which made every auto-persist effect below (`isInitialMount.current`
+        // is cleared in `.finally()` right after this) believe real settings
+        // had loaded and write that fabricated default over the user's actual
+        // `settings.json` ~500ms later, unprompted.
+        //
+        // `appSettings` deliberately stays `null` (its initial state) instead
+        // — every effect in this file that persists a setting change already
+        // early-returns on `!appSettings`, so leaving it `null` is what
+        // actually stops the silent overwrite. `settingsLoadError` is the real,
+        // visible error state (mirrors `packages/editor/src/timelineStore.ts`'s
+        // `status: 'error'` + `error` pattern) so this failure is a fact other
+        // code and the user can see, not a fact quietly discarded.
         console.error('Failed to load settings:', err);
-        setAppSettings({
-          lastRootPath: null,
-          theme: DEFAULT_THEME_ID as Theme,
-          thumbnailSize: defaultThumbnailSize,
-        });
+        setSettingsLoadError(String(err));
+        toast.error(
+          'Could not load your saved settings — using this session’s defaults without saving over them.',
+        );
       })
       .finally(() => {
         isInitialMount.current = false;
       });
   }, [
     setAppSettings,
+    setSettingsLoadError,
     setTheme,
     setUI,
     defaultThumbnailSize,

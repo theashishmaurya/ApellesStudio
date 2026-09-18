@@ -774,6 +774,16 @@ One or two lines per session. Detail lives in the decision it references.
   unless the last load actually succeeded. New `usePresets.dom.test.ts`
   regression-tests the exact failure (a failed load followed by an edit no
   longer writes an empty list back over the real file).
+
+- **2026-09-18** — **B-194: a corrupt `settings.json` no longer gets silently
+  replaced with defaults and written back over the real file.** New
+  `app_settings::LoadSettingsError` (`NotFound`/`Io`/`Parse`, copied from
+  D-326's `LoadManifestError`) distinguishes "first run" from "a real settings
+  file exists and failed to read" — only the former may default. The frontend
+  catch in `useAppInitialization.ts` no longer fakes a loaded `appSettings`
+  value (which used to unlock the auto-persist effects that wrote the default
+  back); `useSettingsStore` gained a real `settingsLoadError` state plus a
+  `toast.error` so the failure is visible instead of silent.
 - **2026-09-15** — **B-199: the transport bar's timecode no longer jitters,
   and drops the frame field.** `tabular-nums` alone only fixes digit widths;
   `font-mono` on the whole readout makes every character (colons, `/`, space)

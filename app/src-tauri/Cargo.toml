@@ -60,6 +60,14 @@ blake3 = "1.8.7"
 wgpu = "29.0" # Downgraded to prevent P3 color shifts on Apple devices
 pollster = "1.0"
 bytemuck = { version = "1.25", features = ["derive"] }
+# B-194 — the typed-error pattern D-326 introduced for `LoadManifestError`
+# (`apelles-project`), reused as-is for `app_settings::LoadSettingsError` so a
+# corrupt/unreadable `settings.json` can't be told apart from "no file yet" by
+# a `Result<_, String>` that has already thrown the distinction away. Already
+# in this workspace's dependency tree (pinned "2" at the workspace root, and a
+# direct dependency of `apelles-project`/`apelles-types`/`apelles-speech`) —
+# this only adds the edge to `apelles` itself, no new crate to the build.
+thiserror = "2"
 anyhow = "1.0.104"
 kamadak-exif = "0.6.1"
 rawler = { git = "https://github.com/CyberTimon/RapidRAW-DngLab.git" }
