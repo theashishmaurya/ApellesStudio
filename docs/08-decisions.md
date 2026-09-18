@@ -6,6 +6,119 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-350 — `editor_export`'s ffmpeg filter-graph architecture is the wrong shape for a heavily-cut timeline; the real fix is rendering through the SAME native GPU compositor the live preview already uses, not more ffmpeg flags
+
+**decided (2026-09-18) — build our own, on top of the existing `apelles-gpu` compositor** · relates to **B-228/B-229/B-230**, and the parity-bug lineage **B-201/B-208/B-218/B-223**
+
+- **Context.** Tonight's export work (B-228/B-229/B-230) found and fixed three real,
+  measured resource pathologies in `editor_export`'s ffmpeg pipeline on a real,
+  heavily-cut project (`2026-09-12-c040-mgfx-recut`, ~79 clips after cuts): a muted
+  track fully decoded for guaranteed silence, `-filter_complex_threads` multiplying
+  per FILTER INSTANCE rather than once per graph (3,065 threads / 56 GB), and
+  `-threads` doing the identical thing per DECODER `-i` (the remaining 38 GB → 7.7 GB
+  in the measured synthetic case). All three fixes are real and correct, but they are
+  patches on an architecture that was never designed for this shape of timeline: one
+  ffmpeg process asked to composite ~80 independently-timed, independently-transformed
+  layers via a text-built `-filter_complex` graph (sequential `overlay=...:enable=`
+  stages, each with its own `crop=`/`scale=`/`geq=` chain). Even fully patched, this
+  project's real export still sat around 14-16 GB of resident memory and took many
+  minutes before producing its first output byte — a floor set by the graph's shape
+  (instance count), not by anything the three fixes could touch.
+- **The owner asked, directly: how do established tools actually do this?** — matching
+  this repo's own standing rule ("research the real pattern first, don't guess",
+  CLAUDE.md). Two real answers, not guessed:
+  - **Palmier Pro** (the owner's own prior NLE, `/Applications/PalmierPro.app`,
+    installed locally) — confirmed by reading its own compiled binary (`strings` on
+    `PalmierPro.app/Contents/MacOS/PalmierPro`), which references
+    `AVAssetExportSession` and `AVFoundation` directly. **It does not shell out to
+    ffmpeg for export at all.** It builds a native `AVMutableComposition` +
+    `AVVideoComposition` and exports through Apple's own GPU-accelerated
+    (VideoToolbox-backed) session object — no external process, no filter-graph
+    string, no per-instance resource multiplication to even be possible.
+  - **DaVinci Resolve** — publicly documented (see sources) as running an almost
+    entirely GPU-native render/compositing pipeline of its own (CUDA/OpenCL for
+    color, compositing, Fusion, noise reduction), with GPU-accelerated
+    encode/decode (NVENC/NVDEC or the platform equivalent) reserved specifically for
+    the final transcode step — the same shape as Palmier: **composite natively on
+    GPU, hand an external/hardware encoder only the last, already-composited frame
+    stream.** Neither reference tool asks a general-purpose external tool to do the
+    compositing itself.
+  - Sources: [Vagon — How to Use GPU on DaVinci Resolve 17](https://vagon.io/gpu-guide/how-to-use-gpu-on-davinci-resolve-17),
+    [COREMICRO — Best GPUs for DaVinci Resolve Studio](https://www.coremicro.com/blogs/news/davinci-resolve-studio-gpu-guide).
+- **The part that makes this actionable rather than "go build AVFoundation": Apelles
+  already has the native compositor Palmier/Resolve's pattern calls for — it's just
+  not used for export.** The live preview already composites the Edit tab's canvas
+  through a real, native, GPU-accelerated Rust path (`crates/apelles-gpu`,
+  `composite_layer_onto`, D-136/D-256/D-338/D-346) that resolves the exact same
+  per-clip transform/crop/opacity/keyframe/rounded-corner model `timelineExport.ts`
+  re-implements as ffmpeg filter strings. These are two SEPARATE, hand-synchronized
+  implementations of the same compositing math today — which is the direct, named
+  cause of this project's whole parity-bug lineage (B-201, B-208, B-218, B-223: the
+  live preview and the export silently disagreeing on position/scale/crop units,
+  each one found and fixed by hand, one property at a time).
+- **Options for closing the gap:**
+  - **(a) Keep patching the ffmpeg path** (more flags, maybe hardware
+    encode/decode via `-hwaccel videotoolbox`/`h264_videotoolbox`). Cheap,
+    incremental, but caps out: `geq` (the rounded-corner mask) has no GPU
+    filter equivalent in ffmpeg, so any GPU decode/filter mixed into this
+    graph still round-trips through CPU memory for that stage, and 77+
+    concurrent `-hwaccel videotoolbox` decode sessions is untested territory —
+    VideoToolbox has its own concurrent-session ceiling, a plausible NEW
+    resource pathology rather than a fix. Does not close the parity-bug gap.
+  - **(b) Render the timeline through the existing native GPU compositor,
+    frame by frame, into a raw/intermediate stream, then hand ONLY that
+    stream to an encoder** (ffmpeg for muxing/encode, or VideoToolbox
+    directly) for final compression. Matches both reference tools' actual
+    architecture. Would retire the entire `timelineExport.ts` filter-graph
+    builder for the picture side (audio mixing is a separate, already
+    reasonably-shaped problem, D-197) and, as a structural side effect,
+    close the parity-bug class at its root — there would be one compositor,
+    not two to keep in sync.
+  - **(c) Full AVFoundation rewrite** (drop the Rust GPU compositor too, go
+    all-native like Palmier). Rejected outright: throws away real, working,
+    cross-referenced Apelles code (`apelles-gpu`) for a macOS-only API,
+    when (b) gets the same architectural benefit while keeping the app's own
+    compositor as the one source of truth for preview AND export.
+- **Checked the Rust ecosystem for an existing crate before deciding to build,
+  per this repo's own "check for an existing crate first" rule** — a web
+  search for a maintained, in-process (non-subprocess) video compositing/
+  export solution turned up real candidates: **gstreamer-rs** (a mature,
+  actively-maintained (~564K downloads/month) Rust binding to GStreamer, with
+  `appsink`/`appsrc` for a real in-process pipeline and its own compositor/
+  encoder elements); **ez-ffmpeg** (described as the only actively-maintained
+  in-process ffmpeg runtime for Rust — decoded-frame export, frame-push
+  encoding, no subprocess, typed errors); and **media-pp** (a smaller,
+  GStreamer-flavored pipeline crate built on `ffmpeg-next`, zero-copy GPU
+  capture/compositing/encoding on D3D11/CUDA — Windows/NVIDIA-shaped, not
+  this project's macOS/Metal target).
+- **Choice: build our own, on `apelles-gpu`, not adopt any of the above.**
+  None of them close the actual gap here — this project doesn't need a
+  general-purpose media pipeline or an in-process ffmpeg, it needs its
+  OWN, ALREADY-CORRECT compositing math (`composite_layer_onto`,
+  D-136/D-256/D-338/D-346 — the exact per-clip transform/crop/keyframe/
+  rounded-corner/grade model this whole parity-bug lineage exists to keep in
+  sync) to also drive export instead of being re-implemented a second time as
+  an ffmpeg filter string. Adopting gstreamer-rs or ez-ffmpeg would still mean
+  maintaining that compositing math in TWO places (the existing WGPU path for
+  preview, a new pipeline/filter graph for export) — it would swap "sync two
+  implementations by hand across an ffmpeg process boundary" for "sync two
+  implementations by hand across a different library's own graph model,"
+  not eliminate the sync problem D-350 exists to close. Building the headless
+  render path directly on `apelles-gpu` is the only option of the four that
+  makes there be ONE compositor, not two, which is the entire point.
+- **Design still needed, not skipped:** a headless render-to-frames API on
+  the existing GPU compositor, the audio mix's interaction with it, encoder
+  handoff (ffmpeg or `VTCompressionSession` for the final encode step only —
+  the compositing/GPU half is what's changing, not necessarily the encode
+  half), and how a Colorist grade/LUT bake fits in since it already runs
+  through GPU too. Scoped and built starting 2026-09-18; see `docs/notes/`
+  for the design note once written, and `docs/CHANGELOG.md` for what actually
+  landed.
+- **Roadmap:** tracked in `docs/04-roadmap.md`'s "Later" section until the
+  first phase lands, then moved to "Next".
+
+---
+
 ## D-001 — Engine base: fork RapidRAW
 **decided (2026-09-01)**
 

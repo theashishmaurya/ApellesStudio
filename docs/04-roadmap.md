@@ -2646,6 +2646,23 @@ flag itself).
 
 No urgency — each needs an earlier item to land first, or is a bigger bet.
 
+- **Export through the native GPU compositor instead of an ffmpeg filter graph — D-350.**
+  A real bug-fix session (B-228/B-229/B-230, 2026-09-18) found and fixed three
+  measured resource pathologies in `editor_export`'s ffmpeg pipeline on a heavily-cut
+  project (79 clips: 3,065 threads/56 GB → bounded, then the same multiplication one
+  layer down in the decoder threads, 38 GB → ~7.7 GB measured) — but even fully
+  patched, a real export still floors around 14-16 GB and takes minutes before its
+  first output byte, a cost tied to the GRAPH'S SHAPE (≈80 sequential `overlay=`
+  stages), not anything the three fixes touch. Checked how established tools actually
+  do this rather than guess (CLAUDE.md's own rule): Palmier Pro (the owner's own prior
+  NLE, confirmed by reading its binary) uses `AVAssetExportSession`/`AVFoundation`
+  directly, no ffmpeg at all; DaVinci Resolve runs its own GPU-native
+  render/compositing pipeline and reserves an external/hardware encoder for only the
+  final transcode. Apelles already has the matching piece — the live preview's own
+  GPU compositor (`crates/apelles-gpu`, `composite_layer_onto`) — just not reused for
+  export, which is also the direct, named cause of this project's preview/export
+  parity-bug lineage (B-201/B-208/B-218/B-223). Full write-up, options considered, and
+  why this is a real proposal rather than a same-night rewrite: **D-350**.
 - **XMEML/FCP7 XML interchange export (Premiere)** — D-196 shipped the
   FCPXML 1.7 half of "move a Apelles edit to another NLE" (DaVinci
   Resolve/Final Cut Pro), deliberately scoping XMEML out rather than guess at
