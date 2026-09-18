@@ -129,6 +129,72 @@ export type GraphHighlight = { id: string; at: number; dur?: number };
 
 type Sim = SimulationNodeDatum & { id: string; label?: string };
 
+/** The primitive's own pre-B-225 constant — every existing manifest with
+ *  comfortable clearance renders identically to before. */
+export const GRAPH_LABEL_BASE_FONT_SIZE = 30;
+/** Below this, a genuine collision is a content problem (the label is too
+ *  long for ANY reasonable spacing, e.g. a full sentence used as a node
+ *  name) rather than something a bigger shrink should paper over — so the
+ *  floor is a legibility limit, not a promise of zero overlap in every case. */
+export const GRAPH_LABEL_MIN_FONT_SIZE = 14;
+/** Rough average glyph-width-to-font-size ratio for `theme.fontUi` — real
+ *  text metrics vary per character, but this only has to keep two labels
+ *  from visibly overlapping, not lay them out to the pixel, so an
+ *  approximation is the right amount of precision here. */
+const GRAPH_LABEL_CHAR_WIDTH_RATIO = 0.42;
+/** Leaves a visible gap between two labels at the computed size rather than
+ *  letting them land exactly edge-to-edge, since the ratio above is already
+ *  an approximation. */
+const GRAPH_LABEL_SAFETY_MARGIN = 0.85;
+
+/**
+ * B-225 — the font size a `graph` layer's node labels render at, derived
+ * from the ACTUAL on-screen clearance between node centres, not the fixed
+ * `GRAPH_LABEL_BASE_FONT_SIZE` this primitive used unconditionally before.
+ *
+ * D-347's canvas reflow moves node CENTRES (via `propCatalog.ts`'s `graph`
+ * `sizeFields`/`positionFields` entries and `manifestReflow.ts`'s own
+ * `nodes[].x`/`y` handling) and even scales `nodeR` (`manifestReflow.ts`'s
+ * `EXTRA_FIELDS`) — but a node's LABEL FONT SIZE was never a manifest field
+ * in either registry, because it was never a manifest field anywhere: this
+ * primitive drew every label at the same hardcoded size regardless of node
+ * spacing. Shrinking the canvas moves nodes closer together without
+ * shrinking their labels, so a comfortable gap can become a collision.
+ *
+ * Deliberately NOT a new `propCatalog.ts` manifest field (see B-225's own
+ * writeup): this is a rendering-time approximation of available space, not
+ * a persisted document value, computed fresh from whatever the frozen
+ * layout actually produced — so it self-corrects for reflow, a hand-authored
+ * tight layout, or anything else that moves nodes, with nothing new to keep
+ * in sync.
+ *
+ * Exported as a pure function so it is directly unit-testable the same way
+ * `graphEdgeStroke`/`resolvableEdges` are (`@apelles/motion-engine` has no
+ * test runner of its own — `@apelles/motion`'s `graphLabelSize.test.ts`
+ * imports it across the package boundary).
+ */
+export function graphLabelFontSize(
+  nodes: Array<{ label?: string; x: number; y: number }>,
+): number {
+  let size = GRAPH_LABEL_BASE_FONT_SIZE;
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i];
+    const la = a.label?.length ?? 0;
+    if (la === 0) continue;
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j];
+      const lb = b.label?.length ?? 0;
+      if (lb === 0) continue;
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      if (dist <= 0) continue;
+      const maxForPair =
+        (dist * GRAPH_LABEL_SAFETY_MARGIN) / ((la + lb) * GRAPH_LABEL_CHAR_WIDTH_RATIO);
+      size = Math.min(size, maxForPair);
+    }
+  }
+  return Math.max(GRAPH_LABEL_MIN_FONT_SIZE, Math.min(GRAPH_LABEL_BASE_FONT_SIZE, size));
+}
+
 export const Graph: React.FC<{
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -218,7 +284,13 @@ export const Graph: React.FC<{
         y: (mT + (H - mB)) / 2 + (r.y - cyLayout) * scale,
       };
     }
-    return pos;
+    // B-225 — computed from the FROZEN, post-scale positions (the ones
+    // actually drawn), not the pre-fit `raw` ones, since it's the on-screen
+    // clearance that determines whether two labels collide.
+    const labelFontSize = graphLabelFontSize(
+      nodes.map((n) => ({ label: n.label, x: pos[n.id].x, y: pos[n.id].y })),
+    );
+    return { pos, labelFontSize };
   }, [nodes, edges, seed, W, H, nodeR]);
 
   const nodeIndex: Record<string, number> = {};
@@ -232,7 +304,7 @@ export const Graph: React.FC<{
   // than crash the frame. `nodes.map` never hits this branch: it only ever
   // asks `at()` for an id it just took from `nodes` itself.
   const at = (id: string, drift = true) => {
-    const p = layout[id];
+    const p = layout.pos[id];
     if (!p) return null;
     const d = drift
       ? ambientDrift(frame, fps, nodeIndex[id] + 1, theme.ambientDriftPx)
@@ -355,7 +427,7 @@ export const Graph: React.FC<{
                 textAnchor="middle"
                 fill={theme.textDim}
                 fontFamily={theme.fontUi}
-                fontSize={30}
+                fontSize={layout.labelFontSize}
               >
                 {n.label}
               </text>
