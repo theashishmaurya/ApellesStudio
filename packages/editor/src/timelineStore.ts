@@ -78,7 +78,12 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { create } from 'zustand';
+// D-358/B-217 — this store is a process-wide singleton and must survive a Vite
+// dev-mode module re-evaluation as ONE instance; `createSharedStore` is plain
+// `create()` in production and under vitest. It also announces which project it
+// is holding, so an MCP op is refused rather than run against the wrong one if
+// this store and `useSessionStore` ever diverge. See `packages/store/README.md`.
+import { createSharedStore, registerProjectIdentityParticipant } from '@apelles/store';
 import { useHistoryStore } from '@apelles/history';
 
 import {
@@ -591,7 +596,7 @@ function unflushedError(error: string | null): string {
   }`;
 }
 
-export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => ({
+export const useEditorTimelineStore = createSharedStore<EditorTimelineState>('edit.timeline', (set, get) => ({
   timeline: null,
   openProjectKey: null,
   status: 'idle',
@@ -986,3 +991,14 @@ export const useEditorTimelineStore = create<EditorTimelineState>((set, get) => 
     }
   },
 }));
+
+/** B-217/D-358 — what this store believes it is holding, for the guard that
+ *  refuses an MCP op when the Edit tab and `useSessionStore` have stopped
+ *  agreeing about which project is open. `openProjectKey` is pushed in from the
+ *  composition root and is this tab's whole project identity (see its own doc
+ *  above), so it is the right and only thing to compare. */
+registerProjectIdentityParticipant('edit', {
+  label: 'Edit timeline',
+  read: () => useEditorTimelineStore.getState().openProjectKey,
+  expected: (session) => session.projectKey,
+});

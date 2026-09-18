@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["dom", "esnext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    // `import.meta.hot` is Vite's own dev-only HMR API; its type comes from
+    // `vite/client`, the same entry `app/tsconfig.json` and
+    // `packages/editor/tsconfig.json` already list. This package is the one
+    // place in the repo that touches it for state (D-358), so it has to be
+    // typed here rather than hand-declared.
+    "types": ["vite/client"]
+  },
+  "include": ["src"]
+}

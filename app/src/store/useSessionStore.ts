@@ -50,9 +50,14 @@
 // is already path-unique there), and `addShots`/`removeShot` stay pure
 // `chroma_session_*` calls with nothing persisted — the scoping doc's
 // "explicitly deferred" case.
-import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { trackEvent } from '@apelles/bridge';
+// D-358/B-217 — this store is a process-wide singleton and must survive a Vite
+// dev-mode module re-evaluation as ONE instance; `createSharedStore` is plain
+// `create()` everywhere else. It is also the project-identity AUTHORITY: every
+// other store that caches per-project state is measured against what this one
+// holds. See `packages/store/README.md`.
+import { createSharedStore, registerProjectIdentityAuthority } from '@apelles/store';
 import { useEditorTimelineStore, type ProjectSettingsValue } from '@apelles/editor';
 
 import { useEditorStore } from './useEditorStore';
@@ -455,7 +460,7 @@ function applyLoaded(
 export const selectProjectKey = (s: SessionState): string | null =>
   s.projectPath ?? (s.projectName ? `untitled:${s.projectName}` : null);
 
-export const useSessionStore = create<SessionState>((set, get) => ({
+export const useSessionStore = createSharedStore<SessionState>('app.session', (set, get) => ({
   shots: [],
   activeIndex: 0,
   grades: {},
@@ -1006,3 +1011,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 }));
+
+/** B-217/D-358 — this store is the app's one source of truth for *which* project
+ *  is open, so it is what every per-project store in every tab is checked
+ *  against before an MCP op runs. Registered here, at module scope, rather than
+ *  from `Root.tsx`: the guard has to be armed for any code path that can reach a
+ *  store at all, not only the one that happens to render the composition root.
+ *
+ *  The two fields are the two halves `selectProjectKey`'s own doc explains — the
+ *  Edit tab and the media pool follow the full key (non-null for an Untitled
+ *  loose-clip session too), Motion follows the path (null for one). */
+registerProjectIdentityAuthority(() => {
+  const s = useSessionStore.getState();
+  return { projectKey: selectProjectKey(s), projectPath: s.projectPath };
+});

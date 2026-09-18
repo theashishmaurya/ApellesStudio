@@ -98,6 +98,8 @@ import { listen, emit } from '@tauri-apps/api/event';
 
 import { useMediaPoolStore, type MediaItem } from '@apelles/bridge';
 import { runAsAgent } from '@apelles/history';
+// B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
+import { assertProjectIdentity } from '@apelles/store';
 // D-280 — the transport's own rate bounds, from the package that owns the
 // transport. The same pair the store clamps to and the Rust session clamps to.
 import { MAX_PLAYBACK_RATE, MIN_PLAYBACK_RATE } from '@apelles/player';
@@ -4922,6 +4924,14 @@ export function useEditorControl(): void {
       }
 
       try {
+        // B-217/D-358 — refuse to run while the app's stores disagree about
+        // which project is open. This registry is where that mattered most: an
+        // `editor_*` write against an Edit tab still holding the OUTGOING
+        // project's timeline lands one project's document in another project's
+        // file, with no error anywhere. Reads are guarded too — `editor_get_state`
+        // reporting the wrong project confidently is how B-217 stayed invisible.
+        await assertProjectIdentity(op);
+
         // D-298 — every `@apelles/history` push inside this window is stamped
         // `source: 'agent'`, which is the whole of this tab's agent-activity
         // instrumentation: one wrapper at the dispatcher, not a line in each

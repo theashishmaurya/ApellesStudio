@@ -101,6 +101,8 @@ import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
 import { runAsAgent } from '@apelles/history';
+// B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
+import { assertProjectIdentity } from '@apelles/store';
 import type { PlayerRef } from '@remotion/player';
 
 import { createMotionOps, type MotionOpsApi, type MotionEditLinks } from './motionOps';
@@ -248,6 +250,14 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       }
 
       try {
+        // B-217/D-358 — refuse to run while the app's stores disagree about
+        // which project is open. The Motion half of B-217's own symptom was
+        // `motion_get_state` answering `loadState: "no-project"` while a real
+        // project was demonstrably open; this makes that a loud error instead of
+        // a confident wrong answer, and stops a `motion_save_manifest` from
+        // writing into the wrong project's sidecar.
+        await assertProjectIdentity(op);
+
         // D-298 — every `@apelles/history` push inside this window is stamped
         // `source: 'agent'`, which is the whole of this tab's agent-activity
         // instrumentation: one wrapper at the dispatcher, not a line in each

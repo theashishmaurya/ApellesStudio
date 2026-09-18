@@ -2,6 +2,9 @@ import { useEffect } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { v4 as uuidv4 } from 'uuid';
+// B-217/D-358 — the cross-store project-identity guard. See the call site in the
+// dispatcher below for why every op runs it, reads included.
+import { assertProjectIdentity } from '@apelles/store';
 import { safeUnlisten } from '../utils/tauriListeners';
 
 // D-183 — the three Edit-tab ops that used to live here (`get_timeline`,
@@ -1541,6 +1544,16 @@ export function useChromaControl() {
       const shouldLog = !READ_ONLY.has(op) && !NAV.has(op);
 
       try {
+        // B-217/D-358 — before anything else: refuse to run while this app's
+        // stores disagree about which project is open. Reads are guarded as well
+        // as writes deliberately — what made B-217 cost hours was `get_state`
+        // answering confidently about the wrong project, not the write that
+        // would have followed it. Throws `ProjectIdentityError` (caught below,
+        // and answered as this op's own error) only after the divergence has
+        // survived the settle window; in the healthy case it is a synchronous
+        // comparison of three strings and costs nothing.
+        await assertProjectIdentity(op);
+
         // snapshot the grade + history position BEFORE the op — the feed's diff
         // base and undo target (D-032).
         const before = shouldLog

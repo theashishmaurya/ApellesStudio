@@ -17,6 +17,7 @@ import {
 } from '@apelles/motion';
 import { useMediaPoolStore, trackEvent } from '@apelles/bridge';
 import { useKeymapStore } from '@apelles/keymap';
+import { setProjectIdentityAlertSink } from '@apelles/store';
 import { useTranslation } from 'react-i18next';
 import App from './App';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
@@ -279,6 +280,28 @@ export function Root() {
   // same reasoning as the B-007/B-083 bridges above.
   const keybinds = useSettingsStore((s) => s.appSettings?.keybinds);
   const osPlatform = useSettingsStore((s) => s.osPlatform);
+
+  // B-217/D-358 — the guard's GUI voice. `@apelles/store` sits at the bottom of
+  // the layer stack and may not depend on a toast library (or on React at all),
+  // so the app injects where a divergence is shown, exactly like the keymap's
+  // `setPersist` sink just below. The guard is loud without this — it
+  // `console.error`s (which `frontendLogBridge` forwards to the Rust log) and
+  // fails the op — but the human driving the app should not have to be reading
+  // a console to find out the Edit tab is serving the wrong project. One fixed
+  // `toastId`, because a wedged app gets one op per agent call and would
+  // otherwise paper the screen with the same notice.
+  useEffect(() => {
+    setProjectIdentityAlertSink((message) => {
+      toast.error(message, {
+        toastId: 'project-identity-divergence',
+        autoClose: false,
+        // The message names each store on its own line; without this the toast
+        // would collapse it into one unreadable run.
+        style: { whiteSpace: 'pre-line' },
+      });
+    });
+    return () => setProjectIdentityAlertSink(null);
+  }, []);
 
   useEffect(() => {
     useKeymapStore.getState().hydrate(keybinds);

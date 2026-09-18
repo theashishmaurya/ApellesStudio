@@ -32,7 +32,12 @@
  * thing that can produce the "No project open" screen is `openProjectPath` being
  * null — the app's own source of truth, not a guess made from an error string.
  */
-import { create } from 'zustand';
+// D-358/B-217 — this store is a process-wide singleton and must survive a Vite
+// dev-mode module re-evaluation as ONE instance; `createSharedStore` is plain
+// `create()` in production and under vitest. It also announces which project it
+// is holding, so an MCP op is refused rather than run against the wrong one if
+// this store and `useSessionStore` ever diverge. See `packages/store/README.md`.
+import { createSharedStore, registerProjectIdentityParticipant } from '@apelles/store';
 
 import { getSavedManifest } from './manifestIO';
 
@@ -92,7 +97,7 @@ interface MotionProjectState {
 let loadToken = 0;
 let loadGeneration = 0;
 
-export const useMotionProjectStore = create<MotionProjectState>((set, get) => ({
+export const useMotionProjectStore = createSharedStore<MotionProjectState>('motion.project', (set, get) => ({
   openProjectPath: null,
   status: 'idle',
   error: null,
@@ -137,3 +142,15 @@ export const useMotionProjectStore = create<MotionProjectState>((set, get) => ({
     }
   },
 }));
+
+/** B-217/D-358 — what this store believes it is holding, for the guard that
+ *  refuses an MCP op when the Motion tab and `useSessionStore` have stopped
+ *  agreeing about which project is open. Compared against the session's project
+ *  *path* rather than its wider key, for exactly the reason `setOpenProject`'s
+ *  own doc gives: an Untitled loose-clip session has no project directory, so
+ *  `null` here is the correct answer then, not a divergence. */
+registerProjectIdentityParticipant('motion', {
+  label: 'Motion manifest',
+  read: () => useMotionProjectStore.getState().openProjectPath,
+  expected: (session) => session.projectPath,
+});

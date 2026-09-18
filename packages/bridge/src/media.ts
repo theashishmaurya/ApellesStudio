@@ -25,8 +25,13 @@
  * holds is the DTO shape (`video` facts + a live `offline` flag + a live `thumb`),
  * not the bare persisted model.
  */
-import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+// D-358/B-217 — this store is a process-wide singleton and must survive a Vite
+// dev-mode module re-evaluation as ONE instance; `createSharedStore` is plain
+// `create()` in production and under vitest. It also announces which project it
+// is holding, so an MCP op is refused rather than run against the wrong one if
+// this store and `useSessionStore` ever diverge. See `packages/store/README.md`.
+import { createSharedStore, registerProjectIdentityParticipant } from '@apelles/store';
 
 /** Mirrors `chroma::project::MediaVideoInfo` (serde camelCase). */
 export interface MediaVideoInfo {
@@ -223,7 +228,7 @@ function mergeById(existing: MediaItem[], incoming: MediaItem[]): MediaItem[] {
   return [...merged, ...incoming.filter((it) => !known.has(it.id))];
 }
 
-export const useMediaPoolStore = create<MediaPoolState>((set, get) => ({
+export const useMediaPoolStore = createSharedStore<MediaPoolState>('bridge.mediaPool', (set, get) => ({
   items: [],
   folders: [],
   loading: false,
@@ -338,3 +343,15 @@ export const useMediaPoolStore = create<MediaPoolState>((set, get) => ({
     }
   },
 }));
+
+/** B-217/D-358 — what this store believes it is holding, for the guard that
+ *  refuses an MCP op when the media pool and `useSessionStore` have stopped
+ *  agreeing about which project is open. Worth guarding on its own account and
+ *  not only for symmetry: `editor_add_clip` resolves a `mediaId`/`sourcePath`
+ *  against exactly these items (B-084), so a pool left on the outgoing project
+ *  is how the wrong file ends up on the right timeline. */
+registerProjectIdentityParticipant('media', {
+  label: 'Media pool',
+  read: () => useMediaPoolStore.getState().openProjectKey,
+  expected: (session) => session.projectKey,
+});
