@@ -139,7 +139,12 @@ fn ffmpeg_bin() -> String {
 }
 
 /// Drain a child's stderr on a thread, keeping the last ~16 KiB for error reports.
-fn drain_stderr(child: &mut Child) -> std::sync::Arc<Mutex<Vec<u8>>> {
+///
+/// `pub(super)` since D-350: `chroma::edit_render` spawns its own encoder child
+/// and needs exactly this, and a second copy of a "read stderr on a thread so
+/// the pipe can't fill and deadlock the writer" helper is the kind of
+/// copy-paste this repo's own rules forbid.
+pub(super) fn drain_stderr(child: &mut Child) -> std::sync::Arc<Mutex<Vec<u8>>> {
     let sink = std::sync::Arc::new(Mutex::new(Vec::<u8>::new()));
     if let Some(mut err) = child.stderr.take() {
         let sink2 = sink.clone();
@@ -163,7 +168,9 @@ fn drain_stderr(child: &mut Child) -> std::sync::Arc<Mutex<Vec<u8>>> {
     sink
 }
 
-fn tail(sink: &std::sync::Arc<Mutex<Vec<u8>>>) -> String {
+/// The last ~1200 characters of a drained stderr sink — what an error message
+/// actually carries. `pub(super)` alongside [`drain_stderr`], same reason.
+pub(super) fn tail(sink: &std::sync::Arc<Mutex<Vec<u8>>>) -> String {
     let g = sink.lock().unwrap_or_else(|e| e.into_inner());
     String::from_utf8_lossy(&g)
         .chars()

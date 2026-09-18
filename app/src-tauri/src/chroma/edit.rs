@@ -920,6 +920,39 @@ pub(crate) fn timeline_frame_image(
     intent: FrameIntent,
 ) -> Result<Option<DynamicImage>, String> {
     let (timeline, settings) = resolve_timeline_and_settings(false)?;
+    render_timeline_frame(&timeline, &settings, pos, max_long_edge, intent)
+}
+
+/// **The headless render entry point (D-350).** Everything
+/// [`timeline_frame_image`] does, against an **explicitly supplied** timeline
+/// and output spec rather than the open project's, re-read from disk.
+///
+/// What it is: the one function that turns "this document, at this timeline
+/// position" into a finished picture — decode every visible layer, run each
+/// clip's Colorist grade, composite them in z-order through
+/// [`composite_layer_onto`], apply adjustment clips in place, draw captions on
+/// top. It is exactly what the Edit tab's live preview calls, so anything built
+/// on it is composited by the preview's own engine by construction rather than
+/// by a second implementation kept in sync by hand — which is the whole of
+/// D-350's rationale (see `docs/notes/export-gpu-compositor.md`).
+///
+/// What it does NOT do: read the open project (the caller supplies the
+/// document), resize to an output resolution (the caller picks the canvas via
+/// `max_long_edge`), or encode anything.
+///
+/// **Why the split is load-bearing rather than cosmetic.** The pre-D-350
+/// function resolved the project manifest from disk on *every call*. That is
+/// invisible at preview rates (a few calls a second) and pathological at export
+/// rates — a 4-minute 60 fps export is ~14,000 manifest parses of a document
+/// that cannot change while the render runs. `edit_render` resolves once and
+/// drives this.
+pub(crate) fn render_timeline_frame(
+    timeline: &Timeline,
+    settings: &project::ProjectSettings,
+    pos: u64,
+    max_long_edge: Option<u32>,
+    intent: FrameIntent,
+) -> Result<Option<DynamicImage>, String> {
     if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
         return Err("timeline has no video track".to_string());
     }
@@ -970,7 +1003,7 @@ pub(crate) fn timeline_frame_image(
     // the keep-list with what is about to be visible keeps at most half a
     // second of extra lifetime per slot, which is exactly the lookahead.
     let upcoming = match intent {
-        FrameIntent::Playing => upcoming_boundary_targets(&timeline, pos, max_long_edge),
+        FrameIntent::Playing => upcoming_boundary_targets(timeline, pos, max_long_edge),
         // A scrub/thumbnail predicts nothing, so it also extends nothing — the
         // keep-list stays exactly the pre-D-324 visible set.
         FrameIntent::Single => Vec::new(),
@@ -984,7 +1017,7 @@ pub(crate) fn timeline_frame_image(
         prime(&upcoming);
         return Ok(None);
     }
-    let comp = composition_size(&settings, &timeline)?;
+    let comp = composition_size(settings, timeline)?;
 
     // D-136 — the fast path's second condition. A lone clip may be returned as
     // a plain decode only if it really *is* the whole composition: same pixel
@@ -1100,7 +1133,7 @@ pub(crate) fn timeline_frame_image(
     // are none, which is every pre-D-229 project and every frame of a project
     // with no subtitle track — so the common case pays one `Vec` allocation
     // that comes back empty.
-    let img = draw_captions_onto(img, &timeline, pos as i64)?;
+    let img = draw_captions_onto(img, timeline, pos as i64)?;
 
     // D-324 — prime the upcoming boundaries AFTER this frame is decoded, not
     // before.
