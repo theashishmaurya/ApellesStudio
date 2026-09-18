@@ -589,8 +589,13 @@ async function settleWithin<T>(
 
 /** The exact clip-fade shape `get_timeline` (pre-D-183, `useChromaControl
  *  .ts`) already reported per clip — reused verbatim so `editor_get_timeline`
- *  is byte-for-byte the same response shape under its new name. */
-function timelineDto(tl: Timeline) {
+ *  is byte-for-byte the same response shape under its new name. Exported
+ *  (only for `useEditorControl.test.ts`, B-203) so this pure serializer can
+ *  be unit-tested directly rather than through the Tauri event round trip
+ *  the rest of this hook needs — it has a correct answer, the same
+ *  reasoning CLAUDE.md's Testing section gives for the grade-doc/mask-
+ *  geometry unit tests. */
+export function timelineDto(tl: Timeline) {
   return {
     id: tl.id,
     name: tl.name,
@@ -630,6 +635,18 @@ function timelineDto(tl: Timeline) {
         positionX: c.position_x ?? 0,
         positionY: c.position_y ?? 0,
         scale: c.scale ?? 1,
+        // B-203 — the ONLY size mechanism with real preview/export parity
+        // (`scale` means different things in the two engines, see B-201) was
+        // writable via `editor_set_clip_transform` and persisted, but this
+        // DTO never reported it back — the natural verification (set it,
+        // read it back) read as "the write silently did nothing." `null`
+        // (not `0`/`1`) for "no override, derive from `scale`", the same
+        // explicit-null convention every other nullable field on this clip
+        // uses (`linkGroup`, `text`) and the one `timeline.ts`'s own
+        // `Clip.box_width`/`box_height` doc requires: a cleared override
+        // must round-trip as `null`, not vanish.
+        boxWidth: c.box_width ?? null,
+        boxHeight: c.box_height ?? null,
         rotation: c.rotation ?? 0,
         cropLeft: c.crop_left ?? 0,
         cropTop: c.crop_top ?? 0,
