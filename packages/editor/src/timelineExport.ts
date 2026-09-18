@@ -2513,6 +2513,19 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
   // behavior) never checks it either; `hidden` is a picture-only concept.
   for (const track of timeline.tracks) {
     if (track.kind !== 'audio') continue;
+    // B-228 — a track muted at the TRACK level (`gain: 0`, D-057) contributes
+    // exactly nothing to `amix` no matter what its clips decode to
+    // (`buildAudioSourceChain`'s `gain` multiplies every sample by it), so
+    // decoding those clips at all is pure waste: a full `-i` + filter chain
+    // per clip for output that's provably silent. Safe to skip entirely —
+    // `resolveDuckForTrack` (above) derives ducking from a track's own CLIP
+    // TIMING (`trackClipSpansFromZero`), never from another track's actual
+    // decoded audio, so a muted track can still duck (or be ducked by)
+    // another track correctly with none of its own clips ever opened here.
+    // Does NOT skip a clip whose PER-CLIP `volume` is 0 — that field can be
+    // keyframed/faded up from 0, so only the non-animatable track-level gain
+    // is safe to treat as "never audible, ever" statically.
+    if ((track.gain ?? 1) === 0) continue;
     const trackIndex = timeline.tracks.indexOf(track);
     for (const clip of track.clips) {
       if (!(opts.hasAudioOverrides?.[clip.id] ?? true)) continue;
@@ -2566,6 +2579,22 @@ export function buildExportFfmpegArgs(timeline: Timeline, outPath: string, opts:
 
   const args = [
     ...inputs,
+    // B-229 — ffmpeg's own `-filter_complex_threads` defaults to the
+    // logical CPU count, but that count is applied to EVERY individual
+    // filter INSTANCE in the graph independently, not shared once across
+    // it — total OS threads scale as roughly (filter instance count) ×
+    // (this value). A heavily-cut timeline's overlay/crop/geq chain can
+    // carry hundreds of filter instances, which multiplied by an
+    // unbounded per-instance thread pool measured out to 3,000+ threads
+    // and tens of GB RSS on a real project (confirmed via a controlled
+    // synthetic reproduction, not guessed) — `-filter_threads` does NOT
+    // control this; it is a documented no-op for a `-filter_complex`
+    // graph. Capping this to a small constant bounds both memory and
+    // thread count to a small multiple of the instance count regardless
+    // of how many clips a project has, at the cost of some per-filter
+    // parallelism on a simple, few-clip export.
+    '-filter_complex_threads',
+    '2',
     '-filter_complex',
     filterSteps.join(';'),
     '-map',

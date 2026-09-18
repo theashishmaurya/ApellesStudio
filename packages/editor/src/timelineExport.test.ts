@@ -223,6 +223,8 @@ describe('buildExportFfmpegArgs', () => {
       '8',
       '-i',
       '/media/c1.mov',
+      '-filter_complex_threads',
+      '2',
       '-filter_complex',
       "[0:v]scale=w='1080*(1)':h=-2[v0];color=black:size=1080x1920:rate=30[base];[base][v0]overlay=x='0*W':y='0*H':enable='between(t,0,8)'[outv]",
       '-map',
@@ -233,6 +235,18 @@ describe('buildExportFfmpegArgs', () => {
       '8',
       '/out.mp4',
     ]);
+  });
+
+  it('B-229: always caps -filter_complex_threads — unbounded per-filter-instance thread pools measured out to 3,000+ threads/tens of GB on a heavily-cut real project', () => {
+    const tl = timeline([track('video', [clip('c1')])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+
+    const idx = args.indexOf('-filter_complex_threads');
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe('2');
+    // Must precede -filter_complex — ffmpeg reads global options like this
+    // one before the filtergraph they apply to.
+    expect(idx).toBeLessThan(args.indexOf('-filter_complex'));
   });
 
   it('chains crop then scale, in order, when the clip has a non-zero crop', () => {
@@ -703,6 +717,31 @@ describe('buildExportFfmpegArgs — audio (D-197)', () => {
     // whether any real video track exists — with the sole audio clip
     // excluded, that's the ONLY `-map` in the whole command.
     expect(args.filter((a2) => a2 === '-map')).toHaveLength(1);
+  });
+
+  it('a track muted at gain: 0 (B-228) gets NO -i at all for its clips — not just silenced, never decoded', () => {
+    const a = clip('a1', { duration: 240 });
+    const b = clip('a2', { duration: 240 });
+    const tl = timeline([track('audio', [a], { gain: 0 }), track('audio', [b])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    // Only the un-muted track's clip is a real source -> exactly one -i,
+    // no amix (a lone contributor bypasses it, D-057's single-source rule).
+    expect(args.filter((a2) => a2 === '-i')).toHaveLength(1);
+    expect(filterComplex).not.toContain('amix');
+    const maps = args.filter((a2, i) => args[i - 1] === '-map');
+    expect(maps).toContain('0:a');
+  });
+
+  it("a track's own volume=0 filter is still emitted (not the same as gain: 0) when the CLIP's per-clip volume is 0, since that can be faded/keyframed up", () => {
+    const a = clip('a1', { duration: 240, volume: 0 });
+    const tl = timeline([track('audio', [a])]);
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts30);
+
+    // Still gets its own real -i — only the non-animatable TRACK gain is
+    // trusted to mean "never audible", never a per-clip field.
+    expect(args.filter((a2) => a2 === '-i')).toHaveLength(1);
   });
 
   it('a sped-up clip gets an atempo chain on its audio, keeping it in sync with the setpts-sped picture', () => {
