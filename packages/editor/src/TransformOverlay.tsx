@@ -128,6 +128,28 @@
  * exact shape (a transform silently dropped, not refused) reproduced through
  * a different door — hiding the handles closes the door rather than
  * teaching this component (or the store reducer) to refuse mid-drag.
+ *
+ * **B-186/D-356 — the box only draws while the selected clip's own span is
+ * actually under the playhead**, mirroring `CaptionTransformOverlay`'s
+ * B-185/D-317 fix exactly: `clipCoversFrame` plus a `!track.hidden` check.
+ * Before this, selecting a clip whose span did not contain the playhead drew
+ * its box over whatever picture WAS on screen — a different clip's, or
+ * black — because nothing here asked the question at all; `useCanvasClipPick`
+ * already restricts a canvas PICK to `visibleVideoLayersAt` (which does ask
+ * it), so the pick half and the draw half disagreed, the same asymmetry as
+ * B-185. **This does not conflict with D-209's "resolve at the clip's own
+ * source frame" rule** — that rule answers a different question (WHICH frame
+ * to resolve, once the box is known to be drawn) from this one (WHETHER to
+ * draw it at all). A clip the playhead is not over contributes no picture to
+ * `composite_video_frame` (`Track::clip_at` finds nothing for it there), so a
+ * box for it has nothing real to sit on regardless of which frame its
+ * keyframes would otherwise resolve to — confirmed against
+ * `apelles_timeline::Track::clip_at` and
+ * `Timeline::resolve_visible_video_layers_at` before writing this, per the
+ * bug's own "decide first" note. Video needed no different answer than
+ * captions here. Also skips the `chroma_timeline_clip_geometry` probe
+ * entirely while off screen — the same round-trip saving
+ * `CaptionTransformOverlay` already does for its own measurement.
  */
 import { usePreviewContentBox } from './usePreviewContentBox';
 import {
@@ -136,7 +158,7 @@ import {
   mergeClipKeyframeParams,
   resolveClipBoxTransform,
 } from './clipKeyframes';
-import { findClip, timelineFps, type ClipTransformParam } from './timeline';
+import { clipCoversFrame, findClip, timelineFps, type ClipTransformParam } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import { useClipGeometry } from './useClipGeometry';
 import { TransformBox, type TransformDraft, type TransformGestureKind } from './TransformBox';
@@ -163,7 +185,8 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   const found = primary ? findClip(timeline, primary.track, primary.id) : null;
   const clip = found?.clip ?? null;
   const clipIndex = found?.index ?? -1;
-  const trackLocked = primary ? !!timeline?.tracks[primary.track]?.locked : false;
+  const track = primary ? (timeline?.tracks[primary.track] ?? null) : null;
+  const trackLocked = !!track?.locked;
   // D-211 follow-up — see this module's own doc: a text clip's `scale` is
   // pinned server-side and a corner drag would silently write a value
   // nothing ever reads, so the handles for it are hidden entirely rather
@@ -195,14 +218,26 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
   // `null` with nothing said about why (B-183).
   const isCaption = !!clip?.caption;
 
+  // B-186/D-356 — is the selected clip's own span the one the playhead is
+  // actually over? The SAME predicate `visibleVideoLayersAt` gates a canvas
+  // PICK on (`canvasPick.ts`), so the box a click can select and the box this
+  // draws are answers to one question rather than two — see this module's own
+  // doc above for why it is correct to hide, not just re-anchor, the box for
+  // an off-screen selection. A hidden track draws nothing either, for the
+  // same reason `visibleVideoLayersAt` excludes one.
+  const onScreen = !!clip && !!track && !track.hidden && clipCoversFrame(clip, playhead, timelineFps(timeline));
+
   // D-316 — not probed for a caption: that command has no answer for one (it
   // reports a SIZE, and a caption's box position is not derivable from any
   // `Clip` field) and returns a real `Err`, so asking would be one failed IPC
   // round trip per caption selection for a box this overlay is standing aside
   // from anyway.
+  // B-186/D-356 — also not probed while off screen: scrubbing the playhead
+  // away from a still-selected clip must not cost a geometry round trip per
+  // frame for a box that is about to draw nothing anyway.
   const geometry = useClipGeometry(
-    isCaption ? null : (primary?.track ?? null),
-    isCaption ? -1 : clipIndex,
+    isCaption || !onScreen ? null : (primary?.track ?? null),
+    isCaption || !onScreen ? -1 : clipIndex,
     clip?.source_path,
   );
 
@@ -366,6 +401,7 @@ export function TransformOverlay({ container }: { container: HTMLElement | null 
     !clip ||
     isAdjustment ||
     isCaption ||
+    !onScreen ||
     !effective ||
     !geometry ||
     contentBox.width <= 0 ||

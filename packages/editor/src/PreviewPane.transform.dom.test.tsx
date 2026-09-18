@@ -65,6 +65,12 @@ const STUB_FRAME = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer;
  *  box below is `scale` (or the override) directly. */
 const NATURAL_FULL_FRAME = { naturalWidth: 1, naturalHeight: 1 };
 
+/** B-186 — how many times `chroma_timeline_clip_geometry` was actually
+ *  invoked. Used to assert that an off-screen selection costs no round trip,
+ *  the same saving `CaptionTransformOverlay`'s own `captionMeasureCalls`
+ *  proves for B-185. */
+let clipGeometryCalls = 0;
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
     chroma_timeline_frame: () => STUB_FRAME,
@@ -73,11 +79,14 @@ vi.mock('@tauri-apps/api/core', () => ({
       compHeight: CANVAS_H,
       ...NATURAL_FULL_FRAME,
     }),
-    chroma_timeline_clip_geometry: () => ({
-      compWidth: CANVAS_W,
-      compHeight: CANVAS_H,
-      ...NATURAL_FULL_FRAME,
-    }),
+    chroma_timeline_clip_geometry: () => {
+      clipGeometryCalls += 1;
+      return {
+        compWidth: CANVAS_W,
+        compHeight: CANVAS_H,
+        ...NATURAL_FULL_FRAME,
+      };
+    },
     chroma_project_get_settings: () => ({ width: CANVAS_W, height: CANVAS_H }),
     chroma_audio_play: () => undefined,
     chroma_audio_stop: () => undefined,
@@ -93,6 +102,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 
 import { useEditorTimelineStore } from './timelineStore';
+import { visibleVideoLayersAt } from './canvasPick';
 import { PreviewPane } from './PreviewPane';
 import type { Clip, Timeline, Track } from './timeline';
 
@@ -182,6 +192,34 @@ async function mountWithSelected(clip: Clip): Promise<HTMLElement> {
   return box as HTMLElement;
 }
 
+/** B-186 — same seeding as `mountWithSelected`, but for an arbitrary set of
+ *  tracks and an explicit playhead, and it does NOT require a box to appear —
+ *  the off-screen/hidden-track cases below expect exactly that. */
+async function mountWithTimeline(
+  tracks: Track[],
+  opts: { selectedTrack: number; selectedId: string; playhead: number },
+): Promise<void> {
+  actSync(() =>
+    useEditorTimelineStore.setState({
+      timeline: timelineOf(tracks),
+      openProjectKey: 'test-project',
+      status: 'ready',
+      error: null,
+      playhead: opts.playhead,
+      playing: false,
+      selection: [{ track: opts.selectedTrack, id: opts.selectedId }],
+      selectedGap: null,
+    }),
+  );
+  mounted = mount(React.createElement(PreviewPane), { strictMode: true });
+  await waitFrames(4);
+}
+
+/** The clip transform overlay's box, or `null` when nothing is drawn. */
+function transformBoxEl(): HTMLElement | null {
+  return (mounted?.container.querySelector('[data-transform-overlay] > div') as HTMLElement | null) ?? null;
+}
+
 /** The box's own CSS geometry, in the screen pixels the component set. */
 function boxRect(box: HTMLElement) {
   const px = (v: string) => Number.parseFloat(v);
@@ -214,6 +252,7 @@ beforeEach(() => {
   // frame through one now.
   objectUrls = installObjectUrlStub();
   console_ = captureConsole();
+  clipGeometryCalls = 0;
 });
 
 afterEach(() => {
@@ -357,5 +396,129 @@ describe('B-093 — dragging a keyframed clip', () => {
     const key = after.chroma_keyframes?.find((k) => k.frame === PLAYHEAD);
     expect(key).toBeDefined();
     expect(key?.params.scale as number).toBeGreaterThan(KEYED_SCALE_AT_PLAYHEAD);
+  });
+});
+
+// ---- B-186/D-356: the box may not outlive the selected CLIP's own span ----
+//
+// Mirrors `CaptionTransformOverlay.dom.test.tsx`'s own B-185 suite exactly,
+// for the video-clip box: the live defect was a clip selected while the
+// playhead sat over a DIFFERENT (or no) clip, drawing its box over whatever
+// picture WAS actually on screen.
+describe('B-186 — the transform box on a clip the playhead is not over', () => {
+  // The clip under test occupies timeline frames [100, 150).
+  function spanClip(extra: Partial<Clip> = {}): Clip {
+    return plainClip({ id: 'span', start_frame: 100, duration: 50, source_len: 50, ...extra });
+  }
+
+  it('draws NOTHING while the playhead is outside the selected clip’s span', async () => {
+    await mountWithTimeline([{ kind: 'video', clips: [spanClip()] }], {
+      selectedTrack: 0,
+      selectedId: 'span',
+      playhead: 50,
+    });
+    expect(transformBoxEl()).toBeNull();
+  });
+
+  it('skips its OWN geometry probe while off screen — no round trip per scrubbed frame', async () => {
+    // Baseline: the SAME clip, selected, ON screen. `PreviewPane` also mounts
+    // `DynamicZoomOverlay`, which probes `chroma_timeline_clip_geometry` for
+    // the selection unconditionally (out of scope for B-186 — it has no
+    // playhead dependency at all, on screen or off), so an absolute "0 calls"
+    // assertion would conflate the two overlays. Recording this baseline
+    // first isolates `TransformOverlay`'s OWN contribution instead.
+    await mountWithTimeline([{ kind: 'video', clips: [spanClip()] }], {
+      selectedTrack: 0,
+      selectedId: 'span',
+      playhead: 120,
+    });
+    expect(transformBoxEl()).not.toBeNull();
+    const onScreenCalls = clipGeometryCalls;
+    expect(onScreenCalls).toBeGreaterThan(0);
+    mounted?.unmount();
+    mounted = null;
+    clipGeometryCalls = 0;
+
+    await mountWithTimeline([{ kind: 'video', clips: [spanClip()] }], {
+      selectedTrack: 0,
+      selectedId: 'span',
+      playhead: 50,
+    });
+    expect(transformBoxEl()).toBeNull();
+    // Off screen, `TransformOverlay`'s own probe is skipped entirely — any
+    // remaining calls are `DynamicZoomOverlay`'s unconditional one, which does
+    // not vary with the playhead, so this must be strictly fewer than the
+    // on-screen baseline above.
+    expect(clipGeometryCalls).toBeLessThan(onScreenCalls);
+  });
+
+  it('draws nothing BEFORE the selected clip starts', async () => {
+    await mountWithTimeline([{ kind: 'video', clips: [spanClip()] }], {
+      selectedTrack: 0,
+      selectedId: 'span',
+      playhead: 99,
+    });
+    expect(transformBoxEl()).toBeNull();
+  });
+
+  it('draws nothing one frame PAST the clip’s end, and does at its last frame', async () => {
+    await mountWithTimeline([{ kind: 'video', clips: [spanClip()] }], {
+      selectedTrack: 0,
+      selectedId: 'span',
+      playhead: 149,
+    });
+    expect(transformBoxEl()).not.toBeNull();
+    mounted?.unmount();
+    mounted = null;
+
+    await mountWithTimeline([{ kind: 'video', clips: [spanClip()] }], {
+      selectedTrack: 0,
+      selectedId: 'span',
+      playhead: 150,
+    });
+    expect(transformBoxEl()).toBeNull();
+  });
+
+  it('brings the box BACK when the playhead re-enters the clip’s span', async () => {
+    await mountWithTimeline([{ kind: 'video', clips: [spanClip()] }], {
+      selectedTrack: 0,
+      selectedId: 'span',
+      playhead: 200,
+    });
+    expect(transformBoxEl()).toBeNull();
+
+    actSync(() => useEditorTimelineStore.setState({ playhead: 120 }));
+    await waitFrames(4);
+    expect(transformBoxEl()).not.toBeNull();
+  });
+
+  it('draws nothing when the selected clip’s track is HIDDEN, even inside its span', async () => {
+    await mountWithTimeline([{ kind: 'video', clips: [spanClip()], hidden: true }], {
+      selectedTrack: 0,
+      selectedId: 'span',
+      playhead: 120,
+    });
+    expect(transformBoxEl()).toBeNull();
+  });
+
+  it('agrees with what a canvas click could have selected', async () => {
+    // The invariant behind the fix: a click can only ever select a clip that
+    // is on screen (`visibleVideoLayersAt`), so a box drawn for one that is
+    // NOT is the one way the draw half and the pick half could disagree. Both
+    // now ask `clipCoversFrame`, checked here against the pick side's own
+    // answer rather than a second copy of the rule.
+    const tl = () => useEditorTimelineStore.getState().timeline;
+    await mountWithTimeline([{ kind: 'video', clips: [spanClip()] }], {
+      selectedTrack: 0,
+      selectedId: 'span',
+      playhead: 50,
+    });
+    expect(visibleVideoLayersAt(tl(), 50)).toHaveLength(0);
+    expect(transformBoxEl()).toBeNull();
+
+    actSync(() => useEditorTimelineStore.setState({ playhead: 120 }));
+    await waitFrames(4);
+    expect(visibleVideoLayersAt(tl(), 120)).toHaveLength(1);
+    expect(transformBoxEl()).not.toBeNull();
   });
 });
