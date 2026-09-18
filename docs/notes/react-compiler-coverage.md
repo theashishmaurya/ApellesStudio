@@ -212,6 +212,28 @@ something outside that package.
 - **`app/src/components/chroma/SourcesPanel.tsx`** — *TryStatement with a
   finalizer*, same plain-tail rewrite as `PreviewPane`.
 
+## The one regression since (B-184 / D-355, 2026-09-18)
+
+`packages/editor/*` did not stay bailout-free on its own: `TimelinePane.tsx`
+regressed to *Cannot access refs during render* (a `trimPressRef.current` read
+in the render body, added with B-144's slip/slide preview) and sat broken long
+enough to be filed **twice** independently — B-184, and B-210 against the same
+statement three days later. The guard test above did its job both times; what
+was missing was anyone acting on it. Two things worth carrying forward:
+
+- **The fix pattern for "a ref value has to affect render output" here is
+  ref-then-promote, not ref-to-state.** Keep the raw listener writing a ref
+  (so it never re-binds, and so a press that never becomes a gesture costs no
+  render), and snapshot that ref into state at the moment the gesture actually
+  starts. `clipGrab` (B-137) and now `clipDragPress` (D-355) are both this
+  shape. Promoting the ref itself to state, or calling `setState` from the raw
+  `pointerdown` listener, re-renders the whole pane on every click in the edit
+  area — a performance regression traded for a performance fix.
+- **A bailout in this file is not cosmetic.** `TimelinePane.tsx` is ~3,400
+  lines and the Edit tab's highest-update-frequency surface; one bad line costs
+  the auto-memoization of all of it, silently. Treat a red line in this test as
+  a real defect with a `B-NNN`, not as lint.
+
 **Careful — the compiler reads comments.** Its ESLint-suppression check
 matches the suppression text itself, so even *mentioning*
 `eslint-disable-next-line react-hooks/…` verbatim in a prose comment

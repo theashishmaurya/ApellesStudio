@@ -1163,6 +1163,15 @@ function TrackDropZone({ track, top, height }: { track: number; top: number; hei
   );
 }
 
+/** D-235/D-261 — everything about the press a gesture began from that the pure
+ *  `trimMode.ts` rule cannot see for itself: the modifiers held, where in the
+ *  clip's row the pointer went down, and which palette tool was active. Named
+ *  once here because it is now held in two places at once (`trimPressRef`, the
+ *  live capture, and `clipDragPress`, the drag-start snapshot the render reads
+ *  — B-184/D-355), and two hand-copied inline object types are exactly how
+ *  those two would drift apart. */
+type TrimPressCapture = { altKey: boolean; shiftKey: boolean; bodyYRatio: number; tool: TrimTool };
+
 export function TimelinePane() {
   const timeline = useEditorTimelineStore((s) => s.timeline);
   // D-325 — deliberately NOT `useEditorTimelineStore((s) => s.playhead)`. This
@@ -1509,7 +1518,7 @@ export function TimelinePane() {
   // change halfway through a drag would mean the op committed was not the one
   // the user aimed at.
   const [trimArmed, setTrimArmed] = useState(false);
-  const trimPressRef = useRef<{ altKey: boolean; shiftKey: boolean; bodyYRatio: number; tool: TrimTool } | null>(null);
+  const trimPressRef = useRef<TrimPressCapture | null>(null);
   /** B-137 — the horizontal half of the same capture-phase press: how wide the
    *  pressed clip really is on screen, and how far into it the pointer went
    *  down. Stamped by the listener below and promoted to `clipGrab` state once
@@ -1815,6 +1824,29 @@ export function TimelinePane() {
    *  for a clip drag dnd-kit could not measure (a pane laid out to nothing).
    *  Feeds `dragGhostWindow` — see that module for why the ghost needs it. */
   const [clipGrab, setClipGrab] = useState<{ widthPx: number; offsetPx: number } | null>(null);
+  /** B-184 / D-355 — the same press, in its trim-tool aspect, and promoted to
+   *  state for the same reason and at the same instant as `clipGrab` above.
+   *
+   *  The render below has to know whether the drag now running is going to
+   *  commit a slip/slide rather than a move (B-144), and that answer comes from
+   *  the press, not from live key state. It used to read `trimPressRef.current`
+   *  straight out of the render body, which is a ref read during render — the
+   *  React Compiler (D-201) refuses to compile a component that does that and
+   *  silently dropped auto-memoization for this whole file, the Edit tab's
+   *  highest-update-frequency surface. `reactCompiler.test.ts` is the guard
+   *  that caught it.
+   *
+   *  Snapshotting at drag start rather than at press deliberately: `onDndDragStart`
+   *  only runs once dnd-kit's 4px activation constraint is satisfied, i.e. well
+   *  after the capture-phase `pointerdown` listener has stamped the ref — the
+   *  exact ordering `clipGrab` has relied on since B-137 — so the value here is
+   *  the press that started THIS drag, and nothing about that listener (which
+   *  must never re-bind, see `trimPressRef`'s own doc) changes. The alternative,
+   *  setting state from inside that listener, would re-render this entire pane
+   *  on every press anywhere in the edit area, including a plain click that
+   *  never becomes a drag — which is the cost the ref-then-promote pattern
+   *  exists to avoid. */
+  const [clipDragPress, setClipDragPress] = useState<TrimPressCapture | null>(null);
   // D-113 — owner, live: "when i drag and drop it shows whole track as
   // white make only the track length and where it is actually going to
   // go, placeholder kindda." The full-row wash `TrackDropZone` used to
@@ -1870,6 +1902,7 @@ export function TimelinePane() {
       document.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, cancelable: true }));
       setActiveDrag((prev) => (prev === null ? prev : null));
       setClipGrab((prev) => (prev === null ? prev : null));
+      setClipDragPress((prev) => (prev === null ? prev : null));
     };
     window.addEventListener('blur', onBlur);
     return () => window.removeEventListener('blur', onBlur);
@@ -3230,11 +3263,18 @@ export function TimelinePane() {
     // Promoted to state only now, once there is a real drag to render a ghost
     // for. See `dragGhost.ts` for what it is used for.
     setClipGrab(clip ? clipGrabRef.current : null);
+    // B-184 — and the trim aspect of that same press, for the render that has
+    // to decide whether this drag shows a move preview at all (B-144). Taken
+    // here, in the same batched update as `setActiveDrag`, so "the drag is
+    // running" and "this is the press it started from" can never be true at
+    // different renders. See this state's own doc for why not at press time.
+    setClipDragPress(clip ? trimPressRef.current : null);
   }, []);
 
   const onDndDragCancel = useCallback(() => {
     setActiveDrag(null);
     setClipGrab(null);
+    setClipDragPress(null);
     dragScrollOriginRef.current = null;
     dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
   }, []);
@@ -3433,6 +3473,7 @@ export function TimelinePane() {
         raw && (raw as TransitionDragData).type === 'transition' ? (raw as TransitionDragData) : null;
       setActiveDrag(null);
       setClipGrab(null);
+      setClipDragPress(null);
       dragPreviewRef.current?.setLanding((prev) => (prev === null ? prev : null));
       // B-145 — the drag's real displacement, for every branch below that
       // resolves a position. `dragScrollOriginRef` is deliberately NOT cleared
@@ -3734,16 +3775,20 @@ export function TimelinePane() {
   // (and, for a slide, its neighbours') never changes, so a cursor-follow
   // ghost promising a reposition — the filmstrip/waveform preview below, or
   // its label-pill fallback — would be lying about what this gesture is
-  // about to commit. Read `trimPressRef` directly rather than the live
-  // `trimArmed` state: a trim's mode is resolved once, from the press that
-  // started the drag (see that ref's own doc), not continuously from
-  // whatever key state happens to be true mid-drag — the exact same
-  // `claimed` test `onDndDragEnd` uses to decide whether this gesture
-  // commits a slip/slide instead of a move, so the preview can never
-  // disagree with the op that actually fires. D-250's pointer-adjacent mode
-  // badge already names the gesture correctly; this just stops the move
-  // ghost from contradicting it.
-  const clipDragPress = trimPressRef.current;
+  // about to commit. Built from the press that started the drag — not from
+  // the live `trimArmed` state: a trim's mode is resolved once, at press
+  // (see `trimPressRef`'s own doc), not continuously from whatever key state
+  // happens to be true mid-drag — which is the exact same `claimed` test
+  // `onDndDragEnd` uses to decide whether this gesture commits a slip/slide
+  // instead of a move, so the preview can never disagree with the op that
+  // actually fires. D-250's pointer-adjacent mode badge already names the
+  // gesture correctly; this just stops the move ghost from contradicting it.
+  //
+  // B-184/D-355 — `clipDragPress` is the drag-start SNAPSHOT of that press
+  // (see its declaration), not `trimPressRef.current` read here. Reading the
+  // ref during render is what bailed the React Compiler out of this entire
+  // file. The value is the same one by construction, and is now pinned for
+  // the whole gesture rather than re-read every render.
   const isSlipOrSlideDrag =
     activeDrag?.type === 'clip' &&
     clipDragPress !== null &&

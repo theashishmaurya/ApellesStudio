@@ -340,10 +340,12 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    on decoding the whole file rather than one clip's range, which is why Premiere generates
    them on import in the background rather than on demand.
 
-0c. **`TimelinePane` still has neither compiler nor manual memoization (B-184, open)** —
-   one React Compiler bailout (`Cannot access refs during render`) disables
-   auto-memoization for the WHOLE file, and D-201 deliberately removed the hand-written
-   `useMemo`/`useCallback`s on the assumption the compiler would cover them. D-336's
+0c. ~~**`TimelinePane` still has neither compiler nor manual memoization (B-184, open)**~~
+   — **the memoization half is DONE (2026-09-18, D-355).** The one React Compiler bailout
+   (`Cannot access refs during render`) that disabled auto-memoization for the WHOLE file
+   is fixed, so D-201's assumption — that the compiler would cover the hand-written
+   `useMemo`/`useCallback`s it deliberately removed — holds again for this file.
+   `reactCompiler.test.ts` is green. The rest of this item is still open. D-336's
    survey also found scroll position living in un-throttled React state
    (`setScrollLeft`/`setScrollTop` per scroll tick → a full pane re-render → a re-render of
    every mounted action, since the library memoizes nothing), and `getActionRender` doing
@@ -1767,8 +1769,8 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         this pass counted them directly rather than trusting the old number).
         **`TimelinePane` — by far the worst of the eleven, and the one this
         pass fixed** — is not just "a re-render": it is a ~4500-line component
-        that also fails its own React Compiler coverage test (B-184, still
-        open) and walks every clip on every track to build its output, so its
+        that also failed its own React Compiler coverage test (B-184, fixed
+        since by D-355) and walks every clip on every track to build its output, so its
         playhead-driven re-render cost SCALES WITH CLIP COUNT, a dimension
         D-290's original "closing the Inspector alone moved the loop 25→23ms"
         measurement never exercised (that project had a handful of clips).
