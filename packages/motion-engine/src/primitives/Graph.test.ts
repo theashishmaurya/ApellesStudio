@@ -7,17 +7,15 @@
  * new `propCatalog.ts` manifest field (that file's size-field registry is
  * mid-edit for the separate, unrelated B-213 in this session).
  *
- * Lives in `@apelles/motion`'s test suite for the same reason
- * `graphEdge.test.ts` / `plotLabel.test.ts` do — `@apelles/motion-engine` has
- * no `test` script of its own — importing the pure function across the
- * package boundary the same established way.
+ * Colocated directly with `Graph.tsx` (plain `node` environment — this is a
+ * pure function, no DOM needed; see `vitest.config.ts`'s own comment on
+ * that split). `graphEdgeStroke`/`resolvableEdges` above still have their
+ * tests in `@apelles/motion`'s `graphEdge.test.ts` instead, from before
+ * B-212 gave this package a test runner of its own — not moved here, out of
+ * scope for this fix.
  */
 import { describe, it, expect } from 'vitest';
-import {
-  graphLabelFontSize,
-  GRAPH_LABEL_BASE_FONT_SIZE,
-  GRAPH_LABEL_MIN_FONT_SIZE,
-} from '@apelles/motion-engine/src/primitives/Graph';
+import { graphLabelFontSize, GRAPH_LABEL_BASE_FONT_SIZE, GRAPH_LABEL_MIN_FONT_SIZE } from './Graph';
 
 /** `Graph.tsx`'s own private tuning constants for this formula, duplicated
  *  here the same way `graphEdge.test.ts` hardcodes the pre-D-340 stroke

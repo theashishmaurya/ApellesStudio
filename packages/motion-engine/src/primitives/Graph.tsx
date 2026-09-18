@@ -168,10 +168,12 @@ const GRAPH_LABEL_SAFETY_MARGIN = 0.85;
  * tight layout, or anything else that moves nodes, with nothing new to keep
  * in sync.
  *
- * Exported as a pure function so it is directly unit-testable the same way
- * `graphEdgeStroke`/`resolvableEdges` are (`@apelles/motion-engine` has no
- * test runner of its own — `@apelles/motion`'s `graphLabelSize.test.ts`
- * imports it across the package boundary).
+ * Exported as a pure function so it is directly unit-testable, the same
+ * shape `graphEdgeStroke`/`resolvableEdges` above already use — tested in
+ * this package's own colocated `Graph.test.ts` (this package gained a real
+ * test runner with B-212, after those two were already established in
+ * `@apelles/motion`'s `graphEdge.test.ts` via cross-package import; not
+ * moved here, out of scope for this fix).
  */
 export function graphLabelFontSize(
   nodes: Array<{ label?: string; x: number; y: number }>,
