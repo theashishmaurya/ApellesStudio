@@ -1,9 +1,15 @@
-# Export through the app's own compositor (D-350) — phase 1
+# Export through the app's own compositor (D-350) — phases 1 and 2
 
-**Status:** phase 1 shipped 2026-09-18, opt-in (`renderer: "compositor"`).
-The old filter-graph path is still the default and is still present.
-**Decision:** `docs/08-decisions.md` D-350. **Bugs it supersedes:**
-B-228/B-229/B-230 (resource), B-201/B-208/B-218/B-223 (parity).
+**Status:** phase 1 (correctness + memory) and phase 2 (speed, §9) both shipped
+2026-09-18, opt-in (`renderer: "compositor"`). The old filter-graph path is
+still the default and is still present.
+**Decisions:** `docs/08-decisions.md` **D-350** (the architecture) and **D-351**
+(phase 2's parallelism, and why frame-level `par_iter` is the wrong shape here).
+**Bugs it supersedes:** B-228/B-229/B-230 (resource),
+B-201/B-208/B-218/B-223 (parity).
+
+Sections 1-8 are phase 1. **Section 9 is phase 2** — read §9.2 first if you are
+about to try to parallelise this loop.
 
 ---
 
@@ -296,3 +302,206 @@ every pixel in userspace, per frame.
 | `packages/editor/src/exportQueueStore.ts` | a job freezes its render plan alongside its argv |
 | `packages/editor/src/exportParityFixture.test.ts` | **new** — the fixture generator + staleness guard |
 | `mcp/server.py`, `mcp/schemas.py`, `crates/apelles-mcp/src/tools/edit.rs` | `renderer` on both MCP surfaces |
+
+---
+
+# 9. Phase 2 — speed (D-351, 2026-09-18)
+
+Phase 1 made the export *correct* and *cheap in memory*. It did not make it
+fast. This section is what phase 2 measured, what it changed, and — the part
+worth reading — **why the obvious parallelisation is the wrong one.**
+
+## 9.1 The starting point, measured
+
+The real project (`2026-09-12-c040-mgfx-recut`, ~79 clips, 3840×2160, 5,605
+frames / 233.5 s) rendered correctly at ~3.2 GB — but took **~5-6x the video's
+own runtime**, with `apelles` at **~22% CPU on a 10-logical-core machine**.
+
+`edit_render.rs`'s loop was a plain `for pos in 0..req.frames`. Where the time
+actually went, on the 20-clip / 1080p / 240-frame stress fixture:
+
+```
+total     33.16 s   (7.2 fps)
+decode    11.03 s   (33.3%, 480 calls, 23.0 ms/call)
+composite 22.12 s   (66.7%)
+```
+
+Two thirds compositing, all of it on one thread. That is the ~22%.
+
+## 9.2 Why `par_iter` over frame indices is the WRONG fix
+
+This is the finding, and it is not obvious: **frames are not independent**, even
+though each one's *picture* is a pure function of the document. The compositor
+reaches a process-global, order-dependent decoder:
+
+1. **`decode_pipe::PIPES` is one global `Mutex<PipePool>`, and it is held across
+   the blocking pipe read.** Concurrent `render_timeline_frame` calls serialise
+   on decode regardless — so frame-level parallelism buys almost nothing even
+   ignoring correctness.
+2. **`FramePipe::can_serve` is forward-only**, within `MAX_FORWARD_SKIP = 48`.
+   Anything else is a kill-and-respawn, measured at **248-337 ms** (median
+   723 ms on the owner's C040 footage). Frames arriving out of order thrash it.
+3. **`retain_pipe_slots` and `sync_prefetch` are declarative per frame** — each
+   call releases every pipe the *current* frame does not want. Two frames in
+   flight would each release the other's pipes, on every frame.
+
+So a naive `par_iter` here is not "slightly unsafe"; it is *slower*, and it
+fails silently — the picture stays correct while the decoders churn.
+
+**Round-robin across frames does not help either, and that is provable rather
+than empirical.** Hand worker `k` every Lth frame and it still has to *decode*
+every frame, because the pipe can only skip forward through the ones it does not
+need. Wall time is `N·d + N·c/L`, i.e. speedup `(d + c)/(d + c/L)` — **exactly**
+what parallelising the compositing alone achieves, while burning L× the decode
+work and L× the ffmpeg children. Contiguous segments genuinely do scale both
+terms, but need a whole segment of finished frames buffered (tens of GB at 4K)
+unless each segment gets its own encoder — see §9.5.
+
+## 9.3 What phase 2 did instead
+
+**Every per-pixel pass inside a frame, across the cores; frame order untouched.**
+Each of these writes each output pixel from inputs it does not itself write, so
+splitting by ROW changes the schedule and not one pixel's arithmetic:
+
+- `blend_layer_sampled` — D-217's fused crop/scale/round/blend fast path.
+- `image::imageops::overlay` → `overlay_parallel`, a re-spelling of the
+  library's own per-pixel `blend`, asserted **byte-identical** to it by
+  `overlay_parallel_matches_the_image_crate` so it cannot drift.
+- the corner-radius (D-344) and opacity alpha passes.
+- `apply_adjustment_to_canvas` (D-230) — now the row-parallel twin of
+  `grade_lut::apply_to_rgba`, which has always been parallel.
+- the RGB→RGBA widening every decoded frame pays (`to_rgba8_parallel`).
+
+Two non-parallel wins in the same pass:
+
+- **the base layer's `layer.clone()` is gone.** A full-frame layer with no crop,
+  resize, rounding, rotation or opacity — the base of every composition, every
+  frame — copied the whole canvas (33 MB at 4K) so that `overlay` could read the
+  copy. It is a `Cow` now; `to_mut()` still copies exactly when a pass really
+  will write.
+- **the encoder hand-off left the critical path.** The finished frame goes to a
+  writer thread over a `sync_channel(WRITE_AHEAD)`, so the pipe write, the
+  kernel buffer and the encoder's own latency overlap the next frame's
+  compositing.
+
+`rayon` is not a new dependency — it is already direct in the `apelles` crate
+and already this repo's pattern for pixel work (`lens_blur.rs`,
+`inpainting.rs`, `grade_lut`) — so there is no dependency `D-NNN` to write.
+
+### The bound on the hand-off, stated
+
+`WRITE_AHEAD = 4` frames. Each is one output-size RGBA canvas, so the extra
+resident memory this can *ever* cost is 4 × frame: **133 MB at 4K, 33 MB at
+1080p**. Deliberately small and deliberately a hard bound — B-229 and B-230 were
+both "a per-unit cost nobody bounded", and answering them with an unbounded
+frame queue one layer up would have been the same bug in a new place.
+
+## 9.4 The preview is excluded — and that is a correctness fix
+
+Parallelising at preview sizes **broke an existing test**,
+`playback_primes_the_upcoming_cut_and_a_scrub_does_not`. It was confirmed to be
+this change's fault the only way that can be confirmed: the same test was run on
+pristine `main` under *higher* machine load, where it passed.
+
+The mechanism is real and worth recording. A compositor taking all ten cores
+slows the `ffmpeg` decode **child** it is competing with → that inflates
+`decode_pipe::record_seek_cost`'s measured EWMA → which widens
+`prefetch_lead_secs` → so D-330's scheduler, correctly, primes more standby
+pipes than that fixture expects. No arithmetic is wrong anywhere in that chain.
+It is simply the export's optimisation reaching into **live playback** and
+changing how it schedules decoders, which is the trade CLAUDE.md's
+"performance, then stability" exists to forbid.
+
+So the passes go parallel only above `PARALLEL_PIXEL_MIN = 1024² px`. That is a
+boundary between two **callers**, not a tuned constant:
+
+| caller | largest frame it composites |
+|---|---|
+| live preview (`PreviewPane.tsx`, `PREVIEW_LONG_EDGE = 960`) | 960 × 960 = 921,600 px |
+| `PARALLEL_PIXEL_MIN` | **1,048,576 px** |
+| smallest real export | 1920 × 1080 = 2,073,600 px |
+
+**The live preview is byte- and thread-identical to before this change.**
+
+## 9.5 The numbers — and what they do NOT reach
+
+`cargo test -p apelles --lib chroma::edit_render::parity_tests::measure_render_throughput -- --ignored --nocapture`
+
+Absolute times track machine load, so the honest comparison is **one binary, two
+runs, back to back**, via `RAYON_NUM_THREADS` (1 = the pre-D-351 compositor):
+
+```
+session A   threads=1   42.05 s ·  5.7 fps   →   threads=10   32.10 s ·  7.5 fps   1.31x
+session B   threads=1   19.08 s · 12.6 fps   →   threads=10   14.79 s · 16.2 fps   1.29x
+```
+
+Against **pristine `main`**, both on a quiet machine (20 clips, 1080p, 240
+frames):
+
+```
+main      20.38 s   decode 6.40 s   composite 13.98 s
+D-351     14.79 s   decode 5.93 s   composite  8.86 s
+          -----------------------------------------------
+          overall 1.38x   ·   the compositing half 1.58x
+```
+
+**This does not reach the owner's "under 1x the video's runtime", and the reason
+is measured, not guessed:**
+
+- **~31% of the time is decode**, still one global-locked, forward-only
+  sequential pipe (§9.2). Nothing in this phase touched it.
+- **`image::imageops::resize` is still serial**, and it is the largest remaining
+  compositing term. It is the library's own separable two-pass filter;
+  splitting it by output band needs an input halo whose weight normalisation
+  `image` does not expose, so hand-rolling a bit-identical replacement is
+  precisely what CLAUDE.md's "check for an existing crate before hand-rolling"
+  rule says not to do. Back-solving Amdahl from 1.58x on 10 threads puts the
+  parallelised share of compositing at only **~41%** — the other ~59% is that
+  resize plus the crop copy.
+
+### Phase 3 — what would actually reach <1x
+
+**Contiguous-segment parallel rendering**: split the timeline into N contiguous
+segments, give each its own worker, its own decode-pipe lane, and its own
+encoder writing its own file; concatenate at the end. This is the standard
+segment-render-and-concat architecture, and unlike every alternative in §9.2 it
+scales **both** the decode and the composite term with the core count. It needs
+three things, none of them small and none of them done here:
+
+1. **Lane-scoped keys in `decode_pipe`'s global pool** — `(lane, PipeSlot)`
+   rather than `PipeSlot`, so `retain_pipe_slots`/`sync_prefetch` release only
+   their own worker's pipes. Live playback is lane 0 and keeps today's
+   behaviour exactly.
+2. **Releasing that pool's lock across the blocking read** (check the pipe out,
+   decode, check it back in, with a condvar so two callers for one key still
+   serialise). Without this, lanes serialise on decode and the rest is worth
+   nothing.
+3. **Per-segment encode + concat** in the argv `timelinePipeExport.ts` owns,
+   with the audio mux moving to the concat step. This is what removes the
+   whole-segment frame buffer that makes contiguous segments impossible today.
+
+Only (3) changes the TypeScript side; (1) and (2) are contained in
+`crates/apelles-media/src/decode_pipe.rs` and are behaviour-preserving for the
+single-threaded live-playback caller by construction.
+
+## 9.6 Tests added
+
+| test | what it pins |
+|---|---|
+| `the_piped_stream_carries_every_frame_in_timeline_order` | every frame reaches the encoder, once, in order — asserted losslessly (`-f rawvideo`, no codec) against what the compositor produced, because ffmpeg reads this pipe as headerless raw video where a swap is silent, not an error |
+| `overlay_parallel_matches_the_image_crate` | the parallel overlay IS `image`'s overlay, at four canvas/top pairs including partial and fully-outside overlaps, and at a size over the parallel threshold |
+| `to_rgba8_parallel_matches_the_image_crate` | same, for the RGB→RGBA widening |
+| `parallel_row_passes_match_their_serial_form` | `for_each_row_mut`'s parallel arm equals its serial arm on the same closure |
+| `the_parallel_compositor_is_deterministic_across_runs` | the row split cannot leak a scheduler into the picture — CLAUDE.md's "same doc + same frame ⇒ identical pixels", asserted on the composite path directly |
+
+Unchanged and still green: `render_path_matches_the_filter_graph_path_pixel_for_pixel`
+and `rendering_the_same_frame_twice_produces_identical_bytes` (phase 1's
+old-vs-new pixel parity and determinism), plus the whole `apelles` lib suite —
+**366 passed, 0 failed**.
+
+## 9.7 Files (phase 2)
+
+| file | what changed |
+|---|---|
+| `app/src-tauri/src/chroma/edit.rs` | `for_each_row_mut`, `to_rgba8_parallel`, `overlay_parallel`, `PARALLEL_PIXEL_MIN`; row-parallel `blend_layer_sampled` / corner-radius / opacity / `apply_adjustment_to_canvas`; the base layer's clone becomes a `Cow`; five new tests |
+| `app/src-tauri/src/chroma/edit_render.rs` | `WRITE_AHEAD`, the writer thread and its bounded channel; `measure_render_throughput`; `the_piped_stream_carries_every_frame_in_timeline_order` |

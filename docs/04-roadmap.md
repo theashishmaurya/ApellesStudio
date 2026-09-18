@@ -258,7 +258,37 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    erosion, on every frame) — plus a same-frame-twice determinism check. Measured at
    20 clips / 1080p: **peak RSS −18%** (1787 → 1463 MB) with the growth term removed
    structurally, **threads +49%** (100 → 149), which is a real remaining cost, see below.
-   **Phase 2 — not built:**
+   **Phase 2 — SPEED, partly SHIPPED (2026-09-18, D-351).** Real-world run of phase 1 on
+   the owner's own project was correct and memory-flat (~3.2 GB vs 38-56 GB) but took
+   **~5-6x the video's runtime at ~22% CPU on 10 cores**. Measured cause: the render loop
+   was sequential and **66.7% of its time was compositing, all single-threaded** (33.3%
+   decode). Shipped: every per-pixel compositing pass now runs across the cores via
+   `rayon` (`blend_layer_sampled`, a byte-identical parallel `overlay`, corner-radius,
+   opacity, `apply_adjustment_to_canvas`, the RGB→RGBA widening), the base layer's
+   per-frame whole-canvas `clone()` is gone (a `Cow`), and the encoder hand-off moved to a
+   writer thread behind a bounded `WRITE_AHEAD = 4` channel (a deliberate, stated memory
+   bound — 133 MB at 4K — so this does not reintroduce B-229/B-230's unbounded-per-unit
+   shape). **Measured 1.38x overall / 1.58x on the compositing half** (20 clips, 1080p:
+   20.38 s → 14.79 s), reproducible at 1.29-1.31x as a same-binary `RAYON_NUM_THREADS`
+   A/B. **The live preview is deliberately excluded and is byte- and thread-identical to
+   before** — parallelising at preview sizes measurably broke
+   `playback_primes_the_upcoming_cut_and_a_scrub_does_not` by starving the decode child
+   and widening D-330's prefetch lead, so the passes only go parallel above
+   `PARALLEL_PIXEL_MIN = 1024²` px, a line that sits between the preview's own 960-long-edge
+   cap and the smallest real export.
+   **This does NOT meet the owner's stated goal of "under 1x the video's runtime"**, and
+   §9.5 of the note says exactly why: ~31% of the time is still serial decode (one
+   global-locked, forward-only pipe) and `image::imageops::resize` is still serial.
+   **Phase 3, the thing that would reach <1x — contiguous-segment parallel rendering**
+   (N segments, each with its own worker, its own `decode_pipe` LANE and its own encoder,
+   concatenated at the end). Needs: lane-scoped keys in `decode_pipe`'s global pool;
+   releasing that pool's lock across the blocking read; per-segment encode + concat in
+   `timelinePipeExport.ts`'s argv. **Note for whoever picks this up: a naive `par_iter`
+   over frame indices is unsafe AND slower here** — `decode_pipe` holds one global mutex
+   across the blocking read, serves only forward targets within 48 frames, and releases
+   pipes declaratively per frame. Round-robin across frames is provably no better than
+   what already shipped. See `docs/notes/export-gpu-compositor.md` §9.2.
+   **Phase 2 — still not built:**
    - `speedOverrides`/`fitOverrides`/`freezeOverrides` (refused, not silently ignored, by
      the render path today — the live compositor has no notion of them);
    - capping `decode_pipe`'s per-pipe ffmpeg `-threads` the way B-230 capped the export's

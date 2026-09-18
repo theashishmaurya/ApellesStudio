@@ -71,6 +71,23 @@ pub struct TimelineRenderOutcome {
     pub stderr_tail: String,
 }
 
+/// How many finished frames may sit between the compositor and the encoder
+/// (D-351).
+///
+/// **A bound, chosen for memory, not a queue depth to tune.** Each buffered
+/// frame is one full output-size RGBA canvas — 33.2 MB at 3840×2160 — so this
+/// number times the frame size IS the extra resident memory this hand-off can
+/// ever cost: 133 MB at 4K, 33 MB at 1080p. Deliberately small: the only thing
+/// it has to cover is the encoder's jitter frame to frame, and B-229/B-230 were
+/// both "a per-unit cost nobody bounded", so a render path that answered them
+/// by growing an unbounded frame queue of its own would have reintroduced their
+/// exact shape one layer up.
+///
+/// Four rather than one because a `sync_channel(0)` rendezvous would put the
+/// encoder's latency straight back on the compositor's thread, which is the
+/// whole point of the hand-off.
+const WRITE_AHEAD: usize = 4;
+
 /// The **canvas** to composite into for an output of `out` pixels, given a
 /// composition of `comp` — and whether the finished canvas still needs a
 /// resize to reach `out`.
@@ -103,11 +120,19 @@ fn canvas_plan(comp: (u32, u32), out: (u32, u32)) -> (Option<u32>, bool) {
 /// Render `timeline` at `req.width`×`req.height` for `req.frames` frames and
 /// pipe it into the ffmpeg invocation `req.args` names.
 ///
-/// **Blocking, and deliberately synchronous** — one frame is composited, then
-/// written, then the next. Backpressure is just pipe flow control, exactly as
-/// `chroma::export`'s single-clip renderer has done since D-022: if the encoder
-/// falls behind, `write_all` blocks and no unbounded queue of 4K frames builds
-/// up in this process. That is the whole memory story of this path.
+/// **Blocking, and rendered in frame order** — frame `n` is composited before
+/// frame `n + 1` is started, because `decode_pipe`'s pipes are strictly
+/// sequential forward readers and asking one for a frame it has already passed
+/// costs a kill-and-respawn (248-337 ms measured). See
+/// [`WRITE_AHEAD`] and `docs/notes/export-gpu-compositor.md` §9 for why that
+/// makes a naive `par_iter` over frame indices the wrong shape here, and what
+/// IS parallel instead.
+///
+/// **Handing the finished frame off is not in that order-bound path**, though:
+/// it goes to a writer thread through a bounded channel, so the copy into the
+/// pipe, the kernel buffer and the encoder's own latency overlap the next
+/// frame's compositing instead of stalling it. Backpressure is the channel's
+/// bound — the memory story is [`WRITE_AHEAD`] frames, not an unbounded queue.
 pub fn render_timeline(
     timeline: &Timeline,
     settings: &ProjectSettings,
@@ -141,7 +166,25 @@ pub fn render_timeline(
     let blank: image::RgbaImage =
         image::ImageBuffer::from_pixel(out.0, out.1, image::Rgba([0, 0, 0, 255]));
 
-    let mut written = 0u64;
+    // D-351 — the writer. It owns `stdin` and does nothing but drain the
+    // channel in the order the compositor produced it, so **frame order on the
+    // wire is structural**: a `sync_channel` is FIFO and there is exactly one
+    // producer, so there is no reordering for a sort to undo. ffmpeg is reading
+    // this as a headerless `rawvideo` stream, where frame N is simply "the Nth
+    // `width * height * 4` bytes" — a swap would not error, it would silently
+    // emit a shuffled video, which is why the ordering guarantee wants to be a
+    // property of the structure rather than of a comparison somewhere.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(WRITE_AHEAD);
+    let writer = std::thread::spawn(move || -> Result<u64, std::io::Error> {
+        let mut n = 0u64;
+        for frame in rx {
+            stdin.write_all(&frame)?;
+            n += 1;
+        }
+        drop(stdin); // EOF → the encoder flushes and exits
+        Ok(n)
+    });
+
     let mut render_err: Option<String> = None;
     for pos in 0..req.frames {
         let frame = match edit::render_timeline_frame(
@@ -185,21 +228,31 @@ pub fn render_timeline(
                 break;
             }
         };
-        if let Err(e) = stdin.write_all(frame.as_raw()) {
-            render_err = Some(format!(
-                "write frame {pos} to encoder: {e} — {}",
-                tail(&stderr)
-            ));
+        if tx.send(frame.into_raw()).is_err() {
+            // The writer is gone, which only happens when its `write_all`
+            // failed — its own error is the real one, so take that below
+            // rather than reporting "the channel closed".
+            render_err = Some(format!("frame {pos}: encoder stopped reading"));
             break;
         }
-        written += 1;
     }
 
-    drop(stdin); // EOF → the encoder flushes and exits
+    drop(tx); // ends the writer's `for frame in rx`, which drops `stdin` → EOF
+    let written = match writer.join() {
+        Ok(Ok(n)) => n,
+        Ok(Err(e)) => {
+            let _ = child.wait();
+            return Err(format!("write to encoder: {e} — {}", tail(&stderr)));
+        }
+        Err(_) => {
+            let _ = child.wait();
+            return Err("the encoder writer thread panicked".to_string());
+        }
+    };
     let status = child.wait().map_err(|e| format!("wait for encoder: {e}"))?;
 
     if let Some(e) = render_err {
-        return Err(e);
+        return Err(format!("{e} — {}", tail(&stderr)));
     }
     if !status.success() {
         return Err(format!("encoder exited {status}: {}", tail(&stderr)));
@@ -381,6 +434,73 @@ mod parity_tests {
 
     fn ffmpeg_available() -> bool {
         have(&ffmpeg_bin()) && have("ffprobe")
+    }
+
+    /// **D-351's own number: how fast does this path actually render?**
+    ///
+    /// Renders the stress fixture straight on the compositor — no encoder, so
+    /// what it times is decode + composite and nothing else — and reports
+    /// frames per second. `#[ignore]`d for the same reason
+    /// [`measure_resource_use_against_the_filter_graph_path`] is: it samples a
+    /// live machine, so it is a MEASUREMENT to read, not a threshold to fail a
+    /// build on (a different core count is a different, equally correct
+    /// number — which is the whole point of scaling with the cores available).
+    ///
+    /// ```text
+    /// cargo test -p apelles --lib chroma::edit_render::parity_tests::measure_render_throughput -- --ignored --nocapture
+    /// ```
+    ///
+    /// **Run it against `RAYON_NUM_THREADS=1` to see D-351's own A/B**, on one
+    /// binary at one moment, which is the only comparison this machine's load
+    /// cannot distort:
+    ///
+    /// ```text
+    /// RAYON_NUM_THREADS=1 cargo test ... # the pre-D-351 compositor
+    /// ```
+    ///
+    /// The recorded runs are in `docs/notes/export-gpu-compositor.md` §9.
+    #[test]
+    #[ignore = "a live throughput measurement, not a pass/fail assertion — see the doc comment"]
+    fn measure_render_throughput() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let fx = load_fixture();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path();
+        generate_stress_media(&fx, dir).expect("generate stress media");
+        let st = &fx.stress;
+        let (w, h) = (st.width, st.height);
+        let timeline = localise_timeline(&st.timeline, dir);
+        let settings = ProjectSettings {
+            width: Some(w),
+            height: Some(h),
+            fps: Some(fx.fps),
+            color_space: None,
+        };
+        // Warm the probe/grade caches so frame 0 is not charged for them.
+        let _ = edit::render_timeline_frame(&timeline, &settings, 0, Some(w), FrameIntent::Single);
+
+        let started = Instant::now();
+        for pos in 0..st.pipe_frames {
+            edit::render_timeline_frame(&timeline, &settings, pos, Some(w), FrameIntent::Single)
+                .unwrap_or_else(|e| panic!("render frame {pos}: {e}"));
+        }
+        let total = started.elapsed().as_secs_f64();
+        eprintln!(
+            "\n=== D-351 render throughput: {} clips, {w}x{h}, {} frames ===\n\
+             {total:.2} s  ·  {:.1} fps  ·  {:.1} ms/frame  \
+             (rayon threads: {})\n",
+            st.clips,
+            st.pipe_frames,
+            st.pipe_frames as f64 / total,
+            total * 1000.0 / st.pipe_frames as f64,
+            rayon::current_num_threads(),
+        );
     }
 
     #[derive(serde::Deserialize)]
@@ -775,6 +895,88 @@ mod parity_tests {
                 once.to_rgba8().into_raw(),
                 twice.to_rgba8().into_raw(),
                 "frame {n} rendered two different pictures from one document"
+            );
+        }
+    }
+
+    /// **D-351 — every frame reaches the encoder, once, in timeline order.**
+    ///
+    /// The hand-off to the encoder is a bounded channel and a writer thread now,
+    /// so the frames are no longer written by the same thread that composited
+    /// them. ffmpeg reads that pipe as headerless `rawvideo`, where frame N is
+    /// nothing but "the Nth `w * h * 4` bytes" — a dropped, duplicated or
+    /// swapped frame would not raise an error anywhere, it would silently ship a
+    /// shuffled video. So the ordering is asserted directly rather than trusted:
+    /// the render's own output is taken **losslessly** (`-f rawvideo`, no codec
+    /// in the loop) and every frame of it is compared byte-for-byte against what
+    /// the compositor produces for that position, in order.
+    ///
+    /// Byte equality, not a tolerance — with no encoder between them the two
+    /// must be the identical buffer, which also makes a one-frame offset
+    /// (the failure a per-frame *marker* would catch) impossible to pass: the
+    /// fixture's picture genuinely differs frame to frame, since its pip slides.
+    #[test]
+    fn the_piped_stream_carries_every_frame_in_timeline_order() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let fx = load_fixture();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path();
+        generate_media(&fx, dir).expect("generate fixture media");
+        let timeline = localise_timeline(&fx.timeline, dir);
+        let settings = settings_for(&fx);
+        let (w, h) = (fx.comp_width, fx.comp_height);
+
+        // A lossless sink: rgba in, rgba out, no filter and no codec, so the
+        // file IS the byte stream this path wrote.
+        let raw = dir.join("ordered.raw");
+        let mut args = pipe_input_args(w, h, fx.fps);
+        args.extend([
+            "-f".into(),
+            "rawvideo".into(),
+            "-pix_fmt".into(),
+            "rgba".into(),
+        ]);
+        args.push(raw.to_string_lossy().into_owned());
+
+        let req = TimelineRenderRequest {
+            args,
+            width: w,
+            height: h,
+            frames: fx.pipe_frames,
+        };
+        let outcome = render_timeline(&timeline, &settings, &req).expect("the render path");
+        assert_eq!(
+            outcome.frames, fx.pipe_frames,
+            "the render reported a different frame count than it was asked for"
+        );
+
+        let bytes = std::fs::read(&raw).expect("read the raw stream back");
+        let frame_len = w as usize * h as usize * 4;
+        assert_eq!(
+            bytes.len(),
+            frame_len * fx.pipe_frames as usize,
+            "the piped stream is not exactly {} whole frames — a frame was dropped or duplicated",
+            fx.pipe_frames
+        );
+
+        for pos in 0..fx.pipe_frames {
+            let want =
+                edit::render_timeline_frame(&timeline, &settings, pos, None, FrameIntent::Single)
+                    .expect("render for comparison")
+                    .expect("a visible frame")
+                    .to_rgba8()
+                    .into_raw();
+            let got = &bytes[pos as usize * frame_len..(pos as usize + 1) * frame_len];
+            assert!(
+                want == got,
+                "frame {pos} of the piped stream is not the frame the compositor produced for \
+                 position {pos} — the writer reordered, dropped or duplicated a frame"
             );
         }
     }

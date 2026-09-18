@@ -114,6 +114,152 @@ use super::{caption_render, decode_pipe, grade_lut, project, text};
 pub(crate) use apelles_media::probe::probe_cached;
 
 // --------------------------------------------------------------------------- //
+// D-351 — the compositor's per-pixel passes, across the machine's cores.
+//
+// Measured first, not assumed: a headless export of the 20-clip/1080p stress
+// fixture spent **66.7% of its wall time compositing and 33.3% decoding**
+// (33.16 s for 240 frames, 7.2 fps), with every one of those composite passes
+// running on ONE thread while the other nine sat idle — which is exactly the
+// "~22% CPU on a 10-core machine" the owner saw on the real project. See
+// `docs/notes/export-gpu-compositor.md` §9.
+//
+// Every pass parallelised here writes each output pixel from inputs it does not
+// itself write, so splitting the work by ROW is not an approximation: each
+// pixel's arithmetic is the identical expression it was before, evaluated in an
+// unspecified thread order that cannot reach it. That is what keeps CLAUDE.md's
+// "same doc + same frame ⇒ identical pixels" invariant true by construction
+// rather than by hoping — `rendering_the_same_frame_twice_produces_identical_
+// bytes` and the old-vs-new pixel-parity test both still pass unchanged, and
+// `parallel_row_passes_match_their_serial_form` asserts the equivalence
+// directly on the two hot loops.
+//
+// What is NOT parallelised here, deliberately: `image::imageops::resize`. It is
+// the library's own separable two-pass filter, and splitting it by output band
+// would need an input halo whose weight normalisation `image` does not expose —
+// a hand-rolled "identical" resize is exactly the kind of thing CLAUDE.md says
+// to reach for a library for, not to re-derive. It is parallelised ACROSS
+// layers instead (`prepare_layer_paint`), and remains this path's largest
+// single-threaded term; see the design note for what closes it.
+// --------------------------------------------------------------------------- //
+
+/// Below this many pixels a pass runs serially — and the number is **not** a
+/// rayon split-overhead threshold, which is what it looks like. It is the line
+/// between the LIVE PREVIEW's frames and an EXPORT's, and it is there because
+/// those two want opposite things from the CPU.
+///
+/// **Measured, not assumed** (this was a real regression, caught by an existing
+/// test before it shipped). Parallelising the compositor at preview sizes made
+/// `playback_primes_the_upcoming_cut_and_a_scrub_does_not` fail: the compositor
+/// taking every core slows the `ffmpeg` decode CHILD it is competing with, which
+/// inflates `decode_pipe::record_seek_cost`'s measured EWMA, which widens
+/// `prefetch_lead_secs`, which primes more standby pipes than that test's
+/// fixture expects. Nothing there is wrong arithmetic — it is D-330's scheduler
+/// correctly reacting to a genuinely slower seek — but it is the export's
+/// optimisation reaching into live playback and changing how it schedules
+/// decoders, which is precisely the trade CLAUDE.md says not to make
+/// ("performance, then stability" is about the UI feeling snappy; a preview that
+/// starves its own decoder to compositing threads is the opposite).
+///
+/// So: an export composites on every core, and the preview composites exactly as
+/// it did before this change, byte for byte and thread for thread.
+///
+/// **Why this value separates them exactly.** `PreviewPane.tsx`'s
+/// `PREVIEW_LONG_EDGE` is 960, and the preview is the only caller that caps the
+/// canvas that way — so the largest frame live playback can ever composite is
+/// 960×960, i.e. 921,600 px, even for a square composition. The smallest frame a
+/// real export composites is 1920×1080, i.e. 2,073,600 px. 1024² sits between
+/// them with room on both sides, so this is a boundary between two callers
+/// rather than a tuned constant. (A deliberately tiny export — the 640×360
+/// parity fixture — therefore composites serially, which is correct: it is
+/// smaller than a preview frame.)
+const PARALLEL_PIXEL_MIN: u64 = 1024 * 1024;
+
+/// Run `f(y, row)` over every row of `buf`, in parallel when there is enough
+/// work to pay for it. `stride` is one row in bytes; `buf.len()` must be a whole
+/// number of rows.
+///
+/// The serial arm is not a fallback for correctness — both arms run the same
+/// closure over the same disjoint rows — it is purely the small-image case.
+fn for_each_row_mut(buf: &mut [u8], stride: usize, f: impl Fn(usize, &mut [u8]) + Send + Sync) {
+    debug_assert!(stride > 0 && buf.len().is_multiple_of(stride));
+    if (buf.len() / stride.max(1)) as u64 * (stride as u64 / 4) < PARALLEL_PIXEL_MIN {
+        buf.chunks_mut(stride)
+            .enumerate()
+            .for_each(|(y, r)| f(y, r));
+    } else {
+        use rayon::prelude::*;
+        buf.par_chunks_mut(stride)
+            .enumerate()
+            .for_each(|(y, r)| f(y, r));
+    }
+}
+
+/// `DynamicImage::to_rgba8`, but the 8-bit-RGB case — which is every frame
+/// `decode_pipe` produces — converts across cores instead of on one.
+///
+/// A 4K frame is 8.3 M pixels; at two video layers a frame that is ~16 M
+/// channel-widening writes per frame charged to a single thread for no reason.
+/// Every other variant defers to `image`'s own conversion, unchanged.
+fn to_rgba8_parallel(img: DynamicImage) -> image::RgbaImage {
+    let DynamicImage::ImageRgb8(src) = img else {
+        return img.to_rgba8();
+    };
+    let (w, h) = src.dimensions();
+    let mut out: image::RgbaImage = image::ImageBuffer::new(w, h);
+    let src_raw = src.as_raw();
+    let src_stride = w as usize * 3;
+    let dst_stride = w as usize * 4;
+    for_each_row_mut(out.as_mut(), dst_stride, |y, row| {
+        let s = &src_raw[y * src_stride..y * src_stride + src_stride];
+        for (d, p) in row
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(s.as_chunks::<3>().0)
+        {
+            *d = [p[0], p[1], p[2], 255];
+        }
+    });
+    out
+}
+
+/// `image::imageops::overlay`, across cores.
+///
+/// Deliberately a re-spelling of that function's own body rather than a new
+/// blend model: it is `dst.blend(&src)` over the intersection of the two
+/// images, which is a dozen lines and is the ONLY thing standing between this
+/// pass and the row split. The alternative — keeping `image`'s serial call —
+/// leaves a full-canvas alpha blend per layer per frame on one thread.
+/// `overlay_parallel_matches_the_image_crate` asserts the two produce identical
+/// buffers, so this cannot drift from the library it mirrors.
+fn overlay_parallel(canvas: &mut image::RgbaImage, top: &image::RgbaImage, ox: i64, oy: i64) {
+    use image::Pixel as _;
+    let (cw, ch) = canvas.dimensions();
+    let (tw, th) = top.dimensions();
+    let x0 = ox.max(0);
+    let y0 = oy.max(0);
+    let x1 = (ox + tw as i64).min(cw as i64);
+    let y1 = (oy + th as i64).min(ch as i64);
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let stride = cw as usize * 4;
+    let t_stride = tw as usize * 4;
+    let t_raw = top.as_raw();
+    let band = &mut canvas.as_mut()[y0 as usize * stride..y1 as usize * stride];
+    for_each_row_mut(band, stride, |ri, row| {
+        let py = y0 + ri as i64;
+        let t_row = (py - oy) as usize * t_stride;
+        for px in x0..x1 {
+            let to = t_row + (px - ox) as usize * 4;
+            let src = image::Rgba([t_raw[to], t_raw[to + 1], t_raw[to + 2], t_raw[to + 3]]);
+            let o = px as usize * 4;
+            image::Rgba::from_slice_mut(&mut row[o..o + 4]).blend(&src);
+        }
+    });
+}
+
+// --------------------------------------------------------------------------- //
 // D-292 — a clip's source may be a STILL IMAGE, not just moving footage.
 //
 // The two questions the preview asks of every picture layer — "how big is this
@@ -176,7 +322,7 @@ fn decode_clip_rgba(
     }
     let info = probe_cached(&path)?;
     decode_pipe::playback_frame_scaled(slot, &path, &info, source_frame, scale)
-        .map(|img| std::sync::Arc::new(img.to_rgba8()))
+        .map(|img| std::sync::Arc::new(to_rgba8_parallel(img)))
         .map_err(|e| format!("decode {source_path} @ src frame {source_frame}: {e}"))
 }
 
@@ -2260,12 +2406,19 @@ fn apply_adjustment_to_canvas(
     canvas: &mut image::RgbaImage,
     ops: &apelles_timeline::AdjustmentOps,
 ) {
-    for px in canvas.pixels_mut() {
-        let [r, g, b] = ops.apply_rgb8([px[0], px[1], px[2]]);
-        px[0] = r;
-        px[1] = g;
-        px[2] = b;
-    }
+    // D-351 — by row, like `grade_lut::apply_to_rgba` (which this pass is the
+    // adjustment-clip twin of) has always done. A full-canvas colour operator on
+    // one thread is a 4K frame's worth of per-pixel maths per adjustment clip
+    // per frame.
+    let stride = canvas.width() as usize * 4;
+    for_each_row_mut(canvas.as_mut(), stride, |_, row| {
+        for px in row.as_chunks_mut::<4>().0 {
+            let [r, g, b] = ops.apply_rgb8([px[0], px[1], px[2]]);
+            px[0] = r;
+            px[1] = g;
+            px[2] = b;
+        }
+    });
 }
 
 /// The **kept** (un-cropped) region of a `w`×`h` layer under `t`'s normalised
@@ -2511,17 +2664,29 @@ pub(super) fn composite_layer_onto(
     // agree there too. It is also strictly less work than the old path: no
     // full-layer clone, no per-pixel alpha pass, and the resize input is the
     // crop rather than the whole frame.
-    let mut work: image::RgbaImage = if cropped {
+    // D-351 — `Cow`, not an unconditional clone. A full-frame layer with no
+    // crop, no resize, no rounding, no rotation and full opacity — the base
+    // layer of every composition, on every frame — reached `layer.clone()` here
+    // and then had `overlay` read the copy: a whole canvas memcpy per frame
+    // (33 MB at 4K) whose result is byte-identical to what it was copied from.
+    // `to_mut()` below still copies exactly when one of those passes really is
+    // going to write, so nothing that mutates `work` changed.
+    let mut work: std::borrow::Cow<'_, image::RgbaImage> = if cropped {
         let sub = image::imageops::crop_imm(layer, cx0, cy0, crop_w, crop_h).to_image();
-        if (sw, sh) != (crop_w, crop_h) {
+        std::borrow::Cow::Owned(if (sw, sh) != (crop_w, crop_h) {
             image::imageops::resize(&sub, sw, sh, image::imageops::FilterType::Triangle)
         } else {
             sub
-        }
+        })
     } else if (sw, sh) != (lw, lh) {
-        image::imageops::resize(layer, sw, sh, image::imageops::FilterType::Triangle)
+        std::borrow::Cow::Owned(image::imageops::resize(
+            layer,
+            sw,
+            sh,
+            image::imageops::FilterType::Triangle,
+        ))
     } else {
-        layer.clone()
+        std::borrow::Cow::Borrowed(layer)
     };
 
     // D-344 — round the placement box's corners, here: `work` is now exactly
@@ -2534,18 +2699,26 @@ pub(super) fn composite_layer_onto(
     // with the crop mask above it exactly the way `opacity` below composes with
     // both: a cropped-away pixel is already alpha 0 and must not be un-hidden.
     if t.corner_radius > 0.0 {
+        let work = work.to_mut();
         let (ww, wh) = work.dimensions();
         let (fw, fh) = (ww as f64, wh as f64);
-        for (x, y, px) in work.enumerate_pixels_mut() {
-            let cov = corner_coverage(x as f64, y as f64, fw, fh, t.corner_radius);
-            if cov < 1.0 {
-                px[3] = (px[3] as f32 * cov).round().clamp(0.0, 255.0) as u8;
+        let radius = t.corner_radius;
+        let stride = ww as usize * 4;
+        // D-351 — the same per-pixel coverage multiply, by row. `corner_coverage`
+        // is a pure function of `(x, y, w, h, r)`, so a row depends on nothing
+        // another row writes.
+        for_each_row_mut(work.as_mut(), stride, |y, row| {
+            for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                let cov = corner_coverage(x as f64, y as f64, fw, fh, radius);
+                if cov < 1.0 {
+                    px[3] = (px[3] as f32 * cov).round().clamp(0.0, 255.0) as u8;
+                }
             }
-        }
+        });
     }
 
     if t.rotation != 0.0 {
-        let rgba32f = DynamicImage::ImageRgba8(work).to_rgba32f();
+        let rgba32f = DynamicImage::ImageRgba8(work.into_owned()).to_rgba32f();
         let rotated = imageproc::geometric_transformations::rotate_about_center(
             &rgba32f,
             (t.rotation as f32) * std::f32::consts::PI / 180.0,
@@ -2554,13 +2727,17 @@ pub(super) fn composite_layer_onto(
                 0.0f32, 0.0, 0.0, 0.0,
             ])),
         );
-        work = DynamicImage::ImageRgba32F(rotated).to_rgba8();
+        work = std::borrow::Cow::Owned(DynamicImage::ImageRgba32F(rotated).to_rgba8());
     }
 
     if opacity < 1.0 {
-        for p in work.pixels_mut() {
-            p[3] = (p[3] as f32 * opacity).round().clamp(0.0, 255.0) as u8;
-        }
+        let work = work.to_mut();
+        let stride = work.width() as usize * 4;
+        for_each_row_mut(work.as_mut(), stride, |_, row| {
+            for p in row.as_chunks_mut::<4>().0 {
+                p[3] = (p[3] as f32 * opacity).round().clamp(0.0, 255.0) as u8;
+            }
+        });
     }
 
     let (cw, ch) = canvas.dimensions();
@@ -2578,7 +2755,7 @@ pub(super) fn composite_layer_onto(
     // layer's size.
     let x = t.position_x * cw as f64;
     let y = t.position_y * ch as f64;
-    image::imageops::overlay(canvas, &work, x.round() as i64, y.round() as i64);
+    overlay_parallel(canvas, &work, x.round() as i64, y.round() as i64);
 }
 
 /// Paint a layer onto `canvas` at `dest_size`, scaling it by direct bilinear
@@ -2695,7 +2872,14 @@ fn blend_layer_sampled(
         })
         .collect();
 
-    for py in vy0..vy1 {
+    // D-351 — one destination row per unit of work. Every tap this loop reads is
+    // in `layer` (immutable) and every pixel it writes is on its own row, so the
+    // split changes the schedule and nothing else: each output pixel is the same
+    // expression of the same inputs it was before.
+    let canvas_stride = cw as usize * 4;
+    let band = &mut canvas.as_mut()[vy0 as usize * canvas_stride..vy1 as usize * canvas_stride];
+    for_each_row_mut(band, canvas_stride, |ri, crow| {
+        let py = vy0 + ri as i64;
         let v = ((py - oy) as f64 + 0.5) * ry - 0.5 + cy0 as f64;
         let vy = v.floor();
         let fy = (v - vy) as f32;
@@ -2742,14 +2926,15 @@ fn blend_layer_sampled(
                 out[2].round().clamp(0.0, 255.0) as u8,
                 a,
             ]);
-            let dst = canvas.get_pixel_mut(px as u32, py as u32);
+            let o = px as usize * 4;
+            let dst = image::Rgba::from_slice_mut(&mut crow[o..o + 4]);
             if a == 255 {
                 *dst = sample; // an opaque source-over is a plain replace
             } else {
                 dst.blend(&sample);
             }
         }
-    }
+    });
 }
 
 #[cfg(test)]
@@ -2759,6 +2944,147 @@ mod composite_tests {
 
     fn flat(w: u32, h: u32, px: [u8; 4]) -> image::RgbaImage {
         ImageBuffer::from_pixel(w, h, Rgba(px))
+    }
+
+    /// A deterministic, NON-flat test image — flat colours would let a wrong
+    /// pixel index pass every comparison below, which is precisely the class of
+    /// mistake a row split can make.
+    fn noisy(w: u32, h: u32, seed: u32) -> image::RgbaImage {
+        ImageBuffer::from_fn(w, h, |x, y| {
+            let v = |k: u32| {
+                ((x.wrapping_mul(2654435761)
+                    .wrapping_add(y.wrapping_mul(40503)))
+                    ^ seed.wrapping_mul(k + 1)) as u8
+            };
+            Rgba([v(1), v(2), v(3), v(4)])
+        })
+    }
+
+    /// **D-351 — the parallel overlay is the `image` crate's overlay.**
+    ///
+    /// `overlay_parallel` exists only to put `image::imageops::overlay`'s own
+    /// per-pixel blend on more than one thread, so the thing that has to stay
+    /// true is not "it looks right" but "it is byte-identical to the function it
+    /// replaced" — including at every partial overlap, which is where an index
+    /// error hides.
+    #[test]
+    fn overlay_parallel_matches_the_image_crate() {
+        // The last case is deliberately over `PARALLEL_PIXEL_MIN` so this
+        // exercises the PARALLEL arm as well as the serial one — the small
+        // cases alone would only ever compare `overlay_parallel`'s serial
+        // fallback against `image`, which is the half that cannot be wrong.
+        for (cw, ch, tw, th) in [
+            (64u32, 48u32, 32u32, 24u32),
+            (301, 199, 512, 400),
+            (8, 8, 8, 8),
+            (1920, 1080, 1280, 700),
+        ] {
+            for (ox, oy) in [
+                (0i64, 0i64),
+                (7, 5),
+                (-9, -13),
+                (cw as i64 - 3, 2),
+                (2, ch as i64 + 4),
+            ] {
+                let base = noisy(cw, ch, 11);
+                let top = noisy(tw, th, 29);
+                let mut want = base.clone();
+                image::imageops::overlay(&mut want, &top, ox, oy);
+                let mut got = base.clone();
+                overlay_parallel(&mut got, &top, ox, oy);
+                assert_eq!(
+                    want, got,
+                    "overlay_parallel diverged at canvas {cw}x{ch}, top {tw}x{th}, origin ({ox},{oy})"
+                );
+            }
+        }
+    }
+
+    /// **D-351 — the row split is a schedule change, not a maths change.**
+    ///
+    /// `for_each_row_mut` has a serial arm and a parallel arm chosen by size
+    /// alone. This drives the same closure through both over an image big
+    /// enough to take the parallel arm and asserts the buffers are equal —
+    /// so if the parallel arm ever mis-indexes a row, the two disagree here
+    /// rather than in an exported video.
+    #[test]
+    fn parallel_row_passes_match_their_serial_form() {
+        let (w, h) = (1600u32, 900u32); // 1.44 Mpx — comfortably over PARALLEL_PIXEL_MIN
+        assert!(
+            (w as u64) * (h as u64) >= PARALLEL_PIXEL_MIN,
+            "this test must exercise the PARALLEL arm to mean anything"
+        );
+        let stride = w as usize * 4;
+        let pass = |y: usize, row: &mut [u8]| {
+            for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                px[0] = px[0].wrapping_add(x as u8);
+                px[3] = ((px[3] as f32) * 0.5 + y as f32).round().clamp(0.0, 255.0) as u8;
+            }
+        };
+        let src = noisy(w, h, 7);
+        let mut serial = src.clone();
+        serial
+            .as_mut()
+            .chunks_mut(stride)
+            .enumerate()
+            .for_each(|(y, r)| pass(y, r));
+        let mut parallel = src.clone();
+        for_each_row_mut(parallel.as_mut(), stride, pass);
+        assert_eq!(
+            serial, parallel,
+            "the parallel row arm is not the serial one"
+        );
+    }
+
+    /// **D-351 — the parallel RGB→RGBA widening is `to_rgba8`.**
+    #[test]
+    fn to_rgba8_parallel_matches_the_image_crate() {
+        for (w, h) in [(333u32, 277u32), (2, 2), (1920, 1080)] {
+            let rgb: image::RgbImage =
+                ImageBuffer::from_fn(w, h, |x, y| image::Rgb([x as u8, y as u8, (x ^ y) as u8]));
+            let want = DynamicImage::ImageRgb8(rgb.clone()).to_rgba8();
+            let got = to_rgba8_parallel(DynamicImage::ImageRgb8(rgb));
+            assert_eq!(want, got, "to_rgba8_parallel diverged at {w}x{h}");
+        }
+    }
+
+    /// **D-351 — the compositor is a pure function of its inputs, run twice.**
+    ///
+    /// The row split hands unspecified rows to unspecified threads, so the one
+    /// thing a scheduler could in principle leak into the picture is a
+    /// *different answer on a second run*. CLAUDE.md makes that a blocker
+    /// ("same doc + same frame ⇒ identical pixels"), so it is asserted directly
+    /// on the two passes that now split, rather than only end-to-end.
+    #[test]
+    fn the_parallel_compositor_is_deterministic_across_runs() {
+        // Export-sized on purpose: at a PREVIEW size every pass below takes the
+        // serial arm and this would assert nothing about the parallel one.
+        let layer = noisy(1800, 1400, 3);
+        let t = ClipTransform {
+            opacity: 0.6,
+            position_x: 0.1,
+            position_y: 0.05,
+            scale: 1.0,
+            box_width: Some(0.5),
+            box_height: Some(0.5),
+            rotation: 0.0,
+            crop_left: 0.1,
+            crop_top: 0.05,
+            crop_right: 0.0,
+            crop_bottom: 0.0,
+            corner_radius: 18.0,
+        };
+        let natural = natural_of(&layer);
+        let once = {
+            let mut c = flat(1920, 1080, [0, 0, 0, 255]);
+            composite_layer_onto(&mut c, &layer, &t, natural);
+            c
+        };
+        for _ in 0..3 {
+            let mut c = flat(1920, 1080, [0, 0, 0, 255]);
+            composite_layer_onto(&mut c, &layer, &t, natural);
+            assert_eq!(once, c, "the compositor produced two different pictures");
+        }
     }
 
     /// D-136 — a layer whose natural composition footprint is exactly its own
