@@ -34735,3 +34735,122 @@ spot-checking.
   finding. And there is no whole-track sweep for the dark-region tool: the sweep case is
   served by `editor_detect_retakes`, which scans every clip it groups.
 
+
+---
+
+## D-357 — `ResolveAt` also reports how long the timeline is, so a play session can tell a gap from the end
+
+**Date:** 2026-09-19. Fixing **B-192**, filed as a known gap by B-190/D-323's
+own session rather than reported live.
+
+### Context
+
+`apelles_media::audio` deliberately knows nothing about a timeline. Its one
+window onto one is `ResolveAt`, which was `Fn(u64) -> Result<Vec<AudioSourceSpec>>`
+— a frame goes in, the sources active *at that frame* come back, and that is
+all. B-111 made `run_session` call it periodically so a clip starting later is
+opened when its moment comes; D-323 made it call it again, unscheduled, the
+instant every open source runs dry, so a butted cut cannot lose the race
+between "exhausted" and "re-resolved."
+
+That closure cannot answer the one question the terminal condition actually
+needs. A playhead sitting in a **genuine, intentional silence between two
+clips** and a playhead sitting **past the last clip on the timeline** produce
+the identical answer: no sources here. `run_session` ended the session for both,
+so a timeline with a real gap played the first clip and never the second.
+
+### Options
+
+1. **A second closure**, `Fn(u64) -> bool`, beside `ResolveAt`. Rejected: two
+   timeline walks per re-resolve, and two things that must agree about the same
+   timeline at the same instant but are free to drift.
+2. **Report the exact frame at which the timeline's AUDIO ends.** The honest
+   answer to the literal question, and rejected on cost: "does this clip have an
+   audio stream" is a probe per clip, and this closure runs on a 10 Hz schedule
+   for the life of every play session.
+3. **A bounded "keep going for N more seconds after running dry."** Rejected as
+   exactly the guess this file forbids — it is wrong for any gap longer than N
+   and wastes a session for every gap shorter.
+4. **Widen `ResolveAt`'s return to carry the timeline's own length.** ← chosen.
+
+### The choice
+
+`ResolveAt` now returns `ResolvedAudio { sources, timeline_end_frame }`.
+`timeline_end_frame` is the timeline's plain length —
+`apelles_timeline::Timeline::duration()`, the longest track, exclusive like
+`Clip::end_frame_at` — read from the same manifest read that already produced
+the fps (`chroma::edit::timeline_fps_and_end_frame`, new), so the resolver costs
+no extra I/O. It is reported on **every** call rather than once at session start,
+so a clip appended while the timeline plays extends the session playing it.
+
+Deliberately the timeline's length and not "where the audio ends" (option 2).
+Overstating it costs only mixed silence — which is bit-identical to what the
+session's own idle path produces, and which the device drains the same way.
+Understating it is what B-192 is.
+
+The terminal condition is now `session_is_over(all_done, current_frame,
+timeline_end_frame)`, a pure function: everything exhausted **and** the playhead
+at or past the timeline's end. Inside a gap the loop keeps going and mixes the
+silence that IS the correct output there — `mix_chunk` over an emptied
+`OpenSources` is a full chunk of zeros, which is what keeps the clock advancing
+so the scheduled re-resolve reaches the clip after the gap.
+
+### D-280's stake in this, which is the reason it is a decision and not a patch
+
+D-280's WSOLA tail flush runs *after* the `'mix` loop and **its only "no more
+input is coming" signal is that the loop exited.** A terminal condition that
+could stay false forever would not merely leave a session idling — it would
+silently stop the flush firing and drop the last ~12 ms of every session's
+audio, with nothing to notice it. So `session_is_over` is written to be
+*guaranteed*-terminating rather than merely usually-right: `timeline_end_frame`
+is a fixed number for a fixed timeline and `current_frame` only advances, so the
+condition is reached in bounded time from anywhere inside any gap. Both
+directions of the exhaustion/frame-clock race are harmless under that — noticing
+exhaustion late ends the session at once, noticing it early costs at most a chunk
+or two of extra mixed silence, which the stretch stage consumes as ordinary input
+and which therefore pushes the real audio *out* of it rather than stranding it.
+`the_terminal_condition_is_reached_from_anywhere_inside_a_gap` and
+`a_speed_ramped_tail_at_the_real_end_still_reaches_d280s_flush` pin both halves.
+
+### `advance_mix`, and why the loop body moved
+
+`run_session` opens a real `cpal` device on its own thread and cannot be unit
+tested, so the decision above would have been testable only as a copy of itself.
+One iteration of its mix loop — resolve, decide, retire, mix — is now
+`advance_mix`, returning `Ok(None)` for "the session is over." Everything that
+genuinely needs the device (ring buffer, backpressure, the D-280 stretch stage,
+the generation checks) stayed in `run_session`, so the split lands exactly on
+D-280's own timeline/real-time seam.
+
+One behaviour change came out of writing it: the forced re-resolve no longer
+runs a **second** time in an iteration where the scheduled one already ran at the
+same frame. It would return the identical answer, and inside a gap `all_done` is
+true on every iteration (≈47/s), which would have turned a timeline walk plus a
+probe-cache lookup per track into a hot loop for the length of the silence.
+
+### Tests
+
+`cargo test -p apelles-media` 203/203, `cargo test -p apelles --lib` green.
+New, in `crates/apelles-media/src/audio.rs`:
+
+- **A minimal gap-timeline harness** (`GapTimeline`/`GapClip`/`drive_mix`) — the
+  crate had none, and could not have: every existing test either drives a pure
+  helper or opens a single source, and B-192 needs a `ResolveAt` that answers
+  differently at different frames. It produces the same shape
+  `chroma::audio::resolve_sources_at` does (per-clip in-points, an out-point in
+  `duration_secs`, a `clip_id`, real D-242 speed segments) and drives the **real**
+  `advance_mix`, not a re-implementation.
+- `a_gap_in_the_middle_of_the_timeline_does_not_end_the_session` — clip A
+  (0–1 s), a real one-second silence, clip B (2–3 s): A audible, the gap exactly
+  `0.0`, **B audible**, session ends at 3.0 s.
+- `without_the_timelines_extent_a_gap_ends_the_session_which_is_the_bug` — the
+  same timeline with `timeline_end_frame: 0` (all the old closure could say)
+  dies at ~1.0 s and never reaches B. The fix is pinned by something that fails
+  without it, not only by something that passes with it.
+- `the_genuine_end_of_the_timeline_still_ends_the_session`,
+  `the_terminal_condition_separates_a_gap_from_the_end_of_the_timeline` (the
+  four-row truth table), `mixing_an_empty_source_set_is_a_full_chunk_of_silence`.
+- `a_speed_ramped_tail_at_the_real_end_still_reaches_d280s_flush` — a clip with a
+  real 2× D-242 ramp running to the genuine end, previewed at a 2× D-280 rate:
+  the session ends, the ramped clip is audible right up to it, the stretch stage
+  emitted ~input/rate frames, and `flush()` still hands back a non-empty tail.

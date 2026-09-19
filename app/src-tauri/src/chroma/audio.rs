@@ -38,7 +38,7 @@
 use std::path::PathBuf;
 
 use apelles_media::audio::{
-    AudioSourceSpec, AudioSpeedSegment, DuckEnvelope, FadeEnvelope, LevelEnvelope,
+    AudioSourceSpec, AudioSpeedSegment, DuckEnvelope, FadeEnvelope, LevelEnvelope, ResolvedAudio,
 };
 use apelles_media::scrub::ScrubSource;
 
@@ -171,6 +171,35 @@ pub fn chroma_audio_scrub_end(seq: u64) {
     apelles_media::scrub::end(seq);
 }
 
+/// A count of **TIMELINE** frames (the difference of two timeline-space frame
+/// numbers, e.g. `Clip::end_frame_at(fps) - playhead`), converted to real
+/// elapsed seconds at the timeline's own rate — never a source file's.
+///
+/// **B-041.** `resolve_sources_at`'s `remaining_frames` below used to be
+/// handed to `VideoInfo::frame_to_secs`, which divides by the SOURCE's own
+/// probed `fps()`. That is correct for a genuinely source-space frame count
+/// (like `source_frame`, a few lines away, which really is measured in the
+/// file's own native rate) but wrong for `remaining_frames`: it is the
+/// difference of two TIMELINE-space values, so "N of them" means "N /
+/// (timeline fps) real seconds" by construction, regardless of what rate the
+/// source file happens to report. The two rates usually agree closely enough
+/// that this was invisible (a project's timeline fps is commonly set to match
+/// its dominant clip's own native rate) — until the source has no REAL native
+/// rate to agree with at all: an audio-only file's `VideoInfo::fps()` is
+/// [`apelles_media::video::probe`]'s nominal `24/1` "there is no frame rate to
+/// measure" placeholder (see that function's own doc), which only coincides
+/// with the timeline's real rate when the project happens to be 24fps. On any
+/// other project rate this silently played an audio-track clip's tail for the
+/// wrong number of real seconds — not the crash B-041 was originally filed
+/// against (`apelles_media::video::probe`'s own audio-only branch, added by
+/// B-089/D-292, already stopped that), but the "an audio clip's frame
+/// positions have to be interpreted against the TIMELINE's rate rather than a
+/// source video's" semantics gap that bug's own investigation named as the
+/// real fix still owed.
+fn timeline_frame_span_to_secs(frames: u64, fps: f64) -> f64 {
+    if fps > 0.0 { frames as f64 / fps } else { 0.0 }
+}
+
 /// Resolve `frame` on the active timeline to every currently-active audio
 /// source at that instant — the video track's own embedded audio (D-050's
 /// original, still-default behaviour, unchanged: always at unity gain,
@@ -211,43 +240,28 @@ pub fn chroma_audio_scrub_end(seq: u64) {
 /// across two calls at different frames — this function has no idea that
 /// matters, it just resolves `frame` fresh every time, exactly as if it were
 /// the only call.
-
-/// A count of **TIMELINE** frames (the difference of two timeline-space frame
-/// numbers, e.g. `Clip::end_frame_at(fps) - playhead`), converted to real
-/// elapsed seconds at the timeline's own rate — never a source file's.
 ///
-/// **B-041.** `resolve_sources_at`'s `remaining_frames` below used to be
-/// handed to `VideoInfo::frame_to_secs`, which divides by the SOURCE's own
-/// probed `fps()`. That is correct for a genuinely source-space frame count
-/// (like `source_frame`, a few lines away, which really is measured in the
-/// file's own native rate) but wrong for `remaining_frames`: it is the
-/// difference of two TIMELINE-space values, so "N of them" means "N /
-/// (timeline fps) real seconds" by construction, regardless of what rate the
-/// source file happens to report. The two rates usually agree closely enough
-/// that this was invisible (a project's timeline fps is commonly set to match
-/// its dominant clip's own native rate) — until the source has no REAL native
-/// rate to agree with at all: an audio-only file's `VideoInfo::fps()` is
-/// [`apelles_media::video::probe`]'s nominal `24/1` "there is no frame rate to
-/// measure" placeholder (see that function's own doc), which only coincides
-/// with the timeline's real rate when the project happens to be 24fps. On any
-/// other project rate this silently played an audio-track clip's tail for the
-/// wrong number of real seconds — not the crash B-041 was originally filed
-/// against (`apelles_media::video::probe`'s own audio-only branch, added by
-/// B-089/D-292, already stopped that), but the "an audio clip's frame
-/// positions have to be interpreted against the TIMELINE's rate rather than a
-/// source video's" semantics gap that bug's own investigation named as the
-/// real fix still owed.
-fn timeline_frame_span_to_secs(frames: u64, fps: f64) -> f64 {
-    if fps > 0.0 { frames as f64 / fps } else { 0.0 }
-}
-
-fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
+/// **B-192 — it also reports how long the timeline is**
+/// (`ResolvedAudio::timeline_end_frame`), which is the one thing the mixer
+/// cannot work out for itself and the only thing that separates "the playhead
+/// is in a genuine silent gap between two clips, keep playing" from "the
+/// playhead is past the last clip, stop". Reported on every call rather than
+/// once at session start, so a clip appended while the timeline plays extends
+/// the session playing it. See `edit::timeline_fps_and_end_frame` for why it
+/// is the timeline's plain length rather than an exact "where does the audio
+/// end".
+fn resolve_sources_at(frame: u64) -> Result<ResolvedAudio, String> {
     let mut sources: Vec<AudioSourceSpec> = Vec::new();
     // B-079 — the active timeline's own rate, for every `end_frame_at(fps)`
     // out-point below (fps-naive `end_frame()` before this fix). A cheap
     // extra manifest read (see `timeline_fps`'s own doc) rather than
     // widening `resolve_video_position`/`resolve_audio_track_positions`.
-    let fps = super::edit::timeline_fps()?;
+    //
+    // B-192 — and, from the same read, how long the timeline is. See
+    // `timeline_fps_and_end_frame` for why it is the timeline's plain length
+    // rather than an exact "where does the audio end", and `ResolvedAudio`
+    // for what the mixer does with it.
+    let (fps, timeline_end_frame) = super::edit::timeline_fps_and_end_frame()?;
 
     if let Some((track_index, clip, source_frame, info)) =
         super::edit::resolve_video_position(frame)?
@@ -381,7 +395,10 @@ fn resolve_sources_at(frame: u64) -> Result<Vec<AudioSourceSpec>, String> {
         });
     }
 
-    Ok(sources)
+    Ok(ResolvedAudio {
+        sources,
+        timeline_end_frame,
+    })
 }
 
 /// Seek-and-play in one call: resolve `start_frame` via
@@ -424,11 +441,11 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64, rate: f64) -> Result<(), St
     };
 
     let fps = super::edit::timeline_fps()?;
-    let sources = resolve_sources_at(start_frame)?;
+    let resolved = resolve_sources_at(start_frame)?;
 
     apelles_media::audio::start(
         session,
-        sources,
+        resolved.sources,
         start_frame,
         fps,
         clamp_playback_rate(rate),
@@ -1694,16 +1711,22 @@ mod tests {
         let result = resolve_sources_at(0);
         super::super::state::set_project(None);
 
-        let sources = result.expect(
+        let resolved = result.expect(
             "an audio-only clip on a genuine Audio track must resolve, not error \
              — this is B-041's own originally reported crash",
         );
         assert_eq!(
-            sources.len(),
+            resolved.sources.len(),
             1,
             "the audio-track clip should be the only resolved source (the empty video track contributes nothing)"
         );
-        let src = &sources[0];
+        // B-192 — and the same resolve reports how far the timeline runs, which
+        // is what lets a play session tell a gap from the end of the timeline.
+        assert_eq!(
+            resolved.timeline_end_frame, CLIP_FRAMES as u64,
+            "the timeline's own length in frames, from `Timeline::duration`"
+        );
+        let src = &resolved.sources[0];
         assert_eq!(src.start_secs, 0.0);
         let got = src
             .duration_secs

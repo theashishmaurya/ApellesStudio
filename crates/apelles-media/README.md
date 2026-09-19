@@ -77,6 +77,14 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
   envelope evaluates (`apelles_types::fade_gain`) is in **L0** for the same
   reason: it is shared with `apelles-timeline`'s compositor-side fade without
   this crate depending on `apelles-timeline`.
+  **The one thing a play session is told *about* a timeline rather than about a
+  source is its length** (`audio::ResolvedAudio::timeline_end_frame`, D-357) —
+  a single frame number the app reports alongside each re-resolve, uninterpreted
+  here beyond one comparison. It exists because "the playhead is in a real
+  silence between two clips" and "the playhead is past the last clip" are
+  indistinguishable from inside the mixer and must not be (B-192); it is not a
+  crack in the boundary above, since the answer still comes *from* the layer
+  that owns the timeline rather than being worked out here.
 - **Touch the GPU, the grade, or `AppState`.**
 
 ## The `test-support` feature

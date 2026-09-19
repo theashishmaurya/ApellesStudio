@@ -630,7 +630,23 @@ pub(crate) fn resolve_audio_track_positions(pos: u64) -> Result<Vec<AudioTrackPo
 /// (no media probing) re-read of the manifest rather than widening either of
 /// those signatures for a single extra `f64`.
 pub(crate) fn timeline_fps() -> Result<f64, String> {
-    Ok(resolve_timeline(false)?.fps())
+    Ok(timeline_fps_and_end_frame()?.0)
+}
+
+/// B-192 — [`timeline_fps`] plus the active timeline's total length in frames
+/// ([`apelles_timeline::Timeline::duration`], the longest track), from **one**
+/// manifest read rather than two.
+///
+/// The length is what `chroma::audio::resolve_sources_at` reports to
+/// `apelles_media::audio` as `ResolvedAudio::timeline_end_frame`, which is how
+/// a play session tells a genuine silent gap between two clips ("keep going")
+/// from the end of the timeline ("stop"). It is the timeline's plain length,
+/// not "where the audio ends": the exact answer would need an audio-stream
+/// probe per clip on that closure's 10 Hz schedule, and overstating it costs
+/// only mixed silence the session's own idle path would have produced anyway.
+pub(crate) fn timeline_fps_and_end_frame() -> Result<(f64, u64), String> {
+    let timeline = resolve_timeline(false)?;
+    Ok((timeline.fps(), timeline.duration().max(0) as u64))
 }
 
 /// D-149 — one track's ducking configuration resolved against the active

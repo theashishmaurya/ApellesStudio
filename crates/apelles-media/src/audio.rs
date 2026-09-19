@@ -60,7 +60,11 @@
 //!   whatever was playing at `start_frame` has ended, is picked up when its
 //!   own moment comes rather than only at the next Play/seek. Each source
 //!   still stops dead at its own clip's out-point rather than running on
-//!   into the rest of the file (B-048) — that part is unchanged.
+//!   into the rest of the file (B-048) — that part is unchanged. **A session
+//!   that runs dry inside a genuine gap keeps running** (B-192): the same
+//!   closure reports how far the timeline itself goes
+//!   ([`ResolvedAudio::timeline_end_frame`]), so silence between two clips is
+//!   mixed through rather than mistaken for the end of the timeline.
 //!
 //! ## Waveform extraction (D-051 — the mature timeline UI pass)
 //!
@@ -1852,11 +1856,53 @@ pub fn begin_play(seq: u64) -> Option<PlaySession> {
     })
 }
 
-/// A source's stable identity, so [`run_session`]'s periodic re-resolve
-/// (B-111) can tell "this clip is still playing" from "this clip just
-/// started" across two calls to `resolve_at` at different frames — never
-/// interpreted, see [`AudioSourceSpec::clip_id`].
-pub type ResolveAt = Box<dyn Fn(u64) -> Result<Vec<AudioSourceSpec>, String> + Send>;
+/// What one [`ResolveAt`] call answers: which sources are active **at** the
+/// frame it was asked about, and how far the timeline runs **past** it.
+///
+/// **B-192 / D-357 — the second field is the whole reason this is a struct.**
+/// `ResolveAt` used to be `frame -> Vec<AudioSourceSpec>` and nothing more,
+/// which left [`run_session`] unable to tell two situations apart that look
+/// identical from inside the mixer: the playhead sitting in a genuine, silent
+/// gap *between* two clips (where more audio is coming and the session must
+/// keep running), and the playhead past the last clip on the timeline (where
+/// nothing is coming and the session must end). Both answer "no sources here."
+/// One extra number from the side that actually has a timeline separates them
+/// — see [`session_is_over`], which is the only thing that reads it.
+#[derive(Default)]
+pub struct ResolvedAudio {
+    /// The sources active at the resolved frame — exactly what this closure
+    /// used to return on its own, unchanged in meaning.
+    pub sources: Vec<AudioSourceSpec>,
+    /// The first timeline frame at or after which the timeline is **over** —
+    /// exclusive, the same convention as
+    /// `apelles_timeline::Clip::end_frame_at`, so a timeline whose last clip
+    /// ends at frame 300 reports `300` and a position of 300 is already past
+    /// it. `0` means "nothing on this timeline at all," which reads correctly
+    /// through the `<` comparison in [`session_is_over`] without a special
+    /// case.
+    ///
+    /// It is a property of the whole timeline rather than of the frame asked
+    /// about, and is reported on **every** call rather than once at session
+    /// start deliberately: the timeline can be edited while it plays, and a
+    /// clip appended mid-session must extend the session that is playing it.
+    ///
+    /// This crate never interprets it beyond the one comparison in
+    /// [`session_is_over`]. It is emphatically not "where the audio ends" —
+    /// answering that exactly would mean probing every clip for an audio
+    /// stream on a 10 Hz schedule (see `chroma::audio::resolve_sources_at`,
+    /// which is where the number comes from and why it is the timeline's
+    /// plain length). Overstating it costs only silence that the idle path
+    /// below would have produced anyway; understating it would resurrect
+    /// B-192.
+    pub timeline_end_frame: u64,
+}
+
+/// Resolve the timeline at one frame. A source's stable identity across two
+/// calls at different frames is [`AudioSourceSpec::clip_id`], so
+/// [`run_session`]'s periodic re-resolve (B-111) can tell "this clip is still
+/// playing" from "this clip just started" — never interpreted, see that
+/// field. B-192 widened the return from a bare `Vec` to [`ResolvedAudio`].
+pub type ResolveAt = Box<dyn Fn(u64) -> Result<ResolvedAudio, String> + Send>;
 
 /// Start a fresh session that decodes and mixes `sources` together (see
 /// [`run_session`]) under the transport claimed by [`begin_play`].
@@ -3150,38 +3196,83 @@ fn newly_active_sources<'a>(
         .collect()
 }
 
-/// Re-resolve the timeline at whatever frame `pos_frames` names and open every
-/// clip that has become active since the last resolve — the single step
-/// [`run_session`] runs both on [`RESOLVE_INTERVAL_SECS`] schedule and,
-/// unscheduled, the instant every open source runs dry (B-190). Returns how
-/// many sources it opened.
+/// The TIMELINE frame a session that began at `start_frame` has reached after
+/// producing `pos_frames` output sample-frames.
 ///
+/// **B-192 — extracted so the re-resolve and the terminal condition cannot ask
+/// about two different frames.** It was inlined in [`resolve_and_open_new`]
+/// while the resolve was the only thing that needed it; [`session_is_over`]
+/// now needs the same number for the same iteration, and computing it twice
+/// from two copies of the formula is exactly the kind of drift that makes an
+/// off-by-one at the end of a timeline un-diagnosable.
+///
+/// D-280 note: `pos_frames` is in TIMELINE samples (the playback-rate stage
+/// sits downstream of everything that touches it), so this is rate-independent
+/// by construction and needs no `rate` argument.
+fn timeline_frame_at(start_frame: u64, fps: f64, out_rate: u32, pos_frames: u64) -> u64 {
+    let elapsed_secs = pos_frames as f64 / out_rate.max(1) as f64;
+    start_frame + (elapsed_secs * fps).round() as u64
+}
+
+/// **B-192 — [`run_session`]'s terminal condition, as a pure function**, so the
+/// one decision that can silently cost a user the second half of their
+/// timeline (or, the other way, D-280's tail flush) is testable without a real
+/// `cpal` device.
+///
+/// `all_done` is [`OpenSources::all_done`] *after* a resolve taken at
+/// `current_frame`, i.e. "the timeline was asked, right here, right now, and
+/// still has nothing playing." Before B-192 that alone ended the session, which
+/// is wrong inside a genuine gap between two clips: silence is the correct
+/// output there, and the clip after the gap is still coming.
+///
+/// **Why this is guaranteed to terminate, which is D-280's whole stake in it.**
+/// The time-stretch tail flush fires *after* the `'mix` loop and its only "no
+/// more input is coming" signal is that the loop exited — so a condition that
+/// could stay `false` forever would not merely leave a session idling, it would
+/// silently stop flushing and drop the last ~12 ms of every session's audio.
+/// It cannot: `timeline_end_frame` is a fixed number for a fixed timeline and
+/// `current_frame` advances by a whole chunk every iteration, so the
+/// `current_frame >= timeline_end_frame` below is reached in bounded time no
+/// matter where in a gap the sources ran dry. The two ways exhaustion and the
+/// frame clock can disagree are both harmless under that: noticing exhaustion a hair *late*
+/// (past the end frame) ends the session immediately, and noticing it a hair
+/// *early* costs at most a chunk or two of extra mixed silence — which the
+/// stretch stage consumes as ordinary input and which therefore pushes the real
+/// audio *out* of it rather than stranding it.
+fn session_is_over(all_done: bool, current_frame: u64, timeline_end_frame: u64) -> bool {
+    all_done && current_frame >= timeline_end_frame
+}
+
+/// Re-resolve the timeline at `current_frame` and open every clip that has
+/// become active since the last resolve — the single step [`run_session`] runs
+/// both on [`RESOLVE_INTERVAL_SECS`] schedule and, unscheduled, the instant
+/// every open source runs dry (B-190).
+///
+/// Returns what the timeline said its own end frame is
+/// ([`ResolvedAudio::timeline_end_frame`]), or `None` if the resolve failed.
 /// A resolve failure is logged and treated as "nothing new", never fatal: the
 /// timeline being momentarily unreadable must not take down a session that is
-/// mid-playback.
+/// mid-playback — and, B-192, must not be mistaken for "the timeline is over"
+/// either, which is why the caller keeps the last answer it did get rather
+/// than defaulting to one.
 fn resolve_and_open_new(
     resolve_at: &ResolveAt,
     open: &mut OpenSources,
-    start_frame: u64,
-    fps: f64,
+    current_frame: u64,
     out_rate: u32,
     out_channels: usize,
     pos_frames: u64,
-) -> usize {
-    let elapsed_secs = pos_frames as f64 / out_rate.max(1) as f64;
-    let current_frame = start_frame + (elapsed_secs * fps).round() as u64;
-    let fresh = match resolve_at(current_frame) {
+) -> Option<u64> {
+    let resolved = match resolve_at(current_frame) {
         Ok(f) => f,
         Err(e) => {
             log::warn!("chroma audio: timeline re-resolve failed: {e}");
-            return 0;
+            return None;
         }
     };
-    let mut opened = 0;
-    for spec in newly_active_sources(&fresh, &open.ever_opened) {
+    for spec in newly_active_sources(&resolved.sources, &open.ever_opened) {
         match open.open_and_track(spec, out_rate, out_channels, pos_frames) {
             Ok(()) => {
-                opened += 1;
                 log::debug!(
                     "chroma audio: re-resolve opened a newly-active source at timeline frame {current_frame}: {}",
                     spec.path.display()
@@ -3192,7 +3283,7 @@ fn resolve_and_open_new(
             }
         }
     }
-    opened
+    Some(resolved.timeline_end_frame)
 }
 
 /// Every per-source vec [`run_session`] keeps index-parallel, in one place.
@@ -3413,9 +3504,12 @@ fn discard_samples(
 /// single-source behaviour when `sources.len() == 1` — see that function's
 /// doc for why this keeps the pre-D-057 single-track case byte-identical),
 /// and writes the mixed window into the ring buffer the `cpal` callback
-/// drains — until either every source is exhausted (then idles, keeping the
-/// device stream open — silent — until told to stop) or `my_gen` is
-/// superseded.
+/// drains — until either the **timeline** is over (B-192: every source
+/// exhausted *and* the playhead past `ResolvedAudio::timeline_end_frame`, at
+/// which point it idles, keeping the device stream open — silent — until told
+/// to stop) or `my_gen` is superseded. Every source running dry short of that
+/// is a gap, not an ending, and is mixed through as silence; see
+/// [`session_is_over`].
 ///
 /// **If `sources[0]` (the baseline) fails to open, that's a real error** —
 /// same contract this function always had for its one source. **If any later
@@ -3626,85 +3720,34 @@ fn run_session(
     // frame before any time has passed would just rediscover them all as
     // "already open" for free — correct, but pointless work every session.
     let resolve_interval_frames = (RESOLVE_INTERVAL_SECS * out_rate as f64).round() as u64;
-    let mut next_resolve_at_pos_frames: u64 = resolve_interval_frames;
+
+    let cfg = MixConfig {
+        start_frame,
+        fps,
+        out_rate,
+        out_channels,
+        chunk_len,
+        resolve_interval_frames,
+    };
+    let mut clock = MixClock {
+        pos_frames,
+        next_resolve_at_pos_frames: resolve_interval_frames,
+        // B-192 — see the field's own doc: `0` until the first resolve sets it,
+        // which is the pre-B-192 "nothing playing means stop" behaviour.
+        timeline_end_frame: 0,
+    };
 
     'mix: loop {
         if !is_current(my_gen) {
             break 'mix;
         }
 
-        // B-111 — re-resolve the timeline BEFORE the exhaustion check below,
-        // not after: a session whose only source has just ended must still
-        // get the chance to discover a LATER clip before this loop decides
-        // there is nothing left and falls through to the idle wait. This is
-        // the fix's whole point — without it, every source opened here would
-        // still be frozen at whatever `resolve_at` returned for `start_frame`.
-        if pos_frames >= next_resolve_at_pos_frames {
-            next_resolve_at_pos_frames = pos_frames + resolve_interval_frames;
-            resolve_and_open_new(
-                &resolve_at,
-                &mut open,
-                start_frame,
-                fps,
-                out_rate,
-                out_channels,
-                pos_frames,
-            );
-        }
-
-        // **B-190 / D-323 — exhaustion is a question for the timeline, not a
-        // verdict on its own.**
-        //
-        // B-111 put the scheduled resolve above this check so a just-ended
-        // source could still discover a later clip — but the two run on
-        // different clocks. The resolve fires every `RESOLVE_INTERVAL_SECS`
-        // (≈100 ms, ≈4.7 iterations of this loop at 1024 frames / 48 kHz);
-        // exhaustion is noticed the moment it happens. So for roughly four
-        // iterations out of every five, "every source is done" was being
-        // decided against a resolve taken up to 100 ms of timeline ago — one
-        // that legitimately did not yet know about the clip starting at this
-        // very frame.
-        //
-        // On one long clip that never mattered: nothing exhausts mid-playback,
-        // so this check only ever fired at the real end of the media. On a
-        // ripple-deleted timeline (D-318/D-321) it is the steady state — every
-        // one of 60-96 butted clips exhausts exactly as the next begins — and
-        // the first boundary to lose that race ended the session for good,
-        // leaving the device open and silent until the user hit stop and play
-        // again. That is the reported dropout.
-        //
-        // So: ask again, right now, at this exact position, and only believe
-        // the answer if the timeline agrees there is nothing left.
-        if open.all_done() {
-            next_resolve_at_pos_frames = pos_frames + resolve_interval_frames;
-            resolve_and_open_new(
-                &resolve_at,
-                &mut open,
-                start_frame,
-                fps,
-                out_rate,
-                out_channels,
-                pos_frames,
-            );
-            if open.all_done() {
-                break 'mix; // genuinely nothing left — fall through to the idle wait below
-            }
-        }
-
-        // D-323 — retire what the fresh resolve has just made redundant, so a
-        // long recut timeline holds one open decoder per *playing* clip rather
-        // than one per clip played so far. Only ever drops sources that can no
-        // longer contribute anything but silence, so the mix is unchanged.
-        let retired = open.retire_exhausted();
-        if retired > 0 {
-            log::trace!(
-                "chroma audio: retired {retired} exhausted source(s), {} still open",
-                open.decoded.len()
-            );
-        }
-
-        let mixed = mix_chunk(&mut open, chunk_len, out_channels, pos_frames, out_rate)?;
-        pos_frames += (mixed.len() / out_channels.max(1)) as u64;
+        // B-192 — the timeline side of D-280's seam, in one place: resolve,
+        // decide whether the session is over, retire, mix. `None` is the only
+        // way this loop ends other than being superseded.
+        let Some(mixed) = advance_mix(&mut open, &resolve_at, &mut clock, &cfg)? else {
+            break 'mix;
+        };
         // D-280 — timeline audio becomes real-time audio here, and only here.
         // At 4x this is a quarter as many samples per mixed chunk, which is
         // exactly what makes the backpressure loop below pull the timeline four
@@ -3731,6 +3774,12 @@ fn run_session(
     // knows no more input is coming. Without this the last ~12 ms of a session's
     // audio would be dropped rather than faded out. No-op at 1x, and skipped
     // outright if we were superseded (that session must make no sound at all).
+    //
+    // **B-192 — exiting the loop above is still this stage's ONLY "no more
+    // input" signal**, which is the whole reason `session_is_over` is written
+    // to be guaranteed-terminating rather than merely usually-right: a gap that
+    // never ended would not just idle, it would silently stop this flush from
+    // ever firing. See that function's doc.
     if let Some(st) = stretch.as_mut().filter(|_| is_current(my_gen)) {
         let tail = st.flush();
         if !tail.is_empty() {
@@ -3746,6 +3795,172 @@ fn run_session(
         thread::sleep(Duration::from_millis(50));
     }
     Ok(()) // `stream` drops here, closing the device
+}
+
+/// **B-192 — everything [`advance_mix`] needs that is fixed for the life of a
+/// session.** Bundled rather than passed as six arguments so the two things
+/// that genuinely change between iterations ([`MixClock`]) are visible as
+/// exactly that.
+struct MixConfig {
+    start_frame: u64,
+    fps: f64,
+    out_rate: u32,
+    out_channels: usize,
+    chunk_len: usize,
+    /// B-111 — how many OUTPUT sample-frames between re-resolves; see
+    /// [`RESOLVE_INTERVAL_SECS`].
+    resolve_interval_frames: u64,
+}
+
+/// **B-192 — the state [`advance_mix`] carries from one iteration to the
+/// next.**
+struct MixClock {
+    /// D-147 — output sample-frames this session has produced so far, and the
+    /// position every fade envelope is evaluated at. TIMELINE samples: D-280's
+    /// rate stage sits downstream of everything that reads this.
+    pos_frames: u64,
+    /// B-111 — the `pos_frames` at which the next scheduled re-resolve is due.
+    next_resolve_at_pos_frames: u64,
+    /// **B-192 — the last thing a SUCCESSFUL resolve said about how far the
+    /// timeline runs** ([`ResolvedAudio::timeline_end_frame`]). Kept across
+    /// iterations rather than re-defaulted, so a transient resolve failure in
+    /// the middle of a gap cannot be mistaken for "the timeline is over" and
+    /// end the session. `0` until the first resolve, which is the pre-B-192
+    /// behaviour ("nothing playing means stop") and is only ever read after the
+    /// forced resolve in [`advance_mix`] has had its chance to set it.
+    timeline_end_frame: u64,
+}
+
+/// **One iteration of [`run_session`]'s mix loop, from the TIMELINE side of
+/// D-280's seam** — resolve, decide whether the session is over, retire what
+/// the resolve made redundant, mix one chunk. `Ok(None)` is "the session is
+/// over", the one thing that ends the loop short of being superseded.
+///
+/// **B-192 extracted this from the loop body.** It was inline while its only
+/// decision was "is everything exhausted"; it now holds the judgement that
+/// separates a genuine mid-timeline silence from the end of the timeline, and
+/// that judgement can cost a user the second half of their edit (or, via the
+/// tail flush the caller runs when this returns `None`, the last ~12 ms of
+/// every session). [`run_session`] itself cannot be unit-tested — it opens a
+/// real `cpal` device on the calling thread — so leaving the decision inside it
+/// meant testing a copy of the logic instead of the logic. Everything that
+/// genuinely needs the device (the ring buffer, backpressure, the D-280 stretch
+/// stage, the generation checks) stays in the caller.
+fn advance_mix(
+    open: &mut OpenSources,
+    resolve_at: &ResolveAt,
+    clock: &mut MixClock,
+    cfg: &MixConfig,
+) -> Result<Option<Vec<f32>>, String> {
+    // B-192 — computed once, used by both the resolve and the terminal
+    // condition; see `timeline_frame_at`.
+    let current_frame = timeline_frame_at(cfg.start_frame, cfg.fps, cfg.out_rate, clock.pos_frames);
+
+    // B-111 — re-resolve the timeline BEFORE the exhaustion check below,
+    // not after: a session whose only source has just ended must still
+    // get the chance to discover a LATER clip before this loop decides
+    // there is nothing left and falls through to the idle wait. This is
+    // the fix's whole point — without it, every source opened here would
+    // still be frozen at whatever `resolve_at` returned for `start_frame`.
+    let mut resolved_here = false;
+    if clock.pos_frames >= clock.next_resolve_at_pos_frames {
+        clock.next_resolve_at_pos_frames = clock.pos_frames + cfg.resolve_interval_frames;
+        if let Some(end) = resolve_and_open_new(
+            resolve_at,
+            open,
+            current_frame,
+            cfg.out_rate,
+            cfg.out_channels,
+            clock.pos_frames,
+        ) {
+            clock.timeline_end_frame = end;
+        }
+        resolved_here = true;
+    }
+
+    // **B-190 / D-323 — exhaustion is a question for the timeline, not a
+    // verdict on its own.**
+    //
+    // B-111 put the scheduled resolve above this check so a just-ended
+    // source could still discover a later clip — but the two run on
+    // different clocks. The resolve fires every `RESOLVE_INTERVAL_SECS`
+    // (≈100 ms, ≈4.7 iterations of this loop at 1024 frames / 48 kHz);
+    // exhaustion is noticed the moment it happens. So for roughly four
+    // iterations out of every five, "every source is done" was being
+    // decided against a resolve taken up to 100 ms of timeline ago — one
+    // that legitimately did not yet know about the clip starting at this
+    // very frame.
+    //
+    // On one long clip that never mattered: nothing exhausts mid-playback,
+    // so this check only ever fired at the real end of the media. On a
+    // ripple-deleted timeline (D-318/D-321) it is the steady state — every
+    // one of 60-96 butted clips exhausts exactly as the next begins — and
+    // the first boundary to lose that race ended the session for good,
+    // leaving the device open and silent until the user hit stop and play
+    // again. That is the reported dropout.
+    //
+    // So: ask again, right now, at this exact position, and only believe
+    // the answer if the timeline agrees there is nothing left.
+    //
+    // **B-192 — and "nothing playing here" is still not "the timeline is
+    // over."** A real, intentional silence between two clips answers this
+    // resolve exactly the way the end of the timeline does; the only thing
+    // that separates them is `ResolvedAudio::timeline_end_frame`, which is
+    // why `resolve_at` reports it. Inside a gap the loop keeps going,
+    // mixing the silence that IS the correct output there (an emptied
+    // `OpenSources` mixes a full chunk of it — see `mix_sources`), and the
+    // scheduled resolve above opens the clip after the gap when its own
+    // moment comes, exactly as it does for any other late clip.
+    if open.all_done() {
+        // B-192 — not a second time in the same iteration: a scheduled
+        // resolve that already ran at this very `current_frame` would
+        // return the identical answer, and inside a gap `all_done` is true
+        // on EVERY iteration (≈47/s at 1024 frames / 48 kHz), which would
+        // turn a timeline walk plus a probe-cache lookup per track into a
+        // hot loop for the length of the silence.
+        if !resolved_here {
+            clock.next_resolve_at_pos_frames = clock.pos_frames + cfg.resolve_interval_frames;
+            if let Some(end) = resolve_and_open_new(
+                resolve_at,
+                open,
+                current_frame,
+                cfg.out_rate,
+                cfg.out_channels,
+                clock.pos_frames,
+            ) {
+                clock.timeline_end_frame = end;
+            }
+        }
+        if session_is_over(open.all_done(), current_frame, clock.timeline_end_frame) {
+            return Ok(None); // genuinely nothing left
+        }
+    }
+
+    // D-323 — retire what the fresh resolve has just made redundant, so a
+    // long recut timeline holds one open decoder per *playing* clip rather
+    // than one per clip played so far. Only ever drops sources that can no
+    // longer contribute anything but silence, so the mix is unchanged.
+    // B-192 — inside a gap this empties the set outright, which is fine and
+    // is the point: `mix_chunk` over no sources is a full chunk of silence
+    // (see `mix_sources`), so the clock keeps advancing and the scheduled
+    // resolve above keeps getting its chance to find the next clip.
+    let retired = open.retire_exhausted();
+    if retired > 0 {
+        log::trace!(
+            "chroma audio: retired {retired} exhausted source(s), {} still open",
+            open.decoded.len()
+        );
+    }
+
+    let mixed = mix_chunk(
+        open,
+        cfg.chunk_len,
+        cfg.out_channels,
+        clock.pos_frames,
+        cfg.out_rate,
+    )?;
+    clock.pos_frames += (mixed.len() / cfg.out_channels.max(1)) as u64;
+    Ok(Some(mixed))
 }
 
 /// Build the `cpal` output stream for whichever `sample_format` the device's
@@ -4079,6 +4294,509 @@ mod tests {
         let fresh = vec![spec_with_id("a"), spec_with_id("b")];
         let open = HashSet::from(["a".to_string(), "b".to_string()]);
         assert!(newly_active_sources(&fresh, &open).is_empty());
+    }
+
+    // --- B-192: a timeline with a real gap in the middle --------------------
+
+    /// **B-192 — the terminal condition's truth table.** The four rows are the
+    /// four situations `run_session` can be in when every open source has run
+    /// dry, and getting any of them wrong is audible: row 2 is the bug (a real
+    /// silence between two clips read as the end of the timeline), row 3 is
+    /// what must keep working (the genuine end, which is also D-280's tail
+    /// flush), and row 1 is the invariant that a clip overhanging whatever the
+    /// timeline reported still gets to finish.
+    #[test]
+    fn the_terminal_condition_separates_a_gap_from_the_end_of_the_timeline() {
+        // 1. Something is still playing — never over, wherever the playhead is.
+        assert!(!session_is_over(false, 10, 300));
+        assert!(
+            !session_is_over(false, 9_999, 300),
+            "a source still producing samples past the reported end must finish; \
+             the end frame is a floor on the session's length, not a guillotine"
+        );
+
+        // 2. B-192 itself: dry at frame 120 of a timeline that runs to 300.
+        assert!(
+            !session_is_over(true, 120, 300),
+            "a genuine mid-timeline gap must NOT end the session — this is B-192"
+        );
+
+        // 3. The genuine end, exclusive: a timeline whose last clip ends at
+        //    300 is already over AT 300.
+        assert!(session_is_over(true, 300, 300));
+        assert!(session_is_over(true, 301, 300));
+
+        // 4. Nothing anywhere (an empty timeline, or a resolve that never
+        //    succeeded and so left the end frame at its `0` default) — the
+        //    pre-B-192 behaviour, deliberately preserved.
+        assert!(session_is_over(true, 0, 0));
+    }
+
+    /// **B-192 — the property D-280's tail flush rests on**: the terminal
+    /// condition is reached in bounded time from anywhere, because the frame
+    /// clock only advances and the end frame does not move. If it were not,
+    /// the flush — whose only "no more input" signal is the `'mix` loop
+    /// exiting — would silently stop firing and every session would lose its
+    /// last ~12 ms.
+    #[test]
+    fn the_terminal_condition_is_reached_from_anywhere_inside_a_gap() {
+        let end = 300u64;
+        // A chunk of 1024 frames at 48 kHz on a 24 fps timeline is ~0.49
+        // timeline frames, so this is a deliberately pessimistic step: even
+        // advancing one frame at a time from the very start of a gap, the
+        // condition must be reached, and within the frames that are left.
+        for start in [0u64, 1, 120, 299] {
+            let mut frame = start;
+            let mut steps = 0u64;
+            while !session_is_over(true, frame, end) {
+                frame += 1;
+                steps += 1;
+                assert!(steps <= end, "must terminate, from frame {start}");
+            }
+            assert_eq!(frame, end, "it ends exactly at the end frame, not past it");
+        }
+    }
+
+    /// **B-192 — what makes a gap *advance* rather than spin.** Once the
+    /// sources either side of a gap are retired the set is empty, and
+    /// `advance_mix` mixes it anyway; if that produced nothing the loop would
+    /// busy-spin at a frozen `pos_frames` and never reach the clip after the
+    /// gap. A full chunk of digital silence is both the correct output for a
+    /// gap and the thing that keeps the clock moving.
+    #[test]
+    fn mixing_an_empty_source_set_is_a_full_chunk_of_silence() {
+        let mut empty = OpenSources::default();
+        let chunk_len = 1024 * 2;
+        let mixed = mix_chunk(&mut empty, chunk_len, 2, 0, 48_000).expect("mix an empty set");
+        assert_eq!(
+            mixed.len(),
+            chunk_len,
+            "a full chunk, so `pos_frames` advances by a full chunk"
+        );
+        assert!(mixed.iter().all(|s| *s == 0.0), "and it is silence");
+    }
+
+    /// Peak above which a chunk is unambiguously real audio rather than a
+    /// gap. `synth_sine_wav`'s tone measures ~0.088 full-scale through the
+    /// mixer, and a gap is exactly `0.0`, so anything in between separates the
+    /// two with an order of magnitude of headroom either side.
+    const AUDIBLE: f32 = 0.01;
+
+    /// One clip of a [`GapTimeline`] — a real file, a real timeline window,
+    /// and optionally a real D-242 speed ramp.
+    struct GapClip {
+        clip_id: &'static str,
+        path: PathBuf,
+        start_frame: u64,
+        /// Exclusive, the same convention as
+        /// `apelles_timeline::Clip::end_frame_at`.
+        end_frame: u64,
+        /// Source seconds consumed per output second (D-242). `1.0` is an
+        /// un-ramped clip and builds no `Retime` stage at all.
+        speed: f64,
+    }
+
+    /// **B-192 — the minimal timeline-with-a-gap harness.** This crate had no
+    /// way to build one: every existing test either drives a pure helper
+    /// (`newly_active_sources`, `mix_sources`) or opens a single source
+    /// (`mix_chunk`, the D-242 retime tests), and the one thing B-192 is about
+    /// — what the mix loop does when it runs dry *between* two clips — needs a
+    /// `ResolveAt` that answers differently at different frames, which nothing
+    /// here produced.
+    ///
+    /// It is deliberately the same shape `chroma::audio::resolve_sources_at`
+    /// produces (source seconds measured from the clip's own in-point, an
+    /// out-point in `duration_secs`, a `clip_id` per clip,
+    /// `timeline_end_frame` from the longest clip) rather than a mock: what is
+    /// under test is `advance_mix`, and feeding it anything other than the
+    /// real resolver's shape would test something else.
+    struct GapTimeline {
+        fps: f64,
+        clips: Vec<GapClip>,
+        /// What to report as `ResolvedAudio::timeline_end_frame`. `None` means
+        /// "the longest clip's end", i.e. the truth. `Some(0)` reproduces the
+        /// pre-B-192 signal (the closure could not say anything about the
+        /// timeline's extent) and is how the regression test proves the bug.
+        end_frame_override: Option<u64>,
+    }
+
+    impl GapTimeline {
+        fn end_frame(&self) -> u64 {
+            self.end_frame_override
+                .unwrap_or_else(|| self.clips.iter().map(|c| c.end_frame).max().unwrap_or(0))
+        }
+
+        fn resolve(&self, frame: u64) -> ResolvedAudio {
+            let sources = self
+                .clips
+                .iter()
+                .filter(|c| frame >= c.start_frame && frame < c.end_frame)
+                .map(|c| {
+                    let output_secs = (c.end_frame - frame) as f64 / self.fps;
+                    let into_clip_secs = (frame - c.start_frame) as f64 / self.fps;
+                    AudioSourceSpec {
+                        path: c.path.clone(),
+                        // D-242 — under a ramp the source second to open at and
+                        // the number of OUTPUT seconds left stop being the same
+                        // number, exactly as `speed_for_clip` handles it.
+                        start_secs: into_clip_secs * c.speed,
+                        duration_secs: Some(output_secs),
+                        speed: if c.speed == 1.0 {
+                            Vec::new()
+                        } else {
+                            vec![AudioSpeedSegment {
+                                start_secs: 0.0,
+                                end_secs: output_secs * c.speed,
+                                speed: c.speed,
+                            }]
+                        },
+                        gain: 1.0,
+                        fade: None,
+                        duck: None,
+                        level: None,
+                        eq_bands: Vec::new(),
+                        clip_id: c.clip_id.to_string(),
+                    }
+                })
+                .collect();
+            ResolvedAudio {
+                sources,
+                timeline_end_frame: self.end_frame(),
+            }
+        }
+    }
+
+    /// What [`drive_mix`] saw, per chunk, plus how the session ended.
+    struct DriveResult {
+        /// `(pos_frames at the start of the chunk, its peak absolute sample)`.
+        chunks: Vec<(u64, f32)>,
+        /// The `pos_frames` at which `advance_mix` returned `None`, or `None`
+        /// if it never did within the chunk budget — which for every test here
+        /// is a failure, since it is exactly "the D-280 tail flush never
+        /// fires".
+        ended_at_pos_frames: Option<u64>,
+    }
+
+    impl DriveResult {
+        /// Peak over every chunk whose start falls in `[from_secs, to_secs)`.
+        fn peak_between(&self, from_secs: f64, to_secs: f64, out_rate: u32) -> f32 {
+            let lo = (from_secs * out_rate as f64) as u64;
+            let hi = (to_secs * out_rate as f64) as u64;
+            self.chunks
+                .iter()
+                .filter(|(pos, _)| *pos >= lo && *pos < hi)
+                .map(|(_, peak)| *peak)
+                .fold(0.0f32, f32::max)
+        }
+    }
+
+    /// Drive the **real** [`advance_mix`] over a [`GapTimeline`] exactly the
+    /// way [`run_session`] does, minus everything that needs a `cpal` device
+    /// (the ring buffer, the backpressure sleep, the generation checks, the
+    /// D-280 stretch stage — which `stretch` here stands in for when a test
+    /// wants it). `max_chunks` is a budget, not an expectation: every test
+    /// asserts the session ended well inside it.
+    fn drive_mix(
+        timeline: GapTimeline,
+        start_frame: u64,
+        out_rate: u32,
+        out_channels: usize,
+        max_chunks: usize,
+        mut stretch: Option<&mut crate::timestretch::TimeStretch>,
+        mut stretched_out: Option<&mut Vec<f32>>,
+    ) -> DriveResult {
+        let fps = timeline.fps;
+        let chunk_len = 1024 * out_channels;
+        let opening = timeline.resolve(start_frame);
+        let mut open = OpenSources::default();
+        for spec in &opening.sources {
+            open.open_and_track(spec, out_rate, out_channels, 0)
+                .expect("open the session's opening sources");
+        }
+        let resolve_at: ResolveAt = Box::new(move |f| Ok(timeline.resolve(f)));
+
+        let cfg = MixConfig {
+            start_frame,
+            fps,
+            out_rate,
+            out_channels,
+            chunk_len,
+            resolve_interval_frames: (RESOLVE_INTERVAL_SECS * out_rate as f64).round() as u64,
+        };
+        let mut clock = MixClock {
+            pos_frames: 0,
+            next_resolve_at_pos_frames: (RESOLVE_INTERVAL_SECS * out_rate as f64).round() as u64,
+            timeline_end_frame: 0,
+        };
+
+        let mut chunks = Vec::new();
+        let mut ended_at_pos_frames = None;
+        for _ in 0..max_chunks {
+            let at = clock.pos_frames;
+            match advance_mix(&mut open, &resolve_at, &mut clock, &cfg).expect("advance_mix") {
+                Some(mixed) => {
+                    let peak = mixed.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+                    chunks.push((at, peak));
+                    if let (Some(st), Some(out)) = (stretch.as_mut(), stretched_out.as_mut()) {
+                        out.extend(st.push(&mixed));
+                    }
+                }
+                None => {
+                    ended_at_pos_frames = Some(at);
+                    break;
+                }
+            }
+        }
+        DriveResult {
+            chunks,
+            ended_at_pos_frames,
+        }
+    }
+
+    /// **B-192, the bug itself.** Clip A (0–1s), a real one-second silence,
+    /// then clip B (2–3s). Before the fix the session ended the instant clip A
+    /// ran dry and clip B was never heard; it must now play the silence
+    /// through and pick clip B up on its own.
+    #[test]
+    fn a_gap_in_the_middle_of_the_timeline_does_not_end_the_session() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out_rate = 48_000u32;
+        let tone = synth_sine_wav(tmp.path(), 440, 4.0, out_rate);
+        let fps = 24.0;
+
+        let result = drive_mix(
+            GapTimeline {
+                fps,
+                clips: vec![
+                    GapClip {
+                        clip_id: "clip-a",
+                        path: tone.clone(),
+                        start_frame: 0,
+                        end_frame: 24, // 0.0s – 1.0s
+                        speed: 1.0,
+                    },
+                    GapClip {
+                        clip_id: "clip-b",
+                        path: tone,
+                        start_frame: 48, // a REAL one-second gap, 1.0s – 2.0s
+                        end_frame: 72,   // 2.0s – 3.0s
+                        speed: 1.0,
+                    },
+                ],
+                end_frame_override: None,
+            },
+            0,
+            out_rate,
+            2,
+            400,
+            None,
+            None,
+        );
+
+        let ended = result
+            .ended_at_pos_frames
+            .expect("the session must still END — D-280's tail flush depends on it");
+
+        assert!(
+            result.peak_between(0.1, 0.9, out_rate) > AUDIBLE,
+            "sanity: clip A is audible"
+        );
+        assert!(
+            result.peak_between(1.2, 1.8, out_rate) < 1e-6,
+            "the gap is real, intentional silence — not something to fill"
+        );
+        assert!(
+            result.peak_between(2.2, 2.8, out_rate) > AUDIBLE,
+            "B-192: the clip AFTER the gap must be picked up and played. Before \
+             the fix the session ended at ~1.0s and this is digital silence."
+        );
+        let ended_secs = ended as f64 / out_rate as f64;
+        assert!(
+            (2.9..3.3).contains(&ended_secs),
+            "and it ends at the END of the timeline (3.0s), not in the gap — got {ended_secs:.3}s"
+        );
+    }
+
+    /// The other half of B-192, and the half that must not regress: past the
+    /// last clip, the session really is over. Same harness, no gap, so the
+    /// only thing that can end it is the terminal condition doing its job.
+    #[test]
+    fn the_genuine_end_of_the_timeline_still_ends_the_session() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out_rate = 48_000u32;
+        let tone = synth_sine_wav(tmp.path(), 440, 4.0, out_rate);
+
+        let result = drive_mix(
+            GapTimeline {
+                fps: 24.0,
+                clips: vec![GapClip {
+                    clip_id: "only-clip",
+                    path: tone,
+                    start_frame: 0,
+                    end_frame: 24, // one second, and the whole timeline
+                    speed: 1.0,
+                }],
+                end_frame_override: None,
+            },
+            0,
+            out_rate,
+            2,
+            400,
+            None,
+            None,
+        );
+
+        let ended = result
+            .ended_at_pos_frames
+            .expect("a one-clip timeline must end when that clip ends");
+        let ended_secs = ended as f64 / out_rate as f64;
+        assert!(
+            (0.95..1.25).contains(&ended_secs),
+            "it ends at the timeline's real end (1.0s), promptly — got {ended_secs:.3}s. \
+             An unbounded session here would silently disable D-280's tail flush."
+        );
+    }
+
+    /// **The pre-B-192 behaviour, reproduced deliberately**, so the fix is
+    /// pinned by something that fails without it rather than only by something
+    /// that passes with it. `timeline_end_frame: 0` is exactly what the old
+    /// `ResolveAt` could tell the mixer — nothing — and with it the identical
+    /// gap timeline above dies in the gap and never reaches clip B.
+    #[test]
+    fn without_the_timelines_extent_a_gap_ends_the_session_which_is_the_bug() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out_rate = 48_000u32;
+        let tone = synth_sine_wav(tmp.path(), 440, 4.0, out_rate);
+
+        let result = drive_mix(
+            GapTimeline {
+                fps: 24.0,
+                clips: vec![
+                    GapClip {
+                        clip_id: "clip-a",
+                        path: tone.clone(),
+                        start_frame: 0,
+                        end_frame: 24,
+                        speed: 1.0,
+                    },
+                    GapClip {
+                        clip_id: "clip-b",
+                        path: tone,
+                        start_frame: 48,
+                        end_frame: 72,
+                        speed: 1.0,
+                    },
+                ],
+                end_frame_override: Some(0),
+            },
+            0,
+            out_rate,
+            2,
+            400,
+            None,
+            None,
+        );
+
+        let ended_secs = result
+            .ended_at_pos_frames
+            .expect("the pre-fix path ends the session") as f64
+            / out_rate as f64;
+        assert!(
+            ended_secs < 1.3,
+            "B-192's symptom: the session dies the moment clip A runs dry — got {ended_secs:.3}s"
+        );
+        assert!(
+            result.peak_between(2.2, 2.8, out_rate) < 1e-6,
+            "and clip B is never heard, which is the whole report"
+        );
+    }
+
+    /// **D-280's stake in B-192, end to end.** A clip whose real D-242 speed
+    /// ramp runs right up to the genuine end of the timeline, previewed at a
+    /// D-280 playback rate, with a gap before it for good measure — the case
+    /// where a wrong "there is more later" would mean the `'mix` loop never
+    /// exits, and therefore that `TimeStretch::flush` is never called and the
+    /// tail it is holding is never emitted. Asserts all three: the session
+    /// ends, the ramped clip really was audible up to that end, and the flush
+    /// still hands back a non-empty tail afterwards.
+    #[test]
+    fn a_speed_ramped_tail_at_the_real_end_still_reaches_d280s_flush() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out_rate = 48_000u32;
+        let out_channels = 2usize;
+        let tone = synth_sine_wav(tmp.path(), 440, 6.0, out_rate);
+        const RATE: f64 = 2.0;
+
+        let mut stretch = crate::timestretch::TimeStretch::new(RATE, out_rate, out_channels)
+            .expect("2x is a real stretch, not the identity");
+        let mut stretched: Vec<f32> = Vec::new();
+
+        let result = drive_mix(
+            GapTimeline {
+                fps: 24.0,
+                clips: vec![
+                    GapClip {
+                        clip_id: "clip-a",
+                        path: tone.clone(),
+                        start_frame: 0,
+                        end_frame: 24, // 0.0s – 1.0s
+                        speed: 1.0,
+                    },
+                    GapClip {
+                        clip_id: "ramped-tail",
+                        path: tone,
+                        start_frame: 48, // after a real gap
+                        end_frame: 72,   // 2.0s – 3.0s of OUTPUT, at 2x source
+                        speed: 2.0,
+                    },
+                ],
+                end_frame_override: None,
+            },
+            0,
+            out_rate,
+            out_channels,
+            400,
+            Some(&mut stretch),
+            Some(&mut stretched),
+        );
+
+        let ended_secs = result
+            .ended_at_pos_frames
+            .expect("the ramped tail must still END the session") as f64
+            / out_rate as f64;
+        assert!(
+            (2.9..3.3).contains(&ended_secs),
+            "the session ends at the ramped clip's real out-point — got {ended_secs:.3}s"
+        );
+        assert!(
+            result.peak_between(2.7, 2.95, out_rate) > AUDIBLE,
+            "the ramped clip is still producing real audio right up to the end; \
+             a terminal condition that fired early would cut this tail off"
+        );
+
+        // D-280's own contract at the seam: `rate` timeline seconds in, one
+        // real second out.
+        let mixed_frames = result.chunks.len() * 1024;
+        let stretched_frames = stretched.len() / out_channels;
+        let expected = mixed_frames as f64 / RATE;
+        assert!(
+            (stretched_frames as f64 - expected).abs() < expected * 0.05,
+            "the stretch stage read {mixed_frames} timeline frames and emitted \
+             {stretched_frames}, which should be ~{expected:.0}"
+        );
+
+        // And the thing that only fires because the loop above exited.
+        let tail = stretch.flush();
+        assert!(
+            !tail.is_empty(),
+            "D-280's tail flush must still have something to emit at a genuine \
+             end — if B-192's fix ever makes the loop unbounded, this is the \
+             assertion that catches it"
+        );
+        assert!(
+            tail.iter().all(|s| s.is_finite()),
+            "and it is real audio, not NaN padding"
+        );
     }
 
     /// A `pcm_s16le` sine tone (not `synth_test_tone`'s AAC): lossless AND,
