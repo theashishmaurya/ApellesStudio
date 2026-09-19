@@ -2724,17 +2724,22 @@ function clampedTrimStartDelta(tr: Track, clipIdx: number, delta: number, fps: n
   return Math.max(d, prevEnd - c.start_frame);
 }
 
-/** The clamped new `duration` `trim_end` would really apply — mirrors
- *  `apelles-timeline::clamped_trim_end_duration`. Returns a new `duration`
- *  (source frames, per the `Clip` doc — the caller applies it to that field
- *  directly, unlike `clampedTrimStartDelta` above). `delta` is a TIMELINE
- *  frame delta (B-077, same UI-drag convention as `trim_start`'s), converted
- *  to `c`'s own source frames before it ever touches `duration`; the
- *  following-clip position bound (naturally a timeline-frame quantity —
- *  `nextStart - c.start_frame`) is converted the same way before being
- *  compared against the source-frame media-length bound, so `Math.min` never
- *  compares two different units again. */
-function clampedTrimEndDuration(tr: Track, clipIdx: number, delta: number, fps: number): number {
+/** The two upper bounds on a clip's `duration` a tail trim must respect, in
+ *  `c`'s own SOURCE frames — the media's own remaining length, and the
+ *  nearest following clip's `start_frame` (D-054: a plain trim never overlaps
+ *  a neighbour). Split out of [`clampedTrimEndDuration`] by B-215/B-220 so
+ *  `checkTrim` can say WHICH of the two refused a trim rather than only that
+ *  something did.
+ *
+ *  `maxDurPosition` is naturally a timeline-frame quantity (`nextStart -
+ *  c.start_frame`) and is converted through `timelineFramesToSource` before
+ *  being returned, so a caller never compares two different units (B-077).
+ *  `nextStart` is the raw TIMELINE frame it came from, kept for the message. */
+function trimEndBounds(
+  tr: Track,
+  clipIdx: number,
+  fps: number,
+): { maxDurSource: number; maxDurPosition: number; maxDur: number; nextStart: number | null } {
   const c = tr.clips[clipIdx];
   const ceiling = Math.max(c.source_len, 0);
   const maxDurSource = Math.max(ceiling - c.source_start, 1);
@@ -2743,13 +2748,43 @@ function clampedTrimEndDuration(tr: Track, clipIdx: number, delta: number, fps: 
     if (i === clipIdx || other.start_frame < c.start_frame) continue;
     if (nextStart === null || other.start_frame < nextStart) nextStart = other.start_frame;
   }
-  const maxDurPositionSource =
+  const maxDurPosition =
     nextStart === null
       ? Infinity
       : Math.max(timelineFramesToSource(c, Math.max(nextStart - c.start_frame, 1), fps), 1);
-  const maxDur = Math.max(Math.min(maxDurSource, maxDurPositionSource), 1);
+  return { maxDurSource, maxDurPosition, maxDur: Math.max(Math.min(maxDurSource, maxDurPosition), 1), nextStart };
+}
+
+/** The clamped new `duration` `trim_end` would really apply — mirrors
+ *  `apelles-timeline::clamped_trim_end_duration`. Returns a new `duration`
+ *  (source frames, per the `Clip` doc — the caller applies it to that field
+ *  directly, unlike `clampedTrimStartDelta` above). `delta` is a TIMELINE
+ *  frame delta (B-077, same UI-drag convention as `trim_start`'s), converted
+ *  to `c`'s own source frames before it ever touches `duration`.
+ *
+ *  **B-220 — the upper bound is `max(maxDur, c.duration)`, not `maxDur`.**
+ *  `maxDur` bounds where a trim may take the clip; it is NOT a fact about
+ *  where the clip already is. A clip whose stored `duration` already exceeds
+ *  it (an out-of-bounds state this op did not create — a source that shrank
+ *  under it, a `source_len` that never got probed, a sibling placed at the
+ *  same `start_frame`) was, before this fix, rewritten down to `maxDur` by ANY
+ *  trim, including a 1-frame one: `clampInt(duration + deltaSource, 1, maxDur)`
+ *  clamps the ABSOLUTE new duration, so it silently discarded every frame of
+ *  the pre-existing overhang as a side effect of an unrelated edit — data loss
+ *  the caller never asked for and could not see in the `{ok: true}` it got
+ *  back. Widening the ceiling to the clip's own current duration means a
+ *  shortening trim still shortens by exactly the delta asked for (and may
+ *  bring the clip back into bounds, which is progress), while a LENGTHENING
+ *  one clamps to the current duration, i.e. changes nothing — a no-op that
+ *  `checkTrim` turns into a real, specific error rather than a false success.
+ *  Identical to the old expression for every in-bounds clip
+ *  (`max(maxDur, duration) === maxDur` whenever `duration <= maxDur`), so no
+ *  well-formed timeline sees any change at all. */
+function clampedTrimEndDuration(tr: Track, clipIdx: number, delta: number, fps: number): number {
+  const c = tr.clips[clipIdx];
+  const { maxDur } = trimEndBounds(tr, clipIdx, fps);
   const deltaSource = timelineFramesToSource(c, delta, fps);
-  return clampInt(c.duration + deltaSource, 1, maxDur);
+  return clampInt(c.duration + deltaSource, 1, Math.max(maxDur, c.duration));
 }
 
 /** The clamped slip delta the `slip` `EditOp` (D-195) would really apply —
@@ -4341,6 +4376,249 @@ export function checkRemoveGap(
   return { ok: true, gap };
 }
 
+/** What a trim would do to the addressed clip, or why it would do nothing.
+ *  [`checkTrim`]'s result. `newStartFrame`/`newDuration` are the addressed
+ *  clip's fields AFTER the trim, in their own native units (`start_frame` a
+ *  timeline frame, `duration` the clip's own source frames — B-077), so a
+ *  caller can report back what actually landed instead of guessing from the
+ *  delta it asked for. */
+export type TrimCheck =
+  | { ok: true; newStartFrame: number; newDuration: number }
+  | { ok: false; reason: string };
+
+/** How a clip is addressed in a rejection message — the name if it has one,
+ *  always the index, so a caller can tell a repeated name apart. */
+function trimClipLabel(c: Clip, track: number, clip: number): string {
+  return c.name ? `"${c.name}" (track ${track}, clip ${clip})` : `track ${track}, clip ${clip}`;
+}
+
+/** Pre-flight check for `trim_start`/`trim_end` (B-215/B-220) — the same
+ *  preconditions `applyOp`'s own two trim cases enforce, factored into one
+ *  place so the reducer and a command handler (`useEditorControl.ts`'s
+ *  `editor_trim_clip`) share the exact logic instead of it living only inside
+ *  a reducer that silently `return tl`s on every rejection. This is
+ *  `checkRemoveGap`'s pattern (B-227) applied to the second of the three
+ *  functions that entry names in the silent-no-op class.
+ *
+ *  Every way a trim can decline to do anything comes back as a `reason` that
+ *  names the CONSTRAINT, not just the refusal: which bound clamped it (the
+ *  source media's own length, the following clip's `start_frame`, the
+ *  previous clip's end, the 1-frame floor), which OTHER link-group member
+ *  disagreed, or — B-220's case — that the clip's stored `duration` is
+ *  already past the bound and so can only be shortened, never extended.
+ *
+ *  `delta` is a TIMELINE-frame delta and positive means "this edge moves LATER
+ *  in time" (D-352): on `end` that lengthens the clip, on `start` it shortens
+ *  it. `ripple` selects the D-235 rippled form, whose bounds are genuinely
+ *  different (no neighbour term — the neighbour is pushed, not collided
+ *  with), so it is checked against `applyRippleTrim`'s own preconditions. */
+export function checkTrim(
+  tl: Timeline,
+  track: number,
+  clip: number,
+  edge: 'start' | 'end',
+  delta: number,
+  ripple: boolean,
+  fps: number,
+): TrimCheck {
+  const tr = tl.tracks[track];
+  if (!tr) return { ok: false, reason: `no track ${track} (0..${tl.tracks.length - 1})` };
+  if (tr.locked) return { ok: false, reason: `track ${track} is locked` };
+  const c = tr.clips[clip];
+  if (!c) return { ok: false, reason: `no clip ${clip} on track ${track} (0..${tr.clips.length - 1})` };
+  if (delta === 0) return { ok: false, reason: `delta 0 trims nothing` };
+
+  if (ripple) {
+    const targets = lockstepTargets(tl, track, clip);
+    if (!targets) {
+      const locked = (linkTargets(tl, track, clip)?.members ?? []).find(([ti]) => tl.tracks[ti]?.locked);
+      return {
+        ok: false,
+        reason:
+          `${trimClipLabel(c, track, clip)} is A/V-linked to a clip on track ${locked?.[0] ?? '?'}, which is ` +
+          `locked — a linked pair trims in lockstep or not at all (D-129). Unlock that track, or unlink first.`,
+      };
+    }
+    const [lo, hi] = lockstepRoom(tl, targets, edge === 'start' ? headRoom : tailRoom, fps);
+    if (lo > hi) {
+      return {
+        ok: false,
+        reason:
+          `ripple trim refused: ${trimClipLabel(c, track, clip)}'s link group has no ${edge} delta every member can ` +
+          `absorb (the shared range is empty — one member's own source media runs out where another's has room).`,
+      };
+    }
+    const d = clampInt(delta, lo, hi);
+    if (d === 0) {
+      return {
+        ok: false,
+        reason:
+          `ripple trim of ${trimClipLabel(c, track, clip)} by ${delta} frames clamps to 0 — the ${edge} edge can ` +
+          `only move within [${lo}, ${hi}] timeline frames, bounded by the source media every member has left.`,
+      };
+    }
+    const threshold = endFrame(c, fps);
+    const straddling = findStraddlingSyncLockedTrack(tl.tracks, track, threshold, fps);
+    if (straddling !== null) {
+      return {
+        ok: false,
+        reason:
+          `ripple trim refused (B-033): the ripple from frame ${threshold} would shift every sync-locked track, and ` +
+          `track ${straddling} has a clip straddling that frame — a sync-locked track's clip can't be split by a ` +
+          `ripple. Unlock or unsync track ${straddling}, move its straddling clip clear of frame ${threshold}, or ` +
+          `trim without ripple.`,
+      };
+    }
+    const dSource = timelineFramesToSource(c, d, fps);
+    return {
+      ok: true,
+      newStartFrame: c.start_frame,
+      newDuration: edge === 'start' ? c.duration - dSource : c.duration + dSource,
+    };
+  }
+
+  if (edge === 'start') {
+    const d = clampedTrimStartDelta(tr, clip, delta, fps);
+    const dSource = timelineFramesToSource(c, d, fps);
+    if (c.duration - dSource < 1) {
+      return {
+        ok: false,
+        reason:
+          `trimming ${trimClipLabel(c, track, clip)}'s head by ${delta} frames would leave it ` +
+          `${c.duration - dSource} source frames long — a clip must keep at least 1. It is now ${c.duration}.`,
+      };
+    }
+    if (d === 0) return { ok: false, reason: trimStartClampReason(tr, track, clip, delta, fps) };
+    const linkReason = linkLockstepReason(tl, track, clip, (ot, ci) => {
+      const oc = ot.clips[ci];
+      return clampedTrimStartDelta(ot, ci, delta, fps) === d && oc.duration - timelineFramesToSource(oc, d, fps) >= 1;
+    });
+    if (linkReason) return { ok: false, reason: linkReason };
+    return { ok: true, newStartFrame: c.start_frame + d, newDuration: c.duration - dSource };
+  }
+
+  const newDur = clampedTrimEndDuration(tr, clip, delta, fps);
+  if (newDur === c.duration) return { ok: false, reason: trimEndClampReason(tr, track, clip, delta, fps) };
+  const applied = newDur - c.duration;
+  const linkReason = linkLockstepReason(
+    tl,
+    track,
+    clip,
+    (ot, ci) => clampedTrimEndDuration(ot, ci, delta, fps) - ot.clips[ci].duration === applied,
+  );
+  if (linkReason) return { ok: false, reason: linkReason };
+  return { ok: true, newStartFrame: c.start_frame, newDuration: newDur };
+}
+
+/** The D-129 lockstep gate both plain trim edges share: every OTHER member of
+ *  the clip's A/V link group must be on an unlocked track AND absorb the
+ *  identical on-screen delta (`agrees`), or the whole op is refused rather
+ *  than left desynced. Returns the rejection message, or `null` to proceed. */
+function linkLockstepReason(
+  tl: Timeline,
+  track: number,
+  clip: number,
+  agrees: (ot: Track, ci: number) => boolean,
+): string | null {
+  const link = linkTargets(tl, track, clip);
+  if (!link) return null;
+  for (const [ti, ci] of link.members) {
+    if (ti === track && ci === clip) continue;
+    const ot = tl.tracks[ti];
+    if (ot.locked) {
+      return (
+        `this clip is A/V-linked (group "${link.group}") to track ${ti}, clip ${ci}, whose track is locked — ` +
+        `a linked pair trims in lockstep or not at all (D-129). Unlock track ${ti}, or unlink the pair first.`
+      );
+    }
+    if (!agrees(ot, ci)) {
+      return (
+        `this clip is A/V-linked (group "${link.group}") to track ${ti}, clip ${ci}, which cannot absorb the same ` +
+        `delta (its own source media or its own neighbour clamps it differently), so the trim is refused whole ` +
+        `rather than desyncing the pair (D-129). Unlink first if an L-cut is what you want.`
+      );
+    }
+  }
+  return null;
+}
+
+/** Why a head trim clamped to zero — which of `clampedTrimStartDelta`'s three
+ *  terms (the source media's in-point, its out-point, the previous clip's
+ *  end) actually did it. */
+function trimStartClampReason(tr: Track, track: number, clipIdx: number, delta: number, fps: number): string {
+  const c = tr.clips[clipIdx];
+  const prevEnd = tr.clips.reduce((max, other, i) => {
+    if (i === clipIdx) return max;
+    const oe = endFrame(other, fps);
+    return oe <= c.start_frame ? Math.max(max, oe) : max;
+  }, 0);
+  const label = trimClipLabel(c, track, clipIdx);
+  if (delta < 0) {
+    if (prevEnd === c.start_frame) {
+      return (
+        `${label} cannot extend its head earlier: the previous clip on this track ends exactly at frame ` +
+        `${c.start_frame}, and a plain (non-rippled) trim never overlaps a neighbour (D-054). Ripple-trim it, or ` +
+        `move the neighbour first.`
+      );
+    }
+    return (
+      `${label} cannot extend its head earlier: it already starts at source frame ${c.source_start} of its media, ` +
+      `so there is no earlier material to pull in.`
+    );
+  }
+  return (
+    `${label} cannot shorten from the head: its source window (source_start ${c.source_start} of source_len ` +
+    `${c.source_len}) leaves no room to move the in-point later.`
+  );
+}
+
+/** Why a tail trim changed nothing — the constraint that actually bound it,
+ *  including B-220's case (a stored `duration` already past every bound, which
+ *  can now only be shortened, never extended, and is never silently rewritten
+ *  down to the bound as a side effect). */
+function trimEndClampReason(tr: Track, track: number, clipIdx: number, delta: number, fps: number): string {
+  const c = tr.clips[clipIdx];
+  const { maxDurSource, maxDurPosition, maxDur, nextStart } = trimEndBounds(tr, clipIdx, fps);
+  const label = trimClipLabel(c, track, clipIdx);
+  const deltaSource = timelineFramesToSource(c, delta, fps);
+  if (deltaSource === 0) {
+    return (
+      `a delta of ${delta} timeline frames is 0 of ${label}'s own source frames (its source runs at ` +
+      `${c.source_fps ?? fps} fps against the timeline's ${fps}), so there is nothing to apply. Ask for a larger ` +
+      `delta.`
+    );
+  }
+  if (c.duration > maxDur) {
+    // B-220 — the out-of-bounds state. Extending is refused; shortening is
+    // always allowed, so reaching here with a negative delta is impossible.
+    const why =
+      maxDurPosition < maxDurSource
+        ? `another clip on this track starts at frame ${nextStart}, only ${maxDurPosition} source frames past this ` +
+          `clip's own start`
+        : `its media only has ${maxDurSource} source frames left from source_start ${c.source_start} (source_len ` +
+          `${c.source_len})`;
+    return (
+      `${label} cannot be extended: its stored duration (${c.duration}) ALREADY exceeds the ${maxDur} frames it has ` +
+      `room for — ${why}. This is an inconsistent clip, not something this trim caused; shortening it still works ` +
+      `(a negative delta), and re-placing it at the length you want is the reliable fix. The trim was refused ` +
+      `rather than silently rewriting the duration down to ${maxDur} and discarding ${c.duration - maxDur} frames ` +
+      `you did not ask to lose (B-220).`
+    );
+  }
+  if (deltaSource > 0) {
+    return maxDurPosition <= maxDurSource
+      ? `${label} is already ${c.duration} source frames long and cannot grow: the next clip on this track starts ` +
+          `at frame ${nextStart}, and a plain (non-rippled) trim never overlaps a neighbour (D-054). Ripple-trim ` +
+          `it, or move the neighbour first.`
+      : `${label} is already ${c.duration} source frames long and cannot grow: that is all its media has from ` +
+          `source_start ${c.source_start} (source_len ${c.source_len}). Extend it into earlier material with ` +
+          `edge "start" instead, or swap in a longer source.`;
+  }
+  return (
+    `${label} is already 1 source frame long — a clip must keep at least one frame, so it cannot shorten further.`
+  );
+}
+
 export function applyOp(tl: Timeline, op: EditOp): Timeline {
   // B-077 — the project's own timeline-frame rate, needed by every op below
   // that combines a `start_frame`-space position with a `duration`/
@@ -5301,6 +5579,19 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // timeline-native); `source_start`/`duration` shift by `d`'s SOURCE-
       // frame equivalent, per-clip (`timelineFramesToSource`) since a linked
       // pair's two members may in principle have different `source_fps`.
+      // B-215 — every precondition this case used to enforce inline (the
+      // clamp, the 1-frame floor, and D-129's lockstep-or-reject rule: a
+      // linked clip trims in lockstep with every other member of its group,
+      // and if any member would clamp to a DIFFERENT delta the whole op is
+      // rejected rather than leaving the halves out of sync — unlink first
+      // for a deliberate L-cut) now lives in `checkTrim`, so the MCP handler
+      // and the GUI can learn WHY a trim was refused instead of getting the
+      // silent `return tl` this reducer still does. Mirrors
+      // `apelles-timeline::Timeline::trim_start`, whose own checks are its
+      // `TimelineError` returns. Compared in TIMELINE frames (`d`, the amount
+      // the user actually dragged) — every member must absorb the SAME
+      // on-screen delta, converted to ITS OWN source frames.
+      if (!checkTrim(tl, op.track, op.clip, 'start', op.delta, op.ripple === true, fps).ok) return tl;
       // D-235 — the rippled form is a genuinely different edit (no gap opens,
       // the neighbour is pushed instead of blocking), so it branches before
       // any of the plain-trim math below rather than post-processing it.
@@ -5308,28 +5599,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       const c = tr.clips[op.clip];
       if (!c) return tl;
       const d = clampedTrimStartDelta(tr, op.clip, op.delta, fps);
-      const dSource = timelineFramesToSource(c, d, fps);
-      if (c.duration - dSource < 1) return tl;
-      // D-129 — a linked clip trims in lockstep with every other member of
-      // its group; if any member would clamp to a DIFFERENT delta (its own
-      // source runs out first, a neighbour blocks it) the whole op is
-      // rejected rather than leaving the halves out of sync. Unlink first for
-      // a deliberate L-cut — that's what unlink is for, in both references.
-      // Mirrors `apelles-timeline::Timeline::trim_start`. Compared in TIMELINE
-      // frames (`d`, the amount the user actually dragged) — every member
-      // must be able to absorb the SAME on-screen delta, converted to ITS
-      // OWN source frames.
       const link = linkTargets(tl, op.track, op.clip);
-      if (link) {
-        for (const [ti, ci] of link.members) {
-          if (ti === op.track && ci === op.clip) continue;
-          const ot = tl.tracks[ti];
-          if (ot.locked) return tl;
-          const oc = ot.clips[ci];
-          const oDeltaSource = timelineFramesToSource(oc, d, fps);
-          if (clampedTrimStartDelta(ot, ci, op.delta, fps) !== d || oc.duration - oDeltaSource < 1) return tl;
-        }
-      }
       const next = clone(tl);
       const targets: Array<[number, number]> = link ? link.members : [[op.track, op.clip]];
       for (const [ti, ci] of targets) {
@@ -5349,23 +5619,17 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // (a TIMELINE-frame delta, B-077) to `c`'s own source frames — `applied`
       // below is a `duration` (source-frame) delta throughout, needing no
       // further conversion.
+      // B-215/B-220 — the clamp-made-no-difference case and D-129's
+      // lockstep-or-reject contract both moved into `checkTrim`, for the
+      // reason given in `trim_start` above: this reducer's `return tl` says
+      // nothing, and a silently-refused trim was the whole of B-215.
+      if (!checkTrim(tl, op.track, op.clip, 'end', op.delta, op.ripple === true, fps).ok) return tl;
       // D-235 — see the matching branch in `trim_start` above.
       if (op.ripple) return applyRippleTrim(tl, op.track, op.clip, op.delta, 'end', fps);
       const c = tr.clips[op.clip];
       if (!c) return tl;
-      const newDur = clampedTrimEndDuration(tr, op.clip, op.delta, fps);
-      if (newDur === c.duration) return tl;
-      const applied = newDur - c.duration;
-      // D-129 — same lockstep-or-reject contract as `trim_start` above.
+      const applied = clampedTrimEndDuration(tr, op.clip, op.delta, fps) - c.duration;
       const link = linkTargets(tl, op.track, op.clip);
-      if (link) {
-        for (const [ti, ci] of link.members) {
-          if (ti === op.track && ci === op.clip) continue;
-          const ot = tl.tracks[ti];
-          if (ot.locked) return tl;
-          if (clampedTrimEndDuration(ot, ci, op.delta, fps) - ot.clips[ci].duration !== applied) return tl;
-        }
-      }
       const next = clone(tl);
       const targets: Array<[number, number]> = link ? link.members : [[op.track, op.clip]];
       for (const [ti, ci] of targets) next.tracks[ti].clips[ci].duration += applied;

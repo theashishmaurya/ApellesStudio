@@ -20,6 +20,7 @@ import {
   checkAddClip,
   checkLink,
   checkRemoveGap,
+  checkTrim,
   clipAt,
   clipFromDraggedMedia,
   computeInsertion,
@@ -439,6 +440,189 @@ describe('trim_end (D-058)', () => {
     const before = tl([clip('a', 'A', { start_frame: 0, duration: 50, source_len: 500 })]);
     const after = applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: 200 });
     expect(after.tracks[0].clips[0].duration).toBe(250);
+  });
+});
+
+// -------------------------------------------------------------------------- //
+// B-215 / B-220 — the trim op's two defects, fixed together because they live
+// in the same function. B-215: a refused trim reported itself as `{ok: true}`
+// with nothing changed (the same silent-no-op class B-227 fixed for
+// `remove_gap`, and `checkTrim` is that fix's `checkRemoveGap` pattern).
+// B-220: the tail clamp bounded the ABSOLUTE new duration against `maxDur`,
+// so a clip whose stored `duration` already exceeded it was rewritten down to
+// `maxDur` by ANY trim — silently discarding the whole overhang.
+//
+// The sign convention every test here asserts is D-352's: a POSITIVE delta
+// moves that edge later in time, so on `end` it lengthens the clip.
+// -------------------------------------------------------------------------- //
+
+describe('checkTrim (B-215) — a refused trim says why, instead of a silent no-op', () => {
+  it('rejects B-215\'s own shape (last clip, no source left to extend into) and names the constraint', () => {
+    // B-215 as reported: the last clip on its track, asked to extend its tail,
+    // with the media already exhausted. `applyOp` returns the timeline
+    // unchanged and cannot say more than that; this is what the caller gets.
+    const before = tl([clip('a', 'Overlay', { start_frame: 0, duration: 100, source_len: 100 })]);
+    expect(applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: 13 })).toBe(before);
+    const check = checkTrim(before, 0, 0, 'end', 13, false, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.reason).toContain('"Overlay"'); // names the clip, not just "a clip"
+      expect(check.reason).toContain('cannot grow');
+      expect(check.reason).toContain('source_len 100'); // the ACTUAL constraint, in its own numbers
+    }
+  });
+
+  it('names the neighbour, not the media, when the NEXT clip is what blocks the extension', () => {
+    const before = tl([
+      clip('a', 'A', { start_frame: 0, duration: 100, source_len: 1000 }),
+      clip('b', 'B', { start_frame: 100, duration: 50 }),
+    ]);
+    const check = checkTrim(before, 0, 0, 'end', 40, false, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.reason).toContain('next clip on this track starts at frame 100');
+      expect(check.reason).toContain('D-054');
+    }
+  });
+
+  it('agrees with applyOp on the success case, and reports the duration that actually lands', () => {
+    const before = tl([
+      clip('a', 'A', { start_frame: 0, duration: 60, source_len: 1000 }),
+      clip('b', 'B', { start_frame: 100 }),
+    ]);
+    const check = checkTrim(before, 0, 0, 'end', 1000, false, 24);
+    // the CLAMPED result, not the 1060 that was asked for
+    expect(check).toEqual({ ok: true, newStartFrame: 0, newDuration: 100 });
+    const after = applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: 1000 });
+    expect(after).not.toBe(before);
+    expect(after.tracks[0].clips[0].duration).toBe(100);
+  });
+
+  it('names a locked track, a bad track and a bad clip, matching applyOp\'s silent-reject cases', () => {
+    const before = tl(backToBack());
+    before.tracks[0].locked = true;
+    expect(checkTrim(before, 0, 0, 'end', -5, false, 24)).toEqual({ ok: false, reason: 'track 0 is locked' });
+    before.tracks[0].locked = false;
+    expect(checkTrim(before, 7, 0, 'end', -5, false, 24)).toEqual({ ok: false, reason: 'no track 7 (0..0)' });
+    expect(checkTrim(before, 0, 99, 'end', -5, false, 24)).toEqual({
+      ok: false,
+      reason: 'no clip 99 on track 0 (0..1)',
+    });
+    expect(checkTrim(before, 0, 0, 'end', 0, false, 24)).toEqual({ ok: false, reason: 'delta 0 trims nothing' });
+  });
+
+  it('names the previous clip for a head trim that D-054 clamps to zero', () => {
+    const before = tl([
+      clip('a', 'A', { start_frame: 0, duration: 100, source_len: 100 }),
+      clip('b', 'B', { start_frame: 100, source_start: 60, duration: 100, source_len: 200 }),
+    ]);
+    const check = checkTrim(before, 0, 1, 'start', -50, false, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.reason).toContain('"B"');
+      expect(check.reason).toContain('ends exactly at frame 100');
+      expect(check.reason).toContain('D-054');
+    }
+  });
+
+  it('names the A/V-linked partner when D-129 refuses the trim whole rather than desyncing it', () => {
+    // Video half has plenty of media left; the audio half is already at its
+    // own end, so the two clamp differently and the op is refused whole.
+    const before = twoTrack(
+      [clip('v', 'Shot V', { start_frame: 0, duration: 100, source_len: 1000, link_group: 'g1' })],
+      [clip('a', 'Shot A', { start_frame: 0, duration: 100, source_len: 100, link_group: 'g1' })],
+    );
+    expect(applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: 50 })).toBe(before);
+    const check = checkTrim(before, 0, 0, 'end', 50, false, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.reason).toContain('A/V-linked');
+      expect(check.reason).toContain('group "g1"');
+      expect(check.reason).toContain('track 1, clip 0');
+      expect(check.reason).toContain('D-129');
+    }
+  });
+
+  it('reports the B-033 straddle for a RIPPLE trim, the way checkRemoveGap does for a gap', () => {
+    const before = twoTrack(
+      [
+        clip('a', 'A', { start_frame: 0, duration: 50, source_len: 500 }),
+        clip('b', 'B', { start_frame: 50, duration: 50 }),
+      ],
+      [clip('x', 'X', { start_frame: 20, duration: 180, source_len: 10_000 })],
+    );
+    expect(applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: 10, ripple: true })).toBe(before);
+    const check = checkTrim(before, 0, 0, 'end', 10, true, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.reason).toContain('B-033');
+      expect(check.reason).toContain('track 1');
+    }
+  });
+});
+
+describe('B-220 — a trim never rewrites a duration that is ALREADY out of bounds', () => {
+  /** The B-220 shape: `duration` (200) is past everything the clamp would
+   *  allow (`source_len` 100), an inconsistent state no trim created — a
+   *  source that shrank under the clip, a `source_len` that never got probed,
+   *  a sibling placed at the same `start_frame`. */
+  const overlong = () => tl([clip('a', 'Recap', { start_frame: 0, duration: 200, source_len: 100 })]);
+
+  it('shortens by EXACTLY the delta asked for, instead of collapsing to the bound', () => {
+    // Before the fix: `clampInt(180, 1, 100)` → 100. A 20-frame trim silently
+    // took 100 frames — the destructive half of B-220.
+    const after = applyOp(overlong(), { kind: 'trim_end', track: 0, clip: 0, delta: -20 });
+    expect(after.tracks[0].clips[0].duration).toBe(180);
+  });
+
+  it('refuses to EXTEND an already-over-long clip, and says so instead of truncating it', () => {
+    const before = overlong();
+    // Before the fix this reported `{ok: true}` and left duration at 100 —
+    // a lengthening request that SHORTENED the clip by half.
+    expect(applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: 20 })).toBe(before);
+    const check = checkTrim(before, 0, 0, 'end', 20, false, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.reason).toContain('B-220');
+      expect(check.reason).toContain('ALREADY exceeds');
+      expect(check.reason).toContain('discarding 100 frames');
+    }
+  });
+
+  it('does not collapse a clip to 1 frame when a sibling shares its start_frame (maxDur 1)', () => {
+    // The most destructive form of the same arithmetic: a neighbour at the
+    // identical `start_frame` makes `maxDurPosition` — and therefore
+    // `maxDur` — exactly 1, so the old clamp rewrote ANY trim of this clip to
+    // `duration: 1`, which is precisely what B-220 observed live (360 → 1).
+    const before = tl([
+      clip('a', 'Recap', { start_frame: 0, duration: 360, source_len: 558 }),
+      clip('b', 'B', { start_frame: 0, duration: 50 }),
+    ]);
+    const after = applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: -10 });
+    expect(after.tracks[0].clips[0].duration).toBe(350); // not 1
+    // and the other direction is refused rather than collapsing it
+    expect(applyOp(before, { kind: 'trim_end', track: 0, clip: 0, delta: 10 })).toBe(before);
+  });
+
+  it('shortening an over-long clip may bring it back INTO bounds, and still stops at 1 frame', () => {
+    const backIn = applyOp(overlong(), { kind: 'trim_end', track: 0, clip: 0, delta: -150 });
+    expect(backIn.tracks[0].clips[0].duration).toBe(50);
+    const floor = applyOp(overlong(), { kind: 'trim_end', track: 0, clip: 0, delta: -500 });
+    expect(floor.tracks[0].clips[0].duration).toBe(1);
+  });
+
+  it('changes nothing for an in-bounds clip — the widened ceiling is inert until a clip is past it', () => {
+    // Guards the fix itself: `max(maxDur, duration) === maxDur` whenever
+    // `duration <= maxDur`, so every well-formed timeline clamps identically.
+    const media = tl([clip('a', 'A', { start_frame: 0, duration: 50, source_len: 100 })]);
+    const grownToMedia = applyOp(media, { kind: 'trim_end', track: 0, clip: 0, delta: 1000 });
+    expect(grownToMedia.tracks[0].clips[0].duration).toBe(100);
+    const neighbour = tl([
+      clip('a', 'A', { start_frame: 0, duration: 60, source_len: 1000 }),
+      clip('b', 'B', { start_frame: 100 }),
+    ]);
+    const grownToNeighbour = applyOp(neighbour, { kind: 'trim_end', track: 0, clip: 0, delta: 1000 });
+    expect(grownToNeighbour.tracks[0].clips[0].duration).toBe(100);
   });
 });
 

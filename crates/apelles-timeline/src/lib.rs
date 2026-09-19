@@ -2212,6 +2212,20 @@ fn clamped_trim_start_delta(track: &Track, clip_idx: usize, delta: i64) -> i64 {
 /// The clamped new `duration` `trim_end` would really apply — the tail-trim
 /// counterpart of [`clamped_trim_start_delta`], factored out for the same
 /// D-129 reason. Caller guarantees `clip_idx` is in range.
+///
+/// **B-220 — the upper bound is `max(max_dur, c.duration)`, not `max_dur`**,
+/// matching `packages/editor/src/timeline.ts`'s `clampedTrimEndDuration` (see
+/// that function's own doc for the full argument). `max_dur` bounds where a
+/// trim may take the clip; it is not a fact about where the clip already is.
+/// Clamping the ABSOLUTE new duration against it meant a clip whose stored
+/// `duration` already exceeded it — an out-of-bounds state no trim created —
+/// was silently rewritten down to `max_dur` by ANY trim, discarding the whole
+/// pre-existing overhang as a side effect of an unrelated edit. With the
+/// widened ceiling a shortening trim still shortens by exactly `delta` (and
+/// may bring the clip back into bounds), while a lengthening one clamps to the
+/// current duration and so changes nothing, which the caller is told about
+/// rather than being handed a silent success. Identical to the old expression
+/// for every in-bounds clip, so no well-formed timeline changes behaviour.
 fn clamped_trim_end_duration(track: &Track, clip_idx: usize, delta: i64) -> i64 {
     let c = &track.clips[clip_idx];
     let max_dur_source = (c.source_ceiling() - c.source_start).max(1);
@@ -2226,7 +2240,7 @@ fn clamped_trim_end_duration(track: &Track, clip_idx: usize, delta: i64) -> i64 
         .map(|s| (s - c.start_frame).max(1))
         .unwrap_or(i64::MAX);
     let max_dur = max_dur_source.min(max_dur_position).max(1);
-    (c.duration + delta).clamp(1, max_dur)
+    (c.duration + delta).clamp(1, max_dur.max(c.duration))
 }
 
 impl Timeline {
@@ -4179,6 +4193,109 @@ mod tests {
         assert_eq!(
             t2.tracks[0].clips[0].duration, 50,
             "grew right up to Y's start (50), not further, despite ample source_len"
+        );
+    }
+
+    /// B-220 — the clamp bounds where a trim may TAKE the clip; it is not a
+    /// fact about where the clip already is. A `duration` that already exceeds
+    /// every bound is an inconsistent state no trim created (a source that
+    /// shrank under the clip, a `source_len` never probed, a sibling placed at
+    /// the same `start_frame`), and the old
+    /// `(duration + delta).clamp(1, max_dur)` silently rewrote it down to
+    /// `max_dur` on ANY trim — a 20-frame ask that destroyed 100 frames.
+    /// Mirrors `timeline.test.ts`'s own B-220 block, clip for clip.
+    fn overlong_track() -> Timeline {
+        let mut t = Timeline::default();
+        t.tracks.push(Track {
+            kind: TrackKind::Video,
+            clips: vec![Clip {
+                id: "a".into(),
+                name: "Recap".into(),
+                source_path: "/a.mov".into(),
+                source_start: 0,
+                duration: 200, // already double what source_len allows
+                source_len: 100,
+                start_frame: 0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        t
+    }
+
+    #[test]
+    fn trim_end_shortens_an_overlong_clip_by_exactly_the_delta() {
+        let mut t = overlong_track();
+        t.trim_end(0, 0, -20).unwrap();
+        assert_eq!(
+            t.tracks[0].clips[0].duration, 180,
+            "B-220: shortened by the 20 asked for, not truncated to source_len (100)"
+        );
+        // and it still stops at the 1-frame floor like any other trim
+        let mut t2 = overlong_track();
+        t2.trim_end(0, 0, -500).unwrap();
+        assert_eq!(t2.tracks[0].clips[0].duration, 1);
+    }
+
+    #[test]
+    fn trim_end_never_lengthens_an_overlong_clip_and_never_truncates_it_either() {
+        let mut t = overlong_track();
+        t.trim_end(0, 0, 20).unwrap();
+        assert_eq!(
+            t.tracks[0].clips[0].duration, 200,
+            "B-220: a lengthening trim of an out-of-bounds clip changes nothing — \
+             before the fix it SHORTENED it to 100"
+        );
+    }
+
+    #[test]
+    fn trim_end_does_not_collapse_a_clip_whose_sibling_shares_its_start_frame() {
+        // The most destructive form of the same arithmetic, and the one B-220
+        // observed live (360 -> 1): a neighbour at the identical `start_frame`
+        // makes the position bound, and so `max_dur`, exactly 1.
+        let mut t = Timeline::default();
+        t.tracks.push(Track {
+            kind: TrackKind::Video,
+            clips: vec![
+                Clip {
+                    id: "a".into(),
+                    name: "Recap".into(),
+                    source_path: "/a.mov".into(),
+                    source_start: 0,
+                    duration: 360,
+                    source_len: 558,
+                    start_frame: 0,
+                    ..Default::default()
+                },
+                Clip {
+                    id: "b".into(),
+                    name: "B".into(),
+                    source_path: "/b.mov".into(),
+                    source_start: 0,
+                    duration: 50,
+                    source_len: 50,
+                    start_frame: 0,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+        t.trim_end(0, 0, -10).unwrap();
+        assert_eq!(t.tracks[0].clips[0].duration, 350, "not 1");
+    }
+
+    #[test]
+    fn trim_end_clamp_is_unchanged_for_every_in_bounds_clip() {
+        // Guards the B-220 fix itself: `max(max_dur, duration) == max_dur`
+        // whenever `duration <= max_dur`, so a well-formed timeline clamps
+        // exactly as it did before.
+        let mut t = Timeline::from_shots(&shots());
+        t.trim_end(0, 0, -50).unwrap();
+        assert_eq!(t.tracks[0].clips[0].duration, 50);
+        t.trim_end(0, 0, 999).unwrap();
+        assert_eq!(
+            t.tracks[0].clips[0].duration, 100,
+            "still clamped by source_len/the next clip, as before"
         );
     }
 

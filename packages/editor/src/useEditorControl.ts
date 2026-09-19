@@ -164,6 +164,7 @@ import {
   resolveMarkerColor,
   timelineFps,
   checkRemoveGap,
+  checkTrim,
   trackIndexAfterMove,
   checkTransition,
   cutFrames,
@@ -3204,10 +3205,37 @@ export function useEditorControl(): void {
         // D-235 — `ripple` is the MCP half of the context-sensitive trim
         // tool's ripple mode, the same `EditOp` field the GUI's armed edge
         // drag sets. Absent/false is the pre-D-235 behaviour byte for byte.
+        const ripple = a?.ripple === true;
+        // B-215 — this used to call `applyOp` and report `{ok: true, track}`
+        // regardless, including on every one of the reducer's silent
+        // `return tl` rejection paths (the clamp made no difference, a link
+        // member disagreed, a sync-locked track straddles the ripple point).
+        // That is exactly the false success B-227 fixed for `editor_remove_gap`;
+        // `checkTrim` is the same pattern — the identical precondition logic
+        // the reducer itself now calls, run BEFORE dispatching so a refusal
+        // comes back naming the real constraint. The reference-equality check
+        // after dispatch is the same backstop B-227 left, for any future
+        // rejection path this pre-check does not yet mirror.
+        const checkEdge = a?.edge === 'start' ? 'start' : 'end';
+        const check = checkTrim(tl, found.track, found.clip, checkEdge, delta, ripple, timelineFps(tl));
+        if (!check.ok) return { error: check.reason };
         useEditorTimelineStore
           .getState()
-          .applyOp({ kind: edge, track: found.track, clip: found.clip, delta, ripple: a?.ripple === true });
-        return { ok: true, track: found.track };
+          .applyOp({ kind: edge, track: found.track, clip: found.clip, delta, ripple });
+        if (useEditorTimelineStore.getState().timeline === tl) {
+          return { error: 'trim made no change for an unrecognised reason — this is a bug, please file it' };
+        }
+        // B-215/B-220 — report what actually landed, not just that something
+        // did: the clamp routinely applies less than the delta asked for, and
+        // the whole of B-215 was a caller unable to tell those apart.
+        const after = useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip];
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          startFrame: after?.start_frame ?? check.newStartFrame,
+          duration: after?.duration ?? check.newDuration,
+        };
       },
 
       // D-235 — roll and slide, the two genuinely new ops of the
