@@ -1,15 +1,20 @@
-# Export through the app's own compositor (D-350) — phases 1 and 2
+# Export through the app's own compositor (D-350) — phases 1, 2 and 3
 
-**Status:** phase 1 (correctness + memory) and phase 2 (speed, §9) both shipped
-2026-09-18, opt-in (`renderer: "compositor"`). The old filter-graph path is
-still the default and is still present.
-**Decisions:** `docs/08-decisions.md` **D-350** (the architecture) and **D-351**
-(phase 2's parallelism, and why frame-level `par_iter` is the wrong shape here).
+**Status:** phase 1 (correctness + memory) and phase 2 (speed, §9) shipped
+2026-09-18; phase 3 (contiguous segments, §10) shipped 2026-09-19. All opt-in
+(`renderer: "compositor"`) — the old filter-graph path is still the default and
+is still present.
+**Decisions:** `docs/08-decisions.md` **D-350** (the architecture), **D-351**
+(phase 2's parallelism, and why frame-level `par_iter` is the wrong shape here)
+and **D-360** (phase 3's segments, lanes and concat).
 **Bugs it supersedes:** B-228/B-229/B-230 (resource),
 B-201/B-208/B-218/B-223 (parity).
 
 Sections 1-8 are phase 1. **Section 9 is phase 2** — read §9.2 first if you are
-about to try to parallelise this loop.
+about to try to parallelise this loop. **Section 10 is phase 3**, which is the
+parallelisation §9.2 says IS correct, and §10.5 is the honest measurement of how
+far it got (1.64x, and still not under 1x) — including why a single timing run
+on this machine is worthless and what the harness does about it.
 
 ---
 
@@ -505,3 +510,269 @@ old-vs-new pixel parity and determinism), plus the whole `apelles` lib suite —
 |---|---|
 | `app/src-tauri/src/chroma/edit.rs` | `for_each_row_mut`, `to_rgba8_parallel`, `overlay_parallel`, `PARALLEL_PIXEL_MIN`; row-parallel `blend_layer_sampled` / corner-radius / opacity / `apply_adjustment_to_canvas`; the base layer's clone becomes a `Cow`; five new tests |
 | `app/src-tauri/src/chroma/edit_render.rs` | `WRITE_AHEAD`, the writer thread and its bounded channel; `measure_render_throughput`; `the_piped_stream_carries_every_frame_in_timeline_order` |
+
+---
+
+# 10. Phase 3 — contiguous segments (D-360, 2026-09-19)
+
+Phase 1 made the export correct and memory-flat; phase 2 put the compositing
+work on every core and still left it well above the video's own runtime. This
+is the phase that goes after the owner's actual goal — **under 1x** — and it is
+the one §9.5 already scoped: split the timeline into N contiguous stretches,
+give each its own worker, its own decode-pipe lane and its own encoder, and
+concatenate.
+
+## 10.1 Why contiguous, and why nothing cheaper works
+
+This argument is D-351's (§9.2), repeated here only because it is what rules out
+every simpler option:
+
+- **`par_iter` over frame indices is unsafe *and* slower.** `decode_pipe` is a
+  process-global pool whose pipes serve only *forward* targets within
+  `MAX_FORWARD_SKIP = 48`, and whose `retain_pipe_slots`/`sync_prefetch` are
+  declarative per frame — so out-of-order frames thrash the decoders, and two
+  frames in flight release each other's pipes.
+- **Round-robin (worker `k` takes every Lth frame) is provably no better than
+  phase 2.** Each worker still has to *decode* every frame, because a pipe can
+  only skip forward through the ones it does not need. Wall time stays
+  `N·d + N·c/L`.
+- **Contiguous ranges divide both terms**, because worker `k` decodes only the
+  frames in its own range. The price is that a whole segment of finished frames
+  would have to be buffered — tens of GB at 4K — *unless each segment has its
+  own encoder*. Which is the whole design.
+
+## 10.2 The two things `decode_pipe` needed
+
+Both are contained in `crates/apelles-media/src/decode_pipe.rs`, and both are
+behaviour-preserving for the single-threaded live-playback caller by
+construction rather than by care.
+
+**1. The pool is keyed by `(lane, slot)`, not `slot`.** A `PipeSlot` answers
+"which independently-sequential stream is this?" — one per visible video track.
+That was the whole question while exactly one thing walked the timeline. A
+`PipeLane` is the missing half: *whose*. Every walker calls `retain_pipe_slots`
+and `sync_prefetch` every frame with the complete set of slots **it** wants —
+both are declarative by design (D-330) — so under one un-laned pool, N workers
+at N different positions would each release every other's pipes on every frame.
+That is D-125/B-040's measured respawn storm (which reduced the multi-layer
+compositor to ~0.85 fps) reproduced one level up.
+
+`PipeLane::LIVE` is the entire pre-existing app — preview, Colorist,
+thumbnails. Nothing in the running app passes anything else.
+
+**2. The pool's lock is released across the blocking read.** It used to be held
+for the whole of `FramePipe::frame_scaled` — the pipe read, and on a respawn the
+248-337 ms keyframe seek behind it. Lanes alone would have bought nothing:
+N workers would have queued on one mutex and decoded exactly as sequentially as
+one of them did. The pipe is now **checked out** of the pool, read off-lock, and
+checked back in, with `Checkout`'s `Drop` guaranteeing it always returns — every
+exit from a decode (the frame, a pipe error, the hardware-decode fallback, a
+panic) has to give the key back, or the next caller for it waits on a condvar
+forever. A second caller for the *same* key waits, which is exactly the
+serialisation the pool mutex used to impose on it.
+
+A release (`retain_pipe_slots`, `reset`, `drop_pipes_for_path`) arriving while a
+pipe is checked out cannot take it from the thread holding it, so it **dooms**
+the key instead and `Checkout::drop` honours that — a released pipe stays
+released even when the release loses the race.
+
+## 10.3 The shape that shipped
+
+`render_timeline` now has one loop, `render_range`, parameterised by frame range
+and lane. The single-stream path is one call of it over the whole timeline; the
+segmented path is N of them at once inside a `std::thread::scope`. There is
+deliberately no third spelling of the loop.
+
+- **Segment count is decided by the renderer, not the compiler**
+  (`plan_segment_count`), because only it knows the machine: bounded by the work
+  available (`MIN_SEGMENT_FRAMES = 90`), by `available_parallelism`, and by
+  `MAX_SEGMENTS = 8`.
+- **`MAX_SEGMENTS = 6` is a memory bound before it is a speed one.** Each
+  segment holds its own encoder plus one `decode_pipe` ffmpeg per visible video
+  track, so the render's cost is `segments × (tracks + 1)` — exactly the
+  per-unit product B-229 and B-230 were. Bounding the multiplier here, rather
+  than letting it follow whatever core count the machine has, is what stops a
+  32-core box turning a 3.2 GB export into a 25 GB one. Six rather than eight
+  because the throughput sweep says so as well (§10.5). Within a segment the
+  hand-off bound is still phase 2's `WRITE_AHEAD = 4`.
+- **`MIN_SEGMENT_FRAMES` is the cold-start tax.** Every segment starts with one
+  keyframe seek per visible track (248-337 ms, median 723 ms on the owner's
+  C040). 90 frames is ~5.6 s of work at this path's measured rate against
+  ~0.7 s of start-up — a ~12% tax on that segment, for a whole core.
+- **A lane is released when its segment ends** (`release_lane`, via an RAII
+  `LaneGuard`), so the Nth segment's decoders die when the Nth segment does
+  rather than at process exit.
+- **A failing segment aborts its siblings** through a shared `AtomicBool`
+  checked once per frame, so a failure surfaces in about a frame's time instead
+  of after every other segment has rendered itself out in full.
+
+### The argv (the only TypeScript change)
+
+`timelinePipeExport.ts` compiles two more argvs alongside the single-stream one.
+Both carry a placeholder for the one thing the compiler cannot know — where this
+run's temporary files landed — substituted by `edit_render` exactly once each
+(`{{APELLES_SEGMENT_OUT}}`, `{{APELLES_CONCAT_LIST}}`).
+
+- **`segmentArgs`** — the same raw-RGBA input and the same codec tail as the
+  single-stream argv (that equality *is* the concat demuxer's precondition, so it
+  is asserted rather than assumed), writing **video only**, with **no `-t`**: a
+  segment's length is however many frames the compositor writes before closing
+  the pipe.
+- **`concatArgs`** — `-f concat -safe 0` over the finished segments, `-c:v copy`
+  (re-encoding would cost a second generation for nothing), plus **the whole
+  timeline's audio mix**, which has no notion of a frame range and so is muxed
+  once, here.
+
+**The concat list is input 0 — exactly where the pipe was — and that is
+load-bearing.** `buildPipeAudioGraph` numbers its sources from input 1 because
+input 0 is the pipe; putting the list in that same slot lets the *identical*
+graph string be reused at the concat step instead of recompiled with shifted
+indices, which would be a second implementation of the mix and precisely the bug
+class D-350 exists to close. Asserted directly, on a timeline that really has
+sound.
+
+## 10.4 Correctness — where a split can hide, and what pins it
+
+Segment boundaries are the only place this architecture can go wrong, and it
+goes wrong **silently**: the concat demuxer stitches whatever it is handed, so a
+segment one frame short produces a perfectly valid file that is one frame out of
+sync from that boundary onward, with no error from anything.
+
+So frame accuracy is structural first and measured second:
+
+| pinned by | what it pins |
+|---|---|
+| `segment_ranges_partition_the_render_exactly` | the ranges cover `0..frames` — contiguous, no hole, no overlap, no two differing by more than one frame |
+| `render_range`'s own tail check | each worker wrote **exactly** its range's length |
+| `render_segmented`'s total check | the segments wrote `req.frames` between them |
+| `the_segmented_render_is_the_same_video_as_the_single_stream_one` | `ffprobe -count_frames` on both real files agrees with the other and with the count asked for; and every frame at `b-1`, `b`, `b+1` for every boundary, plus phase 1's five sample frames, decoded from **both** files and compared |
+| `a_frame_is_the_same_in_any_decode_lane` | a lane changes which `ffmpeg` decoded a frame, never the frame — raw compositor output, no encoder in the way |
+
+The fixture's pip **slides one step per frame**, which is what makes the boundary
+comparison sharp: a one-frame offset is a *displaced box* — a filled region,
+which is exactly what `solid_share` (§5) measures and a one-pixel rounding line
+is not.
+
+**What is NOT claimed: the final file is not byte-identical to the single-stream
+file, and could not be.** Each segment is its own libx264 encode with its own
+GOP structure and rate control, so the compressed bytes differ by construction.
+What is asserted is that the *picture* is the same, by the same
+`solid_share`/`gross_share` metrics phase 1 used for old-vs-new. Determinism
+itself (same doc + same frame ⇒ same pixels) is unchanged and still pinned by
+phase 1's `rendering_the_same_frame_twice_produces_identical_bytes` and D-351's
+`the_parallel_compositor_is_deterministic_across_runs`.
+
+## 10.5 The numbers — and, again, what they do NOT reach
+
+```text
+cargo test -p apelles --lib chroma::edit_render::parity_tests::measure_segmented -- --ignored --nocapture
+```
+
+The whole export end to end — decode, composite, encode, and for the segmented
+runs the concatenation — on the same 20-clip / 1080p / 240-frame stress fixture
+phase 2 used. 240 frames at 30 fps is **8.00 s of video**, so "under 1x" means
+the `xruntime` column below 1.00. Ten logical cores.
+
+```text
+segs       best       fps  xruntime  speedup
+   1     14.45s      16.6      1.81     1.00x
+   2     10.18s      23.6      1.27     1.42x
+   4      8.79s      27.3      1.10     1.64x
+   6      8.91s      26.9      1.11     1.62x
+   8      9.19s      26.1      1.15     1.57x
+```
+
+**Read honestly, and the headline first: this is a real 1.64x, and it still
+does NOT reach the owner's "under 1x the video's runtime."** It takes the
+export from **1.81x** the video's runtime to **1.10x** — close enough to the
+goal to see it, and not the goal.
+
+### Why this is best-of-3, and why a single reading here was worthless
+
+This matters more than the table. The first two sweeps of this fixture, run
+minutes apart with identical code, disagreed **by 2x on the one-segment
+baseline** — 24.24 s, then 12.38 s — and the second sweep even reported 6 and 8
+segments as *slower than one*. Nothing about the code changed. Sibling build
+agents on this machine come and go on a timescale **shorter than one sweep**
+(load average was observed swinging between 15 and 64 during this work), so
+each row of a single-pass sweep is timed under a different machine.
+
+So the harness now runs `REPEATS = 3`, sweeping **every configuration inside
+each repeat** (so drift lands on all of them roughly equally rather than
+concentrating in whichever row was unlucky), and reports the **minimum** per
+configuration. The minimum, not the mean, because every error source here is
+additive and one-directional: another process can only ever make this render
+slower, never faster, so the fastest observed run is the closest this harness
+gets to the cost of the code itself — and averaging a contended run in just
+launders someone else's build into our number. The spread that survives is
+still large (repeat 3's four-segment run took 13.98 s against repeat 2's
+8.79 s), which is exactly why the minimum is the one reported.
+
+**The 1.64x above is therefore the conservative reading.** An earlier
+single-pass sweep showed 2.04x; that number is not repeated here because it
+was measured under a load spike on its baseline row and is not one this
+harness can reproduce.
+
+One caveat remains, pointing the other way: **this fixture is 1080p.** The
+owner's real project is 4K, where decode is a much larger share of each frame
+and therefore has more for segments to reclaim. An end-to-end measurement on
+that project is still not done — it was already on phase 2's punch list and
+still is.
+
+### Why it plateaus at 4-6 rather than scaling to the core count
+
+Worth stating, because "N segments on N cores" sounds like it should be linear
+and is not:
+
+1. **Phase 2 already spends every core inside a frame.** `rayon` puts ~41% of
+   the compositing work (§9.5's Amdahl back-solve) across all ten cores at one
+   segment. So segmenting is not claiming an idle machine — it is claiming the
+   *serial remainder* (`image::imageops::resize`, the crop copy) and the decode
+   term. That is a smaller prize than the core count suggests.
+2. **A segment is not just a compositor.** Each one runs its own libx264 and
+   its own decode `ffmpeg` per visible track, all competing for the same ten
+   cores as the compositor. Past ~4 segments the machine is saturated and
+   further segments buy context switching and one more cold start
+   (`MIN_SEGMENT_FRAMES`) rather than throughput.
+3. **Eight measured WORSE than four** (9.19 s vs 8.79 s), which is the same
+   effect from the other side — and both independent sweeps agreed on that
+   ordering.
+
+**So `MAX_SEGMENTS` is 6, not 8.** Eight costs a third more concurrent encoders
+and decode processes than six and buys no throughput at all on either
+measurement — which is the wrong side of that constant's own memory argument
+(`segments × (tracks + 1)`, the B-229/B-230 shape). Six keeps the whole
+plateau. The 4K case is unmeasured, and every unknown there points the same
+way: each segment's resident cost is four times larger at 4K, so if the bound
+is wrong for 4K it is wrong in the direction of being too generous, not too
+tight.
+
+### What would be needed to actually reach <1x
+
+Not speculation — these are the terms the measurements above name:
+
+- **`image::imageops::resize` is still serial within a frame**, and §9.5
+  already worked out why it stays that way: splitting it by output band needs an
+  input halo whose weight normalisation `image` does not expose, and
+  hand-rolling a bit-identical replacement is what CLAUDE.md's "check for an
+  existing crate first" rule forbids. A maintained parallel resampler crate
+  that is *provably* bit-identical would be the honest route.
+- **The compositing is still on the CPU.** §2 records that D-350 phase 1 did
+  not actually move compositing onto the GPU despite the decision's title; that
+  remains the largest single unclaimed factor, and it is the one that would
+  change the shape of this table rather than its constants.
+- **Hardware encode.** Every segment encodes with libx264 on the CPU, competing
+  with the compositor for the cores this phase is trying to spend on pixels.
+  `h264_videotoolbox` per segment is a parameter away and is not in this phase.
+
+## 10.6 Files (phase 3)
+
+| file | what changed |
+|---|---|
+| `crates/apelles-media/src/decode_pipe.rs` | `PipeLane`, `PipeKey`, the `LiveEntry::Idle/Busy` pool, `check_out`/`Checkout`/`release_key`, `release_lane`; `playback_frame_scaled`/`retain_pipe_slots`/`sync_prefetch` take a lane |
+| `app/src-tauri/src/chroma/edit.rs` | `render_timeline_frame`/`composite_video_frame`/`decode_clip_rgba`/`decode_clip_picture`/`prime` take a lane |
+| `app/src-tauri/src/chroma/edit_render.rs` | `render_range` (the loop, parameterised), `render_segmented`, `plan_segment_count`, `segment_ranges`, `LaneGuard`, `SegmentedEncodePlan`, the token substitution; new tests + `measure_segmented_render_throughput` |
+| `app/src-tauri/src/chroma/{commands,session,playback}.rs` | `PipeLane::LIVE` at the three live decode call sites |
+| `packages/editor/src/timelinePipeExport.ts` | `segmentArgs`/`concatArgs`, the two tokens, `TimelineRenderPlan` |
+| `packages/editor/src/{editorExport,exportQueueStore}.ts` | the render plan carries `segments`; three hand-copied shapes become one `TimelineRenderPlan` |
+| `packages/editor/src/exportParityFixture.test.ts` | the segment argvs join the frozen fixture; three new cross-engine tests |

@@ -21,7 +21,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildExportFfmpegArgs, exportTotalDurationSec, type TimelineExportOptions } from './timelineExport';
-import { buildPipeExportPlan } from './timelinePipeExport';
+import {
+  buildPipeExportPlan,
+  CONCAT_LIST_TOKEN,
+  SEGMENT_OUT_TOKEN,
+} from './timelinePipeExport';
 import type { Clip, ClipKeyframe, Timeline, Track } from './timeline';
 
 /** Where the Rust half reads it from. Relative to this file so it resolves the
@@ -327,6 +331,11 @@ interface ParityFixture {
   /** The NEW path's complete argv, same substitution rules. */
   pipeArgs: string[];
   pipeFrames: number;
+  /** D-360 — the per-segment encode + concat argvs, same substitution rules,
+   *  plus their own `{{APELLES_SEGMENT_OUT}}` / `{{APELLES_CONCAT_LIST}}`
+   *  placeholders which the Rust half fills with this run's temp files. */
+  segmentArgs: string[];
+  concatArgs: string[];
   /** The many-clip resource case — same substitution rules, its own comp size.
    *  Consumed by `measure_resource_use_against_the_filter_graph_path`, which is
    *  `#[ignore]`d: it measures a live process and so reports rather than
@@ -344,6 +353,8 @@ interface ParityFixture {
     filterArgs: string[];
     pipeArgs: string[];
     pipeFrames: number;
+    segmentArgs: string[];
+    concatArgs: string[];
   };
 }
 
@@ -368,6 +379,8 @@ function buildFixture(): ParityFixture {
     filterArgs: buildExportFfmpegArgs(timeline, 'OUT', opts),
     pipeArgs: plan.args,
     pipeFrames: plan.frames,
+    segmentArgs: plan.segments.segmentArgs,
+    concatArgs: plan.segments.concatArgs,
     stress: buildStress(),
   };
 }
@@ -388,6 +401,8 @@ function buildStress(): ParityFixture['stress'] {
     filterArgs: buildExportFfmpegArgs(timeline, 'OUT', opts),
     pipeArgs: plan.args,
     pipeFrames: plan.frames,
+    segmentArgs: plan.segments.segmentArgs,
+    concatArgs: plan.segments.concatArgs,
   };
 }
 
@@ -442,5 +457,91 @@ describe('D-350 — the export-parity fixture the Rust render path is measured a
     expect(tOf(filterArgs)).toBe(String(durationSec));
     expect(tOf(pipeArgs)).toBe(String(durationSec));
     expect(pipeFrames).toBe(Math.round(durationSec * FPS));
+  });
+
+  it('D-360 — a segment carries the picture and only the picture', () => {
+    const { segmentArgs } = buildFixture();
+    // Same raw input and same codec settings as the single-stream argv: that
+    // equality IS the concat demuxer's precondition, so it is asserted rather
+    // than assumed.
+    expect(segmentArgs).toContain('rawvideo');
+    expect(segmentArgs.filter((a) => a === '-i')).toHaveLength(1);
+    expect(segmentArgs.slice(segmentArgs.indexOf('-c:v'), segmentArgs.indexOf('-c:v') + 6)).toEqual(
+      ['-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p'],
+    );
+    // No sound and no duration bound — a segment's length is however many
+    // frames the compositor writes before it closes the pipe, and the mix is
+    // compiled for the whole timeline (see `buildSegmentArgs`).
+    expect(segmentArgs).not.toContain('-filter_complex');
+    expect(segmentArgs).not.toContain('-t');
+    expect(segmentArgs.filter((a) => a === SEGMENT_OUT_TOKEN)).toHaveLength(1);
+    // The placeholder is the LAST argument: it is the output path.
+    expect(segmentArgs[segmentArgs.length - 1]).toBe(SEGMENT_OUT_TOKEN);
+  });
+
+  it('D-360 — the concat step copies the picture and muxes the whole timeline’s sound', () => {
+    const { concatArgs, pipeArgs, durationSec } = buildFixture();
+    expect(concatArgs[concatArgs.indexOf('-f') + 1]).toBe('concat');
+    // `-safe 0`: the list holds absolute paths into the renderer's temp dir.
+    expect(concatArgs[concatArgs.indexOf('-safe') + 1]).toBe('0');
+    expect(concatArgs.filter((a) => a === CONCAT_LIST_TOKEN)).toHaveLength(1);
+    // The list is input 0, exactly where the pipe was — which is what lets the
+    // audio graph keep the input indices it was already compiled with.
+    expect(concatArgs.indexOf(CONCAT_LIST_TOKEN)).toBe(concatArgs.indexOf('-i') + 1);
+    // Stream-copied, never re-encoded: a second generation for nothing.
+    expect(concatArgs.slice(concatArgs.indexOf('-c:v'), concatArgs.indexOf('-c:v') + 2)).toEqual([
+      '-c:v',
+      'copy',
+    ]);
+    // Same length bound as the single-stream argv, so the two paths agree
+    // about an export's duration by construction rather than by coincidence.
+    const tOf = (args: string[]) => args[args.lastIndexOf('-t') + 1];
+    expect(tOf(concatArgs)).toBe(String(durationSec));
+    expect(tOf(concatArgs)).toBe(tOf(pipeArgs));
+    // And the same output file the single-stream argv would have written.
+    expect(concatArgs[concatArgs.length - 1]).toBe(pipeArgs[pipeArgs.length - 1]);
+  });
+
+  it('D-360 — the segmented audio mix is the single-stream one, byte for byte', () => {
+    // **The load-bearing reason the concat list is input 0.** The mix is
+    // compiled once, by `buildPipeAudioGraph`, with its sources numbered from
+    // input 1 — because input 0 is the pipe. Putting the concat list in that
+    // same slot is what lets the identical graph string be reused at the
+    // concat step instead of recompiled with shifted indices, which would be a
+    // second implementation of the mix and exactly the class of bug D-350
+    // exists to close.
+    //
+    // Neither committed fixture carries sound (the parity one is pure geometry,
+    // the stress one is a clip-count measurement), so a timeline with a real
+    // audio track is built here rather than asserting vacuously on those.
+    const timeline = parityTimeline();
+    timeline.tracks.push({
+      kind: 'audio',
+      gain: 0.8,
+      clips: [clip('a-music', 'music.mp4', { start_frame: 0, duration: 60 })],
+    } as Track);
+    const opts = parityOpts();
+    const plan = buildPipeExportPlan(timeline, 'OUT', opts, exportTotalDurationSec(timeline, opts));
+
+    const graphOf = (args: string[]) =>
+      args.includes('-filter_complex') ? args[args.indexOf('-filter_complex') + 1] : null;
+    expect(graphOf(plan.args), 'the fixture must actually have a mix to compare').toContain(
+      'volume',
+    );
+    expect(graphOf(plan.segments.concatArgs)).toBe(graphOf(plan.args));
+
+    // ...and the same sources, in the same order, at the same input indices.
+    const sourcesOf = (args: string[]) =>
+      args.flatMap((a, i) =>
+        a === '-i' && args[i + 1] !== '-' && args[i + 1] !== CONCAT_LIST_TOKEN
+          ? [args[i + 1]]
+          : [],
+      );
+    expect(sourcesOf(plan.segments.concatArgs)).toEqual(sourcesOf(plan.args));
+    expect(sourcesOf(plan.args)).toEqual(['music.mp4']);
+    // The mapping too — the sound must be mapped out of the same label.
+    const mapsOf = (args: string[]) =>
+      args.flatMap((a, i) => (a === '-map' ? [args[i + 1]] : []));
+    expect(mapsOf(plan.segments.concatArgs)).toEqual(mapsOf(plan.args));
   });
 });

@@ -279,15 +279,42 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    **This does NOT meet the owner's stated goal of "under 1x the video's runtime"**, and
    §9.5 of the note says exactly why: ~31% of the time is still serial decode (one
    global-locked, forward-only pipe) and `image::imageops::resize` is still serial.
-   **Phase 3, the thing that would reach <1x — contiguous-segment parallel rendering**
-   (N segments, each with its own worker, its own `decode_pipe` LANE and its own encoder,
-   concatenated at the end). Needs: lane-scoped keys in `decode_pipe`'s global pool;
-   releasing that pool's lock across the blocking read; per-segment encode + concat in
-   `timelinePipeExport.ts`'s argv. **Note for whoever picks this up: a naive `par_iter`
-   over frame indices is unsafe AND slower here** — `decode_pipe` holds one global mutex
-   across the blocking read, serves only forward targets within 48 frames, and releases
-   pipes declaratively per frame. Round-robin across frames is provably no better than
-   what already shipped. See `docs/notes/export-gpu-compositor.md` §9.2.
+   **Phase 3 — contiguous-segment parallel rendering, SHIPPED (2026-09-19, D-360).**
+   All three things phase 2 said this needed are done: `decode_pipe`'s pool is keyed by
+   `(lane, slot)` (`PipeLane::LIVE` is the whole pre-existing app, so live playback is
+   unchanged by construction); its lock is **released across the blocking read** via a
+   check-out/check-in whose `Drop` guarantees the key always returns, with a mid-decode
+   release *dooming* the key rather than failing to take it; and `timelinePipeExport.ts`
+   compiles a per-segment encode + a concat argv, with the audio mux moved to the concat
+   step and the concat list at **input 0** so the identical audio graph is reused rather
+   than recompiled with shifted indices. Bounded the way B-229/B-230 demand — a segment
+   costs `1 encoder + 1 decoder per visible track`, so `MAX_SEGMENTS = 8` bounds the
+   multiplier (six, not eight — both independent sweeps put 8 segments *behind* 4, so
+   eight would cost a third more concurrent processes for no throughput),
+   `MIN_SEGMENT_FRAMES = 90` stops a short export paying a cold keyframe seek
+   per segment, `WRITE_AHEAD = 4` still bounds each segment's hand-off, and `LaneGuard`
+   frees a lane the moment its segment ends.
+   **Measured, and short of the goal: a real 1.64x that still does NOT reach "under 1x."**
+   Same 20-clip/1080p/240-frame fixture (8.00 s of video), best-of-3:
+   **14.45 s → 8.79 s = 1.81x the video's runtime → 1.10x**, plateauing at 4 segments.
+   It plateaus because D-351 already spends all ten cores on ~41%
+   of the compositing — segments claim the serial remainder, not an idle machine — and
+   each segment's own libx264 competes for those cores. **The harness had to be fixed
+   before any of this could be believed**: two single-pass sweeps of the identical binary
+   disagreed 2x on the baseline (24.24 s, then 12.38 s) because sibling agents' builds come
+   and go faster than one sweep, so it now sweeps every configuration inside each of three
+   repeats and reports the per-configuration minimum (minimum, not mean — interference is
+   one-directional). **Frame accuracy at the segment
+   boundaries** (where a split fails silently — the concat demuxer stitches anything) is
+   pinned four ways: the partition is unit-tested, each worker asserts its own range
+   length, the total is asserted, and a real both-paths run compares `ffprobe
+   -count_frames` (60 = 60) and every frame around every boundary at **0.000% differing
+   pixels**. See `docs/notes/export-gpu-compositor.md` §10, and §9.2 still for why a naive
+   `par_iter` over frame indices is unsafe AND slower.
+   **What would actually reach <1x, per §10.5:** a provably bit-identical parallel resize
+   (`image::imageops::resize` is still serial within a frame), compositing genuinely on
+   the GPU (§2 records that phase 1 never did move it there despite D-350's title), and
+   hardware encode per segment.
    **Phase 2 — still not built:**
    - `speedOverrides`/`fitOverrides`/`freezeOverrides` (refused, not silently ignored, by
      the render path today — the live compositor has no notion of them);
@@ -298,7 +325,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    - an end-to-end measurement at the real ~79-clip project (the slope is argued
      structurally and asserted on the compiled argv, not yet measured at that size);
    - real progress reporting (this path knows its frame number; the old one could only
-     parse ffmpeg stderr);
+     parse ffmpeg stderr) — **B-231's fix, and D-360 changed the shape of the question
+     it has to answer**: progress is now N concurrent workers each walking its own frame
+     range, so "the frame we are on" is a sum over segments, not a single counter. The
+     seam is there for it — `render_range` already takes each segment's range and returns
+     its own outcome, and `TimelineRenderOutcome` already reports the segment count — but
+     nothing publishes a per-frame event yet, deliberately (B-231 is sequenced after
+     D-360 and is not part of it);
    - ProRes / a quality knob (phase 1 is h.264 crf 18, matching the old path's default);
    - **deleting the old filter-graph path and the temporary `renderer` parameter** — the
      end state of D-350, once phase 2 closes the gaps above.

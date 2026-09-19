@@ -35,6 +35,7 @@
 //! numbers, and what phase 1 deliberately defers.
 
 use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
@@ -61,12 +62,43 @@ pub struct TimelineRenderRequest {
     /// duration the old path put in its `-t`, so the two paths' picture lengths
     /// agree by construction rather than by two independent roundings.
     pub frames: u64,
+    /// **D-360 — the argv for rendering this export as N contiguous segments.**
+    ///
+    /// Optional, and absent means "single stream", for two reasons: an export
+    /// queued before D-360 and run after it carries no segment argv (the queue
+    /// freezes a job's plan at enqueue time), and this side — not the
+    /// compiler — decides whether splitting is worth it at all, since only it
+    /// knows the machine. See [`plan_segment_count`].
+    #[serde(default)]
+    pub segments: Option<SegmentedEncodePlan>,
+}
+
+/// The two extra argvs a segmented render needs, compiled by
+/// `timelinePipeExport.ts` alongside the single-stream one (D-360).
+///
+/// Both carry a placeholder — [`SEGMENT_OUT_TOKEN`], [`CONCAT_LIST_TOKEN`] —
+/// for the one thing the compiler cannot know: where this run's temporary
+/// files landed. Everything else about them, the codec, the audio graph, the
+/// mapping, is still compiled entirely on the TypeScript side, which is D-350's
+/// "the caller owns the content" split unchanged.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentedEncodePlan {
+    /// One segment's encode: the raw-video input, and a **video-only** output.
+    pub segment_args: Vec<String>,
+    /// The concat demuxer reading the finished segments, plus the audio mix —
+    /// which is compiled for the whole timeline and so cannot be split.
+    pub concat_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TimelineRenderOutcome {
     pub ok: bool,
     pub frames: u64,
+    /// How many contiguous segments this render actually used (D-360) — 1 for
+    /// the single-stream path. Reported because it is decided here, from the
+    /// machine, and is otherwise invisible to the caller that asked for it.
+    pub segments: usize,
     pub ms: u128,
     pub stderr_tail: String,
 }
@@ -87,6 +119,142 @@ pub struct TimelineRenderOutcome {
 /// encoder's latency straight back on the compositor's thread, which is the
 /// whole point of the hand-off.
 const WRITE_AHEAD: usize = 4;
+
+/// **D-360 — the smallest stretch of timeline worth giving its own worker.**
+///
+/// Every segment starts COLD: one keyframe seek per visible video track before
+/// its first frame, measured by `decode_pipe` itself at 248-337 ms and a median
+/// 723 ms on the owner's C040 footage. That cost is paid once per segment and
+/// amortised over the frames in it, so the split only pays when a segment is
+/// many times longer than its own start-up. At the ~16 fps this path renders
+/// the 1080p stress fixture at, 90 frames is ~5.6 s of work against ~0.7 s of
+/// cold start — a ~12% tax on that segment, against the whole core it buys.
+/// Below that the arithmetic turns over and a split makes the export slower.
+const MIN_SEGMENT_FRAMES: u64 = 90;
+
+/// **D-360 — the hard ceiling on concurrent segments: a memory bound that the
+/// throughput measurement then independently agreed with.**
+///
+/// Each segment holds its own encoder process plus one `decode_pipe` `ffmpeg`
+/// per visible video track, so the render's total process and memory cost is
+/// `segments × (tracks + 1)`. That product is exactly the shape B-229 and B-230
+/// were: a per-unit cost nobody bounded. Bounding the multiplier here — rather
+/// than letting it follow the core count on whatever machine this runs on — is
+/// what keeps a 32-core box from turning a 3.2 GB export into a 25 GB one.
+///
+/// **Six because it was measured, not because it is a round number.** The
+/// throughput sweep ([`parity_tests::measure_segmented_render_throughput`],
+/// recorded in `docs/notes/export-gpu-compositor.md` §10.5) plateaus at four
+/// segments and is flat-to-slightly-worse beyond it — best-of-3 on the 1080p
+/// stress fixture: 4 → 8.79 s, 6 → 8.91 s, 8 → 9.19 s, with an earlier
+/// independent sweep agreeing that 8 loses to 4-6. So eight costs a third more
+/// concurrent encoders and decoders than six for no throughput at all, which is
+/// the wrong side of this constant's own argument. Six keeps the whole plateau
+/// and is still below the owner's 10 logical cores, so the measured
+/// configuration is the bounded one. The 4K case — where each segment's
+/// resident cost is four times larger — is unmeasured, and every unknown there
+/// points the same way: fewer, not more.
+const MAX_SEGMENTS: usize = 6;
+
+/// The argv placeholder `timelinePipeExport.ts` writes where a segment's own
+/// output file goes, and the one it writes for the concat list. Substituted
+/// here because only this side knows the temporary directory; the argv is
+/// otherwise still compiled entirely by the caller, which is the D-350 split.
+///
+/// Their TypeScript twins are `SEGMENT_OUT_TOKEN` / `CONCAT_LIST_TOKEN` in
+/// `packages/editor/src/timelinePipeExport.ts`, kept honest by
+/// `the_segment_argv_tokens_match_the_typescript_compiler` reading them out of
+/// the shared fixture — the same cross-engine pair pattern D-338/B-201 uses.
+const SEGMENT_OUT_TOKEN: &str = "{{APELLES_SEGMENT_OUT}}";
+const CONCAT_LIST_TOKEN: &str = "{{APELLES_CONCAT_LIST}}";
+
+/// How many contiguous segments to split a render of `frames` into on THIS
+/// machine (D-360).
+///
+/// Bounded three ways, in order: by the work available
+/// ([`MIN_SEGMENT_FRAMES`]), by the cores available, and by
+/// [`MAX_SEGMENTS`]. A short export comes back as 1 and takes the
+/// single-stream path unchanged.
+fn plan_segment_count(frames: u64) -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1);
+    let by_work = (frames / MIN_SEGMENT_FRAMES) as usize;
+    by_work.min(cores).clamp(1, MAX_SEGMENTS)
+}
+
+/// Split `frames` into `segments` contiguous, non-overlapping ranges that
+/// cover `0..frames` exactly.
+///
+/// **The remainder is spread, not dumped on the last segment.** With
+/// `frames = 5605` and 8 segments the difference is one frame per worker
+/// against five on one of them, which is nothing; the reason to do it properly
+/// is that "every frame belongs to exactly one range, and the ranges are
+/// contiguous and in order" is the property the concatenated output's
+/// frame-accuracy rests on, and it is easier to see in arithmetic that cannot
+/// drop a remainder than in arithmetic that has to remember to add it back.
+fn segment_ranges(frames: u64, segments: usize) -> Vec<std::ops::Range<u64>> {
+    let segments = segments.max(1) as u64;
+    let base = frames / segments;
+    let extra = frames % segments;
+    let mut ranges = Vec::with_capacity(segments as usize);
+    let mut start = 0u64;
+    for i in 0..segments {
+        let len = base + u64::from(i < extra);
+        ranges.push(start..start + len);
+        start += len;
+    }
+    ranges
+}
+
+/// Replace the single occurrence of `token` in `args` with `value`.
+///
+/// An exact whole-argument match, and exactly one of them — a token that is
+/// missing, or present twice, is a compiler/renderer disagreement about the
+/// argv contract and is reported rather than papered over.
+fn substitute_token(args: &[String], token: &str, value: &Path) -> Result<Vec<String>, String> {
+    let hits = args.iter().filter(|a| a.as_str() == token).count();
+    if hits != 1 {
+        return Err(format!(
+            "the segmented export argv must contain {token} exactly once, found {hits}"
+        ));
+    }
+    Ok(args
+        .iter()
+        .map(|a| {
+            if a.as_str() == token {
+                value.to_string_lossy().into_owned()
+            } else {
+                a.clone()
+            }
+        })
+        .collect())
+}
+
+/// One line of an ffmpeg **concat demuxer** list.
+///
+/// The demuxer's own quoting rules: the path is single-quoted, and a literal
+/// `'` inside it is written `'\''`. Our paths are generated inside a temporary
+/// directory and contain neither, but escaping is a property of the format, not
+/// of the paths we happen to produce.
+fn concat_list_line(path: &Path) -> String {
+    format!("file '{}'\n", path.to_string_lossy().replace('\'', "'\\''"))
+}
+
+/// Releases a render worker's whole decode-pipe lane when its segment ends
+/// (D-360), however it ends.
+///
+/// RAII rather than a call at the bottom of the loop: a segment that returns
+/// early on a decode error must still free its `ffmpeg` processes, and "the
+/// Nth segment's cost stops when the Nth segment does" is the bound
+/// [`MAX_SEGMENTS`] is multiplied against.
+struct LaneGuard(apelles_media::decode_pipe::PipeLane);
+
+impl Drop for LaneGuard {
+    fn drop(&mut self) {
+        apelles_media::decode_pipe::release_lane(self.0);
+    }
+}
 
 /// The **canvas** to composite into for an output of `out` pixels, given a
 /// composition of `comp` — and whether the finished canvas still needs a
@@ -143,11 +311,70 @@ pub fn render_timeline(
     }
     let out = (req.width, req.height);
     let comp = edit::composition_size(settings, timeline)?;
-    let (max_long_edge, needs_resize) = canvas_plan(comp, out);
-
+    let canvas = canvas_plan(comp, out);
     let started = Instant::now();
+
+    // D-360 — split into contiguous segments when the caller compiled the argv
+    // for it AND this machine and this export are big enough to be worth it.
+    if let Some(plan) = &req.segments {
+        let segments = plan_segment_count(req.frames);
+        if segments > 1 {
+            return render_segmented(
+                timeline, settings, req, plan, segments, out, canvas, started,
+            );
+        }
+    }
+
+    let one = render_range(
+        timeline,
+        settings,
+        &req.args,
+        out,
+        canvas,
+        0..req.frames,
+        apelles_media::decode_pipe::PipeLane::render(0),
+        &std::sync::atomic::AtomicBool::new(false),
+    )?;
+    Ok(TimelineRenderOutcome {
+        ok: true,
+        frames: one.written,
+        segments: 1,
+        ms: started.elapsed().as_millis(),
+        stderr_tail: one.stderr_tail,
+    })
+}
+
+/// What one segment's worker produced.
+struct SegmentOutcome {
+    written: u64,
+    stderr_tail: String,
+}
+
+/// **Render `range` of the timeline into the encoder `args` names, and nothing
+/// else** — the loop D-350 phase 1 built and D-351 pipelined, with its frame
+/// range and its decode-pipe lane made parameters (D-360).
+///
+/// One call is one contiguous stretch of frames, one `ffmpeg`, one output file
+/// and one decode-pipe lane, decoded strictly forward from `range.start`. The
+/// whole of the segmented path is N of these run at once; the single-stream
+/// path is one of them over the whole timeline. There is deliberately no third
+/// spelling of this loop.
+#[allow(clippy::too_many_arguments)]
+fn render_range(
+    timeline: &Timeline,
+    settings: &ProjectSettings,
+    args: &[String],
+    out: (u32, u32),
+    canvas: (Option<u32>, bool),
+    range: std::ops::Range<u64>,
+    lane: apelles_media::decode_pipe::PipeLane,
+    abort: &std::sync::atomic::AtomicBool,
+) -> Result<SegmentOutcome, String> {
+    let (max_long_edge, needs_resize) = canvas;
+    // Frees this segment's decoders however this function returns.
+    let _lane = LaneGuard(lane);
     let mut child = Command::new(ffmpeg_bin())
-        .args(&req.args)
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -186,7 +413,15 @@ pub fn render_timeline(
     });
 
     let mut render_err: Option<String> = None;
-    for pos in 0..req.frames {
+    for pos in range.clone() {
+        // D-360 — a sibling segment has already failed, so this one's remaining
+        // frames are work nobody will use. Checked per frame rather than not at
+        // all so a failure surfaces in about one frame's time instead of after
+        // every other segment has rendered itself out in full.
+        if abort.load(std::sync::atomic::Ordering::Relaxed) {
+            render_err = Some("another segment failed".to_string());
+            break;
+        }
         let frame = match edit::render_timeline_frame(
             timeline,
             settings,
@@ -208,6 +443,7 @@ pub fn render_timeline(
             // than running two decoders where one would do. See
             // `docs/notes/export-gpu-compositor.md` §6.
             FrameIntent::Single,
+            lane,
         ) {
             Ok(Some(img)) => {
                 let rgba = img.to_rgba8();
@@ -257,11 +493,154 @@ pub fn render_timeline(
     if !status.success() {
         return Err(format!("encoder exited {status}: {}", tail(&stderr)));
     }
+    let wanted = range.end - range.start;
+    if written != wanted {
+        // The encoder read a headerless raw stream, so a short write is not an
+        // error anywhere below this line — it is simply a shorter video. Said
+        // here or not at all.
+        return Err(format!(
+            "segment {}..{} wrote {written} frames, not {wanted}",
+            range.start, range.end
+        ));
+    }
+    Ok(SegmentOutcome {
+        written,
+        stderr_tail: tail(&stderr),
+    })
+}
+
+/// **D-360 — the contiguous-segment render: N workers, N lanes, N encoders,
+/// one concatenation.**
+///
+/// Splits `0..req.frames` into `segments` contiguous ranges and renders them at
+/// once, each into its own file, then hands the files to the caller-compiled
+/// concat argv — which is also where the audio mix is muxed in, since the sound
+/// is compiled for the whole timeline and has no notion of the split.
+///
+/// **Why this is the shape that scales where D-351's could not** (the full
+/// argument is D-351's own §9.2): giving each worker every Lth frame leaves
+/// every worker *decoding* every frame, because a decode pipe can only skip
+/// forward — so wall time stays `N·d + N·c/L` and only the composite term
+/// improves. Contiguous ranges divide both terms, because worker `k` decodes
+/// only the frames in its own range. What that costs is a whole segment of
+/// finished frames in flight, which is tens of GB at 4K — and is exactly what
+/// giving each segment its OWN encoder removes: nothing is buffered that
+/// [`WRITE_AHEAD`] does not already bound, per segment.
+///
+/// **Frame accuracy across a boundary is structural, not checked afterwards.**
+/// [`segment_ranges`] partitions `0..frames`, each worker asserts it wrote its
+/// own range's length exactly, and this function asserts the total. A frame
+/// cannot be dropped or duplicated at a boundary without one of those three
+/// failing, which matters because the concat demuxer would stitch a short
+/// segment together with the next one perfectly happily and ship a video one
+/// frame out of sync from that point on.
+#[allow(clippy::too_many_arguments)]
+fn render_segmented(
+    timeline: &Timeline,
+    settings: &ProjectSettings,
+    req: &TimelineRenderRequest,
+    plan: &SegmentedEncodePlan,
+    segments: usize,
+    out: (u32, u32),
+    canvas: (Option<u32>, bool),
+    started: Instant,
+) -> Result<TimelineRenderOutcome, String> {
+    let dir = tempfile::Builder::new()
+        .prefix("apelles-render-")
+        .tempdir()
+        .map_err(|e| format!("create the segment directory: {e}"))?;
+    // No segment may be empty: it would spawn an encoder, write nothing, and
+    // hand the concat demuxer a zero-frame file. `plan_segment_count` already
+    // cannot produce one (`MIN_SEGMENT_FRAMES` is 90), so this only makes the
+    // function total for a caller — a test, today — that names its own count.
+    let segments = segments.clamp(1, req.frames.max(1) as usize);
+    let ranges = segment_ranges(req.frames, segments);
+    let files: Vec<PathBuf> = (0..ranges.len())
+        .map(|i| dir.path().join(format!("segment-{i:03}.mp4")))
+        .collect();
+    let argvs = files
+        .iter()
+        .map(|f| substitute_token(&plan.segment_args, SEGMENT_OUT_TOKEN, f))
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let abort = std::sync::atomic::AtomicBool::new(false);
+    let results: Vec<Result<SegmentOutcome, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = ranges
+            .iter()
+            .zip(&argvs)
+            .enumerate()
+            .map(|(i, (range, args))| {
+                let (range, abort) = (range.clone(), &abort);
+                scope.spawn(move || {
+                    let outcome = render_range(
+                        timeline,
+                        settings,
+                        args,
+                        out,
+                        canvas,
+                        range,
+                        apelles_media::decode_pipe::PipeLane::render(i),
+                        abort,
+                    );
+                    if outcome.is_err() {
+                        abort.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    outcome
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err("a segment worker panicked".to_string()))
+            })
+            .collect()
+    });
+
+    let mut written = 0u64;
+    let mut stderr_tail = String::new();
+    for (i, result) in results.into_iter().enumerate() {
+        match result {
+            Ok(outcome) => {
+                written += outcome.written;
+                if !outcome.stderr_tail.is_empty() {
+                    stderr_tail = outcome.stderr_tail;
+                }
+            }
+            Err(e) => return Err(format!("segment {i}: {e}")),
+        }
+    }
+    if written != req.frames {
+        return Err(format!(
+            "the segments wrote {written} frames between them, not the {} asked for",
+            req.frames
+        ));
+    }
+
+    let list = dir.path().join("segments.txt");
+    let listing: String = files.iter().map(|f| concat_list_line(f)).collect();
+    std::fs::write(&list, listing).map_err(|e| format!("write the concat list: {e}"))?;
+    let concat = substitute_token(&plan.concat_args, CONCAT_LIST_TOKEN, &list)?;
+    let joined = Command::new(ffmpeg_bin())
+        .args(&concat)
+        .output()
+        .map_err(|e| format!("spawn the concat step: {e}"))?;
+    if !joined.status.success() {
+        return Err(format!(
+            "concatenating {} segments exited {}: {}",
+            files.len(),
+            joined.status,
+            String::from_utf8_lossy(&joined.stderr)
+        ));
+    }
+
     Ok(TimelineRenderOutcome {
         ok: true,
         frames: written,
+        segments: files.len(),
         ms: started.elapsed().as_millis(),
-        stderr_tail: tail(&stderr),
+        stderr_tail,
     })
 }
 
@@ -349,6 +728,81 @@ mod tests {
         assert_eq!(canvas_plan((1920, 1080), (1920, 1080)), (None, false));
     }
 
+    /// **D-360 — the property the concatenated output's frame accuracy rests
+    /// on.** Every frame belongs to exactly one segment, the segments are
+    /// contiguous and in order, and they cover the whole render. A partition
+    /// that lost or repeated a frame would not fail anywhere else: the concat
+    /// demuxer stitches whatever it is given, so a short segment simply ships a
+    /// video that is out of sync from that point on.
+    #[test]
+    fn segment_ranges_partition_the_render_exactly() {
+        for (frames, segments) in [(60u64, 4usize), (5605, 8), (100, 3), (7, 4), (1, 1), (0, 4)] {
+            let ranges = segment_ranges(frames, segments);
+            assert_eq!(ranges.len(), segments, "{frames}/{segments}: segment count");
+            assert_eq!(ranges[0].start, 0, "{frames}/{segments}: starts at zero");
+            assert_eq!(
+                ranges[ranges.len() - 1].end,
+                frames,
+                "{frames}/{segments}: ends at the last frame"
+            );
+            for pair in ranges.windows(2) {
+                assert_eq!(
+                    pair[0].end, pair[1].start,
+                    "{frames}/{segments}: {pair:?} leaves a hole or overlaps"
+                );
+            }
+            let covered: u64 = ranges.iter().map(|r| r.end - r.start).sum();
+            assert_eq!(covered, frames, "{frames}/{segments}: total frames");
+            // The remainder is spread, so no two segments differ by more than
+            // one frame — the whole point of splitting is that they finish
+            // together.
+            let lens: Vec<u64> = ranges.iter().map(|r| r.end - r.start).collect();
+            let (lo, hi) = (
+                lens.iter().copied().min().unwrap_or(0),
+                lens.iter().copied().max().unwrap_or(0),
+            );
+            assert!(hi - lo <= 1, "{frames}/{segments}: uneven split {lens:?}");
+        }
+    }
+
+    /// D-360 — a render too short to be worth splitting takes the
+    /// single-stream path, whatever the machine's core count.
+    #[test]
+    fn a_short_render_is_not_split() {
+        assert_eq!(plan_segment_count(0), 1);
+        assert_eq!(plan_segment_count(MIN_SEGMENT_FRAMES - 1), 1);
+        assert_eq!(plan_segment_count(MIN_SEGMENT_FRAMES), 1);
+        // And a long one is bounded by MAX_SEGMENTS however many cores exist.
+        assert!(plan_segment_count(u32::MAX as u64) <= MAX_SEGMENTS);
+    }
+
+    #[test]
+    fn substitute_token_demands_exactly_one_placeholder() {
+        let out = Path::new("/tmp/seg-000.mp4");
+        let ok = vec!["-i".to_string(), SEGMENT_OUT_TOKEN.to_string()];
+        assert_eq!(
+            substitute_token(&ok, SEGMENT_OUT_TOKEN, out),
+            Ok(vec!["-i".to_string(), "/tmp/seg-000.mp4".to_string()])
+        );
+        assert!(substitute_token(&[], SEGMENT_OUT_TOKEN, out).is_err());
+        let twice = vec![SEGMENT_OUT_TOKEN.to_string(), SEGMENT_OUT_TOKEN.to_string()];
+        assert!(substitute_token(&twice, SEGMENT_OUT_TOKEN, out).is_err());
+    }
+
+    /// The concat demuxer's own quoting, not ours — a path is single-quoted and
+    /// a literal quote inside it is `'\''`.
+    #[test]
+    fn a_concat_list_line_quotes_the_path() {
+        assert_eq!(
+            concat_list_line(Path::new("/tmp/a b/seg.mp4")),
+            "file '/tmp/a b/seg.mp4'\n"
+        );
+        assert_eq!(
+            concat_list_line(Path::new("/tmp/it's/seg.mp4")),
+            "file '/tmp/it'\\''s/seg.mp4'\n"
+        );
+    }
+
     #[test]
     fn pipe_input_args_declare_rgba_at_the_render_size() {
         let args = pipe_input_args(1920, 1080, 30.0);
@@ -378,7 +832,7 @@ mod tests {
 #[cfg(test)]
 mod parity_tests {
     use super::*;
-    use std::path::{Path, PathBuf};
+    use apelles_media::decode_pipe::PipeLane;
 
     /// How close is close enough — and **why PSNR is reported but not asserted
     /// on**, which is the one genuinely non-obvious thing about this test.
@@ -483,12 +937,26 @@ mod parity_tests {
             color_space: None,
         };
         // Warm the probe/grade caches so frame 0 is not charged for them.
-        let _ = edit::render_timeline_frame(&timeline, &settings, 0, Some(w), FrameIntent::Single);
+        let _ = edit::render_timeline_frame(
+            &timeline,
+            &settings,
+            0,
+            Some(w),
+            FrameIntent::Single,
+            PipeLane::LIVE,
+        );
 
         let started = Instant::now();
         for pos in 0..st.pipe_frames {
-            edit::render_timeline_frame(&timeline, &settings, pos, Some(w), FrameIntent::Single)
-                .unwrap_or_else(|e| panic!("render frame {pos}: {e}"));
+            edit::render_timeline_frame(
+                &timeline,
+                &settings,
+                pos,
+                Some(w),
+                FrameIntent::Single,
+                PipeLane::LIVE,
+            )
+            .unwrap_or_else(|e| panic!("render frame {pos}: {e}"));
         }
         let total = started.elapsed().as_secs_f64();
         eprintln!(
@@ -503,6 +971,178 @@ mod parity_tests {
         );
     }
 
+    /// **D-360's own number: the WHOLE export, at one segment and at several.**
+    ///
+    /// Differs from [`measure_render_throughput`] deliberately, and the
+    /// difference is the point. That one times the compositor alone, which is
+    /// what D-351 was changing. This one times
+    /// [`render_timeline`]/[`render_segmented`] end to end — decode, composite,
+    /// encode and, for the segmented runs, the concatenation — because that is
+    /// the number the owner's "under 1x the video's runtime" goal is about, and
+    /// a speedup that appeared only with the encoder taken out would not be one.
+    ///
+    /// The sweep is over the segment count rather than a single reading at
+    /// [`plan_segment_count`]'s own answer, because the shape of the curve is
+    /// the finding — where it stops paying says whether the bound in
+    /// [`MAX_SEGMENTS`] is in the right place.
+    ///
+    /// ```text
+    /// cargo test -p apelles --lib chroma::edit_render::parity_tests::measure_segmented -- --ignored --nocapture
+    /// ```
+    ///
+    /// `#[ignore]`d for the same reason every measurement here is: it samples a
+    /// live machine, so a different core count is a different and equally
+    /// correct number. The recorded runs are in
+    /// `docs/notes/export-gpu-compositor.md` §10.
+    #[test]
+    #[ignore = "a live throughput measurement, not a pass/fail assertion — see the doc comment"]
+    fn measure_segmented_render_throughput() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let fx = load_fixture();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path();
+        generate_stress_media(&fx, dir).expect("generate stress media");
+        let st = &fx.stress;
+        let timeline = localise_timeline(&st.timeline, dir);
+        let settings = ProjectSettings {
+            width: Some(st.width),
+            height: Some(st.height),
+            fps: Some(fx.fps),
+            color_space: None,
+        };
+        let out = (st.width, st.height);
+        let comp = edit::composition_size(&settings, &timeline).expect("composition size");
+        let canvas = canvas_plan(comp, out);
+        let runtime = st.pipe_frames as f64 / fx.fps;
+
+        /// How many times each configuration is timed.
+        ///
+        /// **Not statistical ceremony — a single reading here was measured to be
+        /// worthless.** Two back-to-back sweeps of this same fixture disagreed
+        /// by 2x on the one-segment baseline (24.24 s, then 12.38 s) because
+        /// other builds on the machine come and go on a timescale *shorter than
+        /// one sweep*. A reading taken while a sibling `rustc` happens to be
+        /// running is not a fact about this code.
+        const REPEATS: usize = 3;
+
+        /// The configurations, swept INSIDE each repeat rather than each one
+        /// repeated in turn: drift over a minute then lands on every
+        /// configuration roughly equally instead of concentrating in whichever
+        /// one happened to be running when load arrived.
+        ///
+        /// **Deliberately runs PAST [`MAX_SEGMENTS`]**, by calling
+        /// [`render_segmented`] directly rather than through
+        /// [`plan_segment_count`]. The 8 here is the evidence for that cap
+        /// being 6 — a sweep that stopped at the cap could never show that
+        /// going beyond it costs processes and returns nothing.
+        const PLAN: [usize; 5] = [1, 2, 4, 6, 8];
+
+        eprintln!(
+            "\n=== D-360 segmented export: {} clips, {}x{}, {} frames ({runtime:.2} s of video) ===\n\
+             best of {REPEATS}, all configurations swept within each repeat",
+            st.clips, st.width, st.height, st.pipe_frames,
+        );
+
+        // Best (minimum) wall time seen for each configuration. The MINIMUM,
+        // not the mean: every source of error on a shared machine is additive
+        // and one-directional — another process can only ever make this render
+        // slower, never faster — so the fastest observed run is the closest
+        // this harness gets to the cost of the code itself, and averaging in a
+        // contended run just launders someone else's build into our number.
+        let mut best = [f64::INFINITY; PLAN.len()];
+        for repeat in 1..=REPEATS {
+            for (slot, segments) in PLAN.iter().copied().enumerate() {
+                let wall = time_one_render(&timeline, &settings, st, dir, out, canvas, segments);
+                best[slot] = best[slot].min(wall);
+                eprint!("  repeat {repeat}: {segments} seg {wall:>6.2}s\r");
+            }
+        }
+
+        eprintln!(
+            "\n{:>4}  {:>9}  {:>8}  {:>8}  {:>7}",
+            "segs", "best", "fps", "xruntime", "speedup",
+        );
+        let baseline = best[0];
+        for (slot, segments) in PLAN.iter().copied().enumerate() {
+            let wall = best[slot];
+            eprintln!(
+                "{segments:>4}  {wall:>8.2}s  {:>8.1}  {:>8.2}  {:>6.2}x",
+                st.pipe_frames as f64 / wall,
+                wall / runtime,
+                baseline / wall,
+            );
+        }
+        eprintln!(
+            "\n(\"under 1x\" means the xruntime column is below 1.00 — this fixture is \
+             {runtime:.2} s of video. {} logical cores.)\n",
+            std::thread::available_parallelism()
+                .map(std::num::NonZeroUsize::get)
+                .unwrap_or(0),
+        );
+    }
+
+    /// One timed render of the stress fixture at `segments`, for
+    /// [`measure_segmented_render_throughput`]. Returns wall seconds.
+    #[allow(clippy::too_many_arguments)]
+    fn time_one_render(
+        timeline: &Timeline,
+        settings: &ProjectSettings,
+        st: &StressCase,
+        dir: &Path,
+        out: (u32, u32),
+        canvas: (Option<u32>, bool),
+        segments: usize,
+    ) -> f64 {
+        let target = dir.join(format!("stress-{segments}.mp4"));
+        let started = Instant::now();
+        let outcome = if segments == 1 {
+            render_timeline(
+                timeline,
+                settings,
+                &TimelineRenderRequest {
+                    args: localise(&st.pipe_args, dir, &target),
+                    width: st.width,
+                    height: st.height,
+                    frames: st.pipe_frames,
+                    segments: None,
+                },
+            )
+        } else {
+            let plan = SegmentedEncodePlan {
+                segment_args: localise(&st.segment_args, dir, &target),
+                concat_args: localise(&st.concat_args, dir, &target),
+            };
+            render_segmented(
+                timeline,
+                settings,
+                &TimelineRenderRequest {
+                    args: Vec::new(),
+                    width: st.width,
+                    height: st.height,
+                    frames: st.pipe_frames,
+                    segments: None,
+                },
+                &plan,
+                segments,
+                out,
+                canvas,
+                Instant::now(),
+            )
+        }
+        .unwrap_or_else(|e| panic!("render at {segments} segments: {e}"));
+        assert_eq!(
+            outcome.frames, st.pipe_frames,
+            "a timing run that did not render every frame is not a timing of this render"
+        );
+        started.elapsed().as_secs_f64()
+    }
+
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct StressCase {
@@ -515,6 +1155,8 @@ mod parity_tests {
         filter_args: Vec<String>,
         pipe_args: Vec<String>,
         pipe_frames: u64,
+        segment_args: Vec<String>,
+        concat_args: Vec<String>,
     }
 
     struct ParityFixture {
@@ -533,6 +1175,8 @@ mod parity_tests {
         filter_args: Vec<String>,
         pipe_args: Vec<String>,
         pipe_frames: u64,
+        segment_args: Vec<String>,
+        concat_args: Vec<String>,
         stress: StressCase,
     }
 
@@ -563,6 +1207,8 @@ mod parity_tests {
             filter_args: Vec<String>,
             pipe_args: Vec<String>,
             pipe_frames: u64,
+            segment_args: Vec<String>,
+            concat_args: Vec<String>,
             stress: StressCase,
         }
         let w: Wire = serde_json::from_str(&raw).expect("parity fixture is not valid JSON");
@@ -578,6 +1224,8 @@ mod parity_tests {
             filter_args: w.filter_args,
             pipe_args: w.pipe_args,
             pipe_frames: w.pipe_frames,
+            segment_args: w.segment_args,
+            concat_args: w.concat_args,
             stress: w.stress,
         }
     }
@@ -826,6 +1474,7 @@ mod parity_tests {
             width: fx.comp_width,
             height: fx.comp_height,
             frames: fx.pipe_frames,
+            segments: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the new render path");
         assert_eq!(
@@ -891,14 +1540,26 @@ mod parity_tests {
         let settings = settings_for(&fx);
 
         for n in &fx.sample_frames {
-            let once =
-                edit::render_timeline_frame(&timeline, &settings, *n, None, FrameIntent::Single)
-                    .expect("render once")
-                    .expect("a visible frame");
-            let twice =
-                edit::render_timeline_frame(&timeline, &settings, *n, None, FrameIntent::Single)
-                    .expect("render twice")
-                    .expect("a visible frame");
+            let once = edit::render_timeline_frame(
+                &timeline,
+                &settings,
+                *n,
+                None,
+                FrameIntent::Single,
+                PipeLane::LIVE,
+            )
+            .expect("render once")
+            .expect("a visible frame");
+            let twice = edit::render_timeline_frame(
+                &timeline,
+                &settings,
+                *n,
+                None,
+                FrameIntent::Single,
+                PipeLane::LIVE,
+            )
+            .expect("render twice")
+            .expect("a visible frame");
             assert_eq!(
                 once.to_rgba8().into_raw(),
                 twice.to_rgba8().into_raw(),
@@ -957,6 +1618,7 @@ mod parity_tests {
             width: w,
             height: h,
             frames: fx.pipe_frames,
+            segments: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the render path");
         assert_eq!(
@@ -974,12 +1636,18 @@ mod parity_tests {
         );
 
         for pos in 0..fx.pipe_frames {
-            let want =
-                edit::render_timeline_frame(&timeline, &settings, pos, None, FrameIntent::Single)
-                    .expect("render for comparison")
-                    .expect("a visible frame")
-                    .to_rgba8()
-                    .into_raw();
+            let want = edit::render_timeline_frame(
+                &timeline,
+                &settings,
+                pos,
+                None,
+                FrameIntent::Single,
+                PipeLane::LIVE,
+            )
+            .expect("render for comparison")
+            .expect("a visible frame")
+            .to_rgba8()
+            .into_raw();
             let got = &bytes[pos as usize * frame_len..(pos as usize + 1) * frame_len];
             assert!(
                 want == got,
@@ -987,6 +1655,304 @@ mod parity_tests {
                  position {pos} — the writer reordered, dropped or duplicated a frame"
             );
         }
+    }
+
+    /// How many video frames `video` actually contains, counted rather than
+    /// derived from a duration — the number a dropped or duplicated frame at a
+    /// segment boundary changes, and the one the container's own metadata is
+    /// least likely to be honest about.
+    fn frame_count(video: &Path) -> Result<u64, String> {
+        let out = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-count_frames",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=nb_read_frames",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(video)
+            .output()
+            .map_err(|e| format!("spawn ffprobe: {e}"))?;
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse::<u64>()
+            .map_err(|e| format!("ffprobe frame count for {}: {e}", video.display()))
+    }
+
+    /// **D-360's decisive test: N contiguous segments, concatenated, are the
+    /// same video as one stream — checked hardest exactly where a split could
+    /// hide.**
+    ///
+    /// Segment boundaries are the only place this architecture can go wrong,
+    /// and it can go wrong silently: the concat demuxer stitches whatever it is
+    /// handed, so a segment one frame short produces a perfectly valid file
+    /// that is a frame out of sync from that boundary onward, with no error
+    /// from anything. So this asserts three separate things, on the real
+    /// four-segment output of the real path:
+    ///
+    /// 1. **The count.** `ffprobe -count_frames` on both files, against each
+    ///    other and against the frame count asked for.
+    /// 2. **The boundaries.** Every frame either side of every boundary
+    ///    (`b-1`, `b`, `b+1`) decoded from both files and compared. This
+    ///    fixture's pip **slides one step per frame**, so a one-frame offset is
+    ///    a displaced box — a filled region, which is precisely what
+    ///    `solid_share` measures and a one-pixel boundary line is not.
+    /// 3. **The rest.** The same five sample frames phase 1's old-vs-new test
+    ///    uses, so a segmented render is compared against the single-stream one
+    ///    away from the boundaries too.
+    ///
+    /// Four segments over 60 frames puts boundaries at 15, 30 and 45 —
+    /// `plan_segment_count` would say 1 for a render this short, so
+    /// [`render_segmented`] is driven directly rather than through
+    /// [`render_timeline`]'s own planning.
+    #[test]
+    fn the_segmented_render_is_the_same_video_as_the_single_stream_one() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let fx = load_fixture();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path();
+        generate_media(&fx, dir).expect("generate fixture media");
+        let timeline = localise_timeline(&fx.timeline, dir);
+        let settings = settings_for(&fx);
+
+        const SEGMENTS: usize = 4;
+        let single_out = dir.join("single.mp4");
+        let segmented_out = dir.join("segmented.mp4");
+
+        let single = render_timeline(
+            &timeline,
+            &settings,
+            &TimelineRenderRequest {
+                args: localise(&fx.pipe_args, dir, &single_out),
+                width: fx.comp_width,
+                height: fx.comp_height,
+                frames: fx.pipe_frames,
+                segments: None,
+            },
+        )
+        .expect("the single-stream render");
+        assert_eq!(single.segments, 1, "the single-stream path must not split");
+
+        let req = TimelineRenderRequest {
+            args: Vec::new(), // unused: `render_segmented` takes the plan below
+            width: fx.comp_width,
+            height: fx.comp_height,
+            frames: fx.pipe_frames,
+            segments: None,
+        };
+        let plan = SegmentedEncodePlan {
+            segment_args: localise(&fx.segment_args, dir, &segmented_out),
+            concat_args: localise(&fx.concat_args, dir, &segmented_out),
+        };
+        let out = (fx.comp_width, fx.comp_height);
+        let comp = edit::composition_size(&settings, &timeline).expect("composition size");
+        let many = render_segmented(
+            &timeline,
+            &settings,
+            &req,
+            &plan,
+            SEGMENTS,
+            out,
+            canvas_plan(comp, out),
+            Instant::now(),
+        )
+        .expect("the segmented render");
+        assert_eq!(many.segments, SEGMENTS);
+        assert_eq!(
+            many.frames, fx.pipe_frames,
+            "the segments must write every frame between them"
+        );
+
+        // 1 — the counts, from the files themselves.
+        let (n_single, n_many) = (
+            frame_count(&single_out).expect("count the single-stream output"),
+            frame_count(&segmented_out).expect("count the segmented output"),
+        );
+        eprintln!("frames: single-stream {n_single} · {SEGMENTS} segments {n_many}");
+        assert_eq!(
+            n_many, n_single,
+            "the segmented output has a different number of frames than the single-stream one \
+             — a frame was dropped or duplicated at a boundary"
+        );
+        assert_eq!(
+            n_many, fx.pipe_frames,
+            "the segmented output is not the length it was asked for"
+        );
+
+        // 2 + 3 — the pixels, hardest at the boundaries.
+        let boundaries: Vec<u64> = segment_ranges(fx.pipe_frames, SEGMENTS)
+            .iter()
+            .skip(1)
+            .map(|r| r.start)
+            .collect();
+        // Derived, not hard-coded: the fixture's frame count is owned by the
+        // TypeScript compiler and has already changed once (D-353 added a
+        // fifth clip), so a literal here would be a test that silently stops
+        // testing the boundaries it names.
+        assert_eq!(
+            boundaries.len(),
+            SEGMENTS - 1,
+            "four segments have three interior boundaries"
+        );
+        assert!(
+            boundaries.iter().all(|b| *b > 0 && *b < fx.pipe_frames),
+            "every boundary must fall strictly inside the render: {boundaries:?}"
+        );
+        eprintln!(
+            "segment boundaries at {boundaries:?} of {} frames",
+            fx.pipe_frames
+        );
+        let mut sample: Vec<u64> = boundaries
+            .iter()
+            .flat_map(|b| [b.saturating_sub(1), *b, b + 1])
+            .chain(fx.sample_frames.iter().copied())
+            .filter(|n| *n < fx.pipe_frames)
+            .collect();
+        sample.sort_unstable();
+        sample.dedup();
+
+        for (i, n) in sample.iter().enumerate() {
+            let a = frame_of(&single_out, *n, &dir.join(format!("one{i}.png"))).expect("one");
+            let b = frame_of(&segmented_out, *n, &dir.join(format!("many{i}.png"))).expect("many");
+            let d = compare(&a, &b);
+            let at_boundary = boundaries.contains(n);
+            eprintln!(
+                "frame {n:>3}{} PSNR {:.1} dB · differing {:.3}% · SOLID {:.4}%",
+                if at_boundary {
+                    " (boundary)"
+                } else {
+                    "           "
+                },
+                d.psnr_db,
+                d.gross_share * 100.0,
+                d.solid_share * 100.0,
+            );
+            assert!(
+                d.solid_share <= MAX_SOLID_DIFF_SHARE,
+                "frame {n}: {:.4}% of pixels differ SOLIDLY between the single-stream and the \
+                 {SEGMENTS}-segment render (limit {:.4}%, bbox {:?}). The two renders drew a \
+                 different picture — at a boundary this is a dropped or duplicated frame.",
+                d.solid_share * 100.0,
+                MAX_SOLID_DIFF_SHARE * 100.0,
+                d.bbox
+            );
+            assert!(
+                d.gross_share <= MAX_GROSS_DIFF_SHARE,
+                "frame {n}: {:.2}% of pixels differ grossly (limit {:.2}%)",
+                d.gross_share * 100.0,
+                MAX_GROSS_DIFF_SHARE * 100.0
+            );
+        }
+    }
+
+    /// **D-360 — a lane changes which `ffmpeg` decoded a frame, never the
+    /// frame.**
+    ///
+    /// The whole safety argument for rendering N stretches of one timeline at
+    /// once is that `decode_pipe`'s lanes are an allocation strategy and
+    /// nothing else: frame `N` is the picture at `N / source_fps` however the
+    /// decoder got there (D-228/B-104), so a segment worker that seeks cold
+    /// into the middle of a clip must produce exactly what a sequential walk
+    /// through that clip produces. Asserted on raw compositor output, with no
+    /// encoder in the way to mask a difference.
+    #[test]
+    fn a_frame_is_the_same_in_any_decode_lane() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let fx = load_fixture();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path();
+        generate_media(&fx, dir).expect("generate fixture media");
+        let timeline = localise_timeline(&fx.timeline, dir);
+        let settings = settings_for(&fx);
+
+        for n in &fx.sample_frames {
+            // The live lane, walking forward from the start as the preview
+            // does...
+            let live = edit::render_timeline_frame(
+                &timeline,
+                &settings,
+                *n,
+                None,
+                FrameIntent::Single,
+                PipeLane::LIVE,
+            )
+            .expect("render on the live lane")
+            .expect("a visible frame");
+            // ...and a render lane meeting this frame cold, as a segment
+            // worker whose range starts here does.
+            let segment = edit::render_timeline_frame(
+                &timeline,
+                &settings,
+                *n,
+                None,
+                FrameIntent::Single,
+                PipeLane::render(3),
+            )
+            .expect("render on a segment lane")
+            .expect("a visible frame");
+            apelles_media::decode_pipe::release_lane(PipeLane::render(3));
+            assert_eq!(
+                live.to_rgba8().into_raw(),
+                segment.to_rgba8().into_raw(),
+                "frame {n} came out differently on a segment lane than on the live lane"
+            );
+        }
+    }
+
+    /// D-360 — the two placeholder spellings are one fact, written on both
+    /// sides of the language boundary. The same cross-engine pair
+    /// `pipe_input_args_declare_rgba_at_the_render_size` is half of.
+    #[test]
+    fn the_segment_argv_tokens_match_the_typescript_compiler() {
+        let fx = load_fixture();
+        assert_eq!(
+            fx.segment_args
+                .iter()
+                .filter(|a| a.as_str() == SEGMENT_OUT_TOKEN)
+                .count(),
+            1,
+            "the compiled segment argv must carry {SEGMENT_OUT_TOKEN} exactly once"
+        );
+        assert_eq!(
+            fx.concat_args
+                .iter()
+                .filter(|a| a.as_str() == CONCAT_LIST_TOKEN)
+                .count(),
+            1,
+            "the compiled concat argv must carry {CONCAT_LIST_TOKEN} exactly once"
+        );
+        // A segment is video only, and is bounded by its pipe closing rather
+        // than by a duration that knows nothing about its range.
+        assert!(
+            !fx.segment_args.iter().any(|a| a == "-t"),
+            "a segment argv must not carry -t"
+        );
+        assert!(
+            !fx.segment_args.iter().any(|a| a == "-filter_complex"),
+            "a segment argv must not carry an audio graph"
+        );
+        // The concat step copies the picture: re-encoding it would cost a
+        // second generation for nothing.
+        assert!(
+            fx.concat_args.windows(2).any(|w| w == ["-c:v", "copy"]),
+            "the concat step must stream-copy the video"
+        );
     }
 
     /// **The live resource measurement B-230's own write-up says this repo was
@@ -1055,6 +2021,7 @@ mod parity_tests {
             width: st.width,
             height: st.height,
             frames: st.pipe_frames,
+            segments: None,
         };
         let timeline = localise_timeline(&st.timeline, dir);
         let settings = ProjectSettings {

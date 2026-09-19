@@ -310,6 +310,7 @@ fn decode_scale(source_size: (u32, u32), max_long_edge: Option<u32>) -> Option<(
 fn decode_clip_rgba(
     source_path: &str,
     source_size: (u32, u32),
+    lane: decode_pipe::PipeLane,
     slot: decode_pipe::PipeSlot,
     source_frame: u64,
     max_long_edge: Option<u32>,
@@ -321,7 +322,7 @@ fn decode_clip_rgba(
             .map_err(|e| format!("decode still {source_path}: {e}"));
     }
     let info = probe_cached(&path)?;
-    decode_pipe::playback_frame_scaled(slot, &path, &info, source_frame, scale)
+    decode_pipe::playback_frame_scaled(lane, slot, &path, &info, source_frame, scale)
         .map(|img| std::sync::Arc::new(to_rgba8_parallel(img)))
         .map_err(|e| format!("decode {source_path} @ src frame {source_frame}: {e}"))
 }
@@ -338,6 +339,7 @@ fn decode_clip_rgba(
 fn decode_clip_picture(
     source_path: &str,
     source_size: (u32, u32),
+    lane: decode_pipe::PipeLane,
     slot: decode_pipe::PipeSlot,
     source_frame: u64,
     max_long_edge: Option<u32>,
@@ -350,7 +352,7 @@ fn decode_clip_picture(
             .map_err(|e| format!("decode still {source_path}: {e}"));
     }
     let info = probe_cached(&path)?;
-    decode_pipe::playback_frame_scaled(slot, &path, &info, source_frame, scale)
+    decode_pipe::playback_frame_scaled(lane, slot, &path, &info, source_frame, scale)
         .map_err(|e| format!("decode {source_path} @ src frame {source_frame}: {e}"))
 }
 
@@ -1082,7 +1084,14 @@ pub(crate) fn timeline_frame_image(
     intent: FrameIntent,
 ) -> Result<Option<DynamicImage>, String> {
     let (timeline, settings) = resolve_timeline_and_settings(false)?;
-    render_timeline_frame(&timeline, &settings, pos, max_long_edge, intent)
+    render_timeline_frame(
+        &timeline,
+        &settings,
+        pos,
+        max_long_edge,
+        intent,
+        decode_pipe::PipeLane::LIVE,
+    )
 }
 
 /// **The headless render entry point (D-350).** Everything
@@ -1108,12 +1117,22 @@ pub(crate) fn timeline_frame_image(
 /// rates — a 4-minute 60 fps export is ~14,000 manifest parses of a document
 /// that cannot change while the render runs. `edit_render` resolves once and
 /// drives this.
+///
+/// **`lane` is which set of decode pipes this walk owns (D-360).** The live
+/// preview is `PipeLane::LIVE`; each contiguous-segment render worker gets its
+/// own. It exists because this function is declarative about the pipes it wants
+/// — it releases every slot not visible at `pos` on every call — so two callers
+/// at two different `pos` sharing one lane would release each other's decoders
+/// every frame. Nothing else about the frame depends on it: the picture at
+/// `pos` is the same in any lane, which `a_frame_is_the_same_in_any_decode_lane`
+/// pins.
 pub(crate) fn render_timeline_frame(
     timeline: &Timeline,
     settings: &project::ProjectSettings,
     pos: u64,
     max_long_edge: Option<u32>,
     intent: FrameIntent,
+    lane: decode_pipe::PipeLane,
 ) -> Result<Option<DynamicImage>, String> {
     if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
         return Err("timeline has no video track".to_string());
@@ -1171,12 +1190,12 @@ pub(crate) fn render_timeline_frame(
         FrameIntent::Single => Vec::new(),
     };
     keep_slots.extend(upcoming.iter().map(|t| t.slot));
-    decode_pipe::retain_pipe_slots(&keep_slots);
+    decode_pipe::retain_pipe_slots(lane, &keep_slots);
 
     if layers.is_empty() {
         // A gap under the playhead still has a boundary coming, and priming it
         // is the whole reason the keep-list above was extended.
-        prime(&upcoming);
+        prime(lane, &upcoming);
         return Ok(None);
     }
     let comp = composition_size(settings, timeline)?;
@@ -1279,12 +1298,13 @@ pub(crate) fn render_timeline_frame(
             decode_clip_picture(
                 &clip.source_path,
                 comp,
+                lane,
                 pipe_slot(*track, *role),
                 (*source_frame).max(0) as u64,
                 max_long_edge,
             )?
         }
-        _ => composite_video_frame(&layers, max_long_edge, comp)?,
+        _ => composite_video_frame(&layers, max_long_edge, comp, lane)?,
     };
 
     // D-229 — captions go on last, over the finished picture, whatever the
@@ -1310,7 +1330,7 @@ pub(crate) fn render_timeline_frame(
     // and nothing got faster. (Caught by
     // `playback_primes_the_upcoming_cut_and_a_scrub_does_not`, which is why it
     // asserts on the standby count rather than only on wall-clock.)
-    prime(&upcoming);
+    prime(lane, &upcoming);
 
     Ok(Some(img))
 }
@@ -1325,7 +1345,7 @@ pub(crate) fn render_timeline_frame(
 /// nothing, and therefore wants nothing primed) has to say so rather than
 /// simply not calling — otherwise the standbys playback left behind would sit
 /// holding `ffmpeg` processes until the slot went away.
-fn prime(targets: &[PrefetchTarget]) {
+fn prime(lane: decode_pipe::PipeLane, targets: &[PrefetchTarget]) {
     let specs: Vec<decode_pipe::PrefetchSpec<'_>> = targets
         .iter()
         .map(|t| decode_pipe::PrefetchSpec {
@@ -1336,7 +1356,7 @@ fn prime(targets: &[PrefetchTarget]) {
             scale: t.scale,
         })
         .collect();
-    decode_pipe::sync_prefetch(&specs);
+    decode_pipe::sync_prefetch(lane, &specs);
 }
 
 /// D-229 — alpha-composite every caption showing at `pos` onto `frame`.
@@ -2216,6 +2236,7 @@ fn composite_video_frame(
     layers: &[VisibleLayer<'_>],
     max_long_edge: Option<u32>,
     comp: (u32, u32),
+    lane: decode_pipe::PipeLane,
 ) -> Result<DynamicImage, String> {
     /// One step of the paint walk. Was a plain struct (a layer always had
     /// pixels) until D-230 introduced a layer that has none and instead
@@ -2334,6 +2355,7 @@ fn composite_video_frame(
         let mut rgba = decode_clip_rgba(
             &clip.source_path,
             source_size,
+            lane,
             pipe_slot(track, *role),
             (*source_frame).max(0) as u64,
             max_long_edge,
@@ -6089,7 +6111,10 @@ mod preview_throughput_tests {
             "one pipe per layer"
         );
 
-        super::decode_pipe::retain_pipe_slots(&[super::decode_pipe::PipeSlot::Track(0)]);
+        super::decode_pipe::retain_pipe_slots(
+            super::decode_pipe::PipeLane::LIVE,
+            &[super::decode_pipe::PipeSlot::Track(0)],
+        );
         assert_eq!(
             super::decode_pipe::open_pipe_count(),
             1,

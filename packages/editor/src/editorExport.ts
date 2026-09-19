@@ -38,7 +38,12 @@ import {
 // live-preview compositor and piped in, rather than re-expressed as an ffmpeg
 // filter graph. See `timelinePipeExport.ts` and
 // `docs/notes/export-gpu-compositor.md`.
-import { buildPipeExportPlan, pipeExportUnsupported, type PipeExportPlan } from './timelinePipeExport';
+import {
+  buildPipeExportPlan,
+  pipeExportUnsupported,
+  type PipeExportPlan,
+  type TimelineRenderPlan,
+} from './timelinePipeExport';
 import { loadTextFonts, textFontPaths } from './textFonts';
 // D-243 — the per-word advances an animated caption is laid out from.
 import { captionMetricsSnapshot, warmCaptionMetrics } from './captionMetrics';
@@ -93,7 +98,7 @@ export interface CompiledExport {
   renderer: ExportRenderer;
   /** D-350 — how many frames of what size the compositor must write into the
    *  pipe. Present only for `renderer: 'compositor'`. */
-  render?: { width: number; height: number; frames: number };
+  render?: TimelineRenderPlan;
 }
 
 export interface CompileError {
@@ -436,7 +441,12 @@ export function compileEditorExportArgs(a: {
       outPath,
       args: plan.args,
       renderer,
-      render: { width: plan.width, height: plan.height, frames: plan.frames },
+      render: {
+        width: plan.width,
+        height: plan.height,
+        frames: plan.frames,
+        segments: plan.segments,
+      },
     };
   }
 
@@ -556,6 +566,9 @@ export async function runEditorExport(
 interface TimelineRenderOutcome {
   ok: boolean;
   frames: number;
+  /** D-360 — how many contiguous segments the renderer actually split into.
+   *  Decided there, from the machine's core count, not requested from here. */
+  segments: number;
   ms: number;
   stderr_tail: string;
 }
@@ -572,12 +585,20 @@ interface TimelineRenderOutcome {
  *  it minutes later. */
 export async function runCompiledExport(
   args: string[],
-  render?: { width: number; height: number; frames: number },
+  render?: TimelineRenderPlan,
 ): Promise<{ ok: boolean; error: string | null; stdoutTail: string; stderrTail: string }> {
   if (render) {
     try {
       const outcome = await invoke<TimelineRenderOutcome>('chroma_render_timeline_export', {
-        req: { args, width: render.width, height: render.height, frames: render.frames },
+        req: {
+          args,
+          width: render.width,
+          height: render.height,
+          frames: render.frames,
+          // D-360 — the per-segment + concat argv. The renderer decides whether
+          // to use it; a job frozen before D-360 simply has none.
+          segments: render.segments ?? null,
+        },
       });
       return {
         ok: outcome.ok,

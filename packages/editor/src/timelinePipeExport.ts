@@ -216,6 +216,54 @@ function videoCodecArgs(): string[] {
   return ['-c:v', 'libx264', '-crf', '18', '-pix_fmt', 'yuv420p'];
 }
 
+/** D-360 — the placeholder the Rust side replaces with a segment's own output
+ *  file, and the one it replaces with the concat list. Whole-argument tokens,
+ *  substituted exactly once each; their Rust twins are `SEGMENT_OUT_TOKEN` /
+ *  `CONCAT_LIST_TOKEN` in `chroma::edit_render`.
+ *
+ *  A placeholder rather than the real path because the renderer is the only
+ *  side that knows where its temporary directory is — and a token is the
+ *  smallest hole to leave in "the caller compiles the whole argv", which is
+ *  D-350's split and is what keeps the encode settings, the mapping and the
+ *  audio graph compiled in exactly one place. */
+export const SEGMENT_OUT_TOKEN = '{{APELLES_SEGMENT_OUT}}';
+export const CONCAT_LIST_TOKEN = '{{APELLES_CONCAT_LIST}}';
+
+/** D-360 — the two extra argvs a contiguous-segment render needs. */
+export interface PipeExportSegments {
+  /** One segment's own encode: the raw-video input, and a VIDEO-ONLY output.
+   *  No audio, and no `-t`: a segment's length is however many frames the
+   *  compositor writes before closing the pipe. */
+  segmentArgs: string[];
+  /** The concat demuxer over the finished segments, plus the whole timeline's
+   *  audio mix. Video is `-c:v copy`: every segment came out of the same
+   *  encoder with the same settings at the same size, so the concat demuxer's
+   *  own precondition holds and re-encoding the picture a second time would
+   *  cost a full generation of quality for nothing. */
+  concatArgs: string[];
+}
+
+/**
+ * What `chroma_render_timeline_export` needs beyond the argv — the typed
+ * restatement of the geometry that argv declares, plus D-360's segment argvs.
+ *
+ * One exported type rather than the same inline object literal in
+ * `editorExport.ts`'s compile result, its `runCompiledExport` parameter and
+ * `exportQueueStore`'s frozen job: they are three views of one payload, and
+ * D-360 adding a field to three hand-copied shapes is exactly how the fourth
+ * one gets missed.
+ *
+ * Mirrors `chroma::edit_render::TimelineRenderRequest` minus `args`.
+ */
+export interface TimelineRenderPlan {
+  width: number;
+  height: number;
+  frames: number;
+  /** D-360. Absent on a job frozen before D-360 existed, which then renders
+   *  as a single stream exactly as it was queued to. */
+  segments?: PipeExportSegments;
+}
+
 export interface PipeExportPlan {
   /** The complete ffmpeg argv — `chroma_render_timeline_export` spawns it. */
   args: string[];
@@ -223,6 +271,9 @@ export interface PipeExportPlan {
   frames: number;
   width: number;
   height: number;
+  /** D-360. Always compiled; whether it is USED is the renderer's call, since
+   *  only it knows the core count — see `plan_segment_count`. */
+  segments: PipeExportSegments;
 }
 
 /**
@@ -262,5 +313,82 @@ export function buildPipeExportPlan(
     frames: Math.max(0, Math.round(totalDurationSec * opts.fps)),
     width: opts.width,
     height: opts.height,
+    segments: {
+      segmentArgs: buildSegmentArgs(opts),
+      concatArgs: buildConcatArgs(audio, outPath, opts, totalDurationSec),
+    },
   };
+}
+
+/**
+ * D-360 — one segment's encode.
+ *
+ * The same raw-video input and the same codec tail as the single-stream argv,
+ * so every segment is byte-comparable with every other and the concat
+ * demuxer's "identical codec and parameters" precondition holds by
+ * construction rather than by inspection.
+ *
+ * **What it deliberately does NOT carry**, and both matter:
+ * - **no audio.** The mix is compiled for the whole timeline — `amix`, the
+ *   ducking envelopes, `asoftclip` — and has no notion of a frame range to be
+ *   cut at. It is muxed once, at the concat step, over the finished picture.
+ * - **no `-t`.** The single-stream argv bounds its output by duration because
+ *   its audio inputs would otherwise run past the picture. A segment has no
+ *   audio, and its length is exactly the frames the compositor writes before
+ *   closing the pipe — a duration bound here could only disagree with that.
+ */
+function buildSegmentArgs(opts: TimelineExportOptions): string[] {
+  return [
+    ...pipeVideoInputArgs(opts.width, opts.height, opts.fps),
+    '-map',
+    `${PIPE_VIDEO_INPUT_IDX}:v`,
+    ...videoCodecArgs(),
+    '-r',
+    String(opts.fps),
+    SEGMENT_OUT_TOKEN,
+  ];
+}
+
+/**
+ * D-360 — stitch the segments and mux the sound.
+ *
+ * The concat demuxer is input 0, exactly where the pipe was, so **every audio
+ * input keeps the index `buildPipeAudioGraph` already gave it** and the audio
+ * graph is reused verbatim rather than recompiled for this step. That is the
+ * whole reason the concat list is the first input and not the last.
+ *
+ * `-t` is kept, and kept identical to the single-stream argv's, for the same
+ * reason it exists there: the audio must not run the output past the picture.
+ * Keeping it the same expression is also what makes the two paths agree about
+ * an export's length rather than agreeing by coincidence.
+ */
+function buildConcatArgs(
+  audio: AudioGraph,
+  outPath: string,
+  opts: TimelineExportOptions,
+  totalDurationSec: number,
+): string[] {
+  const args = [
+    '-y',
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-f',
+    'concat',
+    // The list holds absolute paths into the renderer's own temporary
+    // directory, which `-safe 1` (the default) refuses outright.
+    '-safe',
+    '0',
+    '-i',
+    CONCAT_LIST_TOKEN,
+    ...audio.inputs,
+  ];
+  if (audio.filterSteps.length > 0) {
+    args.push('-filter_complex_threads', '2', '-filter_complex', audio.filterSteps.join(';'));
+  }
+  args.push('-map', `${PIPE_VIDEO_INPUT_IDX}:v`);
+  if (audio.mapArg) args.push('-map', audio.mapArg);
+  args.push('-c:v', 'copy');
+  args.push('-t', String(totalDurationSec), outPath);
+  return args;
 }

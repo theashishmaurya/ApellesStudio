@@ -39,6 +39,105 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-360 — the export renders N contiguous segments at once, each with its own decode-pipe LANE and its own encoder, concatenated at the end; and `decode_pipe`'s pool stops holding its lock across the blocking read
+
+**decided (2026-09-19)** · D-350 phase 3 · builds directly on **D-351** (§9.5 scoped this) · relates to **B-229/B-230** (bounded per-unit cost)
+
+- **Context.** D-351 put every per-pixel compositing pass on every core and
+  reached 1.38x — and said plainly that it could not reach the owner's "under
+  1x the video's runtime" goal, because ~31% of the time was still **serial
+  decode** through one global-locked, forward-only pipe, and
+  `image::imageops::resize` was still serial inside each frame. Its §9.5 scoped
+  the fix precisely: contiguous-segment rendering, needing three things —
+  lane-scoped keys in `decode_pipe`'s pool, releasing that pool's lock across
+  the blocking read, and per-segment encode + concat in the argv.
+- **Why contiguous segments and not something cheaper** (D-351 §9.2 established
+  this and it is unchanged): `par_iter` over frame indices is unsafe *and*
+  slower — the pool serves only forward targets within `MAX_FORWARD_SKIP = 48`
+  and releases pipes declaratively per frame, so out-of-order frames thrash the
+  decoders and two frames in flight free each other's pipes. Round-robin is
+  **provably** no better than D-351 (each worker still decodes every frame, so
+  wall time stays `N·d + N·c/L`). Only contiguous ranges divide both the decode
+  and the composite term, and they are only affordable because each segment
+  gets its own encoder instead of buffering a whole segment of finished frames
+  (tens of GB at 4K).
+- **Choice: a `PipeLane` is the missing half of the pool's key, and the pipe is
+  checked OUT of the pool for the duration of a decode.** A `PipeSlot` says
+  *which* sequential stream; a lane says *whose*. Every walker of the timeline
+  calls `retain_pipe_slots`/`sync_prefetch` every frame with the complete set it
+  wants — both declarative by design (D-330) — so under one un-laned pool N
+  workers at N positions would each release every other's pipes every frame:
+  D-125/B-040's measured respawn storm, one level up. `PipeLane::LIVE` is the
+  entire pre-existing app and nothing in the running app passes anything else,
+  so live playback is unchanged by construction rather than by care. The lock
+  release is the other half and is what makes lanes worth anything — held
+  across `frame_scaled`, N lanes would queue on one mutex and decode exactly as
+  sequentially as one. `Checkout`'s `Drop` is what guarantees the key always
+  comes back (every exit from a decode — the frame, a pipe error, the
+  hardware-decode fallback, a panic — must return it, or the next caller waits
+  on a condvar forever), and a release arriving mid-decode **dooms** the key
+  rather than failing to take it.
+- **Bounded on purpose, because this is exactly B-229/B-230's shape.** A
+  segment costs one encoder plus one decode `ffmpeg` per visible video track, so
+  the render's cost is `segments × (tracks + 1)`. `MAX_SEGMENTS = 6` bounds the
+  multiplier rather than letting it follow whatever core count the machine has —
+  six rather than eight because the throughput sweep independently agreed (8
+  measured slower than 4 on both independent sweeps, so eight would cost a third
+  more concurrent processes for no throughput);
+  `MIN_SEGMENT_FRAMES = 90` stops a short export being split into segments that
+  each pay a cold keyframe seek (248-337 ms, median 723 ms) for a handful of
+  frames; within a segment the hand-off bound is still D-351's `WRITE_AHEAD = 4`;
+  and a lane is released the moment its segment ends (`LaneGuard`) rather than
+  at process exit. **The segment count is decided by the renderer, not the argv
+  compiler**, because only the renderer knows the machine.
+- **The only TypeScript change is the argv**, as D-351 predicted: `segmentArgs`
+  (video only, no `-t` — a segment's length is what the compositor writes) and
+  `concatArgs` (`-f concat -safe 0`, `-c:v copy`, plus the whole timeline's
+  audio mix). **The concat list is input 0, exactly where the pipe was**, which
+  is what lets the *identical* audio graph string be reused rather than
+  recompiled with shifted indices — a second implementation of the mix would be
+  precisely the bug class D-350 exists to close.
+- **Verified where a split can hide — segment boundaries, which fail silently**
+  (the concat demuxer stitches whatever it is handed, so a segment one frame
+  short ships a valid file that is one frame out of sync from there on). The
+  partition is unit-tested, each worker asserts it wrote exactly its range's
+  length, the total is asserted, and
+  `the_segmented_render_is_the_same_video_as_the_single_stream_one` runs both
+  paths for real and compares: `ffprobe -count_frames` **60 = 60**, and at every
+  boundary and its neighbours plus phase 1's sample frames, **0.000% of pixels
+  differ at all** (PSNR 55.9-85.2 dB, pure codec noise). The fixture's pip
+  slides one step per frame, so a one-frame offset would be a displaced box —
+  a filled region, which is what `solid_share` measures. Plus
+  `a_frame_is_the_same_in_any_decode_lane` (a lane changes which `ffmpeg`
+  decoded a frame, never the frame), and D-350/D-351's own parity and
+  determinism tests re-run unchanged and green.
+- **Measured, and reported the way D-351 reported its own shortfall: this is a
+  real 1.64x and it still does NOT reach "under 1x."** On the same 20-clip /
+  1080p / 240-frame fixture (8.00 s of video): **14.45 s → 8.79 s**, i.e.
+  **1.81x the video's runtime → 1.10x**, plateauing at 4 segments. Why it
+  plateaus rather than scaling with cores is measured, not guessed: D-351
+  already spends all ten cores on ~41% of the compositing, so segments claim the
+  serial remainder rather than an idle machine, and each segment's own libx264
+  and decoders compete for those same cores.
+- **The measurement harness itself had to be fixed first, and that is worth
+  recording.** Two single-pass sweeps of the identical binary minutes apart
+  disagreed **2x on the one-segment baseline** (24.24 s, then 12.38 s), the
+  second even reporting 6 and 8 segments as slower than one — because sibling
+  build agents on this machine come and go on a timescale shorter than one
+  sweep (load observed swinging 15→64). A single reading here is not a fact
+  about this code. The harness now sweeps every configuration **inside** each of
+  three repeats and reports the per-configuration **minimum** — the minimum
+  because every error source is additive and one-directional (another process
+  can only make a render slower), so the fastest run is the closest available
+  estimate of the code's own cost, where a mean just launders someone else's
+  build into the number. The 1.64x above is the conservative reading that
+  survives; the earlier 2.04x is deliberately NOT quoted, because its baseline
+  row was taken under a load spike and this harness cannot reproduce it.
+  `docs/notes/export-gpu-compositor.md` §10.5 records the table, that reasoning,
+  and the three things that would actually reach <1x (a provably bit-identical
+  parallel resize, compositing genuinely on the GPU — which §2 records phase 1
+  never did — and hardware encode per segment).
+
 ## D-356 — the on-canvas VIDEO transform box also gates on `clipCoversFrame`, closing B-186 the same way D-317 closed B-185 for captions
 
 **decided (2026-09-18)** · closes **B-186** · area: `packages/editor/src/TransformOverlay.tsx` · precedent: **D-317** (B-185, `CaptionTransformOverlay.tsx`)

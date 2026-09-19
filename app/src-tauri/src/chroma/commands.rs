@@ -150,6 +150,7 @@ pub async fn seek_and_install(
     let view_for_task = view.clone();
     let decoded = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, String> {
         let img = decode_pipe::playback_frame_scaled(
+            decode_pipe::PipeLane::LIVE,
             decode_pipe::PipeSlot::Current,
             &path,
             &info,

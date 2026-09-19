@@ -103,6 +103,30 @@
 //! needed, which was itself what made a chain impossible — a standby for a
 //! LATER boundary cannot serve the current one by construction.
 //!
+//! ## Why the pool is keyed by (LANE, slot) since D-360
+//!
+//! A [`PipeSlot`] answers "which independently-sequential stream is this?" —
+//! one per visible video track. That was the whole question while exactly one
+//! thing walked the timeline at a time. D-350's headless render path made it
+//! two (a preview and an export), and D-360's contiguous-segment render made it
+//! N: several workers, each walking a *different stretch* of the same timeline
+//! at the same moment, each decoding the same tracks.
+//!
+//! Every one of them calls [`retain_pipe_slots`] and [`sync_prefetch`] per
+//! frame with the complete set of slots IT wants — both are declarative by
+//! design (D-330) — so under one un-laned pool each walker released every other
+//! walker's pipes on every frame. That is D-125/B-040's measured respawn storm
+//! ("~0.85 fps") reproduced one level up. A [`PipeLane`] is the missing half of
+//! the key: slot says which stream, lane says whose.
+//!
+//! **And the pool's lock is released across the blocking read** (D-360). It
+//! used to be held for the whole of [`FramePipe::frame_scaled`] — the pipe
+//! read, and on a respawn the 248-337 ms keyframe seek behind it — which made
+//! every lane's decode serialise on one mutex regardless of how many lanes
+//! there were. The pipe is checked out of the pool, read, and checked back in;
+//! [`Checkout`]'s `Drop` is what guarantees it always returns. A second caller
+//! for the *same* key waits, exactly as it used to wait on the pool mutex.
+//!
 //! ## The lead time is measured per source, not a constant (D-330)
 //!
 //! D-324 derived its fixed 0.5 s lead from a table measured on one file
@@ -487,6 +511,80 @@ pub enum PipeSlot {
     TrackTransition(usize),
 }
 
+/// **Which independent SET of decode pipes a caller owns (D-360).**
+///
+/// A [`PipeSlot`] says "this is one sequential stream"; a lane says "…belonging
+/// to this one walker of the timeline". They are different questions, and
+/// before D-360 only the first was asked — so two walkers at two different
+/// timeline positions shared one pool and each one's per-frame
+/// [`retain_pipe_slots`] / [`sync_prefetch`] released the other's pipes, every
+/// frame. That is exactly the failure D-125/B-040 already fixed once, a level
+/// up: the same reason two layers need two slots is the reason two walkers need
+/// two lanes.
+///
+/// **[`PipeLane::LIVE`] is the whole app as it was before D-360** — the Edit
+/// tab's preview, the Colorist tab, thumbnails. Nothing in the running app
+/// passes anything else, so live playback's pool behaviour is unchanged by
+/// construction rather than by care. Only `chroma::edit_render`'s headless
+/// render workers take a [`PipeLane::render`] lane, one each.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+pub struct PipeLane(u16);
+
+impl PipeLane {
+    /// The live app. Everything that existed before D-360 runs here.
+    pub const LIVE: PipeLane = PipeLane(0);
+
+    /// The `n`th headless render worker's own lane — never [`Self::LIVE`], so a
+    /// background render can neither release nor reposition a pipe the preview
+    /// is using, and two render workers can never do it to each other.
+    ///
+    /// Saturating rather than wrapping: `n` is a segment index bounded by the
+    /// machine's core count two layers up, so the clamp is unreachable — but
+    /// wrapping it would silently alias lane 0, which is the one lane that must
+    /// never be handed out here.
+    pub fn render(n: usize) -> Self {
+        PipeLane(n.saturating_add(1).min(u16::MAX as usize) as u16)
+    }
+}
+
+/// What the pool is actually keyed by since D-360: one sequential stream,
+/// belonging to one walker of the timeline.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct PipeKey {
+    lane: PipeLane,
+    slot: PipeSlot,
+}
+
+/// A pipe's state in the pool while a caller is decoding with it (D-360).
+///
+/// The pipe itself is not here — it has been handed to that caller and is out
+/// of the map entirely, which is the entire point: the blocking pipe read that
+/// follows must not hold the pool's lock, or every lane serialises on one
+/// caller's `read_exact` and the lanes buy nothing (see [`check_out`]).
+///
+/// What stays behind is a claim on the key, so that a second caller for the
+/// same key waits for the pipe rather than spawning a rival `ffmpeg` on the
+/// same stream, and so that a release arriving mid-decode has somewhere to
+/// record itself.
+struct Checkedout {
+    /// The source the checkout was made for. A release by path
+    /// ([`drop_pipes_for_path`]) cannot see the pipe to ask it, so the pipe
+    /// says where it is going before it leaves.
+    path: PathBuf,
+    /// Set by a release that ran while the pipe was out. [`check_in`] honours
+    /// it by dropping the pipe instead of putting it back — a released pipe
+    /// stays released, even if the release lost the race.
+    doomed: bool,
+}
+
+/// One live-pipe entry: in the pool, or out with a caller.
+enum LiveEntry {
+    /// In the pool, mid-stream, ready to be checked out.
+    Idle(FramePipe),
+    /// Checked out — see [`Checkedout`].
+    Busy(Checkedout),
+}
+
 /// The live pipes, plus D-324's primed-but-unread ones.
 ///
 /// **One mutex over both maps, not two mutexes.** Every interesting operation
@@ -495,8 +593,9 @@ pub enum PipeSlot {
 /// an invariant nothing in the type system would hold us to, for no gain.
 #[derive(Default)]
 struct PipePool {
-    /// One per slot, mid-stream, `next_index` at whatever was last read.
-    live: HashMap<PipeSlot, FramePipe>,
+    /// One per key, mid-stream, `next_index` at whatever was last read — or a
+    /// [`LiveEntry::Busy`] claim while some caller is decoding with it.
+    live: HashMap<PipeKey, LiveEntry>,
     /// **D-324 — pipes spawned ahead of a known cut boundary and not yet read
     /// from. D-330 — up to [`MAX_STANDBY_PER_SLOT`] of them per slot, in the
     /// order the boundaries will be reached.**
@@ -516,10 +615,153 @@ struct PipePool {
     /// lead time used to have its own standby evicted by the clip after it, and
     /// a run of short clips needs its respawns overlapped rather than
     /// serialised.
-    standby: HashMap<PipeSlot, Vec<FramePipe>>,
+    standby: HashMap<PipeKey, Vec<FramePipe>>,
 }
 
 static PIPES: Lazy<Mutex<PipePool>> = Lazy::new(|| Mutex::new(PipePool::default()));
+
+/// Signalled every time a checked-out pipe comes back (D-360). Waited on only
+/// by a second caller for the *same* key — the case that used to serialise on
+/// the pool mutex itself, and still serialises, just without holding the lock
+/// that every other lane needs.
+static PIPE_RETURNED: std::sync::Condvar = std::sync::Condvar::new();
+
+/// Take `key`'s pipe OUT of the pool for the duration of a blocking decode,
+/// adopting a primed standby first if the live pipe cannot serve this frame.
+///
+/// **Why the pipe leaves the map at all (D-360).** Everything expensive about a
+/// decode — `read_exact` on the pipe, and on a respawn the keyframe seek behind
+/// it, measured at 248-337 ms and a median 723 ms on the owner's C040 — happens
+/// *inside* [`FramePipe::frame_scaled`]. Before D-360 that ran with the pool
+/// mutex held, which was free while one thread walked the timeline and is fatal
+/// the moment several do: N render segments would each wait their turn on one
+/// global lock and decode exactly as sequentially as one of them did. Handing
+/// the pipe out and taking the lock again only to hand it back is what makes a
+/// lane's decode genuinely concurrent with every other lane's.
+///
+/// Blocks only on a second caller for this exact key, which is the same
+/// serialisation the pool mutex used to impose on it.
+fn check_out(key: PipeKey, path: &Path, target: u64, scale: Option<(u32, u32)>) -> Checkout {
+    let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
+    while matches!(pool.live.get(&key), Some(LiveEntry::Busy(_))) {
+        pool = PIPE_RETURNED.wait(pool).unwrap_or_else(|e| e.into_inner());
+    }
+
+    // D-324 — the boundary crossing. If this key's live pipe cannot serve
+    // `target` (a cut: the source frame jumped somewhere a forward read can't
+    // reach) but a standby primed for exactly this moment can, adopt it. The
+    // old pipe drops here, killing its `ffmpeg`; the primed one takes its place
+    // with its seek already paid.
+    //
+    // Both halves of the condition matter. Only consulting the standbys when the
+    // live pipe has genuinely failed keeps the ordinary mid-clip frame on the
+    // exact code path it was always on. And re-checking `can_serve` on the
+    // standby itself is what makes a mispredicted prefetch harmless: playback
+    // that jumped somewhere else entirely simply does not adopt it.
+    let live_can_serve = matches!(
+        pool.live.get(&key),
+        Some(LiveEntry::Idle(p)) if p.can_serve(path, target, scale)
+    );
+    if !live_can_serve && let Some(primed) = pool.standby.get_mut(&key) {
+        // **D-330 — take the one that serves this boundary and LEAVE the rest.**
+        // D-324 removed the slot's standby unconditionally here, on the grounds
+        // that a standby which cannot serve the current frame is an overtaken
+        // prediction. That is exactly wrong once there is a chain: the standby
+        // for boundary `N+2` cannot serve boundary `N+1` *by construction*, so
+        // the unconditional drop was what made a chain impossible. Releasing a
+        // genuinely stale standby is `sync_prefetch`'s job now — it is handed
+        // the complete wanted set every frame and drops everything else.
+        if let Some(i) = primed.iter().position(|p| p.can_serve(path, target, scale)) {
+            let adopted = primed.remove(i);
+            log::trace!(
+                "decode pipe: adopted a primed pipe for {key:?} at frame {target} \
+                 instead of respawning ({} standby left)",
+                primed.len()
+            );
+            pool.live.insert(key, LiveEntry::Idle(adopted));
+        }
+    }
+
+    let claim = LiveEntry::Busy(Checkedout {
+        path: path.to_path_buf(),
+        doomed: false,
+    });
+    let pipe = match pool.live.insert(key, claim) {
+        Some(LiveEntry::Idle(pipe)) => Some(pipe),
+        // Unreachable: the wait above returns only with this key not busy, and
+        // the pool lock has been held ever since. Handled as "no pipe" rather
+        // than a panic because this module's whole contract is that a pipe is a
+        // fast path and never a new failure mode — the worst a miss can cost is
+        // one respawn.
+        Some(LiveEntry::Busy(_)) | None => None,
+    };
+    Checkout { key, pipe }
+}
+
+/// A pipe on loan from the pool, for exactly one decode (D-360).
+///
+/// **RAII, and that is load-bearing rather than tidy.** Every way out of a
+/// decode — the frame, a pipe error, a hardware-decode fallback, a `?` on
+/// something else entirely, a panic — has to return the key to the pool, or
+/// that key stays [`LiveEntry::Busy`] forever and the next caller for it waits
+/// on a condvar that will never be signalled. A `Drop` impl is the only exit
+/// path a future edit to this function cannot forget to take.
+struct Checkout {
+    key: PipeKey,
+    /// `None` once the decode has failed and the pipe has been discarded, or
+    /// before one has been opened at all.
+    pipe: Option<FramePipe>,
+}
+
+impl Drop for Checkout {
+    fn drop(&mut self) {
+        let key = self.key;
+        let returning = self.pipe.take();
+        // Dropped after the lock is released: killing and reaping an `ffmpeg`
+        // is not something every other lane should be made to wait behind.
+        let discarded = {
+            let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
+            let doomed = matches!(
+                pool.live.get(&key),
+                Some(LiveEntry::Busy(c)) if c.doomed
+            );
+            match returning {
+                Some(pipe) if !doomed => {
+                    pool.live.insert(key, LiveEntry::Idle(pipe));
+                    None
+                }
+                // Either the decode poisoned it (next call respawns clean, as
+                // before D-360) or a release claimed it while it was out.
+                other => {
+                    pool.live.remove(&key);
+                    other
+                }
+            }
+        };
+        PIPE_RETURNED.notify_all();
+        drop(discarded);
+    }
+}
+
+/// Mark `key` for release, or release it now — whichever is possible.
+///
+/// A pipe that is [`LiveEntry::Busy`] cannot simply be removed: some caller is
+/// decoding with it and holds the only handle. Dooming it instead makes the
+/// release land at [`Checkout::drop`], which is the same observable outcome one
+/// decode later. Returns the pipe when it could be taken now, so the caller can
+/// drop it outside the pool lock.
+fn release_key(pool: &mut PipePool, key: PipeKey) -> Option<FramePipe> {
+    match pool.live.get_mut(&key) {
+        Some(LiveEntry::Busy(claim)) => {
+            claim.doomed = true;
+            None
+        }
+        _ => match pool.live.remove(&key) {
+            Some(LiveEntry::Idle(pipe)) => Some(pipe),
+            _ => None,
+        },
+    }
+}
 
 /// Decode `target` via `slot`'s playback pipe, creating / advancing /
 /// restarting it as needed. On any failure the slot's pipe is dropped and the
@@ -529,12 +771,13 @@ static PIPES: Lazy<Mutex<PipePool>> = Lazy::new(|| Mutex::new(PipePool::default(
 /// `playback_frame_scaled(.., None)`, kept for API symmetry.
 #[allow(dead_code)]
 pub fn playback_frame(
+    lane: PipeLane,
     slot: PipeSlot,
     path: &Path,
     info: &VideoInfo,
     target: u64,
 ) -> Result<DynamicImage> {
-    playback_frame_scaled(slot, path, info, target, None)
+    playback_frame_scaled(lane, slot, path, info, target, None)
 }
 
 /// As [`playback_frame`], but ffmpeg downscales each frame to `scale` first
@@ -547,64 +790,38 @@ pub fn playback_frame(
 /// pre-D-125 software behaviour rather than to no preview at all. The failure
 /// is logged and remembered per source ([`NO_HWACCEL`]) so later respawns of
 /// the same file go straight to software.
+///
+/// **D-360 — the pool's lock is NOT held across the decode.** The pipe is
+/// checked out of the pool, read off-lock, and checked back in; see
+/// [`check_out`] for why, and [`Checkout`] for what guarantees it always goes
+/// back. For a single-threaded caller (all of live playback) the observable
+/// behaviour is identical to before.
 pub fn playback_frame_scaled(
+    lane: PipeLane,
     slot: PipeSlot,
     path: &Path,
     info: &VideoInfo,
     target: u64,
     scale: Option<(u32, u32)>,
 ) -> Result<DynamicImage> {
-    let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
-
-    // D-324 — the boundary crossing. If this slot's live pipe cannot serve
-    // `target` (a cut: the source frame jumped somewhere a forward read can't
-    // reach) but a standby primed for exactly this moment can, adopt it. The
-    // old pipe drops here, killing its `ffmpeg`; the primed one takes its place
-    // with its seek already paid.
-    //
-    // Both halves of the condition matter. Only consulting the standbys when the
-    // live pipe has genuinely failed keeps the ordinary mid-clip frame on the
-    // exact code path it was always on. And re-checking `can_serve` on the
-    // standby itself is what makes a mispredicted prefetch harmless: playback
-    // that jumped somewhere else entirely simply does not adopt it.
-    let live_can_serve = pool
-        .live
-        .get(&slot)
-        .is_some_and(|p| p.can_serve(path, target, scale));
-    if !live_can_serve && let Some(primed) = pool.standby.get_mut(&slot) {
-        // **D-330 — take the one that serves this boundary and LEAVE the rest.**
-        // D-324 removed the slot's standby unconditionally here, on the grounds
-        // that a standby which cannot serve the current frame is an overtaken
-        // prediction. That is exactly wrong once there is a chain: the standby
-        // for boundary `N+2` cannot serve boundary `N+1` *by construction*, so
-        // the unconditional drop was what made a chain impossible. Releasing a
-        // genuinely stale standby is `sync_prefetch`'s job now — it is handed
-        // the complete wanted set every frame and drops everything else.
-        if let Some(i) = primed.iter().position(|p| p.can_serve(path, target, scale)) {
-            let adopted = primed.remove(i);
-            log::trace!(
-                "decode pipe: adopted a primed pipe for {slot:?} at frame {target} \
-                 instead of respawning ({} standby left)",
-                primed.len()
-            );
-            pool.live.insert(slot, adopted);
-        }
-    }
+    let key = PipeKey { lane, slot };
+    let mut held = check_out(key, path, target, scale);
 
     // D-330 — a COLD open is a keyframe seek too, and has to be measured like
     // one. It does not reach `frame_scaled`'s respawn branch: the pipe it opens
     // starts at `target`, so `can_serve` is true and the first frame is read
     // forward. Timed here instead, around the open and that first read
     // together, which is the same span `frame_scaled` measures for a respawn.
-    let was_vacant = !pool.live.contains_key(&slot);
+    let was_vacant = held.pipe.is_none();
     let started = std::time::Instant::now();
-    let pipe = match pool.live.entry(slot) {
-        std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
-        std::collections::hash_map::Entry::Vacant(v) => {
-            v.insert(FramePipe::open_scaled(path, info, target, scale)?)
-        }
+    if held.pipe.is_none() {
+        held.pipe = Some(FramePipe::open_scaled(path, info, target, scale)?);
+    }
+    let Some(pipe) = held.pipe.as_mut() else {
+        return Err(anyhow!("decode pipe vanished between open and read"));
     };
 
+    let was_hwaccel = pipe.hwaccel;
     let decoded = pipe.frame_scaled(path, info, target, scale);
     if was_vacant && decoded.is_ok() {
         record_seek_cost(path, started.elapsed().as_secs_f64() * 1000.0);
@@ -612,8 +829,7 @@ pub fn playback_frame_scaled(
     match decoded {
         Ok(img) => Ok(img),
         Err(e) => {
-            let was_hwaccel = pipe.hwaccel;
-            pool.live.remove(&slot); // poison → next call respawns clean
+            held.pipe = None; // poison → next call respawns clean
             if !was_hwaccel {
                 return Err(e);
             }
@@ -624,7 +840,7 @@ pub fn playback_frame_scaled(
             disable_hwaccel(path);
             let mut sw = FramePipe::open_with_hwaccel(path, info, target, scale, false)?;
             let img = sw.frame_scaled(path, info, target, scale)?;
-            pool.live.insert(slot, sw);
+            held.pipe = Some(sw);
             Ok(img)
         }
     }
@@ -679,36 +895,54 @@ pub struct PrefetchSpec<'a> {
 /// Errors are swallowed deliberately. A prefetch is an optimisation with a
 /// complete fallback (the respawn that would have happened anyway), so a
 /// failure to spawn one must never become a failure to show a frame.
-pub fn sync_prefetch(wanted: &[PrefetchSpec<'_>]) {
+///
+/// **D-360 — scoped to one [`PipeLane`].** `wanted` is this lane's complete
+/// set, so the release half must not reach into another lane's standbys: a
+/// render segment priming nothing at all (every export frame is
+/// `FrameIntent::Single`) would otherwise drop every boundary live playback had
+/// primed, on every frame it rendered.
+pub fn sync_prefetch(lane: PipeLane, wanted: &[PrefetchSpec<'_>]) {
     let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
 
     // 1. Release everything no longer wanted. A standby matches a spec when it
     //    is the same source at the same scale primed at exactly that frame —
     //    `next_index` is where the pipe will start reading, and nothing has
     //    read from it, so it is still the frame it was spawned for.
-    let still_wanted = |slot: PipeSlot, p: &FramePipe| {
+    let still_wanted = |key: PipeKey, p: &FramePipe| {
         wanted.iter().any(|w| {
-            w.slot == slot && w.path == p.path && w.scale == p.scale && w.target == p.next_index
+            w.slot == key.slot && w.path == p.path && w.scale == p.scale && w.target == p.next_index
         })
     };
-    for (slot, primed) in pool.standby.iter_mut() {
-        primed.retain(|p| still_wanted(*slot, p));
+    for (key, primed) in pool.standby.iter_mut() {
+        if key.lane != lane {
+            continue; // another lane's prediction is not ours to overrule
+        }
+        primed.retain(|p| still_wanted(*key, p));
     }
     pool.standby.retain(|_, primed| !primed.is_empty());
 
     // 2. Spawn whatever is wanted and not already running.
     for spec in wanted {
+        let key = PipeKey {
+            lane,
+            slot: spec.slot,
+        };
         // Reading forward from where this slot already is will reach the
         // boundary on its own — no second process needed. This is what makes a
         // clip already under the playhead cost nothing here.
-        if pool
-            .live
-            .get(&spec.slot)
-            .is_some_and(|p| p.can_serve(spec.path, spec.target, spec.scale))
-        {
+        //
+        // A pipe that is checked out right now (D-360) reads as "cannot serve",
+        // which is conservative in the harmless direction — it costs at most one
+        // standby `ffmpeg` that the next frame's `still_wanted` pass releases.
+        // It also cannot arise on the path that matters: the Edit tab primes
+        // AFTER it has decoded, on the same thread, so its own key is idle.
+        if matches!(
+            pool.live.get(&key),
+            Some(LiveEntry::Idle(p)) if p.can_serve(spec.path, spec.target, spec.scale)
+        ) {
             continue;
         }
-        let primed = pool.standby.entry(spec.slot).or_default();
+        let primed = pool.standby.entry(key).or_default();
         if primed
             .iter()
             .any(|p| p.path == spec.path && p.scale == spec.scale && p.next_index == spec.target)
@@ -764,12 +998,71 @@ pub fn sync_prefetch(wanted: &[PrefetchSpec<'_>]) {
 /// frame and drops everything else, so a standby for a track that has gone
 /// hidden or been deleted is already released by the same call that stops
 /// asking for it — one owner for that lifetime instead of two.
-pub fn retain_pipe_slots(keep: &[PipeSlot]) {
-    let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
-    pool.live.retain(|slot, _| match slot {
-        PipeSlot::Current => true,
-        other => keep.contains(other),
-    });
+///
+/// **D-360 — releases only `lane`'s own pipes.** Every walker of the timeline
+/// calls this every frame with the slots visible at ITS position, so a
+/// lane-blind release would have each render segment free the pipes of every
+/// other segment and of the live preview, once per frame — the D-125/B-040
+/// respawn storm, one level up.
+pub fn retain_pipe_slots(lane: PipeLane, keep: &[PipeSlot]) {
+    let mut dropped: Vec<FramePipe> = Vec::new();
+    {
+        let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
+        let release: Vec<PipeKey> = pool
+            .live
+            .keys()
+            .copied()
+            .filter(|key| {
+                key.lane == lane
+                    && match key.slot {
+                        PipeSlot::Current => false,
+                        other => !keep.contains(&other),
+                    }
+            })
+            .collect();
+        for key in release {
+            dropped.extend(release_key(&mut pool, key));
+        }
+    }
+    // Outside the lock: a `FramePipe`'s drop kills and reaps an `ffmpeg`.
+    drop(dropped);
+}
+
+/// **Drop everything `lane` owns — live pipes and primed standbys (D-360).**
+///
+/// What a headless render worker calls when its segment is finished. Without
+/// it a segment's decoders would stay resident until the process exited, which
+/// is precisely the unbounded-per-unit shape B-229/B-230 were about: the whole
+/// point of splitting an export into N segments is that the Nth one's cost
+/// stops when it does.
+///
+/// Not how the live app resets itself — [`PipeLane::LIVE`] owns the Colorist
+/// tab's [`PipeSlot::Current`] as well, and nothing but [`reset`] has the
+/// standing to end that session.
+pub fn release_lane(lane: PipeLane) {
+    let mut dropped: Vec<FramePipe> = Vec::new();
+    {
+        let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
+        let keys: Vec<PipeKey> = pool
+            .live
+            .keys()
+            .copied()
+            .filter(|key| key.lane == lane)
+            .collect();
+        for key in keys {
+            dropped.extend(release_key(&mut pool, key));
+        }
+        let primed: Vec<PipeKey> = pool
+            .standby
+            .keys()
+            .copied()
+            .filter(|key| key.lane == lane)
+            .collect();
+        for key in primed {
+            dropped.extend(pool.standby.remove(&key).unwrap_or_default());
+        }
+    }
+    drop(dropped);
 }
 
 /// How many pipes — and therefore how many live `ffmpeg` processes — the pool
@@ -810,9 +1103,15 @@ pub fn standby_pipe_count() -> usize {
 /// Drop every playback pipe, primed standbys included (frees the ffmpeg
 /// processes + their fds). Called from `state::set_current_video` when the clip
 /// changes, and before an export.
+/// D-360: a pipe checked out for a decode in flight cannot be taken away from
+/// the thread holding it, so it is marked instead and dropped the moment that
+/// decode returns — the same observable outcome, one frame later.
 pub fn reset() {
     let mut pool = PIPES.lock().unwrap_or_else(|e| e.into_inner());
-    pool.live.clear();
+    let keys: Vec<PipeKey> = pool.live.keys().copied().collect();
+    for key in keys {
+        let _ = release_key(&mut pool, key);
+    }
     pool.standby.clear();
 }
 
@@ -855,12 +1154,33 @@ pub fn drop_pipes_for_path(path: &Path) -> usize {
         .remove(path);
     let standby_count = |pool: &PipePool| pool.standby.values().map(Vec::len).sum::<usize>();
     let before = pool.live.len() + standby_count(&pool);
-    pool.live.retain(|_, pipe| pipe.path != path);
+    // D-360 — across EVERY lane: the file on disk has been replaced, which is
+    // true for the live preview and for a render segment alike. A checked-out
+    // pipe is matched on the source its checkout recorded, since the pipe
+    // itself is out with its caller and cannot be asked.
+    let on_path: Vec<PipeKey> = pool
+        .live
+        .iter()
+        .filter(|(_, entry)| match entry {
+            LiveEntry::Idle(pipe) => pipe.path == path,
+            LiveEntry::Busy(claim) => claim.path == path,
+        })
+        .map(|(key, _)| *key)
+        .collect();
+    let mut still_held = 0usize;
+    for key in on_path {
+        if release_key(&mut pool, key).is_none() {
+            // Doomed rather than removed — it is out with a caller and leaves
+            // the pool when that decode returns. It is no longer servable, so
+            // it counts as dropped.
+            still_held += 1;
+        }
+    }
     for primed in pool.standby.values_mut() {
         primed.retain(|pipe| pipe.path != path);
     }
     pool.standby.retain(|_, primed| !primed.is_empty());
-    before - (pool.live.len() + standby_count(&pool))
+    before - (pool.live.len() + standby_count(&pool)) + still_held
 }
 
 #[cfg(test)]
@@ -924,9 +1244,9 @@ mod tests {
             .unwrap_or_else(|e| e.into_inner())
             .standby
             .iter()
-            .flat_map(|(slot, pipes)| {
+            .flat_map(|(key, pipes)| {
                 pipes.iter().map(|p| StandbyId {
-                    slot: *slot,
+                    slot: key.slot,
                     path: p.path.clone(),
                     target: p.next_index,
                     scale: p.scale,
@@ -949,7 +1269,7 @@ mod tests {
                 scale: w.scale,
             })
             .collect();
-        sync_prefetch(&specs);
+        sync_prefetch(PipeLane::LIVE, &specs);
     }
 
     /// D-260 — `drop_pipes_for_path` drops exactly the pipes on that file and
@@ -1007,9 +1327,9 @@ mod tests {
         // Three live pipes: two on `a` (one of them the Colorist's own slot,
         // which this call MUST drop and `retain_pipe_slots` never would), one
         // on `b`.
-        playback_frame(PipeSlot::Track(0), &a, &info_a, 0).expect("a on track 0");
-        playback_frame(PipeSlot::Current, &a, &info_a, 0).expect("a on Current");
-        playback_frame(PipeSlot::Track(1), &b, &info_b, 0).expect("b on track 1");
+        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &a, &info_a, 0).expect("a on track 0");
+        playback_frame(PipeLane::LIVE, PipeSlot::Current, &a, &info_a, 0).expect("a on Current");
+        playback_frame(PipeLane::LIVE, PipeSlot::Track(1), &b, &info_b, 0).expect("b on track 1");
         assert_eq!(open_pipe_count(), 3);
 
         assert_eq!(
@@ -1097,7 +1417,7 @@ mod tests {
 
         // Playing along at frame 10 — a long way from the boundary below, so
         // the live pipe genuinely cannot reach it by reading forward.
-        playback_frame(PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
+        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
         assert_eq!(open_pipe_count(), 1);
         assert_eq!(standby_pipe_count(), 0);
 
@@ -1109,7 +1429,7 @@ mod tests {
             "a target the live pipe cannot reach must be primed"
         );
 
-        let got = playback_frame(PipeSlot::Track(0), &vid, &info, BOUNDARY)
+        let got = playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, BOUNDARY)
             .expect("the boundary frame")
             .to_rgb8();
         assert_eq!(
@@ -1129,9 +1449,15 @@ mod tests {
         );
 
         // And the adopted pipe is a normal sequential pipe afterwards.
-        let next = playback_frame(PipeSlot::Track(0), &vid, &info, BOUNDARY + 1)
-            .expect("the frame after the boundary")
-            .to_rgb8();
+        let next = playback_frame(
+            PipeLane::LIVE,
+            PipeSlot::Track(0),
+            &vid,
+            &info,
+            BOUNDARY + 1,
+        )
+        .expect("the frame after the boundary")
+        .to_rgb8();
         let next_want =
             crate::video::decode_frame(&vid, crate::video::FramePos::Index(BOUNDARY + 1), &info)
                 .expect("reference decode")
@@ -1155,12 +1481,12 @@ mod tests {
         let info = crate::video::probe(&vid).expect("probe");
         reset();
 
-        playback_frame(PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
+        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
         const BOUNDARY: u64 = 300;
         prime_one(PipeSlot::Track(0), &vid, &info, BOUNDARY, None);
 
         let late = BOUNDARY + 3;
-        let got = playback_frame(PipeSlot::Track(0), &vid, &info, late)
+        let got = playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, late)
             .expect("a late landing")
             .to_rgb8();
         assert_eq!(standby_pipe_count(), 0, "adopted, not discarded");
@@ -1197,13 +1523,13 @@ mod tests {
         let info = crate::video::probe(&vid).expect("probe");
         reset();
 
-        playback_frame(PipeSlot::Track(0), &vid, &info, 200).expect("frame 200");
+        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 200).expect("frame 200");
         prime_one(PipeSlot::Track(0), &vid, &info, 300, None);
         assert_eq!(standby_pipe_count(), 1);
 
         // The user seeks backwards instead — the prediction is now worthless.
         let elsewhere = 40;
-        let got = playback_frame(PipeSlot::Track(0), &vid, &info, elsewhere)
+        let got = playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, elsewhere)
             .expect("a seek elsewhere")
             .to_rgb8();
         let want =
@@ -1217,7 +1543,7 @@ mod tests {
 
         // …and the next frame's `sync_prefetch` — which a scrub makes with an
         // empty wanted set — is what releases it.
-        sync_prefetch(&[]);
+        sync_prefetch(PipeLane::LIVE, &[]);
         assert_eq!(
             standby_pipe_count(),
             0,
@@ -1241,7 +1567,7 @@ mod tests {
         let info = crate::video::probe(&vid).expect("probe");
         reset();
 
-        playback_frame(PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
+        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
 
         // Three cuts, each far enough from the last to be a genuine seek — the
         // shape of a run of sub-second clips on one track.
@@ -1256,7 +1582,7 @@ mod tests {
                 scale: None,
             })
             .collect();
-        sync_prefetch(&want);
+        sync_prefetch(PipeLane::LIVE, &want);
         assert_eq!(
             standby_pipe_count(),
             3,
@@ -1266,7 +1592,7 @@ mod tests {
 
         // Crossing each boundary adopts that one and leaves the rest alone.
         for (i, &cut) in CUTS.iter().enumerate() {
-            let got = playback_frame(PipeSlot::Track(0), &vid, &info, cut)
+            let got = playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, cut)
                 .unwrap_or_else(|e| panic!("cut {cut}: {e}"))
                 .to_rgb8();
             assert_eq!(
@@ -1284,7 +1610,7 @@ mod tests {
                 "an adopted standby must produce the right picture at {cut}"
             );
             // Re-state what is still wanted, as the scheduler does each frame.
-            sync_prefetch(&want[i + 1..]);
+            sync_prefetch(PipeLane::LIVE, &want[i + 1..]);
         }
         reset();
     }
@@ -1313,7 +1639,7 @@ mod tests {
                 scale: None,
             })
             .collect();
-        sync_prefetch(&want);
+        sync_prefetch(PipeLane::LIVE, &want);
         assert_eq!(standby_pipe_count(), MAX_STANDBY_PER_SLOT);
         reset();
     }
@@ -1330,12 +1656,12 @@ mod tests {
         reset();
 
         // A cold open + first frame IS a respawn, so it is measured.
-        playback_frame(PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
+        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 10).expect("frame 10");
         let first = estimated_seek_ms(&vid).expect("a cold open is a measured seek");
         assert!(first > 0.0, "a measured seek must be a real duration");
 
         // A sequential read is not a seek and must not be folded in.
-        playback_frame(PipeSlot::Track(0), &vid, &info, 11).expect("frame 11");
+        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 11).expect("frame 11");
         assert_eq!(
             estimated_seek_ms(&vid),
             Some(first),
@@ -1379,7 +1705,7 @@ mod tests {
         let info = crate::video::probe(&vid).expect("probe");
         reset();
 
-        playback_frame(PipeSlot::Track(0), &vid, &info, 100).expect("frame 100");
+        playback_frame(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 100).expect("frame 100");
 
         // Mid-clip: the lookahead frame is a short forward hop the live pipe
         // will reach on its own.
@@ -1410,13 +1736,16 @@ mod tests {
         assert_eq!(standby_pipe_count(), 2);
 
         // …and saying only one of them is still wanted releases the other.
-        sync_prefetch(&[PrefetchSpec {
-            slot: PipeSlot::Track(0),
-            path: &vid,
-            info: &info,
-            target: 420,
-            scale: None,
-        }]);
+        sync_prefetch(
+            PipeLane::LIVE,
+            &[PrefetchSpec {
+                slot: PipeSlot::Track(0),
+                path: &vid,
+                info: &info,
+                target: 420,
+                scale: None,
+            }],
+        );
         assert_eq!(standby_pipe_count(), 1);
         reset();
     }
@@ -1444,14 +1773,14 @@ mod tests {
         reset();
         prime_one(PipeSlot::Track(3), &vid, &info, 100, None);
         assert_eq!(standby_pipe_count(), 1);
-        retain_pipe_slots(&[PipeSlot::Track(0)]);
+        retain_pipe_slots(PipeLane::LIVE, &[PipeSlot::Track(0)]);
         assert_eq!(
             standby_pipe_count(),
             1,
             "releasing LIVE slots must not touch the standby set — that is \
              `sync_prefetch`'s to own (D-330)"
         );
-        sync_prefetch(&[]);
+        sync_prefetch(PipeLane::LIVE, &[]);
         assert_eq!(
             standby_pipe_count(),
             0,
@@ -1461,7 +1790,8 @@ mod tests {
         // (b) the file is replaced underneath it (D-260)
         reset();
         prime_one(PipeSlot::Track(0), &vid, &info, 100, None);
-        playback_frame(PipeSlot::Track(1), &vid, &info, 0).expect("a live pipe too");
+        playback_frame(PipeLane::LIVE, PipeSlot::Track(1), &vid, &info, 0)
+            .expect("a live pipe too");
         assert_eq!(
             drop_pipes_for_path(&vid),
             2,
@@ -1503,23 +1833,27 @@ mod tests {
         let mut without = Vec::new();
         for &cut in &cuts {
             reset();
-            playback_frame_scaled(PipeSlot::Track(0), &vid, &info, 100, scale).expect("warm");
+            playback_frame_scaled(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 100, scale)
+                .expect("warm");
             let t = std::time::Instant::now();
-            playback_frame_scaled(PipeSlot::Track(0), &vid, &info, cut, scale).expect("cut");
+            playback_frame_scaled(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, cut, scale)
+                .expect("cut");
             without.push(t.elapsed().as_secs_f64() * 1000.0);
         }
 
         let mut with = Vec::new();
         for &cut in &cuts {
             reset();
-            playback_frame_scaled(PipeSlot::Track(0), &vid, &info, 100, scale).expect("warm");
+            playback_frame_scaled(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, 100, scale)
+                .expect("warm");
             prime_one(PipeSlot::Track(0), &vid, &info, cut, scale);
             // The lookahead D-324 actually uses: 0.5 s of playback, during
             // which the real preview would have been decoding frames of the
             // OUTGOING clip while this ffmpeg seeks in parallel.
             std::thread::sleep(std::time::Duration::from_millis(500));
             let t = std::time::Instant::now();
-            playback_frame_scaled(PipeSlot::Track(0), &vid, &info, cut, scale).expect("cut");
+            playback_frame_scaled(PipeLane::LIVE, PipeSlot::Track(0), &vid, &info, cut, scale)
+                .expect("cut");
             with.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         reset();

@@ -206,6 +206,7 @@ mod tests {
 
         // warm up the pipe + GPU (first frame pays spawn + shader compile + upload)
         let warm = crate::chroma::decode_pipe::playback_frame_scaled(
+            crate::chroma::decode_pipe::PipeLane::LIVE,
             crate::chroma::decode_pipe::PipeSlot::Current,
             &vid,
             &info,
@@ -224,6 +225,7 @@ mod tests {
 
             let d0 = Instant::now();
             let frame = crate::chroma::decode_pipe::playback_frame_scaled(
+                crate::chroma::decode_pipe::PipeLane::LIVE,
                 crate::chroma::decode_pipe::PipeSlot::Current,
                 &vid,
                 &info,

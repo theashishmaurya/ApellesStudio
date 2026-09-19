@@ -26,6 +26,7 @@
  */
 import { create } from 'zustand';
 import { compileEditorExportArgs, runCompiledExport } from './editorExport';
+import type { TimelineRenderPlan } from './timelinePipeExport';
 
 export type ExportJobStatus = 'queued' | 'running' | 'done' | 'failed';
 
@@ -44,7 +45,7 @@ export interface ExportJob {
    *  filter-graph path, which needs no frames from us. Frozen for exactly the
    *  reason `args` is — a job must run the path it was queued for, even if the
    *  timeline or the dialog's choice has changed since. */
-  render?: { width: number; height: number; frames: number };
+  render?: TimelineRenderPlan;
   status: ExportJobStatus;
   /** Populated only for `status === 'failed'` — ffmpeg's own stderr tail,
    *  or a compile-time validation error. */
