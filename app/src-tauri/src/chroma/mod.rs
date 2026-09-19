@@ -130,6 +130,7 @@ pub mod depth;
 pub mod edit;
 pub mod edit_render;
 pub mod export;
+pub mod export_status;
 pub mod ffmpeg_run;
 pub mod filmstrip;
 pub mod grade;

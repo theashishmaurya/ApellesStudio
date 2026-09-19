@@ -3955,9 +3955,20 @@ impl ApellesMcp {
     source isn't known to have audio), summed and soft-limited. No new
     parameter needed; read `editor_get_capabilities`'s `export.v1_scope`
     entry for the one real caveat (an unprobed video source's embedded audio
-    conservatively defaults to silent). Blocks until ffmpeg finishes; there
-    is no progress reporting yet — use the Edit tab's own Export dialog
-    (D-198) for a real queued/backgrounded multi-export GUI flow instead.
+    conservatively defaults to silent).
+
+    **This call blocks, and on a real project it WILL exceed the 20s frontend
+    round trip — which is expected, and is not the export failing** (D-362,
+    fixes B-231). A minutes-long export outlives that budget, so the bridge
+    answers `ok: false` with a "no reply from the frontend" error while the
+    render carries on and succeeds. On the `"compositor"` renderer this tool
+    handles that for you: it then polls `editor_export_status` until the
+    render really settles, and returns THAT outcome, so what you get back is
+    the export's own answer rather than the timeout's. Call
+    `editor_export_status` yourself at any point to watch progress, or to pick
+    a render back up if this call is interrupted. The `"filter"` renderer
+    reports no progress at all — nothing outside ffmpeg knows where it is — so
+    there a timeout really does leave the output file as your only signal.
 
     **`renderer` (D-350) — which engine composites the picture.**
     `"compositor"` renders every frame through the app's OWN live-preview
@@ -3978,6 +3989,7 @@ impl ApellesMcp {
         &self,
         Parameters(p): Parameters<EditorExportArgs>,
     ) -> Result<CallToolResult, ErrorData> {
+        let out_path = p.out_path.clone();
         let args = WireArgs::new()
             .set("outPath", p.out_path)
             .set("width", p.width)
@@ -3988,6 +4000,17 @@ impl ApellesMcp {
             .put("freezeOverrides", p.freeze_overrides)
             .put("renderer", p.renderer);
         let mut env = self.op("editor_export", args).await?;
+        // D-362 (fixes B-231 facet 1) — the bridge's 20s budget is shorter than
+        // a real export, so a healthy one reliably comes back as a transport
+        // failure (`ok: false`) while the render is still going and will
+        // succeed. That is the false negative B-231 is half made of. The render
+        // publishes real progress on the compositor path, so rather than hand
+        // the caller a verdict that is simply wrong, poll for the true one.
+        if matches!(p.renderer, Some(ExportRenderer::Compositor))
+            && !env.get("ok").and_then(Value::as_bool).unwrap_or(false)
+        {
+            env = self.await_compositor_export(env, &out_path).await;
+        }
         // The result carries the whole ffmpeg argv, which is long, noisy and of no use
         // to a caller deciding what to do next — so it is dropped from the answer.
         if let Some(Value::Object(result)) = env.get_mut("result")
@@ -3995,6 +4018,44 @@ impl ApellesMcp {
         {
             result.remove("args");
         }
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_export_status",
+        description = r#"Poll the running — or most recently finished — `editor_export` render
+    (D-362, fixes B-231). Takes no arguments, starts nothing, and is free to
+    call as often as you like.
+
+    **Read `state` first.** `running` (still going; poll again), `done` (the
+    file is written and finalised), `failed` (`error` says why), `stalled`
+    (see below), or `idle` (no export has run in this session).
+
+    **`stalled` is a real, named failure and it matters.** It means a render
+    worker wrote no frame at all for `stallTimeoutSecs`, so the export was
+    declared hung, its encoder killed, and the render abandoned. **The output
+    file is incomplete and was never finalised — it will not play, and it must
+    not be used or shipped.** Re-run the export. Before D-362 this state
+    reported nothing whatsoever: the file simply stopped growing and every
+    other signal continued to look healthy, which is the whole of B-231's
+    second half.
+
+    **Progress.** `percent` (0-100) is the real fraction of the render —
+    `framesWritten / framesTotal` summed across every concurrent segment, not
+    an elapsed-time guess. `segmentsDone`/`segmentsTotal` and the per-segment
+    `segments` rows report the shape of it, which the percentage alone cannot:
+    four segments evenly at 78% and three finished with one wedged read the
+    same overall and are very different situations. `etaMs` is a rough
+    estimate taken from the slowest unfinished segment (a render ends when its
+    last worker does). While `phase` is `concatenating` every frame is already
+    rendered and the segments are being joined and the audio muxed.
+
+    **Only the `"compositor"` renderer reports progress.** The `"filter"`
+    renderer hands the whole job to one ffmpeg and learns nothing until it
+    exits, so an export run that way is invisible here."#
+    )]
+    pub async fn editor_export_status(&self) -> Result<CallToolResult, ErrorData> {
+        let env = self.op("editor_export_status", WireArgs::new()).await?;
         Ok(render::json_text(&env))
     }
 
@@ -4600,6 +4661,84 @@ impl ApellesMcp {
         let env = self.op("editor_analyze_video_status", args).await?;
         Ok(render::json_text(&env))
     }
+}
+
+/// **D-362 (fixes B-231) — how often, and for how long, `editor_export` waits
+/// out a render whose own call already timed out on the bridge.**
+///
+/// Two seconds because an export is measured in minutes: second-by-second
+/// resolution buys a poller nothing and each poll is a real HTTP round trip.
+/// The ceiling is deliberately generous — the renderer's own stall watchdog is
+/// what guarantees a HUNG export stops being `running` (within its own
+/// timeout), so this one exists only to stop the tool blocking forever on a
+/// render that is genuinely, honestly still going. Past it the last real status
+/// is returned rather than an invented failure, and `editor_export_status`
+/// picks up where this left off.
+///
+/// Twinned with `mcp/server.py`'s `EXPORT_POLL_INTERVAL_S`/`EXPORT_POLL_MAX_S`.
+const EXPORT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+const EXPORT_POLL_MAX: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
+
+impl ApellesMcp {
+    /// Poll `editor_export_status` until the render really settles (D-362).
+    ///
+    /// Called only when `editor_export`'s own call came back as a transport
+    /// failure — which, on a real export, is the expected outcome rather than a
+    /// real one. Returns an envelope shaped like the one it replaces, so a
+    /// caller cannot tell whether its export happened to fit inside the
+    /// bridge's budget.
+    async fn await_compositor_export(&self, env: Value, out_path: &str) -> Value {
+        let deadline = std::time::Instant::now() + EXPORT_POLL_MAX;
+        let mut status = Value::Null;
+        while std::time::Instant::now() < deadline {
+            // The app being genuinely unreachable IS the real failure, and it
+            // is the one already in `env`.
+            let Ok(polled) = self.op("editor_export_status", WireArgs::new()).await else {
+                return env;
+            };
+            status = polled.get("result").cloned().unwrap_or(Value::Null);
+            match status.get("state").and_then(Value::as_str) {
+                // Nothing is running and nothing ever ran: the render never
+                // started, so the original transport error is the honest answer.
+                None | Some("idle") => return env,
+                Some("running") => {}
+                Some(state) => {
+                    return settled_export(state == "done", &status, out_path);
+                }
+            }
+            tokio::time::sleep(EXPORT_POLL_INTERVAL).await;
+        }
+        let mut late = settled_export(false, &status, out_path);
+        if let Some(obj) = late.as_object_mut() {
+            obj.insert(
+                "error".into(),
+                Value::String(format!(
+                    "the export was still rendering after {}h — it has NOT failed and has not \
+                     been stopped; poll editor_export_status to follow it",
+                    EXPORT_POLL_MAX.as_secs() / 3600
+                )),
+            );
+        }
+        late
+    }
+}
+
+/// The settled envelope [`ApellesMcp::await_compositor_export`] hands back:
+/// the status as the `result`, with the output path the caller asked for
+/// alongside it, since the status names the file the RENDERER was given.
+fn settled_export(ok: bool, status: &Value, out_path: &str) -> Value {
+    let mut result = serde_json::Map::new();
+    result.insert("outPath".into(), Value::String(out_path.to_string()));
+    if let Some(obj) = status.as_object() {
+        for (k, v) in obj {
+            result.insert(k.clone(), v.clone());
+        }
+    }
+    serde_json::json!({
+        "ok": ok,
+        "error": status.get("error").cloned().unwrap_or(Value::Null),
+        "result": Value::Object(result),
+    })
 }
 
 /// This tab's contribution to the merged router.

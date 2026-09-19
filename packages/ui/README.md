@@ -68,6 +68,7 @@ Pinned in `package.json`:
 | `ResizablePanelGroup`, `ResizablePanel`, `ResizableHandle` | `react-resizable-panels` | |
 | `Sheet*` | `@base-ui/react/dialog` | side-anchored dialog (`side` = top/right/bottom/left) |
 | `Slider` | `@base-ui/react/slider` | Base UI drives the thumb — real animation, no framer-motion |
+| `Progress` | `@base-ui/react/progress` | determinate progress bar — Root+Track+Indicator in one component, `value={null}` for indeterminate. Added D-362 for the Edit tab's export queue |
 | `Switch` | `@base-ui/react/switch` | the **bare** shadcn switch |
 | `ScrollArea`, `ScrollBar` | `@base-ui/react/scroll-area` | |
 | `Separator` | `@base-ui/react/separator` | |

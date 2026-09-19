@@ -550,7 +550,7 @@ export async function runEditorExport(
   }
   const compiled = compileEditorExportArgs(a);
   if (!('ok' in compiled)) return compiled;
-  const outcome = await runCompiledExport(compiled.args, compiled.render);
+  const outcome = await runCompiledExport(compiled.args, compiled.render, compiled.outPath);
   return {
     ok: outcome.ok,
     error: outcome.error,
@@ -559,6 +559,56 @@ export async function runEditorExport(
     stderrTail: outcome.stderrTail,
     args: compiled.args,
   };
+}
+
+/** Where a compositor export is, as `editor_export_status` and
+ *  `chroma_editor_export_status` both answer it (D-362, fixes B-231).
+ *
+ *  Mirrors `chroma::export_status::ExportStatus` — copied by hand for the same
+ *  reason `FfmpegRunOutcome` and `TimelineRenderOutcome` already are. */
+export type TimelineExportState = 'idle' | 'running' | 'done' | 'failed' | 'stalled';
+
+export interface TimelineExportSegmentStatus {
+  index: number;
+  startFrame: number;
+  endFrame: number;
+  framesWritten: number;
+  done: boolean;
+  secondsSinceProgress: number;
+}
+
+export interface TimelineExportStatus {
+  state: TimelineExportState;
+  /** `'rendering'` or `'concatenating'` while running. */
+  phase?: 'rendering' | 'concatenating';
+  /** Monotonic per render, so a reader can tell this export's numbers from a
+   *  previous one's — which is the only way to poll safely, since the slot
+   *  keeps the LAST export's result after it finishes. */
+  jobId: number;
+  framesTotal: number;
+  framesWritten: number;
+  /** 0-100, one decimal. The real fraction of the render: D-360's segments
+   *  partition the frame space exactly, so the sum across them is exact. */
+  percent: number;
+  segmentsTotal: number;
+  segmentsDone: number;
+  segments: TimelineExportSegmentStatus[];
+  elapsedMs: number;
+  etaMs?: number;
+  output?: string;
+  error?: string;
+  stallTimeoutSecs: number;
+  note: string;
+}
+
+/** Poll the running (or last-finished) compositor export — D-362.
+ *
+ *  A pure read: it starts nothing and is safe to call as often as a caller
+ *  likes. The Export dialog polls it for its progress bar; `editor_export_
+ *  status` answers the identical snapshot over the control server, so the GUI
+ *  and an agent read one value rather than two implementations of it. */
+export async function readTimelineExportStatus(): Promise<TimelineExportStatus> {
+  return await invoke<TimelineExportStatus>('chroma_editor_export_status');
 }
 
 /** Mirrors `chroma::edit_render::TimelineRenderOutcome` (D-350) — copied by
@@ -586,6 +636,7 @@ interface TimelineRenderOutcome {
 export async function runCompiledExport(
   args: string[],
   render?: TimelineRenderPlan,
+  outPath?: string,
 ): Promise<{ ok: boolean; error: string | null; stdoutTail: string; stderrTail: string }> {
   if (render) {
     try {
@@ -598,6 +649,11 @@ export async function runCompiledExport(
           // D-360 — the per-segment + concat argv. The renderer decides whether
           // to use it; a job frozen before D-360 simply has none.
           segments: render.segments ?? null,
+          // D-362 — a label for the status readout, so a caller polling
+          // `editor_export_status` is told WHICH file is being written. The
+          // path is already inside `args`; the renderer deliberately does not
+          // parse the argv it is handed, so it is said outright.
+          output: outPath ?? null,
         },
       });
       return {

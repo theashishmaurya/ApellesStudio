@@ -2360,6 +2360,10 @@ pub fn run() {
             // through the live preview's own compositor, pipe raw frames to one
             // ffmpeg process. See `chroma::edit_render`.
             chroma::edit_render::chroma_render_timeline_export,
+            // D-362 — that render's live progress, polled by the Edit tab's
+            // Export dialog. The same snapshot `editor_export_status` answers
+            // over the control server, so the GUI and an agent read one value.
+            chroma::export_status::chroma_editor_export_status,
             chroma::write_text_file::chroma_write_text_file,
             // B-100/D-219 — internal debug tooling is never shipped
             // (CLAUDE.md). `tauri::generate_handler!` parses an outer

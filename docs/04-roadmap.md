@@ -335,14 +335,22 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      blind because `decode_pipe` is also the LIVE PLAYBACK decoder;
    - an end-to-end measurement at the real ~79-clip project (the slope is argued
      structurally and asserted on the compiled argv, not yet measured at that size);
-   - real progress reporting (this path knows its frame number; the old one could only
-     parse ffmpeg stderr) — **B-231's fix, and D-360 changed the shape of the question
-     it has to answer**: progress is now N concurrent workers each walking its own frame
-     range, so "the frame we are on" is a sum over segments, not a single counter. The
-     seam is there for it — `render_range` already takes each segment's range and returns
-     its own outcome, and `TimelineRenderOutcome` already reports the segment count — but
-     nothing publishes a per-frame event yet, deliberately (B-231 is sequenced after
-     D-360 and is not part of it);
+   - ~~real progress reporting~~ — **done 2026-09-19 by D-362, which also fixes B-231
+     outright.** Progress is a polled VALUE: `framesWritten / framesTotal` summed across
+     D-360's concurrent segments (exact, because `segment_ranges` partitions the render
+     with no hole or overlap), plus `segmentsDone`/`segmentsTotal`, per-segment rows and
+     an ETA taken from the *slowest* unfinished segment. Read by `editor_export_status`
+     — answered **natively** by the control server, since it is the tool a caller
+     reaches for precisely because the frontend round trip already timed out — and by
+     the Export dialog's own progress bar off the identical snapshot. `editor_export`
+     itself now polls past the 20s bridge timeout on the compositor path, so a healthy
+     export no longer reports `{"ok": false}`. The other half is a real **stall
+     watchdog**: 120 s with no frame from a worker (sized off the measured 37-60 ms/frame
+     at 1080p and the 248-337 ms cold seek, with wide margin for the swap pressure that
+     coincided with the original hang) kills that segment's encoder and reports
+     `stalled`, naming the segment and saying the output file is unusable. Proven
+     against a real `ffmpeg` made to genuinely stop reading (`-re -framerate 0.02`),
+     not a simulated one;
    - ProRes / a quality knob (phase 1 is h.264 crf 18, matching the old path's default);
    - **deleting the old filter-graph path and the temporary `renderer` parameter** — the
      end state of D-350, once phase 2 closes the gaps above.

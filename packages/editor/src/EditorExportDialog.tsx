@@ -58,6 +58,7 @@ import {
   DialogTitle,
   Input,
   Label,
+  Progress,
   ScrollArea,
   Select,
   SelectContent,
@@ -74,7 +75,7 @@ import {
 import { usePanelOpen } from './panelRegistry';
 import { useEditorTimelineStore } from './timelineStore';
 import { timelineFps, type Clip, type Timeline } from './timeline';
-import { useExportQueueStore, type ExportJobStatus } from './exportQueueStore';
+import { useExportQueueStore, type ExportJob, type ExportJobStatus } from './exportQueueStore';
 // D-256 — bake each graded clip's Colorist grade into a .cube before the
 // queue freezes this job's ffmpeg argv against those file paths.
 import { warmGradeLuts } from './gradeLuts';
@@ -139,6 +140,48 @@ function StatusIcon({ status }: { status: ExportJobStatus }) {
   if (status === 'done') return <CheckCircleIcon className="size-3.5 text-green-400" />;
   if (status === 'failed') return <XCircleIcon className="size-3.5 text-red-400" />;
   return <span className="size-3.5 rounded-full border border-border-color inline-block" />;
+}
+
+/** `1h 04m` / `4m 20s` / `18s` — a remaining time a human reads at a glance.
+ *  Seconds are dropped past a minute because an ETA extrapolated from a
+ *  partial render is not accurate to the second and should not pretend to be. */
+function shortDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const [h, m, s] = [Math.floor(total / 3600), Math.floor((total % 3600) / 60), total % 60];
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
+  return `${s}s`;
+}
+
+/** D-362 — a running job's REAL progress, where the queue used to show only a
+ *  spinner and the word "Exporting…".
+ *
+ *  The percentage is the renderer's own `framesWritten / framesTotal` summed
+ *  across D-360's concurrent segments, not a guess from elapsed time. The
+ *  segment count is shown alongside it whenever the render actually split,
+ *  because the percentage alone cannot distinguish four workers evenly at 78%
+ *  from three finished and one wedged — which is the situation B-231 was filed
+ *  about and the one a human most needs to see. */
+function JobProgress({ job }: { job: ExportJob }) {
+  const p = job.progress;
+  // A filter-graph job, or a compositor job whose render has not begun: there
+  // is no honest number, so nothing is drawn rather than a fake zero.
+  if (!p || p.state !== 'running') return null;
+  const concatenating = p.phase === 'concatenating';
+  return (
+    <div className="mt-1.5 flex flex-col gap-1">
+      <Progress value={p.percent} />
+      <div className="flex items-center justify-between gap-2 text-[10px] text-text-secondary tabular-nums">
+        <span>
+          {concatenating
+            ? 'Joining segments…'
+            : `${p.percent.toFixed(1)}% · ${p.framesWritten.toLocaleString()} / ${p.framesTotal.toLocaleString()} frames`}
+          {p.segmentsTotal > 1 && !concatenating ? ` · ${p.segmentsDone}/${p.segmentsTotal} segments` : ''}
+        </span>
+        {p.etaMs !== undefined && !concatenating ? <span>{shortDuration(p.etaMs)} left</span> : null}
+      </div>
+    </div>
+  );
 }
 
 export function EditorExportDialog() {
@@ -437,20 +480,24 @@ export function EditorExportDialog() {
                   </div>
                   <div className="flex flex-col gap-1">
                     {jobs.map((job) => (
-                      <div key={job.id} className="flex items-center gap-2 rounded-md border border-border-color px-2.5 py-1.5">
-                        <StatusIcon status={job.status} />
-                        <span className="min-w-0 flex-1 truncate text-xs text-text-primary" title={job.outPath}>
-                          {job.name}
-                        </span>
-                        <span
-                          className={
-                            'shrink-0 text-[11px] ' +
-                            (job.status === 'failed' ? 'text-red-400' : job.status === 'done' ? 'text-green-400' : 'text-text-secondary')
-                          }
-                          title={job.error ?? undefined}
-                        >
-                          {statusLabel[job.status]}
-                        </span>
+                      <div key={job.id} className="flex flex-col rounded-md border border-border-color px-2.5 py-1.5">
+                        <div className="flex items-center gap-2">
+                          <StatusIcon status={job.status} />
+                          <span className="min-w-0 flex-1 truncate text-xs text-text-primary" title={job.outPath}>
+                            {job.name}
+                          </span>
+                          <span
+                            className={
+                              'shrink-0 text-[11px] ' +
+                              (job.status === 'failed' ? 'text-red-400' : job.status === 'done' ? 'text-green-400' : 'text-text-secondary')
+                            }
+                            title={job.error ?? undefined}
+                          >
+                            {statusLabel[job.status]}
+                          </span>
+                        </div>
+                        {/* D-362 — the real percentage while it renders. */}
+                        <JobProgress job={job} />
                       </div>
                     ))}
                   </div>

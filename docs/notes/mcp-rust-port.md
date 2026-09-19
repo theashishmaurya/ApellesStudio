@@ -172,7 +172,7 @@ something that does, it is a bug in the port.
    advertised nine tools it could never answer. This matches the gate `control.rs` already
    uses for its own native debug ops (B-100 / D-219) and CLAUDE.md's standing rule that
    internal debug tooling is never shipped. A debug build publishes 166 tools; a release
-   build publishes 154.
+   build publishes 155.
 2. **An unreachable app reports its own message.** In Python the `RuntimeError` raised on a
    connection failure was masked by the MCP runtime down to `Error executing tool <name>`,
    discarding "Is the Apelles desktop app running?" — the single most useful sentence it

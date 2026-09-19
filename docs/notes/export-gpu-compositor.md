@@ -974,3 +974,144 @@ above (§11.1) — CLAUDE.md's own carve-out ("a genuinely small, stable need
 loses to a dependency") applies; hand-rolling these specific WGSL kernels
 against the CPU path as ground truth is the right call, not a shortcut
 around the rule.
+
+---
+
+# 12. Progress and the stall watchdog (D-362, 2026-09-19 — fixes B-231)
+
+Phases 1-3 made the export correct, memory-flat, parallel and segmented. None
+of them made it **observable**, and B-231 is what that cost: an export you
+cannot tell the state of is not one you can run blind, which is the only way an
+agent ever runs one.
+
+B-231 is a single bug with two opposite symptoms, and the export had both:
+
+- **the false negative** — `editor_export` blocks on a frontend round trip with
+  a fixed 20 s `BRIDGE_TIMEOUT`, and a real 4K export takes minutes, so a
+  healthy export reliably answered `{"ok": false}` and then went on to succeed;
+- **the false positive** — a render task hung internally while the `apelles`
+  process stayed healthy (`editor_get_state` kept answering `"ready"`), its
+  `ffmpeg` child blocked at 0% CPU on a starved stdin, the output file frozen
+  mid-write with no `moov` atom. Nothing reported anything, ever.
+
+## 12.1 The progress value — why the frame fraction, and why counted where it is
+
+D-360 changed the question phase 2 left behind: progress is now a sum over N
+concurrent workers, not one counter.
+
+**The primary number is `framesWritten / framesTotal`, summed across every
+segment — and it is exact, not an estimate.** `segment_ranges` partitions
+`0..frames` with no hole and no overlap (§10.4 already pins that, because the
+concatenated output's frame accuracy rests on it), so the sum over workers is a
+true fraction of the whole render however they interleave in time.
+
+What was not chosen, and why:
+
+| option | why not |
+|---|---|
+| segments done / total, alone | `0/1` then `1/1` for the entire single-stream path — no progress at all for exactly the cheaper exports. Even at six segments it moves six times in several minutes. |
+| parse `ffmpeg`'s stderr | what the OLD filter path had to do, and what D-350 exists to stop doing. With N concurrent encoders it is now N stderrs. |
+| an event per frame | rejected on the bug's own terms: the caller asks this question **after** its op already timed out, when every event it might have received is gone. Same reasoning as D-359 for `motion_render`. Polling is also this repo's existing shape (`chroma_export_progress`). |
+
+**Reported alongside it, not instead of it:** `segmentsDone`/`segmentsTotal` and
+a row per segment. The percentage alone cannot tell four segments evenly at 78%
+from three finished and one wedged at 12% — and the second is exactly the
+situation B-231 was filed about.
+
+**A frame counts when it is WRITTEN to the encoder, not when it is
+composited.** That is the most downstream point this path controls, so one
+counter freezes whether the compositor stalled, the `WRITE_AHEAD` channel
+jammed, or the encoder stopped reading — which is what lets the progress number
+*be* the watchdog's heartbeat rather than needing a second liveness signal. It
+can only under-report, by at most the `WRITE_AHEAD` frames in flight.
+
+**The ETA is the max over unfinished segments, not the aggregate rate**, because
+a segmented render ends when its slowest worker does; the aggregate rate
+systematically under-estimates the tail as earlier segments retire.
+
+## 12.2 Where the answer is served from
+
+`editor_export_status` is answered **natively** by the control server
+(`chroma::control`'s `native_op`, the `ai_env_status` precedent from D-210),
+not relayed to the frontend like the `editor_detect_*_status` family it
+otherwise copies. Those detectors' work really is frontend-driven, so their
+status honestly lives there. This render runs in Rust, so Rust is where its
+numbers already are — and relaying them would put a second copy of the truth
+behind exactly the round trip that has already failed.
+
+`editor_export` itself also stops returning the false negative: on
+`renderer="compositor"` both MCP surfaces poll past the bridge timeout and
+return the render's own settled outcome. Facet 1 is removed from the surface,
+not documented around.
+
+## 12.3 The watchdog
+
+One thread per render, checking each unfinished segment's last-frame time every
+500 ms.
+
+**`STALL_TIMEOUT = 120 s`, sized from the measurements with a deliberately wide
+margin.** This path renders at 37-60 ms a frame at 1080p (§10.5) and roughly
+four times that at 4K; its slowest legitimate single frame is a segment's cold
+keyframe seek per visible track (248-337 ms, median 723 ms). Two minutes is more
+than an order of magnitude above the worst honest case — on purpose, because the
+one condition that actually coincided with B-231's hang was severe memory
+pressure (swap at ~9.3/10 GB from an unrelated build), and under deep swap an
+honest frame can take tens of seconds. **A watchdog whose false alarm kills a
+healthy 4K export would be worse than the bug it is here to catch.**
+
+**It kills the encoder, because nothing else can free the stall it catches.**
+The wedged thread is inside `write_all` on a pipe whose reader has stopped;
+a blocking pipe write has no timeout and no interrupt, so the reader has to go
+away. That needs `shared_child` (MIT, already in the tree via
+`tauri-plugin-shell`): `std::process::Child::kill` takes `&mut self`, and
+killing by raw pid races with the `wait` that reaps it.
+
+Every previously unbounded `wait` on this path is bounded now (`wait_bounded`),
+the concat step included — so the "took EOF and then never exited" variant
+cannot hang silently either. The watchdog's verdict outranks the downstream
+error its own kill produces: a killed encoder surfaces as a broken pipe, which
+names the symptom and not the cause.
+
+## 12.4 Proving it — a watchdog that cannot be shown to fire is not a fix
+
+`a_stalled_encoder_is_killed_and_reported` builds a **genuinely** stuck export
+out of a real `ffmpeg`, rather than simulating one. `-re` makes ffmpeg read its
+input at the input's declared rate, so `-framerate 0.02` is one frame every 50
+seconds: once the kernel pipe buffer and `WRITE_AHEAD` fill, the writer blocks
+and stays blocked — facet 2's exact shape, with the child alive and near 0% CPU.
+
+Measured before the test was written, to confirm the fixture really does stall:
+**5 frames in 59.6 s**, the writer blocked for the whole of it.
+
+| pinned by | what it pins |
+|---|---|
+| `a_stalled_encoder_is_killed_and_reported` | a real stalled `ffmpeg` is caught, killed and named — the call returns in **5.5 s** against the test's 4 s budget (per-job, which is the only reason this is a test and not a two-minute one), and the status reads `stalled` with the segment, its frame range and the warning that the file is unusable |
+| `the_status_advances_while_a_real_render_is_in_flight` | progress sampled from a second thread **during** a real render moves, never goes backwards, and lands exactly on `framesTotal` / 100% |
+| `the_watchdog_fires_on_a_silent_segment` | the watchdog at unit level: one worker keeps writing, one goes quiet, the quiet one is the one named |
+| `a_finished_segment_is_not_watched` | a completed segment does not trip the watchdog while its siblings run on |
+| `progress_sums_across_concurrent_segments` | the sum is a true fraction whatever order out-of-order workers advance in |
+| `a_second_export_is_refused_while_one_runs` | one render at a time — two would overwrite each other's counters and double the `segments × (tracks + 1)` budget `MAX_SEGMENTS` bounds |
+| `exportQueueStore.test.ts`'s two D-362 cases | the dialog follows a compositor job's real progress, ignores a stale `jobId` from the previous export, stops polling when the job settles, and never polls a filter-graph job |
+
+## 12.5 What is still not covered
+
+**The `"filter"` renderer reports no progress and cannot.** It hands the whole
+job to one ffmpeg and learns nothing until it exits; the only way to know where
+it is would be parsing that stderr, which is the thing D-350 exists to stop
+doing. `editor_export_status` answers `idle` for such an export rather than
+guessing, and both tool descriptions say so outright.
+
+## 12.6 Files (D-362)
+
+| file | what changed |
+|---|---|
+| `app/src-tauri/src/chroma/export_status.rs` | **new** — `ExportJob`/`ExportStatus`/`ExportState`, the counters, `STALL_TIMEOUT`, the watchdog thread, `snapshot()`, `chroma_editor_export_status` |
+| `app/src-tauri/src/chroma/edit_render.rs` | `render_range` takes the job + its segment index (the abort flag moves onto the job), the encoder becomes a `SharedChild`, the writer ticks the counter per frame, `wait_bounded`, the partition is derived once in `render_timeline`, `TimelineRenderRequest.output`; two new real-ffmpeg tests |
+| `app/src-tauri/src/chroma/export.rs` | `drain_stderr_pipe` split out of `drain_stderr`, so a `SharedChild`'s stderr uses the same drainer |
+| `app/src-tauri/src/chroma/control.rs` | `editor_export_status` as a native op |
+| `app/src-tauri/{Cargo.toml,src/lib.rs}` | `shared_child`; the new command registered |
+| `mcp/server.py`, `crates/apelles-mcp/src/tools/edit.rs` | `editor_export_status`; `editor_export` polls past the bridge timeout on the compositor path; both descriptions rewritten |
+| `packages/ui/src/components/ui/progress.tsx` | **new** — shadcn `progress` on Base UI (D-042) |
+| `packages/editor/src/editorExport.ts` | `TimelineExportStatus`, `readTimelineExportStatus`, `runCompiledExport` passes the output path |
+| `packages/editor/src/exportQueueStore.ts` | `ExportJob.progress`, `followProgress` and its stale-`jobId` guard |
+| `packages/editor/src/EditorExportDialog.tsx` | `JobProgress` — the real bar, percentage, frame and segment counts, ETA |

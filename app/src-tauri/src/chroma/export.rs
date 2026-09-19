@@ -145,8 +145,20 @@ fn ffmpeg_bin() -> String {
 /// the pipe can't fill and deadlock the writer" helper is the kind of
 /// copy-paste this repo's own rules forbid.
 pub(super) fn drain_stderr(child: &mut Child) -> std::sync::Arc<Mutex<Vec<u8>>> {
+    drain_stderr_pipe(child.stderr.take())
+}
+
+/// [`drain_stderr`], given the pipe itself rather than the child that owns it.
+///
+/// The real implementation of the two, split out by D-362: `chroma::edit_render`
+/// now spawns its encoder as a `SharedChild` (so the stall watchdog can kill it
+/// from another thread), which hands out its stderr by `take_stderr()` rather
+/// than a `&mut Child` field. Same drainer, one copy.
+pub(super) fn drain_stderr_pipe(
+    stderr: Option<std::process::ChildStderr>,
+) -> std::sync::Arc<Mutex<Vec<u8>>> {
     let sink = std::sync::Arc::new(Mutex::new(Vec::<u8>::new()));
-    if let Some(mut err) = child.stderr.take() {
+    if let Some(mut err) = stderr {
         let sink2 = sink.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];

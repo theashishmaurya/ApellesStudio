@@ -3,7 +3,7 @@
     "The porting ledger for D-312: which of the Python server's tools this Rust",
     "server has taken over. `tests/parity.rs` checks the live server's advertised set",
     "against this list in BOTH directions, and checks every name here is a tool the",
-    "golden corpus actually has — so a tool cannot be silently dropped, silently added,",
+    "golden corpus actually has \u2014 so a tool cannot be silently dropped, silently added,",
     "or listed here under a name that never existed.",
     "Add a name here in the same commit that lands its tool, never before."
   ],
@@ -46,6 +46,7 @@
     "editor_create_media_folder",
     "editor_edit_in",
     "editor_export",
+    "editor_export_status",
     "editor_export_fcpxml",
     "editor_export_subtitles",
     "editor_generate_captions_from_transcript",

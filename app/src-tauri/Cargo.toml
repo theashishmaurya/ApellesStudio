@@ -99,6 +99,16 @@ hex = "0.4"
 rand = "0.10"
 tauri-plugin-shell = "2.3.5"
 tempfile = "3.27.0"
+# D-362 (fixes B-231) — a child process one thread can `wait` on while another
+# `kill`s it, which `std::process::Child` cannot do (`kill` needs `&mut`, and
+# killing by raw pid races with the `wait` that reaps it). The export's stall
+# watchdog is exactly that shape: it has to kill an `ffmpeg` that stopped
+# reading in order to free the writer thread wedged in `write_all` on its pipe,
+# a blocking call with no timeout and no interrupt. MIT, by oconnor663(`duct`'s
+# author), and already in this workspace's tree at this exact version as
+# `tauri-plugin-shell`'s own dependency — declaring it directly adds no new
+# crate to the build, the same situation `thiserror` and `imageproc` above are in.
+shared_child = "1.1.1"
 mimalloc = "0.1.52"
 image_hasher = "3.1.1"
 regex = "1.13.1"

@@ -116,6 +116,7 @@ export {
   SheetDescription,
 } from './components/ui/sheet';
 export { Slider } from './components/ui/slider';
+export { Progress } from './components/ui/progress';
 export { Switch } from './components/ui/switch';
 export { ScrollArea, ScrollBar } from './components/ui/scroll-area';
 export { Separator } from './components/ui/separator';

@@ -38,7 +38,7 @@ use serde_json::{Value, json};
 
 /// The tool set the parity gate pins. Asserted here too, because "the HTTP transport
 /// serves a *different* server" is precisely the failure this file exists to catch.
-const TOOL_COUNT: usize = 179;
+const TOOL_COUNT: usize = 180;
 
 /// Answers every op with one canned envelope and writes down what it was asked. The
 /// cut-down twin of `parity.rs`'s recorder — this file needs "what op went out", not

@@ -25,8 +25,19 @@
  * closes the dialog and reopens it later, or switches tabs.
  */
 import { create } from 'zustand';
-import { compileEditorExportArgs, runCompiledExport } from './editorExport';
+import { compileEditorExportArgs, readTimelineExportStatus, runCompiledExport } from './editorExport';
+import type { TimelineExportStatus } from './editorExport';
 import type { TimelineRenderPlan } from './timelinePipeExport';
+
+/** How often a running compositor job's real progress is re-read (D-362).
+ *
+ *  The read is a handful of atomic loads behind one Tauri command, so the cost
+ *  is the IPC hop and nothing else. Half a second is fast enough that a
+ *  progress bar moves smoothly on an export measured in minutes, and slow
+ *  enough to be invisible next to the render itself — this repo's performance
+ *  rule cuts both ways, and a progress poll that competed with the compositor
+ *  for a core would be the wrong trade. */
+const PROGRESS_POLL_MS = 500;
 
 export type ExportJobStatus = 'queued' | 'running' | 'done' | 'failed';
 
@@ -47,6 +58,13 @@ export interface ExportJob {
    *  timeline or the dialog's choice has changed since. */
   render?: TimelineRenderPlan;
   status: ExportJobStatus;
+  /** D-362 — this job's LIVE progress while it runs on the compositor path,
+   *  polled from the renderer's own counters (`editor_export_status`'s exact
+   *  snapshot). `null` when the job is not running, and also for a
+   *  filter-graph job: that path hands the whole export to one ffmpeg and
+   *  learns nothing until it exits, so there is no honest number to show and
+   *  the dialog keeps its spinner rather than inventing one. */
+  progress: TimelineExportStatus | null;
   /** Populated only for `status === 'failed'` — ffmpeg's own stderr tail,
    *  or a compile-time validation error. */
   error: string | null;
@@ -71,6 +89,35 @@ interface ExportQueueState {
   clearFinished(): void;
 }
 
+/** D-362 — follow the renderer's own progress counters onto `job`, until it
+ *  stops running. Returns the stopper.
+ *
+ *  **Only a snapshot from a LATER render than the one already recorded is
+ *  believed.** The renderer keeps the last export's result in its slot after
+ *  it finishes, so a poll that lands before this job's render has actually
+ *  begun would otherwise paint the PREVIOUS export's numbers — a "done, 100%"
+ *  for a job that has not started. `jobId` is monotonic per render, which is
+ *  what it is for. */
+function followProgress(jobId: string, baselineRenderId: number): () => void {
+  let stopped = false;
+  const timer = setInterval(() => {
+    void readTimelineExportStatus()
+      .then((progress) => {
+        if (stopped || progress.jobId <= baselineRenderId) return;
+        useExportQueueStore.setState((s) => ({
+          jobs: s.jobs.map((j) => (j.id === jobId && j.status === 'running' ? { ...j, progress } : j)),
+        }));
+      })
+      // A failed read is not a failed export: the render owns the outcome, and
+      // this is only its readout. Leave the last good numbers on screen.
+      .catch(() => {});
+  }, PROGRESS_POLL_MS);
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
 function runNext(): void {
   const { jobs } = useExportQueueStore.getState();
   if (jobs.some((j) => j.status === 'running')) return; // one at a time — D-198
@@ -81,29 +128,35 @@ function runNext(): void {
     jobs: s.jobs.map((j) => (j.id === next.id ? { ...j, status: 'running' as const, startedAt: Date.now() } : j)),
   }));
 
-  runCompiledExport(next.args, next.render)
+  // Only the compositor path has progress to report (see `ExportJob.progress`).
+  // The baseline is read BEFORE the render starts, so the poller can tell this
+  // job's render from whatever the slot is still holding.
+  let stopFollowing: (() => void) | null = null;
+  if (next.render) {
+    void readTimelineExportStatus()
+      .then((before) => {
+        // By the time this resolves the job may already have finished; starting
+        // a poller then would leave an interval running with nothing to update.
+        if (useExportQueueStore.getState().jobs.find((j) => j.id === next.id)?.status !== 'running') return;
+        stopFollowing = followProgress(next.id, before.jobId);
+      })
+      .catch(() => {});
+  }
+
+  const settle = (patch: Partial<ExportJob>) => {
+    stopFollowing?.();
+    stopFollowing = null;
+    useExportQueueStore.setState((s) => ({
+      jobs: s.jobs.map((j) => (j.id === next.id ? { ...j, ...patch, progress: null, finishedAt: Date.now() } : j)),
+    }));
+  };
+
+  runCompiledExport(next.args, next.render, next.outPath)
     .then((outcome) => {
-      useExportQueueStore.setState((s) => ({
-        jobs: s.jobs.map((j) =>
-          j.id === next.id
-            ? {
-                ...j,
-                status: outcome.ok ? ('done' as const) : ('failed' as const),
-                error: outcome.error,
-                finishedAt: Date.now(),
-              }
-            : j,
-        ),
-      }));
+      settle({ status: outcome.ok ? 'done' : 'failed', error: outcome.error });
     })
     .catch((e: unknown) => {
-      useExportQueueStore.setState((s) => ({
-        jobs: s.jobs.map((j) =>
-          j.id === next.id
-            ? { ...j, status: 'failed' as const, error: String((e as Error)?.message ?? e), finishedAt: Date.now() }
-            : j,
-        ),
-      }));
+      settle({ status: 'failed', error: String((e as Error)?.message ?? e) });
     })
     .finally(() => runNext()); // cascade to the next queued job, if any
 }
@@ -121,6 +174,7 @@ export const useExportQueueStore = create<ExportQueueState>((set) => ({
       args: compiled.args,
       render: compiled.render,
       status: 'queued',
+      progress: null,
       error: null,
       enqueuedAt: Date.now(),
       startedAt: null,

@@ -3792,6 +3792,62 @@ def editor_set_dynamic_zoom(
     return json.dumps(_op("editor_set_dynamic_zoom", **args), indent=2, default=str)
 
 
+# D-362 (fixes B-231) — how often, and for how long, `editor_export` waits out a
+# render whose own call already timed out on the bridge.
+#
+# Two seconds because an export is measured in minutes: second-by-second
+# resolution buys a poller nothing and each poll is a real HTTP round trip. The
+# ceiling is deliberately generous — the renderer's own stall watchdog is what
+# guarantees a HUNG export stops being `running` (within its own timeout), so
+# this one exists only to stop the tool blocking forever on a render that is
+# genuinely, honestly still going. Past it the last real status is returned
+# rather than an invented failure, and `editor_export_status` picks up where
+# this left off.
+EXPORT_POLL_INTERVAL_S = 2.0
+EXPORT_POLL_MAX_S = 2 * 60 * 60
+
+
+def _await_compositor_export(env: dict, out_path: str) -> dict:
+    """Poll `editor_export_status` until the render really settles (D-362).
+
+    Called only when `editor_export`'s own call came back as a transport
+    failure — which, on a real export, is the expected outcome rather than a
+    real one. Returns an envelope shaped like the one it replaces, so a caller
+    cannot tell whether its export happened to fit inside the bridge's budget.
+    """
+    import time
+
+    deadline = time.monotonic() + EXPORT_POLL_MAX_S
+    status: dict = {}
+    while time.monotonic() < deadline:
+        try:
+            status = _op("editor_export_status").get("result") or {}
+        except RuntimeError:
+            # The app is genuinely unreachable — that IS the real failure, and
+            # it is the one already in `env`.
+            return env
+        state = status.get("state")
+        if state in (None, "idle"):
+            # Nothing is running and nothing ever ran: the render never
+            # started, so the original transport error is the honest answer.
+            return env
+        if state != "running":
+            return {
+                "ok": state == "done",
+                "error": status.get("error"),
+                "result": {"outPath": out_path, **status},
+            }
+        time.sleep(EXPORT_POLL_INTERVAL_S)
+    return {
+        "ok": False,
+        "error": (
+            f"the export was still rendering after {EXPORT_POLL_MAX_S / 3600:.0f}h — it has NOT "
+            "failed and has not been stopped; poll editor_export_status to follow it"
+        ),
+        "result": {"outPath": out_path, **status},
+    }
+
+
 @mcp.tool()
 def editor_export(
     out_path: str,
@@ -3862,9 +3918,20 @@ def editor_export(
     source isn't known to have audio), summed and soft-limited. No new
     parameter needed; read `editor_get_capabilities`'s `export.v1_scope`
     entry for the one real caveat (an unprobed video source's embedded audio
-    conservatively defaults to silent). Blocks until ffmpeg finishes; there
-    is no progress reporting yet — use the Edit tab's own Export dialog
-    (D-198) for a real queued/backgrounded multi-export GUI flow instead.
+    conservatively defaults to silent).
+
+    **This call blocks, and on a real project it WILL exceed the 20s frontend
+    round trip — which is expected, and is not the export failing** (D-362,
+    fixes B-231). A minutes-long export outlives that budget, so the bridge
+    answers `ok: false` with a "no reply from the frontend" error while the
+    render carries on and succeeds. On the `"compositor"` renderer this tool
+    handles that for you: it then polls `editor_export_status` until the
+    render really settles, and returns THAT outcome, so what you get back is
+    the export's own answer rather than the timeout's. Call
+    `editor_export_status` yourself at any point to watch progress, or to pick
+    a render back up if this call is interrupted. The `"filter"` renderer
+    reports no progress at all — nothing outside ffmpeg knows where it is — so
+    there a timeout really does leave the output file as your only signal.
 
     **`renderer` (D-350) — which engine composites the picture.**
     `"compositor"` renders every frame through the app's OWN live-preview
@@ -3894,6 +3961,14 @@ def editor_export(
     if renderer is not None:
         args["renderer"] = renderer
     env = _op("editor_export", **args)
+    # D-362 (fixes B-231 facet 1) — the bridge's 20s budget is shorter than a
+    # real export, so a healthy one reliably comes back as a transport failure
+    # (`ok: false`) while the render is still going and will succeed. That is
+    # the false negative B-231 is half made of. The render itself publishes
+    # real progress on the compositor path, so rather than hand the caller a
+    # verdict that is simply wrong, poll for the true one.
+    if renderer == "compositor" and not env.get("ok"):
+        env = _await_compositor_export(env, out_path)
     # B-091 — the compiled ffmpeg `args` (the FULL filter_complex, verbatim)
     # made this response grow with keyframe count/precision until it was
     # observed hitting an unreliable size boundary: the same general payload
@@ -3911,6 +3986,43 @@ def editor_export(
         result = {k: v for k, v in result.items() if k != "args"}
         env = {**env, "result": result}
     return json.dumps(env, indent=2, default=str)
+
+
+@mcp.tool()
+def editor_export_status() -> str:
+    """Poll the running — or most recently finished — `editor_export` render
+    (D-362, fixes B-231). Takes no arguments, starts nothing, and is free to
+    call as often as you like.
+
+    **Read `state` first.** `running` (still going; poll again), `done` (the
+    file is written and finalised), `failed` (`error` says why), `stalled`
+    (see below), or `idle` (no export has run in this session).
+
+    **`stalled` is a real, named failure and it matters.** It means a render
+    worker wrote no frame at all for `stallTimeoutSecs`, so the export was
+    declared hung, its encoder killed, and the render abandoned. **The output
+    file is incomplete and was never finalised — it will not play, and it must
+    not be used or shipped.** Re-run the export. Before D-362 this state
+    reported nothing whatsoever: the file simply stopped growing and every
+    other signal continued to look healthy, which is the whole of B-231's
+    second half.
+
+    **Progress.** `percent` (0-100) is the real fraction of the render —
+    `framesWritten / framesTotal` summed across every concurrent segment, not
+    an elapsed-time guess. `segmentsDone`/`segmentsTotal` and the per-segment
+    `segments` rows report the shape of it, which the percentage alone cannot:
+    four segments evenly at 78% and three finished with one wedged read the
+    same overall and are very different situations. `etaMs` is a rough
+    estimate taken from the slowest unfinished segment (a render ends when its
+    last worker does). While `phase` is `concatenating` every frame is already
+    rendered and the segments are being joined and the audio muxed.
+
+    **Only the `"compositor"` renderer reports progress.** The `"filter"`
+    renderer hands the whole job to one ffmpeg and learns nothing until it
+    exits, so an export run that way is invisible here."""
+    import json
+
+    return json.dumps(_op("editor_export_status"), indent=2, default=str)
 
 
 @mcp.tool()

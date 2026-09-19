@@ -37,13 +37,16 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::Instant;
 
 use apelles_project::manifest::ProjectSettings;
 use apelles_timeline::Timeline;
+use shared_child::SharedChild;
 
 use super::edit::{self, FrameIntent};
-use super::export::{drain_stderr, tail};
+use super::export::{drain_stderr_pipe, tail};
+use super::export_status::{self, ExportJob};
 use super::ffmpeg_run::ffmpeg_bin;
 
 /// One headless render + encode.
@@ -71,6 +74,16 @@ pub struct TimelineRenderRequest {
     /// knows the machine. See [`plan_segment_count`].
     #[serde(default)]
     pub segments: Option<SegmentedEncodePlan>,
+    /// **D-362 — the file this render is writing, for the status readout.**
+    ///
+    /// The path is already inside `args` (it is the output argv's last
+    /// positional), but finding it there means parsing an argv this module
+    /// deliberately does not understand — the D-350 split. The caller knows it
+    /// outright, so it says it. Optional because it is a label, not an input:
+    /// a request without one renders identically and simply reports no
+    /// `output`.
+    #[serde(default)]
+    pub output: Option<String>,
 }
 
 /// The two extra argvs a segmented render needs, compiled by
@@ -316,32 +329,94 @@ pub fn render_timeline(
 
     // D-360 — split into contiguous segments when the caller compiled the argv
     // for it AND this machine and this export are big enough to be worth it.
-    if let Some(plan) = &req.segments {
-        let segments = plan_segment_count(req.frames);
-        if segments > 1 {
-            return render_segmented(
-                timeline, settings, req, plan, segments, out, canvas, started,
-            );
+    // D-362 — the partition is decided HERE, once, whichever path runs, because
+    // the progress tracker is built from the same ranges the workers walk: the
+    // percentage is only a true fraction of the render because those ranges
+    // partition it exactly, so they must not be derived twice.
+    let segments = match &req.segments {
+        Some(_) => plan_segment_count(req.frames),
+        None => 1,
+    };
+    // No segment may be empty: it would spawn an encoder, write nothing, and
+    // hand the concat demuxer a zero-frame file.
+    let segments = segments.clamp(1, req.frames.max(1) as usize);
+    let ranges = segment_ranges(req.frames, segments);
+
+    let job = export_status::begin(
+        req.frames,
+        &ranges,
+        req.output.clone(),
+        export_status::STALL_TIMEOUT,
+    )?;
+
+    let outcome = match (&req.segments, ranges.len()) {
+        (Some(plan), n) if n > 1 => render_segmented(
+            timeline, settings, req, plan, &ranges, out, canvas, &job, started,
+        ),
+        _ => render_range(
+            timeline,
+            settings,
+            &req.args,
+            out,
+            canvas,
+            0..req.frames,
+            apelles_media::decode_pipe::PipeLane::render(0),
+            &job,
+            0,
+        )
+        .map(|one| TimelineRenderOutcome {
+            ok: true,
+            frames: one.written,
+            segments: 1,
+            ms: started.elapsed().as_millis(),
+            stderr_tail: one.stderr_tail,
+        }),
+    };
+
+    // D-362 — the watchdog's verdict outranks whatever error its own kill
+    // produced downstream. Killing a wedged encoder surfaces as a broken pipe,
+    // which names the symptom; the stall reason names the cause, and is the
+    // thing a caller (or B-231's next reader) actually needs to see.
+    match outcome {
+        Ok(o) => {
+            job.finish(Ok(()));
+            Ok(o)
+        }
+        Err(e) => {
+            let e = job.stall_reason().unwrap_or(e);
+            job.finish(Err(e.clone()));
+            Err(e)
         }
     }
+}
 
-    let one = render_range(
-        timeline,
-        settings,
-        &req.args,
-        out,
-        canvas,
-        0..req.frames,
-        apelles_media::decode_pipe::PipeLane::render(0),
-        &std::sync::atomic::AtomicBool::new(false),
-    )?;
-    Ok(TimelineRenderOutcome {
-        ok: true,
-        frames: one.written,
-        segments: 1,
-        ms: started.elapsed().as_millis(),
-        stderr_tail: one.stderr_tail,
-    })
+/// **Wait for a child, but never forever (D-362).**
+///
+/// Every `wait` in this module is on an `ffmpeg` that has already been told
+/// there is no more input, so it should exit promptly — but B-231 facet 2 is
+/// precisely an `ffmpeg` that stopped doing anything while staying alive, and a
+/// plain `wait` on one of those is an unkillable, unreportable hang. Past the
+/// limit the child is killed and the caller gets a real error naming what it
+/// was waiting for.
+fn wait_bounded(
+    child: &SharedChild,
+    limit: std::time::Duration,
+    what: &str,
+) -> Result<std::process::ExitStatus, String> {
+    match child.wait_timeout(limit) {
+        Ok(Some(status)) => Ok(status),
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(format!(
+                "{what} stopped responding: it did not exit within {}s of being told its input \
+                 had ended, and was killed. Any output file it was writing is incomplete and was \
+                 never finalised.",
+                limit.as_secs()
+            ))
+        }
+        Err(e) => Err(format!("wait for {what}: {e}")),
+    }
 }
 
 /// What one segment's worker produced.
@@ -368,23 +443,34 @@ fn render_range(
     canvas: (Option<u32>, bool),
     range: std::ops::Range<u64>,
     lane: apelles_media::decode_pipe::PipeLane,
-    abort: &std::sync::atomic::AtomicBool,
+    job: &Arc<ExportJob>,
+    segment: usize,
 ) -> Result<SegmentOutcome, String> {
     let (max_long_edge, needs_resize) = canvas;
     // Frees this segment's decoders however this function returns.
     let _lane = LaneGuard(lane);
-    let mut child = Command::new(ffmpeg_bin())
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("spawn ffmpeg encoder: {e}"))?;
-    let stderr = drain_stderr(&mut child);
+    // D-362 — a `SharedChild`, not a `std::process::Child`, so the stall
+    // watchdog on another thread can kill this encoder. That is the only thing
+    // that can free a writer wedged in `write_all` on a pipe whose reader has
+    // stopped reading (B-231 facet 2): a blocking pipe write has no timeout,
+    // and killing by raw pid races with the `wait` below reaping it.
+    let child = Arc::new(
+        SharedChild::spawn(
+            Command::new(ffmpeg_bin())
+                .args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped()),
+        )
+        .map_err(|e| format!("spawn ffmpeg encoder: {e}"))?,
+    );
+    let stderr = drain_stderr_pipe(child.take_stderr());
     let mut stdin = child
-        .stdin
-        .take()
+        .take_stdin()
         .ok_or_else(|| "encoder stdin unavailable".to_string())?;
+    // Registered before the first frame, so a segment that wedges on its very
+    // first write is watched too — not only one that stops partway.
+    job.attach_encoder(segment, child.clone());
 
     // The frame written when the timeline shows nothing at all at this
     // position — a gap under every track. Opaque black, which is exactly what
@@ -402,23 +488,35 @@ fn render_range(
     // emit a shuffled video, which is why the ordering guarantee wants to be a
     // property of the structure rather than of a comparison somewhere.
     let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(WRITE_AHEAD);
-    let writer = std::thread::spawn(move || -> Result<u64, std::io::Error> {
-        let mut n = 0u64;
-        for frame in rx {
-            stdin.write_all(&frame)?;
-            n += 1;
-        }
-        drop(stdin); // EOF → the encoder flushes and exits
-        Ok(n)
-    });
+    let writer = {
+        // D-362 — the progress heartbeat is taken HERE, one tick per frame that
+        // really reached the encoder's stdin. This is the most downstream point
+        // this path controls, which is what lets one counter serve as both the
+        // progress number and the watchdog's liveness signal: it freezes
+        // whether the compositor stalled, the hand-off channel jammed, or the
+        // encoder stopped reading.
+        let job = job.clone();
+        std::thread::spawn(move || -> Result<u64, std::io::Error> {
+            let mut n = 0u64;
+            for frame in rx {
+                stdin.write_all(&frame)?;
+                n += 1;
+                job.frame_written(segment);
+            }
+            drop(stdin); // EOF → the encoder flushes and exits
+            Ok(n)
+        })
+    };
 
     let mut render_err: Option<String> = None;
     for pos in range.clone() {
         // D-360 — a sibling segment has already failed, so this one's remaining
         // frames are work nobody will use. Checked per frame rather than not at
         // all so a failure surfaces in about one frame's time instead of after
-        // every other segment has rendered itself out in full.
-        if abort.load(std::sync::atomic::Ordering::Relaxed) {
+        // every other segment has rendered itself out in full. D-362 — the
+        // watchdog sets the same flag, so a stall stops every segment here too,
+        // not only the one that wedged.
+        if job.abort().load(std::sync::atomic::Ordering::Relaxed) {
             render_err = Some("another segment failed".to_string());
             break;
         }
@@ -474,18 +572,32 @@ fn render_range(
     }
 
     drop(tx); // ends the writer's `for frame in rx`, which drops `stdin` → EOF
-    let written = match writer.join() {
+    // The writer is still draining up to `WRITE_AHEAD` frames here, and that
+    // final flush can wedge exactly like any other write — so this join happens
+    // BEFORE the segment stops being watched, deliberately.
+    let joined = writer.join();
+    job.segment_finished(segment);
+    let written = match joined {
         Ok(Ok(n)) => n,
         Ok(Err(e)) => {
+            // The encoder may well still be alive and waiting for input that
+            // will never come, so it is killed rather than waited on.
+            let _ = child.kill();
             let _ = child.wait();
             return Err(format!("write to encoder: {e} — {}", tail(&stderr)));
         }
         Err(_) => {
+            let _ = child.kill();
             let _ = child.wait();
             return Err("the encoder writer thread panicked".to_string());
         }
     };
-    let status = child.wait().map_err(|e| format!("wait for encoder: {e}"))?;
+    // D-362 — bounded, because the watchdog has stopped watching this segment
+    // and an encoder that took EOF and then never exited would hang the whole
+    // export here with nothing left to notice it. Same budget as the per-frame
+    // watchdog: this is the same "it stopped doing anything" question, asked at
+    // the one point where there are no frames left to count.
+    let status = wait_bounded(&child, job.stall_after(), "the encoder")?;
 
     if let Some(e) = render_err {
         return Err(format!("{e} — {}", tail(&stderr)));
@@ -540,21 +652,19 @@ fn render_segmented(
     settings: &ProjectSettings,
     req: &TimelineRenderRequest,
     plan: &SegmentedEncodePlan,
-    segments: usize,
+    ranges: &[std::ops::Range<u64>],
     out: (u32, u32),
     canvas: (Option<u32>, bool),
+    job: &Arc<ExportJob>,
     started: Instant,
 ) -> Result<TimelineRenderOutcome, String> {
     let dir = tempfile::Builder::new()
         .prefix("apelles-render-")
         .tempdir()
         .map_err(|e| format!("create the segment directory: {e}"))?;
-    // No segment may be empty: it would spawn an encoder, write nothing, and
-    // hand the concat demuxer a zero-frame file. `plan_segment_count` already
-    // cannot produce one (`MIN_SEGMENT_FRAMES` is 90), so this only makes the
-    // function total for a caller — a test, today — that names its own count.
-    let segments = segments.clamp(1, req.frames.max(1) as usize);
-    let ranges = segment_ranges(req.frames, segments);
+    // The partition comes in from `render_timeline`, which derived it once —
+    // D-362, because `job`'s progress arithmetic is only a true fraction of the
+    // render if the ranges the workers walk are the ranges it was built from.
     let files: Vec<PathBuf> = (0..ranges.len())
         .map(|i| dir.path().join(format!("segment-{i:03}.mp4")))
         .collect();
@@ -563,14 +673,13 @@ fn render_segmented(
         .map(|f| substitute_token(&plan.segment_args, SEGMENT_OUT_TOKEN, f))
         .collect::<Result<Vec<_>, String>>()?;
 
-    let abort = std::sync::atomic::AtomicBool::new(false);
     let results: Vec<Result<SegmentOutcome, String>> = std::thread::scope(|scope| {
         let handles: Vec<_> = ranges
             .iter()
             .zip(&argvs)
             .enumerate()
             .map(|(i, (range, args))| {
-                let (range, abort) = (range.clone(), &abort);
+                let range = range.clone();
                 scope.spawn(move || {
                     let outcome = render_range(
                         timeline,
@@ -580,10 +689,12 @@ fn render_segmented(
                         canvas,
                         range,
                         apelles_media::decode_pipe::PipeLane::render(i),
-                        abort,
+                        job,
+                        i,
                     );
                     if outcome.is_err() {
-                        abort.store(true, std::sync::atomic::Ordering::Relaxed);
+                        job.abort()
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
                     }
                     outcome
                 })
@@ -618,20 +729,37 @@ fn render_segmented(
         ));
     }
 
+    // D-362 — every frame is rendered; what is left is the join and the audio
+    // mux. Said out loud so the last stretch of a long export reads as
+    // `concatenating` rather than a stuck 100%.
+    job.enter_concat();
+
     let list = dir.path().join("segments.txt");
     let listing: String = files.iter().map(|f| concat_list_line(f)).collect();
     std::fs::write(&list, listing).map_err(|e| format!("write the concat list: {e}"))?;
     let concat = substitute_token(&plan.concat_args, CONCAT_LIST_TOKEN, &list)?;
-    let joined = Command::new(ffmpeg_bin())
-        .args(&concat)
-        .output()
-        .map_err(|e| format!("spawn the concat step: {e}"))?;
-    if !joined.status.success() {
+    // A `SharedChild` here too, for [`wait_bounded`]: the concat makes no
+    // per-frame progress for the watchdog to read, so it bounds itself. It is
+    // `-c:v copy` over finished files and normally takes seconds — but "it
+    // normally finishes" is exactly what B-231 says about the rest of this path.
+    let joiner = Arc::new(
+        SharedChild::spawn(
+            Command::new(ffmpeg_bin())
+                .args(&concat)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped()),
+        )
+        .map_err(|e| format!("spawn the concat step: {e}"))?,
+    );
+    let concat_err = drain_stderr_pipe(joiner.take_stderr());
+    let status = wait_bounded(&joiner, job.stall_after(), "the concat step")?;
+    if !status.success() {
         return Err(format!(
             "concatenating {} segments exited {}: {}",
             files.len(),
-            joined.status,
-            String::from_utf8_lossy(&joined.stderr)
+            status,
+            tail(&concat_err)
         ));
     }
 
@@ -1111,6 +1239,7 @@ mod parity_tests {
                     height: st.height,
                     frames: st.pipe_frames,
                     segments: None,
+                    output: None,
                 },
             )
         } else {
@@ -1118,7 +1247,7 @@ mod parity_tests {
                 segment_args: localise(&st.segment_args, dir, &target),
                 concat_args: localise(&st.concat_args, dir, &target),
             };
-            render_segmented(
+            render_at_segments(
                 timeline,
                 settings,
                 &TimelineRenderRequest {
@@ -1127,12 +1256,12 @@ mod parity_tests {
                     height: st.height,
                     frames: st.pipe_frames,
                     segments: None,
+                    output: None,
                 },
                 &plan,
                 segments,
                 out,
                 canvas,
-                Instant::now(),
             )
         }
         .unwrap_or_else(|e| panic!("render at {segments} segments: {e}"));
@@ -1475,6 +1604,7 @@ mod parity_tests {
             height: fx.comp_height,
             frames: fx.pipe_frames,
             segments: None,
+            output: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the new render path");
         assert_eq!(
@@ -1619,6 +1749,7 @@ mod parity_tests {
             height: h,
             frames: fx.pipe_frames,
             segments: None,
+            output: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the render path");
         assert_eq!(
@@ -1655,6 +1786,279 @@ mod parity_tests {
                  position {pos} — the writer reordered, dropped or duplicated a frame"
             );
         }
+    }
+
+    /// **B-231 facet 2, PROVEN rather than asserted: a real `ffmpeg` that
+    /// really stops reading is caught by the watchdog, killed, and named.**
+    ///
+    /// The hang B-231 describes is an encoder left alive at 0% CPU with the
+    /// render wedged writing into it — a blocking pipe write with no timeout,
+    /// which previously meant no error, ever, and a frozen unfinalised output
+    /// file as the only evidence. A watchdog that cannot be shown to fire is
+    /// not a fix, so this reproduces that exact state with a real process
+    /// rather than simulating it.
+    ///
+    /// **How the stall is constructed, and why it is genuine:** `-re` makes
+    /// ffmpeg read its input at the input's own declared frame rate, so
+    /// `-framerate 0.02` is one frame every 50 seconds. After the kernel pipe
+    /// buffer and [`WRITE_AHEAD`] fill — a few frames — the writer thread
+    /// blocks in `write_all` and stays there, which is facet 2's shape exactly:
+    /// the child is healthy, the render makes no progress, and nothing in the
+    /// process is in a position to notice. Measured before this test was
+    /// written: 5 frames in 59.6 s, the writer blocked for the whole of it.
+    ///
+    /// The job's stall budget is seconds here rather than [`STALL_TIMEOUT`]'s
+    /// two minutes, which is the only reason this can be a test — the
+    /// threshold is a per-job value for exactly that reason.
+    #[test]
+    fn a_stalled_encoder_is_killed_and_reported() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let fx = load_fixture();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path();
+        generate_media(&fx, dir).expect("generate fixture media");
+        let timeline = localise_timeline(&fx.timeline, dir);
+        let settings = settings_for(&fx);
+        let (w, h) = (fx.comp_width, fx.comp_height);
+        let out = (w, h);
+        let comp = edit::composition_size(&settings, &timeline).expect("composition size");
+
+        let args: Vec<String> = vec![
+            "-y".into(),
+            "-hide_banner".into(),
+            "-loglevel".into(),
+            "error".into(),
+            // The stall itself: read the input at its declared rate, and
+            // declare a rate of one frame per 50 seconds.
+            "-re".into(),
+            "-f".into(),
+            "rawvideo".into(),
+            "-pixel_format".into(),
+            "rgba".into(),
+            "-video_size".into(),
+            format!("{w}x{h}"),
+            "-framerate".into(),
+            "0.02".into(),
+            "-i".into(),
+            "-".into(),
+            // Nothing is being measured about the output, so it goes nowhere.
+            "-f".into(),
+            "null".into(),
+            "-".into(),
+        ];
+
+        const STALL: std::time::Duration = std::time::Duration::from_secs(4);
+        // The real partition function, at one segment — the same call
+        // `render_timeline` makes for an unsplit render.
+        let ranges = segment_ranges(fx.pipe_frames, 1);
+        let job = export_status::begin(
+            fx.pipe_frames,
+            &ranges,
+            Some("/tmp/never-finished.mp4".to_string()),
+            STALL,
+        )
+        .expect("begin");
+
+        let started = Instant::now();
+        let result = render_range(
+            &timeline,
+            &settings,
+            &args,
+            out,
+            canvas_plan(comp, out),
+            0..fx.pipe_frames,
+            PipeLane::render(0),
+            &job,
+            0,
+        );
+        let elapsed = started.elapsed();
+        assert!(result.is_err(), "a stalled render must not report success");
+        job.finish(result.map(|_| ()).map_err(|e| e.clone()));
+
+        // 1 — it really was stopped by the watchdog, not by finishing.
+        let reason = job
+            .stall_reason()
+            .expect("the watchdog must have fired on a genuinely stalled encoder");
+        assert!(reason.contains("stalled"), "{reason}");
+        assert!(reason.contains("wrote no frame"), "{reason}");
+
+        // 2 — and it really was the hang that was caught, not a slow success:
+        // at one frame per 50 s this argv cannot have written 60 frames, and
+        // the whole call returned in a small multiple of the stall budget
+        // instead of never.
+        assert!(
+            elapsed < STALL * 6,
+            "the watchdog must end a stalled render promptly, took {elapsed:?}"
+        );
+
+        // 3 — what a CALLER sees. This is the actual B-231 fix: a polled status
+        // that says the export is dead and that its file is not usable, where
+        // before there was no signal of any kind.
+        let status = export_status::snapshot();
+        assert_eq!(status.state, export_status::ExportState::Stalled);
+        assert!(status.frames_written < fx.pipe_frames);
+        let error = status.error.expect("a stalled export reports an error");
+        assert!(error.contains("incomplete"), "{error}");
+        assert!(
+            status.note.contains("HUNG"),
+            "the note must not read like a normal failure: {}",
+            status.note
+        );
+    }
+
+    /// **The other half of B-231: the status really moves WHILE a real render
+    /// is running, not just once it has finished.**
+    ///
+    /// A progress value that is only correct at the end is exactly the thing
+    /// B-231 already had — `TimelineRenderOutcome` has always reported the
+    /// final frame count. What was missing is a number a caller whose
+    /// `editor_export` already timed out can read mid-flight, so that is what
+    /// this samples: a render on one thread, `snapshot()` polled from another.
+    ///
+    /// **Deliberately throttled to be deterministic.** `-re` at the fixture's
+    /// own frame rate makes the encoder consume in real time, so this
+    /// fixture's 60 frames take ~2.5 s and a mid-flight window is guaranteed
+    /// rather than raced for. The counter under test is identical either way —
+    /// the writer ticks it per frame regardless of how fast the encoder drains
+    /// — and the unthrottled, genuinely concurrent case is covered by
+    /// `the_segmented_render_is_the_same_video_as_the_single_stream_one`'s own
+    /// end-state assertions plus `export_status`' `progress_sums_across_
+    /// concurrent_segments`.
+    #[test]
+    fn the_status_advances_while_a_real_render_is_in_flight() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let fx = load_fixture();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path();
+        generate_media(&fx, dir).expect("generate fixture media");
+        let timeline = localise_timeline(&fx.timeline, dir);
+        let settings = settings_for(&fx);
+        let (w, h) = (fx.comp_width, fx.comp_height);
+        let out = (w, h);
+        let comp = edit::composition_size(&settings, &timeline).expect("composition size");
+
+        let mut args = vec![
+            "-y".to_string(),
+            "-hide_banner".into(),
+            "-loglevel".into(),
+            "error".into(),
+            "-re".into(),
+        ];
+        args.extend(pipe_input_args(w, h, fx.fps).into_iter().skip(4));
+        args.extend(["-f".to_string(), "null".into(), "-".into()]);
+
+        // The real partition function, at one segment — the same call
+        // `render_timeline` makes for an unsplit render.
+        let ranges = segment_ranges(fx.pipe_frames, 1);
+        let job = export_status::begin(
+            fx.pipe_frames,
+            &ranges,
+            Some("/tmp/in-flight.mp4".to_string()),
+            export_status::STALL_TIMEOUT,
+        )
+        .expect("begin");
+
+        let mut samples: Vec<(u64, f64)> = Vec::new();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                render_range(
+                    &timeline,
+                    &settings,
+                    &args,
+                    out,
+                    canvas_plan(comp, out),
+                    0..fx.pipe_frames,
+                    PipeLane::render(0),
+                    &job,
+                    0,
+                )
+            });
+            while !worker.is_finished() {
+                let s = export_status::snapshot();
+                samples.push((s.frames_written, s.percent));
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            worker
+                .join()
+                .expect("the render thread")
+                .expect("the throttled render");
+        });
+        job.finish(Ok(()));
+
+        // It moved, and it moved in the middle — a sample that is neither
+        // "nothing yet" nor "already everything".
+        assert!(
+            samples.iter().any(|(n, _)| *n > 0 && *n < fx.pipe_frames),
+            "no sample caught the render in flight: {samples:?}"
+        );
+        // And it only ever went forwards. A progress bar that goes backwards is
+        // worse than none.
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1].0 >= pair[0].0 && pair[1].1 >= pair[0].1,
+                "progress went backwards: {:?} then {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+        // And it lands exactly on the whole render, not near it.
+        let done = export_status::snapshot();
+        assert_eq!(done.state, export_status::ExportState::Done);
+        assert_eq!(done.frames_written, fx.pipe_frames);
+        assert_eq!(done.percent, 100.0);
+        assert_eq!(done.segments_done, 1);
+        assert_eq!(done.phase, None);
+    }
+
+    /// Drive [`render_segmented`] at a segment count the test names, doing
+    /// exactly what [`render_timeline`] does around it: derive the partition
+    /// once, open the D-362 progress job from those same ranges, and close it
+    /// with the outcome. `plan_segment_count` answers 1 for renders this short
+    /// (`MIN_SEGMENT_FRAMES` is 90), so these tests cannot get a split by
+    /// asking [`render_timeline`] for one — but they must not skip the job
+    /// either, or they would be exercising a path production no longer has.
+    fn render_at_segments(
+        timeline: &Timeline,
+        settings: &ProjectSettings,
+        req: &TimelineRenderRequest,
+        plan: &SegmentedEncodePlan,
+        segments: usize,
+        out: (u32, u32),
+        canvas: (Option<u32>, bool),
+    ) -> Result<TimelineRenderOutcome, String> {
+        let segments = segments.clamp(1, req.frames.max(1) as usize);
+        let ranges = segment_ranges(req.frames, segments);
+        let job = export_status::begin(
+            req.frames,
+            &ranges,
+            req.output.clone(),
+            export_status::STALL_TIMEOUT,
+        )?;
+        let outcome = render_segmented(
+            timeline,
+            settings,
+            req,
+            plan,
+            &ranges,
+            out,
+            canvas,
+            &job,
+            Instant::now(),
+        );
+        job.finish(outcome.as_ref().map(|_| ()).map_err(Clone::clone));
+        outcome
     }
 
     /// How many video frames `video` actually contains, counted rather than
@@ -1738,6 +2142,7 @@ mod parity_tests {
                 height: fx.comp_height,
                 frames: fx.pipe_frames,
                 segments: None,
+                output: None,
             },
         )
         .expect("the single-stream render");
@@ -1749,6 +2154,7 @@ mod parity_tests {
             height: fx.comp_height,
             frames: fx.pipe_frames,
             segments: None,
+            output: None,
         };
         let plan = SegmentedEncodePlan {
             segment_args: localise(&fx.segment_args, dir, &segmented_out),
@@ -1756,7 +2162,7 @@ mod parity_tests {
         };
         let out = (fx.comp_width, fx.comp_height);
         let comp = edit::composition_size(&settings, &timeline).expect("composition size");
-        let many = render_segmented(
+        let many = render_at_segments(
             &timeline,
             &settings,
             &req,
@@ -1764,7 +2170,6 @@ mod parity_tests {
             SEGMENTS,
             out,
             canvas_plan(comp, out),
-            Instant::now(),
         )
         .expect("the segmented render");
         assert_eq!(many.segments, SEGMENTS);
@@ -2022,6 +2427,7 @@ mod parity_tests {
             height: st.height,
             frames: st.pipe_frames,
             segments: None,
+            output: None,
         };
         let timeline = localise_timeline(&st.timeline, dir);
         let settings = ProjectSettings {

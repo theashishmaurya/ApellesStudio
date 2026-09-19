@@ -151,6 +151,104 @@ describe('useExportQueueStore.enqueue', () => {
   });
 });
 
+// D-362 (fixes B-231) — a running compositor job carries the renderer's own
+// live progress, polled from `chroma_editor_export_status`.
+describe('a compositor job follows the render\'s real progress', () => {
+  const compositorArgs = { ...validArgs, renderer: 'compositor' as const };
+
+  /** `{state, jobId, …}` as `chroma::export_status::ExportStatus` serialises. */
+  function status(state: string, jobId: number, extra: Record<string, unknown> = {}) {
+    return {
+      state,
+      jobId,
+      framesTotal: 200,
+      framesWritten: 0,
+      percent: 0,
+      segmentsTotal: 4,
+      segmentsDone: 0,
+      segments: [],
+      elapsedMs: 0,
+      stallTimeoutSecs: 120,
+      note: '',
+      ...extra,
+    };
+  }
+
+  it('shows the live percentage while it renders, and drops it the moment the job settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const render = deferred<{ ok: boolean; frames: number; segments: number; ms: number; stderr_tail: string }>();
+      // The slot still holds the PREVIOUS export (jobId 7, already done) when
+      // the baseline is read — which is exactly the trap the guard exists for.
+      const statuses = [
+        status('done', 7),
+        status('running', 8, { framesWritten: 85, percent: 42.5, segmentsDone: 1, phase: 'rendering' }),
+        // A stale read of the old job must NOT paint over the new one.
+        status('done', 7),
+        status('running', 8, { framesWritten: 150, percent: 75, segmentsDone: 2, phase: 'rendering' }),
+      ];
+      invokeMock.mockImplementation((cmd: string) => {
+        if (cmd === 'chroma_editor_export_status') return Promise.resolve(statuses.shift() ?? status('running', 8));
+        if (cmd === 'chroma_render_timeline_export') return render.promise;
+        return Promise.reject(new Error(`unexpected command ${cmd}`));
+      });
+
+      useExportQueueStore.getState().enqueue('job1', compositorArgs);
+      await vi.advanceTimersByTimeAsync(0);
+      const running = useExportQueueStore.getState().jobs[0];
+      expect(running.status).toBe('running');
+      expect(running.render).toBeDefined(); // it really compiled for the render path
+      expect(running.progress).toBeNull(); // nothing believed before the first poll
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(useExportQueueStore.getState().jobs[0].progress).toMatchObject({
+        jobId: 8,
+        percent: 42.5,
+        framesWritten: 85,
+        segmentsDone: 1,
+      });
+
+      // The stale `jobId: 7` read lands next — the previous export's result,
+      // which would otherwise report this job as 100% done before it is.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(useExportQueueStore.getState().jobs[0].progress).toMatchObject({ jobId: 8, percent: 42.5 });
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(useExportQueueStore.getState().jobs[0].progress).toMatchObject({ jobId: 8, percent: 75 });
+
+      render.resolve({ ok: true, frames: 200, segments: 4, ms: 1234, stderr_tail: '' });
+      await vi.advanceTimersByTimeAsync(0);
+      const done = useExportQueueStore.getState().jobs[0];
+      expect(done.status).toBe('done');
+      expect(done.progress).toBeNull(); // the poller stopped and cleaned up
+
+      // And it really did stop: no further status reads after the job settled.
+      const after = invokeMock.mock.calls.filter((c) => c[0] === 'chroma_editor_export_status').length;
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(invokeMock.mock.calls.filter((c) => c[0] === 'chroma_editor_export_status')).toHaveLength(after);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a filter-graph job is never polled — that path has no progress to report', async () => {
+    const ffmpeg = deferred<{ ok: boolean; stdout_tail: string; stderr_tail: string }>();
+    invokeMock.mockImplementation((cmd: string) => {
+      if (cmd === 'chroma_run_ffmpeg') return ffmpeg.promise;
+      return Promise.reject(new Error(`unexpected command ${cmd}`));
+    });
+
+    useExportQueueStore.getState().enqueue('job1', validArgs);
+    await flush();
+    await flush();
+
+    expect(useExportQueueStore.getState().jobs[0].status).toBe('running');
+    expect(useExportQueueStore.getState().jobs[0].progress).toBeNull();
+    expect(invokeMock.mock.calls.every((c) => c[0] === 'chroma_run_ffmpeg')).toBe(true);
+    ffmpeg.resolve({ ok: true, stdout_tail: '', stderr_tail: '' });
+  });
+});
+
 describe('useExportQueueStore.clearFinished', () => {
   it('removes done/failed jobs but leaves queued/running ones', async () => {
     const inFlight = deferred<unknown>();

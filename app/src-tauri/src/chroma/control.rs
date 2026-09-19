@@ -407,6 +407,14 @@ fn native_op(app: &tauri::AppHandle, op: &str, args: &serde_json::Value) -> Opti
                 })
                 .map_err(|e| format!("could not serialize the AI-env status: {e}"))
         }
+        // D-362 (fixes B-231) — `editor_export`'s progress. Native, and that is
+        // the whole point: this is the op a caller reaches for precisely
+        // BECAUSE its `editor_export` already died on `BRIDGE_TIMEOUT`, so an
+        // answer that itself needs a frontend round trip is the wrong shape.
+        // The render runs in Rust (`chroma::edit_render`), so Rust is also
+        // where its numbers are — nothing is relayed and nothing can wedge.
+        "editor_export_status" => serde_json::to_value(super::export_status::snapshot())
+            .map_err(|e| format!("could not serialize the export status: {e}")),
         _ => return debug_native_op(app, op, args),
     };
 
