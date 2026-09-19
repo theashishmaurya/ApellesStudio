@@ -167,6 +167,7 @@ import {
   timelineFps,
   checkRemoveGap,
   checkTrim,
+  linkGroupMembers,
   trackIndexAfterMove,
   checkTransition,
   cutFrames,
@@ -3168,8 +3169,22 @@ export function useEditorControl(): void {
         if (!tl) return noTimeline();
         const found = resolveClip(tl, a?.track, a?.clip);
         if ('error' in found) return found;
+        // B-221 — removing one half of an A/V link group silently removes
+        // the other half too (D-129, the reducer's own `remove` case
+        // groups by `link_group` before splicing). Work out the intended
+        // targets the same way the reducer does, then confirm post-op
+        // which of those ids are actually gone — a locked-track refusal
+        // removes nothing, so this never over-reports a no-op as a
+        // deletion.
+        const group = found.c.link_group;
+        const targets: Array<[number, number]> = group ? linkGroupMembers(tl, group) : [[found.track, found.clip]];
+        const before = targets.map(([ti, ci]) => ({ track: ti, clip: ci, id: tl.tracks[ti].clips[ci].id }));
         useEditorTimelineStore.getState().applyOp({ kind: 'remove', track: found.track, clip: found.clip });
-        return { ok: true, track: found.track };
+        const after = useEditorTimelineStore.getState().timeline;
+        const stillPresent = new Set<string>();
+        after?.tracks.forEach((t) => t.clips.forEach((c) => stillPresent.add(c.id)));
+        const removed = before.filter((b) => !stillPresent.has(b.id)).map(({ track, clip, id }) => ({ track, clip, id }));
+        return { ok: true, track: found.track, removed };
       },
 
       editor_remove_gap: (a) => {

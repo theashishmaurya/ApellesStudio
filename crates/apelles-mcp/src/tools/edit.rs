@@ -2867,7 +2867,15 @@ impl ApellesMcp {
         name = "editor_remove_clip",
         description = r#"Remove one clip from the timeline, leaving a gap in its place. Follow
     with `editor_remove_gap` to ripple-close the gap, or leave it if the gap
-    is wanted (e.g. to hold a still frame of nothing)."#
+    is wanted (e.g. to hold a still frame of nothing).
+
+    If the clip is one half of an A/V link group, removing it removes its
+    linked partner too (the same as `editor_swap_clip_media`'s own A/V link
+    but the OPPOSITE of that tool's behavior — that one deliberately does
+    NOT propagate; this one deliberately does, matching the GUI's own
+    delete). The response's `removed` list names every clip actually taken
+    out, `{track, clip, id}` each, so a second deletion shows up here
+    instead of only in a later `get_timeline` read (B-221)."#
     )]
     pub async fn editor_remove_clip(
         &self,

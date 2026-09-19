@@ -3332,7 +3332,7 @@
     },
     {
       "name": "editor_remove_clip",
-      "description": "Remove one clip from the timeline, leaving a gap in its place. Follow\n    with `editor_remove_gap` to ripple-close the gap, or leave it if the gap\n    is wanted (e.g. to hold a still frame of nothing).",
+      "description": "Remove one clip from the timeline, leaving a gap in its place. Follow\n    with `editor_remove_gap` to ripple-close the gap, or leave it if the gap\n    is wanted (e.g. to hold a still frame of nothing).\n\n    If the clip is one half of an A/V link group, removing it removes its\n    linked partner too (the same as `editor_swap_clip_media`'s own A/V link\n    but the OPPOSITE of that tool's behavior \u2014 that one deliberately does\n    NOT propagate; this one deliberately does, matching the GUI's own\n    delete). The response's `removed` list names every clip actually taken\n    out, `{track, clip, id}` each, so a second deletion shows up here\n    instead of only in a later `get_timeline` read (B-221).",
       "inputSchema": {
         "properties": {
           "track": {
