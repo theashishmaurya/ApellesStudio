@@ -1004,14 +1004,20 @@ pub(crate) async fn export_images_impl(
                     ExportAdjustmentsMode::UseSidecars {
                         active_adjustments, ..
                     } => {
+                        // B-195: read-only here, but a sidecar that exists and
+                        // failed to load used to default to "no adjustments" —
+                        // i.e. silently export the ungraded image. Fail the
+                        // export of that one file instead.
                         if is_current_edit {
                             if let Some(adj) = active_adjustments {
                                 adj.clone()
                             } else {
-                                crate::exif_processing::load_sidecar(&sidecar_path).adjustments
+                                crate::exif_processing::load_sidecar_or_fresh(&sidecar_path)?
+                                    .adjustments
                             }
                         } else {
-                            crate::exif_processing::load_sidecar(&sidecar_path).adjustments
+                            crate::exif_processing::load_sidecar_or_fresh(&sidecar_path)?
+                                .adjustments
                         }
                     }
                     ExportAdjustmentsMode::GlobalOverride(adj) => adj.clone(),
@@ -1570,7 +1576,9 @@ pub async fn estimate_export_sizes(
 
         (preview_byte_size as f64 * pixel_ratio) as usize
     } else {
-        let metadata = crate::exif_processing::load_sidecar(&sidecar_path);
+        // B-195: read-only, but an estimate built from a silently defaulted
+        // sidecar is an estimate of the wrong image. Surface the failure.
+        let metadata = crate::exif_processing::load_sidecar_or_fresh(&sidecar_path)?;
         let mut js_adjustments = metadata.adjustments;
 
         const ESTIMATE_DIM: u32 = 1280;

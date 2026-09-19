@@ -899,7 +899,10 @@ pub async fn load_image(
         return crate::chroma::load::load_video_frame(&source_path, &path, 0, &state).await;
     }
 
-    let metadata: ImageMetadata = crate::exif_processing::load_sidecar(&sidecar_path);
+    // B-195: read-only, but silently defaulting here opens the image as if it
+    // had never been edited — and the user's next save would then write that
+    // blank state back. Refuse to open it instead, loudly.
+    let metadata: ImageMetadata = crate::exif_processing::load_sidecar_or_fresh(&sidecar_path)?;
 
     let settings = load_settings(app_handle.clone()).unwrap_or_default();
 

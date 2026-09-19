@@ -23,7 +23,11 @@ fn modify_tags_for_path(
 ) -> Result<(), String> {
     let (source_path, sidecar_path) = parse_virtual_path(path_str);
 
-    let mut metadata = crate::exif_processing::load_sidecar(&sidecar_path);
+    // B-195: adding or removing one tag writes the whole struct back, so a
+    // sidecar that exists and failed to load must propagate (both callers
+    // already log per path) instead of being defaulted — which erased the
+    // photo's adjustments, rating and cached EXIF.
+    let mut metadata = crate::exif_processing::load_sidecar_or_fresh(&sidecar_path)?;
 
     let mut tags = metadata.tags.unwrap_or_default();
     modify_fn(&mut tags);

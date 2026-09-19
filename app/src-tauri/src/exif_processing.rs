@@ -19,6 +19,14 @@ use rawler::decoders::RawMetadata;
 struct ExifCacheState {
     cache: HashMap<PathBuf, HashMap<String, HashMap<String, String>>>,
     dirty: HashSet<PathBuf>,
+    /// Folders whose on-disk `.rrcache` exists but could not be read or
+    /// parsed. B-195's lower-severity sibling: the in-memory map for such a
+    /// folder starts empty and would otherwise be flushed straight over the
+    /// real file, dropping every other image's cached EXIF in that folder.
+    /// The EXIF cache is re-derivable from the image bytes, so degrading to
+    /// "no cache for this folder this session" is correct — writing a partial
+    /// map over it is not.
+    poisoned: HashSet<PathBuf>,
     cache_dir: Option<PathBuf>,
 }
 
@@ -45,6 +53,7 @@ fn get_exif_cache() -> &'static Mutex<ExifCacheState> {
         Mutex::new(ExifCacheState {
             cache: HashMap::new(),
             dirty: HashSet::new(),
+            poisoned: HashSet::new(),
             cache_dir: None,
         })
     })
@@ -68,6 +77,11 @@ pub fn flush_all_dirty_caches() {
     let mut to_write = Vec::new();
 
     for folder in &dirty_folders {
+        // B-195: belt and braces with `save_exif_to_rrcache`'s own guard — a
+        // folder poisoned after it was already marked dirty must not flush.
+        if state.poisoned.contains(folder) {
+            continue;
+        }
         if let Some(folder_map) = state.cache.get(folder)
             && !folder_map.is_empty()
             && let Some(cache_path) = state.get_cache_file_path(folder)
@@ -102,11 +116,21 @@ fn load_rrcache_for_folder(folder: &Path) {
         return;
     };
 
-    let loaded_map = if let Ok(content) = std::fs::read_to_string(&path) {
-        serde_json::from_str::<HashMap<String, HashMap<String, String>>>(&content)
-            .unwrap_or_default()
-    } else {
-        HashMap::new()
+    // B-195, the `.rrcache` sibling: an unreadable or corrupt cache file used
+    // to become an empty map that a later `save_exif_to_rrcache` then flushed
+    // straight over the real file. Classify instead — absent is the normal
+    // first-run case (an empty map is right); anything else poisons the
+    // folder for this session so nothing writes over it.
+    let loaded_map = match read_rrcache_file(&path) {
+        Ok(map) => map,
+        Err(e) if e.is_not_found() => HashMap::new(),
+        Err(e) => {
+            log::warn!("EXIF cache unreadable, not caching this folder: {e}");
+            if let Ok(mut state) = get_exif_cache().lock() {
+                state.poisoned.insert(folder.to_path_buf());
+            }
+            return;
+        }
     };
 
     if let Ok(mut state) = get_exif_cache().lock() {
@@ -115,6 +139,19 @@ fn load_rrcache_for_folder(folder: &Path) {
             .entry(folder.to_path_buf())
             .or_insert(loaded_map);
     }
+}
+
+/// Read one folder's `.rrcache`, classified the same way [`load_sidecar`] is
+/// so "no cache yet" stays distinguishable from "a cache is there and will
+/// not load" (B-195).
+fn read_rrcache_file(
+    path: &Path,
+) -> Result<HashMap<String, HashMap<String, String>>, LoadSidecarError> {
+    let content = std::fs::read_to_string(path).map_err(|e| LoadSidecarError::io(path, e))?;
+    serde_json::from_str(&content).map_err(|e| LoadSidecarError::Parse {
+        path: path.display().to_string(),
+        source: e,
+    })
 }
 
 fn get_exif_from_rrcache(image_path: &Path) -> Option<HashMap<String, String>> {
@@ -144,6 +181,12 @@ fn save_exif_to_rrcache(image_path: &Path, exif: HashMap<String, String>) {
         Ok(s) => s,
         Err(_) => return,
     };
+    // B-195: this folder's cache file exists and would not load, so the
+    // in-memory map holds only what this session happened to re-derive.
+    // Flushing that would drop every other image's cached EXIF.
+    if state.poisoned.contains(folder) {
+        return;
+    }
     let folder_map = state.cache.entry(folder.to_path_buf()).or_default();
     folder_map.insert(filename.to_string_lossy().to_string(), exif);
     state.dirty.insert(folder.to_path_buf());
@@ -173,16 +216,103 @@ pub fn truncate_large_exif(value: &str) -> String {
     value.to_string()
 }
 
-pub fn load_sidecar(sidecar_path: &Path) -> ImageMetadata {
-    if !sidecar_path.exists() {
-        return ImageMetadata::default();
+/// Why reading a `.rrdata` sidecar is a `Result` and not an `ImageMetadata`
+/// (B-195).
+///
+/// [`load_sidecar`] used to return `ImageMetadata` and swallow every failure:
+/// an unreadable file and an unparseable one both became
+/// `ImageMetadata::default()`, indistinguishable from "this image has no
+/// sidecar yet." Every real caller is a read-modify-write — load the sidecar,
+/// change one field, write the whole struct back — so one transient I/O
+/// failure or one corrupt `.rrdata` erased the photo's tags, rating, colour
+/// label, cached EXIF *and* adjustments on the next ordinary save.
+///
+/// Same anti-pattern, and the same fix, as B-194 (`settings.json`,
+/// `app_settings::LoadSettingsError`) and D-326 (`apelles_project`'s
+/// `LoadManifestError`), whose shape this deliberately copies.
+///
+/// It also classifies this module's *other* JSON read — a folder's
+/// `.rrcache` ([`read_rrcache_file`]), which had the same defect at lower
+/// severity — rather than duplicating three identical variants for it.
+#[derive(Debug, thiserror::Error)]
+pub enum LoadSidecarError {
+    /// There is no sidecar at this path (`io::ErrorKind::NotFound`) — the
+    /// normal state of any image nobody has edited, tagged or rated yet, and
+    /// the **only** variant on which substituting [`ImageMetadata::default`]
+    /// (and then writing it) is correct.
+    #[error("read {path}: {source}")]
+    NotFound {
+        path: String,
+        source: std::io::Error,
+    },
+    /// A real I/O failure reading it — permissions, a bad descriptor, an
+    /// unmounted network volume, a transient failure under memory pressure.
+    /// The sidecar may well exist and be perfectly good; we just could not
+    /// read it this time.
+    #[error("read {path}: {source}")]
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
+    /// It exists and was read, but is not valid JSON, or does not match
+    /// [`ImageMetadata`]'s shape (truncated, half-written by a non-atomic
+    /// writer, corrupted, hand-edited into something invalid).
+    #[error("parse {path}: {source}")]
+    Parse {
+        path: String,
+        source: serde_json::Error,
+    },
+}
+
+impl LoadSidecarError {
+    /// Classify a `std::io::Error` from reading a sidecar: a `NotFound`
+    /// becomes [`Self::NotFound`], everything else [`Self::Io`].
+    fn io(path: &Path, source: std::io::Error) -> Self {
+        let path = path.display().to_string();
+        if source.kind() == std::io::ErrorKind::NotFound {
+            Self::NotFound { path, source }
+        } else {
+            Self::Io { path, source }
+        }
     }
 
-    let Ok(content) = fs::read_to_string(sidecar_path) else {
-        return ImageMetadata::default();
-    };
+    /// True only when the sidecar genuinely does not exist — the single case
+    /// in which a caller may substitute [`ImageMetadata::default`] and go on
+    /// to write it. Everything else means "there is a real sidecar here":
+    /// refuse, don't overwrite (B-195).
+    pub fn is_not_found(&self) -> bool {
+        matches!(self, Self::NotFound { .. })
+    }
+}
 
-    let mut meta = serde_json::from_str::<ImageMetadata>(&content).unwrap_or_default();
+impl From<LoadSidecarError> for String {
+    fn from(e: LoadSidecarError) -> Self {
+        e.to_string()
+    }
+}
+
+/// Read and parse one `.rrdata` sidecar, strictly: nothing is defaulted, and
+/// nothing is written except the bloated-EXIF auto-heal below — which can
+/// only run on a sidecar that already parsed, so it can never write a default
+/// over a real file. A caller decides what [`LoadSidecarError::NotFound`]
+/// means (no sidecar yet: a fresh default is correct) versus every other
+/// variant (a real file is there and failed to load: refuse, never
+/// overwrite). Most callers want [`load_sidecar_or_fresh`], which encodes
+/// exactly that policy once.
+///
+/// Reads directly rather than `exists()` then `read_to_string` (the pre-B-195
+/// shape) so there is no separate stat to race against — the same reasoning
+/// as `apelles_project::load_manifest` (D-326) and `read_settings_file`
+/// (B-194).
+pub fn load_sidecar(sidecar_path: &Path) -> Result<ImageMetadata, LoadSidecarError> {
+    let content =
+        fs::read_to_string(sidecar_path).map_err(|e| LoadSidecarError::io(sidecar_path, e))?;
+
+    let mut meta =
+        serde_json::from_str::<ImageMetadata>(&content).map_err(|e| LoadSidecarError::Parse {
+            path: sidecar_path.display().to_string(),
+            source: e,
+        })?;
     let mut healed = false;
 
     if let Some(ref mut exif_map) = meta.exif {
@@ -202,7 +332,19 @@ pub fn load_sidecar(sidecar_path: &Path) -> ImageMetadata {
         );
     }
 
-    meta
+    Ok(meta)
+}
+
+/// The read half of every sidecar read-modify-write, and of every read-only
+/// consumer: the sidecar if it is there, a fresh [`ImageMetadata::default`]
+/// if it genuinely is not, and an error for anything else. This is the one
+/// place B-195's policy lives — *a missing sidecar may be defaulted and
+/// written; a sidecar that exists but failed to load may not.*
+pub fn load_sidecar_or_fresh(sidecar_path: &Path) -> Result<ImageMetadata, LoadSidecarError> {
+    match load_sidecar(sidecar_path) {
+        Err(e) if e.is_not_found() => Ok(ImageMetadata::default()),
+        other => other,
+    }
 }
 
 fn to_ur64(val: &exif::Rational) -> uR64 {
@@ -1503,7 +1645,11 @@ pub fn get_rrexif_path(image_path: &Path) -> PathBuf {
     image_path.with_file_name(filename)
 }
 
-fn load_primary_metadata(image_path: &Path) -> ImageMetadata {
+/// Strict, like [`load_sidecar`]: `NotFound` stays an error so each caller
+/// below can tell "this image has no sidecar" (write the EXIF to the
+/// `.rrcache` instead) from "its sidecar is unreadable" (write nothing —
+/// B-195).
+fn load_primary_metadata(image_path: &Path) -> Result<ImageMetadata, LoadSidecarError> {
     let primary = get_primary_sidecar_path(image_path);
     load_sidecar(&primary)
 }
@@ -1515,13 +1661,20 @@ fn save_primary_metadata(image_path: &Path, metadata: &ImageMetadata) -> std::io
 }
 
 pub fn read_rrexif_sidecar(image_path: &Path) -> Option<HashMap<String, String>> {
-    let primary = get_primary_sidecar_path(image_path);
-
-    if primary.exists() {
-        let metadata = load_primary_metadata(image_path);
-        if let Some(exif) = metadata.exif {
-            return Some(exif);
+    match load_primary_metadata(image_path) {
+        Ok(metadata) => {
+            if let Some(exif) = metadata.exif {
+                return Some(exif);
+            }
         }
+        // No sidecar for this image — the ordinary case. Fall through to the
+        // EXIF cache below exactly as before.
+        Err(e) if e.is_not_found() => {}
+        // B-195: a sidecar is there and could not be read. This read is
+        // purely a cache lookup, so degrade to re-deriving the EXIF — but say
+        // so, because the callers that would otherwise write here refuse on
+        // the same error.
+        Err(e) => log::warn!("Sidecar unreadable, falling back to the EXIF cache: {e}"),
     }
 
     if let Some(exif) = get_exif_from_rrcache(image_path) {
@@ -1579,13 +1732,19 @@ pub fn read_exif_data(path: &str, file_bytes: &[u8]) -> HashMap<String, String> 
 
     let exif_map = read_exif_data_from_bytes(path, file_bytes);
     if !exif_map.is_empty() {
-        let primary = get_primary_sidecar_path(source_path);
-        if primary.exists() {
-            let mut metadata = load_primary_metadata(source_path);
-            metadata.exif = Some(exif_map.clone());
-            let _ = save_primary_metadata(source_path, &metadata);
-        } else {
-            save_exif_to_rrcache(source_path, exif_map.clone());
+        match load_primary_metadata(source_path) {
+            Ok(mut metadata) => {
+                metadata.exif = Some(exif_map.clone());
+                let _ = save_primary_metadata(source_path, &metadata);
+            }
+            // No sidecar yet: the freshly-read EXIF belongs in the cache, as
+            // before. (Loading rather than `exists()`-then-loading also drops
+            // the stat this used to race against.)
+            Err(e) if e.is_not_found() => save_exif_to_rrcache(source_path, exif_map.clone()),
+            // B-195: there IS a sidecar and it failed to load. Writing the
+            // EXIF into a defaulted struct would erase this photo's
+            // adjustments, tags and rating.
+            Err(e) => log::error!("Refusing to write EXIF over an unreadable sidecar: {e}"),
         }
     }
 
@@ -1602,16 +1761,17 @@ pub fn persist_exif_if_missing(source_path: &Path, source_path_str: &str, file_b
         return;
     }
 
-    let primary = get_primary_sidecar_path(source_path);
-
-    if primary.exists() {
-        let mut metadata = load_primary_metadata(source_path);
-        if metadata.exif.is_none() {
-            metadata.exif = Some(exif_map);
-            let _ = save_primary_metadata(source_path, &metadata);
+    match load_primary_metadata(source_path) {
+        Ok(mut metadata) => {
+            if metadata.exif.is_none() {
+                metadata.exif = Some(exif_map);
+                let _ = save_primary_metadata(source_path, &metadata);
+            }
         }
-    } else {
-        save_exif_to_rrcache(source_path, exif_map);
+        Err(e) if e.is_not_found() => save_exif_to_rrcache(source_path, exif_map),
+        // B-195: same refusal as `read_exif_data` — never write a defaulted
+        // struct over a sidecar that exists but would not load.
+        Err(e) => log::error!("Refusing to write EXIF over an unreadable sidecar: {e}"),
     }
 }
 
@@ -1630,8 +1790,209 @@ pub fn write_rrexif_sidecar(source_path_str: &str, target_image_path: &Path) -> 
         return Ok(());
     }
 
-    let mut metadata = load_primary_metadata(target_image_path);
+    // B-195: the target is usually a brand-new output file, so no sidecar is
+    // the normal case and a fresh default is right. A target sidecar that
+    // exists and will not load is not: refuse rather than write EXIF into a
+    // default over it.
+    let primary = get_primary_sidecar_path(target_image_path);
+    let mut metadata = load_sidecar_or_fresh(&primary)
+        .map_err(|e| format!("Refusing to write EXIF over an unreadable sidecar: {e}"))?;
     metadata.exif = Some(exif_data);
     save_primary_metadata(target_image_path, &metadata)
         .map_err(|e| format!("Failed to write sidecar: {}", e))
+}
+
+#[cfg(test)]
+mod sidecar_load_tests {
+    use super::*;
+
+    /// A real, populated sidecar — the thing B-195 was erasing.
+    const REAL_SIDECAR: &str = r#"{
+  "version": 1,
+  "rating": 4,
+  "adjustments": { "exposure": 0.75 },
+  "tags": ["portrait", "color:red"],
+  "exif": { "Make": "Canon" }
+}"#;
+
+    fn write_sidecar(dir: &Path, name: &str, body: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, body).expect("write sidecar");
+        path
+    }
+
+    /// No sidecar at all is `NotFound` — the one case a caller may substitute
+    /// `ImageMetadata::default()` for, and then write.
+    #[test]
+    fn missing_sidecar_is_not_found() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("IMG_0001.CR2.rrdata");
+
+        let err = load_sidecar(&path).expect_err("no sidecar should not load");
+
+        assert!(err.is_not_found(), "expected NotFound, got: {err:?}");
+    }
+
+    /// B-195's actual bug: a sidecar that EXISTS but is corrupt (truncated /
+    /// not valid JSON) must surface as a real error, not be swallowed into
+    /// `ImageMetadata::default()` — which every read-modify-write caller then
+    /// wrote straight back over the real file.
+    #[test]
+    fn corrupt_sidecar_is_a_parse_error_and_its_bytes_survive() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // A torn/half-written write looks exactly like this — not "valid JSON
+        // of the wrong schema."
+        let corrupt = r#"{"version": 1, "rating": 4, "adjustments": {"exp"#;
+        let path = write_sidecar(tmp.path(), "IMG_0002.CR2.rrdata", corrupt);
+
+        let err = load_sidecar(&path).expect_err("corrupt sidecar must not parse");
+
+        assert!(
+            !err.is_not_found(),
+            "a corrupt-but-present sidecar must never be classified as NotFound: {err:?}"
+        );
+        assert!(
+            matches!(err, LoadSidecarError::Parse { .. }),
+            "expected Parse, got: {err:?}"
+        );
+        // The bug's own failure mode: never write anything over a file that
+        // failed to read. `load_sidecar` only ever writes the bloated-EXIF
+        // auto-heal, which cannot run on a sidecar that did not parse.
+        let on_disk = fs::read_to_string(&path).expect("re-read");
+        assert_eq!(on_disk, corrupt, "the corrupt sidecar's bytes were touched");
+    }
+
+    /// A permission-style I/O failure (simulated as a path whose parent is a
+    /// file, not a directory) must classify as `Io`, not `NotFound` — same
+    /// "there is real state here, don't default over it" reasoning.
+    #[test]
+    fn unreadable_path_is_io_not_not_found() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let not_a_dir = write_sidecar(tmp.path(), "IMG_0003.CR2.rrdata", REAL_SIDECAR);
+        let bogus_path = not_a_dir.join("IMG_0003.CR2.rrdata");
+
+        let err = load_sidecar(&bogus_path).expect_err("must fail to read");
+
+        assert!(
+            !err.is_not_found(),
+            "a real I/O failure must not be classified as NotFound: {err:?}"
+        );
+        assert!(
+            matches!(err, LoadSidecarError::Io { .. }),
+            "expected Io, got: {err:?}"
+        );
+    }
+
+    /// The happy path is untouched by the fix.
+    #[test]
+    fn valid_sidecar_loads_normally() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = write_sidecar(tmp.path(), "IMG_0004.CR2.rrdata", REAL_SIDECAR);
+
+        let meta = load_sidecar(&path).expect("valid sidecar should load");
+
+        assert_eq!(meta.rating, 4);
+        assert_eq!(
+            meta.tags,
+            Some(vec!["portrait".to_string(), "color:red".to_string()])
+        );
+        assert_eq!(meta.adjustments["exposure"], 0.75);
+    }
+
+    /// `load_sidecar_or_fresh` is the single place B-195's policy lives, and
+    /// every one of the twelve read-modify-write sites now goes through it:
+    /// absent defaults, present-but-broken refuses.
+    #[test]
+    fn or_fresh_defaults_only_when_the_sidecar_is_absent() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let absent = tmp.path().join("IMG_0005.CR2.rrdata");
+        let fresh = load_sidecar_or_fresh(&absent).expect("an absent sidecar is a fresh default");
+        assert_eq!(fresh.rating, ImageMetadata::default().rating);
+        assert_eq!(fresh.tags, None);
+        assert!(!absent.exists(), "reading must not create the sidecar");
+
+        let corrupt = write_sidecar(tmp.path(), "IMG_0006.CR2.rrdata", "not json at all");
+        let err = load_sidecar_or_fresh(&corrupt)
+            .expect_err("a sidecar that exists and will not load must never default");
+        assert!(matches!(err, LoadSidecarError::Parse { .. }), "{err:?}");
+    }
+
+    /// B-195's lower-severity sibling, at its classification point: a
+    /// `.rrcache` that exists and will not parse must not read as "no cache
+    /// yet." An empty map there is what a later `save_exif_to_rrcache` then
+    /// flushed over the real file, dropping the whole folder's cached EXIF.
+    #[test]
+    fn corrupt_rrcache_is_a_parse_error_not_an_empty_map() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let absent = tmp.path().join("abcdef.json");
+        let err = read_rrcache_file(&absent).expect_err("no cache file");
+        assert!(err.is_not_found(), "expected NotFound, got: {err:?}");
+
+        let corrupt = write_sidecar(tmp.path(), "fedcba.json", r#"{"IMG_1.CR2": {"Make"#);
+        let err = read_rrcache_file(&corrupt).expect_err("corrupt cache must not parse");
+        assert!(
+            !err.is_not_found() && matches!(err, LoadSidecarError::Parse { .. }),
+            "expected Parse, got: {err:?}"
+        );
+
+        let valid = write_sidecar(
+            tmp.path(),
+            "123456.json",
+            r#"{"IMG_1.CR2": {"Make": "Nikon"}}"#,
+        );
+        let map = read_rrcache_file(&valid).expect("valid cache should load");
+        assert_eq!(map["IMG_1.CR2"]["Make"], "Nikon");
+    }
+
+    /// A real read-modify-write call site, end to end: `write_rrexif_sidecar`
+    /// copies the source's EXIF into the TARGET's sidecar. Before B-195 an
+    /// unreadable target sidecar was defaulted, so this wrote a struct with
+    /// nothing but EXIF in it straight over the target's real adjustments,
+    /// tags and rating.
+    #[test]
+    fn write_rrexif_sidecar_refuses_an_unreadable_target_sidecar() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let source = tmp.path().join("SRC_0001.CR2");
+        write_sidecar(tmp.path(), "SRC_0001.CR2.rrdata", REAL_SIDECAR);
+
+        let target = tmp.path().join("OUT_0001.jpg");
+        let corrupt = r#"{"version": 1, "rating": 5, "adjustments": {"expos"#;
+        let target_sidecar = write_sidecar(tmp.path(), "OUT_0001.jpg.rrdata", corrupt);
+
+        let result = write_rrexif_sidecar(&source.to_string_lossy(), &target);
+
+        let err = result.expect_err("an unreadable target sidecar must not be written over");
+        assert!(
+            err.contains("Refusing to write EXIF over an unreadable sidecar"),
+            "unexpected error: {err}"
+        );
+        let on_disk = fs::read_to_string(&target_sidecar).expect("re-read");
+        assert_eq!(
+            on_disk, corrupt,
+            "the target's corrupt sidecar was overwritten anyway"
+        );
+    }
+
+    /// The same call site's happy path: a target with no sidecar yet is the
+    /// normal case (a freshly exported/denoised file), and still gets one.
+    #[test]
+    fn write_rrexif_sidecar_still_writes_when_the_target_has_no_sidecar() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let source = tmp.path().join("SRC_0002.CR2");
+        write_sidecar(tmp.path(), "SRC_0002.CR2.rrdata", REAL_SIDECAR);
+
+        let target = tmp.path().join("OUT_0002.jpg");
+
+        write_rrexif_sidecar(&source.to_string_lossy(), &target).expect("should write");
+
+        let written = load_sidecar(&get_primary_sidecar_path(&target)).expect("written sidecar");
+        assert_eq!(
+            written.exif.expect("exif").get("Make"),
+            Some(&"Canon".to_string())
+        );
+    }
 }

@@ -94,9 +94,22 @@ fn resolve_image_metadata(
     enable_xmp_sync: bool,
     settings: &AppSettings,
 ) -> ImageFileMetadata {
-    let mut metadata = crate::exif_processing::load_sidecar(sidecar_path);
+    // B-195: this is a read-modify-write (the XMP sync below writes the whole
+    // struct back), so a sidecar that exists but failed to load must not be
+    // defaulted — that would erase the photo's adjustments, tags and rating.
+    // A missing sidecar is the normal case and still defaults. A real failure
+    // degrades this one grid entry to "unedited, untagged" and writes nothing.
+    let (mut metadata, may_write) =
+        match crate::exif_processing::load_sidecar_or_fresh(sidecar_path) {
+            Ok(metadata) => (metadata, true),
+            Err(e) => {
+                log::warn!("Sidecar unreadable, not syncing XMP into it: {e}");
+                (ImageMetadata::default(), false)
+            }
+        };
 
-    if enable_xmp_sync
+    if may_write
+        && enable_xmp_sync
         && sync_metadata_from_xmp(image_path, &mut metadata)
         && let Ok(json) = serde_json::to_string_pretty(&metadata)
     {
@@ -413,40 +426,63 @@ pub async fn update_exif_fields(
     updates: HashMap<String, String>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        paths.par_iter().for_each(|path| {
-            let original_path = Path::new(&path);
-            let primary_path = crate::exif_processing::get_primary_sidecar_path(original_path);
-            let temp_metadata = crate::exif_processing::load_sidecar(&primary_path);
+        // B-195: one load, not the two this used to do, and a failed load is
+        // no longer a default that gets written straight back over the real
+        // sidecar. A path whose sidecar is unreadable is skipped — the rest
+        // of the batch still applies — and every skip is reported back.
+        let failures: Vec<String> = paths
+            .par_iter()
+            .filter_map(|path| {
+                let original_path = Path::new(&path);
+                let primary_path = crate::exif_processing::get_primary_sidecar_path(original_path);
+                let mut metadata =
+                    match crate::exif_processing::load_sidecar_or_fresh(&primary_path) {
+                        Ok(metadata) => metadata,
+                        Err(e) => {
+                            log::error!("Refusing to write EXIF over an unreadable sidecar: {e}");
+                            return Some(e.to_string());
+                        }
+                    };
 
-            let mut exif_data = temp_metadata.exif.unwrap_or_else(|| {
-                if let Some(existing) = crate::exif_processing::read_rrexif_sidecar(original_path) {
-                    existing
-                } else if let Ok(mmap) = read_file_mapped(original_path) {
-                    crate::exif_processing::read_exif_data_from_bytes(path, &mmap)
-                } else if let Ok(bytes) = fs::read(original_path) {
-                    crate::exif_processing::read_exif_data_from_bytes(path, &bytes)
-                } else {
-                    HashMap::new()
+                let mut exif_data = metadata.exif.take().unwrap_or_else(|| {
+                    if let Some(existing) =
+                        crate::exif_processing::read_rrexif_sidecar(original_path)
+                    {
+                        existing
+                    } else if let Ok(mmap) = read_file_mapped(original_path) {
+                        crate::exif_processing::read_exif_data_from_bytes(path, &mmap)
+                    } else if let Ok(bytes) = fs::read(original_path) {
+                        crate::exif_processing::read_exif_data_from_bytes(path, &bytes)
+                    } else {
+                        HashMap::new()
+                    }
+                });
+
+                for (k, v) in &updates {
+                    let trimmed = v.trim();
+                    if trimmed.is_empty() {
+                        exif_data.remove(k);
+                    } else {
+                        exif_data.insert(k.clone(), trimmed.to_string());
+                    }
                 }
-            });
 
-            for (k, v) in &updates {
-                let trimmed = v.trim();
-                if trimmed.is_empty() {
-                    exif_data.remove(k);
-                } else {
-                    exif_data.insert(k.clone(), trimmed.to_string());
+                metadata.exif = Some(exif_data);
+                if let Ok(json) = serde_json::to_string_pretty(&metadata) {
+                    let _ = std::fs::write(&primary_path, json);
                 }
-            }
+                None
+            })
+            .collect();
 
-            let mut final_metadata = crate::exif_processing::load_sidecar(&primary_path);
-
-            final_metadata.exif = Some(exif_data);
-            if let Ok(json) = serde_json::to_string_pretty(&final_metadata) {
-                let _ = std::fs::write(&primary_path, json);
-            }
-        });
-        Ok(())
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Some sidecars could not be read: {}",
+                failures.join("; ")
+            ))
+        }
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -1582,7 +1618,11 @@ pub fn save_metadata_and_update_thumbnail(
 ) -> Result<(), String> {
     let (source_path, sidecar_path) = parse_virtual_path(&path);
 
-    let mut metadata = crate::exif_processing::load_sidecar(&sidecar_path);
+    // B-195: the main "save the user's edit" path. This writes the whole
+    // struct back a few lines down, so a sidecar that exists and failed to
+    // load must abort the save rather than be defaulted — defaulting kept the
+    // new adjustments and dropped the photo's tags, rating and cached EXIF.
+    let mut metadata = crate::exif_processing::load_sidecar_or_fresh(&sidecar_path)?;
 
     let mut final_adjustments = adjustments;
     {
@@ -1693,7 +1733,20 @@ pub async fn apply_adjustments_to_paths(
         paths.par_iter().for_each(|path| {
             let (_, sidecar_path) = parse_virtual_path(path);
 
-            let mut existing_metadata = crate::exif_processing::load_sidecar(&sidecar_path);
+            // B-195: pasting onto a defaulted sidecar and writing that back
+            // would erase this photo's tags, rating and cached EXIF. One
+            // unreadable sidecar skips its own path; the rest of the batch
+            // still applies.
+            let mut existing_metadata =
+                match crate::exif_processing::load_sidecar_or_fresh(&sidecar_path) {
+                    Ok(metadata) => metadata,
+                    Err(e) => {
+                        log::error!(
+                            "Skipping {path}: refusing to paste adjustments over an unreadable sidecar: {e}"
+                        );
+                        return;
+                    }
+                };
 
             let mut new_adjustments = existing_metadata.adjustments;
             if new_adjustments.is_null() {
@@ -1788,7 +1841,19 @@ pub async fn reset_adjustments_for_paths(
         paths.par_iter().for_each(|path| {
             let (_, sidecar_path) = parse_virtual_path(path);
 
-            let mut existing_metadata = crate::exif_processing::load_sidecar(&sidecar_path);
+            // B-195: resetting adjustments must not also reset everything
+            // else. A sidecar that exists and failed to load is skipped, not
+            // defaulted and written back.
+            let mut existing_metadata =
+                match crate::exif_processing::load_sidecar_or_fresh(&sidecar_path) {
+                    Ok(metadata) => metadata,
+                    Err(e) => {
+                        log::error!(
+                            "Skipping {path}: refusing to reset adjustments on an unreadable sidecar: {e}"
+                        );
+                        return;
+                    }
+                };
 
             existing_metadata.adjustments = serde_json::json!({});
 
@@ -1896,7 +1961,12 @@ pub async fn apply_auto_adjustments_to_paths(
                 let auto_results = perform_auto_analysis(&image);
                 let auto_adjustments_json = auto_results_to_json(&auto_results);
 
-                let mut existing_metadata = crate::exif_processing::load_sidecar(&sidecar_path);
+                // B-195: this closure already returns `Result`, so an
+                // unreadable sidecar aborts this one path's auto-analysis
+                // (reported by the `map_err` below) instead of writing the
+                // auto adjustments into a default over the real file.
+                let mut existing_metadata =
+                    crate::exif_processing::load_sidecar_or_fresh(&sidecar_path)?;
 
                 if existing_metadata.adjustments.is_null() {
                     existing_metadata.adjustments = serde_json::json!({});
@@ -1975,37 +2045,58 @@ pub fn set_color_label_for_paths(
     let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
     let create_xmp_if_missing = settings.create_xmp_if_missing.unwrap_or(false);
 
-    paths.par_iter().for_each(|path| {
-        let (_, sidecar_path) = parse_virtual_path(path);
+    // B-195: setting a colour label writes the whole struct back, so a
+    // defaulted read here wiped the photo's adjustments and rating. An
+    // unreadable sidecar skips its own path and is reported back; the rest of
+    // the batch still gets its label.
+    let failures: Vec<String> = paths
+        .par_iter()
+        .filter_map(|path| {
+            let (_, sidecar_path) = parse_virtual_path(path);
 
-        let mut metadata = crate::exif_processing::load_sidecar(&sidecar_path);
+            let mut metadata = match crate::exif_processing::load_sidecar_or_fresh(&sidecar_path) {
+                Ok(metadata) => metadata,
+                Err(e) => {
+                    log::error!("Refusing to set a colour label on an unreadable sidecar: {e}");
+                    return Some(e.to_string());
+                }
+            };
 
-        let mut tags = metadata.tags.unwrap_or_default();
-        tags.retain(|tag| !tag.starts_with(COLOR_TAG_PREFIX));
+            let mut tags = metadata.tags.unwrap_or_default();
+            tags.retain(|tag| !tag.starts_with(COLOR_TAG_PREFIX));
 
-        if let Some(c) = &color
-            && !c.is_empty()
-        {
-            tags.push(format!("{}{}", COLOR_TAG_PREFIX, c));
-        }
+            if let Some(c) = &color
+                && !c.is_empty()
+            {
+                tags.push(format!("{}{}", COLOR_TAG_PREFIX, c));
+            }
 
-        if tags.is_empty() {
-            metadata.tags = None;
-        } else {
-            metadata.tags = Some(tags);
-        }
+            if tags.is_empty() {
+                metadata.tags = None;
+            } else {
+                metadata.tags = Some(tags);
+            }
 
-        if let Ok(json_string) = serde_json::to_string_pretty(&metadata) {
-            let _ = std::fs::write(&sidecar_path, json_string);
-        }
+            if let Ok(json_string) = serde_json::to_string_pretty(&metadata) {
+                let _ = std::fs::write(&sidecar_path, json_string);
+            }
 
-        if enable_xmp_sync {
-            let source_path = parse_virtual_path(path).0;
-            sync_metadata_to_xmp(&source_path, &metadata, create_xmp_if_missing);
-        }
-    });
+            if enable_xmp_sync {
+                let source_path = parse_virtual_path(path).0;
+                sync_metadata_to_xmp(&source_path, &metadata, create_xmp_if_missing);
+            }
+            None
+        })
+        .collect();
 
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Some sidecars could not be read: {}",
+            failures.join("; ")
+        ))
+    }
 }
 
 #[tauri::command]
@@ -2014,7 +2105,9 @@ pub fn load_metadata(path: String, app_handle: AppHandle) -> Result<ImageMetadat
     let enable_xmp_sync = settings.enable_xmp_sync.unwrap_or(false);
 
     let (source_path, sidecar_path) = parse_virtual_path(&path);
-    let mut metadata = crate::exif_processing::load_sidecar(&sidecar_path);
+    // B-195: the XMP sync below writes this struct back, so an unreadable
+    // sidecar propagates to the caller rather than being defaulted over.
+    let mut metadata = crate::exif_processing::load_sidecar_or_fresh(&sidecar_path)?;
 
     if enable_xmp_sync
         && sync_metadata_from_xmp(&source_path, &mut metadata)
@@ -2882,5 +2975,63 @@ pub fn sync_metadata_to_xmp(source_path: &Path, metadata: &ImageMetadata, create
         }
 
         let _ = fs::write(&xmp_file, content);
+    }
+}
+
+#[cfg(test)]
+mod sidecar_write_back_tests {
+    use super::*;
+
+    const XMP_WITH_RATING: &str = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="4"/>
+ </rdf:RDF>
+</x:xmpmeta>"#;
+
+    /// B-195, at a real read-modify-write call site. `resolve_image_metadata`
+    /// loads the sidecar, merges the XMP into it and writes the whole struct
+    /// back. When the load was silently defaulted, that write replaced the
+    /// photo's real adjustments, tags, rating and cached EXIF with a default
+    /// plus whatever the XMP happened to carry — with no user action beyond
+    /// the folder being listed.
+    #[test]
+    fn a_corrupt_sidecar_is_not_overwritten_by_the_xmp_sync() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let image_path = tmp.path().join("IMG_0100.jpg");
+        let sidecar_path = tmp.path().join("IMG_0100.jpg.rrdata");
+        let corrupt = r#"{"version": 1, "rating": 5, "adjustments": {"exposu"#;
+        fs::write(&sidecar_path, corrupt).expect("write corrupt sidecar");
+        fs::write(tmp.path().join("IMG_0100.xmp"), XMP_WITH_RATING).expect("write xmp");
+
+        let settings = AppSettings::default();
+        let resolved = resolve_image_metadata(&image_path, &sidecar_path, true, &settings);
+
+        let on_disk = fs::read_to_string(&sidecar_path).expect("re-read");
+        assert_eq!(
+            on_disk, corrupt,
+            "the corrupt sidecar was overwritten by the XMP sync"
+        );
+        // Degraded, deliberately: this one grid entry reads as unrated and
+        // untagged rather than claiming the XMP's rating it could not merge.
+        assert_eq!(resolved.rating, 0);
+        assert_eq!(resolved.tags, None);
+    }
+
+    /// The same path's normal case must be unchanged: an image with an XMP
+    /// but no sidecar yet still gets one written, carrying the XMP's rating.
+    #[test]
+    fn an_absent_sidecar_is_still_created_from_the_xmp() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let image_path = tmp.path().join("IMG_0101.jpg");
+        let sidecar_path = tmp.path().join("IMG_0101.jpg.rrdata");
+        fs::write(tmp.path().join("IMG_0101.xmp"), XMP_WITH_RATING).expect("write xmp");
+
+        let settings = AppSettings::default();
+        let resolved = resolve_image_metadata(&image_path, &sidecar_path, true, &settings);
+
+        assert_eq!(resolved.rating, 4, "the XMP's rating should be picked up");
+        let written = crate::exif_processing::load_sidecar(&sidecar_path)
+            .expect("a fresh sidecar should have been written");
+        assert_eq!(written.rating, 4);
     }
 }

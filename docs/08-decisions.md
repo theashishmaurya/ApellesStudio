@@ -31833,7 +31833,10 @@ instances do exist in RapidRAW-inherited code (`settings.json`, the `.rrdata`
 image sidecars and their eleven write-back sites, `presets.json`) and are filed
 as **B-194/B-195/B-196** rather than fixed here: different subsystems, different
 types, and folding them in would have made a critical data-loss fix
-unreviewable. They are real and should be fixed next.
+unreviewable. They are real and should be fixed next. *(All three were fixed
+2026-09-18/19. The sidecar count above is off by one: B-195's own fix re-counted
+it against the code and found **twelve** write-back sites plus five read-only
+consumers — see B-195 in `docs/BUGS.md`.)*
 
 ### `fsync`: yes on the file, no on the directory
 
