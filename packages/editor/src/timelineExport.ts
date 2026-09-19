@@ -930,17 +930,26 @@ export interface TimelineExportOptions {
    *  interactive GUI toggle exists yet — a pure export parameter, the
    *  caller's choice per export, not a cross-cutting change to the core
    *  model). `'fit'` (the default when a clip has no entry here) sizes the
-   *  overlay's width to `opts.width * scale` and lets ffmpeg compute its
-   *  height from the clip's own real (post-crop) aspect ratio — correct,
+   *  overlay's width from `scale` (B-208/D-353: `scale` × the clip's own
+   *  native footprint — see `sourceFootprints` below) and lets ffmpeg compute
+   *  its height from the clip's own real (post-crop) aspect ratio — correct,
    *  undistorted, for a "full width, natural height" layout (e.g. two clips
    *  stacked in one canvas, each letterboxed within its half). `'stretch'`
-   *  is the pre-B-074 behavior: force BOTH dimensions to
-   *  `opts.width * scale` / `opts.height * scale`, i.e. a box that always
-   *  has exactly the OUTPUT canvas's own aspect ratio regardless of the
-   *  source's — correct for a deliberate distort effect, or a plain
-   *  same-aspect picture-in-picture bubble where that was already true
-   *  anyway, never correct for fitting arbitrary source footage into a
-   *  differently-shaped region.
+   *  is the pre-B-074 behavior: force BOTH dimensions from `scale` that same
+   *  way, so the box keeps the UNCROPPED source's own shape whatever the crop
+   *  did to the real picture, rather than following its post-crop aspect —
+   *  correct for a deliberate distort effect, or a plain same-aspect
+   *  picture-in-picture bubble where that was already true anyway, never
+   *  correct for fitting arbitrary source footage into a differently-shaped
+   *  region.
+   *
+   *  **B-208/D-353 moved `'stretch'` too, deliberately.** It could have been
+   *  left on the old canvas-fraction reading — it is export-only and the
+   *  preview has no equivalent — but then `scale` would have meant two
+   *  different things depending on an unrelated export flag. Both modes now
+   *  read `scale` as a native-footprint multiple and this option decides only
+   *  where the HEIGHT comes from. For a source shaped like the canvas (this
+   *  mode's own stated main use) the box is unchanged.
    *
    *  **D-193 superseded the need for this on any clip with a real
    *  `box_width`/`box_height` override** (now a first-class, persisted
@@ -952,6 +961,47 @@ export interface TimelineExportOptions {
    *  at all), which stays a real, common, first-class case this option
    *  keeps serving unchanged. */
   fitOverrides?: Record<string, 'fit' | 'stretch'>;
+  /**
+   * **B-208/D-353 — each clip's own SOURCE footprint, as a fraction of the
+   * OUTPUT COMPOSITION**, keyed by `Clip.id`. `{width: 0.5, height: 0.5}` is
+   * "this clip's source is half the composition's width and half its height".
+   * Exactly `chroma::edit::ClipGeometry`'s `naturalWidth`/`naturalHeight` —
+   * the same normalised footprint the on-canvas transform overlay already
+   * reads — not raw source pixels, so the SAME map is correct whether this
+   * export is compiled at the composition's own size or at any multiple of it.
+   *
+   * **What it is for.** `scale` is a multiplier of the clip's own NATIVE
+   * footprint (see `Clip.scale`'s own doc, and `ClipTransform::effective_size`
+   * in `app/src-tauri/src/chroma/edit.rs`, which is what the live preview and
+   * the D-350 compositor render path both compute). This compiler read it as a
+   * fraction of the output canvas instead, so `scale` meant two different
+   * things in the two engines and they only agreed when a clip's source
+   * resolution happened to equal the composition's — B-208. D-353 settled the
+   * direction: the EXPORT learns the preview's reading, because flipping the
+   * preview would silently resize every clip in every existing project that
+   * carries a non-default `scale`.
+   *
+   * **Why the caller supplies it and not this module.** Same
+   * "the-compiler-stays-pure / the-caller-supplies-what-only-it-can-know"
+   * split as `hasAudioOverrides` and `audioChannelsOverrides` above: this
+   * module is pure and does no I/O, and a source's resolution can only come
+   * from a probe. It is already probed — `editor_import_media` stores it on
+   * the media-pool item (`MediaVideoInfo.width`/`height`, or
+   * `MediaImageInfo`'s for a still) — so nothing new is measured at export
+   * time; `editorExport.ts`'s `resolveSourceFootprints` just divides that by
+   * the composition size.
+   *
+   * **An absent entry means "unknown", and keeps the pre-B-208 reading**
+   * (footprint `1.0` on both axes, i.e. `scale` as a plain canvas fraction) —
+   * the `audioChannelsOverrides` sentinel discipline, for the same reason: a
+   * guessed footprint is a confidently wrong box. That fallback is also
+   * byte-identical to this compiler's pre-fix output, so a clip with no pooled
+   * media (and every test that passes no map at all) compiles exactly as
+   * before. A clip carrying `box_width`/`box_height` never consults this at
+   * all — those are canvas fractions in BOTH engines by construction (D-193)
+   * and have no divergence to fix.
+   */
+  sourceFootprints?: Record<string, { width: number; height: number }>;
   /** D-188 — export-time-only per-clip choice to hold this clip's OWN LAST
    *  FRAME, frozen, for the rest of the export's total runtime (the longest
    *  clip on the whole timeline) instead of simply disappearing once its own
@@ -1392,6 +1442,32 @@ export function buildReversibleRampSteps(
   return { steps, label: `[${out}]` };
 }
 
+/** B-208/D-353 — the footprint of a clip whose source resolution IS the
+ *  composition's, on either axis: the identity, and the value every clip the
+ *  caller could not resolve a real footprint for falls back to. Named because
+ *  the compiler also branches on it to keep emitting the pre-B-208 argv
+ *  verbatim in that case (see `buildClipFilterChain`'s `widthExpr`). */
+const FULL_FRAME_FOOTPRINT = 1;
+
+/** B-208/D-353 — `clip`'s SOURCE footprint as a fraction of the output
+ *  composition, per `TimelineExportOptions.sourceFootprints`.
+ *
+ *  Absent, non-finite or non-positive on an axis ⇒ [`FULL_FRAME_FOOTPRINT`]
+ *  for that axis. A missing entry is the honest "this clip's source was never
+ *  probed" case (an offline pool item, a text/adjustment clip with no media at
+ *  all) and the fallback is exactly this compiler's pre-B-208 behaviour; the
+ *  non-finite guards are ordinary defensiveness about a number that arrives
+ *  from a division the caller performed. */
+function sourceFootprintOf(
+  clip: Clip,
+  opts: TimelineExportOptions,
+): { width: number; height: number } {
+  const f = opts.sourceFootprints?.[clip.id];
+  const axis = (v: number | undefined): number =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : FULL_FRAME_FOOTPRINT;
+  return { width: axis(f?.width), height: axis(f?.height) };
+}
+
 /** One clip's `setpts`/`crop`/`scale` chain, ending in `[label]` — factored
  *  out of `buildExportFfmpegArgs` so it's independently testable. Takes the
  *  clip's ffmpeg INPUT index (`inputIdx`, one `-i` per clip, in track/clip
@@ -1585,10 +1661,27 @@ function buildClipFilterChain(
   // override (mirrors `position_x`'s own convention) — it replaces
   // `opts.width*scale` outright rather than participating in B-074's
   // `fit`/`stretch` choice, since there is no more ambiguity to resolve
-  // once the caller has stated the width explicitly. Falls back to the
-  // pre-D-193 `opts.width*scale` when absent, so an existing clip (or one
-  // that only sets `scale`) compiles byte-identically to before.
-  const widthExpr = clip.box_width != null ? `${opts.width}*${clip.box_width}` : `${opts.width}*(${scaleExpr})`;
+  // once the caller has stated the width explicitly. Falls back to `scale`'s
+  // own formula when absent, so an existing clip (or one that only sets
+  // `scale`) keeps going through the branch below.
+  // B-208/D-353 — `scale` is a multiplier of the clip's own NATIVE footprint,
+  // which is what `ClipTransform::effective_size` (the live preview and the
+  // D-350 compositor render path) has always computed; this compiler used to
+  // read it as a plain fraction of the output canvas. `sourceFootprints`
+  // carries that footprint in, already normalised against the composition, so
+  // the two engines finally agree on a clip whose source resolution is not the
+  // composition's. See the option's own doc for the full "why".
+  const footprint = sourceFootprintOf(clip, opts);
+  const widthExpr =
+    clip.box_width != null
+      ? `${opts.width}*${clip.box_width}`
+      : footprint.width === FULL_FRAME_FOOTPRINT
+        ? // The unknown/source-is-the-composition case, spelled EXACTLY as it
+          // was before B-208 rather than as `…*1*(…)` — this is the argv the
+          // committed `export-parity.json` fixture and every existing test
+          // assert on byte for byte.
+          `${opts.width}*(${scaleExpr})`
+        : `${opts.width}*${footprint.width}*(${scaleExpr})`;
   // B-074 — see `TimelineExportOptions.fitOverrides`'s own doc for the full
   // "why": `'fit'` (default) sizes WIDTH from the canvas and lets ffmpeg's
   // `-2` compute height from the clip's real post-crop aspect ratio;
@@ -1610,20 +1703,30 @@ function buildClipFilterChain(
   // `stretch` never touched width), `box_height` is genuinely a third
   // option alongside `fit`/`stretch`, not a variant of either.
   //
-  // **Known, deliberate limit (D-193):** `box_width`/`box_height` are a
-  // fraction of the OUTPUT CANVAS in both this compiler and the Rust
-  // live-preview compositor (`chroma::edit::composite_layer_onto`) — a
-  // genuinely NEW field with NO Rust/TS parity gap, unlike `scale` itself
-  // (whose meaning depends on the clip's own SOURCE resolution, which this
-  // pure, no-I/O module still cannot probe — B-074/D-184's own pre-existing,
-  // intentionally-not-reopened gap). See D-193's decision entry for the
-  // full comparison.
+  // **D-193:** `box_width`/`box_height` are a fraction of the OUTPUT CANVAS
+  // in both this compiler and the Rust live-preview compositor
+  // (`chroma::edit::composite_layer_onto`) — a genuinely NEW field that never
+  // had a Rust/TS parity gap at all, which is why this pair stayed correct
+  // through the whole of B-208. `scale` itself, whose meaning depends on the
+  // clip's own SOURCE resolution, DID have one until D-353 closed it: this
+  // module is still pure and still probes nothing, and now reads that
+  // resolution from `sourceFootprints`, which the caller fills from the media
+  // pool's already-probed dimensions. See D-193's decision entry for the full
+  // comparison and D-353's for why the export moved to the preview's reading
+  // rather than the other way round.
   const fitMode = opts.fitOverrides?.[clip.id] ?? 'fit';
   const heightExpr =
     clip.box_height != null
       ? `${opts.height}*${clip.box_height}`
       : fitMode === 'stretch'
-        ? `${opts.height}*(${scaleExpr})`
+        ? // B-208/D-353 — the same native-footprint reading as `widthExpr`
+          // above, on the other axis. `'fit'` (the default, `-2`) needs no
+          // footprint at all: ffmpeg derives the height from the already-
+          // corrected width and the input's own post-crop aspect ratio, which
+          // is precisely what `effective_size` derives it from too.
+          footprint.height === FULL_FRAME_FOOTPRINT
+          ? `${opts.height}*(${scaleExpr})`
+          : `${opts.height}*${footprint.height}*(${scaleExpr})`
         : '-2';
   // `eval=frame` (default `eval=init`, sampled once) only when `scale` is
   // actually animated — a keyframed width/height expression under the

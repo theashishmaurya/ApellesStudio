@@ -343,6 +343,19 @@ pub enum FitMode {
     Stretch,
 }
 
+/// `editor_export`'s `renderer` — which engine composites the PICTURE (D-350).
+/// A real enum rather than a bare `String` so this surface publishes the same
+/// two-value contract `mcp/server.py`'s own `ExportRenderer` literal does; the
+/// parity gate compares the published `inputSchema`, and a plain string here
+/// silently dropped the `enum` from it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+pub enum ExportRenderer {
+    #[serde(rename = "filter")]
+    Filter,
+    #[serde(rename = "compositor")]
+    Compositor,
+}
+
 /// One segment boundary in a clip speed ramp (`set_clip_speed`).
 ///
 /// "From this SOURCE frame onward, play at this speed." Source frames are absolute in

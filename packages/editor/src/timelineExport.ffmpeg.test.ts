@@ -1259,6 +1259,129 @@ describe.skipIf(!FFMPEG_AVAILABLE)('D-338/B-201 — placement parity with the li
 });
 
 // ---------------------------------------------------------------------- //
+// B-208 / D-353 — the NON-DEGENERATE `scale` parity case.
+// ---------------------------------------------------------------------- //
+//
+// **Why this one had to be added, and why the two parity tests either side of
+// it could not have caught B-208.** Both of them put a source of EXACTLY the
+// canvas's own size (or a box spelled entirely in `box_width`/`box_height`,
+// which both engines read as canvas fractions) into the canvas. That is the
+// one geometry where "`scale` is a fraction of the output canvas" (what this
+// compiler computed) and "`scale` is a multiple of the clip's own native
+// footprint" (what `ClipTransform::effective_size` computes, and therefore
+// what the live preview and the D-350 render path both show) are the SAME
+// NUMBER. B-208's own filing says exactly this: the existing parity tests are
+// vacuous for `scale`.
+//
+// So this case is deliberately built the other way round: a **160x120 source
+// in a 320x240 canvas** — half the composition on each axis — carrying a plain
+// `scale`, no `box_width`/`box_height` at all. The two readings differ by 2x
+// here, which no inset or encoder softness can hide.
+//
+// The expected rectangle is the PREVIEW's, per D-353's choice of direction:
+//   footprint 160/320 = 0.5 -> width  320 * 0.5 * scale 0.5 = 80 px
+//   height from ffmpeg's `-2`, i.e. the source's own 4:3   = 60 px
+//   top-left at (0.25 * 320, 0.25 * 240)                   = (80, 60)
+// which is `effective_size`'s `natural.0 * scale` = 160 * 0.5 = 80 exactly,
+// pinned on the Rust side by `effective_size_is_unchanged_for_an_uncropped_
+// clip`. The pre-D-353 export made the same clip 160x120 — twice as wide and
+// twice as tall — so the assertions below that require BLACK at (170, 130)
+// are the ones that actually fail without the fix.
+describe.skipIf(!FFMPEG_AVAILABLE)('B-208/D-353 — scale parity with the live-preview compositor', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'chroma-scale-parity-export-test-'));
+  });
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const CANVAS = { width: 320, height: 240 };
+  /** Half the canvas on each axis — the whole point of the case. */
+  const SOURCE = { width: 160, height: 120 };
+  const SCALE_PARITY_TRANSFORM = { scale: 0.5, position_x: 0.25, position_y: 0.25 };
+  /** Literals, not recomputed from the transform. */
+  const EXPECTED = { x0: 80, y0: 60, x1: 160, y1: 120 };
+  /** Where the pre-D-353 canvas-fraction reading would have painted and this
+   *  one must not: comfortably inside the 160x120 box it produced, and
+   *  comfortably outside the 80x60 box the preview shows. */
+  const OLD_READING_ONLY = { x: 170, y: 130 };
+
+  it('sizes a half-composition source from its OWN footprint, not the canvas', () => {
+    const src = join(dir, 'half.mp4');
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i',
+      `color=c=magenta:size=${SOURCE.width}x${SOURCE.height}:duration=2:rate=24`,
+      '-pix_fmt', 'yuv420p', src,
+    ]);
+    const c = clip('scaleparity', {
+      source_path: src,
+      source_fps: 24,
+      duration: 48,
+      source_len: 48,
+      ...SCALE_PARITY_TRANSFORM,
+    });
+    const out = join(dir, 'scaleparity.mp4');
+    execFileSync(
+      'ffmpeg',
+      [
+        '-y',
+        ...buildExportFfmpegArgs(timeline([track('video', [c])]), out, {
+          fps: 24,
+          ...CANVAS,
+          // What `editorExport.ts`'s `resolveSourceFootprints` computes for
+          // this clip from the media pool's probed dimensions: the source's
+          // size divided by the composition's.
+          sourceFootprints: {
+            scaleparity: {
+              width: SOURCE.width / CANVAS.width,
+              height: SOURCE.height / CANVAS.height,
+            },
+          },
+        }),
+      ],
+      { stdio: 'pipe' },
+    );
+
+    const INSET = 4;
+    const magenta = (p: [number, number, number]) => p[0] > 150 && p[2] > 150 && p[1] < 90;
+    const black = (p: [number, number, number]) => Math.max(...p) < 50;
+    const at = (x: number, y: number) => pixelAt(out, 1.0, x, y);
+
+    for (const [x, y] of [
+      [EXPECTED.x0 + INSET, EXPECTED.y0 + INSET],
+      [EXPECTED.x1 - INSET, EXPECTED.y0 + INSET],
+      [EXPECTED.x0 + INSET, EXPECTED.y1 - INSET],
+      [EXPECTED.x1 - INSET, EXPECTED.y1 - INSET],
+    ]) {
+      const p = at(x, y);
+      expect(magenta(p), `(${x},${y}) should be inside the overlay, got ${p}`).toBe(true);
+    }
+
+    for (const [x, y, why] of [
+      [EXPECTED.x0 - INSET, EXPECTED.y0 + INSET, 'left of the box'],
+      [EXPECTED.x1 + INSET, EXPECTED.y0 + INSET, 'right of the box'],
+      [EXPECTED.x0 + INSET, EXPECTED.y0 - INSET, 'above the box'],
+      [EXPECTED.x0 + INSET, EXPECTED.y1 + INSET, 'below the box'],
+    ] as Array<[number, number, string]>) {
+      const p = at(x, y);
+      expect(black(p), `(${x},${y}) is ${why} and should be the black base, got ${p}`).toBe(true);
+    }
+
+    // The assertion that is specifically about B-208 rather than about
+    // placement in general.
+    const stale = at(OLD_READING_ONLY.x, OLD_READING_ONLY.y);
+    expect(
+      black(stale),
+      `(${OLD_READING_ONLY.x},${OLD_READING_ONLY.y}) is only covered if scale was read as a ` +
+        `fraction of the CANVAS instead of the clip's own footprint (B-208), got ${stale}`,
+    ).toBe(true);
+  }, 60000);
+});
+
+// ---------------------------------------------------------------------- //
 // B-218 — the CROSS-ENGINE crop-then-scale parity pair.
 // ---------------------------------------------------------------------- //
 //

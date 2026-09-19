@@ -49,6 +49,9 @@ import { captionAnimationOf, isPerWordAnim, isSingleWordAnim } from './captionAn
 import { hasSpeedRamp } from './speedRamp';
 // D-256 — each graded clip's baked Colorist grade, as a `.cube` for `lut3d`.
 import { gradeLutPathsSnapshot, gradeLutsAreWarm, warmGradeLuts } from './gradeLuts';
+// B-208/D-353 — the composition size every clip's source footprint is
+// normalised against, warmed the same way the three caches above are.
+import { compositionSizeSnapshot, warmCompositionSize } from './compositionSize';
 
 /** Mirrors `app/src-tauri/src/chroma/ffmpeg_run.rs`'s `FfmpegRunOutcome` —
  *  copied by hand, same reason `useEditorControl.ts`'s own copy already
@@ -142,6 +145,50 @@ function resolveAudioChannelsOverrides(tl: Timeline): Record<string, number> {
       const media = items.find((m) => m.id === clip.media_id || m.sourcePath === clip.source_path);
       const channels = media?.video?.audioChannels;
       if (typeof channels === 'number' && channels > 0) out[clip.id] = channels;
+    }
+  }
+  return out;
+}
+
+/**
+ * B-208/D-353 — every clip's own SOURCE resolution as a fraction of the
+ * COMPOSITION, for `TimelineExportOptions.sourceFootprints`. Same
+ * the-compiler-stays-pure / the-caller-supplies-the-fact split as
+ * `resolveHasAudioOverrides` and `resolveAudioChannelsOverrides` above,
+ * reading the same pool items.
+ *
+ * **Nothing is probed here.** `editor_import_media` already probed every pool
+ * item and stored its dimensions (`MediaVideoInfo` for footage,
+ * `MediaImageInfo` for a still — D-292); this only divides them by `comp`.
+ * That division is what makes the map resolution-independent: the compiler
+ * multiplies it back by the EXPORT's own width, so exporting the same timeline
+ * at 1080p and at 720p scales the whole layout uniformly instead of resizing
+ * one clip against the other.
+ *
+ * A clip whose source was never probed successfully — an offline item, a text
+ * or adjustment clip with no media at all, a `source_path` that no longer
+ * matches a pool item — is simply **absent** rather than defaulted, the same
+ * sentinel discipline `resolveAudioChannelsOverrides` uses. The compiler reads
+ * absence as "unknown" and keeps its pre-B-208 canvas-fraction reading for that
+ * clip; writing a guessed footprint would turn "we don't know" into a
+ * confidently wrong box.
+ *
+ * Video tracks only: an audio clip has no picture to size.
+ */
+function resolveSourceFootprints(
+  tl: Timeline,
+  comp: { width: number; height: number },
+): Record<string, { width: number; height: number }> {
+  const out: Record<string, { width: number; height: number }> = {};
+  if (!(comp.width > 0) || !(comp.height > 0)) return out;
+  const items = useMediaPoolStore.getState().items;
+  for (const track of tl.tracks) {
+    if (track.kind !== 'video') continue;
+    for (const clip of track.clips) {
+      const media = items.find((m) => m.id === clip.media_id || m.sourcePath === clip.source_path);
+      const probed = media?.video ?? media?.image ?? null;
+      if (!probed || !(probed.width > 0) || !(probed.height > 0)) continue;
+      out[clip.id] = { width: probed.width / comp.width, height: probed.height / comp.height };
     }
   }
   return out;
@@ -341,6 +388,19 @@ export function compileEditorExportArgs(a: {
   }
   const gradeLutPaths = gradeLutPathsSnapshot();
 
+  // B-208/D-353 — the composition every clip's `scale` is a native-footprint
+  // multiple against. `runEditorExport` and the Export dialog both warm this
+  // before they get here; when it is genuinely unresolvable (an empty project
+  // with no settings and no clip to derive a size from — the same case
+  // `useCompositionSize` shows as "nothing yet"), the export's own requested
+  // size stands in, which is what this compiler's contract already calls the
+  // composition ("width and height must be positive numbers (the output
+  // composition size)") and what every caller that does not resize on export
+  // passes anyway. This is NOT refused the way a cold font/grade cache is:
+  // those would silently drop a title or a grade from the file, where this
+  // falls back to a real, documented reading of the same document.
+  const comp = compositionSizeSnapshot() ?? { width, height };
+
   const opts: TimelineExportOptions = {
     fps,
     width,
@@ -348,6 +408,7 @@ export function compileEditorExportArgs(a: {
     speedOverrides,
     fitOverrides,
     freezeOverrides,
+    sourceFootprints: resolveSourceFootprints(tl, comp),
     hasAudioOverrides: resolveHasAudioOverrides(tl),
     audioChannelsOverrides: resolveAudioChannelsOverrides(tl),
     fontFiles,
@@ -449,6 +510,11 @@ export async function runEditorExport(
   // Inspector has ever rendered a font picker. Idempotent and a no-op once
   // loaded (see `textFonts.ts`), so this costs nothing on every later call.
   await loadTextFonts();
+  // B-208/D-353 — and the project's composition size, for the identical
+  // reason: `compileEditorExportArgs` normalises every clip's probed source
+  // resolution against it to resolve what `scale` means, and it is
+  // synchronous, so the async answer has to be in memory before it runs.
+  await warmCompositionSize();
   // D-243 — and the per-word advances every ANIMATED caption needs, for the
   // identical reason: the compiler below is synchronous, so anything it needs
   // from the backend has to already be in memory. Derived from the timeline

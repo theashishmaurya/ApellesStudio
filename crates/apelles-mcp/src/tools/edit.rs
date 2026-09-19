@@ -22,7 +22,8 @@ use serde_json::Value;
 use crate::args::WireArgs;
 use crate::render;
 use crate::schemas::{
-    ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming, FitMode, GapSelector, SpeedRampPoint,
+    ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming, ExportRenderer, FitMode,
+    GapSelector, SpeedRampPoint,
 };
 use crate::server::ApellesMcp;
 
@@ -869,7 +870,7 @@ pub struct EditorExportArgs {
     /// `-filter_complex` graph). Omitted = `"filter"` while the render path is
     /// phase 1. See the tool doc.
     #[serde(default)]
-    pub renderer: Option<String>,
+    pub renderer: Option<ExportRenderer>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -3953,16 +3954,17 @@ impl ApellesMcp {
     **`renderer` (D-350) — which engine composites the picture.**
     `"compositor"` renders every frame through the app's OWN live-preview
     compositor and pipes it into one ffmpeg process that only compresses and
-    muxes; `"filter"` (the default, and everything described above) compiles the
-    whole composite into an ffmpeg `-filter_complex` graph with one `-i` per
-    clip. Prefer `"compositor"` for a HEAVILY CUT timeline — the filter path's
-    memory and thread use both scale with the clip count (B-228/B-229/B-230:
-    a real ~79-clip 4K project reached 56 GB and 3,065 threads on one process),
-    while the render path opens exactly one input whatever the clip count, and
-    it is by construction the same picture the Edit tab previews. It is opt-in
-    while it is phase 1: it does NOT yet support `speed_overrides`,
-    `fit_overrides` or `freeze_overrides` (all EXPORT-TIME-ONLY knobs the live
-    compositor has no notion of) and REFUSES rather than silently ignoring one."#
+    muxes; `"filter"` (the default, and everything described above) compiles
+    the whole composite into an ffmpeg `-filter_complex` graph with one `-i`
+    per clip. Prefer `"compositor"` for a HEAVILY CUT timeline — the filter
+    path's memory and thread use both scale with the clip count
+    (B-228/B-229/B-230: a real ~79-clip 4K project reached 56 GB and 3,065
+    threads on one process), while the render path opens exactly one input
+    whatever the clip count, and it is by construction the same picture the
+    Edit tab previews. It is opt-in while it is phase 1: it does NOT yet
+    support `speed_overrides`, `fit_overrides` or `freeze_overrides` (all
+    EXPORT-TIME-ONLY knobs the live compositor has no notion of) and REFUSES
+    rather than silently ignoring one."#
     )]
     pub async fn editor_export(
         &self,

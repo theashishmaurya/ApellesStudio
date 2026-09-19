@@ -337,6 +337,104 @@ describe('buildExportFfmpegArgs', () => {
     expect(filterComplex).toContain("scale=w='1080*(1)':h='1920*(1)'"); // b: stretch override
   });
 
+  // ------------------------------------------------------------------ //
+  // B-208 / D-353 — `scale` is a multiple of the clip's OWN NATIVE
+  // footprint, not a fraction of the output canvas.
+  // ------------------------------------------------------------------ //
+  //
+  // The argv half. The PIXEL half — the same reading rendered through real
+  // ffmpeg and checked against the number the live-preview compositor
+  // produces — is `timelineExport.ffmpeg.test.ts`'s
+  // `'B-208/D-353 — scale parity with the live-preview compositor'`, and the
+  // decisive cross-engine half is the `c-scaled` clip in
+  // `exportParityFixture.test.ts`, which `edit_render.rs` renders through the
+  // real Rust compositor and diffs pixel for pixel.
+  it('B-208: scale multiplies the clip\'s own NATIVE footprint, so a half-size source at scale 1 is half the canvas — not all of it', () => {
+    const c = clip('c1', { scale: 1 });
+    const tl = timeline([track('video', [c])]);
+    // A 540x960 source in this 1080x1920 composition: half the canvas on each
+    // axis, i.e. footprint 0.5. `scale: 1` means "this clip at its own size",
+    // which is half the frame wide — exactly what `ClipTransform::
+    // effective_size` computes (`natural.0 * scale`) and what the preview
+    // therefore shows.
+    const opts: TimelineExportOptions = { ...opts30, sourceFootprints: { c1: { width: 0.5, height: 0.5 } } };
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain("scale=w='1080*0.5*(1)':h=-2[v0]");
+    // and NOT the pre-B-208 canvas-fraction reading, which made this same
+    // clip the FULL frame wide — twice the size the preview showed.
+    expect(filterComplex).not.toContain("scale=w='1080*(1)':h=-2[v0]");
+  });
+
+  it('B-208: a clip whose source IS the composition compiles byte-identically to before the fix', () => {
+    // The degenerate case the pre-D-353 parity tests were all built on, and
+    // the reason B-208 stayed invisible for so long: footprint 1.0 on both
+    // axes must emit the OLD string exactly — not `1080*1*(0.5)` — so every
+    // existing project, test and committed fixture is untouched.
+    const c = clip('c1', { scale: 0.5 });
+    const tl = timeline([track('video', [c])]);
+    const opts: TimelineExportOptions = { ...opts30, sourceFootprints: { c1: { width: 1, height: 1 } } };
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain("scale=w='1080*(0.5)':h=-2[v0]");
+    expect(filterComplex).not.toContain('1080*1*');
+  });
+
+  it('B-208: a clip with NO sourceFootprints entry keeps the pre-fix reading — an unprobed source is "unknown", never a guess', () => {
+    const known = clip('known', { scale: 0.5 });
+    const unknown = clip('unknown', { scale: 0.5 });
+    const tl = timeline([track('video', [known]), track('video', [unknown])]);
+    const opts: TimelineExportOptions = { ...opts30, sourceFootprints: { known: { width: 0.25, height: 0.25 } } };
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain("scale=w='1080*0.25*(0.5)'");
+    expect(filterComplex).toContain("scale=w='1080*(0.5)'");
+  });
+
+  it('B-208: box_width still wins over scale and never consults the footprint — it is a canvas fraction in BOTH engines (D-193)', () => {
+    const c = clip('c1', { box_width: 0.75, box_height: 0.25, scale: 0.5 });
+    const tl = timeline([track('video', [c])]);
+    const opts: TimelineExportOptions = { ...opts30, sourceFootprints: { c1: { width: 0.5, height: 0.5 } } };
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain("scale=w='1080*0.75':h='1920*0.25'[v0]");
+  });
+
+  it('B-208: stretch applies the footprint on BOTH axes, keeping fit and stretch consistent about what scale means', () => {
+    const c = clip('c1', { scale: 0.5 });
+    const tl = timeline([track('video', [c])]);
+    const opts: TimelineExportOptions = {
+      ...opts30,
+      fitOverrides: { c1: 'stretch' },
+      sourceFootprints: { c1: { width: 0.5, height: 0.25 } },
+    };
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain("scale=w='1080*0.5*(0.5)':h='1920*0.25*(0.5)'[v0]");
+  });
+
+  it('B-208: a keyframed scale stays keyframed — the footprint multiplies the whole expression, and eval=frame survives', () => {
+    const c = clip('c1', {
+      scale: 1,
+      chroma_keyframes: [
+        { frame: 0, params: { scale: 1 } },
+        { frame: 30, params: { scale: 2 } },
+      ],
+    });
+    const tl = timeline([track('video', [c])]);
+    const opts: TimelineExportOptions = { ...opts30, sourceFootprints: { c1: { width: 0.5, height: 0.5 } } };
+    const args = buildExportFfmpegArgs(tl, '/out.mp4', opts);
+    const filterComplex = args[args.indexOf('-filter_complex') + 1];
+
+    expect(filterComplex).toContain("scale=w='1080*0.5*(");
+    expect(filterComplex).toContain(':eval=frame');
+  });
+
   it('B-075: uses a clip\'s own source_fps (not opts.fps) to convert source_start/duration to real seconds for -ss/-t', () => {
     // A clip whose native rate (24fps) differs from the export rate (opts30 = 30fps).
     const c = clip('c1', { source_fps: 24, source_start: 48, duration: 240 });

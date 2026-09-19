@@ -523,6 +523,11 @@ mod parity_tests {
         fps: f64,
         source_frames: u32,
         colors: std::collections::HashMap<String, [u8; 3]>,
+        /// B-208/D-353 — each named source's OWN pixel size. The fixture's
+        /// media is no longer uniformly the composition's size: `c-scaled`'s
+        /// source is deliberately half of it on each axis, which is the only
+        /// geometry in which `scale`'s two readings differ.
+        sizes: std::collections::HashMap<String, [u32; 2]>,
         sample_frames: Vec<u64>,
         timeline: Timeline,
         filter_args: Vec<String>,
@@ -552,6 +557,7 @@ mod parity_tests {
             fps: f64,
             source_frames: u32,
             colors: std::collections::HashMap<String, [u8; 3]>,
+            sizes: std::collections::HashMap<String, [u32; 2]>,
             sample_frames: Vec<u64>,
             timeline: Timeline,
             filter_args: Vec<String>,
@@ -566,6 +572,7 @@ mod parity_tests {
             fps: w.fps,
             source_frames: w.source_frames,
             colors: w.colors,
+            sizes: w.sizes,
             sample_frames: w.sample_frames,
             timeline: w.timeline,
             filter_args: w.filter_args,
@@ -603,17 +610,18 @@ mod parity_tests {
         Ok(())
     }
 
-    /// The parity fixture's media, at the parity composition's own size.
+    /// The parity fixture's media, each at **its own** size (B-208/D-353) —
+    /// which for every source but `c-scaled`'s is still the composition's. A
+    /// name the fixture lists no size for falls back to the composition, which
+    /// is what every source was before D-353.
     fn generate_media(fx: &ParityFixture, dir: &Path) -> Result<(), String> {
         for (name, rgb) in &fx.colors {
-            generate_one(
-                dir,
-                name,
-                *rgb,
-                (fx.comp_width, fx.comp_height),
-                fx.source_frames,
-                fx.fps,
-            )?;
+            let size = fx
+                .sizes
+                .get(name)
+                .map(|s| (s[0], s[1]))
+                .unwrap_or((fx.comp_width, fx.comp_height));
+            generate_one(dir, name, *rgb, size, fx.source_frames, fx.fps)?;
         }
         Ok(())
     }

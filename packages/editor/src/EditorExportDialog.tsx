@@ -31,14 +31,22 @@
  * dialog just never populates it now.
  *
  * Width/height default from the project's own composition size
- * (`chroma_timeline_clip_geometry`'s `compWidth`/`compHeight` — the SAME
- * command `useClipGeometry.ts`/`ClipInspectorPanel.tsx` already use for
- * exactly this fact, D-193), falling back to a plain 1920×1080 when there is
- * no clip yet to derive it from (a brand-new, empty project). fps defaults
- * to the timeline's own rate (`timelineFps`).
+ * (`compositionSize.ts`'s `warmCompositionSize`, i.e.
+ * `chroma_timeline_composition_size` — D-199's selection-independent resolver),
+ * falling back to a plain 1920×1080 when there is nothing yet to derive it from
+ * (a brand-new, empty project). fps defaults to the timeline's own rate
+ * (`timelineFps`).
+ *
+ * **B-208/D-353 — that same warm is also what makes this dialog's ENQUEUE
+ * correct**, not just its default form values: `compileEditorExportArgs` reads
+ * the composition size synchronously to resolve what each clip's `scale` is a
+ * multiple OF, and the queue compiles a job's argv at enqueue time (D-198).
+ * This dialog used to resolve the size with its own walk over
+ * `chroma_timeline_clip_geometry` for the form fields alone; it now goes
+ * through the one shared resolver, so the number on screen and the number the
+ * compiler uses cannot be two different answers.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { WarningIcon, CheckCircleIcon, DownloadSimpleIcon, CircleNotchIcon, XCircleIcon } from '@phosphor-icons/react';
 import {
@@ -70,15 +78,9 @@ import { useExportQueueStore, type ExportJobStatus } from './exportQueueStore';
 // D-256 — bake each graded clip's Colorist grade into a .cube before the
 // queue freezes this job's ffmpeg argv against those file paths.
 import { warmGradeLuts } from './gradeLuts';
-
-/** Mirrors `chroma::edit::ClipGeometry` — see `useClipGeometry.ts`'s own
- *  identical DTO. Not reused directly: that hook is keyed to a SELECTED
- *  clip for the on-canvas overlay's use case, whereas this dialog only ever
- *  wants "the project's own composition size", once, when it opens. */
-interface ClipGeometry {
-  compWidth: number;
-  compHeight: number;
-}
+// B-208/D-353 — the composition size, for this dialog's default width/height
+// AND for the compiler the queue runs at enqueue time.
+import { warmCompositionSize } from './compositionSize';
 
 const FALLBACK_WIDTH = 1920;
 const FALLBACK_HEIGHT = 1080;
@@ -114,20 +116,15 @@ function videoClips(tl: Timeline | null): Clip[] {
   return tl.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.clips);
 }
 
+/** The project's composition size for this dialog's width/height fields —
+ *  and, as a side effect that the enqueue path below depends on, the warm
+ *  `compositionSize.ts` snapshot `compileEditorExportArgs` reads (B-208/D-353).
+ *  `FALLBACK_*` stands in only when there is genuinely nothing to derive a
+ *  size from, which is the one case the resolver answers `null` for. */
 async function fetchCompositionSize(tl: Timeline | null): Promise<{ width: number; height: number }> {
   if (!tl) return { width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT };
-  for (const [trackIndex, track] of tl.tracks.entries()) {
-    if (track.kind !== 'video') continue;
-    for (let clipIndex = 0; clipIndex < track.clips.length; clipIndex++) {
-      try {
-        const geo = await invoke<ClipGeometry>('chroma_timeline_clip_geometry', { track: trackIndex, clip: clipIndex });
-        if (geo.compWidth > 0 && geo.compHeight > 0) return { width: geo.compWidth, height: geo.compHeight };
-      } catch {
-        // fall through to the next clip / the final fallback below
-      }
-    }
-  }
-  return { width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT };
+  const size = await warmCompositionSize();
+  return size ?? { width: FALLBACK_WIDTH, height: FALLBACK_HEIGHT };
 }
 
 const statusLabel: Record<ExportJobStatus, string> = {
@@ -254,6 +251,12 @@ export function EditorExportDialog() {
       return;
     }
     setQueueing(true);
+    // B-208/D-353 — refresh the composition size the compiler reads
+    // synchronously, for the same enqueue-time-snapshot reason the grade bake
+    // below exists: the dialog may have been open across a `set_project_
+    // settings` write, and a job frozen against the old size would size every
+    // `scale`d clip against a composition the project no longer has.
+    await warmCompositionSize();
     try {
       const baked = await warmGradeLuts(timeline);
       setGradeNotes(baked.warnings);

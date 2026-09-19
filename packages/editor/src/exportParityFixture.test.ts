@@ -37,6 +37,9 @@ const MEDIA = {
   pip: 'pip.mp4',
   rounded: 'rounded.mp4',
   cropped: 'cropped.mp4',
+  /** B-208/D-353 — the one source deliberately NOT at the composition's size.
+   *  See `SOURCE_SIZES` and `parityTimeline`'s `c-scaled` clip. */
+  scaled: 'scaled.mp4',
 } as const;
 
 /** Solid RGB for each fixture source. Flat colours on purpose: any geometry
@@ -48,13 +51,54 @@ export const FIXTURE_COLORS: Record<string, [number, number, number]> = {
   [MEDIA.pip]: [230, 140, 30],
   [MEDIA.rounded]: [40, 200, 90],
   [MEDIA.cropped]: [220, 40, 200],
+  [MEDIA.scaled]: [250, 220, 40],
 };
 
 const COMP_W = 640;
 const COMP_H = 360;
 const FPS = 30;
-/** Every fixture source is this long, and at the composition's own size —
- *  see `parityTimeline`'s note on why the size matters. */
+
+/**
+ * **B-208/D-353 — each source's own pixel size, which is NOT uniformly the
+ * composition's any more.**
+ *
+ * Every source used to be generated at `COMP_W x COMP_H`, and `parityTimeline`
+ * said so in as many words: the two engines were known to disagree about what
+ * `scale` is a fraction OF whenever a clip's source resolution differed from
+ * the composition, so the fixture matched the sizes to keep that divergence out
+ * of a harness measuring compositing. D-353 closed the divergence — the export
+ * now reads `scale` the preview's way — so the fixture can (and must) finally
+ * carry the case that proves it: `scaled.mp4` is TWICE the composition on each
+ * axis, and the `c-scaled` clip sizes itself with a plain `scale`.
+ *
+ * **Twice, not half, and that is a measured choice rather than an arbitrary
+ * one.** A source SMALLER than the composition was tried first (320x180) and
+ * the parity comparison failed on it — but not on geometry: a pixel dump showed
+ * both engines putting the box's bottom edge on exactly the same row, with the
+ * difference confined to a 4-row soft-edge/chroma band straddling it (per-channel
+ * deltas of 25-27 against the harness's own 24 threshold). The render path
+ * decodes a source smaller than the composition UP to the composition's size
+ * first and then composites it back DOWN into the box, so that one clip paid two
+ * resamples and came out with a softer edge than ffmpeg's single `scale`. That is
+ * a real (small, pre-existing, unrelated-to-B-208) property of the render path
+ * for undersized sources, not a divergence this fix introduced or should hide
+ * behind a loosened tolerance. An OVERSIZED source goes down the same
+ * single-resample path every other clip here already uses, so it isolates the
+ * unit question this case exists to ask — and 4K footage in a 1080p composition
+ * is the commoner real shape anyway.
+ *
+ * The Rust half (`edit_render.rs`'s `generate_media`) reads this map instead of
+ * generating everything at the composition size.
+ */
+export const SOURCE_SIZES: Record<string, [number, number]> = {
+  [MEDIA.base]: [COMP_W, COMP_H],
+  [MEDIA.pip]: [COMP_W, COMP_H],
+  [MEDIA.rounded]: [COMP_W, COMP_H],
+  [MEDIA.cropped]: [COMP_W, COMP_H],
+  [MEDIA.scaled]: [COMP_W * 2, COMP_H * 2],
+};
+
+/** Every fixture source is this long. */
 const SOURCE_FRAMES = 90;
 
 function clip(id: string, source: string, over: Partial<Clip>): Clip {
@@ -81,17 +125,23 @@ function kf(frame: number, params: Record<string, number>): ClipKeyframe {
  * position (`overlay=x='<expr>'`), a rounded box (`geq`), and a crop
  * (`crop=`) — over a full-frame base layer (`overlay` onto `[base]`).
  *
- * **Every source is 640x360, the composition's own size, deliberately.** The
- * two engines are documented (see `capabilities.json`'s `scale` note) to
- * disagree about what `scale` is a fraction OF when a clip's source resolution
- * differs from the composition: the export reads it as a fraction of the canvas,
- * the live preview as a multiple of the clip's own footprint. That is a real,
- * known, pre-existing divergence and it is NOT what this fixture is measuring —
- * mixing it in would make a genuine geometry regression indistinguishable from
- * it. Matching the sizes makes the two readings the same number, so any pixel
- * difference this harness reports is about the compositing itself. (Every box
- * here is spelled with `box_width`/`box_height` besides, which both engines read
- * identically as canvas fractions.)
+ * **B-208/D-353 — and one clip sized by a plain `scale` from a source that is
+ * NOT the composition's size.** Every source here used to be 640x360 on
+ * purpose, because the two engines disagreed about what `scale` was a fraction
+ * OF (the export: the output canvas; the live preview: the clip's own native
+ * footprint) and matching the sizes kept that known divergence from
+ * contaminating a harness measuring compositing. D-353 settled it in the
+ * preview's favour and taught this compiler the same reading, so the case the
+ * fixture used to dodge is now the case it has to prove: `c-scaled` is a
+ * 320x180 source at `scale: 0.5`, which is a 160x90 box under the correct
+ * reading and a 320x180 one under the old. Nothing else about the harness
+ * changes — the other three overlays are still spelled with
+ * `box_width`/`box_height`, which both engines have always read identically as
+ * canvas fractions.
+ *
+ * `c-scaled` is a 1280x720 source (twice the composition on each axis, so a
+ * footprint of 2.0) at `scale: 0.25`, which is a 320x180 box under the correct
+ * reading and a 160x90 one — a quarter of the area — under the old.
  */
 export function parityTimeline(): Timeline {
   const top: Track = {
@@ -135,11 +185,26 @@ export function parityTimeline(): Timeline {
         position_x: 0.25,
         position_y: 0.25,
       }),
+      // B-208/D-353 — the non-degenerate `scale` case, and the only clip here
+      // sized without a `box_*` override. A 1280x720 source (twice the
+      // composition on each axis, footprint 2.0) at `scale: 0.25` is a 320x180
+      // box: the compositor computes `natural.0 * scale` = 320 and derives 180
+      // from the source's own aspect, and this compiler now emits
+      // `scale=w='640*2*(0.25)':h=-2`. Before D-353 it emitted `640*(0.25)` =
+      // 160 and ffmpeg derived 90 — a box a QUARTER of the area, in the one
+      // place the old fixture had deliberately arranged never to look.
+      clip('c-scaled', MEDIA.scaled, {
+        start_frame: 60,
+        duration: 15,
+        scale: 0.25,
+        position_x: 0.25,
+        position_y: 0.25,
+      }),
     ],
   };
   const bottom: Track = {
     kind: 'video',
-    clips: [clip('c-base', MEDIA.base, { start_frame: 0, duration: 60 })],
+    clips: [clip('c-base', MEDIA.base, { start_frame: 0, duration: 75 })],
   };
   return {
     id: 'parity',
@@ -150,13 +215,35 @@ export function parityTimeline(): Timeline {
 }
 
 export function parityOpts(): TimelineExportOptions {
-  return { fps: FPS, width: COMP_W, height: COMP_H };
+  return {
+    fps: FPS,
+    width: COMP_W,
+    height: COMP_H,
+    // B-208/D-353 — what `editorExport.ts`'s `resolveSourceFootprints` would
+    // compute for this timeline from the media pool's probed dimensions: each
+    // source's size over the composition's. Written out for every clip rather
+    // than only the one that is not 1:1, because that is what a real export of
+    // this timeline actually passes, and the whole value of this fixture is
+    // that it is the real compiler's real input.
+    sourceFootprints: Object.fromEntries(
+      [
+        ['c-pip', MEDIA.pip],
+        ['c-round', MEDIA.rounded],
+        ['c-crop', MEDIA.cropped],
+        ['c-scaled', MEDIA.scaled],
+        ['c-base', MEDIA.base],
+      ].map(([clipId, media]) => [
+        clipId,
+        { width: SOURCE_SIZES[media][0] / COMP_W, height: SOURCE_SIZES[media][1] / COMP_H },
+      ]),
+    ),
+  };
 }
 
 /** Timeline frames the Rust half renders through BOTH paths and compares.
  *  One inside the keyframe slide's start, middle and end; one on the rounded
- *  clip; one on the cropped clip. */
-const SAMPLE_FRAMES = [5, 15, 25, 35, 50];
+ *  clip; one on the cropped clip; one on the B-208 `scale` clip. */
+const SAMPLE_FRAMES = [5, 15, 25, 35, 50, 65];
 
 // --------------------------------------------------------------------------- #
 // The STRESS case — the shape B-228/B-229/B-230 were measured on.
@@ -227,6 +314,9 @@ interface ParityFixture {
   fps: number;
   sourceFrames: number;
   colors: Record<string, [number, number, number]>;
+  /** B-208/D-353 — each named source's own pixel size. No longer uniformly
+   *  `compWidth x compHeight`; see `SOURCE_SIZES`. */
+  sizes: Record<string, [number, number]>;
   sampleFrames: number[];
   durationSec: number;
   timeline: Timeline;
@@ -271,6 +361,7 @@ function buildFixture(): ParityFixture {
     fps: FPS,
     sourceFrames: SOURCE_FRAMES,
     colors: FIXTURE_COLORS,
+    sizes: SOURCE_SIZES,
     sampleFrames: SAMPLE_FRAMES,
     durationSec,
     timeline,
