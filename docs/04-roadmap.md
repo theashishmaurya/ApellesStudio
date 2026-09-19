@@ -315,6 +315,17 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    (`image::imageops::resize` is still serial within a frame), compositing genuinely on
    the GPU (§2 records that phase 1 never did move it there despite D-350's title), and
    hardware encode per segment.
+   **Real-world measurement (B-234): only ~6% net gain on the owner's actual 4K/79-clip
+   project (2.57x→2.41x), far below the 1.64x benchmark — not yet root-caused.**
+   **Phase 4 — the GPU compositor itself, SCOPED not built (2026-09-19, D-363).** A
+   read-only planning pass enumerated all 15 CPU compositor ops, designed a new
+   `crates/apelles-compositor` (L1, deps `apelles-gpu`+`apelles-types` only) taking a pure
+   `FramePlan` descriptor, and sequenced 5 waves gated on a wave-0 measurement of the real
+   project (also B-234's own missing root-cause data) before any GPU code is written.
+   Modelled ~0.94x with no margin — clears the goal but barely, and only if wave 0's real
+   split matches the 1080p fixture's. **Deliberately not built** per explicit owner
+   instruction to document now and pick up later. Full plan:
+   `docs/notes/export-gpu-compositor.md` §11; decision: `docs/08-decisions.md` D-363.
    **Phase 2 — still not built:**
    - `speedOverrides`/`fitOverrides`/`freezeOverrides` (refused, not silently ignored, by
      the render path today — the live compositor has no notion of them);

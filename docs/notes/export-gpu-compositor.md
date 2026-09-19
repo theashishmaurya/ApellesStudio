@@ -1,20 +1,28 @@
-# Export through the app's own compositor (D-350) — phases 1, 2 and 3
+# Export through the app's own compositor (D-350) — phases 1, 2, 3 and the GPU plan
 
 **Status:** phase 1 (correctness + memory) and phase 2 (speed, §9) shipped
 2026-09-18; phase 3 (contiguous segments, §10) shipped 2026-09-19. All opt-in
 (`renderer: "compositor"`) — the old filter-graph path is still the default and
-is still present.
+is still present. **§11 is a PLAN, not shipped work** — a real GPU compositor
+(D-363) was scoped 2026-09-19 in response to B-234 (phase 3's real-world gain
+being far smaller than its benchmark) but deliberately not built yet; read §11
+before picking this effort back up.
 **Decisions:** `docs/08-decisions.md` **D-350** (the architecture), **D-351**
-(phase 2's parallelism, and why frame-level `par_iter` is the wrong shape here)
-and **D-360** (phase 3's segments, lanes and concat).
+(phase 2's parallelism, and why frame-level `par_iter` is the wrong shape here),
+**D-360** (phase 3's segments, lanes and concat), and **D-363** (the GPU
+compositor plan, not yet built).
 **Bugs it supersedes:** B-228/B-229/B-230 (resource),
-B-201/B-208/B-218/B-223 (parity).
+B-201/B-208/B-218/B-223 (parity). **B-234** (phase 3's real-world shortfall) is
+what §11 exists to eventually close.
 
 Sections 1-8 are phase 1. **Section 9 is phase 2** — read §9.2 first if you are
 about to try to parallelise this loop. **Section 10 is phase 3**, which is the
 parallelisation §9.2 says IS correct, and §10.5 is the honest measurement of how
 far it got (1.64x, and still not under 1x) — including why a single timing run
-on this machine is worthless and what the harness does about it.
+on this machine is worthless and what the harness does about it. **Section 11
+is the plan for what comes next** — moving the compositor itself onto the GPU
+— scoped but explicitly deferred; start there, not from scratch, when this is
+picked back up.
 
 ---
 
@@ -776,3 +784,193 @@ Not speculation — these are the terms the measurements above name:
 | `packages/editor/src/timelinePipeExport.ts` | `segmentArgs`/`concatArgs`, the two tokens, `TimelineRenderPlan` |
 | `packages/editor/src/{editorExport,exportQueueStore}.ts` | the render plan carries `segments`; three hand-copied shapes become one `TimelineRenderPlan` |
 | `packages/editor/src/exportParityFixture.test.ts` | the segment argvs join the frozen fixture; three new cross-engine tests |
+
+---
+
+## 11. The GPU compositor plan (D-363) — scoped 2026-09-19, deliberately NOT built
+
+§10.5 named the remaining term: *"the compositing is still on the CPU… that
+remains the largest single unclaimed factor."* This section is a read-only
+planning pass's output (no code or other docs were touched by that pass) —
+captured here so the next session picks it up rather than re-deriving it. It
+answers "what would it take" without spending the build. See **D-363** in
+`docs/08-decisions.md` for the decision itself (options considered, why).
+
+### 11.1 What's being ported — fully enumerated, not guessed
+
+The CPU compositor (`app/src-tauri/src/chroma/edit.rs`) does exactly these
+operations, and nothing else — **source-over blending only, no masks, no
+other blend modes** (Colorist masks are stripped at LUT-bake time,
+`edit.rs:38-40`), which is what makes this tractable:
+
+1. opaque-black canvas init (`edit.rs:2410`)
+2. reverse z-order paint walk (`:2413`), order resolved on the CPU
+3. 3D-LUT grade per clip, **before geometry** (`grade_lut.rs:616` →
+   `lut3d.rs:223`) — must use **manual trilinear fetches from a storage
+   buffer**, not a hardware `textureSampleLevel` sampler, because hardware
+   samplers quantise interpolation weights to 8-bit fixed point and would
+   silently diverge from `Lut3d::sample_trilinear`'s f32 math
+4. integer crop rect from normalised insets (`:2477-2487`)
+5. placement box size, `effective_size` (`:1974`, used `:2652`)
+6. bilinear **magnify**, crop-relative taps (`blend_layer_sampled`,
+   `:2899-2948`)
+7. Triangle **minify**, separable two-pass (`image::imageops::resize`,
+   `:2715/2720`) — **the hard parity target**; §9.5 already found this
+   library does not expose its weight normalisation, so byte-exactness in
+   WGSL is not guaranteed and must be measured, not assumed
+8. rounded-corner SDF coverage × alpha (`corner_coverage`, `:2526`), applied
+   after scale, before rotate
+9. rotation about the crop's centre, rgba32f/bilinear/transparent border
+   (`:2758-2769`)
+10. opacity alpha multiply (`:2771-2779`)
+11. source-over blend (`overlay_parallel` = `image::Rgba::blend`, `:235-260`,
+    `:2969-2973`) — **truncates, does not round** (`as u8`)
+12. placement at `round(position * canvas)` (`:2794-2796`, D-338's top-left
+    convention)
+13. the adjustment-clip colour op on the whole canvas (`:2443` →
+    `AdjustmentOps::apply_rgb8`, `adjustment.rs:340`) — **floors to u8
+    between its two stages** (`:343-344`); a "cleaner" full-precision f32
+    shader would diverge by design
+14. generated colour plates / dip-to-colour (`:2286-2298`)
+15. pre-rasterised text/caption layers (`:2331-2345`, `:1376`) — stay
+    CPU-rasterised, uploaded as cached textures, not re-derived on the GPU
+
+**Deliberately out of scope:** the live preview (stays byte/thread-identical
+— D-351 §9.4 is the precedent for why reaching into preview scheduling from
+an export change breaks things), the single-layer plain-decode fast path
+(`:1268-1306`, keep it — uploading/reading back an already-correct frame
+would be a regression), GPU decode, hardware encode (separate wave, changes
+output bytes), and deleting the CPU compositor (it stays as the parity
+reference, permanently).
+
+### 11.2 Where it lives: a new crate, `crates/apelles-compositor`
+
+Not inside `apelles-gpu` — that crate is L0 and must stay a thin
+`init_gpu_context()` shell per its own README and architecture-lock's
+rebuild-time principle. The name and slot are already reserved in
+`crates/README.md:20`, `docs/03-architecture.md:138`,
+`docs/notes/architecture-lock.md:45`. Legal dependency chain: `app (L4) →
+apelles-compositor (L1) → apelles-gpu (L0) → apelles-types (L0)`. It needs
+only `apelles-gpu` (device) and `apelles-types` (`Lut3d`, `AdjustmentOps`,
+already L0) — **not** `apelles-media` or `apelles-grade` as
+architecture-lock's own table predicted, and not `apelles-timeline` (L2,
+would be an illegal upward edge). **That prediction was wrong and D-363
+corrects it — record the correction, same as D-143/D-146/D-148 each did.**
+
+The crate takes a pure `FramePlan { canvas, steps: Vec<Step> }` /
+`Step::{Paint{source, place}, Adjust(AdjustmentOps)}` descriptor — no
+timeline/app types cross the boundary. `edit.rs` gains exactly one
+`ClipTransform + natural → Placement` conversion, reusing
+`crop_pixel_rect`/`effective_size` unchanged, so the geometry math still has
+exactly one implementation (the D-350 rationale, applied at this new
+boundary rather than undone by it — the single gravest risk here is
+re-deriving geometry inside the shader and recreating the bug class D-350
+exists to close).
+
+Wired as a **third `renderer` value, `"gpu"`**, alongside the existing
+`'filter' | 'compositor'` (`editorExport.ts:98,264-272,423-454`,
+`mcp/schemas.py:390`, `crates/apelles-mcp/src/tools/edit.rs:873,3962,3989`).
+Same pipe protocol, same argv shape — only who fills the RGBA buffer
+changes. `'compositor'` stays the default until parity + throughput evidence
+is in.
+
+### 11.3 The honest bandwidth arithmetic
+
+At 4K, canvas readback alone is 3840×2160×4 = 33.2 MB/frame; at ~24fps that's
+~0.8 GB/s — fine on Apple Silicon's unified memory, **but only if pipelined**
+with a bounded staging-buffer ring (the same shape as `WRITE_AHEAD`,
+`edit_render.rs:119-134`). A naive synchronous `device.poll(PollType::Wait)`
+per frame (the pattern that's correct for `gpu_processing.rs`'s one-off
+screenshot readback, wrong here) would fully serialise CPU/GPU and hand the
+whole win back — the single biggest way this effort could make export
+*slower*, not faster.
+
+**Modelled, not measured:** if the real 4K project's ~100ms/frame splits like
+the 1080p fixture (composite ≈ 2/3), swapping ~67ms of CPU compositing for
+~6ms of GPU upload+dispatch+readback predicts ~39ms/frame ⇒ ~219s for the
+233.5s test video ⇒ **~0.94x**. That clears the <1x goal with *no margin* —
+which is exactly why the plan puts a measurement wave *before* any GPU code:
+if the real split turns out closer to composite-40%/decode-40%/encode-20%,
+the GPU compositor alone cannot reach <1x and hardware encode has to be
+pulled forward.
+
+### 11.4 Five waves (each independently commit-able and verifiable)
+
+0. **Measure first (Sonnet, blocking gate).** Per-phase timing (decode / LUT
+   / composite / resize / readback / encoder-wait) on the *real* 4K/79-clip
+   project, per segment — `measure_render_throughput` currently reports only
+   a total. This is also B-234's own missing root-cause measurement. If
+   composite is under ~45% of real wall time, say so and resequence hardware
+   encode ahead of the GPU compositor.
+1. **The crate + op kernels (Opus).** `apelles-compositor`, WGSL for ops
+   3/6/7/8/10/11/13 above, not wired into anything yet. Op-level parity
+   tests, byte-exact where the CPU op is byte-exact (source-over, the
+   adjustment operator's floor, the LUT's manual fetch) — the frame-level
+   diff metric (`GROSS_DIFF_CHANNEL = 24`) deliberately ignores ±1 LSB drift,
+   so these op tests are what actually catch rounding divergence.
+2. **Frame assembler + opt-in wiring (Opus).** `FramePlan`/`Placement`, the
+   one `ClipTransform → Placement` conversion, `renderer: "gpu"` through
+   both MCP surfaces **and the export-dialog GUI control in the same
+   commit** (CLAUDE.md's human-AND-AI rule). Frame- and video-level parity
+   against the CPU path (`export-parity.json`, same methodology as §10's
+   segment work). Performance is explicitly NOT claimed in this wave.
+3. **Make it fast (Opus).** One device + one pipeline cache per render
+   (never process-lifetime — mirrors `BakeSession`'s own reasoning,
+   `grade_lut.rs:95-103`), a texture pool, an async staging-buffer ring, a
+   text/caption texture cache, and a re-decision of `MAX_SEGMENTS` now that
+   the GPU is a second shared resource segments compete for. This is the
+   wave that either reaches <1x or produces the honest number for what's
+   still missing.
+4. **The remaining terms (Sonnet), sequenced by wave 0/3's data.**
+   `h264_videotoolbox` per segment, optionally `nv12`/`yuv420p` from
+   `decode_pipe` so colour conversion also moves to the GPU. Both change
+   output bytes — parity moves to the picture-level tolerance D-360 already
+   established for a different encoder, not byte-exactness.
+5. **The live preview.** Explicitly deferred, needs its own decision — D-351
+   §9.4's scar tissue about reaching into preview scheduling applies again.
+
+### 11.5 Named risks and their catchers
+
+Triangle-minify not matching `image`'s weight normalisation (caught by the
+op-level test; fallback is CPU-only minify through wave 2, moved in wave 3
+with its own measurement) · intermediate-quantisation mismatches in the
+adjustment operator and source-over blend, invisible to the frame metric
+(caught by byte-exact op tests) · hardware LUT-sampler quantisation (caught
+by the LUT op test; mitigated structurally by manual fetches, never
+`textureSampleLevel`) · readback becoming the new bottleneck (caught by wave
+3's phase timing; mitigated by the bounded staging ring) · VRAM/unified-memory
+pressure at 4K × N segments, the same unbounded-per-unit-cost shape as
+B-229/B-230 one layer down (caught by extended resource measurement;
+mitigated by one device + one bounded pool + re-deciding `MAX_SEGMENTS`) · a
+third long-lived wgpu device alongside `image_processing::GpuContext` and
+`BakeSession` (mitigated by construction — created per render, dropped at the
+end) · the `wgpu = "29.0"` pin (`app/src-tauri/Cargo.toml`, downgraded to
+avoid a P3 colour shift on Apple devices) — any dependency forcing wgpu 30
+reintroduces that bug, hard constraint on every dep choice · cross-device
+non-determinism, since CPU IEEE-754 gives cross-machine byte-identity and a
+GPU does not — CLAUDE.md's determinism invariant becomes a *per-device*
+guarantee for this path, stated as an accepted scoped weakening, not
+discovered later · GPU hang/device loss mid-export — every poll needs a
+timeout and the export must fail loudly, never silently fall back to CPU
+mid-render (which would ship one file composited two different ways) ·
+losing the single-layer fast path if `renderer: "gpu"` routes every frame
+through upload+readback regardless (mitigated by keeping `edit.rs:1268-1306`
+intact and asserting it still triggers under the GPU renderer).
+
+### 11.6 Dependency check done, so it isn't redone
+
+Per CLAUDE.md's "check for an existing crate before hand-rolling" rule:
+**Smelter** (`software-mansion/smelter`) isn't usable — its render crate
+isn't published on crates.io, it's a workspace-internal piece of a media
+*server* with its own decode/encode pipeline. **Vello**
+(`linebender/vello`, Apache-2.0/MIT, wgpu `^29.0.3` compatible with our pin)
+is genuinely maintained but is a vector-path renderer whose image
+resampling/AA/blend semantics are its own — adopting it would turn "does the
+GPU match the CPU" from a check into a re-derivation, and it does nothing
+for the 3D-LUT grade or the adjustment operator (custom shaders either way).
+**rosace-compositor** (0.1.0, ~70 downloads) isn't a real dependency
+candidate. The operation set here is small, fixed, and fully enumerated
+above (§11.1) — CLAUDE.md's own carve-out ("a genuinely small, stable need
+loses to a dependency") applies; hand-rolling these specific WGSL kernels
+against the CPU path as ground truth is the right call, not a shortcut
+around the rule.

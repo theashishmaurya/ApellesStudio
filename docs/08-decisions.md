@@ -6,6 +6,88 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-363 — the Edit tab's compositor moves to the GPU (wgpu/Metal), as a new `apelles-compositor` crate, opt-in behind `renderer: "gpu"`
+
+**Status: `open` — planned, not built.** A read-only planning pass scoped this
+2026-09-19; no code was written. Captured so the next session picks the plan
+up rather than re-deriving it — see `docs/notes/export-gpu-compositor.md` §11
+for the full op list, phasing, and risk table this summary compresses.
+
+**Context.** D-350 made the export render through the app's own compositor,
+D-351 put its per-pixel passes on every core, D-360 split the render into
+contiguous segments with their own decode lanes and encoders. Measured end to
+end on the owner's real project (3840×2160, ~79 clips, 233.54s of video):
+~600s → ~562s, i.e. 2.57x → 2.41x real-time (B-234). The goal is under 1x.
+Segmentation delivered ~6% on the real project against the 1.64x its own
+1080p fixture predicted, and D-360's own §10.5 already named the remaining
+term: "the compositing is still on the CPU… that remains the largest single
+unclaimed factor." D-350 §2 recorded that its own title said "GPU compositor"
+while the code it built on (`composite_layer_onto`, `image`/`imageproc`) is
+CPU. This decision closes that gap. Every comparable professional tool
+composites on the GPU (DaVinci Resolve and Final Cut both on Metal); a CPU
+compositor is the wrong architecture for real-time 4K, not a slow
+implementation of the right one.
+
+**Options considered.**
+1. *More CPU optimisation.* §9.5's Amdahl back-solve puts the parallelised
+   share of compositing at only ~41%; the rest is `image::imageops::resize`
+   (whose weight normalisation isn't exposed) and the crop copy. Small
+   ceiling, mostly already spent.
+2. *An existing GPU-compositing crate*, per CLAUDE.md's "check before
+   hand-rolling" rule. Checked: Smelter isn't published/embeddable (a media
+   server's internal crate); Vello is maintained and wgpu-29-compatible but
+   is a vector-path renderer whose resampling/blend semantics are its own —
+   adopting it turns "does the GPU match the CPU" into a re-derivation, and
+   it does nothing for the 3D-LUT grade or the adjustment operator either
+   way; rosace-compositor (~70 downloads) isn't a real candidate. The op set
+   here is small, fixed and fully enumerated — the rule's own carve-out
+   ("a genuinely small, stable need loses to a dependency") applies.
+3. *Hardware encode/decode first.* Real remaining terms, but they don't touch
+   the measured majority (compositing was 66.7% of the compositor's own wall
+   time at 1080p). Sequenced as a later wave, gated on measurement.
+4. *A GPU compositor, as a new L1 crate.* **Chosen.**
+
+**Choice.** A new `crates/apelles-compositor` (L1) — the crate
+`architecture-lock.md`, `crates/README.md` and `docs/03-architecture.md` have
+all named as future work since D-039. Depends on `apelles-gpu` (device only)
+and `apelles-types` (`Lut3d`, `AdjustmentOps`, already L0) — **not**
+`apelles-media`/`apelles-grade` as architecture-lock's table predicted, and
+not `apelles-timeline` (L2, an illegal upward edge); that prediction is now
+corrected. Takes a pure `FramePlan` descriptor; `ClipTransform → Placement`
+is one conversion in `edit.rs` reusing `crop_pixel_rect`/`effective_size`
+unchanged, so the geometry math keeps exactly one implementation. A third
+`renderer` value, `"gpu"`, exposed on the GUI and both MCP surfaces in the
+same pass (human-AND-AI rule) — `"compositor"` stays the default and the
+parity reference.
+
+**Why.** The measurement says compositing is the majority of the export's own
+time and the only remaining term whose *shape* the CPU can't change. The op
+set to port is small and fully enumerated (crop, bilinear magnify, Triangle
+minify, rounded-box SDF, rotate, opacity, source-over, 3D LUT, adjustment
+operator) — no blend modes, no masks, which is what makes the port tractable
+and checkable op by op.
+
+**What this costs, stated rather than discovered.** CPU IEEE-754 gives
+byte-identical output on any machine; a GPU does not. CLAUDE.md's "same doc +
+same frame ⇒ identical pixels" becomes, on this path, a **per-device**
+guarantee, bounded by the CPU compositor remaining present as the reference.
+Parity against it is asserted with D-350's own `solid_share`/`gross_share`
+metric on the committed `export-parity.json`, plus byte-exact op-level tests
+(the frame metric's `GROSS_DIFF_CHANNEL = 24` deliberately ignores ±1 LSB, so
+op tests are what stop rounding drift accumulating unseen).
+
+**What it does not claim.** That it reaches <1x. The modelled figure is
+~0.94x with no margin, and the measurement that decides it — a per-phase
+profile of the real 4K project, never taken (B-234) — is wave 0 of this
+work, deliberately ahead of any GPU code. **Five waves, gated on wave 0's
+number:** (0) measure the real project, (1) crate + op kernels, no wiring,
+(2) frame assembler + opt-in wiring, no performance claim, (3) make it fast —
+device/pipeline reuse, texture pool, staging ring, re-decide `MAX_SEGMENTS`,
+(4) hardware encode/decode, sequenced by what 0/3 found. The live preview is
+explicitly excluded (its own future decision — D-351 §9.4 is why).
+
+---
+
 ## D-358 — a shared store runtime (`@apelles/store`): HMR-resilient singletons, and an op-time project-identity guard
 
 **decided (2026-09-18)** · fixes **B-217** · relates to **B-083/D-203** (the identity bridge this guards), **D-201/B-081** (why a store module is not a Fast Refresh boundary)

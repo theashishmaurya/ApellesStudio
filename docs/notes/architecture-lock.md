@@ -42,7 +42,7 @@ binary, Tauri.**
 |---|---|---|
 | `apelles-media` | **real, D-146.** decode / probe. VideoToolbox (macOS HW) → wgpu texture; ffmpeg-CLI fallback (D-015); the persistent decode pipe (D-030); the source-keyed disk cache (D-128); the LOD filmstrip (D-128/D-134); the Edit-tab audio engine + waveforms (D-049/D-051/D-057). ffmpeg is a **subprocess, never linked.** The export encode pipe (D-022) has **not** moved — it is still `chroma/export.rs`, which imports six fork modules (`crate-extraction-plan.md` §2.7). | `apelles-types` — **not `apelles-gpu`**: this table predicted that edge, and the real extracted code has none (everything moved is CPU/subprocess). It becomes real if and when VideoToolbox→texture lands. |
 | `apelles-grade` | the colour grade **renderer** — wraps the RapidRAW `engine/` shader + `AllAdjustments` ↔ uniform bridge + masks + `structure_blur` + scopes (D-021) | `apelles-gpu`, `apelles-types`, `engine` |
-| `apelles-compositor` | multi-layer wgpu compositing: blend N `apelles-media` layers + transitions, then `apelles-grade` per output frame. **The new work for the editing tab.** | `apelles-gpu`, `apelles-media`, `apelles-grade`, `apelles-types` |
+| `apelles-compositor` | multi-layer wgpu compositing: blend N layers + transitions. **The new work for the editing tab.** Scoped as **D-363** (2026-09-19, not built) — real deps below are corrected from this table's original prediction; see `docs/notes/export-gpu-compositor.md` §11. | `apelles-gpu`, `apelles-types` |
 
 ### Layer 2 — domain models (pure data + logic, NO gpu/media deps)
 | crate | responsibility | depends on |
