@@ -324,9 +324,16 @@ export function Root() {
 
   const mediaItems = useMediaPoolStore((s) => s.items);
   const editTracks = useEditorTimelineStore((s) => s.timeline?.tracks);
+  // B-219/D-359 — the open project's own root goes in with them. It is what
+  // separates "this pool item is the file a re-render will overwrite" from
+  // "this pool item was inherited verbatim when the project was copied on the
+  // filesystem and points into the ORIGINAL project, where no render of ours
+  // can reach it". `motionProjectPath` above is the same value the Motion tab
+  // already keys its manifest on, so there is no second notion of which
+  // project is open.
   const motionEditLinks = useMemo(
-    () => computeEditLinks(mediaItems, editTracks ?? []),
-    [mediaItems, editTracks],
+    () => computeEditLinks(mediaItems, editTracks ?? [], motionProjectPath),
+    [mediaItems, editTracks, motionProjectPath],
   );
 
   return (

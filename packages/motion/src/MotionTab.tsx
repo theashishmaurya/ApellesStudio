@@ -507,9 +507,23 @@ export function MotionTab({
             save failed: {m.saveError}
           </span>
         )}
+        {/* B-202 — WHICH scene failed, not just that a render did. The loop
+           stops on the first failure (D-180), so the scene named here is the
+           one to fix; everything before it is on disk. Same
+           `renderStatus.failedSceneId` `motion_get_state` reports, so the
+           owner and an agent read the same fact. */}
         {!m.saveError && m.renderError && (
-          <span className="text-[11px] text-red-400 truncate max-w-[280px]" title={m.renderError}>
-            render failed: {m.renderError}
+          <span
+            className="text-[11px] text-red-400 truncate max-w-[280px]"
+            title={
+              m.renderStatus.failedSceneId
+                ? `scene "${m.renderStatus.failedSceneId}" failed after ${m.renderStatus.scenesDone} of ${m.renderStatus.scenesTotal} scene(s): ${m.renderError}`
+                : m.renderError
+            }
+          >
+            render failed
+            {m.renderStatus.failedSceneId ? ` (scene ${m.renderStatus.failedSceneId})` : ''}:{' '}
+            {m.renderError}
           </span>
         )}
         {/* D-180 — Render now produces one file PER SCENE, never one
@@ -529,8 +543,16 @@ export function MotionTab({
         <Button variant="secondary" disabled={!m.dirty || m.saving || !!m.parseError} onClick={m.save}>
           {m.saving ? 'Saving…' : 'Save'}
         </Button>
+        {/* B-202 — real progress while it runs. A multi-scene render takes
+           minutes, and "Rendering…" alone made a stalled render and a slow
+           one look identical; the scene counter is the same
+           `scenesDone`/`scenesTotal` pair `motion_get_state` reports. */}
         <Button disabled={m.rendering || !!m.parseError} onClick={m.render}>
-          {m.rendering ? 'Rendering…' : 'Render'}
+          {m.rendering
+            ? m.renderStatus.scenesTotal
+              ? `Rendering ${Math.min(m.renderStatus.scenesDone + 1, m.renderStatus.scenesTotal)}/${m.renderStatus.scenesTotal}…`
+              : 'Rendering…'
+            : 'Render'}
         </Button>
       </div>
       <div className="flex-1 min-h-0">

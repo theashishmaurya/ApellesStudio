@@ -23,6 +23,10 @@
 //!   renderer. It still does NOT know about the media pool or the timeline —
 //!   the provenance stamp and the clip refresh are the app layer's
 //!   (`app/src/Root.tsx`), same D-062 layering.
+//!   **B-202** — it also LOGS each render's start and, on failure, the scene id
+//!   and the real error. The frontend drives one call per scene and a
+//!   multi-scene render always outlives the 20s bridge timeout, so without this
+//!   a mid-loop failure left no trace anywhere on this side of the app.
 //! What it does NOT do: no manifest schema validation — the frontend
 //!   validates against the `zod` schema in
 //!   `packages/motion-engine/src/engine/schema.ts` before ever calling
@@ -215,20 +219,38 @@ pub async fn chroma_motion_render(
     if let Some((start, end)) = frame_range {
         req = req.with_frame_range(start, end);
     }
+
+    // B-202 — the log trail. A multi-scene render is driven from the frontend
+    // one scene at a time and always outlives `control.rs`'s 20s bridge
+    // timeout, so when a scene fails the op's reply is long gone and the
+    // failure used to exist NOWHERE: the loop simply stopped, the caller found
+    // N of M files on disk, and the app log was empty. These two lines are the
+    // floor under that — whatever any caller does or does not poll, the app
+    // log now names the scene that failed and why. `motion_get_state`'s
+    // `render` block is the other half (the one a caller can read back).
+    let scene = scene_id.as_deref().unwrap_or("<whole manifest>");
+    log::info!(
+        "[chroma::motion] render start — scene {scene}, frames {}, → {}",
+        frame_range.map_or_else(|| "all".to_string(), |(a, b)| format!("{a}-{b}")),
+        out.display()
+    );
     let outcome = tauri::async_runtime::spawn_blocking(move || apelles_motion::run_render(&req))
         .await
-        .map_err(|e| format!("render task panicked: {e}"))?
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("render task panicked: {e}"))
+        .and_then(|r| r.map_err(|e| e.to_string()))
+        .inspect_err(|e| log::error!("[chroma::motion] render FAILED — scene {scene}: {e}"))?;
 
     std::fs::rename(&staging, &out).map_err(|e| {
         // Leave the staged file where it is: it is a complete, correct render
         // and the previous output is still intact, so the recoverable state is
         // the one worth reporting.
-        format!(
+        let message = format!(
             "rendered to {} but could not move it onto {}: {e}",
             staging.display(),
             out.display()
-        )
+        );
+        log::error!("[chroma::motion] render FAILED — scene {scene}: {message}");
+        message
     })?;
 
     // D-260 — the one cache in this workspace that a replaced file does NOT
@@ -361,6 +383,7 @@ mod motion_relink_tests {
             &mut manifest,
             &[render.to_string_lossy().into_owned()],
             Some(SCENE_ID),
+            Some(dir),
         );
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].motion_scene_id.as_deref(), Some(SCENE_ID));
@@ -501,8 +524,12 @@ mod motion_relink_tests {
 
         solid_clip(&out, "red", 2);
         let mut manifest = empty_manifest();
-        let (first, changed) =
-            super::super::project::refresh_media(&mut manifest, &[path.clone()], Some(SCENE_ID));
+        let (first, changed) = super::super::project::refresh_media(
+            &mut manifest,
+            std::slice::from_ref(&path),
+            Some(SCENE_ID),
+            Some(&dir),
+        );
         assert!(changed, "adding an item is a change");
         let id = first[0].id.clone();
         assert_eq!(
@@ -516,8 +543,12 @@ mod motion_relink_tests {
         solid_clip(&staging, "blue", 4);
         std::fs::rename(&staging, &out).expect("rename");
 
-        let (second, changed) =
-            super::super::project::refresh_media(&mut manifest, &[path.clone()], Some(SCENE_ID));
+        let (second, changed) = super::super::project::refresh_media(
+            &mut manifest,
+            std::slice::from_ref(&path),
+            Some(SCENE_ID),
+            Some(&dir),
+        );
         assert!(changed, "a longer render is a real change to the pool item");
         assert_eq!(
             manifest.media.len(),
@@ -536,8 +567,12 @@ mod motion_relink_tests {
         );
 
         // Idempotent: reconciling an unchanged file writes nothing.
-        let (_, changed) =
-            super::super::project::refresh_media(&mut manifest, &[path], Some(SCENE_ID));
+        let (_, changed) = super::super::project::refresh_media(
+            &mut manifest,
+            &[path],
+            Some(SCENE_ID),
+            Some(&dir),
+        );
         assert!(
             !changed,
             "reconciling an unchanged file must not dirty the manifest"

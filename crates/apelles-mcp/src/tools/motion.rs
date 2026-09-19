@@ -379,6 +379,16 @@ impl ApellesMcp {
       * `fps`, `totalFrames`, `width`, `height`, `title` — the document's own
         output spec, all four of them written by
         `motion_set_project_settings`.
+      * `render` — where a `motion_render` is: `state` (`idle`/`running`/
+        `error`), `scenesTotal` / `scenesDone` / `doneSceneIds` (real
+        progress), `sceneId` (the one rendering right now), and
+        `failedSceneId` + `error` when one failed. **This is how you find out
+        a render failed.** A multi-scene render always outlives the 20s
+        control-bridge timeout, so `motion_render`'s own reply is gone before
+        a mid-loop failure happens; poll here instead of counting files on
+        disk, which cannot tell "still rendering" from "stopped on a failure".
+        A failed render stops at the failing scene, so `doneSceneIds` is
+        exactly what is on disk and `failedSceneId` is what to fix.
       * `scenes` — one row per scene: `index`, `id`, `dur` (SECONDS), its
         absolute `startFrame` in the combined timeline, `layerCount`,
         `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.
@@ -1705,7 +1715,23 @@ impl ApellesMcp {
     A scene that is `rendered: true` with `clipCount: 0` has been rendered and
     is sitting in Sources, but has never been placed — re-rendering it changes
     nothing on the timeline. Use `editor_add_clip` with its `mediaId` to place
-    it."#
+    it.
+
+    **`rendered` and `clipCount` are answered against the file a re-render
+    will actually WRITE (B-219).** A project copied on the filesystem (Finder,
+    `cp -R`) keeps the ORIGINAL project's absolute media paths, so its Motion
+    pool items point at files no render of this project can reach. Such a
+    scene reads `rendered: false`, `clipCount: 0`, `refreshedByRender: false`,
+    with the whole inherited link reported separately as `staleLink`
+    (`mediaId` / `sourcePath` / `clipCount` / `clips` / `reason`), and the
+    response carries a top-level `warning`. Those clips are really on the
+    timeline and really play — they just will not be refreshed by a render.
+    Fix: `motion_render` the scene to produce this project's own file, then
+    `editor_swap_clip_media` those clips onto it.
+
+    `refreshedByRender` is three-valued: `true` (the render lands on this
+    file), `false` (the copied-project case above), `null` (no project root
+    reached the tab — the question was not asked, which is not a "no")."#
     )]
     pub async fn motion_get_edit_links(&self) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new();
@@ -1868,7 +1894,10 @@ impl ApellesMcp {
     itself — in the preview and in the export — with its length and frame rate
     re-read from the new render. You do NOT re-import, and you do NOT call
     `editor_swap_clip_media`. Call `motion_get_edit_links` to see what a
-    re-render will refresh (or did).
+    re-render will refresh (or did). The one case where it does NOT hold is a
+    project copied on the filesystem, whose pool still names the ORIGINAL
+    project's files — `motion_get_edit_links` reports that as `staleLink` and
+    says what to do about it (B-219).
 
     It is still not a live embed, and the difference matters: nothing
     re-renders on its own. Editing the manifest changes nothing downstream
@@ -1879,8 +1908,12 @@ impl ApellesMcp {
     **A slow render can look like a failure and is not.** The control bridge
     gives up after 20 seconds while the render keeps running to completion on
     disk. If this returns a timeout error, treat it as INCONCLUSIVE rather
-    than failed: wait, then check the Sources pool for the new files instead
-    of re-rendering (which would just start a second render)."#
+    than failed, and poll `motion_get_state`'s `render` block instead of
+    re-rendering (which would just start a second render). That block is the
+    definitive answer: `running` with a scene counter means wait, `idle` with
+    `scenesDone == scenesTotal` means it finished, and `error` names the scene
+    that failed and why (B-202). Counting files in Sources cannot tell those
+    three apart."#
     )]
     pub async fn motion_render(&self) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new();

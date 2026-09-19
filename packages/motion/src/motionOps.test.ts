@@ -76,6 +76,11 @@ import {
 import { sizeFields } from './propCatalog';
 import type { Selection } from './LayerList';
 import type { MotionLayerPreset } from './layerPresets';
+import {
+  IDLE_RENDER_STATUS,
+  runSceneRenders,
+  type MotionRenderStatus,
+} from './renderLoop';
 
 // ---------------------------------------------------------------------------
 // harness
@@ -91,6 +96,7 @@ function harness(initial: Manifest = sample) {
     loadState: 'ready' as MotionOpsApi['loadState'],
     selections: [] as Selection[],
     frame: 0,
+    renderStatus: IDLE_RENDER_STATUS as MotionRenderStatus,
   };
   const commits: { manifest: Manifest; label: string }[] = [];
   const seeks: number[] = [];
@@ -117,6 +123,12 @@ function harness(initial: Manifest = sample) {
     },
     save: save as unknown as MotionOpsApi['save'],
     render: render as unknown as MotionOpsApi['render'],
+    // B-202 — the render's own progress. Mutable through `state` so a test can
+    // put the tab into "a scene failed" and read it back out of
+    // `motion_get_state`, which is the whole point of the field existing.
+    get renderStatus() {
+      return state.renderStatus;
+    },
   };
 
   let player: MotionPlayer | null = {
@@ -344,6 +356,80 @@ describe('reads', () => {
     expect(scenes[2]).toMatchObject({ index: 2, id: 'space', startFrame: 300, scene3dChildCount: 2, camera3dKeys: 2 });
   });
 
+  // ------------------------------------------------------------------ //
+  // B-202 — motion_get_state reports the render's own status
+  // ------------------------------------------------------------------ //
+
+  it('motion_get_state reports an idle render before anything has been rendered', () => {
+    const h = harness();
+    expect(h.run('motion_get_state').render).toEqual(IDLE_RENDER_STATUS);
+  });
+
+  it('THE headline (B-202): a scene that FAILS mid-render is named by motion_get_state', async () => {
+    // The whole bug: `motion_render` renders one scene at a time and always
+    // outlives control.rs's 20s bridge timeout, so when scene 2 of 3 fails the
+    // op's reply is long gone. This is the route by which a caller who was
+    // told "treat the timeout as inconclusive" can find out what happened —
+    // before this pass there was none, in the reply, the log or here.
+    const h = harness();
+
+    // the REAL loop, with a deliberately-failing scene — not a hand-written
+    // status literal, so this covers the wiring rather than the shape.
+    const outcome = await runSceneRenders(
+      sample.scenes.map((s, i) => ({ sceneId: s.id, startFrame: i * 100, endFrame: i * 100 + 99 })),
+      {
+        renderScene: async (job) => {
+          if (job.sceneId === 'stack') throw new Error('remotion render exited 1: ENOMEM');
+          return job.sceneId;
+        },
+        onStatus: (s) => {
+          h.state.renderStatus = s;
+        },
+      },
+    );
+    expect(outcome.ok).toBe(false);
+
+    const render = h.run('motion_get_state').render as Record<string, unknown>;
+    expect(render.state).toBe('error');
+    expect(render.failedSceneId).toBe('stack');
+    expect(render.error).toContain('ENOMEM');
+    // and the progress that used to be reconstructable only by counting files
+    expect(render.scenesTotal).toBe(3);
+    expect(render.scenesDone).toBe(1);
+    expect(render.doneSceneIds).toEqual(['hook']);
+  });
+
+  it('motion_get_state distinguishes a RUNNING render from a stalled one', async () => {
+    // "still rendering", "stopped on a failure" and "finished early" were
+    // indistinguishable from a directory listing. They are three states here.
+    const h = harness();
+    let release = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const loop = runSceneRenders([{ sceneId: 'hook', startFrame: 0, endFrame: 99 }], {
+      renderScene: async () => {
+        await blocked;
+        return 'hook';
+      },
+      onStatus: (s) => {
+        h.state.renderStatus = s;
+      },
+    });
+
+    const mid = h.run('motion_get_state').render as Record<string, unknown>;
+    expect(mid.state).toBe('running');
+    expect(mid.sceneId).toBe('hook');
+    expect(mid.scenesDone).toBe(0);
+
+    release();
+    await loop;
+    const after = h.run('motion_get_state').render as Record<string, unknown>;
+    expect(after.state).toBe('idle');
+    expect(after.scenesDone).toBe(1);
+    expect(after.error).toBeNull();
+  });
+
   it('motion_get_state survives the player not being mounted', () => {
     const h = harness();
     h.unmountPlayer();
@@ -556,8 +642,14 @@ describe('scenes', () => {
         mediaId: 'm1',
         sourcePath: '/p/.chroma/motion/renders/s0.mp4',
         clips: [{ track: 0, clip: 0, clipId: 'c1', name: 's0.mp4' }],
+        refreshedByRender: true,
       },
-      [sample.scenes[1].id]: { mediaId: 'm2', sourcePath: '/p/.chroma/motion/renders/s1.mp4', clips: [] },
+      [sample.scenes[1].id]: {
+        mediaId: 'm2',
+        sourcePath: '/p/.chroma/motion/renders/s1.mp4',
+        clips: [],
+        refreshedByRender: true,
+      },
     };
 
     const resized = h.run('motion_set_project_settings', { width: 1080, height: 1920 });
@@ -1583,6 +1675,7 @@ describe('motion_get_edit_links', () => {
           { track: 0, clip: 2, clipId: 'c9', name: 'hook.mp4' },
           { track: 1, clip: 0, clipId: 'c10', name: 'hook.mp4' },
         ],
+        refreshedByRender: true,
       },
     };
     const r = h.run('motion_get_edit_links');
@@ -1624,10 +1717,109 @@ describe('motion_get_edit_links', () => {
   it('a rendered-but-unplaced scene is rendered with zero clips', () => {
     const h = harness();
     const sceneId = sample.scenes[0].id;
-    h.links.current = { [sceneId]: { mediaId: 'm1', sourcePath: '/hook.mp4', clips: [] } };
+    h.links.current = {
+      [sceneId]: { mediaId: 'm1', sourcePath: '/hook.mp4', clips: [], refreshedByRender: true },
+    };
     const row = (h.run('motion_get_edit_links').scenes as Array<Record<string, unknown>>)[0];
     expect(row.rendered).toBe(true);
     expect(row.clipCount).toBe(0);
+  });
+
+  // ------------------------------------------------------------------ //
+  // B-219/D-359 — a link into a DIFFERENT project
+  // ------------------------------------------------------------------ //
+
+  /** The copied-project shape, as `computeEditLinks` hands it over: a stamped
+   *  pool item with clips placed from it, which a `motion_render` of this
+   *  scene will NOT write to. */
+  const staleLinks = (sceneId: string) => ({
+    [sceneId]: {
+      mediaId: 'm1',
+      sourcePath: '/Movies/Chroma/c040-mgfx.chroma/motion/renders/hook.mp4',
+      clips: [
+        { track: 0, clip: 2, clipId: 'c9', name: 'hook.mp4' },
+        { track: 1, clip: 0, clipId: 'c10', name: 'hook.mp4' },
+      ],
+      refreshedByRender: false as const,
+    },
+  });
+
+  it('THE headline: a link a re-render cannot reach reads rendered:false, clipCount:0', () => {
+    // B-219's own words: "an honest `clipCount: 0` here would have made this
+    // visible in one call". This tool's entire job is "what will a re-render
+    // refresh?", so answering it against a file no render of ours writes is
+    // the one wrong answer that matters.
+    const h = harness();
+    const sceneId = sample.scenes[0].id;
+    h.links.current = staleLinks(sceneId) as MotionEditLinks;
+
+    const r = h.run('motion_get_edit_links');
+    const row = (r.scenes as Array<Record<string, unknown>>)[0];
+    expect(row.rendered).toBe(false);
+    expect(row.clipCount).toBe(0);
+    expect(row.clips).toEqual([]);
+    expect(row.mediaId).toBeNull();
+    expect(row.sourcePath).toBeNull();
+    expect(row.refreshedByRender).toBe(false);
+  });
+
+  it('…and says what it DID find, rather than flattening it away', () => {
+    const h = harness();
+    const sceneId = sample.scenes[0].id;
+    h.links.current = staleLinks(sceneId) as MotionEditLinks;
+
+    const r = h.run('motion_get_edit_links');
+    const row = (r.scenes as Array<Record<string, unknown>>)[0];
+    const stale = row.staleLink as Record<string, unknown>;
+    expect(stale.mediaId).toBe('m1');
+    expect(stale.sourcePath).toBe('/Movies/Chroma/c040-mgfx.chroma/motion/renders/hook.mp4');
+    expect(stale.clipCount).toBe(2);
+    expect((stale.clips as unknown[]).length).toBe(2);
+    expect(stale.reason).toMatch(/DIFFERENT project/);
+    // and the whole response is flagged, so an agent skimming the rows sees it
+    expect(r.warning).toMatch(/1 scene links to a render belonging to a DIFFERENT project/);
+  });
+
+  it('a healthy link carries no staleLink and no warning', () => {
+    const h = harness();
+    const sceneId = sample.scenes[0].id;
+    h.links.current = {
+      [sceneId]: { mediaId: 'm1', sourcePath: '/p/.chroma/x.mp4', clips: [], refreshedByRender: true },
+    };
+    const r = h.run('motion_get_edit_links');
+    expect(r.warning).toBeUndefined();
+    expect((r.scenes as Array<Record<string, unknown>>)[0].staleLink).toBeNull();
+  });
+
+  it('refreshedByRender null (no project root) is NOT treated as stale', () => {
+    // Three-valued on purpose: "we could not ask" must not read as "no".
+    const h = harness();
+    const sceneId = sample.scenes[0].id;
+    h.links.current = {
+      [sceneId]: {
+        mediaId: 'm1',
+        sourcePath: '/hook.mp4',
+        clips: [{ track: 0, clip: 0, clipId: 'c1', name: 'hook.mp4' }],
+        refreshedByRender: null,
+      },
+    };
+    const r = h.run('motion_get_edit_links');
+    const row = (r.scenes as Array<Record<string, unknown>>)[0];
+    expect(row.rendered).toBe(true);
+    expect(row.clipCount).toBe(1);
+    expect(row.refreshedByRender).toBeNull();
+    expect(row.staleLink).toBeNull();
+    expect(r.warning).toBeUndefined();
+  });
+
+  it("a stale link is not counted as a render this project's settings made stale", () => {
+    // `motion_set_project_settings`' own staleness answer reads the same map,
+    // through the same rule: no file of OURS was produced at the old spec, so
+    // nothing of ours is stale because of it.
+    const h = harness();
+    h.links.current = staleLinks(sample.scenes[0].id) as MotionEditLinks;
+    const resized = h.run('motion_set_project_settings', { width: 1080, height: 1920 });
+    expect(resized.renders).toMatchObject({ stale: false, linkDataAvailable: true, scenes: 0, clips: 0 });
   });
 
   it("commits nothing — it is a pure read (D-216/D-218's view-state discipline)", () => {
@@ -1672,6 +1864,7 @@ describe('saved components (D-332)', () => {
         commit: () => {},
         save: (async () => ({ ok: true })) as unknown as MotionOpsApi['save'],
         render: (async () => ({ ok: true })) as unknown as MotionOpsApi['render'],
+        renderStatus: IDLE_RENDER_STATUS,
       }),
       selections: () => [],
       setSelections: () => {},

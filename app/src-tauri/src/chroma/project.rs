@@ -835,7 +835,16 @@ pub async fn chroma_media_refresh(
     let dir = require_open_project()?;
     let touched = tokio::task::spawn_blocking(move || -> Result<Vec<MediaItem>, String> {
         let mut manifest = load_manifest(&dir)?;
-        let (touched, changed) = refresh_media(&mut manifest, &paths, motion_scene_id.as_deref());
+        // B-219/D-358 — the open project's own root goes in with the paths: it
+        // is what lets the reconcile tell a render this project OWNS from a
+        // pool entry it inherited verbatim when the project was copied on the
+        // filesystem. See `refresh_media`'s own doc.
+        let (touched, changed) = refresh_media(
+            &mut manifest,
+            &paths,
+            motion_scene_id.as_deref(),
+            Some(dir.as_path()),
+        );
         if changed {
             manifest.modified = now_rfc3339();
             save_manifest(&dir, &manifest)?;

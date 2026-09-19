@@ -49,4 +49,7 @@ export type {
   MotionEditLinks,
 } from './motionOps';
 export type { SceneRenderResult } from './useMotionManifest';
+// B-202 — the render loop's own status type, so anything holding a
+// `MotionOpsApi` (or reading `motion_get_state`'s `render` block) can name it.
+export type { MotionRenderState, MotionRenderStatus } from './renderLoop';
 export { computeEditLinks, clipReadsItem } from './editLinks';

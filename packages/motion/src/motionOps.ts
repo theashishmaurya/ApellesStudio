@@ -166,6 +166,7 @@ import { sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/
 import type { Cam2dKey, Cam3dKey, Manifest, ThemeName, TransformKey } from '@apelles/motion-engine/src/engine/schema';
 import { DEFAULT_THEME_NAME, THEMES, THEME_NAMES } from '@apelles/motion-engine/src/design';
 import type { LoadState, RenderOutcome, SaveOutcome } from './useMotionManifest';
+import type { MotionRenderStatus } from './renderLoop';
 
 /**
  * The slice of `useMotionManifest()`'s return value these ops actually use.
@@ -182,6 +183,13 @@ export interface MotionOpsApi {
   commit: (next: Manifest, label: string) => void;
   save: () => Promise<SaveOutcome>;
   render: () => Promise<RenderOutcome>;
+  /** B-202 — where the render is: `idle`/`running`/`error`, how many scenes
+   *  are done, and which one failed. The one field on this interface that
+   *  exists for a caller who is NOT awaiting `render()` — a multi-scene render
+   *  always outlives `control.rs`'s 20s bridge timeout, so the op's own reply
+   *  is gone by the time the failure happens and this is the only place it can
+   *  be read. Reported by `motion_get_state`. */
+  renderStatus: MotionRenderStatus;
 }
 
 /** The bit of `@remotion/player`'s `PlayerRef` these ops touch — structural,
@@ -265,6 +273,13 @@ export interface MotionEditLink {
   /** every clip on the OPEN timeline reading that file. Empty when the scene
    *  has been rendered and imported but never placed. */
   clips: MotionEditLinkClip[];
+  /** B-219 — will a `motion_render` of this scene actually write over
+   *  `sourcePath`? `true` when the file is inside the open project, `false`
+   *  when it belongs to a DIFFERENT project (the filesystem-copy case, where
+   *  D-260's refresh contract is silently void), and `null` when no project
+   *  root reached `computeEditLinks` and the question was not asked. See
+   *  `editLinks.ts` for why containment is the check. */
+  refreshedByRender: boolean | null;
 }
 
 /** D-260 — scene id → its Edit-tab footprint. A scene with no entry has never
@@ -394,7 +409,13 @@ function renderStaleness(
     // here" must not read as "nothing is rendered".
     return { stale: true, reason, linkDataAvailable: false, scenes: null, clips: null, sceneIds: null };
   }
-  const rendered = manifest.scenes.filter((s) => links[s.id] !== undefined);
+  // B-219 — a link into a DIFFERENT project is not a render this project has:
+  // no file of ours was produced at the old spec, so nothing of ours is stale
+  // because of it. Same `refreshedByRender === false` test `motion_get_edit_
+  // links` uses, for the same reason — one rule, not two.
+  const rendered = manifest.scenes.filter(
+    (s) => links[s.id] !== undefined && links[s.id].refreshedByRender !== false,
+  );
   const clips = rendered.reduce((n, s) => n + links[s.id].clips.length, 0);
   return {
     stale: rendered.length > 0,
@@ -537,6 +558,13 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * frame, duration, layer counts). Selection was previously invisible to
      * everything outside the webview — the exact gap D-216 closed for Edit,
      * and `mcp-tool-coverage.md` explicitly flagged it as still open here.
+     *
+     * **B-202 — `render`.** A multi-scene `motion_render` always outlives
+     * `control.rs`'s 20s bridge timeout, so its own reply is gone long before
+     * a mid-loop failure happens; before this pass the failure then existed
+     * NOWHERE a caller could reach — not in the reply, not in the app log, and
+     * not here, which reported no render status at all. It does now: state,
+     * progress, and the failing scene id, on the tab's existing polling read.
      */
     motion_get_state: () => {
       const cur = ctx.api();
@@ -564,6 +592,10 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         // "never set" from "explicitly set to the default".
         theme: manifest?.theme ?? null,
         defaultTheme: DEFAULT_THEME_NAME,
+        // B-202 — the render's own progress, verbatim from `renderLoop.ts`'s
+        // `MotionRenderStatus`. The GUI's Render button reads the identical
+        // value, so a human and an agent are told the same thing.
+        render: cur.renderStatus,
         scenes: manifest
           ? manifest.scenes.map((scene, i) => ({
               index: i,
@@ -593,26 +625,60 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * link data at all — no project open, or a build with nothing wired — as
      * distinct from a scene that genuinely has no render yet, which is
      * `rendered: false`. Two different "no", never collapsed into one.
+     *
+     * **B-219 — `rendered` and `clipCount` are reported against the file a
+     * render will actually WRITE, not against whatever carries the stamp.** In
+     * a project copied on the filesystem, the inherited pool item points into
+     * the ORIGINAL project and no re-render can reach it; this tool used to
+     * answer `rendered: true` with the original's path and its clip count,
+     * which is the one wrong answer that matters here — its entire job is
+     * "what will a re-render refresh?". Such a scene now reads
+     * `rendered: false, clipCount: 0` with the whole stale link reported
+     * separately as `staleLink`, so the fact is visible rather than
+     * flattened away.
      */
     motion_get_edit_links: () => {
       const cur = ctx.api();
       const guard = requireManifest(cur);
       if (isErr(guard)) return guard;
       const links = ctx.editLinks?.();
+      let stale = 0;
+      const scenes = guard.manifest.scenes.map((scene, index) => {
+        const link = links?.[scene.id];
+        // `false` only — `null` means the question was not asked (no project
+        // root reached the tab), which must not read as "this is stale".
+        const unreachable = link !== undefined && link.refreshedByRender === false;
+        if (unreachable) stale += 1;
+        return {
+          index,
+          sceneId: scene.id,
+          rendered: link !== undefined && !unreachable,
+          mediaId: unreachable ? null : (link?.mediaId ?? null),
+          sourcePath: unreachable ? null : (link?.sourcePath ?? null),
+          refreshedByRender: link?.refreshedByRender ?? null,
+          clipCount: unreachable ? 0 : (link?.clips.length ?? 0),
+          clips: unreachable ? [] : (link?.clips ?? []),
+          // B-219 — what WAS found, when it is not something a render reaches.
+          staleLink: unreachable
+            ? {
+                mediaId: link.mediaId,
+                sourcePath: link.sourcePath,
+                clipCount: link.clips.length,
+                clips: link.clips,
+                reason:
+                  'this pool item lives in a DIFFERENT project — its file is not the one a motion_render of this scene writes, so a re-render cannot refresh the clips reading it (B-219: a project copied on the filesystem keeps the original project\'s absolute source paths). Re-render this scene to produce this project\'s own file, then editor_swap_clip_media those clips onto it.',
+              }
+            : null,
+        };
+      });
       return {
         available: links !== undefined,
-        scenes: guard.manifest.scenes.map((scene, index) => {
-          const link = links?.[scene.id];
-          return {
-            index,
-            sceneId: scene.id,
-            rendered: link !== undefined,
-            mediaId: link?.mediaId ?? null,
-            sourcePath: link?.sourcePath ?? null,
-            clipCount: link?.clips.length ?? 0,
-            clips: link?.clips ?? [],
-          };
-        }),
+        scenes,
+        ...(stale > 0
+          ? {
+              warning: `${stale === 1 ? '1 scene links' : `${stale} scenes link`} to a render belonging to a DIFFERENT project — see each scene's staleLink (B-219)`,
+            }
+          : {}),
       };
     },
 

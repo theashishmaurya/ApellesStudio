@@ -592,7 +592,14 @@ export function LayerList({
     editLink?: MotionEditLink,
   ) => {
     const isSel = selections.some((s) => s.sceneIndex === sceneIndex && sameTarget(s.target, target));
-    const clipCount = editLink?.clips.length ?? 0;
+    // B-219 — a link into a DIFFERENT project's file (the filesystem-copy
+    // case) is NOT something re-rendering this scene refreshes, so its clips
+    // must not be counted here: the badge's own tooltip promises exactly that
+    // refresh, and the count is the promise. It gets its own badge below
+    // instead, which says what is actually true.
+    const stale = editLink?.refreshedByRender === false;
+    const clipCount = stale ? 0 : (editLink?.clips.length ?? 0);
+    const staleCount = stale ? (editLink?.clips.length ?? 0) : 0;
     const key = `${target.kind}-${'index' in target ? target.index : ''}`;
     const button = (
       <button
@@ -623,6 +630,20 @@ export function LayerList({
             title={`Used in ${clipCount} Edit clip${clipCount === 1 ? '' : 's'} — re-rendering this scene refreshes ${clipCount === 1 ? 'it' : 'them'}`}
           >
             {`${clipCount} in Edit`}
+          </span>
+        )}
+        {/* B-219 — the honest badge for a scene whose only pool item belongs
+           to ANOTHER project (this project was copied on the filesystem, so
+           it inherited the original's absolute source paths). Re-rendering
+           reaches none of those clips, so saying "N in Edit" there would be
+           the same wrong promise `motion_get_edit_links` used to make. */}
+        {staleCount > 0 && (
+          <span
+            data-scene-edit-links-stale={staleCount}
+            className="shrink-0 rounded-full px-1.5 text-[9px] leading-4 bg-red-500/15 text-red-400"
+            title={`${staleCount} Edit clip${staleCount === 1 ? '' : 's'} read a render belonging to a DIFFERENT project (this project was copied on disk), so re-rendering this scene will NOT refresh ${staleCount === 1 ? 'it' : 'them'}. Render this scene, then point ${staleCount === 1 ? 'that clip' : 'those clips'} at this project's own file.`}
+          >
+            {`${staleCount} stale`}
           </span>
         )}
         {/* D-160 — a key-count badge, only when there's something to count

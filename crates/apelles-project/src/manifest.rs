@@ -934,14 +934,36 @@ fn thumb_is_stale(source_path: &str, media_id: &str) -> bool {
 /// genuinely changed file pays a real `ffprobe`. The thumbnail is regenerated
 /// only when [`thumb_is_stale`] says so, for the same reason — this is a
 /// reconcile, not an invalidate-everything.
+///
+/// **B-219/D-359 — `project_dir`, and why exact-string path matching alone is
+/// not enough.** The match below is `source_path == path`, which cannot tell a
+/// path this project OWNS from one it merely inherited. A `.chroma` project
+/// copied on the filesystem (Finder, `cp -R` — there is no in-app copy
+/// operation) carries `project.json` verbatim, so every Motion-render pool item
+/// in the copy still holds the ORIGINAL project's absolute `source_path`. A
+/// re-render in the copy writes into the copy's own `motion/renders/`, matches
+/// nothing, and appends a SECOND item for the same scene — while the stale one
+/// stays first in the pool and is the one the scene→clip link then reports.
+/// D-260's "a re-render refreshes the placed Edit clips" is void for the copy,
+/// and `motion_get_edit_links` confirmed it would work. Given the project root,
+/// [`adopt_inherited_scene_items`] resolves that before the match runs. Passing
+/// `None` skips it entirely and keeps this function exactly as it was — which
+/// is what every caller that is not a Motion render passes, since the question
+/// only exists for a stamped, project-relative render path.
 pub fn refresh_media(
     manifest: &mut ProjectManifest,
     paths: &[String],
     motion_scene_id: Option<&str>,
+    project_dir: Option<&Path>,
 ) -> (Vec<MediaItem>, bool) {
     let mut touched = Vec::new();
     let mut changed = false;
     for path in paths {
+        // B-219 — before matching, reconcile whatever this project inherited
+        // from the one it was copied from.
+        if let (Some(scene_id), Some(dir)) = (motion_scene_id, project_dir) {
+            changed |= adopt_inherited_scene_items(manifest, path, scene_id, dir);
+        }
         let Some(item) = manifest.media.iter_mut().find(|m| &m.source_path == path) else {
             let item = probe_media_item(path, None);
             let mut item = item;
@@ -968,6 +990,81 @@ pub fn refresh_media(
         touched.push(item.clone());
     }
     (touched, changed)
+}
+
+/// B-219/D-359 — reconcile the pool entries a project inherited from the one it
+/// was COPIED from, for the scene now being rendered to `path`.
+///
+/// Returns whether anything was written. Pure model logic, no I/O: it only
+/// compares paths and rewrites fields the caller then persists.
+///
+/// **What it identifies.** An item is this project's inherited copy of `path`
+/// when all three hold: it carries `scene_id`'s Motion stamp; its
+/// `source_path` is NOT inside `project_dir`; and it sits at the SAME
+/// project-relative location `path` does under `project_dir`
+/// (`motion/renders/<scene>.mp4`). All three together are what "a different
+/// project's copy that happens to share a path prefix" means, and each one
+/// alone is not enough — a render deliberately sent to a caller-named
+/// `output_path` elsewhere on disk fails the third, a genuinely unrelated file
+/// fails the first, and this project's own render fails the second.
+///
+/// **What it does about it.** If this project has no item at `path` yet (the
+/// copy's FIRST re-render), the inherited item is REPOINTED at `path`, keeping
+/// its id — so every Edit clip already placed from it stays linked and really
+/// does pick up the copy's own render, which is exactly what D-260 promises and
+/// what a copied project silently lost. The caller re-probes it moments later
+/// through the ordinary path, so its frame count, rate and thumbnail all come
+/// from the new file.
+///
+/// If this project DOES already have an item at `path` (a copy re-rendered
+/// before this fix existed, which is how B-219 was found), repointing would
+/// duplicate it, so the inherited item instead loses its scene stamp. The item
+/// itself stays in the pool untouched — clips may still be reading it, and
+/// removing a source out from under them would be a far worse answer than
+/// leaving it — it just stops CLAIMING to be this scene's render, so the
+/// scene→item link is unambiguous again and `motion_get_edit_links` can report
+/// the real one.
+fn adopt_inherited_scene_items(
+    manifest: &mut ProjectManifest,
+    path: &str,
+    scene_id: &str,
+    project_dir: &Path,
+) -> bool {
+    // A render sent outside the project has no project-relative location to
+    // compare against, so there is nothing here to recognise.
+    let Ok(relative) = Path::new(path).strip_prefix(project_dir) else {
+        return false;
+    };
+    let inherited: Vec<usize> = manifest
+        .media
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.motion_scene_id.as_deref() == Some(scene_id))
+        .filter(|(_, m)| {
+            let source = Path::new(&m.source_path);
+            // `starts_with`/`ends_with` on `Path` compare whole components, so
+            // `/Movies/c040.chroma` does not "contain" `/Movies/c040.chroma-recut`
+            // — the exact pair of names this bug was found on.
+            !source.starts_with(project_dir) && source.ends_with(relative)
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if inherited.is_empty() {
+        return false;
+    }
+
+    let already_ours = manifest.media.iter().any(|m| m.source_path == path);
+    let mut changed = false;
+    let mut rest = inherited.into_iter();
+    if !already_ours && let Some(i) = rest.next() {
+        manifest.media[i].source_path = path.to_string();
+        changed = true;
+    }
+    for i in rest {
+        manifest.media[i].motion_scene_id = None;
+        changed = true;
+    }
+    changed
 }
 
 /// B-073 — re-probe the pool items named by `ids`, in `ids` order, and return
@@ -998,7 +1095,10 @@ pub fn reprobe_media(manifest: &mut ProjectManifest, ids: &[String]) -> (Vec<Med
         .iter()
         .filter_map(|id| manifest.media_for(id).map(|m| m.source_path.clone()))
         .collect();
-    refresh_media(manifest, &paths, None)
+    // B-219's cross-project reconcile is a Motion-render question (it needs a
+    // scene stamp and a project-relative render path); a bare re-probe has
+    // neither, so it passes no project root and behaves exactly as before.
+    refresh_media(manifest, &paths, None, None)
 }
 
 /// Probe + append the entries of `paths` not already in `manifest.media`
@@ -1062,7 +1162,7 @@ pub fn add_media(
     if unprobed.is_empty() {
         return added;
     }
-    let (healed, _) = refresh_media(manifest, &unprobed, None);
+    let (healed, _) = refresh_media(manifest, &unprobed, None, None);
     // Only the ones that actually gained metadata are worth reporting — a
     // still-offline source is unchanged, and saying "imported" about it would
     // be the same false signal the original bug was made of.
@@ -3305,7 +3405,7 @@ mod tests {
 
         // And the reconcile path agrees with the import path (they share
         // `reprobe_source`): nothing changed, so nothing is written.
-        let (touched, changed) = refresh_media(&mut manifest, &[path], None);
+        let (touched, changed) = refresh_media(&mut manifest, &[path], None, None);
         assert_eq!(touched.len(), 1);
         assert!(!changed, "an unchanged still re-probes to the same facts");
 
@@ -4813,5 +4913,253 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    // ------------------------------------------------------------------ //
+    // B-219/D-359 — a project COPIED on the filesystem must not silently
+    // inherit the original project's Motion-render pool entries.
+    // ------------------------------------------------------------------ //
+
+    /// The pool item a copied project inherits: the ORIGINAL project's absolute
+    /// path, stamped with the scene that produced it, verbatim out of the
+    /// `project.json` that was copied.
+    fn stamped_item(id: &str, source_path: &str, scene: &str) -> MediaItem {
+        MediaItem {
+            id: id.to_string(),
+            source_path: source_path.to_string(),
+            name: Path::new(source_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            added: String::new(),
+            video: None,
+            image: None,
+            folder: None,
+            motion_scene_id: Some(scene.to_string()),
+        }
+    }
+
+    /// The two projects B-219 is made of: the same relative media layout under
+    /// two different absolute roots. Nothing is written to disk — this is the
+    /// path-matching half of the reconcile, which is pure.
+    fn copied_project_paths() -> (PathBuf, String, PathBuf, String) {
+        let original = PathBuf::from("/Movies/Chroma/c040-mgfx.chroma");
+        let copy = PathBuf::from("/Movies/Chroma/c040-mgfx-recut.chroma");
+        let rel = "motion/renders/hook.mp4";
+        (
+            original.clone(),
+            original.join(rel).to_string_lossy().into_owned(),
+            copy.clone(),
+            copy.join(rel).to_string_lossy().into_owned(),
+        )
+    }
+
+    /// THE headline assertion. Re-rendering scene `hook` in the COPY must
+    /// repoint the inherited pool item at the copy's own file — same item id,
+    /// so every Edit clip already placed from it stays linked and really does
+    /// pick the new render up — instead of appending a second item and leaving
+    /// the stale one to be reported as the scene's render.
+    #[test]
+    fn a_copied_project_repoints_its_inherited_render_item_rather_than_duplicating_it() {
+        let (_orig_dir, orig_render, copy_dir, copy_render) = copied_project_paths();
+        let mut manifest = ProjectManifest::fresh("c040-mgfx-recut");
+        manifest.media = vec![stamped_item("m1", &orig_render, "hook")];
+
+        let (touched, changed) = refresh_media(
+            &mut manifest,
+            std::slice::from_ref(&copy_render),
+            Some("hook"),
+            Some(&copy_dir),
+        );
+
+        assert!(changed, "repointing an inherited item is a real change");
+        assert_eq!(
+            manifest.media.len(),
+            1,
+            "the copy's render is the SAME pool item, repointed — not a second one"
+        );
+        assert_eq!(
+            manifest.media[0].id, "m1",
+            "keeping the id is what keeps the already-placed Edit clips linked"
+        );
+        assert_eq!(
+            manifest.media[0].source_path, copy_render,
+            "and it now points at the file this project's own render writes"
+        );
+        assert_eq!(
+            manifest.media[0].motion_scene_id.as_deref(),
+            Some("hook"),
+            "the scene stamp survives the repoint — it is still that scene's render"
+        );
+        assert_eq!(touched.len(), 1);
+        assert_eq!(touched[0].id, "m1");
+    }
+
+    /// The NEGATIVE CONTROL, in this repo's D-256 style: with no project root
+    /// supplied, the identical call behaves exactly as it did before this fix —
+    /// a second item, and the stale one still stamped. That is the proof the
+    /// test above measures the new matching rather than something incidental,
+    /// and it pins that every non-Motion caller (which all pass `None`) is
+    /// untouched by this change.
+    #[test]
+    fn without_a_project_root_the_old_duplicate_behaviour_is_exactly_preserved() {
+        let (_orig_dir, orig_render, _copy_dir, copy_render) = copied_project_paths();
+        let mut manifest = ProjectManifest::fresh("c040-mgfx-recut");
+        manifest.media = vec![stamped_item("m1", &orig_render, "hook")];
+
+        let (_, changed) = refresh_media(
+            &mut manifest,
+            std::slice::from_ref(&copy_render),
+            Some("hook"),
+            None,
+        );
+
+        assert!(changed);
+        assert_eq!(manifest.media.len(), 2, "the B-219 shape, unfixed");
+        assert_eq!(manifest.media[0].source_path, orig_render);
+        assert_eq!(
+            manifest.media[0].motion_scene_id.as_deref(),
+            Some("hook"),
+            "two items claiming one scene — and the stale one first, which is \
+             precisely what editLinks.ts then reported"
+        );
+    }
+
+    /// The already-bitten case: a copy that was re-rendered BEFORE this fix
+    /// existed already carries both items. The inherited one cannot be
+    /// repointed (that would duplicate the real one), so it loses its scene
+    /// stamp instead — the item itself stays, because clips may still be
+    /// reading it, it just stops claiming to be this scene's render.
+    #[test]
+    fn an_already_duplicated_copy_has_the_inherited_stamp_cleared_not_the_item_removed() {
+        let (_orig_dir, orig_render, copy_dir, copy_render) = copied_project_paths();
+        let mut manifest = ProjectManifest::fresh("c040-mgfx-recut");
+        manifest.media = vec![
+            stamped_item("m1", &orig_render, "hook"),
+            stamped_item("m2", &copy_render, "hook"),
+        ];
+
+        let (_, changed) = refresh_media(
+            &mut manifest,
+            std::slice::from_ref(&copy_render),
+            Some("hook"),
+            Some(&copy_dir),
+        );
+
+        assert!(changed);
+        assert_eq!(manifest.media.len(), 2, "no pool item is ever removed here");
+        assert_eq!(manifest.media[0].id, "m1");
+        assert_eq!(
+            manifest.media[0].source_path, orig_render,
+            "the inherited item keeps its own file — clips may still read it"
+        );
+        assert_eq!(
+            manifest.media[0].motion_scene_id, None,
+            "but it no longer claims to be this scene's render"
+        );
+        assert_eq!(
+            manifest.media[1].motion_scene_id.as_deref(),
+            Some("hook"),
+            "the project's OWN render is the one scene link left standing"
+        );
+    }
+
+    /// The three things that must NOT be adopted, each failing exactly one of
+    /// the rule's three conditions.
+    #[test]
+    fn nothing_but_a_real_inherited_copy_is_adopted() {
+        let (_orig_dir, orig_render, copy_dir, copy_render) = copied_project_paths();
+
+        // 1. a DIFFERENT scene's render, at the same relative location under
+        //    the original root — right shape, wrong stamp.
+        let mut m = ProjectManifest::fresh("p");
+        m.media = vec![stamped_item("m1", &orig_render, "outro")];
+        refresh_media(
+            &mut m,
+            std::slice::from_ref(&copy_render),
+            Some("hook"),
+            Some(&copy_dir),
+        );
+        assert_eq!(
+            m.media.len(),
+            2,
+            "a different scene's item is not ours to move"
+        );
+        assert_eq!(m.media[0].source_path, orig_render);
+
+        // 2. a render this scene was deliberately sent to a caller-named path
+        //    OUTSIDE any project — right stamp, no shared relative location.
+        let mut m = ProjectManifest::fresh("p");
+        m.media = vec![stamped_item("m1", "/Users/me/Desktop/hook.mp4", "hook")];
+        refresh_media(
+            &mut m,
+            std::slice::from_ref(&copy_render),
+            Some("hook"),
+            Some(&copy_dir),
+        );
+        assert_eq!(
+            m.media.len(),
+            2,
+            "an explicitly-placed render is not a stale copy"
+        );
+        assert_eq!(m.media[0].source_path, "/Users/me/Desktop/hook.mp4");
+
+        // 3. an item of this project's OWN, stamped with this scene but living
+        //    somewhere else inside the project (imported by hand, say) — right
+        //    stamp, but inside the root, so it is not an inherited anything.
+        let mut m = ProjectManifest::fresh("p");
+        let own_elsewhere = copy_dir
+            .join("media/hook.mp4")
+            .to_string_lossy()
+            .into_owned();
+        m.media = vec![stamped_item("m1", &own_elsewhere, "hook")];
+        refresh_media(
+            &mut m,
+            std::slice::from_ref(&copy_render),
+            Some("hook"),
+            Some(&copy_dir),
+        );
+        assert_eq!(
+            m.media.len(),
+            2,
+            "our own file is never treated as inherited"
+        );
+        assert_eq!(m.media[0].source_path, own_elsewhere);
+    }
+
+    /// The component boundary, in the direction that actually bites: a sibling
+    /// project whose directory NAME extends this one's. A bare string-prefix
+    /// "is it inside the project" test would call
+    /// `/Movies/c040.chroma-recut/…` a child of `/Movies/c040.chroma` and skip
+    /// the adoption — leaving exactly the stale duplicate B-219 is about, on
+    /// exactly the pair of names it was found on. `Path::starts_with` compares
+    /// whole components, so it does not.
+    #[test]
+    fn a_sibling_project_whose_name_merely_extends_this_one_is_still_a_different_project() {
+        let project = PathBuf::from("/Movies/Chroma/c040.chroma");
+        let render = project
+            .join("motion/renders/hook.mp4")
+            .to_string_lossy()
+            .into_owned();
+        // note: `c040.chroma-recut`, not `c040.chroma/recut` — one string
+        // starts with the other, and they are different projects.
+        let sibling_render = "/Movies/Chroma/c040.chroma-recut/motion/renders/hook.mp4";
+
+        let mut manifest = ProjectManifest::fresh("c040");
+        manifest.media = vec![stamped_item("m1", sibling_render, "hook")];
+
+        refresh_media(
+            &mut manifest,
+            std::slice::from_ref(&render),
+            Some("hook"),
+            Some(&project),
+        );
+
+        assert_eq!(
+            manifest.media.len(),
+            1,
+            "the sibling's item is adopted, not left behind as a stale duplicate"
+        );
+        assert_eq!(manifest.media[0].source_path, render);
     }
 }
