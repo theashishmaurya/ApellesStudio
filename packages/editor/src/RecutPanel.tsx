@@ -68,7 +68,7 @@ import {
   type DetectedSpan,
 } from './recut';
 import { sweepTargets } from './recutSweep';
-import { timelineFps, type Clip } from './timeline';
+import { applyRippleDeleteRanges, timelineFps, type Clip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import {
   retakeKey,
@@ -528,23 +528,34 @@ export function RecutPanel() {
     // against one track, and reading the results may well have moved the
     // selection somewhere else.
     if (!timeline || chosen.length === 0 || resultTrack === null) return;
-    const ranges = chosen.map((c) => ({ startFrame: c.span.startFrame, endFrame: c.span.endFrame }));
-    const before = timeline;
-    applyOp({
-      kind: 'ripple_delete_ranges',
-      track: resultTrack,
-      ranges: ranges.map((r) => ({ start: r.startFrame, end: r.endFrame })),
-    });
-    const after = useEditorTimelineStore.getState().timeline;
-    if (after === before) {
-      setError('Nothing was cut — the track may be locked.');
+    const ranges = chosen.map((c) => ({ start: c.span.startFrame, end: c.span.endFrame }));
+    // B-197 — the same per-range dry run the MCP side runs, for the same
+    // reason: "did the timeline change at all" cannot tell a full cut from one
+    // that quietly dropped some of its ranges (a sync-locked clip straddling a
+    // gap's end, an L-cut link partner that can't be razored there), and the
+    // panel used to report "Cut N ranges" either way.
+    const outcome = applyRippleDeleteRanges(timeline, resultTrack, ranges, timelineFps(timeline));
+    const skipped = outcome.results.filter((r) => !r.applied);
+    if (outcome.timeline === timeline) {
+      setError(skipped[0]?.reason ?? 'Nothing was cut — the track may be locked.');
       return;
     }
+    applyOp({ kind: 'ripple_delete_ranges', track: resultTrack, ranges });
     // The candidates described the timeline as it was a moment ago; after a
     // ripple every later frame number is stale, so they go rather than linger
     // as numbers that now point at the wrong material.
     reset();
-    setNotice(`Cut ${ranges.length} range${ranges.length === 1 ? '' : 's'} — one undo reverses all of it.`);
+    const cutCount = outcome.results.length - skipped.length;
+    // One message, not two: the notice is hidden while an error is showing, and
+    // "some of it did not happen" is the half the user has to read.
+    if (skipped.length > 0) {
+      setError(
+        `Cut ${cutCount} of ${outcome.results.length} ranges — the other ${skipped.length} could not be cut and ` +
+          `${skipped.length === 1 ? 'was' : 'were'} left untouched: ${skipped[0].reason}`,
+      );
+      return;
+    }
+    setNotice(`Cut ${cutCount} range${cutCount === 1 ? '' : 's'} — one undo reverses all of it.`);
   };
 
   return (

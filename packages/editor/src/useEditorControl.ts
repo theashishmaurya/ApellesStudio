@@ -165,6 +165,7 @@ import {
   panGains,
   resolveMarkerColor,
   timelineFps,
+  applyRippleDeleteRanges,
   checkRemoveGap,
   checkTrim,
   linkGroupMembers,
@@ -184,7 +185,6 @@ import {
   type Clip,
   type DraggedMedia,
   type EqBand,
-  mergeFrameRanges,
   type EqBandKind,
   type Marker,
   type NewClipFields,
@@ -4876,19 +4876,49 @@ export function useEditorControl(): void {
           return { error: 'every range needs a finite startFrame and endFrame' };
         }
 
-        const before = tl;
-        useEditorTimelineStore.getState().applyOp({ kind: 'ripple_delete_ranges', track, ranges });
-        const after = useEditorTimelineStore.getState().timeline;
-        if (after === before) {
+        // B-197 — a batch's honest answer is per-range, not a boolean. The
+        // pure `applyRippleDeleteRanges` is run here first as a dry run purely
+        // to learn WHICH ranges land and why the rest do not; the store then
+        // applies the op for real, through the identical pure function, so the
+        // two cannot disagree (`checkRemoveGap`/`checkTrim`'s pre-check
+        // pattern, B-227/B-215, with a list instead of one verdict). The old
+        // `after === before` reference check stayed true for a batch that
+        // dropped 2 of 87 ranges — it can only see a TOTAL no-op — and that
+        // false `{ok: true}` is the whole of B-197.
+        const dry = applyRippleDeleteRanges(tl, track, ranges, timelineFps(tl));
+        const skipped = dry.results.filter((r) => !r.applied);
+        if (dry.results.length === 0) {
+          return { error: 'no range describes real material — every one was empty, inverted, or before frame 0' };
+        }
+        if (dry.timeline === tl) {
           return {
+            error: `nothing was cut — none of the ${dry.results.length} range(s) could be applied`,
+            track,
+            skipped: skipped.map((r) => ({ startFrame: r.start, endFrame: r.end, reason: r.reason })),
+          };
+        }
+
+        useEditorTimelineStore.getState().applyOp({ kind: 'ripple_delete_ranges', track, ranges });
+
+        const applied = dry.results.length - skipped.length;
+        if (skipped.length > 0) {
+          return {
+            ok: false,
             error:
-              'nothing was cut — the track is locked, or no range describes real material on it',
+              `${skipped.length} of ${dry.results.length} ranges were NOT cut — see \`skipped\` for which and why. ` +
+              `The other ${applied} WERE applied (as one undo entry): re-read the timeline before acting on any ` +
+              `frame number you had, and undo if you would rather start over.`,
+            track,
+            requested: dry.results.length,
+            applied,
+            skipped: skipped.map((r) => ({ startFrame: r.start, endFrame: r.end, reason: r.reason })),
           };
         }
         return {
           ok: true,
           track,
-          ranges: mergeFrameRanges(ranges).length,
+          ranges: dry.results.length,
+          applied,
           note: 'applied as ONE edit, so a single undo reverses all of it',
         };
       },

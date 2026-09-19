@@ -19,7 +19,9 @@ import {
   isEqBandActive,
   checkAddClip,
   checkLink,
+  checkRemove,
   checkRemoveGap,
+  checkSplit,
   checkTrim,
   clipAt,
   clipFromDraggedMedia,
@@ -1942,6 +1944,50 @@ describe('cross-track ripple sync (D-106)', () => {
       expect(check.reason).toContain('B-033');
       expect(check.reason).toContain('track 1');
     }
+  });
+
+  it('checkSplit (B-197) names the D-129 link partner a razor cannot cut, where the reducer only returns tl', () => {
+    // A J-cut pair: the audio half starts at 60, so frame 30 is inside the
+    // video clip and outside its partner. `applyOp` refuses — silently — and
+    // `checkSplit` says the same thing out loud, which is what lets a batched
+    // ripple delete report WHICH of its ranges it could not cut.
+    const v = clip('v', 'V', { start_frame: 0, duration: 100, link_group: 'g' });
+    const a = clip('a', 'A', { start_frame: 60, duration: 40, link_group: 'g' });
+    const before = twoTrack([v], [a]);
+    expect(applyOp(before, { kind: 'split', track: 0, clip: 0, atFrame: 30 })).toBe(before);
+    const check = checkSplit(before, 0, 0, 30, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.reason).toContain('A/V-linked');
+      expect(check.reason).toContain('frame 30');
+    }
+    // And it agrees with the reducer on a frame that IS inside both halves.
+    expect(checkSplit(before, 0, 0, 70, 24)).toEqual({ ok: true });
+    expect(applyOp(before, { kind: 'split', track: 0, clip: 0, atFrame: 70 })).not.toBe(before);
+  });
+
+  it('checkSplit reports a boundary frame and an out-of-range clip the same way', () => {
+    const before = twoTrack([clip('a', 'A', { start_frame: 0, duration: 100 })], []);
+    const atEdge = checkSplit(before, 0, 0, 0, 24);
+    expect(atEdge.ok).toBe(false);
+    if (!atEdge.ok) expect(atEdge.reason).toContain('not strictly inside');
+    expect(checkSplit(before, 0, 3, 50, 24).ok).toBe(false);
+  });
+
+  it('checkRemove (B-197) names the locked link partner that refuses a delete', () => {
+    const v = clip('v', 'V', { start_frame: 0, duration: 100, link_group: 'g' });
+    const a = clip('a', 'A', { start_frame: 0, duration: 100, link_group: 'g' });
+    const before = twoTrack([v], [a]);
+    before.tracks[1].locked = true;
+    expect(applyOp(before, { kind: 'remove', track: 0, clip: 0 })).toBe(before);
+    const check = checkRemove(before, 0, 0);
+    expect(check.ok).toBe(false);
+    if (!check.ok) {
+      expect(check.reason).toContain('track 1 is locked');
+      expect(check.reason).toContain('D-129');
+    }
+    before.tracks[1].locked = false;
+    expect(checkRemove(before, 0, 0)).toEqual({ ok: true });
   });
 
   it('checkRemoveGap reports a real gap as ok, with the gap bounds `remove_gap` would use', () => {

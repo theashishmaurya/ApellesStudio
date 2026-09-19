@@ -2249,56 +2249,201 @@ export function mergeFrameRanges(
   return merged;
 }
 
-/** D-318 — cut ONE `[start, end)` timeline-frame range out of `track` and close
- *  the gap, by composing `split` + `remove` + `remove_gap`.
+/** What ONE range of a `ripple_delete_ranges` batch actually did (B-197).
  *
- *  Every refusal is a skip, never a guess: if a split is unnecessary or
- *  refused, if `remove` is rejected (a locked track, a link group reaching onto
- *  one), or if there is no closeable gap afterwards, this returns whatever it
- *  has rather than reaching past the ops' own guards. That is deliberate — the
- *  ops below already encode D-106/D-129/B-033, and a batch helper that
- *  second-guessed them would be a second, weaker implementation of rules that
- *  are already right. */
+ *  `start`/`end` are the range as `mergeFrameRanges` normalised it — half-open
+ *  TIMELINE frames — not necessarily as the caller wrote it. `applied` is the
+ *  whole truth about that range: its material came out AND the hole behind it
+ *  was closed (or there was nothing after it to pull earlier, which is the one
+ *  legitimate way a cut ends without a ripple). Anything less and `applied` is
+ *  false, the timeline is byte-identical for that range — see
+ *  `rippleDeleteOneRange`'s per-range rollback — and `reason` names the
+ *  constraint that refused it. */
+export interface RippleDeleteRangeResult {
+  start: number;
+  end: number;
+  applied: boolean;
+  reason?: string;
+}
+
+/** D-318 — cut ONE `[start, end)` timeline-frame range out of `track` and close
+ *  the gap, by composing `split` + `remove` + `remove_gap`. Returns the track's
+ *  index in the timeline it hands back (a `remove` can prune an emptied track,
+ *  which renumbers the ones after it) and a per-range verdict.
+ *
+ *  **B-197 — a range is all-or-nothing, and it says which it was.** The three
+ *  ops this composes each encode a real rule (D-106/D-129/B-033) and can refuse;
+ *  this helper still never reaches past their guards — second-guessing them
+ *  would be a weaker second implementation of rules that are already right. What
+ *  changed is what happens on a refusal. It used to `return next`: whatever had
+ *  been done so far stayed, the rest of that range was abandoned, and the batch
+ *  above had no idea. That is exactly B-197 — an 87-range recut reported
+ *  `{ok: true, ranges: 87}` with two of the ranges' material still on the
+ *  timeline (a refused `split`) or cut but with the hole left open (a refused
+ *  `remove_gap` — a sync-locked track straddling the gap's end, B-033's own
+ *  contract working as designed), which reads as "the timeline is longer than
+ *  the arithmetic says" and nothing else.
+ *
+ *  So a range that cannot complete now rolls back to the timeline it was handed
+ *  — no orphan split boundaries, no half-cut hole — and comes back with a
+ *  `reason` its caller can report. `checkSplit`/`checkRemove`/`checkRemoveGap`
+ *  supply those reasons, so this file states each rule exactly once. */
 function rippleDeleteOneRange(
   tl: Timeline,
   track: number,
   start: number,
   end: number,
   fps: number,
-): Timeline {
+): { timeline: Timeline; track: number; result: RippleDeleteRangeResult } {
+  const refuse = (reason: string) => ({
+    timeline: tl,
+    track,
+    result: { start, end, applied: false, reason },
+  });
+
+  const tr0 = tl.tracks[track];
+  if (!tr0) return refuse(`no track ${track} (0..${tl.tracks.length - 1})`);
+  if (tr0.locked) return refuse(`track ${track} is locked`);
+
   let next = tl;
 
   // 1. Isolate the range into whole clips. The LATER split goes first: cutting
   //    at `start` first would renumber the clip that `end` falls in.
   for (const at of [end, start]) {
-    const tr = next.tracks[track];
-    if (!tr) return next;
-    const hit = clipAt(tr, at, fps);
+    const hit = clipAt(next.tracks[track], at, fps);
     // A boundary that already falls on a clip edge needs no split — and asking
     // for one there would be a no-op the reducer rejects anyway.
     if (!hit || at <= hit.clip.start_frame) continue;
+    const check = checkSplit(next, track, hit.index, at, fps);
+    if (!check.ok) return refuse(`the cut at frame ${at} could not be made — ${check.reason}`);
     next = applyOp(next, { kind: 'split', track, clip: hit.index, atFrame: at });
   }
 
   // 2. Remove every clip now sitting wholly inside the range. Re-resolved each
   //    time, because `remove` can delete a whole A/V link group and can prune
   //    an emptied track — both of which renumber what is left.
+  let liveTrack = track;
+  let removed = 0;
   for (;;) {
-    const tr = next.tracks[track];
-    if (!tr) return next;
+    const tr = next.tracks[liveTrack];
+    // The track's own last clip was just removed, so the track itself pruned:
+    // everything this range asked for is gone. `liveTrack` is stale from here,
+    // which is what the caller needs the returned index for.
+    if (!tr) {
+      liveTrack = -1;
+      break;
+    }
     const idx = tr.clips.findIndex((c) => c.start_frame >= start && endFrame(c, fps) <= end);
     if (idx < 0) break;
-    const after = applyOp(next, { kind: 'remove', track, clip: idx });
-    // Refused (locked track, or a link member on one). Stop rather than spin:
-    // the `findIndex` above would return the same clip forever.
-    if (after === next) return next;
-    next = after;
+    const check = checkRemove(next, liveTrack, idx);
+    if (!check.ok) return refuse(`"${tr.clips[idx].name}" inside the range could not be removed — ${check.reason}`);
+    const before = next;
+    // Which of THIS track's clips will still be here afterwards — the anchor
+    // that re-finds the track if the removal prunes a lower-indexed one. A
+    // link group can reach back onto this track, so the doomed members are
+    // subtracted rather than assuming only `idx` goes.
+    const doomed = new Set<string>(
+      (linkTargets(next, liveTrack, idx)?.members ?? [[liveTrack, idx]]).map(
+        ([ti, ci]) => next.tracks[ti].clips[ci].id,
+      ),
+    );
+    const survivors = tr.clips.filter((c) => !doomed.has(c.id)).map((c) => c.id);
+    next = applyOp(next, { kind: 'remove', track: liveTrack, clip: idx });
+    // Belt and braces: `checkRemove` mirrors every refusal `case 'remove'`
+    // makes, so this cannot fire today — but a silent no-op here used to spin
+    // the loop forever on the same clip, and a future guard added to the
+    // reducer alone must surface as an honest refusal, not a hang.
+    if (next === before) return refuse(`"${tr.clips[idx].name}" inside the range could not be removed`);
+    removed++;
+    // D-129 — removing a link group can empty (and so prune) a track at a
+    // LOWER index than this one, which shifts this one. Follow the track by a
+    // clip it still owns rather than trusting the index, so the rest of the
+    // batch cannot silently cut a different track.
+    if (next.tracks.length !== before.tracks.length) {
+      liveTrack = survivors.length
+        ? next.tracks.findIndex((t) => t.clips.some((c) => survivors.includes(c.id)))
+        : -1;
+    }
   }
 
-  // 3. Close the hole. Refused as a no-op when there is nothing to ripple —
-  //    e.g. the cut ran to the end of the track, where there is no later
-  //    material to pull earlier (`remove_gap`'s own documented behaviour).
-  return applyOp(next, { kind: 'remove_gap', track, frame: start });
+  if (removed === 0) {
+    return refuse(
+      `nothing on track ${track} lies wholly inside frames ${start}..${end} — the range describes no real ` +
+        `material (already cut, a gap, or past the end of the track)`,
+    );
+  }
+  if (liveTrack < 0) {
+    // The material is gone and the track went with it; there is no hole left
+    // to close, so the range is fully applied.
+    return { timeline: next, track: liveTrack, result: { start, end, applied: true } };
+  }
+
+  // 3. Close the hole. `checkRemoveGap` (B-227) tells the two apart: "there is
+  //    nothing after this to pull earlier" — the cut ran to the end of the
+  //    track — is the one legitimate way a ripple delete ends without a
+  //    ripple, and is a real success. Anything else (B-033's straddling
+  //    sync-locked clip, above all) would leave the material cut and the hole
+  //    open, which is the half-applied state B-197 was filed for: roll back.
+  const gap = checkRemoveGap(next, liveTrack, start, fps);
+  if (!gap.ok) {
+    if (trackDuration(next.tracks[liveTrack], fps) <= start) {
+      return { timeline: next, track: liveTrack, result: { start, end, applied: true } };
+    }
+    return refuse(
+      `the material came out but the ${end - start}-frame hole at frame ${start} could not be closed, so the ` +
+        `cut would have left a gap instead of rippling — ${gap.reason}`,
+    );
+  }
+  return {
+    timeline: applyOp(next, { kind: 'remove_gap', track: liveTrack, frame: start }),
+    track: liveTrack,
+    result: { start, end, applied: true },
+  };
+}
+
+/** D-318 — the whole batched ripple delete, as one pure function: normalise the
+ *  ranges, cut them back to front, and report what each one did (B-197).
+ *
+ *  `applyOp`'s `case 'ripple_delete_ranges'` is this function and nothing else,
+ *  so the MCP handler (`editor_ripple_delete_ranges`) and the GUI (the Recut
+ *  panel's Cut button) can run it themselves to learn the PER-RANGE outcome
+ *  instead of inferring "did anything at all change" from a reference
+ *  comparison. That inference is what B-197 proved insufficient: a batch that
+ *  drops 2 of 87 ranges changes the timeline, so a reference check calls it a
+ *  success. This is the same shared-precondition pattern `checkRemoveGap`
+ *  (B-227) and `checkTrim` (B-215/B-220) established, taken one step further
+ *  because a batch's honest answer is a LIST, not a boolean.
+ *
+ *  `results` is in ascending range order (the order `mergeFrameRanges` returns,
+ *  not the back-to-front order they are applied in), one entry per MERGED
+ *  range — overlapping input is one cut and therefore one result. */
+export function applyRippleDeleteRanges(
+  tl: Timeline,
+  track: number,
+  ranges: ReadonlyArray<{ start: number; end: number }>,
+  fps: number,
+): { timeline: Timeline; results: RippleDeleteRangeResult[] } {
+  const merged = mergeFrameRanges(ranges);
+  const results: RippleDeleteRangeResult[] = new Array(merged.length);
+  let next = tl;
+  let liveTrack = track;
+  // Back to front: cutting an earlier range ripples every later one earlier,
+  // which would invalidate the frame numbers we were handed.
+  for (let i = merged.length - 1; i >= 0; i--) {
+    if (liveTrack < 0) {
+      results[i] = {
+        ...merged[i],
+        applied: false,
+        reason: `an earlier range in this batch removed the last clip on track ${track}, and the emptied track went with it`,
+      };
+      continue;
+    }
+    const step = rippleDeleteOneRange(next, liveTrack, merged[i].start, merged[i].end, fps);
+    next = step.timeline;
+    liveTrack = step.track;
+    results[i] = step.result;
+  }
+  return { timeline: next, results };
 }
 
 export function gapAt(tr: Track, frame: number, fps: number): { gapStart: number; gapEnd: number } | null {
@@ -4376,6 +4521,103 @@ export function checkRemoveGap(
   return { ok: true, gap };
 }
 
+/** Pre-flight check for `split` (B-197) — the same preconditions `applyOp`'s
+ *  own `case 'split'` enforces, factored out for the same reason
+ *  `checkRemoveGap` (B-227) and `checkTrim` (B-215/B-220) were: the reducer
+ *  can only answer a rejection with a silent `return tl`, and a caller that
+ *  needs to say WHY nothing happened cannot re-derive it without
+ *  re-implementing D-129.
+ *
+ *  `ripple_delete_ranges` is the caller that forced this one out (B-197): a
+ *  batched ripple delete composes `split` + `remove` + `remove_gap`, so a
+ *  refused split there is a whole range of the batch quietly not being cut,
+ *  and the batch could not report which range or why until the three ops'
+ *  refusals each had a name. */
+export function checkSplit(
+  tl: Timeline,
+  track: number,
+  clip: number,
+  atFrame: number,
+  fps: number,
+): { ok: true } | { ok: false; reason: string } {
+  const tr = tl.tracks[track];
+  if (!tr) return { ok: false, reason: `no track ${track} (0..${tl.tracks.length - 1})` };
+  if (tr.locked) return { ok: false, reason: `track ${track} is locked` };
+  const c = tr.clips[clip];
+  if (!c) return { ok: false, reason: `no clip ${clip} on track ${track} (0..${tr.clips.length - 1})` };
+  const span = sourceFramesToTimeline(c, c.duration, fps);
+  const offset = atFrame - c.start_frame;
+  if (offset <= 0 || offset >= span) {
+    return {
+      ok: false,
+      reason:
+        `frame ${atFrame} is not strictly inside ${trimClipLabel(c, track, clip)} ` +
+        `(${c.start_frame}..${c.start_frame + span}) — a split has to leave real material on both sides`,
+    };
+  }
+  // D-129 — a razor through one member of a link group cuts every member at
+  // the same frame, so the frame has to be strictly inside every one of them
+  // and none of their tracks may be locked. An already-slipped L-cut pair is
+  // exactly the case that fails here.
+  const link = linkTargets(tl, track, clip);
+  if (link) {
+    for (const [ti, ci] of link.members) {
+      if (ti === track && ci === clip) continue;
+      const ot = tl.tracks[ti];
+      if (ot.locked) {
+        return {
+          ok: false,
+          reason: `track ${ti} is locked and holds ${trimClipLabel(ot.clips[ci], ti, ci)}, linked (A/V, D-129) to this clip`,
+        };
+      }
+      const o = ot.clips[ci];
+      const oSpan = sourceFramesToTimeline(o, o.duration, fps);
+      const off = atFrame - o.start_frame;
+      if (off <= 0 || off >= oSpan) {
+        return {
+          ok: false,
+          reason:
+            `frame ${atFrame} is inside this clip but NOT inside ${trimClipLabel(o, ti, ci)} ` +
+            `(${o.start_frame}..${o.start_frame + oSpan}), which is A/V-linked to it (D-129) — a razor cuts ` +
+            `every member of a link group at one frame, so an already-offset L/J-cut pair cannot be split ` +
+            `there. Unlink the pair first if that is what you want.`,
+        };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+/** Pre-flight check for `remove` (B-197) — `checkSplit`'s counterpart for the
+ *  second of the three ops a batched ripple delete composes. Same two
+ *  rejections `applyOp`'s own `case 'remove'` makes: the clip index has to
+ *  exist, and D-129's "deleting one member of an A/V link group deletes every
+ *  member" is refused whole if ANY member's track is locked. */
+export function checkRemove(
+  tl: Timeline,
+  track: number,
+  clip: number,
+): { ok: true } | { ok: false; reason: string } {
+  const tr = tl.tracks[track];
+  if (!tr) return { ok: false, reason: `no track ${track} (0..${tl.tracks.length - 1})` };
+  if (tr.locked) return { ok: false, reason: `track ${track} is locked` };
+  if (clip < 0 || clip >= tr.clips.length) {
+    return { ok: false, reason: `no clip ${clip} on track ${track} (0..${tr.clips.length - 1})` };
+  }
+  const link = linkTargets(tl, track, clip);
+  const lockedMember = link?.members.find(([ti]) => tl.tracks[ti].locked);
+  if (lockedMember) {
+    return {
+      ok: false,
+      reason:
+        `track ${lockedMember[0]} is locked and holds a clip A/V-linked to this one (D-129) — deleting one ` +
+        `member of a link group deletes every member, so the whole delete is refused rather than leaving the ` +
+        `halves out of sync. Unlink the pair, or unlock track ${lockedMember[0]}.`,
+    };
+  }
+  return { ok: true };
+}
+
 /** What a trim would do to the addressed clip, or why it would do nothing.
  *  [`checkTrim`]'s result. `newStartFrame`/`newDuration` are the addressed
  *  clip's fields AFTER the trim, in their own native units (`start_frame` a
@@ -5522,14 +5764,16 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // `start_frame` is untouched, so this plain splice already matches
       // `apelles-timeline::Timeline::remove` exactly; the gap it leaves is
       // implicit (nothing occupies that `start_frame` range any more).
-      if (op.clip < 0 || op.clip >= tr.clips.length) return tl;
       // D-129 — deleting one member of an A/V link group deletes every
       // member (Resolve's own "…or deleting… automatically applies to the
       // other"). Refused whole if any member's track is locked; each emptied
       // track prunes, highest index first so lower ones stay valid. Mirrors
-      // `apelles-timeline::Timeline::remove`.
+      // `apelles-timeline::Timeline::remove`. B-197 — both that rule and the
+      // index bound live in `checkRemove` now, so a caller (the batched
+      // `ripple_delete_ranges` below) can report WHICH refusal it hit instead
+      // of this case's silent `return tl`.
+      if (!checkRemove(tl, op.track, op.clip).ok) return tl;
       const link = linkTargets(tl, op.track, op.clip);
-      if (link && link.members.some(([ti]) => tl.tracks[ti].locked)) return tl;
       const targets: Array<[number, number]> = link ? [...link.members] : [[op.track, op.clip]];
       targets.sort((a, b) => b[0] - a[0] || b[1] - a[1]);
       const next = clone(tl);
@@ -5555,19 +5799,12 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       propagateSyncLockRipple(next.tracks, op.track, gap.gapEnd, -shift);
       return next;
     }
-    case 'ripple_delete_ranges': {
+    case 'ripple_delete_ranges':
       // D-318 — the BATCHING of split+remove+remove_gap, not a second
-      // implementation of any of them. See the op's own doc.
-      const ranges = mergeFrameRanges(op.ranges);
-      if (ranges.length === 0) return tl;
-      let next = tl;
-      // Back to front: cutting an earlier range ripples every later one
-      // earlier, which would invalidate the frame numbers we were handed.
-      for (let i = ranges.length - 1; i >= 0; i--) {
-        next = rippleDeleteOneRange(next, op.track, ranges[i].start, ranges[i].end, fps);
-      }
-      return next;
-    }
+      // implementation of any of them. See the op's own doc. B-197 — the whole
+      // body is `applyRippleDeleteRanges`, which a caller runs itself when it
+      // needs the per-range outcome this reducer signature cannot carry.
+      return applyRippleDeleteRanges(tl, op.track, op.ranges, fps).timeline;
     case 'trim_start': {
       // Mirrors `apelles-timeline::Timeline::trim_start` field-for-field: the
       // clip's *end* stays fixed — `source_start` and `start_frame` shift by
@@ -5793,28 +6030,17 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // clip's own TIMELINE-frame footprint, not its raw (source-frame)
       // `.duration`. The actual `source_start`/`duration` split further down
       // converts that timeline offset to each clip's own source frames.
-      const c = tr.clips[op.clip];
-      if (!c) return tl;
-      const offset = op.atFrame - c.start_frame;
-      if (offset <= 0 || offset >= sourceFramesToTimeline(c, c.duration, fps)) return tl;
       // D-129 — a razor through one member of a link group cuts every member
       // at the same frame ("clicking a linked clip with the Razor Tool cuts
       // both tracks at once"), producing two INTACT pairs: left halves keep
       // the group, right halves move to a derived one (`{group}·{frame}`,
       // matching the clip-id derivation already used here). Rejected whole if
       // the frame isn't strictly inside every member (an already-slipped
-      // L-cut). Mirrors `apelles-timeline::Timeline::split`.
+      // L-cut). Mirrors `apelles-timeline::Timeline::split`. B-197 — every one
+      // of those preconditions lives in `checkSplit` now, for the same reason
+      // `remove` above moved to `checkRemove`.
+      if (!checkSplit(tl, op.track, op.clip, op.atFrame, fps).ok) return tl;
       const link = linkTargets(tl, op.track, op.clip);
-      if (link) {
-        for (const [ti, ci] of link.members) {
-          if (ti === op.track && ci === op.clip) continue;
-          const ot = tl.tracks[ti];
-          if (ot.locked) return tl;
-          const o = ot.clips[ci];
-          const off = op.atFrame - o.start_frame;
-          if (off <= 0 || off >= sourceFramesToTimeline(o, o.duration, fps)) return tl;
-        }
-      }
       const rightGroup = link ? `${link.group}·${op.atFrame}` : null;
       const next = clone(tl);
       // Descending, so inserting each right half at `ci + 1` never shifts an

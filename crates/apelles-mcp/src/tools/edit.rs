@@ -4505,8 +4505,19 @@ impl ApellesMcp {
 
     One call is **one undo entry**, however many ranges it removes — which is
     the reason this exists rather than looping `editor_split_clip` +
-    `editor_remove_clip` + `editor_remove_gap` yourself. Refused with an `error`
-    if the track is locked or no range describes real material on it."#
+    `editor_remove_clip` + `editor_remove_gap` yourself.
+
+    **Read the answer; do not assume it (B-197).** `ok: true` means every range
+    really was cut. A range that CANNOT be — a sync-locked track has a clip
+    straddling the point its ripple would have to close (B-033), an A/V-linked
+    partner cannot be razored there (D-129), the range describes no real
+    material — is left ENTIRELY alone (its material stays, no half-cut hole),
+    and the call answers `ok: false` with `applied` (how many ranges did land,
+    still as one undo entry), `requested`, and `skipped`: each un-cut range's
+    `startFrame`/`endFrame` and the `reason` it was refused. Re-read the
+    timeline before trusting any frame number you were holding, or undo.
+    Refused outright with an `error`, nothing applied, if the track is locked
+    or not one range could be cut."#
     )]
     pub async fn editor_ripple_delete_ranges(
         &self,

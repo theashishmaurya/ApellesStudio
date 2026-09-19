@@ -138,6 +138,30 @@ Status: `open` · `decided` · `revisit`
   parallel resize, compositing genuinely on the GPU — which §2 records phase 1
   never did — and hardware encode per segment).
 
+---
+
+## D-361 — a batch edit's honest answer is a LIST, and a range it cannot finish rolls back rather than half-applying
+
+**decided (2026-09-19)** · fixes **B-197** · extends **B-227**'s `checkRemoveGap` pattern (reused by **B-215/B-220** as `checkTrim`) · area: `packages/editor/src/timeline.ts`, `useEditorControl.ts`, `RecutPanel.tsx`
+
+- **Context.** B-197: `editor_ripple_delete_ranges` dropped 2 of 87 ranges on a real recut and reported `{ok: true, ranges: 87}`. The established silent-no-op pattern (a `check*` precondition function + a reference-equality backstop in the handler) does not close it: a batch that drops SOME of its ranges *does* change the timeline, so `after !== before` is true and the backstop reports success. B-197's own entry says as much — the backstop is "useless here."
+
+- **Two real decisions, not one.**
+
+  - **(1) Report per range, not per call.** `applyRippleDeleteRanges(tl, track, ranges, fps)` returns `{timeline, results}` — one `{start, end, applied, reason?}` per MERGED range, in ascending order. `applyOp`'s `case 'ripple_delete_ranges'` is now that function and nothing else, and both callers (the MCP handler, the Recut panel's Cut button) run it themselves as a dry run to learn the outcome before dispatching. That is B-227's "one shared definition of the preconditions, run by the reducer and the caller alike," with a list where that pattern had a boolean — a batch cannot answer honestly with one verdict. **Option not taken:** deriving the per-range truth by diffing before/after timelines in the handler. It re-implements the op's own semantics in a second place to answer a question the op already knows the answer to, and it cannot attribute a result to the range that caused it once ranges interact.
+  - **(2) A range that cannot finish rolls back — all-or-nothing PER RANGE, not per batch.** Three of the four failure paths (a refused razor, a refused delete, a refused gap close) used to leave the timeline mid-cut: material gone with the hole left open, or two orphan split boundaries around material that was never removed. That half-state is what made B-197's live symptom read as "the timeline is 630 frames longer than the arithmetic" with no other clue. Since the helper is pure, rolling one range back is just returning the timeline it was handed.
+    **Why per range and not per batch (all-or-nothing for the whole call):** one straddling overlay graphic would veto an 87-range cleanup outright, and the same op is the Recut panel's Cut button — refusing the whole recut because one range of it is blocked is worse for both the human and the agent than cutting 85 and saying plainly which 2 were not cut and why. The caller is told, in the same answer, exactly what landed, and one undo still reverses all of it.
+
+- **A refused range is NOT re-litigated.** Each of the three refusals is a rule that is already right — D-129's link-group razor/delete contract, B-033's reject-on-straddle. Nothing here second-guesses them (B-033's straddle behaviour is byte-for-byte unchanged, per B-227's own finding); this decision is only about what the caller is told and what state it is left in. `checkSplit` and `checkRemove` are new, exported, and shared with `applyOp`'s own two cases, so the reasons come from the rules themselves rather than a parallel description of them.
+
+- **The batch follows its track through a prune.** A `remove` that empties a track prunes it (`pruneIfEmptyTrack`), which renumbers every track after it — and the batch loop kept using the raw index, so the remaining ranges could have cut a DIFFERENT track. It now re-finds the edited track by a clip it still owns whenever the track count changes, and reports the rest of the batch as un-applied if that track is gone. Found while enumerating the failure paths, not by reproduction, and fixed rather than documented because "cuts the wrong track" has no acceptable reporting.
+
+- **Cost, accepted.** The handler applies the batch twice: once as a pure dry run for the outcome, once through the store for real. Measured at **11.8 ms** for 87 ranges on a 16,475-frame clip, so ~12 ms added to a one-shot user gesture, nowhere near the preview/render hot path this repo's performance rule is about. The alternative — having the store return the new timeline so the dry run could be reused — changes the store's op contract for every op to serve one, and was rejected as the bigger change.
+
+- **Both interfaces, same pass, per CLAUDE.md.** The MCP tool answers `ok: false` + `applied`/`requested`/`skipped[{startFrame, endFrame, reason}]`, and both MCP surfaces' descriptions (`mcp/server.py`, `crates/apelles-mcp/src/tools/edit.rs`) now state that contract — parity corpus re-captured. The Recut panel reports `Cut 85 of 87 ranges — the other 2 could not be cut and were left untouched: …` instead of its old unconditional "Cut 87 ranges."
+
+---
+
 ## D-356 — the on-canvas VIDEO transform box also gates on `clipCoversFrame`, closing B-186 the same way D-317 closed B-185 for captions
 
 **decided (2026-09-18)** · closes **B-186** · area: `packages/editor/src/TransformOverlay.tsx` · precedent: **D-317** (B-185, `CaptionTransformOverlay.tsx`)
@@ -34216,10 +34240,10 @@ a confident all-clear over material nobody looked at is the failure mode this
 whole entry exists to remove.
 
 **Nothing is cut**, unchanged. Both forms propose; `editor_ripple_delete_ranges`
-still decides. (Note for whoever cuts a large swept batch: **B-197 is still
-open** — `ripple_delete_ranges` can silently drop ranges from a large batch.
-Orthogonal to this entry, but a sweep makes large batches easier to produce, so
-verify a big cut's result against its own frame arithmetic.)
+still decides. (Note for whoever cuts a large swept batch: **B-197 is fixed**
+(D-361, 2026-09-19) — a batch that cannot apply a range now says so, per range,
+with a reason, instead of reporting a blanket success. Read `skipped` in the
+answer rather than re-deriving the cut's frame arithmetic yourself.)
 
 **Both interfaces, per CLAUDE.md.** `RecutPanel.tsx` gains the same capability
 on ONE control rather than a second pair of buttons — a "This clip / Whole
