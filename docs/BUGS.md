@@ -27,7 +27,15 @@ Still real:
 
 ## Open
 
-## B-231 — `editor_export`'s status is unreliable in BOTH directions: a healthy export reports itself as failed, and a genuinely hung one reports itself as fine
+## B-235 — deleting/cutting on the Edit timeline leaves live playback audibly muted for a beat before it comes back
+
+status: **open** · severity: medium (no data loss, and it self-recovers, but a real, reproducible playback defect on the single most common editing action — cutting something) · area: likely `app/src-tauri/src/chroma/audio.rs` / `crates/apelles-media/src/audio.rs`'s play-session re-resolve path (`generation`/`begin_request`, `resolve_sources_at`, `run_session` — not yet confirmed, see below)
+
+- **found:** 2026-09-24, reported live by the owner while reviewing the `2026-09-12-c038-mgfx` timeline (screenshot: `scratch/bug-reports/B-235-audio-mute-after-timeline-edit.png`) — the project open at the time, playhead around 00:01:36 on the video/audio tracks.
+- **repro (as reported, not yet independently reproduced by an agent):** delete a clip (or otherwise cut) on the Edit timeline while it can play audio. For a noticeable stretch afterward, played-back audio is silent/muted, then comes back on its own.
+- **owner's own hypothesis, worth checking first rather than assuming:** "probably a re-rendering of the voice once we change the timeline" — i.e. the edit invalidates the live audio-mix session (a `generation` bump forcing `run_session` to tear down and restart via `begin_request`/`resolve_sources_at` in `app/src-tauri/src/chroma/audio.rs` and `crates/apelles-media/src/audio.rs`) and the gap is that teardown-to-first-audible-sample window, not a real silence in the material.
+- **not yet root-caused.** No agent has reproduced this directly against the running app, read the actual re-resolve code path this session, or measured the gap's real duration — filed from the owner's live report so it isn't lost, not from a confirmed cause. The `generation`/`begin_request` mechanism (`app/src-tauri/src/chroma/audio.rs:900-990`, `crates/apelles-media/src/audio.rs`) is where a fresh session gets spun up after any op that changes the timeline, and is the first place to look, per the owner's own hypothesis — but that is a lead, not a confirmed cause.
+- **not fixed here.**
 
 status: **fixed** (2026-09-19, **D-362**) · severity: high (not a rendering defect — an *observability* one, but a serious one: neither a human nor an agent driving this MCP tool could trust its own success/failure signal for the compositor export path) · area: `crates/apelles-mcp`/`mcp/server.py`'s `editor_export` RPC bridge, `app/src-tauri/src/chroma/chroma::control` (frontend round-trip), `app/src-tauri/src/chroma/edit_render.rs`
 
