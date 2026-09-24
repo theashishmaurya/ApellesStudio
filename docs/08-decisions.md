@@ -6,6 +6,104 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-364 — retake detection reads a continuous TAKE, not a clip: consecutive clips cut from one uninterrupted stretch of one source are merged into one run before grouping, and a group's takes are mapped back onto the real clips afterwards
+
+**Status: `decided`** (2026-09-24). Fixes **B-237**.
+
+**Context.** `editor_detect_retakes`'s whole-track sweep called `detect_retakes`
+once per clip, and `resolveRetakeArgs` scoped each call's transcript view to
+`clipSourceRangeSecs(c, fps)` — that one clip's own trimmed source range. After
+an earlier fine-grained silence cut a clip is routinely *shorter than the
+sentence it is part of*: the owner's real project (`2026-09-12-c038-mgfx`) has
+clips of 0.25 s and 0.58 s. So a restart's two halves land in different clips'
+views and no call ever sees both. A chain needs two members; a view holding one
+half cannot produce one however good the scoring is. Measured, not inferred:
+**6 of 7 real retakes the owner cut by hand span 2-5 original clips each and
+were invisible; the one the sweep caught is the one whose two takes happened to
+share a single clip.** The grouping algorithm itself is fine — run on the real
+numbers it scores a same-clip restart at 0.844 against the 0.82 bar. The bug is
+entirely in what gets fed to it. Evidence and method: **B-237** in `docs/BUGS.md`
+and `docs/notes/retake-detection.md` §4.
+
+**Options.**
+
+1. **Keep per-clip scoping, tune the thresholds.** Rejected outright: no
+   threshold recovers a take that is not in the input. This is not a scoring
+   problem.
+2. **Merge every clip on the track into one view.** Rejected. It compares
+   material that was never one take — two different source files, a re-ordered
+   timeline, two halves of a recording an hour apart — and re-introduces
+   material the timeline no longer shows. `window_secs` exists for a different
+   reason (how far apart two *takes* may be) and does not bound any of that.
+3. **Merge a contiguous run of same-source clips — chosen.** Consecutive
+   analysable clips that share a `source_path`, move forward through that
+   source, and are separated by at most `window_secs` of removed material are
+   one *run*: the reconstruction of "one continuous recording, chopped up, with
+   bits taken out". Detection runs once per run over the merged utterance list;
+   a found group's takes, which are absolute source seconds, are mapped back
+   onto the clips and frames they actually land in.
+
+**Why the gap bound is `window_secs` and not a new number.** `window_secs` is
+already the furthest apart two takes may be before the detector refuses to pair
+them. Two takes either side of more removed source than that could never be
+grouped even if merged, so merging across it is cost with no possible finding. A
+caller that raises `window_secs` raises the run bound with it; there is no
+second knob and no magic constant.
+
+**What the merge deliberately does NOT widen: what is read.** The run's
+utterance list is the union of the clips' *own* filtered, D-349-spliced views,
+not a fresh slice of the run's whole source span. Material an earlier cut
+removed therefore still contributes nothing, and the pre-existing invariant ("a
+source trimmed to its second half must not report retakes from material nobody
+will ever see") holds at run granularity. The D-349 dark-region scan and its
+recovery windows are unchanged — still per clip, same cache keys, same cost.
+Only the grouping *input* is merged, and it is deduped: one transcript segment
+overlapping two clips of a run is one utterance, not two (the double-count that
+made `editor_get_timeline_transcript` look like a Whisper bug during B-237's
+investigation).
+
+**The single-clip call widens too — decided deliberately, not left ambiguous.**
+`editor_detect_retakes(track, clip)` now reads the whole run its clip belongs to
+and then reports only the groups that actually touch that clip. Three reasons,
+in order: (1) a human reviewing one clip in the Recut panel wants the stumble
+that clip is part of — half a restart cannot be grouped with anything, so the
+literal "just this clip" contract was answering a question with no useful
+answer; (2) it keeps ONE code path and one `RetakeDetectionArgs` per run, so a
+single-clip call and a sweep derive the identical cache key and cannot report
+the same material differently — the exact drift B-216/D-349 were about; (3) a
+single-clip answer that contradicted the sweep's answer for the same clip would
+be a new bug of its own. The answer still names the clip that was asked about,
+still carries no sweep-only fields, and now says `readAcrossClips` when it was
+read as part of a longer run.
+
+**A take can span clips, and the response says so honestly.** Each take gained
+`clips` and a `segments` entry per clip (each carrying the same three frame
+spaces the tools already return). A take that lives inside one clip *also* keeps
+the flat `startFrame`/`endFrame` it always had — every take these tools have
+ever returned. A take that straddles clips does **not** get them, deliberately:
+no single range describes it, and emitting a clamped one would quietly under-cut
+when passed to `editor_ripple_delete_ranges`. A caller reading it blindly gets
+nothing rather than something wrong. The Recut panel's Cut button passes every
+segment of a ticked row for the same reason. A sweep reports a multi-clip group
+ONCE, under the earliest clip it touches, and gained a `runs` count so "these 20
+clips were read as one take" is visible rather than implied.
+
+**Where it lives.** `packages/editor/src/recutRuns.ts` (pure: the run rule, the
+merge, the take→clips mapping) and `runTranscriptView` in `darkRecovery.ts` (the
+stateful step, next to the per-clip view it wraps, so the Recut panel and
+`editor_detect_retakes` share it exactly as they already shared
+`clipTranscriptView`).
+
+**Verified** by a regression fixture built from B-237's own first table row —
+the "…the trick behind used…" → "down. And the trick being used…" restart at
+source 210-230 s, split across clips including the real 0.25 s and 0.58 s
+lengths, with the second take deliberately straddling a boundary. Against the
+pre-D-364 per-clip scoping the sweep answers *"no retake groups anywhere on this
+track"*; with the fix it returns the group, with the straddling take as one
+range per clip it lands in. 14 pure tests + 4 end-to-end op-layer tests.
+
+---
+
 ## D-363 — the Edit tab's compositor moves to the GPU (wgpu/Metal), as a new `apelles-compositor` crate, opt-in behind `renderer: "gpu"`
 
 **Status: `open` — planned, not built.** A read-only planning pass scoped this

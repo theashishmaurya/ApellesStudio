@@ -56,7 +56,25 @@ const backend = vi.hoisted(() => ({
   /** Utterance texts the stub retake detector groups, keyed by nothing: it
    *  groups whatever it is handed if the handed list is long enough. */
   retakeGroups: 0,
+  /** B-237/D-364. `'similar'` makes the stub group only utterances that are
+   *  actually alike, so a call that is handed one half of a restart finds
+   *  nothing and a call handed both finds the pair — which is the ONLY
+   *  property of the real detector this file is entitled to lean on. The real
+   *  scoring is `apelles-speech`'s own Rust suite's subject; what is on trial
+   *  here is what gets HANDED to it. */
+  retakeMode: 'any' as 'any' | 'similar',
 }));
+
+/** Word-set overlap, the crudest possible stand-in for "the same line again".
+ *  Deliberately not a reimplementation of `retake.rs` — it exists only so the
+ *  fixture below can distinguish "saw both takes" from "saw one". */
+function alike(a: string, b: string): boolean {
+  const words = (t: string) => new Set(t.toLowerCase().split(/\W+/).filter(Boolean));
+  const x = words(a);
+  const y = words(b);
+  const shared = [...x].filter((w) => y.has(w)).length;
+  return shared / Math.max(x.size, y.size) >= 0.6;
+}
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
@@ -73,6 +91,36 @@ vi.mock('@tauri-apps/api/core', () => ({
       backend.calls.push({ cmd: 'chroma_detect_retakes', args });
       const utterances = (args?.utterances ?? []) as Array<{ start: number; end: number; text: string }>;
       if (backend.retakeGroups === 0 || utterances.length < 2) return { groups: [] };
+      if (backend.retakeMode === 'similar') {
+        const pair: number[] = [];
+        for (let i = 0; i < utterances.length && pair.length === 0; i += 1) {
+          for (let j = i + 1; j < utterances.length; j += 1) {
+            if (alike(utterances[i].text, utterances[j].text)) {
+              pair.push(i, j);
+              break;
+            }
+          }
+        }
+        if (pair.length === 0) return { groups: [] };
+        return {
+          groups: [
+            {
+              keep: 1,
+              similarity: 0.87,
+              takes: [
+                { first: 0, last: 0 },
+                { first: 1, last: 1 },
+              ],
+              members: pair.map((u, index) => ({
+                index,
+                start_secs: utterances[u].start,
+                end_secs: utterances[u].end,
+                text: utterances[u].text,
+              })),
+            },
+          ],
+        };
+      }
       return {
         groups: [
           {
@@ -214,6 +262,7 @@ beforeEach(() => {
   backend.calls.length = 0;
   backend.silenceAt = [];
   backend.retakeGroups = 0;
+  backend.retakeMode = 'any';
   bus.emitted.length = 0;
   bus.dispatches.length = 0;
   useMediaUnderstandingStore.setState({
@@ -272,17 +321,40 @@ describe('the counting invariant — one dispatch, whatever the clip count (B-21
 
   /** A retake sweep must not cost one TRANSCRIPTION per clip: a transcript is
    *  a fact about a FILE, which is the same rule `editor_get_timeline
-   *  _transcript` follows (D-329). Twenty clips off one source is one. */
-  it('transcribes once per SOURCE FILE, not once per clip', async () => {
+   *  _transcript` follows (D-329). Twenty clips off one source is one.
+   *
+   *  Since D-364 it does not cost one DETECTION per clip either: these twenty
+   *  clips are back-to-back cuts of one recording, so they are one run and one
+   *  grouping — which is the point of B-237's fix, and also strictly less work
+   *  than the twenty calls this used to make. */
+  it('transcribes once per SOURCE FILE, and groups once per continuous take', async () => {
     const n = 20;
     useMediaUnderstandingStore.setState({ transcripts: { [SOURCE]: transcript(200) } });
     await mountWith(fixture(n));
 
-    await callOp('editor_detect_retakes', { track: 0 });
+    const env = await callOp('editor_detect_retakes', { track: 0 });
 
     expect(bus.dispatches).toHaveLength(1);
     expect(backend.calls.filter((c) => c.cmd === 'chroma_transcribe_start')).toHaveLength(0);
-    expect(backend.calls.filter((c) => c.cmd === 'chroma_detect_retakes')).toHaveLength(n);
+    expect(backend.calls.filter((c) => c.cmd === 'chroma_detect_retakes')).toHaveLength(1);
+    expect(env.result.runs).toBe(1);
+    expect(env.result.totals.analysable).toBe(n);
+  });
+
+  /** The other direction: clips that are NOT one continuous take are still one
+   *  detection each, so the merge cannot quietly compare unrelated material. */
+  it('still groups separately when the clips are not one continuous take', async () => {
+    useMediaUnderstandingStore.setState({ transcripts: { [SOURCE]: transcript(400) } });
+    const tl = fixture(3);
+    // Push clip 2 far enough down the source that no pair of takes either side
+    // of the removed stretch could ever be grouped anyway.
+    tl.tracks[0].clips[2].source_start = 240 * 20;
+    await mountWith(tl);
+
+    const env = await callOp('editor_detect_retakes', { track: 0 });
+
+    expect(env.result.runs).toBe(2);
+    expect(backend.calls.filter((c) => c.cmd === 'chroma_detect_retakes')).toHaveLength(2);
   });
 
   /** Two clips over the SAME source range at the same threshold are one
@@ -335,7 +407,7 @@ describe('what a sweep reports', () => {
     });
   });
 
-  it('reports retake groups per clip, and never cuts anything', async () => {
+  it('reports retake groups against the clips they land in, and never cuts anything', async () => {
     backend.retakeGroups = 1;
     useMediaUnderstandingStore.setState({ transcripts: { [SOURCE]: transcript(40) } });
     const before = useEditorTimelineStore.getState().timeline;
@@ -343,7 +415,12 @@ describe('what a sweep reports', () => {
 
     const env = await callOp('editor_detect_retakes', { track: 0 });
 
-    expect(env.result.flagged).toHaveLength(4);
+    // One run, one grouping, and the group is reported ONCE — under the
+    // earliest clip it touches (D-364). Repeating it under every clip it spans
+    // would make one stumble look like several.
+    expect(env.result.flagged).toHaveLength(1);
+    expect(env.result.flagged[0].clip).toBe(0);
+    expect(env.result.clean).toEqual([1, 2, 3]);
     expect(env.result.flagged[0].groups[0].takes).toHaveLength(2);
     expect(env.result.flagged[0].groups[0].keep).toBe(1);
     expect(env.result.note).toMatch(/nothing was cut/);
@@ -441,11 +518,166 @@ describe('the single-clip answer is unchanged (the regression guarantee)', () =>
     useMediaUnderstandingStore.setState({ transcripts: { [SOURCE]: transcript(40) } });
     await mountWith(fixture(4));
 
-    const env = await callOp('editor_detect_retakes', { track: 0, clip: 1 });
+    const env = await callOp('editor_detect_retakes', { track: 0, clip: 0 });
 
-    expect(env.result).toMatchObject({ ok: true, track: 0, clip: 1, clipId: 'c1', state: 'done' });
+    expect(env.result).toMatchObject({ ok: true, track: 0, clip: 0, clipId: 'c0', state: 'done' });
     expect(env.result.groups[0].keep).toBe(1);
+    // A take inside one clip still carries the flat frame fields it always did.
     expect(env.result.groups[0].takes[0]).toHaveProperty('startFrame');
     expect(env.result.flagged).toBeUndefined();
+  });
+
+  /** D-364 — asking about one clip answers about THAT clip, even though the
+   *  detection is now read over the whole run it belongs to. A group sitting
+   *  entirely in a neighbour is not this clip's business. */
+  it('answers about the clip that was asked about, not about its whole run', async () => {
+    backend.retakeGroups = 1;
+    useMediaUnderstandingStore.setState({ transcripts: { [SOURCE]: transcript(40) } });
+    await mountWith(fixture(4));
+
+    const env = await callOp('editor_detect_retakes', { track: 0, clip: 2 });
+
+    expect(env.result).toMatchObject({ ok: true, clip: 2, state: 'done' });
+    expect(env.result.groups).toEqual([]);
+    expect(env.result.note).toBe('no retakes found in this clip');
+    // And it says plainly that it read more than clip 2 to decide that.
+    expect(env.result.readAcrossClips).toEqual([0, 1, 2, 3]);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+// B-237 / D-364 — the case the sweep was structurally blind to
+// --------------------------------------------------------------------------- #
+
+/** The restart "…the trick behind used…" → "down. And the trick being used…"
+ *  at source 210-230 s, which an earlier silence cut had already split across
+ *  several original clips including ones of 0.25 s and 0.58 s. Those numbers
+ *  are the measured ones (`docs/notes/retake-detection.md` §4); the exact
+ *  original partition is not recorded, so the clip lengths are laid out across
+ *  that window in the shape a silence cut leaves behind. The second take starts
+ *  inside the 0.58 s sliver, so the take itself straddles a boundary too. */
+const REAL_TAKE_ONE = 'and this is the trick behind used in every one of these models';
+const REAL_TAKE_TWO = 'down and the trick being used in every one of these models is the same';
+
+function straddlingRestart() {
+  const clips = [
+    { id: 'r0', source_start: 5030, duration: 228, start_frame: 0 },
+    { id: 'r1', source_start: 5258, duration: 6, start_frame: 228 },
+    { id: 'r2', source_start: 5264, duration: 14, start_frame: 234 },
+    { id: 'r3', source_start: 5278, duration: 251, start_frame: 248 },
+  ].map((c) => ({
+    ...c,
+    name: c.id,
+    source_path: SOURCE,
+    source_len: 24 * 600,
+    source_fps: 24,
+  }));
+  return {
+    id: 'tl',
+    name: 'B-237',
+    rate: { num: 24, den: 1 },
+    tracks: [
+      { kind: 'video', clips, gain: 1, sync_locked: false },
+      { kind: 'audio', clips: [], gain: 1, sync_locked: false },
+    ],
+    markers: [],
+  };
+}
+
+function restartTranscript(): Transcript {
+  const segments = [
+    { start: 200.0, end: 209.0, text: 'so before we get to any of that there is one more thing' },
+    { start: 210.4, end: 219.05, text: REAL_TAKE_ONE },
+    { start: 219.5, end: 229.6, text: REAL_TAKE_TWO },
+    { start: 230.0, end: 236.0, text: 'which brings us neatly to the next part' },
+  ];
+  return { text: segments.map((s) => s.text).join(' '), segments, language: 'en' } as Transcript;
+}
+
+describe('a restart split across clips by an earlier silence cut (B-237)', () => {
+  beforeEach(() => {
+    backend.retakeGroups = 1;
+    backend.retakeMode = 'similar';
+    useMediaUnderstandingStore.setState({ transcripts: { [SOURCE]: restartTranscript() } });
+  });
+
+  /** THE regression test. Before D-364 each of these four clips was asked
+   *  about on its own, and no single one of those views held both takes — so
+   *  the sweep returned nothing, which is exactly what happened on the owner's
+   *  real project six times out of seven. */
+  it('finds the group the per-clip sweep could never have seen', async () => {
+    await mountWith(straddlingRestart());
+
+    const env = await callOp('editor_detect_retakes', { track: 0 });
+
+    expect(env.result.state).toBe('done');
+    expect(env.result.runs).toBe(1);
+    expect(env.result.totals.findings).toBe(1);
+    expect(env.result.flagged).toHaveLength(1);
+
+    const group = env.result.flagged[0].groups[0];
+    expect(group.takes.map((t: { text: string }) => t.text)).toEqual([
+      REAL_TAKE_ONE,
+      REAL_TAKE_TWO,
+    ]);
+    // The detector was handed both halves in ONE call. That is the fix.
+    const detect = backend.calls.filter((c) => c.cmd === 'chroma_detect_retakes');
+    expect(detect).toHaveLength(1);
+    const handed = (detect[0].args?.utterances ?? []) as Array<{ text: string }>;
+    expect(handed.map((u) => u.text)).toContain(REAL_TAKE_ONE);
+    expect(handed.map((u) => u.text)).toContain(REAL_TAKE_TWO);
+  });
+
+  /** The half of the fix that stops it being a different bug: a take that
+   *  straddles clips must come back as every range it covers, or accepting it
+   *  would cut one piece and leave the rest on the timeline. */
+  it('reports the straddling take as one range per clip it lands in', async () => {
+    await mountWith(straddlingRestart());
+
+    const env = await callOp('editor_detect_retakes', { track: 0 });
+    const takes = env.result.flagged[0].groups[0].takes;
+
+    // Take 1 sits inside clip 0: one segment, and the flat frame fields it has
+    // always carried.
+    expect(takes[0].clips).toEqual([0]);
+    expect(takes[0].segments).toHaveLength(1);
+    expect(takes[0]).toHaveProperty('startFrame');
+
+    // Take 2 enters in the 0.58s sliver and finishes in clip 3.
+    expect(takes[1].clips).toEqual([2, 3]);
+    expect(takes[1].segments.map((s: { clip: number }) => s.clip)).toEqual([2, 3]);
+    for (const seg of takes[1].segments) {
+      expect(seg.endFrame).toBeGreaterThan(seg.startFrame);
+    }
+    // And NO single flat range, because no single range describes it — a caller
+    // that read one blindly would under-cut.
+    expect(takes[1].startFrame).toBeUndefined();
+    expect(takes[1].endFrame).toBeUndefined();
+  });
+
+  /** Asking about the clip the second take FINISHES in must surface the group
+   *  it is half of — the single-clip question a human asks from the Recut panel
+   *  when they can hear the stumble but only part of it is in this clip. */
+  it('surfaces the straddling group from a single-clip call on either half', async () => {
+    await mountWith(straddlingRestart());
+
+    const first = await callOp('editor_detect_retakes', { track: 0, clip: 0 });
+    const last = await callOp('editor_detect_retakes', { track: 0, clip: 3 });
+
+    expect(first.result.groups).toHaveLength(1);
+    expect(last.result.groups).toHaveLength(1);
+    expect(last.result.readAcrossClips).toEqual([0, 1, 2, 3]);
+    // Both calls asked the identical question, so the detector ran once.
+    expect(backend.calls.filter((c) => c.cmd === 'chroma_detect_retakes')).toHaveLength(1);
+  });
+
+  /** Nothing is cut, by either form — D-318's contract, unchanged. */
+  it('still proposes rather than cuts', async () => {
+    await mountWith(straddlingRestart());
+
+    const env = await callOp('editor_detect_retakes', { track: 0 });
+
+    expect(env.result.note).toMatch(/nothing was cut/);
+    expect(backend.calls.some((c) => c.cmd === 'chroma_timeline_set')).toBe(false);
   });
 });

@@ -68,6 +68,12 @@ import {
   type DetectedSpan,
 } from './recut';
 import { sweepTargets } from './recutSweep';
+// D-364/B-237 — the clips a fine-grained silence cut chopped out of one
+// continuous take are put back together before the grouper reads them, so a
+// restart whose halves landed in two clips is visible here too, not only to
+// the MCP tool. The panel and `editor_detect_retakes` share this layer for the
+// same reason they share `clipTranscriptView`: they must not disagree.
+import { clipRuns, takeSegments, type ClipRun } from './recutRuns';
 import { applyRippleDeleteRanges, timelineFps, type Clip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import {
@@ -81,7 +87,7 @@ import {
 // re-reads those windows and splices the words back in. The SAME function
 // `editor_detect_retakes` runs, so the human's recut and the agent's cannot end
 // up grouping two different transcripts of one file.
-import { clipTranscriptView } from './darkRecovery';
+import { clipTranscriptView, runTranscriptView } from './darkRecovery';
 
 /** One row the user can tick. A silence is its own candidate; a retake group
  *  contributes one candidate per take, with the suggested keep marked so the
@@ -89,12 +95,23 @@ import { clipTranscriptView } from './darkRecovery';
 interface Candidate {
   id: string;
   kind: 'silence' | 'retake';
+  /** Where the row starts, for sorting and for the timestamp column. */
   span: DetectedSpan;
-  /** Which clip on the scanned track this came from. Always present — a
-   *  whole-track scan needs it to label the row, and a single-clip scan gets
-   *  it for free. */
+  /** Every range this row would cut, one per clip it lands in (D-364). A
+   *  silence, and a retake take that lives inside one clip, has exactly one —
+   *  which is every row this panel showed before B-237. A take spanning clips a
+   *  silence cut split apart has several, and cutting only the first would
+   *  leave the other halves on the timeline. */
+  spans: DetectedSpan[];
+  /** Which clip on the scanned track this came from — the first one, when the
+   *  row spans several. Always present: a whole-track scan needs it to label
+   *  the row, and a single-clip scan gets it for free. */
   clip: number;
   clipName: string;
+  /** How many clips the row spans, when that is more than one (D-364). Shown
+   *  so a human can see the cut reaches past the clip the row is labelled
+   *  with. */
+  clipSpan?: number;
   /** Present for retakes: the words, so a human can see what they are cutting. */
   text?: string;
   /** Retakes only: this take is the group's suggested keeper. */
@@ -134,7 +151,12 @@ interface PendingClip {
   startSecs: number;
   durationSecs: number;
   key: string | null;
-  /** Set when this one clip failed (a transcript that errored) — the rest of
+  /** Retakes only (D-364/B-237): the continuous take this unit covers. One
+   *  detection runs per RUN, not per clip, so `index`/`clip` name the run's
+   *  first clip and this carries the rest. A silence scan has no run — silence
+   *  is a fact about one clip's own audio and never spanned anything. */
+  run?: ClipRun;
+  /** Set when this one unit failed (a transcript that errored) — the rest of
    *  the scan carries on, which is the point of a whole-track scan. */
   failure?: string;
   /** D-349 — how many of this clip's utterances came back only because the app
@@ -247,28 +269,52 @@ export function RecutPanel() {
     if (!tr) return null;
     const fps = timelineFps(timeline);
 
+    const all = sweepTargets(tr).targets;
     const chosen =
-      effectiveScope === 'clip'
-        ? sweepTargets(tr).targets.filter((t) => t.c.id === primary?.id)
-        : sweepTargets(tr).targets;
+      effectiveScope === 'clip' ? all.filter((t) => t.c.id === primary?.id) : all;
     if (chosen.length === 0) return null;
 
+    if (kind === 'silence') {
+      return {
+        kind,
+        track,
+        fps,
+        minSilenceMs,
+        clips: chosen.map((t) => {
+          const range = clipSourceRangeSecs(t.c, fps);
+          return {
+            index: t.clip,
+            clip: t.c,
+            source: t.source,
+            startSecs: range.startSecs,
+            durationSecs: range.durationSecs,
+            key: null,
+          };
+        }),
+      };
+    }
+
+    // D-364/B-237 — a retake unit is a RUN. Reviewing ONE clip still widens to
+    // the run that clip belongs to (built from the whole track, not from the
+    // selection), because a stumble the user can see in this clip is usually
+    // only half inside it, and half a restart cannot be grouped with anything.
+    const runs = clipRuns(all, fps).filter((r) =>
+      chosen.some((t) => r.targets.some((rt) => rt.clip === t.clip)),
+    );
     return {
       kind,
       track,
       fps,
       minSilenceMs,
-      clips: chosen.map((t) => {
-        const range = clipSourceRangeSecs(t.c, fps);
-        return {
-          index: t.clip,
-          clip: t.c,
-          source: t.source,
-          startSecs: range.startSecs,
-          durationSecs: range.durationSecs,
-          key: null,
-        };
-      }),
+      clips: runs.map((run) => ({
+        index: run.targets[0].clip,
+        clip: run.targets[0].c,
+        source: run.source,
+        startSecs: run.startSecs,
+        durationSecs: run.durationSecs,
+        key: null,
+        run,
+      })),
     };
   };
 
@@ -363,14 +409,11 @@ export function RecutPanel() {
       // the scan on each pass and never settle. "Run it again" is expressed
       // instead by `findRetakes` clearing this file's failures once per click,
       // which is the part of `force` a human actually wants.
-      const view = clipTranscriptView(
-        c.source,
-        transcript,
-        c.startSecs,
-        c.durationSecs,
-        true,
-        true,
-      );
+      // D-364/B-237 — one merged view over the whole run, not one per clip.
+      // The per-clip D-349 scan and splice inside it are unchanged; only the
+      // grouping input is merged, which is what lets a restart split across
+      // two clips be compared with itself at all.
+      const view = runTranscriptView(c.run as ClipRun, transcript, true, true, false, pending.fps);
       if (view.pending) {
         if (view.pending === 'recovering') pendingRecovery = true;
         return c;
@@ -380,7 +423,8 @@ export function RecutPanel() {
         path: c.source,
         startSecs: c.startSecs,
         durationSecs: c.durationSecs,
-        utterances: view.utterances,
+        // The `recovered` flag is local bookkeeping and does not cross the wire.
+        utterances: view.utterances.map((u) => ({ start: u.start, end: u.end, text: u.text })),
         recovered: view.recovered,
       };
       store.startRetakeDetection(args, true);
@@ -440,6 +484,7 @@ export function RecutPanel() {
             id: `sil-${c.index}-${i}`,
             kind: 'silence',
             span,
+            spans: [span],
             clip: c.index,
             clipName: c.clip.name,
           });
@@ -453,14 +498,22 @@ export function RecutPanel() {
       retakes[key].groups.forEach((g, gi) => {
         const takes = groupTakes(g);
         takes.forEach((t) => {
-          const span = spanToFrames(c.clip, t.startSecs, t.endSecs, fps);
-          if (span.endFrame <= span.startFrame) return;
+          // D-364/B-237 — a take can land in several clips of the run, and one
+          // row has to carry every one of those ranges or the cut leaves the
+          // other halves behind. `spans[0]` is where the row sorts and reads.
+          const segments = takeSegments(c.run as ClipRun, t.startSecs, t.endSecs, fps);
+          if (segments.length === 0) return;
+          const spans = segments.map((seg) => seg.span);
           rows.push({
             id: `ret-${c.index}-${gi}-${t.index}`,
             kind: 'retake',
-            span,
-            clip: c.index,
-            clipName: c.clip.name,
+            span: spans[0],
+            spans,
+            clip: segments[0].clip,
+            clipName:
+              (c.run as ClipRun).targets.find((rt) => rt.clip === segments[0].clip)?.c.name ??
+              c.clip.name,
+            ...(segments.length > 1 ? { clipSpan: segments.length } : {}),
             text: t.text,
             suggestedKeep: t.suggestedKeep,
             groupIndex: gi,
@@ -486,9 +539,12 @@ export function RecutPanel() {
     setCandidates(rows);
     setResultTrack(pending.track);
 
-    const scanned = pending.clips.length - failures.length;
-    const where =
-      pending.clips.length === 1 ? 'this clip' : `${scanned} clips on this track`;
+    // Counted in CLIPS, not in units: since D-364 a retake unit is a whole run
+    // of clips, and "1 clip on this track" for a run of twenty would be a lie.
+    const clipsIn = (c: PendingClip) => c.run?.targets.length ?? 1;
+    const scannedUnits = pending.clips.filter((c) => !c.failure);
+    const scanned = scannedUnits.reduce((n, c) => n + clipsIn(c), 0);
+    const where = scanned === 1 ? 'this clip' : `${scanned} clips on this track`;
     // D-349 — say it out loud whenever the grouping read words the transcript
     // did not originally contain. A human reading this list is entitled to know
     // that, and a line of text is cheaper than being blindsided by a take
@@ -528,7 +584,11 @@ export function RecutPanel() {
     // against one track, and reading the results may well have moved the
     // selection somewhere else.
     if (!timeline || chosen.length === 0 || resultTrack === null) return;
-    const ranges = chosen.map((c) => ({ start: c.span.startFrame, end: c.span.endFrame }));
+    // Every range each ticked row covers, not just its first: a retake take
+    // split across clips by an earlier silence cut is several ranges (D-364).
+    const ranges = chosen.flatMap((c) =>
+      c.spans.map((s) => ({ start: s.startFrame, end: s.endFrame })),
+    );
     // B-197 — the same per-range dry run the MCP side runs, for the same
     // reason: "did the timeline change at all" cannot tell a full cut from one
     // that quietly dropped some of its ranges (a sync-locked clip straddling a
@@ -702,6 +762,9 @@ export function RecutPanel() {
                   where on the track they are about to cut. */}
               <span className="mt-0.5 block truncate text-text-secondary">
                 <span className="tabular-nums opacity-70">#{c.clip}</span> {c.clipName}
+                {c.clipSpan && (
+                  <span className="ml-1 opacity-70">+{c.clipSpan - 1} more clip{c.clipSpan > 2 ? 's' : ''}</span>
+                )}
                 {c.text && <span className="ml-1 opacity-100">· {c.text}</span>}
               </span>
             </span>

@@ -100,8 +100,14 @@ export type {
   RecoveryWindow,
   SplicedSegment,
 } from './darkRegions';
-export { clipTranscriptView } from './darkRecovery';
-export type { ClipTranscriptView } from './darkRecovery';
+export { clipTranscriptView, runTranscriptView } from './darkRecovery';
+export type { ClipTranscriptView, RunTranscriptView, Utterance } from './darkRecovery';
+/** D-364 (fixes B-237) — put the original continuous take back together before
+ *  retake detection reads it, and take the answer apart again afterwards. Pure:
+ *  which consecutive clips came from one uninterrupted stretch of one source,
+ *  and which clips and frames a group's take actually lands in. */
+export { RETAKE_WINDOW_SECS, clipRuns, mergeRunUtterances, runGapSecs, takeSegments } from './recutRuns';
+export type { ClipRun, TakeSegment } from './recutRuns';
 /** D-274 — the project-level output-spec form (Resolution/Frame Rate/Colour
  *  Space), shared between this package's own docked `ProjectSettingsPanel`
  *  (`EditorInspectorPanel`'s "nothing selected" branch) and `app/src`'s

@@ -211,6 +211,19 @@ ordering so it cannot quietly stop being true.
 
 ## 4. The sweep is scoped PER CLIP, and that is a second, separate bug from anything above (B-237, 2026-09-24)
 
+> **FIXED 2026-09-24 by D-364.** Everything below is accurate history and is
+> left as it was written — it is the measurement that produced the fix. What
+> changed: detection's unit is no longer a clip but a **run** — consecutive
+> analysable clips sharing a source file, moving forward through it, separated
+> by at most `window_secs` of removed material. `detect_retakes` is called once
+> per run over the merged utterance list (the union of the clips' own filtered,
+> D-349-spliced views, deduped — so nothing the timeline no longer shows is read
+> back in), and a found group's takes are mapped back onto the clips and frames
+> they land in, which can be several. The single-clip call widens the same way
+> and then reports only the groups touching the clip that was named. The eighth
+> case below — the 0.495 technical-term stumble — is **not** fixed and was never
+> this bug; it stands as recorded. See **D-364** in `docs/08-decisions.md`.
+
 Everything in §1-3 is about `detect_retakes` itself: given a full list of
 utterances, does it group the right ones. This section is about a layer above
 it that nobody had measured against a real human edit before — **how the
@@ -291,12 +304,14 @@ tightened the pacing by hand. Worth stating plainly: not every frame a human
 cuts is something a retake/silence detector was ever supposed to catch, and this
 investigation does not claim otherwise.
 
-**Not fixed here.** The fix this points at — merge a contiguous run of clips
-sharing one source file back into one utterance view before calling
-`detect_retakes`, then map any found group's cut back onto the real clip/frame
-structure — is a real architectural change to the sweep, not a parameter tweak,
-and deserves its own `D-NNN` rather than a quiet patch inside
-`resolveRetakeArgs`. See **B-237** in `docs/BUGS.md`.
+**~~Not fixed here~~ — fixed by D-364 (2026-09-24),** which is exactly the fix
+this paragraph pointed at: merge a contiguous run of clips sharing one source
+file back into one utterance view before calling `detect_retakes`, then map any
+found group's cut back onto the real clip/frame structure. Implemented in
+`packages/editor/src/recutRuns.ts` (pure) and `runTranscriptView` in
+`darkRecovery.ts` (the stateful merge). The regression fixture is this section's
+own first table row. See **B-237** in `docs/BUGS.md` and **D-364** in
+`docs/08-decisions.md`.
 
 ---
 

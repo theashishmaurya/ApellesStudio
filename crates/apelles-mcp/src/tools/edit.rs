@@ -4343,14 +4343,16 @@ impl ApellesMcp {
     contract as `editor_detect_silences` (D-321): `state: "done"` with `groups`
     if it finished inside this call, otherwise `state: "running"` — poll
     `editor_detect_retakes_status` with the same arguments. `force` re-runs a
-    grouping that is already cached for this clip range and these thresholds.
+    grouping that is already cached for this range and these thresholds.
 
     - `track` — required.
     - `clip` — **optional**. Name a clip index to ask about that one clip.
       **Omit it to sweep every analysable clip on the track in a single call**
       (D-342, fixes B-216) — do this for any cleanup pass. Asking one clip at a
-      time is exactly how real retakes survived to a final cut. Only each
-      clip's own trimmed range is considered, either way.
+      time is exactly how real retakes survived to a final cut. Either way the
+      words are read across the whole continuous TAKE a clip belongs to rather
+      than that clip alone (D-364, below); a named clip is still answered about
+      on its own.
     - `similarity` — how alike two utterances must be to count as the same line
       (0..1, default 0.82).
     - `window_secs` — how far apart two takes may be (default 30). A line
@@ -4381,19 +4383,44 @@ impl ApellesMcp {
       first call typically returns `state: "transcribing"` once or twice more
       than it would otherwise.
 
-    Each group has `takes` (each with its `text` and the same three frame
-    spaces `editor_detect_silences` returns), a `similarity` score, and `keep` —
-    the index of the take this **suggests** keeping, which is the last one,
-    normally what the speaker settled on. `keep` is a suggestion and nothing
-    more: text alone cannot always tell a retake from a later line that merely
-    extends an earlier one, so read the `text` before cutting.
+    **Detection reads a continuous TAKE, not a clip** (D-364, fixes B-237).
+    Consecutive clips cut from one uninterrupted stretch of one source file —
+    what an earlier fine-grained silence pass leaves behind — are merged back
+    into one run and grouped once. They have to be: a clip is routinely shorter
+    than the sentence it is part of (the project this was measured on has clips
+    of 0.25s and 0.58s), so a restart's two halves land in different clips and a
+    view scoped to one clip can never hold both. Six of seven real retakes on
+    that project spanned 2-5 clips each and were invisible for exactly that
+    reason. A run stops at a change of source file, a jump backwards through the
+    source, or more removed material than `window_secs` — nothing is compared
+    that was never one take — and only material still ON the timeline is read,
+    so a removed stretch between two clips of a run contributes nothing.
+
+    Each group has `takes`, a `similarity` score, and `keep` — the index of the
+    take this **suggests** keeping, which is the last one, normally what the
+    speaker settled on. `keep` is a suggestion and nothing more: text alone
+    cannot always tell a retake from a later line that merely extends an earlier
+    one, so read the `text` before cutting.
+
+    Each take carries its `text`, its `startSecs`/`endSecs`, the `clips` it
+    lands in, and one `segments` entry per clip with the same three frame spaces
+    `editor_detect_silences` returns. **A take inside one clip also carries the
+    flat `startFrame`/`endFrame` it always did; a take that spans several does
+    NOT** — no single range describes it, and a clamped one would quietly
+    under-cut. Pass every entry of `segments` to `editor_ripple_delete_ranges`.
+
+    A single-clip answer also carries `readAcrossClips` when the clip was read
+    as part of a longer run: the clip indices that run covered.
 
     **A SWEEP (no `clip`) answers in a different, aggregate shape**: `flagged`
     is the clips that found something, in full, each with its own `clip` index
     and `groups`; `clean` is a bare list of clip indices with nothing in them;
     `running` / `transcribing` / `notStarted` / `failed` / `skipped` say what
     has not answered and why (`transcribing` is waiting on the words, not on
-    the grouping); `totals` counts all of it. Act on `flagged`.
+    the grouping); `totals` counts all of it, and `runs` says how many
+    continuous takes the track's clips were read as. A group that spans several
+    clips is reported ONCE, under the earliest clip it touches, with every clip
+    it covers named inside its takes. Act on `flagged`.
 
     **Nothing is cut**, by either form. Pass the takes you want gone to
     `editor_ripple_delete_ranges`."#
@@ -4423,12 +4450,16 @@ impl ApellesMcp {
         name = "editor_detect_retakes_status",
         description = r#"Poll a retake grouping started by `editor_detect_retakes` (D-321).
 
-    Pass the SAME arguments you started it with — a grouping is cached per clip
+    Pass the SAME arguments you started it with — a grouping is cached per
     range and per threshold set, so different arguments read as `state: "idle"`.
 
     `clip` is optional here for the same reason it is on the start tool (D-342):
     **omit it to poll a whole-track sweep**, and the answer comes back in the
     same aggregate shape the sweep returned, one request for the whole track.
+
+    Naming a clip polls the whole continuous take that clip belongs to (D-364,
+    B-237) and reports the groups that actually touch the clip you named, so a
+    poll and a sweep can never disagree about the same material.
 
     `state` is `running`, `done` (with `groups`, exactly as
     `editor_detect_retakes` returns them) or `idle`. If the transcript itself is

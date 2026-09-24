@@ -2452,6 +2452,15 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         `chroma_detect_retakes`, which today deliberately asks for
         `start`/`end`/`text` only, and a take shape that is no longer
         utterance-indexed. Not scoped yet.
+        **Closed since: the sweep's own scoping (B-237 → D-364, 2026-09-24).**
+        Detection ran once per CLIP over that clip's own trimmed range, so after
+        a fine-grained silence cut a restart's two halves sat in different
+        clips' views and no call ever saw both — 6 of 7 real retakes on the
+        owner's project were invisible for exactly that reason, and it was not a
+        scoring problem. Consecutive clips cut from one uninterrupted stretch of
+        one source are now merged into a **run** and grouped once, and a group's
+        takes are mapped back onto the clips and frames they land in (which can
+        be several). `packages/editor/src/recutRuns.ts`.
     - ✅ **A DARK-REGION detector — "there is speech here nobody has read" —
       DONE, 2026-09-18 (D-349), and it went further than this item asked.**
       (B-216's transcription sub-finding; research trail

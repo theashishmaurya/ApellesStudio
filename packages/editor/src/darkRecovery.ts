@@ -43,12 +43,20 @@ import {
   type DarkDetection,
   type SplicedSegment,
 } from './darkRegions';
+import { clipSourceRangeSecs } from './recut';
+import { mergeRunUtterances, type ClipRun } from './recutRuns';
 
-/** One utterance as both retake callers hand it to the detector. */
+/** One utterance as both retake callers hand it to the detector.
+ *
+ *  `recovered` is local bookkeeping, never sent to the detector — D-364's run
+ *  merge counts recovered lines on the MERGED list (one line straddling two
+ *  clips of a run is one line, not two), which needs the flag to travel with
+ *  the utterance rather than as a per-clip total. `retakeArgsFor` strips it. */
 export interface Utterance {
   start: number;
   end: number;
   text: string;
+  recovered?: boolean;
 }
 
 /** A clip's transcript once dark regions have been accounted for. */
@@ -89,8 +97,17 @@ export function clipTranscriptView(
   const rangeEnd = rangeStartSecs + rangeSecs;
   const inRange = (s: { start: number; end: number }) =>
     s.end > rangeStartSecs && s.start < rangeEnd;
-  const toUtterances = (segments: readonly TranscriptSegment[]): Utterance[] =>
-    segments.filter(inRange).map((s) => ({ start: s.start, end: s.end, text: s.text }));
+  const toUtterances = (
+    segments: ReadonlyArray<TranscriptSegment & { recovered?: boolean }>,
+  ): Utterance[] =>
+    segments
+      .filter(inRange)
+      .map((s) => ({
+        start: s.start,
+        end: s.end,
+        text: s.text,
+        ...(s.recovered ? { recovered: true as const } : {}),
+      }));
   const raw = (extra: Partial<ClipTranscriptView> = {}): ClipTranscriptView => ({
     utterances: toUtterances(transcript.segments ?? []),
     recovered: 0,
@@ -169,5 +186,79 @@ export function clipTranscriptView(
     pending: null,
     detection: scan.result,
     error: failure,
+  };
+}
+
+/**
+ * The view for a whole RUN of clips cut from one continuous stretch of one
+ * source (D-364, fixes B-237).
+ *
+ * **What it adds over [`clipTranscriptView`], and what it deliberately does
+ * not.** It calls that function once per clip, unchanged — the same ranges, the
+ * same dark-scan cache keys, the same recovery windows, so D-349 got neither
+ * wider nor more expensive. The only thing that is new is the *merge*: the
+ * clips' utterance lists are folded into one list, deduped, in time order. That
+ * merged list is what the detector is handed, and it is the first time both
+ * halves of a restart split across two clips are ever in the same input.
+ *
+ * **Only what the timeline still shows.** Because the merge is over the clips'
+ * own filtered views, the stretches between them — material an earlier cut
+ * removed — contribute nothing. The pre-B-237 invariant ("must not report
+ * retakes from material nobody will ever see") holds at run granularity.
+ *
+ * Lives here, next to the per-clip view, because the Recut panel and
+ * `editor_detect_retakes` both need exactly this and a copy in each is the
+ * drift this module's own header exists to prevent.
+ */
+export interface RunTranscriptView {
+  run: ClipRun;
+  /** One entry per clip of the run, in run order — what D-349 found in each. */
+  views: ClipTranscriptView[];
+  /** The merged, deduped, time-ordered list the detector is handed. */
+  utterances: Utterance[];
+  /** How many of `utterances` exist only because the app went back for them.
+   *  Counted on the MERGED list: a recovered line straddling two clips of the
+   *  run is one line, not two. */
+  recovered: number;
+  /** Any clip of the run still waiting on words. A run cannot be grouped until
+   *  all of them are in — a half-present run is exactly the partial view B-237
+   *  is about. */
+  pending: 'scanning' | 'recovering' | null;
+}
+
+export function runTranscriptView(
+  run: ClipRun,
+  transcript: Transcript,
+  recover: boolean,
+  start: boolean,
+  force: boolean,
+  fps: number,
+): RunTranscriptView {
+  const views = run.targets.map((t) => {
+    const range = clipSourceRangeSecs(t.c, fps);
+    return clipTranscriptView(
+      t.source,
+      transcript,
+      range.startSecs,
+      range.durationSecs,
+      recover,
+      start,
+      force,
+    );
+  });
+  // `scanning` wins over `recovering` in the note: it is the earlier step, and
+  // it is the one that decides whether a recovery is needed at all.
+  const pending: RunTranscriptView['pending'] = views.some((v) => v.pending === 'scanning')
+    ? 'scanning'
+    : views.some((v) => v.pending === 'recovering')
+      ? 'recovering'
+      : null;
+  const utterances = mergeRunUtterances(views.map((v) => v.utterances));
+  return {
+    run,
+    views,
+    utterances,
+    recovered: utterances.filter((u) => u.recovered).length,
+    pending,
   };
 }

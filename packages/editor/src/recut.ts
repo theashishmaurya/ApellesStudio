@@ -106,8 +106,11 @@ export function groupTakes(g: RetakeGroupWire): RetakeTake[] {
 
 /** The clip's source rate, falling back to the timeline's (a clip with no
  *  `source_fps` is assumed to share it — the same fallback `scrubSource.ts`
- *  and `clipAt` already use). */
-function sourceRate(c: Clip, fps: number): number {
+ *  and `clipAt` already use).
+ *
+ *  Exported because `recutRuns.ts` reasons about two clips' source positions in
+ *  the same units and must not re-derive this fallback differently (D-364). */
+export function clipSourceRate(c: Clip, fps: number): number {
   return c.source_fps && c.source_fps > 0 ? c.source_fps : fps;
 }
 
@@ -115,7 +118,7 @@ function sourceRate(c: Clip, fps: number): number {
  *  source seconds — what a detector should be pointed at, so it never reports
  *  a candidate in material the clip does not show. */
 export function clipSourceRangeSecs(c: Clip, fps: number): { startSecs: number; durationSecs: number } {
-  const rate = sourceRate(c, fps);
+  const rate = clipSourceRate(c, fps);
   return { startSecs: c.source_start / rate, durationSecs: c.duration / rate };
 }
 
@@ -126,7 +129,7 @@ export function clipSourceRangeSecs(c: Clip, fps: number): { startSecs: number; 
  *  its edges can land a frame outside the clip, which would make a ripple
  *  delete reach into a neighbour. */
 export function spanToFrames(c: Clip, startSecs: number, endSecs: number, fps: number): DetectedSpan {
-  const rate = sourceRate(c, fps);
+  const rate = clipSourceRate(c, fps);
   const clipEndSource = c.source_start + c.duration;
 
   const rawStart = Math.round(startSecs * rate);

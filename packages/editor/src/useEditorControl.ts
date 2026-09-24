@@ -92,8 +92,17 @@ import {
   sweepReport,
   sweepTargets,
   type SweepClipResult,
-  type SweepTarget,
 } from './recutSweep';
+// D-364/B-237 — a restart whose two halves ended up in different clips is only
+// visible to the detector if the clips that were one continuous take are put
+// back together before it reads them, and taken apart again after.
+import {
+  clipRuns,
+  mergeRunUtterances,
+  runGapSecs,
+  takeSegments,
+  type ClipRun,
+} from './recutRuns';
 import { listen, emit } from '@tauri-apps/api/event';
 
 import { useMediaPoolStore, type MediaItem } from '@apelles/bridge';
@@ -254,7 +263,7 @@ import {
 // one shared step that scans for it, re-reads those windows and splices the
 // recovered words back in. The SAME step the Recut panel runs, so the human's
 // recut and the agent's cannot read two different transcripts of one file.
-import { clipTranscriptView, type ClipTranscriptView } from './darkRecovery';
+import { runTranscriptView, type RunTranscriptView } from './darkRecovery';
 import type { DarkDetection, DarkRegionWire } from './darkRegions';
 // D-238 — auto-captioning from the D-189 transcript. The grouping algorithm
 // and the seconds->frames conversion are the ONE new thing this feature
@@ -1064,7 +1073,8 @@ function resolveRetakeArgs(
       fps: number;
       args: RetakeDetectionArgs;
       key: string;
-      view: ClipTranscriptView;
+      run: ClipRun;
+      rv: RunTranscriptView;
     } {
   const tl = useEditorTimelineStore.getState().timeline;
   if (!tl) return noTimeline();
@@ -1092,17 +1102,19 @@ function resolveRetakeArgs(
   }
 
   const fps = timelineFps(tl);
-  const range = clipSourceRangeSecs(c, fps);
-  // Only what this clip actually shows: a source trimmed to its second half
-  // must not report retakes from material nobody will ever see. The D-349
-  // splice happens inside this view, so the grouper sees the speech whisper
-  // dropped as well as the speech it read — which matters here specifically,
-  // because the dropped speech is BIASED towards retakes (B-216).
-  const view = clipTranscriptView(
-    c.source_path,
+  const tuning = retakeTuning(a);
+  // D-364/B-237 — a named clip is still ANSWERED about on its own, but it is
+  // READ as part of the continuous take it belongs to. Scoping the view to one
+  // clip is what made a restart whose halves sit in two clips structurally
+  // undetectable, and a human reviewing clip K in the Recut panel wants the
+  // stumble K is part of, not the half of it that happens to fall inside K.
+  // Building the run here (rather than only in the sweep) also means one clip
+  // and a sweep derive the IDENTICAL `RetakeDetectionArgs`, so they share a
+  // cache key and can never report the same material differently.
+  const run = runFor(tl, found.track, found.clip, c, fps, tuning.windowSecs);
+  const rv = runTranscriptView(
+    run,
     transcript.result as Transcript,
-    range.startSecs,
-    range.durationSecs,
     recoverRequested(a),
     // Started from the `_status` twin as well, exactly as the transcript above
     // already is: a poll that kicked nothing off would report `scanning` for
@@ -1112,22 +1124,35 @@ function resolveRetakeArgs(
     // to retry one, since a failure otherwise degrades to the raw transcript
     // rather than spinning (see `clipTranscriptView`).
     !!a?.force,
+    fps,
   );
-  if (view.pending) {
-    return { pending: { ok: true, source: c.source_path, ...recoveryPending(view) } };
+  if (rv.pending) {
+    return { pending: { ok: true, source: c.source_path, ...recoveryPending(rv.pending) } };
   }
 
+  const args = retakeArgsFor(rv, tuning);
+  return { found, c, fps, args, key: retakeKey(args), run, rv };
+}
+
+/** The retake tuning knobs, parsed once.
+ *
+ *  Shared by the single-clip path and the sweep because D-364 makes both build
+ *  the same `RetakeDetectionArgs` for the same run: two copies of this parsing
+ *  that ever disagreed would split one detection into two cache entries. */
+interface RetakeTuning {
+  similarity?: number;
+  windowSecs?: number;
+  minWords?: number;
+  maxSpanUtterances?: number;
+}
+
+function retakeTuning(a: OpArgs): RetakeTuning {
   const num = (v: unknown): number | undefined => {
     if (v === undefined || v === null) return undefined;
     const n = Number(v);
     return Number.isFinite(n) ? n : undefined;
   };
-  const args: RetakeDetectionArgs = {
-    path: c.source_path,
-    startSecs: range.startSecs,
-    durationSecs: range.durationSecs,
-    utterances: view.utterances,
-    recovered: view.recovered,
+  return {
     similarity: num(a?.similarity),
     windowSecs: num(a?.windowSecs),
     minWords: a?.minWords === undefined ? undefined : Math.round(Number(a.minWords)),
@@ -1136,7 +1161,47 @@ function resolveRetakeArgs(
         ? undefined
         : Math.max(1, Math.round(Number(a.maxSpanUtterances))),
   };
-  return { found, c, fps, args, key: retakeKey(args), view };
+}
+
+/** The run one named clip belongs to (D-364).
+ *
+ *  Falls back to a run of just that clip when the clip is not something a sweep
+ *  would analyse at all — a still with a source path, which `sweepTargets`
+ *  excludes but the single-clip tool has always accepted. The answer for such a
+ *  clip is then exactly what it was before D-364. */
+function runFor(
+  tl: Timeline,
+  track: number,
+  clip: number,
+  c: Clip,
+  fps: number,
+  windowSecs: number | undefined,
+): ClipRun {
+  const source = c.source_path ?? '';
+  const { targets } = sweepTargets(tl.tracks[track]);
+  const found = clipRuns(targets, fps, runGapSecs(windowSecs)).find((r) =>
+    r.targets.some((t) => t.clip === clip),
+  );
+  if (found) return found;
+  const range = clipSourceRangeSecs(c, fps);
+  return { source, targets: [{ clip, c, source }], ...range };
+}
+
+/** The detection arguments for one run. The run's own source range is the key's
+ *  range, so every clip of a run asks one identical question exactly once.
+ *
+ *  The utterances are rebuilt field by field rather than passed through: D-349's
+ *  `recovered` flag is local bookkeeping (see [`Utterance`]) and has no business
+ *  crossing the wire into the detector. */
+function retakeArgsFor(rv: RunTranscriptView, tuning: RetakeTuning): RetakeDetectionArgs {
+  return {
+    path: rv.run.source,
+    startSecs: rv.run.startSecs,
+    durationSecs: rv.run.durationSecs,
+    utterances: rv.utterances.map((u) => ({ start: u.start, end: u.end, text: u.text })),
+    recovered: rv.recovered,
+    ...tuning,
+  };
 }
 
 /** Should this call scan for and recover dropped speech before grouping?
@@ -1155,11 +1220,14 @@ function recoverRequested(a: OpArgs): boolean {
  *  transcript-not-ready branch uses: in both cases the words are not all here
  *  yet and the move is to poll, so an agent that already handles one handles
  *  this. The note says which of the two it is. */
-function recoveryPending(view: ClipTranscriptView): { state: 'transcribing'; note: string } {
+function recoveryPending(pending: 'scanning' | 'recovering'): {
+  state: 'transcribing';
+  note: string;
+} {
   return {
     state: 'transcribing',
     note:
-      view.pending === 'scanning'
+      pending === 'scanning'
         ? 'scanning for speech whisper did not transcribe (D-349) — poll editor_detect_retakes_status, or pass recoverDarkRegions: false to group the raw transcript now'
         : 're-transcribing the dropped speech this clip contains — poll editor_detect_retakes_status; the recovered words will be spliced in before grouping',
   };
@@ -1173,15 +1241,52 @@ function recoveryPending(view: ClipTranscriptView): { state: 'transcribing'; not
  *
  *  Shared by the single-clip envelope and the whole-track sweep (D-342) so the
  *  two cannot report the same group differently. */
-function retakeGroupsDto(status: AnalysisStatus<RetakeDetection>, c: Clip, fps: number) {
-  return (status.result?.groups ?? []).map((g) => ({
-    similarity: g.similarity,
-    keep: g.keep,
-    takes: groupTakes(g).map((t) => ({
-      text: t.text,
-      ...spanToFrames(c, t.startSecs, t.endSecs, fps),
-    })),
-  }));
+function retakeGroupsDto(status: AnalysisStatus<RetakeDetection>, run: ClipRun, fps: number) {
+  return (status.result?.groups ?? [])
+    .map((g) => ({
+      similarity: g.similarity,
+      keep: g.keep,
+      takes: groupTakes(g).map((t) => {
+        const segments = takeSegments(run, t.startSecs, t.endSecs, fps);
+        return {
+          text: t.text,
+          startSecs: t.startSecs,
+          endSecs: t.endSecs,
+          // Every clip this delivery lands in, and where in each. A take that
+          // spans several is the normal case after a fine-grained silence cut,
+          // and is exactly what B-237 was blind to.
+          clips: segments.map((s) => s.clip),
+          segments: segments.map((s) => ({ clip: s.clip, clipId: s.clipId, ...s.span })),
+          // The flat frame fields stay EXACTLY as they were for a take that
+          // lives in one clip, which is every take this tool has ever returned.
+          // They are deliberately absent when a take spans several: one
+          // `{startFrame, endFrame}` cannot describe two clips' worth of cut,
+          // and emitting a clamped one would quietly under-cut. A caller that
+          // reads them blindly gets nothing rather than something wrong; the
+          // ranges to cut are in `segments`.
+          ...(segments.length === 1
+            ? {
+                sourceStartFrame: segments[0].span.sourceStartFrame,
+                sourceEndFrame: segments[0].span.sourceEndFrame,
+                startFrame: segments[0].span.startFrame,
+                endFrame: segments[0].span.endFrame,
+              }
+            : {}),
+        };
+      }),
+    }))
+    // A group none of whose takes land on a real frame has nothing to review:
+    // the material it was found in is no longer on the timeline.
+    .filter((g) => g.takes.some((t) => t.segments.length > 0));
+}
+
+/** The clip a group is reported under: the earliest one any of its takes
+ *  touches. Reported ONCE, not once per clip it spans — a sweep's caller acts
+ *  on the `flagged` list as a whole, and repeating a group under each of its
+ *  clips would make one stumble look like three. */
+function groupHomeClip(g: { takes: Array<{ clips: number[] }> }): number | null {
+  const clips = g.takes.flatMap((t) => t.clips);
+  return clips.length === 0 ? null : Math.min(...clips);
 }
 
 /** Every silence in one detection, in the three frame spaces a caller needs.
@@ -1198,7 +1303,7 @@ function retakeEnvelope(
   c: Clip,
   fps: number,
   utterances: number,
-  view: ClipTranscriptView,
+  rv: RunTranscriptView,
 ) {
   if (status.phase === 'error') return { error: status.error ?? 'retake detection failed' };
   const head = {
@@ -1208,9 +1313,15 @@ function retakeEnvelope(
     clipId: c.id,
     source: c.source_path,
     utterances,
+    // D-364/B-237 — say plainly when the answer was read over more than the one
+    // clip that was asked about, and which clips that was. Omitted for a clip
+    // that is its own run, which is the answer's pre-D-364 shape exactly.
+    ...(rv.run.targets.length > 1
+      ? { readAcrossClips: rv.run.targets.map((t) => t.clip) }
+      : {}),
     // D-349 — a caller is entitled to know the transcript it is being told about
     // is NOT the one whisper handed us.
-    ...darkSummary(view),
+    ...darkSummary(rv),
   };
   if (status.phase !== 'done') {
     return {
@@ -1222,7 +1333,14 @@ function retakeEnvelope(
           : 'nothing has been started for this clip — call editor_detect_retakes',
     };
   }
-  const groups = retakeGroupsDto(status, c, fps);
+  // Only the groups that actually touch the clip that was asked about. The
+  // detection is read over the whole run (D-364), but "tell me about clip K"
+  // still answers about clip K — a group entirely inside K's neighbours is not
+  // K's business, and a group STRADDLING K is, which is the case that used to
+  // be missing altogether.
+  const groups = retakeGroupsDto(status, rv.run, fps).filter((g) =>
+    g.takes.some((t) => t.clips.includes(found.clip)),
+  );
   return {
     ...head,
     state: 'done',
@@ -1376,14 +1494,18 @@ function darkEnvelope(
  *  because the app went back for them. Both are omitted entirely when no scan
  *  ran (`recoverDarkRegions: false`, or a transcript with no word timings) —
  *  a zero would claim a clean scan that never happened. */
-function darkSummary(view: ClipTranscriptView): Record<string, unknown> {
-  if (!view.detection) {
-    return view.error ? { darkScanError: view.error } : {};
+function darkSummary(rv: RunTranscriptView): Record<string, unknown> {
+  // Summed over the run's clips (D-364). A run of one — the only shape that
+  // existed before it — reduces to exactly the old numbers.
+  const scanned = rv.views.filter((v) => v.detection);
+  const error = rv.views.find((v) => v.error)?.error;
+  if (scanned.length === 0) {
+    return error ? { darkScanError: error } : {};
   }
   return {
-    darkRegions: view.detection.regions.length,
-    recoveredUtterances: view.recovered,
-    ...(view.error ? { darkScanError: view.error } : {}),
+    darkRegions: scanned.reduce((n, v) => n + (v.detection?.regions.length ?? 0), 0),
+    recoveredUtterances: rv.recovered,
+    ...(error ? { darkScanError: error } : {}),
   };
 }
 
@@ -1413,19 +1535,21 @@ function resolveSweepTrack(
   return { tl, track, tr, fps: timelineFps(tl) };
 }
 
-/** One clip's place in a sweep: which clip, and the cache key its detection
- *  will land under. `key` is `null` for a retake clip whose transcript has not
- *  arrived — there is nothing to key a grouping on until there are words. */
+/** One RUN's place in a retake sweep: which clips, and the cache key its one
+ *  detection will land under (D-364 — the unit was a clip before B-237, and a
+ *  clip-scoped view is what made a restart spanning two clips invisible).
+ *  `key` is `null` for a run whose transcript has not arrived — there is
+ *  nothing to key a grouping on until there are words. */
 interface SweepJob {
-  target: SweepTarget;
+  run: ClipRun;
   key: string | null;
-  /** Set when the clip itself failed before any detection could start (a
-   *  transcript that errored), so the sweep reports the real reason rather
-   *  than an eternal `running`. */
+  /** Set when the run failed before any detection could start (a transcript
+   *  that errored), so the sweep reports the real reason rather than an eternal
+   *  `running`. */
   failure?: string;
-  /** The D-349 dark-region view behind this clip's utterances, when there is
-   *  one. Absent for a clip whose transcript has not arrived yet. */
-  view?: ClipTranscriptView;
+  /** The merged, D-349-recovered view behind this run's utterances, when there
+   *  is one. Absent for a run whose transcript has not arrived yet. */
+  rv?: RunTranscriptView;
 }
 
 /** Wait for a whole sweep the same way `settleWithin` waits for one clip.
@@ -1506,20 +1630,7 @@ async function retakeSweep(a: OpArgs, start: boolean) {
   if ('error' in resolved) return resolved;
   const { track, tr, fps } = resolved;
 
-  const num = (v: unknown): number | undefined => {
-    if (v === undefined || v === null) return undefined;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : undefined;
-  };
-  const tuning = {
-    similarity: num(a?.similarity),
-    windowSecs: num(a?.windowSecs),
-    minWords: a?.minWords === undefined ? undefined : Math.round(Number(a.minWords)),
-    maxSpanUtterances:
-      a?.maxSpanUtterances === undefined
-        ? undefined
-        : Math.max(1, Math.round(Number(a.maxSpanUtterances))),
-  };
+  const tuning = retakeTuning(a);
 
   const { targets, skipped } = sweepTargets(tr);
 
@@ -1534,78 +1645,95 @@ async function retakeSweep(a: OpArgs, start: boolean) {
   }
 
   const recover = recoverRequested(a);
-  const jobs: SweepJob[] = targets.map((target) => {
-    const transcript = useMediaUnderstandingStore.getState().transcriptStatus(target.source);
+  // D-364/B-237 — the sweep's unit is a RUN of clips cut from one continuous
+  // stretch of one source, not a clip. Detection runs once per run over the
+  // merged view, so a restart whose two halves were split across clips by an
+  // earlier silence cut is inside one view for the first time.
+  const runs = clipRuns(targets, fps, runGapSecs(tuning.windowSecs));
+  const jobs: SweepJob[] = runs.map((run) => {
+    const transcript = useMediaUnderstandingStore.getState().transcriptStatus(run.source);
     if (transcript.phase === 'error') {
-      return { target, key: null, failure: transcript.error ?? 'transcription failed' };
+      return { run, key: null, failure: transcript.error ?? 'transcription failed' };
     }
-    if (transcript.phase !== 'done') return { target, key: null };
+    if (transcript.phase !== 'done') return { run, key: null };
 
-    const range = clipSourceRangeSecs(target.c, fps);
-    // Only what this clip actually shows — the same filter the single-clip
-    // path applies, so one clip's answer inside a sweep is the answer it would
-    // have given on its own. Including the D-349 splice: a sweep that grouped
-    // the raw transcript while a single-clip call grouped the recovered one
-    // would be two detectors again, which is the drift B-216 is made of.
-    const view = clipTranscriptView(
-      target.source,
+    // The D-349 scan and splice still happen per CLIP, with the same keys and
+    // the same windows — only the grouping input is merged. A sweep that
+    // grouped the raw transcript while a single-clip call grouped the recovered
+    // one would be two detectors again, which is the drift B-216 is made of.
+    const rv = runTranscriptView(
+      run,
       transcript.result as Transcript,
-      range.startSecs,
-      range.durationSecs,
       recover,
       start,
       !!a?.force,
+      fps,
     );
     // Still scanning or still recovering: the words are not all here, which is
     // the same thing `transcribing` already means on this track.
-    if (view.pending) return { target, key: null, view };
+    if (rv.pending) return { run, key: null, rv };
 
-    const args: RetakeDetectionArgs = {
-      path: target.source,
-      startSecs: range.startSecs,
-      durationSecs: range.durationSecs,
-      utterances: view.utterances,
-      recovered: view.recovered,
-      ...tuning,
-    };
+    const args = retakeArgsFor(rv, tuning);
     if (start) useMediaUnderstandingStore.getState().startRetakeDetection(args, !!a?.force);
-    return { target, key: retakeKey(args), view };
+    return { run, key: retakeKey(args), rv };
   });
 
   const read = (key: string) => useMediaUnderstandingStore.getState().retakeDetectionStatus(key);
   if (start) await settleSweep(() => jobs.some((j) => j.key !== null && read(j.key).phase === 'running'));
 
-  const results: SweepClipResult[] = jobs.map(({ target, key, failure, view }) => {
-    const head = { clip: target.clip, clipId: target.c.id, source: target.source };
-    if (failure) return { ...head, state: 'error' as const, findings: [], error: failure };
-    // No key means no words yet: the grouping has not been asked for, and the
-    // thing to wait on is the transcript — or, since D-349, the scan/recovery
-    // that is still going and getting the rest of the words.
-    if (key === null) return { ...head, state: 'transcribing' as const, findings: [] };
+  // A run's answer is reported against the CLIPS it was read over, so the
+  // report's shape is unchanged — one row per clip, `flagged` acted on the same
+  // way. A group that spans several clips is reported once, under the earliest
+  // clip it touches, with every clip and frame range it covers inside it.
+  const results: SweepClipResult[] = [];
+  for (const { run, key, failure } of jobs) {
+    const heads = run.targets.map((t) => ({
+      clip: t.clip,
+      clipId: t.c.id,
+      source: t.source,
+    }));
+    if (failure) {
+      for (const head of heads) results.push({ ...head, state: 'error', findings: [], error: failure });
+      continue;
+    }
+    if (key === null) {
+      // No key means no words yet: the grouping has not been asked for, and the
+      // thing to wait on is the transcript — or, since D-349, the scan/recovery
+      // that is still going and getting the rest of the words.
+      for (const head of heads) results.push({ ...head, state: 'transcribing', findings: [] });
+      continue;
+    }
     const status = read(key);
-    return {
-      ...head,
-      state: status.phase,
-      findings: status.phase === 'done' ? retakeGroupsDto(status, target.c, fps) : [],
-      ...(status.phase === 'error' ? { error: status.error ?? 'retake detection failed' } : {}),
-    };
-  });
+    const groups = status.phase === 'done' ? retakeGroupsDto(status, run, fps) : [];
+    for (const head of heads) {
+      results.push({
+        ...head,
+        state: status.phase,
+        findings: groups.filter((g) => groupHomeClip(g) === head.clip),
+        ...(status.phase === 'error' ? { error: status.error ?? 'retake detection failed' } : {}),
+      });
+    }
+  }
 
   // The recovery is a fact about the whole sweep, not about one clip, so it is
   // summarised once at the top rather than repeated on 75 rows (the same "full
   // detail only where there is something to act on" rule the report itself
   // keeps). `darkRegions: 0` on a sweep that ran IS information — it says the
   // track was scanned and was clean.
-  const scanned = jobs.filter((j) => j.view?.detection);
+  const scannedViews = jobs.flatMap((j) => j.rv?.views.filter((v) => v.detection) ?? []);
   return {
     ...sweepReport(RETAKE_SWEEP, track, results, skipped),
-    ...(recover && scanned.length > 0
+    ...(recover && scannedViews.length > 0
       ? {
-          darkRegions: scanned.reduce((n, j) => n + (j.view?.detection?.regions.length ?? 0), 0),
-          recoveredUtterances: scanned.reduce((n, j) => n + (j.view?.recovered ?? 0), 0),
-          darkScanned: scanned.length,
+          darkRegions: scannedViews.reduce((n, v) => n + (v.detection?.regions.length ?? 0), 0),
+          recoveredUtterances: jobs.reduce((n, j) => n + (j.rv?.recovered ?? 0), 0),
+          darkScanned: scannedViews.length,
         }
       : {}),
+    // D-364/B-237 — how the track was actually read. `runs < analysable` is the
+    // signal that clips were merged back into continuous takes before grouping,
+    // which is the whole point of the fix and is otherwise invisible.
+    runs: runs.length,
   };
 }
 
@@ -4796,14 +4924,14 @@ export function useEditorControl(): void {
         const resolved = resolveRetakeArgs(a);
         if ('error' in resolved) return resolved;
         if ('pending' in resolved) return resolved.pending;
-        const { found, c, fps, args, key, view } = resolved;
+        const { found, c, fps, args, key, rv } = resolved;
 
         useMediaUnderstandingStore.getState().startRetakeDetection(args, !!a?.force);
         const status = await settleWithin(
           () => useMediaUnderstandingStore.getState().retakeDetectionStatus(key),
           DETECT_GRACE_MS,
         );
-        return retakeEnvelope(status, found, c, fps, args.utterances.length, view);
+        return retakeEnvelope(status, found, c, fps, args.utterances.length, rv);
       },
 
       editor_detect_retakes_status: async (a) => {
@@ -4811,9 +4939,9 @@ export function useEditorControl(): void {
         const resolved = resolveRetakeArgs(a);
         if ('error' in resolved) return resolved;
         if ('pending' in resolved) return resolved.pending;
-        const { found, c, fps, args, key, view } = resolved;
+        const { found, c, fps, args, key, rv } = resolved;
         const status = useMediaUnderstandingStore.getState().retakeDetectionStatus(key);
-        return retakeEnvelope(status, found, c, fps, args.utterances.length, view);
+        return retakeEnvelope(status, found, c, fps, args.utterances.length, rv);
       },
 
       // **`editor_detect_dark_regions` (D-349, B-216)** — the third detector,
