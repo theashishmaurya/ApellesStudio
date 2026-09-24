@@ -2,13 +2,18 @@
 
 Worked-out detail behind **D-318** (the detector), **D-320** (edit distance +
 containment), and **D-327** (spans, and the embedding model that was measured
-and rejected). Fixes **B-198**.
+and rejected). Fixes **B-198**. **§4 is a different bug, found later** (B-237,
+2026-09-24) — not in the algorithm this note is mostly about, but in how the
+whole-track sweep feeds it, measured against a real human re-edit rather than
+a synthetic case.
 
 This note exists for one reason: "use a semantic embedding model" is the
 obvious, confident, wrong answer to this problem, and the next person to look at
 retake detection will think of it within about thirty seconds. It was built,
 measured against upstream's own reference implementation, and thrown away. The
-numbers are here so that decision does not have to be re-derived.
+numbers are here so that decision does not have to be re-derived. **§4 is the
+other trap**: even a perfect grouping algorithm catches nothing if the sweep
+calling it never shows it both takes at once.
 
 ---
 
@@ -204,7 +209,98 @@ ordering so it cannot quietly stop being true.
 
 ---
 
-## 4. Reproducing any of this
+## 4. The sweep is scoped PER CLIP, and that is a second, separate bug from anything above (B-237, 2026-09-24)
+
+Everything in §1-3 is about `detect_retakes` itself: given a full list of
+utterances, does it group the right ones. This section is about a layer above
+it that nobody had measured against a real human edit before — **how the
+utterances given to `detect_retakes` get chosen in the first place** — and it
+turns out that layer throws away most of the retakes before the algorithm ever
+sees them.
+
+**How it was found.** The owner manually re-cut `2026-09-12-c038-mgfx` by hand,
+independently of any tool, taking the timeline from a 94-clip/~8:41 automated
+cut (silence + retake detection already run) down to a 77-clip/~7:19 cut. The
+owner's own words: *"i think the algorithm is broken cant take retakes at all."*
+Diffing the two cuts in **source-frame space** (not timeline frames — this
+project's timeline had already been ripple-edited twice, so timeline offsets
+between the two versions don't correspond to the same material) found **30
+additional spans, 96.5 s total**, that the owner cut by hand and
+`editor_detect_retakes` had not flagged. See `scratch/` for the working data;
+the method was: dump both cuts' clip lists via `get_timeline`, convert
+`sourceStart`/`duration` to seconds at the shared source fps, compute the set
+difference, then look up each gap's real text in the RAW whole-file transcript
+(`editor_get_transcript`, segment-level — **not** `editor_get_timeline_transcript`,
+which double-counts a segment once per clip it overlaps and was mistaken for a
+"Whisper repeats itself" bug for a good twenty minutes before the raw transcript
+ruled that out).
+
+**Root cause, confirmed by direct measurement, not inferred:** `editor_detect_retakes`'s
+whole-track sweep calls `resolveRetakeArgs` (`packages/editor/src/useEditorControl.ts`)
+**once per clip**, and that function scopes the transcript view to `clipSourceRangeSecs(c, fps)`
+— **that one clip's own trimmed source range, and nothing else.** When a clip is
+shorter than the utterance it's part of (routine after an earlier fine-grained
+silence cut — this project has clips as short as 0.25 s and 0.58 s), the two
+halves of a real restart end up in *different* clips' views, and no single call
+to `detect_retakes` ever sees both halves at once. A chain needs ≥2 members to
+be a group; a view containing only one half can never produce one, regardless of
+how good the similarity scoring is.
+
+**Measured, clip by clip**, checking how many *original* clips physically
+overlap each real retake's full span:
+
+| case (source time) | clips it spans | shortest clip involved | caught? |
+|---|---|---|---|
+| "…trick behind used…" → "down. And the trick being used…" (210-230s) | **3** | 0.25s, 0.58s | no |
+| "the real reason is this expensive…" restart (426-439s) | **2** | — | no |
+| "enormous amount of work…" (528-547s, 3 deliveries) | **5** | 0.71s | no |
+| "quick recap," restart (848-868s) | **3** | — | no |
+| outro "not just what it can do" (955-987s) | **4** | — | no |
+| "grog doesn't build" false start (29-45s) | **3** | — | no |
+| "it's expensive for sure…" (309-317s) — **the one retake the sweep DID catch** | **1** | — | **yes** |
+| "speculative speculating…speculative decoding" (718-736s) | **1** | — | no (see below) |
+
+Six of seven real multi-clip cases were invisible to the sweep for exactly the
+scoping reason above — and the one case the sweep *did* catch is also the one
+case whose two takes happen to sit inside a single, less-fragmented clip. That
+is not a coincidence; it is the mechanism, confirmed by the fact that flipping
+this one variable (single clip vs. several) flips the outcome every time it was
+checked.
+
+**The eighth case is a different, harder problem, not this one.** "and the third
+one called speculative speculating and the third one's called speculating
+speculative" against "speculative decoding okay and the third one call is
+speculative decoding and it's kind of clever" sits inside ONE clip — the sweep
+genuinely saw both — and scored **0.495** (whole=0.303, containment=0.495)
+against the `similarity: 0.82` bar, computed directly with the real
+`normalise`/`normalized_levenshtein`/`containment` logic, not estimated. A human
+hears one continuous correction of the same term; the algorithm sees two
+sentences that only share a few words and diverge everywhere else, because the
+speaker didn't repeat the line — they fumbled a two-word technical term three
+times *inside* two otherwise-different sentences. This is a real limitation of
+"the same LINE again" as the detection model, not a scoping bug, and nothing in
+§1-4's toolkit (spans, containment, the rejected embedding model) fixes it —
+it would need a genuinely different signal (e.g. scanning for a repeated
+*n-gram*, not a repeated *span*). Not solved here; recorded so it isn't
+re-discovered as a surprise.
+
+A ninth case, "A few months later, Google did something similar." (84-89s), was
+in the owner's cut too but is **not a retake at all** — one clean, non-repeated
+sentence with nothing else like it anywhere in the transcript. The owner simply
+tightened the pacing by hand. Worth stating plainly: not every frame a human
+cuts is something a retake/silence detector was ever supposed to catch, and this
+investigation does not claim otherwise.
+
+**Not fixed here.** The fix this points at — merge a contiguous run of clips
+sharing one source file back into one utterance view before calling
+`detect_retakes`, then map any found group's cut back onto the real clip/frame
+structure — is a real architectural change to the sweep, not a parameter tweak,
+and deserves its own `D-NNN` rather than a quiet patch inside
+`resolveRetakeArgs`. See **B-237** in `docs/BUGS.md`.
+
+---
+
+## 5. Reproducing any of this
 
 Lexical scores and the before/after, no model required:
 
