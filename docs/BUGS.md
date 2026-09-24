@@ -27,6 +27,16 @@ Still real:
 
 ## Open
 
+## B-236 — a gap left by a manual split on the Edit timeline can't be selected/deleted through the normal gap-click UI
+
+status: **open** · severity: medium (no data loss — the material is all still there — but a real dead end in the ordinary edit flow: the owner's only stated workaround was to stop) · area: `packages/editor/src/timeline.ts` (`gapAt`), `packages/editor/src/TimelinePane.tsx` (the empty-space click handler around D-105's `gapAt(tracks[trackIdx], frame, fps)` call and the selected-gap highlight/close-gap button), `editor_remove_gap` (`crates/apelles-mcp`/`mcp/server.py`)
+
+- **found:** 2026-09-24, reported live by the owner on `2026-09-12-c038-mgfx` (screenshot: `scratch/bug-reports/B-236-unselectable-gap-after-manual-split.png`) — "in here i made a gap i m not able to select and delete it, i did a manual split :/ after that."
+- **repro (as reported):** split a clip by hand on the timeline; a gap results that will not select via the normal click-on-empty-space interaction, so the GUI's own "close gap" action (D-105, ripples everything after it left) is unreachable for it.
+- **not independently reproduced this session** — this agent has no click/drag input into the running native Tauri window (only read-oriented `debug_*` tools and the programmatic `editor_*` MCP ops), so the owner's actual pointer interaction could not be replayed. A structural read of the live timeline via `get_timeline` around the reported area found no positive-width gap in the clip list at the time it was checked (moments after the report) — either the click precision is the real defect (see lead below) rather than the gap failing to exist, or timeline state had already moved on from the exact moment of the screenshot.
+- **lead, not a confirmed cause:** `gapAt` (`packages/editor/src/timeline.ts:2449`) returns `null` whenever `clipAt` claims the clicked frame first, and a gap created by a manual split (as opposed to a ripple-delete or an explicit "remove, leave gap") could plausibly be narrow — a handful of frames wide, a few pixels at typical zoom — making it an easy miss for a pointer click that needs to land exactly inside it rather than on either clip's edge. Worth checking with a real narrow-gap repro before assuming the lookup logic itself is wrong.
+- **not fixed here.**
+
 ## B-235 — deleting/cutting on the Edit timeline leaves live playback audibly muted for a beat before it comes back
 
 status: **open** · severity: medium (no data loss, and it self-recovers, but a real, reproducible playback defect on the single most common editing action — cutting something) · area: likely `app/src-tauri/src/chroma/audio.rs` / `crates/apelles-media/src/audio.rs`'s play-session re-resolve path (`generation`/`begin_request`, `resolve_sources_at`, `run_session` — not yet confirmed, see below)
