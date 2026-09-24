@@ -1,19 +1,26 @@
 # Retake detection — what signal actually separates a restart from a different sentence
 
 Worked-out detail behind **D-318** (the detector), **D-320** (edit distance +
-containment), and **D-327** (spans, and the embedding model that was measured
-and rejected). Fixes **B-198**. **§4 is a different bug, found later** (B-237,
-2026-09-24) — not in the algorithm this note is mostly about, but in how the
-whole-track sweep feeds it, measured against a real human re-edit rather than
-a synthetic case.
+containment), **D-327** (spans, and the embedding model that was measured and
+rejected), **D-364** (detection's unit is a continuous take, not a clip) and
+**D-365** (the second, repeated-phrase signal). Fixes **B-198** and **B-237**.
 
-This note exists for one reason: "use a semantic embedding model" is the
-obvious, confident, wrong answer to this problem, and the next person to look at
-retake detection will think of it within about thirty seconds. It was built,
-measured against upstream's own reference implementation, and thrown away. The
-numbers are here so that decision does not have to be re-derived. **§4 is the
-other trap**: even a perfect grouping algorithm catches nothing if the sweep
-calling it never shows it both takes at once.
+Three traps are written down here, because each one costs a day to re-derive
+and two of them have already been walked into once:
+
+1. **§1-3 — "use a semantic embedding model" is the obvious, confident, wrong
+   answer**, and the next person to look at retake detection will think of it
+   within about thirty seconds. It was built, measured against upstream's own
+   reference implementation, and thrown away. The numbers are here so that
+   decision does not have to be re-made.
+2. **§4 — even a perfect grouping algorithm catches nothing if the sweep
+   calling it never shows it both takes at once.** Found by diffing a real
+   human re-edit against the tool's output, not from a synthetic case.
+3. **§5 — "the same line again" is only half the question.** The other half is
+   the speaker repairing one *phrase* inside two otherwise-different sentences,
+   which no whole-string measure can see. §5 is also the honest record of what
+   that second signal costs: one measured false positive per 698 real
+   utterance pairs, and the class it belongs to.
 
 ---
 
@@ -220,9 +227,14 @@ ordering so it cannot quietly stop being true.
 > D-349-spliced views, deduped — so nothing the timeline no longer shows is read
 > back in), and a found group's takes are mapped back onto the clips and frames
 > they land in, which can be several. The single-clip call widens the same way
-> and then reports only the groups touching the clip that was named. The eighth
-> case below — the 0.495 technical-term stumble — is **not** fixed and was never
-> this bug; it stands as recorded. See **D-364** in `docs/08-decisions.md`.
+> and then reports only the groups touching the clip that was named. See
+> **D-364** in `docs/08-decisions.md`.
+>
+> **The eighth case below — the 0.495 technical-term stumble — was not fixed by
+> D-364 and was never this bug. It is fixed now, by D-365 (§5)**, which added
+> the second, repeated-n-gram signal this section's closing paragraph pointed
+> at. The text below is left exactly as written: it is the measurement that
+> produced both fixes.
 
 Everything in §1-3 is about `detect_retakes` itself: given a full list of
 utterances, does it group the right ones. This section is about a layer above
@@ -294,8 +306,10 @@ times *inside* two otherwise-different sentences. This is a real limitation of
 "the same LINE again" as the detection model, not a scoping bug, and nothing in
 §1-4's toolkit (spans, containment, the rejected embedding model) fixes it —
 it would need a genuinely different signal (e.g. scanning for a repeated
-*n-gram*, not a repeated *span*). Not solved here; recorded so it isn't
-re-discovered as a surprise.
+*n-gram*, not a repeated *span*). ~~Not solved here~~ — **solved by D-365**,
+which is exactly the repeated-n-gram signal this sentence guessed at; the
+measurement and its cost are in §5. Recorded so it isn't re-discovered as a
+surprise.
 
 A ninth case, "A few months later, Google did something similar." (84-89s), was
 in the owner's cut too but is **not a retake at all** — one clean, non-repeated
@@ -315,12 +329,220 @@ own first table row. See **B-237** in `docs/BUGS.md` and **D-364** in
 
 ---
 
-## 5. Reproducing any of this
+## 5. The second signal: a repeated PHRASE, not a repeated line (D-365, 2026-09-24)
+
+§1-3 are about one question — *is this the same line again?* §4 is about which
+utterances that question gets asked about. This section is about a **different
+question**, added beside the first rather than replacing it, and about the
+measurement that decided its thresholds and disclosed its cost.
+
+It closes the limitation §4 named and left open: its **eighth case**, the
+technical-term stumble that sat inside a single clip, was seen by the detector
+in full, and still scored 0.495.
+
+### 5.1 The shape the line-level question cannot reach
+
+A speaker does not only restart whole lines. Just as often they repair **one
+phrase** inside two sentences that otherwise diverge completely. Real, from
+`A001_09122319_C038.MOV`, measured with the real
+`normalise`/`normalized_levenshtein`/`containment` code — not estimated:
+
+| # | transcript pair (normalised, elided) | whole | containment | `similarity` |
+|---|---|---|---|---|
+| 94/95 | "…the third one called speculative speculating…" / "speculative decoding okay and the third one call is speculative decoding…" | 0.303 | 0.495 | **0.495** |
+| 67/68 | "that's an enormous amount of repetitive work happening constant…" / "an enormous amount of work happening for every single response…" | — | — | **0.380** |
+| 68/69 | "…for every single response for every single" / "risk for every single response for every single user…" | — | — | **0.380** |
+| 56/57 | "but the real reason is this expensive is something else entirely…" / "reason it's this expensive the real reason of this being this expensive is" | — | — | **0.299** |
+| 117/118 | "corner and subscribe if you want more of this the actual economy…" / "behind AI not just what it can do and subscribe if you want more of this the" | — | — | **0.397** |
+| 118/119 | "…and subscribe if you want more of this the" / "actual economy and mechanic and mechanics behind AI not just what it can" | — | — | **0.306** |
+
+Against the 0.82 bar these are **noise, not near misses**. 0.30 is where
+genuinely unrelated sentences score (§1's own table has unrelated pairs at
+0.13–0.32). No threshold movement reaches them; the material the two sides share
+is a *phrase*, and nothing in §1-3 looks at phrases.
+
+### 5.2 The signal, and why it is not the embedding idea wearing a hat
+
+This is the **reparandum / repair** pattern from the disfluency literature
+(Shriberg 1994 onward), whose established non-ML detection signal is the **"rough
+copy" property**: a repair is a near-verbatim repeat of a phrase from the botched
+attempt, even when the surrounding sentence differs. So the unit is a repeated
+**word n-gram**.
+
+`crates/apelles-speech/src/phrase.rs` implements one predicate. The longest run
+of words occurring contiguously in both sides must be at least
+`phrase_min_words` (default 3) long, **and** either carry ≥2 **content**
+(non-stopword) words, **or** be *longer* than the bar — in which case its length
+is the evidence and it needs no content words at all.
+
+This does not reopen §3. That rejection rests on a model scoring *meaning* and
+getting negation backwards; this predicate reports literal repetition and never
+infers meaning at all. **But it is not a fix for negation either, and §5.5 says
+so plainly** — that is the one claim it would be easy and wrong to make here.
+
+### 5.3 Why those numbers, measured
+
+Every pair of C038's 121 real utterances was swept — all 7,260 — and every
+candidate run hand-classified against the transcript text.
+
+**The shortest admissible run: 3 words, 2 content words.** At exactly three
+words the content count is the whole separation, and on real data it is clean:
+
+| shared 3-word run | content words | real retake? | admitted |
+|---|---|---|---|
+| "the real reason" | 2 | yes (#56/#57) | ✅ |
+| "inference is everything" | 2 | yes (#41/#42, a false start) | ✅ |
+| "so quick recap" | 2 | yes (#105/#106) | ✅ |
+| "something else entirely" | 3 | yes (#56/#58) | ✅ |
+| "actual economy and" | 2 | yes (#117/#119) | ✅ |
+| **"if you want"** | **1** | **no — incidental** (#115/#117, #115/#118) | ❌ correctly rejected |
+
+**The length tier exists for two real cases.** Some genuine repairs repeat a
+purely functional phrase — there the marker *is* the function words:
+
+| shared run | words | content | real retake? |
+|---|---|---|---|
+| "and the third one" | 4 | 0 | yes — #94/#95, the headline case |
+| "not just what it can" | 5 | 0 | yes — #119/#120 |
+| "not just what it can do" | 6 | 0 | yes — #118/#120 (the outro line, delivered four times) |
+| "it s" / "that s" | 2 | 0 | no — rejected by the length floor |
+
+Requiring content words at *every* length loses all three of the first rows,
+including the case this whole section exists for.
+
+**The time window: reuse `window_secs`, unchanged, and that is measured too.**
+Of the 26 pairs the predicate admits across all 7,260, **20 are inside the 30 s
+window and 6 are outside it**. The 6 outside:
+
+| pair | gap | shared run |
+|---|---|---|
+| 46/112 | **565 s** | "time you send a message to" |
+| 30/76 | 378 s | "to bring that cost" |
+| 31/76 | 371 s | "to bring that cost" |
+| 47/99 | 406 s | "kind of like a" |
+| 47/95 | 362 s | "it s kind of" |
+| 62/96 | 248 s | "writing every single" |
+
+The nearest is **248 s out — eight times the window** — and the worst of them is
+the video's own deliberate bookend ("Every time you send a message to ChatGPT"
+at 350 s, "next time you send a message to ChatGPT" at 919 s). That is precisely
+what `window_secs` was put there for (§1), so the phrase arm needs no bound of
+its own. Pinned by `a_deliberate_callback_is_outside_the_window`.
+
+### 5.4 The false-positive measurement, on two whole real transcripts
+
+A signal whose entire risk is incidental repetition cannot be validated on
+curated examples. Both fixtures are the verbatim whole-file output of
+`ai-media/transcribe.py` (mlx-whisper large-v3) on the owner's own camera
+originals, committed at `crates/apelles-speech/tests/fixtures/` and read by
+`tests/real_transcripts.rs`. Both are single-speaker talking heads on one
+technical subject each — the hardest possible negative material, because a
+16-minute video *about* inference says "inference", "model", "training" and
+"cost" constantly.
+
+"Newly admitted" means: the phrase arm says yes **and** the existing
+edit-distance arm says no. That is the only set the decision turns on.
+
+| corpus | segments | duration | pairs in window | newly admitted | real retakes | false positives |
+|---|---|---|---|---|---|---|
+| `A001_09122319_C038.MOV` | 121 | 987 s | 483 | 15 | **15** | **0** |
+| `A001_09122356_C040.MOV` | 66 | 684 s | 215 | 7 | **6** | **1** |
+| **combined** | 187 | 1,671 s | **698** | **22** | **21** | **1** |
+
+C038's 15, all real, all previously missed: #3/#4 ("grog doesn't build", a
+clipped false start), #41/#42 and #41/#44 ("Inference is everything that
+it's…"), #43/#45 ("the model actually being used" / "the model being actually
+used"), #56/#57 and #56/#58, #67/#68, #68/#69, #94/#95, #105/#106 ("So quick
+recap,"), #117/#118, #117/#119, #118/#119, #118/#120, #119/#120.
+
+Four of these — #30/#31, #56/#57, #67/#68/#69, #105/#106, #117-#120 — are rows
+of §4's own table of retakes the owner cut by hand and the tool did not flag.
+
+#### The one false positive, in full
+
+From C040, pair **#30/#32**:
+
+```text
+  #30  "Every word turns itself into a question."
+  #32  "Every other word turns itself into a kind of answer key
+        advertising what it's about."
+```
+
+Not a retake. Two deliberate, contrasting sentences — the query/key metaphor,
+built out of parallel phrasing on purpose — sharing the verbatim run "word turns
+itself into a" (5 words, 3 content). **Structurally this is indistinguishable
+from a repair**: a long verbatim frame around a changed pivot. What differs is
+the speaker's intent, which the text does not carry.
+
+Combinations tried, and why each was abandoned:
+
+| candidate tightening | rejects #30/#32? | cost |
+|---|---|---|
+| raise content bar to 3 at every length | no (run has 3 content words) | loses "the real reason", "so quick recap", "inference is everything" |
+| drop the length tier (always need ≥2 content) | no | loses #94/#95, #118/#120, #119/#120 |
+| length tier only when content == 0 | no | ditto — the run has content words |
+| cap the content tier's run length at 4-5 | no | loses #68/#69 ("for every single response…", 7 words) |
+| require `similarity` below a ceiling (the pair is a near-miss at 0.738-0.771) | yes | loses #41/#42 at 0.794 — a real false start in the same regime |
+| require the run at a span boundary (start/end) | yes | loses #56/#57, where the run is mid-sentence on both sides |
+
+Nothing separated them without losing genuine repairs, so it is **accepted,
+pinned as a test, and disclosed** rather than tuned away by shrinking the signal
+until it stopped being useful. The same class shows up in §3's own synthetic
+probe set: "first we will look at what attention **does**" / "then we will look
+at what attention **cannot** do" (`similarity` 0.738) is newly admitted too.
+
+What makes it survivable: the detector only ever *proposes* (D-318); a
+phrase-matched group reports its genuinely low `similarity`, so it sorts to the
+top of anything a reviewer ranks by confidence; the rate is 1 in 698 real pairs
+against 21 real retakes recovered; and `phrase_min_words: 0` restores the
+pre-D-365 detector exactly, asserted on both corpora.
+
+### 5.5 The correction this pass had to make to §3's reading
+
+It is tempting — and it was nearly written down here — to claim a phrase signal
+"solves" the negation problem that killed the embedding model. **It does not.**
+A minimal pair differing in one word shares a long verbatim run by construction:
+
+| probe | shared run | phrase arm | existing `similarity` |
+|---|---|---|---|
+| "…gives that part of your message **less** weight" / "…**more** weight" | "the model gives that part of your message" (8w) | says yes | **0.925** |
+| "weighs every part of your message equally" / "does **not** weigh every part…" | "every part of your message equally" (6w) | says yes | **0.843** |
+| "this is the **encoder** side of the model" / "…**decoder** side…" | "side of the model" (4w) | says yes | **0.946** |
+
+The phrase arm adds **no new admission** on any of them — and the reason is the
+part of §3 that is easy to misread. Those pairs score **above** the 0.82 bar on
+plain edit distance, so **the lexical detector has always grouped them**, since
+D-320. §3's "MUST NOT group" table was a statement about *ranking* — that the
+embedding put negations above real retakes while edit distance put them below —
+never a claim that the shipped detector rejects them. Only measuring showed
+that. Pinned by `a_negation_minimal_pair_is_not_a_new_admission`.
+
+### 5.6 What is still not caught
+
+- **Parallel construction**, per §5.4 — the one accepted false-positive class,
+  and it cuts both ways: a deliberate contrast can be proposed as a retake.
+- **A repair with no verbatim repeat at all.** "The model down-weights it" →
+  "The model gives it less attention" shares no phrase and scores low on edit
+  distance. Neither arm sees it, and nothing text-only will.
+- **Word-accurate take boundaries**, unchanged from §2's honest limit: a take is
+  still a range of whole utterances, so a boundary falling mid-utterance is left
+  out rather than over-claimed.
+
+---
+
+## 6. Reproducing any of this
 
 Lexical scores and the before/after, no model required:
 
 ```sh
 cargo test -p apelles-speech --lib retake -- --nocapture
+```
+
+§5's false-positive sweep over both whole real transcripts — also no model, no
+audio and no network, since the fixtures are plain JSON:
+
+```sh
+cargo test -p apelles-speech --test real_transcripts -- --nocapture
 ```
 
 The embedding measurements are not reproducible from the tree by design — the

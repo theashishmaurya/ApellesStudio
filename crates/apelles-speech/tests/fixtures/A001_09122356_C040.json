@@ -1,0 +1,332 @@
+[
+[
+0.0,
+7.32,
+"Have you ever given an AI three things to do in one message?"
+],
+[
+7.32,
+12.24,
+"Like summarize this, pull out the action item and tell me if anything looks off and it does"
+],
+[
+12.24,
+17.62,
+"the first two and just skips the third?"
+],
+[
+17.62,
+21.82,
+"That's not the model being lazy."
+],
+[
+21.82,
+28.36,
+"It's something called attention, the mechanism that decide which part of what you say it's"
+],
+[
+28.36,
+36.52,
+"actually focused on and here's an explanation no maths no whiteboard nothing at all i'm going"
+],
+[
+36.52,
+41.56,
+"to walk you through what that actually is and by the end you will know exactly"
+],
+[
+41.56,
+44.6,
+"how to write a prompt that doesn't get half ignored"
+],
+[
+44.6,
+60.28,
+"Attention! In simple term, it's just the model deciding for every word it's about to write."
+],
+[
+60.28,
+65.46,
+"much to focus on each word you give."
+],
+[
+79.28,
+85.0,
+"Attention! In simple term, it's just the model deciding for every word it's about"
+],
+[
+85.0,
+95.46,
+"to write, how much to focus on each word you gave it."
+],
+[
+95.46,
+106.66,
+"Think about it like cooking from a recipe you have just read once."
+],
+[
+106.66,
+112.48,
+"You don't re-read the whole thing before every step, you glance back at exactly the line"
+],
+[
+112.48,
+129.94,
+"that matters right now that's the whole point with the skipped instruction if"
+],
+[
+129.94,
+135.3,
+"one part of your message get less of that glancing back then the others the"
+],
+[
+135.3,
+138.06,
+"model just"
+],
+[
+138.06,
+148.24,
+"If the one part of your message gets less of that glancing back than others, the model"
+],
+[
+148.24,
+167.22,
+"just under waves it."
+],
+[
+167.22,
+179.46,
+"If one part of your message gets less of that glancing back than the others, the model just"
+],
+[
+179.46,
+188.86,
+"underweighs it."
+],
+[
+188.86,
+195.84,
+"The specific version of this used inside these models is called self-attention and it's simpler"
+],
+[
+195.84,
+210.7,
+"then the name sounds. Every word in your message gets to look at every other word at the same"
+],
+[
+210.7,
+223.74,
+"time. Picture a group chat instead of a one-on-one conversation."
+],
+[
+231.18,
+235.66,
+"You're not just looking at the last message you are scanning back through"
+],
+[
+235.66,
+244.24,
+"the last 10 to figure out who's actually being asked you're not just looking at the last message"
+],
+[
+244.24,
+248.62,
+"you are is you're not actually looking at the last message you're scanning back through the"
+],
+[
+248.62,
+264.14,
+"last 10 to figure out who's actually being asked self-attention is the model doing that for itself"
+],
+[
+264.14,
+281.2,
+"Self-attention is the model doing that for every word constantly."
+],
+[
+281.2,
+290.26,
+"There's an actual mechanism behind that checking in."
+],
+[
+290.26,
+303.12,
+"Every word turns itself into a question."
+],
+[
+303.12,
+304.36,
+"It's great."
+],
+[
+304.36,
+315.88,
+"Every other word turns itself into a kind of answer key advertising what it's about."
+],
+[
+315.88,
+322.88,
+"So words question get checked against everyone else's answer key and whoever matches the"
+],
+[
+322.88,
+337.98,
+"closest that's who it borrows the most content from called the value."
+],
+[
+337.98,
+341.5,
+"That's the real computation underneath checking in."
+],
+[
+341.5,
+347.1,
+"real computation underneath checking in and it's got a name query key value attention"
+],
+[
+355.9,
+360.7,
+"there's a second half to this how the model actually writes the response"
+],
+[
+365.58,
+369.82,
+"the encoder reads your whole message once and published a build"
+],
+[
+371.5,
+381.46,
+"The encoder reads your whole message once and builds a rich picture of it using the"
+],
+[
+381.46,
+392.84,
+"same self-attention."
+],
+[
+392.84,
+399.2,
+"The decoder generates the reply one word at a time and every time it writes a new word,"
+],
+[
+399.2,
+405.28,
+"It glances back at that picture the encoder built plus everything it already written so"
+],
+[
+405.28,
+413.78,
+"far."
+],
+[
+413.78,
+430.9,
+"And glancing back at the encoder step even has its own name, cross attention."
+],
+[
+430.9,
+444.68,
+"It's less read than write and more read than write while constantly rechecking."
+],
+[
+444.68,
+462.22,
+"And here's why that skipped instruction happened specifically."
+],
+[
+462.22,
+467.54,
+"There's a real documented finding. Models pay less attention to stuff buried in the"
+],
+[
+467.54,
+479.6,
+"middle of a long message then stuff at the very start or very end. It's called lost in"
+],
+[
+479.6,
+500.4,
+"the middle."
+],
+[
+500.4,
+514.64,
+"a bug just how attention naturally distributes across a long input."
+],
+[
+514.64,
+526.6,
+"So if something is genuinely important don't bury it in the middle of a long task."
+],
+[
+526.6,
+537.34,
+"it first or repeat it at the end. Break a long list of tasks into an actual"
+],
+[
+537.34,
+551.6,
+"numbered list instead of the one run on sentences. So each one gets its own anchor point."
+],
+[
+551.6,
+557.76,
+"not a trick. It's just working with how attention actually distributes itself instead of against it."
+],
+[
+568.5,
+576.32,
+"So, quick recap. Attention is the model deciding how much to focus on each part of what you said"
+],
+[
+576.32,
+581.36,
+"by matching each word's query against every other word's key."
+],
+[
+586.8,
+588.2,
+"So, quick recap."
+],
+[
+588.46,
+592.8,
+"I digitized the model deciding how much to focus on each part of what you said"
+],
+[
+592.8,
+597.34,
+"by matching each word's query against every other word's key."
+],
+[
+606.32,
+611.98,
+"The encoder builds a picture of what your message is."
+],
+[
+611.98,
+633.78,
+"The decoder writes the reply while constantly glancing back at it."
+],
+[
+633.78,
+646.0,
+"And that's exactly why a buried instruction get less attention than one sitting up front."
+],
+[
+646.0,
+656.78,
+"Not a glitch, just a mechanism working as built."
+],
+[
+656.78,
+660.18,
+"And once I understood this, it changed how I write props."
+],
+[
+660.18,
+683.68,
+"I stopped burying the important instruction in paragraph 3."
+]
+]

@@ -6,6 +6,186 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-365 — a SECOND, independent retake signal: a repeated content-bearing n-gram ("rough copy"), ORed with the existing edit-distance arm, catching the self-correction that repairs one PHRASE inside two otherwise-different sentences
+
+**Status: `decided`** (2026-09-24). Closes the limitation **B-237** recorded and
+deliberately left open (its "eighth case"). Builds on **D-318** / **D-320** /
+**D-327** (the existing detector) and **D-364** (the merged-run architecture the
+new signal plugs into unchanged).
+
+**Context.** Everything the retake detector does asks one question — *is this
+**the same line** again?* — measured as normalised edit distance over the whole
+string plus a containment sweep (D-320). That is the right question for a
+restart and the wrong question for the other, equally common disfluency: the
+speaker repairs **one phrase** inside two sentences that otherwise diverge
+completely. B-237's investigation found this shape in the owner's own footage
+inside a *single* clip, so D-364's scoping fix does not reach it either.
+Measured with the real `normalise`/`containment`/`similarity` code, not
+estimated — all from `A001_09122319_C038.MOV`, against the 0.82 bar:
+
+| real pair | `similarity` |
+|---|---|
+| "…the third one called speculative speculating and the third one's called speculating speculative" / "speculative decoding okay and the third one call is speculative decoding and it's kind of clever" | **0.495** (whole 0.303, containment 0.495) |
+| "that's an enormous amount of repetitive work happening constant that's an" / "an enormous amount of work happening for every single response for every single" | **0.380** |
+| "an enormous amount of work happening for every single response for every single" / "risk for every single response for every single user at the same time" | **0.380** |
+| "but the real reason is this expensive is something else entirely but the real" / "reason it's this expensive the real reason of this being this expensive is" | **0.299** |
+| "corner and subscribe if you want more of this the actual economy and mechanism" / "behind AI not just what it can do and subscribe if you want more of this the" | **0.397** |
+
+These are not near misses a looser threshold would sweep up — 0.30–0.50 against
+0.82 is noise, and dropping the bar that far would group everything. What the
+two sides share is a *phrase*, and no whole-string measure is looking at phrases.
+
+**Options.**
+
+1. **Do nothing; leave it documented as a known limit.** Honest, and what B-237
+   did. Rejected now because the class is not rare: five distinct instances in
+   one 16-minute video, and the owner cut every one of them by hand.
+2. **Sentence embeddings, again.** Rejected, and this is explicitly *not* a
+   re-litigation of D-327. That rejection stands on its own measurement — cosine
+   from `all-MiniLM-L6-v2` scored a sentence against its own negation at 0.946,
+   *above* every genuine retake (0.59–0.77), so no threshold separates them
+   (`docs/notes/retake-detection.md` §3). Nothing here revisits that. The signal
+   chosen below reports literal repetition only and never infers meaning, so it
+   cannot invent an equivalence the words do not show — a different failure
+   surface, not the same one re-tried. What it is *not* is a fix for negation;
+   see the correction at the end of this entry.
+3. **Lower `similarity`, or add a second lower threshold for "topically close".**
+   Rejected on the numbers above: the real cases live at 0.30–0.50, which is
+   where genuinely unrelated sentences live too.
+4. **Word-level n-gram overlap — the "rough copy" property. CHOSEN.** The classic
+   reparandum/repair pattern from the disfluency literature (Shriberg 1994
+   onward), whose established non-ML signal is exactly this: a repair is a
+   near-verbatim repeat of a *phrase* from the botched attempt even when the
+   surrounding sentence differs. So look for a repeated word n-gram, not a
+   repeated sentence.
+
+**Choice.** A new pure module, `crates/apelles-speech/src/phrase.rs`, exposing
+one predicate — `is_phrase_repeat(a, b, params) -> bool`. Its own module rather
+than more of `retake.rs` because it is a self-contained scoring concern with its
+own constant data (a stopword list) and its own tests, and `retake.rs` is
+already 1,100 lines of chain machinery that would bury it.
+
+`retake.rs` ORs the two arms in `next_take`: a candidate span matches its anchor
+when **either** `similarity >= p.similarity` **or** `is_phrase_repeat`. Nothing
+else changed — anchors, chains, the aside step-over, the time window, `keep`,
+and the `RetakeGroup`/`TakeSpan` output shape are untouched, so no downstream
+consumer (the MCP tools, the sweep, `RecutPanel.tsx`, ripple-delete mapping) has
+a contract change.
+
+**Why an OR inside the existing chain rather than a separate second pass.**
+Measured: C038's utterances #41/#42/#44 are one restart whose first link
+("Inference is everything that it's…" → "Inference is everything after that.")
+scores 0.794 and is seen *only* by the phrase arm, while its second link scores
+1.000 and needs only the similarity arm. A two-pass design groups #42 and #44 in
+pass one, marks them taken, and can never reach back for #41 — losing the false
+start that is the whole reason to cut. Interleaving the predicates in one walk
+is what makes a mixed chain like that expressible.
+
+**The tuned rule, and why each number.** The longest run of words occurring
+contiguously in both sides must be at least `phrase_min_words` (default **3**)
+long, **and** either carry at least **2 content** (non-stopword) words, **or** be
+*longer* than the bar, in which case its length is the evidence and it needs no
+content words at all. The stopword list is a ~150-word hardcoded constant — the
+standard practice in this literature, and far under the bar for taking on an NLP
+dependency (`CLAUDE.md`'s own carve-out for a small stable pure function).
+
+Both numbers are measured against real transcripts, not picked:
+
+- **3 words with 2 content words** is the shortest admissible run. Every
+  three-word run with two content words in the real footage is a genuine
+  self-correction ("the real reason", "inference is everything", "so quick
+  recap", "something else entirely", "actual economy and"); the only three-word
+  runs with *one* content word are the incidental "if you want" pairs, correctly
+  rejected.
+- **The length tier exists for two real cases** and would otherwise lose them:
+  "and the third one" (the headline case above) and "not just what it can do"
+  (an outro line delivered four times) are repeated verbatim and are pure
+  function words. In a repair of this shape the marker *is* the functional phrase.
+- **No dedicated time bound; `window_secs` is reused as-is.** Measured rather
+  than assumed: across all 7,260 pairs of C038's 121 utterances the predicate
+  admits 26, and the 6 outside the existing 30 s window are **248–565 s** apart.
+  The nearest incidental match is eight times the window — and is the video's own
+  deliberate callback ("Every time you send a message to ChatGPT" at 350 s,
+  "next time you send a message to ChatGPT" at 919 s), exactly what
+  `window_secs` exists for.
+
+**A second, non-obvious correctness rule the implementation needs.** The
+similarity arm is tried at *every* span length before the phrase arm is tried at
+any. "Shortest span that clears the bar wins" (D-327) assumes one yardstick;
+mixing a looser arm into the same length sweep let a shorter span squeak through
+on the loose signal and pre-empt the longer span the strict signal would have
+matched. On the D-327 fixture that split one delivery (`#3..#4`) into two takes
+— and since `keep` is the *last* take, it quietly offered the first half of a
+real delivery up to be cut. Ordering the arms keeps the change strictly
+**additive**: wherever the old detector matched, it still matches exactly that.
+Pinned by
+`the_phrase_signal_does_not_re_cut_a_take_the_similarity_signal_already_found`.
+
+**The honest tradeoff — this buys recall for a measured, non-zero
+false-positive risk.** Verified against two whole real transcripts, both
+committed as fixtures (`crates/apelles-speech/tests/real_transcripts.rs`),
+deliberately the hardest negative material available: single-speaker talking
+heads each on one technical subject, so topic vocabulary repeats constantly.
+
+| corpus | segments | duration | pairs in window | newly admitted | real retakes | false positives |
+|---|---|---|---|---|---|---|
+| `A001_09122319_C038.MOV` | 121 | 987 s | 483 | 15 | **15** | **0** |
+| `A001_09122356_C040.MOV` | 66 | 684 s | 215 | 7 | **6** | **1** |
+| **combined** | 187 | 1,671 s | **698** | **22** | **21** | **1** |
+
+The one false positive is real and is pinned as a test rather than hidden:
+
+```text
+  #30  "Every word turns itself into a question."
+  #32  "Every other word turns itself into a kind of answer key
+        advertising what it's about."
+```
+
+Two deliberate, contrasting sentences — the query/key metaphor, built out of
+parallel phrasing on purpose — sharing the verbatim run "word turns itself into
+a". **Structurally that is indistinguishable from a repair**: a long verbatim
+frame around a changed pivot. Every combination of run-length and content-word
+threshold tried either admitted it or lost several genuine repairs with it
+(`docs/notes/retake-detection.md` §5 has the table). The same class appears in
+D-327's own synthetic probe set: "first we will look at what attention **does**"
+/ "then we will look at what attention **cannot** do" is newly admitted too.
+
+It is accepted, rather than tuned away by shrinking the signal until it stopped
+being useful, because: the detector only ever **proposes** and never cuts
+(D-318); a phrase-matched group honestly reports its low `similarity`, so it
+sorts to the top of anything a reviewer ranks by confidence; the rate is 1 in
+698 real pairs against 21 real retakes recovered; and `phrase_min_words: 0`
+turns the arm off outright, restoring the pre-D-365 detector **exactly** (
+asserted on both corpora).
+
+**One thing that must not be claimed, because it is false.** It is tempting to
+say a phrase signal "solves" the negation problem that killed the embedding
+model. It does not: a minimal pair differing in one word shares a long verbatim
+run *by construction*, so `is_phrase_repeat` says yes to "…gives that part
+**less** weight" / "…**more** weight". What is actually true, and all the design
+rests on, is that the phrase arm adds **no new admission** there — the existing
+edit-distance arm already scores that pair **0.925**, over its own 0.82 bar, and
+has grouped minimal pairs like it since long before this module existed. D-327's
+"must NOT group" table was about embedding-vs-lexical *ranking*, never about
+absolute behaviour, and re-reading it as the latter was a mistake caught only by
+measuring. Pinned by `a_negation_minimal_pair_is_not_a_new_admission`.
+
+**Human and AI, both** (CLAUDE.md). `phrase_min_words` is exposed along the whole
+path: `chroma_detect_retakes` → `RetakeDetectionArgs`/`retakeKey` →
+`retakeTuning` → `editor_detect_retakes` and `editor_detect_retakes_status`, in
+both `mcp/server.py` and `crates/apelles-mcp`. The Recut panel passes **no**
+tuning knob for any of the five (it has always taken the Rust defaults), so it
+picks the new signal up automatically and no new human/AI gap is introduced;
+adding a GUI control for this one knob alone, when its four siblings have none,
+would be the inconsistency.
+
+**Consequences.** On the two real transcripts the detector now finds 11 groups
+each, against 5 and 7 before. `crates/apelles-speech` gains one module, one
+integration test and two committed transcript fixtures; no new dependency. The
+parity corpus was re-captured for the added parameter (180 tools, 267 cases).
+
+---
+
 ## D-364 — retake detection reads a continuous TAKE, not a clip: consecutive clips cut from one uninterrupted stretch of one source are merged into one run before grouping, and a group's takes are mapped back onto the real clips afterwards
 
 **Status: `decided`** (2026-09-24). Fixes **B-237**.

@@ -1144,6 +1144,7 @@ interface RetakeTuning {
   windowSecs?: number;
   minWords?: number;
   maxSpanUtterances?: number;
+  phraseMinWords?: number;
 }
 
 function retakeTuning(a: OpArgs): RetakeTuning {
@@ -1160,6 +1161,12 @@ function retakeTuning(a: OpArgs): RetakeTuning {
       a?.maxSpanUtterances === undefined
         ? undefined
         : Math.max(1, Math.round(Number(a.maxSpanUtterances))),
+    // 0 is meaningful here — it turns the phrase signal off (D-365) — so this
+    // one floors at 0 rather than at 1 the way `maxSpanUtterances` does.
+    phraseMinWords:
+      a?.phraseMinWords === undefined
+        ? undefined
+        : Math.max(0, Math.round(Number(a.phraseMinWords))),
   };
 }
 

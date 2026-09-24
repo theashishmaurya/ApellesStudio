@@ -1001,6 +1001,8 @@ pub struct EditorDetectRetakesArgs {
     pub min_words: Option<i64>,
     #[serde(default)]
     pub max_span_utterances: Option<i64>,
+    #[serde(default)]
+    pub phrase_min_words: Option<i64>,
     #[serde(default = "default_editor_recover_dark_regions")]
     pub recover_dark_regions: bool,
     #[serde(default = "default_editor_detect_retakes_force")]
@@ -1021,6 +1023,8 @@ pub struct EditorDetectRetakesStatusArgs {
     pub min_words: Option<i64>,
     #[serde(default)]
     pub max_span_utterances: Option<i64>,
+    #[serde(default)]
+    pub phrase_min_words: Option<i64>,
     #[serde(default = "default_editor_recover_dark_regions")]
     pub recover_dark_regions: bool,
 }
@@ -4365,6 +4369,23 @@ impl ApellesMcp {
       on boundaries of its own, which do not line up with the speaker's (D-327):
       a take is a SPAN of utterances, so one delivery can cover several. 1
       restores the old utterance-to-utterance behaviour.
+    - `phrase_min_words` — the detector's SECOND, independent signal (D-365):
+      the shortest repeated PHRASE, in words, that marks two spans as one
+      self-correction even when `similarity` says they are different sentences
+      (default 3; **0 turns it off**). `similarity` asks "is this the same LINE
+      again" and misses the equally common disfluency where a speaker repairs
+      one phrase inside two otherwise-different sentences — measured on real
+      footage, "and the third one called speculative speculating and the third
+      one's called speculating speculative" against "speculative decoding okay
+      and the third one call is speculative decoding and it's kind of clever"
+      scores 0.495 against the 0.82 bar. A pair matched by EITHER signal is a
+      group. The tradeoff is real and measured: across two whole real
+      transcripts (698 utterance pairs) this arm newly admits 22 pairs, 21 of
+      them genuine missed retakes and 1 a false positive — a deliberate
+      parallel construction ("Every word turns itself into a question." /
+      "Every other word turns itself into a kind of answer key..."), which text
+      alone cannot tell from a repair. Groups found this way report a LOW
+      `similarity`, so they sort to the top of anything ranked by it.
     - `recover_dark_regions` — **default true, and leave it that way** (D-349,
       B-216). Whisper's whole-file pass silently declines to transcribe some
       utterances inside windows it otherwise reads confidently: roughly one
@@ -4435,7 +4456,8 @@ impl ApellesMcp {
             .put("similarity", p.similarity)
             .put("windowSecs", p.window_secs)
             .put("minWords", p.min_words)
-            .put("maxSpanUtterances", p.max_span_utterances);
+            .put("maxSpanUtterances", p.max_span_utterances)
+            .put("phraseMinWords", p.phrase_min_words);
         if !p.recover_dark_regions {
             args = args.set("recoverDarkRegions", false);
         }
@@ -4480,7 +4502,8 @@ impl ApellesMcp {
             .put("similarity", p.similarity)
             .put("windowSecs", p.window_secs)
             .put("minWords", p.min_words)
-            .put("maxSpanUtterances", p.max_span_utterances);
+            .put("maxSpanUtterances", p.max_span_utterances)
+            .put("phraseMinWords", p.phrase_min_words);
         if !p.recover_dark_regions {
             args = args.set("recoverDarkRegions", false);
         }

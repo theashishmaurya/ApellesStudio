@@ -368,6 +368,11 @@ pub struct TranscriptUtterance {
 /// each delivery, and `keep` indexes `takes` — a caller that cuts "every member
 /// except `keep`" rather than "every take except `keep`" will eat words the
 /// speaker meant to keep.
+///
+/// Two independent signals decide whether two spans are the same take (D-365):
+/// `similarity` ("the same line again") and `phrase_min_words` ("the same
+/// *phrase* again, inside two otherwise-different sentences"). A pair matched by
+/// either is a group. `phrase_min_words: 0` turns the second one off.
 #[tauri::command]
 pub async fn chroma_detect_retakes(
     utterances: Vec<TranscriptUtterance>,
@@ -375,6 +380,7 @@ pub async fn chroma_detect_retakes(
     window_secs: Option<f64>,
     min_words: Option<usize>,
     max_span_utterances: Option<usize>,
+    phrase_min_words: Option<usize>,
 ) -> Result<serde_json::Value, String> {
     let defaults = RetakeParams::default();
     let params = RetakeParams {
@@ -384,6 +390,7 @@ pub async fn chroma_detect_retakes(
         max_span_utterances: max_span_utterances
             .unwrap_or(defaults.max_span_utterances)
             .max(1),
+        phrase_min_words: phrase_min_words.unwrap_or(defaults.phrase_min_words),
     };
 
     let utterances: Vec<Utterance> = utterances
@@ -404,6 +411,7 @@ pub async fn chroma_detect_retakes(
         "window_secs": params.window_secs,
         "min_words": params.min_words,
         "max_span_utterances": params.max_span_utterances,
+        "phrase_min_words": params.phrase_min_words,
         "utterances": utterances.len(),
         "groups": groups,
     }))

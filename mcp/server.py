@@ -4414,6 +4414,7 @@ def editor_detect_retakes(
     window_secs: float | None = None,
     min_words: int | None = None,
     max_span_utterances: int | None = None,
+    phrase_min_words: int | None = None,
     recover_dark_regions: bool = True,
     force: bool = False,
 ) -> str:
@@ -4454,6 +4455,23 @@ def editor_detect_retakes(
       on boundaries of its own, which do not line up with the speaker's (D-327):
       a take is a SPAN of utterances, so one delivery can cover several. 1
       restores the old utterance-to-utterance behaviour.
+    - `phrase_min_words` — the detector's SECOND, independent signal (D-365):
+      the shortest repeated PHRASE, in words, that marks two spans as one
+      self-correction even when `similarity` says they are different sentences
+      (default 3; **0 turns it off**). `similarity` asks "is this the same LINE
+      again" and misses the equally common disfluency where a speaker repairs
+      one phrase inside two otherwise-different sentences — measured on real
+      footage, "and the third one called speculative speculating and the third
+      one's called speculating speculative" against "speculative decoding okay
+      and the third one call is speculative decoding and it's kind of clever"
+      scores 0.495 against the 0.82 bar. A pair matched by EITHER signal is a
+      group. The tradeoff is real and measured: across two whole real
+      transcripts (698 utterance pairs) this arm newly admits 22 pairs, 21 of
+      them genuine missed retakes and 1 a false positive — a deliberate
+      parallel construction ("Every word turns itself into a question." /
+      "Every other word turns itself into a kind of answer key..."), which text
+      alone cannot tell from a repair. Groups found this way report a LOW
+      `similarity`, so they sort to the top of anything ranked by it.
     - `recover_dark_regions` — **default true, and leave it that way** (D-349,
       B-216). Whisper's whole-file pass silently declines to transcribe some
       utterances inside windows it otherwise reads confidently: roughly one
@@ -4526,6 +4544,8 @@ def editor_detect_retakes(
         args["minWords"] = min_words
     if max_span_utterances is not None:
         args["maxSpanUtterances"] = max_span_utterances
+    if phrase_min_words is not None:
+        args["phraseMinWords"] = phrase_min_words
     if not recover_dark_regions:
         args["recoverDarkRegions"] = False
     if force:
@@ -4541,6 +4561,7 @@ def editor_detect_retakes_status(
     window_secs: float | None = None,
     min_words: int | None = None,
     max_span_utterances: int | None = None,
+    phrase_min_words: int | None = None,
     recover_dark_regions: bool = True,
 ) -> str:
     """Poll a retake grouping started by `editor_detect_retakes` (D-321).
@@ -4577,6 +4598,8 @@ def editor_detect_retakes_status(
         args["minWords"] = min_words
     if max_span_utterances is not None:
         args["maxSpanUtterances"] = max_span_utterances
+    if phrase_min_words is not None:
+        args["phraseMinWords"] = phrase_min_words
     if not recover_dark_regions:
         args["recoverDarkRegions"] = False
     return json.dumps(_op("editor_detect_retakes_status", **args), indent=2, default=str)

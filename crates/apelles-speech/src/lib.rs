@@ -10,7 +10,10 @@
 //! - **Retakes**, from the transcript ([`retake`]). Near-duplicate *spans* of
 //!   adjacent utterances — not single utterances, because Whisper's segment
 //!   boundaries do not line up with a speaker's restarts (D-327) — grouped by
-//!   normalised edit distance, with the last take recommended.
+//!   normalised edit distance, with the last take recommended. Two independent
+//!   signals feed it: that edit distance ("the same line again"), and
+//!   [`phrase`]'s repeated-n-gram test ("the same *phrase* again inside two
+//!   different sentences", D-365). A pair matched by either is a retake.
 //! - **Dark regions**, from both at once ([`dark`], D-349). Where the VAD hears
 //!   a voice and the transcript has no words, whisper silently dropped a
 //!   multi-second utterance — a real, measured, ~once-per-three-minutes failure
@@ -41,6 +44,7 @@
 //! makes the tests real, and nothing here needs a decoder.
 
 pub mod dark;
+pub mod phrase;
 pub mod retake;
 pub mod silence;
 pub mod vad;
@@ -49,6 +53,7 @@ pub use dark::{
     DarkInput, DarkParams, DarkRegion, DarkReport, RMS_HOP_SECS, WordSpan, detect_dark_regions,
     rms_envelope,
 };
+pub use phrase::{PhraseParams, is_phrase_repeat};
 pub use retake::{RetakeGroup, RetakeParams, TakeSpan, Utterance, detect_retakes};
 pub use silence::{SilenceParams, Span, silence_spans, speech_spans};
 pub use vad::{

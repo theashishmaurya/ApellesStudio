@@ -9,7 +9,8 @@ the retakes, and find the speech the transcription silently never read.
 |---|---|---|
 | `vad` | is anyone talking, right now? | silero-vad v6.2.1 ONNX (D-319), 16 kHz mono, one probability per 512-sample hop |
 | `silence` | where are the gaps worth cutting? | hysteresis over those probabilities → spans in seconds |
-| `retake` | did they say this line already? | normalised edit distance + containment over **spans** of adjacent utterances (D-320, D-327) |
+| `retake` | did they say this line already? | normalised edit distance + containment over **spans** of adjacent utterances (D-320, D-327), ORed with `phrase` |
+| `phrase` | did they just repair the same PHRASE? | a repeated, content-bearing word n-gram — the "rough copy" property of a reparandum/repair (D-365) |
 | `dark` | is there speech here that nobody transcribed? | VAD speech ∩ the gaps in transcript word coverage, gated on a per-file amplitude floor (D-349) |
 
 ## The boundary
@@ -116,6 +117,30 @@ duplicated speech. `retake` therefore compares **spans** of up to
 `max_span_utterances` adjacent utterances, which scores the same material 0.905.
 A group reports `takes` (inclusive ranges over its `members`) and `keep` indexes
 `takes`, not `members`.
+
+### Two signals, not one (D-365)
+
+"The same line again" is only half the question. The other half is a speaker
+repairing **one phrase** inside two otherwise-different sentences — measured on
+real footage at **0.495** against the 0.82 bar, i.e. unreachable by any threshold
+move. `phrase` answers that half, and `retake` accepts a candidate matched by
+**either** arm. `similarity` keeps its exact previous meaning;
+`phrase_min_words: 0` restores the pre-D-365 detector.
+
+It is strictly *additive* — the similarity arm is tried at every span length
+before the phrase arm at any, so wherever the old detector matched, it still
+matches exactly that. (Without that ordering the looser arm pre-empted a longer
+strict match and split one delivery in two, which — since `keep` is the last
+take — offered half a real delivery up to be cut.)
+
+**Its cost, measured on two whole real transcripts** (187 segments, 1,671 s, 698
+utterance pairs; both committed as fixtures and run by
+`tests/real_transcripts.rs`): 22 pairs newly admitted, **21 real retakes and 1
+false positive** — a deliberate parallel construction, which text alone cannot
+tell from a repair. Pinned as a test rather than hidden. And note what `phrase`
+does *not* fix: a minimal pair differing in one word shares a long verbatim run,
+so it says yes to "…less weight" / "…more weight" — it adds no *new* admission
+there only because plain edit distance already scores that pair 0.925.
 
 The obvious fix — an on-device sentence-embedding model — was built in full,
 verified correct to four decimals against upstream's own reference

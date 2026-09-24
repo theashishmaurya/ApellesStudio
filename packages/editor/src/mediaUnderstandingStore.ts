@@ -135,6 +135,7 @@ export interface RetakeDetection {
   window_secs: number;
   min_words: number;
   max_span_utterances: number;
+  phrase_min_words: number;
   utterances: number;
   groups: RetakeGroupWire[];
 }
@@ -158,6 +159,11 @@ export interface RetakeDetectionArgs {
   windowSecs?: number;
   minWords?: number;
   maxSpanUtterances?: number;
+  /** Shortest repeated PHRASE, in words, that marks two spans as one
+   *  self-correction even when `similarity` says they are different sentences
+   *  (D-365) — the detector's second, independent signal. 0 turns it off,
+   *  giving exactly the pre-D-365 detector. */
+  phraseMinWords?: number;
   /** How many of `utterances` came from a dark-region recovery rather than from
    *  the whole-file pass (D-349). Not sent to the detector — it is in the KEY,
    *  because a splice can swap a stretched-word segment for a recovered one
@@ -200,6 +206,7 @@ export function retakeKey(a: RetakeDetectionArgs): string {
     a.windowSecs ?? '',
     a.minWords ?? '',
     a.maxSpanUtterances ?? '',
+    a.phraseMinWords ?? '',
   ].join('|');
 }
 
@@ -629,6 +636,7 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
         windowSecs: args.windowSecs ?? null,
         minWords: args.minWords ?? null,
         maxSpanUtterances: args.maxSpanUtterances ?? null,
+        phraseMinWords: args.phraseMinWords ?? null,
       });
       set((s) => ({ retakes: { ...s.retakes, [key]: detection } }));
       return detection;

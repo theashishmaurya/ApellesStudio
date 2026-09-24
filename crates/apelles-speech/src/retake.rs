@@ -68,8 +68,42 @@
 //! sentence that carried the "not" is worse than one that proposes nothing.
 //! The full table, and how it was verified against upstream's own reference
 //! implementation, is in `docs/notes/retake-detection.md` (D-327).
+//!
+//! ## The SECOND signal: a repeated phrase, not a repeated line (D-365)
+//!
+//! Everything above asks one question — *is this the same line again?* There is
+//! a second, equally common disfluency that question cannot reach: the speaker
+//! repairs **one phrase** inside two otherwise-different sentences. Measured on
+//! the owner's own footage, "and the third one called speculative speculating
+//! and the third one's called speculating speculative" against "speculative
+//! decoding okay and the third one call is speculative decoding and it's kind of
+//! clever" scores whole-string **0.303** / containment **0.495** against the
+//! 0.82 bar, because the two sentences genuinely diverge outside the repeat.
+//!
+//! So [`crate::phrase`] adds a second, independent predicate — *do these two
+//! share a repeated, content-bearing phrase?* — and [`next_take`] accepts a
+//! candidate that clears **either** bar. It is an OR, not a replacement:
+//! `similarity`'s contract and default are untouched, and
+//! [`RetakeParams::phrase_min_words`] turns the new arm off entirely.
+//!
+//! **Why an OR inside the existing chain rather than a separate second pass.**
+//! Measured on the same transcript, utterances #41/#42/#44 are one restart in
+//! which the first link ("Inference is everything that it's…" → "Inference is
+//! everything after that.") scores 0.794 and only the phrase signal sees it,
+//! while the second link scores 1.000 and only the similarity signal is needed.
+//! A two-pass design groups #42 and #44 in pass one, marks them taken, and can
+//! never then reach back for #41 — it loses the false start that is the whole
+//! reason to cut. Interleaving the two predicates in one walk is what makes a
+//! mixed chain like that expressible.
+//!
+//! A group found through the phrase arm reports a genuinely low
+//! [`RetakeGroup::similarity`], and that is correct rather than a wart: that
+//! field exists so a reviewer can sort the marginal groupings to the top, and
+//! these are exactly the ones a human should look at first.
 
 use serde::{Deserialize, Serialize};
+
+use crate::phrase::{PhraseParams, is_phrase_repeat};
 
 /// One thing the speaker said, as the transcript segments it.
 ///
@@ -161,6 +195,29 @@ pub struct RetakeParams {
     /// reproduces the pre-D-327 utterance-to-utterance detector exactly, which
     /// is how that old behaviour stays testable.
     pub max_span_utterances: usize,
+    /// Shortest **repeated phrase**, in words, that marks two spans as one
+    /// self-correction even when [`Self::similarity`] says they are different
+    /// sentences (D-365) — the second, independent signal described in the
+    /// module doc. **0 turns that signal off**, giving exactly the pre-D-365
+    /// detector.
+    ///
+    /// This is a separate knob from `similarity` on purpose: `similarity`'s
+    /// 0.82 still means precisely what it always meant, so nothing relying on
+    /// that number changed behaviour underneath it. The tradeoff this one buys
+    /// is stated plainly in D-365 — it catches a class of real retakes the
+    /// line-level signal cannot see, at the cost of a different, measured
+    /// false-positive risk. Default 3; see [`crate::phrase`] for the rule and
+    /// `docs/notes/retake-detection.md` §5 for the measurement behind it.
+    pub phrase_min_words: usize,
+}
+
+impl RetakeParams {
+    /// The phrase signal's own tuning, as [`crate::phrase`] wants it.
+    fn phrase(&self) -> PhraseParams {
+        PhraseParams {
+            min_words: self.phrase_min_words,
+        }
+    }
 }
 
 impl Default for RetakeParams {
@@ -170,6 +227,7 @@ impl Default for RetakeParams {
             window_secs: 30.0,
             min_words: 3,
             max_span_utterances: 3,
+            phrase_min_words: PhraseParams::DEFAULT_MIN_WORDS,
         }
     }
 }
@@ -524,6 +582,21 @@ fn extend_chain(
 /// the same or higher; "best score wins" therefore grows every take until it
 /// swallows whatever happens to sit next to the line. The minimal span that
 /// says the line is the take.
+///
+/// **The similarity arm is tried at every span length before the phrase arm is
+/// tried at any** (D-365), and that ordering is load-bearing rather than a
+/// preference. "Shortest span wins" assumes every candidate length is judged by
+/// the same yardstick; the phrase arm is the looser of the two, so mixing them
+/// into one length sweep lets a *shorter* span squeak through on the loose
+/// signal and pre-empt the longer span that the strict signal would have
+/// matched. Measured on the D-327 fixture, that regressed the third delivery
+/// from one take of `#3..#4` into two takes of `#3` and `#4` — and since the
+/// recommended keep is the LAST take, that quietly offered the first half of a
+/// delivery up to be cut. Trying similarity at all lengths first keeps the
+/// phrase arm strictly *additive*: wherever the old detector matched something,
+/// it still matches exactly that, and the new arm only speaks where the old one
+/// was silent. Pinned by
+/// `the_phrase_signal_does_not_re_cut_a_take_the_similarity_signal_already_found`.
 #[allow(clippy::too_many_arguments)]
 fn next_take(
     utterances: &[Utterance],
@@ -547,25 +620,47 @@ fn next_take(
             continue;
         }
 
-        for len in 1..=max_span {
-            let Some(text) = span_at(spans, taken, j, len) else {
-                continue;
-            };
-            // Only a span being GLUED needs the overlap guard; a lone utterance
-            // is judged by `similarity`, as it always was.
-            if len > 1
-                && (j..j + len)
-                    .any(|k| word_overlap(&normalised[k], anchor) < MIN_UTTERANCE_OVERLAP)
-            {
-                continue;
-            }
-            let score = similarity(anchor, text);
-            if score >= p.similarity {
-                return Some((j, len, score));
+        for arm in [MatchArm::Similarity, MatchArm::Phrase] {
+            for len in 1..=max_span {
+                let Some(text) = span_at(spans, taken, j, len) else {
+                    continue;
+                };
+                // Only a span being GLUED needs the overlap guard; a lone
+                // utterance is judged by the arm alone, as it always was.
+                if len > 1
+                    && (j..j + len)
+                        .any(|k| word_overlap(&normalised[k], anchor) < MIN_UTTERANCE_OVERLAP)
+                {
+                    continue;
+                }
+                // `score` is the line-level similarity whichever arm matched,
+                // so a phrase-only match honestly reports its low number
+                // rather than a flattering stand-in.
+                let score = similarity(anchor, text);
+                let matched = match arm {
+                    MatchArm::Similarity => score >= p.similarity,
+                    MatchArm::Phrase => is_phrase_repeat(anchor, text, &p.phrase()),
+                };
+                if matched {
+                    return Some((j, len, score));
+                }
             }
         }
     }
     None
+}
+
+/// Which of the two independent signals is being asked (D-365).
+///
+/// Ordered: [`MatchArm::Similarity`] is the stricter, older arm and is always
+/// tried first — see [`next_take`] for why that matters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MatchArm {
+    /// "The same line again" — [`similarity`] against [`RetakeParams::similarity`].
+    Similarity,
+    /// "The same phrase again, inside two different sentences" —
+    /// [`crate::phrase::is_phrase_repeat`].
+    Phrase,
 }
 
 /// Is `candidate` a better chain than the best so far?
@@ -940,12 +1035,20 @@ mod tests {
         }
     }
 
-    /// `max_span_utterances: 1` is the pre-D-327 detector, kept as a knob so
-    /// the behaviour change is opt-out-able and testable.
+    /// The pre-D-327 detector, kept reachable by its knobs so the behaviour
+    /// change stays opt-out-able and testable.
+    ///
+    /// Reproducing it now takes **both** knobs at their pre-existing settings:
+    /// `max_span_utterances: 1` (D-327's span window off) and
+    /// `phrase_min_words: 0` (D-365's second signal off). That is the point of
+    /// having them as knobs rather than as a rewrite — each added signal can be
+    /// switched back off independently, and "the old detector" remains a thing
+    /// this suite can actually run.
     #[test]
     fn a_max_span_of_one_is_the_old_utterance_to_utterance_detector() {
         let p = RetakeParams {
             max_span_utterances: 1,
+            phrase_min_words: 0,
             ..RetakeParams::default()
         };
         let g = detect_retakes(&REAL_TRIPLE_REPEAT.utterances(), &p);
@@ -954,6 +1057,24 @@ mod tests {
             vec![vec![0, 2]],
             "the old detector found exactly one pair and missed the rest"
         );
+    }
+
+    /// The phrase signal alone — span window off — still reaches further into
+    /// the D-327 run than edit distance alone ever did, because the repeats
+    /// share verbatim phrases even where the whole strings diverge.
+    ///
+    /// Recorded as a measurement, not as a recommendation: `max_span_utterances`
+    /// stays at its default of 3 precisely because whole spans are the better
+    /// unit here, and these takes are single utterances that each straddle a
+    /// delivery boundary.
+    #[test]
+    fn the_phrase_signal_alone_reaches_past_the_old_detectors_single_pair() {
+        let p = RetakeParams {
+            max_span_utterances: 1,
+            ..RetakeParams::default()
+        };
+        let g = detect_retakes(&REAL_TRIPLE_REPEAT.utterances(), &p);
+        assert_eq!(indices(&g), vec![vec![0, 2, 3, 4]]);
     }
 
     /// ---------------------------------------------------------------------
@@ -1115,5 +1236,220 @@ mod tests {
             s >= p.similarity,
             "spans #0..#1 vs #2..#4 should match, got {s}"
         );
+    }
+
+    /// ---------------------------------------------------------------------
+    /// D-365: the phrase-repair misses, from the owner's own second file.
+    /// ---------------------------------------------------------------------
+    ///
+    /// Verbatim segments of `A001_09122319_C038.MOV` (the 16-minute talking
+    /// head behind the `2026-09-12-c038-mgfx` project), read back through
+    /// `editor_get_transcript` — the same whole-file, segment-level transcript
+    /// B-237's investigation used, and the same footage whose hand re-cut
+    /// produced that bug. Indices are this fixture's own, with each segment's
+    /// real index in the 121-segment transcript in the comment beside it.
+    ///
+    /// Every pair here is a **self-correction of one phrase inside two
+    /// otherwise-different sentences** — the shape §1-4's toolkit cannot reach,
+    /// recorded as an open limit by B-237 and closed by the phrase signal.
+    const REAL_PHRASE_REPAIRS: &[(&str, &str, &str)] = &[
+        (
+            "the technical term stumbled three times (transcript #94/#95, 717-736 s) \
+             — B-237's own eighth case, measured there at whole=0.303 / containment=0.495",
+            "and the third one called speculative speculating and the third one's called speculating speculative",
+            "speculative decoding okay and the third one call is speculative decoding and it's kind of clever",
+        ),
+        (
+            "the restart of 'an enormous amount of work' (transcript #67/#68, 528-541 s)",
+            "that's an enormous amount of repetitive work happening constant that's an",
+            "an enormous amount of work happening for every single response for every single",
+        ),
+        (
+            "…and its second repair (transcript #68/#69, 535-547 s)",
+            "an enormous amount of work happening for every single response for every single",
+            "risk for every single response for every single user at the same time",
+        ),
+        (
+            "'the real reason it's this expensive' (transcript #56/#57, 426-439 s)",
+            "but the real reason is this expensive is something else entirely but the real",
+            "reason it's this expensive the real reason of this being this expensive is",
+        ),
+        (
+            "the outro's 'and subscribe if you want more of this' (transcript #117/#118, 954-970 s)",
+            "corner and subscribe if you want more of this the actual economy and mechanism",
+            "behind AI not just what it can do and subscribe if you want more of this the",
+        ),
+    ];
+
+    /// **The decisive proof, run both ways** — the same pattern B-237's fix
+    /// used. For every real case above: the existing edit-distance arm alone
+    /// does NOT reach it, and the phrase arm does.
+    ///
+    /// Asserting both directions is the whole point. "The new signal finds it"
+    /// is worth nothing on its own unless the old code demonstrably did not,
+    /// and these pairs sit at 0.299-0.495 against a 0.82 bar — not near misses
+    /// that a looser threshold would have swept up, but material the line-level
+    /// question was never asking about.
+    #[test]
+    fn the_real_phrase_repairs_are_found_and_were_not_found_before() {
+        let default = RetakeParams::default();
+        let old = RetakeParams {
+            phrase_min_words: 0,
+            ..default
+        };
+
+        for (what, a, b) in REAL_PHRASE_REPAIRS {
+            let u = vec![utt(0, 0.0, 6.0, a), utt(1, 6.1, 12.0, b)];
+
+            let before = detect_retakes(&u, &old);
+            let score = similarity(&normalise(a), &normalise(b));
+            assert!(
+                before.is_empty(),
+                "{what}: the pre-D-365 detector must NOT have found this \
+                 (it scored {score:.3}) — otherwise this case proves nothing"
+            );
+            assert!(
+                score < default.similarity,
+                "{what}: scored {score:.3}, which is already over the bar"
+            );
+
+            let after = detect_retakes(&u, &default);
+            assert_eq!(
+                after.len(),
+                1,
+                "{what}: the phrase signal must group this, got {after:?}"
+            );
+            assert_eq!(after[0].takes.len(), 2, "{what}: two deliveries");
+            assert_eq!(
+                after[0].keep, 1,
+                "{what}: the LAST delivery is the recommended keep"
+            );
+        }
+    }
+
+    /// A phrase-matched group reports its **real**, low line-level similarity
+    /// rather than a flattering stand-in (D-365).
+    ///
+    /// This is deliberate and load-bearing for the human half of the feature:
+    /// `similarity` exists so a reviewer can sort the shakiest groupings to the
+    /// top, and a group found only by the phrase arm is exactly one a person
+    /// should eyeball before cutting.
+    #[test]
+    fn a_phrase_matched_group_reports_its_genuinely_low_similarity() {
+        let (_, a, b) = REAL_PHRASE_REPAIRS[0];
+        let g = detect_retakes(
+            &[utt(0, 0.0, 6.0, a), utt(1, 6.1, 12.0, b)],
+            &RetakeParams::default(),
+        );
+        assert_eq!(g.len(), 1);
+        assert!(
+            g[0].similarity < RetakeParams::default().similarity,
+            "a phrase-only match must not claim a line-level score it does not \
+             have, got {}",
+            g[0].similarity
+        );
+    }
+
+    /// The new arm is **additive, never subtractive**: where the similarity arm
+    /// already explained a delivery, the phrase arm must not re-cut it into
+    /// smaller pieces (D-365).
+    ///
+    /// This is a real regression that was hit while building this, not a
+    /// hypothetical. The chain takes the shortest span that clears the bar at
+    /// the earliest position; with both signals in one length sweep, `#3` alone
+    /// matched on the loose phrase signal and pre-empted the `#3..#4` span the
+    /// strict signal matched — splitting the third delivery in two. Because the
+    /// recommended keep is the LAST take, that offered the first half of a real
+    /// delivery up to be cut. `next_take` now runs the similarity arm at every
+    /// span length before the phrase arm at any, which is what makes this hold.
+    #[test]
+    fn the_phrase_signal_does_not_re_cut_a_take_the_similarity_signal_already_found() {
+        let u = REAL_TRIPLE_REPEAT.utterances();
+        let with = detect_retakes(&u, &RetakeParams::default());
+        let without = detect_retakes(
+            &u,
+            &RetakeParams {
+                phrase_min_words: 0,
+                ..RetakeParams::default()
+            },
+        );
+        assert_eq!(
+            with, without,
+            "the phrase arm must change nothing about a run the similarity arm \
+             already grouped"
+        );
+        assert_eq!(with[0].takes.len(), 3, "still three deliveries, not four");
+    }
+
+    /// Ordinary spoken English that merely shares a topic must stay ungrouped
+    /// even with the looser arm on — the negative half of D-365.
+    ///
+    /// These are real consecutive segments from the same C038 transcript,
+    /// chosen because they are dense with the repeated topic vocabulary a
+    /// 16-minute video about inference costs is full of ("model", "inference",
+    /// "training", "cost"). The full sweep behind this — 7,260 real pairs, of
+    /// which the phrase arm admits 20 inside the time window and all 20 are
+    /// genuine retakes — is in `docs/notes/retake-detection.md` §5.
+    #[test]
+    fn real_topical_repetition_is_not_a_phrase_repair() {
+        let u = vec![
+            utt(
+                0,
+                0.0,
+                6.0,
+                "Training is when a lab takes a model and teaches it, feeding it a giant pile of",
+            ),
+            utt(
+                1,
+                6.1,
+                12.0,
+                "text and letting it adjust billions of internal numbers until it gets good at",
+            ),
+            utt(
+                2,
+                12.1,
+                18.0,
+                "The whole business is building the chips for only one thing, running an already finished",
+            ),
+            utt(3, 18.1, 22.0, "model as fast and as cheap as possible."),
+            utt(
+                4,
+                22.1,
+                28.0,
+                "Which already tells you why it can end up costing more than training.",
+            ),
+        ];
+        let g = detect_retakes(&u, &RetakeParams::default());
+        assert!(
+            g.is_empty(),
+            "sharing a subject is not repeating a phrase: {g:?}"
+        );
+    }
+
+    /// The time window still bounds the new arm, and that is what keeps a
+    /// deliberate callback from being read as a stumble (D-365).
+    ///
+    /// Real: C038 says "Every time you send a message to chat GPT or cloud" at
+    /// 350 s and "So next time you send a message to chatgpd or clod" at 919 s
+    /// — a verbatim 6-word shared run, and an intentional bookend rather than a
+    /// retake. It is 565 s apart, so the existing `window_secs` rejects it with
+    /// an enormous margin; the nearest incidental match anywhere in that
+    /// transcript is 248 s out, which is why the phrase arm needs no tighter
+    /// bound of its own.
+    #[test]
+    fn a_deliberate_callback_is_outside_the_window() {
+        let a = "Every time you send a message to chat GPT or cloud, that's 1 in 5.";
+        let b = "So next time you send a message to chatgpd or clod and get an instant answer back, that's";
+
+        let far = vec![utt(0, 350.2, 354.5, a), utt(1, 919.78, 927.88, b)];
+        assert!(
+            detect_retakes(&far, &RetakeParams::default()).is_empty(),
+            "565 s apart is a callback, not a flubbed take"
+        );
+
+        // …and the pair really does share the phrase — it is the window doing
+        // the work here, not a failure to notice.
+        let near = vec![utt(0, 0.0, 5.0, a), utt(1, 5.5, 12.0, b)];
+        assert_eq!(detect_retakes(&near, &RetakeParams::default()).len(), 1);
     }
 }

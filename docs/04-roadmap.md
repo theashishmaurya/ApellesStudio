@@ -2461,6 +2461,24 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         one source are now merged into a **run** and grouped once, and a group's
         takes are mapped back onto the clips and frames they land in (which can
         be several). `packages/editor/src/recutRuns.ts`.
+        **Closed since: the repaired PHRASE, not the repeated line (D-365,
+        2026-09-24).** B-237 also found, and deliberately left open, a case the
+        sweep genuinely saw and the scoring still missed at **0.495** — a speaker
+        fumbling a two-word technical term inside two otherwise-different
+        sentences. "The same line again" cannot reach that shape at any
+        threshold. A **second, independent signal** now runs beside the first:
+        a repeated, content-bearing word n-gram — the "rough copy" property of a
+        reparandum/repair from the disfluency literature, which (unlike the
+        rejected embedding) reports only literal repetition and never infers
+        meaning. A pair matched by *either* arm is a group;
+        `similarity` keeps its exact old contract and `phrase_min_words: 0`
+        turns the new arm off. `crates/apelles-speech/src/phrase.rs`.
+        **Its cost is measured and disclosed, not waved away:** across two whole
+        real transcripts (187 segments, 1,671 s, 698 utterance pairs) it newly
+        admits 22 pairs — **21 real retakes the tool had been missing, and 1
+        false positive**, a deliberate parallel construction that is
+        structurally identical to a repair. Pinned as a test. Detail and the
+        combinations tried: `docs/notes/retake-detection.md` §5.
     - ✅ **A DARK-REGION detector — "there is speech here nobody has read" —
       DONE, 2026-09-18 (D-349), and it went further than this item asked.**
       (B-216's transcription sub-finding; research trail
