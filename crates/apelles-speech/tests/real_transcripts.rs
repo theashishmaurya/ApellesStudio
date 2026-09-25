@@ -245,6 +245,17 @@ fn disabling_the_phrase_signal_restores_the_old_detector_exactly() {
 /// full length, not just on the crafted unit fixtures: takes tile their
 /// members, the recommended keep is in range, and no group is a single
 /// delivery. Also records the real before/after group counts.
+///
+/// **C040's phrase-off count moved 7 → 6 in B-238 / D-366**, and that is the
+/// one number in this file the anchor guard changed. The group it removed was
+/// never a retake: the detector glued #47-#49 into one anchor and matched the
+/// verbatim run "in the middle of a long" against #51's practical advice ("don't
+/// bury it in the middle of a long task"), proposing 38 seconds of real
+/// explanation for deletion. The pairwise sweeps above never saw that pair —
+/// #48 ends at 479.60 s and #51 starts at 514.64 s, 35 s apart and outside
+/// `window_secs` — because gluing the 20-second "the middle." fragment on the
+/// end of the anchor is what carried the window far enough to reach it. It is
+/// gone from both counts now.
 #[test]
 fn whole_transcript_runs_stay_well_formed_with_the_phrase_signal_on() {
     let p = RetakeParams::default();
@@ -255,7 +266,7 @@ fn whole_transcript_runs_stay_well_formed_with_the_phrase_signal_on() {
 
     for (name, before, after) in [
         ("A001_09122319_C038.json", 5, 11),
-        ("A001_09122356_C040.json", 7, 11),
+        ("A001_09122356_C040.json", 6, 7),
     ] {
         let u = load(name);
         assert_eq!(

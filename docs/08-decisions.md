@@ -35406,3 +35406,91 @@ New, in `crates/apelles-media/src/audio.rs`:
   real 2× D-242 ramp running to the genuine end, previewed at a 2× D-280 rate:
   the session ends, the ramped clip is audible right up to it, the stretch stage
   emitted ~input/rate frames, and `flush()` still hands back a non-empty tail.
+
+---
+
+## D-366 — a glued take must not propose material that repeats nothing: the overlap guard applies to the ANCHOR too, referenced to the union of the deliveries that matched it
+
+**Status: `decided`** (2026-09-25). Fixes **B-238**. Corrects a call made in
+**D-327** and inherited unchanged by **D-364** / **D-365**; worked-out detail and
+every number below: `docs/notes/retake-detection.md` §6.
+
+**Context.** The retake detector had been fixed and reported correct twice in two
+sessions — D-364 (B-237: read a continuous take, not a clip) and D-365 (the
+repeated-phrase signal). Both passes measured *detection*: is the group real. The
+owner then asked whether the tool had cut anything it shouldn't. It had. A group
+discards each non-kept take **whole**, and both D-327's span gluing and D-365's
+phrase arm match a span on *part* of itself — `containment` sweeps for its best
+window, `is_phrase_repeat` needs one shared run anywhere — so a take glued from
+three utterances could match on the last one and offer all three for deletion.
+
+Measured on the owner's own two transcripts: **17 of 22 groups had a glued
+anchor, 16 of those 17 were carrying unique content, and 259.8 s of the 441.4 s
+proposed for deletion repeated nothing** — including, via the phrase arm, the
+C038 video's own cold open (the Nvidia / \$20-billion hook, 2.04–21.02 s), and
+including D-364's own celebrated "proof" case, where "Today I actually want to
+show you why that's true…" was swept in beside the line that genuinely repeated.
+This is a correctness defect, not a missed detection: the tool was silently
+proposing to delete real, unique, wanted content.
+
+**Root cause.** D-327 already had the guard — `MIN_UTTERANCE_OVERLAP` (0.5) stops
+a *candidate* span gluing in an utterance that shares nothing with the anchor —
+and deliberately exempted the anchor from it, reasoning that "a junk anchor is
+self-limiting […] because nothing later will match it." That is false: the anchor
+matches on its best window regardless of what else it contains, bounded only by
+the 3× containment length ratio, and the phrase arm is looser still. The matched
+takes were never the problem; they already pass the guard. The anchor was.
+
+**Options.**
+1. **Post-hoc trim of the reported cut range**, changing `TakeSpan`/`RetakeGroup`
+   so a take's cut range is a sub-range of its members. Rejected: it makes the
+   output shape express two different things (what matched vs. what to cut),
+   breaks every caller and the parity corpus, and leaves the detector still
+   *believing* a wrong take. The wrong span should not be constructed.
+2. **Trim the anchor in place and rebuild the chain.** Rejected: it commits a
+   chain starting where the anchor loop has not arrived yet, skipping `better`'s
+   comparison of the anchor lengths available there, and needs a fixed-point loop
+   to be sound.
+3. **Chosen — give the anchor the same guard, and reject an unjustified chain.**
+   Once a chain exists, every utterance glued into its anchor must clear
+   `MIN_UTTERANCE_OVERLAP` against the **union of the other takes**, or the chain
+   is dropped; the outer loop then reaches the justified utterance on its own and
+   explores it properly. A member must also carry `min_words` distinct words
+   before its overlap *fraction* is believed, since over two words that fraction
+   can only be 0, 0.5 or 1.
+
+**Why the union rather than each take separately** — measured, not assumed:
+Whisper distributes a repeated line across its own boundaries, so C040 #9 scores
+**0.125** against delivery two and **0.875** against the union, its repeat having
+landed in delivery three. Per-take checking would reject genuine glue and break
+D-327's pinned case.
+
+**Why one constant and not a second bar:** it is the same question asked twice —
+does this utterance's own vocabulary appear in the line this take claims to be a
+delivery of — on the same scale. Re-measured for the anchor side: genuinely
+redundant members score 0.600–1.000, unique content 0.000–0.500.
+
+**What this changes.** Proposed cut seconds across both real fixtures:
+**441.4 s → 181.6 s**, all 259.8 s of the difference material that repeated
+nothing. C038 still finds all 11 groups. C040 goes 11 → 7, which is mostly
+chains *merging* now that the junk prefixes are gone, plus **one group dropped
+that was a false positive**: a glued 20-second "the middle." fragment had
+extended the time window far enough to match #47–#49 against #51's unrelated
+advice, proposing 38 s of real explanation for deletion. So the glued anchor was
+manufacturing matches as well as over-claiming cuts.
+
+**What does NOT change.** `RetakeGroup` / `TakeSpan` are untouched — takes still
+tile `members` with no gaps, `keep` still indexes `takes`, no consumer reads
+`members` positionally, and the MCP parity corpus records schema and dispatch
+against a stub control server rather than detector output, so it needed **no
+re-capture**. Both MCP docstrings already describe `max_span_utterances` as a
+ceiling ("may be joined", "can cover several"), so nothing they claim became
+false. `similarity`, `is_phrase_repeat` and every threshold are untouched, and
+D-365's §5.4 predicate sweep — 7,260 pairs, 22 admissions, the one known false
+positive — passes unchanged, which is the evidence that detection is not what
+moved.
+
+**The process lesson, recorded because it cost two sessions:** "the group is
+found" and "the range it offers to delete is right" are two separate claims. Only
+the first was ever measured. A change to this module must measure the proposed
+cut.

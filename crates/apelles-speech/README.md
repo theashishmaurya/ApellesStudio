@@ -142,6 +142,23 @@ does *not* fix: a minimal pair differing in one word shares a long verbatim run,
 so it says yes to "…less weight" / "…more weight" — it adds no *new* admission
 there only because plain edit distance already scores that pair 0.925.
 
+### A glued take may not carry material that repeats nothing (D-366)
+
+Both signals above match a span on only *part* of itself — containment sweeps for
+its best window, `phrase` needs one shared run anywhere — while a group discards
+each non-kept take **whole**. So a take glued from several utterances could match
+on one of them and propose all of them for deletion. Measured on the same two
+fixtures, that was the default rather than an edge case: 16 of 17 glued anchors
+were carrying unique content, and the detector proposed cutting **259.8 s of
+speech that repeated nothing**, one video's own opening hook included.
+`MIN_UTTERANCE_OVERLAP` now guards the **anchor** as well as the candidate —
+referenced to the union of the deliveries that matched it, since Whisper spreads
+a repeated line across its own boundaries — and an unjustified chain is rejected
+rather than trimmed. Detection, the predicates and the `RetakeGroup`/`TakeSpan`
+shape are all unchanged. **When changing this crate, measure the proposed cut and
+not only the grouping**: they are two claims, and two consecutive passes verified
+only the first.
+
 The obvious fix — an on-device sentence-embedding model — was built in full,
 verified correct to four decimals against upstream's own reference
 implementation, and **rejected on the numbers**: cosine ranks a sentence against

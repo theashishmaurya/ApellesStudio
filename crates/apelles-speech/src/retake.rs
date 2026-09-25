@@ -100,6 +100,29 @@
 //! [`RetakeGroup::similarity`], and that is correct rather than a wart: that
 //! field exists so a reviewer can sort the marginal groupings to the top, and
 //! these are exactly the ones a human should look at first.
+//!
+//! ## A glued take may not carry material that repeats nothing (D-366, B-238)
+//!
+//! Everything above is about **detection** — which utterances belong together.
+//! This is about the claim that follows from it: a group discards each non-kept
+//! take *whole*, so every utterance inside one is being proposed for deletion.
+//!
+//! Gluing (D-327) and the phrase arm (D-365) both match a span on *part* of
+//! itself — [`containment`] sweeps for its best window, and
+//! [`crate::phrase::is_phrase_repeat`] needs one shared run anywhere. So a span
+//! can match on one of its utterances while the rest contribute nothing, and
+//! before D-366 those passengers went into the proposed cut with it. Measured on
+//! the owner's own footage: 17 of 22 real groups had a glued anchor, 16 of the 17
+//! were carrying unique content, and across two real transcripts the detector
+//! proposed deleting **259.8 seconds of speech that repeated nothing** — one
+//! video's opening hook included — with every test green.
+//!
+//! [`anchor_is_justified`] closes it by applying [`MIN_UTTERANCE_OVERLAP`] to the
+//! anchor, the side D-327 had deliberately exempted on the since-disproved
+//! theory that a junk anchor is self-limiting. **The two claims a change here has
+//! to check are separate: "is this group real?" and "is the range it offers to
+//! delete right?"** Only the first was ever measured, twice, and both times the
+//! second was wrong. `docs/notes/retake-detection.md` §6.
 
 use serde::{Deserialize, Serialize};
 
@@ -352,8 +375,8 @@ fn word_overlap(part: &str, whole: &str) -> f64 {
     hits as f64 / words.len() as f64
 }
 
-/// How much of its own vocabulary an utterance must share with the anchor
-/// before it may be *joined* to its neighbours to form one take.
+/// How much of its own vocabulary an utterance must share with the rest of the
+/// group before it may be *joined* to its neighbours to form one take.
 ///
 /// This guard exists because [`containment`] scores a span by its best matching
 /// window and ignores whatever else is in it: without this, "The cat sat on the
@@ -363,6 +386,18 @@ fn word_overlap(part: &str, whole: &str) -> f64 {
 /// footage in the module doc, every utterance that genuinely belongs to a
 /// delivery scores 0.93-1.00 here and an unrelated aside scores 0.00, so the
 /// bar sits in the middle of an enormous gap rather than on a knife edge.
+///
+/// **The same bar guards both sides of a comparison** (B-238 / D-366): a
+/// candidate span is checked against the anchor in [`next_take`], and the
+/// anchor is checked against the deliveries that matched it in
+/// [`anchor_is_justified`]. It is deliberately one constant and not two,
+/// because it is one question asked twice — *does this utterance's own
+/// vocabulary show up in the line this take is supposed to be a delivery of?* —
+/// on one scale, and a second nearly-identical bar for it would be an arbitrary
+/// choice with nothing to measure it against. Re-measured for the anchor side
+/// over both real transcripts: genuinely redundant anchor members score
+/// 0.600-1.000 and non-redundant ones 0.000-0.500
+/// (`docs/notes/retake-detection.md` §6).
 ///
 /// Single-utterance takes are judged by [`similarity`] alone, as they always
 /// were: this is about what may be glued together, not about what counts as a
@@ -468,12 +503,10 @@ pub fn detect_retakes(utterances: &[Utterance], p: &RetakeParams) -> Vec<RetakeG
             let Some(anchor) = span_at(&spans, &taken, i, anchor_len) else {
                 continue;
             };
-            // No overlap guard on the anchor: gluing adjacent utterances into
-            // one anchor is the entire point (a sentence Whisper cut in half —
-            // "…the model" + "just under waves it" — has zero word overlap
-            // between its halves and is still one line). A junk anchor is
-            // self-limiting instead, because nothing later will match it and a
-            // chain of one take is discarded.
+            // The anchor's own overlap guard cannot run here — it is a
+            // question about the deliveries that end up matching this anchor,
+            // and none are known yet. `extend_chain` applies it once the chain
+            // exists; see `anchor_is_justified` (B-238 / D-366).
             let chain = extend_chain(
                 utterances,
                 &normalised,
@@ -570,7 +603,78 @@ fn extend_chain(
         cursor = j + len;
     }
 
-    (takes.len() >= 2).then_some(Chain { takes, worst })
+    if takes.len() < 2 {
+        return None;
+    }
+    let chain = Chain { takes, worst };
+    // The anchor's half of the overlap guard, which can only be asked now that
+    // the deliveries are known (B-238 / D-366).
+    anchor_is_justified(&chain, normalised, p).then_some(chain)
+}
+
+/// Is every utterance glued into this chain's anchor actually justified by the
+/// deliveries that matched it — or did it ride along on a neighbour's repeat?
+///
+/// **Why this exists (B-238 / D-366).** The anchor is built speculatively:
+/// [`detect_retakes`] glues up to [`RetakeParams::max_span_utterances`] adjacent
+/// utterances together *before* it knows what will match, because that gluing is
+/// what puts a restart boundary back inside a comparable string (D-327). But
+/// [`similarity`]'s [`containment`] arm scores a span by its best matching
+/// window and ignores everything else in it, and the phrase arm matches on a
+/// single shared run — so a glued anchor can match on one of its utterances
+/// while the others contribute nothing. D-327 exempted the anchor from
+/// [`MIN_UTTERANCE_OVERLAP`] on the theory that a junk anchor is self-limiting
+/// because nothing would match it. **That was wrong**, and wrong in the
+/// dangerous direction: the group discards every non-kept take whole, so the
+/// unrelated material glued in front of a genuine repeat was being proposed for
+/// deletion along with it. On the owner's own footage that silently offered up
+/// the video's opening hook and a 21-second setup line — see
+/// `docs/notes/retake-detection.md` §6 and `docs/BUGS.md` B-238.
+///
+/// **The reference is the union of the other takes, not each one separately.**
+/// Measured: Whisper distributes a repeated line across its own boundaries, so a
+/// tail fragment of delivery one ("just under waves it.") is absent from the
+/// *first* matching delivery and present in the third. Checking each take
+/// separately would reject that genuine glue; the union accepts it at 1.000
+/// while still scoring the D-366 cases 0.000-0.500.
+///
+/// An unjustified chain is **rejected, not repaired**. Trimming the anchor in
+/// place would commit a chain from a start position the anchor loop has not
+/// reached yet and would therefore skip [`better`]'s comparison of the anchor
+/// lengths available there. Dropping it instead lets the outer loop arrive at the
+/// justified utterance on its own and explore it properly — measured on both
+/// real transcripts, every genuine group is still found that way, with its
+/// anchor now starting at the utterance that actually repeats.
+///
+/// **A member too short to judge is not justified either.** An overlap
+/// *fraction* over two distinct words can only be 0, 0.5 or 1, and 0.5 means one
+/// incidental word in common — measured, that is exactly how C038's "one
+/// response" (0.96 s, the tail of the previous sentence) landed on the bar and
+/// rode into a cut. So a member also has to carry
+/// [`RetakeParams::min_words`] distinct words before its fraction is believed at
+/// all, which is the same bar and the same reasoning the module already applies
+/// to a whole span. Every sub-bar utterance in both real transcripts is a
+/// Whisper sentence-tail fragment ("about.", "place.", "change", "the middle.")
+/// that no delivery should claim; the shortest genuinely-repeated one, "So quick
+/// recap," has exactly three. Where this costs something it costs a fragment
+/// left out of a take that keeps it — under-cutting, the safe direction
+/// (D-318, and D-327's own honest-limit note).
+fn anchor_is_justified(chain: &Chain, normalised: &[String], p: &RetakeParams) -> bool {
+    let anchor = chain.takes[0];
+    // Nothing was glued, so there is nothing to justify — the same carve-out
+    // the candidate side makes in `next_take`.
+    if anchor.len == 1 {
+        return true;
+    }
+    let rest = chain.takes[1..]
+        .iter()
+        .flat_map(|t| normalised[t.start..t.end()].iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ");
+    (anchor.start..anchor.end()).all(|k| {
+        distinct_word_count(&normalised[k]) >= p.min_words
+            && word_overlap(&normalised[k], &rest) >= MIN_UTTERANCE_OVERLAP
+    })
 }
 
 /// The next delivery at or after `cursor` that matches `anchor`, as
@@ -1451,5 +1555,413 @@ mod tests {
         // the work here, not a failure to notice.
         let near = vec![utt(0, 0.0, 5.0, a), utt(1, 5.5, 12.0, b)];
         assert_eq!(detect_retakes(&near, &RetakeParams::default()).len(), 1);
+    }
+
+    /// ---------------------------------------------------------------------
+    /// B-238 / D-366: a glued anchor proposing unique content for deletion.
+    /// ---------------------------------------------------------------------
+    ///
+    /// Verbatim segments of `A001_09122319_C038.MOV`, the same file and the same
+    /// `editor_get_transcript` read as §5's fixture above, with each segment's
+    /// real index in the 121-segment transcript beside it.
+    ///
+    /// **These two runs were both reported as fixed and correct** — the first by
+    /// B-237/D-364 (its "decisive proof" case) and the second by D-365 — and in
+    /// both the *detection* was right and the *proposed cut* was not. The
+    /// detector glued three adjacent utterances into one anchor so it would have
+    /// a comparable string, matched on the last of them, and then offered all
+    /// three for deletion. See `docs/notes/retake-detection.md` §6.
+    ///
+    /// Pre-fix, measured, with default params:
+    ///
+    /// ```text
+    ///   case 1: take 0 = #28 "place." + #29 "Today I actually want to show
+    ///           you why that's true…" + #30 "it so expensive and the trick
+    ///           behind used to bring that cost back down."   190.52-222.74 s
+    ///   case 2: take 0 = #0 "In December of last year, Nvidia made the single
+    ///           biggest deal in its entire history." + #1 "$20 billion in cash
+    ///           to license technology from a company called Grok." + #2 "and
+    ///           here's the actually interesting part"          2.04-32.74 s
+    /// ```
+    ///
+    /// Only #30 and #2 respectively repeat anything. The rest is the video's
+    /// own opening hook and a 21-second setup line, and every second of it was
+    /// inside the range the tool proposed to ripple-delete.
+    const REAL_GLUED_ANCHORS: &[(&str, f64, f64, &str)] = &[
+        // Case 1 — B-237's own proof case. #28-#31.
+        ("unique/setup", 190.52, 190.80, "place."),
+        (
+            "unique/setup",
+            204.28,
+            210.26,
+            "Today I actually want to show you why that's true, what's happening technically that makes",
+        ),
+        (
+            "redundant",
+            210.26,
+            222.74,
+            "it so expensive and the trick behind used to bring that cost back down.",
+        ),
+        (
+            "keep",
+            222.74,
+            229.86,
+            "down. And the trick being used to bring that cost back down.",
+        ),
+    ];
+
+    /// Case 2 — the D-365 phrase-arm equivalent: the video's own intro. #0-#4.
+    const REAL_GLUED_ANCHOR_INTRO: &[(&str, f64, f64, &str)] = &[
+        (
+            "unique/hook",
+            2.04,
+            8.52,
+            "In December of last year, Nvidia made the single biggest deal in its entire history.",
+        ),
+        (
+            "unique/hook",
+            14.58,
+            21.02,
+            "$20 billion in cash to license technology from a company called Grok.",
+        ),
+        (
+            "redundant",
+            28.82,
+            32.74,
+            "and here's the actually interesting part",
+        ),
+        // Whisper's own 0.66 s fragment sitting between the two deliveries.
+        ("fragment", 33.34, 34.0, "grog doesn't build"),
+        (
+            "keep",
+            39.50,
+            44.70,
+            "and here's the actually interesting part grog doesn't build chips for training ai models",
+        ),
+    ];
+
+    fn from_rows(rows: &[(&str, f64, f64, &str)]) -> Vec<Utterance> {
+        rows.iter()
+            .enumerate()
+            .map(|(i, (_, s, e, t))| utt(i, *s, *e, t))
+            .collect()
+    }
+
+    /// The `(start, end)` of every row carrying `label`.
+    ///
+    /// The labels in the two fixtures above are the expected answer, not a
+    /// comment: `"redundant"` is exactly what may be cut, `"keep"` is the
+    /// delivery to keep, and everything else must not be claimed at all. Reading
+    /// them back here is what stops the fixture's own annotation drifting away
+    /// from what the test actually asserts.
+    fn rows_labelled(rows: &[(&str, f64, f64, &str)], label: &str) -> Vec<(f64, f64)> {
+        rows.iter()
+            .filter(|(l, ..)| *l == label)
+            .map(|(_, s, e, _)| (*s, *e))
+            .collect()
+    }
+
+    /// Every second this group proposes for deletion, as `(start, end)` per
+    /// non-kept member — the thing a reviewer's ripple-delete actually removes.
+    fn proposed_cut(group: &RetakeGroup) -> Vec<(f64, f64)> {
+        group
+            .takes
+            .iter()
+            .enumerate()
+            .filter(|(ti, _)| *ti != group.keep)
+            .flat_map(|(_, t)| {
+                (t.first..=t.last).map(|m| (group.members[m].start_secs, group.members[m].end_secs))
+            })
+            .collect()
+    }
+
+    /// **Case 1, the full correct outcome** (B-238 / D-366).
+    ///
+    /// The group is still found — detection is not what was broken — and the
+    /// proposed cut is now *only* the utterance that actually repeats the
+    /// keeper's line. Pre-fix this asserted-away range covered 190.52-222.74 s,
+    /// including the whole "Today I actually want to show you why that's true"
+    /// setup, which shares almost no words with the keeper and is not a retake
+    /// of anything.
+    #[test]
+    fn a_glued_anchor_does_not_propose_the_unique_setup_line_for_deletion() {
+        let u = from_rows(REAL_GLUED_ANCHORS);
+        let g = detect_retakes(&u, &RetakeParams::default());
+
+        assert_eq!(g.len(), 1, "the retake must still be detected: {g:?}");
+        let group = &g[0];
+        assert_eq!(group.takes.len(), 2, "two deliveries of the line");
+
+        // The genuinely redundant utterance is still proposed for the cut…
+        assert_eq!(
+            proposed_cut(group),
+            rows_labelled(REAL_GLUED_ANCHORS, "redundant"),
+            "only the utterance that actually repeats the line may be cut"
+        );
+        // …and the keeper is the later, clean delivery.
+        let keeper = &group.members[group.takes[group.keep].first];
+        assert_eq!(
+            vec![(keeper.start_secs, keeper.end_secs)],
+            rows_labelled(REAL_GLUED_ANCHORS, "keep"),
+            "the later, clean delivery is the keeper"
+        );
+
+        // Stated the other way round, as the defect: neither unique utterance
+        // may appear anywhere in the group at all.
+        let claimed: Vec<usize> = group.members.iter().map(|m| m.index).collect();
+        assert_eq!(
+            claimed,
+            vec![2, 3],
+            "#0 (\"place.\") and #1 (the setup line) are not part of any \
+             delivery and must not be members"
+        );
+    }
+
+    /// **Case 2, the full correct outcome** — the same defect reached through
+    /// the phrase arm, and the one that took out the video's opening hook.
+    ///
+    /// Pre-fix the non-kept take ran 2.04-32.74 s: the Nvidia sentence, the
+    /// $20-billion sentence, and only then the actually-repeated "and here's the
+    /// actually interesting part". The first two share no content with the
+    /// keeper; cutting them deletes the video's cold open.
+    #[test]
+    fn a_glued_anchor_does_not_propose_the_videos_own_intro_for_deletion() {
+        let u = from_rows(REAL_GLUED_ANCHOR_INTRO);
+        let g = detect_retakes(&u, &RetakeParams::default());
+
+        assert_eq!(g.len(), 1, "the retake must still be detected: {g:?}");
+        let group = &g[0];
+        assert_eq!(group.takes.len(), 2);
+
+        assert_eq!(
+            proposed_cut(group),
+            rows_labelled(REAL_GLUED_ANCHOR_INTRO, "redundant"),
+            "only the repeated phrase's own utterance may be cut"
+        );
+        assert_eq!(
+            indices(&g),
+            vec![vec![2, 4]],
+            "the fragment #3 is claimed by neither delivery"
+        );
+        let keeper = &group.members[group.takes[group.keep].first];
+        assert_eq!(
+            vec![(keeper.start_secs, keeper.end_secs)],
+            rows_labelled(REAL_GLUED_ANCHOR_INTRO, "keep"),
+            "the full, later delivery is the keeper"
+        );
+
+        for (i, label) in [(0, "the Nvidia hook"), (1, "the $20 billion line")] {
+            assert!(
+                !group.members.iter().any(|m| m.index == i),
+                "{label} is unique content and must never be swept into a cut"
+            );
+        }
+    }
+
+    /// The direct statement of the invariant the two tests above are instances
+    /// of: **no utterance a group proposes to cut may be unique content.**
+    ///
+    /// Expressed as the property rather than as a fixture, over both real cases:
+    /// every member of every non-kept take has to share at least
+    /// [`MIN_UTTERANCE_OVERLAP`] of its own vocabulary with the take the group
+    /// recommends keeping. That is the check `anchor_is_justified` performs, read
+    /// back off the finished output — so it also catches a future change that
+    /// builds an over-claiming take by some other route.
+    #[test]
+    fn nothing_proposed_for_deletion_is_unique_content() {
+        for rows in [REAL_GLUED_ANCHORS, REAL_GLUED_ANCHOR_INTRO] {
+            let u = from_rows(rows);
+            for g in detect_retakes(&u, &RetakeParams::default()) {
+                let keeper = g.takes[g.keep];
+                let kept: String = (keeper.first..=keeper.last)
+                    .map(|m| normalise(&g.members[m].text))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                for (ti, t) in g.takes.iter().enumerate() {
+                    if ti == g.keep {
+                        continue;
+                    }
+                    for m in t.first..=t.last {
+                        let text = normalise(&g.members[m].text);
+                        let ov = word_overlap(&text, &kept);
+                        assert!(
+                            ov >= MIN_UTTERANCE_OVERLAP,
+                            "take {ti} proposes cutting #{} at overlap {ov:.3} \
+                             against the keeper — that is unique content: {:?}",
+                            g.members[m].index,
+                            g.members[m].text
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// **The non-regression half** (B-238 / D-366): a glued anchor whose members
+    /// are *all* genuinely redundant must still be proposed whole.
+    ///
+    /// The fix must not become "never glue an anchor." Real C040 #8-#11: the
+    /// speaker delivers the definition of attention, trails off, and delivers it
+    /// again — and Whisper cut *both* deliveries across its own boundary, so the
+    /// anchor is genuinely two utterances and **both** of them repeat. The cut
+    /// this proposes is 44.60-65.46 s, all of it, and that is correct.
+    ///
+    /// This case is also the proof that the guard's reference has to be the
+    /// **union** of the other deliveries and not the first matching one: "much to
+    /// focus on each word you give." scores 0.125 against delivery two (#10) and
+    /// 0.875 against the union, because Whisper put its repeat in #11. Checked
+    /// take by take, this genuine glue would be wrongly rejected.
+    #[test]
+    fn a_glued_anchor_whose_every_member_repeats_is_still_cut_whole() {
+        let u = vec![
+            utt(
+                0,
+                44.60,
+                60.28,
+                "Attention! In simple term, it's just the model deciding for every word it's about to write.",
+            ),
+            utt(1, 60.28, 65.46, "much to focus on each word you give."),
+            utt(
+                2,
+                79.28,
+                85.00,
+                "Attention! In simple term, it's just the model deciding for every word it's about",
+            ),
+            utt(
+                3,
+                85.00,
+                95.46,
+                "to write, how much to focus on each word you gave it.",
+            ),
+        ];
+        let g = detect_retakes(&u, &RetakeParams::default());
+
+        assert_eq!(g.len(), 1, "{g:?}");
+        let group = &g[0];
+        assert_eq!(
+            group.takes[0].len(),
+            2,
+            "the anchor really is two utterances"
+        );
+        assert_eq!(
+            proposed_cut(group),
+            vec![(44.60, 60.28), (60.28, 65.46), (79.28, 85.00)],
+            "both glued anchor utterances genuinely repeat, so the whole anchor \
+             is still cut — as is the second delivery, leaving #11 as the keeper"
+        );
+
+        // And the reason the second one survives, measured rather than asserted.
+        let n: Vec<String> = u.iter().map(|x| normalise(&x.text)).collect();
+        let union = n[2..4].join(" ");
+        assert!(
+            word_overlap(&n[1], &union) >= MIN_UTTERANCE_OVERLAP,
+            "against the union of the other deliveries: {:.3}",
+            word_overlap(&n[1], &union)
+        );
+        assert!(
+            word_overlap(&n[1], &n[2]) < MIN_UTTERANCE_OVERLAP,
+            "…but not against delivery two alone ({:.3}) — which is why the \
+             union, not the first take, is the reference",
+            word_overlap(&n[1], &n[2])
+        );
+    }
+
+    /// D-327's own run is unchanged by the anchor guard (B-238 / D-366).
+    ///
+    /// Stated separately from `the_real_triple_repeat_is_found` because that test
+    /// predates the guard and it matters that its result did not move: the
+    /// winning chain there has a **single-utterance** anchor (`better` prefers the
+    /// shortest anchor that explains the same deliveries), so the guard has
+    /// nothing to check and cannot have changed the answer.
+    #[test]
+    fn the_d327_run_is_untouched_by_the_anchor_guard() {
+        let g = detect_retakes(&REAL_TRIPLE_REPEAT.utterances(), &RetakeParams::default());
+        assert_eq!(indices(&g), vec![vec![0, 2, 3, 4]]);
+        assert_eq!(g[0].takes.len(), 3);
+        assert_eq!(g[0].takes[0].len(), 1, "a single-utterance anchor");
+    }
+
+    /// The other non-regression shape: a run of short single-utterance restarts
+    /// with nothing unique glued into any of them (B-238 / D-366).
+    ///
+    /// Real C038 segments #41-#45, two interleaved restarts the detector
+    /// resolves into two groups. Every take here is one utterance, so
+    /// `anchor_is_justified` has nothing to check and these must come through
+    /// byte-identical to their pre-fix output.
+    #[test]
+    fn single_utterance_restart_clusters_are_untouched() {
+        let u = vec![
+            utt(0, 321.76, 327.36, "Inference is everything that it's..."),
+            utt(1, 333.68, 336.00, "Inference is everything after that."),
+            utt(2, 336.12, 338.36, "It's the model actually being used."),
+            utt(3, 339.52, 341.90, "Inference is everything after that."),
+            utt(4, 342.04, 344.00, "It's the model being actually used."),
+        ];
+        let g = detect_retakes(&u, &RetakeParams::default());
+        assert_eq!(
+            indices(&g),
+            vec![vec![0, 1, 3], vec![2, 4]],
+            "both clusters, unchanged: {g:?}"
+        );
+        assert_eq!(g[0].takes.len(), 3);
+        assert_eq!(g[1].takes.len(), 2);
+        for group in &g {
+            for t in &group.takes {
+                assert_eq!(t.len(), 1, "every take here is a single utterance");
+            }
+        }
+    }
+
+    /// An utterance too short for its overlap *fraction* to mean anything is not
+    /// glued in either (B-238 / D-366).
+    ///
+    /// Real C038 #66-#68. "one response" is 0.96 s and two distinct words, one
+    /// of which ("response") happens to recur in the repair — so it scores
+    /// exactly 0.500 and cleared the bar on a single incidental word. It is the
+    /// tail of the *previous* sentence ("200 full rereads just to write one
+    /// response"), not part of the repeated line, which is why
+    /// `anchor_is_justified` also requires `min_words` distinct words before it
+    /// believes a fraction at all.
+    #[test]
+    fn an_utterance_too_short_to_judge_is_not_glued_into_an_anchor() {
+        let u = vec![
+            utt(0, 519.68, 520.64, "one response"),
+            utt(
+                1,
+                528.50,
+                535.66,
+                "that's an enormous amount of repetitive work happening constant that's an",
+            ),
+            utt(
+                2,
+                535.66,
+                541.14,
+                "an enormous amount of work happening for every single response for every single",
+            ),
+        ];
+        let g = detect_retakes(&u, &RetakeParams::default());
+
+        assert_eq!(g.len(), 1, "the repair is still found: {g:?}");
+        assert_eq!(
+            indices(&g),
+            vec![vec![1, 2]],
+            "\"one response\" belongs to the previous sentence, not this take"
+        );
+
+        // The measurement behind the rule: the fraction alone would have let it
+        // in on one word in common.
+        let short = normalise("one response");
+        let rest = normalise(
+            "an enormous amount of work happening for every single response for every single",
+        );
+        assert!(
+            word_overlap(&short, &rest) >= MIN_UTTERANCE_OVERLAP,
+            "the overlap fraction alone does not reject it: {:.3}",
+            word_overlap(&short, &rest)
+        );
+        assert!(
+            distinct_word_count(&short) < RetakeParams::default().min_words,
+            "it is the distinct-word bar that does"
+        );
     }
 }

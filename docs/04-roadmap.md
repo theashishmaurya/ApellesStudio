@@ -2479,6 +2479,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
         false positive**, a deliberate parallel construction that is
         structurally identical to a repair. Pinned as a test. Detail and the
         combinations tried: `docs/notes/retake-detection.md` §5.
+        **Closed since: a glued take was proposing unique content for DELETION
+        (B-238 → D-366, 2026-09-25).** Both passes above measured *detection* —
+        is the group real — and neither measured the range the group then offers
+        to cut. A group discards each non-kept take whole, while gluing and the
+        phrase arm each match a span on only part of itself, so a take built
+        from three utterances matched on one and proposed all three: **259.8 s
+        of never-repeated speech across the two real transcripts, including one
+        video's own opening hook, and including D-364's own "proof" case.** Not
+        a fluke — 16 of the 17 glued anchors in that data were carrying unique
+        content. D-327's `MIN_UTTERANCE_OVERLAP` guard existed for exactly this
+        and had been applied to only one side of the comparison; it now guards
+        the anchor too, referenced to the union of the deliveries that matched
+        it. Proposed cut seconds 441.4 → 181.6 across both fixtures, with the
+        predicates and the output shape untouched.
+        `docs/notes/retake-detection.md` §6.
     - ✅ **A DARK-REGION detector — "there is speech here nobody has read" —
       DONE, 2026-09-18 (D-349), and it went further than this item asked.**
       (B-216's transcription sub-finding; research trail
