@@ -534,3 +534,31 @@ were listed here until D-263 docked those libraries and removed them.)
 
 Check `docs/CHANGELOG.md` (search "debug" or the date) for what has actually landed —
 this file is the scope/tracker, not a live status board.
+
+### Gap found 2026-09-26: the Agent Activity dock occludes the lower-left of every screenshot, and nothing can dismiss it
+
+Hit live while verifying 16 rebuilt Motion scenes by screenshot for the c038
+side-by-side (D-348's treatment applied to a second video). The
+**`AgentActivityDock` overlays the bottom-left of the Motion preview** — roughly
+authoring x < 450, y > 700 on a 1252×1016 canvas — which is exactly where a
+composition's supporting caption tends to live.
+
+Why it is a real gap rather than an annoyance:
+
+- **There is no MCP or `debug_*` affordance to hide it.** Piece 2 of this note
+  gives agents real control over panels, popovers, tabs and the inspector
+  (`debug_set_sources_panel`, `debug_set_popover_open`, `debug_set_inspector_tab`
+  …). The dock has no equivalent, so the one region an agent cannot photograph is
+  a region real content occupies.
+- **Dismissing it by hand does not hold.** It re-opens on the next activity row,
+  and an agent mutating the document *is* a stream of activity rows — so it
+  cannot be cleared and kept clear across exactly the pass that needs it.
+- The consequence is silent: a screenshot comes back looking fine because the
+  occluded caption is simply not visible, so "verified by screenshot" quietly
+  means "verified everywhere except where captions go".
+
+The missing piece is a `debug_set_agent_dock(false)` in the same family as the
+existing piece-2 setters — compile-gated out of a production build like
+everything else here. Until it exists, screenshot verification of the lower-left
+of any canvas is incomplete, and a verification pass should say so rather than
+claim full coverage.
