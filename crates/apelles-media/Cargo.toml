@@ -50,5 +50,5 @@ rubato = "0.15"
 dasp_sample = "0.11.0"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "sync", "macros"] }
+tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
 tempfile = "3.27.0"
