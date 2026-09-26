@@ -27,6 +27,16 @@ Still real:
 
 ## Open
 
+## B-242 — a scene's `id` is its display name, but nothing can properly set it: no Inspector row, and the one MCP tool that writes it warns that it shouldn't
+
+status: **open** · severity: low (there is a working path, it just tells you it is wrong) · area: `packages/motion/src/propCatalog.ts` (`SCENE_FIELDS`), `motion_add_scene`
+
+- **found:** 2026-09-27, by a builder agent adding scenes to `2026-09-12-c038-mgfx`. It passed `scene_id: "c038-training"` to `motion_add_scene` and got `id: "scene-kl4e06"`.
+- **actual:** `motion_add_scene` has no id parameter at all (an unknown argument is silently dropped by the MCP layer, so the caller gets no signal). The working path is `motion_set_scene_field key="id"`, which writes correctly but returns `"id" is not one of the known scene fields (dur, bg, grain, vignette, transition) — set anyway`. So the tool that ought to set the id can't, and the one that does believes it shouldn't.
+- **why it matters beyond cosmetics:** the scene id IS the scene's name everywhere a person sees it — the layer panel's section headers, the scene selector, and `motion_render`'s per-scene output filenames. It is not an internal handle. Under this repo's "every feature is built for a human AND an AI" invariant it currently has neither a real GUI affordance (no Inspector row, because `SCENE_FIELDS` omits it) nor an honest MCP one.
+- **fix:** add `id` to `SCENE_FIELDS` (`kind: 'string'`, content group) so the Inspector renders it and the warning stops firing. Check first whether a rename needs to update anything that references a scene by id — `motion_get_edit_links` at least, and any placed Edit-tab clip — and either follow the references or refuse a rename that would orphan one. Optionally give `motion_add_scene` an `id` argument so the common case is one call.
+- **deliberately not fixed on the spot:** a builder agent was driving the live app at the time, and editing `packages/motion` would have HMR-remounted its preview mid-verification.
+
 ## B-241 — one bad frame latched the Motion preview forever: `@remotion/player`'s error boundary has no reset path
 
 status: **fixed** (D-367, 2026-09-26) · severity: high (the whole Motion tab's preview, not one layer — and the only recovery was restarting the app) · area: `packages/motion/src/MotionPreview.tsx`
