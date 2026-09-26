@@ -27,6 +27,18 @@ Still real:
 
 ## Open
 
+## B-241 — one bad frame latched the Motion preview forever: `@remotion/player`'s error boundary has no reset path
+
+status: **fixed** (D-367, 2026-09-26) · severity: high (the whole Motion tab's preview, not one layer — and the only recovery was restarting the app) · area: `packages/motion/src/MotionPreview.tsx`
+
+- **found:** 2026-09-26, live, building `c038-tpusplit`. A `graph` layer was authored with `enter` as an array instead of `{at, stagger}`, so `Graph.tsx:352` called Remotion's `interpolate` with `[NaN, NaN]` and threw: `inputRange must contain only finite numbers`.
+- **expected:** fix the manifest → the preview renders again.
+- **actual:** the preview stayed a black frame with an error triangle **permanently**. Correcting the layer, saving, switching scenes, switching to the Edit tab and back, and an HMR update to `Graph.tsx` itself all left it wedged; three consecutive screenshots came back byte-identical while `motion_get_state` reported `playerMounted: true`, `parseError: null`, `loadState: "ready"` — i.e. the app was healthy and only the preview was dead. The dev log confirmed no NEW error after the fix; the ORIGINAL one was simply still being displayed.
+- **cause:** read `@remotion/player`'s own `error-boundary.tsx` — `hasError` is set by `getDerivedStateFromError` and cleared by **nothing**. No prop, no `key`, no imperative reset. Once caught, that boundary renders its fallback for the rest of its mounted life, and `MotionPreview` never remounted `<Player>`.
+- **why B-211 did not already cover this:** B-211 hardened `Graph` against ONE known cause (dangling edge ids). It could not address the latch, which any throw from any primitive re-triggers — and this was a different cause in the same primitive.
+- **fix (D-367):** `MotionPreview` now owns a `playerEpoch` key on `<Player>`, plus an `errorFallback` that reports the crash by MOUNTING (a `frameupdate`/`error` listener would miss a first-frame throw, since `getDerivedStateFromError` runs before the parent's passive effects). The next manifest edit or scene change bumps the epoch and remounts, and `initialFrame` restores the playhead. Deliberately not an immediate retry: that would re-render the same bad frame in a loop and hide the message from whoever needs to read it.
+- **verified:** the wedged session recovered in place — the `graph` fork rendered at 4.4 s and the full scene at 7.2 s, no restart.
+
 ## B-240 — a `layers` callout is side-anchored and `nowrap`, and when it does not fit on the right it flips LEFT to a negative x and renders fully off-canvas, silently
 
 status: **open** · severity: medium (silent, total loss of an authored element — no error, no clipping artefact, the callout is simply not in the frame; and it is reachable by ordinary authoring, not an edge case) · area: `packages/motion-engine/src/primitives/Layers.tsx` (the callout side-picker and its `nowrap` text)

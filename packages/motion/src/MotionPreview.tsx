@@ -75,8 +75,23 @@
  * composition. `sceneStartFrame`/`sceneDurationFrames` are the SAME
  * `build.ts` functions `KeyframeTimeline.tsx`'s own scene-boundary lines and
  * D-180's per-scene export already use — no new scene-window math invented.
+ *
+ * B-241/D-367 — the preview RECOVERS from a frame that throws. Read
+ * `@remotion/player`'s own `error-boundary.tsx`: its `hasError` state is set
+ * by `getDerivedStateFromError` and cleared by nothing at all, so one bad
+ * frame (a primitive handed a prop shape it can't interpolate, say) latched
+ * the whole Motion preview to its fallback permanently — fixing the manifest,
+ * switching scenes, even leaving the tab and coming back all left it wedged,
+ * and only restarting the app brought it back. B-211's fix hardened `Graph`
+ * against ONE known cause; it could never address the latch itself, which any
+ * future throw from any primitive re-triggers. The boundary's state is
+ * private, so the only reset is a remount: `playerEpoch` keys `<Player>`, the
+ * `errorFallback` reports the crash on mount, and the next manifest edit or
+ * scene change bumps the epoch — the two things a person actually does after
+ * seeing the error. `initialFrame` puts the playhead back where it was so the
+ * recovery is invisible when the underlying cause is already fixed.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { PlayIcon, PauseIcon } from '@phosphor-icons/react';
 import { Player, type PlayerRef } from '@remotion/player';
@@ -109,6 +124,27 @@ export interface MotionCanvasMeasureApi {
 function formatSeconds(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** B-241 — what `<Player errorFallback>` renders. A component (not inline
+ *  JSX) so it can own a mount effect: `getDerivedStateFromError` runs during
+ *  the commit that kills the tree, BEFORE this component's parent's own
+ *  passive effects, so a plain `addEventListener('error')` subscription in
+ *  `MotionPreview` would miss a crash that happens on the player's very first
+ *  frame. Mounting is the one signal that cannot be missed. */
+function PreviewErrorFallback({ error, onMount }: { error: Error; onMount: () => void }) {
+  useEffect(() => {
+    onMount();
+  }, [onMount]);
+  return (
+    <div className="h-full w-full flex flex-col items-center justify-center gap-1 bg-black px-6 text-center">
+      <span className="text-text-primary text-sm">This frame failed to render</span>
+      <span className="text-text-secondary text-xs max-w-md">{error.message}</span>
+      <span className="text-text-secondary text-[11px]">
+        The preview retries on the next edit or scene change.
+      </span>
+    </div>
+  );
 }
 
 export function MotionPreview({
@@ -161,6 +197,15 @@ export function MotionPreview({
       : null;
   const [frame, setFrame] = useState(0);
   const [playing, setPlaying] = useState(false);
+  // B-241 — see the module doc comment. `playerEpoch` is the `<Player>` key;
+  // `errored` is set by the fallback's mount and consumed by the reset effect
+  // below. `lastFrameRef` is a ref, not the `frame` state, because it has to
+  // survive the render that swaps the tree for the fallback (after which no
+  // further `frameupdate` ever arrives) without itself causing a re-render.
+  const [playerEpoch, setPlayerEpoch] = useState(0);
+  const [errored, setErrored] = useState(false);
+  const lastFrameRef = useRef(0);
+  const markErrored = useCallback(() => setErrored(true), []);
 
   // D-157 — populate the measure API once (and again whenever the manifest
   // this scale calc depends on changes) rather than rebuilding it on every
@@ -200,6 +245,7 @@ export function MotionPreview({
     if (!player) return;
     const onFrameUpdate = (e: { detail: { frame: number } }) => {
       setFrame(e.detail.frame);
+      lastFrameRef.current = e.detail.frame; // B-241 — restored on remount
       if (soloWindow && e.detail.frame >= soloWindow.end) player.seekTo(soloWindow.start);
     };
     const onPlay = () => setPlaying(true);
@@ -208,14 +254,17 @@ export function MotionPreview({
     player.addEventListener('play', onPlay);
     player.addEventListener('pause', onPause);
     setFrame(player.getCurrentFrame());
+    lastFrameRef.current = player.getCurrentFrame();
     setPlaying(player.isPlaying());
     return () => {
       player.removeEventListener('frameupdate', onFrameUpdate);
       player.removeEventListener('play', onPlay);
       player.removeEventListener('pause', onPause);
     };
+    // `playerEpoch` (B-241) is a dep because a remount replaces the whole
+    // player instance — the listeners must be re-attached to the new one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectivePlayerRef, soloWindow?.start, soloWindow?.end]);
+  }, [effectivePlayerRef, soloWindow?.start, soloWindow?.end, playerEpoch]);
 
   // D-181 — a SAFETY NET, not the primary seek: `MotionTab.tsx`'s own
   // `onSelect` (B-064/D-176's existing "seek only if not already visible"
@@ -240,6 +289,21 @@ export function MotionPreview({
   }, [activeSceneIndex, soloWindow?.start, soloWindow?.end]);
 
   const shown = transientManifest ?? manifest;
+
+  // B-241 — the only way out of `@remotion/player`'s latched error boundary.
+  // Deliberately keyed on the manifest identity and the active scene rather
+  // than firing the instant `errored` flips: remounting immediately would
+  // just re-render the same bad frame and re-throw in a loop, hiding the
+  // error message from whoever needs to read it. These two deps are the
+  // actions a person (or an agent) takes to FIX the cause, so the retry
+  // happens exactly when there is reason to think it will now succeed.
+  useEffect(() => {
+    if (!errored) return;
+    setErrored(false);
+    setPlayerEpoch((e) => e + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown, activeSceneIndex]);
+
   if (!shown) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-black text-text-secondary text-sm px-6 text-center">
@@ -252,6 +316,14 @@ export function MotionPreview({
     <div className="relative h-full w-full flex items-center justify-center bg-black">
       <div ref={containerRef} className="relative h-full w-full">
         <Player
+          // B-241 — bumping this key is the remount that clears the latched
+          // boundary; it never changes during normal use, so the player is
+          // not re-created by ordinary edits.
+          key={playerEpoch}
+          initialFrame={Math.min(Math.max(0, lastFrameRef.current), Math.max(0, totalFrames(shown) - 1))}
+          errorFallback={({ error }) => (
+            <PreviewErrorFallback error={error} onMount={markErrored} />
+          )}
           ref={effectivePlayerRef}
           component={Video}
           inputProps={shown}

@@ -35494,3 +35494,45 @@ moved.
 found" and "the range it offers to delete is right" are two separate claims. Only
 the first was ever measured. A change to this module must measure the proposed
 cut.
+
+---
+
+## D-367 — the Motion preview recovers from a frame that throws, by remounting the player on the next edit
+
+**Status: `decided`** (2026-09-26). Fixes **B-241**.
+
+**Context.** `@remotion/player`'s internal error boundary sets `hasError` in
+`getDerivedStateFromError` and clears it nowhere — no prop, no `key`, no
+imperative reset (read from its own `error-boundary.tsx`, not assumed). So one
+primitive throwing on one frame killed the ENTIRE Motion preview for the rest of
+the app's life. Hit live: a malformed `graph.enter` made `Graph.tsx` interpolate
+over `[NaN, NaN]`; correcting the manifest, saving, switching scenes, switching
+tabs and even an HMR reload of the offending file all left the preview showing
+the same dead frame, while `motion_get_state` reported the app perfectly healthy.
+Only restarting the app brought it back. B-211 had hardened `Graph` against one
+specific cause; the latch itself was never addressed, and any future throw from
+any primitive re-triggers it.
+
+**Options.**
+1. *Keep hardening primitives one crash at a time.* What B-211 did. It cannot
+   converge — the failure mode is "a primitive threw", not "this primitive threw".
+2. *Key `<Player>` on the manifest.* One line, but it re-creates the player on
+   every keystroke in the manifest editor, losing playback state constantly.
+3. *A dedicated epoch key, bumped only to recover.* Chosen.
+
+**Choice.** `MotionPreview` owns `playerEpoch`, the `<Player>` key. `errorFallback`
+renders a component whose MOUNT reports the crash — a `PlayerRef` `error`
+listener would miss a first-frame throw, because `getDerivedStateFromError` runs
+during the commit that kills the tree, before the parent's passive effects ever
+subscribe. The epoch is bumped by an effect keyed on the shown manifest and the
+active scene, and `initialFrame` restores the playhead, so recovery is invisible
+once the cause is fixed.
+
+**Why not retry immediately.** Remounting the instant the fallback appears would
+re-render the same bad frame and throw again in a loop, and the person would
+never get to read the error. The two chosen triggers — an edit, or a scene change
+— are exactly the actions someone takes to FIX the cause, so the retry happens
+when there is reason to think it will now succeed. The fallback says so on screen.
+
+**Verified** in the wedged session itself: the preview came back without a
+restart, and the scene that caused the crash rendered correctly afterwards.
