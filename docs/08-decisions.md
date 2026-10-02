@@ -35536,3 +35536,59 @@ when there is reason to think it will now succeed. The fallback says so on scree
 
 **Verified** in the wedged session itself: the preview came back without a
 restart, and the scene that caused the crash rendered correctly afterwards.
+
+---
+
+## D-368 — c038 gets the D-348 split-screen, 21 compositions, and a camera that holds per SEGMENT rather than per graphic
+
+**Status: `decided`** (2026-10-02). Detail: `docs/notes/c038-split-screen.md`,
+`docs/notes/motion-primitive-traps.md`.
+
+**Context.** The owner's own 7:19 re-edit of c038 had 9 motion scenes, 4 of them
+placed as a small top-left corner PIP — the treatment D-348 replaced for c040.
+The ask was the c040 two-panel split plus "10-20" explainers. The result is 21
+compositions (9 reflowed, 12 new) over a 439 s video: 205 s of panel time.
+
+**What D-348 gave, and what it could not.** The panel geometry transferred
+exactly — margins, gutter, both panels' boxes, `corner_radius` 14, the 12-frame
+`(0.42, 0, 0.58, 1)` ramp, and the rule that the graphic uses `box_*` while the
+camera uses `scale`+`crop_*` (keyframes cannot animate `box_*`). Two of its
+numbers did NOT transfer and were inherited silently before being caught:
+
+- **The crop centre is a per-shoot measurement**, not a constant. c040's
+  0.535 is *that* speaker's head centre; c038 measures 0.512 across three
+  sampled frames. Using c040's value would have put the speaker 88 source px
+  off — ~9 % of the 1144 px column, visibly off-centre. `crop_left`/`crop_right`
+  recomputed keeping the kept-width fraction identical.
+- **The beat frames were stale.** The assignment table was built from a
+  superseded beat map; only 5 of 21 frames were right and the rest ran 30-75
+  frames late. Re-derived from the current `beats.tsv`. A related, separate
+  error: anchoring a graphic to the line the table *quotes* rather than the
+  **first line of its beat** cost `c038-everymessage` half its length before a
+  builder pushed back correctly.
+
+**The real decision: ramp the camera per SEGMENT, not per graphic.** Four pairs
+of graphics sit closer together than their own ramps need — 5, 2, 0 and 21
+frames in places. A 12-frame out plus a 12-frame in needs 24 frames of clear
+air, and a camera that bounces out and straight back reads as a glitch. So
+adjacent graphics share one continuous hold: the camera ramps into the column
+once, holds across the run, and ramps out once. **14 ramps instead of 21**, and
+every collision disappears.
+
+The cost is that segment L — batching, quantization, specdecode, tricks — is
+**95 seconds of unbroken split-screen**. That is not a side effect of the rule
+but a property of the footage: those four beats are one continuous stretch of
+narration. If it reads long, the fix is a content cut (act4.md nominates
+`c038-quantization`), not a camera move.
+
+**Options considered.** (1) Per-graphic ramps — rejected, impossible at 2-frame
+gaps and glitchy at 74. (2) Leave the 4 PIPs and add 17 — rejected by the owner.
+(3) Delete and re-add the 4 PIPs — rejected in favour of converting them in
+place, since their start frames and durations already matched the plan exactly
+and D-260's auto-refresh had already pointed them at the new renders.
+
+**Also recorded**, because it is reusable and not guessable: `editor_set_clip_keyframes`
+accepts an `ease` object inline per keyframe, which is what made 14 eased ramps
+~50 calls instead of ~250; keyframe frames are clip-source-absolute; and a hold
+spanning several footage clips needs those middle clips set statically (25 of
+them here, 16 inside segment L alone).
