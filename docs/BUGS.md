@@ -27,6 +27,24 @@ Still real:
 
 ## Open
 
+## B-243 — a big timeline's `-filter_complex` graph exceeds `ARG_MAX` and `editor_export` cannot spawn ffmpeg at all
+
+status: **fixed** (the spawn; see the second half for what the fix then exposed) · severity: high (total failure of export, with an OS-level error that names nothing about the timeline) · area: `app/src-tauri/src/chroma/ffmpeg_run.rs`
+
+- **found:** 2026-10-05, exporting c038's finished split-screen (D-368) — 98 clips: 77 footage + 21 graphics.
+- **actual:** `failed to spawn ffmpeg: Argument list too long (os error 7)`. Nothing rendered; the error comes from the OS, not ffmpeg, so it says nothing about which part of the timeline is responsible.
+- **cause:** `timelineExport.ts` passes the whole filtergraph as one argv element after `-filter_complex`. **Measured on this project: 1,476,115 bytes.** macOS's `ARG_MAX` is 1,048,576 for argv AND envp combined, so the graph alone was ~1.4× the entire limit. Each eased keyframe segment is expanded into 20 linear steps (ffmpeg has no bezier solver), so a timeline's graph grows with clips × keyframes × eased properties — 14 camera ramps × 7 properties here.
+- **fix:** `run_ffmpeg` rewrites `-filter_complex <graph>` to `-filter_complex_script <file>` past 100 KB, which is what that ffmpeg flag exists for. Done at the **spawn** layer, not in `timelineExport.ts`: the limit is a property of process spawning rather than of the timeline model, the TS builder is deliberately pure and unit-testable with no filesystem, and this fixes it once for every ffmpeg caller. A `Drop` guard owns the temp file and is held across the spawn — `-filter_complex_script` makes ffmpeg read the path at startup, so deleting it earlier would be a race visible only on busy machines. The 100 KB bar is deliberately well below the OS limit (which cannot be computed reliably, since envp counts against it) so an ordinary export's argv is untouched and still reads as one copy-pasteable command line in a log.
+- **verified:** 3 unit tests (small graph untouched, oversized graph spills verbatim and is cleaned up on drop, no-filtergraph argv is a no-op), plus a real 98-clip export that now spawns and runs where it previously died instantly.
+
+### What fixing it exposed — read before using `renderer: "filter"` on a big timeline
+
+Spawning was only the first wall. With the graph spilled, that same export ran **31 minutes at 61 % CPU and wrote zero bytes** (confirmed by reading the output file descriptor's offset, still 0). `-filter_complex_threads` is capped at 2 by **B-229** to stop a thread explosion, and one graph of this size through two threads is not a viable export.
+
+**The answer is not to raise that cap — it is `renderer: "compositor"` (D-350),** which renders frames with the preview's own Rust compositor and hands one raw RGBA stream to ffmpeg, so no large graph exists. On the same project it immediately ran 6 parallel segment lanes (D-360) and began producing output. It also supersedes the parity bugs (B-201/B-208/B-218/B-223) that bear on `scale` and `crop_*` — exactly the fields a split-screen camera ramp animates — so for this class of timeline it is the more correct path as well as the only practical one.
+
+**Still open, deliberately:** `editor_export` still defaults to `renderer: "filter"` and gives no warning when a timeline is far past what that path can serve. A caller finds out by waiting. Candidate fixes: pick the compositor automatically above some clip/graph-size threshold, or refuse the filter path with a named reason pointing at the alternative. Not done here because the right threshold wants measurement rather than a guess.
+
 ## B-242 — a scene's `id` is its display name, but nothing can properly set it: no Inspector row, and the one MCP tool that writes it warns that it shouldn't
 
 status: **open** · severity: low (there is a working path, it just tells you it is wrong) · area: `packages/motion/src/propCatalog.ts` (`SCENE_FIELDS`), `motion_add_scene`

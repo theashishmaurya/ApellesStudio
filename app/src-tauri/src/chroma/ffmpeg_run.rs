@@ -199,12 +199,83 @@ fn tail_of(stderr: &Arc<Mutex<Vec<u8>>>, lines: usize) -> String {
     }
 }
 
+/// Spill a very large `-filter_complex` graph to a file past this many
+/// bytes (B-243). Not the OS limit itself: macOS's `ARG_MAX` is 1 MiB for
+/// argv AND envp COMBINED, so the real ceiling for one argument depends on
+/// the caller's environment and cannot be computed reliably here. This is a
+/// deliberately conservative bar — comfortably spawnable everywhere, and
+/// high enough that an ordinary export's argv is untouched and still reads
+/// as one copy-pasteable command line in a log.
+const MAX_INLINE_FILTERGRAPH_BYTES: usize = 100_000;
+
+/// A filtergraph written to a temp file, deleted when this is dropped.
+///
+/// It must outlive the `ffmpeg` process, which is the whole reason this is a
+/// value the caller holds rather than a file written and forgotten inside a
+/// helper: `-filter_complex_script` makes ffmpeg READ the path at startup,
+/// so deleting it before the child has run is a race that would surface as
+/// an unreproducible "No such file or directory" on busy machines only.
+pub struct SpilledFiltergraph {
+    path: std::path::PathBuf,
+}
+
+impl Drop for SpilledFiltergraph {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// B-243 — rewrite `-filter_complex <graph>` to `-filter_complex_script
+/// <file>` when the graph is too big to pass as an argument.
+///
+/// Why here and not in `timelineExport.ts`, which builds the argv: the limit
+/// being hit is a property of process spawning, not of the timeline model,
+/// and the TS builder is deliberately pure (no I/O, unit-testable without a
+/// filesystem). Doing it at the spawn boundary also fixes it once for every
+/// caller rather than for the one that happened to hit it first.
+///
+/// Returns the args to actually spawn plus, when a spill happened, the guard
+/// that owns the temp file's lifetime.
+pub fn spill_oversized_filtergraph(
+    args: &[String],
+) -> std::io::Result<(Vec<String>, Option<SpilledFiltergraph>)> {
+    let Some(flag_idx) = args.iter().position(|a| a == "-filter_complex") else {
+        return Ok((args.to_vec(), None));
+    };
+    let Some(graph) = args.get(flag_idx + 1) else {
+        return Ok((args.to_vec(), None));
+    };
+    if graph.len() <= MAX_INLINE_FILTERGRAPH_BYTES {
+        return Ok((args.to_vec(), None));
+    }
+
+    // Nanosecond suffix as well as the pid: two exports from the same
+    // process must not collide on the same scratch file.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let path = std::env::temp_dir().join(format!(
+        "apelles-filtergraph-{}-{stamp}.txt",
+        std::process::id()
+    ));
+    std::fs::write(&path, graph)?;
+
+    let mut out = args.to_vec();
+    out[flag_idx] = "-filter_complex_script".to_string();
+    out[flag_idx + 1] = path.to_string_lossy().into_owned();
+    Ok((out, Some(SpilledFiltergraph { path })))
+}
+
 /// Run `req`, blocking until `ffmpeg` exits. Callers on an async runtime
 /// should wrap this in `spawn_blocking` (the Tauri command
 /// `chroma_run_ffmpeg` does) — same convention `apelles_motion::run_render`
 /// already established.
 pub fn run_ffmpeg(req: &FfmpegRunRequest) -> Result<FfmpegRunOutcome, String> {
-    let output = build_command(req)
+    // B-243 — `_graph_file` must stay in scope until ffmpeg has exited.
+    let (args, _graph_file) = spill_oversized_filtergraph(&req.args)
+        .map_err(|e| format!("failed to write filtergraph script: {e}"))?;
+    let output = build_command(&FfmpegRunRequest::new(args))
         .output()
         .map_err(|e| format!("failed to spawn ffmpeg: {e}"))?;
 
@@ -304,5 +375,71 @@ mod tests {
             !outcome.stderr_tail.trim().is_empty(),
             "expected ffmpeg to explain the bad flag on stderr"
         );
+    }
+
+    /// B-243 — an ordinary export's argv is left completely alone, so the
+    /// common path keeps its one copy-pasteable command line.
+    #[test]
+    fn a_small_filtergraph_is_left_inline() {
+        let args = vec![
+            "-filter_complex".to_string(),
+            "[0:v][1:v]overlay[out]".to_string(),
+            "-map".to_string(),
+            "[out]".to_string(),
+        ];
+        let (out, guard) = spill_oversized_filtergraph(&args).expect("no I/O should be needed");
+        assert!(guard.is_none(), "a tiny graph must not spill to a file");
+        assert_eq!(out, args);
+    }
+
+    /// B-243's actual defect: a 98-clip timeline's graph exceeded the OS
+    /// argv limit and `ffmpeg` could not be spawned at all. Pre-fix this
+    /// returned the graph inline and the spawn failed with
+    /// `Argument list too long (os error 7)`.
+    #[test]
+    fn an_oversized_filtergraph_spills_to_a_script_file() {
+        let graph = "x".repeat(MAX_INLINE_FILTERGRAPH_BYTES + 1);
+        let args = vec![
+            "-i".to_string(),
+            "/tmp/a.mov".to_string(),
+            "-filter_complex".to_string(),
+            graph.clone(),
+            "-map".to_string(),
+            "[out]".to_string(),
+        ];
+        let (out, guard) = spill_oversized_filtergraph(&args).expect("temp write must succeed");
+        let guard = guard.expect("an oversized graph must spill");
+
+        assert_eq!(out[2], "-filter_complex_script");
+        assert_ne!(out[3], graph, "the graph must not still be inline");
+        assert_eq!(
+            std::fs::read_to_string(&out[3]).expect("the script file must exist while running"),
+            graph,
+            "the spilled file must hold the graph verbatim"
+        );
+        // Everything either side of the flag is untouched.
+        assert_eq!(&out[0..2], &args[0..2]);
+        assert_eq!(&out[4..], &args[4..]);
+
+        let path = out[3].clone();
+        drop(guard);
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "the temp file must be cleaned up when the guard drops"
+        );
+    }
+
+    /// An argv with no filtergraph at all is a no-op — the helper runs on
+    /// every ffmpeg invocation, including the debug recorder's.
+    #[test]
+    fn an_argv_without_a_filtergraph_is_untouched() {
+        let args = vec![
+            "-i".to_string(),
+            "-".to_string(),
+            "/tmp/out.mp4".to_string(),
+        ];
+        let (out, guard) = spill_oversized_filtergraph(&args).expect("no I/O should be needed");
+        assert!(guard.is_none());
+        assert_eq!(out, args);
     }
 }
