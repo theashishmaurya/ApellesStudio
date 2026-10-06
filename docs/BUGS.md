@@ -264,6 +264,29 @@ status: **open** · severity: medium (no correctness defect — the output is by
   2. 6 concurrent segments at 4K (vs. 1080p in the benchmark) use substantially more memory/decode bandwidth simultaneously — real contention the small benchmark never had to pay for, and `MAX_SEGMENTS`/`MIN_SEGMENT_FRAMES` were tuned against the 1080p fixture's numbers, not a 4K one.
   3. This specific project's clip distribution (79 short clips, sync-locked tracks, motion overlays) may partition unevenly across `MAX_SEGMENTS = 6`, leaving some segments doing much more work than others — the benchmark fixture's own clip shape was not designed to stress this.
 - **not fixed here.** This needs a real profiled run on the actual project (not another synthetic fixture) to distinguish these — CPU/memory telemetry per segment during a real 4K export, not a guess. Filed so the discrepancy is tracked rather than lost, and so nobody re-quotes D-360's 1.64x as the real-world number without this caveat attached.
+
+### 2026-10-06 — the profiled run this asked for. Candidates 2 and 3 confirmed; candidate 1 effectively ruled out.
+
+Measured on `2026-09-12-c038-mgfx` (3840×2160, **98 clips** — 77 footage + 21 graphics, D-368's split-screen), by sampling per-segment output size, process count and load average throughout a full `renderer: "compositor"` export. ~45 min wall for a 439.25 s video (~6.1x real-time, worse than c040's 2.41x — this project is heavier).
+
+**The lanes starve each other, and the tail lane is the wall-clock.**
+
+| when | segment-004 | the other five | load (10 cores) | ffmpeg procs |
+|---|---|---|---|---|
+| 31:54 | 40.8 MB | 147-212 MB | ~50 | 21 |
+| 42:23 | 45.5 MB (**+4.7 MB in 10.5 min**) | 154-213 MB | **49.85** | 18 |
+| ~47:00 | 103.3 MB (**+57.8 MB in ~5 min**) | finished | 23.34 | 6 |
+
+Once the other five lanes finished, the straggler ran roughly **24× faster** with no other change. That single number is what distinguishes the candidates:
+
+- **Candidate 1 (compositing already saturates all cores, so there is no serial remainder to claim) is effectively ruled out.** If the machine were genuinely saturated by useful work, freeing five lanes could not make the sixth 24× faster. The cores were not saturated — they were *oversubscribed*, thrashing between 18 processes at load ~50 on 10 cores (6 encoders plus a decoder per clip each lane currently needs).
+- **Candidates 2 and 3 are both confirmed, and they compound.** The partition is uneven (candidate 3: one lane still had ~60 % of its bytes to write when the others were done), and during the parallel phase every lane is slowed by contention (candidate 2). So the export pays the contention cost *and then* waits on a straggler that no longer has anyone to contend with.
+
+**What this implies for a fix** (not done here): `MAX_SEGMENTS = 6` is a constant tuned on a 1080p fixture, but the real constraint is cores ÷ (processes each lane spawns). On a 10-core machine, 6 lanes × ~3 processes is ~5× oversubscribed. Two independent levers, worth measuring separately:
+1. **Cap concurrent lanes to the machine**, not to a constant — fewer lanes running nearer full speed should beat six thrashing.
+2. **Partition by estimated work, not by equal frame count.** Lanes are currently equal-frame spans, but a span of full-frame 4K camera costs far more per frame than one that is mostly flat graphics panel, so equal frames are not equal work. That is what produced the straggler.
+
+Both are measurable against this project, which is now the better fixture — it reproduces the effect far more strongly than c040 did.
 - **2026-09-19 update:** a read-only planning pass (D-363) scoped what it would actually take to close this — the CPU compositor itself, not more segmentation, is the largest remaining term (§10.5 had already named it). Plan: `docs/notes/export-gpu-compositor.md` §11. Wave 0 of that plan is exactly this bug's own missing measurement (a per-phase profile of the real 4K project) and is a **blocking gate** before any GPU code is written — this bug should be root-caused and closed BY that wave, not separately. Not built yet, per explicit owner instruction to document and pick up later.
 
 ## B-233 — `packages/motion`'s `theme.test.ts` fails `tsc` with missing `node:fs`/`node:url`/`node:path` — no `@types/node` in that package's tsconfig
