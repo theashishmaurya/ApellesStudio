@@ -27,6 +27,17 @@ Still real:
 
 ## Open
 
+## B-244 — B-240's fix shipped a worse regression: a correct layout rendered as a one-glyph-wide vertical column, because `maxWidth` is a cap and cannot give a shrink-to-fit box room
+
+status: **fixed** (same day, before reaching a render) · severity: high (total loss of the callout, and visibly broken rather than merely absent — strictly worse than the bug it replaced) · area: `packages/motion-engine/src/primitives/Layers.tsx`
+
+- **found:** 2026-10-07, by eye, immediately after merging B-240's fix — the first live render of `c038-tricks` showed the callout "none of it is free" set as `n / o / n / e / o / f / …` running vertically off the bottom of the frame.
+- **cause:** B-240 restructured the text box to be a sibling of the arm, absolutely positioned inside the stack's **zero-width** origin container, and set `width` only for the `below` placement — the two side placements kept `maxWidth` alone plus `overflowWrap: "anywhere"`. `maxWidth` is a CAP: it can shrink a box, it cannot give one room. With no explicit `width`, shrink-to-fit resolved against ~0 available space and `overflowWrap: "anywhere"` then did exactly what it was told, breaking at every character.
+- **why the tests did not catch it:** B-240 extracted `layoutCallout` as a pure function and tested it hard — 49 cases, verified failing against the pre-fix geometry. The layout was never wrong. The bug lived entirely in the *consumer*, the inline style object, which had no test at all. **A pure core with a well-tested contract does not protect you if the one caller misuses it**, and an inline style in a render body is exactly the place that escapes a unit test.
+- **fix:** `calloutBoxGeometry(layout)` — the style's geometry extracted as a pure function, setting a real `width` on every placement, with the cap retained alongside it. `every_placement_gets_a_real_width` pins it and was verified failing against the old conditional.
+- **verified live**, not just by test: `c038-tricks` ("none of it is free") and `c038-chaiwala` ("10 cups vs 10 million") both render on one line beside their arm again.
+- **the process lesson:** the subagent that wrote B-240's fix reported "a RIGHT placement is byte-identical… cap above the text's own width so it never wraps" and listed what it could not verify without a render. That claim was wrong, and it was in the half it believed it had verified — not in the half it flagged. The honest reading is that the flagged list was not the risky part; the confident claim was. Render-path work does not count as verified until something renders.
+
 ## B-243 — a big timeline's `-filter_complex` graph exceeds `ARG_MAX` and `editor_export` cannot spawn ffmpeg at all
 
 status: **fixed** (the spawn; see the second half for what the fix then exposed) · severity: high (total failure of export, with an OS-level error that names nothing about the timeline) · area: `app/src-tauri/src/chroma/ffmpeg_run.rs`

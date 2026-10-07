@@ -89,6 +89,36 @@ export interface CalloutLayout {
   maxWidth: number;
 }
 
+/** The box geometry a [`CalloutLayout`] implies, as a pure function so it is
+ *  testable without a DOM (B-244).
+ *
+ *  Extracted because B-240's layout maths was pure and unit-tested while the
+ *  style that consumed it was not, and the bug that slipped through lived
+ *  entirely in the consumer: `width` was set only for `below`, so the other
+ *  two placements fell back to shrink-to-fit inside a ZERO-WIDTH origin
+ *  container and `overflowWrap: "anywhere"` broke them to one glyph per line.
+ *  A correct layout rendered wrong. The invariant worth pinning is simply
+ *  that every placement gets a real width — see
+ *  `every_placement_gets_a_real_width`. */
+export function calloutBoxGeometry(layout: CalloutLayout): {
+  left: number | undefined;
+  right: number | undefined;
+  width: number;
+  maxWidth: number;
+  textAlign: "left" | "right" | "center";
+} {
+  const isLeft = layout.placement === "left";
+  return {
+    // The origin div is zero-width, so a local x of `a` for the box's RIGHT
+    // edge is `right: -a`.
+    left: isLeft ? undefined : layout.anchor,
+    right: isLeft ? -layout.anchor : undefined,
+    width: layout.maxWidth,
+    maxWidth: layout.maxWidth,
+    textAlign: isLeft ? "right" : layout.placement === "below" ? "center" : "left",
+  };
+}
+
 /**
  * B-240 — where a `layers` callout's text goes, as a pure function.
  *
@@ -393,24 +423,13 @@ const Callout: React.FC<{
       <div
         style={{
           position: "absolute",
-          // `left` anchors the box's left edge; `right` its right edge. The
-          // origin div is zero-width, so a local x of `a` for the right edge
-          // is `right: -a`.
-          left: layout.placement === "left" ? undefined : layout.anchor,
-          right: layout.placement === "left" ? -layout.anchor : undefined,
+          // B-244 — every placement gets a REAL width, not just `below` and
+          // not `maxWidth` alone: `maxWidth` is a cap, and a cap cannot give
+          // a shrink-to-fit box room it does not have inside a zero-width
+          // origin container. See `calloutBoxGeometry`.
+          ...calloutBoxGeometry(layout),
           top: layout.top,
-          // The cap `layoutCallout` measured. Combined with `overflowWrap`
-          // this is what makes the box's width bounded for ANY text, which
-          // `whiteSpace: nowrap` (what this used to be) never was.
-          maxWidth: layout.maxWidth,
           overflowWrap: "anywhere",
-          textAlign:
-            layout.placement === "left"
-              ? "right"
-              : layout.placement === "below"
-                ? "center"
-                : "left",
-          width: layout.placement === "below" ? layout.maxWidth : undefined,
           fontFamily: theme.fontUi,
           fontSize: CALLOUT_FONT_SIZE,
           color: theme.text,

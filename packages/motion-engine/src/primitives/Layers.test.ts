@@ -19,6 +19,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   layoutCallout,
+  calloutBoxGeometry,
   CALLOUT_FONT_SIZE,
   CALLOUT_CHAR_WIDTH_RATIO,
   CALLOUT_TEXT_OFFSET,
@@ -278,5 +279,47 @@ describe('B-240 — the `below` fallback cannot run off the bottom either', () =
     expect(worldTop).toBeGreaterThanOrEqual(60);
     // one line at 34 px, generously 1.5× — still inside the bottom margin
     expect(worldTop + CALLOUT_FONT_SIZE * 1.5).toBeLessThanOrEqual(canvas.height - 60);
+  });
+});
+
+describe("calloutBoxGeometry (B-244)", () => {
+  const layouts: CalloutLayout[] = [
+    { placement: "right", anchor: 324, top: -18, maxWidth: 400 },
+    { placement: "left", anchor: -324, top: -18, maxWidth: 400 },
+    { placement: "below", anchor: -566, top: 120, maxWidth: 1132 },
+  ];
+
+  /// The regression. Pre-fix, `width` was set only for `below`; the other two
+  /// fell back to shrink-to-fit inside a zero-width origin container, and
+  /// `overflowWrap: "anywhere"` then broke the text to ONE GLYPH PER LINE —
+  /// a vertical column running off the bottom of the frame. A cap is not a
+  /// width.
+  it("every placement gets a real width, not just a cap", () => {
+    for (const layout of layouts) {
+      const g = calloutBoxGeometry(layout);
+      expect(g.width, `${layout.placement} must have an explicit width`).toBe(layout.maxWidth);
+      expect(typeof g.width).toBe("number");
+      expect(g.width).toBeGreaterThan(0);
+      // The cap must still be there — it is what bounds a long string.
+      expect(g.maxWidth).toBe(layout.maxWidth);
+    }
+  });
+
+  it("anchors the correct edge per placement", () => {
+    const right = calloutBoxGeometry(layouts[0]);
+    expect(right.left).toBe(324);
+    expect(right.right).toBeUndefined();
+    expect(right.textAlign).toBe("left");
+
+    // `left` anchors the box's RIGHT edge, and the origin is zero-width, so
+    // a local x of -324 becomes `right: 324`.
+    const left = calloutBoxGeometry(layouts[1]);
+    expect(left.left).toBeUndefined();
+    expect(left.right).toBe(324);
+    expect(left.textAlign).toBe("right");
+
+    const below = calloutBoxGeometry(layouts[2]);
+    expect(below.left).toBe(-566);
+    expect(below.textAlign).toBe("center");
   });
 });
