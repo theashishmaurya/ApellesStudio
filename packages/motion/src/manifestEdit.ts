@@ -1724,11 +1724,26 @@ function genSceneId(): string {
  * scene-delete or scene-reorder op yet either — out of THIS pass's own
  * scope, the owner only asked to CREATE and edit).
  *
- * **Renaming a scene's `id` stays out of Inspector scope**, unchanged by
- * this function — `propCatalog.ts`'s own `SCENE_FIELDS` doc comment already
- * calls this out as deliberate ("a rename here needs to be a deliberate,
- * separate operation"); the raw-JSON textarea remains the only way to
- * rename one, exactly as it already was for every hand-authored scene.
+ * **B-242/D-371 — `id` may now be supplied instead.** A caller that already
+ * knows what the scene is called ("c038-training") should not have to create
+ * it under a random name and rename it in a second call, which was the whole
+ * of B-242's symptom: `motion_add_scene` had no id parameter, an unknown
+ * argument is dropped silently by the MCP layer, and the caller got
+ * `scene-kl4e06` with no signal its name had been ignored. The generated id
+ * stays the default for every caller that does not care (the GUI's "+ Scene"
+ * button), for the reasons above.
+ *
+ * **Validation is the CALLER's, not this function's** — deliberately, and the
+ * same split every other function in this file makes. A supplied id has to be
+ * non-empty, usable as a filename and not already taken, which is exactly
+ * `checkSceneRename`'s (`editLinks.ts`) first three rules; this stays a pure
+ * mutation so the one validator serves the add path and the rename path alike
+ * rather than each growing its own near-copy. `motionOps.ts`'s
+ * `motion_add_scene` runs it before calling here.
+ *
+ * **Renaming an EXISTING scene's `id`** is `setSceneField`, gated by
+ * `checkSceneRename` — see that function for why a rename is refused once the
+ * scene has been rendered into the Edit tab.
  *
  * No out-of-range floor needed the way `addLayer`'s `sceneIndex` guard is:
  * an out-of-range `afterSceneIndex` (stale/undefined) simply falls back to
@@ -1736,9 +1751,13 @@ function genSceneId(): string {
  * mode here the way there is for a layer insert into an ALREADY-existing
  * scene, since this function creates its own target from nothing.
  */
-export function addScene(manifest: Manifest, afterSceneIndex?: number): { manifest: Manifest; selection: Selection } {
+export function addScene(
+  manifest: Manifest,
+  afterSceneIndex?: number,
+  id?: string,
+): { manifest: Manifest; selection: Selection } {
   const next = clone(manifest);
-  const scene: Scene = { id: genSceneId(), dur: 4 };
+  const scene: Scene = { id: id ?? genSceneId(), dur: 4 };
   const insertAt =
     afterSceneIndex !== undefined && next.scenes[afterSceneIndex] ? afterSceneIndex + 1 : next.scenes.length;
   next.scenes.splice(insertAt, 0, scene);

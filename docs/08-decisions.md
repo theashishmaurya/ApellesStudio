@@ -35727,3 +35727,100 @@ primitive deriving a rendering-time value from the layout it actually got)
   against a transcription of the pre-fix geometry). What a wrapped or
   below-the-stack callout actually *looks* like on the c038 canvas has not
   been seen — the live app was in use by another session.
+
+---
+
+## D-371 — a Motion scene's `id` is an editable name in both interfaces, and a rename that would orphan its render is refused rather than followed
+
+**Status: `decided`** (2026-10-07). Fixes **B-242**.
+
+**Context.** `scene.id` is the scene's DISPLAY NAME — the layer panel's section
+header, the scene selector, `motion_get_state`'s per-scene row — and nothing
+could properly set it. `motion_add_scene` had no `id` parameter, and the MCP
+layer drops an unknown argument silently, so a caller that passed one got
+`scene-kl4e06` back with no signal. `motion_set_scene_field key="id"` wrote it
+correctly and then warned `"id" is not one of the known scene fields`, because
+that warning is computed from `SCENE_FIELDS`, which omitted it. The tool that
+ought to set it could not; the one that did believed it should not. Under this
+repo's human-AND-AI invariant the field failed in both directions at once.
+
+Adding `id` to `SCENE_FIELDS` is one line. The real question was the one B-242
+asked and did not answer: **what does a rename break?** Read out of the code,
+two things, neither of which a rename touches:
+
+1. **The Motion→Edit link is keyed by the id, through a COPY of it.**
+   `computeEditLinks` resolves a scene to its clips through the `motionSceneId`
+   stamp written onto the media-pool item at render time (D-260). That stamp is
+   a copy, not a reference. Rename the scene and it keeps the old name: the
+   renamed scene reads as "never rendered", the stamp survives pointing at a
+   scene that no longer exists, and `renderStaleness` stops counting it.
+2. **The rendered file is NAMED by the id.** `default_output_path`
+   (`app/src-tauri/src/chroma/motion.rs`, D-180) writes
+   `<project>.chroma/motion/renders/<id>.mp4`. After a rename the next render
+   writes a *different* file and every placed clip keeps reading the old one —
+   D-260's "a re-render refreshes the placed Edit clips" silently void, which
+   is precisely the failure B-219 described for a filesystem-copied project,
+   reached here by an ordinary rename.
+
+**Options.**
+1. *Add `id` to `SCENE_FIELDS` and nothing else.* What the bug entry proposed as
+   the minimum. Rejected once the above was read: it would put a one-click,
+   one-call way to break a placed clip into both interfaces, silently, which is
+   a worse bug than the warning it removes.
+2. *Follow the references on rename.* Rename the file on disk, rewrite the pool
+   item's `sourcePath` and stamp, rewrite every placed clip's `source_path`.
+   The right eventual answer, and out of reach here: `@apelles/motion` cannot
+   touch the filesystem, the media pool or the Edit timeline (D-039's layer
+   direction — the pool already arrives as a read-only injected accessor for
+   exactly this reason). It is a real cross-layer feature, not a guard.
+3. *Refuse a rename that would orphan a render, with a named reason.* Chosen.
+
+**Choice.** `checkSceneRename` (`packages/motion/src/editLinks.ts`) — one pure
+pre-flight predicate, in the file that already owns "what is this scene linked
+to", returning `{ok:true}` or `{ok:false, reason, overridable}`. Both callers
+run the identical one: the Inspector's new `id` row and
+`motion_set_scene_field`, so the GUI and the MCP tool cannot reach different
+conclusions. That is `checkRemoveGap` (B-227) and `checkSplit` (B-197)'s
+established shape, for the same reason they have it — a writer can only answer
+a rejection with silence, and a caller that needs to say WHY cannot re-derive it
+without re-implementing the rule.
+
+`motion_add_scene` gains `id` and validates it through the SAME function against
+a placeholder scene, rather than growing a second near-copy of "what is a legal
+id".
+
+**The orphan test is `renderStaleness`' test, deliberately, not a second one:**
+`links[id] !== undefined && links[id].refreshedByRender !== false`. A link into a
+DIFFERENT project (B-219) is not a render this project owns, so renaming past it
+orphans nothing of ours. One rule, not two. No link map at all (`undefined`)
+allows the rename and is not a loophole: in the shipped app `Root.tsx` always
+computes one, and the only mount without it is the standalone Motion harness,
+where there is no Edit timeline to hold a clip.
+
+**Why `force` exists.** The orphan refusal, and only it, is `overridable`
+(`force: true` on the tool, a "Rename anyway" confirm in the Inspector — the
+arm-then-confirm shape the scene-delete button already uses). A scene's name is
+a thing people legitimately change after shipping a cut, and the damage is
+recoverable (re-render under the new name, re-place the clip). A rule that made
+a rendered scene's name permanent forever would be a worse bug than B-242.
+
+**Three refusals `force` does NOT lift**, because each produces a document that
+is wrong rather than a tradeoff someone can accept — all three found by reading
+the code this pass, none of them in B-242's own description:
+- **Deleting the id** (`value: null` used to delete the key) — `schema.ts`
+  declares `scene.id` a required `z.string()`; the manifest would stop parsing.
+- **A collision** — two scenes with one id render to the same `<id>.mp4`, the
+  second overwriting the first, and the link map cannot tell them apart.
+- **An id that is not a usable filename** — `default_output_path` does no
+  escaping whatsoever, so `value: "../../x"` wrote the render OUT of the
+  project. Empty, whitespace-padded, `/`, `\`, `.`, `..` and control characters
+  are all rejected.
+
+**Verified.** 25 new unit cases across `editLinks.test.ts`, `motionOps.test.ts`
+and `propCatalog.test.ts`; 9 of them re-run against the pre-fix code in place and
+confirmed failing. `packages/motion` 811/811, `apelles-mcp` 25 + 5 parity + 3
+transport with the corpus re-captured (180 tools, 267 cases — the tool COUNT is
+unchanged; two descriptions and two argument lists moved), `cargo fmt`/`clippy`
+clean, `tsc` unchanged at 65 pre-existing `app/src` errors. **Not** verified in
+the running app — another session held it; the Inspector row and its refusal UI
+rest on the shared predicate's tests and on reading, not on a screenshot.

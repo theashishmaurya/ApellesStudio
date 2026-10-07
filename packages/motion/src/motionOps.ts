@@ -161,6 +161,10 @@ import {
   sizeFields,
 } from './propCatalog';
 import { clampEaseCurve, resolveEaseCurve, type EaseCurve } from './easeCurve';
+// B-242/D-371 — the scene-rename pre-flight. A VALUE import of `editLinks.ts`,
+// whose own import of this file's link types is `import type` and therefore
+// erased, so this is a one-way edge at runtime, not a cycle.
+import { checkSceneRename } from './editLinks';
 import { layerLabel, type Selection } from './LayerList';
 import { sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/build';
 import type { Cam2dKey, Cam3dKey, Manifest, ThemeName, TransformKey } from '@apelles/motion-engine/src/engine/schema';
@@ -299,6 +303,14 @@ const KEY_LANES = new Set<string>(['layer', 'camera', 'scene3d-camera', 'active'
 /** the default `fps` used when a manifest somehow carries none — the same
  *  floor `useMotionControl`'s Phase 3 ops already applied inline. */
 const FALLBACK_FPS = 30;
+
+/** B-242/D-371 — the stand-in id `motion_add_scene` gives the not-yet-created
+ *  scene so it can validate a caller-supplied `id` through the REAL
+ *  `checkSceneRename` instead of a second copy of its rules. It contains a
+ *  "/", which that function rejects as an id before it compares anything,
+ *  precisely so the placeholder can never collide with — or compare equal to —
+ *  any id a caller is allowed to pass. */
+const NEW_SCENE_ID_PLACEHOLDER = '/new-scene';
 
 /** reads an arg under either its `snake_case` or `camelCase` spelling. */
 function arg(a: Record<string, unknown>, snake: string, camel: string): unknown {
@@ -773,9 +785,23 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
 
     // ---- scenes -------------------------------------------------------
 
-    /** insert a new 4s scene right after `after_scene_index` (or at the end)
-     *  — `addScene`, the exact function `LayerList.tsx`'s own "+ Scene"
-     *  button calls (D-178). */
+    /**
+     * insert a new 4s scene right after `after_scene_index` (or at the end)
+     * — `addScene`, the exact function `LayerList.tsx`'s own "+ Scene"
+     * button calls (D-178).
+     *
+     * B-242/D-371 — `id` names the new scene outright. Before this, the tool
+     * had no id parameter at all and the MCP layer drops an unknown argument
+     * silently, so a caller that passed one got a random `scene-kl4e06` back
+     * with no signal its name had been ignored. Validated through
+     * `checkSceneRename` against a HYPOTHETICAL scene appended at the end:
+     * the three rules that apply to a new id (non-empty, usable as a
+     * filename, not already taken) are exactly that function's first three,
+     * and running the real one is what keeps the add path and the rename path
+     * from drifting into two different notions of a legal id. Its fourth rule
+     * — the Edit-link orphan check — is skipped by passing no link map: there
+     * is no scene here yet, so there is no render of it to orphan.
+     */
     motion_add_scene: (a) => {
       const cur = ctx.api();
       const guard = requireManifest(cur);
@@ -788,9 +814,23 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         if (!Number.isFinite(after)) return { error: 'after_scene_index must be an integer' };
       }
 
-      const { manifest: next, selection } = addScene(guard.manifest, after);
+      const rawId = a?.id;
+      let id: string | undefined;
+      if (rawId !== undefined && rawId !== null) {
+        const scenes = [...guard.manifest.scenes, { id: NEW_SCENE_ID_PLACEHOLDER }];
+        const check = checkSceneRename(scenes, scenes.length - 1, rawId, undefined);
+        if (!check.ok) return { error: check.reason };
+        id = check.to;
+      }
+
+      const { manifest: next, selection } = addScene(guard.manifest, after, id);
       cur.commit(next, 'Add scene');
-      return { selection, sceneIndex: selection.sceneIndex, sceneCount: next.scenes.length };
+      return {
+        selection,
+        sceneIndex: selection.sceneIndex,
+        sceneId: next.scenes[selection.sceneIndex].id,
+        sceneCount: next.scenes.length,
+      };
     },
 
     /**
@@ -981,7 +1021,20 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       };
     },
 
-    /** set (or delete, `value: null`) one field on the scene itself. */
+    /**
+     * set (or delete, `value: null`) one field on the scene itself.
+     *
+     * **B-242/D-371 — `key: "id"` is a RENAME, and goes through
+     * `checkSceneRename` first.** It used to be the one working way to set a
+     * scene's name and the only one that said it was wrong: `id` was missing
+     * from `SCENE_FIELDS`, so the generic unknown-key warning below fired on
+     * the field that names the scene. Both halves are fixed — `id` is a known
+     * scene field now, and the write is gated instead of warned about, for
+     * the reason `checkSceneRename` states: the id keys the Motion→Edit link
+     * and names the rendered file, and nothing in this package can follow
+     * either reference. A refusal names the clips it would orphan; `force:
+     * true` accepts the broken link deliberately.
+     */
     motion_set_scene_field: (a) => {
       const cur = ctx.api();
       const guard = requireManifest(cur);
@@ -998,6 +1051,16 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       if (typeof key !== 'string' || !key) return { error: 'key (string) required' };
       if (!a || !('value' in a)) return { error: 'value is required (use JSON null to delete the field)' };
       const value = a.value === null ? undefined : a.value;
+
+      if (key === 'id') {
+        const check = checkSceneRename(manifest.scenes, sceneIndex, value, ctx.editLinks?.(), {
+          force: a?.force === true,
+        });
+        if (!check.ok) return { error: check.reason, overridable: check.overridable };
+        const renamed = setSceneField(manifest, sceneIndex, key, check.to);
+        cur.commit(renamed, `Rename scene to ${check.to}`);
+        return { sceneIndex, key, value: check.to, renamedFrom: check.from };
+      }
 
       const warning = SCENE_FIELDS.some((f) => f.key === key)
         ? undefined

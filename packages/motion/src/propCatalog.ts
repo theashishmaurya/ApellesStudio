@@ -270,12 +270,27 @@ export function fieldsForPrimitive(use: string): FieldSpec[] | undefined {
   return [...timingFields, ...own];
 }
 
-/** scene-level fields (selection target `{kind:'scene'}`) — NOT `id`
- *  (used as the scene's identity/React key and by anything that
- *  cross-references it by id; editable but out of scope for a first pass —
- *  a rename here needs to be a deliberate, separate operation, not a
- *  side effect of a generic field editor). */
+/** scene-level fields (selection target `{kind:'scene'}`).
+ *
+ *  **`id` is here as of B-242/D-371**, reversing this list's original "NOT
+ *  `id` … out of scope for a first pass" exclusion. That exclusion was wrong
+ *  in both directions at once: `scene.id` is not an internal handle, it is the
+ *  scene's NAME everywhere a person sees one (the layer panel's section
+ *  headers, the scene selector, and `motion_render`'s per-scene output
+ *  filename), so leaving it out gave the Inspector no way to set the one field
+ *  that names a scene — while `motion_set_scene_field` wrote it perfectly well
+ *  and then warned `"id" is not one of the known scene fields`, because this
+ *  list is what that warning is computed from. The tool that ought to set it
+ *  could not, and the one that did believed it should not.
+ *
+ *  The original comment's underlying point still stands and is not dropped: a
+ *  rename IS a deliberate operation, because the id keys the Motion→Edit link
+ *  and names the file on disk. It is now enforced where it can actually be
+ *  enforced — `checkSceneRename` (`editLinks.ts`), the one pre-flight both the
+ *  Inspector's row and `motion_set_scene_field` run — instead of by hiding the
+ *  field from one of its two callers. */
 export const SCENE_FIELDS: FieldSpec[] = [
+  { key: 'id', label: 'Name (scene id)', kind: 'string', group: 'content' },
   { key: 'dur', label: 'Duration (s)', kind: 'number', group: 'timing' },
   { key: 'bg', label: 'Background', kind: 'color', group: 'fill' },
   { key: 'grain', label: 'Grain', kind: 'boolean', group: 'fill' },

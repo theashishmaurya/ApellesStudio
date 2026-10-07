@@ -5813,7 +5813,7 @@
     },
     {
       "name": "motion_add_scene",
-      "description": "Add a new empty 4-second scene \u2014 the same action the layer panel's own\n    \"+ Scene\" button performs.\n\n    Scenes play back to back in array order, and each renders to its OWN\n    separate video file (see `motion_render`), so a scene is the unit of \"one\n    shot\" here, not a track. The new scene is inserted directly AFTER\n    `after_scene_index` (matching the GUI, which inserts after whatever is\n    selected) or appended at the end when omitted. Every later scene's index\n    shifts by one \u2014 re-read `motion_get_state` afterwards.\n\n    Returns the new scene's `sceneIndex` and a `selection` addressing it. Set\n    its length with `motion_set_scene_field(key=\"dur\", value=<seconds>)`.\n\n    Args:\n        after_scene_index: insert after this scene. Omit to append.",
+      "description": "Add a new empty 4-second scene \u2014 the same action the layer panel's own\n    \"+ Scene\" button performs.\n\n    Scenes play back to back in array order, and each renders to its OWN\n    separate video file (see `motion_render`), so a scene is the unit of \"one\n    shot\" here, not a track. The new scene is inserted directly AFTER\n    `after_scene_index` (matching the GUI, which inserts after whatever is\n    selected) or appended at the end when omitted. Every later scene's index\n    shifts by one \u2014 re-read `motion_get_state` afterwards.\n\n    **Name it here.** A scene's `id` is its DISPLAY NAME \u2014 the layer panel's\n    section header, the scene selector, and the filename `motion_render` writes\n    (`motion/renders/<id>.mp4`). Pass `id` and the scene is created under that\n    name; omit it and you get a generated `scene-xxxxxx` you would then have to\n    rename, which is harder once the scene has been rendered and placed (see\n    `motion_set_scene_field`). An id must be non-empty, free of \"/\", \"\\\" and\n    control characters (it becomes a filename), and not already taken by\n    another scene \u2014 any of those is refused with a reason, and nothing is\n    created.\n\n    Returns the new scene's `sceneIndex`/`sceneId` and a `selection` addressing\n    it. Set its length with\n    `motion_set_scene_field(key=\"dur\", value=<seconds>)`.\n\n    Args:\n        after_scene_index: insert after this scene. Omit to append.\n        id: the new scene's name. Omit for a generated one.",
       "inputSchema": {
         "properties": {
           "after_scene_index": {
@@ -5827,6 +5827,18 @@
             ],
             "default": null,
             "title": "After Scene Index"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Id"
           }
         },
         "type": "object",
@@ -8762,7 +8774,7 @@
     },
     {
       "name": "motion_set_scene_field",
-      "description": "Set one field on a SCENE itself (not on a layer) \u2014 most often `dur`, the\n    scene's length in SECONDS, which decides how long its shot runs and is the\n    clamp every keyframe time in it is bound to.\n\n    `motion_list_primitives`' `sceneFields` lists the known keys; an\n    unrecognised one is still written (a hand-authored manifest may carry\n    fields the Inspector does not know) but comes back with a `warning`.\n\n    Args:\n        scene_index: which scene.\n        key: the field, e.g. \"dur\" or \"id\".\n        value: the new value. Pass null to DELETE the field.",
+      "description": "Set one field on a SCENE itself (not on a layer) \u2014 most often `dur`, the\n    scene's length in SECONDS, which decides how long its shot runs and is the\n    clamp every keyframe time in it is bound to.\n\n    `motion_list_primitives`' `sceneFields` lists the known keys; an\n    unrecognised one is still written (a hand-authored manifest may carry\n    fields the Inspector does not know) but comes back with a `warning`.\n\n    **`key=\"id\"` is a RENAME and is checked, not just written.** A scene's id\n    is its display name AND the name of the file it renders to\n    (`motion/renders/<id>.mp4`) AND the key the Motion\u2192Edit link is made of \u2014\n    the `motionSceneId` stamp put on the media-pool item at render time. A\n    rename does NOT follow that stamp, so renaming a scene whose render is\n    already in Sources (or placed on the Edit timeline) would leave those clips\n    reading the old file while a re-render writes a new one under the new name,\n    refreshing nothing. That case is refused with a reason naming the clips it\n    would orphan; pass `force=true` to do it anyway and accept the broken link.\n    An id that is empty, has leading/trailing whitespace, contains \"/\", \"\\\" or\n    a control character, or collides with another scene is refused outright \u2014\n    `force` does not lift those. To rename a scene cleanly: rename it, then\n    re-render it and re-place (or re-link) its clips.\n\n    Args:\n        scene_index: which scene.\n        key: the field, e.g. \"dur\" or \"id\".\n        value: the new value. Pass null to DELETE the field.\n        force: for key=\"id\" only \u2014 rename even though it orphans a render.",
       "inputSchema": {
         "properties": {
           "scene_index": {
@@ -8776,6 +8788,11 @@
           "value": {
             "default": null,
             "title": "Value"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
           }
         },
         "required": [
@@ -15198,13 +15215,15 @@
       "tool": "motion_add_scene",
       "case": "full",
       "arguments": {
-        "after_scene_index": 97
+        "after_scene_index": 97,
+        "id": "v_motion_add_scene.id"
       },
       "requests": [
         {
           "op": "motion_add_scene",
           "args": {
-            "after_scene_index": 97
+            "after_scene_index": 97,
+            "id": "v_motion_add_scene.id"
           },
           "timeout_ms": 20000
         }
@@ -16994,7 +17013,8 @@
           "args": {
             "scene_index": 35,
             "key": "v_motion_set_scene_field.key",
-            "value": null
+            "value": null,
+            "force": false
           },
           "timeout_ms": 20000
         }
@@ -17013,7 +17033,8 @@
       "arguments": {
         "scene_index": 35,
         "key": "v_motion_set_scene_field.key",
-        "value": "any_motion_set_scene_field.value"
+        "value": "any_motion_set_scene_field.value",
+        "force": true
       },
       "requests": [
         {
@@ -17021,7 +17042,8 @@
           "args": {
             "scene_index": 35,
             "key": "v_motion_set_scene_field.key",
-            "value": "any_motion_set_scene_field.value"
+            "value": "any_motion_set_scene_field.value",
+            "force": true
           },
           "timeout_ms": 20000
         }

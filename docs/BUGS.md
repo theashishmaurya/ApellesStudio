@@ -58,13 +58,33 @@ Spawning was only the first wall. With the graph spilled, that same export ran *
 
 ## B-242 — a scene's `id` is its display name, but nothing can properly set it: no Inspector row, and the one MCP tool that writes it warns that it shouldn't
 
-status: **open** · severity: low (there is a working path, it just tells you it is wrong) · area: `packages/motion/src/propCatalog.ts` (`SCENE_FIELDS`), `motion_add_scene`
+status: **fixed** (2026-10-07, **D-371**) · severity: low (there was a working path, it just told you it was wrong — but see "what fixing it found", which is not low) · area: `packages/motion/src/propCatalog.ts` (`SCENE_FIELDS`), `packages/motion/src/editLinks.ts` (the new `checkSceneRename`), `packages/motion/src/motionOps.ts`, `packages/motion/src/InspectorPanel.tsx`, `motion_add_scene`/`motion_set_scene_field` in both MCP servers
 
 - **found:** 2026-09-27, by a builder agent adding scenes to `2026-09-12-c038-mgfx`. It passed `scene_id: "c038-training"` to `motion_add_scene` and got `id: "scene-kl4e06"`.
 - **actual:** `motion_add_scene` has no id parameter at all (an unknown argument is silently dropped by the MCP layer, so the caller gets no signal). The working path is `motion_set_scene_field key="id"`, which writes correctly but returns `"id" is not one of the known scene fields (dur, bg, grain, vignette, transition) — set anyway`. So the tool that ought to set the id can't, and the one that does believes it shouldn't.
 - **why it matters beyond cosmetics:** the scene id IS the scene's name everywhere a person sees it — the layer panel's section headers, the scene selector, and `motion_render`'s per-scene output filenames. It is not an internal handle. Under this repo's "every feature is built for a human AND an AI" invariant it currently has neither a real GUI affordance (no Inspector row, because `SCENE_FIELDS` omits it) nor an honest MCP one.
-- **fix:** add `id` to `SCENE_FIELDS` (`kind: 'string'`, content group) so the Inspector renders it and the warning stops firing. Check first whether a rename needs to update anything that references a scene by id — `motion_get_edit_links` at least, and any placed Edit-tab clip — and either follow the references or refuse a rename that would orphan one. Optionally give `motion_add_scene` an `id` argument so the common case is one call.
 - **deliberately not fixed on the spot:** a builder agent was driving the live app at the time, and editing `packages/motion` would have HMR-remounted its preview mid-verification.
+
+### The fix (D-371)
+
+`id` is in `SCENE_FIELDS` (`kind: 'string'`, label "Name (scene id)", content group), so the Inspector renders a row for it and the spurious warning cannot fire. `motion_add_scene` takes an `id`, so naming a scene is one call. Both halves of the invariant are now real: a GUI affordance and an MCP parameter, over the same `setSceneField`/`checkSceneRename` underneath.
+
+**What the rename-safety check of this entry actually found — the part that was NOT cosmetic.** A rename was unsafe, in two ways, and the checking had to be done by reading the code rather than reasoning about it:
+
+1. **`motion_get_edit_links` does NOT reference scenes by anything stable.** `computeEditLinks` (`packages/motion/src/editLinks.ts`) builds its whole map from the **`motionSceneId` stamp copied onto each media-pool item at render time** (D-260). That stamp is a copy of the id, not a reference to the scene, so a rename leaves it pointing at the old name: the renamed scene reads as "never rendered", and the stale stamp survives as a link to a scene that no longer exists. `renderStaleness` (`motionOps.ts`) reads the same `links[s.id]`, so a rename also silently takes a scene out of the "your renders went stale" report.
+2. **`motion_render` names the output file by scene id** — `default_output_path` (`app/src-tauri/src/chroma/motion.rs`) writes `<project>.chroma/motion/renders/<id>.mp4`, D-180. So after a rename the next render writes a **different file**, while every placed Edit clip keeps reading the old one. That is exactly the failure B-219 described for a filesystem-copied project, reached by an ordinary rename instead.
+
+**So a rename CAN orphan a placed clip, and it is refused rather than followed.** Following the references would mean renaming a file on disk, rewriting the pool item's `sourcePath` and stamp, and rewriting every placed clip's `source_path` — three layers `@apelles/motion` structurally cannot reach (D-039 forbids a tab package importing `@apelles/bridge` or `@apelles/editor`; the pool arrives as a read-only injected accessor). The refusal is `checkSceneRename`, the repo's established shape for this (`checkRemoveGap`/B-227, `checkSplit`/B-197): **one pre-flight predicate shared by the Inspector row and the MCP tool**, returning a reason that names the clips it would orphan and the two ways out. `force: true` (MCP) / a "Rename anyway" confirm button (GUI) accepts the broken link deliberately — a rule that made a rendered scene's name permanent forever would be a worse bug than this one.
+
+**The test for "would this orphan something" is `renderStaleness`' test, not a second one:** `links[id] !== undefined && links[id].refreshedByRender !== false`. A link into a DIFFERENT project (B-219) is not a render this project owns, so renaming past it orphans nothing of ours. One rule, not two.
+
+**Three further refusals the same read turned up**, none of which `force` lifts, because each produces a document that is simply wrong rather than a tradeoff:
+- **Deleting the id.** `motion_set_scene_field key="id" value=null` deleted the key, and `schema.ts` declares `scene.id` as a required `z.string()` — the manifest would stop parsing.
+- **A collision.** Two scenes sharing an id render to the same `<id>.mp4` (the second overwrites the first) and cannot be told apart by the link map, which is keyed by id.
+- **An id that is not a usable filename.** `default_output_path` joins the id onto the renders directory with **no escaping at all**, so `motion_set_scene_field key="id" value="../../x"` would have written the render outside the project. Empty, whitespace-padded, `/`, `\`, `.`, `..` and control characters are all rejected.
+
+- **verified:** 15 new `checkSceneRename` cases in `editLinks.test.ts`, 7 new op cases in `motionOps.test.ts`, 3 in `propCatalog.test.ts`; **9 of them confirmed failing against the pre-fix code** (reverted in place and re-run, not assumed). `packages/motion` 811/811, `apelles-mcp` 25 + 5 parity + 3 transport (corpus re-captured for the two reworded tools), `cargo fmt`/`clippy` clean, `tsc` 65 errors — all 65 pre-existing and in `app/src/`, none in any file this touched.
+- **not verified, and could not be:** nothing was driven in the live app (another session held it). The Inspector's new `id` row, its refusal text and the "Rename anyway" button are verified by reading and by the shared predicate's unit tests, not by a screenshot of the running Inspector.
 
 ## B-241 — one bad frame latched the Motion preview forever: `@remotion/player`'s error boundary has no reset path
 

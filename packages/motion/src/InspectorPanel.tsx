@@ -105,6 +105,8 @@ import { InspectorEmptyState, InspectorSection } from '@apelles/inspector';
 // field behaviour instead of a second hand-written copy of it.
 import { useNumberField } from '@apelles/ui/number-scrub';
 import { EaseFieldControl } from './EaseCurveEditor';
+import { checkSceneRename } from './editLinks';
+import type { MotionEditLinks } from './motionOps';
 import { layerLabel, type Selection } from './LayerList';
 import type { PrimitiveUse } from './catalog';
 import { PRESET_NAME_MAX, normalizePresetName, suggestedPresetName } from './layerPresets';
@@ -883,6 +885,83 @@ function ProjectInspector({ manifest, onChange }: { manifest: Manifest; onChange
   );
 }
 
+/**
+ * B-242/D-371 — the SCENE form. Its own component (rather than the inline
+ * `FieldGroup` the scene branch used to be) for the same reason
+ * `ProjectInspector` above is one: it needs `useState` to hold a refusal, and
+ * `InspectorPanel`'s body is a chain of early returns where a hook cannot go.
+ *
+ * Every field but `id` commits straight through `setSceneField`, unchanged.
+ * `id` is a RENAME and runs `checkSceneRename` first — the SAME pre-flight
+ * `motion_set_scene_field` runs, so the GUI and the MCP tool cannot come to
+ * different conclusions about whether a rename is safe (this repo's
+ * human-AND-AI rule, and `checkRemoveGap`/B-227's shape for a shared refusal).
+ *
+ * A refusal the check marks `overridable` (the Edit-link orphan, the only one)
+ * arms a "Rename anyway" button rather than being a dead end — the arm-then-
+ * confirm shape `LayerList.tsx`'s own scene delete already uses, for the same
+ * reason: the action is legitimate and recoverable, it just must not happen by
+ * accident. A non-overridable refusal (a blank id, a `/` in it, a collision
+ * with another scene) shows the reason and nothing else; there is no version
+ * of those the person actually wants.
+ */
+function SceneInspector({
+  manifest,
+  sceneIndex,
+  scene,
+  onChange,
+  editLinks,
+}: {
+  manifest: Manifest;
+  sceneIndex: number;
+  scene: Record<string, unknown>;
+  onChange: (next: Manifest) => void;
+  editLinks?: MotionEditLinks;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  /** the id a refused-but-overridable rename was asking for, or `null`. */
+  const [armedRename, setArmedRename] = useState<string | null>(null);
+
+  const rename = (value: unknown, force: boolean) => {
+    const check = checkSceneRename(manifest.scenes, sceneIndex, value, editLinks, { force });
+    if (!check.ok) {
+      setError(check.reason);
+      setArmedRename(check.overridable && typeof value === 'string' ? value : null);
+      return;
+    }
+    setError(null);
+    setArmedRename(null);
+    if (check.to === check.from) return;
+    onChange(setSceneField(manifest, sceneIndex, 'id', check.to));
+  };
+
+  const commit = (key: string, value: unknown) => {
+    if (key === 'id') {
+      rename(value, false);
+      return;
+    }
+    setError(null);
+    setArmedRename(null);
+    onChange(setSceneField(manifest, sceneIndex, key, value));
+  };
+
+  return (
+    <div className="h-full w-full overflow-y-auto p-3 flex flex-col gap-3">
+      <FieldGroup fields={SCENE_FIELDS} raw={scene} onCommit={commit} />
+      {error && <span className="text-[10px] text-red-400">{error}</span>}
+      {armedRename !== null && (
+        <button
+          type="button"
+          className="self-start rounded border border-border-color px-2 py-1 text-[10px] text-text-secondary hover:text-text-primary"
+          onClick={() => rename(armedRename, true)}
+        >
+          Rename anyway
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** D-345 — the document theme as an Inspector control. Built here rather than
  *  in `PROJECT_FIELDS` because its options come from the engine's live theme
  *  registry and its writer is `setProjectTheme` (an empty pick DELETES the
@@ -913,6 +992,7 @@ export function InspectorPanel({
   onChange,
   onSnapToLayer,
   onSaveAsComponent,
+  editLinks,
 }: {
   manifest: Manifest;
   /** D-158 — the whole live selection (was `Selection | null`). 0 entries:
@@ -931,6 +1011,13 @@ export function InspectorPanel({
    *  with no library wired simply doesn't get the section, rather than
    *  getting one that silently does nothing. */
   onSaveAsComponent?: (name: string) => void;
+  /** B-242/D-371 — each scene's Edit-tab footprint, so the scene form's `id`
+   *  row can refuse a rename that would orphan a placed clip. Supplied by the
+   *  app layer through `MotionTab` for the same D-039 layer reason
+   *  `LayerList`'s badge takes it as a prop: this package may not import the
+   *  media pool or the Edit timeline. Omitting it means no link data exists to
+   *  orphan (the standalone Motion harness) — see `checkSceneRename`. */
+  editLinks?: MotionEditLinks;
 }) {
   // D-345 — nothing selected means the DOCUMENT is what is being inspected.
   if (selections.length === 0) {
@@ -948,13 +1035,16 @@ export function InspectorPanel({
     const scene = selectedScene(manifest, selection.sceneIndex);
     if (!scene) return <StaleNotice />;
     return (
-      <div className="h-full w-full overflow-y-auto p-3">
-        <FieldGroup
-          fields={SCENE_FIELDS}
-          raw={scene as unknown as Record<string, unknown>}
-          onCommit={(key, value) => onChange(setSceneField(manifest, selection.sceneIndex, key, value))}
-        />
-      </div>
+      <SceneInspector
+        // B-242/D-371 — remount on a scene change so a refusal shown for one
+        // scene cannot linger over the next one's form.
+        key={selection.sceneIndex}
+        manifest={manifest}
+        sceneIndex={selection.sceneIndex}
+        scene={scene as unknown as Record<string, unknown>}
+        onChange={onChange}
+        editLinks={editLinks}
+      />
     );
   }
 
