@@ -76,3 +76,29 @@ c038-specific — it applies to any Motion scene.
   filling left-to-right needs `fillDir: "col"`.
 
 Both were caught by reading `Matrix.tsx` before building, not from the spec.
+
+---
+
+## Two the fixes themselves changed (2026-10-07)
+
+- **A `layers` callout that does not fit beside its stack is now drawn
+  CENTRED UNDER the stack, with no arm** (B-240/D-370). It used to flip to the
+  left of the stack and, on a narrow canvas, render at a negative x — entirely
+  off-frame, silently. Budget, measured: the text's near edge sits
+  `cardW/2 + 314` from the stack's centre, so a side placement needs
+  `cardW/2 + 314 + 0.42 × 34 × len(callout)` to fit inside the canvas's 60-px
+  margin. On a 1252-wide canvas a default `cardW: 620` leaves **nothing** —
+  624 wanted against 566 available — so every callout on such a stack goes
+  below. Narrow `cardW` if you want it beside the stack; otherwise the text
+  wraps into the full content box under it, which is usually the better
+  layout anyway.
+
+- **`plot`'s own type now scales with the plot's box** (B-239, same day). Its
+  five type roles (title 28, annotation / baseline label 26, axis title /
+  tick 24) are multiplied by `min(width/820, height/520)`, floored so the
+  smallest never drops under 14 px. So shrinking a `plot` shrinks its labels —
+  which is the point — but it also means a `plot` you deliberately made
+  *large* draws larger type than the catalog's numbers suggest. The other
+  primitives' internal type (`layers`' card label 40 / sublabel 24 /
+  callout 34, `matrix`) is still fixed and does NOT participate in a canvas
+  reflow.

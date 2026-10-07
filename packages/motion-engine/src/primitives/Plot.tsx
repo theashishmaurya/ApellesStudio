@@ -31,6 +31,10 @@
  *
  * `data-motion-box` marks the outer `<svg>`, which is already sized to the
  * plot's real footprint (`width`/`height`), so it is the tight box.
+ *
+ * Type: every size this draws is a named base times `plotTypeScale` below
+ * (B-239), so the chart's own labels stay proportional to the chart when its
+ * box changes — a canvas reflow, or simply a plot authored smaller.
  */
 import React, { useMemo } from "react";
 import { useCurrentFrame } from "remotion";
@@ -56,6 +60,81 @@ const MARGIN = { left: 96, right: 32, top: 28, bottom: 76, titleTop: 72 } as con
 
 /** Marker radius in px at 1080p. */
 const MARKER_R = 7;
+
+/** The box this primitive's lengths were authored against — its own default
+ *  `width`/`height`. `plotTypeScale` is exactly 1 here, so a plot drawn at
+ *  the default box renders byte-for-byte as it did before B-239. */
+export const PLOT_BASE_WIDTH = 820;
+export const PLOT_BASE_HEIGHT = 520;
+
+/** The five type roles this primitive draws, at the base box. Named because
+ *  they are a deliberate hierarchy — kicker above annotation above the
+ *  scaffolding — not five incidental literals, and B-239 was partly a bug of
+ *  not being able to see that hierarchy at all. */
+export const PLOT_TITLE_FONT_SIZE = 28;
+export const PLOT_ANNOTATION_FONT_SIZE = 26;
+export const PLOT_BASELINE_LABEL_FONT_SIZE = 26;
+export const PLOT_AXIS_TITLE_FONT_SIZE = 24;
+export const PLOT_TICK_FONT_SIZE = 24;
+
+/** Below this a label stops being readable at all, so shrinking further only
+ *  trades one unreadable result for another — the same legibility floor, and
+ *  the same reasoning, as `Graph.tsx`'s `GRAPH_LABEL_MIN_FONT_SIZE`. */
+export const PLOT_TYPE_MIN_FONT_SIZE = 14;
+/** Expressed against the SMALLEST role, so the floor bites on the first
+ *  thing that would become illegible rather than on an average. */
+const PLOT_TYPE_MIN_SCALE = PLOT_TYPE_MIN_FONT_SIZE / PLOT_TICK_FONT_SIZE;
+
+/**
+ * B-239 — the multiplier every type size in this primitive is drawn at,
+ * derived from the plot's OWN box.
+ *
+ * **The bug.** All five sizes above were bare literals in the JSX. D-347's
+ * canvas reflow scales a `plot`'s `width` by `sx` and its `height` by `sy`
+ * (`propCatalog.ts`'s `sizeFields('plot')`) and scales an authored `text`
+ * layer's `size` too (`manifestReflow.ts`'s `EXTRA_FIELDS`), but it has no
+ * way to reach type baked inside a primitive's render. So on c038's
+ * 1920×1080 → 1252×1016 reshape the chart lost 35% of its width while its
+ * own axis labels stayed at 24 px and the authored captions around it
+ * reflowed down to 22–23 px — the type hierarchy inverted, supporting
+ * captions rendering SMALLER than the chart's scaffolding, and nothing
+ * overflowed or errored to flag it.
+ *
+ * **Why the plot's own box and not the canvas.** The question this type has
+ * to answer is "does it fit in, and read against, THIS chart" — a plot
+ * hand-authored small on a full-size canvas has exactly the same problem as
+ * a reflowed one, and solving it from the box solves both with nothing to
+ * keep in sync. It is also the same call `Graph.tsx` made for B-225: a
+ * rendering-time derivation from the layout that actually happened, not a
+ * new persisted manifest field (so no `propCatalog.ts` entry and no MCP
+ * parameter is owed here — there is no new authored value).
+ *
+ * **Why `min` of the two ratios.** Type cannot be stretched per axis, and it
+ * has to fit a box that moved on both: the tick row is constrained by width,
+ * the title by the top margin's height. `min` is the factor that clears
+ * both — the same reasoning `manifestReflow.ts` gives for its own `su`.
+ * (That is a different question from B-239's other half, where an AUTHORED
+ * caption floating on the canvas tracks height, `sy`, rather than whichever
+ * axis happened to change most.)
+ *
+ * **What it does NOT scale.** `MARGIN`, `MARKER_R` and `LABEL_LIFT`/
+ * `TROUGH_LABEL_LIFT` are still fixed. Those are layout geometry, not type;
+ * leaving them is conservative (a shrunk label inside an unshrunk margin has
+ * more air, never less) and keeps `plotLabelY`'s contract — and its existing
+ * tests — untouched.
+ *
+ * **It is not a no-op for an already-non-default box.** A plot authored at,
+ * say, 1000×640 now draws its type ~1.23× — which is the fix doing its job,
+ * not a regression: that chart's type was never proportional to it.
+ */
+export function plotTypeScale(width: number, height: number): number {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return 1;
+  if (width <= 0 || height <= 0) return 1;
+  return Math.max(
+    PLOT_TYPE_MIN_SCALE,
+    Math.min(width / PLOT_BASE_WIDTH, height / PLOT_BASE_HEIGHT),
+  );
+}
 
 /**
  * One direct label. `dy` (D-341) nudges it vertically off the automatic
@@ -186,13 +265,16 @@ export const Plot: React.FC<{
   seed = 1,
   x = 0,
   y = 0,
-  width = 820,
-  height = 520,
+  width = PLOT_BASE_WIDTH,
+  height = PLOT_BASE_HEIGHT,
 }) => {
   const frame = useCurrentFrame();
   const theme = useTheme();
   const color = colorProp ?? theme.accentSignal;
   const baselineColor = baselineColorProp ?? theme.accent;
+
+  // B-239 — every fontSize below is this multiplier times its named base.
+  const typeScale = plotTypeScale(width, height);
 
   const top = title ? MARGIN.titleTop : MARGIN.top;
   const plotW = width - MARGIN.left - MARGIN.right;
@@ -262,7 +344,7 @@ export const Plot: React.FC<{
           fill={theme.textDim}
           opacity={axesP}
           fontFamily={theme.fontUi}
-          fontSize={28}
+          fontSize={PLOT_TITLE_FONT_SIZE * typeScale}
           letterSpacing="0.06em"
         >
           {title.toUpperCase()}
@@ -282,7 +364,7 @@ export const Plot: React.FC<{
           fill={theme.textDim}
           opacity={axesP}
           fontFamily={theme.fontUi}
-          fontSize={24}
+          fontSize={PLOT_AXIS_TITLE_FONT_SIZE * typeScale}
           letterSpacing="0.06em"
         >
           {yTitle.toUpperCase()}
@@ -297,7 +379,7 @@ export const Plot: React.FC<{
           fill={theme.textDim}
           opacity={axesP}
           fontFamily={theme.fontUi}
-          fontSize={24}
+          fontSize={PLOT_AXIS_TITLE_FONT_SIZE * typeScale}
           letterSpacing="0.06em"
         >
           {xTitle.toUpperCase()}
@@ -314,7 +396,7 @@ export const Plot: React.FC<{
           fill={theme.textDim}
           opacity={axesP}
           fontFamily={theme.fontUi}
-          fontSize={24}
+          fontSize={PLOT_TICK_FONT_SIZE * typeScale}
         >
           {xLabels?.[i] ?? String(i + 1)}
         </text>
@@ -346,7 +428,7 @@ export const Plot: React.FC<{
               fill={baselineColor}
               opacity={baseP}
               fontFamily={theme.fontUi}
-              fontSize={26}
+              fontSize={PLOT_BASELINE_LABEL_FONT_SIZE * typeScale}
             >
               {baselineLabel}
             </text>
@@ -401,7 +483,7 @@ export const Plot: React.FC<{
             fill={theme.text}
             opacity={labelP}
             fontFamily={theme.fontUi}
-            fontSize={26}
+            fontSize={PLOT_ANNOTATION_FONT_SIZE * typeScale}
           >
             {a.text}
           </text>

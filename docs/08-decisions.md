@@ -35644,3 +35644,86 @@ the fixture; a direct before/after of a 45-minute 4K export was not run. At 4K
 each segment's resident cost is ~4× larger, so the contention penalty should be
 larger than 18 %, not smaller — but that is reasoning, not a measurement, and
 should be stated as such until someone runs it.
+
+---
+
+## D-370 — a `layers` callout that fits nowhere beside its stack goes UNDER it, and its text box is capped at the space actually there rather than drawn `nowrap`
+
+**decided (2026-10-07)** · fixes **B-240** · same shape as **B-225/D-347** (a
+primitive deriving a rendering-time value from the layout it actually got)
+
+- **Context.** `Layers`' callout picked a side with a one-line expression —
+  flip to `"left"` when `cx + cardW/2 + 314 + 17·len > width − 60` — and then
+  drew the text `whiteSpace: nowrap`. Nothing checked that the chosen side had
+  any room. On the left the text was laid out at whatever x its own width
+  implied, which on a narrow canvas is NEGATIVE, so the callout rendered
+  entirely outside the frame: no error, no clipping artefact, simply not in the
+  picture. Hit live on c038 after D-347 reflowed that project 1920×1080 →
+  1252×1016, and a static audit of the same manifest had rated the scene
+  "clean, polish only". B-240 names three candidate fixes.
+
+- **Options, and why none of the first two is sufficient on its own.**
+  1. **Wrap instead of `nowrap`.** Bounds the box — but a wrapped block
+     anchored at a negative x is still off-canvas, and where the clear space
+     is a few dozen px it wraps into an unreadable column.
+  2. **Clamp x into the canvas after side selection.** Cannot deliver the
+     guarantee at all: a `nowrap` line can be wider than the whole canvas, so
+     there is no x that puts it fully on screen — clamping only chooses which
+     end falls off.
+  3. **Fall back to centring under the stack when neither side fits.** The
+     only one that turns a too-tight canvas into a *usable* callout rather
+     than merely an on-canvas one.
+
+- **Choice: (3), with (1) and (2) kept as the bound rather than the fix.**
+  The real repro settles it: a 620-wide stack on a 1252-wide canvas leaves
+  566 px to the margin while the text's near edge alone wants 624, so there is
+  genuinely no room beside the stack — a clamp would pin the text to the frame
+  edge on top of the stack, and a wrap would squeeze it into a zero-width
+  column. Dropped under the stack it gets the full 1132-px content box and
+  sets on one comfortable line. The anchor is still clamped into the safe area
+  and the box still carries a `maxWidth` equal to the measured distance from
+  that anchor to the far margin, which together make its whole extent provably
+  a subset of the canvas **for any text length** — the property the bug asked
+  for, and the property the new test asserts over every case it runs.
+
+- **The placement is a pure exported function, `layoutCallout`, not an inline
+  expression.** A geometry decision that can silently put authored content
+  outside the frame deserves a test, and the two-line version could not have
+  one. Same call `Graph.tsx` made for `graphLabelFontSize` under B-225.
+
+- **The width estimate is corrected while we are here** (B-240's own second
+  finding): the picker assumed a flat 17 px/char, i.e. `0.5em` at fontSize 34,
+  where Kalam's real average advance is `≈0.42em`. It therefore over-estimated
+  every callout by ~19% and flipped some to the unusable side that would have
+  fitted where they were. `CALLOUT_CHAR_WIDTH_RATIO` is now the same 0.42
+  `Graph.tsx`'s label fitter already measures with — one number, one font.
+
+- **What changes and what does not.** A RIGHT placement is byte-identical:
+  same `cardW/2 + 314` offset, same `fromY − 18` top, and the cap sits above
+  the text's own width so it never wraps. A LEFT placement is deliberately NOT
+  identical, because the pre-fix left geometry was itself wrong — the text was
+  a child of the arm's own shrink-to-fit container and `right: len + 34` put
+  its right edge 14 px *inside* the arm's start, i.e. on top of the arm rather
+  than clear of its tip. Correcting that mirror costs the left side the 240 px
+  of apparent room it had been borrowing from the arm, so a callout that used
+  to flip left and sit on its own arm now goes `below`. That is the fix: both
+  of the things the left side used to do — off-frame, or over the arm — were
+  wrong.
+
+- **No arm on the `below` placement.** A line from the active card down to a
+  centred caption has to cross every card beneath it. The active card is
+  already called out by its accent border, its glow and its forward translate,
+  so the pointer is redundant there.
+
+- **No new manifest field, so nothing is owed on the MCP side.** This is a
+  rendering-time derivation from the layout that actually happened, not a
+  persisted document value — the same reasoning B-225 recorded for
+  `graphLabelFontSize`. CLAUDE.md's "a GUI affordance and an MCP parameter in
+  the same pass" applies to new *capabilities*; there is no new authored value
+  here to expose, and `callout` itself is already in `propCatalog.ts`.
+
+- **Not verified by a render.** The arithmetic, the side pick, the clamp and
+  the cap are unit-tested (`Layers.test.ts`, 49 cases, confirmed failing
+  against a transcription of the pre-fix geometry). What a wrapped or
+  below-the-stack callout actually *looks* like on the c038 canvas has not
+  been seen — the live app was in use by another session.
