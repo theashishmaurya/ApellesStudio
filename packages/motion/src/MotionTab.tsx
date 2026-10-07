@@ -654,6 +654,10 @@ export function MotionTab({
                 onChange={onInspectorChange}
                 onSnapToLayer={onSnapToLayer}
                 onSaveAsComponent={onSaveAsComponent}
+                // B-242/D-371 — the same map `LayerList`'s badge and
+                // `motion_get_edit_links` read, so the Inspector's rename
+                // refusal is computed from the identical link data.
+                editLinks={editLinks}
               />
             )}
           </div>

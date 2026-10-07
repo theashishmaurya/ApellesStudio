@@ -7,7 +7,14 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { computeEditLinks, clipReadsItem, type EditLinkClip, type EditLinkTrack } from './editLinks';
+import {
+  checkSceneRename,
+  computeEditLinks,
+  clipReadsItem,
+  type EditLinkClip,
+  type EditLinkTrack,
+} from './editLinks';
+import type { MotionEditLinks } from './motionOps';
 
 const item = (id: string, sourcePath: string, motionSceneId?: string | null) => ({
   id,
@@ -205,5 +212,134 @@ describe('computeEditLinks — the copied-project case (B-219)', () => {
     );
     expect(links.hook.mediaId).toBe('m1');
     expect(links.hook.refreshedByRender).toBe(false);
+  });
+});
+
+/**
+ * B-242/D-371 — the rename pre-flight.
+ *
+ * The orphan case is the one worth pinning hardest: before this check existed,
+ * `motion_set_scene_field key="id"` wrote the rename straight through (with a
+ * spurious "not a known scene field" warning attached), which silently voided
+ * D-260's "a re-render refreshes the placed Edit clips" contract — the pool
+ * item keeps the OLD id as its `motionSceneId` stamp and the clips keep
+ * reading the OLD file, while the next render writes a new one under the new
+ * name.
+ */
+describe('checkSceneRename (B-242/D-371)', () => {
+  const scenes = [{ id: 'hook' }, { id: 'body' }, { id: 'outro' }];
+
+  /** a link map exactly as `computeEditLinks` builds one. */
+  const linked = (sceneId: string, clips: number, refreshedByRender: boolean | null = true): MotionEditLinks => ({
+    [sceneId]: {
+      mediaId: 'm1',
+      sourcePath: `/p/.chroma/motion/renders/${sceneId}.mp4`,
+      clips: Array.from({ length: clips }, (_, i) => ({
+        track: 0,
+        clip: i,
+        clipId: `c${i}`,
+        name: `${sceneId}.mp4`,
+      })),
+      refreshedByRender,
+    },
+  });
+
+  it('allows a rename of a scene nothing links to', () => {
+    expect(checkSceneRename(scenes, 0, 'c038-training', {})).toEqual({
+      ok: true,
+      from: 'hook',
+      to: 'c038-training',
+    });
+  });
+
+  it('allows a rename when no link data reached the tab at all', () => {
+    // `undefined` is "no Edit timeline is mounted here", not "we did not look".
+    expect(checkSceneRename(scenes, 0, 'c038-training', undefined).ok).toBe(true);
+  });
+
+  it('REFUSES a rename that would orphan placed Edit clips, and names them', () => {
+    const r = checkSceneRename(scenes, 0, 'c038-training', linked('hook', 2));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.overridable).toBe(true);
+    expect(r.reason).toContain('2 clip(s)');
+    expect(r.reason).toContain('hook.mp4');
+    expect(r.reason).toContain('motion/renders/c038-training.mp4');
+    expect(r.reason).toContain('force: true');
+  });
+
+  it('REFUSES when the render is in Sources but never placed — the pool item is orphaned too', () => {
+    const r = checkSceneRename(scenes, 0, 'c038-training', linked('hook', 0));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toContain('not placed on the timeline');
+  });
+
+  it('force lifts the orphan refusal, and only that one', () => {
+    expect(checkSceneRename(scenes, 0, 'c038-training', linked('hook', 2), { force: true }).ok).toBe(true);
+    // a collision is not a tradeoff anyone can accept — force does not reach it
+    const collide = checkSceneRename(scenes, 0, 'body', linked('hook', 2), { force: true });
+    expect(collide.ok).toBe(false);
+    if (collide.ok) return;
+    expect(collide.overridable).toBe(false);
+  });
+
+  it('a link into a DIFFERENT project does not block the rename (B-219, same test renderStaleness uses)', () => {
+    // No render of OURS exists under that id, so nothing of ours is orphaned.
+    expect(checkSceneRename(scenes, 0, 'c038-training', linked('hook', 2, false)).ok).toBe(true);
+  });
+
+  it('a link on a DIFFERENT scene does not block this one', () => {
+    expect(checkSceneRename(scenes, 0, 'c038-training', linked('outro', 3)).ok).toBe(true);
+  });
+
+  it('renaming a scene to the id it already has is a no-op, link or no link', () => {
+    expect(checkSceneRename(scenes, 0, 'hook', linked('hook', 2))).toEqual({
+      ok: true,
+      from: 'hook',
+      to: 'hook',
+    });
+  });
+
+  it('refuses a collision with another scene — two scenes would render to one file', () => {
+    const r = checkSceneRename(scenes, 0, 'outro', {});
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.overridable).toBe(false);
+    expect(r.reason).toContain('scene 2 is already called');
+  });
+
+  it('refuses a non-string id, which is how `value: null` (delete the field) arrives', () => {
+    for (const bad of [null, undefined, 7, { id: 'x' }]) {
+      const r = checkSceneRename(scenes, 0, bad, {});
+      expect(r.ok, `expected ${JSON.stringify(bad)} to be refused`).toBe(false);
+    }
+  });
+
+  it('refuses an empty or whitespace-only id', () => {
+    expect(checkSceneRename(scenes, 0, '', {}).ok).toBe(false);
+    expect(checkSceneRename(scenes, 0, '   ', {}).ok).toBe(false);
+  });
+
+  it('refuses leading/trailing whitespace — invisible on screen, real in the filename', () => {
+    expect(checkSceneRename(scenes, 0, ' hook2', {}).ok).toBe(false);
+    expect(checkSceneRename(scenes, 0, 'hook2 ', {}).ok).toBe(false);
+  });
+
+  it('refuses an id that is not usable as a filename — `default_output_path` does no escaping', () => {
+    // `motion.rs`'s `default_output_path` joins the id straight onto
+    // `<project>.chroma/motion/renders/` with `.mp4`, so these walk out of the
+    // project or produce an unaddressable path.
+    const bad = ['../../etc/passwd', 'a/b', 'a\\b', 'a' + String.fromCharCode(0) + 'b', 'a\nb', '.', '..'];
+    for (const id of bad) {
+      expect(checkSceneRename(scenes, 0, id, {}).ok, `expected ${JSON.stringify(id)} to be refused`).toBe(false);
+    }
+  });
+
+  it('refuses an out-of-range scene index', () => {
+    const r = checkSceneRename(scenes, 9, 'x', {});
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.reason).toContain('no scene at index 9');
   });
 });

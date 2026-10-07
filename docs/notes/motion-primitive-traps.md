@@ -56,9 +56,18 @@ c038-specific — it applies to any Motion scene.
 9. **`matrix preset: "fill-in"` ignores `values`** (only `heatmap` reads them),
    and a matrix draws its full empty grid from scene frame 0, before its own
    `at`. `plot` does not do the equivalent — only its first marker appears early.
-10. **`motion_add_scene` takes no id argument** and generates `scene-xxxxxx`.
+10. ~~**`motion_add_scene` takes no id argument** and generates `scene-xxxxxx`.
    Set the real id afterwards with `motion_set_scene_field key="id"`; it works
-   but returns a spurious "not one of the known scene fields" warning.
+   but returns a spurious "not one of the known scene fields" warning.~~ —
+   **fixed 2026-10-07 (B-242/D-371).** `motion_add_scene(id: "…")` names the
+   scene outright, and `id` is a known scene field now, with an Inspector row
+   of its own and no spurious warning. What replaces this trap is a smaller
+   one worth knowing: **renaming a scene that has already been rendered is
+   refused**, because the scene id is the key of the Motion→Edit link (the
+   `motionSceneId` stamp on the pool item) and the name of the file on disk,
+   and a rename follows neither. Name a scene when you create it; if you must
+   rename a rendered one, the refusal explains the two ways out (re-render and
+   re-place, or `force: true` and accept the broken link).
 
 
 ---

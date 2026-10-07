@@ -92,6 +92,10 @@ pub struct MotionListLayersArgs {
 pub struct MotionAddSceneArgs {
     #[serde(default)]
     pub after_scene_index: Option<i64>,
+    /// B-242/D-371 — the new scene's DISPLAY NAME. Published as `id`, which is
+    /// what the manifest calls it. Omit for a generated `scene-xxxxxx`.
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -134,6 +138,10 @@ pub struct MotionSetSceneFieldArgs {
     pub key: String,
     #[serde(default = "default_motion_set_scene_field_value")]
     pub value: Value,
+    /// B-242/D-371 — for `key: "id"` only: rename even though it orphans a
+    /// render already linked into the Edit tab. See the tool's description.
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -688,17 +696,31 @@ impl ApellesMcp {
     selected) or appended at the end when omitted. Every later scene's index
     shifts by one — re-read `motion_get_state` afterwards.
 
-    Returns the new scene's `sceneIndex` and a `selection` addressing it. Set
-    its length with `motion_set_scene_field(key="dur", value=<seconds>)`.
+    **Name it here.** A scene's `id` is its DISPLAY NAME — the layer panel's
+    section header, the scene selector, and the filename `motion_render` writes
+    (`motion/renders/<id>.mp4`). Pass `id` and the scene is created under that
+    name; omit it and you get a generated `scene-xxxxxx` you would then have to
+    rename, which is harder once the scene has been rendered and placed (see
+    `motion_set_scene_field`). An id must be non-empty, free of "/", "\" and
+    control characters (it becomes a filename), and not already taken by
+    another scene — any of those is refused with a reason, and nothing is
+    created.
+
+    Returns the new scene's `sceneIndex`/`sceneId` and a `selection` addressing
+    it. Set its length with
+    `motion_set_scene_field(key="dur", value=<seconds>)`.
 
     Args:
-        after_scene_index: insert after this scene. Omit to append."#
+        after_scene_index: insert after this scene. Omit to append.
+        id: the new scene's name. Omit for a generated one."#
     )]
     pub async fn motion_add_scene(
         &self,
         Parameters(p): Parameters<MotionAddSceneArgs>,
     ) -> Result<CallToolResult, ErrorData> {
-        let args = WireArgs::new().put("after_scene_index", p.after_scene_index);
+        let args = WireArgs::new()
+            .put("after_scene_index", p.after_scene_index)
+            .put("id", p.id);
         let env = self.op("motion_add_scene", args).await?;
         Ok(render::json_text(&env))
     }
@@ -769,10 +791,25 @@ impl ApellesMcp {
     unrecognised one is still written (a hand-authored manifest may carry
     fields the Inspector does not know) but comes back with a `warning`.
 
+    **`key="id"` is a RENAME and is checked, not just written.** A scene's id
+    is its display name AND the name of the file it renders to
+    (`motion/renders/<id>.mp4`) AND the key the Motion→Edit link is made of —
+    the `motionSceneId` stamp put on the media-pool item at render time. A
+    rename does NOT follow that stamp, so renaming a scene whose render is
+    already in Sources (or placed on the Edit timeline) would leave those clips
+    reading the old file while a re-render writes a new one under the new name,
+    refreshing nothing. That case is refused with a reason naming the clips it
+    would orphan; pass `force=true` to do it anyway and accept the broken link.
+    An id that is empty, has leading/trailing whitespace, contains "/", "\" or
+    a control character, or collides with another scene is refused outright —
+    `force` does not lift those. To rename a scene cleanly: rename it, then
+    re-render it and re-place (or re-link) its clips.
+
     Args:
         scene_index: which scene.
         key: the field, e.g. "dur" or "id".
-        value: the new value. Pass null to DELETE the field."#
+        value: the new value. Pass null to DELETE the field.
+        force: for key="id" only — rename even though it orphans a render."#
     )]
     pub async fn motion_set_scene_field(
         &self,
@@ -781,7 +818,8 @@ impl ApellesMcp {
         let args = WireArgs::new()
             .set("scene_index", p.scene_index)
             .set("key", p.key)
-            .set("value", p.value);
+            .set("value", p.value)
+            .set("force", p.force);
         let env = self.op("motion_set_scene_field", args).await?;
         Ok(render::json_text(&env))
     }

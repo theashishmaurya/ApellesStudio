@@ -13,7 +13,7 @@
  * Position X/Y).
  */
 import { describe, it, expect } from 'vitest';
-import { CAM2D_KEY_FIELDS, CAM3D_KEY_FIELDS, LAYER_TRANSFORM_KEY_FIELDS } from './propCatalog';
+import { CAM2D_KEY_FIELDS, CAM3D_KEY_FIELDS, LAYER_TRANSFORM_KEY_FIELDS, SCENE_FIELDS } from './propCatalog';
 
 describe('B-061 — camera keyframe `at` field is labelled in seconds, not frames', () => {
   it('CAM2D_KEY_FIELDS[0] ("at") is labelled "At (s)" with a sub-second step', () => {
@@ -48,5 +48,34 @@ describe('B-061 — camera keyframe `at` field is labelled in seconds, not frame
     const at = LAYER_TRANSFORM_KEY_FIELDS[0];
     expect(at.key).toBe('at');
     expect(at.label).toBe('At (s)');
+  });
+});
+
+/**
+ * B-242 — `SCENE_FIELDS` omitted `id`, which is the scene's DISPLAY NAME
+ * (layer-panel section header, scene selector, `motion_render`'s per-scene
+ * output filename), not an internal handle. Two things fell out of that one
+ * omission, in opposite directions: the Inspector rendered no row for the
+ * field that names a scene, and `motion_set_scene_field key="id"` — which
+ * wrote it correctly — reported `"id" is not one of the known scene fields`,
+ * because that warning is computed from this list.
+ */
+describe('B-242 — `id` is a known scene field', () => {
+  it('SCENE_FIELDS includes `id` as an editable string, so the Inspector renders a row for it', () => {
+    const id = SCENE_FIELDS.find((f) => f.key === 'id');
+    expect(id).toBeDefined();
+    expect(id?.kind).toBe('string');
+    // The label has to read as a NAME, not as an opaque identifier — that
+    // misreading is the whole of this bug.
+    expect(id?.label).toMatch(/name/i);
+  });
+
+  it('`id` is therefore no longer reported as an unknown scene field', () => {
+    // The exact expression `motion_set_scene_field` builds its warning from.
+    expect(SCENE_FIELDS.some((f) => f.key === 'id')).toBe(true);
+  });
+
+  it('every field the list already had is still there (no collateral changes)', () => {
+    expect(SCENE_FIELDS.map((f) => f.key)).toEqual(['id', 'dur', 'bg', 'grain', 'vignette', 'transition']);
   });
 });

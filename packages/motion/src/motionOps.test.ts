@@ -547,6 +547,29 @@ describe('scenes', () => {
     expect(h.run('motion_add_scene', { after_scene_index: 'nope' }).error).toMatch(/must be an integer/);
   });
 
+  // B-242/D-371 — the add path's own half of the bug: the tool had no `id`
+  // parameter at all, and an unknown argument is dropped silently by the MCP
+  // layer, so a caller that passed `scene_id: "c038-training"` got
+  // `scene-kl4e06` back with nothing saying its name had been ignored.
+  it('motion_add_scene names the new scene when given an id, and reports it back', () => {
+    const h = harness();
+    const r = h.run('motion_add_scene', { id: 'c038-training' });
+    expect(h.current().scenes[3].id).toBe('c038-training');
+    expect(r.sceneId).toBe('c038-training');
+    // the generated id is still the default for a caller that does not care
+    const h2 = harness();
+    expect(h2.run('motion_add_scene').sceneId).toMatch(/^scene-/);
+  });
+
+  it('motion_add_scene refuses an id that collides or could not be a filename, and commits nothing', () => {
+    const h = harness();
+    const existing = sample.scenes[0].id;
+    expect(h.run('motion_add_scene', { id: existing }).error).toMatch(/already called/);
+    expect(h.run('motion_add_scene', { id: '../escape' }).error).toMatch(/not usable as a scene id/);
+    expect(h.run('motion_add_scene', { id: '' }).error).toMatch(/cannot be empty/);
+    expect(h.commits).toHaveLength(0);
+  });
+
   // D-339 — the document-level theme setter.
   it('motion_set_project_theme === setProjectTheme, and reports the effective look', () => {
     const h = harness();
@@ -704,6 +727,75 @@ describe('scenes', () => {
     const h2 = harness();
     const r = h2.run('motion_set_scene_field', { scene_index: 0, key: 'nonsense', value: 1 });
     expect(r.warning).toMatch(/not one of the known scene fields/);
+  });
+
+  // B-242/D-371 — `key: "id"` is a RENAME. Before the fix it wrote straight
+  // through AND carried the spurious unknown-field warning; now it is a known
+  // field (no warning) gated by `checkSceneRename` (the link check).
+  describe('motion_set_scene_field key="id" (B-242/D-371)', () => {
+    /** a link map keyed on whatever `sample`'s first scene is called. */
+    const linkedToScene0 = (): MotionEditLinks => ({
+      [sample.scenes[0].id]: {
+        mediaId: 'm1',
+        sourcePath: `/p/.chroma/motion/renders/${sample.scenes[0].id}.mp4`,
+        clips: [{ track: 0, clip: 0, clipId: 'c1', name: `${sample.scenes[0].id}.mp4` }],
+        refreshedByRender: true,
+      },
+    });
+
+    it('renames an unlinked scene, with NO "unknown scene field" warning', () => {
+      const h = harness();
+      const r = h.run('motion_set_scene_field', { scene_index: 0, key: 'id', value: 'c038-training' });
+      expect(r.warning).toBeUndefined();
+      expect(r.renamedFrom).toBe(sample.scenes[0].id);
+      expect(h.current().scenes[0].id).toBe('c038-training');
+      // still the same `setSceneField` a GUI commit calls — no parallel logic
+      expect(h.current()).toEqual(setSceneField(sample, 0, 'id', 'c038-training'));
+      expect(h.commits[0].label).toBe('Rename scene to c038-training');
+    });
+
+    it('REFUSES a rename that would orphan a placed Edit clip, and commits nothing', () => {
+      const h = harness();
+      h.links.current = linkedToScene0();
+      const r = h.run('motion_set_scene_field', { scene_index: 0, key: 'id', value: 'c038-training' });
+      expect(r.error).toMatch(/would orphan its render/);
+      expect(r.overridable).toBe(true);
+      expect(h.commits).toHaveLength(0);
+      expect(h.current().scenes[0].id).toBe(sample.scenes[0].id);
+    });
+
+    it('force: true renames anyway', () => {
+      const h = harness();
+      h.links.current = linkedToScene0();
+      const r = h.run('motion_set_scene_field', {
+        scene_index: 0,
+        key: 'id',
+        value: 'c038-training',
+        force: true,
+      });
+      expect(r.error).toBeUndefined();
+      expect(h.current().scenes[0].id).toBe('c038-training');
+    });
+
+    it('refuses to DELETE the id (value: null), which would make the manifest unparseable', () => {
+      const h = harness();
+      const r = h.run('motion_set_scene_field', { scene_index: 0, key: 'id', value: null });
+      expect(r.error).toMatch(/must be a non-empty string/);
+      expect(h.commits).toHaveLength(0);
+    });
+
+    it('refuses a collision with another scene even with force', () => {
+      const h = harness();
+      const r = h.run('motion_set_scene_field', {
+        scene_index: 0,
+        key: 'id',
+        value: sample.scenes[1].id,
+        force: true,
+      });
+      expect(r.error).toMatch(/already called/);
+      expect(r.overridable).toBe(false);
+      expect(h.commits).toHaveLength(0);
+    });
   });
 
   it('motion_set_scene_field guards the scene index and a missing value', () => {
