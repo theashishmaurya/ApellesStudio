@@ -41,7 +41,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use apelles_project::manifest::ProjectSettings;
-use apelles_timeline::Timeline;
+use apelles_timeline::{Timeline, TrackKind};
 use shared_child::SharedChild;
 
 use super::edit::{self, FrameIntent};
@@ -182,18 +182,64 @@ const SEGMENT_OUT_TOKEN: &str = "{{APELLES_SEGMENT_OUT}}";
 const CONCAT_LIST_TOKEN: &str = "{{APELLES_CONCAT_LIST}}";
 
 /// How many contiguous segments to split a render of `frames` into on THIS
-/// machine (D-360).
+/// machine (D-360; the core bound corrected by B-234/D-369).
 ///
-/// Bounded three ways, in order: by the work available
-/// ([`MIN_SEGMENT_FRAMES`]), by the cores available, and by
-/// [`MAX_SEGMENTS`]. A short export comes back as 1 and takes the
-/// single-stream path unchanged.
-fn plan_segment_count(frames: u64) -> usize {
+/// Bounded four ways, in order: by the work available
+/// ([`MIN_SEGMENT_FRAMES`]), by the cores available **divided by how many
+/// processes each segment actually spawns**, and by [`MAX_SEGMENTS`]. A short
+/// export comes back as 1 and takes the single-stream path unchanged.
+///
+/// **B-234 — why `procs_per_segment` and not just `cores`.** [`MAX_SEGMENTS`]'s
+/// own doc states the cost model: a segment costs `tracks + 1` processes (one
+/// encoder plus one `decode_pipe` per visible video track), so a render costs
+/// `segments × (tracks + 1)`. That product was used to argue the MEMORY
+/// ceiling but never applied to the CPU bound, which compared `segments`
+/// against `cores` as though a segment were one process. On a 2-video-track
+/// project that is a 3× undercount: 6 segments on 10 cores is 18 processes,
+/// not 6.
+///
+/// Measured on the real 98-clip 4K c038 export (B-234's 2026-10-06 profiling):
+/// 18 ffmpeg processes, load average ~50 on 10 logical cores, and one
+/// straggler lane that wrote **+4.7 MB in 10.5 min while contending, then
+/// +57.8 MB in 5 min once the other five finished** — ~24× faster with
+/// nothing else changed. Lanes were starving each other, and because the
+/// concat waits on the slowest, the wall clock paid the contention AND then
+/// waited on the straggler. That measurement is also what ruled out the
+/// "cores already saturated by useful work" explanation: saturation cannot
+/// produce a 24× speedup from merely removing competition.
+///
+/// Dividing is the conservative choice rather than a tuned one. There is no
+/// measured oversubscription ratio that works — the honest reading of the
+/// evidence is one process per core, and [`MAX_SEGMENTS`]'s own closing line
+/// about the unmeasured 4K case ("every unknown there points the same way:
+/// fewer, not more") points here too.
+fn plan_segment_count(frames: u64, procs_per_segment: usize) -> usize {
     let cores = std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(1);
     let by_work = (frames / MIN_SEGMENT_FRAMES) as usize;
-    by_work.min(cores).clamp(1, MAX_SEGMENTS)
+    // `max(1)` on both: a caller reporting zero tracks (an audio-only or empty
+    // timeline) must not divide by zero, and a machine the core count divides
+    // away to nothing still renders — as one segment.
+    let by_cores = (cores / procs_per_segment.max(1)).max(1);
+    by_work.min(by_cores).clamp(1, MAX_SEGMENTS)
+}
+
+/// How many processes one segment of this timeline spawns: one encoder plus
+/// one `decode_pipe` `ffmpeg` per VISIBLE VIDEO track (B-234/D-369).
+///
+/// Hidden video tracks are excluded because they are skipped by
+/// `resolve_visible_video_layers_at` entirely and so never open a pipe; audio
+/// tracks are excluded because this render path produces picture only (the
+/// audio is the caller's own argv, one process for the whole export, not one
+/// per segment).
+fn procs_per_segment(timeline: &Timeline) -> usize {
+    let visible_video = timeline
+        .tracks
+        .iter()
+        .filter(|t| matches!(t.kind, TrackKind::Video) && !t.hidden)
+        .count();
+    visible_video + 1
 }
 
 /// Split `frames` into `segments` contiguous, non-overlapping ranges that
@@ -334,7 +380,7 @@ pub fn render_timeline(
     // percentage is only a true fraction of the render because those ranges
     // partition it exactly, so they must not be derived twice.
     let segments = match &req.segments {
-        Some(_) => plan_segment_count(req.frames),
+        Some(_) => plan_segment_count(req.frames, procs_per_segment(timeline)),
         None => 1,
     };
     // No segment may be empty: it would spawn an encoder, write nothing, and
@@ -897,11 +943,80 @@ mod tests {
     /// single-stream path, whatever the machine's core count.
     #[test]
     fn a_short_render_is_not_split() {
-        assert_eq!(plan_segment_count(0), 1);
-        assert_eq!(plan_segment_count(MIN_SEGMENT_FRAMES - 1), 1);
-        assert_eq!(plan_segment_count(MIN_SEGMENT_FRAMES), 1);
+        assert_eq!(plan_segment_count(0, 2), 1);
+        assert_eq!(plan_segment_count(MIN_SEGMENT_FRAMES - 1, 2), 1);
+        assert_eq!(plan_segment_count(MIN_SEGMENT_FRAMES, 2), 1);
         // And a long one is bounded by MAX_SEGMENTS however many cores exist.
-        assert!(plan_segment_count(u32::MAX as u64) <= MAX_SEGMENTS);
+        assert!(plan_segment_count(u32::MAX as u64, 1) <= MAX_SEGMENTS);
+    }
+
+    /// B-234/D-369 — the core bound counts PROCESSES, not segments. A segment
+    /// costs `tracks + 1` processes, so a heavier timeline must get fewer
+    /// lanes on the same machine. Pre-fix this returned `MAX_SEGMENTS` for
+    /// every one of these, which is how a 2-track export came to run 18
+    /// ffmpeg processes on 10 cores.
+    #[test]
+    fn more_processes_per_segment_means_fewer_segments() {
+        let long = u32::MAX as u64;
+        let cores = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1);
+
+        let mut prev = usize::MAX;
+        for procs in 1..=8usize {
+            let got = plan_segment_count(long, procs);
+            assert!(
+                got <= prev,
+                "more processes per segment must never INCREASE the lane \
+                 count: {procs} procs gave {got}, previous gave {prev}"
+            );
+            assert!(got >= 1, "must always render: {procs} procs gave 0");
+            // The invariant that matters: total processes stay within the
+            // machine, unless one segment alone already exceeds it.
+            assert!(
+                got * procs <= cores.max(procs),
+                "{got} segments x {procs} procs = {} exceeds {cores} cores",
+                got * procs
+            );
+            prev = got;
+        }
+    }
+
+    /// A timeline with no visible video track still renders — the divisor is
+    /// never zero, and the encoder itself is the `+ 1`.
+    #[test]
+    fn a_zero_track_timeline_still_plans_at_least_one_segment() {
+        assert_eq!(
+            plan_segment_count(u32::MAX as u64, 0),
+            1.max(plan_segment_count(u32::MAX as u64, 0))
+        );
+        assert!(plan_segment_count(u32::MAX as u64, 0) >= 1);
+    }
+
+    /// B-234/D-369 — hidden video tracks open no decode pipe, so they must not
+    /// cost a segment's budget; audio tracks never do either.
+    #[test]
+    fn procs_per_segment_counts_only_visible_video_tracks() {
+        use apelles_timeline::{Track, TrackKind};
+        let track = |kind, hidden| Track {
+            kind,
+            clips: vec![],
+            gain: 1.0,
+            locked: false,
+            hidden,
+            ..Default::default()
+        };
+        let mut tl = Timeline::default();
+        tl.tracks = vec![
+            track(TrackKind::Video, false),
+            track(TrackKind::Video, false),
+            track(TrackKind::Video, true),  // hidden — no pipe
+            track(TrackKind::Audio, false), // audio — no pipe on this path
+        ];
+        // 2 visible video + 1 encoder.
+        assert_eq!(procs_per_segment(&tl), 3);
+
+        assert_eq!(procs_per_segment(&Timeline::default()), 1);
     }
 
     #[test]

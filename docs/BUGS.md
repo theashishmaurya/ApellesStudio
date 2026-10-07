@@ -251,7 +251,7 @@ status: **fixed** (2026-09-18) · severity: low (cosmetic — a real, visible la
 
 ## B-234 — D-360's contiguous-segment export gives a much smaller real-world speedup than its own benchmark predicted: 1.64x on the 20-clip/1080p fixture, ~1.07x (2.57x→2.41x real-time) on the owner's real 4K/79-clip project
 
-status: **open** · severity: medium (no correctness defect — the output is byte-valid and the export completes — but a real, measured gap between the benchmark's own headline number and what the owner actually gets, on exactly the project this whole D-350/D-351/D-360 effort was built for) · area: `app/src-tauri/src/chroma/edit_render.rs` (segmented render), `crates/apelles-media/src/decode_pipe.rs` (lane-keyed pool) — D-360's own machinery, not a new subsystem
+status: **fixed** (root cause found and fixed by **D-369** — the core bound counted segments, not processes; see the 2026-10-06 profiling and 2026-10-07 fix sections below) · severity: medium (no correctness defect — the output is byte-valid and the export completes — but a real, measured gap between the benchmark's own headline number and what the owner actually gets, on exactly the project this whole D-350/D-351/D-360 effort was built for) · area: `app/src-tauri/src/chroma/edit_render.rs` (segmented render), `crates/apelles-media/src/decode_pipe.rs` (lane-keyed pool) — D-360's own machinery, not a new subsystem
 
 - **found:** 2026-09-19, live, running `editor_export(renderer: "compositor")` against the owner's real `2026-09-12-c040-mgfx-recut.chroma` project (3840×2160, ~79 clips, heavy motion-graphics compositing) immediately after D-360 landed, specifically to get the end-to-end number D-360's own report named as "not measured."
 - **measured, both runs on the identical real project:**
@@ -287,6 +287,35 @@ Once the other five lanes finished, the straggler ran roughly **24× faster** wi
 2. **Partition by estimated work, not by equal frame count.** Lanes are currently equal-frame spans, but a span of full-frame 4K camera costs far more per frame than one that is mostly flat graphics panel, so equal frames are not equal work. That is what produced the straggler.
 
 Both are measurable against this project, which is now the better fixture — it reproduces the effect far more strongly than c040 did.
+
+### 2026-10-07 — fixed (D-369). Lever 1 taken; lever 2 left open.
+
+`plan_segment_count` now divides the core bound by `procs_per_segment`
+(visible video tracks + 1) instead of comparing segments against cores as
+though a segment were one process. On a long 2-track render it picks **3
+segments where it previously picked 6**.
+
+Re-running D-360's own sweep on the same 1080p fixture and machine:
+1 → 9.68 s, 2 → 6.39 s, **4 → 6.11 s (peak)**, 6 → 7.23 s, 8 → 8.35 s. Six
+now costs **18 % over four**, and four won every individual repeat — where
+D-360's recorded sweep had 4 and 6 nearly flat (8.79 vs 8.91). The sweep is
+forced, so it measures the curve rather than what the planner picks; the
+planner's own answer moved because the fixture is too short (240 frames) for
+the lane bound to bind, while a real export is not.
+
+**Not claimed:** no direct 4K A/B. The mechanism was measured on the real
+project, the curve on the 1080p fixture. At 4K each segment's resident cost is
+~4× larger so the penalty should be worse than 18 %, but that is reasoning,
+not measurement.
+
+**Lever 2 — partition by estimated work, not equal frame count — is still
+open and is the remaining half of this bug.** Lanes are still equal-frame
+spans, and a span of full-frame 4K camera costs far more per frame than one
+that is mostly flat graphics panel. That is what produced the straggler in the
+first place; fewer lanes reduces the contention around it but does not make
+the partition even. Worth doing when someone has a way to estimate per-frame
+cost cheaply — clip count and transform complexity per span are the obvious
+inputs.
 - **2026-09-19 update:** a read-only planning pass (D-363) scoped what it would actually take to close this — the CPU compositor itself, not more segmentation, is the largest remaining term (§10.5 had already named it). Plan: `docs/notes/export-gpu-compositor.md` §11. Wave 0 of that plan is exactly this bug's own missing measurement (a per-phase profile of the real 4K project) and is a **blocking gate** before any GPU code is written — this bug should be root-caused and closed BY that wave, not separately. Not built yet, per explicit owner instruction to document and pick up later.
 
 ## B-233 — `packages/motion`'s `theme.test.ts` fails `tsc` with missing `node:fs`/`node:url`/`node:path` — no `@types/node` in that package's tsconfig

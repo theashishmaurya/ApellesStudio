@@ -35592,3 +35592,55 @@ accepts an `ease` object inline per keyframe, which is what made 14 eased ramps
 ~50 calls instead of ~250; keyframe frames are clip-source-absolute; and a hold
 spanning several footage clips needs those middle clips set statically (25 of
 them here, 16 inside segment L alone).
+
+---
+
+## D-369 — the segment bound counts PROCESSES, not segments: `cores / (tracks + 1)`, not `cores`
+
+**Status: `decided`** (2026-10-07). Fixes the root cause in **B-234**. Corrects
+one line of **D-360**. Detail and measurements: `docs/BUGS.md` B-234's
+2026-10-06 profiling section, `docs/notes/export-gpu-compositor.md` §10.5.
+
+**Context.** `MAX_SEGMENTS`'s own doc already states the cost model — a segment
+costs `tracks + 1` processes (one encoder plus one `decode_pipe` per visible
+video track), so a render costs `segments × (tracks + 1)`. D-360 used that
+product to argue the MEMORY ceiling and then, two functions later, bounded the
+CPU side with `by_work.min(cores)` — comparing *segments* against cores as
+though a segment were one process. On a 2-video-track project that is a 3×
+undercount.
+
+**What it cost, measured.** The real 98-clip 4K c038 export ran **18 ffmpeg
+processes at load ~50 on 10 logical cores**, and one straggler lane wrote
+**+4.7 MB in 10.5 min while the others ran, then +57.8 MB in 5 min once they
+finished — ~24× faster with nothing else changed**. Because the concat waits
+on the slowest lane, the export paid the contention *and then* waited on the
+straggler. That 24× also settles B-234's open question: it rules out
+"compositing already saturates the cores", since saturation by useful work
+cannot be relieved by removing competition.
+
+**Choice.** `plan_segment_count(frames, procs_per_segment)` divides the core
+bound by the processes a segment actually spawns. `procs_per_segment` counts
+VISIBLE VIDEO tracks only — a hidden track opens no pipe, and audio is the
+caller's own argv, one process for the whole export rather than one per
+segment.
+
+**Why dividing rather than a tuned oversubscription ratio.** There is no
+measured ratio to tune to; one process per core is the defensible reading, and
+`MAX_SEGMENTS`'s own closing line about the unmeasured 4K case — "every unknown
+there points the same way: fewer, not more" — points here too. `MAX_SEGMENTS`
+stays as the memory ceiling it was always argued as; this is a second, tighter
+bound, not a replacement.
+
+**Evidence it helps, and its limit.** Re-running D-360's own sweep on the same
+1080p fixture and machine: 1 → 9.68 s, 2 → 6.39 s, **4 → 6.11 s (peak)**,
+6 → 7.23 s, 8 → 8.35 s. Six now costs **18 % over four**, and four beat six in
+every individual repeat — where D-360's recorded sweep had them nearly flat
+(8.79 vs 8.91). On a long 2-track render this change picks **3 segments where
+it previously picked 6**.
+
+**What is NOT claimed:** the sweep is the 1080p/240-frame fixture, not a real
+4K A/B. The mechanism was measured on the real project and the curve shape on
+the fixture; a direct before/after of a 45-minute 4K export was not run. At 4K
+each segment's resident cost is ~4× larger, so the contention penalty should be
+larger than 18 %, not smaller — but that is reasoning, not a measurement, and
+should be stated as such until someone runs it.
