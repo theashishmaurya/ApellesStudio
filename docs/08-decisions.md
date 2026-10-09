@@ -36103,3 +36103,65 @@ failing against equal-frame splitting). The cost WEIGHTS are grounded in
 §9.1/§10.5's measurements but have not been fitted against a real project's
 per-lane timings. The c038 A/B — which the owner runs — and that fitting are
 what remains, and B-234 says so.
+
+---
+
+## D-374 — ASR becomes a swappable backend behind the existing transcript contract, and the product is the harness around it
+
+**Status: `decided`** (2026-10-09, owner: *"lets move to parakeet its light fast
+and we can run multi iteration :/ we can not get 100% thats not possible we
+will build the Harness arround it also make sure every harness it easily takes
+other ones"*). Detail, measurements and the staged migration:
+`docs/notes/asr-backends-and-harness.md`.
+
+**Context.** `ai-media/transcribe.py` hard-codes `mlx-whisper large-v3`
+(~3 GB). A head-to-head on the owner's own 989.5 s C038 source against the
+committed Whisper fixture: **parakeet-tdt-0.6b-v3 transcribes it in 56.3 s —
+17.6× realtime — at 0.6 B params**, with 1296 words against Whisper's 1316.
+It is slightly *worse* on this content's vocabulary (drops `KV cache`,
+`chaiwala`, one `stenographer`, one `Nvidia`; spells numbers out) and slightly
+better in one place (it caught `"Cut from here"`, a spoken editor instruction
+Whisper dropped). Neither gets `Groq` or `Gartner`.
+
+**The decision is not "Parakeet is more accurate" — it is not.** It is that a
+model 17× faster and 2 % worse is a *better input to a multi-pass harness*
+than a slower, marginally better one, because the saved time buys passes and
+the harness can then report where it is uncertain. "We cannot get 100 %" is
+the premise, not a disappointment.
+
+**Choice.** Three things, in this order:
+1. **A backend seam at the contract that already exists.** `transcribe()`'s
+   return value — `{text, language, model, source, segments[{start,end,text,
+   words[]}], words[], window?}` — is the interface. `ai-media/asr/` holds
+   `base.py`, `whisper_mlx.py` (moved unchanged) and `parakeet_mlx.py`.
+   Nothing above `transcribe.py` changes.
+2. **A Parakeet backend that fixes its two real defects itself** rather than
+   leaking them: sub-word tokens merged into words on the leading-space
+   boundary, and segmentation derived from token gaps with a hard maximum —
+   never from `result.sentences`, which produced a **98.2 s** segment
+   swallowing five of Whisper's.
+3. **A harness as a pipeline of checks over the contract**, each taking and
+   returning the contract plus annotations. A check never sees a model. That
+   is what makes it backend-agnostic in both senses the owner asked for — any
+   backend can be harnessed, and any check can be added without touching the
+   others. First two checks: multi-pass reconciliation (vary chunk offset,
+   which is where the measured failures cluster; report per-word agreement and
+   low-confidence spans) and a generalised VAD cross-check (today's `dark.rs`,
+   whose Whisper-specific constants move into the backend descriptor).
+
+**Why the harness is built against WHISPER first.** Backend-agnosticism gets
+*proved* that way rather than asserted: if the harness is written against the
+existing backend and Parakeet then drops in, the seam is real.
+
+**Why Whisper stays the default for now.** `apelles-speech`'s retake detector
+was tuned across four sessions (B-237, B-238, D-365, D-366) against Whisper's
+tokenisation and segment boundaries, pinned by five corpus tests asserting
+exact group counts and cut ranges. Switching ASR invalidates that tuning. The
+default moves only after those are re-derived against a Parakeet transcript
+and the thresholds re-swept — and that re-derivation is the expensive,
+non-optional part of this decision, not a follow-up.
+
+**Also recorded:** Parakeet covers 25 European languages and **Hindi is not
+among them**, while `transcribe.py` documents code-switched Hinglish working
+on `large-v3`. The backend descriptor carries its language set so a Hinglish
+source is refused rather than silently mis-transcribed.
