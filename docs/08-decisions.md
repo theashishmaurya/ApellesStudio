@@ -35938,3 +35938,168 @@ the table entry to `axis: 'y'` **fails 6 of 24** cases in the file, including
 the pre-existing "scales a font size … UNIFORMLY, never per axis". `@apelles/
 motion` 823/823, `@apelles/motion-engine` 112/112. Not verified by a render —
 the owner was using the app.
+
+---
+
+## D-373 — a render's segments divide its estimated WORK, not its frame count: a per-frame cost model read off the timeline
+
+**Status: `decided`** (2026-10-09). Closes the remaining half of **B-234** —
+the lever its own 2026-10-07 fix section left open. Second correction to
+**D-360**, after **D-369**. Detail and measurements: `docs/BUGS.md` B-234,
+`docs/notes/export-gpu-compositor.md` §10.7.
+
+**Context.** D-360 splits the export into N contiguous segments and cut them by
+**equal frame count**, spreading the remainder so no two differed by more than
+one frame. That is the right answer only if frames are equal work, and they are
+not: a span of stacked full-frame 4K camera decodes two or three streams and
+composites them, while a span that is one flat graphics panel decodes one and
+composites nothing at all (D-132/B-053's single-layer fast path returns the
+plain decode). Because the concat waits on the slowest lane, the export's wall
+clock is set by the straggler. Measured on the real 98-clip 4K c038 project
+*after* D-369 landed (3 lanes, 23 m 25 s): final segment sizes
+**[367, 361, 176] MB**, the third lane tracking at ~45 % of its siblings for
+the entire run. It never stalled — it simply had less costly content.
+
+**Options weighed.**
+1. **Measure the first frames of each lane and re-balance.** Rejected: the
+   boundary has to be chosen before any frame is rendered, a lane that has
+   started cannot be handed a different range without discarding its work, and
+   D-362's progress fraction is computed from the ranges the workers were
+   given.
+2. **Many more, smaller segments, handed out from a work queue.** The classic
+   answer to an unknown cost distribution, and the wrong one here: a segment
+   starts COLD (one keyframe seek per visible video track, ~0.7 s median), and
+   D-369 has just finished establishing that the binding constraint is
+   `cores ÷ procs_per_segment` — more concurrent lanes is exactly what made the
+   c038 export thrash at load ~50 on 10 cores.
+3. **Probe the media and cost the frames properly.** Rejected on cost: an
+   `ffprobe` per clip (98 of them) before the render can start, to learn
+   bitrate/codec/GOP facts that still would not say what a frame costs.
+4. **Estimate from the document alone, then cut the cumulative curve.** Taken.
+
+**Choice.** A new `chroma::render_cost` builds a per-frame integer work
+estimate from the `Timeline` and nothing else, and `edit_render::segment_ranges`
+cuts on its cumulative curve instead of on the frame count.
+
+The model asks the renderer's own `Timeline::resolve_visible_video_layers_at`,
+filtered by the renderer's own `edit::layer_is_renderable` — extracted from the
+inline closure inside `render_timeline_frame` for exactly this reason, since a
+second copy of "which layers are there" is the two-implementations divergence
+D-350 exists to remove — and charges each layer against the branch
+`composite_layer_onto` would actually take:
+
+| term | weight | what it is |
+|---|---|---|
+| frame base | 1 | the canvas fill, the RGBA hand-off, the encoder's per-frame work |
+| video decode | 3 | `decode_pipe::playback_frame_scaled` + the RGBA convert |
+| still / text layer | 0 | a hit in `apelles_media::still`'s or `chroma::text`'s cache |
+| composite, fused | 1 | D-217's `blend_layer_sampled`, bounded by the canvas |
+| composite, resized | 2 | the general path — a full intermediate buffer, then `overlay` |
+| composite, rotated | 6 | `rgba8 → rgba32f → rotate → rgba8`: three full passes, one at 4× the bytes |
+| adjustment clip | 1 | D-230's full-canvas per-pixel colour pass |
+
+**3:1 for decode against composite because that is the measured ratio**, not a
+guess: §9.1 measured 11.03 s of decode over 480 layer-decodes (23.0 ms each) on
+the 1080p stress fixture, and §10.5's post-D-351 one-segment total of 14.45 s
+leaves ~3.4 s of compositing over those same 480 layers (~7 ms each) once D-351
+put the per-pixel passes on every core. §10.5's own caveat — decode is a larger
+share at 4K — says the ratio only grows on the footage this is for. The three
+paint weights are asserted as an ORDER at compile time (`const _: () =
+assert!(..)`) so an edit cannot silently invert the ranking the model rests on.
+
+A lone layer with an identity transform is charged its decode and **no
+composite at all**, which is D-132/B-053's single-layer fast path and the
+cheapest frame this renderer has; telling that frame apart from a composited
+one is most of the model's value.
+
+**What the model deliberately does not know.** Stated here because each one is
+a decision, not an oversight:
+- **Keyframes and fades.** The transform is read from the clip's static fields,
+  so a clip animating `scale 1.0 → 0.3` is costed un-shrunk for its whole
+  length. Resolving the real transform means parsing `chroma_keyframes` per
+  keyframed layer per sampled frame — real time before the render can start —
+  and the whole error it removes is one or two units on a layer whose transform
+  crosses a branch boundary. The terms this exists to separate (how many layers
+  composite, and how many of them decode) are exact either way.
+- **The source's pixel size and whether the clip is graded**, which the real
+  fast-path guard also tests. Both need I/O, so the estimate is optimistic by
+  exactly one composite unit on the cheapest frame in the render — the right
+  side to be wrong on.
+- **Codec, bitrate and compressibility.** A 4K ProRes decode and a 4K H.264
+  decode are one weight here. This is the model's real limit and the reason the
+  c038 A/B is the measurement that matters.
+- **How many PROCESSES a lane will need.** The model costs work per frame; it
+  does not know that moving a boundary into a region where more tracks have
+  content makes that lane spawn more decode `ffmpeg`s. Found live while
+  building the measurement below, and it is D-369's territory rather than this
+  decision's — recorded in `render_cost`'s own module doc and in B-234 as the
+  next thing to look at if a real project ever regresses.
+
+**Three invariants the partition keeps, all load-bearing.** The ranges still
+partition `0..frames` exactly (the concat demuxer stitches whatever it is
+handed, so a segment one frame short ships a valid file that is one frame out of
+sync from there on — and D-362's progress percentage is only a true fraction
+because the tracker is built from these same ranges); no segment falls below
+`MIN_SEGMENT_FRAMES` while the render is long enough to allow it (a cut that
+handed a lane a handful of very expensive frames would spend more on its cold
+start than it saved on balance); and **a flat curve gives back the equal-frame
+split to within one frame**, so a genuinely uniform timeline partitions exactly
+as it did before.
+
+**Measured — and the honest part first: this repo's own sweep cannot show it,
+which is a property of the fixture rather than of the change.** The 20-clip /
+1080p / 240-frame stress fixture is uniform: every frame carries the same two
+layers (a full-length base plus one of 20 back-to-back cuts), so its cost curve
+is constant and the work-balanced split *is* the equal-frame split, frame for
+frame. That is now asserted rather than inferred —
+`the_stress_fixtures_cost_curve_is_flat_so_d373_cannot_move_its_split` fails
+the day the fixture grows a clip that makes the curve uneven — so the
+before/after sweep is rendering provably identical ranges and any difference
+between the two tables is this machine, not this code:
+
+```text
+segs   before    after
+   1   13.69s   10.76s
+   2   10.41s    9.43s
+   4   10.45s    9.03s
+   6   10.85s    9.06s
+   8   12.19s    9.40s
+```
+
+So a second, deliberately lopsided harness was added
+(`measure_segmented_render_balance`), built out of the same fixture's own media:
+every clip covering the first half of the render gets a 17° `rotation`, the
+dearest branch the compositor has, while the second half stays on the fused
+path. On that timeline the model moves the two-lane cut from 120 to 92 and the
+**estimated per-lane imbalance from 1.90x to 1.01x** ([2280, 1200] →
+[1748, 1732] work units).
+
+**Rotation rather than "fewer layers in the second half"**, which was the first
+attempt and is a trap worth recording: truncating a track changes how many
+decode processes each lane needs, and changes it differently for the two
+partitions — the cost-based cut reaches back into the stacked region, so its
+cheap lane spawns decoders the equal-frame lane never had. That version measured
+the cost-based split **consistently 5-6 % slower in every repeat** (9.75 s vs
+10.30 s best-of-5), which is D-369's contention term rather than noise, and is
+where this decision's "the model costs work, not processes" bullet above comes
+from. Rotation skews the work at identical track occupancy, so both partitions
+spawn the same processes wherever the boundary falls.
+
+**And then the wall clock still could not resolve it, which is reported rather
+than worked around.** On the rotation skew the machine's run-to-run spread on
+the *identical* configuration was 9.28-17.02 s against a 2.4 s gap between the
+two partitions' minima — the spread is three times the effect, so the minima are
+not comparable and the faster row is simply the one that caught the quietest
+moment. The harness now says so itself: it compares each configuration's spread
+against the gap and prints **INCONCLUSIVE** rather than a ratio when the spread
+wins, which is D-360's own harness lesson ("a single reading here is not a fact
+about this code") turned into an assertion instead of a footnote.
+
+**What is NOT claimed.** No 4K A/B, and **no wall-clock evidence at all** that
+the balanced partition finishes sooner. What is evidenced: the imbalance is real
+and was measured on the real c038 project; the model identifies it and the
+partition removes it, deterministically and under test (two unit tests verified
+failing against equal-frame splitting). The cost WEIGHTS are grounded in
+§9.1/§10.5's measurements but have not been fitted against a real project's
+per-lane timings. The c038 A/B — which the owner runs — and that fitting are
+what remains, and B-234 says so.

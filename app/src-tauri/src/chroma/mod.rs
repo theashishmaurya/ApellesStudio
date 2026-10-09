@@ -54,6 +54,13 @@
 //!   structurally, the preview-vs-export parity-bug class (B-201/B-208/B-218/
 //!   B-223) — there is one compositor now, not two. Builds no ffmpeg arguments
 //!   and mixes no audio; both come from `packages/editor/src/timelineExport.ts`
+//! - `render_cost` — **what one frame of that render costs, estimated from the
+//!   document alone (B-234 lever 2, D-373)**: a pure integer per-frame work
+//!   estimate over a `Timeline`, so `edit_render` can cut its contiguous
+//!   segments into spans of equal WORK instead of equal FRAME COUNT (equal
+//!   frames are not equal work, and the straggler lane is the export's wall
+//!   clock). Decodes nothing, probes nothing, opens no file, and predicts no
+//!   wall-clock — only the RATIOS between its weights are claimed
 //! - `playback` — fused decode+install+grade command for real-time playback (D-031)
 //! - `mask`     — subject matte via the AI sidecar (SAM 2 → ViTMatte, D-016)
 //! - `depth`    — per-frame temporally-consistent depth track (Video Depth Anything, D-036)
@@ -145,6 +152,7 @@ pub mod motion_presets;
 pub mod playback;
 pub mod project;
 pub mod relight;
+pub mod render_cost;
 pub mod session;
 pub mod sidecar;
 pub mod speech;

@@ -242,26 +242,98 @@ fn procs_per_segment(timeline: &Timeline) -> usize {
     visible_video + 1
 }
 
-/// Split `frames` into `segments` contiguous, non-overlapping ranges that
-/// cover `0..frames` exactly.
+/// The partition [`render_timeline`] hands its workers: `segments` contiguous,
+/// non-overlapping ranges covering `0..frames` exactly, cut on this timeline's
+/// own estimated work curve (B-234 lever 2, D-373).
 ///
-/// **The remainder is spread, not dumped on the last segment.** With
-/// `frames = 5605` and 8 segments the difference is one frame per worker
-/// against five on one of them, which is nothing; the reason to do it properly
-/// is that "every frame belongs to exactly one range, and the ranges are
-/// contiguous and in order" is the property the concatenated output's
-/// frame-accuracy rests on, and it is easier to see in arithmetic that cannot
-/// drop a remainder than in arithmetic that has to remember to add it back.
-fn segment_ranges(frames: u64, segments: usize) -> Vec<std::ops::Range<u64>> {
+/// One segment needs no curve and no arithmetic, so it does not build one.
+fn plan_segment_ranges(
+    timeline: &Timeline,
+    frames: u64,
+    segments: usize,
+) -> Vec<std::ops::Range<u64>> {
+    if segments <= 1 {
+        let whole: std::ops::Range<u64> = 0..frames;
+        return vec![whole];
+    }
+    segment_ranges(
+        &super::render_cost::frame_cost_curve(timeline, frames),
+        segments,
+    )
+}
+
+/// Split `0..costs.len()` into `segments` contiguous, non-overlapping ranges of
+/// roughly **equal estimated work**, where `costs[f]` is what frame `f` is
+/// expected to cost (`chroma::render_cost`).
+///
+/// **Why work and not frame count (B-234 lever 2, D-373).** This function used
+/// to divide the frame count, spreading the remainder so no two segments
+/// differed by more than one frame — which is the right answer only if frames
+/// are equal work, and they are not. A span of stacked full-frame 4K camera
+/// costs several times a span that is one flat graphics panel, so equal-frame
+/// lanes finish at wildly different times, and because the concat waits on the
+/// slowest the export's wall clock is set by the straggler: measured on the real
+/// 98-clip 4K c038 project at final segment sizes of **[367, 361, 176] MB**,
+/// with the third lane tracking at ~45 % of its siblings for the entire run.
+///
+/// **Three properties, all of them load-bearing rather than tidy:**
+/// 1. **The ranges partition `0..frames` exactly** — contiguous, in order, no
+///    gaps and no overlaps. The concatenated output's frame accuracy rests on
+///    it (the concat demuxer stitches whatever it is handed, so a segment one
+///    frame short ships a valid file that is one frame out of sync from there
+///    on), and D-362's progress percentage is only a true fraction of the
+///    render because the tracker is built from these same ranges.
+/// 2. **No segment is shorter than [`MIN_SEGMENT_FRAMES`]** where the render is
+///    long enough to allow it. A segment pays a cold keyframe seek per visible
+///    video track before its first frame (~0.7 s median), so a work-balanced
+///    cut that handed a lane a handful of very expensive frames would spend
+///    more on start-up than it saved on balance. Where the render is *not* long
+///    enough, the floor drops to `frames / segments` and then to one frame — a
+///    split this short never reaches production (`plan_segment_count` answers 1
+///    for it) but the arithmetic must still be total.
+/// 3. **Equal costs give an equal-frame split**, to within one frame, so a
+///    timeline whose frames really are uniform partitions exactly as it did
+///    before D-373.
+///
+/// The cumulative curve is strictly increasing (every frame costs at least
+/// `render_cost`'s own frame base), which is what lets the ideal cut for each
+/// segment be found by binary search rather than by walking.
+fn segment_ranges(costs: &[u32], segments: usize) -> Vec<std::ops::Range<u64>> {
     let segments = segments.max(1) as u64;
-    let base = frames / segments;
-    let extra = frames % segments;
+    let frames = costs.len() as u64;
+    if frames == 0 {
+        // Nothing to render: still answer with the segment count asked for, so
+        // the caller's own "one argv per range" bookkeeping holds.
+        return vec![0..0; segments as usize];
+    }
+    let mut cum: Vec<u64> = Vec::with_capacity(costs.len() + 1);
+    cum.push(0);
+    for &c in costs {
+        cum.push(cum[cum.len() - 1] + u64::from(c));
+    }
+    let total = cum[costs.len()];
+    let min_len = MIN_SEGMENT_FRAMES.min(frames / segments).max(1);
+
     let mut ranges = Vec::with_capacity(segments as usize);
     let mut start = 0u64;
-    for i in 0..segments {
-        let len = base + u64::from(i < extra);
-        ranges.push(start..start + len);
-        start += len;
+    for i in 1..=segments {
+        if i == segments {
+            ranges.push(start..frames);
+            break;
+        }
+        // The first frame at which the cumulative cost reaches this segment's
+        // ideal share of the whole.
+        let ideal = cum.partition_point(|&c| c < total * i / segments) as u64;
+        // Clamped so every later segment still has `min_len` frames to take,
+        // and — where that leaves room — so this one is at least `min_len`
+        // long itself. The reserve wins over the minimum, because a segment
+        // below the minimum is slow while an EMPTY segment is a zero-frame
+        // file handed to the concat demuxer.
+        let hi = frames.saturating_sub((segments - i) * min_len).max(start);
+        let lo = (start + min_len).min(hi);
+        let end = ideal.clamp(lo, hi);
+        ranges.push(start..end);
+        start = end;
     }
     ranges
 }
@@ -379,6 +451,8 @@ pub fn render_timeline(
     // the progress tracker is built from the same ranges the workers walk: the
     // percentage is only a true fraction of the render because those ranges
     // partition it exactly, so they must not be derived twice.
+    // D-373 — and it is cut on this timeline's own estimated WORK curve, not on
+    // the frame count, so the lanes finish together; see [`segment_ranges`].
     let segments = match &req.segments {
         Some(_) => plan_segment_count(req.frames, procs_per_segment(timeline)),
         None => 1,
@@ -386,7 +460,7 @@ pub fn render_timeline(
     // No segment may be empty: it would spawn an encoder, write nothing, and
     // hand the concat demuxer a zero-frame file.
     let segments = segments.clamp(1, req.frames.max(1) as usize);
-    let ranges = segment_ranges(req.frames, segments);
+    let ranges = plan_segment_ranges(timeline, req.frames, segments);
 
     let job = export_status::begin(
         req.frames,
@@ -902,41 +976,211 @@ mod tests {
         assert_eq!(canvas_plan((1920, 1080), (1920, 1080)), (None, false));
     }
 
-    /// **D-360 — the property the concatenated output's frame accuracy rests
-    /// on.** Every frame belongs to exactly one segment, the segments are
-    /// contiguous and in order, and they cover the whole render. A partition
-    /// that lost or repeated a frame would not fail anywhere else: the concat
-    /// demuxer stitches whatever it is given, so a short segment simply ships a
-    /// video that is out of sync from that point on.
+    /// Assert [`segment_ranges`]' own contract on one answer: `segments`
+    /// contiguous ranges, in order, covering `0..frames` with no gap and no
+    /// overlap. Returns the lengths so a caller can go on to assert what KIND
+    /// of split it got.
+    ///
+    /// **D-360 — this is the property the concatenated output's frame accuracy
+    /// rests on.** A partition that lost or repeated a frame would not fail
+    /// anywhere else: the concat demuxer stitches whatever it is given, so a
+    /// short segment simply ships a video that is out of sync from that point
+    /// on. D-362 added a second consumer with the same requirement — the
+    /// progress tracker is built from these ranges, so the percentage is only a
+    /// true fraction of the render if they partition it exactly.
+    fn assert_partitions(
+        ranges: &[std::ops::Range<u64>],
+        frames: u64,
+        segments: usize,
+    ) -> Vec<u64> {
+        let what = format!("{frames} frames / {segments} segments");
+        assert_eq!(ranges.len(), segments, "{what}: segment count");
+        assert_eq!(ranges[0].start, 0, "{what}: starts at zero");
+        assert_eq!(
+            ranges[ranges.len() - 1].end,
+            frames,
+            "{what}: ends at the last frame"
+        );
+        for pair in ranges.windows(2) {
+            assert_eq!(
+                pair[0].end, pair[1].start,
+                "{what}: {pair:?} leaves a hole or overlaps"
+            );
+        }
+        let lens: Vec<u64> = ranges.iter().map(|r| r.end - r.start).collect();
+        assert_eq!(lens.iter().sum::<u64>(), frames, "{what}: total frames");
+        lens
+    }
+
+    /// D-360/D-373 — the exact-partition property, over a flat curve (every
+    /// frame the same cost) and over two deliberately lopsided ones. Whatever
+    /// the curve, the ranges still cover the render exactly.
     #[test]
     fn segment_ranges_partition_the_render_exactly() {
         for (frames, segments) in [(60u64, 4usize), (5605, 8), (100, 3), (7, 4), (1, 1), (0, 4)] {
-            let ranges = segment_ranges(frames, segments);
-            assert_eq!(ranges.len(), segments, "{frames}/{segments}: segment count");
-            assert_eq!(ranges[0].start, 0, "{frames}/{segments}: starts at zero");
-            assert_eq!(
-                ranges[ranges.len() - 1].end,
-                frames,
-                "{frames}/{segments}: ends at the last frame"
-            );
-            for pair in ranges.windows(2) {
-                assert_eq!(
-                    pair[0].end, pair[1].start,
-                    "{frames}/{segments}: {pair:?} leaves a hole or overlaps"
+            let f = frames as usize;
+            let curves: [Vec<u32>; 3] = [
+                vec![7; f],
+                // All the work at the front, and all of it at the back: the two
+                // shapes most likely to push a boundary off the end.
+                (0..f).map(|i| if i < f / 4 { 50 } else { 1 }).collect(),
+                (0..f).map(|i| if i < f / 4 { 1 } else { 50 }).collect(),
+            ];
+            for (which, costs) in curves.iter().enumerate() {
+                let ranges = segment_ranges(costs, segments);
+                let lens = assert_partitions(&ranges, frames, segments);
+                assert!(
+                    lens.iter().sum::<u64>() == frames,
+                    "curve {which}: {lens:?}"
                 );
             }
-            let covered: u64 = ranges.iter().map(|r| r.end - r.start).sum();
-            assert_eq!(covered, frames, "{frames}/{segments}: total frames");
-            // The remainder is spread, so no two segments differ by more than
-            // one frame — the whole point of splitting is that they finish
-            // together.
-            let lens: Vec<u64> = ranges.iter().map(|r| r.end - r.start).collect();
-            let (lo, hi) = (
-                lens.iter().copied().min().unwrap_or(0),
-                lens.iter().copied().max().unwrap_or(0),
-            );
-            assert!(hi - lo <= 1, "{frames}/{segments}: uneven split {lens:?}");
         }
+    }
+
+    /// D-373 — a timeline whose frames really are uniform must partition
+    /// exactly as it did before the cost model existed: within one frame of an
+    /// even split. The cost model only has licence to move a boundary when the
+    /// work is actually uneven.
+    #[test]
+    fn a_flat_cost_curve_still_splits_by_equal_frames() {
+        for (frames, segments) in [(60u64, 4usize), (5605, 8), (100, 3), (7, 4), (240, 2)] {
+            for cost in [1u32, 5, 11] {
+                let lens = assert_partitions(
+                    &segment_ranges(&vec![cost; frames as usize], segments),
+                    frames,
+                    segments,
+                );
+                let (lo, hi) = (
+                    lens.iter().copied().min().unwrap_or(0),
+                    lens.iter().copied().max().unwrap_or(0),
+                );
+                assert!(
+                    hi - lo <= 1,
+                    "{frames}/{segments} at a flat cost of {cost}: uneven split {lens:?}"
+                );
+            }
+        }
+    }
+
+    /// **D-373 — the whole point of lever 2, and the assertion equal-frame
+    /// splitting fails.**
+    ///
+    /// The first third of this render costs ten times the rest, exactly the
+    /// shape B-234 measured on the real c038 project ([367, 361, 176] MB across
+    /// three lanes). An equal-frame split would cut at 1000/2000; a
+    /// work-balanced one has to cut much earlier, and the costs either side of
+    /// the cuts have to come out close.
+    #[test]
+    fn segment_ranges_cut_early_when_the_work_is_front_loaded() {
+        const FRAMES: u64 = 3_000;
+        let costs: Vec<u32> = (0..FRAMES)
+            .map(|f| if f < FRAMES / 3 { 30 } else { 3 })
+            .collect();
+        let total: u64 = costs.iter().map(|&c| u64::from(c)).sum();
+
+        let ranges = segment_ranges(&costs, 3);
+        let lens = assert_partitions(&ranges, FRAMES, 3);
+
+        // 1 — the cuts really did move, and in the right direction. Equal
+        //     frames would be [1000, 1000, 1000].
+        assert!(
+            lens[0] < 600,
+            "the expensive first lane must get far fewer than its equal share \
+             of the frames: {lens:?}"
+        );
+        assert!(
+            lens[2] > 1_500,
+            "the cheap last lane must get far more: {lens:?}"
+        );
+
+        // 2 — and the point of moving them: the lanes' estimated work is close,
+        //     where an equal-frame split is wildly out. The ideal is
+        //     total / 3 per lane.
+        let cost_of = |r: &std::ops::Range<u64>| -> u64 {
+            costs[r.start as usize..r.end as usize]
+                .iter()
+                .map(|&c| u64::from(c))
+                .sum()
+        };
+        let balanced: Vec<u64> = ranges.iter().map(cost_of).collect();
+        let spread = |c: &[u64]| {
+            c.iter().copied().max().unwrap_or(0) as f64
+                / c.iter().copied().min().unwrap_or(1) as f64
+        };
+        let equal_frames: Vec<u64> = (0..3)
+            .map(|i| cost_of(&(i * FRAMES / 3..(i + 1) * FRAMES / 3)))
+            .collect();
+        assert!(
+            spread(&balanced) < 1.1,
+            "work-balanced lanes must be within 10% of each other: {balanced:?} \
+             (ideal {} each)",
+            total / 3
+        );
+        assert!(
+            spread(&equal_frames) > 5.0,
+            "this fixture has to be one equal-frame splitting really fails, or \
+             the test proves nothing: {equal_frames:?}"
+        );
+    }
+
+    /// D-373 — a cost-balanced cut must not produce a segment too short to
+    /// amortise its own cold start, however concentrated the work is. The
+    /// ideal cut here is at frame 5; [`MIN_SEGMENT_FRAMES`] is what stops it.
+    #[test]
+    fn segment_ranges_never_go_below_the_minimum_segment_length() {
+        const FRAMES: u64 = 1_000;
+        let costs: Vec<u32> = (0..FRAMES)
+            .map(|f| if f < 10 { 10_000 } else { 1 })
+            .collect();
+        for segments in 2..=MAX_SEGMENTS {
+            let lens = assert_partitions(&segment_ranges(&costs, segments), FRAMES, segments);
+            assert!(
+                lens.iter().all(|&l| l >= MIN_SEGMENT_FRAMES),
+                "{segments} segments: {lens:?} has one below {MIN_SEGMENT_FRAMES}"
+            );
+        }
+    }
+
+    /// D-373 — the partition the planner actually hands the workers, derived
+    /// from a real `Timeline` rather than a hand-written curve: a two-layer
+    /// first half and a one-layer second half must not be cut down the middle.
+    #[test]
+    fn the_planner_splits_a_lopsided_timeline_off_centre() {
+        use apelles_timeline::{Clip, Track, TrackKind};
+        const FRAMES: u64 = 600;
+
+        let clip = |id: &str, start: i64, duration: i64| Clip {
+            id: id.to_string(),
+            source_path: format!("/tmp/{id}.mp4"),
+            start_frame: start,
+            source_start: 0,
+            duration,
+            ..Default::default()
+        };
+        let track = |clips: Vec<Clip>| Track {
+            kind: TrackKind::Video,
+            clips,
+            ..Default::default()
+        };
+        let timeline = Timeline {
+            tracks: vec![
+                // An overlay over the first half only.
+                track(vec![clip("over", 0, FRAMES as i64 / 2)]),
+                track(vec![clip("base", 0, FRAMES as i64)]),
+            ],
+            ..Default::default()
+        };
+
+        let lens = assert_partitions(&plan_segment_ranges(&timeline, FRAMES, 2), FRAMES, 2);
+        assert!(
+            lens[0] < FRAMES / 2,
+            "the lane holding the stacked half must take fewer frames: {lens:?}"
+        );
+        assert_eq!(
+            plan_segment_ranges(&timeline, FRAMES, 1),
+            vec![0..FRAMES],
+            "one segment is the whole render, with no curve built at all"
+        );
     }
 
     /// D-360 — a render too short to be worth splitting takes the
@@ -1006,13 +1250,15 @@ mod tests {
             hidden,
             ..Default::default()
         };
-        let mut tl = Timeline::default();
-        tl.tracks = vec![
-            track(TrackKind::Video, false),
-            track(TrackKind::Video, false),
-            track(TrackKind::Video, true),  // hidden — no pipe
-            track(TrackKind::Audio, false), // audio — no pipe on this path
-        ];
+        let tl = Timeline {
+            tracks: vec![
+                track(TrackKind::Video, false),
+                track(TrackKind::Video, false),
+                track(TrackKind::Video, true),  // hidden — no pipe
+                track(TrackKind::Audio, false), // audio — no pipe on this path
+            ],
+            ..Default::default()
+        };
         // 2 visible video + 1 encoder.
         assert_eq!(procs_per_segment(&tl), 3);
 
@@ -1327,6 +1573,302 @@ mod parity_tests {
             std::thread::available_parallelism()
                 .map(std::num::NonZeroUsize::get)
                 .unwrap_or(0),
+        );
+    }
+
+    /// **D-373 — why [`measure_segmented_render_throughput`]'s before/after is
+    /// unchanged, stated exactly rather than inferred from two noisy timings.**
+    ///
+    /// The stress fixture's own cost curve is **constant**: every one of its 240
+    /// frames carries the same two layers (one full-length base clip plus one of
+    /// 20 back-to-back cuts above it), and none of the perturbations the fixture
+    /// does carry — four clips with a 10 % left crop — crosses a cost boundary.
+    /// A flat curve means the work-balanced partition IS the equal-frame
+    /// partition, so the sweep measures the same two renders before and after
+    /// D-373 and any difference between the two tables is this machine, not this
+    /// code.
+    ///
+    /// Asserting that here is worth more than a timing: it turns "the sweep
+    /// looks the same" into "the sweep is rendering identical ranges", and it
+    /// will start failing the day the fixture grows a clip that makes the curve
+    /// genuinely uneven — at which point the sweep becomes able to measure
+    /// D-373 and this test is the signal to go and read it.
+    ///
+    /// Needs no media and no ffmpeg: the cost model never opens a file.
+    #[test]
+    fn the_stress_fixtures_cost_curve_is_flat_so_d373_cannot_move_its_split() {
+        let fx = load_fixture();
+        let st = &fx.stress;
+        let timeline = st.timeline.clone();
+
+        let curve = super::super::render_cost::frame_cost_curve(&timeline, st.pipe_frames);
+        assert_eq!(curve.len() as u64, st.pipe_frames);
+        let first = curve[0];
+        assert!(
+            curve.iter().all(|&c| c == first),
+            "the stress fixture is supposed to be uniform; it is not, so the \
+             D-360 sweep CAN now measure D-373 — go and read it. curve: {curve:?}"
+        );
+
+        // And therefore the partition is the equal-frame one, at every segment
+        // count the sweep uses.
+        for segments in [2usize, 4, 6, 8] {
+            let ranges = plan_segment_ranges(&timeline, st.pipe_frames, segments);
+            let lens: Vec<u64> = ranges.iter().map(|r| r.end - r.start).collect();
+            assert_eq!(lens.iter().sum::<u64>(), st.pipe_frames);
+            let (lo, hi) = (
+                lens.iter().copied().min().unwrap_or(0),
+                lens.iter().copied().max().unwrap_or(0),
+            );
+            assert!(
+                hi - lo <= 1,
+                "{segments} segments on a flat curve must still be an even \
+                 split: {lens:?}"
+            );
+        }
+    }
+
+    /// **D-373 — does cutting on the WORK curve instead of the frame count
+    /// actually finish sooner?**
+    ///
+    /// [`measure_segmented_render_throughput`] cannot answer that, and the
+    /// reason is a property of its fixture rather than of the change: the
+    /// 20-clip / 1080p / 240-frame stress case is **uniform**. Every frame
+    /// carries the same two layers — one full-length base clip plus one of 20
+    /// back-to-back cuts above it — so its cost curve is flat, the
+    /// work-balanced split *is* the equal-frame split frame for frame, and the
+    /// before/after sweep is expected to be unchanged (it is; see
+    /// `docs/notes/export-gpu-compositor.md` §10.7).
+    ///
+    /// So this one makes the fixture lopsided, out of the fixture's **own**
+    /// generated media and nothing else: every clip covering the FIRST half of
+    /// the render gets a real `rotation`, which sends its layer down
+    /// `composite_layer_onto`'s dearest branch (`rgba8 → rgba32f → bilinear
+    /// rotate → rgba8`, three full-buffer passes, one of them at four times the
+    /// bytes) while the second half stays on D-217's fused path. Then it renders
+    /// that timeline twice at the same lane count — once on an **equal-frame**
+    /// partition (D-360's arithmetic, reproduced here so the comparison is
+    /// against the real thing) and once on [`plan_segment_ranges`]' cost-based
+    /// one.
+    ///
+    /// **Why rotation, and not "fewer layers in the second half" — which is the
+    /// obvious skew and was this harness's first attempt.** Truncating a track
+    /// so the second half has fewer layers changes how many DECODE PROCESSES a
+    /// lane needs, and changes it *differently for the two partitions*: the
+    /// cost-based cut reaches back into the stacked region, so its cheap lane
+    /// spawns extra decoders its equal-frame counterpart never had. That version
+    /// measured the cost-based partition **consistently 5-6 % slower in every
+    /// repeat** (9.75 s vs 10.30 s best-of-5) — D-369's contention term, not
+    /// noise. It is a true and useful finding about this model (it costs WORK,
+    /// not PROCESSES — see `chroma::render_cost`'s own "what it does not do")
+    /// but it says nothing about whether balancing work helps, because the two
+    /// partitions were not running the same number of processes. Rotation skews
+    /// the per-frame compositing cost while leaving track occupancy identical
+    /// everywhere, so every lane spawns the same processes wherever the boundary
+    /// falls and the comparison isolates the one variable.
+    ///
+    /// **Read the spread, not just the two numbers.** 240 frames is ~10 s of
+    /// render, and this machine's run-to-run spread on the identical
+    /// configuration has been measured at ±25 % (see
+    /// [`measure_segmented_render_throughput`]'s own note). The per-lane
+    /// ESTIMATED work this also prints is deterministic, and at this fixture's
+    /// size it is the half to trust.
+    ///
+    /// ```text
+    /// cargo test -p apelles --lib chroma::edit_render::parity_tests::measure_segmented_render_balance -- --ignored --nocapture
+    /// ```
+    ///
+    /// `#[ignore]`d, best-of-`REPEATS`, and alternating the two partitions
+    /// inside each repeat, for exactly the reasons
+    /// [`measure_segmented_render_throughput`] gives: a single reading on a
+    /// shared machine is not a fact about this code.
+    #[test]
+    #[ignore = "a live throughput measurement, not a pass/fail assertion — see the doc comment"]
+    fn measure_segmented_render_balance() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let fx = load_fixture();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = dir.path();
+        generate_stress_media(&fx, dir).expect("generate stress media");
+        let st = &fx.stress;
+
+        // The skew, in two steps. Neither changes which tracks have content
+        // where, so both partitions spawn the same processes — see the doc
+        // comment for why that is the whole design of this harness.
+        let mut timeline = localise_timeline(&st.timeline, dir);
+        let half = st.pipe_frames as i64 / 2;
+
+        // 1 — the base track's one full-length clip becomes two clips meeting
+        //     at the half, so the rotation in step 2 can apply to one of them.
+        //     Same track, so still one `PipeSlot` and one decode `ffmpeg`, and
+        //     still covering every frame of the render.
+        let base = timeline
+            .tracks
+            .iter_mut()
+            .rfind(|t| t.kind == TrackKind::Video)
+            .expect("the stress fixture's base video track");
+        assert_eq!(
+            base.clips.len(),
+            1,
+            "the base track is one full-length clip"
+        );
+        let mut tail = base.clips[0].clone();
+        base.clips[0].duration = half;
+        tail.id = format!("{}-tail", tail.id);
+        tail.start_frame = half;
+        tail.source_start += half;
+        tail.duration = st.pipe_frames as i64 - half;
+        base.clips.push(tail);
+
+        // 2 — every clip starting in the first half gets a real rotation.
+        //     17 degrees: enough to be a genuine rotation rather than a no-op,
+        //     and an odd angle so no axis-aligned shortcut could ever apply.
+        const SKEW_ROTATION_DEG: f64 = 17.0;
+        for track in &mut timeline.tracks {
+            for clip in &mut track.clips {
+                if clip.start_frame < half {
+                    clip.rotation = SKEW_ROTATION_DEG;
+                }
+            }
+        }
+
+        let settings = ProjectSettings {
+            width: Some(st.width),
+            height: Some(st.height),
+            fps: Some(fx.fps),
+            color_space: None,
+        };
+        let out = (st.width, st.height);
+        let comp = edit::composition_size(&settings, &timeline).expect("composition size");
+        let canvas = canvas_plan(comp, out);
+
+        /// Two lanes, because the skew is a half: it is the smallest split that
+        /// has an expensive lane and a cheap one, and the one whose imbalance is
+        /// easiest to read off the numbers.
+        const SEGMENTS: usize = 2;
+        const REPEATS: usize = 5;
+
+        // D-360's own equal-frame arithmetic, reproduced rather than referenced
+        // because D-373 replaced it — this is the baseline being measured
+        // against, so it has to be stated.
+        let equal: Vec<std::ops::Range<u64>> = {
+            let base = st.pipe_frames / SEGMENTS as u64;
+            let extra = st.pipe_frames % SEGMENTS as u64;
+            let mut start = 0;
+            (0..SEGMENTS as u64)
+                .map(|i| {
+                    let len = base + u64::from(i < extra);
+                    let r = start..start + len;
+                    start += len;
+                    r
+                })
+                .collect()
+        };
+        let balanced = plan_segment_ranges(&timeline, st.pipe_frames, SEGMENTS);
+
+        // The deterministic half of this measurement, and the half worth
+        // trusting at this fixture's size: what the model says each lane is
+        // carrying under each partition. No timer, no machine, no noise.
+        let curve = super::super::render_cost::frame_cost_curve(&timeline, st.pipe_frames);
+        let lane_work = |ranges: &[std::ops::Range<u64>]| -> Vec<u64> {
+            ranges
+                .iter()
+                .map(|r| {
+                    curve[r.start as usize..r.end as usize]
+                        .iter()
+                        .map(|&c| u64::from(c))
+                        .sum()
+                })
+                .collect()
+        };
+        let imbalance = |w: &[u64]| {
+            w.iter().copied().max().unwrap_or(0) as f64
+                / w.iter().copied().min().unwrap_or(1) as f64
+        };
+
+        eprintln!(
+            "\n=== D-373 work-balanced segments: {}x{}, {} frames, every layer \
+             rotated for the first {half} and none after ===\n\
+             estimated work per lane (deterministic, chroma::render_cost):\n\
+             \x20 equal-frame {equal:?} {:?} imbalance {:.2}x\n\
+             \x20 cost-based  {balanced:?} {:?} imbalance {:.2}x\n\
+             wall clock, best of {REPEATS}, both partitions rendered within each repeat:",
+            st.width,
+            st.height,
+            st.pipe_frames,
+            lane_work(&equal),
+            imbalance(&lane_work(&equal)),
+            lane_work(&balanced),
+            imbalance(&lane_work(&balanced)),
+        );
+
+        let mut best = [f64::INFINITY; 2];
+        let mut worst = [0.0f64; 2];
+        for repeat in 1..=REPEATS {
+            for (slot, ranges) in [&equal, &balanced].into_iter().enumerate() {
+                let target = dir.join(format!("balance-{slot}.mp4"));
+                let plan = SegmentedEncodePlan {
+                    segment_args: localise(&st.segment_args, dir, &target),
+                    concat_args: localise(&st.concat_args, dir, &target),
+                };
+                let started = Instant::now();
+                let outcome = render_at_ranges(
+                    &timeline,
+                    &settings,
+                    &TimelineRenderRequest {
+                        args: Vec::new(),
+                        width: st.width,
+                        height: st.height,
+                        frames: st.pipe_frames,
+                        segments: None,
+                        output: None,
+                    },
+                    &plan,
+                    ranges,
+                    out,
+                    canvas,
+                )
+                .unwrap_or_else(|e| panic!("render on {ranges:?}: {e}"));
+                assert_eq!(outcome.frames, st.pipe_frames);
+                let wall = started.elapsed().as_secs_f64();
+                best[slot] = best[slot].min(wall);
+                worst[slot] = worst[slot].max(wall);
+                eprint!("  repeat {repeat}: partition {slot} {wall:>6.2}s\r");
+            }
+        }
+
+        // **The harness says when it could not measure.** The two minima are
+        // only comparable if each configuration's own spread is smaller than
+        // the gap between them; otherwise the "faster" row is just the one that
+        // happened to catch the quietest moment on a shared machine, and
+        // quoting its ratio would be exactly the error D-360's own harness note
+        // was written about.
+        let gap = (best[0] - best[1]).abs();
+        let spread = (worst[0] - best[0]).max(worst[1] - best[1]);
+        eprintln!(
+            "\n  equal-frame  min {:>6.2}s  max {:>6.2}s\n\
+             \x20 cost-based   min {:>6.2}s  max {:>6.2}s\n\
+             \x20 {}\n",
+            best[0],
+            worst[0],
+            best[1],
+            worst[1],
+            if spread > gap {
+                format!(
+                    "INCONCLUSIVE: the {spread:.2}s run-to-run spread on this machine \
+                     is larger than the {gap:.2}s gap between the two partitions. \
+                     Trust the per-lane estimate above, not these timings; the real \
+                     c038 project is the fixture that can answer this."
+                )
+            } else {
+                format!("-> {:.2}x for the cost-based partition", best[0] / best[1])
+            },
         );
     }
 
@@ -1971,7 +2513,7 @@ mod parity_tests {
         const STALL: std::time::Duration = std::time::Duration::from_secs(4);
         // The real partition function, at one segment — the same call
         // `render_timeline` makes for an unsplit render.
-        let ranges = segment_ranges(fx.pipe_frames, 1);
+        let ranges = plan_segment_ranges(&timeline, fx.pipe_frames, 1);
         let job = export_status::begin(
             fx.pipe_frames,
             &ranges,
@@ -2076,7 +2618,7 @@ mod parity_tests {
 
         // The real partition function, at one segment — the same call
         // `render_timeline` makes for an unsplit render.
-        let ranges = segment_ranges(fx.pipe_frames, 1);
+        let ranges = plan_segment_ranges(&timeline, fx.pipe_frames, 1);
         let job = export_status::begin(
             fx.pipe_frames,
             &ranges,
@@ -2154,10 +2696,26 @@ mod parity_tests {
         canvas: (Option<u32>, bool),
     ) -> Result<TimelineRenderOutcome, String> {
         let segments = segments.clamp(1, req.frames.max(1) as usize);
-        let ranges = segment_ranges(req.frames, segments);
+        let ranges = plan_segment_ranges(timeline, req.frames, segments);
+        render_at_ranges(timeline, settings, req, plan, &ranges, out, canvas)
+    }
+
+    /// [`render_at_segments`] with the partition supplied rather than planned —
+    /// what [`measure_segmented_render_balance`] needs in order to render the
+    /// same timeline twice at the same lane count on two different partitions.
+    #[allow(clippy::too_many_arguments)]
+    fn render_at_ranges(
+        timeline: &Timeline,
+        settings: &ProjectSettings,
+        req: &TimelineRenderRequest,
+        plan: &SegmentedEncodePlan,
+        ranges: &[std::ops::Range<u64>],
+        out: (u32, u32),
+        canvas: (Option<u32>, bool),
+    ) -> Result<TimelineRenderOutcome, String> {
         let job = export_status::begin(
             req.frames,
-            &ranges,
+            ranges,
             req.output.clone(),
             export_status::STALL_TIMEOUT,
         )?;
@@ -2166,7 +2724,7 @@ mod parity_tests {
             settings,
             req,
             plan,
-            &ranges,
+            ranges,
             out,
             canvas,
             &job,
@@ -2310,7 +2868,7 @@ mod parity_tests {
         );
 
         // 2 + 3 — the pixels, hardest at the boundaries.
-        let boundaries: Vec<u64> = segment_ranges(fx.pipe_frames, SEGMENTS)
+        let boundaries: Vec<u64> = plan_segment_ranges(&timeline, fx.pipe_frames, SEGMENTS)
             .iter()
             .skip(1)
             .map(|r| r.start)
