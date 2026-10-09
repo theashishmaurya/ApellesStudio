@@ -188,3 +188,107 @@ describe('reflowManifest', () => {
     expect(layerById(manifest, 'g').nodeR as number).toBeGreaterThanOrEqual(1);
   });
 });
+
+/**
+ * D-372 — which axis an AUTHORED `text.size` scales by: the second, open half
+ * of B-239.
+ *
+ * B-239 measured c038's 1920×1080 → 1252×1016 reshape, where captions
+ * reflowed by `su` (= `sx` = 0.6521) to 22–23 px while every primitive's own
+ * internal type stayed at its hardcoded 24–40 px, and proposed scaling type
+ * by `sy` (0.9407) instead so it "tracks height". D-372 keeps `su` and fixes
+ * the primitives instead (`plotTypeScale`, `layersTypeScale`): the inversion
+ * was the primitives not scaling at all, and `sy` buys its bigger type by
+ * breaking the one layout guarantee this module can make.
+ *
+ * The property these cases pin is that guarantee: **a reflow never increases
+ * a text block's line count.** A block's characters-per-line is
+ * `maxWidth / size`, `maxWidth` scales by `sx`, and `su = min(sx, sy) <= sx`
+ * — so the ratio can only grow. Any factor above `sx` (which `sy` is,
+ * whenever the canvas lost relatively more width — exactly the c038 case)
+ * can only re-wrap, and this module cannot measure text to know that it did.
+ *
+ * The guarantee is exact in the FACTORS; the values written are whole px, and
+ * rounding can give half a pixel back in either direction. The cases below
+ * state both bounds separately rather than pretending the rounded one is the
+ * clean inequality.
+ */
+describe('D-372 — a type size tracks the binding axis, never a wider one', () => {
+  /** Every shape of reshape, including the two extremes. */
+  const RESHAPES: Array<[string, { width: number; height: number }]> = [
+    ['c038, the real incident (lost width, kept height)', { width: 1252, height: 1016 }],
+    ['the same shape, bigger', { width: 2560, height: 1440 }],
+    ['16:9 -> 9:16, a vertical reel', { width: 1080, height: 1920 }],
+    ['9:16 -> 16:9, back again', { width: 3413, height: 1920 }],
+    ['4:3 -> 16:9, same height', { width: 1920, height: 810 }],
+    ['taller, same width', { width: 1920, height: 1440 }],
+    ['a hard uniform shrink', { width: 480, height: 270 }],
+    ['no-op', { width: 1920, height: 1080 }],
+  ];
+
+  for (const [name, to] of RESHAPES) {
+    it(`${name}: the type factor never exceeds the width factor`, () => {
+      const { manifest, factors } = reflowManifest(fixture(), to);
+      expect(factors.su).toBeLessThanOrEqual(factors.sx);
+      expect(factors.su).toBeLessThanOrEqual(factors.sy);
+
+      // …so in exact arithmetic the block holds at least as many characters
+      // per line as it did before: `(maxWidth·sx) / (size·su) >=
+      // maxWidth / size`, because `su <= sx`.
+      const idealAfter = (1650 * factors.sx) / (46 * factors.su);
+      expect(idealAfter).toBeGreaterThanOrEqual(1650 / 46 - 1e-9);
+
+      // What is actually WRITTEN is whole px (`px()`), which can move each of
+      // the two by up to half a pixel — so the realised ratio is bounded by
+      // the ideal with that half-pixel taken off the numerator and added to
+      // the denominator, not by the ideal itself. At ordinary factors this is
+      // a fraction of a percent; at a 4x shrink it is a few percent, and it
+      // is the only way a reflow can cost a text block a character per line.
+      const text = layerById(manifest, 't');
+      const charsPerLineAfter = (text.maxWidth as number) / (text.size as number);
+      expect(charsPerLineAfter).toBeGreaterThanOrEqual(
+        (1650 * factors.sx - 0.5) / (46 * factors.su + 0.5),
+      );
+    });
+  }
+
+  it('on the c038 reshape that is `sx`, the narrower ratio — NOT `sy`', () => {
+    const { manifest, factors } = reflowManifest(fixture(), { width: 1252, height: 1016 });
+    expect(factors.su).toBe(factors.sx);
+    expect(factors.sy).toBeGreaterThan(factors.sx); // the tension B-239 found
+    expect(layerById(manifest, 't').size).toBe(Math.round(46 * factors.sx));
+    // what `sy` would have written, and what this must NOT be
+    expect(layerById(manifest, 't').size).not.toBe(Math.round(46 * factors.sy));
+  });
+
+  it('a reflow into a vertical reel SHRINKS type — it must never grow it', () => {
+    // The case that rules `sy` out on its own: 16:9 -> 9:16 has `sy` = 1.778,
+    // so "type tracks height" would scale every caption UP by 78% on a canvas
+    // that just lost 44% of its width — guaranteed overflow, B-240's class of
+    // failure, on a reshape this project does routinely.
+    const { manifest, factors } = reflowManifest(fixture(), { width: 1080, height: 1920 });
+    expect(factors.sy).toBeCloseTo(1.7777, 3);
+    expect(layerById(manifest, 't').size).toBe(Math.round(46 * factors.sx));
+    expect(layerById(manifest, 't').size as number).toBeLessThan(46);
+  });
+
+  it('when HEIGHT is the axis that shrank more, the type does track height', () => {
+    // The other side of `min`: this is why `su` is not merely "the width
+    // ratio with extra steps".
+    const { manifest, factors } = reflowManifest(fixture(), { width: 1920, height: 810 });
+    expect(factors.su).toBe(factors.sy);
+    expect(layerById(manifest, 't').size).toBe(Math.round(46 * 0.75));
+  });
+
+  it('and the axis table still scales nothing else by a text-only rule', () => {
+    // Splitting the type axis out would have had to leave these alone; the
+    // table is per-field for exactly that reason, so this is the regression
+    // guard for a future caller-selectable axis landing in the wrong column.
+    const to = { width: 1252, height: 1016 };
+    const { manifest, factors } = reflowManifest(fixture(), to);
+    expect(layerById(manifest, 'm').cell).toBe(Math.round(62 * factors.su));
+    expect(layerById(manifest, 'm').gap).toBe(Math.round(12 * factors.su));
+    expect(layerById(manifest, 'l').gap).toBe(Math.round(52 * factors.su));
+    expect(layerById(manifest, 'g').nodeR).toBe(Math.round(52 * factors.su));
+  });
+});

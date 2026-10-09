@@ -23,7 +23,11 @@
  * therefore lands the composition in the right places at the right relative
  * sizes and can still leave a caption that used to be one line sitting on
  * three — the author's remaining job is to correct the overflows, not to
- * re-place 80 layers. It also does not touch `scene3d` (a three.js child's
+ * re-place 80 layers. What it will never do is make that WORSE: a type size
+ * scales by `su <= sx` while the `maxWidth` it wraps inside scales by `sx`,
+ * so a reflowed text block's line count can only fall or stay the same
+ * (D-372, which is why `EXTRA_FIELDS.text.size` is `'u'` and not the `'y'`
+ * B-239 proposed). It also does not touch `scene3d` (a three.js child's
  * coordinates are world units in a 3D scene, not canvas pixels — scaling them
  * by a 2D canvas ratio would be meaningless), any timing (`at`, `dur`,
  * `stagger`), or any content value (a `plot`'s `values`/`baseline`, a
@@ -124,6 +128,17 @@ const EXTRA_FIELDS: Record<string, Array<{ key: string; axis: 'x' | 'y' | 'u' }>
   // there that is a unitless number (`text.weight`, `layers.tilt` degrees,
   // `matrix.rows`/`cols`, every `seed`, a `plot`'s `values`/`baseline`/
   // `yMin`/`yMax` data range) is deliberately absent and must stay absent.
+  //
+  // `text.size` is `'u'` DELIBERATELY, not incidentally — B-239 proposed
+  // `'y'` ("type tracks height") and **D-372 rejected it**. `su` is
+  // `min(sx, sy)`, so it already IS the height ratio whenever height is the
+  // axis that shrank more; where it is not — a canvas that lost relatively
+  // more WIDTH — following height would scale glyphs up against a `maxWidth`
+  // that scaled by `sx`, re-wrapping a block this module cannot measure (see
+  // "What it does NOT do" above). `su` is the LARGEST factor that cannot
+  // worsen any text block's wrapping, because `su <= sx` always and
+  // `maxWidth` scales by `sx`. Pinned in `manifestReflow.test.ts`'s
+  // "D-372 — a type size tracks the binding axis" block.
   text: [{ key: 'size', axis: 'u' }],
   matrix: [{ key: 'gap', axis: 'u' }],
   layers: [{ key: 'gap', axis: 'u' }],

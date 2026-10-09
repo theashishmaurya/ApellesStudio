@@ -17,6 +17,11 @@
  * function rather than an inline expression, because it is a geometry
  * decision that could (and did, B-240) put authored content outside the
  * frame with no error to notice.
+ *
+ * Type: every size this draws — card label, sublabel, callout — is a named
+ * base times `layersTypeScale` below (B-239), so the stack's own type stays
+ * proportional to the cards when the card box changes: a canvas reflow, or
+ * simply a stack authored smaller.
  */
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
@@ -35,9 +40,87 @@ import { roughLine } from "../lib/rough";
  *  computes from. */
 export type LayerItem = { label: string; sublabel?: string; dx?: number; dy?: number };
 
+/** The card box this primitive's type sizes were authored against — its own
+ *  default `cardW`/`cardH`. `layersTypeScale` is exactly 1 here, so a stack
+ *  drawn at the default card renders byte-for-byte as it did before B-239.
+ *  `gap`, `tilt` and the item COUNT are deliberately not part of it: they
+ *  move the stack's total height, not the box a label has to sit in. */
+export const LAYERS_BASE_CARD_WIDTH = 620;
+export const LAYERS_BASE_CARD_HEIGHT = 110;
+
+/** The two type roles a card itself draws, at the base card. Named for the
+ *  same reason the `plot` ones are: they are a deliberate hierarchy (the
+ *  label reads first, the sublabel is support), not two incidental literals.
+ */
+export const LAYERS_LABEL_FONT_SIZE = 40;
+export const LAYERS_SUBLABEL_FONT_SIZE = 24;
+
 /** The callout's own type size. Exported because the placement below derives
  *  its width estimate from it, and the two must never drift apart. */
 export const CALLOUT_FONT_SIZE = 34;
+
+/** Below this a label stops being readable at all — the same legibility
+ *  floor, and the same reasoning, as `Plot.tsx`'s `PLOT_TYPE_MIN_FONT_SIZE`
+ *  and `Graph.tsx`'s `GRAPH_LABEL_MIN_FONT_SIZE`. */
+export const LAYERS_TYPE_MIN_FONT_SIZE = 14;
+/** Expressed against the SMALLEST role, so the floor bites on the first
+ *  thing that would become illegible rather than on an average. */
+const LAYERS_TYPE_MIN_SCALE = LAYERS_TYPE_MIN_FONT_SIZE / LAYERS_SUBLABEL_FONT_SIZE;
+
+/**
+ * B-239 — the multiplier every type size in this primitive is drawn at,
+ * derived from the stack's OWN card box.
+ *
+ * **The bug.** The card label (40) and sublabel (24) were bare literals in
+ * the JSX and the callout (34) a bare constant. D-347's canvas reflow scales
+ * a `layers` layer's `cardW` by `sx` and `cardH` by `sy` (`propCatalog.ts`'s
+ * `sizeFields('layers')`), its `gap` by `su`, and an authored `text` layer's
+ * `size` too (`manifestReflow.ts`'s `EXTRA_FIELDS`) — but it has no way to
+ * reach type baked inside a primitive's render. So on c038's 1920×1080 →
+ * 1252×1016 reshape the cards lost 35% of their width while their own labels
+ * stayed at 40 px and the authored captions around them reflowed down to
+ * 22–23 px: the type hierarchy inverted, supporting captions rendering
+ * SMALLER than a card's label, with nothing overflowing or erroring to flag
+ * it.
+ *
+ * **Why the card box and not the canvas or the whole stack.** The question
+ * this type has to answer is "does it fit in, and read against, THIS card" —
+ * a stack hand-authored small on a full-size canvas has exactly the same
+ * problem as a reflowed one, and solving it from the box solves both with
+ * nothing to keep in sync (the same call `Plot.tsx`'s `plotTypeScale` and
+ * `Graph.tsx`'s `graphLabelFontSize` already made; a rendering-time
+ * derivation, not a new persisted manifest field, so no `propCatalog.ts`
+ * entry and no MCP parameter is owed — there is no new authored value). The
+ * CARD, not the stack's total height, because that total is `n · cardH +
+ * (n−1) · gap`: deriving type from it would shrink every label the moment an
+ * author added a fifth card, which is not a type problem.
+ *
+ * **Why `min` of the two ratios.** Type cannot be stretched per axis, and it
+ * has to fit a card that moved on both — the label is bound by the card's
+ * width, the label+sublabel pair by its height. `min` is the factor that
+ * clears both, the same reasoning `manifestReflow.ts` gives for its own `su`
+ * and `plotTypeScale` for its own `min`.
+ *
+ * **What it does NOT scale.** The callout's ARM geometry (`CALLOUT_ARM_GAP`/
+ * `_LENGTH`/`_TEXT_GAP` and so `CALLOUT_TEXT_OFFSET`), `CALLOUT_CANVAS_MARGIN`,
+ * `CALLOUT_TEXT_RISE`, `CALLOUT_BELOW_GAP` and the cards' own `borderRadius`/
+ * `marginTop` are all still fixed. Those are layout geometry, not type —
+ * `plotTypeScale` draws the same line at `MARGIN`/`MARKER_R`, and leaving
+ * them is the conservative direction (a shrunk label inside an unshrunk
+ * offset has more air around it, never less).
+ *
+ * **It is not a no-op for an already-non-default card.** A stack authored at,
+ * say, 760×150 now draws its type ~1.23× — that chart's type was never
+ * proportional to it, so this is the fix doing its job, not a regression.
+ */
+export function layersTypeScale(cardW: number, cardH: number): number {
+  if (!Number.isFinite(cardW) || !Number.isFinite(cardH)) return 1;
+  if (cardW <= 0 || cardH <= 0) return 1;
+  return Math.max(
+    LAYERS_TYPE_MIN_SCALE,
+    Math.min(cardW / LAYERS_BASE_CARD_WIDTH, cardH / LAYERS_BASE_CARD_HEIGHT),
+  );
+}
 
 /** Average glyph advance as a fraction of the font size, for `theme.fontUi`
  *  (Kalam). B-240's second finding: the pre-fix picker assumed `0.5em`
@@ -183,6 +266,13 @@ export function layoutCallout(opts: {
   fromY: number;
   canvasWidth: number;
   canvasHeight: number;
+  /** The size the text will actually render at. `Layers` passes
+   *  `CALLOUT_FONT_SIZE × layersTypeScale(cardW, cardH)` (B-239); the default
+   *  is the base constant, which is what that product IS at the default card,
+   *  so an omitted `fontSize` still describes a default stack exactly. The
+   *  budget maths below is in px and so depends on this: a smaller size means
+   *  a narrower line estimate and a shorter wrapped block, which can legally
+   *  change the chosen placement for a non-default card — see B-239's entry. */
   fontSize?: number;
 }): CalloutLayout {
   const {
@@ -258,8 +348,8 @@ export const Layers: React.FC<{
   callout,
   x,
   y,
-  cardW = 620,
-  cardH = 110,
+  cardW = LAYERS_BASE_CARD_WIDTH,
+  cardH = LAYERS_BASE_CARD_HEIGHT,
   gap = 20,
   tilt = 24,
 }) => {
@@ -270,6 +360,10 @@ export const Layers: React.FC<{
   const cy = y ?? height / 2;
   const n = items.length;
   const stackH = n * cardH + (n - 1) * gap;
+
+  // B-239 — every font size below is this multiplier times its named base.
+  const typeScale = layersTypeScale(cardW, cardH);
+  const calloutFontSize = CALLOUT_FONT_SIZE * typeScale;
 
   const calloutFromY = active * (cardH + gap) - stackH / 2 + cardH / 2;
   const calloutLayout =
@@ -283,6 +377,11 @@ export const Layers: React.FC<{
           fromY: calloutFromY,
           canvasWidth: width,
           canvasHeight: height,
+          // B-239 — the placement's own width/height budget is measured in
+          // the size the text will ACTUALLY render at, not the base constant.
+          // At the default card that is `CALLOUT_FONT_SIZE` exactly, so every
+          // placement B-240/B-244 signed off is unchanged.
+          fontSize: calloutFontSize,
         })
       : null;
 
@@ -336,11 +435,22 @@ export const Layers: React.FC<{
                 fontFamily: theme.fontUi,
               }}
             >
-              <div style={{ fontSize: 40, color: isActive ? theme.text : theme.textDim }}>
+              <div
+                style={{
+                  fontSize: LAYERS_LABEL_FONT_SIZE * typeScale,
+                  color: isActive ? theme.text : theme.textDim,
+                }}
+              >
                 {it.label}
               </div>
               {it.sublabel && (
-                <div style={{ fontSize: 24, color: theme.textDim, marginTop: 4 }}>
+                <div
+                  style={{
+                    fontSize: LAYERS_SUBLABEL_FONT_SIZE * typeScale,
+                    color: theme.textDim,
+                    marginTop: 4,
+                  }}
+                >
                   {it.sublabel}
                 </div>
               )}
@@ -356,6 +466,7 @@ export const Layers: React.FC<{
           cardW={cardW}
           fromY={calloutFromY}
           start={start + active * stagger + 10}
+          fontSize={calloutFontSize}
         />
       )}
     </div>
@@ -379,7 +490,13 @@ const Callout: React.FC<{
   cardW: number;
   fromY: number;
   start: number;
-}> = ({ text, layout, cardW, fromY, start }) => {
+  /** B-239 — the rendered size, i.e. `CALLOUT_FONT_SIZE × layersTypeScale`.
+   *  It is passed in rather than recomputed here so the size the box was
+   *  LAID OUT for (`layoutCallout`'s `fontSize`) and the size it is DRAWN at
+   *  cannot drift apart — the same reason `CALLOUT_FONT_SIZE` was exported in
+   *  the first place. */
+  fontSize: number;
+}> = ({ text, layout, cardW, fromY, start, fontSize }) => {
   const frame = useCurrentFrame();
   const theme = useTheme();
   const draw = inAt(frame, start, start + 14);
@@ -431,7 +548,7 @@ const Callout: React.FC<{
           top: layout.top,
           overflowWrap: "anywhere",
           fontFamily: theme.fontUi,
-          fontSize: CALLOUT_FONT_SIZE,
+          fontSize,
           color: theme.text,
           opacity: show,
           transform: `translateX(${(1 - show) * -12 * dir}px)`,

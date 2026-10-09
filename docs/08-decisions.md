@@ -35824,3 +35824,117 @@ unchanged; two descriptions and two argument lists moved), `cargo fmt`/`clippy`
 clean, `tsc` unchanged at 65 pre-existing `app/src` errors. **Not** verified in
 the running app — another session held it; the Inspector row and its refusal UI
 rest on the shared predicate's tests and on reading, not on a screenshot.
+
+## D-372 — a reflow scales an authored `text.size` by `su`, the largest factor that cannot re-wrap a text block — NOT by `sy`, which B-239 proposed
+
+**Status: `decided`** (2026-10-09). Closes the first of **B-239**'s two pieces.
+Supersedes that entry's own proposed fix.
+
+**Context.** D-347's `reflowManifest` maps a manifest onto a new canvas: `x`
+and widths by `sx`, `y` and heights by `sy`, and anything that cannot be
+stretched per axis — a font size, a `matrix` cell, a `graph` nodeR, a
+`deviceframe` scale — by `su = min(sx, sy)`. On c038's 1920×1080 → 1252×1016
+reshape (`sx` 0.6521, `sy` 0.9407) authored captions therefore reflowed to
+22–23 px while every primitive's INTERNAL type (a `plot` tick, a `layers` card
+label) stayed at its hardcoded 24–40 px, because reflow cannot reach inside a
+primitive's render. The hierarchy inverted — supporting captions smaller than
+a chart's own scaffolding — and B-239 read that as the type having scaled on
+the wrong axis, proposing `sy` instead ("type tracks height, not whichever
+axis happened to change most"); `sy` was also the hand-applied workaround on
+the real project, and it did produce a better-looking frame there.
+
+**What a re-read of the arithmetic found.** Two things B-239 could not see at
+filing time.
+
+1. **The inversion was the other piece, not the axis.** With piece (2) landed
+   (`plotTypeScale`, 2026-10-07; `layersTypeScale`, this pass) a primitive's
+   internal type scales by the `min` of its own box's two ratios, which for a
+   reflowed primitive is ~`su`. Authored captions and primitive-internal type
+   then scale by the same factor and the authored hierarchy is preserved
+   exactly — the c038 measurement reproduced: a card label lands at 26.1 px
+   against a 22.2 px caption, the ratio the author set (40/34), where
+   pre-fix it was 1.80×. Switching captions to `sy` now re-breaks that
+   synchronisation from the other side: captions at 0.94 against chart type at
+   0.65, i.e. a 1.44× drift in the opposite direction.
+2. **`sy` is unsafe in the direction that matters.** `su <= sx` always, and a
+   `text` layer's `maxWidth` scales by `sx`, so under `su` the ratio
+   `maxWidth / size` — a block's characters per line — can only grow: **a
+   reflow can never increase a text block's line count.** Any factor above
+   `sx` can, and `sy` exceeds `sx` exactly when the canvas lost relatively
+   more width, which is the c038 case and every case B-239 was looking at. The
+   extreme is a 16:9 → 9:16 reflow (a vertical reel, which this project does
+   routinely): `sy` = 1.778, so "type tracks height" scales every caption UP
+   78% on a canvas that just lost 44% of its width. Measured on the fixture,
+   `size: 46` becomes **82 px with `sy` against 26 px with `su`** — guaranteed
+   overflow, which is B-240's class of failure (authored content off-frame,
+   silently) rather than B-239's (type too small, visible but harmless).
+
+**Options.**
+1. ***`sy`*, as B-239 proposed.** Rejected on (2): it trades an aesthetic
+   defect for a layout one, in a module that explicitly cannot measure text.
+2. **A caller-selectable axis** (`reflowManifest(..., {typeAxis})`). Rejected.
+   Under this repo's human-AND-AI invariant it owes an MCP parameter on
+   `motion_set_project_settings` and a GUI control, for a value no author can
+   reason about better than the rule can — and the rule here is not a taste
+   question with two defensible answers, it is a constraint with one. A knob
+   would also have to pick a default, which is this decision anyway.
+3. **A geometric mean, `sqrt(sx·sy)`** (preserve type's share of frame AREA).
+   Rejected: it is above `sx` whenever `sy > sx`, so it re-wraps too, just
+   less — the same failure with a weaker argument and no precedent in the file.
+4. **Keep `su`, and say why it is `su`.** Chosen.
+
+**Choice.** `EXTRA_FIELDS.text = [{key: 'size', axis: 'u'}]` is unchanged —
+but it is now a documented decision rather than an incidental entry in a
+table, with the reasoning in the table itself, in the module header's "What it
+does NOT do", and pinned by tests. The statement worth keeping is the
+optimality one: **`su` is the largest factor that cannot worsen any text
+block's wrapping.** Because `su = min(sx, sy)`, it already *is* the height
+ratio whenever height is the axis that shrank more (a 1920×1080 → 1920×810
+reshape scales type by 0.75, tracking height exactly, and the test asserts
+that); where it is not, following height would re-wrap. "Type tracks height"
+and "type must not outgrow its wrap width" are the same rule in every case
+except the one where they conflict, and there the width wins because this
+module has no text metrics with which to notice that it lost.
+
+**What else `su` scales, checked before touching it.** `matrix.cell` (a square
+cell, `sizeFields` kind `'scalar'`), `deviceframe.scale` (a uniform multiplier
+over a fixed model body, kind `'scale'`), and the `'u'` extras `matrix.gap`,
+`layers.gap`, `graph.nodeR`, `claudechat.radius`. All of them genuinely want
+`min` and none is type, so splitting the type axis out would have been
+mechanically safe — the table is per-field precisely so it can be. It is not
+split because the answer for type turns out to be the same one.
+
+**The rewrapping consequence, stated plainly** (B-239 asked for this
+explicitly). Under `su`, B-239's own claim that "wrapping is identical before
+and after" **continues to hold whenever `su === sx`**, which is every reshape
+that loses relatively more width, c038 included. Where `su === sy < sx` a
+block gets MORE room per line, so it can only un-wrap, never re-wrap. `maxWidth`
+therefore does not move axes either: it is a width and must keep scaling by
+`sx`, or a block can grow past the frame. The one residual: the values written
+are whole px, and `px()`'s rounding can hand back up to half a pixel on each
+side — a fraction of a percent at ordinary factors, ~4% of a line's character
+budget at a 4× shrink. The guarantee is exact in the factors and
+half-a-pixel-loose in the written values; the tests state both bounds
+separately rather than pretending otherwise.
+
+**What was NOT researched.** No external product reference was scraped for
+this one — CLAUDE.md's "research the real pattern" rule is about UI surfaces,
+and the external convention that would bear on it argues the *rejected* side:
+broadcast caption sizing is conventionally a fraction of picture HEIGHT
+(TTML/IMSC's default 15-row cell grid). It does not transfer, for a reason
+worth recording: those standards size type against a delivery picture of fixed
+aspect, and their renderers re-wrap text with real font metrics at display
+time. A reflow has neither — it rewrites a document once, blind, and whatever
+it writes is what renders.
+
+**Verification.** `manifestReflow.test.ts` — 12 new cases over eight reshapes
+(c038, uniform up, 16:9 → 9:16, back, 4:3 → 16:9, taller, a hard 4× shrink,
+no-op), asserting `su <= sx`, the characters-per-line bound with its rounding
+term, that the c038 reshape writes `46 · sx` and specifically **not** `46 · sy`,
+that a vertical reel shrinks rather than grows type, that a height-bound
+reshape does track height, and that the other `'u'` fields are untouched.
+Confirmed non-vacuous the only way a no-code-change decision can be: flipping
+the table entry to `axis: 'y'` **fails 6 of 24** cases in the file, including
+the pre-existing "scales a font size … UNIFORMLY, never per axis". `@apelles/
+motion` 823/823, `@apelles/motion-engine` 112/112. Not verified by a render —
+the owner was using the app.
