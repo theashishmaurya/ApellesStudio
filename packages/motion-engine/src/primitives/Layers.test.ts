@@ -20,9 +20,15 @@ import { describe, it, expect } from 'vitest';
 import {
   layoutCallout,
   calloutBoxGeometry,
+  layersTypeScale,
   CALLOUT_FONT_SIZE,
   CALLOUT_CHAR_WIDTH_RATIO,
   CALLOUT_TEXT_OFFSET,
+  LAYERS_BASE_CARD_WIDTH,
+  LAYERS_BASE_CARD_HEIGHT,
+  LAYERS_LABEL_FONT_SIZE,
+  LAYERS_SUBLABEL_FONT_SIZE,
+  LAYERS_TYPE_MIN_FONT_SIZE,
   type CalloutLayout,
 } from './Layers';
 
@@ -321,5 +327,241 @@ describe("calloutBoxGeometry (B-244)", () => {
     const below = calloutBoxGeometry(layouts[2]);
     expect(below.left).toBe(-566);
     expect(below.textAlign).toBe("center");
+  });
+});
+
+/**
+ * B-239, piece (2) for `layers` — the card label (40), sublabel (24) and
+ * callout (34) were baked in px, so D-347's canvas reflow shrank the CARDS
+ * (`cardW` by `sx`, `cardH` by `sy`) and the authored captions around them
+ * (`text.size` by `su`) while the cards' own type stayed exactly where it
+ * was. Fixed by `layersTypeScale`: one multiplier from the card's own box
+ * against the box those three sizes were authored for.
+ *
+ * The same treatment, and the same reasoning, as `Plot.test.ts`'s
+ * `plotTypeScale` cases — kept in that order so the two read together.
+ */
+describe('B-239 — the authored card is unchanged', () => {
+  /** The three sizes `Layers.tsx` drew before this fix (the callout's 34 was
+   *  already a named constant, from B-240). Asserted here so the named
+   *  constants cannot silently drift from the rendering this primitive was
+   *  signed off at. */
+  const PRE_FIX_SIZES = { label: 40, sublabel: 24, callout: 34 } as const;
+
+  it('the named constants are the three sizes that were there', () => {
+    expect(LAYERS_LABEL_FONT_SIZE).toBe(PRE_FIX_SIZES.label);
+    expect(LAYERS_SUBLABEL_FONT_SIZE).toBe(PRE_FIX_SIZES.sublabel);
+    expect(CALLOUT_FONT_SIZE).toBe(PRE_FIX_SIZES.callout);
+  });
+
+  it('the base box is the primitive’s own default card', () => {
+    expect(LAYERS_BASE_CARD_WIDTH).toBe(DEFAULTS.cardW);
+    expect(LAYERS_BASE_CARD_HEIGHT).toBe(DEFAULTS.cardH);
+  });
+
+  it('the scale is exactly 1 there', () => {
+    expect(layersTypeScale(LAYERS_BASE_CARD_WIDTH, LAYERS_BASE_CARD_HEIGHT)).toBe(1);
+  });
+
+  it('so every role renders at exactly its pre-fix size', () => {
+    const s = layersTypeScale(LAYERS_BASE_CARD_WIDTH, LAYERS_BASE_CARD_HEIGHT);
+    expect(LAYERS_LABEL_FONT_SIZE * s).toBe(PRE_FIX_SIZES.label);
+    expect(LAYERS_SUBLABEL_FONT_SIZE * s).toBe(PRE_FIX_SIZES.sublabel);
+    expect(CALLOUT_FONT_SIZE * s).toBe(PRE_FIX_SIZES.callout);
+  });
+
+  it('the item COUNT and the gap are not part of the box', () => {
+    // A fifth card makes the stack taller; it does not make a label smaller.
+    expect(layersTypeScale(DEFAULTS.cardW, DEFAULTS.cardH)).toBe(1);
+    expect(STACK_H).toBeGreaterThan(DEFAULTS.cardH); // the stack is not the card
+  });
+});
+
+/**
+ * The real incident, with its own numbers. c038's canvas went 1920×1080 →
+ * 1252×1016, so the reflow scaled `cardW` by `sx = 0.6521` and `cardH` by
+ * `sy = 0.9407`, and an authored supporting caption (`text.size: 34`) by
+ * `su = sx` to 22.2 px — while the card's own label stayed at 40.
+ */
+describe('B-239 — the c038 reflow, with its own factors', () => {
+  const SX = 1252 / 1920; // 0.6521
+  const SY = 1016 / 1080; // 0.9407
+  const W = LAYERS_BASE_CARD_WIDTH * SX;
+  const H = LAYERS_BASE_CARD_HEIGHT * SY;
+  /** An authored supporting caption, reflowed by `su` (= `sx` here) — D-372. */
+  const CAPTION_AFTER = 34 * SX;
+
+  it('the card’s type shrinks with the card', () => {
+    expect(layersTypeScale(W, H)).toBeCloseTo(SX, 10);
+    expect(LAYERS_LABEL_FONT_SIZE * layersTypeScale(W, H)).toBeCloseTo(26.08, 2);
+  });
+
+  it('the inversion is gone: the label/caption ratio is the authored one', () => {
+    const label = LAYERS_LABEL_FONT_SIZE * layersTypeScale(W, H);
+    // pre-fix: a 40 px label against a 22.2 px caption — 1.80×, where the
+    // author had set 40/34 = 1.18×.
+    expect(LAYERS_LABEL_FONT_SIZE / CAPTION_AFTER).toBeCloseTo(1.8, 2);
+    expect(label / CAPTION_AFTER).toBeCloseTo(LAYERS_LABEL_FONT_SIZE / CALLOUT_FONT_SIZE, 10);
+  });
+
+  it('and the hierarchy inside the stack is preserved exactly', () => {
+    const s = layersTypeScale(W, H);
+    expect(LAYERS_LABEL_FONT_SIZE * s).toBeGreaterThan(CALLOUT_FONT_SIZE * s);
+    expect(CALLOUT_FONT_SIZE * s).toBeGreaterThan(LAYERS_SUBLABEL_FONT_SIZE * s);
+    expect((LAYERS_LABEL_FONT_SIZE * s) / (LAYERS_SUBLABEL_FONT_SIZE * s)).toBeCloseTo(40 / 24, 10);
+  });
+});
+
+describe('B-239 — `min` of the two ratios, because type cannot stretch', () => {
+  it('a card that only got narrower scales by the width ratio', () => {
+    expect(layersTypeScale(LAYERS_BASE_CARD_WIDTH * 0.8, LAYERS_BASE_CARD_HEIGHT)).toBeCloseTo(
+      0.8,
+      10,
+    );
+  });
+
+  it('a card that only got shorter scales by the height ratio', () => {
+    expect(layersTypeScale(LAYERS_BASE_CARD_WIDTH, LAYERS_BASE_CARD_HEIGHT * 0.8)).toBeCloseTo(
+      0.8,
+      10,
+    );
+  });
+
+  it('a wider-but-shorter card takes the axis that shrank, not an average', () => {
+    expect(layersTypeScale(LAYERS_BASE_CARD_WIDTH * 2, LAYERS_BASE_CARD_HEIGHT * 0.7)).toBeCloseTo(
+      0.7,
+      10,
+    );
+  });
+
+  it('a uniformly bigger card gets proportionally bigger type — no cap', () => {
+    expect(layersTypeScale(LAYERS_BASE_CARD_WIDTH * 2, LAYERS_BASE_CARD_HEIGHT * 2)).toBe(2);
+    expect(layersTypeScale(LAYERS_BASE_CARD_WIDTH * 10, LAYERS_BASE_CARD_HEIGHT * 10)).toBe(10);
+  });
+
+  it('a card authored non-default is already scaled — the other half of the fix', () => {
+    // 760×150, the `layers` card in `@apelles/motion`'s own reflow fixture:
+    // min(1.2258, 1.3636). Its type was never proportional to it before.
+    expect(layersTypeScale(760, 150)).toBeCloseTo(760 / 620, 10);
+  });
+});
+
+describe('B-239 — the legibility floor', () => {
+  it('does not bind at the c038 reflow, or anywhere near an ordinary one', () => {
+    expect(
+      layersTypeScale(LAYERS_BASE_CARD_WIDTH * 0.6521, LAYERS_BASE_CARD_HEIGHT * 0.9407),
+    ).toBeCloseTo(0.6521, 10);
+    // it starts to bind only once the smallest role would drop under 14 px
+    expect(LAYERS_TYPE_MIN_FONT_SIZE / LAYERS_SUBLABEL_FONT_SIZE).toBeCloseTo(0.5833, 4);
+  });
+
+  it('the smallest role never goes under the floor, however small the card', () => {
+    for (const box of [
+      [10, 10],
+      [1, 110],
+      [620, 1],
+      [0.001, 0.001],
+    ] as Array<[number, number]>) {
+      expect(LAYERS_SUBLABEL_FONT_SIZE * layersTypeScale(box[0], box[1])).toBeGreaterThanOrEqual(
+        LAYERS_TYPE_MIN_FONT_SIZE,
+      );
+    }
+  });
+
+  it('the floor lands exactly on the floor font size for the sublabel role', () => {
+    expect(LAYERS_SUBLABEL_FONT_SIZE * layersTypeScale(1, 1)).toBeCloseTo(
+      LAYERS_TYPE_MIN_FONT_SIZE,
+      10,
+    );
+  });
+});
+
+/**
+ * `cardW`/`cardH` reach this primitive through a `.passthrough()` schema
+ * layer and are never validated item by item, so a hand-authored
+ * `"cardW": "620"` really can arrive as a non-number — the same guard
+ * `plotTypeScale` needs, for the same reason: a `NaN` font size silently
+ * drops the text it was for.
+ */
+describe('B-239 — a non-numeric or degenerate card falls back to 1, never NaN', () => {
+  const BAD: Array<[unknown, unknown]> = [
+    [NaN, 110],
+    [620, NaN],
+    [Infinity, 110],
+    [620, -Infinity],
+    [0, 110],
+    [620, 0],
+    [-620, -110],
+  ];
+  for (const [w, h] of BAD) {
+    it(`${String(w)} × ${String(h)}`, () => {
+      const s = layersTypeScale(w as number, h as number);
+      expect(Number.isFinite(s)).toBe(true);
+      expect(s).toBe(1);
+    });
+  }
+});
+
+/**
+ * The callout is the one role whose size feeds a LAYOUT decision — B-240's
+ * placement budget is in px, and `layoutCallout` takes the size as an
+ * argument precisely so it can be told. `Layers` now passes the SCALED size,
+ * so the size the box is laid out for and the size it is drawn at cannot
+ * drift apart.
+ */
+describe('B-239 — the callout’s placement is measured at the size it will render', () => {
+  const HD: Canvas = { width: 1920, height: 1080 };
+
+  /** `cardW` is held at the default throughout, so the only thing varying
+   *  across these cases is the font size. */
+  function placeAt(text: string, fontSize?: number): CalloutLayout {
+    return layoutCallout({
+      text,
+      cx: HD.width / 2,
+      cy: HD.height / 2,
+      cardW: DEFAULTS.cardW,
+      stackH: STACK_H,
+      fromY: 0,
+      canvasWidth: HD.width,
+      canvasHeight: HD.height,
+      ...(fontSize === undefined ? {} : { fontSize }),
+    });
+  }
+
+  it('at the default card the passed size IS the default, so nothing moves', () => {
+    const text = 'none of it makes inference free';
+    const s = layersTypeScale(LAYERS_BASE_CARD_WIDTH, LAYERS_BASE_CARD_HEIGHT);
+    expect(placeAt(text, CALLOUT_FONT_SIZE * s)).toEqual(placeAt(text));
+  });
+
+  it('a squat card shrinks the text, so a callout can now fit on a side', () => {
+    // 25 chars at 34 px needs 357 px and the right side has 276, so it falls
+    // `below`; the same text at 0.6× needs 214 and fits on the right.
+    const text = 'x'.repeat(25);
+    const s = layersTypeScale(LAYERS_BASE_CARD_WIDTH, LAYERS_BASE_CARD_HEIGHT * 0.6);
+    expect(s).toBeCloseTo(0.6, 10);
+    expect(placeAt(text).placement).toBe('below');
+    expect(placeAt(text, CALLOUT_FONT_SIZE * s).placement).toBe('right');
+  });
+
+  it('and the `below` block’s predicted height shrinks with it too', () => {
+    const short: Canvas = { width: 1252, height: 420 };
+    const text = 'x'.repeat(400);
+    const at = (fontSize?: number) =>
+      layoutCallout({
+        text,
+        cx: short.width / 2,
+        cy: short.height / 2,
+        cardW: DEFAULTS.cardW,
+        stackH: STACK_H,
+        fromY: 0,
+        canvasWidth: short.width,
+        canvasHeight: short.height,
+        ...(fontSize === undefined ? {} : { fontSize }),
+      });
+    // A shorter predicted block is pulled back up less hard by the bottom
+    // margin, so it sits LOWER — closer to where it wanted to be.
+    expect(at().placement).toBe('below');
+    expect(at(CALLOUT_FONT_SIZE * 0.6).top).toBeGreaterThan(at().top);
   });
 });

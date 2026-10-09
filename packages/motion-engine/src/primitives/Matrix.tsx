@@ -16,6 +16,16 @@
  * to the grid's real footprint (`width={w} height={h}`, computed from
  * `rows`/`cols`/`cell`/`gap`) rather than the whole composition, so it needs
  * no per-cell union — it already IS the tight box.
+ *
+ * Type: there is none. This primitive draws no text of any kind — cells are
+ * fills and hand-drawn borders, with no labels, no axis ticks and no legend —
+ * so B-239's "a primitive bakes its own type size in px" problem does not
+ * apply to it and there is deliberately no `matrixTypeScale` counterpart to
+ * `Plot.tsx`'s or `Layers.tsx`'s. Its only two lengths, `cell` and `gap`, are
+ * authored manifest fields that D-347's reflow already scales
+ * (`propCatalog.ts`'s `sizeFields('matrix')` and `manifestReflow.ts`'s
+ * `EXTRA_FIELDS`). Audited for B-239, 2026-10-09; if labelled cells are ever
+ * added, that is when this primitive owes a type scale.
  */
 import React, { useMemo } from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
