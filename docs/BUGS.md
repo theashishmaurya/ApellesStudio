@@ -299,7 +299,7 @@ status: **fixed** (2026-09-18) · severity: low (cosmetic — a real, visible la
 
 ## B-234 — D-360's contiguous-segment export gives a much smaller real-world speedup than its own benchmark predicted: 1.64x on the 20-clip/1080p fixture, ~1.07x (2.57x→2.41x real-time) on the owner's real 4K/79-clip project
 
-status: **fixed** (root cause found and fixed by **D-369** — the core bound counted segments, not processes; see the 2026-10-06 profiling and 2026-10-07 fix sections below) · severity: medium (no correctness defect — the output is byte-valid and the export completes — but a real, measured gap between the benchmark's own headline number and what the owner actually gets, on exactly the project this whole D-350/D-351/D-360 effort was built for) · area: `app/src-tauri/src/chroma/edit_render.rs` (segmented render), `crates/apelles-media/src/decode_pipe.rs` (lane-keyed pool) — D-360's own machinery, not a new subsystem
+status: **fixed** (both levers taken — **D-369** corrected the core bound, which counted segments where a segment costs `tracks + 1` processes, and **D-373** replaced the equal-FRAME partition with an equal-WORK one; see the 2026-10-06 profiling, 2026-10-07 and 2026-10-09 fix sections below. What remains is a *measurement*, not a fix: a real 4K A/B on the c038 project, which the owner runs) · severity: medium (no correctness defect — the output is byte-valid and the export completes — but a real, measured gap between the benchmark's own headline number and what the owner actually gets, on exactly the project this whole D-350/D-351/D-360 effort was built for) · area: `app/src-tauri/src/chroma/edit_render.rs` (segmented render), `crates/apelles-media/src/decode_pipe.rs` (lane-keyed pool) — D-360's own machinery, not a new subsystem
 
 - **found:** 2026-09-19, live, running `editor_export(renderer: "compositor")` against the owner's real `2026-09-12-c040-mgfx-recut.chroma` project (3840×2160, ~79 clips, heavy motion-graphics compositing) immediately after D-360 landed, specifically to get the end-to-end number D-360's own report named as "not measured."
 - **measured, both runs on the identical real project:**
@@ -356,14 +356,81 @@ project, the curve on the 1080p fixture. At 4K each segment's resident cost is
 ~4× larger so the penalty should be worse than 18 %, but that is reasoning,
 not measurement.
 
-**Lever 2 — partition by estimated work, not equal frame count — is still
-open and is the remaining half of this bug.** Lanes are still equal-frame
-spans, and a span of full-frame 4K camera costs far more per frame than one
-that is mostly flat graphics panel. That is what produced the straggler in the
-first place; fewer lanes reduces the contention around it but does not make
-the partition even. Worth doing when someone has a way to estimate per-frame
-cost cheaply — clip count and transform complexity per span are the obvious
-inputs.
+**Lever 2 — partition by estimated work, not equal frame count — was still
+open at this point and is the remaining half of this bug.** Lanes were still
+equal-frame spans, and a span of full-frame 4K camera costs far more per frame
+than one that is mostly flat graphics panel. That is what produced the
+straggler in the first place; fewer lanes reduces the contention around it but
+does not make the partition even. Worth doing when someone has a way to
+estimate per-frame cost cheaply — clip count and transform complexity per span
+are the obvious inputs. **Taken 2026-10-09 by D-373, next section.**
+
+### 2026-10-09 — lever 2 taken (D-373). Segments now divide estimated WORK.
+
+**The imbalance, measured on the real c038 project after D-369 landed** (3
+lanes, 23 m 25 s total): final segment sizes **[367, 361, 176] MB**, the third
+lane tracking at ~45 % of the other two for the whole run. It never stalled; it
+simply had less costly content, and the concat waits on the slowest.
+
+**Fix.** A new `app/src-tauri/src/chroma/render_cost.rs` estimates each frame's
+work from the `Timeline` alone — no decode, no `ffprobe`, no file opened — by
+asking the renderer's own `resolve_visible_video_layers_at` which layers
+composite there (filtered by `edit::layer_is_renderable`, extracted from
+`render_timeline_frame`'s inline closure so there is one copy of that rule, not
+two) and charging each against the branch `composite_layer_onto` would take: a
+video decode 3, a cached still or text raster 0, the fused blend 1, the general
+resize path 2, the rotation round-trip 6, an adjustment clip's full-canvas pass
+1, plus 1 per frame for the canvas and the encoder hand-off. 3:1 for decode
+against composite is the ratio §9.1/§10.5 measured, not a guess. A lone
+untransformed layer is charged its decode and no composite at all, because
+that is D-132/B-053's plain-decode fast path. `edit_render::segment_ranges`
+then cuts the cumulative curve instead of the frame count, still partitioning
+`0..frames` exactly (D-362) and still honouring `MIN_SEGMENT_FRAMES`.
+
+**What the model does not know, and one of these was found the hard way.** It
+reads static transform fields (no keyframe resolution, no fade), it cannot know
+a source's pixel size or whether a clip is graded without I/O, and codec and
+bitrate are outside it entirely. It also costs **work, not processes** — moving
+a boundary into a region where more tracks have content makes that lane spawn
+more decode `ffmpeg`s, which is D-369's territory. That one showed up live: the
+first version of the lopsided measurement harness skewed the fixture by
+truncating a track, so the cost-based cut reached back into the stacked region
+and its cheap lane spawned decoders the equal-frame lane never had — the
+cost-based partition measured **consistently 5-6 % slower in every repeat**
+(9.75 s vs 10.30 s best-of-5). Not noise, and not an argument against balancing
+work; an argument that the harness was measuring the wrong variable. Redone
+with the skew expressed as `rotation` (same track occupancy everywhere, so both
+partitions spawn identical processes), the model moves the two-lane cut from 120
+to 92 and the estimated per-lane imbalance goes from **1.90x to 1.01x**
+([2280, 1200] → [1748, 1732] work units).
+
+**The wall clock still could not resolve it, and the harness now says so
+itself.** On the rotation skew the run-to-run spread on the *identical*
+configuration was 9.28-17.02 s against a 2.4 s gap between the two partitions'
+minima — three times the effect — so the minima are not comparable.
+`measure_segmented_render_balance` compares each configuration's spread against
+the gap and prints **INCONCLUSIVE** instead of a ratio when the spread wins,
+which is D-360's own harness lesson turned into an assertion rather than a
+footnote.
+
+**This repo's own sweep provably cannot measure lever 2, and that is now
+asserted rather than inferred.** The 20-clip / 1080p / 240-frame stress fixture
+is uniform — every frame carries the same two layers — so its cost curve is
+constant and the work-balanced split *is* the equal-frame split, frame for
+frame. `the_stress_fixtures_cost_curve_is_flat_so_d373_cannot_move_its_split`
+pins that and will fail the day the fixture stops being uniform, at which point
+the sweep becomes able to read D-373. Before/after on that sweep is therefore
+the same two renders: 1 → 13.69 s / 10.76 s, 2 → 10.41 / 9.43, 4 → 10.45 /
+9.03, 6 → 10.85 / 9.06, 8 → 12.19 / 9.40 — a quieter machine, not a faster
+partition.
+
+**Not claimed: no 4K A/B, and no wall-clock evidence at all.** What is
+evidenced is that the imbalance is real (measured on c038), that the model
+identifies it, and that the partition removes it — deterministically and under
+test, with two unit tests verified failing against equal-frame splitting. The
+real c038 project remains the only fixture that reproduces the imbalance;
+running that A/B, and fitting the weights against its per-lane timings, is what
+is left.
 - **2026-09-19 update:** a read-only planning pass (D-363) scoped what it would actually take to close this — the CPU compositor itself, not more segmentation, is the largest remaining term (§10.5 had already named it). Plan: `docs/notes/export-gpu-compositor.md` §11. Wave 0 of that plan is exactly this bug's own missing measurement (a per-phase profile of the real 4K project) and is a **blocking gate** before any GPU code is written — this bug should be root-caused and closed BY that wave, not separately. Not built yet, per explicit owner instruction to document and pick up later.
 
 ## B-233 — `packages/motion`'s `theme.test.ts` fails `tsc` with missing `node:fs`/`node:url`/`node:path` — no `@types/node` in that package's tsconfig

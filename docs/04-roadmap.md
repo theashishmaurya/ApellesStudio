@@ -316,7 +316,16 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    the GPU (§2 records that phase 1 never did move it there despite D-350's title), and
    hardware encode per segment.
    **Real-world measurement (B-234): only ~6% net gain on the owner's actual 4K/79-clip
-   project (2.57x→2.41x), far below the 1.64x benchmark — not yet root-caused.**
+   project (2.57x→2.41x), far below the 1.64x benchmark.** Root-caused 2026-10-06/07 and
+   both levers taken: **D-369** — the core bound counted SEGMENTS where a segment costs
+   `tracks + 1` processes, so a 2-track export ran 18 ffmpegs at load ~50 on 10 cores
+   (a long render now plans 3 lanes, not 6); **D-373** — the partition divides estimated
+   WORK rather than frame count, via a new `chroma::render_cost` that reads a per-frame
+   cost off the `Timeline` alone (no decode, no probe), because equal frames are not equal
+   work and that is what produced the straggler ([367, 361, 176] MB across three lanes on
+   c038). **Still owed: the real 4K A/B on c038** — the 1080p fixture is uniform and
+   provably cannot measure D-373, and at 240 frames the machine's own noise beats the
+   effect.
    **Phase 4 — the GPU compositor itself, SCOPED not built (2026-09-19, D-363).** A
    read-only planning pass enumerated all 15 CPU compositor ops, designed a new
    `crates/apelles-compositor` (L1, deps `apelles-gpu`+`apelles-types` only) taking a pure

@@ -787,6 +787,155 @@ Not speculation — these are the terms the measurements above name:
 
 ---
 
+## 10.7 Equal frames are not equal work — the partition divides COST (D-373, 2026-10-09)
+
+D-360 cut the N segments by **equal frame count**. §10.4 verified that partition
+hard, and it is still exactly right about frame *accuracy* — but it is the wrong
+quantity to equalise. A frame's cost is set by how many layers composite there
+and what each one does: a span of stacked full-frame 4K camera decodes two or
+three streams and composites them, while a span that is one flat graphics panel
+decodes one and composites nothing at all (D-132/B-053's single-layer fast path
+returns the plain decode). Because the concat waits on the slowest lane, the
+export's wall clock is the straggler's.
+
+**Measured on the real 98-clip 4K c038 project, after D-369 had already cut the
+lane count from 6 to 3** (23 m 25 s total): final segment sizes
+**[367, 361, 176] MB**, the third lane tracking at ~45 % of the other two for
+the entire run. It never stalled — it had less costly content. That is B-234's
+2026-10-06 profiling section's "lever 2", and this is it.
+
+### The model
+
+`app/src-tauri/src/chroma/render_cost.rs`. Pure, integer, and **from the
+`Timeline` alone** — no decode, no `ffprobe`, no file opened (the one filesystem-
+shaped input is `still::is_image_file`, a filename-extension test). It asks the
+renderer's own `Timeline::resolve_visible_video_layers_at`, filtered by the
+renderer's own `edit::layer_is_renderable` — extracted out of
+`render_timeline_frame`'s inline closure, because a second copy of "which layers
+are there" is precisely the two-implementations divergence D-350 exists to
+remove — and charges each layer against the branch `composite_layer_onto` would
+actually take:
+
+| term | weight | what it is |
+|---|---|---|
+| frame base | 1 | the canvas fill, the RGBA hand-off, the encoder's per-frame work |
+| video decode | 3 | `decode_pipe::playback_frame_scaled` + the RGBA convert |
+| still / text layer | 0 | a hit in `apelles_media::still`'s or `chroma::text`'s cache |
+| composite, fused | 1 | D-217's `blend_layer_sampled`, bounded by the canvas |
+| composite, resized | 2 | the general path — a full intermediate buffer, then `overlay` |
+| composite, rotated | 6 | `rgba8 → rgba32f → rotate → rgba8`: three full passes, one at 4× the bytes |
+| adjustment clip | 1 | D-230's full-canvas per-pixel colour pass |
+
+**3:1 for decode against composite is this document's own measurement**, not a
+guess: §9.1 has 11.03 s of decode over 480 layer-decodes (23.0 ms each), and
+§10.5's post-D-351 one-segment total of 14.45 s leaves ~3.4 s of compositing over
+those same 480 layers (~7 ms each). §10.5's closing caveat — decode is a larger
+share at 4K — says the ratio only grows on the footage this is for. The three
+paint weights are asserted as an *order* at compile time so an edit cannot
+silently invert the ranking the model rests on.
+
+A lone layer with an identity transform is charged its decode and **no composite
+at all**, which is the single-layer fast path; separating that frame from a
+composited one is most of the model's value.
+
+### What it does not know
+
+Each of these is a decision, and the last one was found the hard way:
+
+- **Keyframes and fades.** Static transform fields only. Resolving the real
+  transform means parsing `chroma_keyframes` per keyframed layer per sampled
+  frame — real time before the render starts — and the error it removes is one
+  or two units on a layer whose transform crosses a branch boundary. The terms
+  this model exists to separate are exact either way.
+- **Source pixel size and whether a clip is graded**, which the real fast-path
+  guard also tests. Both need I/O, so the estimate is optimistic by one
+  composite unit on the cheapest frame in the render.
+- **Codec, bitrate, compressibility.** A 4K ProRes decode and a 4K H.264 decode
+  are one weight. This is the model's real limit.
+- **How many PROCESSES a lane will need.** It costs work per frame; it does not
+  know that moving a boundary into a region where more tracks have content makes
+  that lane spawn more decode `ffmpeg`s. That is D-369's territory, and it is
+  what the first version of the measurement below accidentally measured.
+
+### The partition
+
+`edit_render::segment_ranges` takes the cost curve instead of a frame count and
+cuts the cumulative sum, keeping three properties:
+
+1. **It partitions `0..frames` exactly.** §10.4's reason (the concat demuxer
+   stitches whatever it is handed) plus D-362's (the progress tracker is built
+   from these ranges, so the percentage is only a true fraction because they
+   partition exactly).
+2. **No segment below `MIN_SEGMENT_FRAMES`** while the render is long enough to
+   allow it — a cut that handed a lane a handful of very expensive frames would
+   spend more on its cold start than it saved on balance.
+3. **A flat curve gives back the equal-frame split** to within one frame, so a
+   uniform timeline partitions exactly as it did before D-373.
+
+### Measurement — and what it could and could not show
+
+**The sweep in §10.5 provably cannot measure this.** The 20-clip / 1080p /
+240-frame stress fixture is **uniform**: every frame carries the same two layers
+(a full-length base plus one of 20 back-to-back cuts), so its cost curve is
+constant and the work-balanced split *is* the equal-frame split, frame for
+frame. That is asserted, not inferred —
+`the_stress_fixtures_cost_curve_is_flat_so_d373_cannot_move_its_split` fails the
+day the fixture stops being uniform, at which point the sweep becomes able to
+read D-373 and that test is the signal to go and read it. So the before/after
+tables below are the same two renders on a differently-loaded machine:
+
+```text
+segs   before    after
+   1   13.69s   10.76s
+   2   10.41s    9.43s
+   4   10.45s    9.03s
+   6   10.85s    9.06s
+   8   12.19s    9.40s
+```
+
+**A second harness, `measure_segmented_render_balance`, makes the fixture
+lopsided out of its own media**: every clip covering the first half of the render
+gets a 17° `rotation` (the dearest compositing branch), the second half stays on
+the fused path. The model moves the two-lane cut from 120 to 92 and the
+**estimated per-lane imbalance from 1.90x to 1.01x** ([2280, 1200] →
+[1748, 1732] work units).
+
+**Why rotation and not "fewer layers in the second half", which was the first
+attempt.** Truncating a track changes how many decode processes each lane needs,
+and changes it *differently for the two partitions*: the cost-based cut reaches
+back into the stacked region, so its cheap lane spawns decoders the equal-frame
+lane never had. That version measured the cost-based partition **consistently
+5-6 % slower in every repeat** (9.75 s vs 10.30 s best-of-5) — D-369's
+contention term, not noise. A true finding about the model (see "does not know"
+above), and nothing at all about whether balancing work helps, because the two
+partitions were not running the same number of processes.
+
+**And then the wall clock still could not resolve it.** On the rotation skew the
+run-to-run spread on the *identical* configuration was 9.28-17.02 s against a
+2.4 s gap between the two partitions' minima — three times the effect. The
+harness now says so itself: it compares each configuration's spread against the
+gap and prints **INCONCLUSIVE** rather than a ratio when the spread wins, which
+is §10.5's own lesson ("a single reading here is not a fact about this code")
+turned into an assertion instead of a footnote.
+
+**So: no wall-clock evidence that the balanced partition finishes sooner.** What
+is evidenced is that the imbalance is real and was measured on the real project,
+that the model identifies it, and that the partition removes it —
+deterministically and under test, with two unit tests verified failing against
+equal-frame splitting. **The real c038 A/B, and fitting these weights against
+its per-lane timings, is what remains** (B-234 says so too).
+
+### Files (D-373)
+
+| file | what changed |
+|---|---|
+| `app/src-tauri/src/chroma/render_cost.rs` | new — the cost model, its weights and their rationale, 12 unit tests |
+| `app/src-tauri/src/chroma/edit.rs` | `layer_is_renderable` extracted from `render_timeline_frame`'s inline filter |
+| `app/src-tauri/src/chroma/edit_render.rs` | `segment_ranges` takes the cost curve; new `plan_segment_ranges`; 5 new tests + `measure_segmented_render_balance` + the fixture-flatness assertion |
+| `app/src-tauri/src/chroma/mod.rs` | `pub mod render_cost;` and its line in the module map |
+
+---
+
 ## 11. The GPU compositor plan (D-363) — scoped 2026-09-19, deliberately NOT built
 
 §10.5 named the remaining term: *"the compositing is still on the CPU… that

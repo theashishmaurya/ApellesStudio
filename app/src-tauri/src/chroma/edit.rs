@@ -1094,6 +1094,40 @@ pub(crate) fn timeline_frame_image(
     )
 }
 
+/// Whether a resolved [`VisibleLayer`] is one this renderer will actually
+/// draw — i.e. everything [`Timeline::resolve_visible_video_layers_at`] returns
+/// except an **empty-source media clip** (one whose media is missing or
+/// offline).
+///
+/// D-211 — a TEXT clip is a real visible layer with no `source_path` at all:
+/// its picture is generated, not decoded. So the "skip a clip with no source"
+/// filter (which exists to drop an empty/offline media clip) has to make an
+/// exception for it, or a title would resolve, be discarded here, and silently
+/// never appear.
+///
+/// D-226 — a [`LayerSource::Color`] plate (a dip-to-colour transition) is
+/// likewise generated and has no `source_path`, so the same exception applies
+/// to it; this predicate only ever discards an EMPTY-source media clip, which
+/// is what it was always for.
+///
+/// D-230 — an ADJUSTMENT clip has no `source_path` either, and decodes nothing
+/// at all: it is an operator on the layers below it, not a layer with pixels.
+/// Same exception, third time.
+///
+/// **A named predicate rather than the inline closure it was until D-373**,
+/// because `chroma::render_cost` has to agree with
+/// [`render_timeline_frame`] about which layers exist at a position in order to
+/// estimate what that frame costs, and a second copy of the rule is exactly the
+/// kind of two-implementations divergence D-350 exists to remove.
+pub(super) fn layer_is_renderable(layer: &VisibleLayer<'_>) -> bool {
+    match &layer.source {
+        LayerSource::Clip { clip, .. } => {
+            clip.is_text() || clip.is_adjustment() || !clip.source_path.is_empty()
+        }
+        LayerSource::Color { .. } => true,
+    }
+}
+
 /// **The headless render entry point (D-350).** Everything
 /// [`timeline_frame_image`] does, against an **explicitly supplied** timeline
 /// and output spec rather than the open project's, re-read from disk.
@@ -1137,29 +1171,10 @@ pub(crate) fn render_timeline_frame(
     if !timeline.tracks.iter().any(|t| t.kind == TrackKind::Video) {
         return Err("timeline has no video track".to_string());
     }
-    // D-211 — a TEXT clip is a real visible layer with no `source_path` at
-    // all: its picture is generated, not decoded. So the "skip a clip with no
-    // source" filter (which exists to drop an empty/offline media clip) has
-    // to make an exception for it, or a title would resolve, be discarded
-    // here, and silently never appear.
-    //
-    // D-226 — a `LayerSource::Color` plate (a dip-to-colour transition) is
-    // likewise generated and has no `source_path`, so the same exception
-    // applies to it; the filter below only ever discards an EMPTY-source media
-    // clip, which is what it was always for.
-    //
-    // D-230 — an ADJUSTMENT clip has no `source_path` either, and decodes
-    // nothing at all: it is an operator on the layers below it, not a layer
-    // with pixels. Same exception, third time.
     let layers: Vec<VisibleLayer<'_>> = timeline
         .resolve_visible_video_layers_at(pos as i64)
         .into_iter()
-        .filter(|l| match &l.source {
-            LayerSource::Clip { clip, .. } => {
-                clip.is_text() || clip.is_adjustment() || !clip.source_path.is_empty()
-            }
-            LayerSource::Color { .. } => true,
-        })
+        .filter(layer_is_renderable)
         .collect();
 
     // Release the decode pipe of any slot that is no longer a visible layer
