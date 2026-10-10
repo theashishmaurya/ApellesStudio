@@ -363,7 +363,15 @@ pub fn similarity(a: &str, b: &str) -> f64 {
 
 /// Fraction of `part`'s distinct words that also occur in `whole`, in
 /// `0.0..=1.0`. An empty `part` scores 0.0.
-fn word_overlap(part: &str, whole: &str) -> f64 {
+///
+/// `pub` for the same reason [`normalise`] and [`similarity`] are: it is the
+/// scale D-366's "does this repeat anything?" question is asked on, and the
+/// integration tests read the *finished* detector output back against it
+/// ([`MIN_UTTERANCE_OVERLAP`] is the bar) rather than re-deriving a second
+/// overlap measure of their own. D-377 widened that audit to every raw source
+/// in the corpus, which put it in an integration test and therefore outside
+/// this module's private scope.
+pub fn word_overlap(part: &str, whole: &str) -> f64 {
     let haystack: Vec<&str> = whole.split(' ').filter(|w| !w.is_empty()).collect();
     let mut words: Vec<&str> = part.split(' ').filter(|w| !w.is_empty()).collect();
     words.sort_unstable();
@@ -402,7 +410,7 @@ fn word_overlap(part: &str, whole: &str) -> f64 {
 /// Single-utterance takes are judged by [`similarity`] alone, as they always
 /// were: this is about what may be glued together, not about what counts as a
 /// match.
-const MIN_UTTERANCE_OVERLAP: f64 = 0.5;
+pub const MIN_UTTERANCE_OVERLAP: f64 = 0.5;
 
 /// A candidate delivery: `len` utterances starting at `start`.
 #[derive(Debug, Clone, Copy)]

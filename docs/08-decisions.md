@@ -6,6 +6,91 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-377 — Whisper stays the default ASR, because Parakeet's longer segments turn the retake detector's over-claimed cuts from 5.42 s into 56.92 s
+
+**Status: `decided`** (2026-10-10). This is **D-374 step 4**, the step D-374
+itself called "the expensive one and not optional". Detail and the full sweep:
+`docs/notes/retake-detection.md` §8 and
+`docs/notes/asr-backends-and-harness.md` §4.2. Measurement:
+`crates/apelles-speech/tests/proposed_cuts.rs`. Found doing it: **B-246**.
+
+**Context.** D-374 moved ASR behind a backend seam and put
+`parakeet-tdt-0.6b-v3` behind it opt-in, measured at ~10× Whisper's end-to-end
+speed through the real seam (C038: 38.3 s vs 369.6 s for 989.5 s of audio —
+25.8× realtime against 2.7×) at a small, catalogued accuracy cost. It
+deliberately did **not** switch the default, because four sessions of retake
+tuning (B-237, B-238, D-365, D-366) were fitted to Whisper's output shape and
+pinned by five corpus tests. Step 4 was to re-derive those numbers on Parakeet
+and decide on them.
+
+**What was measured.** Both backends, through `transcribe(..., backend=…)`, over
+**all twelve** of the owner's raw camera originals — not the corpus two. Nine
+turned out to be silent B-roll (room tone, −47 to −65 dBFS mean), which cannot
+have a cut proposed against it, so the decision rests on the **three speech
+sources**: C038 (989 s) and C040 (686 s), the existing corpus, plus **C019
+(517 s), which no earlier session had ever pointed the detector at**.
+
+The metric is **not** "does it find the retakes" — the earlier sessions proved
+that is the easy half. It is D-366's own question, applied to every proposed
+cut: `word_overlap` of the material being cut against the take the group
+recommends keeping, below `MIN_UTTERANCE_OVERLAP` meaning *this speech repeats
+nothing and is being offered for deletion anyway*.
+
+| over 2,192.6 s of speech | groups | proposed for cut | absent from the keeper | **repeats nothing** |
+|---|---|---|---|---|
+| mlx-whisper large-v3 | 25 | 237.88 s | 89.40 s | **5.42 s** — 1 utterance |
+| parakeet-tdt-0.6b-v3 | 27 | 218.36 s | 56.92 s | **56.92 s** — 5 utterances |
+
+**Options.**
+1. *Switch to Parakeet.* It finds slightly more groups (27 vs 25), proposes
+   slightly less in total, and is ~10× faster — a reasonable case on every
+   number except the one that matters.
+2. *Switch, and re-tune the thresholds to compensate.* Swept: `similarity`
+   0.82→0.95, `min_words` 3→8, `max_span_utterances` 3→1, `phrase_min_words`
+   3→6. **No setting of any of them removes Parakeet's five cases** (§8 has the
+   grid); raising `similarity` to 0.90 makes *Whisper* worse (5.42 → 20.94 s).
+3. **Keep Whisper, record the defect, and do not touch a threshold.**
+
+**Choice: option 3.** The deciding number is **56.92 s against 5.42 s** — 10.5×
+— i.e. **26 % of everything Parakeet's retake proposals offer for deletion
+repeats nothing at all, against Whisper's 2.3 %**. Over-cutting is the one
+direction D-318 rules out: the tool only ever proposes, and a proposal a human
+accepts must not silently delete speech that exists nowhere in the result.
+
+**Why, mechanically — and this is why no threshold can fix it.** The cause is
+segment *length*, not transcription quality. A take is a range of **whole
+utterances** (`retake-detection.md` §2's honest limit), so when only an
+utterance's tail repeats, the whole utterance is cut. Parakeet's mean segment is
+11.4-11.8 s against Whisper's 6.2-10.4 s, so each over-claimed cut carries
+proportionally more unrelated speech: Parakeet's five cases are 14.96, 12.24,
+11.36, 14.52 and 3.84 s long, Whisper's one is 5.42 s. The thresholds in option
+2 all govern *whether* a pair matches; none governs how much unrelated speech
+rides along once it does.
+
+**Robustness, because the Whisper half rests on committed fixtures.**
+Re-transcribing C038/C040 today does not reproduce them (126 segments vs 121, 83
+vs 66 — unexplained; they predate D-349's MLX seeding and nothing records the
+`language` they were captured with). Both re-derived transcripts are committed
+and audited separately: they propose *more* (19 and 22 cuts vs 14 and 15) and
+still **0.00 s that repeats nothing**. Whisper's zero holds across two
+segmentations; Parakeet's 56.92 s has no reading that removes it.
+
+**What this does NOT decide.** Parakeet stays shipped and opt-in — nothing is
+reverted, and the harness (D-375) is backend-agnostic by construction. The
+speed is real and the right way to spend it is D-375's multi-pass
+reconciliation, not a default switch. The day a *shorter-segment* Parakeet
+configuration exists (`SEGMENT_MAX_S` is a cap, not a target, and
+`chunk_duration`/`overlap_duration` are still unthreaded — `§5`), this is worth
+re-measuring with the same harness: the measurement is now one `cargo test`.
+
+**Also found, and left as found** (`CLAUDE.md`: do not edit a failing assertion
+until it passes): B-246 — the over-claimed cut is **not fixed on either
+backend**, and D-366's guard never covered the case that produces it. Whisper's
+one case is on C019, the source this pass added, which is the whole value of
+having widened it.
+
+---
+
 ## D-365 — a SECOND, independent retake signal: a repeated content-bearing n-gram ("rough copy"), ORed with the existing edit-distance arm, catching the self-correction that repairs one PHRASE inside two otherwise-different sentences
 
 **Status: `decided`** (2026-09-24). Closes the limitation **B-237** recorded and

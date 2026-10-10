@@ -3,12 +3,13 @@
 Worked-out detail behind **D-318** (the detector), **D-320** (edit distance +
 containment), **D-327** (spans, and the embedding model that was measured and
 rejected), **D-364** (detection's unit is a continuous take, not a clip),
-**D-365** (the second, repeated-phrase signal) and **D-366** (a glued anchor may
-not propose unique content for deletion). Fixes **B-198**, **B-237** and
-**B-238**.
+**D-365** (the second, repeated-phrase signal), **D-366** (a glued anchor may
+not propose unique content for deletion) and **D-377** (the cut audit widened to
+every raw source and both ASR backends; Whisper stays the default). Fixes
+**B-198**, **B-237** and **B-238**; records **B-246** as open.
 
-Four traps are written down here, because each one costs a day to re-derive
-and three of them have already been walked into once:
+Five traps are written down here, because each one costs a day to re-derive
+and four of them have already been walked into once:
 
 1. **§1-3 — "use a semantic embedding model" is the obvious, confident, wrong
    answer**, and the next person to look at retake detection will think of it
@@ -30,6 +31,14 @@ and three of them have already been walked into once:
    the two real transcripts — including one video's own opening hook — while
    every test passed. **When changing this module, measure the proposed cut, not
    just the grouping.**
+5. **§8 — §6's fix was verified on two hand-picked excerpts, so it looked
+   finished and was not.** Run over whole transcripts it still proposes speech
+   that repeats nothing (**B-246**, 5.42 s on Whisper, 56.92 s on Parakeet), and
+   D-365's phrase arm is the entire source of it. Also: a corpus of two
+   transcripts of two sources is not a corpus — widening it to twelve raw
+   sources found the first Whisper violation on the first source nobody had
+   looked at. **A green audit over material the tuning was fitted to measures
+   almost nothing.**
 
 ---
 
@@ -761,6 +770,40 @@ audio and no network, since the fixtures are plain JSON:
 cargo test -p apelles-speech --test real_transcripts -- --nocapture
 ```
 
+§8's whole cut audit — the per-source table, the six B-246 cases with their
+overlaps, and the silent-source check — the same way, and it prints the table
+§8.2 quotes:
+
+```sh
+cargo test -p apelles-speech --test proposed_cuts -- --nocapture
+```
+
+§8.3's threshold grid is not a committed test: it is the same `audit()` run
+under one-parameter-off-default `RetakeParams`, and keeping a sweep that
+concludes "change nothing" as permanent test surface would be dead code. To
+re-derive it, loop `proposed_cuts.rs`'s `audit` over the variants in the §8.3
+table.
+
+The twelve raw sources are the owner's own camera originals and are not in the
+repo; the transcripts derived from them are, under
+`crates/apelles-speech/tests/fixtures/transcripts/`. A fixture is the
+`[start, end, text]` reduction of `transcribe.py`'s own output — every segment,
+its `start`/`end` rounded to 0.01 s, nothing dropped — so re-deriving one is the
+sidecar's ordinary CLI plus that projection:
+
+```sh
+ai-env/.venv/bin/python ai-media/transcribe.py --audio <source>.MOV \
+  --language en [--backend parakeet] --output /tmp/full.json
+python3 -c 'import json,sys; b=json.load(open("/tmp/full.json")); \
+  json.dump([[round(s["start"],2),round(s["end"],2),s["text"]] for s in b["segments"]], \
+  sys.stdout, indent=1)'
+```
+
+Both backends need the audio: `ai-env/.venv` carries `mlx-whisper`, and
+`parakeet-mlx` is in `ai-media/requirements.txt` but deliberately **not** in
+`ai-env/requirements.lock.txt` (see `asr-backends-and-harness.md` §4.1), so a
+Parakeet run needs it installed into that venv or a venv of its own.
+
 §6's cut-range defect, both ways. The four tests named below assert the correct
 proposed cut; to watch them fail the way the pre-D-366 detector did, make
 `anchor_is_justified` return `true` as its first statement and re-run — the two
@@ -793,3 +836,157 @@ Expected sha256, if the ONNX export is wanted instead of the safetensors:
 onnx/model.onnx    6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452
 tokenizer.json     be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037
 ```
+
+---
+
+## 8. The cut audit, widened to every raw source and both ASR backends (D-377, B-246, 2026-10-10)
+
+This section is **D-374 step 4** — "re-run `apelles-speech`'s corpus against a
+Parakeet transcript, re-sweep the retake thresholds, and decide the default on
+the numbers." It is also §6's own trap walked into a third time, which is why it
+is written down rather than summarised.
+
+### 8.1 What the corpus was, and why two transcripts was not enough
+
+Every number in §4-§6 comes from **two** transcripts of **two** sources, both
+`mlx-whisper large-v3`. That is a 1,671 s corpus of single-subject explainers,
+and four sessions of tuning were fitted to it. So all twelve of the owner's raw
+camera originals (43 minutes) were transcribed with **both** backends — cheap
+now that one of them runs at 25.8× realtime.
+
+Nine turned out to be **silent B-roll** — room tone at −47 to −65 dBFS mean,
+camera rolling, nobody talking. A source with no speech cannot have a cut
+proposed against it, so those nine pass any cut audit **vacuously**, and a
+vacuous pass is exactly how B-238 kept surviving. They are listed once and
+excluded from every number below. The corpus that decides anything is three
+sources:
+
+| source | duration | mean dBFS | segments (whisper / parakeet) | in the corpus before? |
+|---|---|---|---|---|
+| `A001_08302215_C019` | 517 s | −18.4 | 83 / 45 | **no — new here** |
+| `A001_09122319_C038` | 989 s | −25.1 | 121 / 87 | yes (§4, §5) |
+| `A001_09122356_C040` | 686 s | −25.5 | 66 / 58 | yes (§1, §6) |
+
+**C019 is the whole value of the widening**: 517 s of real speech, the loudest
+of the twelve, a prompt-caching explainer, never once seen by this detector —
+and the only source where *Whisper* over-claims a cut.
+
+**The nine silent ones do say one thing, and it is about Whisper.** Parakeet
+emits nothing on them. Whisper emits `"Thank you."` (and one `"All right."`) —
+**nine phantom utterances across five of the nine sources**, the familiar
+Whisper-on-silence artifact. Two are a *verbatim* repeat inside `window_secs`:
+C030's `"Thank you."` at 0.00-2.70 s and 30.00-30.76 s, 27.3 s apart, similarity
+**1.000**. The only thing stopping the detector proposing a cut of a phantom is
+`min_words: 3` — `"thank you"` is two distinct words. **That is a measured reason
+never to lower `min_words`**, and it is pinned by
+`proposed_cuts.rs::the_silent_sources_are_not_a_test_of_the_cut`.
+
+### 8.2 The measurement, and the number the decision turned on
+
+Not "does it find the retakes" — §4-§6 established that is the easy half and the
+one that keeps getting measured instead of the hard one. **§6's own method,
+applied to every proposed cut**: `word_overlap` of the material being cut
+against the take the group recommends keeping, with `MIN_UTTERANCE_OVERLAP` as
+the bar. Two readings, because they need different fixes:
+
+| | vs the keeper | vs the union of the other takes | what it is |
+|---|---|---|---|
+| **straddled** | < 0.5 | ≥ 0.5 | repeats *another discarded take*, not the keeper — the ASR boundary fell mid-repetition. Accepting the group still loses it |
+| **repeats nothing** | < 0.5 | < 0.5 | **B-238 itself. Unfixed.** |
+
+| source | backend | groups | cut utterances | proposed | absent from keeper | **repeats nothing** |
+|---|---|---|---|---|---|---|
+| C019 | whisper | 7 | 9 | 56.32 s | 18.14 s | **5.42 s** (1) |
+| C019 | parakeet | 7 | 9 | 44.24 s | 27.20 s | **27.20 s** (2) |
+| C038 | whisper | 11 | 14 | 82.78 s | 27.44 s | 0.00 s |
+| C038 | parakeet | 10 | 14 | 82.28 s | 25.88 s | **25.88 s** (2) |
+| C040 | whisper | 7 | 15 | 98.78 s | 43.82 s | 0.00 s |
+| C040 | parakeet | 10 | 16 | 91.84 s | 3.84 s | **3.84 s** (1) |
+| **whisper total** | | **25** | **38** | **237.88 s** | **89.40 s** | **5.42 s** |
+| **parakeet total** | | **27** | **39** | **218.36 s** | **56.92 s** | **56.92 s** |
+
+**The deciding number is 56.92 s against 5.42 s.** Parakeet finds *more* groups,
+proposes *less* in total, straddles *less*, and is 10× faster — and 26 % of
+everything it offers for deletion repeats nothing at all, against Whisper's
+2.3 %. Over-cutting is the direction D-318 rules out.
+
+**The cause is segment length, not transcription quality.** A take is a range of
+**whole utterances** (§2's honest limit). When only an utterance's *tail*
+repeats, the whole utterance is cut, and Parakeet's mean segment is 11.4-11.8 s
+against Whisper's 6.2-10.4 s. Its five cases are 14.96, 12.24, 11.36, 14.52 and
+3.84 s; Whisper's one is 5.42 s. The worst:
+
+```text
+  C019 parakeet #14  162.84-177.80  (14.96 s, overlap 0.156)
+    "changes. That's you pointing at this stack and saying everything above the
+     line keeps it warm. Get that order right and the number stop being
+     abstract. Let's actually go to the maths. Writing the notes into the"
+  keeper #18  195.56-203.80
+    "Writing the notes, writing those notes into the cache the first time costs
+     you about 25% more than a normal red"
+```
+
+Six words at the end repeat. Fifteen seconds get proposed for deletion.
+
+### 8.3 The threshold sweep: nothing moves, and that is the finding
+
+All three speech sources, both backends, one parameter off default at a time.
+`UNIQUE` is the §8.2 verdict column.
+
+| | whisper: groups / cut s / **UNIQUE** | parakeet: groups / cut s / **UNIQUE** |
+|---|---|---|
+| **default** (0.82 / 3 / 3 / 3) | 25 / 237.88 / **1 — 5.42 s** | 27 / 218.36 / **5 — 56.92 s** |
+| `similarity` 0.85 | 25 / 237.88 / 1 — 5.42 | 27 / 218.36 / 5 — 56.92 |
+| `similarity` 0.88 | 25 / 237.88 / 1 — 5.42 | 27 / 218.36 / 5 — 56.92 |
+| `similarity` 0.90 | 27 / 244.68 / **2 — 20.94** ← worse | 27 / 218.36 / 5 — 56.92 |
+| `similarity` 0.95 | 26 / 249.02 / 2 — 20.94 | 27 / 218.36 / 5 — 56.92 |
+| `min_words` 4 | 24 / 234.82 / 1 — 5.42 | 26 / 214.48 / 5 — 56.92 |
+| `min_words` 5 | 24 / 234.82 / 1 — 5.42 | 26 / 213.96 / 5 — 56.92 |
+| `min_words` 6 | 23 / 226.90 / 1 — 5.42 | 25 / 212.36 / 5 — 56.92 |
+| `min_words` 8 | 19 / 205.90 / 1 — 5.42 | 23 / 190.84 / 4 — 53.08 |
+| `max_span_utterances` 1 | 29 / 233.14 / 2 — 20.94 | 27 / 209.40 / 5 — 56.92 |
+| `max_span_utterances` 2 | 25 / 237.88 / 1 — 5.42 | 27 / 217.20 / 5 — 56.92 |
+| `phrase_min_words` 4 | 22 / 208.90 / 2 — 11.48 | 26 / 207.00 / 3 — 38.12 |
+| `phrase_min_words` 5 | 20 / 196.14 / 2 — 10.90 | 24 / 184.68 / 2 — 26.76 |
+| `phrase_min_words` 6 | 17 / 174.34 / 1 — 5.48 | 24 / 155.28 / 1 — 12.24 |
+| **`phrase_min_words` 0** | 13 / 106.22 / **0 — 0.00** | 16 / 96.36 / **0 — 0.00** |
+
+Three things fall out, and none of them is a threshold change:
+
+- **`similarity`, `min_words` and `max_span_utterances` cannot reach it.** They
+  govern *whether* a pair matches; none governs how much unrelated speech rides
+  along once it does. Raising `similarity` to 0.90 makes Whisper **worse** —
+  it breaks a three-take group into two, and a take that was straddled becomes
+  one that repeats nothing. `min_words` 8 costs six of Whisper's 25 groups to
+  remove nothing.
+- **`phrase_min_words: 0` zeroes it on both backends** — so **D-365's phrase arm
+  is the entire source of the over-claimed cut**. That arm was validated by
+  sweeping 7,260 *pairs* (§5.3-§5.4) and never by looking at a resulting cut: it
+  admits pairs whose redundancy is a sub-utterance phrase, which the
+  whole-utterance take model then cannot express. §6's trap, one level up. It is
+  not turned off: it costs 12 of Whisper's 25 groups, including every case §5
+  exists for.
+- **`min_words` must not go down**, per §8.1's phantom `"Thank you."`.
+
+**So no default moves, and the defect is recorded as B-246 rather than tuned
+away.** The real fix is to apply `MIN_UTTERANCE_OVERLAP` to single-utterance
+takes as well (D-366 exempted them, and all six violations are single-utterance
+takes) — which moves the group counts the five corpus tests pin, so it is its
+own pass with its own recall measurement.
+
+### 8.4 The one thing that could not be verified
+
+Re-transcribing C038/C040 with `mlx-whisper large-v3` today does **not**
+reproduce the committed fixtures: **126 segments against 121, and 83 against
+66.** Unexplained. The fixtures predate D-349's MLX seeding (B-224), so they may
+be from an unseeded run, and nothing records the `language` they were captured
+with; these runs used `language="en"`. They were **not** replaced — §5's four
+tests are hand-classified against those exact files.
+
+Both re-derived transcripts are committed beside them and audited separately.
+They propose **more** (19 and 22 cut utterances against 14 and 15; 87.80 s and
+123.00 s) and still **0.00 s that repeats nothing**. So Whisper's zero holds
+across two different segmentations of the same two sources, which is what makes
+§8.2 a measurement rather than a property of one fixture vintage.
+
+---

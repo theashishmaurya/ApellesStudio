@@ -301,15 +301,16 @@ tool — so it has no human/AI surface pair yet; that is named in §5.
 3. ✅ **Harness** (2026-10-10, D-375) — `ai-media/harness/`, built against the
    *existing Whisper backend* first, which is how its backend-agnosticism got
    proved rather than asserted. Detail: §3.
-4. ⬜ **Re-derive, then switch** — only once the harness exists: re-run
-   `apelles-speech`'s corpus against a Parakeet transcript, re-sweep the
-   retake thresholds, and decide the default on the numbers.
+4. ✅ **Re-derive, then decide** (2026-10-10, **D-377**) — done, and the answer
+   is **do not switch**. Detail: §4.2 below and
+   `docs/notes/retake-detection.md` §8. Parakeet stays shipped and opt-in.
 
-**Step 4 is the expensive one and it is not optional.** B-237, B-238, D-365
+**Step 4 was the expensive one and it was not optional.** B-237, B-238, D-365
 and D-366 were four sessions of tuning against Whisper's output shape, pinned
 by five corpus tests asserting exact group counts and cut ranges. Changing the
-ASR changes tokenisation, punctuation and boundaries, so those tests must be
-re-derived, not edited until green.
+ASR changes tokenisation, punctuation and boundaries, so those tests had to be
+re-derived, not edited until green. **They were not touched and all five still
+pass**; every Parakeet number is additional tests over new fixtures.
 
 ### 4.1 What steps 1 and 2 actually shipped (2026-10-09)
 
@@ -382,13 +383,72 @@ pin, which is a bigger change than this one. `ai-env/verify.py` deliberately
 does NOT check for `parakeet_mlx` either: that file gates whether
 `apelles_ai::ai_env` **wipes and rebuilds** the shared venv (D-315), so adding
 an opt-in backend to it would condemn every existing install. Both are tracked
-in `docs/04-roadmap.md`.
+in `docs/04-roadmap.md`. **Still true after step 4** — a default that did not
+move needs no relock, and §4.2's own measurement was taken with
+`parakeet-mlx` in a venv of its own rather than by touching the shared one.
+
+### 4.2 What step 4 measured, and why the default did not move (D-377, 2026-10-10)
+
+The full working is `docs/notes/retake-detection.md` §8; the decision and its
+rejected options are **D-377**. The short version, because it is the one number
+this whole note exists to produce:
+
+Both backends, through the real seam, over **all twelve** of the owner's raw
+camera originals — not just the two the thresholds were tuned on. Nine turned
+out to be silent B-roll (−47 to −65 dBFS mean), which cannot have a cut proposed
+against it, so the decision rests on three speech sources: C038, C040, and
+**C019 (517 s), which the retake detector had never been pointed at**.
+
+| over 2,192.6 s of speech | segments | retake groups | proposed for cut | **proposed but repeats nothing** |
+|---|---|---|---|---|
+| mlx-whisper large-v3 | 270 | 25 | 237.88 s | **5.42 s** — 1 utterance |
+| parakeet-tdt-0.6b-v3 | 190 | 27 | 218.36 s | **56.92 s** — 5 utterances |
+
+**Whisper stays the default on 56.92 s against 5.42 s** — 26 % of what Parakeet
+offers for deletion repeats nothing, against Whisper's 2.3 %. The cause is the
+thing this note has been measuring all along: **segment length**. A retake take
+is a range of *whole* utterances, so when only an utterance's tail repeats the
+whole utterance is cut, and Parakeet's mean segment is 11.4-11.8 s against
+Whisper's 6.2-10.4 s. No setting of `similarity`, `min_words`,
+`max_span_utterances` or `phrase_min_words` removes it (grid in §8.3) — they
+govern *whether* a pair matches, not how much unrelated speech rides along.
+
+Three things this pass established that bear on the rest of this note:
+
+- **The seam is reproducible.** C038 through `transcribe(..., backend="parakeet")`
+  gave **87 segments, median 5.12 s, max 14.96 s, 1296 words** — byte-for-byte
+  §4.1's table, re-derived on a different day in a different venv.
+- **The speed is ~10× end-to-end, not 17.6× relative to an untimed baseline.**
+  Measured through the seam on the same machine, whole-file, ffmpeg extraction
+  included: C038 **38.3 s** on Parakeet (25.8× realtime) against **369.6 s** on
+  Whisper (2.7× realtime); C040 20.3 s against 237.8 s; C019 18.3 s against
+  193.4 s. §1's "not timed this run" is now filled in.
+- **Whisper hallucinates on silence and Parakeet does not.** On the nine silent
+  sources Parakeet emits nothing; Whisper emits `"Thank you."` nine times across
+  five of them, twice as a *verbatim* repeat 27.3 s apart — inside the retake
+  detector's own window, at similarity 1.000. Only `min_words: 3` keeps it out.
+  Pinned by `proposed_cuts.rs::the_silent_sources_are_not_a_test_of_the_cut`.
+  It is the one place Parakeet is cleanly better for this pipeline.
+- **`SEGMENT_MAX_S` / `SEGMENT_GAP_S` did not move** (§5 listed them as inputs to
+  this sweep). The cap was never the binding constraint: Parakeet's longest
+  segment on these sources is 14.96 s, under the cap, and the five bad cuts are
+  11-15 s segments that are perfectly legal. Shortening them is a *retake*
+  question, not a backend one — see D-377's "what this does NOT decide".
+
+**Also found, and left as found:** the over-claimed cut is not fixed on either
+backend — **B-246** — and D-366's guard never covered the case that produces it.
+Whisper's one violation is on C019, the source this pass added.
 
 ---
 
 ## 5. Open, named
 
-- **Default backend is still Whisper** until step 4's numbers exist.
+- ~~**Default backend is still Whisper** until step 4's numbers exist.~~
+  **Settled 2026-10-10 (D-377): Whisper stays the default, measured.** The
+  deciding number is 56.92 s against 5.42 s of never-repeated speech proposed
+  for deletion (§4.2). Not "pending more data" — a decision, revisitable only by
+  a *shorter-segment* Parakeet configuration, since segment length is the whole
+  cause.
 - ~~`dark.rs`'s Whisper-specific constants are not yet moved to a
   descriptor.~~ **Done 2026-10-10 (D-375):** `BackendDescriptor` now carries
   `max_word_secs` (Whisper 2.0 s, Parakeet `None`), read by
@@ -396,17 +456,30 @@ in `docs/04-roadmap.md`.
   field out. **What remains is the app side:** `chroma_detect_dark_regions`
   still defaults to `DarkParams::default()`, i.e. Whisper's bound, because
   nothing in the app knows which backend produced a cached transcript. Correct
-  today (Whisper is the default) and a real gap the day it is not — it belongs
-  with step 4.
+  today (Whisper is the default) and a real gap the day it is not. **Step 4
+  left it open on purpose** (D-377): the default did not move, so the app side
+  is still correct, and plumbing a per-transcript backend tag through the cache
+  to feed `max_word_secs` has no caller until it does.
 - **The harness has no caller above `transcribe.py`.** `ai-media/harness/` is
   a library with tests; no sidecar endpoint, no GUI control, no MCP tool runs
   it, so it does not yet have the human+AI pair `CLAUDE.md` requires. The
   surface it will need is the one step 4's decision shapes (how many passes, at
-  which offsets, and whether `low_confidence` renders in the Recut panel), so
-  designing it before those numbers exist would be guessing.
-- **`SEGMENT_GAP_S` / `SEGMENT_MAX_S` are measured, not settled.** Both were
-  picked from one source and are inputs to step 4's re-sweep, not conclusions
-  of it. `SEGMENT_MAX_S` admits exactly one exception — a single word longer
+  which offsets, and whether `low_confidence` renders in the Recut panel).
+  **Step 4 has now shaped it** (D-377): the default stays Whisper at 2.7×
+  realtime, so "three passes of a 989 s source for ~170 s" (§3.1) is a Parakeet
+  budget, not a Whisper one — a multi-pass Whisper run of that file is ~18
+  minutes. So the first real caller is a **Parakeet-backed** multi-pass pass
+  whose *reconciled* output feeds the retake detector, which is a different
+  question from "which backend's raw transcript is better" and is not answered
+  by D-377.
+- **`SEGMENT_GAP_S` / `SEGMENT_MAX_S` are measured, not settled — and step 4
+  did not move them, because they were not the binding constraint** (D-377).
+  Parakeet's longest segment across the three speech sources is 14.96 s, inside
+  the cap; the five over-claimed cuts are 11-15 s segments that are perfectly
+  legal. What §8 shows is that *mean* segment length, not the maximum, is what
+  the retake detector is sensitive to — which makes "aim Parakeet at a shorter
+  mean" a real, unexplored option and the only thing that would reopen the
+  default. `SEGMENT_MAX_S` admits exactly one exception — a single word longer
   than the cap, kept whole rather than split mid-word — which is pinned by test
   so it stays the only one.
 - **`chunk_duration` / `overlap_duration` are still module constants, not
@@ -415,8 +488,10 @@ in `docs/04-roadmap.md`.
   are still unthreaded, so a multi-pass run on the Parakeet backend currently
   varies its seams only via `start_secs` too. That works — its chunker also
   starts from the audio it is handed — but exposing the two parameters is the
-  more direct knob and belongs with step 4, where the pass count and offsets
-  get chosen on numbers.
+  more direct knob and belongs with the first multi-pass caller, where the pass
+  count and offsets get chosen on numbers. **Step 4 raised their value**: they
+  are also the lever for a shorter *mean* segment, which is the one change that
+  would reopen the default (previous bullet).
 - **Parakeet reports no detected language.** `parakeet_mlx` 0.5.3 takes no
   language argument and `AlignedResult` carries no detected one, so the
   contract's `language` is whatever the caller asked for, or `"unknown"` for
@@ -431,10 +506,16 @@ in `docs/04-roadmap.md`.
   still have no way to ask for Parakeet — which is intentional for an opt-in
   step 2 ("nothing above `transcribe.py` changes"), and is also why this feature
   does not yet owe the GUI+MCP pair `CLAUDE.md` requires. It will when the
-  default moves, or sooner if a caller wants the choice.
-- Number normalisation ("Twenty billion dollars" vs "$20 billion") is
-  unhandled; it affects `retake.rs`'s string similarity and should be decided
-  with step 4's sweep, not guessed at now.
+  default moves, or sooner if a caller wants the choice. **D-377 decided the
+  default does not move**, so this stays shut until a caller asks — and the
+  likeliest such caller is the harness's own multi-pass run, which wants
+  Parakeet for its speed regardless of which backend the single-pass default
+  is.
+- Number normalisation ("Twenty billion dollars" vs "$20 billion") is still
+  unhandled, and **step 4 measured that it did not matter here** (D-377): not
+  one of Parakeet's five over-claimed cuts, nor any difference in group count,
+  turns on a spelled-out number. It stays open as a transcript-quality issue,
+  not as a retake-detection one.
 - Parakeet is 25 European languages. `transcribe.py`'s docstring claims
   code-switched Hinglish auto-detects fine on `large-v3` — **Hindi is not in
   Parakeet's set**, so any Hinglish source must stay on Whisper. The backend

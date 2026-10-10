@@ -1,0 +1,227 @@
+[
+ [
+  2.72,
+  4.08,
+  "And it keeps them."
+ ],
+ [
+  6.48,
+  8.08,
+  "When you turn it on."
+ ],
+ [
+  11.28,
+  17.36,
+  "When you turn it on after that first read, the provider hangs on to the working note instead of winning"
+ ],
+ [
+  17.68,
+  32.56,
+  "them. Then on your next call, it takes the opening chunk of your new note prompt and it makes a fingerprint on it, a hash, and it checks have I read this exact opening before. If yes, that's a cache it. It"
+ ],
+ [
+  32.56,
+  46.48,
+  "loads the same notes and skips the read entirely. Jump straight on to a new part at the bottom. The actual question, the starting answer, and start answering. So you go from a reread"
+ ],
+ [
+  46.96,
+  57.76,
+  "1000 words to load the notes, read the 12 new words and go. The model isn't doing the expensive part anymore because the expensive part was"
+ ],
+ [
+  58.08,
+  62.64,
+  "understanding the stuff that didn't change. Sounds free."
+ ],
+ [
+  78.0,
+  91.52,
+  "That's not mostly exactly. One extra space, one swapped word, a timestamp or a session ID you stuck at the top of your system prompt, any of it and the fingerprint different."
+ ],
+ [
+  95.92,
+  97.36,
+  "This is the mistake."
+ ],
+ [
+  99.6,
+  102.96,
+  "People enabling caching drop a current type in"
+ ],
+ [
+  103.44,
+  114.96,
+  "people enabling caching, drop a current time is 3 42 p.m. into the top of their prompt, and the wonder why and wonder why nothing got cheaper. It's because"
+ ],
+ [
+  125.08,
+  133.96,
+  "it's because that one line changes every call. So the fingerprint changes every call. So it's a fresh red"
+ ],
+ [
+  134.36,
+  149.0,
+  "every call. That rule is simple. So everything that stays the same goes at the top, and everything that changes go at the bottom. Your tools, then your system instruction, then your big context"
+ ],
+ [
+  149.0,
+  162.84,
+  "blob, all the frozen stuff first, then dead last. The user's actual message. And you drop a little marker, it's called cache breakpoint. Right after the last thing at that never"
+ ],
+ [
+  162.84,
+  177.8,
+  "changes. That's you pointing at this stack and saying everything above the line keeps it warm. Get that order right and the number stop being abstract. Let's actually go to the maths. Writing the notes into the"
+ ],
+ [
+  177.8,
+  183.0,
+  "cache first, time costs you about 25% more than a normal red"
+ ],
+ [
+  183.48,
+  189.96,
+  "one time. That's the price of admission. Then every call that hits the cache."
+ ],
+ [
+  191.56,
+  193.72,
+  "Okay, I should do this."
+ ],
+ [
+  195.56,
+  203.8,
+  "Writing the notes, writing those notes into the cache the first time costs you about 25% more than a normal red"
+ ],
+ [
+  204.44,
+  219.16,
+  "one time, and that's the price of admission. Then every call that hits the cache after that cost a tenth of the normal price. Not 10% off, a tenth of the normal price. So you are behind for exactly"
+ ],
+ [
+  219.16,
+  226.08,
+  "one call and ahead of every single call after that. Summer ran this on a pretty ordinary"
+ ],
+ [
+  226.56,
+  233.36,
+  "setup, a rag chatbot. 10,000 token system, 5,000 requests a day on cloud."
+ ],
+ [
+  234.88,
+  247.2,
+  "Without caching, that's roughly 4,500 a month, just in rereading the same instruction over and over again. With caching turned on the str and the structure right"
+ ],
+ [
+  247.6,
+  259.84,
+  "around 700. Same app, same traffic, same model. About an 80% cut from one structural change. One more thing to know the notes never"
+ ],
+ [
+  260.48,
+  275.04,
+  "one more one more thing to know. The notes doesn't live forever. The default is 5 minutes. Although every time you hit the cache, that 5 minute timer resets. So a busy app basically keeps it alive forever."
+ ],
+ [
+  284.32,
+  293.84,
+  "And next call pays to rebuild them. So it's a real saving. But I will be lying if I say it always shows up on the final bin,"
+ ],
+ [
+  294.8,
+  309.12,
+  "on the final bill. And here's why. Here's the thing nobody tells you. When teams turn caching on watch the per call cost drop, they mostly don't pocket the difference. They spend it."
+ ],
+ [
+  318.64,
+  326.6,
+  "So the perl token prices goes down and the monthly invoice still goes up. There's actually a name for this. There's actually a name for this"
+ ],
+ [
+  329.08,
+  333.88,
+  "from economics. The Jevon's paradox. Jevon's paradox."
+ ],
+ [
+  334.52,
+  337.4,
+  "Make a resource cheaper to use and people just"
+ ],
+ [
+  337.72,
+  352.52,
+  "use more of it. Make a resource cheaper to use and people just use more of it. Caching makes token cheaper so the agent loops get stronger. And the other limit, caching only touches the input side. Prompt going"
+ ],
+ [
+  352.52,
+  353.24,
+  "in. If the"
+ ],
+ [
+  353.64,
+  354.2,
+  "if the work"
+ ],
+ [
+  357.64,
+  358.44,
+  "if the work"
+ ],
+ [
+  358.92,
+  366.68,
+  "if the workload is output heavy, long generated answers, big document write back, and the input has never the"
+ ],
+ [
+  367.32,
+  376.84,
+  "then the input was never the expensive part. And caching barely moves your bill. It's a level for one specific shape of problem."
+ ],
+ [
+  377.72,
+  392.52,
+  "A big mostly unchanging prompt hit over and over, which to be fair is most agent agents and most chatbots. Which to be fair, it's most agent and most chatbots. So put it all back together back to where we"
+ ],
+ [
+  392.52,
+  407.4,
+  "started. The model isn't broken and you are not being scammed. By default, it's genuinely does rereads your whole prompt every time. Because keeping those nodes around for"
+ ],
+ [
+  407.4,
+  422.28,
+  "everyone forever would be enormously expensive. Prompt caching prompt caching is you telling the provider this chunk right here, keep it warm. I will be back in a minute. Frozen stuff at"
+ ],
+ [
+  422.28,
+  434.68,
+  "the top, changing the stuff at the bottom, breakpoint after the last thing that never moves. Do that and you stop paying full price to the processes to process word"
+ ],
+ [
+  435.12,
+  449.28,
+  "that model already understood. So one thing to actually do if you are building anything on top of an LLM API right now, open your prompt and check one thing. Is it ordered stable to"
+ ],
+ [
+  449.28,
+  452.0,
+  "volatile? Or is it otherwise?"
+ ],
+ [
+  453.12,
+  467.12,
+  "And make sure it doesn't have a session ID, timestamp, username sitting on top of every call so that like cash breaks. That one reorder is often the whole difference between the 4000 bill and"
+ ],
+ [
+  467.12,
+  468.72,
+  "7001."
+ ],
+ [
+  501.6,
+  515.28,
+  "Why is my AI bill like this? Thing finally click subscribe. I'm breaking I'm breaking down one AI cost thing like this every week, and the next one is context window. Thank you very much."
+ ]
+]

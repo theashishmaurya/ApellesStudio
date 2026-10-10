@@ -34,29 +34,22 @@
 //! false-positive rate on real speech, and should be looked at rather than
 //! re-baselined reflexively.
 //!
+//! **This file measures the predicates, not the cut.** The pairs below are what
+//! the phrase arm *admits*; what a group then proposes to *delete* is a second
+//! claim, and D-377 found it is a weaker one — see `proposed_cuts.rs`, which
+//! audits the proposed cut over whole transcripts of twelve raw sources and both
+//! ASR backends (B-246). The two fixtures here are deliberately **not**
+//! re-derived by that pass: these four counts are hand-classified against these
+//! exact files.
+//!
 //! [`dark_live`]: ../dark_live.rs
 //! [`silero_live`]: ../silero_live.rs
 
+mod common;
+
 use apelles_speech::retake::{RetakeParams, Utterance, detect_retakes, normalise, similarity};
 use apelles_speech::{PhraseParams, is_phrase_repeat};
-
-/// One fixture transcript: `[start_secs, end_secs, text]` per segment, exactly
-/// as whisper segmented it.
-fn load(name: &str) -> Vec<Utterance> {
-    let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
-    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
-    let rows: Vec<(f64, f64, String)> =
-        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parsing {path}: {e}"));
-    rows.into_iter()
-        .enumerate()
-        .map(|(index, (start_secs, end_secs, text))| Utterance {
-            index,
-            start_secs,
-            end_secs,
-            text,
-        })
-        .collect()
-}
+use common::load;
 
 /// Every pair of utterances the phrase signal admits **and** the existing
 /// edit-distance signal does not, inside the detector's own time window.

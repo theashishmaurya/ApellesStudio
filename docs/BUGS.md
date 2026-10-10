@@ -27,6 +27,31 @@ Still real:
 
 ## Open
 
+## B-246 — the retake detector still proposes cutting speech that repeats nothing: D-366's guard exempts single-utterance takes, and `similarity`'s containment arm admits a long utterance on a matching tail
+
+status: **open** · severity: high (over-cutting — the one direction D-318 rules out: a proposal a human accepts silently deletes speech absent from the result) · area: `crates/apelles-speech/src/retake.rs`
+
+- **found:** 2026-10-10, doing **D-374 step 4** (→ **D-377**) — widening the B-238 cut audit from the two corpus transcripts to every raw source the owner has, on both ASR backends. Pinned by `crates/apelles-speech/tests/proposed_cuts.rs::b246_the_cuts_that_repeat_nothing_are_exactly_these`, which itemises all six cases.
+- **repro:** `cargo test -p apelles-speech --test proposed_cuts -- --nocapture`. The test is green: it pins the defect as a measurement, the way `real_transcripts.rs` pins D-365's one known false positive. A fix makes it fail with the list it emptied.
+- **expected:** no utterance a group proposes for deletion shares less than `MIN_UTTERANCE_OVERLAP` of its own vocabulary with the take the group recommends keeping. That is exactly the invariant **D-366** stated and tested — `retake::tests::nothing_proposed_for_deletion_is_unique_content`.
+- **actual:** six violations across three speech sources (2,192.6 s). mlx-whisper 1 (5.42 s), parakeet 5 (56.92 s):
+
+  | source | backend | # | secs | overlap vs keeper | only this repeats |
+  |---|---|---|---|---|---|
+  | C019 | whisper | 50 | 5.42 | 0.417 | "there's actually a name for this" — the monthly-invoice line is said once |
+  | C019 | parakeet | 14 | **14.96** | 0.156 | the trailing "Writing the notes into the" |
+  | C019 | parakeet | 23 | 12.24 | 0.381 | "One more thing to know the notes never" |
+  | C038 | parakeet | 17 | 11.36 | 0.280 | "and the trick behind use to bring that cost" |
+  | C038 | parakeet | 40 | 14.52 | 0.240 | "But the real reason it's this expensive" |
+  | C040 | parakeet | 36 | 3.84 | 0.375 | "read than write" |
+
+- **cause:** two layers, both of which made the earlier green look right.
+  1. **`anchor_is_justified` (D-366) only guards *glued* spans.** `MIN_UTTERANCE_OVERLAP`'s own doc says so explicitly — "single-utterance takes are judged by `similarity` alone, as they always were". Every one of the six is a **single-utterance take**, so the guard never ran. `similarity` maximises over `containment`, so an utterance whose *tail* matches the next delivery scores above 0.82 however much unrelated speech precedes it, and the take is cut whole (§2's "a take is a range of whole utterances" limit, pointed the over-cutting way instead of the under-cutting way §6.6 claims).
+  2. **D-366's invariant test only ever ran on two hand-picked excerpt fixtures** (`REAL_GLUED_ANCHORS`, `REAL_GLUED_ANCHOR_INTRO`), never on a whole transcript. That is the same shape of miss B-238 itself was: the pairwise predicates were swept exhaustively and the resulting *cut* was not. **A green number that measured nothing** — third time on this detector, which is why D-377 added a whole-transcript tier rather than another excerpt.
+- **a second, distinct class found alongside, not counted above:** 13 more cut utterances (83.98 s of Whisper's 89.40 s "absent from the keeper") repeat *another discarded take* but not the keeper, because the ASR's segment boundary fell mid-repetition. Accepting the group still loses that speech. It is less severe (the content is genuinely redundant, just not with what survives) and needs a different fix — choosing `keep` by coverage rather than by recency — so it is recorded here and not merged into the count.
+- **the phrase arm is the whole source of it, measured:** `phrase_min_words: 0` (the D-365 escape hatch) takes both backends to **0 cases / 0.00 s**, at 13 and 16 groups instead of 25 and 27. `phrase_min_words: 6` leaves 1 case each (5.48 s / 12.24 s). So this is D-365's arm admitting pairs whose redundancy is a sub-utterance phrase, which the whole-utterance take model then cannot express. Full grid in `docs/notes/retake-detection.md` §8.3.
+- **fix:** not attempted here, deliberately. The obvious one — apply `MIN_UTTERANCE_OVERLAP` to single-utterance takes too — moves the group counts the **five existing corpus tests pin against Whisper**, and D-377's brief forbade touching them (`CLAUDE.md`: do not edit a failing assertion until it passes). It needs its own pass, with the recall cost measured rather than assumed: the sweep above shows the naive levers trade real catches for it. Tracked in `docs/04-roadmap.md`.
+
 ## B-245 — `test_transcribe_subprocess.py`'s server-wiring stub went stale and the check it exists for stopped being made at all
 
 status: **fixed** (2026-10-09, while landing D-374 steps 1-2) · severity: low (a test, not shipped behaviour — but it was the only guard on the B-189 regression) · area: `ai-media/test_transcribe_subprocess.py`

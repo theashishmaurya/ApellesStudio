@@ -2708,14 +2708,44 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ⬜ **Pass the backend's `max_word_secs` through the app.**
       `chroma_detect_dark_regions` still defaults to Whisper's bound because
       nothing app-side knows which backend produced a cached transcript.
-      Correct while Whisper is the default; a real gap the day it is not.
-    - ⬜ **Step 4 — re-derive, then switch.** Re-run `apelles-speech`'s corpus
-      against a Parakeet transcript, re-sweep the retake thresholds, and decide
-      the default on the numbers. **The expensive, non-optional part:** B-237,
-      B-238, D-365 and D-366 were four sessions of tuning against Whisper's
-      output shape, pinned by five corpus tests asserting exact group counts and
-      cut ranges. `SEGMENT_GAP_S` / `SEGMENT_MAX_S` are inputs to that sweep,
-      not conclusions of it.
+      Correct while Whisper is the default; a real gap the day it is not —
+      **still open and still correct after step 4**, which kept the default
+      (D-377).
+    - ✅ **Step 4 — re-derive, then decide** (2026-10-10, **D-377**). Both
+      backends over **all twelve** raw camera originals through the real seam;
+      nine turned out to be silent B-roll, so the decision rests on three speech
+      sources including **C019 (517 s), never previously measured**. The answer
+      is **do not switch**: over 2,192.6 s, the retake detector proposes
+      **56.92 s** of never-repeated speech for deletion on Parakeet against
+      **5.42 s** on Whisper — 26 % of its proposals against 2.3 % — because a
+      take is a range of whole utterances and Parakeet's mean segment is
+      11.4-11.8 s against Whisper's 6.2-10.4 s. **No threshold moved**: a sweep
+      of `similarity` 0.82→0.95, `min_words` 3→8, `max_span_utterances` 3→1 and
+      `phrase_min_words` 3→6 removes none of it, and `similarity` 0.90 makes
+      Whisper worse. `SEGMENT_GAP_S` / `SEGMENT_MAX_S` were not the binding
+      constraint. The five corpus tests were not touched and all five pass; the
+      measurement is now `crates/apelles-speech/tests/proposed_cuts.rs`
+      (+ 24 committed transcript fixtures). Detail:
+      `docs/notes/retake-detection.md` §8,
+      `docs/notes/asr-backends-and-harness.md` §4.2.
+    - ⬜ **B-246 — the retake detector still proposes cutting speech that
+      repeats nothing**, on *both* backends (Whisper 5.42 s, Parakeet 56.92 s).
+      Found by step 4. D-366's `anchor_is_justified` guard exempts
+      single-utterance takes, and all six violations are single-utterance takes
+      admitted by `similarity`'s containment arm on a matching tail. The obvious
+      fix moves the group counts the five corpus tests pin, so it needs its own
+      pass with the recall cost measured: the §8.3 sweep shows the naive levers
+      trade real catches for it, and `phrase_min_words: 0` zeroes it only by
+      giving up 12 of Whisper's 25 groups. Pinned as a measurement by
+      `proposed_cuts.rs::b246_the_cuts_that_repeat_nothing_are_exactly_these`.
+    - ⬜ **Explain the fixture divergence, or re-baseline deliberately.**
+      Re-transcribing C038/C040 with `mlx-whisper large-v3` today gives 126 and
+      83 segments against the committed fixtures' 121 and 66 (D-377 §8.4). The
+      fixtures predate D-349's MLX seeding and nothing records the `language`
+      they were captured with. Not resolved by replacing them — `real_transcripts.rs`
+      hand-classifies against those exact files — and the re-derived pair is
+      committed and audited separately, so this is a provenance gap, not a
+      blocked measurement.
     - ⬜ **Expose `backend` above `transcribe.py`** when the default moves or a
       caller wants the choice — `server.py`'s `/transcribe`,
       `editor_get_transcript` and the Recut panel have no way to ask for

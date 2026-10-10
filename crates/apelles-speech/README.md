@@ -60,9 +60,12 @@ and D-319 for why the version is pinned.
 cargo test -p apelles-speech
 ```
 
-57 tests, no model required — `tests/real_model_output.rs` replays a probability
+93 tests, no model required — `tests/real_model_output.rs` replays a probability
 track captured from the real model over a real speech clip, `retake.rs` carries
-the real six transcript segments from **B-198** as a regression test, and
+the real six transcript segments from **B-198** as a regression test,
+`tests/real_transcripts.rs` and `tests/proposed_cuts.rs` run the detector over
+whole verbatim transcripts of the owner's own camera originals (plain JSON — no
+model, no audio, no network), and
 `dark.rs`'s fixtures are shaped like real speech (five utterances separated by
 real pauses, because a fixture that is one continuous span has no *other*
 utterance to calibrate the amplitude floor against).
@@ -158,6 +161,22 @@ rather than trimmed. Detection, the predicates and the `RetakeGroup`/`TakeSpan`
 shape are all unchanged. **When changing this crate, measure the proposed cut and
 not only the grouping**: they are two claims, and two consecutive passes verified
 only the first.
+
+### …and it is still not fully fixed (B-246, found by D-377)
+
+D-366's guard applies to *glued* spans only — `MIN_UTTERANCE_OVERLAP`'s own doc
+says single-utterance takes stay "judged by `similarity` alone" — and its
+invariant test only ever ran on two hand-picked excerpt fixtures. Run over whole
+transcripts of **twelve** raw sources, both ASR backends, it fails: **six
+proposed cuts carry speech that repeats nothing in their own group**, every one a
+single-utterance take admitted by containment on a matching tail. 5.42 s on
+mlx-whisper, **56.92 s on parakeet** — whose longer segments are what made that
+number decide D-374's backend default (**D-377**: Whisper stays). Third time this
+detector has shown a green audit that measured material the tuning was fitted to,
+which is why the new tier — `tests/proposed_cuts.rs`, 24 committed transcript
+fixtures — audits whole transcripts of every source rather than another excerpt.
+`docs/notes/retake-detection.md` §8 has the table, the threshold sweep that
+removes none of it, and why `phrase_min_words: 0` is not the fix.
 
 The obvious fix — an on-device sentence-embedding model — was built in full,
 verified correct to four decimals against upstream's own reference

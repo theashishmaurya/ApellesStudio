@@ -1,0 +1,292 @@
+[
+ [
+  2.56,
+  14.72,
+  "Have you ever given an EI three things to do in one message? Like summarize this, pull out the action item and tell me if anything looks off and it does the first two and just skips the third."
+ ],
+ [
+  17.12,
+  19.52,
+  "That's not the model being lazy."
+ ],
+ [
+  21.44,
+  27.04,
+  "It's something called attention, the mechanism that decides which part of what"
+ ],
+ [
+  27.36,
+  30.08,
+  "you say it's actually focused on."
+ ],
+ [
+  31.6,
+  45.12,
+  "And here's an explanation. No maths, no whiteboard, nothing at all. I'm gonna walk you through what that actually is, and by the end you will know exactly how to write a prompt that doesn't get half ignored."
+ ],
+ [
+  52.0,
+  63.52,
+  "Attention. In simple terms, it's just the model deciding for every word it's about to write. How much to focus on each word you give? Okay."
+ ],
+ [
+  81.84,
+  89.52,
+  "It's just the model deciding for every word it's about to write how much to focus on each word you give it."
+ ],
+ [
+  94.96,
+  99.44,
+  "Think about it like cooking from a recipe you have just read once."
+ ],
+ [
+  106.32,
+  114.0,
+  "You don't reread the whole thing before every step. You glance back at exactly the line that matters right now."
+ ],
+ [
+  119.4,
+  123.32,
+  "That's the whole point with the skipped instruction."
+ ],
+ [
+  129.64,
+  136.36,
+  "If one part of your masses get less of that glancing back, then the others, the model just"
+ ],
+ [
+  142.6,
+  150.36,
+  "if the one part of your masses get less of that glancing back than others, the model just underweighs it."
+ ],
+ [
+  152.12,
+  159.08,
+  "If the one part of your masses gets less of that glancing back than the others, the model just waves it,"
+ ],
+ [
+  160.76,
+  164.76,
+  "the model just underweighs it. Okay, underweighs it."
+ ],
+ [
+  166.84,
+  172.2,
+  "If one part of your message gets less of that glancing back, then"
+ ],
+ [
+  172.84,
+  180.84,
+  "if one part of your message gets the less of that glancing back than the others, the model just underweighs it."
+ ],
+ [
+  193.0,
+  197.32,
+  "It's called self-attention, and it's simpler than the name sounds"
+ ],
+ [
+  205.64,
+  211.48,
+  "every word in your message gets to look at every other word at the same time."
+ ],
+ [
+  218.44,
+  222.12,
+  "Picture group check. Instead of a one-on-one conversation."
+ ],
+ [
+  231.36,
+  238.32,
+  "You're not just looking at the last message. You are scanning back through the last 10 to figure out who's"
+ ],
+ [
+  239.12,
+  253.12,
+  "who's actually being asked. You're not just looking at the last message. You are is you're not actually looking at the last message. You are scanning back through the last 10 to figure out who's actually being asked."
+ ],
+ [
+  259.6,
+  262.88,
+  "Self-attention is the model doing that for exelf"
+ ],
+ [
+  264.16,
+  267.52,
+  "mattens, is the model doing that for every word"
+ ],
+ [
+  267.84,
+  268.72,
+  "constantly"
+ ],
+ [
+  269.2,
+  275.84,
+  "constantly. Constantly. Self-attention is the model doing that for every word constantly."
+ ],
+ [
+  289.76,
+  295.92,
+  "Every word turns into every word turns into itself. Every word turns itself into a"
+ ],
+ [
+  297.12,
+  298.56,
+  "every word turns."
+ ],
+ [
+  300.16,
+  310.72,
+  "Every word turns itself into a question. It's query. Every other word turns itself into a kind of answer key, advertising what it's"
+ ],
+ [
+  316.52,
+  329.12,
+  "question get check against everyone else's answer key, and whoever matches the closest, that's who it borrows the most content from called the value."
+ ],
+ [
+  337.4,
+  339.88,
+  "That's the real computation and then it check-in."
+ ],
+ [
+  341.0,
+  347.64,
+  "That's the real computation and then it's checking in, and it's got a name query key value attention."
+ ],
+ [
+  355.72,
+  361.4,
+  "There's a second half to this. How the model actually writes the response."
+ ],
+ [
+  365.48,
+  370.28,
+  "The encoder reads your whole message once and published a build."
+ ],
+ [
+  376.12,
+  383.4,
+  "The encoder reads your whole message once and builds a rich picture of it using the same self-attention."
+ ],
+ [
+  392.44,
+  406.04,
+  "The decoder generates a reply one word at a time, and every time it writes a new word, it glances back at that picture, the encoder build, plus everything it already written so far."
+ ],
+ [
+  413.4,
+  420.76,
+  "That glancing back at the encoder step even has its own name, cross attention."
+ ],
+ [
+  430.52,
+  434.36,
+  "It's less, it's less read than write, and more"
+ ],
+ [
+  434.96,
+  438.96,
+  "read than write while constantly rechecking."
+ ],
+ [
+  444.32,
+  449.04,
+  "And here's why that skipped instruction happened specifically."
+ ],
+ [
+  461.68,
+  473.6,
+  "There's a real documented. Models pay less attention to stuff buried in the middle of a long message than stuff at the very start or very end."
+ ],
+ [
+  478.32,
+  480.72,
+  "It's called lost in the middle."
+ ],
+ [
+  501.04,
+  505.6,
+  "Just how attention naturally distributes across a long input."
+ ],
+ [
+  518.08,
+  520.16,
+  "So if something's genuinely"
+ ],
+ [
+  520.48,
+  523.44,
+  "important, don't bury it in the middle of a long task."
+ ],
+ [
+  526.24,
+  529.2,
+  "Put it first or repeat it at the end."
+ ],
+ [
+  534.0,
+  539.68,
+  "Break a long list of a task into an actual number list instead of the one run"
+ ],
+ [
+  540.04,
+  543.8,
+  "on sentences. So each one gets its own anchor point."
+ ],
+ [
+  551.08,
+  557.96,
+  "That's not a trick. It's just working with how attention actually distributes itself instead of against it."
+ ],
+ [
+  568.84,
+  574.92,
+  "So quick recap. Attention is the model deciding how much to focus on each part of"
+ ],
+ [
+  575.24,
+  581.96,
+  "what you said by matching each words query against every other words key."
+ ],
+ [
+  587.0,
+  597.96,
+  "So quick recap. Attention is the model deciding how much to focus on each part of what you said by matching each word square against every other words key."
+ ],
+ [
+  608.6,
+  619.72,
+  "The encoder builds a picture of what your message is. The decoder writes the reply while constantly while constantly the encoder builds a picture of what your message."
+ ],
+ [
+  620.68,
+  628.36,
+  "The encoder builds a picture of your message. The decoder writes the reply while constantly glancing back at it."
+ ],
+ [
+  633.32,
+  639.4,
+  "And that's exactly why a buried instruction gets less attention than one sitting up front."
+ ],
+ [
+  645.52,
+  648.64,
+  "Not a glitch, just a mechanism working as built."
+ ],
+ [
+  656.32,
+  664.72,
+  "And once I understood this, it changed how I write props. I stopped burying the important instruction in paragraph three."
+ ],
+ [
+  674.56,
+  681.36,
+  "Subscribe if you want more of this, breaking down what actually happening inside these models. Thank you for watching"
+ ],
+ [
+  681.84,
+  684.32,
+  "for watching. See you in the next one."
+ ]
+]

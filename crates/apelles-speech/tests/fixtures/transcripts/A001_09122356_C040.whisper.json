@@ -1,0 +1,417 @@
+[
+ [
+  2.4,
+  6.74,
+  "Have you ever given an AI three things to do in one message?"
+ ],
+ [
+  6.94,
+  12.16,
+  "Like summarize this, pull out the action item and tell me if anything looks off and it does"
+ ],
+ [
+  12.16,
+  14.12,
+  "the first two and just skips the third?"
+ ],
+ [
+  16.96,
+  18.82,
+  "That's not the model being lazy."
+ ],
+ [
+  21.18,
+  28.26,
+  "It's something called attention, the mechanism that decide which part of what you say it's"
+ ],
+ [
+  28.26,
+  34.58,
+  "actually focused on and here's an explanation no maths no whiteboard"
+ ],
+ [
+  34.58,
+  39.4,
+  "nothing at all I'm gonna walk you through what that actually is and by the"
+ ],
+ [
+  39.4,
+  44.38,
+  "end you will know exactly how to write a prompt that doesn't get half ignored"
+ ],
+ [
+  44.38,
+  58.44,
+  "note. Attention, in simple term, it's just the model deciding for every word it's about"
+ ],
+ [
+  58.44,
+  63.34,
+  "to write how much to focus on each word you get okay"
+ ],
+ [
+  79.36,
+  84.88,
+  "attention in simple term it's just the model deciding for every word it's about"
+ ],
+ [
+  84.88,
+  96.38,
+  "to write how much to focus on each word you gave it. Think about it like cooking"
+ ],
+ [
+  96.38,
+  98.74,
+  "from a recipe you have just read once."
+ ],
+ [
+  105.9,
+  111.88,
+  "You don't reread the whole thing before every step. You glance back at exactly"
+ ],
+ [
+  111.88,
+  121.74,
+  "the line that matters right now that's the whole point with the skipped"
+ ],
+ [
+  121.74,
+  122.62,
+  "instruction"
+ ],
+ [
+  129.4,
+  135.28,
+  "if one part of your message get less of that glancing back then the others the"
+ ],
+ [
+  135.28,
+  135.96,
+  "model just"
+ ],
+ [
+  142.34,
+  147.66,
+  "if the one part of your message get less of that glancing back than others the"
+ ],
+ [
+  147.66,
+  155.02,
+  "model just underweighs it if the one part of your message gets less of that"
+ ],
+ [
+  155.02,
+  162.66,
+  "glancing back than the others the model just waves it the model just underweighs it"
+ ],
+ [
+  162.66,
+  170.96,
+  "okay under basic if one part of your message gets less of that glancing back"
+ ],
+ [
+  170.96,
+  177.04,
+  "then if one part of your message get the less of the glancing back than the"
+ ],
+ [
+  177.04,
+  180.2,
+  "others the model just under weighs it"
+ ],
+ [
+  187.92,
+  195.06,
+  "The specific version of this used inside these models is called self-attention and it's"
+ ],
+ [
+  195.06,
+  196.54,
+  "simpler than the name sounds."
+ ],
+ [
+  205.14,
+  210.98,
+  "Every word in your message gets to look at every other word at the same time."
+ ],
+ [
+  218.36,
+  221.44,
+  "picture group chat instead of a one-on-one conversation"
+ ],
+ [
+  231.7,
+  236.36,
+  "you're not just looking at the last message you are scanning back through the last 10"
+ ],
+ [
+  236.36,
+  240.52,
+  "to figure out who's actually being asked."
+ ],
+ [
+  241.76,
+  244.1,
+  "You are not just looking at the last message."
+ ],
+ [
+  244.24,
+  247.2,
+  "You are not actually looking at the last message."
+ ],
+ [
+  247.24,
+  249.56,
+  "You are scanning back through the last 10"
+ ],
+ [
+  249.56,
+  252.36,
+  "to figure out who's actually being asked."
+ ],
+ [
+  259.46,
+  262.54,
+  "Self-attention is the model doing that for..."
+ ],
+ [
+  262.54,
+  268.16,
+  "self-attention is the model doing that for every word constantly."
+ ],
+ [
+  270.44,
+  274.96,
+  "Constantly. Self-attention is the model doing that for every word constantly."
+ ],
+ [
+  280.48,
+  283.24,
+  "There's an actual mechanism behind that checking in."
+ ],
+ [
+  289.38,
+  295.32,
+  "every word turns into every word turns into itself every word turns itself into"
+ ],
+ [
+  295.32,
+  304.52,
+  "every word turns every word turns itself into a question it's great every other"
+ ],
+ [
+  304.52,
+  310.48,
+  "word turns itself into a kind of answer key advertising what it's about"
+ ],
+ [
+  310.48,
+  322.5,
+  "out. Your words question gets checked against everyone else's answer key and whoever matches"
+ ],
+ [
+  322.5,
+  338.02,
+  "the closest, that's who it borrows the most content from, called the value. That's the"
+ ],
+ [
+  338.02,
+  343.36,
+  "real computation underneath check-in. That's the real computation underneath checking-in"
+ ],
+ [
+  343.94,
+  346.8,
+  "and it's got a name query key value attention."
+ ],
+ [
+  355.6,
+  360.48,
+  "There's a second half to this. How the model actually writes the response."
+ ],
+ [
+  360.48,
+  360.72,
+  "once."
+ ],
+ [
+  375.88,
+  379.12,
+  "The encoder reads your whole message once and"
+ ],
+ [
+  379.12,
+  382.76,
+  "and builds a rich picture of it using the same self-attention."
+ ],
+ [
+  392.12,
+  398.6,
+  "The decoder generates the reply one word at a time and every time it writes a new word,"
+ ],
+ [
+  398.78,
+  405.22,
+  "it glances back at that picture the encoder built plus everything it already written so"
+ ],
+ [
+  405.22,
+  405.52,
+  "so far."
+ ],
+ [
+  412.96,
+  419.92,
+  "That glancing back at the encoder step even has its own name, Cross Attention."
+ ],
+ [
+  429.78,
+  438.48,
+  "It's less read than write and more read than write while constantly rechecking."
+ ],
+ [
+  443.06,
+  448.34,
+  "And here's why that skipped instruction happened specifically."
+ ],
+ [
+  461.04,
+  463.54,
+  "There's a real documented finding."
+ ],
+ [
+  463.54,
+  469.64,
+  "models pay less attention to stuff buried in the middle of long masses than"
+ ],
+ [
+  469.64,
+  479.9,
+  "stuff at the very start or very end. It's called lost in the middle."
+ ],
+ [
+  499.68,
+  504.88,
+  "Not a bug, just how attention naturally distributes across a long input."
+ ],
+ [
+  513.9,
+  522.8,
+  "So if something's genuinely important, don't bury it in the middle of a long task."
+ ],
+ [
+  525.74,
+  528.64,
+  "Put it first or repeat it at the end."
+ ],
+ [
+  533.68,
+  540.42,
+  "Break a long list of tasks into an actual numbered list instead of the one run on sentences."
+ ],
+ [
+  540.78,
+  543.36,
+  "So each one gets its own anchor point."
+ ],
+ [
+  550.82,
+  555.68,
+  "That's not a trick. It's just working with how attention actually distributes itself"
+ ],
+ [
+  555.68,
+  557.58,
+  "instead of against it."
+ ],
+ [
+  557.58,
+  557.72,
+  "it."
+ ],
+ [
+  568.38,
+  575.84,
+  "So quick recap, Attention is the model deciding how much to focus on each part of what you"
+ ],
+ [
+  575.84,
+  581.16,
+  "said by matching each word's query against every other word's key."
+ ],
+ [
+  581.16,
+  581.26,
+  "key."
+ ],
+ [
+  586.76,
+  592.4,
+  "So quick recap, attention is the model deciding how much to focus on each part of what you"
+ ],
+ [
+  592.4,
+  597.2,
+  "said by matching each words query against every other words key."
+ ],
+ [
+  608.2,
+  611.48,
+  "The encoder builds a picture of what your message is."
+ ],
+ [
+  611.62,
+  618.04,
+  "The decoder writes the reply while constantly glancing at the message."
+ ],
+ [
+  618.04,
+  624.18,
+  "picture of what your message the encoder builds a picture of your message the"
+ ],
+ [
+  624.18,
+  627.76,
+  "decoder writes the reply while constantly glancing back at it"
+ ],
+ [
+  632.88,
+  638.0,
+  "and that's exactly why a buried instruction get less attention than one"
+ ],
+ [
+  638.0,
+  638.88,
+  "sitting up front"
+ ],
+ [
+  645.4,
+  647.96,
+  "Not a glitch, just a mechanism working as built."
+ ],
+ [
+  656.14,
+  659.66,
+  "And once I understood this, it changed how I write props."
+ ],
+ [
+  659.66,
+  664.08,
+  "I stopped burning the important instruction in paragraph 3"
+ ],
+ [
+  674.4,
+  678.42,
+  "subscribe if you want more of this breaking down what actually happening"
+ ],
+ [
+  678.42,
+  683.26,
+  "inside these models thank you for what thank you for watching see you in the"
+ ],
+ [
+  683.26,
+  683.62,
+  "next one"
+ ]
+]

@@ -1,0 +1,437 @@
+[
+ [
+  2.56,
+  9.12,
+  "In December of last year, Nvidia made the single biggest deal in its entire history."
+ ],
+ [
+  15.12,
+  15.6,
+  "Twenty"
+ ],
+ [
+  15.92,
+  21.44,
+  "billion dollars in cash to license technology from a company called Groc."
+ ],
+ [
+  29.28,
+  30.4,
+  "And here's the"
+ ],
+ [
+  31.04,
+  33.2,
+  "and here's the actual interesting part."
+ ],
+ [
+  35.28,
+  38.96,
+  "What's the actual interesting part? Grog doesn't build chips for free."
+ ],
+ [
+  40.32,
+  45.44,
+  "And here's the actual interesting part. Grog doesn't build chips for training AI models."
+ ],
+ [
+  59.44,
+  66.72,
+  "Running an already finished model as fast and as cheap as possible. And that's called inference."
+ ],
+ [
+  84.0,
+  98.0,
+  "A few months later, a few months later a few months later, Google did something similar. They split their own AI chips line, they split their own AI chip line, the TPU into two completely separate products."
+ ],
+ [
+  101.92,
+  106.64,
+  "One built to train models and one built to run them"
+ ],
+ [
+  111.4,
+  114.6,
+  "different chips for different jobs."
+ ],
+ [
+  119.8,
+  123.08,
+  "And this year, Gutter, one of the research firm"
+ ],
+ [
+  123.4,
+  127.16,
+  "tracking this put out a number that made it official."
+ ],
+ [
+  129.48,
+  139.64,
+  "In 2026, for the first time in AI history, companies spent more money just running their models than they spent building them."
+ ],
+ [
+  142.76,
+  145.4,
+  "Fifty-five cents of every dollar"
+ ],
+ [
+  145.72,
+  151.16,
+  "going into AI cloud spending went to inference, not training inference."
+ ],
+ [
+  163.64,
+  177.08,
+  "The biggest chip company on entire earth, Google splitting an entire product line in two, and a research firm calling it official all points at the exact same shift."
+ ],
+ [
+  204.6,
+  215.96,
+  "Today I actually want to show you why that's true. What's happening technically that makes it so expensive, and the trick behind use to bring that cost"
+ ],
+ [
+  216.52,
+  224.76,
+  "and trick being used to bring and tricks being used to bring that cost back down. Cut from here"
+ ],
+ [
+  225.52,
+  226.48,
+  "and the trick"
+ ],
+ [
+  226.8,
+  230.16,
+  "being used to bring that cost back down"
+ ],
+ [
+  240.08,
+  250.8,
+  "if understanding why ai costs what it cost and where all that money is actually going sounds interesting then subscribe let's get into it"
+ ],
+ [
+  270.32,
+  274.56,
+  "training and inference are two different words people use this"
+ ],
+ [
+  275.52,
+  279.28,
+  "people use these words like they are the same phase of AI"
+ ],
+ [
+  279.68,
+  281.12,
+  "they are actually not"
+ ],
+ [
+  285.84,
+  298.16,
+  "training is when a lab takes a model and teaches it feeding it a giant pile of text and letting it adjust billions of internal numbers until it gets good at predicting language"
+ ],
+ [
+  302.32,
+  304.4,
+  "that only happens once"
+ ],
+ [
+  309.04,
+  313.52,
+  "it's expensive for sure but it's a one time bill only"
+ ],
+ [
+  314.4,
+  317.84,
+  "it's expensive for sure, but it's a one-time bill only."
+ ],
+ [
+  321.96,
+  323.12,
+  "Inference is a"
+ ],
+ [
+  323.64,
+  325.28,
+  "inference everything that's"
+ ],
+ [
+  326.16,
+  330.84,
+  "the model actually being used. Inference is everything that it's inference is everything"
+ ],
+ [
+  335.64,
+  344.76,
+  "after that. It's the model actually being used. Inference is everything after that. It's the model being actually used."
+ ],
+ [
+  350.28,
+  355.16,
+  "Every time you send a message to chat GPT or cloud, that's one inference."
+ ],
+ [
+  361.32,
+  370.84,
+  "It's like I it's kind of like a chayavala setting up a stall, building the stall, buying the stuff is one time caught. That's basically training. But then"
+ ],
+ [
+  371.16,
+  386.12,
+  "every single day after that, you are buying milk, tea, leaves, gas for the stock all over again for every single cup you sell. That daily recurring cost is inference, and a stall selling a hundred cups a day"
+ ],
+ [
+  386.2,
+  388.68,
+  "looks very different cost-wise"
+ ],
+ [
+  389.08,
+  391.56,
+  "from one selling ten millions,"
+ ],
+ [
+  398.28,
+  410.84,
+  "and that's actually the core of it. The training happens once, and inference it happens every single time forever, as long as you run it and it scales"
+ ],
+ [
+  411.32,
+  414.6,
+  "with how many people are actually using the thing,"
+ ],
+ [
+  421.4,
+  435.92,
+  "which already tells you why it can end up costing more than training. But the real reason is this expensive is something else in trial. But the real reason it's this expensive, the real"
+ ],
+ [
+  435.92,
+  440.32,
+  "reason of this being this expensive is something else entirely."
+ ],
+ [
+  444.8,
+  447.68,
+  "Here's the part most explainers skip."
+ ],
+ [
+  458.8,
+  463.92,
+  "These models don't write your answer all at once. They write it."
+ ],
+ [
+  464.88,
+  479.44,
+  "These models don't write your answer all at once. They write it one word at a time, and to write each new word correctly, they have to recheck everything they have already written, plus your entire original message."
+ ],
+ [
+  487.68,
+  488.32,
+  "Who"
+ ],
+ [
+  489.52,
+  496.72,
+  "before writing every single next word rereads the entire conversation from the very beginning every time?"
+ ],
+ [
+  499.44,
+  501.92,
+  "Word one, reread everything."
+ ],
+ [
+  505.04,
+  505.68,
+  "Plus"
+ ],
+ [
+  506.16,
+  509.44,
+  "the word you already sent and the word one."
+ ],
+ [
+  528.84,
+  534.28,
+  "That's an enormous amount of repetitive work happening. Constantly,"
+ ],
+ [
+  535.16,
+  541.32,
+  "that's an enormous amount of work happening for every single response for every single"
+ ],
+ [
+  542.36,
+  547.24,
+  "for every single response for every single user at the same time."
+ ],
+ [
+  559.8,
+  570.68,
+  "There's a fix, it's called KV Cash, and it's basically that stenographer finally keeping a running note sheet instead of rereading from scratch every time."
+ ],
+ [
+  573.8,
+  588.6,
+  "It helps a lot, but even with that fix, you are still doing that much math for every word that goes out, and that's before you even get to know how many replies are going out"
+ ],
+ [
+  588.6,
+  590.6,
+  "at once worldwide."
+ ],
+ [
+  597.16,
+  606.12,
+  "So obviously, companies just not gonna eat that cost away. There's a whole set of tricks built specifically to bring that cost down."
+ ],
+ [
+  610.44,
+  614.84,
+  "The first one called batching, and it's just like a restaurant kitchen."
+ ],
+ [
+  621.0,
+  627.64,
+  "Cooking one order at a time on a huge industrial stove is a massive waste of that stove capacity."
+ ],
+ [
+  633.4,
+  642.44,
+  "So instead, the kitchen fire stay in order at once, same equipment but way more food out at the other side."
+ ],
+ [
+  647.2,
+  651.76,
+  "GPUs work the same way. Instead of running your question through the model alone,"
+ ],
+ [
+  659.2,
+  670.16,
+  "they bundle it with a they bundle it with a bunch of other people's question and run them all together. That way it becomes more efficient per request."
+ ],
+ [
+  676.48,
+  681.84,
+  "The second trick you have actually probably heard of without the name quantization."
+ ],
+ [
+  688.32,
+  703.28,
+  "I did a whole separate video on this one, so I won't re-explain it here, but the short version it's storing the model's internal numbers less precisely, so it takes less hardware and less power to run each reply."
+ ],
+ [
+  703.28,
+  706.24,
+  "Small sharpness trade off in exchange,"
+ ],
+ [
+  719.04,
+  728.4,
+  "and the third one called speculative speculate speculative, and the third one's called speculating speculative"
+ ],
+ [
+  728.8,
+  736.16,
+  "speculative decoding. Okay, and the third one called is speculative decoding, and it's kind of clever."
+ ],
+ [
+  741.52,
+  751.72,
+  "Instead of a big expensive model writing every single word itself, a smaller, much cheaper model guesses the next few words,"
+ ],
+ [
+  753.4,
+  755.48,
+  "and then a big model"
+ ],
+ [
+  755.88,
+  760.44,
+  "just like where those guesses were right instead of generating from scratch"
+ ],
+ [
+  772.36,
+  782.52,
+  "kind of like a manager who lets a junior write the first draft and only steps in to fix what's actually wrong instead of writing the whole thing."
+ ],
+ [
+  792.76,
+  798.76,
+  "Checking is way cheaper than writing, so this alone cuts a lot of cost"
+ ],
+ [
+  806.04,
+  812.76,
+  "batching, quantization, speculative decoding, none of these make inference free,"
+ ],
+ [
+  819.48,
+  824.52,
+  "they just make the same brutal math a lot less brutal,"
+ ],
+ [
+  830.84,
+  836.44,
+  "and that's exactly why the chip war I open with is happening in the first place."
+ ],
+ [
+  852.44,
+  856.64,
+  "So quick recap. Training cost is the one time thing."
+ ],
+ [
+  862.16,
+  871.84,
+  "So quick recap. Training cost is the one time thing that grabs the headline, but inference is that quite recurring cost of the model actually running."
+ ],
+ [
+  878.56,
+  878.88,
+  "And"
+ ],
+ [
+  879.2,
+  881.12,
+  "because of these models"
+ ],
+ [
+  881.68,
+  889.12,
+  "generate word by word, rechecking everything before every new word that becomes a massive problem at scale."
+ ],
+ [
+  894.72,
+  902.32,
+  "Batching, quantization, and speculative decoding all exist purely to make that math less painful."
+ ],
+ [
+  913.2,
+  915.04,
+  "Well, you know."
+ ],
+ [
+  920.96,
+  929.28,
+  "Next time you send a message to chat GPT or Claude and get an instant answer back. That's not free."
+ ],
+ [
+  933.84,
+  940.88,
+  "Running right at that exact moment, and someone's paying for every single one of those repliesf"
+ ],
+ [
+  946.68,
+  955.88,
+  "you want the deep dive on quantization specifically, one of the tricks I mentioned, I have got a whole video on that. I will drop it in the corner."
+ ],
+ [
+  956.92,
+  965.72,
+  "And subscribe if you want more of this. The actual economy and mechanism behind AI, not just what it can do."
+ ],
+ [
+  967.48,
+  979.64,
+  "And subscribe if you want more of this. The actual economy and mechanics and mechanics behind AI, not just what it can do. Not just what it can do. Not just what it can do."
+ ]
+]

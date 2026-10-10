@@ -1,0 +1,417 @@
+[
+ [
+  2.56,
+  7.58,
+  "and it keeps them when you turn it on"
+ ],
+ [
+  11.12,
+  15.54,
+  "when you turn it on after that first read the provider hangs on to the"
+ ],
+ [
+  15.54,
+  20.44,
+  "working node instead of meaning them then on your next call it takes the"
+ ],
+ [
+  20.44,
+  25.26,
+  "opening chunk of your new node prompt and it makes a fingerprint on it a hash"
+ ],
+ [
+  25.26,
+  31.28,
+  "and it checks have I read this exact opening before if yes that's a cache it"
+ ],
+ [
+  31.28,
+  38.34,
+  "it loads the same notes and skips the read entirely jump straight on to a new"
+ ],
+ [
+  38.34,
+  43.62,
+  "part at the bottom the actual question the starting answer and start answering"
+ ],
+ [
+  43.62,
+  51.24,
+  "so you go from a reread 1000 words to load the notes read the 12 new words and"
+ ],
+ [
+  51.24,
+  57.32,
+  "and go. The model isn't doing the expensive part anymore because the expensive part was"
+ ],
+ [
+  57.96,
+  63.6,
+  "understanding the stuff that didn't change. Sounds free. Actually, it's not."
+ ],
+ [
+  65.7,
+  72.6,
+  "And the reason it's free and the reason it's not free is also the reason most people cashing"
+ ],
+ [
+  72.6,
+  80.1,
+  "silently does nothing. The fingerprint has to match exactly. That's not mostly, exactly."
+ ],
+ [
+  80.62,
+  87.32,
+  "One extra space, one swapped word, a timestamp or a session id you stuck at the top of your"
+ ],
+ [
+  87.32,
+  93.84,
+  "system prompt, any of it and the fingerprint different. And the model reads the whole thing"
+ ],
+ [
+  93.84,
+  102.3,
+  "like caching was never on. This is the mistake. People enabling caching drop a current IP"
+ ],
+ [
+  102.3,
+  109.1,
+  "in people enabling caching drop a current time is 3 42 p.m. into the top"
+ ],
+ [
+  109.1,
+  114.16,
+  "of their prompt and the wonder why and wonder why nothing got cheaper it's"
+ ],
+ [
+  114.16,
+  114.48,
+  "because"
+ ],
+ [
+  124.82,
+  130.66,
+  "it's because that one line changes every call so the fingerprint changes every"
+ ],
+ [
+  130.66,
+  139.74,
+  "every call. So it's a fresh read every call. That rule is simple. So everything that stays"
+ ],
+ [
+  139.74,
+  146.18,
+  "the same goes at the top and everything that changes goes at the bottom. Your tools, then"
+ ],
+ [
+  146.18,
+  152.24,
+  "your system instruction, then your big context blob, all the frozen stuff first, then dead"
+ ],
+ [
+  152.24,
+  158.78,
+  "last the user's actual message. And you drop a little marker. It's called cache breakpoint."
+ ],
+ [
+  158.78,
+  165.6,
+  "right after the last thing at that never changes that's you pointing at the stack"
+ ],
+ [
+  165.6,
+  170.64,
+  "and saying everything above the line keeps it warm get that order right and"
+ ],
+ [
+  170.64,
+  176.64,
+  "the number stop being abstract let's actually go to the maths writing the"
+ ],
+ [
+  176.64,
+  183.54,
+  "notes into the cache first time cost you about 25% more than a normal read one"
+ ],
+ [
+  183.54,
+  191.84,
+  "one time that's the price of admission then every call that hits the cash okay"
+ ],
+ [
+  191.84,
+  200.12,
+  "I should do this writing the notes writing those notes into the cash the"
+ ],
+ [
+  200.12,
+  205.94,
+  "first time cost you about 25% more than a normal rate one time and that's the"
+ ],
+ [
+  205.94,
+  212.32,
+  "price of admission then every call that hits the cash after that cost a tenth of"
+ ],
+ [
+  212.32,
+  218.24,
+  "the normal price not 10% off a tenth of the normal price so you are behind for"
+ ],
+ [
+  218.24,
+  224.56,
+  "exactly one call and ahead of every single call after that someone ran this"
+ ],
+ [
+  224.56,
+  231.32,
+  "on a pretty ordinary setup a rack chatbot 10,000 token system of 5,000"
+ ],
+ [
+  231.32,
+  239.22,
+  "requests a day on cloud without caching that's roughly 4,500 a month just in"
+ ],
+ [
+  239.22,
+  245.1,
+  "rereading the same instruction over and over again with caching turned on the"
+ ],
+ [
+  245.1,
+  252.14,
+  "strip and the structure right around $700 same app same traffic same model"
+ ],
+ [
+  252.14,
+  259.2,
+  "about an 80% cut from one structural change one more thing to know the nodes"
+ ],
+ [
+  259.2,
+  264.88,
+  "never one more one more thing to know the nodes doesn't live forever the"
+ ],
+ [
+  264.88,
+  270.52,
+  "The default is 5 minutes, although every time you hit the cache that 5 minute timer resets"
+ ],
+ [
+  270.52,
+  273.5,
+  "so a busy app basically keeps it alive forever."
+ ],
+ [
+  275.4,
+  280.54,
+  "There's a one hour option that costs a bit more to write for stuff that runs in bursts"
+ ],
+ [
+  280.54,
+  281.42,
+  "with gaps."
+ ],
+ [
+  281.84,
+  286.84,
+  "Past that window the notes are gone and next call paste to rebuild them."
+ ],
+ [
+  287.36,
+  288.52,
+  "So it's a real saving."
+ ],
+ [
+  289.2,
+  295.52,
+  "but I will be lying if I say it always show up on the final bin on the final"
+ ],
+ [
+  295.52,
+  302.12,
+  "bill and here's why here's the thing nobody tells you when teams turn cashing"
+ ],
+ [
+  302.12,
+  308.2,
+  "on watch the per call cost drop they mostly don't pocket the difference they"
+ ],
+ [
+  308.2,
+  315.7,
+  "spend it longer contacts more agents steps more back and forth in a single"
+ ],
+ [
+  315.7,
+  321.88,
+  "task because now they can afford it so the per token prices goes down and the"
+ ],
+ [
+  321.88,
+  327.3,
+  "monthly invoice still goes up there's actually a name for this there's"
+ ],
+ [
+  327.3,
+  334.88,
+  "actually a name for this from economics the Jevons paradox Jevons paradox make a"
+ ],
+ [
+  334.88,
+  340.1,
+  "resource cheaper to use and people just use more of it make a resource cheaper"
+ ],
+ [
+  340.1,
+  342.3,
+  "cheaper to use and people just use more of it."
+ ],
+ [
+  342.72,
+  349.32,
+  "Caching makes tokens cheaper so the agent loops get stronger and the other limit caching"
+ ],
+ [
+  349.32,
+  352.52,
+  "only touches the input side prompt going in."
+ ],
+ [
+  352.82,
+  365.2,
+  "If the workload is output heavy, long generated answers, big document write back and the input"
+ ],
+ [
+  365.2,
+  369.56,
+  "then the input was never the expensive part."
+ ],
+ [
+  369.82,
+  371.88,
+  "And caching barely moves your bill."
+ ],
+ [
+  372.2,
+  376.74,
+  "It's a lever for one specific shape of problem."
+ ],
+ [
+  377.3,
+  380.64,
+  "A big, mostly unchanging prompt hit over and over."
+ ],
+ [
+  381.1,
+  385.22,
+  "Which to be fair is most agents and most chatbots."
+ ],
+ [
+  385.4,
+  388.72,
+  "Which to be fair, it's most agents and most chatbots."
+ ],
+ [
+  388.94,
+  392.44,
+  "So put it all back together, back to where we started."
+ ],
+ [
+  392.44,
+  399.96,
+  "started. The model isn't broken and you are not being scammed. By default, it genuinely"
+ ],
+ [
+  400.66,
+  407.58,
+  "does re-reads your whole prompt every time because keeping those nodes around for everyone"
+ ],
+ [
+  408.68,
+  416.84,
+  "forever would be enormously expensive. Prompt caching is you telling the provider, this"
+ ],
+ [
+  416.84,
+  418.76,
+  "This chunk right here keep it warm."
+ ],
+ [
+  419.0,
+  420.32,
+  "I will be back in a minute."
+ ],
+ [
+  421.18,
+  426.58,
+  "Frozen stuff at the top, changing the stuff at the bottom, break pound after the last"
+ ],
+ [
+  426.58,
+  428.1,
+  "thing that never moves."
+ ],
+ [
+  428.5,
+  436.74,
+  "Do that and you stop paying full price to process work that model already understood."
+ ],
+ [
+  437.42,
+  444.16,
+  "So one thing to actually do, if you are building anything on top of an LLM API right now, open"
+ ],
+ [
+  444.16,
+  451.16,
+  "Open your prompt and check one thing, is it ordered stable to volatile or is it otherwise?"
+ ],
+ [
+  452.58,
+  458.16,
+  "And make sure it doesn't have a session id, timestamp, username sitting on top of"
+ ],
+ [
+  458.16,
+  461.54,
+  "every call so that like cache breaks."
+ ],
+ [
+  461.54,
+  468.38,
+  "fix. That one reorder is often the whole difference between the 4000 bill and 700 one."
+ ],
+ [
+  468.38,
+  469.5,
+  "one"
+ ],
+ [
+  498.08,
+  499.48,
+  "The"
+ ],
+ [
+  499.48,
+  505.9,
+  "If this made the whole why is my AI build like this thing finally click subscribe."
+ ],
+ [
+  506.3,
+  513.3,
+  "I am breaking down one AI cost thing like this every week and the next one is context"
+ ],
+ [
+  513.3,
+  513.64,
+  "window."
+ ],
+ [
+  513.84,
+  514.74,
+  "Thank you very much."
+ ]
+]
