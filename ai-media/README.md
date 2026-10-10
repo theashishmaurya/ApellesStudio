@@ -5,7 +5,7 @@ this footage" questions the app itself can't:
 
 | | |
 |---|---|
-| **what was SAID, and when** | `transcribe.py` — mlx-whisper `large-v3`, word-level timings |
+| **what was SAID, and when** | `transcribe.py` — word-level timings, over a swappable ASR backend (`asr/`, D-374): mlx-whisper `large-v3` by default, `parakeet-tdt-0.6b-v3` opt-in |
 | **what CHANGED on screen, and when** | `video_understand.py` — ffmpeg scene-detect for the timing + Qwen3-VL-4B for the description |
 
 Nothing here touches the network (models are local; the VLM subprocess runs

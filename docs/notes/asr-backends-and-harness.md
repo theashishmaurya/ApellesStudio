@@ -136,13 +136,13 @@ needs model internals is a backend feature, not a check.
 
 ## 4. Migration, deliberately staged
 
-1. **Seam only** — `ai-media/asr/`, Whisper moved behind it, zero behaviour
-   change. The committed fixtures must come back byte-identical.
-2. **Parakeet backend** — opt-in via `backend="parakeet"`. Whisper stays the
-   default.
-3. **Harness** — built against the *existing Whisper backend* first, which is
+1. ✅ **Seam only** (2026-10-09) — `ai-media/asr/`, Whisper moved behind it,
+   zero behaviour change.
+2. ✅ **Parakeet backend** (2026-10-09) — opt-in via `backend="parakeet"`.
+   Whisper stays the default.
+3. ⬜ **Harness** — built against the *existing Whisper backend* first, which is
    how its backend-agnosticism gets proved rather than asserted.
-4. **Re-derive, then switch** — only once the harness exists: re-run
+4. ⬜ **Re-derive, then switch** — only once the harness exists: re-run
    `apelles-speech`'s corpus against a Parakeet transcript, re-sweep the
    retake thresholds, and decide the default on the numbers.
 
@@ -152,12 +152,111 @@ by five corpus tests asserting exact group counts and cut ranges. Changing the
 ASR changes tokenisation, punctuation and boundaries, so those tests must be
 re-derived, not edited until green.
 
+### 4.1 What steps 1 and 2 actually shipped (2026-10-09)
+
+`ai-media/asr/` — `base.py` (the `AsrBackend` Protocol, `BackendDescriptor`,
+`validate_body`, `check_language`, and B-174's offline model-path resolver,
+which is now **shared** because `parakeet_mlx.utils.from_pretrained` has the
+same missing-`local_files_only` bug `mlx_whisper.load_model` does),
+`whisper_mlx.py` (moved, not rewritten), `parakeet_mlx.py`, `__init__.py` (the
+registry), `README.md`. `transcribe.py` keeps `transcribe`,
+`transcribe_subprocess`, `extract_audio` and `main`, and gains `backend=` /
+`--backend`; it also keeps everything a backend must NOT own — the path check,
+the ffmpeg window, the shift into absolute source seconds, the flattened
+`words`, the `model`/`source`/`window` keys. Nothing above it changed:
+`DEFAULT_MODEL` and `MLX_MODEL_REPOS` are re-exported under their old names
+because `server.py` reads both.
+
+**How "step 1 changed nothing" was established, and how it was not.** The
+committed fixtures could not be re-derived (~15 min of GPU each, and
+re-deriving them is step 4's job), so the proof is a **differential**: the
+pre-D-374 `transcribe.py` and the post-D-374 one were each run against the same
+*stubbed* `mlx_whisper`, over 6 scripted model outputs × 10 argument
+combinations (plain WAV, plain MOV, explicit language, `"auto"`,
+`word_timestamps=False`, a non-default model, four window shapes) — 60 cases,
+comparing the full JSON result, the kwargs that reached the model, and the RNG
+seeding. **50 of 60 are byte-identical**, including every window case and the
+`None`-word-timing case `_shift` exists for.
+
+The 10 that differ are all one synthetic input: a segment whose own
+`start`/`end` is `None` or a bool. The old code passed it through as `null`;
+the new `validate_body` raises `ValueError` naming the backend. `mlx_whisper`
+does not emit that — segment times come from its seek arithmetic and are always
+floats — and a `null` segment time would already have failed Rust-side
+deserialisation, so this is a deliberate tightening at a boundary that was
+silently permissive. Everything else the old code defended against (a non-dict
+segment, `words: None`, `text: None`, a word with no `start`/`end` keys, an
+unrounded probability) is still tolerated identically. **What remains unproven
+is only the model itself, which did not change.**
+
+**Parakeet, measured end-to-end through the new backend** on the same 989.5 s
+C038 source (whole file, `chunk_duration=120`, `overlap_duration=15`):
+
+| | Whisper fixture | raw `result.sentences` | this backend |
+|---|---|---|---|
+| segments | 121 | 75 | **87** |
+| median / p90 / max | 5.36 / 9.20 / **15.92** s | 9.44 / — / **98.20** s | 5.12 / 12.32 / **14.96** s |
+| segments > 30 s | 0 | 3 | **0** |
+| words | 1316 | 2480 sub-word *tokens* | **1296 words** |
+
+Both defects are fixed and asserted: no segment exceeds `SEGMENT_MAX_S`, and
+`words[]` holds whole words (`' December'`, `' year,'`, `' Nvidia'`) each
+carrying the leading space `retake.rs`'s `normalise` already expects — no
+`'cem'`, `'ber'`, `'vid'` fragment survives. Also verified: **deterministic**
+(two identical runs produced byte-identical output — greedy TDT, no sampling, no
+seed needed), and **D-349 windowing works on it unchanged** (`start_secs=200`,
+`duration_secs=120` → 10 segments, median 5.40 s, max 13.12 s, all inside the
+window, nothing over the cap).
+
+**A third defect was found doing this and is D-376** — `parakeet-mlx`
+timestamps sentence-final punctuation at the end of the *following* silence, so
+49 of 1184 within-word token gaps exceed 0.5 s (47 of them a bare `.` / `,` /
+`?` / `'`; `' inference' + '.'` 12.16 s apart). It made ~4 % of words seconds
+too long and produced a 19.92 s single-word segment on the windowed run,
+defeating the cap. Fixed at the merge: such a token keeps its text and loses its
+vote on the word's `end`.
+
+**Not done, deliberately:** `parakeet-mlx==0.5.3` is in
+`ai-media/requirements.txt` but **not** in `ai-env/requirements.lock.txt` — the
+relock is a full re-resolution of both sidecars and rewrites every transitive
+pin, which is a bigger change than this one. `ai-env/verify.py` deliberately
+does NOT check for `parakeet_mlx` either: that file gates whether
+`apelles_ai::ai_env` **wipes and rebuilds** the shared venv (D-315), so adding
+an opt-in backend to it would condemn every existing install. Both are tracked
+in `docs/04-roadmap.md`.
+
 ---
 
 ## 5. Open, named
 
 - **Default backend is still Whisper** until step 4's numbers exist.
 - `dark.rs`'s Whisper-specific constants are not yet moved to a descriptor.
+  `BackendDescriptor` deliberately carries only what the seam itself uses
+  (models, languages) — a field no check reads yet would be dead code.
+- **`SEGMENT_GAP_S` / `SEGMENT_MAX_S` are measured, not settled.** Both were
+  picked from one source and are inputs to step 4's re-sweep, not conclusions
+  of it. `SEGMENT_MAX_S` admits exactly one exception — a single word longer
+  than the cap, kept whole rather than split mid-word — which is pinned by test
+  so it stays the only one.
+- **`chunk_duration` / `overlap_duration` are module constants, not
+  parameters.** §3.1 wants the chunk offset varied per pass; the harness that
+  would vary it is step 3, so threading them through now would be a parameter
+  nothing passes.
+- **Parakeet reports no detected language.** `parakeet_mlx` 0.5.3 takes no
+  language argument and `AlignedResult` carries no detected one, so the
+  contract's `language` is whatever the caller asked for, or `"unknown"` for
+  auto-detect. Nothing downstream reads it today.
+- **No per-word `probability` from Parakeet.** `AlignedToken.confidence` is
+  `1.0 - entropy/max_entropy`, not a probability; the field is optional and
+  nothing in the repo reads it (the only `probability` consumers are Silero
+  VAD's own speech probabilities), so putting a non-probability there would only
+  mislead a future harness check that thresholded on it.
+- **`transcribe.py`'s `backend` is not exposed above itself.** `server.py`'s
+  `/transcribe`, and therefore `editor_get_transcript` and the Recut panel,
+  still have no way to ask for Parakeet — which is intentional for an opt-in
+  step 2 ("nothing above `transcribe.py` changes"), and is also why this feature
+  does not yet owe the GUI+MCP pair `CLAUDE.md` requires. It will when the
+  default moves, or sooner if a caller wants the choice.
 - Number normalisation ("Twenty billion dollars" vs "$20 billion") is
   unhandled; it affects `retake.rs`'s string similarity and should be decided
   with step 4's sweep, not guessed at now.

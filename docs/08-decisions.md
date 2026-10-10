@@ -36165,3 +36165,62 @@ non-optional part of this decision, not a follow-up.
 among them**, while `transcribe.py` documents code-switched Hinglish working
 on `large-v3`. The backend descriptor carries its language set so a Hinglish
 source is refused rather than silently mis-transcribed.
+
+---
+
+## D-376 — a Parakeet word's `end` comes from its last CONTIGUOUS token, because the model timestamps sentence-final punctuation at the end of the following silence
+
+**Status: `decided`** (2026-10-09, found while implementing D-374 steps 1-2 and
+verifying the new backend against the real C038 source). Detail:
+`docs/notes/asr-backends-and-harness.md` §4.1; code and the measurement:
+`ai-media/asr/parakeet_mlx.py`'s `WORD_TOKEN_GAP_MAX_S`.
+
+**Context.** D-374 named two defects the Parakeet backend must fix itself:
+sub-word tokens, and `result.sentences`' 98.2 s run-on. Re-running the real
+989.5 s source through the finished backend found a third, which D-374's own
+measurement pass had not separated out. `parakeet-mlx` attaches a sentence-final
+punctuation token to the preceding word with a timestamp **seconds later than
+the word it punctuates** — at roughly the end of the following silence. Measured
+over the 1184 within-word token gaps on that source: p50 0.000 s, p90 0.000 s,
+p99 **6.400 s**, max **12.480 s**; 49 gaps exceed 0.5 s and **47 of those are a
+bare `.` / `,` / `?` / `'`** (`' history' + '.'` 5.68 s apart, `' models' + '.'`
+9.44 s, `' inference' + '.'` 12.16 s).
+
+Taking the last token's `end` literally — the obvious reading, and what D-374's
+own spec says ("a word's `end` is the last token's `end`") — therefore made
+**~4 % of words several seconds too long**. That is fatal for the one thing word
+timings exist for, cutting to an exact spoken word, and it also broke
+`SEGMENT_MAX_S`'s guarantee: on a windowed run it produced a **19.92 s
+single-word segment** (`' it.'`, 250.40 → 270.32 s), i.e. D-374's run-on defect
+back again through a different door.
+
+**Options.**
+1. *Accept it, weaken the cap's claim.* Rejected: a 19.92 s utterance is the
+   exact failure D-374 exists to prevent, and the wrong word timings would
+   remain wrong whether or not a segment exceeded the cap.
+2. *Split the word.* Rejected: it yields a junk `'.'` "word" with no leading
+   space, breaking the convention `retake.rs`'s `normalise` relies on, and loses
+   the punctuation from the word it belongs to.
+3. *Drop the mis-aligned token.* Rejected: it corrupts the transcript text.
+4. **Keep the text, deny the vote.** A continuation token more than
+   `WORD_TOKEN_GAP_MAX_S` after the word's running `end` joins the word's
+   characters and does **not** extend its `end`.
+
+**Choice: option 4, with the threshold measured rather than chosen.** On the
+real source the largest *legitimate* within-word gap is **0.480 s** and the
+smallest anomaly is **0.560 s**, so 0.5 s sits in a genuinely empty band with an
+order of magnitude of headroom either side of the two populations. One of the 49
+(`'f'`) is a real sub-word fragment whose word now ends slightly early — one
+under-reported word against 48 multi-second over-reported ones, named in the
+constant's own comment rather than hidden.
+
+**Consequence worth recording:** fixing this changed the gap distribution the
+segmentation threshold was derived from (the anomalies become between-word gaps,
+which is what they are), so `SEGMENT_GAP_S` was re-derived at the same time and
+is now **0.32 s — exactly one maximum-length TDT token** (`num_tdt_durations: 5`
+frames x the 0.08 s subsampled frame; measured p99 = max = 0.320 s over all 2480
+tokens), a unit the model defines rather than a percentile that moves with the
+content. End-to-end that gives **87 segments, median 5.12 s, max 14.96 s, none
+over 30 s** against the Whisper fixture's 121 / 5.36 / 15.92 — medians agreeing
+to within 0.25 s. Both constants remain inputs to D-374 step 4's re-sweep, not
+conclusions of it.

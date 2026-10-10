@@ -27,6 +27,16 @@ Still real:
 
 ## Open
 
+## B-245 — `test_transcribe_subprocess.py`'s server-wiring stub went stale and the check it exists for stopped being made at all
+
+status: **fixed** (2026-10-09, while landing D-374 steps 1-2) · severity: low (a test, not shipped behaviour — but it was the only guard on the B-189 regression) · area: `ai-media/test_transcribe_subprocess.py`
+
+- **found:** 2026-10-09, running `ai-media/`'s three test files before touching `transcribe.py` for D-374. The file failed on `main`, unmodified, with `AssertionError: {... 'state': 'error', 'error': "TypeError: check_server_wiring.<locals>._stub() got an unexpected keyword argument 'start_secs'"}`. Confirmed pre-existing by running a clean `git archive HEAD` copy.
+- **cause:** `check_server_wiring`'s stub for `transcribe_subprocess` named a fixed signature — `(path, model, language, word_timestamps)`. D-349 then added `start_secs` / `duration_secs` to `server.py`'s call. The stub could no longer be called, so the job recorded a `TypeError` and the assertion tripped on `state == "error"` — and the question the check exists to ask (**is `/transcribe` wired to the subprocess and not to the in-process function?**, which is B-189 itself) stopped being asked.
+- **why it mattered:** B-189 was 11 GB of unreleasable `IOAccelerator (graphics)` in the uvicorn parent. This was its only automated guard, and it had been dark since D-349.
+- **fix:** the stub takes `(path, **kwargs)` and records every keyword; the assertion pins the whole kwarg set. Drift still fails the test — but as a readable diff of what `server.py` now passes, rather than as a stub that cannot be invoked.
+- **the lesson:** a test stub that mirrors a signature is a second copy of that signature, and it rots exactly like any other duplicate. Record what the caller passed and assert on that instead.
+
 ## B-244 — B-240's fix shipped a worse regression: a correct layout rendered as a one-glyph-wide vertical column, because `maxWidth` is a cap and cannot give a shrink-to-fit box room
 
 status: **fixed** (same day, before reaching a render) · severity: high (total loss of the callout, and visibly broken rather than merely absent — strictly worse than the bug it replaced) · area: `packages/motion-engine/src/primitives/Layers.tsx`

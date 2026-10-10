@@ -16,26 +16,34 @@ continuous uncut shot (a talking head has no visual delta to key off). Pick by
 what is being asked: "find where I said X" → here; "find where the picture
 changed" → there.
 
-Backend: `mlx-whisper` (Apple Silicon, local) with `large-v3`. Ported from
-videoAgent's own `/whisper-mlx` script (`src/transcribe/whisper_transcribe.py`)
-— a mature, already-proven capability, nothing novel to validate. Two
-deliberate simplifications from that source, so this file has no unused
-surface (`CLAUDE.md`: no dead code):
-  - Its `lightning-whisper-mlx` backend is dropped. It cannot produce
-    word-level timings at all (segments only), which is the entire reason
-    Apelles wants a transcript; keeping it would mean a second model dependency
-    that no caller here can use.
-  - Its `--quant` / `--batch-size` knobs went with that backend; `mlx-whisper`
-    has neither.
+**The MODEL is swappable; this file's return value is not** (D-374, 2026-10-09).
+Until then `mlx-whisper large-v3` was hard-coded here. It now lives in
+`asr/whisper_mlx.py` behind the [`asr.AsrBackend`] Protocol, along
+`asr/parakeet_mlx.py` (`parakeet-tdt-0.6b-v3`, 17.6× realtime, opt-in via
+`backend="parakeet"`), and **whisper stays the default** — D-374's step 4,
+re-deriving `apelles-speech`'s five corpus tests and re-sweeping the retake
+thresholds against a Parakeet transcript, is what moves it, and that has not
+happened. What a backend is, and what it owes, is `asr/base.py`; the
+measurements and the staged migration are
+`docs/notes/asr-backends-and-harness.md`.
 
-`condition_on_previous_text=False` is kept from the source: a loop/hallucination
-guard that matters on exactly the long single-take footage an editor works
-with.
+**The seam is at the contract that already existed.** [`transcribe`]'s return
+value IS the interface, unchanged since D-189, and this file keeps every piece
+of the job that is not the model: the path check, the ffmpeg window, the shift
+into absolute source seconds, the flattened `words`, the `model`/`source`/
+`window` keys, and the contract validation. A backend is handed one prepared
+audio file and returns window-local seconds — which is why D-349's windowing
+below works identically on a backend that knows nothing about it.
+
+`condition_on_previous_text=False`, the `large-v3` repo map, B-224's seed and
+the two deliberate simplifications carried over from videoAgent's own
+`/whisper-mlx` script all moved with the implementation and are documented at
+their definitions in `asr/whisper_mlx.py`.
 
 **Two things D-349 added, both of them about B-216/B-224 and both documented at
-their own definitions below:** [`MLX_RANDOM_SEED`] makes a run reproducible
-(B-224 — the fallback ladder was sampling on an unseeded global RNG), and
-[`transcribe`]'s `start_secs`/`duration_secs` transcribe one WINDOW of a source
+their own definitions:** [`asr.whisper_mlx.MLX_RANDOM_SEED`] makes a run
+reproducible (B-224 — the fallback ladder was sampling on an unseeded global
+RNG), and [`transcribe`]'s `start_secs`/`duration_secs` transcribe one WINDOW of a source
 with its timestamps shifted back to absolute source seconds — the recovery
 primitive `apelles-speech`'s dark-region detector feeds, since an isolated pass
 reads the speech a whole-file pass silently drops.
@@ -71,59 +79,28 @@ import sys
 import tempfile
 from pathlib import Path
 
+from asr import (
+    BACKENDS,
+    DEFAULT_BACKEND,
+    backend_models,
+    check_language,
+    get_backend,
+    validate_body,
+)
+from asr import whisper_mlx
 from errors import UserFacingError
 
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
-DEFAULT_MODEL = "large-v3"
-
-# The fixed seed for MLX's global RNG (B-224, fixed by D-349).
-#
-# `mlx_whisper` falls back through `temperature=(0.0, 0.2, …, 1.0)` when a window
-# trips `compression_ratio_threshold` or `logprob_threshold`, and at any
-# temperature > 0 it SAMPLES — `mlx_whisper/decoding.py`'s
-# `mx.random.categorical(logits / temp)`, on MLX's **global** RNG. Nothing here
-# ever seeded it, so the same file through the same pipeline returned a
-# different transcript every run: measured at 925 / 923 / 913 words over three
-# identical runs of `A001_09122356_C040.MOV`, all three `text` fields pairwise
-# unequal (`docs/notes/whisper-dark-region-research.md` §3).
-#
-# That breaks `CLAUDE.md`'s own determinism invariant ("no `rand()`, no
-# un-seeded anything"), and it breaks every consumer downstream of a transcript:
-# retake detection, silence detection, caption generation and
-# `editor_get_timeline_transcript` can all legitimately disagree with a cached
-# answer, and a bug report against a transcript may not reproduce — which is
-# exactly what happened to B-216's five-times-confirmed dark region.
-#
-# The VALUE is arbitrary and only has to be fixed; 0 is MLX's own documented
-# example seed. What matters is that it is set once, before every run, from a
-# named constant rather than from an incidental call site.
-#
-# This makes runs reproducible. It does NOT make them correct: B-216's
-# dropped-speech failure happens at temperature 0.0 and is untouched by it —
-# see [`transcribe`]'s own note and `docs/BUGS.md` B-216.
-MLX_RANDOM_SEED = 0
-
-# mlx-whisper loads weights from an HF repo, not a bare model name.
-MLX_MODEL_REPOS = {
-    "tiny": "mlx-community/whisper-tiny-mlx",
-    "base": "mlx-community/whisper-base-mlx",
-    "small": "mlx-community/whisper-small-mlx",
-    "medium": "mlx-community/whisper-medium-mlx",
-    "large-v2": "mlx-community/whisper-large-v2-mlx",
-    "large-v3": "mlx-community/whisper-large-v3-mlx",
-    "large": "mlx-community/whisper-large-v3-mlx",
-    # ENGLISH ONLY (D-335). Every distil-whisper release is `language: en`
-    # (https://huggingface.co/distil-whisper/distil-large-v3.5), so selecting
-    # this model silently voids the Hinglish auto-detection this module's own
-    # docstring and `transcribe()`'s promise below. ~2.1-3.2x faster than
-    # `large-v3` and a legitimate opt-in for English-only work; never a default.
-    # Measured 2026-09-16: 12.47% WER divergence from `large-v3`, and the WORST
-    # segment boundaries of the three candidates tried on D-327's own B-198
-    # retake region — which matters, because `apelles-speech`'s retake detector
-    # reads exactly those boundaries.
-    "distil-large-v3": "mlx-community/distil-whisper-large-v3",
-}
+# The whisper backend's own default model and repo map, re-exported under the
+# names they have always had here because callers above this file read them from
+# this module and D-374 step 1 changes nothing above it: `server.py` defaults
+# `TranscribeReq.model` to the first, validates a request against the second and
+# reports the resolved repo from `/health`. A backend's model list in general is
+# `backend.descriptor.models`; these two are specifically whisper's, spelled
+# where their existing callers already look.
+DEFAULT_MODEL = whisper_mlx.DEFAULT_MODEL
+MLX_MODEL_REPOS = whisper_mlx.MLX_MODEL_REPOS
 
 # --------------------------------------------------------------------------- #
 # the process boundary (B-189 / D-322)
@@ -223,37 +200,6 @@ def extract_audio(
     )
 
 
-def _local_snapshot_or_repo(repo: str) -> str:
-    """Resolve `repo` to its cached local snapshot path, or return `repo`
-    unchanged if it is not cached yet (B-174).
-
-    `mlx_whisper.load_models.load_model` calls
-    `huggingface_hub.snapshot_download(repo_id=path_or_hf_repo)` with no
-    `local_files_only` — which, even when every file is already cached, still
-    reaches out to the Hub to check the cached revision is current. That
-    contradicts this module's own promise ("no network calls beyond a
-    first-run model download") and was caught live: a dead TCP connection
-    (CLOSE_WAIT — the peer had already closed, the client never noticed) left
-    a transcribe job hung indefinitely with 0% CPU, no timeout, no error.
-
-    `load_model` only calls `snapshot_download` when `Path(path_or_hf_repo)`
-    does NOT already exist — a real local directory is used as-is. So
-    resolving the cached snapshot path ourselves, with `local_files_only=True`
-    (which raises immediately rather than touching the network when the
-    repo isn't cached), and handing `load_model` that path instead of the bare
-    repo id skips the network call entirely on every call after the first,
-    with no global state (`HF_HUB_OFFLINE`) to mutate and no thread-safety
-    concern with concurrent jobs for different models."""
-    try:
-        from huggingface_hub import snapshot_download
-
-        return snapshot_download(repo_id=repo, local_files_only=True)
-    except Exception:
-        # Not cached yet (or the cache is unreadable) — fall back to the bare
-        # repo id so `load_model` does its normal first-run download.
-        return repo
-
-
 def _shift(value: object, offset: float) -> object:
     """A timestamp moved into absolute source seconds, or left alone if the
     model did not emit one. `None` is a real possibility in mlx-whisper's word
@@ -265,30 +211,43 @@ def _shift(value: object, offset: float) -> object:
 
 def transcribe(
     path: str,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     language: str | None = None,
     word_timestamps: bool = True,
     start_secs: float | None = None,
     duration_secs: float | None = None,
+    backend: str = DEFAULT_BACKEND,
 ) -> dict:
     """`{text, language, model, source, segments: [{start, end, text, words:
     [{word, start, end, probability?}]}], words: [...]}`.
 
     `language`: "en", "hi", … or `None` to auto-detect (code-switched Hinglish
     auto-detects fine on `large-v3`). `word_timestamps=False` returns
-    segment-level timings only — faster, but not enough to cut to a word.
+    segment-level timings only — faster on whisper, but not enough to cut to a
+    word.
 
     `words` is the flattened per-word list across every segment: the shape a
     caller actually wants for "find the word at 12.4s" without walking the
     segment tree itself. Absent (rather than empty) when the model returned no
     word timings at all.
 
+    **`backend`** selects the model family — `"whisper"` (the default,
+    `mlx-whisper`) or `"parakeet"` (`parakeet-tdt-0.6b-v3`, 17.6× realtime,
+    opt-in). D-374: the contract above is identical either way, which is the
+    whole point of the seam; `model=None` means "that backend's own default", so
+    a caller switching backend does not have to know the model names. A language
+    the chosen backend cannot transcribe is **refused here** rather than
+    silently mis-transcribed — Parakeet is 25 European languages and Hindi is
+    not among them (`asr.base.check_language`).
+
     **`start_secs` / `duration_secs` transcribe one WINDOW of the source**
     (D-349, the recovery half of B-216's dark-region fix). The window is cut out
-    with ffmpeg and handed to whisper on its own, and **every timestamp coming
+    with ffmpeg and handed to the model on its own, and **every timestamp coming
     back is shifted by `start_secs`**, so a windowed result is in the same
     absolute source seconds as a whole-file one and can be spliced straight into
     it. `window` in the output records the range that was actually asked for.
+    This is done HERE and not in a backend, so a new backend gets it for free
+    and the shift arithmetic exists exactly once.
 
     Transcribing a window in ISOLATION is not merely a speed optimisation: it is
     the one technique measured to recover the multi-second regions of real
@@ -300,25 +259,24 @@ def transcribe(
     measurements.
 
     **Deterministic since D-349** (B-224): MLX's global RNG is seeded from
-    [`MLX_RANDOM_SEED`] before every run, so the same file and the same
-    arguments give the same transcript. That is reproducibility, not
-    correctness — see the constant's own note."""
+    [`asr.whisper_mlx.MLX_RANDOM_SEED`] before every whisper run, so the same
+    file and the same arguments give the same transcript. That is
+    reproducibility, not correctness — see the constant's own note. The parakeet
+    backend decodes greedily and needs no seed at all."""
     src = Path(path)
     if not src.exists():
         raise FileNotFoundError(path)
 
-    repo = MLX_MODEL_REPOS.get(model)
-    if repo is None:
-        raise ValueError(
-            f"no HF repo mapped for model {model!r}. Supported: {', '.join(MLX_MODEL_REPOS)}"
-        )
+    asr = get_backend(backend)
+    model = asr.descriptor.require_model(model)
+    check_language(asr.descriptor, language)
 
     offset = float(start_secs) if start_secs and start_secs > 0 else 0.0
     windowed = offset > 0.0 or bool(duration_secs and duration_secs > 0)
 
     tmp_audio: str | None = None
     if windowed or src.suffix.lower() in VIDEO_EXTS:
-        # A window is cut out even from a plain WAV — whisper is handed the
+        # A window is cut out even from a plain WAV — the model is handed the
         # window and nothing else, which is the entire point.
         tmp_audio = extract_audio(str(src), start_secs, duration_secs)
         audio_path = tmp_audio
@@ -326,31 +284,24 @@ def transcribe(
         audio_path = str(src)
 
     try:
-        import mlx_whisper
-        import mlx.core as mx
-
-        # B-224. Before the fallback ladder can sample, not after: this is the
-        # global RNG `mlx_whisper/decoding.py`'s `mx.random.categorical` draws
-        # from, and seeding it here is what makes a re-run reproduce.
-        mx.random.seed(MLX_RANDOM_SEED)
-
-        kwargs: dict = {
-            "path_or_hf_repo": _local_snapshot_or_repo(repo),
-            "word_timestamps": word_timestamps,
-            # Loop/hallucination guard on long single-take footage — kept from
-            # the ported source, where it was added for exactly that reason.
-            "condition_on_previous_text": False,
-        }
-        if language and language != "auto":
-            kwargs["language"] = language
-        result = mlx_whisper.transcribe(audio_path, **kwargs)
+        body = asr.transcribe(
+            audio_path,
+            model=model,
+            language=language,
+            word_timestamps=word_timestamps,
+        )
     finally:
         if tmp_audio:
             Path(tmp_audio).unlink(missing_ok=True)
 
+    # The backend's half of the contract, checked at its own boundary (see
+    # `asr/base.py`): a backend that returns a malformed segment fails here,
+    # naming itself, rather than several layers downstream in a retake group.
+    validate_body(body, backend=asr.descriptor.name)
+
     output: dict = {
-        "text": (result.get("text") or "").strip(),
-        "language": result.get("language", language or "unknown"),
+        "text": body["text"],
+        "language": body["language"],
         "model": model,
         "source": str(src),
     }
@@ -360,32 +311,18 @@ def transcribe(
             "duration_secs": float(duration_secs) if duration_secs else None,
         }
 
-    segments: list[dict] = []
+    # Window-local → absolute source seconds, in place so each entry keeps the
+    # key order the contract has always had, and flattened as we go so `words`
+    # and `segments[].words` hold the same objects and cannot drift apart.
+    segments: list[dict] = body["segments"]
     flat_words: list[dict] = []
-    for seg in result.get("segments") or []:
-        if not isinstance(seg, dict):
-            continue
-        seg_words: list[dict] = []
-        for w in seg.get("words") or []:
-            if not isinstance(w, dict):
-                continue
-            entry = {
-                "word": w.get("word"),
-                "start": _shift(w.get("start"), offset),
-                "end": _shift(w.get("end"), offset),
-            }
-            if "probability" in w:
-                entry["probability"] = round(w["probability"], 3)
-            seg_words.append(entry)
-            flat_words.append(entry)
-        segments.append(
-            {
-                "start": _shift(seg.get("start"), offset),
-                "end": _shift(seg.get("end"), offset),
-                "text": (seg.get("text") or "").strip(),
-                "words": seg_words,
-            }
-        )
+    for seg in segments:
+        seg["start"] = _shift(seg["start"], offset)
+        seg["end"] = _shift(seg["end"], offset)
+        for w in seg["words"]:
+            w["start"] = _shift(w["start"], offset)
+            w["end"] = _shift(w["end"], offset)
+            flat_words.append(w)
 
     output["segments"] = segments
     if flat_words:
@@ -401,6 +338,7 @@ def _subprocess_cmd(
     out_path: str,
     start_secs: float | None = None,
     duration_secs: float | None = None,
+    backend: str = DEFAULT_BACKEND,
 ) -> list[str]:
     """The child's argv — this file, run as `__main__`, through the SAME
     interpreter the caller is running on.
@@ -415,7 +353,11 @@ def _subprocess_cmd(
 
     Every argument is one of the CLI flags `main()` already documents — no
     private side-channel, so running a job by hand reproduces exactly what the
-    server runs."""
+    server runs.
+
+    `--backend` is omitted when it is the default, exactly as `--language` is
+    omitted for auto-detect: the flag's absence IS the default, so a whisper
+    job's argv is byte-for-byte what it was before D-374."""
     cmd = [
         sys.executable,
         str(Path(__file__).resolve()),
@@ -431,6 +373,8 @@ def _subprocess_cmd(
         cmd += ["--start-secs", repr(float(start_secs))]
     if duration_secs is not None and duration_secs > 0:
         cmd += ["--duration-secs", repr(float(duration_secs))]
+    if backend != DEFAULT_BACKEND:
+        cmd += ["--backend", backend]
     return cmd
 
 
@@ -446,12 +390,13 @@ def _user_facing_message(stderr: str) -> str | None:
 
 def transcribe_subprocess(
     path: str,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     language: str | None = None,
     word_timestamps: bool = True,
     timeout_s: int = TRANSCRIBE_TIMEOUT_S,
     start_secs: float | None = None,
     duration_secs: float | None = None,
+    backend: str = DEFAULT_BACKEND,
 ) -> dict:
     """[`transcribe`], run as its own OS process — same arguments, same return
     value, no model weights and no Metal buffers left in the caller (B-189).
@@ -476,14 +421,18 @@ def transcribe_subprocess(
     to the user verbatim); a timeout becomes one too, because "this took too
     long and was stopped" is a sentence the user can act on; anything else
     becomes a `RuntimeError` carrying the child's stderr tail, so a crash,
-    an OOM kill or an MLX fault is diagnosable instead of silent."""
+    an OOM kill or an MLX fault is diagnosable instead of silent.
+
+    `backend` / `model` are validated HERE as well as in the child, and against
+    the same descriptor, so a bad argument costs no process spawn. The resolved
+    model is then passed explicitly, which is what keeps the child's argv a
+    complete record of the run even when the caller passed `model=None`."""
     src = Path(path)
     if not src.exists():
         raise FileNotFoundError(path)
-    if model not in MLX_MODEL_REPOS:
-        raise ValueError(
-            f"no HF repo mapped for model {model!r}. Supported: {', '.join(MLX_MODEL_REPOS)}"
-        )
+    descriptor = get_backend(backend).descriptor
+    model = descriptor.require_model(model)
+    check_language(descriptor, language)
 
     out_dir = tempfile.mkdtemp(prefix="apelles_transcript_")
     out_path = str(Path(out_dir) / "transcript.json")
@@ -498,6 +447,7 @@ def transcribe_subprocess(
                     out_path,
                     start_secs,
                     duration_secs,
+                    descriptor.name,
                 ),
                 capture_output=True,
                 text=True,
@@ -540,9 +490,24 @@ def main() -> int:
     marker prefix is meaningless to a human reading a terminal and load-bearing
     for a parent process reading stderr, which is why it is on stderr and not
     mixed into the JSON on stdout."""
-    parser = argparse.ArgumentParser(description="Word-level transcript via mlx-whisper (local, Apple Silicon)")
+    parser = argparse.ArgumentParser(description="Word-level transcript, local, Apple Silicon (D-374)")
     parser.add_argument("--audio", required=True, help="Audio or video file path")
-    parser.add_argument("--model", default=DEFAULT_MODEL, choices=sorted(MLX_MODEL_REPOS))
+    parser.add_argument(
+        "--backend",
+        default=DEFAULT_BACKEND,
+        choices=sorted(BACKENDS),
+        help=f"ASR backend (default {DEFAULT_BACKEND}; parakeet is ~17x realtime but "
+        "covers 25 European languages only)",
+    )
+    # Not `choices=` scoped to one backend, because the valid set depends on
+    # `--backend` and argparse cannot express that. The union is the help text;
+    # the real check is `BackendDescriptor.require_model`, which names the
+    # backend in its error — one source of truth instead of two.
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=f"one of: {', '.join(sorted(backend_models()))} (default: the backend's own)",
+    )
     parser.add_argument("--language", default=None, help="en, hi, … or omit for auto-detect")
     parser.add_argument("--no-word-timestamps", action="store_true", help="Segment-level timings only (faster)")
     parser.add_argument("--output", default=None, help="Save JSON to this path")
@@ -568,6 +533,7 @@ def main() -> int:
             word_timestamps=not args.no_word_timestamps,
             start_secs=args.start_secs,
             duration_secs=args.duration_secs,
+            backend=args.backend,
         )
     except UserFacingError as e:
         print(f"{USER_FACING_MARKER}{' '.join(str(e).splitlines())}", file=sys.stderr)

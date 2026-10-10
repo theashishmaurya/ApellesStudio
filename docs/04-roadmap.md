@@ -2642,6 +2642,68 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       word; a 400-cue `.srt` set to animate would build a very large graph.
       Not hit in practice, not optimised.
 
+29. **ASR as a swappable backend, with the harness as the product** — owner,
+    2026-10-09: *"lets move to parakeet its light fast and we can run multi
+    iteration :/ we can not get 100% thats not possible we will build the
+    Harness arround it also make sure every harness it easily takes other
+    ones"*. **D-374**, detail and measurements in
+    `docs/notes/asr-backends-and-harness.md`. Four deliberate stages; the first
+    two are done.
+    - ✅ **Step 1 — the seam** (2026-10-09). `ai-media/asr/` with `base.py`
+      (the `AsrBackend` Protocol, `BackendDescriptor`, `validate_body`,
+      `check_language`, and B-174's offline model-path resolver, now shared
+      because `parakeet_mlx.from_pretrained` has the same missing
+      `local_files_only`), `whisper_mlx.py` (moved, not rewritten),
+      `__init__.py` (the registry), `README.md`. `transcribe.py` keeps its four
+      public functions and gains `backend=` / `--backend`; it still owns the
+      path check, the ffmpeg window, D-349's shift, the flattened `words` and
+      the `model`/`source`/`window` keys, so a new backend gets windowing for
+      free. Nothing above it changed. **Proved by differential**, not asserted:
+      pre- and post-D-374 `transcribe.py` run against the same stubbed
+      `mlx_whisper` over 60 cases, **50 byte-identical**; the 10 that differ are
+      one synthetic shape (`None` segment timings) the new validator now
+      refuses and the real model never emits. §4.1 of the note has the detail.
+    - ✅ **Step 2 — the Parakeet backend** (2026-10-09), opt-in via
+      `backend="parakeet"`. **Whisper is still the default.** Measured
+      end-to-end on the real 989.5 s C038 source: **87 segments, median 5.12 s,
+      max 14.96 s, none over 30 s, 1296 words**, against the committed Whisper
+      fixture's 121 / 5.36 / 15.92 / 1316 and raw `result.sentences`' 75 / 9.44
+      / **98.20**. Both of D-374's named defects fixed inside the backend
+      (sub-word tokens merged on the leading-space boundary; segmentation
+      derived from word gaps with a hard cap), plus a third found in the doing —
+      **D-376**, `parakeet-mlx` timestamping sentence-final punctuation at the
+      end of the following silence. Deterministic across two runs; D-349
+      windowing verified on it.
+    - ⬜ **Run `ai-env/setup.sh --relock`** so the shared venv carries
+      `parakeet-mlx==0.5.3`. It is in `ai-media/requirements.txt` and
+      deliberately not in `ai-env/requirements.lock.txt` — the relock
+      re-resolves BOTH sidecars and rewrites every transitive pin, too large a
+      change to make as a side effect of landing an opt-in backend. Until it
+      runs, `backend="parakeet"` raises `ImportError` on a lock-built venv; the
+      default path is unaffected. **Do not add `parakeet_mlx` to
+      `ai-env/verify.py`** — that file decides whether `apelles_ai::ai_env`
+      wipes and rebuilds the venv (D-315), so an opt-in backend there would
+      condemn every existing install.
+    - ⬜ **Step 3 — the harness**, a pipeline of checks over the contract, built
+      against the **Whisper** backend first so backend-agnosticism is proved
+      rather than asserted. First two checks: multi-pass reconciliation (vary
+      the chunk offset; report per-word agreement and low-confidence spans) and
+      a generalised VAD cross-check (today's `dark.rs`, whose Whisper-specific
+      constants move into the backend descriptor). A check may never reach for a
+      model.
+    - ⬜ **Step 4 — re-derive, then switch.** Re-run `apelles-speech`'s corpus
+      against a Parakeet transcript, re-sweep the retake thresholds, and decide
+      the default on the numbers. **The expensive, non-optional part:** B-237,
+      B-238, D-365 and D-366 were four sessions of tuning against Whisper's
+      output shape, pinned by five corpus tests asserting exact group counts and
+      cut ranges. `SEGMENT_GAP_S` / `SEGMENT_MAX_S` are inputs to that sweep,
+      not conclusions of it.
+    - ⬜ **Expose `backend` above `transcribe.py`** when the default moves or a
+      caller wants the choice — `server.py`'s `/transcribe`,
+      `editor_get_transcript` and the Recut panel have no way to ask for
+      Parakeet today, which is intentional for step 2 and is why this does not
+      yet owe the GUI+MCP pair `CLAUDE.md` requires.
+
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 
 **→ The execution map is `docs/notes/crate-extraction-plan.md` (D-141, 2026-09-05).**

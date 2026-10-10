@@ -283,8 +283,16 @@ def check_server_wiring(tmp: Path) -> None:
     real_fn, real_sub = transcribe_mod.transcribe, transcribe_mod.transcribe_subprocess
     calls: list[dict] = []
 
-    def _stub(path, model=transcribe_mod.DEFAULT_MODEL, language=None, word_timestamps=True):
-        calls.append({"path": path, "model": model, "language": language, "words": word_timestamps})
+    # `**kwargs` and not a fixed signature, which is B-245: this stub used to
+    # name `(path, model, language, word_timestamps)` positionally, so when D-349
+    # added `start_secs`/`duration_secs` to `server.py`'s call it raised
+    # `TypeError` inside the job — the job recorded an error, the assertion
+    # below failed on `state == "error"`, and the real question (is `/transcribe`
+    # wired to the subprocess?) stopped being asked at all. Recording every
+    # kwarg and asserting the whole set still catches drift, and now reports it
+    # as the diff it is rather than as a stub that cannot be called.
+    def _stub(path, **kwargs):
+        calls.append({"path": path, **kwargs})
         return {"text": "stubbed"}
 
     transcribe_mod.transcribe = _must_not_run
@@ -307,7 +315,14 @@ def check_server_wiring(tmp: Path) -> None:
     assert snapshot["state"] == "done", snapshot
     assert snapshot["result"] == {"text": "stubbed"}, snapshot
     assert calls == [
-        {"path": str(fixture), "model": transcribe_mod.DEFAULT_MODEL, "language": "en", "words": False}
+        {
+            "path": str(fixture),
+            "model": transcribe_mod.DEFAULT_MODEL,
+            "language": "en",
+            "word_timestamps": False,
+            "start_secs": None,
+            "duration_secs": None,
+        }
     ], calls
     print("ok: POST /transcribe runs the subprocess, and passes every option through")
 

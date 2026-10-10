@@ -28,7 +28,23 @@
 # under mlx-audiocraft in a shared venv). Ranges are how that broke. These are
 # the versions actually verified working together.
 mlx-vlm==0.6.17       # Qwen3-VL-4B-Instruct-4bit — "what changed on screen"
-mlx-whisper==0.4.3    # whisper large-v3 — "what was said, and when"
+mlx-whisper==0.4.3    # whisper large-v3 — "what was said, and when" (the DEFAULT
+                      # ASR backend; D-374)
+
+# The opt-in second ASR backend (D-374 step 2) — parakeet-tdt-0.6b-v3, 0.6 B
+# params, measured at ~30x realtime against large-v3's ~1.5 B. Apache-2.0
+# (package) over a CC-BY-4.0 model; the licence review and the head-to-head
+# measurement are in D-374 and `docs/notes/asr-backends-and-harness.md`.
+#
+# NOT yet in `ai-env/requirements.lock.txt`: adding it here is the documented
+# first half of the workflow this file's header describes ("Edit the two sidecar
+# files, then re-run --relock"), and the relock is a full re-resolution of BOTH
+# sidecars that rewrites every transitive pin — too large a change to make as a
+# side effect of landing an opt-in backend. Tracked in `docs/04-roadmap.md`
+# under D-374. Until it runs, `backend="parakeet"` raises ImportError on a venv
+# built from the lock; the default whisper path is unaffected, because
+# `asr/parakeet_mlx.py` imports this only inside its own `transcribe`.
+parakeet-mlx==0.5.3   # parakeet-tdt-0.6b-v3 — the opt-in fast ASR backend
 
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
