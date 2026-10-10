@@ -135,12 +135,24 @@ PARAKEET_LANGUAGES = frozenset(
     }
 )
 
+# `max_word_secs=None` — the dark-region check's too-long-word bound does not
+# apply to this backend, and that is a structural claim rather than a missing
+# measurement. The bound exists because whisper's DTW alignment stretches one
+# token across a region it dropped, so a long word is not real coverage.
+# Parakeet's duration head caps a TOKEN at 0.320 s (measured exactly on C038:
+# p50 0.240 s, p99 0.320 s, max 0.320 s over 2480 tokens — see
+# [`WORD_TOKEN_GAP_MAX_S`]), and [`merge_tokens_into_words`] refuses to merge
+# across a gap wider than that cap anyway (D-376), so no word this backend
+# emits can span an untranscribed hole. Excluding long words here would only
+# throw away genuine coverage. The number lives in the descriptor, not in the
+# check, precisely because the two backends need different answers — D-375.
 DESCRIPTOR = BackendDescriptor(
     name=NAME,
     default_model=DEFAULT_MODEL,
     models=tuple(PARAKEET_MODEL_REPOS),
     languages=PARAKEET_LANGUAGES,
     language_summary="25 European languages",
+    max_word_secs=None,
 )
 
 # --------------------------------------------------------------------------- #

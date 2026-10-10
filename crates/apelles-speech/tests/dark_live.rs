@@ -27,6 +27,27 @@
 //! what `ai-media/transcribe.py --start-secs/--duration-secs` is for, and what
 //! the app does automatically for a clip's own source range.
 //!
+//! **Three optional env vars, all there for the transcript harness** (D-374
+//! step 3 / D-375). The harness is a pipeline of checks over the transcript
+//! contract, in Python, and its VAD cross-check is *this* detector — not a
+//! second copy of it. So it needs three things of a standalone run: to supply
+//! the too-long-word bound that belongs to the backend rather than to the
+//! algorithm, to get the report back as data rather than as printed lines, and
+//! to be told which clock a windowed PCM dump is on.
+//!
+//! - `APELLES_DARK_MAX_WORD_SECS` overrides [`DarkParams::max_word_secs`],
+//!   which is what `harness.vad.dark_params_for(profile)` emits. Omitted, the
+//!   measured Whisper default stands.
+//! - `APELLES_DARK_REPORT_JSON` writes the whole [`DarkReport`] to that path as
+//!   JSON — the same `serde` shape `chroma_detect_dark_regions` already returns
+//!   to the app — which `harness.vad.fold_dark_report` consumes directly.
+//! - `APELLES_DARK_RANGE_START` is the absolute source second the PCM dump
+//!   begins at, for a run over a WINDOW of a source rather than the whole of
+//!   it (D-349). Transcript words are always in absolute source seconds, so
+//!   without it a windowed PCM and its transcript are in two different clocks
+//!   and every second before the window reads as dark. Defaults to 0.0, which
+//!   is the whole-file case every existing caller is.
+//!
 //! [`silero_live`]: ../silero_live.rs
 
 use std::path::{Path, PathBuf};
@@ -35,6 +56,16 @@ use apelles_speech::dark::{
     DarkInput, DarkParams, RMS_HOP_SECS, WordSpan, detect_dark_regions, rms_envelope,
 };
 use apelles_speech::vad::{FRAME_SECS, SAMPLE_RATE, SileroVad};
+
+/// An optional `f64` from the environment, or `fallback`.
+fn env_f64(key: &str, fallback: f64) -> f64 {
+    match std::env::var(key) {
+        Ok(raw) => raw
+            .parse::<f64>()
+            .unwrap_or_else(|e| panic!("{key}={raw:?} is not a number: {e}")),
+        Err(_) => fallback,
+    }
+}
 
 fn env_path(key: &str) -> PathBuf {
     PathBuf::from(
@@ -79,6 +110,8 @@ fn dark_regions_on_real_footage() {
     let samples = read_f32le(&env_path("APELLES_DARK_PCM"));
     let words = read_words(&env_path("APELLES_DARK_TRANSCRIPT"));
     let total_secs = samples.len() as f64 / SAMPLE_RATE as f64;
+    // Absolute source seconds the PCM begins at — 0.0 for a whole-file run.
+    let range_start = env_f64("APELLES_DARK_RANGE_START", 0.0);
 
     let probs = vad
         .speech_probabilities(&samples)
@@ -86,7 +119,7 @@ fn dark_regions_on_real_footage() {
     let rms = rms_envelope(&samples, SAMPLE_RATE, RMS_HOP_SECS);
 
     let input = DarkInput {
-        range_start_secs: 0.0,
+        range_start_secs: range_start,
         range_secs: total_secs,
         words: &words,
         speech_probs: &probs,
@@ -94,11 +127,26 @@ fn dark_regions_on_real_footage() {
         rms: &rms,
         rms_hop_secs: RMS_HOP_SECS,
     };
-    let params = DarkParams::default();
+    // The one parameter that is the BACKEND's rather than the algorithm's
+    // (D-375). The harness supplies it per backend; a bare run keeps the
+    // measured Whisper default, which is what every existing caller gets.
+    let params = DarkParams {
+        max_word_secs: env_f64(
+            "APELLES_DARK_MAX_WORD_SECS",
+            DarkParams::default().max_word_secs,
+        ),
+        ..DarkParams::default()
+    };
     let report = detect_dark_regions(&input, &params);
 
+    if let Ok(path) = std::env::var("APELLES_DARK_REPORT_JSON") {
+        let json = serde_json::to_string_pretty(&report).expect("a DarkReport serialises");
+        std::fs::write(&path, json).expect("the report path is writable");
+        println!("report written to {path}");
+    }
+
     println!(
-        "source: {total_secs:.2}s, {} words, {} VAD frames",
+        "source: {total_secs:.2}s from {range_start:.2}s, {} words, {} VAD frames",
         words.len(),
         probs.len()
     );
@@ -131,7 +179,7 @@ fn dark_regions_on_real_footage() {
     let mut previous = f64::NEG_INFINITY;
     for r in &report.regions {
         assert!(
-            r.start_secs >= 0.0 && r.end_secs <= total_secs + 1e-6,
+            r.start_secs >= range_start - 1e-6 && r.end_secs <= range_start + total_secs + 1e-6,
             "{r:?} escapes the analysed range"
         );
         assert!(r.end_secs > r.start_secs, "{r:?} is empty");

@@ -4,7 +4,7 @@ One transcript contract, more than one model behind it.
 
 | file | what it is |
 |---|---|
-| `base.py` | the contract: the `AsrBackend` Protocol, `BackendDescriptor`, `validate_body`, `check_language`, and B-174's shared offline model-path resolver |
+| `base.py` | the contract: the `AsrBackend` Protocol, `BackendDescriptor` (incl. `max_word_secs`, D-375), `validate_body`, `check_language`, and B-174's shared offline model-path resolver |
 | `whisper_mlx.py` | **the default.** `mlx-whisper` `large-v3` — today's implementation, moved here unchanged |
 | `parakeet_mlx.py` | **opt-in.** `parakeet-tdt-0.6b-v3` via `parakeet-mlx` — 17.6× realtime, with its two measured defects fixed inside it |
 | `__init__.py` | the name → backend registry (`get_backend`) |
@@ -47,6 +47,14 @@ be present. `ai-env/.venv` does not carry `parakeet-mlx` until
 2. An entry in `__init__.py`'s `BACKENDS`.
 3. Nothing else. `transcribe.py` does not learn the name, and
    `base.validate_body` enforces the contract on every call.
+
+The descriptor's `max_word_secs` (D-375) is the one field that is not about the
+seam: it is the too-long-word bound `crates/apelles-speech/src/dark.rs` must use
+for *this* backend, read by `ai-media/harness/`'s VAD cross-check. Set it to
+the model's own anomaly threshold for a decoder that can stretch a word across
+a region it did not transcribe, and to `None` — "the bound does not apply" —
+for one whose timings cannot stretch. Getting it wrong does not fail; it
+returns a plausible-looking wrong list of dark regions.
 
 If the new model's "words" are not words, or its own segmentation produces
 utterances a retake detector cannot compare, **fix that here** — the whole

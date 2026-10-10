@@ -53,12 +53,15 @@ from errors import UserFacingError
 class BackendDescriptor:
     """Everything a caller can learn about a backend WITHOUT running it.
 
-    Deliberately small. D-374 §3.2 observes that `dark.rs`'s Whisper-specific
-    anomaly constants belong here rather than in a check — that is true and is
-    still open (the note's §5 records it), but the harness that would read them
-    does not exist yet and `CLAUDE.md` does not allow carrying a field nothing
-    consumes. What IS here is what the seam itself needs: which models the
-    backend accepts, and which languages it can actually transcribe.
+    Deliberately small: which models the backend accepts, which languages it
+    can actually transcribe, and the one anomaly constant a *general* check
+    cannot hard-code ([`Self.max_word_secs`]).
+
+    That last field arrived with the harness (D-375). D-374 §3.2 said from the
+    start that `dark.rs`'s Whisper-specific constants belong in the descriptor
+    rather than in a check; this file originally left it out because `CLAUDE.md`
+    does not allow carrying a field nothing consumes, and nothing did yet.
+    `ai-media/harness/`'s VAD cross-check now does.
     """
 
     #: The `backend=` / `--backend` name. Also what an error message calls it.
@@ -75,6 +78,18 @@ class BackendDescriptor:
     languages: frozenset[str] | None
     #: One clause naming the language coverage, for the refusal sentence.
     language_summary: str
+    #: The too-long-word bound the dark-region cross-check must use for THIS
+    #: backend, in seconds — or `None` when the backend cannot stretch a word
+    #: across an untranscribed hole and the bound does not apply to it at all.
+    #:
+    #: `crates/apelles-speech/src/dark.rs` excludes a word longer than this from
+    #: transcript coverage, because Whisper's DTW alignment spreads the few
+    #: tokens it *did* emit across a region it dropped — c038's ` down.` at
+    #: 217.26-222.74 s is 5.48 s for one word — so a gap that looks covered is
+    #: not. The algorithm is general; this number is the backend's, which is why
+    #: it lives here and is passed in. See [`harness.vad.dark_params_for`], its
+    #: only reader, and D-375.
+    max_word_secs: float | None
 
     def require_model(self, model: str | None) -> str:
         """`model`, or the default when it is `None` — raising `ValueError` if

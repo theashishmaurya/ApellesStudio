@@ -87,52 +87,210 @@ consuming exactly what they consume today.
 
 ---
 
-## 3. The harness — the actual product
+## 3. The harness — the actual product (BUILT 2026-10-10, D-375)
 
-A **pipeline of checks**, each taking the contract and returning the contract
-plus annotations. Backend-agnostic by construction: a check only ever sees the
-contract, never a model. This is the "every harness easily takes other ones"
-requirement — both in the sense that any *backend* can be harnessed, and that
-any *check* can be added without touching the others.
+`ai-media/harness/`. A **pipeline of checks**, each taking the contract and
+returning the contract plus annotations. Backend-agnostic by construction, and
+that is now a structural property rather than an intention: `run_checks` calls a
+check with exactly a contract `dict` and a `CheckContext` — a frozen dataclass
+holding one `BackendProfile`, three fields of plain data — and **no module in
+`harness/` imports a backend or a model runtime**, which a test asserts by
+reading the package's own source. A check could not reach a model if it wanted
+to.
 
 ```
 backend ─► [ multi-pass reconcile ] ─► [ VAD cross-check ] ─► [ … ] ─► result
-              (needs a fast backend)     (reuses silero)
+              (needs a fast backend)     (the Rust detector, called not copied)
 ```
+
+Seven modules: `contract.py` (the one place that knows the contract's JSON
+shape, plus the annotation vocabulary), `align.py` (the aligner), `reconcile.py`
+(check 1), `vad.py` (check 2), `pipeline.py` (the `Check` protocol and
+`run_checks`), `profiles.py` (the backend descriptors the checks read),
+`__init__.py`. No dependency outside the standard library. Boundaries and
+module table: `ai-media/harness/README.md`.
+
+### 3.0 The annotation vocabulary
+
+Three places, so a consumer has one place to look whatever checks ran:
+
+| | |
+|---|---|
+| `words[i]["agreement"]` | `{state, passes, of, alternatives?}` |
+| `low_confidence` | `[{start, end, kind, detail}]`, time-ordered, merged per kind |
+| `harness` | provenance — which checks ran, under which profile, their headline numbers |
+
+Same-kind spans within **0.6 s** merge into one finding; different kinds never
+merge. 0.6 s is not a new number — it is `chroma_detect_silences`'s own
+`min_silence_ms` default, this app's existing answer to "how long a gap does a
+person read as *they stopped talking*".
 
 ### 3.1 Multi-pass reconciliation — what the speed buys
 
-At 17.6× realtime, three passes of a 989 s source cost ~170 s. Vary something
-that moves the model's own boundaries without changing the audio: **chunk
-offset** (`parakeet-mlx` takes `chunk_duration`/`overlap_duration`) is the
-obvious knob, because the measured failures — run-on segments and dropped
-words — cluster at chunk seams.
+At 17.6× realtime, three passes of a 989 s source cost ~170 s. The knob is the
+**chunk offset**, because the measured failures — run-on segments and dropped
+words — cluster at chunk seams. `mlx-whisper` has no chunk-size argument and
+does not need one: its 30 s window grid starts at the start of the audio it is
+handed, so a pass started 10 s earlier has every seam 10 s elsewhere, and D-349
+already shifts a windowed pass's timestamps back to absolute source seconds
+precisely so windowed passes are comparable. For `parakeet-mlx` it is
+`chunk_duration`/`overlap_duration`. Either way the harness only ever sees
+contracts.
 
-Reconcile by aligning the passes' word streams on time and text, then:
-- **agreed by all passes** → high confidence
-- **disagreed** → keep the majority reading, record the alternatives
-- **present in some passes only** → keep it, flag it
+Per word, after alignment:
 
-The output is the same contract plus a per-word `agreement` and a
-`low_confidence` span list. That is the honest answer to "we can't get 100 %":
-the transcript says where it is unsure instead of pretending.
+- **agreed by all passes** → `unanimous`
+- **disagreed** → `disagreed`; the majority reading is kept, the alternatives
+  recorded with which passes held each. A tie goes to the reference pass
+- **present in some passes only** → `partial`; kept and flagged
 
-### 3.2 VAD cross-check — generalising `dark.rs`
+Everything not unanimous also becomes a `low_confidence` span of kind
+`multi_pass_reconcile`. That is the honest answer to "we can't get 100 %": the
+transcript says where it is unsure instead of pretending.
 
-`crates/apelles-speech/src/dark.rs` already does exactly this for Whisper:
-VAD says *speech*, transcript says *nothing* → a dark region. It is written
-against Whisper's failure mode and two of its constants are Whisper-specific
-(the 2.0 s too-long-word bound is `mlx_whisper/transcribe.py`'s own anomaly
-threshold; Parakeet's duration head caps token length at ~0.32 s, so that bound
-is meaningless there). **The cross-check is general; the constants are not.**
-They move into the backend descriptor, not the check.
+**Only the range every pass covered is reconciled**, intersected from each
+pass's `window` (or its word extent). Without it a multi-pass run reports its
+own seams as findings — measured: three passes 10 s apart contributed 15 words
+before the reference's first segment, and adopting them put un-cross-checked
+content into the reference's own segments. A word a wider pass found outside the
+common range is now not adopted (`discarded` in provenance); the reference's own
+words outside it are kept and marked `outside`.
+
+**Producing the passes is not a check's job.** `MultiPassReconcile` is
+constructed *with* the other passes — contracts, all of them — which is what
+keeps the structural rule above true for the one check that would have been
+tempting to break it.
+
+A kept word's timings are the ones the pass it came from actually produced,
+never an average, so the result stays a transcript some backend really could
+have returned.
+
+### 3.1.1 The aligner, which is the hard part
+
+`align.py`: align N word streams with timestamps and differing tokenisation, and
+say per column which pass held which word. A pure function returning indices —
+nothing else — so every answer has a correct answer that can be written down.
+
+**Progressive alignment to a growing column set** (standard multiple-sequence
+alignment, which is the problem). Stream 0 becomes the initial columns; each
+further stream is aligned against the columns as they stand, scored against each
+column's consensus — the majority reading among the streams already in it, at the
+*mean* of their midpoints, so by the third pass a column's position is better
+known than any single pass's. A word the columns have no room for is spliced in
+as a **new column**, which is how a word only one pass heard survives in the
+right place in time.
+
+The pairwise step is Needleman-Wunsch **in its gain form**: every word is either
+matched or gapped, so the gap count is fixed by the lengths and the match count,
+and maximising `Σ score − gap_penalty × gaps` is the same problem as maximising
+`Σ (score − 2 × gap_penalty)` over matches alone. That drops the gap bookkeeping
+and leaves the weighted-LCS recurrence, where a pair is matched only when it
+strictly beats leaving both words unmatched.
+
+Scoring blends both signals because either alone is wrong here — text alone
+matches the fourth `"the"` in a sentence to the first; time alone cannot tell a
+substitution from two different words, and the drift the check is *looking for*
+is a timestamp that moved:
+
+    score = 0.65 × similarity + 0.35 × proximity        (bar: 2 × 0.30 = 0.60)
+
+`similarity` is 1.0 on a normalised-equal word (casefolded, punctuation
+stripped, apostrophes kept) and `difflib.SequenceMatcher`'s ratio otherwise —
+stdlib, no dependency, the same family of ratio `retake.rs` scores utterances
+with. `proximity` falls linearly to 0 across 1.0 s of drift. The **5 s time
+band** is a correctness device, not an optimisation: two words further apart than
+that are two utterances of the same word, never one word read twice. It happens
+to also confine the expensive similarity call, but the DP is exact and full, so
+the band never prunes a better alignment.
+
+One consequence worth stating because it is deliberate: text carries 0.65
+against a bar of 0.60, so a pair under ≈0.39 similarity can never be called the
+same word even at the same instant. `"Gartner"`/`"Gutter"` (0.57) aligns as a
+disagreement; `"the"`/`"elephant"` is reported as a drop plus an insertion —
+both of which the harness flags anyway, and the second is the more honest of the
+two readings.
+
+### 3.2 VAD cross-check — the check stays in Rust, and the constant moves to the descriptor
+
+**The check already exists and is not reimplemented.** `VAD says speech,
+transcript says nothing ⇒ a dark region` is
+`crates/apelles-speech/src/dark.rs`, scored over 111 labelled windows across two
+real camera originals for 90 % precision with no region missed in 1676 s. A
+Python copy would be a second implementation of the same logic — which
+`CLAUDE.md` forbids outright — and it would be the untested one. **D-375 records
+the placement decision in full.** Two reasons in short:
+
+- it is **not a contract-only check**. Its second input is *audio* — Silero
+  probabilities and an RMS envelope at two different hop rates — which the
+  contract does not carry and `ai-media/` has no ONNX session, model or decoder
+  to produce. The harness's own rule, that a check sees only the contract, is
+  *why* this one cannot live inside the harness as a self-contained check;
+- what was Whisper-specific was never the algorithm. It was **one number**, and
+  `dark.rs` already took it as a parameter (`DarkParams::max_word_secs`,
+  overridable through `chroma_detect_dark_regions`'s own wire contract). The
+  seam existed; what did not exist was anything that knew what to put in it per
+  backend.
+
+So the number moved to **`asr/base.py`'s `BackendDescriptor`** — the field that
+file deliberately left out until a consumer existed, and now has one: Whisper
+2.0 s (`mlx_whisper`'s own anomaly threshold), Parakeet `None`, meaning the
+bound does not apply, because its duration head caps a token at 0.320 s and
+D-376's merge refuses to span a wider gap, so no word it emits can stretch
+across an untranscribed hole. `harness/vad.py` is the half that genuinely is
+contract-layer:
+
+| | |
+|---|---|
+| `dark_params_for(profile)` | the `DarkParams` override **this backend** needs — a profile may only move what is the backend's; every measured threshold (`min_dark_secs`, the RMS calibration, the Silero hysteresis) is left as the 111-window scoring set it |
+| `fold_dark_report(...)` | the detector's own serialised `DarkReport`, folded into `low_confidence` as kind `vad_cross_check` |
+
+**The guard is the point.** `fold_dark_report` refuses a report produced under
+parameters that are not this backend's. Running a Parakeet transcript against
+Whisper's 2.0 s bound does not fail — it returns a plausible-looking list of
+dark regions that is wrong, which nobody would catch by reading it.
+
+`apelles-speech`'s `dark_live` integration test gained three optional env vars
+so the detector can be driven this way standalone: `APELLES_DARK_MAX_WORD_SECS`
+(what `dark_params_for` emits), `APELLES_DARK_REPORT_JSON` (the report as data),
+and `APELLES_DARK_RANGE_START` (which clock a windowed PCM dump is on). The
+app's `chroma_detect_dark_regions` is the other, already-existing source of a
+report.
 
 ### 3.3 What a check may not do
 
-Reach for a model, or know which backend produced its input. A check that
-needs model internals is a backend feature, not a check.
+Reach for a model, or know which backend produced its input. Enforced by the
+signature, not by convention — see §3's opening. A check that needs model
+internals is a backend feature, not a check.
 
----
+### 3.4 Verification
+
+- **`test_harness_align.py`** — 12 scenarios over synthetic streams: identical
+  passes, a one-word substitution, a pass dropping a run, three passes
+  disagreeing three ways, drifting timestamps, a word only one pass heard, the
+  time band separating two utterances of one word, untimed words, degenerate
+  inputs, every-word-appears-exactly-once, determinism.
+- **`test_harness_pipeline.py`** — 15 checks over hand-written contracts: the
+  three agreement classes, the range intersection, the refusals, the profile
+  parameter, the fold and its refusal, span merging, composition, provenance,
+  the context being one frozen field, **the source-reading proof that nothing in
+  `harness/` imports a backend**, the profile registry matching `asr/`'s
+  descriptors field-for-field, a broken check failing at its own boundary, and
+  determinism. No model, no venv — that is the property under test.
+- **`test_harness_live.py`** — opt-in, against the **real Whisper backend**,
+  which is how the agnosticism is proved rather than asserted (step 3 of §4
+  exists for this reason). Measured 2026-10-10 on the real C038 source, window
+  200-260 s, offsets 0/10/20 s: three passes of **82 / 84 / 96 words** in
+  15.5 / 14.0 / 17.9 s → **82 words, 79 unanimous, 2 disagreed, 1 partial, 15
+  discarded, 3 low-confidence spans**, the harness itself taking 0.01 s.
+  A real `DarkReport` from the Rust detector over the same window (33.2 s of VAD
+  speech, 36.1 s of transcript coverage, floor 0.0954 from 4 calibration spans,
+  **0 regions**) folds through the same pipeline.
+
+**Not claimed:** the single-pass baseline was not re-run against that window, so
+"the reconciled transcript left no dark region" is an observation about the
+three-pass result, not a measured improvement over one pass. Nothing above
+`transcribe.py` calls the harness yet — no sidecar endpoint, no GUI, no MCP
+tool — so it has no human/AI surface pair yet; that is named in §5.
 
 ## 4. Migration, deliberately staged
 
@@ -140,8 +298,9 @@ needs model internals is a backend feature, not a check.
    zero behaviour change.
 2. ✅ **Parakeet backend** (2026-10-09) — opt-in via `backend="parakeet"`.
    Whisper stays the default.
-3. ⬜ **Harness** — built against the *existing Whisper backend* first, which is
-   how its backend-agnosticism gets proved rather than asserted.
+3. ✅ **Harness** (2026-10-10, D-375) — `ai-media/harness/`, built against the
+   *existing Whisper backend* first, which is how its backend-agnosticism got
+   proved rather than asserted. Detail: §3.
 4. ⬜ **Re-derive, then switch** — only once the harness exists: re-run
    `apelles-speech`'s corpus against a Parakeet transcript, re-sweep the
    retake thresholds, and decide the default on the numbers.
@@ -230,18 +389,34 @@ in `docs/04-roadmap.md`.
 ## 5. Open, named
 
 - **Default backend is still Whisper** until step 4's numbers exist.
-- `dark.rs`'s Whisper-specific constants are not yet moved to a descriptor.
-  `BackendDescriptor` deliberately carries only what the seam itself uses
-  (models, languages) — a field no check reads yet would be dead code.
+- ~~`dark.rs`'s Whisper-specific constants are not yet moved to a
+  descriptor.~~ **Done 2026-10-10 (D-375):** `BackendDescriptor` now carries
+  `max_word_secs` (Whisper 2.0 s, Parakeet `None`), read by
+  `harness.vad.dark_params_for`, which was the consumer whose absence kept the
+  field out. **What remains is the app side:** `chroma_detect_dark_regions`
+  still defaults to `DarkParams::default()`, i.e. Whisper's bound, because
+  nothing in the app knows which backend produced a cached transcript. Correct
+  today (Whisper is the default) and a real gap the day it is not — it belongs
+  with step 4.
+- **The harness has no caller above `transcribe.py`.** `ai-media/harness/` is
+  a library with tests; no sidecar endpoint, no GUI control, no MCP tool runs
+  it, so it does not yet have the human+AI pair `CLAUDE.md` requires. The
+  surface it will need is the one step 4's decision shapes (how many passes, at
+  which offsets, and whether `low_confidence` renders in the Recut panel), so
+  designing it before those numbers exist would be guessing.
 - **`SEGMENT_GAP_S` / `SEGMENT_MAX_S` are measured, not settled.** Both were
   picked from one source and are inputs to step 4's re-sweep, not conclusions
   of it. `SEGMENT_MAX_S` admits exactly one exception — a single word longer
   than the cap, kept whole rather than split mid-word — which is pinned by test
   so it stays the only one.
-- **`chunk_duration` / `overlap_duration` are module constants, not
-  parameters.** §3.1 wants the chunk offset varied per pass; the harness that
-  would vary it is step 3, so threading them through now would be a parameter
-  nothing passes.
+- **`chunk_duration` / `overlap_duration` are still module constants, not
+  parameters.** §3.1 varies the chunk offset per pass, and for `mlx-whisper` it
+  does so through `start_secs`, which needed nothing new. Parakeet's own knobs
+  are still unthreaded, so a multi-pass run on the Parakeet backend currently
+  varies its seams only via `start_secs` too. That works — its chunker also
+  starts from the audio it is handed — but exposing the two parameters is the
+  more direct knob and belongs with step 4, where the pass count and offsets
+  get chosen on numbers.
 - **Parakeet reports no detected language.** `parakeet_mlx` 0.5.3 takes no
   language argument and `AlignedResult` carries no detected one, so the
   contract's `language` is whatever the caller asked for, or `"unknown"` for

@@ -88,6 +88,11 @@ class _ScriptedBackend:
             models=("scripted-1",),
             languages=None,
             language_summary="whatever the test says",
+            # D-375: the dark-region cross-check's too-long-word bound. `None`
+            # is "the bound does not apply to this backend", which is the
+            # honest answer for a scripted one that emits whatever the test
+            # hands it.
+            max_word_secs=None,
         )
         self.calls: list[dict] = []
 

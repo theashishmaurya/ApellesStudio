@@ -7,6 +7,7 @@ this footage" questions the app itself can't:
 |---|---|
 | **what was SAID, and when** | `transcribe.py` — word-level timings, over a swappable ASR backend (`asr/`, D-374): mlx-whisper `large-v3` by default, `parakeet-tdt-0.6b-v3` opt-in |
 | **what CHANGED on screen, and when** | `video_understand.py` — ffmpeg scene-detect for the timing + Qwen3-VL-4B for the description |
+| **where a transcript is UNSURE** | `harness/` — a pipeline of checks over the transcript contract (D-374 step 3 / D-375). No model, no backend, no audio: it annotates a transcript it is handed. Not wired to an endpoint yet — see its README |
 
 Nothing here touches the network (models are local; the VLM subprocess runs
 with `HF_HUB_OFFLINE=1`, always — D-354), `grade.json`, or the timeline. It

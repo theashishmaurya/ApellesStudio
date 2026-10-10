@@ -2648,7 +2648,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     Harness arround it also make sure every harness it easily takes other
     ones"*. **D-374**, detail and measurements in
     `docs/notes/asr-backends-and-harness.md`. Four deliberate stages; the first
-    two are done.
+    three are done.
     - ✅ **Step 1 — the seam** (2026-10-09). `ai-media/asr/` with `base.py`
       (the `AsrBackend` Protocol, `BackendDescriptor`, `validate_body`,
       `check_language`, and B-174's offline model-path resolver, now shared
@@ -2684,13 +2684,31 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       `ai-env/verify.py`** — that file decides whether `apelles_ai::ai_env`
       wipes and rebuilds the venv (D-315), so an opt-in backend there would
       condemn every existing install.
-    - ⬜ **Step 3 — the harness**, a pipeline of checks over the contract, built
-      against the **Whisper** backend first so backend-agnosticism is proved
-      rather than asserted. First two checks: multi-pass reconciliation (vary
-      the chunk offset; report per-word agreement and low-confidence spans) and
-      a generalised VAD cross-check (today's `dark.rs`, whose Whisper-specific
-      constants move into the backend descriptor). A check may never reach for a
-      model.
+    - ✅ **Step 3 — the harness** (2026-10-10, **D-375**). `ai-media/harness/`,
+      seven stdlib-only modules + a README. "A check never sees a model" is a
+      property of the signature: a check is called with a contract `dict` and a
+      frozen `CheckContext` holding one three-field `BackendProfile`, and no
+      module in `harness/` imports a backend or a model runtime — proved by a
+      test that reads the package's own source. **Check 1**, multi-pass
+      reconciliation over passes taken at different chunk offsets (for
+      `mlx-whisper`, `start_secs`, which needed no new knob), reporting per-word
+      `unanimous`/`disagreed`/`partial` plus `low_confidence` spans; its aligner
+      is a pure N-stream progressive MSA with its own 12-scenario test file.
+      **Check 2**, the VAD cross-check, **stays in Rust** — `dark.rs` is the
+      detector, not a Python copy of it, because its second input is audio the
+      contract does not carry; what moved is the one Whisper-specific *number*,
+      into `asr/base.py`'s `BackendDescriptor` (Whisper 2.0 s, Parakeet `None`).
+      Verified against the **real Whisper backend** on the real C038 source, and
+      with a real Rust `DarkReport` folded through the same pipeline.
+    - ⬜ **Give the harness a caller.** It is a library with tests; no sidecar
+      endpoint, no GUI control, no MCP tool runs it, so it has no human+AI pair
+      yet. Deliberately deferred: how many passes, at which offsets, and whether
+      `low_confidence` renders in the Recut panel are what step 4's numbers
+      decide.
+    - ⬜ **Pass the backend's `max_word_secs` through the app.**
+      `chroma_detect_dark_regions` still defaults to Whisper's bound because
+      nothing app-side knows which backend produced a cached transcript.
+      Correct while Whisper is the default; a real gap the day it is not.
     - ⬜ **Step 4 — re-derive, then switch.** Re-run `apelles-speech`'s corpus
       against a Parakeet transcript, re-sweep the retake thresholds, and decide
       the default on the numbers. **The expensive, non-optional part:** B-237,

@@ -36224,3 +36224,124 @@ content. End-to-end that gives **87 segments, median 5.12 s, max 14.96 s, none
 over 30 s** against the Whisper fixture's 121 / 5.36 / 15.92 — medians agreeing
 to within 0.25 s. Both constants remain inputs to D-374 step 4's re-sweep, not
 conclusions of it.
+
+---
+
+## D-375 — the transcript harness is a pipeline of checks whose signature cannot reach a model, and the VAD cross-check stays in Rust rather than being copied into it
+
+**Status: `decided`** (2026-10-10). D-374 step 3. Detail, the aligner's maths
+and every measurement: `docs/notes/asr-backends-and-harness.md` §3.
+Code: `ai-media/harness/` (+ its README).
+
+**Context.** D-374 made the harness the product and the backend a swappable
+part, and named two first checks: multi-pass reconciliation, and a generalised
+version of the VAD cross-check that `crates/apelles-speech/src/dark.rs` already
+performs for Whisper. Two real design questions fell out of building it.
+
+### 1. How "a check never sees a model" is enforced
+
+**Options.** (a) A documented convention. (b) A runtime guard — refuse a check
+that imports a backend. (c) Make it a property of the signature.
+
+**Choice: (c).** `run_checks` calls a check with exactly two arguments: a
+contract `dict`, and a `CheckContext` — a frozen dataclass whose single field is
+a `BackendProfile` of three plain-data fields. There is no model, no audio path,
+no callable and no backend module anywhere in that signature, and **no module in
+`harness/` imports a backend or a model runtime**, so a check could not obtain
+one. `test_harness_pipeline.py` proves it by reading the package's own source
+rather than asserting it in a docstring, because this is the claim the whole
+design rests on and one convenient import would quietly end it.
+
+The check this nearly broke is reconciliation itself, which needs N passes.
+Producing passes is a *backend's* job, so `MultiPassReconcile` is constructed
+**with** the other passes — contracts, every one — and its call still receives
+only contracts. Agnosticism is then provable in its strongest form, and is
+tested that way: the whole pipeline runs over a hand-written contract no model
+produced, resolving its profile from the contract's own `model` field.
+
+### 2. Where the VAD cross-check lives — the real question
+
+`dark.rs` is Rust in `apelles-speech`; the harness is Python in `ai-media`.
+`CLAUDE.md` forbids a second implementation of shared logic outright, so
+"reimplement it in Python" was never available.
+
+**Options.** (a) Port it to Python. (b) Keep it in Rust and call it from the
+harness. (c) Move the whole cross-check concept into Rust and drop it from the
+harness. (d) Split it: the detection where it already is, the contract-layer
+halves in the harness.
+
+**Choice: (d), which in practice means (b).** Two findings decided it, both
+from reading the existing code rather than from preference:
+
+- **It is not a contract-only check.** Its second input is *audio* — Silero
+  speech probabilities and an RMS envelope at two different hop rates — which
+  the transcript contract does not carry and which `ai-media/` has no ONNX
+  session, no model and no decoder to produce. The harness's own rule, that a
+  check sees only the contract, is *why* this check cannot be self-contained
+  inside the harness. `dark.rs`'s module doc already draws exactly this line
+  ("it is handed word times, speech probabilities and an amplitude envelope").
+- **What was Whisper-specific was never the algorithm — it was one number, and
+  it was already a parameter.** `DarkParams::max_word_secs` is overridable
+  right through `chroma_detect_dark_regions`'s wire contract, which echoes it
+  back. The seam existed. What did not exist was anything that knew what to put
+  in it per backend.
+
+So the number moved to **`asr/base.py`'s `BackendDescriptor`** — the field that
+file deliberately omitted ("a field nothing consumes") until a consumer existed.
+Whisper: 2.0 s, `mlx_whisper`'s own anomaly threshold. Parakeet: `None`, meaning
+**the bound does not apply**, which is a structural claim and not a missing
+measurement — its duration head caps a token at 0.320 s and D-376's merge
+refuses to span a wider gap, so no word it emits can stretch across an
+untranscribed hole, and excluding long words would only discard real coverage.
+`NO_WORD_LENGTH_BOUND_SECS` encodes that as a large *finite* value, because the
+detector's own guard requires finiteness and `inf` would be the same statement
+in a form it refuses.
+
+`harness/vad.py` is then the half that genuinely is contract-layer:
+`dark_params_for(profile)` (the override this backend needs — a profile may move
+only what is the backend's, never the 111-window-scored thresholds) and
+`fold_dark_report(...)` (the detector's serialised `DarkReport` folded into
+`low_confidence`). **The guard is the point of the generalisation:** a report
+produced under another backend's constants is *refused*, because running a
+Parakeet transcript against Whisper's 2.0 s bound does not fail — it returns a
+plausible-looking list of dark regions that is wrong, which nobody would catch
+by reading it.
+
+To make (b) real, `apelles-speech`'s `dark_live` integration test gained three
+optional env vars — `APELLES_DARK_MAX_WORD_SECS` (what `dark_params_for`
+emits), `APELLES_DARK_REPORT_JSON` (the report as data; `DarkReport` was already
+`Serialize`), `APELLES_DARK_RANGE_START` (which clock a windowed PCM dump is on,
+D-349) — so the Rust detector can be driven standalone and its answer consumed
+as data. The app's `chroma_detect_dark_regions` is the other, pre-existing
+source of a report. **No detection logic was written twice.**
+
+### 3. Two smaller calls worth recording
+
+- **The harness mirrors `asr/`'s descriptors in `profiles.py` rather than
+  importing them.** It has to work on a transcript with no backend in the
+  process (read off disk, or over the sidecar's HTTP boundary), and importing a
+  backend module from a check is the one thing §1 forbids. So the registry is a
+  derived mirror and a test pins it to the descriptors field-for-field: drift is
+  a failing test, not a wrong answer. One definition, one mirror, one test
+  holding them together — the arrangement `CLAUDE.md`'s no-copy-paste rule asks
+  for when two layers genuinely cannot import each other.
+- **Reconciliation reconciles only the range every pass covered**, and does not
+  adopt a word a wider pass found outside it. Measured live: three passes 10 s
+  apart contributed 15 words before the reference's first segment, and adopting
+  them put un-cross-checked content into the reference's own segments. The
+  reference's own words outside the range are kept and marked `outside`.
+
+**Verified.** `test_harness_align.py` (12 scenarios) and
+`test_harness_pipeline.py` (15 checks) green with no model and no venv — that is
+the property under test, not a convenience. `test_harness_live.py` green against
+the **real Whisper backend** on the real C038 source (window 200-260 s, offsets
+0/10/20 s): 82/84/96 words per pass → 82 words, 79 unanimous, 2 disagreed, 1
+partial, 15 discarded, 3 low-confidence spans, harness time 0.01 s; a real
+`DarkReport` from the Rust detector over the same window folds through the same
+pipeline. `cargo clippy -p apelles-speech --tests` clean.
+
+**Not verified.** No single-pass baseline was re-run against that window, so the
+report's 0 dark regions is an observation about the three-pass result, not a
+measured improvement over one pass. Nothing above `transcribe.py` calls the
+harness, so it has no GUI/MCP pair yet — named as open in the note's §5, with
+the reason (the surface's shape is what step 4's numbers decide).

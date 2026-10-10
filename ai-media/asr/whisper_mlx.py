@@ -92,12 +92,23 @@ MLX_MODEL_REPOS = {
 # deliberately not modelled: `distil-large-v3` IS English-only (D-335), but that
 # is recorded where it is selected, above, and inventing a per-model language
 # map here would be a second source of truth for one entry.
+
+# `mlx_whisper/transcribe.py`'s OWN bound for an anomalous word (`if duration >
+# 2.0`), which is why the dark-region check uses it for this backend and not a
+# number of our own: a word longer than this is whisper telling us its DTW
+# alignment stretched one token across something it did not transcribe. Not a
+# value picked to fit — adopting it moved `dark.rs`'s candidate count from 2 to
+# 4 on one real source and 4 to 9 on another, and it is worth more than half the
+# real cases on both (`crates/apelles-speech/src/dark.rs`'s module doc).
+WHISPER_ANOMALY_WORD_SECS = 2.0
+
 DESCRIPTOR = BackendDescriptor(
     name=NAME,
     default_model=DEFAULT_MODEL,
     models=tuple(MLX_MODEL_REPOS),
     languages=None,
     language_summary="99 languages, auto-detected, including code-switched Hinglish",
+    max_word_secs=WHISPER_ANOMALY_WORD_SECS,
 )
 
 
