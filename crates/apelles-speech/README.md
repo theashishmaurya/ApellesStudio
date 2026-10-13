@@ -12,6 +12,7 @@ the retakes, and find the speech the transcription silently never read.
 | `retake` | did they say this line already? | normalised edit distance + containment over **spans** of adjacent utterances (D-320, D-327), ORed with `phrase` |
 | `phrase` | did they just repair the same PHRASE? | a repeated, content-bearing word n-gram — the "rough copy" property of a reparandum/repair (D-365) |
 | `dark` | is there speech here that nobody transcribed? | VAD speech ∩ the gaps in transcript word coverage, gated on a per-file amplitude floor (D-349) |
+| `proposal` | may this retake group, proposed by the MCP client, be applied? | renders the word-indexed view a client reads; a deterministic coverage gate (LCS + five forgiveness rules) refuses any group whose deleted takes hold a word the kept take lacks, and resolves the rest to padded source seconds (D-380) |
 
 ## The boundary
 
@@ -60,7 +61,7 @@ and D-319 for why the version is pinned.
 cargo test -p apelles-speech
 ```
 
-101 tests, no model required — `tests/real_model_output.rs` replays a probability
+No model required for any of the default tests — `tests/real_model_output.rs` replays a probability
 track captured from the real model over a real speech clip, `retake.rs` carries
 the real six transcript segments from **B-198** as a regression test,
 `tests/real_transcripts.rs` and `tests/proposed_cuts.rs` run the detector over
@@ -68,7 +69,9 @@ whole verbatim transcripts of the owner's own camera originals (plain JSON — n
 model, no audio, no network), `tests/retake_eval.rs` scores those same runs
 against hand-labelled ground truth in `eval/retake/` (**D-378** / **D-379** —
 the measurement any change to `retake.rs`, or any external proposer, is judged
-on), and
+on — and, since **D-380**, the measurement that pins `proposal.rs`'s coverage
+gate: oracle refusals, detector misses and the committed MCP-client runs, in
+`eval/retake/gate_baseline.json`), and
 `dark.rs`'s fixtures are shaped like real speech (five utterances separated by
 real pauses, because a fixture that is one continuous span has no *other*
 utterance to calibrate the amplitude floor against).
@@ -188,3 +191,20 @@ its own negation at 0.946 and an antonym pair at 0.981, above every genuine
 retake in that footage (0.59-0.77). Edit distance ranks the same pairs
 correctly. Do not re-add it without reading `docs/notes/retake-detection.md`,
 which has the full table.
+
+## Retake proposals from the MCP client, and the gate in front of them (D-380)
+
+Since D-380 the retake *judgement* is not this crate's: the MCP client (an LLM)
+reads the word-indexed transcript `render_indexed` prints and answers with
+groups of word-index ranges plus a keep. `proposal::check_and_resolve` is the
+app's half, and it runs no model: it refuses any group whose deleted takes hold
+a content word the kept take does not (aligned by LCS, with a closed list of
+forgiven tokens — stopwords, fillers, false starts, repeats, near-identical
+spellings), refuses malformed and conflicting groups, allows a stutter cut
+nested inside another group's kept take, and resolves the rest to padded
+source-second `CutRange`s. **Necessary, not sufficient**: it proves nothing
+said once is offered for deletion; it cannot judge take quality and cannot
+hear. Measured: it accepts none of the old detector's six over-cutting groups
+and refuses 17 of 46 correct ones — nearly all for a word the ASR mis-heard.
+`examples/render_word_transcript.rs` prints the view for any `transcribe.py`
+JSON. Detail: `docs/notes/retake-detection.md` §11.

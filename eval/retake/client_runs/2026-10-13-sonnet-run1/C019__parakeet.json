@@ -1,0 +1,17 @@
+{"groups": [
+{"line":"When you turn it on","takes":[{"first":4,"last":8},{"first":9,"last":13}],"keep":1,"note":"Short attempt abandoned, second continues into the sentence."},
+{"line":"People enabling caching drop a current time","takes":[{"first":175,"last":182},{"first":183,"last":199}],"keep":1,"note":"First attempt cut off after 'in'."},
+{"line":"and wonder why","takes":[{"first":200,"last":203},{"first":204,"last":206}],"keep":1,"note":"Stumble repeated before 'nothing got cheaper'."},
+{"line":"it's because","takes":[{"first":210,"last":211},{"first":212,"last":219}],"keep":1,"note":"Restart of 'it's because' before the full sentence."},
+{"line":"Writing the notes into the cache first time costs 25% more","takes":[{"first":328,"last":358},{"first":364,"last":399}],"keep":1,"note":"Whole passage re-recorded after 'Okay, I should do this'; second version is complete."},
+{"line":"One more thing to know","takes":[{"first":497,"last":504},{"first":505,"last":511}],"keep":1,"note":"First attempt trailed off at 'the notes never'; redone."},
+{"line":"on the final bill","takes":[{"first":567,"last":570},{"first":571,"last":574}],"keep":1,"note":"'bin' flub then corrected to 'bill'."},
+{"line":"Jevon's paradox","takes":[{"first":632,"last":634},{"first":635,"last":636}],"keep":0,"note":"Phrase said twice in a row."},
+{"line":"Make a resource cheaper to use and people just use more of it","takes":[{"first":637,"last":649},{"first":650,"last":662}],"keep":1,"note":"Sentence said twice; second is fluent."},
+{"line":"If the workload is output heavy","takes":[{"first":686,"last":687},{"first":688,"last":690},{"first":691,"last":693},{"first":694,"last":696}],"keep":3,"note":"Three false starts before the complete phrase."},
+{"line":"the input was never the expensive part","takes":[{"first":708,"last":712},{"first":713,"last":720}],"keep":1,"note":"Flubbed 'has never the' then redone."},
+{"line":"Which to be fair is most agents and most chatbots","takes":[{"first":745,"last":755},{"first":756,"last":765}],"keep":1,"note":"Sentence said twice."},
+{"line":"Prompt caching","takes":[{"first":810,"last":811},{"first":812,"last":813}],"keep":1,"note":"Repeated start of the sentence."},
+{"line":"to process","takes":[{"first":860,"last":862},{"first":863,"last":864}],"keep":1,"note":"Garbled 'to the processes' then 'to process'."},
+{"line":"I'm breaking down one AI cost thing","takes":[{"first":953,"last":954},{"first":955,"last":956}],"keep":1,"note":"Repeated 'I'm breaking'."}
+]}

@@ -1,0 +1,12 @@
+{"groups": [
+{"line":"model deciding how much to focus on each word","takes":[{"first":105,"last":125},{"first":127,"last":148}],"keep":1,"note":"Second delivery is complete and clean."},
+{"line":"if one part of your message gets less glancing back, model underweighs it","takes":[{"first":190,"last":207},{"first":208,"last":227},{"first":228,"last":248},{"first":249,"last":256},{"first":257,"last":269},{"first":270,"last":290}],"keep":5,"note":"Last attempt is the only fully fluent complete sentence."},
+{"line":"you're not just looking at the last message, scanning back through last 10 to see who's asked","takes":[{"first":325,"last":348},{"first":349,"last":359},{"first":360,"last":382}],"keep":2,"note":"Same passage said three times; last is complete."},
+{"line":"self-attention is the model doing that for every word constantly","takes":[{"first":383,"last":390},{"first":391,"last":402},{"first":403,"last":412}],"keep":2,"note":"Earlier attempts garbled or fragmentary."},
+{"line":"every word turns itself into a question","takes":[{"first":413,"last":430},{"first":431,"last":437}],"keep":1,"note":"Earlier attempts stumble; last is clean."},
+{"line":"that's the real computation and then it's checking in","takes":[{"first":478,"last":485},{"first":486,"last":494}],"keep":1,"note":"Second is fluent."},
+{"line":"encoder reads your whole message once and builds a picture","takes":[{"first":517,"last":527},{"first":528,"last":545}],"keep":1,"note":"First attempt garbled ('published a build')."},
+{"line":"it's less read than write","takes":[{"first":594,"last":595},{"first":596,"last":597}],"keep":1,"note":"Stutter restart."},
+{"line":"quick recap: attention is the model deciding how much to focus","takes":[{"first":727,"last":755},{"first":756,"last":784}],"keep":1,"note":"Recap restarted; second is complete."},
+{"line":"encoder builds a picture, decoder writes reply while glancing back","takes":[{"first":785,"last":812},{"first":813,"last":831}],"keep":1,"note":"First attempt stumbles and is cut off; second complete."}
+]}

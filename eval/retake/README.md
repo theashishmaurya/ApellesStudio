@@ -300,6 +300,10 @@ eval**, which is why one of them is `expect: "fail"` against today's code.
 | `bad_examples/<id>.transcript.json` + `.labels.json` | the synthetic control set |
 | `baseline.json` | the committed floor — today's scores, including B-246's pinned badness |
 | `transcripts/<source>.parakeet.words.json` | the full `transcribe.py --backend parakeet` output for the three labelled sources, **with word timestamps** — the labels' word-precise bounds come from these, and they are the input an MCP client reads (D-379). Same run as the segment fixtures: re-transcribed 2026-10-13 and verified segment-for-segment identical |
+| `gate_baseline.json` | the coverage gate's pinned measurement (D-380): oracle refusals, detector misses, the client runs gated — rewritten by the same `APELLES_RETAKE_EVAL_BASELINE=1` |
+| `client_runs/prompt.md` | the fixed prompt D-379's POC gave every client, verbatim (`{INPUT}` / `{OUTPUT}` were file paths) |
+| `client_runs/input/<task>.words.txt` | the exact anonymised file each client read (`C019` = `video_a`, `C038` = `video_b`, `C040` = `video_c`); below its two `#` lines, byte-identical to what `render_indexed` prints |
+| `client_runs/2026-10-13-<model>-run<N>/<task>.json` | each client's answer, verbatim, in index form — Opus runs 1-2, Sonnet run 1 |
 
 The segment-level transcripts the corpus tasks score are **not** copied here:
 they point at the 24 fixtures D-377 committed under
@@ -361,10 +365,25 @@ APELLES_RETAKE_EVAL_PROPOSALS=/path/to/dir \
   cargo test -p apelles-speech --test retake_eval external_proposals -- --nocapture
 ```
 
-One file per task, named by its id with `/` as `__` (`C040__parakeet.json`):
-`{"groups": [{"kept": [[s, e], ...], "cut": [[s, e], ...]}]}` in source
-seconds. Nothing in this mode is pinned — a proposer outside the crate is not
-this crate's behaviour; it is how one is measured.
+One file per task, named by its id with `/` as `__` (`C040__parakeet.json`),
+each group in either of two forms:
+
+- **seconds** — `{"kept": [[s, e], ...], "cut": [[s, e], ...]}`, scored as
+  given;
+- **index form** (D-380, what an MCP client answers in) —
+  `{"takes": [{"first": a, "last": b}, ...], "keep": k}` over the source's
+  `transcripts/` word list, resolved through the app's real coverage gate
+  (`apelles_speech::check_and_resolve`): accepted groups are scored as the
+  padded cut ranges the app would apply, **refused groups are listed with their
+  offending words and not scored** — exactly what the app would not apply.
+  Extra fields (`line`, `note`) are ignored.
+
+Nothing in this mode is pinned — a proposer outside the crate is not this
+crate's behaviour; it is how one is measured. The committed client runs are
+pinned separately, below.
+
+To reproduce what a client reads:
+`cargo run -p apelles-speech --example render_word_transcript -- eval/retake/transcripts/<source>.parakeet.words.json`.
 
 **D-379's POC, on the word-precise labels.** Fresh agents with no context, each
 given only one anonymised `transcripts/` file as numbered words and a fixed
@@ -377,6 +396,33 @@ seconds exactly from the word times:
 | Claude Opus, run 1 | 0.00 s | 0.00 s | 3 | 0.585 / 0.733 / 0.742 |
 | Claude Opus, run 2 | 0.00 s | 0.00 s | 3 | 0.605 / 0.745 / 0.717 |
 | Claude Sonnet | 0.00 s | 0.00 s | 3 | 0.567 / 0.720 / 0.725 |
+
+## Measuring the coverage gate (D-380)
+
+Since D-380 the app accepts a client's retake groups only through a
+deterministic coverage gate (`crates/apelles-speech/src/proposal.rs`; the rule
+is in `docs/notes/retake-detection.md` §11). The gate is judged by three
+measurements, all in `the_coverage_gate_measures_as_pinned` and pinned in
+`gate_baseline.json`:
+
+| measurement | what must hold | today |
+|---|---|---|
+| **oracle** — the labels' own answer: every non-keeper delivery cut, the keeper kept, nested groups as their own groups, each delivery mapped to word indices by word midpoint | accepted (a refusal refuses a correct cut) | **17 of 46 refused**; gated over-cut 0.00 s |
+| **the detector's groups** the eval charges as over-cut, mapped the same way and judged one at a time | refused (an acceptance is a miss) | **0 of 6 accepted**; gated over-cut 0.00 s |
+| **the committed client runs**, scored as the app would apply them | no over-cut | **0.00 s in all nine**; retake recall 0.39-0.43 / 0.29-0.30 / 0.30-0.31 |
+
+The refusal count is the gate's recall cost, and it is high: nearly every
+refused correct group holds a word the ASR mis-heard in the flubbed take, which
+the gate — reading text only — cannot tell from a word said once.
+
+The thresholds are swept by `coverage_gate_sweep`:
+
+```sh
+APELLES_RETAKE_GATE_SWEEP=1 cargo test -p apelles-speech --test retake_eval coverage_gate_sweep -- --nocapture
+```
+
+The app's word view itself is pinned by `the_indexed_view_is_the_pocs_input`:
+below its legend, byte-identical to `client_runs/input/`.
 
 ## Boundary
 

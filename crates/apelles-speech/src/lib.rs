@@ -21,6 +21,14 @@
 //!   (B-216). This one is a third detector rather than a note on the other two
 //!   precisely because neither can see it: the silence detector reads no
 //!   transcript, the retake detector reads no audio.
+//! - **Retake proposals from the MCP client** ([`proposal`], D-380). Since
+//!   D-380 the retake *judgement* is the client's: an LLM reads the
+//!   word-indexed transcript [`render_indexed`] prints and answers with groups
+//!   of word-index ranges. [`check_and_resolve`] is the app's half — a
+//!   deterministic coverage gate that refuses any group whose deleted takes
+//!   hold a content word the kept take lacks, and converts the rest to padded
+//!   source seconds. It runs no model and judges no take quality; it only
+//!   proves nothing said once is offered for deletion.
 //!
 //! **What this crate does NOT do — and this is the whole design (D-318).**
 //!
@@ -45,6 +53,7 @@
 
 pub mod dark;
 pub mod phrase;
+pub mod proposal;
 pub mod retake;
 pub mod silence;
 pub mod vad;
@@ -54,6 +63,10 @@ pub use dark::{
     rms_envelope,
 };
 pub use phrase::{PhraseParams, is_phrase_repeat};
+pub use proposal::{
+    CutRange, GateParams, GroupVerdict, IndexedWord, ProposedGroup, Refusal, RunSpan,
+    TranscriptSegment, TranscriptWord, check_and_resolve, index_transcript, render_indexed,
+};
 pub use retake::{RetakeGroup, RetakeParams, TakeSpan, Utterance, detect_retakes};
 pub use silence::{SilenceParams, Span, silence_spans, speech_spans};
 pub use vad::{

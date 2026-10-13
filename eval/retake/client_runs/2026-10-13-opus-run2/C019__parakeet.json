@@ -1,0 +1,19 @@
+{"groups": [
+{"line": "When you turn it on (after that first read)", "takes": [{"first": 4, "last": 8}, {"first": 9, "last": 13}], "keep": 1, "note": "Short false start, second take continues the sentence."},
+{"line": "People enabling caching drop a current time into", "takes": [{"first": 175, "last": 182}, {"first": 183, "last": 194}], "keep": 1, "note": "First attempt flubbed 'type in', second completes the line."},
+{"line": "and they wonder why", "takes": [{"first": 200, "last": 203}, {"first": 204, "last": 206}], "keep": 1, "note": "Immediate repeat; second flows into 'nothing got cheaper'."},
+{"line": "It's because", "takes": [{"first": 210, "last": 211}, {"first": 212, "last": 213}], "keep": 1, "note": "Cut off before a pause, restarted after."},
+{"line": "Writing the notes into the cache first time costs 25% more ... every call that hits the cache", "takes": [{"first": 328, "last": 358}, {"first": 364, "last": 366}, {"first": 367, "last": 399}], "keep": 2, "note": "Whole passage redone after 'Okay, I should do this'; last take is complete and continues."},
+{"line": "the structure right", "takes": [{"first": 475, "last": 476}, {"first": 478, "last": 479}], "keep": 1, "note": "Clipped word 'the str' restarted as 'the structure'."},
+{"line": "One more thing to know: the notes don't live forever", "takes": [{"first": 497, "last": 504}, {"first": 505, "last": 506}, {"first": 507, "last": 513}], "keep": 2, "note": "Two false starts before the full line."},
+{"line": "on the final bill", "takes": [{"first": 567, "last": 570}, {"first": 571, "last": 574}], "keep": 1, "note": "Misspoken 'bin' corrected to 'bill'."},
+{"line": "There's actually a name for this", "takes": [{"first": 618, "last": 623}, {"first": 624, "last": 629}], "keep": 0, "note": "Second copy is a zero-duration ASR duplicate; real audio is the first."},
+{"line": "Jevon's paradox", "takes": [{"first": 633, "last": 634}, {"first": 635, "last": 636}], "keep": 1, "note": "Name said twice back to back."},
+{"line": "Make a resource cheaper to use and people just use more of it", "takes": [{"first": 637, "last": 649}, {"first": 650, "last": 662}], "keep": 1, "note": "Full sentence delivered twice; second leads into the next line."},
+{"line": "If the workload is output heavy", "takes": [{"first": 686, "last": 687}, {"first": 688, "last": 690}, {"first": 691, "last": 693}, {"first": 694, "last": 696}], "keep": 3, "note": "Three false starts before the full clause."},
+{"line": "then the input was never the expensive part", "takes": [{"first": 707, "last": 712}, {"first": 713, "last": 720}], "keep": 1, "note": "First attempt trails off, second completes it."},
+{"line": "which to be fair is most agents and most chatbots", "takes": [{"first": 745, "last": 755}, {"first": 756, "last": 765}], "keep": 1, "note": "First had a stumble 'agent agents', second is clean."},
+{"line": "Prompt caching", "takes": [{"first": 810, "last": 811}, {"first": 812, "last": 813}], "keep": 1, "note": "Immediate repeat of the phrase."},
+{"line": "to process words", "takes": [{"first": 860, "last": 862}, {"first": 863, "last": 864}], "keep": 1, "note": "'to the processes' corrected to 'to process'."},
+{"line": "I'm breaking down", "takes": [{"first": 953, "last": 954}, {"first": 955, "last": 957}], "keep": 1, "note": "Stumbled restart."}
+]}
