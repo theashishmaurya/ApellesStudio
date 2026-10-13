@@ -37,7 +37,11 @@ mod common;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use apelles_speech::{RetakeGroup, RetakeParams, detect_retakes};
+use apelles_speech::proposal::{GateParams, INDEXED_VIEW_LEGEND, check_and_resolve_with};
+use apelles_speech::{
+    GroupVerdict, IndexedWord, ProposedGroup, Refusal, RetakeGroup, RetakeParams, RunSpan,
+    TranscriptSegment, detect_retakes, index_transcript, render_indexed,
+};
 use common::load_path;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -927,22 +931,143 @@ fn null_and_greedy_detectors_fail() {
 
 /// Set to a directory to score proposals produced OUTSIDE this crate — by an
 /// MCP client, a model, a human — instead of the detector. One file per task,
-/// named by its id with `/` as `__` (`C040__parakeet.json`), shaped
-/// `{"groups": [{"kept": [[s, e], …], "cut": [[s, e], …]}]}` in source seconds.
+/// named by its id with `/` as `__` (`C040__parakeet.json`), in either of two
+/// forms, per group:
+///
+/// - **seconds**: `{"kept": [[s, e], …], "cut": [[s, e], …]}` in source seconds,
+///   scored as given;
+/// - **index form** (D-380, the shape an MCP client answers in):
+///   `{"takes": [{"first": a, "last": b}, …], "keep": k}` over the task
+///   source's word transcript (`eval/retake/transcripts/`), resolved through
+///   the real coverage gate, [`apelles_speech::check_and_resolve`] — refused groups are listed
+///   and not scored, exactly as the app would not apply them.
+///
 /// The same scorer and the same labels, so the numbers compare directly with
-/// the detector's table; nothing is pinned, because a proposer outside the
-/// crate is not this crate's behaviour.
+/// the detector's table; nothing in this mode is pinned, because a proposer
+/// outside the crate is not this crate's behaviour (the committed client runs
+/// are pinned separately, by [`the_coverage_gate_measures_as_pinned`]).
 const PROPOSALS_ENV: &str = "APELLES_RETAKE_EVAL_PROPOSALS";
+
+/// Set to `1` to print the coverage gate's threshold sweep (D-380).
+const SWEEP_ENV: &str = "APELLES_RETAKE_GATE_SWEEP";
 
 #[derive(Deserialize)]
 struct ProposalFile {
-    groups: Vec<ProposedGroup>,
+    groups: Vec<ExternalGroup>,
 }
 
 #[derive(Deserialize)]
-struct ProposedGroup {
-    kept: Vec<Iv>,
-    cut: Vec<Iv>,
+#[serde(untagged)]
+enum ExternalGroup {
+    Seconds { kept: Vec<Iv>, cut: Vec<Iv> },
+    Indexed { takes: Vec<WordRange>, keep: usize },
+}
+
+#[derive(Deserialize)]
+struct WordRange {
+    first: usize,
+    last: usize,
+}
+
+/// A source's word transcript (`transcribe.py --backend parakeet` output,
+/// D-379), indexed exactly as the app indexes it for a client.
+#[derive(Deserialize)]
+struct WordTranscript {
+    segments: Vec<TranscriptSegment>,
+}
+
+fn word_transcript(source: &str) -> (Vec<IndexedWord>, Vec<RunSpan>) {
+    let t: WordTranscript = read_json(&format!(
+        "eval/retake/transcripts/{source}.parakeet.words.json"
+    ));
+    index_transcript(&t.segments)
+}
+
+/// One group the gate refused, for the report.
+struct Refused {
+    group: usize,
+    reason: Refusal,
+    words: String,
+}
+
+/// Resolve index-form groups through the gate: the accepted ones as
+/// [`Proposed`] (kept = the kept take's own word span, cut = the gate's padded
+/// ranges), the refused ones itemised.
+fn gated(
+    words: &[IndexedWord],
+    groups: &[ProposedGroup],
+    p: &GateParams,
+) -> (Vec<Proposed>, Vec<Refused>) {
+    let mut accepted = Vec::new();
+    let mut refused = Vec::new();
+    for (gi, (g, v)) in groups
+        .iter()
+        .zip(check_and_resolve_with(words, groups, p))
+        .enumerate()
+    {
+        match v {
+            GroupVerdict::Accepted { cuts } => {
+                let (a, b) = g.takes[g.keep];
+                accepted.push(Proposed {
+                    kept: normalise(vec![(words[a].start_secs, words[b].end_secs)]),
+                    cut: normalise(cuts.iter().map(|c| (c.start_secs, c.end_secs)).collect()),
+                });
+            }
+            GroupVerdict::Refused { reason, offending } => refused.push(Refused {
+                group: gi,
+                reason,
+                words: offending
+                    .iter()
+                    .filter_map(|&i| words.get(i).map(|w| format!("{i}:{}", w.text)))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            }),
+        }
+    }
+    (accepted, refused)
+}
+
+/// Read an external proposal file into groups the scorer takes. Index-form
+/// groups go through the gate against `source`'s word transcript.
+fn external_file(
+    path: &std::path::Path,
+    source: &str,
+    p: &GateParams,
+) -> (Vec<Proposed>, Vec<Refused>) {
+    let raw =
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let file: ProposalFile =
+        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()));
+    let mut seconds = Vec::new();
+    let mut indexed = Vec::new();
+    for g in file.groups {
+        match g {
+            ExternalGroup::Seconds { kept, cut } => seconds.push(Proposed {
+                kept: normalise(kept),
+                cut: normalise(cut),
+            }),
+            ExternalGroup::Indexed { takes, keep } => indexed.push(ProposedGroup {
+                takes: takes.iter().map(|t| (t.first, t.last)).collect(),
+                keep,
+            }),
+        }
+    }
+    if indexed.is_empty() {
+        return (seconds, Vec::new());
+    }
+    let (words, _) = word_transcript(source);
+    let (mut accepted, refused) = gated(&words, &indexed, p);
+    accepted.extend(seconds);
+    (accepted, refused)
+}
+
+fn print_refused(refused: &[Refused]) {
+    for r in refused {
+        println!(
+            "    REFUSED  group {:>2}: {} — {}",
+            r.group, r.reason, r.words
+        );
+    }
 }
 
 /// **Scores external proposals** when [`PROPOSALS_ENV`] is set; a no-op
@@ -961,26 +1086,356 @@ fn external_proposals() {
     let mut scored = 0;
     for t in task_set() {
         let path = PathBuf::from(&dir).join(format!("{}.json", t.id.replace('/', "__")));
-        let Ok(raw) = std::fs::read_to_string(&path) else {
+        if !path.exists() {
             continue;
-        };
-        let file: ProposalFile = serde_json::from_str(&raw)
-            .unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()));
-        let groups: Vec<Proposed> = file
-            .groups
-            .into_iter()
-            .map(|g| Proposed {
-                kept: normalise(g.kept),
-                cut: normalise(g.cut),
-            })
-            .collect();
+        }
+        let labels: Labels = read_json(&t.input.labels);
+        let (groups, refused) = external_file(&path, &labels.source, &GateParams::default());
         print_row(&t.id, &run_with(&t, &groups));
+        print_refused(&refused);
         scored += 1;
     }
     assert!(
         scored > 0,
         "{PROPOSALS_ENV}={dir}: no task's proposal file was found"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The coverage gate (D-380), measured on the three labelled sources.
+
+/// The Parakeet tasks — the only ones with a word transcript to index.
+fn parakeet_tasks() -> Vec<Task> {
+    task_set()
+        .into_iter()
+        .filter(|t| t.id.ends_with("/parakeet"))
+        .collect()
+}
+
+/// The words whose midpoint falls in `[start, end)` — how a span in source
+/// seconds becomes a word-index range. `None` if no word does.
+fn word_range(words: &[IndexedWord], start: f64, end: f64) -> Option<(usize, usize)> {
+    let inside: Vec<usize> = words
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| {
+            let mid = (w.start_secs + w.end_secs) / 2.0;
+            mid >= start - EPS && mid < end - EPS
+        })
+        .map(|(i, _)| i)
+        .collect();
+    Some((*inside.first()?, *inside.last()?))
+}
+
+/// **The oracle**: every labelled group as the right answer — cut every
+/// non-keeper delivery, keep the keeper, nested groups as their own groups in
+/// label order. A gate that refuses any of these refuses a correct cut.
+///
+/// A delivery with no word midpoint inside it is one this word transcript did
+/// not hear (C038's first `"So quick recap,"` is in a Whisper reading only); it
+/// is left out of its group and listed in the second return value, and a group
+/// left with fewer than two takes, or without its keeper, is not proposed.
+fn oracle(labels: &Labels, words: &[IndexedWord]) -> (Vec<(String, ProposedGroup)>, Vec<String>) {
+    let mut out = Vec::new();
+    let mut unheard = Vec::new();
+    for g in &labels.retakes {
+        let mut takes = Vec::new();
+        let mut keep = None;
+        for (i, d) in g.deliveries.iter().enumerate() {
+            match word_range(words, d.start, d.end) {
+                Some(r) => {
+                    if i == g.keeper {
+                        keep = Some(takes.len());
+                    }
+                    takes.push(r);
+                }
+                None => unheard.push(format!("{} delivery {i}", g.id)),
+            }
+        }
+        if let (Some(keep), true) = (keep, takes.len() >= 2) {
+            out.push((g.id.clone(), ProposedGroup { takes, keep }));
+        }
+    }
+    (out, unheard)
+}
+
+/// The old detector's groups as index-form proposals, each paired with what
+/// the eval charges it on its own (its over-cut seconds, in the detector's own
+/// segment-level seconds).
+fn detector_as_proposals(
+    task: &Task,
+    labels: &Labels,
+    words: &[IndexedWord],
+) -> Vec<(ProposedGroup, f64)> {
+    let u = load_path(&repo_path(&task.input.transcript).to_string_lossy());
+    detect_retakes(&u, &task.params.unwrap_or_default())
+        .into_iter()
+        .filter_map(|g| {
+            let charged = score(labels, &from_detector(std::slice::from_ref(&g))).over_cut_secs;
+            let takes: Option<Vec<(usize, usize)>> = g
+                .takes
+                .iter()
+                .map(|t| {
+                    word_range(
+                        words,
+                        g.members[t.first].start_secs,
+                        g.members[t.last].end_secs,
+                    )
+                })
+                .collect();
+            Some((
+                ProposedGroup {
+                    takes: takes?,
+                    keep: g.keep,
+                },
+                charged,
+            ))
+        })
+        .collect()
+}
+
+/// The committed MCP-client runs (D-379's POC): `client_runs/<run>/`.
+fn client_runs() -> Vec<String> {
+    let dir = repo_path("eval/retake/client_runs");
+    let mut runs: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", dir.display()))
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_dir() && e.file_name() != "input")
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    runs.sort();
+    runs
+}
+
+/// The three numbers that set the gate's constants, at one setting.
+struct GateNumbers {
+    /// Oracle groups proposed (label groups this word transcript can express).
+    oracle_groups: usize,
+    /// Labelled deliveries with no word in this transcript (left out).
+    oracle_unheard: Vec<String>,
+    /// Over-cut of the oracle as the gate resolves it — what padding costs.
+    oracle_gated_over_cut: f64,
+    /// Oracle groups refused — the gate refusing a correct cut.
+    oracle_refused: Vec<String>,
+    /// Detector groups the eval charges that the gate ACCEPTS — a miss.
+    detector_missed: Vec<String>,
+    /// Detector groups the eval charges, in total.
+    detector_charged: usize,
+    /// Detector groups the eval does not charge that the gate refuses.
+    detector_clean_refused: usize,
+    /// Over-cut of the detector's gate-accepted groups, resolved and scored.
+    detector_gated_over_cut: f64,
+    /// Per POC run and task: (run, task, over-cut, recall, refused groups).
+    clients: Vec<(String, String, Outcome, Vec<Refused>)>,
+}
+
+fn measure_gate(p: &GateParams) -> GateNumbers {
+    let mut n = GateNumbers {
+        oracle_groups: 0,
+        oracle_unheard: Vec::new(),
+        oracle_gated_over_cut: 0.0,
+        oracle_refused: Vec::new(),
+        detector_missed: Vec::new(),
+        detector_charged: 0,
+        detector_clean_refused: 0,
+        detector_gated_over_cut: 0.0,
+        clients: Vec::new(),
+    };
+    for t in parakeet_tasks() {
+        let labels: Labels = read_json(&t.input.labels);
+        let (words, _) = word_transcript(&labels.source);
+
+        let (groups, unheard) = oracle(&labels, &words);
+        n.oracle_unheard
+            .extend(unheard.into_iter().map(|u| format!("{} {u}", t.id)));
+        n.oracle_groups += groups.len();
+        let proposals: Vec<ProposedGroup> = groups.iter().map(|(_, g)| g.clone()).collect();
+        let (resolved, _) = gated(&words, &proposals, p);
+        n.oracle_gated_over_cut += score(&labels, &resolved).over_cut_secs;
+        for ((id, _), v) in groups
+            .iter()
+            .zip(check_and_resolve_with(&words, &proposals, p))
+        {
+            if let GroupVerdict::Refused { reason, offending } = v {
+                n.oracle_refused
+                    .push(format!("{} {id}: {reason} {offending:?}", t.id));
+            }
+        }
+
+        let det = detector_as_proposals(&t, &labels, &words);
+        let det_groups: Vec<ProposedGroup> = det.iter().map(|(g, _)| g.clone()).collect();
+        // Judged one at a time: the question is whether the gate refuses THIS
+        // group, not whether an earlier one shadowed it.
+        for (g, charged) in &det {
+            let accepted = matches!(
+                check_and_resolve_with(&words, std::slice::from_ref(g), p).first(),
+                Some(GroupVerdict::Accepted { .. })
+            );
+            if *charged > EPS {
+                n.detector_charged += 1;
+                if accepted {
+                    n.detector_missed
+                        .push(format!("{} {:?} charged {charged:.2}s", t.id, g.takes));
+                }
+            } else if !accepted {
+                n.detector_clean_refused += 1;
+            }
+        }
+        let (kept, _) = gated(&words, &det_groups, p);
+        n.detector_gated_over_cut += score(&labels, &kept).over_cut_secs;
+
+        for run in client_runs() {
+            let path = repo_path(&format!(
+                "eval/retake/client_runs/{run}/{}.json",
+                t.id.replace('/', "__")
+            ));
+            let (groups, refused) = external_file(&path, &labels.source, p);
+            n.clients
+                .push((run, t.id.clone(), run_with(&t, &groups), refused));
+        }
+    }
+    n
+}
+
+/// **The coverage gate, measured and pinned (D-380).** Three numbers set its
+/// constants: the oracle — the labels' own answer — must be accepted; every
+/// detector group the eval charges as over-cut must be refused; and the nine
+/// committed MCP-client runs are re-scored as the app would apply them, gated.
+/// All pinned in `eval/retake/gate_baseline.json`, rewritten with
+/// [`BASELINE_ENV`] like `baseline.json`.
+#[test]
+fn the_coverage_gate_measures_as_pinned() {
+    let n = measure_gate(&GateParams::default());
+    println!(
+        "oracle: {} groups, {} refused, gated over-cut {:.2}s; deliveries unheard by this transcript: {:?}",
+        n.oracle_groups,
+        n.oracle_refused.len(),
+        n.oracle_gated_over_cut,
+        n.oracle_unheard
+    );
+    for r in &n.oracle_refused {
+        println!("    {r}");
+    }
+    println!(
+        "detector groups charged: {}, accepted by the gate (missed): {}, clean groups refused: {}, gated over-cut: {:.2}s",
+        n.detector_charged,
+        n.detector_missed.len(),
+        n.detector_clean_refused,
+        n.detector_gated_over_cut
+    );
+    for m in &n.detector_missed {
+        println!("    MISSED {m}");
+    }
+    print_header();
+    let mut rows = serde_json::Map::new();
+    for (run, task, o, refused) in &n.clients {
+        let id = format!("{run}/{task}");
+        print_row(&id, o);
+        print_refused(refused);
+        let mut row = baseline_row(o);
+        row["refused"] = json!(
+            refused
+                .iter()
+                .map(|r| format!("group {}: {} — {}", r.group, r.reason, r.words))
+                .collect::<Vec<_>>()
+        );
+        rows.insert(id, row);
+    }
+    let now = json!({
+        "$comment": "The coverage gate's committed measurement (D-380) at GateParams::default(). Regenerate: APELLES_RETAKE_EVAL_BASELINE=1 cargo test -p apelles-speech --test retake_eval",
+        "oracle": {
+            "groups": n.oracle_groups,
+            "unheard_deliveries": n.oracle_unheard,
+            "refused": n.oracle_refused,
+            "gated_over_cut_secs": r3(n.oracle_gated_over_cut),
+        },
+        "detector": {
+            "charged": n.detector_charged,
+            "missed": n.detector_missed,
+            "clean_refused": n.detector_clean_refused,
+            "gated_over_cut_secs": r3(n.detector_gated_over_cut),
+        },
+        "client_runs": Value::Object(rows),
+    });
+    let path = repo_path("eval/retake/gate_baseline.json");
+    if std::env::var(BASELINE_ENV).as_deref() == Ok("1") {
+        let text = serde_json::to_string_pretty(&now).expect("a json! value always serialises");
+        std::fs::write(&path, text + "\n")
+            .unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
+        println!("wrote {}", path.display());
+        return;
+    }
+    let pinned: Value = read_json("eval/retake/gate_baseline.json");
+    assert_eq!(
+        now, pinned,
+        "the coverage gate no longer measures as eval/retake/gate_baseline.json pins — \
+         if intended, rewrite it with {BASELINE_ENV}=1 and commit the diff"
+    );
+}
+
+/// **The threshold sweep behind [`apelles_speech::proposal::FUZZY_MATCH`] and
+/// [`apelles_speech::proposal::MAX_UNALIGNED_CONTENT_RUN`]** — printed when [`SWEEP_ENV`] is `1`, a no-op
+/// otherwise. Recorded in `docs/notes/retake-detection.md` §11.3.
+#[test]
+fn coverage_gate_sweep() {
+    if std::env::var(SWEEP_ENV).as_deref() != Ok("1") {
+        return;
+    }
+    println!(
+        "{:>6} {:>4} {:>7} {:>7} {:>8} {:>9} {:>10} {:>10}",
+        "fuzzy", "run", "oracle", "missed", "det_clean", "det_over", "poc_over", "poc_refuse"
+    );
+    for fuzzy in [0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 1.01] {
+        for run in [2, 3, 4, usize::MAX] {
+            let n = measure_gate(&GateParams {
+                fuzzy_match: fuzzy,
+                max_unaligned_content_run: run,
+            });
+            let poc_over: f64 = n.clients.iter().map(|c| c.2.metrics.over_cut_secs).sum();
+            let poc_refused: usize = n.clients.iter().map(|c| c.3.len()).sum();
+            println!(
+                "{fuzzy:>6.2} {:>4} {:>7} {:>7} {:>8} {:>9.2} {:>10.2} {:>10}",
+                if run == usize::MAX {
+                    "inf".to_string()
+                } else {
+                    run.to_string()
+                },
+                n.oracle_refused.len(),
+                n.detector_missed.len(),
+                n.detector_clean_refused,
+                n.detector_gated_over_cut,
+                poc_over,
+                poc_refused
+            );
+        }
+    }
+}
+
+/// **The app's word view is the POC's input, byte for byte** (D-380). Below
+/// the legend, `render_indexed` over the committed word transcript must equal
+/// the file each POC client read (`client_runs/input/`, header lines aside), so
+/// what was measured is what the app hands a client.
+#[test]
+fn the_indexed_view_is_the_pocs_input() {
+    for t in parakeet_tasks() {
+        let labels: Labels = read_json(&t.input.labels);
+        let (words, runs) = word_transcript(&labels.source);
+        let ours = render_indexed(&words, &runs).unwrap_or_else(|e| panic!("{}: {e}", t.id));
+        let poc_path = format!(
+            "eval/retake/client_runs/input/{}.words.txt",
+            t.id.replace('/', "__")
+        );
+        let poc = std::fs::read_to_string(repo_path(&poc_path))
+            .unwrap_or_else(|e| panic!("reading {poc_path}: {e}"));
+        let body = |s: &str| s.splitn(4, '\n').nth(3).unwrap_or_default().to_string();
+        assert_eq!(
+            body(&ours),
+            body(&poc),
+            "{}: the indexed view drifted from the POC's input",
+            t.id
+        );
+        assert_eq!(&ours[..ours.len() - body(&ours).len()], INDEXED_VIEW_LEGEND);
+    }
 }
 
 /// Every label file a task points at, once each.

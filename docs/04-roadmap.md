@@ -2760,6 +2760,20 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       **0.00 s** and pass 3 / 3 tasks each, against the detector's 40.24 s and
       0 / 3. The build that follows — retake judgement in the MCP client,
       Parakeet the only ASR — is planned as its own decision.
+    - ✅ **D-380 step 1 — the proposal core in `apelles-speech`** (2026-10-13).
+      `proposal.rs`: the word-indexed view (byte-identical to the POC's input,
+      golden-tested), index → source-second conversion with padded cut edges,
+      and the deterministic coverage gate (LCS + five forgiveness rules, nested
+      stutters, cross-group conflicts). Measured: the oracle loses 0.00 s
+      through it, **every over-cutting detector group is refused (6 / 6)**, the
+      nine POC runs still lose 0.00 s — at a recall cost: 17 of 46 correct label
+      groups are refused, nearly all for an ASR mis-hearing in the flubbed take
+      (`docs/notes/retake-detection.md` §11).
+    - ⬜ **D-380 step 2 — the app + MCP pair over that core**: an
+      `editor_*` tool that hands a client the indexed view and one that takes
+      its groups back through `check_and_resolve`, the matching GUI review
+      surface, and a decision on how a refused group reaches the human (shown
+      as *unverified* with its offending words, rather than dropped — §11.5).
     - ⬜ **Re-decide the ASR default on the eval** (D-377 is `revisit`). D-378
       does not reproduce D-377's 10.5×, because D-377 counted one shape of loss
       of three. In the same pass as B-246's fix, not before — today both

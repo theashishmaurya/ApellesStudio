@@ -282,7 +282,7 @@ const STOPWORDS: &[&str] = &[
 ];
 
 /// Is this word one whose repetition proves nothing?
-fn is_stopword(word: &str) -> bool {
+pub(crate) fn is_stopword(word: &str) -> bool {
     STOPWORDS.binary_search(&word).is_ok()
 }
 

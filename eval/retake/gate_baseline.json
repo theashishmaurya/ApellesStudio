@@ -1,0 +1,247 @@
+{
+  "$comment": "The coverage gate's committed measurement (D-380) at GateParams::default(). Regenerate: APELLES_RETAKE_EVAL_BASELINE=1 cargo test -p apelles-speech --test retake_eval",
+  "client_runs": {
+    "2026-10-13-opus-run1/C019/parakeet": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.08,
+        "cut_precision": 1.0,
+        "group_recall": 0.588,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 29.96,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.407
+      },
+      "passed": false,
+      "refused": [
+        "group 1: a deleted take has words the kept take does not — 181:type",
+        "group 6: a deleted take has words the kept take does not — 504:never",
+        "group 7: a deleted take has words the kept take does not — 570:bin,",
+        "group 12: a deleted take has words the kept take does not — 752:agents",
+        "group 14: a deleted take has words the kept take does not — 862:processes"
+      ],
+      "score": 0.974
+    },
+    "2026-10-13-opus-run1/C038/parakeet": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.08,
+        "cut_precision": 1.0,
+        "group_recall": 0.471,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 38.0,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.291
+      },
+      "passed": false,
+      "refused": [
+        "group 0: a deleted take has words the kept take does not — 47:free.",
+        "group 2: a deleted take has words the kept take does not — 99:chips",
+        "group 3: a deleted take has words the kept take does not — 238:behind 251:tricks",
+        "group 8: a deleted take has words the kept take does not — 571:trial.",
+        "group 10: a deleted take has words the kept take does not — 683:repetitive 686:Constantly,",
+        "group 12: a deleted take has words the kept take does not — 958:speculate 965:speculating",
+        "group 14: a deleted take has words the kept take does not — 1273:mechanics 1275:mechanics"
+      ],
+      "score": 0.915
+    },
+    "2026-10-13-opus-run1/C040/parakeet": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.58,
+        "cut_precision": 1.0,
+        "group_recall": 0.636,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 45.52,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.309
+      },
+      "passed": false,
+      "refused": [
+        "group 1: a deleted take has words the kept take does not — 195:masses 214:masses 234:masses 247:waves",
+        "group 3: a deleted take has words the kept take does not — 390:exelf 391:mattens,",
+        "group 6: a deleted take has words the kept take does not — 525:published",
+        "group 8: a deleted take has words the kept take does not — 750:query"
+      ],
+      "score": 0.952
+    },
+    "2026-10-13-opus-run2/C019/parakeet": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.08,
+        "cut_precision": 1.0,
+        "group_recall": 0.588,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 31.48,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.427
+      },
+      "passed": false,
+      "refused": [
+        "group 1: a deleted take has words the kept take does not — 181:type",
+        "group 6: a deleted take has words the kept take does not — 504:never",
+        "group 7: a deleted take has words the kept take does not — 570:bin,",
+        "group 13: a deleted take has words the kept take does not — 752:agents",
+        "group 15: a deleted take has words the kept take does not — 862:processes"
+      ],
+      "score": 0.979
+    },
+    "2026-10-13-opus-run2/C038/parakeet": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.08,
+        "cut_precision": 1.0,
+        "group_recall": 0.529,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 39.52,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.303
+      },
+      "passed": false,
+      "refused": [
+        "group 0: a deleted take has words the kept take does not — 47:free.",
+        "group 2: a deleted take has words the kept take does not — 99:chips",
+        "group 3: a deleted take has words the kept take does not — 238:behind 251:tricks",
+        "group 8: a deleted take has words the kept take does not — 571:trial.",
+        "group 10: a deleted take has words the kept take does not — 683:repetitive 686:Constantly,",
+        "group 13: a deleted take has words the kept take does not — 958:speculate 965:speculating",
+        "group 15: a deleted take has words the kept take does not — 1273:mechanics 1275:mechanics"
+      ],
+      "score": 0.933
+    },
+    "2026-10-13-opus-run2/C040/parakeet": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.58,
+        "cut_precision": 1.0,
+        "group_recall": 0.545,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 45.44,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.309
+      },
+      "passed": false,
+      "refused": [
+        "group 1: a deleted take has words the kept take does not — 195:masses 214:masses 234:masses 247:waves",
+        "group 3: a deleted take has words the kept take does not — 390:exelf 391:mattens,",
+        "group 5: a deleted take has words the kept take does not — 525:published",
+        "group 8: a deleted take has words the kept take does not — 750:query"
+      ],
+      "score": 0.939
+    },
+    "2026-10-13-sonnet-run1/C019/parakeet": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.04,
+        "cut_precision": 1.0,
+        "group_recall": 0.588,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 28.56,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.388
+      },
+      "passed": false,
+      "refused": [
+        "group 1: a deleted take has words the kept take does not — 181:type",
+        "group 5: a deleted take has words the kept take does not — 503:notes 504:never",
+        "group 6: a deleted take has words the kept take does not — 570:bin,",
+        "group 11: a deleted take has words the kept take does not — 752:agents",
+        "group 13: a deleted take has words the kept take does not — 862:processes"
+      ],
+      "score": 0.969
+    },
+    "2026-10-13-sonnet-run1/C038/parakeet": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.08,
+        "cut_precision": 1.0,
+        "group_recall": 0.471,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 38.92,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.298
+      },
+      "passed": false,
+      "refused": [
+        "group 0: a deleted take has words the kept take does not — 47:free.",
+        "group 2: a deleted take has words the kept take does not — 99:chips",
+        "group 3: a deleted take has words the kept take does not — 238:behind 251:tricks",
+        "group 7: a deleted take has words the kept take does not — 571:trial.",
+        "group 9: a deleted take has words the kept take does not — 683:repetitive 686:Constantly,",
+        "group 11: a deleted take has words the kept take does not — 958:speculate 965:speculating",
+        "group 13: a deleted take has words the kept take does not — 1252:mechanism"
+      ],
+      "score": 0.917
+    },
+    "2026-10-13-sonnet-run1/C040/parakeet": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.58,
+        "cut_precision": 1.0,
+        "group_recall": 0.545,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 44.56,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.303
+      },
+      "passed": false,
+      "refused": [
+        "group 1: a deleted take has words the kept take does not — 195:masses 214:masses 234:masses 247:waves",
+        "group 3: a deleted take has words the kept take does not — 390:exelf 391:mattens,",
+        "group 6: a deleted take has words the kept take does not — 525:published",
+        "group 8: a deleted take has words the kept take does not — 750:query"
+      ],
+      "score": 0.937
+    }
+  },
+  "detector": {
+    "charged": 6,
+    "clean_refused": 7,
+    "gated_over_cut_secs": 0.0,
+    "missed": []
+  },
+  "oracle": {
+    "gated_over_cut_secs": 0.0,
+    "groups": 46,
+    "refused": [
+      "C019/parakeet c019-people-enabling-caching: a deleted take has words the kept take does not [181]",
+      "C019/parakeet c019-one-more-thing-to-know: a deleted take has words the kept take does not [504]",
+      "C019/parakeet c019-on-the-final-bill: a deleted take has words the kept take does not [570]",
+      "C019/parakeet c019-which-to-be-fair: a deleted take has words the kept take does not [752]",
+      "C019/parakeet c019-to-process: a deleted take has words the kept take does not [862]",
+      "C038/parakeet c038-heres-the-actually-interesting-part: a deleted take has words the kept take does not [47]",
+      "C038/parakeet c038-they-split-their-own-ai-chip-line: a deleted take has words the kept take does not [99]",
+      "C038/parakeet c038-the-trick-being-used: a deleted take has words the kept take does not [238, 251]",
+      "C038/parakeet c038-the-real-reason-its-this-expensive: a deleted take has words the kept take does not [559, 571]",
+      "C038/parakeet c038-an-enormous-amount-of-work: a deleted take has words the kept take does not [683, 686]",
+      "C038/parakeet c038-the-third-one-is-speculative-decoding: a deleted take has words the kept take does not [958, 965]",
+      "C038/parakeet c038-subscribe-if-you-want-more-of-this: a deleted take has words the kept take does not [1252]",
+      "C040/parakeet c040-attention-in-simple-terms: a deleted take has words the kept take does not [101, 103, 104]",
+      "C040/parakeet c040-glancing-back: a deleted take has words the kept take does not [195, 214, 234, 247]",
+      "C040/parakeet c040-self-attention-for-every-word: a deleted take has words the kept take does not [390, 391]",
+      "C040/parakeet c040-encoder-reads-your-whole-message: a deleted take has words the kept take does not [525]",
+      "C040/parakeet c040-quick-recap: a deleted take has words the kept take does not [750]"
+    ],
+    "unheard_deliveries": [
+      "C038/parakeet c038-so-quick-recap delivery 0"
+    ]
+  }
+}

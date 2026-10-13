@@ -1,0 +1,18 @@
+{"groups": [
+{"line": "When you turn it on", "takes": [{"first": 4, "last": 8}, {"first": 9, "last": 13}], "keep": 1, "note": "First attempt stops after 'on'; the second continues into the sentence."},
+{"line": "People enabling caching drop a current time", "takes": [{"first": 175, "last": 182}, {"first": 183, "last": 190}], "keep": 1, "note": "The first attempt is flubbed ('current type in'), so it is restarted."},
+{"line": "and wonder why", "takes": [{"first": 200, "last": 203}, {"first": 204, "last": 206}], "keep": 1, "note": "Stumbled 'and the wonder why', said again and completed."},
+{"line": "It's because", "takes": [{"first": 210, "last": 211}, {"first": 212, "last": 213}], "keep": 1, "note": "A false start before the pause; the second take continues the sentence."},
+{"line": "Writing the notes into the cache costs 25% more the first time, the price of admission, then every call that hits the cache", "takes": [{"first": 328, "last": 358}, {"first": 364, "last": 366}, {"first": 367, "last": 399}], "keep": 2, "note": "Whole passage redone after the 'Okay, I should do this' aside; the last take runs on into the rest of the sentence."},
+{"line": "the structure", "takes": [{"first": 475, "last": 476}, {"first": 478, "last": 479}], "keep": 1, "note": "'the str' is cut off and restarted as 'the structure'."},
+{"line": "One more thing to know. The notes doesn't live forever.", "takes": [{"first": 497, "last": 504}, {"first": 505, "last": 506}, {"first": 507, "last": 516}], "keep": 2, "note": "Two broken starts before the complete line."},
+{"line": "on the final bill", "takes": [{"first": 567, "last": 570}, {"first": 571, "last": 574}], "keep": 1, "note": "Misspoken 'bin' is corrected to 'bill'."},
+{"line": "There's actually a name for this", "takes": [{"first": 618, "last": 623}, {"first": 624, "last": 629}], "keep": 0, "note": "Duplicate with zero-length ASR timings; keeping the first, properly timed take is the safe choice."},
+{"line": "Make a resource cheaper to use and people just use more of it", "takes": [{"first": 637, "last": 649}, {"first": 650, "last": 662}], "keep": 1, "note": "Same line twice; the second is said in one breath with no break."},
+{"line": "If the workload is", "takes": [{"first": 686, "last": 687}, {"first": 688, "last": 690}, {"first": 691, "last": 693}, {"first": 694, "last": 696}], "keep": 3, "note": "Three false starts before the full sentence."},
+{"line": "the input was never the", "takes": [{"first": 707, "last": 712}, {"first": 713, "last": 718}], "keep": 1, "note": "'the input has never the' is fumbled and redone."},
+{"line": "which to be fair is most agents and most chatbots", "takes": [{"first": 745, "last": 755}, {"first": 756, "last": 765}], "keep": 1, "note": "The aside is said twice; the first has the 'agent agents' stumble."},
+{"line": "Prompt caching", "takes": [{"first": 810, "last": 811}, {"first": 812, "last": 813}], "keep": 1, "note": "Repeated subject; the second continues the sentence."},
+{"line": "to process", "takes": [{"first": 860, "last": 862}, {"first": 863, "last": 864}], "keep": 1, "note": "'to the processes' is misspoken and corrected."},
+{"line": "I'm breaking", "takes": [{"first": 953, "last": 954}, {"first": 955, "last": 956}], "keep": 1, "note": "Stutter restart."}
+]}

@@ -39,6 +39,14 @@ and four of them have already been walked into once:
    sources found the first Whisper violation on the first source nobody had
    looked at. **A green audit over material the tuning was fitted to measures
    almost nothing.**
+6. **§11 — a safety gate's thresholds cannot be tuned on its own refusal
+   count.** Every fuzzy setting that accepts more correct cuts also makes
+   distinct real words of this corpus "the same word" (`ever`/`never` at 0.8),
+   and none of the gate's own three numbers can see that. The measurement that
+   set `FUZZY_MATCH` was the corpus vocabulary, not the eval.
+
+§9-§11 cover the labelled eval (**D-378**, **D-379**) and the move of retake
+judgement to the MCP client behind a deterministic coverage gate (**D-380**).
 
 ---
 
@@ -1109,3 +1117,150 @@ closely. Recall is ~0.57-0.75: the clients skip what they are unsure of, as the
 prompt tells them to — the right failure direction for D-318. The limits are in
 D-379: three videos, one speaker, nobody listened.
 
+---
+
+## 11. The coverage gate (D-380, 2026-10-13)
+
+§10's POC moved the *judgement* out of the app. What stays in the app is
+mechanical and deterministic: `crates/apelles-speech/src/proposal.rs`, measured
+by `tests/retake_eval.rs` against `eval/retake/` (`gate_baseline.json` pins
+every number below).
+
+### 11.1 What the app does
+
+1. **Render** — `index_transcript` + `render_indexed` print the word view a
+   client reads: a two-line legend, then `--- segment N  S-E` and
+   `index<TAB>S-E<TAB>word` lines. Below the legend it is byte-identical to the
+   files the nine POC clients read (`client_runs/input/`), golden-tested, so
+   the POC's numbers are numbers about the app's real input. Words go to a
+   segment by **start time** (the first segment, scanning in order, whose end
+   they start before): that is the segment's own word list except Parakeet's
+   zero-length phrases stamped on a segment end (C019 326.60 s, C038 330.84 s),
+   which go with the speech after them — the POC's rule, reproduced exactly.
+2. **Convert** — an accepted group's deleted takes become `CutRange`s: one per
+   run (segment × clip) the take crosses, each edge pushed out by at most
+   `EDGE_PAD_MAX_SECS` = 0.32 s (one maximum-length TDT token, D-376) and never
+   past the midpoint of the gap to the neighbouring word or across a run
+   boundary. Measured cost of the padding: the oracle, resolved and scored,
+   loses **0.00 s**. Its price is the other way: a take spanning two segments
+   leaves the inter-segment pause uncut (silence is `silence.rs`'s job).
+3. **Refuse** — the gate, below.
+
+### 11.2 The gate
+
+Structural refusals first (bad indices, `first > last`, < 2 takes, bad `keep`,
+overlapping takes), then cross-group conflicts in the order given: a deleted
+take may not overlap an earlier-accepted group's kept take, nor a kept take an
+earlier group's deletion — **unless** one group lies wholly inside the other's
+kept take. That is the nested stutter (C038's outro keeps `"... and mechanics
+and mechanics ..."`; a second group cuts one copy). It is allowed in either
+order, and only if the outer group's deleted takes still pass the content rule
+against its keeper *less* the nested cut (`StarvesContainer` otherwise).
+
+Then **the content rule**, per deleted take against the kept take: align the
+`retake::normalise` token sequences by LCS (a match is equality, or both
+≥ 4 chars and `normalized_levenshtein ≥ FUZZY_MATCH`), and account for every
+unaligned token:
+
+| | forgiven when | counts toward the run limit |
+|---|---|---|
+| F1 | a stopword (`phrase.rs`'s list, shared, not copied) | no |
+| F2 | a filler: um, uh, er, erm, ah, hmm, mm | no |
+| F3 | a proper prefix of the next deleted token or of a kept token (`"the str"` / `"the structure"`) | no |
+| F4 | equal to a deleted token the alignment used (a stutter or a looped phrase) | no |
+| F5 | matches some kept token, out of order | **yes** |
+
+Any content token forgiven by none of them refuses the take
+(`ContentAbsentFromKeptTake`), and `MAX_UNALIGNED_CONTENT_RUN` consecutive
+run-counting tokens refuse it even when each is forgiven alone
+(`UnalignedContentRun`). A refusal carries the offending word indices.
+
+F4 differs from the brief that specified this module ("equal to the *previous*
+token"), by measurement: that version refused three correct oracle groups —
+C038's `"inference is everything that's … inference is everything"`, C040's
+`"every word turns into every word turns into itself"` and `"while constantly
+while constantly the encoder builds …"` — as out-of-order content, and since the
+LCS may align either copy of a repeat, "previous" was order-dependent besides.
+
+**Why not `word_overlap`:** it forgives a *fraction* of unique words by
+construction (B-246 shape 3, §9.2). This gate forgives none outside the table.
+**What it cannot do:** hear. A word the ASR mis-heard in the flubbed take is,
+to the gate, a word said once — which is §11.4's whole recall cost. And
+stopwords (`not`, `no`, spoken numbers among them) are forgiven unconditionally.
+
+### 11.3 The sweep
+
+Oracle = the labels' own answer (every non-keeper delivery cut, mapped to words
+by midpoint; 46 groups, nested ones included; C038's first `"So quick recap,"`
+is in a Whisper reading only and is left out). Detector = `detect_retakes`'s
+Parakeet groups mapped the same way, each judged alone; 6 of them are charged
+over-cut by the eval. POC = the nine committed client runs, gated.
+
+| fuzzy | run 2: oracle / POC refused | run 3, 4, ∞: oracle / POC refused | detector over-cutters accepted | uncharged detector groups refused |
+|---|---|---|---|---|
+| 0.60 | 10 / 26 | 10 / 24 | 0 | 5 |
+| 0.65 | 11 / 32 | 11 / 30 | 0 | 5 |
+| 0.70 | 12 / 35 | 12 / 33 | 0 | 5 |
+| 0.75 | 12 / 35 | 12 / 33 | 0 | 5 |
+| 0.80 | 14 / 41 | 14 / 39 | 0 | 6 |
+| 0.85 | 17 / 48 | 17 / 48 | 0 | 7 |
+| **0.90** | 17 / 48 | **17 / 48** | **0** | 7 |
+| exact | 17 / 48 | 17 / 48 | 0 | 7 |
+
+Gated over-cut is 0.00 s for the oracle, the detector and every POC run in
+every cell. So these three numbers alone say "lower the fuzzy bar" — and that
+is exactly the trap: the over-cut a loose bar causes is a *different word*
+accepted as the same, which neither the oracle (no different words) nor the
+detector's over-cutters (whole unique phrases) contains. Measured on the
+corpus's own vocabulary instead — the 617 distinct ≥ 4-char tokens of the three
+transcripts — distinct-word pairs matching at each bar: **767 at 0.6, 227 at
+0.7, 103 at 0.8** (`ever`/`never`, `changing`/`unchanging`,
+`difference`/`inference`, `anything`/`nothing`), **30 at 0.85**
+(`content`/`context`, `billions`/`millions`, `deciding`/`decoding`), **0 at
+0.9**; the most similar distinct pair is `generated`/`generates`, 0.889.
+
+**Chosen: `FUZZY_MATCH` = 0.9** — the loosest bar at which no two different
+words of this corpus match; the arm then forgives only near-identical spellings
+of long words. **`MAX_UNALIGNED_CONTENT_RUN` = 3** — the strictest value that
+costs nothing at any fuzzy setting (2 refuses two more POC groups at ≤ 0.8); at
+0.9 it decides no verdict on this corpus, so it stands for the shape its unit
+test builds, not for a measured case. Reproduce:
+`APELLES_RETAKE_GATE_SWEEP=1 cargo test -p apelles-speech --test retake_eval coverage_gate_sweep -- --nocapture`.
+
+### 11.4 The three pinned numbers
+
+1. **Oracle: 17 of 46 correct groups refused.** Every one is a cut-take word
+   the keeper does not literally hold — a mis-heard or mis-said word in the
+   flubbed delivery (`type`/`time`, `bin`/`bill`, `masses`/`message`,
+   `query`/`square`, `published`/`builds`), an inflection (`chips`/`chip`,
+   `agents`/`agent`, `processes`/`process`, `speculating`/`speculative`,
+   `mechanism`/`mechanics`), or words said only in the abandoned attempt that
+   the labels count as part of the retake (`never`, `repetitive … Constantly`,
+   `Attention. In simple terms,`).
+2. **Detector: 0 of its 6 over-cutting groups accepted**, and 7 uncharged ones
+   refused as well; its gated over-cut is **0.00 s** (ungated: 40.24 s).
+3. **The nine POC runs, gated: 0.00 s lost in every run.** Refused per run: 5 /
+   7 / 4 groups on C019 / C038 / C040. Retake recall:
+
+| run | C019 | C038 | C040 | ungated (D-379) |
+|---|---|---|---|---|
+| Opus run 1 | 0.407 | 0.291 | 0.309 | 0.585 / 0.733 / 0.742 |
+| Opus run 2 | 0.427 | 0.303 | 0.309 | 0.605 / 0.745 / 0.717 |
+| Sonnet run 1 | 0.388 | 0.298 | 0.303 | 0.567 / 0.720 / 0.725 |
+
+Every task now misses its recall check (0 / 3 pass), on recall alone — no gate
+fires.
+
+### 11.5 What it means for the next step
+
+The gate is safe on every measurement here and **expensive**: it refuses about
+a third of correct groups and roughly halves the clients' recall, almost
+entirely for words it cannot hear. Two things follow for the app + MCP pair
+(D-380 step 2), neither done here:
+
+- a refused group should reach the human as an **unverified** proposal with its
+  offending words, rather than vanish — the human can hear, the gate cannot;
+- the client can be told *why* (the refusal names words), so it can narrow a
+  take to exclude a trailing abandoned word and resubmit. Whether an inflection
+  rule (`chip`/`chips`, roughly four of the seventeen) is worth its risk is a separate,
+  measurable question for the same eval.

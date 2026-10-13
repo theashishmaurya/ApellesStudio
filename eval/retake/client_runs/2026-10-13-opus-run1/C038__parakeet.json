@@ -1,0 +1,17 @@
+{"groups": [
+{"line": "And here's the actual interesting part. Groq doesn't build chips for training AI models.", "takes": [{"first": 28, "last": 30}, {"first": 31, "last": 36}, {"first": 37, "last": 47}, {"first": 48, "last": 61}], "keep": 3, "note": "Three false starts before the full, fluent line."},
+{"line": "A few months later,", "takes": [{"first": 78, "last": 81}, {"first": 82, "last": 85}, {"first": 86, "last": 89}], "keep": 2, "note": "Phrase said three times; the last flows into the sentence."},
+{"line": "They split their own AI chip line,", "takes": [{"first": 94, "last": 100}, {"first": 101, "last": 107}], "keep": 1, "note": "Second take continues into 'the TPU into two products'."},
+{"line": "and the trick being used to bring that cost back down", "takes": [{"first": 235, "last": 243}, {"first": 244, "last": 249}, {"first": 250, "last": 259}, {"first": 263, "last": 273}], "keep": 3, "note": "Several flubbed attempts; the take after 'cut from here' is clean."},
+{"line": "People use these words", "takes": [{"first": 305, "last": 307}, {"first": 308, "last": 311}], "keep": 1, "note": "False start 'people use this' restarted."},
+{"line": "It's expensive for sure, but it's a one-time bill only.", "takes": [{"first": 361, "last": 371}, {"first": 372, "last": 381}], "keep": 1, "note": "Identical line said twice; second is cleaner."},
+{"line": "Inference is everything after that. It's the model actually being used.", "takes": [{"first": 382, "last": 384}, {"first": 385, "last": 392}, {"first": 393, "last": 397}, {"first": 398, "last": 408}, {"first": 409, "last": 419}], "keep": 4, "note": "Repeated attempts; the final take is complete in one go."},
+{"line": "It's kind of like a chaiwala", "takes": [{"first": 434, "last": 436}, {"first": 437, "last": 442}], "keep": 1, "note": "False start 'It's like I' restarted."},
+{"line": "But the real reason it's this expensive is something else entirely.", "takes": [{"first": 560, "last": 571}, {"first": 572, "last": 578}, {"first": 579, "last": 590}], "keep": 2, "note": "Last take is the only complete one."},
+{"line": "These models don't write your answer all at once. They write it", "takes": [{"first": 597, "last": 608}, {"first": 609, "last": 620}], "keep": 1, "note": "Second take continues into the full explanation."},
+{"line": "That's an enormous amount of work happening", "takes": [{"first": 678, "last": 686}, {"first": 687, "last": 693}], "keep": 1, "note": "Restarted line; second take continues the sentence."},
+{"line": "for every single response for every single user at the same time", "takes": [{"first": 694, "last": 700}, {"first": 701, "last": 712}], "keep": 1, "note": "First attempt trails off; second completes it."},
+{"line": "And the third one is called speculative decoding", "takes": [{"first": 952, "last": 968}, {"first": 970, "last": 977}], "keep": 1, "note": "Stumbling over 'speculative'; clean take after 'Okay'."},
+{"line": "So quick recap. Training cost is the one time thing", "takes": [{"first": 1100, "last": 1109}, {"first": 1110, "last": 1119}], "keep": 1, "note": "Second take continues into the rest of the recap."},
+{"line": "And subscribe if you want more of this. The actual economy and mechanism behind AI, not just what it can do.", "takes": [{"first": 1240, "last": 1260}, {"first": 1261, "last": 1283}, {"first": 1284, "last": 1289}, {"first": 1290, "last": 1295}], "keep": 0, "note": "First take is fluent; later ones stutter on 'mechanics' and repeat the tag."}
+]}
