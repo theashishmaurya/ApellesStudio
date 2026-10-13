@@ -60,12 +60,14 @@ and D-319 for why the version is pinned.
 cargo test -p apelles-speech
 ```
 
-93 tests, no model required — `tests/real_model_output.rs` replays a probability
+99 tests, no model required — `tests/real_model_output.rs` replays a probability
 track captured from the real model over a real speech clip, `retake.rs` carries
 the real six transcript segments from **B-198** as a regression test,
 `tests/real_transcripts.rs` and `tests/proposed_cuts.rs` run the detector over
 whole verbatim transcripts of the owner's own camera originals (plain JSON — no
-model, no audio, no network), and
+model, no audio, no network), `tests/retake_eval.rs` scores those same runs
+against hand-labelled ground truth in `eval/retake/` (**D-378** — the measurement
+any change to `retake.rs` is judged on), and
 `dark.rs`'s fixtures are shaped like real speech (five utterances separated by
 real pauses, because a fixture that is one continuous span has no *other*
 utterance to calibrate the amplitude floor against).

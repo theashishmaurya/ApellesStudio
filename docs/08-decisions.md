@@ -6,9 +6,113 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-378 — The retake detector gets a labelled eval: ground truth in source seconds, a Rust scorer that calls the real detector, and a gate that a silent detector cannot pass
+
+**Status: `decided`** (2026-10-13). Data: `eval/retake/` (its README is the
+spec — schema, labelling rules, every metric). Scorer:
+`crates/apelles-speech/tests/retake_eval.rs`. First run's findings feed
+**B-246** and put **D-377**'s deciding number up for revisit.
+
+**Context.** The retake detector has been declared fixed three times, and each
+time the green number measured something adjacent to the cut (B-198 → B-237 →
+B-238 → B-246; `retake-detection.md` §4, §6, §8). D-377's audit was the best yet
+and is still a *proxy*: `word_overlap` of each proposed utterance against the
+kept take, per utterance, with no ground truth — so it cannot measure recall at
+all, and B-246's fix is explicitly blocked on measuring its recall cost
+(`docs/04-roadmap.md`). Before anyone changes `retake.rs` again, there has to be
+a measurement that knows what the right cut *is*.
+
+**Options.**
+1. *Extend `proposed_cuts.rs`'s proxy.* Cheap, and still no ground truth: it
+   cannot say what was missed, and (found below) it waves through unique speech
+   whenever shared function words or a shared tail lift an utterance over 0.5.
+2. *A scorer in `eval/` next to `score.mjs`.* Matches the existing harness's
+   home, but the detector is Rust; a JS scorer would either re-implement it or
+   shell out, and `eval/`'s own big caveat is exactly an approximate operator
+   making its absolute scores meaningless.
+3. **Hand-labelled ground truth as data in `eval/retake/`, scored by a Rust
+   integration test that calls the real `detect_retakes`.**
+
+**Choice: option 3**, with these design decisions, each in the README:
+
+- **Labels are in source-audio seconds, never segment indices.** Measured, the
+  two backends agree ~90 % on the words (90.3 / 90.2 / 89.6 % word-sequence
+  agreement on C019 / C038 / C040) and differ markedly on segmentation (45 vs 83,
+  87 vs 126, 58 vs 83 segments). Index labels would only ever score one backend
+  and would let the eval mistake a segmentation difference for a quality one. So
+  one label file scores Whisper, Parakeet and any later backend.
+- **Closure:** inside `labelled_span`, anything that is not a labelled delivery
+  or `neutral` is unique content, so a label file need not enumerate the 90 % of
+  a video said once, and cutting any of it is over-cutting.
+- **Expressibility:** a repeat is labelled only where a whole-utterance cut in
+  some reading could remove it without unique speech riding along;
+  sub-segment stutters stay unique content (`retake-detection.md` §2's limit).
+- **The gate is the metric that matters.** `over_cut_secs` and
+  `protected_secs_cut` are gates (max 0.0) that zero a task regardless of score —
+  D-318's one-directional rule stated as an outcome. Precision / recall /
+  group recall / keeper agreement are scored checks. Undefined ratios (nothing
+  proposed) are *failures*, not 1.0.
+- **Non-vacuity is tested, not asserted:** a null detector (cuts nothing) and a
+  greedy one (cuts every utterance) are run against every task and must fail;
+  each real source must carry ≥ 5 groups and ≥ 20 s of redundant speech, with
+  `neutral` capped at 10 %; the nine silent B-roll sources are deliberately not
+  tasks. A synthetic control set (`bad_examples/`, four cases) has answers true
+  by construction — one of them, B-246's shape, is pinned `expect: "fail"`.
+- **Verdicts and numbers are pinned:** each task's `expect` and the full
+  `baseline.json` must match, so neither a fix nor a regression can land
+  without a reviewed diff.
+- **Two rules the first run forced**, both measured: the *survivor* (whose cut
+  seconds are lost content) is the delivery with the smallest cut **fraction**,
+  not the most uncut seconds, because ranges carry their pauses and a padded
+  delivery otherwise "survives" on silence (C038: 5.64 s charged where ~1.2 s of
+  words was lost); and a **0.75 s boundary tolerance** for a lost run touching a
+  labelled edge, sized to the largest disagreement between two readings' timing
+  of the same boundary on this corpus (0.74 s), reported as its own
+  `boundary_slack_secs` column rather than dropped.
+- **No GUI and no MCP tool.** This is internal dev tooling, like `eval/`; it
+  measures the detector rather than offering a capability to a user, so
+  `CLAUDE.md`'s human-and-AI rule does not apply. A tool to *run* it is a later
+  pass if an agent tuning the detector needs one.
+
+**What could not be done: nobody listened to the audio.** The labels were drawn
+from the text of two (C019) or three (C038, C040) independent ASR readings of
+the same audio, never from detector output; every bound that rests on one
+reading or on a word-position estimate is flagged `approximate_*` or explained
+in a `note`.
+
+**What the first run found.** All eight corpus tasks fail the over-cut gate, on
+both backends; the three passing controls pass and B-246's control fails, as
+pinned. Every charged range was checked against the detector's own groups and
+is a real loss of words. Per backend, one transcript per source:
+
+| | content lost | of it protected | retake recall (C019 / C038 / C040) |
+|---|---|---|---|
+| mlx-whisper (C019 re-derived, C038/C040 pinned) | **60.40 s** | 6.18 s | 0.778 / 0.606 / 0.552 |
+| parakeet-tdt-0.6b-v3 | **46.48 s** | 35.54 s | 0.421 / 0.568 / 0.653 |
+
+That does **not** reproduce D-377's 10.5× (5.42 s vs 56.92 s), because D-377's
+deciding column counted only one of three shapes of loss — utterances repeating
+nothing in their group. The eval also charges a **kept take that is a fragment**
+(the group cuts every complete delivery of a line and keeps a part of it —
+B-246's "straddled" class, which D-377 measured at 89.40 s / 56.92 s "absent
+from the keeper" and left out), and **unique speech `word_overlap` waved
+through** (shared function words or a shared tail lifting a mixed utterance over
+0.5). Parakeet still loses far more *named* content (35.54 s protected vs
+6.18 s); Whisper loses more in total. **The default does not move in this
+pass** — this decision is the measurement, not a re-run of D-377 — but D-377's
+stated reason no longer holds as written, so it is marked `revisit`, to be
+re-decided on this eval in the same pass as B-246's fix.
+
+---
+
 ## D-377 — Whisper stays the default ASR, because Parakeet's longer segments turn the retake detector's over-claimed cuts from 5.42 s into 56.92 s
 
-**Status: `decided`** (2026-10-10). This is **D-374 step 4**, the step D-374
+**Status: `revisit`** — decided 2026-10-10; put up for revisit 2026-10-13 by
+**D-378**, whose labelled eval charges two shapes of lost content this
+decision's deciding column left out and does not reproduce its 10.5× (on
+content lost: Whisper 60.40 s, Parakeet 46.48 s; protected content: 6.18 s vs
+35.54 s). The default stays Whisper until B-246's fix pass re-decides it on that
+eval. This is **D-374 step 4**, the step D-374
 itself called "the expensive one and not optional". Detail and the full sweep:
 `docs/notes/retake-detection.md` §8 and
 `docs/notes/asr-backends-and-harness.md` §4.2. Measurement:

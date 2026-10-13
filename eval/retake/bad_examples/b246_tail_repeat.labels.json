@@ -1,0 +1,30 @@
+{
+  "$schema_note": "Synthetic. See eval/retake/README.md. The answer here is true by construction, not labelled from a reading.",
+  "source": "b246_tail_repeat",
+  "duration_secs": 29.0,
+  "labelled_span": [0.0, 29.0],
+  "what_it_is": "B-246's exact shape, isolated: a single-utterance take whose TAIL repeats the next delivery while its head is a complete, unique clause. Modelled on C019's real case (proposed_cuts.rs, whisper #50) with clean boundaries so it tests one mechanism and nothing else. There is no correct cut of segment #1; the only correct cut of this group is segment #2.",
+  "readings": ["synthetic — authored, not transcribed"],
+  "retakes": [
+    {
+      "id": "there-is-actually-a-name-for-this",
+      "line": "and there is actually a name for this",
+      "keeper": 0,
+      "keeper_confidence": "high",
+      "note": "Delivery 0 is the tail of a 12 s segment and is NOT separately cuttable; delivery 1 is its own segment and is. So the group is labelled (per README 'expressibility': at least one delivery must be separately cuttable) and the keeper is delivery 0 — keeping the instance that is welded to unique content and cutting the free-standing repeat is the only edit that loses nothing.",
+      "deliveries": [
+        { "start": 13.4, "end": 17.0, "approximate_start": true, "note": "the tail of segment #1" },
+        { "start": 18.0, "end": 22.0, "note": "segment #2, free-standing" }
+      ]
+    }
+  ],
+  "protected": [
+    {
+      "id": "monthly-invoice-clause",
+      "start": 5.0,
+      "end": 13.4,
+      "note": "'The per-token price goes down and the monthly invoice still goes up' — a complete clause, said once. Today's detector proposes deleting segment #1 whole, which takes all 8.4 s of this with it. That is B-246."
+    }
+  ],
+  "neutral": []
+}

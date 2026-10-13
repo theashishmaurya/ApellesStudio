@@ -2738,6 +2738,26 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       trade real catches for it, and `phrase_min_words: 0` zeroes it only by
       giving up 12 of Whisper's 25 groups. Pinned as a measurement by
       `proposed_cuts.rs::b246_the_cuts_that_repeat_nothing_are_exactly_these`.
+      **Judge the fix on `retake_eval.rs` (D-378), not on that proxy:** the
+      labelled eval finds two more shapes of lost speech the six-case count
+      misses (a kept take that is a fragment; unique speech `word_overlap`
+      waves through), and the obvious fix clears only the first. Done means
+      every corpus task in `eval/retake/tasks.json` flips to `expect: "pass"`
+      with its recall measured in the same baseline diff.
+    - ✅ **D-378 — a labelled eval for the retake detector** (2026-10-13).
+      `eval/retake/`: hand-labelled ground truth in source-audio seconds for
+      C019 / C038 / C040 (28 retake groups, 9 protected ranges), a 4-case
+      synthetic control set, 12 tasks with pinned `expect`s and a committed
+      `baseline.json`; scored by `crates/apelles-speech/tests/retake_eval.rs`
+      calling the real `detect_retakes`, with null and greedy reference
+      detectors proven to fail. First run: **all eight corpus tasks fail the
+      over-cut gate on both backends** — Whisper 60.40 s of content lost,
+      Parakeet 46.48 s (protected 6.18 s vs 35.54 s).
+    - ⬜ **Re-decide the ASR default on the eval** (D-377 is `revisit`). D-378
+      does not reproduce D-377's 10.5×, because D-377 counted one shape of loss
+      of three. In the same pass as B-246's fix, not before — today both
+      backends fail every corpus task, so the comparison is between two
+      failures.
     - ⬜ **Explain the fixture divergence, or re-baseline deliberately.**
       Re-transcribing C038/C040 with `mlx-whisper large-v3` today gives 126 and
       83 segments against the committed fixtures' 121 and 66 (D-377 §8.4). The

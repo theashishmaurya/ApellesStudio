@@ -990,3 +990,73 @@ across two different segmentations of the same two sources, which is what makes
 §8.2 a measurement rather than a property of one fixture vintage.
 
 ---
+
+---
+
+## 9. A labelled eval, and what it says about §8 (D-378, 2026-10-13)
+
+§4, §6 and §8 each ended with a green number that measured something adjacent to
+the cut. §8's is the best of them and is still a proxy — `word_overlap` per
+proposed utterance, no ground truth — so it cannot measure recall, which is
+exactly what B-246's fix is blocked on. **`eval/retake/` is the ground truth**,
+and `crates/apelles-speech/tests/retake_eval.rs` scores the real detector
+against it. The spec (label schema, labelling rules, every metric) is
+`eval/retake/README.md`; this section is the finding.
+
+### 9.1 What was labelled
+
+Three real sources, labelled in **source-audio seconds** from the text of two
+(C019) or three (C038, C040) independent ASR readings, never from detector
+output — 6, 13 and 9 retake groups; 40.1 s, 114.1 s and 133.8 s of redundant
+speech; 3, 3 and 3 protected ranges naming the material past defects proposed
+deleting. Nobody listened to the audio; bounds resting on one reading or on a
+word-position estimate are flagged `approximate_*`. Eight tasks (each backend's
+transcript of each source, plus the re-derived Whisper pair §8.4 committed) and
+four synthetic controls.
+
+### 9.2 The first run
+
+| task | over-cut | of it protected | retake recall | group recall |
+|---|---|---|---|---|
+| C019 / whisper (re-derived) | 23.32 s | 6.18 s | 0.778 | 0.833 |
+| C019 / parakeet | 26.64 s | 21.16 s | 0.421 | 0.833 |
+| C038 / whisper (pinned) | 13.16 s | 0.00 s | 0.606 | 0.846 |
+| C038 / whisper (re-derived) | 17.86 s | 0.00 s | 0.609 | 0.846 |
+| C038 / parakeet | 16.00 s | 10.54 s | 0.568 | 0.846 |
+| C040 / whisper (pinned) | 23.92 s | 0.00 s | 0.552 | 0.778 |
+| C040 / whisper (re-derived) | 29.10 s | 0.00 s | 0.695 | 0.778 |
+| C040 / parakeet | 3.84 s | 3.84 s | 0.653 | 1.000 |
+
+**Every corpus task fails the over-cut gate.** Every charged range was checked
+by hand against the detector's own groups, and every one is real speech lost —
+three shapes:
+
+1. **The take repeats nothing in its group** — §8.2's six, all present.
+2. **The kept take is a fragment.** §8.2's "straddled" row, worst case: the
+   group keeps a take holding part of the line and cuts every complete delivery
+   of the rest. C040's recap keeps *"by matching each word's query against every
+   other word's key"* and cuts both *"So, quick recap. Attention is the model
+   deciding how much to focus on each part of what you said"*. Recency picks
+   `keep`, and the most recent take is not always a whole one.
+3. **`word_overlap` waves unique speech through.** An utterance half made of
+   shared function words, or carrying a shared tail, clears 0.5 while its head is
+   said once: C019 Whisper #37 loses *"about an 80% cut from one structural
+   change"* that way. §8's audit cannot see this; it is the measurement's own
+   blind spot, not a new detector behaviour.
+
+Two scorer rules came out of checking those ranges, both measured (README): the
+survivor is chosen by smallest cut **fraction**, because ranges carry their
+pauses; and a **0.75 s boundary tolerance**, the largest timing disagreement
+between two readings of one boundary on this corpus, reported as its own column.
+
+### 9.3 What it does to §8's decision
+
+On content lost, one transcript per source: **Whisper 60.40 s, Parakeet
+46.48 s.** On *protected* content: **6.18 s vs 35.54 s.** §8.2's 10.5× came
+from counting shape 1 only, which is where Parakeet's long segments hurt most;
+shapes 2 and 3 fall harder on Whisper. Neither backend is clean and neither
+number alone is the decision — so D-377 is marked `revisit`, and the default
+stays Whisper until B-246's fix pass re-decides it on this eval. That pass must
+read its result here, not in `proposed_cuts.rs`: `MIN_UTTERANCE_OVERLAP` on
+single-utterance takes would clear shape 1 and leave 2 and 3.
+

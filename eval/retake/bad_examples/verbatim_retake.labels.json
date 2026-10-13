@@ -1,0 +1,29 @@
+{
+  "$schema_note": "Synthetic. See eval/retake/README.md. The answer here is true by construction.",
+  "source": "verbatim_retake",
+  "duration_secs": 20.0,
+  "labelled_span": [0.0, 20.0],
+  "what_it_is": "A genuine verbatim retake that MUST be cut. This is the case that stops a detector winning the gate by proposing nothing: a null detector passes over_cut_secs and protected_secs_cut trivially and fails every check here.",
+  "readings": ["synthetic — authored, not transcribed"],
+  "retakes": [
+    {
+      "id": "why-your-prompt-gets-half-ignored",
+      "line": "Today I want to talk about why your prompt gets half ignored.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "deliveries": [
+        { "start": 0.0, "end": 7.0 },
+        { "start": 7.0, "end": 14.2 }
+      ]
+    }
+  ],
+  "protected": [
+    {
+      "id": "the-attention-line",
+      "start": 14.2,
+      "end": 20.0,
+      "note": "'It comes down to one mechanism, and that mechanism is called attention.' Said once — the next sentence must not be swept in."
+    }
+  ],
+  "neutral": []
+}

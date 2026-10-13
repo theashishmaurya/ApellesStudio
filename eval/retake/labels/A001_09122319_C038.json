@@ -1,0 +1,198 @@
+{
+  "$schema_note": "See eval/retake/README.md for the schema and the labelling rules. Every time is SOURCE-AUDIO seconds, so these labels score any backend's transcript of this file. Labelled from the transcript text of three independent readings of the same audio (mlx-whisper large-v3 pinned fixture, mlx-whisper large-v3 re-derived, parakeet-tdt-0.6b-v3) and NEVER from detect_retakes output. The two Whisper readings are segment-for-segment identical up to 954.82 s and differ only in the outro, so for most of this file there are effectively two readings, not three.",
+  "source": "A001_09122319_C038",
+  "duration_secs": 989.5,
+  "labelled_span": [0.0, 989.5],
+  "what_it_is": "The inference-cost explainer (Nvidia / Groq / Google TPU). The footage behind B-237, D-365 and most of B-238.",
+  "readings": [
+    "crates/apelles-speech/tests/fixtures/A001_09122319_C038.json (mlx-whisper large-v3, the pinned fixture, 121 segments)",
+    "crates/apelles-speech/tests/fixtures/transcripts/A001_09122319_C038.whisper.json (mlx-whisper large-v3 re-derived 2026-10-10, 126 segments)",
+    "crates/apelles-speech/tests/fixtures/transcripts/A001_09122319_C038.parakeet.json (parakeet-tdt-0.6b-v3, 87 segments)"
+  ],
+  "retakes": [
+    {
+      "id": "c038-heres-the-actually-interesting-part",
+      "line": "And here's the actually interesting part: Groq doesn't build chips for training AI models.",
+      "keeper": 2,
+      "keeper_confidence": "high",
+      "deliveries": [
+        { "start": 28.82, "end": 34.0, "note": "'and here's the / and here's the actual interesting part / grog doesn't build' — Parakeet splits the first two words off as their own attempt (#3)" },
+        { "start": 34.0, "end": 38.96, "note": "'What's the actual interesting part? Grog doesn't build chips for free.' — Parakeet only (#5); both Whisper readings hear nothing between 34.00 and 39.50" },
+        { "start": 39.5, "end": 45.44, "note": "complete" }
+      ]
+    },
+    {
+      "id": "c038-they-split-their-own-ai-chip-line",
+      "line": "They split their own AI chip line, the TPU, into two completely separate products.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "note": "Whisper gives delivery 0 its own segment (#13); Parakeet folds the whole run, including 'a few months later' x3, into one 14 s segment (#8).",
+      "deliveries": [
+        { "start": 89.38, "end": 91.62, "note": "'They split their own AI chip line.'" },
+        { "start": 91.62, "end": 94.7, "approximate_end": true, "note": "the head of whisper #14, before the unique 'the TPU into two completely separate products'" }
+      ]
+    },
+    {
+      "id": "c038-the-trick-being-used",
+      "line": "And the trick being used to bring that cost back down.",
+      "keeper": 2,
+      "keeper_confidence": "high",
+      "note": "B-238 / D-366's own run, and the source of the glued_anchor_unique_head control. Whisper hears two deliveries and welds the first onto 'it so expensive' (#30); Parakeet hears three and ends the second on a spoken editor instruction. Delivery 0's start is estimated, and the later of the two readings' estimates is used so 'it so expensive' stays unique content (rule 3).",
+      "deliveries": [
+        { "start": 213.1, "end": 216.52, "approximate_start": true, "note": "'and the trick behind use to bring that cost'" },
+        { "start": 216.52, "end": 223.3, "approximate_end": true, "note": "'and trick being used to bring, and tricks being used to bring that cost back down' — Parakeet #18 before 'Cut from here'" },
+        { "start": 225.52, "end": 230.16, "note": "complete" }
+      ]
+    },
+    {
+      "id": "c038-its-expensive-for-sure",
+      "line": "It's expensive for sure, but it's a one-time bill only.",
+      "keeper": 1,
+      "keeper_confidence": "low",
+      "note": "Two verbatim deliveries, each its own segment in Parakeet (#27, #28). Identical text, so which one a human keeps is arbitrary.",
+      "deliveries": [
+        { "start": 304.4, "end": 314.4 },
+        { "start": 314.4, "end": 317.84 }
+      ]
+    },
+    {
+      "id": "c038-inference-is-everything-after-that",
+      "line": "Inference is everything after that. It's the model actually being used.",
+      "keeper": 2,
+      "keeper_confidence": "low",
+      "note": "Whisper segments all three cleanly (#41 | #42-#43 | #44-#45). Parakeet's timings disagree with Whisper's by up to 3 s here and it runs deliveries 1 and 2 together in #32, so only a Whisper transcript can separate them. Delivery 1 ('actually being used') is arguably the better read than delivery 2 ('being actually used'), so the keeper is low confidence.",
+      "deliveries": [
+        { "start": 321.76, "end": 333.68, "note": "the false starts — 'Inference is a / inference everything that's / ...inference is everything'" },
+        { "start": 333.68, "end": 339.52, "note": "complete" },
+        { "start": 339.52, "end": 344.76, "note": "complete, and the one the speaker moves on from" }
+      ]
+    },
+    {
+      "id": "c038-the-real-reason-its-this-expensive",
+      "line": "But the real reason it's this expensive is something else entirely.",
+      "keeper": 2,
+      "keeper_confidence": "high",
+      "note": "Three deliveries that every reading runs together across two segments, so all three internal boundaries are estimated. The group's outer bounds are real: whisper #56 starts at 426.28 and parakeet #41 ends at 440.32. A whole-utterance cut of whisper #56 loses nothing; parakeet #40 is B-246's C038 #40 case, because its head is the protected line below.",
+      "deliveries": [
+        { "start": 426.28, "end": 430.4, "approximate_end": true, "note": "'but the real reason is this expensive is something else entirely'" },
+        { "start": 430.4, "end": 433.3, "approximate_start": true, "approximate_end": true, "note": "'but the real reason it's this expensive'" },
+        { "start": 433.3, "end": 440.32, "approximate_start": true, "note": "'the real reason of this being this expensive is something else entirely' — complete" }
+      ]
+    },
+    {
+      "id": "c038-these-models-dont-write-your-answer",
+      "line": "These models don't write your answer all at once. They write it one word at a time.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "note": "Parakeet only. Both Whisper readings hear the line once (#59 then #60 straight on), so a Whisper transcript cannot express this group — a recall miss there is the ASR's, not the detector's.",
+      "deliveries": [
+        { "start": 458.4, "end": 464.88, "note": "parakeet #43, 'These models don't write your answer all at once. They write it.'" },
+        { "start": 464.88, "end": 469.3, "approximate_end": true, "note": "the head of parakeet #44" }
+      ]
+    },
+    {
+      "id": "c038-an-enormous-amount-of-work",
+      "line": "That's an enormous amount of work happening...",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "deliveries": [
+        { "start": 528.5, "end": 535.16, "note": "'That's an enormous amount of repetitive work happening. Constantly,' — abandoned" },
+        { "start": 535.16, "end": 538.0, "approximate_end": true, "note": "the head of parakeet #51 / whisper #67-#68" }
+      ]
+    },
+    {
+      "id": "c038-for-every-single-response",
+      "line": "...for every single response, for every single user at the same time.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "note": "Nested inside the previous line's second delivery: the speaker restarts mid-sentence. Delivery 0 ends where parakeet #51 and whisper #68 both end, so a whole-utterance cut of either is content-safe (the previous group's delivery 0 still carries 'that's an enormous amount of work happening').",
+      "deliveries": [
+        { "start": 538.0, "end": 541.6, "approximate_start": true, "approximate_end": true, "note": "'for every single response for every single'" },
+        { "start": 541.6, "end": 545.2, "approximate_start": true, "approximate_end": true, "note": "the head of parakeet #52 / whisper #69, before the unique 'user at the same time'" }
+      ]
+    },
+    {
+      "id": "c038-the-third-one-is-speculative-decoding",
+      "line": "And the third one is called speculative decoding, and it's kind of clever.",
+      "keeper": 2,
+      "keeper_confidence": "high",
+      "note": "Three attempts and an 'okay', run across two segments in every reading, so the internal bounds are estimated. Delivery 0 starts on a real boundary in both readings (whisper #94, parakeet #65).",
+      "deliveries": [
+        { "start": 718.32, "end": 722.9, "approximate_end": true, "note": "'and the third one called speculative, speculating'" },
+        { "start": 722.9, "end": 729.7, "approximate_start": true, "approximate_end": true, "note": "'and the third one's called speculating, speculative, speculative decoding. Okay,'" },
+        { "start": 729.7, "end": 736.16, "approximate_start": true, "note": "complete" }
+      ]
+    },
+    {
+      "id": "c038-so-quick-recap",
+      "line": "So, quick recap: training cost is the one-time thing that grabs the headline.",
+      "keeper": 2,
+      "keeper_confidence": "high",
+      "note": "The readings each hear a different subset. Whisper hears an attempt at 848.32 that Parakeet drops, and then stretches one 'So, quick recap' across 852.10-868.02, where Parakeet hears two (#75, #76).",
+      "deliveries": [
+        { "start": 848.32, "end": 852.1, "note": "'So quick recap,' — Whisper only (#105)" },
+        { "start": 852.1, "end": 862.16, "note": "'So quick recap. Training cost is the one time thing.' — Parakeet #75" },
+        { "start": 862.16, "end": 867.0, "approximate_end": true, "note": "the head of parakeet #76, complete" }
+      ]
+    },
+    {
+      "id": "c038-subscribe-if-you-want-more-of-this",
+      "line": "And subscribe if you want more of this — the actual economics and mechanics behind AI.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "note": "The outro, twice. Its 'not just what it can do' tag is its own group below, because the speaker repeats it four times, not twice.",
+      "deliveries": [
+        { "start": 955.88, "end": 963.68, "note": "starts where parakeet #84 ('I will drop it in the corner.') ends" },
+        { "start": 967.2, "end": 974.32 }
+      ]
+    },
+    {
+      "id": "c038-not-just-what-it-can-do",
+      "line": "...not just what it can do.",
+      "keeper": 3,
+      "keeper_confidence": "low",
+      "note": "Four times: once closing each outro delivery, then twice more. The re-derived Whisper reading gives every one its own segment (#119, #122, #123, #124); the pinned fixture and Parakeet weld them into longer segments. Any one surviving keeps the content; which one is a style call.",
+      "deliveries": [
+        { "start": 963.68, "end": 967.2 },
+        { "start": 974.32, "end": 976.27 },
+        { "start": 976.27, "end": 977.73 },
+        { "start": 977.73, "end": 979.64 }
+      ]
+    }
+  ],
+  "protected": [
+    {
+      "id": "c038-cold-open",
+      "start": 2.04,
+      "end": 21.44,
+      "note": "'In December of last year, Nvidia made the single biggest deal in its entire history. $20 billion in cash to license technology from a company called Groq.' The video's hook, said once. B-238's original report was the detector proposing it for deletion."
+    },
+    {
+      "id": "c038-today-i-want-to-show-you",
+      "start": 204.28,
+      "end": 210.26,
+      "note": "'Today I actually want to show you why that's true, what's happening technically that makes...' Said once. The setup line D-366's anchor guard exists to protect, and the head of B-246's Parakeet #17 (11.36 s)."
+    },
+    {
+      "id": "c038-costing-more-than-training",
+      "start": 421.0,
+      "end": 426.28,
+      "note": "'Which already tells you why it can end up costing more than training.' Said once. The head of B-246's Parakeet #40 (14.52 s), whose tail is the next group."
+    }
+  ],
+  "neutral": [
+    {
+      "start": 223.3,
+      "end": 225.52,
+      "reason": "aside",
+      "note": "'Cut from here' — a spoken editor instruction (D-374 noted Parakeet catches it and Whisper drops it)."
+    },
+    {
+      "start": 913.2,
+      "end": 915.04,
+      "reason": "aside",
+      "note": "'Well, you know.' — Parakeet only."
+    }
+  ],
+  "unlabelled_rationale": "Everything inside labelled_span that is not a delivery and not neutral is unique content. Known repeats deliberately NOT labelled as deliveries, because the repeated material is a sub-segment fragment in every reading (README, 'expressibility'): 'a few months later' x3 at ~84 s (one segment in every reading), 'people use this / people use these words' at ~274 s (the first is the tail of a segment whose head is unique), and the 'it's like I, it's kind of like', 'they bundle it with a, they bundle it with', 'all / all exist', 'mechanics and mechanics' stutters. Also not labelled: Whisper's boundary-duplicated words ('models.', 'jobs.', 'them.', 'down.', 'brutal.', 'line,', 'change') and its two 0.3 s 'friends.' hallucinations — each is one word, below min_words, and nothing proposes them."
+}

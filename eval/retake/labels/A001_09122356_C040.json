@@ -1,0 +1,136 @@
+{
+  "$schema_note": "See eval/retake/README.md for the schema and the labelling rules. Every time is SOURCE-AUDIO seconds, so these labels score any backend's transcript of this file. Labelled from the transcript text of three independent readings of the same audio (mlx-whisper large-v3 pinned fixture, mlx-whisper large-v3 re-derived, parakeet-tdt-0.6b-v3) and NEVER from detect_retakes output.",
+  "source": "A001_09122356_C040",
+  "duration_secs": 686.0,
+  "labelled_span": [0.0, 686.0],
+  "what_it_is": "The attention / self-attention explainer. The footage behind B-198, D-327 and part of B-238.",
+  "readings": [
+    "crates/apelles-speech/tests/fixtures/A001_09122356_C040.json (mlx-whisper large-v3, the pinned fixture, 66 segments)",
+    "crates/apelles-speech/tests/fixtures/transcripts/A001_09122356_C040.whisper.json (mlx-whisper large-v3 re-derived 2026-10-10, 83 segments)",
+    "crates/apelles-speech/tests/fixtures/transcripts/A001_09122356_C040.parakeet.json (parakeet-tdt-0.6b-v3, 58 segments)"
+  ],
+  "retakes": [
+    {
+      "id": "c040-attention-in-simple-terms",
+      "line": "Attention. In simple terms, it's just the model deciding, for every word it's about to write, how much to focus on each word you give it.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "deliveries": [
+        { "start": 45.12, "end": 65.46, "note": "first delivery; ends '...each word you give. Okay.'" },
+        { "start": 79.28, "end": 94.96, "note": "second, complete delivery — '...each word you gave it.'" }
+      ]
+    },
+    {
+      "id": "c040-glancing-back",
+      "line": "If one part of your message gets less of that glancing back than the others, the model just underweighs it.",
+      "keeper": 4,
+      "keeper_confidence": "high",
+      "note": "Five attempts. The pinned Whisper fixture collapses attempts 2-3 into one 19 s segment and the re-derived one splits them differently again; Parakeet's gaps are what make the five visible. This is B-198 / D-327's own run.",
+      "deliveries": [
+        { "start": 129.64, "end": 138.06, "note": "truncated at '...the model just'" },
+        { "start": 138.06, "end": 152.12, "note": "complete; runs to the next attempt across 1.8 s that Parakeet hears as silence and the re-derived Whisper #19 spans (rule 1)" },
+        { "start": 152.12, "end": 166.84, "note": "'...the model just waves it, the model just underweighs it. Okay, underweighs it.'" },
+        { "start": 166.84, "end": 172.84, "note": "truncated at '...glancing back, then'" },
+        { "start": 172.84, "end": 188.86, "note": "complete, and the one the speaker moves on from" }
+      ]
+    },
+    {
+      "id": "c040-scanning-back-through-the-last-ten",
+      "line": "You're not just looking at the last message, you are scanning back through the last 10 to figure out who's actually being asked.",
+      "keeper": 1,
+      "keeper_confidence": "low",
+      "note": "The boundary between the two attempts falls inside a segment in every reading (Parakeet puts both in one 14 s segment). 239.12 is the nearest real segment boundary and is marked approximate; which attempt a human would keep is therefore also uncertain, so this group is excluded from keeper_agreement.",
+      "deliveries": [
+        { "start": 231.18, "end": 239.12, "approximate_end": true },
+        { "start": 239.12, "end": 253.12, "approximate_start": true, "note": "'You are is— you're not actually looking at the last message...' — carries the stumble but finishes the line" }
+      ]
+    },
+    {
+      "id": "c040-self-attention-for-every-word",
+      "line": "Self-attention is the model doing that for every word, constantly.",
+      "keeper": 2,
+      "keeper_confidence": "high",
+      "deliveries": [
+        { "start": 259.46, "end": 264.16, "note": "truncated at '...doing that for—'" },
+        { "start": 264.16, "end": 269.20, "note": "'...for every word' then 'constantly'" },
+        { "start": 269.20, "end": 281.20, "note": "complete" }
+      ]
+    },
+    {
+      "id": "c040-every-word-turns-itself-into-a-question",
+      "line": "Every word turns itself into a question. It's a query.",
+      "keeper": 2,
+      "keeper_confidence": "high",
+      "note": "Delivery 1 stumbles through 'every word turns into / every word turns into itself / every word turns itself into a'; only Parakeet and the re-derived Whisper show it as more than one attempt.",
+      "deliveries": [
+        { "start": 289.38, "end": 297.12 },
+        { "start": 297.12, "end": 300.16, "note": "'every word turns.' — a clipped false start" },
+        { "start": 300.16, "end": 304.52, "note": "complete" }
+      ]
+    },
+    {
+      "id": "c040-real-computation-underneath-checking-in",
+      "line": "That's the real computation underneath that checking in, and it's got a name: query, key, value attention.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "deliveries": [
+        { "start": 337.98, "end": 341.00, "approximate_start": true, "note": "the readings disagree by 0.6 s on where the previous sentence ends; the later bound is used so the unique sentence is protected" },
+        { "start": 341.00, "end": 347.64, "note": "complete, and carries the name" }
+      ]
+    },
+    {
+      "id": "c040-encoder-reads-your-whole-message",
+      "line": "The encoder reads your whole message once and builds a rich picture of it using the same self-attention.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "note": "The re-derived Whisper transcript misses delivery 1 entirely (a dark region, D-349); the pinned Whisper fixture and Parakeet both have it.",
+      "deliveries": [
+        { "start": 365.48, "end": 371.50, "note": "'...once and published a build' — a false start" },
+        { "start": 371.50, "end": 392.12, "note": "complete" }
+      ]
+    },
+    {
+      "id": "c040-quick-recap",
+      "line": "So quick recap. Attention is the model deciding how much to focus on each part of what you said, by matching each word's query against every other word's key.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "deliveries": [
+        { "start": 568.38, "end": 586.76 },
+        { "start": 586.76, "end": 597.96 }
+      ]
+    },
+    {
+      "id": "c040-encoder-builds-a-picture",
+      "line": "The encoder builds a picture of what your message is. The decoder writes the reply while constantly glancing back at it.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "note": "Delivery 1 runs off the rails mid-way ('...while constantly, while constantly, the encoder builds a picture of what your message') and is restarted. The pinned Whisper fixture shows none of that; it reads as one clean pair of sentences over 606.32-633.78.",
+      "deliveries": [
+        { "start": 606.32, "end": 620.68 },
+        { "start": 620.68, "end": 632.88, "note": "complete" }
+      ]
+    }
+  ],
+  "protected": [
+    {
+      "id": "c040-cold-open",
+      "start": 0.0,
+      "end": 14.12,
+      "note": "The video's own hook — 'Have you ever given an AI three things to do in one message? ... and it does the first two and just skips the third?' Said once. Named because B-238's equivalent on C038 was proposed for deletion."
+    },
+    {
+      "id": "c040-answer-key-half-of-the-query-key-contrast",
+      "start": 304.52,
+      "end": 310.48,
+      "note": "'Every other word turns itself into a kind of answer key, advertising what it's about.' This is the OTHER half of a deliberate parallel construction, and D-365's one known false positive pairs it with 'Every word turns itself into a question' (real_transcripts.rs::the_one_measured_false_positive_is_this_one, pair 30/32). It is unique content and must never be cut."
+    },
+    {
+      "id": "c040-less-read-than-write",
+      "start": 429.78,
+      "end": 438.96,
+      "note": "'It's less — it's less read than write, and more read than write while constantly rechecking.' ONE sentence with a two-word stutter, not two deliveries: nothing here is said twice. B-246's C040 case proposes cutting 430.52-434.36 of it (proposed_cuts.rs, parakeet #36, 3.84 s)."
+    }
+  ],
+  "neutral": [],
+  "unlabelled_rationale": "Everything inside labelled_span that is not a delivery and not neutral is unique content: speech that exists nowhere else in this source, so proposing it for deletion is over-cutting. Known repeats deliberately NOT labelled as deliveries, because the repeated material is a sub-segment fragment in every reading and a whole-utterance take cannot express it without taking unique speech with it (see README, 'expressibility'): 'for watching / for watching' at ~681 s (two words), the 'A few months later' class of one-word mid-sentence corrections, and 'Jevons paradox' style emphatic repetition."
+}

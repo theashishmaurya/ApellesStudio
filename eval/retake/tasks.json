@@ -1,0 +1,255 @@
+{
+  "$comment": "Apelles retake / edit-decision eval — the task set. A task is data (D-378, mirroring D-035's eval/tasks.json vocabulary: id / description / goal.checks[].metric with max|min / gates[]). The scorer is crates/apelles-speech/tests/retake_eval.rs and calls the REAL detect_retakes. Paths are relative to the repo root. `params` overrides RetakeParams (absent = default). `expect` is pinned: a task that stops matching it fails the run, so neither a fix nor a regression can land silently. Metric definitions and the labelling rules: eval/retake/README.md.",
+  "$goal_rationale": "The limits are the GOAL, not today. cut_precision 1.0 and the two gates at 0.0 are D-318's one-directional rule: everything proposed for deletion must exist in what survives. retake_recall 0.5 / group_recall 0.6 are deliberately modest floors chosen so that (a) a null detector fails them outright, which is this harness's whole point, and (b) they do not demand recall the whole-utterance take model cannot express (docs/notes/retake-detection.md §2's honest limit). keeper_agreement 1.0 applies only to groups the labels marked keeper_confidence: high.",
+  "tasks": [
+    {
+      "id": "bad/b246_tail_repeat",
+      "description": "CONTROL, expected to FAIL. B-246's shape: a single-utterance take whose tail repeats the next delivery while its head is a complete unique clause. The only correct cut is the free-standing repeat; the detector cuts the long one instead.",
+      "input": {
+        "transcript": "eval/retake/bad_examples/b246_tail_repeat.transcript.json",
+        "labels": "eval/retake/bad_examples/b246_tail_repeat.labels.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 1.0 },
+          { "id": "groups", "metric": "group_recall", "min": 1.0 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
+      "id": "bad/verbatim_retake",
+      "description": "CONTROL, expected to pass. A genuine verbatim retake that MUST be cut — the case a detector cannot satisfy by proposing nothing.",
+      "input": {
+        "transcript": "eval/retake/bad_examples/verbatim_retake.transcript.json",
+        "labels": "eval/retake/bad_examples/verbatim_retake.labels.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.8 },
+          { "id": "groups", "metric": "group_recall", "min": 1.0 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "pass"
+    },
+    {
+      "id": "bad/glued_anchor_unique_head",
+      "description": "CONTROL, expected to pass. D-366 / B-238's shape: a unique setup line immediately before a genuine repeat, which a speculatively glued anchor would carry into the cut. Passes because D-366's anchor guard is genuinely fixed; fails against pre-D-366 code.",
+      "input": {
+        "transcript": "eval/retake/bad_examples/glued_anchor_unique_head.transcript.json",
+        "labels": "eval/retake/bad_examples/glued_anchor_unique_head.labels.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.8 },
+          { "id": "groups", "metric": "group_recall", "min": 1.0 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "pass"
+    },
+    {
+      "id": "bad/whisper_thank_you_hallucination",
+      "description": "CONTROL, expected to pass. Whisper's two verbatim 'Thank you.' phantoms on room tone, 27.3 s apart at similarity 1.000. Nothing may be proposed — min_words: 3 is the only thing stopping it.",
+      "input": {
+        "transcript": "eval/retake/bad_examples/whisper_thank_you_hallucination.transcript.json",
+        "labels": "eval/retake/bad_examples/whisper_thank_you_hallucination.labels.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "nothing", "metric": "proposed_secs", "max": 0.0, "slack": 3.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "pass"
+    },
+    {
+      "id": "C019/whisper-rederived",
+      "description": "The prompt-caching explainer (517 s), mlx-whisper large-v3 re-derived in D-377 — 83 segments. C019 has no pinned fixture; it entered the corpus in D-377 and was never tuned on. B-246's one Whisper case lives here.",
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/transcripts/A001_08302215_C019.whisper.json",
+        "labels": "eval/retake/labels/A001_08302215_C019.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
+      "id": "C019/parakeet",
+      "description": "The same 517 s of audio, parakeet-tdt-0.6b-v3 — 45 segments. Two of B-246's Parakeet cases live here.",
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/transcripts/A001_08302215_C019.parakeet.json",
+        "labels": "eval/retake/labels/A001_08302215_C019.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
+      "id": "C038/whisper-pinned",
+      "description": "The inference-cost explainer (989 s), mlx-whisper large-v3 — the fixture real_transcripts.rs pins, 121 segments.",
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/A001_09122319_C038.json",
+        "labels": "eval/retake/labels/A001_09122319_C038.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
+      "id": "C038/whisper-rederived",
+      "description": "The same 989 s of audio, mlx-whisper large-v3 re-derived in D-377 — 126 segments, identical to the pinned fixture up to 954.82 s and resegmented in the outro.",
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/transcripts/A001_09122319_C038.whisper.json",
+        "labels": "eval/retake/labels/A001_09122319_C038.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
+      "id": "C038/parakeet",
+      "description": "The same 989 s of audio, parakeet-tdt-0.6b-v3 — 87 segments. Two of B-246's Parakeet cases live here.",
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/transcripts/A001_09122319_C038.parakeet.json",
+        "labels": "eval/retake/labels/A001_09122319_C038.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
+      "id": "C040/whisper-pinned",
+      "description": "The attention explainer (686 s), mlx-whisper large-v3 — the fixture real_transcripts.rs pins, 66 segments.",
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/A001_09122356_C040.json",
+        "labels": "eval/retake/labels/A001_09122356_C040.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
+      "id": "C040/whisper-rederived",
+      "description": "The same 686 s of audio, mlx-whisper large-v3 re-derived in D-377 — 83 segments. Same labels, different segmentation: the point of anchoring labels to source time.",
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/transcripts/A001_09122356_C040.whisper.json",
+        "labels": "eval/retake/labels/A001_09122356_C040.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
+      "id": "C040/parakeet",
+      "description": "The same 686 s of audio, parakeet-tdt-0.6b-v3 — 58 segments. B-246's C040 case lives here.",
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/transcripts/A001_09122356_C040.parakeet.json",
+        "labels": "eval/retake/labels/A001_09122356_C040.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    }
+  ]
+}
