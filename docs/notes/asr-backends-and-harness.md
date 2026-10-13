@@ -453,13 +453,15 @@ Whisper's one violation is on C019, the source this pass added.
   descriptor.~~ **Done 2026-10-10 (D-375):** `BackendDescriptor` now carries
   `max_word_secs` (Whisper 2.0 s, Parakeet `None`), read by
   `harness.vad.dark_params_for`, which was the consumer whose absence kept the
-  field out. **What remains is the app side:** `chroma_detect_dark_regions`
-  still defaults to `DarkParams::default()`, i.e. Whisper's bound, because
-  nothing in the app knows which backend produced a cached transcript. Correct
-  today (Whisper is the default) and a real gap the day it is not. **Step 4
-  left it open on purpose** (D-377): the default did not move, so the app side
-  is still correct, and plumbing a per-transcript backend tag through the cache
-  to feed `max_word_secs` has no caller until it does.
+  field out. **The app-side gap is closed (2026-10-13):** with Whisper
+  decommissioned (D-381, pending) Parakeet is the only backend, so
+  `DarkParams::default().max_word_secs` is now `NO_WORD_LENGTH_BOUND_SECS`
+  (1e6 — the same constant and the same finite-not-`inf` reasoning as
+  `harness.profiles.NO_WORD_LENGTH_BOUND_SECS`) and
+  `chroma_detect_dark_regions` needs no per-transcript backend tag. Measured:
+  the detector still finds real Parakeet drops (21 stretches over C019 / C038 /
+  C040), so it stays — `docs/notes/whisper-dark-region-research.md`
+  "Parakeet, 2026-10-13".
 - **The harness has no caller above `transcribe.py`.** `ai-media/harness/` is
   a library with tests; no sidecar endpoint, no GUI control, no MCP tool runs
   it, so it does not yet have the human+AI pair `CLAUDE.md` requires. The

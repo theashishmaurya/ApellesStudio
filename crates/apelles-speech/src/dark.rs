@@ -1,34 +1,47 @@
 //! Dark regions — "there is speech here that nobody transcribed" (D-349, B-216).
 //!
 //! **What this is.** The cross-check between two signals the app already has
-//! and has never compared: the **transcript** (what Whisper read) and the
-//! **VAD** (where there is actually a voice). Where the second says *speech* and
-//! the first says *nothing*, a multi-second region of real, audible dialogue has
-//! been silently dropped. This module finds those regions.
+//! and has never compared: the **transcript** (what the ASR backend read) and
+//! the **VAD** (where there is actually a voice). Where the second says *speech*
+//! and the first says *nothing*, a multi-second region of real, audible dialogue
+//! has been silently dropped. This module finds those regions. It is
+//! **backend-agnostic**: it is handed word times and never learns which model
+//! produced them.
 //!
-//! **Why it has to exist at all.** Whisper's whole-file pass does not merely
-//! mis-hear such regions, it emits no tokens for them, inside a 30 s window it
-//! is otherwise decoding confidently — measured at temperature 0.0, with
-//! `no_speech_prob` 0.043-0.171 against a 0.6 threshold and `avg_logprob`
-//! -0.249 to -0.460 against a -1.0 threshold. Nothing in whisper's own
-//! machinery notices, so there is no error, no warning and no low-confidence
-//! score to filter on. Worse, the loss is **biased towards near-duplicate
-//! repeated material** — i.e. towards retakes, which is precisely what
-//! [`crate::retake`] exists to find. Rate on real footage: roughly one dropped
-//! multi-second region per three minutes of raw source, across two independent
-//! camera originals. The full trail, with every measurement:
-//! `docs/notes/whisper-dark-region-research.md`.
+//! **Why it has to exist at all.** The historical motivation is Whisper
+//! (removed by D-381): its whole-file pass did not merely mis-hear such regions,
+//! it emitted no tokens for them, inside a 30 s window it was otherwise decoding
+//! confidently — measured at temperature 0.0, with `no_speech_prob`
+//! 0.043-0.171 against a 0.6 threshold and `avg_logprob` -0.249 to -0.460
+//! against a -1.0 threshold. Nothing in the model's own machinery noticed, so
+//! there was no error, no warning and no low-confidence score to filter on.
+//! The loss was **biased towards near-duplicate repeated material** — i.e.
+//! towards retakes, which is precisely what [`crate::retake`] exists to find.
+//! Rate on real footage: roughly one dropped multi-second region per three
+//! minutes of raw source, across two independent camera originals. The full
+//! trail, with every measurement: `docs/notes/whisper-dark-region-research.md`.
 //!
-//! **The stretched word is the trap, and it is load-bearing here.** B-216's
-//! first formulation was "a stretch of ≥1.2 s with *no transcript word in it*".
-//! Taken literally that misses more than half the real cases, because the DTW
-//! alignment spreads the few tokens that *were* emitted across the hole — so the
-//! gap does contain a word, one word, 3-5 s long. A word longer than
-//! [`DarkParams::max_word_secs`] therefore contributes **no coverage**. That
-//! bound is whisper's own anomaly threshold for a too-long word
-//! (`mlx_whisper/transcribe.py`'s `if duration > 2.0`), not a number picked to
-//! fit: it took the candidate count from 2 to 4 on one real file and 4 to 9 on
-//! another.
+//! **It outlived Whisper because the failure is not Whisper's alone.**
+//! Parakeet — now the only backend — has the same *kind* of failure at a
+//! comparable or higher rate, in different places (measured 2026-10-13, same
+//! section of that note): on the same recordings it reads every window Whisper
+//! dropped, and drops others Whisper reads. The detector is the only check that
+//! sees it, so it stays, and it doubles as the harness's VAD cross-check
+//! (D-375).
+//!
+//! **The stretched word was Whisper's trap; Parakeet cannot spring it.**
+//! B-216's first formulation was "a stretch of ≥1.2 s with *no transcript word
+//! in it*". Against Whisper that missed more than half the real cases, because
+//! its DTW alignment spread the few tokens that *were* emitted across the hole —
+//! one word, 3-5 s long — so a word longer than [`DarkParams::max_word_secs`]
+//! had to contribute **no coverage**. The 2.0 s bound was Whisper's own anomaly
+//! threshold for a too-long word (`mlx_whisper/transcribe.py`'s
+//! `if duration > 2.0`). Parakeet's duration head caps a word's length, so no
+//! word can stretch across a hole and the bound has nothing to catch: the
+//! default is [`NO_WORD_LENGTH_BOUND_SECS`], "no word is too long". Its
+//! failure shape is instead a hole with *no* word in it (and, rarely, words
+//! collapsed to zero duration, which are not coverage either). A caller whose
+//! transcript can still stretch words passes a real bound.
 //!
 //! **What it does NOT do.** It does not transcribe, decode, read a file or load
 //! a model — it is handed word times, speech probabilities and an amplitude
@@ -40,8 +53,8 @@
 //!
 //! ## The algorithm, and why each part of it is here
 //!
-//! Every threshold below was scored over **111 labelled windows** — every
-//! uncovered stretch ≥1.2 s in two real sources, each one cut out,
+//! Every threshold below was scored over **111 labelled windows** of *Whisper*
+//! transcripts — every uncovered stretch ≥1.2 s in two real sources, each one cut out,
 //! re-transcribed in isolation and RMS-profiled to make ground truth rather than
 //! assume it.
 //!
@@ -99,6 +112,18 @@ impl WordSpan {
     }
 }
 
+/// [`DarkParams::max_word_secs`] meaning "no word is too long".
+///
+/// Finite rather than `f64::INFINITY` on purpose: the app's command guard
+/// (`chroma_detect_dark_regions`) requires every parameter finite and
+/// positive, the value is echoed back in the JSON result (`inf` is not
+/// representable there), and for any transcript a real backend can produce the
+/// two behave identically — no spoken word is a million seconds long. The same
+/// constant, for the same reason, as `NO_WORD_LENGTH_BOUND_SECS` in
+/// `ai-media/harness/profiles.py`, which is how Parakeet's descriptor
+/// `max_word_secs=None` reaches this crate.
+pub const NO_WORD_LENGTH_BOUND_SECS: f64 = 1.0e6;
+
 /// Tuning for [`detect_dark_regions`]. Every default is the measured
 /// recommendation from the 111-window scoring described in the module doc.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -106,10 +131,12 @@ impl WordSpan {
 pub struct DarkParams {
     /// A transcript word longer than this contributes **no coverage**.
     ///
-    /// 2.0 s is whisper's own anomaly bound for a too-long word, and the rule is
-    /// load-bearing rather than a refinement — see the module doc. Only 5 of 925
-    /// words in one real file and 16 of 1320 in another exceed it, so this is
-    /// not a blunt instrument.
+    /// Default [`NO_WORD_LENGTH_BOUND_SECS`] — the bound does not apply, because
+    /// the only backend (Parakeet) cannot stretch a word across a hole. For a
+    /// backend that can, the value is that backend's own anomaly bound: Whisper's
+    /// was 2.0 s, and for it the rule was load-bearing rather than a refinement
+    /// (see the module doc); only 5 of 925 words in one real file and 16 of
+    /// 1320 in another exceeded it, so it was not a blunt instrument.
     pub max_word_secs: f64,
     /// Flag an uncovered stretch once the VAD speech inside it **sums** to at
     /// least this. 1.2 s, on a measured plateau from 1.0 s to 1.5 s.
@@ -157,7 +184,7 @@ pub struct DarkParams {
 impl Default for DarkParams {
     fn default() -> Self {
         Self {
-            max_word_secs: 2.0,
+            max_word_secs: NO_WORD_LENGTH_BOUND_SECS,
             min_dark_secs: 1.2,
             min_region_secs: SilenceParams::default().min_speech_ms / 1000.0,
             rms_floor_scale: 1.0,
@@ -569,6 +596,19 @@ mod tests {
         out
     }
 
+    /// Whisper's too-long-word bound, the historical value the stretched-word rule
+    /// was measured with (D-349). Tests that exercise that rule pass it
+    /// explicitly, because the default is now "no bound" (Parakeet cannot
+    /// stretch a word).
+    const WHISPER_ANOMALY_WORD_SECS: f64 = 2.0;
+
+    fn whisper_params() -> DarkParams {
+        DarkParams {
+            max_word_secs: WHISPER_ANOMALY_WORD_SECS,
+            ..DarkParams::default()
+        }
+    }
+
     /// Every utterance except [`DARK`] — i.e. the transcript as whisper's
     /// whole-file pass actually returns it on this material.
     fn transcribed() -> Vec<(f64, f64)> {
@@ -622,7 +662,7 @@ mod tests {
 
     /// **The test that would have caught B-216's own wording being wrong.**
     ///
-    /// Same audio, same hole — except the DTW alignment has stretched one word
+    /// Same audio, same hole — except (Whisper's) DTW alignment has stretched one word
     /// across it, which is what actually happens on real footage (c038's
     /// ` down.` at 217.26-222.74 is 5.48 s for a single word). A detector that
     /// asks "is there a transcript word in this gap" sees one and reports
@@ -635,7 +675,7 @@ mod tests {
         words.push(word(DARK.0, DARK.1)); // one 3.0s "word"
         let rms = envelope(&UTTERANCES);
 
-        let r = detect_dark_regions(&input(&p, &words, &rms, 0.0), &DarkParams::default());
+        let r = detect_dark_regions(&input(&p, &words, &rms, 0.0), &whisper_params());
         assert_eq!(
             r.regions.len(),
             1,
@@ -648,7 +688,7 @@ mod tests {
         // precisely the failure being guarded against.
         let lenient = DarkParams {
             max_word_secs: 4.0,
-            ..DarkParams::default()
+            ..whisper_params()
         };
         assert!(
             detect_dark_regions(&input(&p, &words, &rms, 0.0), &lenient)
