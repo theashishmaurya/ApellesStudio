@@ -1,0 +1,24 @@
+{
+  "$schema_note": "Not synthetic: these two rows are VERBATIM from crates/apelles-speech/tests/fixtures/transcripts/A001_09091143_C030.whisper.json, mlx-whisper large-v3's real output on 60 s of room tone at -47 to -65 dBFS. The labels are true by construction anyway — there is no speech in this source, so nothing in it may be proposed for deletion.",
+  "source": "whisper_thank_you_hallucination",
+  "duration_secs": 60.0,
+  "labelled_span": [0.0, 60.0],
+  "what_it_is": "Whisper's familiar on-silence artifact, in the one configuration that reaches the detector: two VERBATIM 'Thank you.' phantoms 27.3 s apart, inside window_secs, scoring a perfect 1.000 similarity. The only thing stopping a phantom cut is RetakeParams::min_words — 'thank you' is two distinct words and the floor is three — which is a measured reason never to lower it (docs/notes/retake-detection.md §8.1). Nine such phantoms exist across five of the nine silent B-roll sources.",
+  "readings": ["crates/apelles-speech/tests/fixtures/transcripts/A001_09091143_C030.whisper.json"],
+  "retakes": [],
+  "protected": [
+    {
+      "id": "phantom-one",
+      "start": 0.0,
+      "end": 2.7,
+      "note": "Not speech at all. Proposing a cut here would ripple-delete a real B-roll shot on the strength of a hallucination."
+    },
+    {
+      "id": "phantom-two",
+      "start": 30.0,
+      "end": 30.76,
+      "note": "The verbatim repeat of phantom one, 27.3 s later — inside the detector's window at similarity 1.000."
+    }
+  ],
+  "neutral": []
+}

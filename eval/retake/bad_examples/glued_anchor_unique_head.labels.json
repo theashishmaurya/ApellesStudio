@@ -1,0 +1,35 @@
+{
+  "$schema_note": "Synthetic. See eval/retake/README.md. The answer here is true by construction.",
+  "source": "glued_anchor_unique_head",
+  "duration_secs": 30.5,
+  "labelled_span": [0.0, 30.5],
+  "what_it_is": "D-366 / B-238's shape, isolated: a unique setup line sitting immediately before a genuine repeat, so a speculatively glued anchor would carry it into the proposed cut. Modelled on the real C038 #28-#31 run (retake.rs::REAL_GLUED_ANCHORS) but re-authored so each delivery is a complete clause on its own segment — the real transcript welds 'it so expensive' onto the front of the repeat, which is a separate (and genuine) limit of the whole-utterance take model and would confound this case.",
+  "readings": ["synthetic — authored, not transcribed"],
+  "retakes": [
+    {
+      "id": "the-trick-used-to-bring-that-cost-back-down",
+      "line": "And the trick being used to bring that cost back down.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "deliveries": [
+        { "start": 16.6, "end": 23.0, "note": "'behind used to' — the flubbed delivery" },
+        { "start": 23.4, "end": 30.5, "note": "'being used to' — the clean one" }
+      ]
+    }
+  ],
+  "protected": [
+    {
+      "id": "the-setup-line",
+      "start": 10.0,
+      "end": 16.6,
+      "note": "'Today I actually want to show you why that's true and what's happening technically that makes it so expensive.' Said once. Pre-D-366 the detector glued this plus the stray 'place.' onto the anchor and proposed all of it for deletion (docs/notes/retake-detection.md §6.1, case 1)."
+    },
+    {
+      "id": "the-stray-fragment",
+      "start": 0.0,
+      "end": 1.2,
+      "note": "A sentence-tail fragment no delivery should claim. Part of the same pre-D-366 over-claim."
+    }
+  ],
+  "neutral": []
+}

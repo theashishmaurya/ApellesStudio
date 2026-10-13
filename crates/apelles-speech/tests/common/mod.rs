@@ -11,7 +11,8 @@
 //! or what any test asserts about it. Both corpus tiers — `real_transcripts.rs`
 //! (the Whisper false-positive measurement, D-365) and `proposed_cuts.rs` (the
 //! B-238 cut audit over every raw source, both backends, D-377) — call this and
-//! then ask their own question. Extracted here when the second caller appeared
+//! then ask their own question, as does `retake_eval.rs` (the D-378 eval,
+//! through [`load_path`]). Extracted here when the second caller appeared
 //! rather than copied (`CLAUDE.md`: if two places need it, extract it).
 
 use apelles_speech::retake::Utterance;
@@ -21,9 +22,23 @@ use apelles_speech::retake::Utterance;
 /// `name` may contain a subdirectory — `transcripts/A001_….parakeet.json` — so
 /// the per-source corpus added by D-377 sits in its own folder without needing a
 /// second loader.
+// Each integration-test binary compiles this module separately and uses a
+// subset of it: `retake_eval.rs` reads by path only, so this is unused there.
+#[allow(dead_code)]
 pub fn load(name: &str) -> Vec<Utterance> {
-    let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
-    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
+    load_path(&format!(
+        "{}/tests/fixtures/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+}
+
+/// One transcript in the fixture format, read from any `path`.
+///
+/// What [`load`] reads with; also called directly by `retake_eval.rs` (D-378),
+/// whose task set names transcripts by repo-relative path because its synthetic
+/// control set lives under `eval/retake/`, not here.
+pub fn load_path(path: &str) -> Vec<Utterance> {
+    let raw = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {path}: {e}"));
     let rows: Vec<(f64, f64, String)> =
         serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parsing {path}: {e}"));
     rows.into_iter()

@@ -1,0 +1,121 @@
+{
+  "$schema_note": "See eval/retake/README.md for the schema and the labelling rules. Every time is SOURCE-AUDIO seconds, so these labels score any backend's transcript of this file. Labelled from the transcript text of two independent readings of the same audio (mlx-whisper large-v3 re-derived 2026-10-10, parakeet-tdt-0.6b-v3) and NEVER from detect_retakes output. C019 has no pinned Whisper fixture — it entered the corpus in D-377 — so there is no third reading.",
+  "source": "A001_08302215_C019",
+  "duration_secs": 517.1,
+  "labelled_span": [0.0, 517.1],
+  "what_it_is": "The prompt-caching explainer. The loudest of the twelve raw sources and the first one the detector had never been tuned on (D-377): it is where Whisper over-claims too.",
+  "readings": [
+    "crates/apelles-speech/tests/fixtures/transcripts/A001_08302215_C019.whisper.json (mlx-whisper large-v3 re-derived 2026-10-10, 83 segments)",
+    "crates/apelles-speech/tests/fixtures/transcripts/A001_08302215_C019.parakeet.json (parakeet-tdt-0.6b-v3, 45 segments)"
+  ],
+  "retakes": [
+    {
+      "id": "c019-when-you-turn-it-on",
+      "line": "When you turn it on, after that first read, the provider hangs on to the working notes.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "note": "Delivery 0 is free-standing in Parakeet (its own 1.6 s segment); delivery 1 is the head of a segment in both readings and carries the rest of the sentence, so it is the one that has to survive. The same shape as the b246_tail_repeat control, inverted.",
+      "deliveries": [
+        { "start": 4.08, "end": 8.08, "note": "'when you turn it on' — the abandoned opening; starts where Parakeet's 'And it keeps them.' ends" },
+        { "start": 11.12, "end": 12.6, "approximate_end": true, "note": "the head of whisper #1 / parakeet #2; the end is estimated from word position (5 of 15 words)" }
+      ]
+    },
+    {
+      "id": "c019-people-enabling-caching",
+      "line": "People enabling caching drop a 'current time is 3:42 pm' into the top of their prompt.",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "note": "Bounds from Parakeet, which gives each attempt its own segment (#9, #10). Whisper welds attempt 1 onto 'This is the mistake.' (#14), so a Whisper cut of #14 takes unique speech with it.",
+      "deliveries": [
+        { "start": 97.36, "end": 102.96, "note": "'People enabling caching drop a current type in' — clipped at the end of 'This is the mistake.'" },
+        { "start": 102.96, "end": 114.96, "note": "complete; ends on the abandoned 'it's because' that the next sentence restarts" }
+      ]
+    },
+    {
+      "id": "c019-writing-the-notes",
+      "line": "Writing the notes into the cache the first time costs you about 25% more than a normal read, one time. That's the price of admission. Then every call that hits the cache...",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "note": "The run B-246's Parakeet #14 cuts into: that 14.96 s segment is 13 s of unique content (the protected range below) with this group's first two words on its tail.",
+      "deliveries": [
+        { "start": 175.8, "end": 191.56, "approximate_start": true, "note": "starts mid-segment in both readings ('...let's actually go to the maths. Writing the'), estimated from word position" },
+        { "start": 193.72, "end": 209.5, "approximate_end": true, "note": "'Writing the notes, writing those notes into the cache...' — complete; ends mid-segment after 'hits the cache', before the unique 'after that cost a tenth'" }
+      ]
+    },
+    {
+      "id": "c019-make-a-resource-cheaper",
+      "line": "Make a resource cheaper to use and people just use more of it.",
+      "keeper": 1,
+      "keeper_confidence": "low",
+      "note": "Said twice back to back, and it may be deliberate emphasis rather than a retake — nobody listened (README). Under this eval's question either reading gives the same verdict: cutting one copy loses no content. Which one to keep is a style call, hence low confidence. The boundary between the two is mid-segment in both readings.",
+      "deliveries": [
+        { "start": 333.88, "end": 338.6, "approximate_end": true, "note": "starts where Parakeet's 'Jevon's paradox.' ends" },
+        { "start": 338.6, "end": 342.3, "approximate_start": true, "note": "ends at whisper #53's end" }
+      ]
+    },
+    {
+      "id": "c019-if-the-workload",
+      "line": "If the workload is output heavy...",
+      "keeper": 2,
+      "keeper_confidence": "high",
+      "note": "Two clipped false starts that Parakeet segments individually (#32, #33) and Whisper does not hear at all — #56 runs 352.82-365.20 as one clean sentence. Only a Parakeet transcript can express this group.",
+      "deliveries": [
+        { "start": 353.64, "end": 357.64, "note": "'if the work' (353.64-354.20), then silence up to the next attempt — absorbed because whisper #56 spans it (rule 1)" },
+        { "start": 357.64, "end": 358.92, "note": "'if the work', and the 0.48 s pause after it" },
+        { "start": 358.92, "end": 360.2, "approximate_end": true, "note": "the head of the complete sentence" }
+      ]
+    },
+    {
+      "id": "c019-which-to-be-fair",
+      "line": "Which, to be fair, is most agents and most chatbots.",
+      "keeper": 1,
+      "keeper_confidence": "low",
+      "note": "Whisper gives each delivery its own segment (#61, #62); Parakeet runs both inside #36. The first is arguably the cleaner read ('is' vs 'it's'), so which to keep is not obvious.",
+      "deliveries": [
+        { "start": 380.64, "end": 385.4 },
+        { "start": 385.4, "end": 388.94 }
+      ]
+    }
+  ],
+  "protected": [
+    {
+      "id": "c019-lets-go-to-the-maths",
+      "start": 162.84,
+      "end": 175.8,
+      "note": "'...changes. That's you pointing at this stack and saying everything above the line keeps it warm. Get that order right and the numbers stop being abstract. Let's actually go to the maths.' Said once. B-246's Parakeet #14 proposes cutting all of it (proposed_cuts.rs, 14.96 s)."
+    },
+    {
+      "id": "c019-an-80-percent-cut",
+      "start": 247.6,
+      "end": 255.8,
+      "note": "'Around $700. Same app, same traffic, same model. About an 80% cut from one structural change.' Said once — the punchline of the worked example. B-246's Parakeet #23 proposes cutting it (12.24 s) because the segment's tail starts a false start of the next line."
+    },
+    {
+      "id": "c019-the-invoice-still-goes-up",
+      "start": 318.64,
+      "end": 324.4,
+      "note": "'So the per-token price goes down and the monthly invoice still goes up.' Said once. B-246's one Whisper case (#50, 5.42 s) cuts it because the segment's tail, 'there's actually a name for this', repeats. The b246_tail_repeat control is this case isolated."
+    }
+  ],
+  "neutral": [
+    {
+      "start": 2.56,
+      "end": 4.08,
+      "reason": "abandoned_restart",
+      "note": "'And it keeps them.' — the head of the same abandoned opening as c019-when-you-turn-it-on's delivery 0, re-expressed in different words as 'hangs on to the working notes'. Below the ~2 s guide on its own, but it is the first 1.5 s of a 5 s false start (whisper #0) and is not separable from it in a whisper reading."
+    },
+    {
+      "start": 191.56,
+      "end": 193.72,
+      "reason": "aside",
+      "note": "'Okay, I should do this.'"
+    },
+    {
+      "start": 352.52,
+      "end": 353.64,
+      "reason": "unresolvable_boundary",
+      "note": "Parakeet #31, 'in. If the' — the 'in' that closes the previous sentence and the first 'if the' false start share one 0.72 s segment, and Whisper hears no false start at all."
+    }
+  ],
+  "unlabelled_rationale": "Everything inside labelled_span that is not a delivery and not neutral is unique content. Known repeats deliberately NOT labelled as deliveries, because the repeated material is a sub-segment fragment in every reading and a whole-utterance take cannot express it without taking unique speech with it (README, 'expressibility'): 'there's actually a name for this' x2 at ~322-327 s (B-246's Whisper case — both copies sit inside parakeet #27, and in whisper #50/#51 the first copy is welded to the invoice line), 'one more thing to know the notes never / one more one more thing to know' at ~255-262 s (the first is the tail of parakeet #23 / whisper #37, the second the head of #24 / #38), 'on the final bin, on the final bill' at ~293 s, 'and the input has never the / then the input was never the expensive part' at ~365 s, and the 'every / every call', 'wonder why and wonder why', 'Jevons paradox, Jevons paradox', 'prompt caching prompt caching' and 'I'm breaking, I'm breaking down' stutters."
+}

@@ -47,6 +47,7 @@ the agent the task's `description` + goal, let it work, `save_grade` to
 | `results/*.grade.json` | 7 hand-authored "good" grades (mean 0.975 vs baseline 0.452) |
 | `bad_examples/*.grade.json` | deliberately wrong grades (mean 0.0, gates fire) |
 | `lib/` | the PNG codec, the ported scope math, the approximate grade operator |
+| `retake/` | a separate eval for the Edit tab's retake detector (**D-378**) — same task vocabulary, its own scorer in Rust and its own README; the caveat below does not apply to it |
 
 ## The one big caveat
 

@@ -6,6 +6,10 @@ call), `docs/notes/agent-visual-feedback.md` (the thesis it tests),
 scorer ports), `docs/notes/match-reference.md` (D-026 — the workflow task (b)
 mirrors).
 
+Not to be confused with `eval/retake/` (**D-378**), the retake detector's eval: it
+borrows this harness's task vocabulary but scores the real Rust detector, so it has
+no approximate-operator caveat. Its spec is `eval/retake/README.md`.
+
 ## Why
 
 The thesis: a grading agent must **grade by the numbers** — measure scopes,
