@@ -6,6 +6,66 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-379 — The retake eval labels every repeat at word precision and scores proposals from outside the crate; a blind MCP-client POC loses nothing
+
+**Status: `decided`** (2026-10-13). Changes D-378's labelling rule and scorer;
+spec in `eval/retake/README.md`; finding in `docs/notes/retake-detection.md`
+§10. The direction this evidence supports — retake judgement in the MCP client,
+Parakeet as the only ASR — is its own decision, recorded with its plan.
+
+**Context.** The owner asked whether retake judgement should move from
+`retake.rs`'s rules to a model, and chose the MCP client over an on-device
+decision model (Laya / Jev were researched and rejected: 512-token context, no
+cut points, ~0.36 untrained, Jev cloud-only). A proof of concept was run before
+anything was built: nine fresh agents with no context (Claude Opus ×2 and
+Sonnet ×1 per source), each given only one anonymised Parakeet transcript as
+numbered words with times and a fixed prompt, proposing retake groups as
+word-index ranges plus a keep. Scored on D-378's labels it lost 29-34 s of
+"unique" speech — and every one of those ranges was a correct cut of a stutter
+("A few months later, a few months later"), charged because D-378's
+*expressibility* rule left any repeat a whole-segment cut could not isolate as
+unique content. The eval was penalising the better behaviour.
+
+**Options.**
+1. *Keep segment-level labels* and judge word-level proposers with a carve-out —
+   two sets of rules for one question.
+2. **Label every repeat at word precision** (Parakeet word timestamps, now
+   committed as `eval/retake/transcripts/`), so a detector that cannot express a
+   stutter scores lower recall on it and a proposer that cuts it correctly is
+   credited. Needs **nested groups** (a stutter inside another group's kept
+   delivery) and a way to score proposals that do not come from the crate.
+
+**Choice: option 2.** Labels re-drawn: C019 6 → 17 groups, C038 13 → 18, C040
+9 → 11; three C040 groups the segment-level pass had wrong are corrected
+(scanning-back has three deliveries, not two; self-attention's stutter is in
+the cut delivery, not the keeper; "It's less, it's less" is a stutter, not
+protected content). Scorer: nested groups (judged only where their container
+survives, moot — counted nowhere — where it is cut; one level, inside a keeper,
+enforced), and `APELLES_RETAKE_EVAL_PROPOSALS` to score external proposal files.
+One keeper was lowered to `low` because a blind run disagreed and, on
+re-reading, was right (C038's outro: delivery 0 is the cleaner read); that is
+recorded on the label. Two hand-worked scorer tests cover nesting.
+
+**What it found.**
+
+| on the word-precise labels | content lost | protected lost | tasks passing |
+|---|---|---|---|
+| today's detector, Parakeet transcripts | 40.24 s | 37.44 s | 0 / 3 |
+| Claude Opus (2 runs), Sonnet (1 run) — 9 proposals | **0.00 s in all 9** | 0.00 s | **3 / 3 each** |
+
+Retake recall: detector 0.265 / 0.523 / 0.606 (C019 / C038 / C040), MCP client
+0.567-0.605 / 0.720-0.745 / 0.717-0.742; keeper agreement 1.000 on every
+client run. ~30-55 s and ~70k tokens per video per run.
+
+**What it does not show.** Three videos, one speaker, labelled by the same
+session that ran the POC (the proposers saw none of it — anonymised inputs, no
+labels, no conversation — but the labels were finalised after seeing their
+cuts, and two label changes were prompted by them: the expressibility rule and
+one keeper confidence. Both are argued on their own terms above; neither moves
+a single over-cut second). Nobody listened to the audio.
+
+---
+
 ## D-378 — The retake detector gets a labelled eval: ground truth in source seconds, a Rust scorer that calls the real detector, and a gate that a silent detector cannot pass
 
 **Status: `decided`** (2026-10-13). Data: `eval/retake/` (its README is the

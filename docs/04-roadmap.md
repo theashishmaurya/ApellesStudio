@@ -2753,6 +2753,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       detectors proven to fail. First run: **all eight corpus tasks fail the
       over-cut gate on both backends** — Whisper 60.40 s of content lost,
       Parakeet 46.48 s (protected 6.18 s vs 35.54 s).
+    - ✅ **D-379 — word-precise eval labels, and a blind MCP-client POC**
+      (2026-10-13). Every repeat labelled from Parakeet word timestamps,
+      nested groups, and an external-proposals scoring mode. Nine blind Claude
+      runs (Opus / Sonnet) proposing retakes from the transcript alone lose
+      **0.00 s** and pass 3 / 3 tasks each, against the detector's 40.24 s and
+      0 / 3. The build that follows — retake judgement in the MCP client,
+      Parakeet the only ASR — is planned as its own decision.
     - ⬜ **Re-decide the ASR default on the eval** (D-377 is `revisit`). D-378
       does not reproduce D-377's 10.5×, because D-377 counted one shape of loss
       of three. In the same pass as B-246's fix, not before — today both

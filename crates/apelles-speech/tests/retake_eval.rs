@@ -10,6 +10,11 @@
 //! detector for real is what keeps this harness free of `eval/`'s own big
 //! caveat (an approximate operator, so its absolute scores mean nothing).
 //!
+//! Since **D-379** it also scores proposals made *outside* the crate — by an
+//! MCP client reading the transcript — through [`external_proposals`], against
+//! the same labels, which are word-precise and may nest a stutter inside a
+//! kept delivery ([`Labels::containers`]).
+//!
 //! **What it does NOT do.** It does not tune anything, does not pick a backend,
 //! and does not decide whether a cut is *good editing* — only whether the
 //! speech it removes exists somewhere in what survives (D-318's one-directional
@@ -209,6 +214,34 @@ impl Labels {
     }
     fn neutral(&self) -> Vec<Iv> {
         normalise(self.neutral.iter().map(|n| (n.start, n.end)).collect())
+    }
+    /// For each group, the `(group, delivery)` it is nested inside, if any — a
+    /// stutter labelled inside another group's delivery (README, "Nested
+    /// groups"). A group is nested when every one of its deliveries lies within
+    /// one delivery of another group.
+    fn containers(&self) -> Vec<Option<(usize, usize)>> {
+        self.retakes
+            .iter()
+            .enumerate()
+            .map(|(gi, g)| {
+                self.retakes
+                    .iter()
+                    .enumerate()
+                    .filter(|(oi, _)| *oi != gi)
+                    .flat_map(|(oi, o)| {
+                        o.deliveries
+                            .iter()
+                            .enumerate()
+                            .map(move |(di, d)| (oi, di, d))
+                    })
+                    .find(|(_, _, d)| {
+                        g.deliveries
+                            .iter()
+                            .all(|x| x.start >= d.start - EPS && x.end <= d.end + EPS)
+                    })
+                    .map(|(oi, di, _)| (oi, di))
+            })
+            .collect()
     }
     /// Every edge where unique content meets something labelled — the only
     /// places a boundary tolerance can apply.
@@ -447,6 +480,22 @@ struct LostRange {
     forgiven: bool,
 }
 
+/// The survivor of a group: the delivery the cut leaves most intact — the
+/// smallest cut FRACTION, earliest on a tie. A fraction, not uncut seconds,
+/// because a delivery's range may include the pause around it (README, rule 2)
+/// and a padded delivery would otherwise "survive" on silence. Its cut seconds
+/// are content lost, charged exactly once even when every delivery is cut.
+fn survivor(cut: &[Iv], ivs: &[Vec<Iv>]) -> usize {
+    let fraction = |i: usize| overlap(cut, &ivs[i]) / total(&ivs[i]);
+    let mut best = 0;
+    for i in 1..ivs.len() {
+        if fraction(i) < fraction(best) - EPS {
+            best = i;
+        }
+    }
+    best
+}
+
 fn score(labels: &Labels, proposal: &[Proposed]) -> Metrics {
     score_itemised(labels, proposal).0
 }
@@ -462,48 +511,69 @@ fn score_itemised(labels: &Labels, proposal: &[Proposed]) -> (Metrics, Vec<LostR
     // Cut seconds that are content lost, before the boundary tolerance.
     let mut lost: Vec<(Iv, String)> = Vec::new();
     let (mut found, mut kept_right, mut kept_judged) = (0usize, 0usize, 0usize);
-    for g in &labels.retakes {
-        let ivs: Vec<Vec<Iv>> = g
-            .deliveries
-            .iter()
-            .map(|d| normalise(vec![(d.start, d.end)]))
-            .collect();
-        let cut_of: Vec<f64> = ivs.iter().map(|d| overlap(&cut, d)).collect();
-
-        // The survivor: the delivery the cut leaves most intact — the smallest
-        // cut FRACTION, earliest on a tie. A fraction, not uncut seconds,
-        // because a delivery's range may include the pause around it (README,
-        // rule 2) and a padded delivery would otherwise "survive" on silence.
-        // Its cut seconds are content lost, charged exactly once even when
-        // every delivery is cut.
-        let fraction = |i: usize| cut_of[i] / total(&ivs[i]);
-        let mut survivor = 0;
-        for i in 1..ivs.len() {
-            if fraction(i) < fraction(survivor) - EPS {
-                survivor = i;
-            }
-        }
-        for (i, c) in cut_of.iter().enumerate() {
-            if i == survivor {
-                for r in intersection(&cut, &ivs[i]) {
-                    lost.push((r, format!("{} (every delivery cut)", g.id)));
+    let mut counted = 0usize;
+    let containers = labels.containers();
+    let ivs_of: Vec<Vec<Vec<Iv>>> = labels
+        .retakes
+        .iter()
+        .map(|g| {
+            g.deliveries
+                .iter()
+                .map(|d| normalise(vec![(d.start, d.end)]))
+                .collect()
+        })
+        .collect();
+    let survivor_of: Vec<usize> = ivs_of.iter().map(|ivs| survivor(&cut, ivs)).collect();
+    for (gi, g) in labels.retakes.iter().enumerate() {
+        let ivs = &ivs_of[gi];
+        let s = survivor_of[gi];
+        // A nested group (a stutter inside another group's keeper) is judged
+        // only where its container delivery survives: inside a cut delivery its
+        // seconds are already that delivery's safe seconds.
+        let judged = match containers[gi] {
+            None => true,
+            Some((cg, cd)) => survivor_of[cg] == cd,
+        };
+        if judged {
+            // The groups nested inside this group's survivor judge their own
+            // seconds, so a correct stutter cut there is not charged here.
+            let nested = normalise(
+                containers
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| **c == Some((gi, s)))
+                    .flat_map(|(ni, _)| ivs_of[ni].concat())
+                    .collect(),
+            );
+            for (i, d) in ivs.iter().enumerate() {
+                if i == s {
+                    for r in intersection(&cut, &subtract(d, &nested)) {
+                        lost.push((r, format!("{} (every delivery cut)", g.id)));
+                    }
+                } else {
+                    safe += overlap(&cut, d);
                 }
-            } else {
-                safe += c;
             }
         }
 
-        let non_keeper_cut: f64 = cut_of
+        // A nested group whose container was cut is moot — the stutter went
+        // with the delivery around it — so it is not a group to find or to
+        // pick a keeper for either.
+        if !judged {
+            continue;
+        }
+        counted += 1;
+        let non_keeper_cut: f64 = ivs
             .iter()
             .enumerate()
             .filter(|(i, _)| *i != g.keeper)
-            .map(|(_, c)| c)
+            .map(|(_, d)| overlap(&cut, d))
             .sum();
         if non_keeper_cut >= GROUP_FOUND_SECS {
             found += 1;
             if g.keeper_confidence == Confidence::High {
                 kept_judged += 1;
-                if detector_keeps(&ivs, proposal) == Some(g.keeper) {
+                if detector_keeps(ivs, proposal) == Some(g.keeper) {
                     kept_right += 1;
                 }
             }
@@ -564,7 +634,7 @@ fn score_itemised(labels: &Labels, proposal: &[Proposed]) -> (Metrics, Vec<LostR
         protected_secs_cut: overlap(&charged, &protected),
         cut_precision: ratio(safe, safe + over),
         retake_recall: ratio(safe, redundant),
-        group_recall: ratio(found as f64, labels.retakes.len() as f64),
+        group_recall: ratio(found as f64, counted as f64),
         keeper_agreement: ratio(kept_right as f64, kept_judged as f64),
         boundary_slack_secs: lost
             .iter()
@@ -666,7 +736,6 @@ fn judge(task: &Task, (metrics, lost): (Metrics, Vec<LostRange>)) -> Outcome {
 }
 
 fn run(task: &Task, proposal: Option<Reference>) -> Outcome {
-    let labels: Labels = read_json(&task.input.labels);
     let groups = match proposal {
         Some(kind) => reference(kind, &task.input.transcript),
         None => {
@@ -674,7 +743,14 @@ fn run(task: &Task, proposal: Option<Reference>) -> Outcome {
             from_detector(&detect_retakes(&u, &task.params.unwrap_or_default()))
         }
     };
-    judge(task, score_itemised(&labels, &groups))
+    run_with(task, &groups)
+}
+
+/// Score any proposal against a task's labels — the detector's, a reference
+/// detector's, or an external one read by [`external_proposals`].
+fn run_with(task: &Task, groups: &[Proposed]) -> Outcome {
+    let labels: Labels = read_json(&task.input.labels);
+    judge(task, score_itemised(&labels, groups))
 }
 
 // ---------------------------------------------------------------------------
@@ -709,6 +785,50 @@ fn fmt(v: Option<f64>) -> String {
     v.map_or_else(|| "   -  ".into(), |v| format!("{v:6.3}"))
 }
 
+fn print_header() {
+    println!(
+        "{:<36} {:>6} {:>5} {:>8} {:>8} {:>6} {:>6} {:>6} {:>6} {:>8}",
+        "task", "score", "pass", "over_s", "prot_s", "prec", "recall", "groups", "keeper", "prop_s"
+    );
+}
+
+/// One task's table row, its missed checks, and every lost range.
+fn print_row(id: &str, o: &Outcome) {
+    let m = &o.metrics;
+    println!(
+        "{:<36} {:>6.3} {:>5} {:>8.2} {:>8.2} {} {} {} {} {:>8.2}{}",
+        id,
+        o.score,
+        if o.passed { "yes" } else { "NO" },
+        m.over_cut_secs,
+        m.protected_secs_cut,
+        fmt(m.cut_precision),
+        fmt(m.retake_recall),
+        fmt(m.group_recall),
+        fmt(m.keeper_agreement),
+        m.proposed_secs,
+        if o.gates_fired.is_empty() {
+            String::new()
+        } else {
+            format!("  GATE: {}", o.gates_fired.join(", "))
+        },
+    );
+    let missed: Vec<&str> = o
+        .checks
+        .iter()
+        .filter(|c| !c.1)
+        .map(|c| c.0.as_str())
+        .collect();
+    if !missed.is_empty() {
+        println!("    checks missed: {}", missed.join(", "));
+    }
+    for l in &o.lost {
+        let (s, e) = l.range;
+        let tag = if l.forgiven { "forgiven" } else { "LOST" };
+        println!("    {tag:<8} {s:7.2}-{e:7.2} ({:5.2}s) {}", e - s, l.what);
+    }
+}
+
 /// **The task set, scored with the real detector — every verdict pinned by its
 /// `expect`, every number pinned by `baseline.json`.**
 ///
@@ -720,48 +840,13 @@ fn fmt(v: Option<f64>) -> String {
 #[test]
 fn the_task_set_scores_as_pinned() {
     let tasks = task_set();
-    println!(
-        "{:<36} {:>6} {:>5} {:>8} {:>8} {:>6} {:>6} {:>6} {:>6} {:>8}",
-        "task", "score", "pass", "over_s", "prot_s", "prec", "recall", "groups", "keeper", "prop_s"
-    );
+    print_header();
     let mut rows = serde_json::Map::new();
     let mut mismatched = Vec::new();
     let (mut passes, mut sum) = (0, 0.0);
     for t in &tasks {
         let o = run(t, None);
-        let m = &o.metrics;
-        println!(
-            "{:<36} {:>6.3} {:>5} {:>8.2} {:>8.2} {} {} {} {} {:>8.2}{}",
-            t.id,
-            o.score,
-            if o.passed { "yes" } else { "NO" },
-            m.over_cut_secs,
-            m.protected_secs_cut,
-            fmt(m.cut_precision),
-            fmt(m.retake_recall),
-            fmt(m.group_recall),
-            fmt(m.keeper_agreement),
-            m.proposed_secs,
-            if o.gates_fired.is_empty() {
-                String::new()
-            } else {
-                format!("  GATE: {}", o.gates_fired.join(", "))
-            },
-        );
-        let missed: Vec<&str> = o
-            .checks
-            .iter()
-            .filter(|c| !c.1)
-            .map(|c| c.0.as_str())
-            .collect();
-        if !missed.is_empty() {
-            println!("    checks missed: {}", missed.join(", "));
-        }
-        for l in &o.lost {
-            let (s, e) = l.range;
-            let tag = if l.forgiven { "forgiven" } else { "LOST" };
-            println!("    {tag:<8} {s:7.2}-{e:7.2} ({:5.2}s) {}", e - s, l.what);
-        }
+        print_row(&t.id, &o);
         let verdict = if o.passed { Expect::Pass } else { Expect::Fail };
         if verdict != t.expect {
             mismatched.push(format!("{} is {verdict:?}, expected {:?}", t.id, t.expect));
@@ -840,6 +925,64 @@ fn null_and_greedy_detectors_fail() {
     }
 }
 
+/// Set to a directory to score proposals produced OUTSIDE this crate — by an
+/// MCP client, a model, a human — instead of the detector. One file per task,
+/// named by its id with `/` as `__` (`C040__parakeet.json`), shaped
+/// `{"groups": [{"kept": [[s, e], …], "cut": [[s, e], …]}]}` in source seconds.
+/// The same scorer and the same labels, so the numbers compare directly with
+/// the detector's table; nothing is pinned, because a proposer outside the
+/// crate is not this crate's behaviour.
+const PROPOSALS_ENV: &str = "APELLES_RETAKE_EVAL_PROPOSALS";
+
+#[derive(Deserialize)]
+struct ProposalFile {
+    groups: Vec<ProposedGroup>,
+}
+
+#[derive(Deserialize)]
+struct ProposedGroup {
+    kept: Vec<Iv>,
+    cut: Vec<Iv>,
+}
+
+/// **Scores external proposals** when [`PROPOSALS_ENV`] is set; a no-op
+/// otherwise, so the ordinary run is unchanged.
+///
+/// ```sh
+/// APELLES_RETAKE_EVAL_PROPOSALS=/path/to/dir \
+///   cargo test -p apelles-speech --test retake_eval external_proposals -- --nocapture
+/// ```
+#[test]
+fn external_proposals() {
+    let Ok(dir) = std::env::var(PROPOSALS_ENV) else {
+        return;
+    };
+    print_header();
+    let mut scored = 0;
+    for t in task_set() {
+        let path = PathBuf::from(&dir).join(format!("{}.json", t.id.replace('/', "__")));
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let file: ProposalFile = serde_json::from_str(&raw)
+            .unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()));
+        let groups: Vec<Proposed> = file
+            .groups
+            .into_iter()
+            .map(|g| Proposed {
+                kept: normalise(g.kept),
+                cut: normalise(g.cut),
+            })
+            .collect();
+        print_row(&t.id, &run_with(&t, &groups));
+        scored += 1;
+    }
+    assert!(
+        scored > 0,
+        "{PROPOSALS_ENV}={dir}: no task's proposal file was found"
+    );
+}
+
 /// Every label file a task points at, once each.
 fn label_files() -> Vec<(String, Labels)> {
     let paths: BTreeSet<String> = task_set().into_iter().map(|t| t.input.labels).collect();
@@ -899,14 +1042,35 @@ fn every_label_file_is_well_formed() {
     for (path, l) in label_files() {
         let (lo, hi) = l.labelled_span;
         let mut all: Vec<(Iv, String)> = Vec::new();
-        for g in &l.retakes {
+        let containers = l.containers();
+        for (gi, g) in l.retakes.iter().enumerate() {
             assert!(g.deliveries.len() >= 2, "{path}/{}: one delivery", g.id);
             assert!(g.keeper < g.deliveries.len(), "{path}/{}: keeper", g.id);
             for w in g.deliveries.windows(2) {
                 assert!(w[0].end <= w[1].start, "{path}/{}: out of order", g.id);
             }
-            for d in &g.deliveries {
-                all.push(((d.start, d.end), g.id.clone()));
+            match containers[gi] {
+                // Nested: allowed only inside the container's KEEPER (where a
+                // stutter cut matters, and where `redundant_secs` stays exact),
+                // and only one level deep.
+                Some((cg, cd)) => {
+                    let c = &l.retakes[cg];
+                    assert_eq!(
+                        cd, c.keeper,
+                        "{path}/{}: nested in {}'s delivery {cd}, which is not its keeper",
+                        g.id, c.id
+                    );
+                    assert!(
+                        containers[cg].is_none(),
+                        "{path}/{}: nested two levels deep",
+                        g.id
+                    );
+                }
+                None => {
+                    for d in &g.deliveries {
+                        all.push(((d.start, d.end), g.id.clone()));
+                    }
+                }
             }
         }
         for p in &l.protected {
@@ -947,6 +1111,58 @@ fn every_protected_range_is_unique_content() {
             );
         }
     }
+}
+
+/// **Nested groups, worked by hand.** An outer line said twice (0-5, 5-10,
+/// keeper 1) whose kept delivery carries a two-copy stutter (6-7, 7-8, keeper
+/// 1). Cutting one stutter copy inside the kept delivery is correct and costs
+/// nothing; cutting both loses the stutter's words; cutting the whole kept
+/// delivery instead of the other one is judged by the outer group alone.
+#[test]
+fn the_scorer_matches_a_hand_worked_nested_case() {
+    let labels: Labels = serde_json::from_value(json!({
+        "source": "hand-nested",
+        "labelled_span": [0.0, 12.0],
+        "readings": ["hand", "hand"],
+        "retakes": [
+            { "id": "outer", "keeper": 1, "keeper_confidence": "high",
+              "deliveries": [{ "start": 0.0, "end": 5.0 }, { "start": 5.0, "end": 10.0 }] },
+            { "id": "stutter", "keeper": 1, "keeper_confidence": "high",
+              "deliveries": [{ "start": 6.0, "end": 7.0 }, { "start": 7.0, "end": 8.0 }] }
+        ],
+        "protected": [],
+        "neutral": []
+    }))
+    .expect("a valid hand case");
+    assert_eq!(labels.containers(), vec![None, Some((0, 1))]);
+    let close = |a: f64, b: f64| (a - b).abs() < EPS;
+    let run = |cut: Vec<Iv>| {
+        score(
+            &labels,
+            &[Proposed {
+                kept: Vec::new(),
+                cut,
+            }],
+        )
+    };
+
+    // The other delivery and one stutter copy: everything cut repeats.
+    let m = run(vec![(0.0, 5.0), (6.0, 7.0)]);
+    assert!(close(m.over_cut_secs, 0.0), "{}", m.over_cut_secs);
+    assert!(close(m.retake_recall.unwrap_or(f64::NAN), 1.0));
+
+    // Both stutter copies: one of them is lost (the earliest, on the tie).
+    let m = run(vec![(0.0, 5.0), (6.0, 8.0)]);
+    assert!(close(m.over_cut_secs, 1.0), "{}", m.over_cut_secs);
+
+    // The kept delivery instead of the other: the outer group alone judges it,
+    // and the stutter inside a cut delivery is not charged a second time.
+    let m = run(vec![(5.0, 10.0)]);
+    assert!(close(m.over_cut_secs, 0.0), "{}", m.over_cut_secs);
+    // ...and the stutter is moot rather than a group found: the outer group's
+    // non-keeper is uncut, so recall is 0 of 1. Counting the moot stutter
+    // (both copies cut, so "found") would make it 1 of 2.
+    assert_eq!(m.group_recall, Some(0.0));
 }
 
 /// **The scorer on a case worked by hand**, so the formulas above are tested

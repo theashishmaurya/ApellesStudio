@@ -1060,3 +1060,52 @@ stays Whisper until B-246's fix pass re-decides it on this eval. That pass must
 read its result here, not in `proposed_cuts.rs`: `MIN_UTTERANCE_OVERLAP` on
 single-utterance takes would clear shape 1 and leave 2 and 3.
 
+---
+
+## 10. The judgement moves to the MCP client: the POC, and the eval fixed to judge it (D-379, 2026-10-13)
+
+§9's eval failed every task on both backends, and the failures were judgement
+calls string matching cannot make: is this the same line, which take is
+complete, where exactly does the repeat end. So the owner asked for the
+judgement to come from a model, and chose the **MCP client** — the LLM the user
+already connects — over an on-device decision model (Laya / Jev: 512-token
+context, fixed-answer outputs with no cut points, ~0.36 untrained, Jev
+cloud-only).
+
+### 10.1 The POC
+
+Nine fresh agents, no context: Claude Opus ×2 and Sonnet ×1 for each source,
+each handed **one anonymised Parakeet transcript as numbered words with their
+times** and one fixed prompt ("find every retake; keep the complete take; a
+deleted take may contain only words whose content survives in the kept one;
+boundaries may fall mid-segment; when unsure, leave it out"), answering with
+word-index ranges + a keep. Code converted indices to seconds exactly from the
+word times. Parakeet's word timestamps came from re-running `transcribe.py
+--backend parakeet` on the three sources: 37 s for C038's 989 s, and the output
+was segment-for-segment identical to the committed fixtures.
+
+### 10.2 What the first scoring got wrong, and the fix
+
+On §9's labels the clients lost 29-34 s — and every charged range was a
+correct stutter cut: *"A few months later, a few months later"*, *"on the final
+bin, on the final bill"*, *"they bundle it with a, they bundle it with"*. §9's
+labels left any repeat a whole segment could not isolate as unique content,
+because the detector could only cut whole segments. D-379 relabels every repeat
+at word precision, adds nested groups for a stutter inside a kept delivery, and
+adds an external-proposals mode to the scorer (README).
+
+### 10.3 The result
+
+| on the word-precise labels | content lost | protected lost | tasks passing | retake recall C019 / C038 / C040 |
+|---|---|---|---|---|
+| detector (Parakeet) | 40.24 s | 37.44 s | 0 / 3 | 0.265 / 0.523 / 0.606 |
+| Opus run 1 | **0.00 s** | 0.00 s | 3 / 3 | 0.585 / 0.733 / 0.742 |
+| Opus run 2 | **0.00 s** | 0.00 s | 3 / 3 | 0.605 / 0.745 / 0.717 |
+| Sonnet | **0.00 s** | 0.00 s | 3 / 3 | 0.567 / 0.720 / 0.725 |
+
+Not one second of unique speech proposed for deletion across nine runs, the
+kept take matching the label every time, and the runs agreeing with each other
+closely. Recall is ~0.57-0.75: the clients skip what they are unsure of, as the
+prompt tells them to — the right failure direction for D-318. The limits are in
+D-379: three videos, one speaker, nobody listened.
+

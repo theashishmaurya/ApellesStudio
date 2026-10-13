@@ -116,24 +116,48 @@ hollow this dataset out. Allowed reasons, all of them narrow:
 redundant seconds. If a future labelling pass wants more neutral time than that,
 it has to move the cap deliberately and say why.
 
-### Expressibility — the rule that decides what counts as a delivery
+### Every repeat is labelled, at word precision (D-379)
 
-A take is a range of **whole utterances** (`retake-detection.md` §2's honest
-limit). So a repeat whose redundant material sits *inside* a segment in every
-reading cannot be cut without taking unique speech with it, and D-318's safe
-direction is to leave it alone. Therefore:
+**Every repeat is a delivery**, however short and wherever it falls: a whole
+re-read sentence, a false start, a two-word stutter inside a sentence. Bounds
+come from Parakeet's **word** timestamps (`transcripts/`), so a delivery can
+start and end mid-segment.
 
-> **A delivery is labelled only where its boundaries coincide with segment
-> boundaries in at least one of the readings.**
+This replaced D-378's *expressibility* rule, which labelled a repeat only where
+some reading's segment boundaries could isolate it, because the detector it was
+written for can only cut whole segments. That rule made the eval charge a
+word-level proposer for cutting a stutter *correctly* — D-379's POC lost
+"A few months later, a few months later" and a dozen like it as over-cuts. Now a
+whole-segment detector that cannot express a stutter simply scores lower recall
+on it, which is the honest account of what it cannot do, and B-246's shape stays
+caught: cutting a segment whose head is unique still charges the head.
 
-A repeat that fails this test is left as **unique content**, which means
-proposing to cut it is scored as over-cutting. That is deliberate and it is
-exactly B-246: Whisper's one violation is a 5.42 s segment whose tail ("there's
-actually a name for this") repeats and whose head ("monthly invoice still goes
-up") is said once. There is no cut of that segment that is correct, so the
-correct behaviour is not to propose one.
+### Nested groups
+
+A stutter can sit *inside* another group's delivery — C038's
+`"and mechanics and mechanics"` inside the second outro. It is labelled as its
+own group, **nested**: every one of its deliveries lies within one delivery of
+another group. Rules, enforced by `every_label_file_is_well_formed`:
+
+- a group may nest only inside its container's **keeper**, and only one level
+  deep — the only place a stutter cut matters, and the one place
+  `redundant_secs` stays exact;
+- when the container delivery **survives**, the nested group judges its own
+  seconds: cutting one copy is safe, cutting every copy loses the survivor's;
+- when the container is **cut**, the stutter went with it — the nested group is
+  moot, counted in neither group recall nor keeper agreement, and its seconds
+  are the container's safe seconds.
 
 ### How a boundary was decided
+
+**Since D-379**, every bound that Parakeet's word timestamps supply is taken from
+them (a delivery runs from its first word's start to the next labelled range,
+so it carries its trailing pause). Two Parakeet timing artifacts are worked
+around, and noted on the delivery wherever they bite: a repeated phrase stamped
+at zero length (C019 326.60, C038 330.84 — the gap that follows is where it was
+said), and D-376's late sentence-final word end (C038's `"training."` runs
+1.04 s; the other reading's boundary is used). The rules below still decide
+everything the word times do not.
 
 Labelled from the transcript **text** of two or three independent readings of
 the same audio — the pinned Whisper fixture, a Whisper transcript re-derived in
@@ -275,10 +299,12 @@ eval**, which is why one of them is `expect: "fail"` against today's code.
 | `labels/<source>.json` | the hand-labelled ground truth, in source-audio seconds |
 | `bad_examples/<id>.transcript.json` + `.labels.json` | the synthetic control set |
 | `baseline.json` | the committed floor — today's scores, including B-246's pinned badness |
+| `transcripts/<source>.parakeet.words.json` | the full `transcribe.py --backend parakeet` output for the three labelled sources, **with word timestamps** — the labels' word-precise bounds come from these, and they are the input an MCP client reads (D-379). Same run as the segment fixtures: re-transcribed 2026-10-13 and verified segment-for-segment identical |
 
-Transcripts are **not** copied here: the corpus tasks point at the 24 fixtures
-D-377 committed under `crates/apelles-speech/tests/fixtures/`, by repo-relative
-path, so there is exactly one copy of each.
+The segment-level transcripts the corpus tasks score are **not** copied here:
+they point at the 24 fixtures D-377 committed under
+`crates/apelles-speech/tests/fixtures/`, by repo-relative path, so there is
+exactly one copy of each.
 
 ## The baseline is a pinned-defect floor, not a target
 
@@ -289,18 +315,20 @@ it is explicitly not the goal: the goal is `expect: "pass"` on every task, which
 needs B-246's fix and its own measurement of the recall cost
 (`docs/04-roadmap.md`).
 
-The first run, at `RetakeParams::default()` (2026-10-13, D-378):
+Today's detector, at `RetakeParams::default()`, on the word-precise labels
+(2026-10-13, D-379; D-378's first numbers, on segment-level labels, are in
+that decision):
 
 | task | over-cut | of it protected | precision | retake recall | group recall | keeper |
 |---|---|---|---|---|---|---|
-| C019 / whisper (re-derived) | 23.32 s | 6.18 s | 0.572 | 0.778 | 0.833 | 1.000 |
-| C019 / parakeet | 26.64 s | 21.16 s | 0.388 | 0.421 | 0.833 | 0.750 |
-| C038 / whisper (pinned) | 13.16 s | 0.00 s | 0.840 | 0.606 | 0.846 | 0.875 |
-| C038 / whisper (re-derived) | 17.86 s | 0.00 s | 0.795 | 0.609 | 0.846 | 0.750 |
-| C038 / parakeet | 16.00 s | 10.54 s | 0.802 | 0.568 | 0.846 | 1.000 |
-| C040 / whisper (pinned) | 23.92 s | 0.00 s | 0.755 | 0.552 | 0.778 | 1.000 |
-| C040 / whisper (re-derived) | 29.10 s | 0.00 s | 0.762 | 0.695 | 0.778 | 0.667 |
-| C040 / parakeet | 3.84 s | 3.84 s | 0.958 | 0.653 | 1.000 | 1.000 |
+| C019 / whisper (re-derived) | 12.40 s | 7.86 s | 0.770 | 0.564 | 0.412 | 1.000 |
+| C019 / parakeet | 24.40 s | 22.96 s | 0.443 | 0.265 | 0.353 | 0.800 |
+| C038 / whisper (pinned) | 10.36 s | 2.10 s | 0.874 | 0.551 | 0.611 | 0.857 |
+| C038 / whisper (re-derived) | 15.06 s | 2.10 s | 0.826 | 0.551 | 0.647 | 0.857 |
+| C038 / parakeet | 12.64 s | 12.64 s | 0.843 | 0.523 | 0.611 | 1.000 |
+| C040 / whisper (pinned) | 17.60 s | 0.00 s | 0.820 | 0.551 | 0.636 | 0.857 |
+| C040 / whisper (re-derived) | 24.16 s | 0.00 s | 0.801 | 0.670 | 0.636 | 0.714 |
+| C040 / parakeet | 3.20 s | 1.84 s | 0.965 | 0.606 | 0.909 | 0.900 |
 
 Every charged range was checked against the detector's own groups and is a real
 loss of words — none is a labelling artifact. They are three shapes, and only
@@ -319,6 +347,36 @@ the first is what `proposed_cuts.rs` counts as B-246:
    (`"about an 80% cut from one structural change"` rides on `"one more thing to
    know the notes"`), C019 Parakeet's `"This is the mistake."`, C038's
    `"corner"` and `"it so expensive"`.
+
+## Scoring proposals from outside the crate (D-379)
+
+The detector is not the only thing worth scoring: since D-379 the retake
+judgement is moving to the MCP client (an LLM reading the transcript), and the
+eval has to referee that too. Set `APELLES_RETAKE_EVAL_PROPOSALS` to a directory
+and `external_proposals` scores it instead of the detector — same labels, same
+scorer, so the numbers compare directly:
+
+```sh
+APELLES_RETAKE_EVAL_PROPOSALS=/path/to/dir \
+  cargo test -p apelles-speech --test retake_eval external_proposals -- --nocapture
+```
+
+One file per task, named by its id with `/` as `__` (`C040__parakeet.json`):
+`{"groups": [{"kept": [[s, e], ...], "cut": [[s, e], ...]}]}` in source
+seconds. Nothing in this mode is pinned — a proposer outside the crate is not
+this crate's behaviour; it is how one is measured.
+
+**D-379's POC, on the word-precise labels.** Fresh agents with no context, each
+given only one anonymised `transcripts/` file as numbered words and a fixed
+prompt, proposing retake groups as word-index ranges + a keep; converted to
+seconds exactly from the word times:
+
+| proposer | content lost | protected lost | tasks passing (of 3) | retake recall C019 / C038 / C040 |
+|---|---|---|---|---|
+| today's detector (Parakeet) | 40.24 s | 37.44 s | 0 | 0.265 / 0.523 / 0.606 |
+| Claude Opus, run 1 | 0.00 s | 0.00 s | 3 | 0.585 / 0.733 / 0.742 |
+| Claude Opus, run 2 | 0.00 s | 0.00 s | 3 | 0.605 / 0.745 / 0.717 |
+| Claude Sonnet | 0.00 s | 0.00 s | 3 | 0.567 / 0.720 / 0.725 |
 
 ## Boundary
 
