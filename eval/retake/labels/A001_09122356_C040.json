@@ -1,13 +1,17 @@
 {
-  "$schema_note": "See eval/retake/README.md for the schema and the labelling rules. Every time is SOURCE-AUDIO seconds, so these labels score any backend's transcript of this file. Labelled from the transcript text of three independent readings of the same audio (mlx-whisper large-v3 pinned fixture, mlx-whisper large-v3 re-derived, parakeet-tdt-0.6b-v3) and NEVER from detect_retakes output.",
+  "$schema_note": "See eval/retake/README.md for the schema and the labelling rules. Every time is SOURCE-AUDIO seconds, so these labels score any backend's transcript of this file. Labelled from the transcript text of three independent readings of the same audio (mlx-whisper large-v3 pinned fixture, mlx-whisper large-v3 re-derived, parakeet-tdt-0.6b-v3) and NEVER from detect_retakes output. Re-drawn 2026-10-13 at WORD precision from Parakeet's word timestamps (D-379): every repeat is labelled, including within-segment stutters, and three groups the segment-level pass got wrong are corrected (scanning-back, self-attention, less-read-than-write).",
   "source": "A001_09122356_C040",
   "duration_secs": 686.0,
-  "labelled_span": [0.0, 686.0],
+  "labelled_span": [
+    0.0,
+    686.0
+  ],
   "what_it_is": "The attention / self-attention explainer. The footage behind B-198, D-327 and part of B-238.",
   "readings": [
     "crates/apelles-speech/tests/fixtures/A001_09122356_C040.json (mlx-whisper large-v3, the pinned fixture, 66 segments)",
     "crates/apelles-speech/tests/fixtures/transcripts/A001_09122356_C040.whisper.json (mlx-whisper large-v3 re-derived 2026-10-10, 83 segments)",
-    "crates/apelles-speech/tests/fixtures/transcripts/A001_09122356_C040.parakeet.json (parakeet-tdt-0.6b-v3, 58 segments)"
+    "crates/apelles-speech/tests/fixtures/transcripts/A001_09122356_C040.parakeet.json (parakeet-tdt-0.6b-v3, 58 segments)",
+    "eval/retake/transcripts/A001_09122356_C040.parakeet.words.json (parakeet-tdt-0.6b-v3 word timestamps, the same run as the segment fixture — used for every word-precise bound)"
   ],
   "retakes": [
     {
@@ -16,8 +20,16 @@
       "keeper": 1,
       "keeper_confidence": "high",
       "deliveries": [
-        { "start": 45.12, "end": 65.46, "note": "first delivery; ends '...each word you give. Okay.'" },
-        { "start": 79.28, "end": 94.96, "note": "second, complete delivery — '...each word you gave it.'" }
+        {
+          "start": 45.12,
+          "end": 65.46,
+          "note": "first delivery; ends '...each word you give. Okay.'"
+        },
+        {
+          "start": 79.28,
+          "end": 94.96,
+          "note": "second, complete delivery — '...each word you gave it.'"
+        }
       ]
     },
     {
@@ -27,22 +39,55 @@
       "keeper_confidence": "high",
       "note": "Five attempts. The pinned Whisper fixture collapses attempts 2-3 into one 19 s segment and the re-derived one splits them differently again; Parakeet's gaps are what make the five visible. This is B-198 / D-327's own run.",
       "deliveries": [
-        { "start": 129.64, "end": 138.06, "note": "truncated at '...the model just'" },
-        { "start": 138.06, "end": 152.12, "note": "complete; runs to the next attempt across 1.8 s that Parakeet hears as silence and the re-derived Whisper #19 spans (rule 1)" },
-        { "start": 152.12, "end": 166.84, "note": "'...the model just waves it, the model just underweighs it. Okay, underweighs it.'" },
-        { "start": 166.84, "end": 172.84, "note": "truncated at '...glancing back, then'" },
-        { "start": 172.84, "end": 188.86, "note": "complete, and the one the speaker moves on from" }
+        {
+          "start": 129.64,
+          "end": 138.06,
+          "note": "truncated at '...the model just'"
+        },
+        {
+          "start": 138.06,
+          "end": 152.12,
+          "note": "complete; runs to the next attempt across 1.8 s that Parakeet hears as silence and the re-derived Whisper #19 spans (rule 1)"
+        },
+        {
+          "start": 152.12,
+          "end": 166.84,
+          "note": "'...the model just waves it, the model just underweighs it. Okay, underweighs it.'"
+        },
+        {
+          "start": 166.84,
+          "end": 172.84,
+          "note": "truncated at '...glancing back, then'"
+        },
+        {
+          "start": 172.84,
+          "end": 188.86,
+          "note": "complete, and the one the speaker moves on from"
+        }
       ]
     },
     {
       "id": "c040-scanning-back-through-the-last-ten",
       "line": "You're not just looking at the last message, you are scanning back through the last 10 to figure out who's actually being asked.",
-      "keeper": 1,
-      "keeper_confidence": "low",
-      "note": "The boundary between the two attempts falls inside a segment in every reading (Parakeet puts both in one 14 s segment). 239.12 is the nearest real segment boundary and is marked approximate; which attempt a human would keep is therefore also uncertain, so this group is excluded from keeper_agreement.",
+      "keeper": 2,
+      "keeper_confidence": "high",
+      "note": "Three deliveries, not two — the segment-level pass drew one boundary at 239.12 inside the first, complete delivery. Word times show: complete (with a 'who's who's' stutter), then a false start, then complete again.",
       "deliveries": [
-        { "start": 231.18, "end": 239.12, "approximate_end": true },
-        { "start": 239.12, "end": 253.12, "approximate_start": true, "note": "'You are is— you're not actually looking at the last message...' — carries the stumble but finishes the line" }
+        {
+          "start": 231.18,
+          "end": 242.08,
+          "note": "complete — '...to figure out who's who's actually being asked.'"
+        },
+        {
+          "start": 242.08,
+          "end": 245.44,
+          "note": "'You're not just looking at the last message. You are is' — abandoned"
+        },
+        {
+          "start": 245.44,
+          "end": 253.12,
+          "note": "complete, and the one the speaker moves on from"
+        }
       ]
     },
     {
@@ -51,9 +96,21 @@
       "keeper": 2,
       "keeper_confidence": "high",
       "deliveries": [
-        { "start": 259.46, "end": 264.16, "note": "truncated at '...doing that for—'" },
-        { "start": 264.16, "end": 269.20, "note": "'...for every word' then 'constantly'" },
-        { "start": 269.20, "end": 281.20, "note": "complete" }
+        {
+          "start": 259.46,
+          "end": 264.16,
+          "note": "'Self-attention is the model doing that for exelf' — truncated"
+        },
+        {
+          "start": 264.16,
+          "end": 271.68,
+          "note": "'...is the model doing that for every word constantly constantly. Constantly.' — the stutter is inside this delivery, not the keeper"
+        },
+        {
+          "start": 271.68,
+          "end": 281.2,
+          "note": "complete"
+        }
       ]
     },
     {
@@ -63,9 +120,20 @@
       "keeper_confidence": "high",
       "note": "Delivery 1 stumbles through 'every word turns into / every word turns into itself / every word turns itself into a'; only Parakeet and the re-derived Whisper show it as more than one attempt.",
       "deliveries": [
-        { "start": 289.38, "end": 297.12 },
-        { "start": 297.12, "end": 300.16, "note": "'every word turns.' — a clipped false start" },
-        { "start": 300.16, "end": 304.52, "note": "complete" }
+        {
+          "start": 289.38,
+          "end": 297.12
+        },
+        {
+          "start": 297.12,
+          "end": 300.16,
+          "note": "'every word turns.' — a clipped false start"
+        },
+        {
+          "start": 300.16,
+          "end": 304.0,
+          "note": "complete — 'Every word turns itself into a question. It's query.'"
+        }
       ]
     },
     {
@@ -74,8 +142,17 @@
       "keeper": 1,
       "keeper_confidence": "high",
       "deliveries": [
-        { "start": 337.98, "end": 341.00, "approximate_start": true, "note": "the readings disagree by 0.6 s on where the previous sentence ends; the later bound is used so the unique sentence is protected" },
-        { "start": 341.00, "end": 347.64, "note": "complete, and carries the name" }
+        {
+          "start": 337.98,
+          "end": 341.0,
+          "approximate_start": true,
+          "note": "the readings disagree by 0.6 s on where the previous sentence ends; the later bound is used so the unique sentence is protected"
+        },
+        {
+          "start": 341.0,
+          "end": 347.64,
+          "note": "complete, and carries the name"
+        }
       ]
     },
     {
@@ -85,8 +162,35 @@
       "keeper_confidence": "high",
       "note": "The re-derived Whisper transcript misses delivery 1 entirely (a dark region, D-349); the pinned Whisper fixture and Parakeet both have it.",
       "deliveries": [
-        { "start": 365.48, "end": 371.50, "note": "'...once and published a build' — a false start" },
-        { "start": 371.50, "end": 392.12, "note": "complete" }
+        {
+          "start": 365.48,
+          "end": 371.5,
+          "note": "'...once and published a build' — a false start"
+        },
+        {
+          "start": 371.5,
+          "end": 392.12,
+          "note": "complete"
+        }
+      ]
+    },
+    {
+      "id": "c040-its-less",
+      "line": "It's less read than write...",
+      "keeper": 1,
+      "keeper_confidence": "high",
+      "note": "A two-word stutter at the head of the protected sentence below — the segment-level pass labelled the whole sentence protected, which charged a correct stutter cut as protected content lost.",
+      "deliveries": [
+        {
+          "start": 430.52,
+          "end": 431.88,
+          "note": "'It's less,'"
+        },
+        {
+          "start": 431.88,
+          "end": 432.52,
+          "note": "'it's less'"
+        }
       ]
     },
     {
@@ -95,8 +199,14 @@
       "keeper": 1,
       "keeper_confidence": "high",
       "deliveries": [
-        { "start": 568.38, "end": 586.76 },
-        { "start": 586.76, "end": 597.96 }
+        {
+          "start": 568.38,
+          "end": 586.76
+        },
+        {
+          "start": 586.76,
+          "end": 597.96
+        }
       ]
     },
     {
@@ -106,8 +216,33 @@
       "keeper_confidence": "high",
       "note": "Delivery 1 runs off the rails mid-way ('...while constantly, while constantly, the encoder builds a picture of what your message') and is restarted. The pinned Whisper fixture shows none of that; it reads as one clean pair of sentences over 606.32-633.78.",
       "deliveries": [
-        { "start": 606.32, "end": 620.68 },
-        { "start": 620.68, "end": 632.88, "note": "complete" }
+        {
+          "start": 606.32,
+          "end": 620.68
+        },
+        {
+          "start": 620.68,
+          "end": 632.88,
+          "note": "complete"
+        }
+      ]
+    },
+    {
+      "id": "c040-for-watching",
+      "line": "Thank you for watching.",
+      "keeper": 1,
+      "keeper_confidence": "low",
+      "deliveries": [
+        {
+          "start": 680.4,
+          "end": 681.84,
+          "note": "'for watching'"
+        },
+        {
+          "start": 681.84,
+          "end": 682.72,
+          "note": "'for watching.'"
+        }
       ]
     }
   ],
@@ -120,17 +255,17 @@
     },
     {
       "id": "c040-answer-key-half-of-the-query-key-contrast",
-      "start": 304.52,
+      "start": 304.0,
       "end": 310.48,
       "note": "'Every other word turns itself into a kind of answer key, advertising what it's about.' This is the OTHER half of a deliberate parallel construction, and D-365's one known false positive pairs it with 'Every word turns itself into a question' (real_transcripts.rs::the_one_measured_false_positive_is_this_one, pair 30/32). It is unique content and must never be cut."
     },
     {
-      "id": "c040-less-read-than-write",
-      "start": 429.78,
+      "id": "c040-read-than-write",
+      "start": 432.52,
       "end": 438.96,
-      "note": "'It's less — it's less read than write, and more read than write while constantly rechecking.' ONE sentence with a two-word stutter, not two deliveries: nothing here is said twice. B-246's C040 case proposes cutting 430.52-434.36 of it (proposed_cuts.rs, parakeet #36, 3.84 s)."
+      "note": "'...read than write, and more read than write while constantly rechecking.' The rest of the sentence after the 'It's less, it's less' stutter (its own group above); said once. B-246's C040 case proposes cutting 430.52-434.36 of it (proposed_cuts.rs, parakeet #36, 3.84 s)."
     }
   ],
   "neutral": [],
-  "unlabelled_rationale": "Everything inside labelled_span that is not a delivery and not neutral is unique content: speech that exists nowhere else in this source, so proposing it for deletion is over-cutting. Known repeats deliberately NOT labelled as deliveries, because the repeated material is a sub-segment fragment in every reading and a whole-utterance take cannot express it without taking unique speech with it (see README, 'expressibility'): 'for watching / for watching' at ~681 s (two words), the 'A few months later' class of one-word mid-sentence corrections, and 'Jevons paradox' style emphatic repetition."
+  "unlabelled_rationale": "Everything inside labelled_span that is not a delivery and not neutral is unique content. Since D-379 every repeat is labelled at word precision, including within-segment stutters. Not labelled: stutters inside a delivery that is itself cut ('constantly constantly', 'every word turns into / every word turns into itself', 'who's who's') — cutting the delivery removes them with it."
 }

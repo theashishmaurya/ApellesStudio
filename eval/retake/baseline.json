@@ -8,148 +8,150 @@
   "tasks": {
     "C019/parakeet": {
       "gates_fired": [
-        "OverCutSecs=26.64",
-        "ProtectedSecsCut=21.16"
+        "OverCutSecs=24.40",
+        "ProtectedSecsCut=22.96"
       ],
       "metrics": {
-        "boundary_slack_secs": 0.0,
-        "cut_precision": 0.388,
-        "group_recall": 0.833,
-        "keeper_agreement": 0.75,
-        "neutral_cut_secs": 0.72,
-        "over_cut_secs": 26.64,
+        "boundary_slack_secs": 0.4,
+        "cut_precision": 0.443,
+        "group_recall": 0.353,
+        "keeper_agreement": 0.8,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 24.4,
         "proposed_secs": 44.24,
-        "protected_secs_cut": 21.16,
-        "retake_recall": 0.421
+        "protected_secs_cut": 22.96,
+        "retake_recall": 0.265
       },
       "passed": false,
       "score": 0.0
     },
     "C019/whisper-rederived": {
       "gates_fired": [
-        "OverCutSecs=23.32",
-        "ProtectedSecsCut=6.18"
+        "OverCutSecs=12.40",
+        "ProtectedSecsCut=7.86"
       ],
       "metrics": {
-        "boundary_slack_secs": 0.0,
-        "cut_precision": 0.572,
-        "group_recall": 0.833,
+        "boundary_slack_secs": 0.7,
+        "cut_precision": 0.77,
+        "group_recall": 0.412,
         "keeper_agreement": 1.0,
         "neutral_cut_secs": 1.8,
-        "over_cut_secs": 23.32,
+        "over_cut_secs": 12.4,
         "proposed_secs": 56.32,
-        "protected_secs_cut": 6.18,
-        "retake_recall": 0.778
+        "protected_secs_cut": 7.86,
+        "retake_recall": 0.564
       },
       "passed": false,
       "score": 0.0
     },
     "C038/parakeet": {
       "gates_fired": [
-        "OverCutSecs=16.00",
-        "ProtectedSecsCut=10.54"
+        "OverCutSecs=12.64",
+        "ProtectedSecsCut=12.64"
       ],
       "metrics": {
-        "boundary_slack_secs": 0.0,
-        "cut_precision": 0.802,
-        "group_recall": 0.846,
+        "boundary_slack_secs": 0.56,
+        "cut_precision": 0.843,
+        "group_recall": 0.611,
         "keeper_agreement": 1.0,
-        "neutral_cut_secs": 1.46,
-        "over_cut_secs": 16.0,
+        "neutral_cut_secs": 0.96,
+        "over_cut_secs": 12.64,
         "proposed_secs": 82.28,
-        "protected_secs_cut": 10.54,
-        "retake_recall": 0.568
+        "protected_secs_cut": 12.64,
+        "retake_recall": 0.523
       },
       "passed": false,
       "score": 0.0
     },
     "C038/whisper-pinned": {
       "gates_fired": [
-        "OverCutSecs=13.16"
+        "OverCutSecs=10.36",
+        "ProtectedSecsCut=2.10"
       ],
       "metrics": {
-        "boundary_slack_secs": 0.5,
-        "cut_precision": 0.84,
-        "group_recall": 0.846,
-        "keeper_agreement": 0.875,
+        "boundary_slack_secs": 0.7,
+        "cut_precision": 0.874,
+        "group_recall": 0.611,
+        "keeper_agreement": 0.857,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 13.16,
+        "over_cut_secs": 10.36,
         "proposed_secs": 82.78,
-        "protected_secs_cut": 0.0,
-        "retake_recall": 0.606
+        "protected_secs_cut": 2.1,
+        "retake_recall": 0.551
       },
       "passed": false,
       "score": 0.0
     },
     "C038/whisper-rederived": {
       "gates_fired": [
-        "OverCutSecs=17.86"
+        "OverCutSecs=15.06",
+        "ProtectedSecsCut=2.10"
       ],
       "metrics": {
-        "boundary_slack_secs": 0.5,
-        "cut_precision": 0.795,
-        "group_recall": 0.846,
-        "keeper_agreement": 0.75,
+        "boundary_slack_secs": 1.06,
+        "cut_precision": 0.826,
+        "group_recall": 0.647,
+        "keeper_agreement": 0.857,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 17.86,
+        "over_cut_secs": 15.06,
         "proposed_secs": 87.8,
-        "protected_secs_cut": 0.0,
-        "retake_recall": 0.609
+        "protected_secs_cut": 2.1,
+        "retake_recall": 0.551
       },
       "passed": false,
       "score": 0.0
     },
     "C040/parakeet": {
       "gates_fired": [
-        "OverCutSecs=3.84",
-        "ProtectedSecsCut=3.84"
+        "OverCutSecs=3.20",
+        "ProtectedSecsCut=1.84"
       ],
       "metrics": {
         "boundary_slack_secs": 0.58,
-        "cut_precision": 0.958,
-        "group_recall": 1.0,
-        "keeper_agreement": 1.0,
+        "cut_precision": 0.965,
+        "group_recall": 0.909,
+        "keeper_agreement": 0.9,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 3.84,
+        "over_cut_secs": 3.2,
         "proposed_secs": 91.84,
-        "protected_secs_cut": 3.84,
-        "retake_recall": 0.653
+        "protected_secs_cut": 1.84,
+        "retake_recall": 0.606
       },
       "passed": false,
       "score": 0.0
     },
     "C040/whisper-pinned": {
       "gates_fired": [
-        "OverCutSecs=23.92"
+        "OverCutSecs=17.60"
       ],
       "metrics": {
         "boundary_slack_secs": 1.02,
-        "cut_precision": 0.755,
-        "group_recall": 0.778,
-        "keeper_agreement": 1.0,
+        "cut_precision": 0.82,
+        "group_recall": 0.636,
+        "keeper_agreement": 0.857,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 23.92,
+        "over_cut_secs": 17.6,
         "proposed_secs": 98.78,
         "protected_secs_cut": 0.0,
-        "retake_recall": 0.552
+        "retake_recall": 0.551
       },
       "passed": false,
       "score": 0.0
     },
     "C040/whisper-rederived": {
       "gates_fired": [
-        "OverCutSecs=29.10"
+        "OverCutSecs=24.16"
       ],
       "metrics": {
-        "boundary_slack_secs": 0.98,
-        "cut_precision": 0.762,
-        "group_recall": 0.778,
-        "keeper_agreement": 0.667,
+        "boundary_slack_secs": 1.5,
+        "cut_precision": 0.801,
+        "group_recall": 0.636,
+        "keeper_agreement": 0.714,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 29.1,
+        "over_cut_secs": 24.16,
         "proposed_secs": 123.0,
         "protected_secs_cut": 0.0,
-        "retake_recall": 0.695
+        "retake_recall": 0.67
       },
       "passed": false,
       "score": 0.0

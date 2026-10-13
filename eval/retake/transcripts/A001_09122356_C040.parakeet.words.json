@@ -1,0 +1,9446 @@
+{
+  "text": "Have you ever given an EI three things to do in one message? Like summarize this, pull out the action item and tell me if anything looks off and it does the first two and just skips the third. That's not the model being lazy. It's something called attention, the mechanism that decides which part of what you say it's actually focused on. And here's an explanation. No maths, no whiteboard, nothing at all. I'm gonna walk you through what that actually is, and by the end you will know exactly how to write a prompt that doesn't get half ignored. Attention. In simple terms, it's just the model deciding for every word it's about to write. How much to focus on each word you give? Okay. It's just the model deciding for every word it's about to write how much to focus on each word you give it. Think about it like cooking from a recipe you have just read once. You don't reread the whole thing before every step. You glance back at exactly the line that matters right now. That's the whole point with the skipped instruction. If one part of your masses get less of that glancing back, then the others, the model just if the one part of your masses get less of that glancing back than others, the model just underweighs it. If the one part of your masses gets less of that glancing back than the others, the model just waves it, the model just underweighs it. Okay, underweighs it. If one part of your message gets less of that glancing back, then if one part of your message gets the less of that glancing back than the others, the model just underweighs it. It's called self-attention, and it's simpler than the name sounds every word in your message gets to look at every other word at the same time. Picture group check. Instead of a one-on-one conversation. You're not just looking at the last message. You are scanning back through the last 10 to figure out who's who's actually being asked. You're not just looking at the last message. You are is you're not actually looking at the last message. You are scanning back through the last 10 to figure out who's actually being asked. Self-attention is the model doing that for exelf mattens, is the model doing that for every word constantly constantly. Constantly. Self-attention is the model doing that for every word constantly. Every word turns into every word turns into itself. Every word turns itself into a every word turns. Every word turns itself into a question. It's query. Every other word turns itself into a kind of answer key, advertising what it's question get check against everyone else's answer key, and whoever matches the closest, that's who it borrows the most content from called the value. That's the real computation and then it check-in. That's the real computation and then it's checking in, and it's got a name query key value attention. There's a second half to this. How the model actually writes the response. The encoder reads your whole message once and published a build. The encoder reads your whole message once and builds a rich picture of it using the same self-attention. The decoder generates a reply one word at a time, and every time it writes a new word, it glances back at that picture, the encoder build, plus everything it already written so far. That glancing back at the encoder step even has its own name, cross attention. It's less, it's less read than write, and more read than write while constantly rechecking. And here's why that skipped instruction happened specifically. There's a real documented. Models pay less attention to stuff buried in the middle of a long message than stuff at the very start or very end. It's called lost in the middle. Just how attention naturally distributes across a long input. So if something's genuinely important, don't bury it in the middle of a long task. Put it first or repeat it at the end. Break a long list of a task into an actual number list instead of the one run on sentences. So each one gets its own anchor point. That's not a trick. It's just working with how attention actually distributes itself instead of against it. So quick recap. Attention is the model deciding how much to focus on each part of what you said by matching each words query against every other words key. So quick recap. Attention is the model deciding how much to focus on each part of what you said by matching each word square against every other words key. The encoder builds a picture of what your message is. The decoder writes the reply while constantly while constantly the encoder builds a picture of what your message. The encoder builds a picture of your message. The decoder writes the reply while constantly glancing back at it. And that's exactly why a buried instruction gets less attention than one sitting up front. Not a glitch, just a mechanism working as built. And once I understood this, it changed how I write props. I stopped burying the important instruction in paragraph three. Subscribe if you want more of this, breaking down what actually happening inside these models. Thank you for watching for watching. See you in the next one.",
+  "language": "en",
+  "model": "parakeet-tdt-0.6b-v3",
+  "source": "/Users/ashishmaurya/Downloads/A001_09122356_C040.MOV",
+  "segments": [
+    {
+      "start": 2.56,
+      "end": 14.72,
+      "text": "Have you ever given an EI three things to do in one message? Like summarize this, pull out the action item and tell me if anything looks off and it does the first two and just skips the third.",
+      "words": [
+        {
+          "word": " Have",
+          "start": 2.56,
+          "end": 3.04
+        },
+        {
+          "word": " you",
+          "start": 3.04,
+          "end": 3.2
+        },
+        {
+          "word": " ever",
+          "start": 3.2,
+          "end": 3.4400000000000004
+        },
+        {
+          "word": " given",
+          "start": 3.44,
+          "end": 3.7600000000000002
+        },
+        {
+          "word": " an",
+          "start": 3.7600000000000002,
+          "end": 4.08
+        },
+        {
+          "word": " EI",
+          "start": 4.08,
+          "end": 4.5600000000000005
+        },
+        {
+          "word": " three",
+          "start": 4.5600000000000005,
+          "end": 4.8
+        },
+        {
+          "word": " things",
+          "start": 4.8,
+          "end": 5.2
+        },
+        {
+          "word": " to",
+          "start": 5.2,
+          "end": 5.5200000000000005
+        },
+        {
+          "word": " do",
+          "start": 5.5200000000000005,
+          "end": 5.840000000000001
+        },
+        {
+          "word": " in",
+          "start": 5.84,
+          "end": 6.16
+        },
+        {
+          "word": " one",
+          "start": 6.16,
+          "end": 6.48
+        },
+        {
+          "word": " message?",
+          "start": 6.48,
+          "end": 7.04
+        },
+        {
+          "word": " Like",
+          "start": 7.04,
+          "end": 7.36
+        },
+        {
+          "word": " summarize",
+          "start": 7.36,
+          "end": 7.92
+        },
+        {
+          "word": " this,",
+          "start": 7.92,
+          "end": 8.24
+        },
+        {
+          "word": " pull",
+          "start": 8.24,
+          "end": 8.48
+        },
+        {
+          "word": " out",
+          "start": 8.48,
+          "end": 8.64
+        },
+        {
+          "word": " the",
+          "start": 8.64,
+          "end": 8.72
+        },
+        {
+          "word": " action",
+          "start": 8.72,
+          "end": 9.040000000000001
+        },
+        {
+          "word": " item",
+          "start": 9.040000000000001,
+          "end": 9.360000000000001
+        },
+        {
+          "word": " and",
+          "start": 9.44,
+          "end": 9.6
+        },
+        {
+          "word": " tell",
+          "start": 9.6,
+          "end": 9.92
+        },
+        {
+          "word": " me",
+          "start": 9.92,
+          "end": 10.16
+        },
+        {
+          "word": " if",
+          "start": 10.16,
+          "end": 10.4
+        },
+        {
+          "word": " anything",
+          "start": 10.4,
+          "end": 10.88
+        },
+        {
+          "word": " looks",
+          "start": 10.88,
+          "end": 11.200000000000001
+        },
+        {
+          "word": " off",
+          "start": 11.200000000000001,
+          "end": 11.440000000000001
+        },
+        {
+          "word": " and",
+          "start": 11.68,
+          "end": 11.92
+        },
+        {
+          "word": " it",
+          "start": 11.92,
+          "end": 12.08
+        },
+        {
+          "word": " does",
+          "start": 12.08,
+          "end": 12.32
+        },
+        {
+          "word": " the",
+          "start": 12.32,
+          "end": 12.56
+        },
+        {
+          "word": " first",
+          "start": 12.56,
+          "end": 12.88
+        },
+        {
+          "word": " two",
+          "start": 12.88,
+          "end": 13.040000000000001
+        },
+        {
+          "word": " and",
+          "start": 13.120000000000001,
+          "end": 13.280000000000001
+        },
+        {
+          "word": " just",
+          "start": 13.280000000000001,
+          "end": 13.520000000000001
+        },
+        {
+          "word": " skips",
+          "start": 13.52,
+          "end": 13.92
+        },
+        {
+          "word": " the",
+          "start": 13.92,
+          "end": 14.16
+        },
+        {
+          "word": " third.",
+          "start": 14.16,
+          "end": 14.72
+        }
+      ]
+    },
+    {
+      "start": 17.12,
+      "end": 19.52,
+      "text": "That's not the model being lazy.",
+      "words": [
+        {
+          "word": " That's",
+          "start": 17.12,
+          "end": 17.68
+        },
+        {
+          "word": " not",
+          "start": 17.68,
+          "end": 17.84
+        },
+        {
+          "word": " the",
+          "start": 17.84,
+          "end": 18.16
+        },
+        {
+          "word": " model",
+          "start": 18.16,
+          "end": 18.48
+        },
+        {
+          "word": " being",
+          "start": 18.48,
+          "end": 18.88
+        },
+        {
+          "word": " lazy.",
+          "start": 18.88,
+          "end": 19.52
+        }
+      ]
+    },
+    {
+      "start": 21.44,
+      "end": 27.04,
+      "text": "It's something called attention, the mechanism that decides which part of what",
+      "words": [
+        {
+          "word": " It's",
+          "start": 21.44,
+          "end": 22.0
+        },
+        {
+          "word": " something",
+          "start": 22.0,
+          "end": 22.48
+        },
+        {
+          "word": " called",
+          "start": 22.48,
+          "end": 23.04
+        },
+        {
+          "word": " attention,",
+          "start": 23.04,
+          "end": 23.84
+        },
+        {
+          "word": " the",
+          "start": 23.84,
+          "end": 24.08
+        },
+        {
+          "word": " mechanism",
+          "start": 24.080000000000002,
+          "end": 24.8
+        },
+        {
+          "word": " that",
+          "start": 24.8,
+          "end": 25.12
+        },
+        {
+          "word": " decides",
+          "start": 25.12,
+          "end": 25.76
+        },
+        {
+          "word": " which",
+          "start": 25.76,
+          "end": 26.080000000000002
+        },
+        {
+          "word": " part",
+          "start": 26.080000000000002,
+          "end": 26.400000000000002
+        },
+        {
+          "word": " of",
+          "start": 26.400000000000002,
+          "end": 26.720000000000002
+        },
+        {
+          "word": " what",
+          "start": 26.72,
+          "end": 27.04
+        }
+      ]
+    },
+    {
+      "start": 27.36,
+      "end": 30.080000000000002,
+      "text": "you say it's actually focused on.",
+      "words": [
+        {
+          "word": " you",
+          "start": 27.36,
+          "end": 27.68
+        },
+        {
+          "word": " say",
+          "start": 27.68,
+          "end": 27.919999999999998
+        },
+        {
+          "word": " it's",
+          "start": 28.080000000000002,
+          "end": 28.48
+        },
+        {
+          "word": " actually",
+          "start": 28.48,
+          "end": 28.959999999999997
+        },
+        {
+          "word": " focused",
+          "start": 28.96,
+          "end": 29.76
+        },
+        {
+          "word": " on.",
+          "start": 29.76,
+          "end": 30.080000000000002
+        }
+      ]
+    },
+    {
+      "start": 31.6,
+      "end": 45.120000000000005,
+      "text": "And here's an explanation. No maths, no whiteboard, nothing at all. I'm gonna walk you through what that actually is, and by the end you will know exactly how to write a prompt that doesn't get half ignored.",
+      "words": [
+        {
+          "word": " And",
+          "start": 31.6,
+          "end": 31.92
+        },
+        {
+          "word": " here's",
+          "start": 32.160000000000004,
+          "end": 32.559999999999995
+        },
+        {
+          "word": " an",
+          "start": 32.56,
+          "end": 32.72
+        },
+        {
+          "word": " explanation.",
+          "start": 32.72,
+          "end": 33.36
+        },
+        {
+          "word": " No",
+          "start": 33.36,
+          "end": 33.6
+        },
+        {
+          "word": " maths,",
+          "start": 33.6,
+          "end": 34.08
+        },
+        {
+          "word": " no",
+          "start": 34.08,
+          "end": 34.239999999999995
+        },
+        {
+          "word": " whiteboard,",
+          "start": 34.24,
+          "end": 34.88
+        },
+        {
+          "word": " nothing",
+          "start": 34.88,
+          "end": 35.28
+        },
+        {
+          "word": " at",
+          "start": 35.28,
+          "end": 35.52
+        },
+        {
+          "word": " all.",
+          "start": 35.52,
+          "end": 36.080000000000005
+        },
+        {
+          "word": " I'm",
+          "start": 36.08,
+          "end": 36.48
+        },
+        {
+          "word": " gonna",
+          "start": 36.480000000000004,
+          "end": 36.72
+        },
+        {
+          "word": " walk",
+          "start": 36.72,
+          "end": 36.96
+        },
+        {
+          "word": " you",
+          "start": 36.96,
+          "end": 37.12
+        },
+        {
+          "word": " through",
+          "start": 37.12,
+          "end": 37.52
+        },
+        {
+          "word": " what",
+          "start": 37.52,
+          "end": 37.760000000000005
+        },
+        {
+          "word": " that",
+          "start": 37.76,
+          "end": 38.0
+        },
+        {
+          "word": " actually",
+          "start": 38.0,
+          "end": 38.56
+        },
+        {
+          "word": " is,",
+          "start": 38.56,
+          "end": 38.88
+        },
+        {
+          "word": " and",
+          "start": 38.88,
+          "end": 39.120000000000005
+        },
+        {
+          "word": " by",
+          "start": 39.12,
+          "end": 39.36
+        },
+        {
+          "word": " the",
+          "start": 39.36,
+          "end": 39.6
+        },
+        {
+          "word": " end",
+          "start": 39.6,
+          "end": 39.76
+        },
+        {
+          "word": " you",
+          "start": 39.84,
+          "end": 40.160000000000004
+        },
+        {
+          "word": " will",
+          "start": 40.160000000000004,
+          "end": 40.480000000000004
+        },
+        {
+          "word": " know",
+          "start": 40.480000000000004,
+          "end": 40.800000000000004
+        },
+        {
+          "word": " exactly",
+          "start": 40.800000000000004,
+          "end": 41.52
+        },
+        {
+          "word": " how",
+          "start": 41.52,
+          "end": 41.760000000000005
+        },
+        {
+          "word": " to",
+          "start": 41.76,
+          "end": 42.0
+        },
+        {
+          "word": " write",
+          "start": 42.0,
+          "end": 42.24
+        },
+        {
+          "word": " a",
+          "start": 42.24,
+          "end": 42.480000000000004
+        },
+        {
+          "word": " prompt",
+          "start": 42.480000000000004,
+          "end": 42.96
+        },
+        {
+          "word": " that",
+          "start": 42.96,
+          "end": 43.12
+        },
+        {
+          "word": " doesn't",
+          "start": 43.12,
+          "end": 43.519999999999996
+        },
+        {
+          "word": " get",
+          "start": 43.52,
+          "end": 43.760000000000005
+        },
+        {
+          "word": " half",
+          "start": 43.76,
+          "end": 44.160000000000004
+        },
+        {
+          "word": " ignored.",
+          "start": 44.160000000000004,
+          "end": 45.120000000000005
+        }
+      ]
+    },
+    {
+      "start": 52.0,
+      "end": 63.52,
+      "text": "Attention. In simple terms, it's just the model deciding for every word it's about to write. How much to focus on each word you give? Okay.",
+      "words": [
+        {
+          "word": " Attention.",
+          "start": 52.0,
+          "end": 53.2
+        },
+        {
+          "word": " In",
+          "start": 53.2,
+          "end": 53.36
+        },
+        {
+          "word": " simple",
+          "start": 53.52,
+          "end": 53.92
+        },
+        {
+          "word": " terms,",
+          "start": 53.92,
+          "end": 54.32
+        },
+        {
+          "word": " it's",
+          "start": 54.32,
+          "end": 54.8
+        },
+        {
+          "word": " just",
+          "start": 54.800000000000004,
+          "end": 55.040000000000006
+        },
+        {
+          "word": " the",
+          "start": 55.04,
+          "end": 55.36
+        },
+        {
+          "word": " model",
+          "start": 55.36,
+          "end": 55.68
+        },
+        {
+          "word": " deciding",
+          "start": 55.84,
+          "end": 56.64
+        },
+        {
+          "word": " for",
+          "start": 56.88,
+          "end": 57.2
+        },
+        {
+          "word": " every",
+          "start": 57.2,
+          "end": 57.76
+        },
+        {
+          "word": " word",
+          "start": 57.76,
+          "end": 58.0
+        },
+        {
+          "word": " it's",
+          "start": 58.0,
+          "end": 58.480000000000004
+        },
+        {
+          "word": " about",
+          "start": 58.480000000000004,
+          "end": 58.720000000000006
+        },
+        {
+          "word": " to",
+          "start": 58.72,
+          "end": 58.96
+        },
+        {
+          "word": " write.",
+          "start": 58.96,
+          "end": 59.92
+        },
+        {
+          "word": " How",
+          "start": 59.92,
+          "end": 60.32
+        },
+        {
+          "word": " much",
+          "start": 60.32,
+          "end": 60.56
+        },
+        {
+          "word": " to",
+          "start": 60.56,
+          "end": 60.72
+        },
+        {
+          "word": " focus",
+          "start": 60.72,
+          "end": 61.04
+        },
+        {
+          "word": " on",
+          "start": 61.04,
+          "end": 61.199999999999996
+        },
+        {
+          "word": " each",
+          "start": 61.36,
+          "end": 61.76
+        },
+        {
+          "word": " word",
+          "start": 61.76,
+          "end": 62.0
+        },
+        {
+          "word": " you",
+          "start": 62.160000000000004,
+          "end": 62.480000000000004
+        },
+        {
+          "word": " give?",
+          "start": 62.480000000000004,
+          "end": 63.2
+        },
+        {
+          "word": " Okay.",
+          "start": 63.2,
+          "end": 63.52
+        }
+      ]
+    },
+    {
+      "start": 81.84,
+      "end": 89.52,
+      "text": "It's just the model deciding for every word it's about to write how much to focus on each word you give it.",
+      "words": [
+        {
+          "word": " It's",
+          "start": 81.84,
+          "end": 82.16
+        },
+        {
+          "word": " just",
+          "start": 82.16,
+          "end": 82.32
+        },
+        {
+          "word": " the",
+          "start": 82.32000000000001,
+          "end": 82.56
+        },
+        {
+          "word": " model",
+          "start": 82.56,
+          "end": 82.88
+        },
+        {
+          "word": " deciding",
+          "start": 82.88,
+          "end": 83.52
+        },
+        {
+          "word": " for",
+          "start": 83.52,
+          "end": 83.67999999999999
+        },
+        {
+          "word": " every",
+          "start": 83.68,
+          "end": 84.08
+        },
+        {
+          "word": " word",
+          "start": 84.08,
+          "end": 84.24
+        },
+        {
+          "word": " it's",
+          "start": 84.4,
+          "end": 84.96
+        },
+        {
+          "word": " about",
+          "start": 84.96000000000001,
+          "end": 85.28
+        },
+        {
+          "word": " to",
+          "start": 85.28,
+          "end": 85.52
+        },
+        {
+          "word": " write",
+          "start": 85.52,
+          "end": 86.08
+        },
+        {
+          "word": " how",
+          "start": 86.32000000000001,
+          "end": 86.64
+        },
+        {
+          "word": " much",
+          "start": 86.64,
+          "end": 86.96
+        },
+        {
+          "word": " to",
+          "start": 86.96000000000001,
+          "end": 87.12
+        },
+        {
+          "word": " focus",
+          "start": 87.12,
+          "end": 87.6
+        },
+        {
+          "word": " on",
+          "start": 87.60000000000001,
+          "end": 87.84
+        },
+        {
+          "word": " each",
+          "start": 87.84,
+          "end": 88.16
+        },
+        {
+          "word": " word",
+          "start": 88.16,
+          "end": 88.39999999999999
+        },
+        {
+          "word": " you",
+          "start": 88.48,
+          "end": 88.72
+        },
+        {
+          "word": " give",
+          "start": 88.72,
+          "end": 89.19999999999999
+        },
+        {
+          "word": " it.",
+          "start": 89.2,
+          "end": 89.52
+        }
+      ]
+    },
+    {
+      "start": 94.96000000000001,
+      "end": 99.44,
+      "text": "Think about it like cooking from a recipe you have just read once.",
+      "words": [
+        {
+          "word": " Think",
+          "start": 94.96000000000001,
+          "end": 95.52
+        },
+        {
+          "word": " about",
+          "start": 95.52,
+          "end": 95.67999999999999
+        },
+        {
+          "word": " it",
+          "start": 95.68,
+          "end": 95.84
+        },
+        {
+          "word": " like",
+          "start": 95.92,
+          "end": 96.16
+        },
+        {
+          "word": " cooking",
+          "start": 96.16,
+          "end": 96.72
+        },
+        {
+          "word": " from",
+          "start": 96.72,
+          "end": 96.96
+        },
+        {
+          "word": " a",
+          "start": 96.96000000000001,
+          "end": 97.12
+        },
+        {
+          "word": " recipe",
+          "start": 97.12,
+          "end": 97.6
+        },
+        {
+          "word": " you",
+          "start": 97.68,
+          "end": 97.92
+        },
+        {
+          "word": " have",
+          "start": 97.92,
+          "end": 98.16
+        },
+        {
+          "word": " just",
+          "start": 98.16,
+          "end": 98.39999999999999
+        },
+        {
+          "word": " read",
+          "start": 98.4,
+          "end": 98.64
+        },
+        {
+          "word": " once.",
+          "start": 98.8,
+          "end": 99.44
+        }
+      ]
+    },
+    {
+      "start": 106.32000000000001,
+      "end": 114.0,
+      "text": "You don't reread the whole thing before every step. You glance back at exactly the line that matters right now.",
+      "words": [
+        {
+          "word": " You",
+          "start": 106.32000000000001,
+          "end": 106.64
+        },
+        {
+          "word": " don't",
+          "start": 106.64,
+          "end": 106.96
+        },
+        {
+          "word": " reread",
+          "start": 106.96000000000001,
+          "end": 107.6
+        },
+        {
+          "word": " the",
+          "start": 107.60000000000001,
+          "end": 107.76
+        },
+        {
+          "word": " whole",
+          "start": 107.76,
+          "end": 108.08
+        },
+        {
+          "word": " thing",
+          "start": 108.08,
+          "end": 108.4
+        },
+        {
+          "word": " before",
+          "start": 108.4,
+          "end": 108.88
+        },
+        {
+          "word": " every",
+          "start": 108.88,
+          "end": 109.36
+        },
+        {
+          "word": " step.",
+          "start": 109.36,
+          "end": 110.32
+        },
+        {
+          "word": " You",
+          "start": 110.32000000000001,
+          "end": 110.64
+        },
+        {
+          "word": " glance",
+          "start": 110.64,
+          "end": 111.19999999999999
+        },
+        {
+          "word": " back",
+          "start": 111.2,
+          "end": 111.44
+        },
+        {
+          "word": " at",
+          "start": 111.44,
+          "end": 111.67999999999999
+        },
+        {
+          "word": " exactly",
+          "start": 111.68,
+          "end": 112.08
+        },
+        {
+          "word": " the",
+          "start": 112.08,
+          "end": 112.32
+        },
+        {
+          "word": " line",
+          "start": 112.32000000000001,
+          "end": 112.64
+        },
+        {
+          "word": " that",
+          "start": 112.64,
+          "end": 112.8
+        },
+        {
+          "word": " matters",
+          "start": 112.8,
+          "end": 113.2
+        },
+        {
+          "word": " right",
+          "start": 113.36,
+          "end": 113.67999999999999
+        },
+        {
+          "word": " now.",
+          "start": 113.68,
+          "end": 114.0
+        }
+      ]
+    },
+    {
+      "start": 119.4,
+      "end": 123.32,
+      "text": "That's the whole point with the skipped instruction.",
+      "words": [
+        {
+          "word": " That's",
+          "start": 119.4,
+          "end": 119.96
+        },
+        {
+          "word": " the",
+          "start": 119.96000000000001,
+          "end": 120.2
+        },
+        {
+          "word": " whole",
+          "start": 120.2,
+          "end": 120.67999999999999
+        },
+        {
+          "word": " point",
+          "start": 120.68,
+          "end": 120.84
+        },
+        {
+          "word": " with",
+          "start": 121.0,
+          "end": 121.24
+        },
+        {
+          "word": " the",
+          "start": 121.24000000000001,
+          "end": 121.48
+        },
+        {
+          "word": " skipped",
+          "start": 121.48,
+          "end": 122.36
+        },
+        {
+          "word": " instruction.",
+          "start": 122.36,
+          "end": 123.32
+        }
+      ]
+    },
+    {
+      "start": 129.64,
+      "end": 136.35999999999999,
+      "text": "If one part of your masses get less of that glancing back, then the others, the model just",
+      "words": [
+        {
+          "word": " If",
+          "start": 129.64,
+          "end": 130.12
+        },
+        {
+          "word": " one",
+          "start": 130.12,
+          "end": 130.36
+        },
+        {
+          "word": " part",
+          "start": 130.36,
+          "end": 130.52
+        },
+        {
+          "word": " of",
+          "start": 130.52,
+          "end": 130.68
+        },
+        {
+          "word": " your",
+          "start": 130.68,
+          "end": 130.92000000000002
+        },
+        {
+          "word": " masses",
+          "start": 130.92000000000002,
+          "end": 131.48000000000002
+        },
+        {
+          "word": " get",
+          "start": 131.48,
+          "end": 131.56
+        },
+        {
+          "word": " less",
+          "start": 131.72,
+          "end": 132.04
+        },
+        {
+          "word": " of",
+          "start": 132.04,
+          "end": 132.2
+        },
+        {
+          "word": " that",
+          "start": 132.2,
+          "end": 132.44
+        },
+        {
+          "word": " glancing",
+          "start": 132.44,
+          "end": 133.16000000000003
+        },
+        {
+          "word": " back,",
+          "start": 133.16,
+          "end": 133.95999999999998
+        },
+        {
+          "word": " then",
+          "start": 133.96,
+          "end": 134.28
+        },
+        {
+          "word": " the",
+          "start": 134.28,
+          "end": 134.6
+        },
+        {
+          "word": " others,",
+          "start": 134.6,
+          "end": 135.24
+        },
+        {
+          "word": " the",
+          "start": 135.24,
+          "end": 135.56
+        },
+        {
+          "word": " model",
+          "start": 135.56,
+          "end": 135.88
+        },
+        {
+          "word": " just",
+          "start": 136.04,
+          "end": 136.35999999999999
+        }
+      ]
+    },
+    {
+      "start": 142.6,
+      "end": 150.35999999999999,
+      "text": "if the one part of your masses get less of that glancing back than others, the model just underweighs it.",
+      "words": [
+        {
+          "word": " if",
+          "start": 142.6,
+          "end": 142.84
+        },
+        {
+          "word": " the",
+          "start": 143.0,
+          "end": 143.24
+        },
+        {
+          "word": " one",
+          "start": 143.24,
+          "end": 143.48000000000002
+        },
+        {
+          "word": " part",
+          "start": 143.48000000000002,
+          "end": 143.64000000000001
+        },
+        {
+          "word": " of",
+          "start": 143.64,
+          "end": 143.88
+        },
+        {
+          "word": " your",
+          "start": 143.88,
+          "end": 144.12
+        },
+        {
+          "word": " masses",
+          "start": 144.12,
+          "end": 144.68
+        },
+        {
+          "word": " get",
+          "start": 144.68,
+          "end": 144.76000000000002
+        },
+        {
+          "word": " less",
+          "start": 144.92000000000002,
+          "end": 145.16
+        },
+        {
+          "word": " of",
+          "start": 145.16,
+          "end": 145.4
+        },
+        {
+          "word": " that",
+          "start": 145.4,
+          "end": 145.56
+        },
+        {
+          "word": " glancing",
+          "start": 145.56,
+          "end": 146.2
+        },
+        {
+          "word": " back",
+          "start": 146.2,
+          "end": 146.51999999999998
+        },
+        {
+          "word": " than",
+          "start": 146.52,
+          "end": 146.76000000000002
+        },
+        {
+          "word": " others,",
+          "start": 146.76,
+          "end": 147.64000000000001
+        },
+        {
+          "word": " the",
+          "start": 147.64,
+          "end": 147.95999999999998
+        },
+        {
+          "word": " model",
+          "start": 147.96,
+          "end": 148.28
+        },
+        {
+          "word": " just",
+          "start": 148.52,
+          "end": 148.84
+        },
+        {
+          "word": " underweighs",
+          "start": 148.84,
+          "end": 150.04000000000002
+        },
+        {
+          "word": " it.",
+          "start": 150.04,
+          "end": 150.35999999999999
+        }
+      ]
+    },
+    {
+      "start": 152.12,
+      "end": 159.07999999999998,
+      "text": "If the one part of your masses gets less of that glancing back than the others, the model just waves it,",
+      "words": [
+        {
+          "word": " If",
+          "start": 152.12,
+          "end": 152.44
+        },
+        {
+          "word": " the",
+          "start": 152.44,
+          "end": 152.68
+        },
+        {
+          "word": " one",
+          "start": 152.68,
+          "end": 152.92000000000002
+        },
+        {
+          "word": " part",
+          "start": 152.92000000000002,
+          "end": 153.08
+        },
+        {
+          "word": " of",
+          "start": 153.07999999999998,
+          "end": 153.23999999999998
+        },
+        {
+          "word": " your",
+          "start": 153.24,
+          "end": 153.48000000000002
+        },
+        {
+          "word": " masses",
+          "start": 153.48000000000002,
+          "end": 154.12
+        },
+        {
+          "word": " gets",
+          "start": 154.12,
+          "end": 154.44
+        },
+        {
+          "word": " less",
+          "start": 154.44,
+          "end": 154.76
+        },
+        {
+          "word": " of",
+          "start": 154.76,
+          "end": 154.92
+        },
+        {
+          "word": " that",
+          "start": 154.92000000000002,
+          "end": 155.16000000000003
+        },
+        {
+          "word": " glancing",
+          "start": 155.16,
+          "end": 155.88
+        },
+        {
+          "word": " back",
+          "start": 155.88,
+          "end": 156.2
+        },
+        {
+          "word": " than",
+          "start": 156.2,
+          "end": 156.35999999999999
+        },
+        {
+          "word": " the",
+          "start": 156.36,
+          "end": 156.68
+        },
+        {
+          "word": " others,",
+          "start": 156.68,
+          "end": 157.4
+        },
+        {
+          "word": " the",
+          "start": 157.4,
+          "end": 157.64000000000001
+        },
+        {
+          "word": " model",
+          "start": 157.64,
+          "end": 157.95999999999998
+        },
+        {
+          "word": " just",
+          "start": 157.96,
+          "end": 158.20000000000002
+        },
+        {
+          "word": " waves",
+          "start": 158.2,
+          "end": 158.76000000000002
+        },
+        {
+          "word": " it,",
+          "start": 158.76,
+          "end": 159.07999999999998
+        }
+      ]
+    },
+    {
+      "start": 160.76,
+      "end": 164.76,
+      "text": "the model just underweighs it. Okay, underweighs it.",
+      "words": [
+        {
+          "word": " the",
+          "start": 160.76,
+          "end": 161.07999999999998
+        },
+        {
+          "word": " model",
+          "start": 161.07999999999998,
+          "end": 161.39999999999998
+        },
+        {
+          "word": " just",
+          "start": 161.64,
+          "end": 161.95999999999998
+        },
+        {
+          "word": " underweighs",
+          "start": 161.96,
+          "end": 162.76
+        },
+        {
+          "word": " it.",
+          "start": 162.76,
+          "end": 163.16000000000003
+        },
+        {
+          "word": " Okay,",
+          "start": 163.16,
+          "end": 163.56
+        },
+        {
+          "word": " underweighs",
+          "start": 163.56,
+          "end": 164.28
+        },
+        {
+          "word": " it.",
+          "start": 164.44,
+          "end": 164.76
+        }
+      ]
+    },
+    {
+      "start": 166.84,
+      "end": 172.2,
+      "text": "If one part of your message gets less of that glancing back, then",
+      "words": [
+        {
+          "word": " If",
+          "start": 166.84,
+          "end": 167.39999999999998
+        },
+        {
+          "word": " one",
+          "start": 167.4,
+          "end": 167.72
+        },
+        {
+          "word": " part",
+          "start": 167.72,
+          "end": 167.96
+        },
+        {
+          "word": " of",
+          "start": 167.96,
+          "end": 168.20000000000002
+        },
+        {
+          "word": " your",
+          "start": 168.2,
+          "end": 168.44
+        },
+        {
+          "word": " message",
+          "start": 168.44,
+          "end": 169.08
+        },
+        {
+          "word": " gets",
+          "start": 169.07999999999998,
+          "end": 169.56
+        },
+        {
+          "word": " less",
+          "start": 169.56,
+          "end": 169.96
+        },
+        {
+          "word": " of",
+          "start": 169.96,
+          "end": 170.20000000000002
+        },
+        {
+          "word": " that",
+          "start": 170.2,
+          "end": 170.44
+        },
+        {
+          "word": " glancing",
+          "start": 170.44,
+          "end": 171.16
+        },
+        {
+          "word": " back,",
+          "start": 171.16,
+          "end": 171.88
+        },
+        {
+          "word": " then",
+          "start": 171.88,
+          "end": 172.2
+        }
+      ]
+    },
+    {
+      "start": 172.84,
+      "end": 180.83999999999997,
+      "text": "if one part of your message gets the less of that glancing back than the others, the model just underweighs it.",
+      "words": [
+        {
+          "word": " if",
+          "start": 172.84,
+          "end": 173.16
+        },
+        {
+          "word": " one",
+          "start": 173.16,
+          "end": 173.48
+        },
+        {
+          "word": " part",
+          "start": 173.48000000000002,
+          "end": 173.72000000000003
+        },
+        {
+          "word": " of",
+          "start": 173.72,
+          "end": 173.88
+        },
+        {
+          "word": " your",
+          "start": 173.88,
+          "end": 174.12
+        },
+        {
+          "word": " message",
+          "start": 174.12,
+          "end": 174.6
+        },
+        {
+          "word": " gets",
+          "start": 174.60000000000002,
+          "end": 174.92
+        },
+        {
+          "word": " the",
+          "start": 174.92000000000002,
+          "end": 175.16000000000003
+        },
+        {
+          "word": " less",
+          "start": 175.16,
+          "end": 175.64000000000001
+        },
+        {
+          "word": " of",
+          "start": 175.64,
+          "end": 175.88
+        },
+        {
+          "word": " that",
+          "start": 175.88,
+          "end": 176.04
+        },
+        {
+          "word": " glancing",
+          "start": 176.04000000000002,
+          "end": 176.68
+        },
+        {
+          "word": " back",
+          "start": 176.68,
+          "end": 176.92000000000002
+        },
+        {
+          "word": " than",
+          "start": 176.92000000000002,
+          "end": 177.08
+        },
+        {
+          "word": " the",
+          "start": 177.07999999999998,
+          "end": 177.39999999999998
+        },
+        {
+          "word": " others,",
+          "start": 177.4,
+          "end": 178.28000000000003
+        },
+        {
+          "word": " the",
+          "start": 178.28,
+          "end": 178.6
+        },
+        {
+          "word": " model",
+          "start": 178.60000000000002,
+          "end": 178.92000000000002
+        },
+        {
+          "word": " just",
+          "start": 179.16,
+          "end": 179.48
+        },
+        {
+          "word": " underweighs",
+          "start": 179.48000000000002,
+          "end": 180.51999999999998
+        },
+        {
+          "word": " it.",
+          "start": 180.51999999999998,
+          "end": 180.83999999999997
+        }
+      ]
+    },
+    {
+      "start": 193.0,
+      "end": 197.32,
+      "text": "It's called self-attention, and it's simpler than the name sounds",
+      "words": [
+        {
+          "word": " It's",
+          "start": 193.0,
+          "end": 193.24
+        },
+        {
+          "word": " called",
+          "start": 193.24,
+          "end": 193.56
+        },
+        {
+          "word": " self-attention,",
+          "start": 193.56,
+          "end": 194.67999999999998
+        },
+        {
+          "word": " and",
+          "start": 194.68,
+          "end": 194.84
+        },
+        {
+          "word": " it's",
+          "start": 194.84,
+          "end": 195.23999999999998
+        },
+        {
+          "word": " simpler",
+          "start": 195.24,
+          "end": 195.72
+        },
+        {
+          "word": " than",
+          "start": 195.72,
+          "end": 195.88
+        },
+        {
+          "word": " the",
+          "start": 195.88,
+          "end": 196.12
+        },
+        {
+          "word": " name",
+          "start": 196.12,
+          "end": 196.52
+        },
+        {
+          "word": " sounds",
+          "start": 196.51999999999998,
+          "end": 197.32
+        }
+      ]
+    },
+    {
+      "start": 205.64,
+      "end": 211.48,
+      "text": "every word in your message gets to look at every other word at the same time.",
+      "words": [
+        {
+          "word": " every",
+          "start": 205.64,
+          "end": 206.12
+        },
+        {
+          "word": " word",
+          "start": 206.44,
+          "end": 206.76
+        },
+        {
+          "word": " in",
+          "start": 206.76,
+          "end": 207.07999999999998
+        },
+        {
+          "word": " your",
+          "start": 207.07999999999998,
+          "end": 207.32
+        },
+        {
+          "word": " message",
+          "start": 207.32,
+          "end": 207.88000000000002
+        },
+        {
+          "word": " gets",
+          "start": 208.12,
+          "end": 208.60000000000002
+        },
+        {
+          "word": " to",
+          "start": 208.60000000000002,
+          "end": 208.84000000000003
+        },
+        {
+          "word": " look",
+          "start": 208.84,
+          "end": 209.08
+        },
+        {
+          "word": " at",
+          "start": 209.07999999999998,
+          "end": 209.23999999999998
+        },
+        {
+          "word": " every",
+          "start": 209.24,
+          "end": 209.64000000000001
+        },
+        {
+          "word": " other",
+          "start": 209.64,
+          "end": 209.95999999999998
+        },
+        {
+          "word": " word",
+          "start": 209.96,
+          "end": 210.20000000000002
+        },
+        {
+          "word": " at",
+          "start": 210.2,
+          "end": 210.44
+        },
+        {
+          "word": " the",
+          "start": 210.44,
+          "end": 210.6
+        },
+        {
+          "word": " same",
+          "start": 210.60000000000002,
+          "end": 211.16
+        },
+        {
+          "word": " time.",
+          "start": 211.16,
+          "end": 211.48
+        }
+      ]
+    },
+    {
+      "start": 218.44,
+      "end": 222.12,
+      "text": "Picture group check. Instead of a one-on-one conversation.",
+      "words": [
+        {
+          "word": " Picture",
+          "start": 218.44,
+          "end": 218.92000000000002
+        },
+        {
+          "word": " group",
+          "start": 219.16,
+          "end": 219.48
+        },
+        {
+          "word": " check.",
+          "start": 219.48000000000002,
+          "end": 219.84
+        },
+        {
+          "word": " Instead",
+          "start": 219.84,
+          "end": 220.20000000000002
+        },
+        {
+          "word": " of",
+          "start": 220.2,
+          "end": 220.35999999999999
+        },
+        {
+          "word": " a",
+          "start": 220.36,
+          "end": 220.52
+        },
+        {
+          "word": " one-on-one",
+          "start": 220.51999999999998,
+          "end": 221.00000000000003
+        },
+        {
+          "word": " conversation.",
+          "start": 221.24,
+          "end": 222.12
+        }
+      ]
+    },
+    {
+      "start": 231.36,
+      "end": 238.32000000000002,
+      "text": "You're not just looking at the last message. You are scanning back through the last 10 to figure out who's",
+      "words": [
+        {
+          "word": " You're",
+          "start": 231.36,
+          "end": 232.0
+        },
+        {
+          "word": " not",
+          "start": 232.0,
+          "end": 232.24
+        },
+        {
+          "word": " just",
+          "start": 232.24,
+          "end": 232.48000000000002
+        },
+        {
+          "word": " looking",
+          "start": 232.48,
+          "end": 232.88
+        },
+        {
+          "word": " at",
+          "start": 232.88,
+          "end": 233.04
+        },
+        {
+          "word": " the",
+          "start": 233.04,
+          "end": 233.35999999999999
+        },
+        {
+          "word": " last",
+          "start": 233.36,
+          "end": 233.60000000000002
+        },
+        {
+          "word": " message.",
+          "start": 233.6,
+          "end": 234.24
+        },
+        {
+          "word": " You",
+          "start": 234.24,
+          "end": 234.4
+        },
+        {
+          "word": " are",
+          "start": 234.4,
+          "end": 234.64000000000001
+        },
+        {
+          "word": " scanning",
+          "start": 234.64,
+          "end": 235.2
+        },
+        {
+          "word": " back",
+          "start": 235.2,
+          "end": 235.44
+        },
+        {
+          "word": " through",
+          "start": 235.44,
+          "end": 235.76000000000002
+        },
+        {
+          "word": " the",
+          "start": 235.76,
+          "end": 236.0
+        },
+        {
+          "word": " last",
+          "start": 236.0,
+          "end": 236.32
+        },
+        {
+          "word": " 10",
+          "start": 236.32,
+          "end": 236.72
+        },
+        {
+          "word": " to",
+          "start": 236.72,
+          "end": 237.04
+        },
+        {
+          "word": " figure",
+          "start": 237.04,
+          "end": 237.52
+        },
+        {
+          "word": " out",
+          "start": 237.52,
+          "end": 237.84
+        },
+        {
+          "word": " who's",
+          "start": 237.84,
+          "end": 238.32000000000002
+        }
+      ]
+    },
+    {
+      "start": 239.12,
+      "end": 253.12,
+      "text": "who's actually being asked. You're not just looking at the last message. You are is you're not actually looking at the last message. You are scanning back through the last 10 to figure out who's actually being asked.",
+      "words": [
+        {
+          "word": " who's",
+          "start": 239.12,
+          "end": 239.68
+        },
+        {
+          "word": " actually",
+          "start": 239.68,
+          "end": 240.08
+        },
+        {
+          "word": " being",
+          "start": 240.08,
+          "end": 240.56
+        },
+        {
+          "word": " asked.",
+          "start": 240.56,
+          "end": 242.07999999999998
+        },
+        {
+          "word": " You're",
+          "start": 242.07999999999998,
+          "end": 242.56000000000003
+        },
+        {
+          "word": " not",
+          "start": 242.56,
+          "end": 242.8
+        },
+        {
+          "word": " just",
+          "start": 242.8,
+          "end": 242.96
+        },
+        {
+          "word": " looking",
+          "start": 242.96,
+          "end": 243.28
+        },
+        {
+          "word": " at",
+          "start": 243.28,
+          "end": 243.44
+        },
+        {
+          "word": " the",
+          "start": 243.44,
+          "end": 243.6
+        },
+        {
+          "word": " last",
+          "start": 243.6,
+          "end": 243.84
+        },
+        {
+          "word": " message.",
+          "start": 243.84,
+          "end": 244.4
+        },
+        {
+          "word": " You",
+          "start": 244.4,
+          "end": 244.56
+        },
+        {
+          "word": " are",
+          "start": 244.56,
+          "end": 244.88
+        },
+        {
+          "word": " is",
+          "start": 244.88,
+          "end": 245.12
+        },
+        {
+          "word": " you're",
+          "start": 245.44,
+          "end": 245.76
+        },
+        {
+          "word": " not",
+          "start": 245.76,
+          "end": 245.92
+        },
+        {
+          "word": " actually",
+          "start": 245.92000000000002,
+          "end": 246.23999999999998
+        },
+        {
+          "word": " looking",
+          "start": 246.24,
+          "end": 246.48
+        },
+        {
+          "word": " at",
+          "start": 246.48000000000002,
+          "end": 246.56000000000003
+        },
+        {
+          "word": " the",
+          "start": 246.56,
+          "end": 246.8
+        },
+        {
+          "word": " last",
+          "start": 246.8,
+          "end": 247.04000000000002
+        },
+        {
+          "word": " message.",
+          "start": 247.04,
+          "end": 247.44000000000003
+        },
+        {
+          "word": " You",
+          "start": 247.44,
+          "end": 247.52
+        },
+        {
+          "word": " are",
+          "start": 247.52,
+          "end": 247.60000000000002
+        },
+        {
+          "word": " scanning",
+          "start": 247.68,
+          "end": 248.16000000000003
+        },
+        {
+          "word": " back",
+          "start": 248.16,
+          "end": 248.32
+        },
+        {
+          "word": " through",
+          "start": 248.32,
+          "end": 248.72
+        },
+        {
+          "word": " the",
+          "start": 248.72,
+          "end": 249.04
+        },
+        {
+          "word": " last",
+          "start": 249.04,
+          "end": 249.35999999999999
+        },
+        {
+          "word": " 10",
+          "start": 249.36,
+          "end": 249.76
+        },
+        {
+          "word": " to",
+          "start": 250.0,
+          "end": 250.24
+        },
+        {
+          "word": " figure",
+          "start": 250.24,
+          "end": 250.64000000000001
+        },
+        {
+          "word": " out",
+          "start": 250.64,
+          "end": 250.88
+        },
+        {
+          "word": " who's",
+          "start": 250.88,
+          "end": 251.35999999999999
+        },
+        {
+          "word": " actually",
+          "start": 251.36,
+          "end": 251.84
+        },
+        {
+          "word": " being",
+          "start": 251.84,
+          "end": 252.32
+        },
+        {
+          "word": " asked.",
+          "start": 252.32,
+          "end": 253.12
+        }
+      ]
+    },
+    {
+      "start": 259.6,
+      "end": 262.88000000000005,
+      "text": "Self-attention is the model doing that for exelf",
+      "words": [
+        {
+          "word": " Self-attention",
+          "start": 259.6,
+          "end": 260.72
+        },
+        {
+          "word": " is",
+          "start": 260.8,
+          "end": 261.04
+        },
+        {
+          "word": " the",
+          "start": 261.04,
+          "end": 261.36
+        },
+        {
+          "word": " model",
+          "start": 261.36,
+          "end": 261.68
+        },
+        {
+          "word": " doing",
+          "start": 261.76,
+          "end": 262.24
+        },
+        {
+          "word": " that",
+          "start": 262.24,
+          "end": 262.40000000000003
+        },
+        {
+          "word": " for",
+          "start": 262.4,
+          "end": 262.71999999999997
+        },
+        {
+          "word": " exelf",
+          "start": 262.72,
+          "end": 262.88000000000005
+        }
+      ]
+    },
+    {
+      "start": 264.16,
+      "end": 267.52,
+      "text": "mattens, is the model doing that for every word",
+      "words": [
+        {
+          "word": " mattens,",
+          "start": 264.16,
+          "end": 264.88
+        },
+        {
+          "word": " is",
+          "start": 264.88,
+          "end": 265.04
+        },
+        {
+          "word": " the",
+          "start": 265.04,
+          "end": 265.28000000000003
+        },
+        {
+          "word": " model",
+          "start": 265.28,
+          "end": 265.59999999999997
+        },
+        {
+          "word": " doing",
+          "start": 265.68,
+          "end": 266.08000000000004
+        },
+        {
+          "word": " that",
+          "start": 266.08,
+          "end": 266.32
+        },
+        {
+          "word": " for",
+          "start": 266.32,
+          "end": 266.56
+        },
+        {
+          "word": " every",
+          "start": 266.56,
+          "end": 267.2
+        },
+        {
+          "word": " word",
+          "start": 267.2,
+          "end": 267.52
+        }
+      ]
+    },
+    {
+      "start": 267.84000000000003,
+      "end": 268.71999999999997,
+      "text": "constantly",
+      "words": [
+        {
+          "word": " constantly",
+          "start": 267.84000000000003,
+          "end": 268.71999999999997
+        }
+      ]
+    },
+    {
+      "start": 269.2,
+      "end": 275.84,
+      "text": "constantly. Constantly. Self-attention is the model doing that for every word constantly.",
+      "words": [
+        {
+          "word": " constantly.",
+          "start": 269.2,
+          "end": 270.4
+        },
+        {
+          "word": " Constantly.",
+          "start": 270.4,
+          "end": 271.68
+        },
+        {
+          "word": " Self-attention",
+          "start": 271.68,
+          "end": 272.56
+        },
+        {
+          "word": " is",
+          "start": 272.56,
+          "end": 272.72
+        },
+        {
+          "word": " the",
+          "start": 272.72,
+          "end": 272.96000000000004
+        },
+        {
+          "word": " model",
+          "start": 272.96,
+          "end": 273.28
+        },
+        {
+          "word": " doing",
+          "start": 273.36,
+          "end": 273.76
+        },
+        {
+          "word": " that",
+          "start": 273.76,
+          "end": 273.92
+        },
+        {
+          "word": " for",
+          "start": 273.92,
+          "end": 274.16
+        },
+        {
+          "word": " every",
+          "start": 274.15999999999997,
+          "end": 274.56
+        },
+        {
+          "word": " word",
+          "start": 274.56,
+          "end": 274.72
+        },
+        {
+          "word": " constantly.",
+          "start": 274.88,
+          "end": 275.84
+        }
+      ]
+    },
+    {
+      "start": 289.76,
+      "end": 295.92,
+      "text": "Every word turns into every word turns into itself. Every word turns itself into a",
+      "words": [
+        {
+          "word": " Every",
+          "start": 289.76,
+          "end": 290.32
+        },
+        {
+          "word": " word",
+          "start": 290.32,
+          "end": 290.64
+        },
+        {
+          "word": " turns",
+          "start": 290.64,
+          "end": 291.04
+        },
+        {
+          "word": " into",
+          "start": 291.04,
+          "end": 291.36
+        },
+        {
+          "word": " every",
+          "start": 291.6,
+          "end": 292.08000000000004
+        },
+        {
+          "word": " word",
+          "start": 292.08,
+          "end": 292.4
+        },
+        {
+          "word": " turns",
+          "start": 292.4,
+          "end": 292.72
+        },
+        {
+          "word": " into",
+          "start": 292.72,
+          "end": 293.04
+        },
+        {
+          "word": " itself.",
+          "start": 293.04,
+          "end": 293.84000000000003
+        },
+        {
+          "word": " Every",
+          "start": 293.84000000000003,
+          "end": 294.24
+        },
+        {
+          "word": " word",
+          "start": 294.24,
+          "end": 294.48
+        },
+        {
+          "word": " turns",
+          "start": 294.48,
+          "end": 294.8
+        },
+        {
+          "word": " itself",
+          "start": 294.8,
+          "end": 295.28000000000003
+        },
+        {
+          "word": " into",
+          "start": 295.28,
+          "end": 295.59999999999997
+        },
+        {
+          "word": " a",
+          "start": 295.6,
+          "end": 295.92
+        }
+      ]
+    },
+    {
+      "start": 297.12,
+      "end": 298.56,
+      "text": "every word turns.",
+      "words": [
+        {
+          "word": " every",
+          "start": 297.12,
+          "end": 297.6
+        },
+        {
+          "word": " word",
+          "start": 297.6,
+          "end": 297.84000000000003
+        },
+        {
+          "word": " turns.",
+          "start": 297.92,
+          "end": 298.56
+        }
+      ]
+    },
+    {
+      "start": 300.15999999999997,
+      "end": 310.71999999999997,
+      "text": "Every word turns itself into a question. It's query. Every other word turns itself into a kind of answer key, advertising what it's",
+      "words": [
+        {
+          "word": " Every",
+          "start": 300.15999999999997,
+          "end": 300.72
+        },
+        {
+          "word": " word",
+          "start": 300.72,
+          "end": 301.04
+        },
+        {
+          "word": " turns",
+          "start": 301.04,
+          "end": 301.44
+        },
+        {
+          "word": " itself",
+          "start": 301.44,
+          "end": 301.84000000000003
+        },
+        {
+          "word": " into",
+          "start": 301.84000000000003,
+          "end": 302.08000000000004
+        },
+        {
+          "word": " a",
+          "start": 302.08,
+          "end": 302.32
+        },
+        {
+          "word": " question.",
+          "start": 302.32,
+          "end": 302.8
+        },
+        {
+          "word": " It's",
+          "start": 302.8,
+          "end": 303.20000000000005
+        },
+        {
+          "word": " query.",
+          "start": 303.2,
+          "end": 304.00000000000006
+        },
+        {
+          "word": " Every",
+          "start": 304.0,
+          "end": 304.48
+        },
+        {
+          "word": " other",
+          "start": 304.48,
+          "end": 304.72
+        },
+        {
+          "word": " word",
+          "start": 304.72,
+          "end": 305.04
+        },
+        {
+          "word": " turns",
+          "start": 305.04,
+          "end": 305.36
+        },
+        {
+          "word": " itself",
+          "start": 305.36,
+          "end": 305.92
+        },
+        {
+          "word": " into",
+          "start": 305.92,
+          "end": 306.16
+        },
+        {
+          "word": " a",
+          "start": 306.15999999999997,
+          "end": 306.4
+        },
+        {
+          "word": " kind",
+          "start": 306.4,
+          "end": 306.71999999999997
+        },
+        {
+          "word": " of",
+          "start": 306.72,
+          "end": 307.04
+        },
+        {
+          "word": " answer",
+          "start": 307.04,
+          "end": 307.44
+        },
+        {
+          "word": " key,",
+          "start": 307.68,
+          "end": 308.64
+        },
+        {
+          "word": " advertising",
+          "start": 308.64,
+          "end": 309.76
+        },
+        {
+          "word": " what",
+          "start": 309.76,
+          "end": 310.08
+        },
+        {
+          "word": " it's",
+          "start": 310.08,
+          "end": 310.71999999999997
+        }
+      ]
+    },
+    {
+      "start": 316.52,
+      "end": 329.12,
+      "text": "question get check against everyone else's answer key, and whoever matches the closest, that's who it borrows the most content from called the value.",
+      "words": [
+        {
+          "word": " question",
+          "start": 316.52,
+          "end": 316.84000000000003
+        },
+        {
+          "word": " get",
+          "start": 317.0,
+          "end": 317.24
+        },
+        {
+          "word": " check",
+          "start": 317.24,
+          "end": 317.64000000000004
+        },
+        {
+          "word": " against",
+          "start": 317.88,
+          "end": 318.52
+        },
+        {
+          "word": " everyone",
+          "start": 318.52,
+          "end": 319.16
+        },
+        {
+          "word": " else's",
+          "start": 319.16,
+          "end": 319.8
+        },
+        {
+          "word": " answer",
+          "start": 319.8,
+          "end": 320.28000000000003
+        },
+        {
+          "word": " key,",
+          "start": 320.28,
+          "end": 321.24
+        },
+        {
+          "word": " and",
+          "start": 321.24,
+          "end": 321.56
+        },
+        {
+          "word": " whoever",
+          "start": 321.56,
+          "end": 322.28000000000003
+        },
+        {
+          "word": " matches",
+          "start": 322.28,
+          "end": 322.68
+        },
+        {
+          "word": " the",
+          "start": 322.68,
+          "end": 322.92
+        },
+        {
+          "word": " closest,",
+          "start": 322.92,
+          "end": 324.04
+        },
+        {
+          "word": " that's",
+          "start": 324.04,
+          "end": 324.76
+        },
+        {
+          "word": " who",
+          "start": 324.76,
+          "end": 325.08
+        },
+        {
+          "word": " it",
+          "start": 325.08,
+          "end": 325.4
+        },
+        {
+          "word": " borrows",
+          "start": 325.4,
+          "end": 325.96000000000004
+        },
+        {
+          "word": " the",
+          "start": 325.96,
+          "end": 326.28
+        },
+        {
+          "word": " most",
+          "start": 326.28,
+          "end": 326.59999999999997
+        },
+        {
+          "word": " content",
+          "start": 326.6,
+          "end": 327.15999999999997
+        },
+        {
+          "word": " from",
+          "start": 327.16,
+          "end": 327.40000000000003
+        },
+        {
+          "word": " called",
+          "start": 327.64,
+          "end": 328.16
+        },
+        {
+          "word": " the",
+          "start": 328.15999999999997,
+          "end": 328.47999999999996
+        },
+        {
+          "word": " value.",
+          "start": 328.48,
+          "end": 329.12
+        }
+      ]
+    },
+    {
+      "start": 337.4,
+      "end": 339.88,
+      "text": "That's the real computation and then it check-in.",
+      "words": [
+        {
+          "word": " That's",
+          "start": 337.4,
+          "end": 337.88
+        },
+        {
+          "word": " the",
+          "start": 337.88,
+          "end": 338.04
+        },
+        {
+          "word": " real",
+          "start": 338.04,
+          "end": 338.28000000000003
+        },
+        {
+          "word": " computation",
+          "start": 338.28,
+          "end": 338.76
+        },
+        {
+          "word": " and",
+          "start": 338.84,
+          "end": 339.0
+        },
+        {
+          "word": " then",
+          "start": 339.0,
+          "end": 339.16
+        },
+        {
+          "word": " it",
+          "start": 339.24,
+          "end": 339.32
+        },
+        {
+          "word": " check-in.",
+          "start": 339.48,
+          "end": 339.88
+        }
+      ]
+    },
+    {
+      "start": 341.0,
+      "end": 347.64,
+      "text": "That's the real computation and then it's checking in, and it's got a name query key value attention.",
+      "words": [
+        {
+          "word": " That's",
+          "start": 341.0,
+          "end": 341.4
+        },
+        {
+          "word": " the",
+          "start": 341.4,
+          "end": 341.56
+        },
+        {
+          "word": " real",
+          "start": 341.56,
+          "end": 341.8
+        },
+        {
+          "word": " computation",
+          "start": 341.8,
+          "end": 342.35999999999996
+        },
+        {
+          "word": " and",
+          "start": 342.44,
+          "end": 342.6
+        },
+        {
+          "word": " then",
+          "start": 342.6,
+          "end": 342.76000000000005
+        },
+        {
+          "word": " it's",
+          "start": 342.84,
+          "end": 343.08000000000004
+        },
+        {
+          "word": " checking",
+          "start": 343.08,
+          "end": 343.4
+        },
+        {
+          "word": " in,",
+          "start": 343.56,
+          "end": 343.96000000000004
+        },
+        {
+          "word": " and",
+          "start": 343.96,
+          "end": 344.2
+        },
+        {
+          "word": " it's",
+          "start": 344.2,
+          "end": 344.6
+        },
+        {
+          "word": " got",
+          "start": 344.6,
+          "end": 344.76000000000005
+        },
+        {
+          "word": " a",
+          "start": 344.76,
+          "end": 344.92
+        },
+        {
+          "word": " name",
+          "start": 344.92,
+          "end": 345.24
+        },
+        {
+          "word": " query",
+          "start": 345.48,
+          "end": 346.04
+        },
+        {
+          "word": " key",
+          "start": 346.04,
+          "end": 346.28
+        },
+        {
+          "word": " value",
+          "start": 346.36,
+          "end": 346.84000000000003
+        },
+        {
+          "word": " attention.",
+          "start": 346.84,
+          "end": 347.64
+        }
+      ]
+    },
+    {
+      "start": 355.72,
+      "end": 361.4,
+      "text": "There's a second half to this. How the model actually writes the response.",
+      "words": [
+        {
+          "word": " There's",
+          "start": 355.72,
+          "end": 356.28000000000003
+        },
+        {
+          "word": " a",
+          "start": 356.28,
+          "end": 356.44
+        },
+        {
+          "word": " second",
+          "start": 356.44,
+          "end": 356.84000000000003
+        },
+        {
+          "word": " half",
+          "start": 356.84000000000003,
+          "end": 357.24
+        },
+        {
+          "word": " to",
+          "start": 357.24,
+          "end": 357.56
+        },
+        {
+          "word": " this.",
+          "start": 357.56,
+          "end": 358.36
+        },
+        {
+          "word": " How",
+          "start": 358.36,
+          "end": 358.76
+        },
+        {
+          "word": " the",
+          "start": 358.76,
+          "end": 359.08
+        },
+        {
+          "word": " model",
+          "start": 359.08,
+          "end": 359.4
+        },
+        {
+          "word": " actually",
+          "start": 359.4,
+          "end": 359.88
+        },
+        {
+          "word": " writes",
+          "start": 359.88,
+          "end": 360.28000000000003
+        },
+        {
+          "word": " the",
+          "start": 360.28,
+          "end": 360.44
+        },
+        {
+          "word": " response.",
+          "start": 360.44,
+          "end": 361.4
+        }
+      ]
+    },
+    {
+      "start": 365.48,
+      "end": 370.28,
+      "text": "The encoder reads your whole message once and published a build.",
+      "words": [
+        {
+          "word": " The",
+          "start": 365.48,
+          "end": 365.72
+        },
+        {
+          "word": " encoder",
+          "start": 365.72,
+          "end": 366.28000000000003
+        },
+        {
+          "word": " reads",
+          "start": 366.28,
+          "end": 366.76000000000005
+        },
+        {
+          "word": " your",
+          "start": 366.76,
+          "end": 366.92
+        },
+        {
+          "word": " whole",
+          "start": 366.92,
+          "end": 367.24
+        },
+        {
+          "word": " message",
+          "start": 367.24,
+          "end": 367.88
+        },
+        {
+          "word": " once",
+          "start": 367.88,
+          "end": 368.20000000000005
+        },
+        {
+          "word": " and",
+          "start": 368.36,
+          "end": 368.6
+        },
+        {
+          "word": " published",
+          "start": 368.6,
+          "end": 369.32
+        },
+        {
+          "word": " a",
+          "start": 369.32,
+          "end": 369.64
+        },
+        {
+          "word": " build.",
+          "start": 369.64,
+          "end": 370.28
+        }
+      ]
+    },
+    {
+      "start": 376.12,
+      "end": 383.4,
+      "text": "The encoder reads your whole message once and builds a rich picture of it using the same self-attention.",
+      "words": [
+        {
+          "word": " The",
+          "start": 376.12,
+          "end": 376.44
+        },
+        {
+          "word": " encoder",
+          "start": 376.44,
+          "end": 377.08000000000004
+        },
+        {
+          "word": " reads",
+          "start": 377.08,
+          "end": 377.48
+        },
+        {
+          "word": " your",
+          "start": 377.48,
+          "end": 377.64000000000004
+        },
+        {
+          "word": " whole",
+          "start": 377.64,
+          "end": 377.96000000000004
+        },
+        {
+          "word": " message",
+          "start": 377.96,
+          "end": 378.52
+        },
+        {
+          "word": " once",
+          "start": 378.52,
+          "end": 378.92
+        },
+        {
+          "word": " and",
+          "start": 379.0,
+          "end": 379.32
+        },
+        {
+          "word": " builds",
+          "start": 379.32,
+          "end": 379.72
+        },
+        {
+          "word": " a",
+          "start": 379.72,
+          "end": 379.88000000000005
+        },
+        {
+          "word": " rich",
+          "start": 379.88,
+          "end": 380.12000000000006
+        },
+        {
+          "word": " picture",
+          "start": 380.12,
+          "end": 380.52000000000004
+        },
+        {
+          "word": " of",
+          "start": 380.52,
+          "end": 380.76
+        },
+        {
+          "word": " it",
+          "start": 380.76,
+          "end": 380.92
+        },
+        {
+          "word": " using",
+          "start": 381.08,
+          "end": 381.48
+        },
+        {
+          "word": " the",
+          "start": 381.48,
+          "end": 381.72
+        },
+        {
+          "word": " same",
+          "start": 381.72,
+          "end": 382.12
+        },
+        {
+          "word": " self-attention.",
+          "start": 382.12,
+          "end": 383.4
+        }
+      ]
+    },
+    {
+      "start": 392.44,
+      "end": 406.04,
+      "text": "The decoder generates a reply one word at a time, and every time it writes a new word, it glances back at that picture, the encoder build, plus everything it already written so far.",
+      "words": [
+        {
+          "word": " The",
+          "start": 392.44,
+          "end": 392.76
+        },
+        {
+          "word": " decoder",
+          "start": 392.76,
+          "end": 393.71999999999997
+        },
+        {
+          "word": " generates",
+          "start": 393.72,
+          "end": 394.28000000000003
+        },
+        {
+          "word": " a",
+          "start": 394.28,
+          "end": 394.52
+        },
+        {
+          "word": " reply",
+          "start": 394.52,
+          "end": 395.0
+        },
+        {
+          "word": " one",
+          "start": 395.24,
+          "end": 395.56
+        },
+        {
+          "word": " word",
+          "start": 395.56,
+          "end": 395.88
+        },
+        {
+          "word": " at",
+          "start": 395.88,
+          "end": 396.04
+        },
+        {
+          "word": " a",
+          "start": 396.04,
+          "end": 396.28000000000003
+        },
+        {
+          "word": " time,",
+          "start": 396.28,
+          "end": 396.6
+        },
+        {
+          "word": " and",
+          "start": 396.6,
+          "end": 396.92
+        },
+        {
+          "word": " every",
+          "start": 396.92,
+          "end": 397.32
+        },
+        {
+          "word": " time",
+          "start": 397.32,
+          "end": 397.56
+        },
+        {
+          "word": " it",
+          "start": 397.56,
+          "end": 397.8
+        },
+        {
+          "word": " writes",
+          "start": 397.8,
+          "end": 398.20000000000005
+        },
+        {
+          "word": " a",
+          "start": 398.2,
+          "end": 398.28
+        },
+        {
+          "word": " new",
+          "start": 398.28,
+          "end": 398.68
+        },
+        {
+          "word": " word,",
+          "start": 398.68,
+          "end": 399.0
+        },
+        {
+          "word": " it",
+          "start": 399.0,
+          "end": 399.24
+        },
+        {
+          "word": " glances",
+          "start": 399.24,
+          "end": 399.88
+        },
+        {
+          "word": " back",
+          "start": 399.88,
+          "end": 400.12
+        },
+        {
+          "word": " at",
+          "start": 400.12,
+          "end": 400.36
+        },
+        {
+          "word": " that",
+          "start": 400.36,
+          "end": 400.6
+        },
+        {
+          "word": " picture,",
+          "start": 400.6,
+          "end": 401.32
+        },
+        {
+          "word": " the",
+          "start": 401.32,
+          "end": 401.56
+        },
+        {
+          "word": " encoder",
+          "start": 401.56,
+          "end": 402.28000000000003
+        },
+        {
+          "word": " build,",
+          "start": 402.28,
+          "end": 402.92
+        },
+        {
+          "word": " plus",
+          "start": 402.92,
+          "end": 403.24
+        },
+        {
+          "word": " everything",
+          "start": 403.24,
+          "end": 403.8
+        },
+        {
+          "word": " it",
+          "start": 403.8,
+          "end": 403.96000000000004
+        },
+        {
+          "word": " already",
+          "start": 404.2,
+          "end": 404.76
+        },
+        {
+          "word": " written",
+          "start": 404.76,
+          "end": 405.4
+        },
+        {
+          "word": " so",
+          "start": 405.4,
+          "end": 405.71999999999997
+        },
+        {
+          "word": " far.",
+          "start": 405.72,
+          "end": 406.04
+        }
+      ]
+    },
+    {
+      "start": 413.4,
+      "end": 420.76,
+      "text": "That glancing back at the encoder step even has its own name, cross attention.",
+      "words": [
+        {
+          "word": " That",
+          "start": 413.4,
+          "end": 413.71999999999997
+        },
+        {
+          "word": " glancing",
+          "start": 413.96000000000004,
+          "end": 414.84
+        },
+        {
+          "word": " back",
+          "start": 414.84000000000003,
+          "end": 415.16
+        },
+        {
+          "word": " at",
+          "start": 415.15999999999997,
+          "end": 415.4
+        },
+        {
+          "word": " the",
+          "start": 415.4,
+          "end": 415.64
+        },
+        {
+          "word": " encoder",
+          "start": 415.64,
+          "end": 416.44
+        },
+        {
+          "word": " step",
+          "start": 416.44,
+          "end": 417.0
+        },
+        {
+          "word": " even",
+          "start": 417.24,
+          "end": 417.56
+        },
+        {
+          "word": " has",
+          "start": 417.56,
+          "end": 417.88
+        },
+        {
+          "word": " its",
+          "start": 417.88,
+          "end": 418.12
+        },
+        {
+          "word": " own",
+          "start": 418.12,
+          "end": 418.52
+        },
+        {
+          "word": " name,",
+          "start": 418.52,
+          "end": 419.16
+        },
+        {
+          "word": " cross",
+          "start": 419.15999999999997,
+          "end": 419.72
+        },
+        {
+          "word": " attention.",
+          "start": 419.88,
+          "end": 420.76
+        }
+      ]
+    },
+    {
+      "start": 430.52,
+      "end": 434.36,
+      "text": "It's less, it's less read than write, and more",
+      "words": [
+        {
+          "word": " It's",
+          "start": 430.52,
+          "end": 431.16
+        },
+        {
+          "word": " less,",
+          "start": 431.15999999999997,
+          "end": 431.88
+        },
+        {
+          "word": " it's",
+          "start": 431.88,
+          "end": 432.28000000000003
+        },
+        {
+          "word": " less",
+          "start": 432.28,
+          "end": 432.52000000000004
+        },
+        {
+          "word": " read",
+          "start": 432.68,
+          "end": 433.08000000000004
+        },
+        {
+          "word": " than",
+          "start": 433.08,
+          "end": 433.24
+        },
+        {
+          "word": " write,",
+          "start": 433.4,
+          "end": 434.0
+        },
+        {
+          "word": " and",
+          "start": 433.88,
+          "end": 434.12
+        },
+        {
+          "word": " more",
+          "start": 434.12,
+          "end": 434.36
+        }
+      ]
+    },
+    {
+      "start": 434.96,
+      "end": 438.96,
+      "text": "read than write while constantly rechecking.",
+      "words": [
+        {
+          "word": " read",
+          "start": 434.96,
+          "end": 435.59999999999997
+        },
+        {
+          "word": " than",
+          "start": 435.6,
+          "end": 435.92
+        },
+        {
+          "word": " write",
+          "start": 436.08,
+          "end": 436.56
+        },
+        {
+          "word": " while",
+          "start": 436.72,
+          "end": 437.2
+        },
+        {
+          "word": " constantly",
+          "start": 437.2,
+          "end": 437.92
+        },
+        {
+          "word": " rechecking.",
+          "start": 437.92,
+          "end": 438.96
+        }
+      ]
+    },
+    {
+      "start": 444.32,
+      "end": 449.04,
+      "text": "And here's why that skipped instruction happened specifically.",
+      "words": [
+        {
+          "word": " And",
+          "start": 444.32,
+          "end": 444.64
+        },
+        {
+          "word": " here's",
+          "start": 444.64,
+          "end": 445.20000000000005
+        },
+        {
+          "word": " why",
+          "start": 445.2,
+          "end": 445.6
+        },
+        {
+          "word": " that",
+          "start": 445.6,
+          "end": 445.92
+        },
+        {
+          "word": " skipped",
+          "start": 445.92,
+          "end": 446.64
+        },
+        {
+          "word": " instruction",
+          "start": 446.64,
+          "end": 447.28
+        },
+        {
+          "word": " happened",
+          "start": 447.28,
+          "end": 448.08
+        },
+        {
+          "word": " specifically.",
+          "start": 448.08,
+          "end": 449.04
+        }
+      ]
+    },
+    {
+      "start": 461.68,
+      "end": 473.59999999999997,
+      "text": "There's a real documented. Models pay less attention to stuff buried in the middle of a long message than stuff at the very start or very end.",
+      "words": [
+        {
+          "word": " There's",
+          "start": 461.68,
+          "end": 462.24
+        },
+        {
+          "word": " a",
+          "start": 462.24,
+          "end": 462.48
+        },
+        {
+          "word": " real",
+          "start": 462.48,
+          "end": 462.8
+        },
+        {
+          "word": " documented.",
+          "start": 462.8,
+          "end": 464.4
+        },
+        {
+          "word": " Models",
+          "start": 464.4,
+          "end": 464.96000000000004
+        },
+        {
+          "word": " pay",
+          "start": 464.96,
+          "end": 465.36
+        },
+        {
+          "word": " less",
+          "start": 465.36,
+          "end": 465.6
+        },
+        {
+          "word": " attention",
+          "start": 465.6,
+          "end": 466.16
+        },
+        {
+          "word": " to",
+          "start": 466.16,
+          "end": 466.40000000000003
+        },
+        {
+          "word": " stuff",
+          "start": 466.4,
+          "end": 466.96000000000004
+        },
+        {
+          "word": " buried",
+          "start": 466.96,
+          "end": 467.44
+        },
+        {
+          "word": " in",
+          "start": 467.44,
+          "end": 467.68
+        },
+        {
+          "word": " the",
+          "start": 467.68,
+          "end": 467.84000000000003
+        },
+        {
+          "word": " middle",
+          "start": 467.84000000000003,
+          "end": 468.40000000000003
+        },
+        {
+          "word": " of",
+          "start": 468.4,
+          "end": 468.56
+        },
+        {
+          "word": " a",
+          "start": 468.56,
+          "end": 468.8
+        },
+        {
+          "word": " long",
+          "start": 468.8,
+          "end": 469.12
+        },
+        {
+          "word": " message",
+          "start": 469.12,
+          "end": 469.76
+        },
+        {
+          "word": " than",
+          "start": 469.76,
+          "end": 470.0
+        },
+        {
+          "word": " stuff",
+          "start": 470.0,
+          "end": 470.56
+        },
+        {
+          "word": " at",
+          "start": 470.56,
+          "end": 470.8
+        },
+        {
+          "word": " the",
+          "start": 470.8,
+          "end": 471.12
+        },
+        {
+          "word": " very",
+          "start": 471.12,
+          "end": 471.44
+        },
+        {
+          "word": " start",
+          "start": 471.44,
+          "end": 472.08000000000004
+        },
+        {
+          "word": " or",
+          "start": 472.4,
+          "end": 472.64
+        },
+        {
+          "word": " very",
+          "start": 472.96,
+          "end": 473.28
+        },
+        {
+          "word": " end.",
+          "start": 473.28,
+          "end": 473.59999999999997
+        }
+      ]
+    },
+    {
+      "start": 478.32,
+      "end": 480.71999999999997,
+      "text": "It's called lost in the middle.",
+      "words": [
+        {
+          "word": " It's",
+          "start": 478.32,
+          "end": 478.71999999999997
+        },
+        {
+          "word": " called",
+          "start": 478.72,
+          "end": 479.12
+        },
+        {
+          "word": " lost",
+          "start": 479.12,
+          "end": 479.6
+        },
+        {
+          "word": " in",
+          "start": 479.6,
+          "end": 479.76000000000005
+        },
+        {
+          "word": " the",
+          "start": 479.76,
+          "end": 479.92
+        },
+        {
+          "word": " middle.",
+          "start": 479.92,
+          "end": 480.71999999999997
+        }
+      ]
+    },
+    {
+      "start": 501.04,
+      "end": 505.59999999999997,
+      "text": "Just how attention naturally distributes across a long input.",
+      "words": [
+        {
+          "word": " Just",
+          "start": 501.04,
+          "end": 501.36
+        },
+        {
+          "word": " how",
+          "start": 501.36,
+          "end": 501.6
+        },
+        {
+          "word": " attention",
+          "start": 501.6,
+          "end": 502.16
+        },
+        {
+          "word": " naturally",
+          "start": 502.15999999999997,
+          "end": 502.72
+        },
+        {
+          "word": " distributes",
+          "start": 502.72,
+          "end": 503.44
+        },
+        {
+          "word": " across",
+          "start": 503.44,
+          "end": 504.0
+        },
+        {
+          "word": " a",
+          "start": 504.0,
+          "end": 504.32
+        },
+        {
+          "word": " long",
+          "start": 504.32,
+          "end": 504.64
+        },
+        {
+          "word": " input.",
+          "start": 504.64,
+          "end": 505.59999999999997
+        }
+      ]
+    },
+    {
+      "start": 518.08,
+      "end": 520.16,
+      "text": "So if something's genuinely",
+      "words": [
+        {
+          "word": " So",
+          "start": 518.08,
+          "end": 518.4000000000001
+        },
+        {
+          "word": " if",
+          "start": 518.56,
+          "end": 518.88
+        },
+        {
+          "word": " something's",
+          "start": 518.88,
+          "end": 519.52
+        },
+        {
+          "word": " genuinely",
+          "start": 519.52,
+          "end": 520.16
+        }
+      ]
+    },
+    {
+      "start": 520.48,
+      "end": 523.44,
+      "text": "important, don't bury it in the middle of a long task.",
+      "words": [
+        {
+          "word": " important,",
+          "start": 520.48,
+          "end": 520.8000000000001
+        },
+        {
+          "word": " don't",
+          "start": 520.8,
+          "end": 521.12
+        },
+        {
+          "word": " bury",
+          "start": 521.12,
+          "end": 521.4399999999999
+        },
+        {
+          "word": " it",
+          "start": 521.44,
+          "end": 521.6
+        },
+        {
+          "word": " in",
+          "start": 521.6,
+          "end": 521.76
+        },
+        {
+          "word": " the",
+          "start": 521.76,
+          "end": 521.84
+        },
+        {
+          "word": " middle",
+          "start": 521.84,
+          "end": 522.1600000000001
+        },
+        {
+          "word": " of",
+          "start": 522.16,
+          "end": 522.3199999999999
+        },
+        {
+          "word": " a",
+          "start": 522.32,
+          "end": 522.48
+        },
+        {
+          "word": " long",
+          "start": 522.48,
+          "end": 522.8000000000001
+        },
+        {
+          "word": " task.",
+          "start": 522.8,
+          "end": 523.44
+        }
+      ]
+    },
+    {
+      "start": 526.24,
+      "end": 529.2,
+      "text": "Put it first or repeat it at the end.",
+      "words": [
+        {
+          "word": " Put",
+          "start": 526.24,
+          "end": 526.72
+        },
+        {
+          "word": " it",
+          "start": 526.72,
+          "end": 527.0400000000001
+        },
+        {
+          "word": " first",
+          "start": 527.04,
+          "end": 527.1999999999999
+        },
+        {
+          "word": " or",
+          "start": 527.36,
+          "end": 527.6
+        },
+        {
+          "word": " repeat",
+          "start": 527.6,
+          "end": 528.0799999999999
+        },
+        {
+          "word": " it",
+          "start": 528.08,
+          "end": 528.32
+        },
+        {
+          "word": " at",
+          "start": 528.32,
+          "end": 528.5600000000001
+        },
+        {
+          "word": " the",
+          "start": 528.56,
+          "end": 528.88
+        },
+        {
+          "word": " end.",
+          "start": 528.88,
+          "end": 529.2
+        }
+      ]
+    },
+    {
+      "start": 534.0,
+      "end": 539.6800000000001,
+      "text": "Break a long list of a task into an actual number list instead of the one run",
+      "words": [
+        {
+          "word": " Break",
+          "start": 534.0,
+          "end": 534.5600000000001
+        },
+        {
+          "word": " a",
+          "start": 534.56,
+          "end": 534.8
+        },
+        {
+          "word": " long",
+          "start": 534.8,
+          "end": 535.12
+        },
+        {
+          "word": " list",
+          "start": 535.12,
+          "end": 535.44
+        },
+        {
+          "word": " of",
+          "start": 535.44,
+          "end": 535.6800000000001
+        },
+        {
+          "word": " a",
+          "start": 535.6800000000001,
+          "end": 535.9200000000001
+        },
+        {
+          "word": " task",
+          "start": 535.92,
+          "end": 536.4
+        },
+        {
+          "word": " into",
+          "start": 536.4,
+          "end": 536.72
+        },
+        {
+          "word": " an",
+          "start": 536.72,
+          "end": 536.88
+        },
+        {
+          "word": " actual",
+          "start": 536.88,
+          "end": 537.36
+        },
+        {
+          "word": " number",
+          "start": 537.36,
+          "end": 537.76
+        },
+        {
+          "word": " list",
+          "start": 537.92,
+          "end": 538.24
+        },
+        {
+          "word": " instead",
+          "start": 538.24,
+          "end": 538.7199999999999
+        },
+        {
+          "word": " of",
+          "start": 538.72,
+          "end": 538.88
+        },
+        {
+          "word": " the",
+          "start": 538.88,
+          "end": 539.2
+        },
+        {
+          "word": " one",
+          "start": 539.2,
+          "end": 539.36
+        },
+        {
+          "word": " run",
+          "start": 539.44,
+          "end": 539.6800000000001
+        }
+      ]
+    },
+    {
+      "start": 540.04,
+      "end": 543.8000000000001,
+      "text": "on sentences. So each one gets its own anchor point.",
+      "words": [
+        {
+          "word": " on",
+          "start": 540.04,
+          "end": 540.28
+        },
+        {
+          "word": " sentences.",
+          "start": 540.28,
+          "end": 541.0
+        },
+        {
+          "word": " So",
+          "start": 541.0,
+          "end": 541.24
+        },
+        {
+          "word": " each",
+          "start": 541.32,
+          "end": 541.72
+        },
+        {
+          "word": " one",
+          "start": 541.72,
+          "end": 541.88
+        },
+        {
+          "word": " gets",
+          "start": 541.88,
+          "end": 542.28
+        },
+        {
+          "word": " its",
+          "start": 542.28,
+          "end": 542.4399999999999
+        },
+        {
+          "word": " own",
+          "start": 542.44,
+          "end": 542.84
+        },
+        {
+          "word": " anchor",
+          "start": 542.84,
+          "end": 543.48
+        },
+        {
+          "word": " point.",
+          "start": 543.48,
+          "end": 543.8000000000001
+        }
+      ]
+    },
+    {
+      "start": 551.08,
+      "end": 557.96,
+      "text": "That's not a trick. It's just working with how attention actually distributes itself instead of against it.",
+      "words": [
+        {
+          "word": " That's",
+          "start": 551.08,
+          "end": 551.5600000000001
+        },
+        {
+          "word": " not",
+          "start": 551.56,
+          "end": 551.8
+        },
+        {
+          "word": " a",
+          "start": 551.8,
+          "end": 551.9599999999999
+        },
+        {
+          "word": " trick.",
+          "start": 551.96,
+          "end": 552.4399999999999
+        },
+        {
+          "word": " It's",
+          "start": 552.44,
+          "end": 552.8399999999999
+        },
+        {
+          "word": " just",
+          "start": 552.84,
+          "end": 553.1600000000001
+        },
+        {
+          "word": " working",
+          "start": 553.16,
+          "end": 553.5600000000001
+        },
+        {
+          "word": " with",
+          "start": 553.56,
+          "end": 553.88
+        },
+        {
+          "word": " how",
+          "start": 553.88,
+          "end": 554.2
+        },
+        {
+          "word": " attention",
+          "start": 554.2,
+          "end": 554.6800000000001
+        },
+        {
+          "word": " actually",
+          "start": 554.68,
+          "end": 555.0
+        },
+        {
+          "word": " distributes",
+          "start": 555.0,
+          "end": 555.64
+        },
+        {
+          "word": " itself",
+          "start": 555.64,
+          "end": 556.04
+        },
+        {
+          "word": " instead",
+          "start": 556.2,
+          "end": 556.68
+        },
+        {
+          "word": " of",
+          "start": 556.68,
+          "end": 557.0
+        },
+        {
+          "word": " against",
+          "start": 557.0,
+          "end": 557.6400000000001
+        },
+        {
+          "word": " it.",
+          "start": 557.64,
+          "end": 557.96
+        }
+      ]
+    },
+    {
+      "start": 568.84,
+      "end": 574.92,
+      "text": "So quick recap. Attention is the model deciding how much to focus on each part of",
+      "words": [
+        {
+          "word": " So",
+          "start": 568.84,
+          "end": 569.1600000000001
+        },
+        {
+          "word": " quick",
+          "start": 569.48,
+          "end": 569.88
+        },
+        {
+          "word": " recap.",
+          "start": 569.88,
+          "end": 570.52
+        },
+        {
+          "word": " Attention",
+          "start": 570.52,
+          "end": 571.0
+        },
+        {
+          "word": " is",
+          "start": 571.16,
+          "end": 571.24
+        },
+        {
+          "word": " the",
+          "start": 571.24,
+          "end": 571.4
+        },
+        {
+          "word": " model",
+          "start": 571.4,
+          "end": 571.72
+        },
+        {
+          "word": " deciding",
+          "start": 571.8,
+          "end": 572.44
+        },
+        {
+          "word": " how",
+          "start": 572.44,
+          "end": 572.6800000000001
+        },
+        {
+          "word": " much",
+          "start": 572.68,
+          "end": 572.92
+        },
+        {
+          "word": " to",
+          "start": 572.92,
+          "end": 573.0799999999999
+        },
+        {
+          "word": " focus",
+          "start": 573.08,
+          "end": 573.64
+        },
+        {
+          "word": " on",
+          "start": 573.64,
+          "end": 573.88
+        },
+        {
+          "word": " each",
+          "start": 573.88,
+          "end": 574.36
+        },
+        {
+          "word": " part",
+          "start": 574.36,
+          "end": 574.6800000000001
+        },
+        {
+          "word": " of",
+          "start": 574.68,
+          "end": 574.92
+        }
+      ]
+    },
+    {
+      "start": 575.24,
+      "end": 581.96,
+      "text": "what you said by matching each words query against every other words key.",
+      "words": [
+        {
+          "word": " what",
+          "start": 575.24,
+          "end": 575.5600000000001
+        },
+        {
+          "word": " you",
+          "start": 575.8,
+          "end": 576.12
+        },
+        {
+          "word": " said",
+          "start": 576.12,
+          "end": 576.44
+        },
+        {
+          "word": " by",
+          "start": 576.68,
+          "end": 577.0
+        },
+        {
+          "word": " matching",
+          "start": 577.0,
+          "end": 577.64
+        },
+        {
+          "word": " each",
+          "start": 577.64,
+          "end": 578.12
+        },
+        {
+          "word": " words",
+          "start": 578.12,
+          "end": 578.6
+        },
+        {
+          "word": " query",
+          "start": 578.76,
+          "end": 579.4000000000001
+        },
+        {
+          "word": " against",
+          "start": 579.4,
+          "end": 580.0400000000001
+        },
+        {
+          "word": " every",
+          "start": 580.04,
+          "end": 580.44
+        },
+        {
+          "word": " other",
+          "start": 580.44,
+          "end": 580.6800000000001
+        },
+        {
+          "word": " words",
+          "start": 580.68,
+          "end": 581.32
+        },
+        {
+          "word": " key.",
+          "start": 581.32,
+          "end": 581.96
+        }
+      ]
+    },
+    {
+      "start": 587.0,
+      "end": 597.96,
+      "text": "So quick recap. Attention is the model deciding how much to focus on each part of what you said by matching each word square against every other words key.",
+      "words": [
+        {
+          "word": " So",
+          "start": 587.0,
+          "end": 587.24
+        },
+        {
+          "word": " quick",
+          "start": 587.48,
+          "end": 587.8
+        },
+        {
+          "word": " recap.",
+          "start": 587.8,
+          "end": 588.36
+        },
+        {
+          "word": " Attention",
+          "start": 588.36,
+          "end": 588.8399999999999
+        },
+        {
+          "word": " is",
+          "start": 588.84,
+          "end": 589.0
+        },
+        {
+          "word": " the",
+          "start": 589.0,
+          "end": 589.16
+        },
+        {
+          "word": " model",
+          "start": 589.16,
+          "end": 589.48
+        },
+        {
+          "word": " deciding",
+          "start": 589.48,
+          "end": 589.9599999999999
+        },
+        {
+          "word": " how",
+          "start": 589.96,
+          "end": 590.2
+        },
+        {
+          "word": " much",
+          "start": 590.2,
+          "end": 590.36
+        },
+        {
+          "word": " to",
+          "start": 590.36,
+          "end": 590.52
+        },
+        {
+          "word": " focus",
+          "start": 590.52,
+          "end": 590.92
+        },
+        {
+          "word": " on",
+          "start": 590.92,
+          "end": 591.16
+        },
+        {
+          "word": " each",
+          "start": 591.16,
+          "end": 591.5600000000001
+        },
+        {
+          "word": " part",
+          "start": 591.56,
+          "end": 591.88
+        },
+        {
+          "word": " of",
+          "start": 591.88,
+          "end": 592.12
+        },
+        {
+          "word": " what",
+          "start": 592.12,
+          "end": 592.44
+        },
+        {
+          "word": " you",
+          "start": 592.44,
+          "end": 592.7600000000001
+        },
+        {
+          "word": " said",
+          "start": 592.76,
+          "end": 593.08
+        },
+        {
+          "word": " by",
+          "start": 593.08,
+          "end": 593.4000000000001
+        },
+        {
+          "word": " matching",
+          "start": 593.4,
+          "end": 594.04
+        },
+        {
+          "word": " each",
+          "start": 594.04,
+          "end": 594.36
+        },
+        {
+          "word": " word",
+          "start": 594.36,
+          "end": 594.6
+        },
+        {
+          "word": " square",
+          "start": 594.76,
+          "end": 595.5600000000001
+        },
+        {
+          "word": " against",
+          "start": 595.56,
+          "end": 596.12
+        },
+        {
+          "word": " every",
+          "start": 596.12,
+          "end": 596.52
+        },
+        {
+          "word": " other",
+          "start": 596.52,
+          "end": 596.76
+        },
+        {
+          "word": " words",
+          "start": 596.76,
+          "end": 597.16
+        },
+        {
+          "word": " key.",
+          "start": 597.32,
+          "end": 597.96
+        }
+      ]
+    },
+    {
+      "start": 608.6,
+      "end": 619.72,
+      "text": "The encoder builds a picture of what your message is. The decoder writes the reply while constantly while constantly the encoder builds a picture of what your message.",
+      "words": [
+        {
+          "word": " The",
+          "start": 608.6,
+          "end": 608.9200000000001
+        },
+        {
+          "word": " encoder",
+          "start": 608.92,
+          "end": 609.64
+        },
+        {
+          "word": " builds",
+          "start": 609.64,
+          "end": 609.96
+        },
+        {
+          "word": " a",
+          "start": 609.96,
+          "end": 610.0400000000001
+        },
+        {
+          "word": " picture",
+          "start": 610.04,
+          "end": 610.36
+        },
+        {
+          "word": " of",
+          "start": 610.36,
+          "end": 610.6
+        },
+        {
+          "word": " what",
+          "start": 610.6,
+          "end": 610.84
+        },
+        {
+          "word": " your",
+          "start": 610.84,
+          "end": 611.0
+        },
+        {
+          "word": " message",
+          "start": 611.0,
+          "end": 611.48
+        },
+        {
+          "word": " is.",
+          "start": 611.48,
+          "end": 611.88
+        },
+        {
+          "word": " The",
+          "start": 611.88,
+          "end": 612.12
+        },
+        {
+          "word": " decoder",
+          "start": 612.12,
+          "end": 612.9200000000001
+        },
+        {
+          "word": " writes",
+          "start": 612.92,
+          "end": 613.3199999999999
+        },
+        {
+          "word": " the",
+          "start": 613.32,
+          "end": 613.5600000000001
+        },
+        {
+          "word": " reply",
+          "start": 613.56,
+          "end": 614.04
+        },
+        {
+          "word": " while",
+          "start": 614.04,
+          "end": 614.4399999999999
+        },
+        {
+          "word": " constantly",
+          "start": 614.44,
+          "end": 615.4000000000001
+        },
+        {
+          "word": " while",
+          "start": 615.64,
+          "end": 616.12
+        },
+        {
+          "word": " constantly",
+          "start": 616.12,
+          "end": 616.9200000000001
+        },
+        {
+          "word": " the",
+          "start": 617.08,
+          "end": 617.32
+        },
+        {
+          "word": " encoder",
+          "start": 617.32,
+          "end": 617.88
+        },
+        {
+          "word": " builds",
+          "start": 617.88,
+          "end": 618.12
+        },
+        {
+          "word": " a",
+          "start": 618.12,
+          "end": 618.2
+        },
+        {
+          "word": " picture",
+          "start": 618.2,
+          "end": 618.44
+        },
+        {
+          "word": " of",
+          "start": 618.44,
+          "end": 618.6
+        },
+        {
+          "word": " what",
+          "start": 618.6,
+          "end": 618.84
+        },
+        {
+          "word": " your",
+          "start": 618.84,
+          "end": 619.08
+        },
+        {
+          "word": " message.",
+          "start": 619.08,
+          "end": 619.72
+        }
+      ]
+    },
+    {
+      "start": 620.6800000000001,
+      "end": 628.36,
+      "text": "The encoder builds a picture of your message. The decoder writes the reply while constantly glancing back at it.",
+      "words": [
+        {
+          "word": " The",
+          "start": 620.6800000000001,
+          "end": 621.0000000000001
+        },
+        {
+          "word": " encoder",
+          "start": 621.0,
+          "end": 621.72
+        },
+        {
+          "word": " builds",
+          "start": 621.72,
+          "end": 622.1999999999999
+        },
+        {
+          "word": " a",
+          "start": 622.2,
+          "end": 622.36
+        },
+        {
+          "word": " picture",
+          "start": 622.36,
+          "end": 622.76
+        },
+        {
+          "word": " of",
+          "start": 622.76,
+          "end": 623.08
+        },
+        {
+          "word": " your",
+          "start": 623.08,
+          "end": 623.24
+        },
+        {
+          "word": " message.",
+          "start": 623.24,
+          "end": 623.9599999999999
+        },
+        {
+          "word": " The",
+          "start": 623.96,
+          "end": 624.2
+        },
+        {
+          "word": " decoder",
+          "start": 624.2,
+          "end": 624.84
+        },
+        {
+          "word": " writes",
+          "start": 624.84,
+          "end": 625.16
+        },
+        {
+          "word": " the",
+          "start": 625.16,
+          "end": 625.24
+        },
+        {
+          "word": " reply",
+          "start": 625.24,
+          "end": 625.8
+        },
+        {
+          "word": " while",
+          "start": 625.8,
+          "end": 626.12
+        },
+        {
+          "word": " constantly",
+          "start": 626.12,
+          "end": 626.76
+        },
+        {
+          "word": " glancing",
+          "start": 626.76,
+          "end": 627.4
+        },
+        {
+          "word": " back",
+          "start": 627.4,
+          "end": 627.72
+        },
+        {
+          "word": " at",
+          "start": 627.72,
+          "end": 628.0400000000001
+        },
+        {
+          "word": " it.",
+          "start": 628.04,
+          "end": 628.36
+        }
+      ]
+    },
+    {
+      "start": 633.32,
+      "end": 639.4000000000001,
+      "text": "And that's exactly why a buried instruction gets less attention than one sitting up front.",
+      "words": [
+        {
+          "word": " And",
+          "start": 633.32,
+          "end": 633.6400000000001
+        },
+        {
+          "word": " that's",
+          "start": 633.64,
+          "end": 634.12
+        },
+        {
+          "word": " exactly",
+          "start": 634.12,
+          "end": 634.6
+        },
+        {
+          "word": " why",
+          "start": 634.84,
+          "end": 635.16
+        },
+        {
+          "word": " a",
+          "start": 635.16,
+          "end": 635.3199999999999
+        },
+        {
+          "word": " buried",
+          "start": 635.32,
+          "end": 635.8
+        },
+        {
+          "word": " instruction",
+          "start": 635.8,
+          "end": 636.28
+        },
+        {
+          "word": " gets",
+          "start": 636.44,
+          "end": 636.68
+        },
+        {
+          "word": " less",
+          "start": 636.6800000000001,
+          "end": 637.0
+        },
+        {
+          "word": " attention",
+          "start": 637.0,
+          "end": 637.6400000000001
+        },
+        {
+          "word": " than",
+          "start": 637.64,
+          "end": 637.88
+        },
+        {
+          "word": " one",
+          "start": 637.88,
+          "end": 638.2
+        },
+        {
+          "word": " sitting",
+          "start": 638.2,
+          "end": 638.6
+        },
+        {
+          "word": " up",
+          "start": 638.6,
+          "end": 638.84
+        },
+        {
+          "word": " front.",
+          "start": 638.84,
+          "end": 639.4000000000001
+        }
+      ]
+    },
+    {
+      "start": 645.52,
+      "end": 648.6400000000001,
+      "text": "Not a glitch, just a mechanism working as built.",
+      "words": [
+        {
+          "word": " Not",
+          "start": 645.52,
+          "end": 645.8399999999999
+        },
+        {
+          "word": " a",
+          "start": 645.84,
+          "end": 646.0
+        },
+        {
+          "word": " glitch,",
+          "start": 646.0,
+          "end": 646.5600000000001
+        },
+        {
+          "word": " just",
+          "start": 646.56,
+          "end": 646.7199999999999
+        },
+        {
+          "word": " a",
+          "start": 646.72,
+          "end": 646.8000000000001
+        },
+        {
+          "word": " mechanism",
+          "start": 646.8,
+          "end": 647.36
+        },
+        {
+          "word": " working",
+          "start": 647.36,
+          "end": 647.68
+        },
+        {
+          "word": " as",
+          "start": 647.68,
+          "end": 648.0
+        },
+        {
+          "word": " built.",
+          "start": 648.0,
+          "end": 648.6400000000001
+        }
+      ]
+    },
+    {
+      "start": 656.32,
+      "end": 664.72,
+      "text": "And once I understood this, it changed how I write props. I stopped burying the important instruction in paragraph three.",
+      "words": [
+        {
+          "word": " And",
+          "start": 656.32,
+          "end": 656.6400000000001
+        },
+        {
+          "word": " once",
+          "start": 656.64,
+          "end": 657.12
+        },
+        {
+          "word": " I",
+          "start": 657.12,
+          "end": 657.28
+        },
+        {
+          "word": " understood",
+          "start": 657.28,
+          "end": 657.9200000000001
+        },
+        {
+          "word": " this,",
+          "start": 657.92,
+          "end": 658.32
+        },
+        {
+          "word": " it",
+          "start": 658.32,
+          "end": 658.48
+        },
+        {
+          "word": " changed",
+          "start": 658.48,
+          "end": 658.88
+        },
+        {
+          "word": " how",
+          "start": 658.88,
+          "end": 659.12
+        },
+        {
+          "word": " I",
+          "start": 659.12,
+          "end": 659.2
+        },
+        {
+          "word": " write",
+          "start": 659.2,
+          "end": 659.36
+        },
+        {
+          "word": " props.",
+          "start": 659.52,
+          "end": 660.1600000000001
+        },
+        {
+          "word": " I",
+          "start": 660.16,
+          "end": 660.4
+        },
+        {
+          "word": " stopped",
+          "start": 660.4,
+          "end": 660.88
+        },
+        {
+          "word": " burying",
+          "start": 660.88,
+          "end": 661.36
+        },
+        {
+          "word": " the",
+          "start": 661.36,
+          "end": 661.6800000000001
+        },
+        {
+          "word": " important",
+          "start": 661.68,
+          "end": 662.0
+        },
+        {
+          "word": " instruction",
+          "start": 662.16,
+          "end": 662.7199999999999
+        },
+        {
+          "word": " in",
+          "start": 662.96,
+          "end": 663.2800000000001
+        },
+        {
+          "word": " paragraph",
+          "start": 663.28,
+          "end": 664.08
+        },
+        {
+          "word": " three.",
+          "start": 664.08,
+          "end": 664.72
+        }
+      ]
+    },
+    {
+      "start": 674.56,
+      "end": 681.36,
+      "text": "Subscribe if you want more of this, breaking down what actually happening inside these models. Thank you for watching",
+      "words": [
+        {
+          "word": " Subscribe",
+          "start": 674.56,
+          "end": 675.44
+        },
+        {
+          "word": " if",
+          "start": 675.44,
+          "end": 675.7600000000001
+        },
+        {
+          "word": " you",
+          "start": 675.76,
+          "end": 676.0
+        },
+        {
+          "word": " want",
+          "start": 676.0,
+          "end": 676.24
+        },
+        {
+          "word": " more",
+          "start": 676.24,
+          "end": 676.4
+        },
+        {
+          "word": " of",
+          "start": 676.4,
+          "end": 676.64
+        },
+        {
+          "word": " this,",
+          "start": 676.64,
+          "end": 676.9599999999999
+        },
+        {
+          "word": " breaking",
+          "start": 676.96,
+          "end": 677.36
+        },
+        {
+          "word": " down",
+          "start": 677.36,
+          "end": 677.6800000000001
+        },
+        {
+          "word": " what",
+          "start": 677.68,
+          "end": 677.92
+        },
+        {
+          "word": " actually",
+          "start": 677.92,
+          "end": 678.24
+        },
+        {
+          "word": " happening",
+          "start": 678.24,
+          "end": 678.64
+        },
+        {
+          "word": " inside",
+          "start": 678.64,
+          "end": 678.9599999999999
+        },
+        {
+          "word": " these",
+          "start": 678.96,
+          "end": 679.2800000000001
+        },
+        {
+          "word": " models.",
+          "start": 679.28,
+          "end": 679.92
+        },
+        {
+          "word": " Thank",
+          "start": 679.92,
+          "end": 680.24
+        },
+        {
+          "word": " you",
+          "start": 680.24,
+          "end": 680.4
+        },
+        {
+          "word": " for",
+          "start": 680.4,
+          "end": 680.64
+        },
+        {
+          "word": " watching",
+          "start": 680.64,
+          "end": 681.36
+        }
+      ]
+    },
+    {
+      "start": 681.84,
+      "end": 684.32,
+      "text": "for watching. See you in the next one.",
+      "words": [
+        {
+          "word": " for",
+          "start": 681.84,
+          "end": 682.08
+        },
+        {
+          "word": " watching.",
+          "start": 682.08,
+          "end": 682.72
+        },
+        {
+          "word": " See",
+          "start": 682.72,
+          "end": 682.96
+        },
+        {
+          "word": " you",
+          "start": 682.96,
+          "end": 683.12
+        },
+        {
+          "word": " in",
+          "start": 683.12,
+          "end": 683.28
+        },
+        {
+          "word": " the",
+          "start": 683.28,
+          "end": 683.4399999999999
+        },
+        {
+          "word": " next",
+          "start": 683.44,
+          "end": 684.0
+        },
+        {
+          "word": " one.",
+          "start": 684.0,
+          "end": 684.32
+        }
+      ]
+    }
+  ],
+  "words": [
+    {
+      "word": " Have",
+      "start": 2.56,
+      "end": 3.04
+    },
+    {
+      "word": " you",
+      "start": 3.04,
+      "end": 3.2
+    },
+    {
+      "word": " ever",
+      "start": 3.2,
+      "end": 3.4400000000000004
+    },
+    {
+      "word": " given",
+      "start": 3.44,
+      "end": 3.7600000000000002
+    },
+    {
+      "word": " an",
+      "start": 3.7600000000000002,
+      "end": 4.08
+    },
+    {
+      "word": " EI",
+      "start": 4.08,
+      "end": 4.5600000000000005
+    },
+    {
+      "word": " three",
+      "start": 4.5600000000000005,
+      "end": 4.8
+    },
+    {
+      "word": " things",
+      "start": 4.8,
+      "end": 5.2
+    },
+    {
+      "word": " to",
+      "start": 5.2,
+      "end": 5.5200000000000005
+    },
+    {
+      "word": " do",
+      "start": 5.5200000000000005,
+      "end": 5.840000000000001
+    },
+    {
+      "word": " in",
+      "start": 5.84,
+      "end": 6.16
+    },
+    {
+      "word": " one",
+      "start": 6.16,
+      "end": 6.48
+    },
+    {
+      "word": " message?",
+      "start": 6.48,
+      "end": 7.04
+    },
+    {
+      "word": " Like",
+      "start": 7.04,
+      "end": 7.36
+    },
+    {
+      "word": " summarize",
+      "start": 7.36,
+      "end": 7.92
+    },
+    {
+      "word": " this,",
+      "start": 7.92,
+      "end": 8.24
+    },
+    {
+      "word": " pull",
+      "start": 8.24,
+      "end": 8.48
+    },
+    {
+      "word": " out",
+      "start": 8.48,
+      "end": 8.64
+    },
+    {
+      "word": " the",
+      "start": 8.64,
+      "end": 8.72
+    },
+    {
+      "word": " action",
+      "start": 8.72,
+      "end": 9.040000000000001
+    },
+    {
+      "word": " item",
+      "start": 9.040000000000001,
+      "end": 9.360000000000001
+    },
+    {
+      "word": " and",
+      "start": 9.44,
+      "end": 9.6
+    },
+    {
+      "word": " tell",
+      "start": 9.6,
+      "end": 9.92
+    },
+    {
+      "word": " me",
+      "start": 9.92,
+      "end": 10.16
+    },
+    {
+      "word": " if",
+      "start": 10.16,
+      "end": 10.4
+    },
+    {
+      "word": " anything",
+      "start": 10.4,
+      "end": 10.88
+    },
+    {
+      "word": " looks",
+      "start": 10.88,
+      "end": 11.200000000000001
+    },
+    {
+      "word": " off",
+      "start": 11.200000000000001,
+      "end": 11.440000000000001
+    },
+    {
+      "word": " and",
+      "start": 11.68,
+      "end": 11.92
+    },
+    {
+      "word": " it",
+      "start": 11.92,
+      "end": 12.08
+    },
+    {
+      "word": " does",
+      "start": 12.08,
+      "end": 12.32
+    },
+    {
+      "word": " the",
+      "start": 12.32,
+      "end": 12.56
+    },
+    {
+      "word": " first",
+      "start": 12.56,
+      "end": 12.88
+    },
+    {
+      "word": " two",
+      "start": 12.88,
+      "end": 13.040000000000001
+    },
+    {
+      "word": " and",
+      "start": 13.120000000000001,
+      "end": 13.280000000000001
+    },
+    {
+      "word": " just",
+      "start": 13.280000000000001,
+      "end": 13.520000000000001
+    },
+    {
+      "word": " skips",
+      "start": 13.52,
+      "end": 13.92
+    },
+    {
+      "word": " the",
+      "start": 13.92,
+      "end": 14.16
+    },
+    {
+      "word": " third.",
+      "start": 14.16,
+      "end": 14.72
+    },
+    {
+      "word": " That's",
+      "start": 17.12,
+      "end": 17.68
+    },
+    {
+      "word": " not",
+      "start": 17.68,
+      "end": 17.84
+    },
+    {
+      "word": " the",
+      "start": 17.84,
+      "end": 18.16
+    },
+    {
+      "word": " model",
+      "start": 18.16,
+      "end": 18.48
+    },
+    {
+      "word": " being",
+      "start": 18.48,
+      "end": 18.88
+    },
+    {
+      "word": " lazy.",
+      "start": 18.88,
+      "end": 19.52
+    },
+    {
+      "word": " It's",
+      "start": 21.44,
+      "end": 22.0
+    },
+    {
+      "word": " something",
+      "start": 22.0,
+      "end": 22.48
+    },
+    {
+      "word": " called",
+      "start": 22.48,
+      "end": 23.04
+    },
+    {
+      "word": " attention,",
+      "start": 23.04,
+      "end": 23.84
+    },
+    {
+      "word": " the",
+      "start": 23.84,
+      "end": 24.08
+    },
+    {
+      "word": " mechanism",
+      "start": 24.080000000000002,
+      "end": 24.8
+    },
+    {
+      "word": " that",
+      "start": 24.8,
+      "end": 25.12
+    },
+    {
+      "word": " decides",
+      "start": 25.12,
+      "end": 25.76
+    },
+    {
+      "word": " which",
+      "start": 25.76,
+      "end": 26.080000000000002
+    },
+    {
+      "word": " part",
+      "start": 26.080000000000002,
+      "end": 26.400000000000002
+    },
+    {
+      "word": " of",
+      "start": 26.400000000000002,
+      "end": 26.720000000000002
+    },
+    {
+      "word": " what",
+      "start": 26.72,
+      "end": 27.04
+    },
+    {
+      "word": " you",
+      "start": 27.36,
+      "end": 27.68
+    },
+    {
+      "word": " say",
+      "start": 27.68,
+      "end": 27.919999999999998
+    },
+    {
+      "word": " it's",
+      "start": 28.080000000000002,
+      "end": 28.48
+    },
+    {
+      "word": " actually",
+      "start": 28.48,
+      "end": 28.959999999999997
+    },
+    {
+      "word": " focused",
+      "start": 28.96,
+      "end": 29.76
+    },
+    {
+      "word": " on.",
+      "start": 29.76,
+      "end": 30.080000000000002
+    },
+    {
+      "word": " And",
+      "start": 31.6,
+      "end": 31.92
+    },
+    {
+      "word": " here's",
+      "start": 32.160000000000004,
+      "end": 32.559999999999995
+    },
+    {
+      "word": " an",
+      "start": 32.56,
+      "end": 32.72
+    },
+    {
+      "word": " explanation.",
+      "start": 32.72,
+      "end": 33.36
+    },
+    {
+      "word": " No",
+      "start": 33.36,
+      "end": 33.6
+    },
+    {
+      "word": " maths,",
+      "start": 33.6,
+      "end": 34.08
+    },
+    {
+      "word": " no",
+      "start": 34.08,
+      "end": 34.239999999999995
+    },
+    {
+      "word": " whiteboard,",
+      "start": 34.24,
+      "end": 34.88
+    },
+    {
+      "word": " nothing",
+      "start": 34.88,
+      "end": 35.28
+    },
+    {
+      "word": " at",
+      "start": 35.28,
+      "end": 35.52
+    },
+    {
+      "word": " all.",
+      "start": 35.52,
+      "end": 36.080000000000005
+    },
+    {
+      "word": " I'm",
+      "start": 36.08,
+      "end": 36.48
+    },
+    {
+      "word": " gonna",
+      "start": 36.480000000000004,
+      "end": 36.72
+    },
+    {
+      "word": " walk",
+      "start": 36.72,
+      "end": 36.96
+    },
+    {
+      "word": " you",
+      "start": 36.96,
+      "end": 37.12
+    },
+    {
+      "word": " through",
+      "start": 37.12,
+      "end": 37.52
+    },
+    {
+      "word": " what",
+      "start": 37.52,
+      "end": 37.760000000000005
+    },
+    {
+      "word": " that",
+      "start": 37.76,
+      "end": 38.0
+    },
+    {
+      "word": " actually",
+      "start": 38.0,
+      "end": 38.56
+    },
+    {
+      "word": " is,",
+      "start": 38.56,
+      "end": 38.88
+    },
+    {
+      "word": " and",
+      "start": 38.88,
+      "end": 39.120000000000005
+    },
+    {
+      "word": " by",
+      "start": 39.12,
+      "end": 39.36
+    },
+    {
+      "word": " the",
+      "start": 39.36,
+      "end": 39.6
+    },
+    {
+      "word": " end",
+      "start": 39.6,
+      "end": 39.76
+    },
+    {
+      "word": " you",
+      "start": 39.84,
+      "end": 40.160000000000004
+    },
+    {
+      "word": " will",
+      "start": 40.160000000000004,
+      "end": 40.480000000000004
+    },
+    {
+      "word": " know",
+      "start": 40.480000000000004,
+      "end": 40.800000000000004
+    },
+    {
+      "word": " exactly",
+      "start": 40.800000000000004,
+      "end": 41.52
+    },
+    {
+      "word": " how",
+      "start": 41.52,
+      "end": 41.760000000000005
+    },
+    {
+      "word": " to",
+      "start": 41.76,
+      "end": 42.0
+    },
+    {
+      "word": " write",
+      "start": 42.0,
+      "end": 42.24
+    },
+    {
+      "word": " a",
+      "start": 42.24,
+      "end": 42.480000000000004
+    },
+    {
+      "word": " prompt",
+      "start": 42.480000000000004,
+      "end": 42.96
+    },
+    {
+      "word": " that",
+      "start": 42.96,
+      "end": 43.12
+    },
+    {
+      "word": " doesn't",
+      "start": 43.12,
+      "end": 43.519999999999996
+    },
+    {
+      "word": " get",
+      "start": 43.52,
+      "end": 43.760000000000005
+    },
+    {
+      "word": " half",
+      "start": 43.76,
+      "end": 44.160000000000004
+    },
+    {
+      "word": " ignored.",
+      "start": 44.160000000000004,
+      "end": 45.120000000000005
+    },
+    {
+      "word": " Attention.",
+      "start": 52.0,
+      "end": 53.2
+    },
+    {
+      "word": " In",
+      "start": 53.2,
+      "end": 53.36
+    },
+    {
+      "word": " simple",
+      "start": 53.52,
+      "end": 53.92
+    },
+    {
+      "word": " terms,",
+      "start": 53.92,
+      "end": 54.32
+    },
+    {
+      "word": " it's",
+      "start": 54.32,
+      "end": 54.8
+    },
+    {
+      "word": " just",
+      "start": 54.800000000000004,
+      "end": 55.040000000000006
+    },
+    {
+      "word": " the",
+      "start": 55.04,
+      "end": 55.36
+    },
+    {
+      "word": " model",
+      "start": 55.36,
+      "end": 55.68
+    },
+    {
+      "word": " deciding",
+      "start": 55.84,
+      "end": 56.64
+    },
+    {
+      "word": " for",
+      "start": 56.88,
+      "end": 57.2
+    },
+    {
+      "word": " every",
+      "start": 57.2,
+      "end": 57.76
+    },
+    {
+      "word": " word",
+      "start": 57.76,
+      "end": 58.0
+    },
+    {
+      "word": " it's",
+      "start": 58.0,
+      "end": 58.480000000000004
+    },
+    {
+      "word": " about",
+      "start": 58.480000000000004,
+      "end": 58.720000000000006
+    },
+    {
+      "word": " to",
+      "start": 58.72,
+      "end": 58.96
+    },
+    {
+      "word": " write.",
+      "start": 58.96,
+      "end": 59.92
+    },
+    {
+      "word": " How",
+      "start": 59.92,
+      "end": 60.32
+    },
+    {
+      "word": " much",
+      "start": 60.32,
+      "end": 60.56
+    },
+    {
+      "word": " to",
+      "start": 60.56,
+      "end": 60.72
+    },
+    {
+      "word": " focus",
+      "start": 60.72,
+      "end": 61.04
+    },
+    {
+      "word": " on",
+      "start": 61.04,
+      "end": 61.199999999999996
+    },
+    {
+      "word": " each",
+      "start": 61.36,
+      "end": 61.76
+    },
+    {
+      "word": " word",
+      "start": 61.76,
+      "end": 62.0
+    },
+    {
+      "word": " you",
+      "start": 62.160000000000004,
+      "end": 62.480000000000004
+    },
+    {
+      "word": " give?",
+      "start": 62.480000000000004,
+      "end": 63.2
+    },
+    {
+      "word": " Okay.",
+      "start": 63.2,
+      "end": 63.52
+    },
+    {
+      "word": " It's",
+      "start": 81.84,
+      "end": 82.16
+    },
+    {
+      "word": " just",
+      "start": 82.16,
+      "end": 82.32
+    },
+    {
+      "word": " the",
+      "start": 82.32000000000001,
+      "end": 82.56
+    },
+    {
+      "word": " model",
+      "start": 82.56,
+      "end": 82.88
+    },
+    {
+      "word": " deciding",
+      "start": 82.88,
+      "end": 83.52
+    },
+    {
+      "word": " for",
+      "start": 83.52,
+      "end": 83.67999999999999
+    },
+    {
+      "word": " every",
+      "start": 83.68,
+      "end": 84.08
+    },
+    {
+      "word": " word",
+      "start": 84.08,
+      "end": 84.24
+    },
+    {
+      "word": " it's",
+      "start": 84.4,
+      "end": 84.96
+    },
+    {
+      "word": " about",
+      "start": 84.96000000000001,
+      "end": 85.28
+    },
+    {
+      "word": " to",
+      "start": 85.28,
+      "end": 85.52
+    },
+    {
+      "word": " write",
+      "start": 85.52,
+      "end": 86.08
+    },
+    {
+      "word": " how",
+      "start": 86.32000000000001,
+      "end": 86.64
+    },
+    {
+      "word": " much",
+      "start": 86.64,
+      "end": 86.96
+    },
+    {
+      "word": " to",
+      "start": 86.96000000000001,
+      "end": 87.12
+    },
+    {
+      "word": " focus",
+      "start": 87.12,
+      "end": 87.6
+    },
+    {
+      "word": " on",
+      "start": 87.60000000000001,
+      "end": 87.84
+    },
+    {
+      "word": " each",
+      "start": 87.84,
+      "end": 88.16
+    },
+    {
+      "word": " word",
+      "start": 88.16,
+      "end": 88.39999999999999
+    },
+    {
+      "word": " you",
+      "start": 88.48,
+      "end": 88.72
+    },
+    {
+      "word": " give",
+      "start": 88.72,
+      "end": 89.19999999999999
+    },
+    {
+      "word": " it.",
+      "start": 89.2,
+      "end": 89.52
+    },
+    {
+      "word": " Think",
+      "start": 94.96000000000001,
+      "end": 95.52
+    },
+    {
+      "word": " about",
+      "start": 95.52,
+      "end": 95.67999999999999
+    },
+    {
+      "word": " it",
+      "start": 95.68,
+      "end": 95.84
+    },
+    {
+      "word": " like",
+      "start": 95.92,
+      "end": 96.16
+    },
+    {
+      "word": " cooking",
+      "start": 96.16,
+      "end": 96.72
+    },
+    {
+      "word": " from",
+      "start": 96.72,
+      "end": 96.96
+    },
+    {
+      "word": " a",
+      "start": 96.96000000000001,
+      "end": 97.12
+    },
+    {
+      "word": " recipe",
+      "start": 97.12,
+      "end": 97.6
+    },
+    {
+      "word": " you",
+      "start": 97.68,
+      "end": 97.92
+    },
+    {
+      "word": " have",
+      "start": 97.92,
+      "end": 98.16
+    },
+    {
+      "word": " just",
+      "start": 98.16,
+      "end": 98.39999999999999
+    },
+    {
+      "word": " read",
+      "start": 98.4,
+      "end": 98.64
+    },
+    {
+      "word": " once.",
+      "start": 98.8,
+      "end": 99.44
+    },
+    {
+      "word": " You",
+      "start": 106.32000000000001,
+      "end": 106.64
+    },
+    {
+      "word": " don't",
+      "start": 106.64,
+      "end": 106.96
+    },
+    {
+      "word": " reread",
+      "start": 106.96000000000001,
+      "end": 107.6
+    },
+    {
+      "word": " the",
+      "start": 107.60000000000001,
+      "end": 107.76
+    },
+    {
+      "word": " whole",
+      "start": 107.76,
+      "end": 108.08
+    },
+    {
+      "word": " thing",
+      "start": 108.08,
+      "end": 108.4
+    },
+    {
+      "word": " before",
+      "start": 108.4,
+      "end": 108.88
+    },
+    {
+      "word": " every",
+      "start": 108.88,
+      "end": 109.36
+    },
+    {
+      "word": " step.",
+      "start": 109.36,
+      "end": 110.32
+    },
+    {
+      "word": " You",
+      "start": 110.32000000000001,
+      "end": 110.64
+    },
+    {
+      "word": " glance",
+      "start": 110.64,
+      "end": 111.19999999999999
+    },
+    {
+      "word": " back",
+      "start": 111.2,
+      "end": 111.44
+    },
+    {
+      "word": " at",
+      "start": 111.44,
+      "end": 111.67999999999999
+    },
+    {
+      "word": " exactly",
+      "start": 111.68,
+      "end": 112.08
+    },
+    {
+      "word": " the",
+      "start": 112.08,
+      "end": 112.32
+    },
+    {
+      "word": " line",
+      "start": 112.32000000000001,
+      "end": 112.64
+    },
+    {
+      "word": " that",
+      "start": 112.64,
+      "end": 112.8
+    },
+    {
+      "word": " matters",
+      "start": 112.8,
+      "end": 113.2
+    },
+    {
+      "word": " right",
+      "start": 113.36,
+      "end": 113.67999999999999
+    },
+    {
+      "word": " now.",
+      "start": 113.68,
+      "end": 114.0
+    },
+    {
+      "word": " That's",
+      "start": 119.4,
+      "end": 119.96
+    },
+    {
+      "word": " the",
+      "start": 119.96000000000001,
+      "end": 120.2
+    },
+    {
+      "word": " whole",
+      "start": 120.2,
+      "end": 120.67999999999999
+    },
+    {
+      "word": " point",
+      "start": 120.68,
+      "end": 120.84
+    },
+    {
+      "word": " with",
+      "start": 121.0,
+      "end": 121.24
+    },
+    {
+      "word": " the",
+      "start": 121.24000000000001,
+      "end": 121.48
+    },
+    {
+      "word": " skipped",
+      "start": 121.48,
+      "end": 122.36
+    },
+    {
+      "word": " instruction.",
+      "start": 122.36,
+      "end": 123.32
+    },
+    {
+      "word": " If",
+      "start": 129.64,
+      "end": 130.12
+    },
+    {
+      "word": " one",
+      "start": 130.12,
+      "end": 130.36
+    },
+    {
+      "word": " part",
+      "start": 130.36,
+      "end": 130.52
+    },
+    {
+      "word": " of",
+      "start": 130.52,
+      "end": 130.68
+    },
+    {
+      "word": " your",
+      "start": 130.68,
+      "end": 130.92000000000002
+    },
+    {
+      "word": " masses",
+      "start": 130.92000000000002,
+      "end": 131.48000000000002
+    },
+    {
+      "word": " get",
+      "start": 131.48,
+      "end": 131.56
+    },
+    {
+      "word": " less",
+      "start": 131.72,
+      "end": 132.04
+    },
+    {
+      "word": " of",
+      "start": 132.04,
+      "end": 132.2
+    },
+    {
+      "word": " that",
+      "start": 132.2,
+      "end": 132.44
+    },
+    {
+      "word": " glancing",
+      "start": 132.44,
+      "end": 133.16000000000003
+    },
+    {
+      "word": " back,",
+      "start": 133.16,
+      "end": 133.95999999999998
+    },
+    {
+      "word": " then",
+      "start": 133.96,
+      "end": 134.28
+    },
+    {
+      "word": " the",
+      "start": 134.28,
+      "end": 134.6
+    },
+    {
+      "word": " others,",
+      "start": 134.6,
+      "end": 135.24
+    },
+    {
+      "word": " the",
+      "start": 135.24,
+      "end": 135.56
+    },
+    {
+      "word": " model",
+      "start": 135.56,
+      "end": 135.88
+    },
+    {
+      "word": " just",
+      "start": 136.04,
+      "end": 136.35999999999999
+    },
+    {
+      "word": " if",
+      "start": 142.6,
+      "end": 142.84
+    },
+    {
+      "word": " the",
+      "start": 143.0,
+      "end": 143.24
+    },
+    {
+      "word": " one",
+      "start": 143.24,
+      "end": 143.48000000000002
+    },
+    {
+      "word": " part",
+      "start": 143.48000000000002,
+      "end": 143.64000000000001
+    },
+    {
+      "word": " of",
+      "start": 143.64,
+      "end": 143.88
+    },
+    {
+      "word": " your",
+      "start": 143.88,
+      "end": 144.12
+    },
+    {
+      "word": " masses",
+      "start": 144.12,
+      "end": 144.68
+    },
+    {
+      "word": " get",
+      "start": 144.68,
+      "end": 144.76000000000002
+    },
+    {
+      "word": " less",
+      "start": 144.92000000000002,
+      "end": 145.16
+    },
+    {
+      "word": " of",
+      "start": 145.16,
+      "end": 145.4
+    },
+    {
+      "word": " that",
+      "start": 145.4,
+      "end": 145.56
+    },
+    {
+      "word": " glancing",
+      "start": 145.56,
+      "end": 146.2
+    },
+    {
+      "word": " back",
+      "start": 146.2,
+      "end": 146.51999999999998
+    },
+    {
+      "word": " than",
+      "start": 146.52,
+      "end": 146.76000000000002
+    },
+    {
+      "word": " others,",
+      "start": 146.76,
+      "end": 147.64000000000001
+    },
+    {
+      "word": " the",
+      "start": 147.64,
+      "end": 147.95999999999998
+    },
+    {
+      "word": " model",
+      "start": 147.96,
+      "end": 148.28
+    },
+    {
+      "word": " just",
+      "start": 148.52,
+      "end": 148.84
+    },
+    {
+      "word": " underweighs",
+      "start": 148.84,
+      "end": 150.04000000000002
+    },
+    {
+      "word": " it.",
+      "start": 150.04,
+      "end": 150.35999999999999
+    },
+    {
+      "word": " If",
+      "start": 152.12,
+      "end": 152.44
+    },
+    {
+      "word": " the",
+      "start": 152.44,
+      "end": 152.68
+    },
+    {
+      "word": " one",
+      "start": 152.68,
+      "end": 152.92000000000002
+    },
+    {
+      "word": " part",
+      "start": 152.92000000000002,
+      "end": 153.08
+    },
+    {
+      "word": " of",
+      "start": 153.07999999999998,
+      "end": 153.23999999999998
+    },
+    {
+      "word": " your",
+      "start": 153.24,
+      "end": 153.48000000000002
+    },
+    {
+      "word": " masses",
+      "start": 153.48000000000002,
+      "end": 154.12
+    },
+    {
+      "word": " gets",
+      "start": 154.12,
+      "end": 154.44
+    },
+    {
+      "word": " less",
+      "start": 154.44,
+      "end": 154.76
+    },
+    {
+      "word": " of",
+      "start": 154.76,
+      "end": 154.92
+    },
+    {
+      "word": " that",
+      "start": 154.92000000000002,
+      "end": 155.16000000000003
+    },
+    {
+      "word": " glancing",
+      "start": 155.16,
+      "end": 155.88
+    },
+    {
+      "word": " back",
+      "start": 155.88,
+      "end": 156.2
+    },
+    {
+      "word": " than",
+      "start": 156.2,
+      "end": 156.35999999999999
+    },
+    {
+      "word": " the",
+      "start": 156.36,
+      "end": 156.68
+    },
+    {
+      "word": " others,",
+      "start": 156.68,
+      "end": 157.4
+    },
+    {
+      "word": " the",
+      "start": 157.4,
+      "end": 157.64000000000001
+    },
+    {
+      "word": " model",
+      "start": 157.64,
+      "end": 157.95999999999998
+    },
+    {
+      "word": " just",
+      "start": 157.96,
+      "end": 158.20000000000002
+    },
+    {
+      "word": " waves",
+      "start": 158.2,
+      "end": 158.76000000000002
+    },
+    {
+      "word": " it,",
+      "start": 158.76,
+      "end": 159.07999999999998
+    },
+    {
+      "word": " the",
+      "start": 160.76,
+      "end": 161.07999999999998
+    },
+    {
+      "word": " model",
+      "start": 161.07999999999998,
+      "end": 161.39999999999998
+    },
+    {
+      "word": " just",
+      "start": 161.64,
+      "end": 161.95999999999998
+    },
+    {
+      "word": " underweighs",
+      "start": 161.96,
+      "end": 162.76
+    },
+    {
+      "word": " it.",
+      "start": 162.76,
+      "end": 163.16000000000003
+    },
+    {
+      "word": " Okay,",
+      "start": 163.16,
+      "end": 163.56
+    },
+    {
+      "word": " underweighs",
+      "start": 163.56,
+      "end": 164.28
+    },
+    {
+      "word": " it.",
+      "start": 164.44,
+      "end": 164.76
+    },
+    {
+      "word": " If",
+      "start": 166.84,
+      "end": 167.39999999999998
+    },
+    {
+      "word": " one",
+      "start": 167.4,
+      "end": 167.72
+    },
+    {
+      "word": " part",
+      "start": 167.72,
+      "end": 167.96
+    },
+    {
+      "word": " of",
+      "start": 167.96,
+      "end": 168.20000000000002
+    },
+    {
+      "word": " your",
+      "start": 168.2,
+      "end": 168.44
+    },
+    {
+      "word": " message",
+      "start": 168.44,
+      "end": 169.08
+    },
+    {
+      "word": " gets",
+      "start": 169.07999999999998,
+      "end": 169.56
+    },
+    {
+      "word": " less",
+      "start": 169.56,
+      "end": 169.96
+    },
+    {
+      "word": " of",
+      "start": 169.96,
+      "end": 170.20000000000002
+    },
+    {
+      "word": " that",
+      "start": 170.2,
+      "end": 170.44
+    },
+    {
+      "word": " glancing",
+      "start": 170.44,
+      "end": 171.16
+    },
+    {
+      "word": " back,",
+      "start": 171.16,
+      "end": 171.88
+    },
+    {
+      "word": " then",
+      "start": 171.88,
+      "end": 172.2
+    },
+    {
+      "word": " if",
+      "start": 172.84,
+      "end": 173.16
+    },
+    {
+      "word": " one",
+      "start": 173.16,
+      "end": 173.48
+    },
+    {
+      "word": " part",
+      "start": 173.48000000000002,
+      "end": 173.72000000000003
+    },
+    {
+      "word": " of",
+      "start": 173.72,
+      "end": 173.88
+    },
+    {
+      "word": " your",
+      "start": 173.88,
+      "end": 174.12
+    },
+    {
+      "word": " message",
+      "start": 174.12,
+      "end": 174.6
+    },
+    {
+      "word": " gets",
+      "start": 174.60000000000002,
+      "end": 174.92
+    },
+    {
+      "word": " the",
+      "start": 174.92000000000002,
+      "end": 175.16000000000003
+    },
+    {
+      "word": " less",
+      "start": 175.16,
+      "end": 175.64000000000001
+    },
+    {
+      "word": " of",
+      "start": 175.64,
+      "end": 175.88
+    },
+    {
+      "word": " that",
+      "start": 175.88,
+      "end": 176.04
+    },
+    {
+      "word": " glancing",
+      "start": 176.04000000000002,
+      "end": 176.68
+    },
+    {
+      "word": " back",
+      "start": 176.68,
+      "end": 176.92000000000002
+    },
+    {
+      "word": " than",
+      "start": 176.92000000000002,
+      "end": 177.08
+    },
+    {
+      "word": " the",
+      "start": 177.07999999999998,
+      "end": 177.39999999999998
+    },
+    {
+      "word": " others,",
+      "start": 177.4,
+      "end": 178.28000000000003
+    },
+    {
+      "word": " the",
+      "start": 178.28,
+      "end": 178.6
+    },
+    {
+      "word": " model",
+      "start": 178.60000000000002,
+      "end": 178.92000000000002
+    },
+    {
+      "word": " just",
+      "start": 179.16,
+      "end": 179.48
+    },
+    {
+      "word": " underweighs",
+      "start": 179.48000000000002,
+      "end": 180.51999999999998
+    },
+    {
+      "word": " it.",
+      "start": 180.51999999999998,
+      "end": 180.83999999999997
+    },
+    {
+      "word": " It's",
+      "start": 193.0,
+      "end": 193.24
+    },
+    {
+      "word": " called",
+      "start": 193.24,
+      "end": 193.56
+    },
+    {
+      "word": " self-attention,",
+      "start": 193.56,
+      "end": 194.67999999999998
+    },
+    {
+      "word": " and",
+      "start": 194.68,
+      "end": 194.84
+    },
+    {
+      "word": " it's",
+      "start": 194.84,
+      "end": 195.23999999999998
+    },
+    {
+      "word": " simpler",
+      "start": 195.24,
+      "end": 195.72
+    },
+    {
+      "word": " than",
+      "start": 195.72,
+      "end": 195.88
+    },
+    {
+      "word": " the",
+      "start": 195.88,
+      "end": 196.12
+    },
+    {
+      "word": " name",
+      "start": 196.12,
+      "end": 196.52
+    },
+    {
+      "word": " sounds",
+      "start": 196.51999999999998,
+      "end": 197.32
+    },
+    {
+      "word": " every",
+      "start": 205.64,
+      "end": 206.12
+    },
+    {
+      "word": " word",
+      "start": 206.44,
+      "end": 206.76
+    },
+    {
+      "word": " in",
+      "start": 206.76,
+      "end": 207.07999999999998
+    },
+    {
+      "word": " your",
+      "start": 207.07999999999998,
+      "end": 207.32
+    },
+    {
+      "word": " message",
+      "start": 207.32,
+      "end": 207.88000000000002
+    },
+    {
+      "word": " gets",
+      "start": 208.12,
+      "end": 208.60000000000002
+    },
+    {
+      "word": " to",
+      "start": 208.60000000000002,
+      "end": 208.84000000000003
+    },
+    {
+      "word": " look",
+      "start": 208.84,
+      "end": 209.08
+    },
+    {
+      "word": " at",
+      "start": 209.07999999999998,
+      "end": 209.23999999999998
+    },
+    {
+      "word": " every",
+      "start": 209.24,
+      "end": 209.64000000000001
+    },
+    {
+      "word": " other",
+      "start": 209.64,
+      "end": 209.95999999999998
+    },
+    {
+      "word": " word",
+      "start": 209.96,
+      "end": 210.20000000000002
+    },
+    {
+      "word": " at",
+      "start": 210.2,
+      "end": 210.44
+    },
+    {
+      "word": " the",
+      "start": 210.44,
+      "end": 210.6
+    },
+    {
+      "word": " same",
+      "start": 210.60000000000002,
+      "end": 211.16
+    },
+    {
+      "word": " time.",
+      "start": 211.16,
+      "end": 211.48
+    },
+    {
+      "word": " Picture",
+      "start": 218.44,
+      "end": 218.92000000000002
+    },
+    {
+      "word": " group",
+      "start": 219.16,
+      "end": 219.48
+    },
+    {
+      "word": " check.",
+      "start": 219.48000000000002,
+      "end": 219.84
+    },
+    {
+      "word": " Instead",
+      "start": 219.84,
+      "end": 220.20000000000002
+    },
+    {
+      "word": " of",
+      "start": 220.2,
+      "end": 220.35999999999999
+    },
+    {
+      "word": " a",
+      "start": 220.36,
+      "end": 220.52
+    },
+    {
+      "word": " one-on-one",
+      "start": 220.51999999999998,
+      "end": 221.00000000000003
+    },
+    {
+      "word": " conversation.",
+      "start": 221.24,
+      "end": 222.12
+    },
+    {
+      "word": " You're",
+      "start": 231.36,
+      "end": 232.0
+    },
+    {
+      "word": " not",
+      "start": 232.0,
+      "end": 232.24
+    },
+    {
+      "word": " just",
+      "start": 232.24,
+      "end": 232.48000000000002
+    },
+    {
+      "word": " looking",
+      "start": 232.48,
+      "end": 232.88
+    },
+    {
+      "word": " at",
+      "start": 232.88,
+      "end": 233.04
+    },
+    {
+      "word": " the",
+      "start": 233.04,
+      "end": 233.35999999999999
+    },
+    {
+      "word": " last",
+      "start": 233.36,
+      "end": 233.60000000000002
+    },
+    {
+      "word": " message.",
+      "start": 233.6,
+      "end": 234.24
+    },
+    {
+      "word": " You",
+      "start": 234.24,
+      "end": 234.4
+    },
+    {
+      "word": " are",
+      "start": 234.4,
+      "end": 234.64000000000001
+    },
+    {
+      "word": " scanning",
+      "start": 234.64,
+      "end": 235.2
+    },
+    {
+      "word": " back",
+      "start": 235.2,
+      "end": 235.44
+    },
+    {
+      "word": " through",
+      "start": 235.44,
+      "end": 235.76000000000002
+    },
+    {
+      "word": " the",
+      "start": 235.76,
+      "end": 236.0
+    },
+    {
+      "word": " last",
+      "start": 236.0,
+      "end": 236.32
+    },
+    {
+      "word": " 10",
+      "start": 236.32,
+      "end": 236.72
+    },
+    {
+      "word": " to",
+      "start": 236.72,
+      "end": 237.04
+    },
+    {
+      "word": " figure",
+      "start": 237.04,
+      "end": 237.52
+    },
+    {
+      "word": " out",
+      "start": 237.52,
+      "end": 237.84
+    },
+    {
+      "word": " who's",
+      "start": 237.84,
+      "end": 238.32000000000002
+    },
+    {
+      "word": " who's",
+      "start": 239.12,
+      "end": 239.68
+    },
+    {
+      "word": " actually",
+      "start": 239.68,
+      "end": 240.08
+    },
+    {
+      "word": " being",
+      "start": 240.08,
+      "end": 240.56
+    },
+    {
+      "word": " asked.",
+      "start": 240.56,
+      "end": 242.07999999999998
+    },
+    {
+      "word": " You're",
+      "start": 242.07999999999998,
+      "end": 242.56000000000003
+    },
+    {
+      "word": " not",
+      "start": 242.56,
+      "end": 242.8
+    },
+    {
+      "word": " just",
+      "start": 242.8,
+      "end": 242.96
+    },
+    {
+      "word": " looking",
+      "start": 242.96,
+      "end": 243.28
+    },
+    {
+      "word": " at",
+      "start": 243.28,
+      "end": 243.44
+    },
+    {
+      "word": " the",
+      "start": 243.44,
+      "end": 243.6
+    },
+    {
+      "word": " last",
+      "start": 243.6,
+      "end": 243.84
+    },
+    {
+      "word": " message.",
+      "start": 243.84,
+      "end": 244.4
+    },
+    {
+      "word": " You",
+      "start": 244.4,
+      "end": 244.56
+    },
+    {
+      "word": " are",
+      "start": 244.56,
+      "end": 244.88
+    },
+    {
+      "word": " is",
+      "start": 244.88,
+      "end": 245.12
+    },
+    {
+      "word": " you're",
+      "start": 245.44,
+      "end": 245.76
+    },
+    {
+      "word": " not",
+      "start": 245.76,
+      "end": 245.92
+    },
+    {
+      "word": " actually",
+      "start": 245.92000000000002,
+      "end": 246.23999999999998
+    },
+    {
+      "word": " looking",
+      "start": 246.24,
+      "end": 246.48
+    },
+    {
+      "word": " at",
+      "start": 246.48000000000002,
+      "end": 246.56000000000003
+    },
+    {
+      "word": " the",
+      "start": 246.56,
+      "end": 246.8
+    },
+    {
+      "word": " last",
+      "start": 246.8,
+      "end": 247.04000000000002
+    },
+    {
+      "word": " message.",
+      "start": 247.04,
+      "end": 247.44000000000003
+    },
+    {
+      "word": " You",
+      "start": 247.44,
+      "end": 247.52
+    },
+    {
+      "word": " are",
+      "start": 247.52,
+      "end": 247.60000000000002
+    },
+    {
+      "word": " scanning",
+      "start": 247.68,
+      "end": 248.16000000000003
+    },
+    {
+      "word": " back",
+      "start": 248.16,
+      "end": 248.32
+    },
+    {
+      "word": " through",
+      "start": 248.32,
+      "end": 248.72
+    },
+    {
+      "word": " the",
+      "start": 248.72,
+      "end": 249.04
+    },
+    {
+      "word": " last",
+      "start": 249.04,
+      "end": 249.35999999999999
+    },
+    {
+      "word": " 10",
+      "start": 249.36,
+      "end": 249.76
+    },
+    {
+      "word": " to",
+      "start": 250.0,
+      "end": 250.24
+    },
+    {
+      "word": " figure",
+      "start": 250.24,
+      "end": 250.64000000000001
+    },
+    {
+      "word": " out",
+      "start": 250.64,
+      "end": 250.88
+    },
+    {
+      "word": " who's",
+      "start": 250.88,
+      "end": 251.35999999999999
+    },
+    {
+      "word": " actually",
+      "start": 251.36,
+      "end": 251.84
+    },
+    {
+      "word": " being",
+      "start": 251.84,
+      "end": 252.32
+    },
+    {
+      "word": " asked.",
+      "start": 252.32,
+      "end": 253.12
+    },
+    {
+      "word": " Self-attention",
+      "start": 259.6,
+      "end": 260.72
+    },
+    {
+      "word": " is",
+      "start": 260.8,
+      "end": 261.04
+    },
+    {
+      "word": " the",
+      "start": 261.04,
+      "end": 261.36
+    },
+    {
+      "word": " model",
+      "start": 261.36,
+      "end": 261.68
+    },
+    {
+      "word": " doing",
+      "start": 261.76,
+      "end": 262.24
+    },
+    {
+      "word": " that",
+      "start": 262.24,
+      "end": 262.40000000000003
+    },
+    {
+      "word": " for",
+      "start": 262.4,
+      "end": 262.71999999999997
+    },
+    {
+      "word": " exelf",
+      "start": 262.72,
+      "end": 262.88000000000005
+    },
+    {
+      "word": " mattens,",
+      "start": 264.16,
+      "end": 264.88
+    },
+    {
+      "word": " is",
+      "start": 264.88,
+      "end": 265.04
+    },
+    {
+      "word": " the",
+      "start": 265.04,
+      "end": 265.28000000000003
+    },
+    {
+      "word": " model",
+      "start": 265.28,
+      "end": 265.59999999999997
+    },
+    {
+      "word": " doing",
+      "start": 265.68,
+      "end": 266.08000000000004
+    },
+    {
+      "word": " that",
+      "start": 266.08,
+      "end": 266.32
+    },
+    {
+      "word": " for",
+      "start": 266.32,
+      "end": 266.56
+    },
+    {
+      "word": " every",
+      "start": 266.56,
+      "end": 267.2
+    },
+    {
+      "word": " word",
+      "start": 267.2,
+      "end": 267.52
+    },
+    {
+      "word": " constantly",
+      "start": 267.84000000000003,
+      "end": 268.71999999999997
+    },
+    {
+      "word": " constantly.",
+      "start": 269.2,
+      "end": 270.4
+    },
+    {
+      "word": " Constantly.",
+      "start": 270.4,
+      "end": 271.68
+    },
+    {
+      "word": " Self-attention",
+      "start": 271.68,
+      "end": 272.56
+    },
+    {
+      "word": " is",
+      "start": 272.56,
+      "end": 272.72
+    },
+    {
+      "word": " the",
+      "start": 272.72,
+      "end": 272.96000000000004
+    },
+    {
+      "word": " model",
+      "start": 272.96,
+      "end": 273.28
+    },
+    {
+      "word": " doing",
+      "start": 273.36,
+      "end": 273.76
+    },
+    {
+      "word": " that",
+      "start": 273.76,
+      "end": 273.92
+    },
+    {
+      "word": " for",
+      "start": 273.92,
+      "end": 274.16
+    },
+    {
+      "word": " every",
+      "start": 274.15999999999997,
+      "end": 274.56
+    },
+    {
+      "word": " word",
+      "start": 274.56,
+      "end": 274.72
+    },
+    {
+      "word": " constantly.",
+      "start": 274.88,
+      "end": 275.84
+    },
+    {
+      "word": " Every",
+      "start": 289.76,
+      "end": 290.32
+    },
+    {
+      "word": " word",
+      "start": 290.32,
+      "end": 290.64
+    },
+    {
+      "word": " turns",
+      "start": 290.64,
+      "end": 291.04
+    },
+    {
+      "word": " into",
+      "start": 291.04,
+      "end": 291.36
+    },
+    {
+      "word": " every",
+      "start": 291.6,
+      "end": 292.08000000000004
+    },
+    {
+      "word": " word",
+      "start": 292.08,
+      "end": 292.4
+    },
+    {
+      "word": " turns",
+      "start": 292.4,
+      "end": 292.72
+    },
+    {
+      "word": " into",
+      "start": 292.72,
+      "end": 293.04
+    },
+    {
+      "word": " itself.",
+      "start": 293.04,
+      "end": 293.84000000000003
+    },
+    {
+      "word": " Every",
+      "start": 293.84000000000003,
+      "end": 294.24
+    },
+    {
+      "word": " word",
+      "start": 294.24,
+      "end": 294.48
+    },
+    {
+      "word": " turns",
+      "start": 294.48,
+      "end": 294.8
+    },
+    {
+      "word": " itself",
+      "start": 294.8,
+      "end": 295.28000000000003
+    },
+    {
+      "word": " into",
+      "start": 295.28,
+      "end": 295.59999999999997
+    },
+    {
+      "word": " a",
+      "start": 295.6,
+      "end": 295.92
+    },
+    {
+      "word": " every",
+      "start": 297.12,
+      "end": 297.6
+    },
+    {
+      "word": " word",
+      "start": 297.6,
+      "end": 297.84000000000003
+    },
+    {
+      "word": " turns.",
+      "start": 297.92,
+      "end": 298.56
+    },
+    {
+      "word": " Every",
+      "start": 300.15999999999997,
+      "end": 300.72
+    },
+    {
+      "word": " word",
+      "start": 300.72,
+      "end": 301.04
+    },
+    {
+      "word": " turns",
+      "start": 301.04,
+      "end": 301.44
+    },
+    {
+      "word": " itself",
+      "start": 301.44,
+      "end": 301.84000000000003
+    },
+    {
+      "word": " into",
+      "start": 301.84000000000003,
+      "end": 302.08000000000004
+    },
+    {
+      "word": " a",
+      "start": 302.08,
+      "end": 302.32
+    },
+    {
+      "word": " question.",
+      "start": 302.32,
+      "end": 302.8
+    },
+    {
+      "word": " It's",
+      "start": 302.8,
+      "end": 303.20000000000005
+    },
+    {
+      "word": " query.",
+      "start": 303.2,
+      "end": 304.00000000000006
+    },
+    {
+      "word": " Every",
+      "start": 304.0,
+      "end": 304.48
+    },
+    {
+      "word": " other",
+      "start": 304.48,
+      "end": 304.72
+    },
+    {
+      "word": " word",
+      "start": 304.72,
+      "end": 305.04
+    },
+    {
+      "word": " turns",
+      "start": 305.04,
+      "end": 305.36
+    },
+    {
+      "word": " itself",
+      "start": 305.36,
+      "end": 305.92
+    },
+    {
+      "word": " into",
+      "start": 305.92,
+      "end": 306.16
+    },
+    {
+      "word": " a",
+      "start": 306.15999999999997,
+      "end": 306.4
+    },
+    {
+      "word": " kind",
+      "start": 306.4,
+      "end": 306.71999999999997
+    },
+    {
+      "word": " of",
+      "start": 306.72,
+      "end": 307.04
+    },
+    {
+      "word": " answer",
+      "start": 307.04,
+      "end": 307.44
+    },
+    {
+      "word": " key,",
+      "start": 307.68,
+      "end": 308.64
+    },
+    {
+      "word": " advertising",
+      "start": 308.64,
+      "end": 309.76
+    },
+    {
+      "word": " what",
+      "start": 309.76,
+      "end": 310.08
+    },
+    {
+      "word": " it's",
+      "start": 310.08,
+      "end": 310.71999999999997
+    },
+    {
+      "word": " question",
+      "start": 316.52,
+      "end": 316.84000000000003
+    },
+    {
+      "word": " get",
+      "start": 317.0,
+      "end": 317.24
+    },
+    {
+      "word": " check",
+      "start": 317.24,
+      "end": 317.64000000000004
+    },
+    {
+      "word": " against",
+      "start": 317.88,
+      "end": 318.52
+    },
+    {
+      "word": " everyone",
+      "start": 318.52,
+      "end": 319.16
+    },
+    {
+      "word": " else's",
+      "start": 319.16,
+      "end": 319.8
+    },
+    {
+      "word": " answer",
+      "start": 319.8,
+      "end": 320.28000000000003
+    },
+    {
+      "word": " key,",
+      "start": 320.28,
+      "end": 321.24
+    },
+    {
+      "word": " and",
+      "start": 321.24,
+      "end": 321.56
+    },
+    {
+      "word": " whoever",
+      "start": 321.56,
+      "end": 322.28000000000003
+    },
+    {
+      "word": " matches",
+      "start": 322.28,
+      "end": 322.68
+    },
+    {
+      "word": " the",
+      "start": 322.68,
+      "end": 322.92
+    },
+    {
+      "word": " closest,",
+      "start": 322.92,
+      "end": 324.04
+    },
+    {
+      "word": " that's",
+      "start": 324.04,
+      "end": 324.76
+    },
+    {
+      "word": " who",
+      "start": 324.76,
+      "end": 325.08
+    },
+    {
+      "word": " it",
+      "start": 325.08,
+      "end": 325.4
+    },
+    {
+      "word": " borrows",
+      "start": 325.4,
+      "end": 325.96000000000004
+    },
+    {
+      "word": " the",
+      "start": 325.96,
+      "end": 326.28
+    },
+    {
+      "word": " most",
+      "start": 326.28,
+      "end": 326.59999999999997
+    },
+    {
+      "word": " content",
+      "start": 326.6,
+      "end": 327.15999999999997
+    },
+    {
+      "word": " from",
+      "start": 327.16,
+      "end": 327.40000000000003
+    },
+    {
+      "word": " called",
+      "start": 327.64,
+      "end": 328.16
+    },
+    {
+      "word": " the",
+      "start": 328.15999999999997,
+      "end": 328.47999999999996
+    },
+    {
+      "word": " value.",
+      "start": 328.48,
+      "end": 329.12
+    },
+    {
+      "word": " That's",
+      "start": 337.4,
+      "end": 337.88
+    },
+    {
+      "word": " the",
+      "start": 337.88,
+      "end": 338.04
+    },
+    {
+      "word": " real",
+      "start": 338.04,
+      "end": 338.28000000000003
+    },
+    {
+      "word": " computation",
+      "start": 338.28,
+      "end": 338.76
+    },
+    {
+      "word": " and",
+      "start": 338.84,
+      "end": 339.0
+    },
+    {
+      "word": " then",
+      "start": 339.0,
+      "end": 339.16
+    },
+    {
+      "word": " it",
+      "start": 339.24,
+      "end": 339.32
+    },
+    {
+      "word": " check-in.",
+      "start": 339.48,
+      "end": 339.88
+    },
+    {
+      "word": " That's",
+      "start": 341.0,
+      "end": 341.4
+    },
+    {
+      "word": " the",
+      "start": 341.4,
+      "end": 341.56
+    },
+    {
+      "word": " real",
+      "start": 341.56,
+      "end": 341.8
+    },
+    {
+      "word": " computation",
+      "start": 341.8,
+      "end": 342.35999999999996
+    },
+    {
+      "word": " and",
+      "start": 342.44,
+      "end": 342.6
+    },
+    {
+      "word": " then",
+      "start": 342.6,
+      "end": 342.76000000000005
+    },
+    {
+      "word": " it's",
+      "start": 342.84,
+      "end": 343.08000000000004
+    },
+    {
+      "word": " checking",
+      "start": 343.08,
+      "end": 343.4
+    },
+    {
+      "word": " in,",
+      "start": 343.56,
+      "end": 343.96000000000004
+    },
+    {
+      "word": " and",
+      "start": 343.96,
+      "end": 344.2
+    },
+    {
+      "word": " it's",
+      "start": 344.2,
+      "end": 344.6
+    },
+    {
+      "word": " got",
+      "start": 344.6,
+      "end": 344.76000000000005
+    },
+    {
+      "word": " a",
+      "start": 344.76,
+      "end": 344.92
+    },
+    {
+      "word": " name",
+      "start": 344.92,
+      "end": 345.24
+    },
+    {
+      "word": " query",
+      "start": 345.48,
+      "end": 346.04
+    },
+    {
+      "word": " key",
+      "start": 346.04,
+      "end": 346.28
+    },
+    {
+      "word": " value",
+      "start": 346.36,
+      "end": 346.84000000000003
+    },
+    {
+      "word": " attention.",
+      "start": 346.84,
+      "end": 347.64
+    },
+    {
+      "word": " There's",
+      "start": 355.72,
+      "end": 356.28000000000003
+    },
+    {
+      "word": " a",
+      "start": 356.28,
+      "end": 356.44
+    },
+    {
+      "word": " second",
+      "start": 356.44,
+      "end": 356.84000000000003
+    },
+    {
+      "word": " half",
+      "start": 356.84000000000003,
+      "end": 357.24
+    },
+    {
+      "word": " to",
+      "start": 357.24,
+      "end": 357.56
+    },
+    {
+      "word": " this.",
+      "start": 357.56,
+      "end": 358.36
+    },
+    {
+      "word": " How",
+      "start": 358.36,
+      "end": 358.76
+    },
+    {
+      "word": " the",
+      "start": 358.76,
+      "end": 359.08
+    },
+    {
+      "word": " model",
+      "start": 359.08,
+      "end": 359.4
+    },
+    {
+      "word": " actually",
+      "start": 359.4,
+      "end": 359.88
+    },
+    {
+      "word": " writes",
+      "start": 359.88,
+      "end": 360.28000000000003
+    },
+    {
+      "word": " the",
+      "start": 360.28,
+      "end": 360.44
+    },
+    {
+      "word": " response.",
+      "start": 360.44,
+      "end": 361.4
+    },
+    {
+      "word": " The",
+      "start": 365.48,
+      "end": 365.72
+    },
+    {
+      "word": " encoder",
+      "start": 365.72,
+      "end": 366.28000000000003
+    },
+    {
+      "word": " reads",
+      "start": 366.28,
+      "end": 366.76000000000005
+    },
+    {
+      "word": " your",
+      "start": 366.76,
+      "end": 366.92
+    },
+    {
+      "word": " whole",
+      "start": 366.92,
+      "end": 367.24
+    },
+    {
+      "word": " message",
+      "start": 367.24,
+      "end": 367.88
+    },
+    {
+      "word": " once",
+      "start": 367.88,
+      "end": 368.20000000000005
+    },
+    {
+      "word": " and",
+      "start": 368.36,
+      "end": 368.6
+    },
+    {
+      "word": " published",
+      "start": 368.6,
+      "end": 369.32
+    },
+    {
+      "word": " a",
+      "start": 369.32,
+      "end": 369.64
+    },
+    {
+      "word": " build.",
+      "start": 369.64,
+      "end": 370.28
+    },
+    {
+      "word": " The",
+      "start": 376.12,
+      "end": 376.44
+    },
+    {
+      "word": " encoder",
+      "start": 376.44,
+      "end": 377.08000000000004
+    },
+    {
+      "word": " reads",
+      "start": 377.08,
+      "end": 377.48
+    },
+    {
+      "word": " your",
+      "start": 377.48,
+      "end": 377.64000000000004
+    },
+    {
+      "word": " whole",
+      "start": 377.64,
+      "end": 377.96000000000004
+    },
+    {
+      "word": " message",
+      "start": 377.96,
+      "end": 378.52
+    },
+    {
+      "word": " once",
+      "start": 378.52,
+      "end": 378.92
+    },
+    {
+      "word": " and",
+      "start": 379.0,
+      "end": 379.32
+    },
+    {
+      "word": " builds",
+      "start": 379.32,
+      "end": 379.72
+    },
+    {
+      "word": " a",
+      "start": 379.72,
+      "end": 379.88000000000005
+    },
+    {
+      "word": " rich",
+      "start": 379.88,
+      "end": 380.12000000000006
+    },
+    {
+      "word": " picture",
+      "start": 380.12,
+      "end": 380.52000000000004
+    },
+    {
+      "word": " of",
+      "start": 380.52,
+      "end": 380.76
+    },
+    {
+      "word": " it",
+      "start": 380.76,
+      "end": 380.92
+    },
+    {
+      "word": " using",
+      "start": 381.08,
+      "end": 381.48
+    },
+    {
+      "word": " the",
+      "start": 381.48,
+      "end": 381.72
+    },
+    {
+      "word": " same",
+      "start": 381.72,
+      "end": 382.12
+    },
+    {
+      "word": " self-attention.",
+      "start": 382.12,
+      "end": 383.4
+    },
+    {
+      "word": " The",
+      "start": 392.44,
+      "end": 392.76
+    },
+    {
+      "word": " decoder",
+      "start": 392.76,
+      "end": 393.71999999999997
+    },
+    {
+      "word": " generates",
+      "start": 393.72,
+      "end": 394.28000000000003
+    },
+    {
+      "word": " a",
+      "start": 394.28,
+      "end": 394.52
+    },
+    {
+      "word": " reply",
+      "start": 394.52,
+      "end": 395.0
+    },
+    {
+      "word": " one",
+      "start": 395.24,
+      "end": 395.56
+    },
+    {
+      "word": " word",
+      "start": 395.56,
+      "end": 395.88
+    },
+    {
+      "word": " at",
+      "start": 395.88,
+      "end": 396.04
+    },
+    {
+      "word": " a",
+      "start": 396.04,
+      "end": 396.28000000000003
+    },
+    {
+      "word": " time,",
+      "start": 396.28,
+      "end": 396.6
+    },
+    {
+      "word": " and",
+      "start": 396.6,
+      "end": 396.92
+    },
+    {
+      "word": " every",
+      "start": 396.92,
+      "end": 397.32
+    },
+    {
+      "word": " time",
+      "start": 397.32,
+      "end": 397.56
+    },
+    {
+      "word": " it",
+      "start": 397.56,
+      "end": 397.8
+    },
+    {
+      "word": " writes",
+      "start": 397.8,
+      "end": 398.20000000000005
+    },
+    {
+      "word": " a",
+      "start": 398.2,
+      "end": 398.28
+    },
+    {
+      "word": " new",
+      "start": 398.28,
+      "end": 398.68
+    },
+    {
+      "word": " word,",
+      "start": 398.68,
+      "end": 399.0
+    },
+    {
+      "word": " it",
+      "start": 399.0,
+      "end": 399.24
+    },
+    {
+      "word": " glances",
+      "start": 399.24,
+      "end": 399.88
+    },
+    {
+      "word": " back",
+      "start": 399.88,
+      "end": 400.12
+    },
+    {
+      "word": " at",
+      "start": 400.12,
+      "end": 400.36
+    },
+    {
+      "word": " that",
+      "start": 400.36,
+      "end": 400.6
+    },
+    {
+      "word": " picture,",
+      "start": 400.6,
+      "end": 401.32
+    },
+    {
+      "word": " the",
+      "start": 401.32,
+      "end": 401.56
+    },
+    {
+      "word": " encoder",
+      "start": 401.56,
+      "end": 402.28000000000003
+    },
+    {
+      "word": " build,",
+      "start": 402.28,
+      "end": 402.92
+    },
+    {
+      "word": " plus",
+      "start": 402.92,
+      "end": 403.24
+    },
+    {
+      "word": " everything",
+      "start": 403.24,
+      "end": 403.8
+    },
+    {
+      "word": " it",
+      "start": 403.8,
+      "end": 403.96000000000004
+    },
+    {
+      "word": " already",
+      "start": 404.2,
+      "end": 404.76
+    },
+    {
+      "word": " written",
+      "start": 404.76,
+      "end": 405.4
+    },
+    {
+      "word": " so",
+      "start": 405.4,
+      "end": 405.71999999999997
+    },
+    {
+      "word": " far.",
+      "start": 405.72,
+      "end": 406.04
+    },
+    {
+      "word": " That",
+      "start": 413.4,
+      "end": 413.71999999999997
+    },
+    {
+      "word": " glancing",
+      "start": 413.96000000000004,
+      "end": 414.84
+    },
+    {
+      "word": " back",
+      "start": 414.84000000000003,
+      "end": 415.16
+    },
+    {
+      "word": " at",
+      "start": 415.15999999999997,
+      "end": 415.4
+    },
+    {
+      "word": " the",
+      "start": 415.4,
+      "end": 415.64
+    },
+    {
+      "word": " encoder",
+      "start": 415.64,
+      "end": 416.44
+    },
+    {
+      "word": " step",
+      "start": 416.44,
+      "end": 417.0
+    },
+    {
+      "word": " even",
+      "start": 417.24,
+      "end": 417.56
+    },
+    {
+      "word": " has",
+      "start": 417.56,
+      "end": 417.88
+    },
+    {
+      "word": " its",
+      "start": 417.88,
+      "end": 418.12
+    },
+    {
+      "word": " own",
+      "start": 418.12,
+      "end": 418.52
+    },
+    {
+      "word": " name,",
+      "start": 418.52,
+      "end": 419.16
+    },
+    {
+      "word": " cross",
+      "start": 419.15999999999997,
+      "end": 419.72
+    },
+    {
+      "word": " attention.",
+      "start": 419.88,
+      "end": 420.76
+    },
+    {
+      "word": " It's",
+      "start": 430.52,
+      "end": 431.16
+    },
+    {
+      "word": " less,",
+      "start": 431.15999999999997,
+      "end": 431.88
+    },
+    {
+      "word": " it's",
+      "start": 431.88,
+      "end": 432.28000000000003
+    },
+    {
+      "word": " less",
+      "start": 432.28,
+      "end": 432.52000000000004
+    },
+    {
+      "word": " read",
+      "start": 432.68,
+      "end": 433.08000000000004
+    },
+    {
+      "word": " than",
+      "start": 433.08,
+      "end": 433.24
+    },
+    {
+      "word": " write,",
+      "start": 433.4,
+      "end": 434.0
+    },
+    {
+      "word": " and",
+      "start": 433.88,
+      "end": 434.12
+    },
+    {
+      "word": " more",
+      "start": 434.12,
+      "end": 434.36
+    },
+    {
+      "word": " read",
+      "start": 434.96,
+      "end": 435.59999999999997
+    },
+    {
+      "word": " than",
+      "start": 435.6,
+      "end": 435.92
+    },
+    {
+      "word": " write",
+      "start": 436.08,
+      "end": 436.56
+    },
+    {
+      "word": " while",
+      "start": 436.72,
+      "end": 437.2
+    },
+    {
+      "word": " constantly",
+      "start": 437.2,
+      "end": 437.92
+    },
+    {
+      "word": " rechecking.",
+      "start": 437.92,
+      "end": 438.96
+    },
+    {
+      "word": " And",
+      "start": 444.32,
+      "end": 444.64
+    },
+    {
+      "word": " here's",
+      "start": 444.64,
+      "end": 445.20000000000005
+    },
+    {
+      "word": " why",
+      "start": 445.2,
+      "end": 445.6
+    },
+    {
+      "word": " that",
+      "start": 445.6,
+      "end": 445.92
+    },
+    {
+      "word": " skipped",
+      "start": 445.92,
+      "end": 446.64
+    },
+    {
+      "word": " instruction",
+      "start": 446.64,
+      "end": 447.28
+    },
+    {
+      "word": " happened",
+      "start": 447.28,
+      "end": 448.08
+    },
+    {
+      "word": " specifically.",
+      "start": 448.08,
+      "end": 449.04
+    },
+    {
+      "word": " There's",
+      "start": 461.68,
+      "end": 462.24
+    },
+    {
+      "word": " a",
+      "start": 462.24,
+      "end": 462.48
+    },
+    {
+      "word": " real",
+      "start": 462.48,
+      "end": 462.8
+    },
+    {
+      "word": " documented.",
+      "start": 462.8,
+      "end": 464.4
+    },
+    {
+      "word": " Models",
+      "start": 464.4,
+      "end": 464.96000000000004
+    },
+    {
+      "word": " pay",
+      "start": 464.96,
+      "end": 465.36
+    },
+    {
+      "word": " less",
+      "start": 465.36,
+      "end": 465.6
+    },
+    {
+      "word": " attention",
+      "start": 465.6,
+      "end": 466.16
+    },
+    {
+      "word": " to",
+      "start": 466.16,
+      "end": 466.40000000000003
+    },
+    {
+      "word": " stuff",
+      "start": 466.4,
+      "end": 466.96000000000004
+    },
+    {
+      "word": " buried",
+      "start": 466.96,
+      "end": 467.44
+    },
+    {
+      "word": " in",
+      "start": 467.44,
+      "end": 467.68
+    },
+    {
+      "word": " the",
+      "start": 467.68,
+      "end": 467.84000000000003
+    },
+    {
+      "word": " middle",
+      "start": 467.84000000000003,
+      "end": 468.40000000000003
+    },
+    {
+      "word": " of",
+      "start": 468.4,
+      "end": 468.56
+    },
+    {
+      "word": " a",
+      "start": 468.56,
+      "end": 468.8
+    },
+    {
+      "word": " long",
+      "start": 468.8,
+      "end": 469.12
+    },
+    {
+      "word": " message",
+      "start": 469.12,
+      "end": 469.76
+    },
+    {
+      "word": " than",
+      "start": 469.76,
+      "end": 470.0
+    },
+    {
+      "word": " stuff",
+      "start": 470.0,
+      "end": 470.56
+    },
+    {
+      "word": " at",
+      "start": 470.56,
+      "end": 470.8
+    },
+    {
+      "word": " the",
+      "start": 470.8,
+      "end": 471.12
+    },
+    {
+      "word": " very",
+      "start": 471.12,
+      "end": 471.44
+    },
+    {
+      "word": " start",
+      "start": 471.44,
+      "end": 472.08000000000004
+    },
+    {
+      "word": " or",
+      "start": 472.4,
+      "end": 472.64
+    },
+    {
+      "word": " very",
+      "start": 472.96,
+      "end": 473.28
+    },
+    {
+      "word": " end.",
+      "start": 473.28,
+      "end": 473.59999999999997
+    },
+    {
+      "word": " It's",
+      "start": 478.32,
+      "end": 478.71999999999997
+    },
+    {
+      "word": " called",
+      "start": 478.72,
+      "end": 479.12
+    },
+    {
+      "word": " lost",
+      "start": 479.12,
+      "end": 479.6
+    },
+    {
+      "word": " in",
+      "start": 479.6,
+      "end": 479.76000000000005
+    },
+    {
+      "word": " the",
+      "start": 479.76,
+      "end": 479.92
+    },
+    {
+      "word": " middle.",
+      "start": 479.92,
+      "end": 480.71999999999997
+    },
+    {
+      "word": " Just",
+      "start": 501.04,
+      "end": 501.36
+    },
+    {
+      "word": " how",
+      "start": 501.36,
+      "end": 501.6
+    },
+    {
+      "word": " attention",
+      "start": 501.6,
+      "end": 502.16
+    },
+    {
+      "word": " naturally",
+      "start": 502.15999999999997,
+      "end": 502.72
+    },
+    {
+      "word": " distributes",
+      "start": 502.72,
+      "end": 503.44
+    },
+    {
+      "word": " across",
+      "start": 503.44,
+      "end": 504.0
+    },
+    {
+      "word": " a",
+      "start": 504.0,
+      "end": 504.32
+    },
+    {
+      "word": " long",
+      "start": 504.32,
+      "end": 504.64
+    },
+    {
+      "word": " input.",
+      "start": 504.64,
+      "end": 505.59999999999997
+    },
+    {
+      "word": " So",
+      "start": 518.08,
+      "end": 518.4000000000001
+    },
+    {
+      "word": " if",
+      "start": 518.56,
+      "end": 518.88
+    },
+    {
+      "word": " something's",
+      "start": 518.88,
+      "end": 519.52
+    },
+    {
+      "word": " genuinely",
+      "start": 519.52,
+      "end": 520.16
+    },
+    {
+      "word": " important,",
+      "start": 520.48,
+      "end": 520.8000000000001
+    },
+    {
+      "word": " don't",
+      "start": 520.8,
+      "end": 521.12
+    },
+    {
+      "word": " bury",
+      "start": 521.12,
+      "end": 521.4399999999999
+    },
+    {
+      "word": " it",
+      "start": 521.44,
+      "end": 521.6
+    },
+    {
+      "word": " in",
+      "start": 521.6,
+      "end": 521.76
+    },
+    {
+      "word": " the",
+      "start": 521.76,
+      "end": 521.84
+    },
+    {
+      "word": " middle",
+      "start": 521.84,
+      "end": 522.1600000000001
+    },
+    {
+      "word": " of",
+      "start": 522.16,
+      "end": 522.3199999999999
+    },
+    {
+      "word": " a",
+      "start": 522.32,
+      "end": 522.48
+    },
+    {
+      "word": " long",
+      "start": 522.48,
+      "end": 522.8000000000001
+    },
+    {
+      "word": " task.",
+      "start": 522.8,
+      "end": 523.44
+    },
+    {
+      "word": " Put",
+      "start": 526.24,
+      "end": 526.72
+    },
+    {
+      "word": " it",
+      "start": 526.72,
+      "end": 527.0400000000001
+    },
+    {
+      "word": " first",
+      "start": 527.04,
+      "end": 527.1999999999999
+    },
+    {
+      "word": " or",
+      "start": 527.36,
+      "end": 527.6
+    },
+    {
+      "word": " repeat",
+      "start": 527.6,
+      "end": 528.0799999999999
+    },
+    {
+      "word": " it",
+      "start": 528.08,
+      "end": 528.32
+    },
+    {
+      "word": " at",
+      "start": 528.32,
+      "end": 528.5600000000001
+    },
+    {
+      "word": " the",
+      "start": 528.56,
+      "end": 528.88
+    },
+    {
+      "word": " end.",
+      "start": 528.88,
+      "end": 529.2
+    },
+    {
+      "word": " Break",
+      "start": 534.0,
+      "end": 534.5600000000001
+    },
+    {
+      "word": " a",
+      "start": 534.56,
+      "end": 534.8
+    },
+    {
+      "word": " long",
+      "start": 534.8,
+      "end": 535.12
+    },
+    {
+      "word": " list",
+      "start": 535.12,
+      "end": 535.44
+    },
+    {
+      "word": " of",
+      "start": 535.44,
+      "end": 535.6800000000001
+    },
+    {
+      "word": " a",
+      "start": 535.6800000000001,
+      "end": 535.9200000000001
+    },
+    {
+      "word": " task",
+      "start": 535.92,
+      "end": 536.4
+    },
+    {
+      "word": " into",
+      "start": 536.4,
+      "end": 536.72
+    },
+    {
+      "word": " an",
+      "start": 536.72,
+      "end": 536.88
+    },
+    {
+      "word": " actual",
+      "start": 536.88,
+      "end": 537.36
+    },
+    {
+      "word": " number",
+      "start": 537.36,
+      "end": 537.76
+    },
+    {
+      "word": " list",
+      "start": 537.92,
+      "end": 538.24
+    },
+    {
+      "word": " instead",
+      "start": 538.24,
+      "end": 538.7199999999999
+    },
+    {
+      "word": " of",
+      "start": 538.72,
+      "end": 538.88
+    },
+    {
+      "word": " the",
+      "start": 538.88,
+      "end": 539.2
+    },
+    {
+      "word": " one",
+      "start": 539.2,
+      "end": 539.36
+    },
+    {
+      "word": " run",
+      "start": 539.44,
+      "end": 539.6800000000001
+    },
+    {
+      "word": " on",
+      "start": 540.04,
+      "end": 540.28
+    },
+    {
+      "word": " sentences.",
+      "start": 540.28,
+      "end": 541.0
+    },
+    {
+      "word": " So",
+      "start": 541.0,
+      "end": 541.24
+    },
+    {
+      "word": " each",
+      "start": 541.32,
+      "end": 541.72
+    },
+    {
+      "word": " one",
+      "start": 541.72,
+      "end": 541.88
+    },
+    {
+      "word": " gets",
+      "start": 541.88,
+      "end": 542.28
+    },
+    {
+      "word": " its",
+      "start": 542.28,
+      "end": 542.4399999999999
+    },
+    {
+      "word": " own",
+      "start": 542.44,
+      "end": 542.84
+    },
+    {
+      "word": " anchor",
+      "start": 542.84,
+      "end": 543.48
+    },
+    {
+      "word": " point.",
+      "start": 543.48,
+      "end": 543.8000000000001
+    },
+    {
+      "word": " That's",
+      "start": 551.08,
+      "end": 551.5600000000001
+    },
+    {
+      "word": " not",
+      "start": 551.56,
+      "end": 551.8
+    },
+    {
+      "word": " a",
+      "start": 551.8,
+      "end": 551.9599999999999
+    },
+    {
+      "word": " trick.",
+      "start": 551.96,
+      "end": 552.4399999999999
+    },
+    {
+      "word": " It's",
+      "start": 552.44,
+      "end": 552.8399999999999
+    },
+    {
+      "word": " just",
+      "start": 552.84,
+      "end": 553.1600000000001
+    },
+    {
+      "word": " working",
+      "start": 553.16,
+      "end": 553.5600000000001
+    },
+    {
+      "word": " with",
+      "start": 553.56,
+      "end": 553.88
+    },
+    {
+      "word": " how",
+      "start": 553.88,
+      "end": 554.2
+    },
+    {
+      "word": " attention",
+      "start": 554.2,
+      "end": 554.6800000000001
+    },
+    {
+      "word": " actually",
+      "start": 554.68,
+      "end": 555.0
+    },
+    {
+      "word": " distributes",
+      "start": 555.0,
+      "end": 555.64
+    },
+    {
+      "word": " itself",
+      "start": 555.64,
+      "end": 556.04
+    },
+    {
+      "word": " instead",
+      "start": 556.2,
+      "end": 556.68
+    },
+    {
+      "word": " of",
+      "start": 556.68,
+      "end": 557.0
+    },
+    {
+      "word": " against",
+      "start": 557.0,
+      "end": 557.6400000000001
+    },
+    {
+      "word": " it.",
+      "start": 557.64,
+      "end": 557.96
+    },
+    {
+      "word": " So",
+      "start": 568.84,
+      "end": 569.1600000000001
+    },
+    {
+      "word": " quick",
+      "start": 569.48,
+      "end": 569.88
+    },
+    {
+      "word": " recap.",
+      "start": 569.88,
+      "end": 570.52
+    },
+    {
+      "word": " Attention",
+      "start": 570.52,
+      "end": 571.0
+    },
+    {
+      "word": " is",
+      "start": 571.16,
+      "end": 571.24
+    },
+    {
+      "word": " the",
+      "start": 571.24,
+      "end": 571.4
+    },
+    {
+      "word": " model",
+      "start": 571.4,
+      "end": 571.72
+    },
+    {
+      "word": " deciding",
+      "start": 571.8,
+      "end": 572.44
+    },
+    {
+      "word": " how",
+      "start": 572.44,
+      "end": 572.6800000000001
+    },
+    {
+      "word": " much",
+      "start": 572.68,
+      "end": 572.92
+    },
+    {
+      "word": " to",
+      "start": 572.92,
+      "end": 573.0799999999999
+    },
+    {
+      "word": " focus",
+      "start": 573.08,
+      "end": 573.64
+    },
+    {
+      "word": " on",
+      "start": 573.64,
+      "end": 573.88
+    },
+    {
+      "word": " each",
+      "start": 573.88,
+      "end": 574.36
+    },
+    {
+      "word": " part",
+      "start": 574.36,
+      "end": 574.6800000000001
+    },
+    {
+      "word": " of",
+      "start": 574.68,
+      "end": 574.92
+    },
+    {
+      "word": " what",
+      "start": 575.24,
+      "end": 575.5600000000001
+    },
+    {
+      "word": " you",
+      "start": 575.8,
+      "end": 576.12
+    },
+    {
+      "word": " said",
+      "start": 576.12,
+      "end": 576.44
+    },
+    {
+      "word": " by",
+      "start": 576.68,
+      "end": 577.0
+    },
+    {
+      "word": " matching",
+      "start": 577.0,
+      "end": 577.64
+    },
+    {
+      "word": " each",
+      "start": 577.64,
+      "end": 578.12
+    },
+    {
+      "word": " words",
+      "start": 578.12,
+      "end": 578.6
+    },
+    {
+      "word": " query",
+      "start": 578.76,
+      "end": 579.4000000000001
+    },
+    {
+      "word": " against",
+      "start": 579.4,
+      "end": 580.0400000000001
+    },
+    {
+      "word": " every",
+      "start": 580.04,
+      "end": 580.44
+    },
+    {
+      "word": " other",
+      "start": 580.44,
+      "end": 580.6800000000001
+    },
+    {
+      "word": " words",
+      "start": 580.68,
+      "end": 581.32
+    },
+    {
+      "word": " key.",
+      "start": 581.32,
+      "end": 581.96
+    },
+    {
+      "word": " So",
+      "start": 587.0,
+      "end": 587.24
+    },
+    {
+      "word": " quick",
+      "start": 587.48,
+      "end": 587.8
+    },
+    {
+      "word": " recap.",
+      "start": 587.8,
+      "end": 588.36
+    },
+    {
+      "word": " Attention",
+      "start": 588.36,
+      "end": 588.8399999999999
+    },
+    {
+      "word": " is",
+      "start": 588.84,
+      "end": 589.0
+    },
+    {
+      "word": " the",
+      "start": 589.0,
+      "end": 589.16
+    },
+    {
+      "word": " model",
+      "start": 589.16,
+      "end": 589.48
+    },
+    {
+      "word": " deciding",
+      "start": 589.48,
+      "end": 589.9599999999999
+    },
+    {
+      "word": " how",
+      "start": 589.96,
+      "end": 590.2
+    },
+    {
+      "word": " much",
+      "start": 590.2,
+      "end": 590.36
+    },
+    {
+      "word": " to",
+      "start": 590.36,
+      "end": 590.52
+    },
+    {
+      "word": " focus",
+      "start": 590.52,
+      "end": 590.92
+    },
+    {
+      "word": " on",
+      "start": 590.92,
+      "end": 591.16
+    },
+    {
+      "word": " each",
+      "start": 591.16,
+      "end": 591.5600000000001
+    },
+    {
+      "word": " part",
+      "start": 591.56,
+      "end": 591.88
+    },
+    {
+      "word": " of",
+      "start": 591.88,
+      "end": 592.12
+    },
+    {
+      "word": " what",
+      "start": 592.12,
+      "end": 592.44
+    },
+    {
+      "word": " you",
+      "start": 592.44,
+      "end": 592.7600000000001
+    },
+    {
+      "word": " said",
+      "start": 592.76,
+      "end": 593.08
+    },
+    {
+      "word": " by",
+      "start": 593.08,
+      "end": 593.4000000000001
+    },
+    {
+      "word": " matching",
+      "start": 593.4,
+      "end": 594.04
+    },
+    {
+      "word": " each",
+      "start": 594.04,
+      "end": 594.36
+    },
+    {
+      "word": " word",
+      "start": 594.36,
+      "end": 594.6
+    },
+    {
+      "word": " square",
+      "start": 594.76,
+      "end": 595.5600000000001
+    },
+    {
+      "word": " against",
+      "start": 595.56,
+      "end": 596.12
+    },
+    {
+      "word": " every",
+      "start": 596.12,
+      "end": 596.52
+    },
+    {
+      "word": " other",
+      "start": 596.52,
+      "end": 596.76
+    },
+    {
+      "word": " words",
+      "start": 596.76,
+      "end": 597.16
+    },
+    {
+      "word": " key.",
+      "start": 597.32,
+      "end": 597.96
+    },
+    {
+      "word": " The",
+      "start": 608.6,
+      "end": 608.9200000000001
+    },
+    {
+      "word": " encoder",
+      "start": 608.92,
+      "end": 609.64
+    },
+    {
+      "word": " builds",
+      "start": 609.64,
+      "end": 609.96
+    },
+    {
+      "word": " a",
+      "start": 609.96,
+      "end": 610.0400000000001
+    },
+    {
+      "word": " picture",
+      "start": 610.04,
+      "end": 610.36
+    },
+    {
+      "word": " of",
+      "start": 610.36,
+      "end": 610.6
+    },
+    {
+      "word": " what",
+      "start": 610.6,
+      "end": 610.84
+    },
+    {
+      "word": " your",
+      "start": 610.84,
+      "end": 611.0
+    },
+    {
+      "word": " message",
+      "start": 611.0,
+      "end": 611.48
+    },
+    {
+      "word": " is.",
+      "start": 611.48,
+      "end": 611.88
+    },
+    {
+      "word": " The",
+      "start": 611.88,
+      "end": 612.12
+    },
+    {
+      "word": " decoder",
+      "start": 612.12,
+      "end": 612.9200000000001
+    },
+    {
+      "word": " writes",
+      "start": 612.92,
+      "end": 613.3199999999999
+    },
+    {
+      "word": " the",
+      "start": 613.32,
+      "end": 613.5600000000001
+    },
+    {
+      "word": " reply",
+      "start": 613.56,
+      "end": 614.04
+    },
+    {
+      "word": " while",
+      "start": 614.04,
+      "end": 614.4399999999999
+    },
+    {
+      "word": " constantly",
+      "start": 614.44,
+      "end": 615.4000000000001
+    },
+    {
+      "word": " while",
+      "start": 615.64,
+      "end": 616.12
+    },
+    {
+      "word": " constantly",
+      "start": 616.12,
+      "end": 616.9200000000001
+    },
+    {
+      "word": " the",
+      "start": 617.08,
+      "end": 617.32
+    },
+    {
+      "word": " encoder",
+      "start": 617.32,
+      "end": 617.88
+    },
+    {
+      "word": " builds",
+      "start": 617.88,
+      "end": 618.12
+    },
+    {
+      "word": " a",
+      "start": 618.12,
+      "end": 618.2
+    },
+    {
+      "word": " picture",
+      "start": 618.2,
+      "end": 618.44
+    },
+    {
+      "word": " of",
+      "start": 618.44,
+      "end": 618.6
+    },
+    {
+      "word": " what",
+      "start": 618.6,
+      "end": 618.84
+    },
+    {
+      "word": " your",
+      "start": 618.84,
+      "end": 619.08
+    },
+    {
+      "word": " message.",
+      "start": 619.08,
+      "end": 619.72
+    },
+    {
+      "word": " The",
+      "start": 620.6800000000001,
+      "end": 621.0000000000001
+    },
+    {
+      "word": " encoder",
+      "start": 621.0,
+      "end": 621.72
+    },
+    {
+      "word": " builds",
+      "start": 621.72,
+      "end": 622.1999999999999
+    },
+    {
+      "word": " a",
+      "start": 622.2,
+      "end": 622.36
+    },
+    {
+      "word": " picture",
+      "start": 622.36,
+      "end": 622.76
+    },
+    {
+      "word": " of",
+      "start": 622.76,
+      "end": 623.08
+    },
+    {
+      "word": " your",
+      "start": 623.08,
+      "end": 623.24
+    },
+    {
+      "word": " message.",
+      "start": 623.24,
+      "end": 623.9599999999999
+    },
+    {
+      "word": " The",
+      "start": 623.96,
+      "end": 624.2
+    },
+    {
+      "word": " decoder",
+      "start": 624.2,
+      "end": 624.84
+    },
+    {
+      "word": " writes",
+      "start": 624.84,
+      "end": 625.16
+    },
+    {
+      "word": " the",
+      "start": 625.16,
+      "end": 625.24
+    },
+    {
+      "word": " reply",
+      "start": 625.24,
+      "end": 625.8
+    },
+    {
+      "word": " while",
+      "start": 625.8,
+      "end": 626.12
+    },
+    {
+      "word": " constantly",
+      "start": 626.12,
+      "end": 626.76
+    },
+    {
+      "word": " glancing",
+      "start": 626.76,
+      "end": 627.4
+    },
+    {
+      "word": " back",
+      "start": 627.4,
+      "end": 627.72
+    },
+    {
+      "word": " at",
+      "start": 627.72,
+      "end": 628.0400000000001
+    },
+    {
+      "word": " it.",
+      "start": 628.04,
+      "end": 628.36
+    },
+    {
+      "word": " And",
+      "start": 633.32,
+      "end": 633.6400000000001
+    },
+    {
+      "word": " that's",
+      "start": 633.64,
+      "end": 634.12
+    },
+    {
+      "word": " exactly",
+      "start": 634.12,
+      "end": 634.6
+    },
+    {
+      "word": " why",
+      "start": 634.84,
+      "end": 635.16
+    },
+    {
+      "word": " a",
+      "start": 635.16,
+      "end": 635.3199999999999
+    },
+    {
+      "word": " buried",
+      "start": 635.32,
+      "end": 635.8
+    },
+    {
+      "word": " instruction",
+      "start": 635.8,
+      "end": 636.28
+    },
+    {
+      "word": " gets",
+      "start": 636.44,
+      "end": 636.68
+    },
+    {
+      "word": " less",
+      "start": 636.6800000000001,
+      "end": 637.0
+    },
+    {
+      "word": " attention",
+      "start": 637.0,
+      "end": 637.6400000000001
+    },
+    {
+      "word": " than",
+      "start": 637.64,
+      "end": 637.88
+    },
+    {
+      "word": " one",
+      "start": 637.88,
+      "end": 638.2
+    },
+    {
+      "word": " sitting",
+      "start": 638.2,
+      "end": 638.6
+    },
+    {
+      "word": " up",
+      "start": 638.6,
+      "end": 638.84
+    },
+    {
+      "word": " front.",
+      "start": 638.84,
+      "end": 639.4000000000001
+    },
+    {
+      "word": " Not",
+      "start": 645.52,
+      "end": 645.8399999999999
+    },
+    {
+      "word": " a",
+      "start": 645.84,
+      "end": 646.0
+    },
+    {
+      "word": " glitch,",
+      "start": 646.0,
+      "end": 646.5600000000001
+    },
+    {
+      "word": " just",
+      "start": 646.56,
+      "end": 646.7199999999999
+    },
+    {
+      "word": " a",
+      "start": 646.72,
+      "end": 646.8000000000001
+    },
+    {
+      "word": " mechanism",
+      "start": 646.8,
+      "end": 647.36
+    },
+    {
+      "word": " working",
+      "start": 647.36,
+      "end": 647.68
+    },
+    {
+      "word": " as",
+      "start": 647.68,
+      "end": 648.0
+    },
+    {
+      "word": " built.",
+      "start": 648.0,
+      "end": 648.6400000000001
+    },
+    {
+      "word": " And",
+      "start": 656.32,
+      "end": 656.6400000000001
+    },
+    {
+      "word": " once",
+      "start": 656.64,
+      "end": 657.12
+    },
+    {
+      "word": " I",
+      "start": 657.12,
+      "end": 657.28
+    },
+    {
+      "word": " understood",
+      "start": 657.28,
+      "end": 657.9200000000001
+    },
+    {
+      "word": " this,",
+      "start": 657.92,
+      "end": 658.32
+    },
+    {
+      "word": " it",
+      "start": 658.32,
+      "end": 658.48
+    },
+    {
+      "word": " changed",
+      "start": 658.48,
+      "end": 658.88
+    },
+    {
+      "word": " how",
+      "start": 658.88,
+      "end": 659.12
+    },
+    {
+      "word": " I",
+      "start": 659.12,
+      "end": 659.2
+    },
+    {
+      "word": " write",
+      "start": 659.2,
+      "end": 659.36
+    },
+    {
+      "word": " props.",
+      "start": 659.52,
+      "end": 660.1600000000001
+    },
+    {
+      "word": " I",
+      "start": 660.16,
+      "end": 660.4
+    },
+    {
+      "word": " stopped",
+      "start": 660.4,
+      "end": 660.88
+    },
+    {
+      "word": " burying",
+      "start": 660.88,
+      "end": 661.36
+    },
+    {
+      "word": " the",
+      "start": 661.36,
+      "end": 661.6800000000001
+    },
+    {
+      "word": " important",
+      "start": 661.68,
+      "end": 662.0
+    },
+    {
+      "word": " instruction",
+      "start": 662.16,
+      "end": 662.7199999999999
+    },
+    {
+      "word": " in",
+      "start": 662.96,
+      "end": 663.2800000000001
+    },
+    {
+      "word": " paragraph",
+      "start": 663.28,
+      "end": 664.08
+    },
+    {
+      "word": " three.",
+      "start": 664.08,
+      "end": 664.72
+    },
+    {
+      "word": " Subscribe",
+      "start": 674.56,
+      "end": 675.44
+    },
+    {
+      "word": " if",
+      "start": 675.44,
+      "end": 675.7600000000001
+    },
+    {
+      "word": " you",
+      "start": 675.76,
+      "end": 676.0
+    },
+    {
+      "word": " want",
+      "start": 676.0,
+      "end": 676.24
+    },
+    {
+      "word": " more",
+      "start": 676.24,
+      "end": 676.4
+    },
+    {
+      "word": " of",
+      "start": 676.4,
+      "end": 676.64
+    },
+    {
+      "word": " this,",
+      "start": 676.64,
+      "end": 676.9599999999999
+    },
+    {
+      "word": " breaking",
+      "start": 676.96,
+      "end": 677.36
+    },
+    {
+      "word": " down",
+      "start": 677.36,
+      "end": 677.6800000000001
+    },
+    {
+      "word": " what",
+      "start": 677.68,
+      "end": 677.92
+    },
+    {
+      "word": " actually",
+      "start": 677.92,
+      "end": 678.24
+    },
+    {
+      "word": " happening",
+      "start": 678.24,
+      "end": 678.64
+    },
+    {
+      "word": " inside",
+      "start": 678.64,
+      "end": 678.9599999999999
+    },
+    {
+      "word": " these",
+      "start": 678.96,
+      "end": 679.2800000000001
+    },
+    {
+      "word": " models.",
+      "start": 679.28,
+      "end": 679.92
+    },
+    {
+      "word": " Thank",
+      "start": 679.92,
+      "end": 680.24
+    },
+    {
+      "word": " you",
+      "start": 680.24,
+      "end": 680.4
+    },
+    {
+      "word": " for",
+      "start": 680.4,
+      "end": 680.64
+    },
+    {
+      "word": " watching",
+      "start": 680.64,
+      "end": 681.36
+    },
+    {
+      "word": " for",
+      "start": 681.84,
+      "end": 682.08
+    },
+    {
+      "word": " watching.",
+      "start": 682.08,
+      "end": 682.72
+    },
+    {
+      "word": " See",
+      "start": 682.72,
+      "end": 682.96
+    },
+    {
+      "word": " you",
+      "start": 682.96,
+      "end": 683.12
+    },
+    {
+      "word": " in",
+      "start": 683.12,
+      "end": 683.28
+    },
+    {
+      "word": " the",
+      "start": 683.28,
+      "end": 683.4399999999999
+    },
+    {
+      "word": " next",
+      "start": 683.44,
+      "end": 684.0
+    },
+    {
+      "word": " one.",
+      "start": 684.0,
+      "end": 684.32
+    }
+  ]
+}
