@@ -5,9 +5,13 @@ this footage" questions the app itself can't:
 
 | | |
 |---|---|
-| **what was SAID, and when** | `transcribe.py` — word-level timings, over a swappable ASR backend (`asr/`, D-374): mlx-whisper `large-v3` by default, `parakeet-tdt-0.6b-v3` opt-in |
+| **what was SAID, and when** | `transcribe.py` — word-level timings, over a swappable ASR backend seam (`asr/`, D-374): `parakeet-tdt-0.6b-v3`, the only backend since Whisper was decommissioned (D-381). 25 European languages; **Hindi/Hinglish unsupported** |
 | **what CHANGED on screen, and when** | `video_understand.py` — ffmpeg scene-detect for the timing + Qwen3-VL-4B for the description |
 | **where a transcript is UNSURE** | `harness/` — a pipeline of checks over the transcript contract (D-374 step 3 / D-375). No model, no backend, no audio: it annotates a transcript it is handed. Not wired to an endpoint yet — see its README |
+
+A transcript is **deterministic**: Parakeet decodes greedily, so the same file
+gives byte-identical output with no seed (D-349's Whisper seed went with
+Whisper, D-381).
 
 Nothing here touches the network (models are local; the VLM subprocess runs
 with `HF_HUB_OFFLINE=1`, always — D-354), `grade.json`, or the timeline. It
@@ -68,7 +72,7 @@ shape `ai/`'s `/track` and `/depth_track` already use.
 | | |
 |---|---|
 | `GET /health` | `{ok, sidecar, models, content_sha256, ffmpeg, jobs_running}` |
-| `POST /transcribe` | `{path, language?, word_timestamps?, model?}` → `{job_id, state, ...}` |
+| `POST /transcribe` | `{path, language?, word_timestamps?, model?, start_secs?, duration_secs?}` → `{job_id, state, ...}`. `model` defaults to, and must be one of, the default backend's (`parakeet-tdt-0.6b-v3`); a `language` outside Parakeet's 25 is refused as a job error sentence |
 | `GET /transcribe/{job_id}` | `{state, elapsed_s, result?, error?}` |
 | `POST /understand_video` | `{path, question?, scene_threshold?, min_gap_s?, max_candidates?, max_tokens?}` → `{job_id, state, ...}` |
 | `GET /understand_video/{job_id}` | `{state, elapsed_s, result?, error?}` |
@@ -80,7 +84,7 @@ shape `ai/`'s `/track` and `/depth_track` already use.
 ```jsonc
 {
   "text": "...",                    // the whole transcript
-  "language": "en", "model": "large-v3", "source": "/abs/path.mp4",
+  "language": "en", "model": "parakeet-tdt-0.6b-v3", "source": "/abs/path.mp4",
   "segments": [{ "start": 0.0, "end": 4.2, "text": "...",
                  "words": [{ "word": " want", "start": 0.0, "end": 0.24 }] }],
   "words":    [ /* the same words, flattened across every segment */ ]
@@ -112,8 +116,13 @@ second than that.
 
 | Model | Job | Size | Fetched |
 |---|---|---|---|
-| `mlx-community/whisper-large-v3-mlx` | transcript | ~2.9 GB | implicitly, on first use |
+| `mlx-community/parakeet-tdt-0.6b-v3` | transcript | ~2.3 GB | implicitly, on first use — or ahead of time, for offline use, by `ai-env/setup.sh --fetch-models` |
 | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | frame-pair description | ~2.9 GB | **explicitly only** — `ai-env/setup.sh --fetch-models` |
+
+`mlx-community/whisper-large-v3-mlx` was the transcript model until D-381. Its
+weights are **not deleted** from an existing HF cache — nothing in Apelles
+removes a user's cached models; delete `~/.cache/huggingface/hub/models--mlx-community--whisper-large-v3-mlx`
+by hand to reclaim ~2.9 GB.
 
 Qwen3-VL **4B, not 2B** — 2B was tested on real footage and produced garbage
 (hallucinated/truncated output). 4B is the empirical floor for usable quality.

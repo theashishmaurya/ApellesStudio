@@ -15,8 +15,8 @@ What this checks, on a real file synthesized with `ffmpeg` at run time (the same
      kind of unreadable failure for a silently uninformative one;
   4. `extract_audio` on a file that DOES have audio still returns a real WAV.
 
-Deliberately importable-free of MLX: nothing here loads whisper, so it runs on a
-plain `python3` without the sidecar's ~3 GB venv. Only `ffmpeg` is required, and
+Deliberately importable-free of MLX: nothing here loads a model, so it runs on a
+plain `python3` without the sidecar's multi-GB venv. Only `ffmpeg` is required, and
 the whole script skips (exit 0) when it is absent — the same skip discipline
 `ai/test_depth_track.py` uses.
 

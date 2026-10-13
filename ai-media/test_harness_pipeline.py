@@ -27,6 +27,13 @@ What has a correct answer, and is therefore checked here:
      both sides of every check, and tells a check nothing but a profile;
   8. **determinism**, the repo-wide invariant.
 
+Since D-381 the registry holds one real profile, Parakeet's. The checks that
+need a SECOND backend — the VAD guard refusing another backend's constants,
+"the bound is the backend's" — use [`STRETCHING`], a synthetic profile that
+describes the kind of decoder the guard exists for (one that stretches a word
+across a hole, as `mlx-whisper` did) without pretending a real one is
+registered. The guard is kept for the next backend; it is tested the same way.
+
     python3 ai-media/test_harness_pipeline.py
 """
 import copy
@@ -42,10 +49,10 @@ sys.path.insert(0, str(HERE))
 from harness import (  # noqa: E402
     CheckContext,
     ContractError,
+    BackendProfile,
     MultiPassReconcile,
     PARAKEET,
     VadCrossCheck,
-    WHISPER,
     dark_params_for,
     fold_dark_report,
     profile_for,
@@ -58,8 +65,17 @@ from harness.profiles import NO_WORD_LENGTH_BOUND_SECS  # noqa: E402
 SENTENCE = "the quick brown fox jumps over the lazy dog".split()
 STEP = 0.5
 
+#: A hypothetical second backend whose decoder CAN stretch a word across an
+#: untranscribed hole, with the 2.0 s bound `mlx-whisper` had. Not registered in
+#: `PROFILES` — it exists to give the per-backend guard something to refuse.
+STRETCHING = BackendProfile(
+    name="stretching",
+    models=frozenset({"stretching-1"}),
+    max_word_secs=2.0,
+)
 
-def contract(words, *, per_segment=4, drift=0.0, model="large-v3", window=None):
+
+def contract(words, *, per_segment=4, drift=0.0, model="parakeet-tdt-0.6b-v3", window=None):
     """A transcript contract, written by hand, laid out one word per [`STEP`].
 
     Deliberately built the way `transcribe()` builds one — words carrying their
@@ -109,7 +125,7 @@ def check_unanimous_passes():
     assert states(result) == ["unanimous"] * len(SENTENCE), states(result)
     assert result["low_confidence"] == [], result["low_confidence"]
     assert result["harness"]["multi_pass_reconcile"]["unanimous"] == len(SENTENCE)
-    assert result["harness"]["profile"] == WHISPER.name
+    assert result["harness"]["profile"] == PARAKEET.name
     # The contract survives intact, which is the thing every consumer needs.
     assert [w["word"] for w in result["words"]] == [f" {w}" for w in SENTENCE]
     assert result["text"] == contract(SENTENCE)["text"], result["text"]
@@ -167,7 +183,7 @@ def check_the_analysed_range_is_intersected():
     own seams as disagreements.
 
     Varying the chunk offset is exactly how the harness gets its passes, and
-    `transcribe(start_secs=…)` is how that is expressed for `mlx-whisper`, so
+    `transcribe(start_secs=…)` is how that is expressed for every backend, so
     passes with different windows are the NORMAL case rather than an edge one.
     """
     whole = contract(SENTENCE, window=(0.0, 4.5))
@@ -229,11 +245,11 @@ def check_reconciliation_refusals():
 
 
 def check_vad_parameters_come_from_the_profile():
-    assert dark_params_for(WHISPER) == {"max_word_secs": 2.0}
     assert dark_params_for(PARAKEET) == {"max_word_secs": NO_WORD_LENGTH_BOUND_SECS}
+    assert dark_params_for(STRETCHING) == {"max_word_secs": 2.0}
     # The generalisation in one line: the check is the same, the number is the
-    # backend's, and the two backends genuinely need different ones.
-    assert dark_params_for(WHISPER) != dark_params_for(PARAKEET)
+    # backend's, and two kinds of decoder genuinely need different ones.
+    assert dark_params_for(STRETCHING) != dark_params_for(PARAKEET)
     print("ok: the dark-region bound comes from the profile, and differs per backend")
 
 
@@ -259,28 +275,28 @@ def check_vad_report_is_folded_and_mismatches_refused():
     folded = fold_dark_report(
         base,
         report,
-        profile=WHISPER,
-        params_used=dark_params_for(WHISPER),
+        profile=PARAKEET,
+        params_used=dark_params_for(PARAKEET),
     )
     spans = [s for s in folded["low_confidence"] if s["kind"] == "vad_cross_check"]
     assert len(spans) == 1 and spans[0]["start"] == 2.0 and spans[0]["end"] == 3.4, spans
     assert spans[0]["detail"][0]["stretch"] == [1.8, 4.0], spans
     provenance = folded["harness"]["vad_cross_check"]
     assert provenance["regions"] == 1 and provenance["gated_out"] == 1, provenance
-    assert provenance["max_word_secs"] == 2.0, provenance
+    assert provenance["max_word_secs"] == NO_WORD_LENGTH_BOUND_SECS, provenance
     # "no regions" means something different depending on these, which is why
     # they are carried rather than dropped.
     assert provenance["speech_secs"] == 12.5 and provenance["covered_secs"] == 9.1
 
-    # The guard: a Parakeet transcript against Whisper's 2.0 s bound returns a
-    # plausible-looking wrong answer, so it is refused instead of folded.
-    parakeet = contract(SENTENCE, model="parakeet-tdt-0.6b-v3")
+    # The guard: a Parakeet transcript against a stretched-word bound (the
+    # detector's Whisper-era default) returns a plausible-looking wrong answer,
+    # so it is refused instead of folded.
     try:
         fold_dark_report(
-            parakeet,
+            base,
             report,
             profile=PARAKEET,
-            params_used=dark_params_for(WHISPER),
+            params_used=dark_params_for(STRETCHING),
         )
     except ContractError as e:
         assert "max_word_secs" in str(e) and "parakeet" in str(e), e
@@ -331,7 +347,7 @@ def check_the_pipeline_composes_both_checks():
         reference,
         [
             MultiPassReconcile([second, third]),
-            VadCrossCheck(report, dark_params_for(WHISPER)),
+            VadCrossCheck(report, dark_params_for(PARAKEET)),
         ],
     )
 
@@ -363,9 +379,9 @@ def check_a_check_is_told_nothing_but_a_profile():
     spy.name = "spy"
     run_checks(contract(SENTENCE), [spy])
     context = seen["context"]
-    assert context.profile is WHISPER, context
+    assert context.profile is PARAKEET, context
     try:
-        context.profile = PARAKEET  # type: ignore[misc]
+        context.profile = STRETCHING  # type: ignore[misc]
     except dataclasses.FrozenInstanceError:
         pass
     else:
@@ -402,9 +418,9 @@ def check_the_profile_registry_matches_the_backend_descriptors():
     could reach a model, which is the one thing D-374 forbids structurally — so
     the registry is a derived mirror. A *test* may import anything, so the
     agreement is pinned here, field for field, and drift becomes a failing test
-    rather than a Parakeet transcript silently scored against Whisper's bound.
+    rather than a transcript silently scored against another backend's bound.
     `asr/` imports no model library at import time (its own module doc says so
-    and `whisper_mlx` keeps `import mlx_whisper` inside `transcribe`), so this
+    and `parakeet_mlx` keeps `import parakeet_mlx` inside `transcribe`), so this
     costs nothing and needs no venv.
     """
     from harness.profiles import BackendProfile, PROFILES
@@ -419,9 +435,6 @@ def check_the_profile_registry_matches_the_backend_descriptors():
     for profile in PROFILES:
         mirrored = BackendProfile.from_descriptor(descriptors[profile.name])
         assert profile == mirrored, f"{profile.name} has drifted from its descriptor: {profile} != {mirrored}"
-    # And the field that matters is really different per backend, so the mirror
-    # is carrying information rather than agreeing by coincidence.
-    assert len({p.max_word_secs for p in PROFILES}) == len(PROFILES)
     print(f"ok: all {len(PROFILES)} harness profiles match their asr BackendDescriptor exactly")
 
 
@@ -432,13 +445,14 @@ def check_agnosticism_over_a_hand_written_contract():
     Every fixture in this file is hand-written, but this case says so out loud
     — including that the profile is resolved from the contract's own `model`
     field, so a transcript read back off disk years later harnesses exactly
-    like one fresh out of a backend, and that an unknown backend is refused by
-    name rather than silently given another's constants.
+    like one fresh out of a backend, and that an unknown backend — including
+    the decommissioned Whisper (`large-v3`, D-381) — is refused by name rather
+    than silently given another's constants.
     """
     typed_by_hand = {
         "text": "hello there",
         "language": "en",
-        "model": "large-v3",
+        "model": "parakeet-tdt-0.6b-v3",
         "source": "/fixtures/never-transcribed.wav",
         "segments": [
             {
@@ -453,7 +467,7 @@ def check_agnosticism_over_a_hand_written_contract():
         ],
     }
     assert "words" not in typed_by_hand, "flat_words must cope with a contract that has only segments"
-    assert profile_for(typed_by_hand) is WHISPER
+    assert profile_for(typed_by_hand) is PARAKEET
 
     variant = copy.deepcopy(typed_by_hand)
     variant["segments"][0]["words"][1]["word"] = " their"
@@ -461,13 +475,14 @@ def check_agnosticism_over_a_hand_written_contract():
     assert states(result) == ["unanimous", "disagreed"], states(result)
     assert result["words"][1]["agreement"]["alternatives"] == [{"word": " their", "passes": [1]}]
 
-    unknown = {**typed_by_hand, "model": "some-future-asr"}
-    try:
-        run_checks(unknown, [])
-    except KeyError as e:
-        assert "some-future-asr" in str(e) and "harness/profiles.py" in str(e), e
-    else:
-        raise AssertionError("an unknown backend must be refused, not given another's constants")
+    for model in ("some-future-asr", "large-v3"):
+        unknown = {**typed_by_hand, "model": model}
+        try:
+            run_checks(unknown, [])
+        except KeyError as e:
+            assert model in str(e) and "harness/profiles.py" in str(e), e
+        else:
+            raise AssertionError(f"{model!r} must be refused, not given another's constants")
     print("ok: the pipeline runs over a contract no model produced, and refuses an unknown backend")
 
 
@@ -494,7 +509,7 @@ def check_determinism():
     report = {"regions": [{"start_secs": 1.0, "end_secs": 1.9}], "speech_secs": 5.0}
     checks = [
         MultiPassReconcile(passes[1:]),
-        VadCrossCheck(report, dark_params_for(WHISPER)),
+        VadCrossCheck(report, dark_params_for(PARAKEET)),
     ]
     first = run_checks(passes[0], checks)
     for _ in range(3):

@@ -1,26 +1,37 @@
 #!/usr/bin/env python3
-"""The parakeet-mlx backend — opt-in, 17.6× realtime, two defects fixed here (D-374).
+"""The parakeet-mlx backend — Apelles' only ASR backend, defects fixed here (D-374, D-381).
 
 **What it is:** NVIDIA `parakeet-tdt-0.6b-v3` via `parakeet-mlx`, behind
-[`base.AsrBackend`]. 0.6 B params against `large-v3`'s ~1.5 B, and **measured at
-56.3 s for the owner's own 989.5 s C038 source — 17.6× realtime** (D-374; the
-measurement table is in `docs/notes/asr-backends-and-harness.md` §1).
+[`base.AsrBackend`]. 0.6 B params, and measured end-to-end through the seam at
+**38.3 s for the owner's own 989.5 s C038 source — 25.8× realtime**, against
+`mlx-whisper large-v3`'s 369.6 s on the same machine (D-377's timing; D-374's
+first, model-only measurement was 56.3 s / 17.6×; both tables are in
+`docs/notes/asr-backends-and-harness.md`).
 
-**What it does NOT do:** it is **not the default** and must not become one here.
-D-374's step 4 — re-deriving `apelles-speech`'s five corpus tests and re-sweeping
-the retake thresholds against a Parakeet transcript — is what moves the default,
-and it has not happened. It also does no ffmpeg, no windowing, no timestamp
-shifting and no `words` flattening; `transcribe.py` owns all of that, identically
-for every backend, which is what makes D-349's windowing work here for free.
+**The default, and since D-381 the only backend.** It was opt-in from D-374 until
+2026-10-13, when the owner decommissioned Whisper. D-377 had kept Whisper the
+default on one number from the retake detector's rules; D-378's labelled eval
+did not reproduce it, and D-379's found retake proposals made from Parakeet's
+word-timed transcripts losing no content at all. D-381 has the reasoning.
 
-**It is not more accurate than Whisper and this file does not pretend it is.**
-Measured on the same source: it drops domain and proper nouns Whisper catches
-(`KV cache` 1→0, `chaiwala` 1→0, `stenographer` 2→1, `Nvidia` 2→1) and spells
-numbers out ("Twenty billion dollars" vs "$20 billion"). It is better in one
-measured place: it transcribed `"Cut from here"` at 223.8 s — a spoken
-instruction to the editor — which Whisper dropped entirely. D-374's reasoning is
-that 17× faster and ~2 % worse is a *better input to a multi-pass harness*, not
-that it wins head-to-head.
+**What it does NOT do:** no ffmpeg, no windowing, no timestamp shifting and no
+`words` flattening; `transcribe.py` owns all of that, identically for every
+backend, which is what makes D-349's windowing work here for free.
+
+**It is not more accurate than Whisper was, and this file does not pretend it
+is.** Measured on the same source: it drops domain and proper nouns Whisper
+caught (`KV cache` 1→0, `chaiwala` 1→0, `stenographer` 2→1, `Nvidia` 2→1) and
+spells numbers out ("Twenty billion dollars" vs "$20 billion"). It is better in
+two measured places: it transcribed `"Cut from here"` at 223.8 s — a spoken
+instruction to the editor — which Whisper dropped entirely, and it emits nothing
+on silent B-roll where Whisper hallucinated `"Thank you."` (D-377). D-374's
+reasoning is that ~10× faster and ~2 % worse is a *better input to a multi-pass
+harness*, not that it wins head-to-head.
+
+**Languages: 25 European, and Hindi is not one of them.** D-381 records
+Hindi/Hinglish sources as unsupported (the owner's call — it does not matter for
+this product). [`PARAKEET_LANGUAGES`] is the refusal surface for a caller that
+names a language; see `base.check_language`.
 
 ---
 
@@ -77,10 +88,13 @@ preferences:
 ---
 
 **Determinism.** Greedy TDT decoding, no sampling anywhere, so no seed is needed
-and none is set — unlike the whisper backend, whose temperature-fallback ladder
-made B-224 possible. Verified by transcribing the real C038 WAV twice through
-this backend and diffing the result (D-374; `CLAUDE.md`'s "render the same frame
-twice, diff").
+and none is set. That is why decommissioning Whisper also retired D-349's
+`MLX_RANDOM_SEED`: the seed existed only because mlx-whisper's
+temperature-fallback ladder sampled from MLX's global RNG (B-224), and nothing
+in this backend draws from an RNG at all. Verified by transcribing the real
+C038 WAV twice through this backend and diffing the result — byte-identical
+(D-374, re-checked for D-381; `CLAUDE.md`'s "render the same frame twice,
+diff").
 
 **No per-word `probability`.** `parakeet_mlx` does expose a per-token
 `confidence`, but it is `1.0 - entropy/max_entropy` over the token's frames —
@@ -98,18 +112,21 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 from asr.base import BackendDescriptor, local_snapshot_or_repo
+from errors import UserFacingError
 
 NAME = "parakeet"
 
 DEFAULT_MODEL = "parakeet-tdt-0.6b-v3"
 
-# `parakeet_mlx.from_pretrained` loads from an HF repo id or a local directory,
-# the same shape `MLX_MODEL_REPOS` has for whisper. One entry: v3 is the
-# multilingual (25 European languages) TDT release D-374 measured. v2 exists and
-# is English-only; it is not listed because nothing has measured it here and
-# `CLAUDE.md` does not allow an untested option carried "just in case".
-PARAKEET_MODEL_REPOS = {
-    "parakeet-tdt-0.6b-v3": "mlx-community/parakeet-tdt-0.6b-v3",
+# `parakeet_mlx.from_pretrained` loads from an HF repo id or a local directory.
+# One entry: v3 is the multilingual (25 European languages) TDT release D-374
+# measured. v2 exists and is English-only; it is not listed because nothing has
+# measured it here and `CLAUDE.md` does not allow an untested option carried
+# "just in case". Carried on the descriptor (`BackendDescriptor.model_repos`)
+# because `server.py`'s `/health` reports it too, and one map is one source of
+# truth.
+MODEL_REPOS = {
+    DEFAULT_MODEL: "mlx-community/parakeet-tdt-0.6b-v3",
 }
 
 # The 25 European languages `nvidia/parakeet-tdt-0.6b-v3` is trained on, as its
@@ -149,7 +166,7 @@ PARAKEET_LANGUAGES = frozenset(
 DESCRIPTOR = BackendDescriptor(
     name=NAME,
     default_model=DEFAULT_MODEL,
-    models=tuple(PARAKEET_MODEL_REPOS),
+    model_repos=MODEL_REPOS,
     languages=PARAKEET_LANGUAGES,
     language_summary="25 European languages",
     max_word_secs=None,
@@ -165,11 +182,14 @@ DESCRIPTOR = BackendDescriptor(
 # what reproduces 56.3 s / 1296 words / 2480 tokens on the C038 source; changing
 # them changes the numbers this file's own docstring cites.
 #
-# D-374 §3.1 intends to VARY the chunk offset as the multi-pass harness's one
-# knob, precisely because the measured failures (run-on segments, dropped words)
-# cluster at chunk seams. That makes these parameters eventually, not yet: the
-# harness is step 3 and does not exist, so there is no caller to thread them
-# through and `CLAUDE.md` does not allow a parameter nothing passes.
+# D-374 §3.1 VARIES the chunk offset as the multi-pass harness's one knob,
+# precisely because the measured failures (run-on segments, dropped words)
+# cluster at chunk seams. The harness (D-375) does that today through
+# `transcribe()`'s `start_secs` — the chunker starts from the audio it is
+# handed, so a pass started 10 s earlier has every seam 10 s elsewhere — which
+# needs nothing threaded through here. These stay module constants until a
+# caller wants them as parameters directly (`CLAUDE.md` does not allow a
+# parameter nothing passes); `docs/notes/asr-backends-and-harness.md` §5.
 CHUNK_DURATION_S = 120.0
 OVERLAP_DURATION_S = 15.0
 
@@ -234,8 +254,11 @@ SEGMENT_GAP_S = 0.32
 # defect is. With it, the exception is back to needing a genuine ~47-token word
 # and the cap holds on every measured run, windowed and whole-file.
 #
-# Not final. D-374 step 4 re-sweeps the retake thresholds against a Parakeet
-# transcript and this constant is an input to that sweep, not a conclusion of it.
+# Measured, not settled. D-374 step 4 (D-377) re-swept the retake thresholds
+# against Parakeet transcripts and did not move this: Parakeet's longest
+# segment over the three speech sources was 14.96 s, inside the cap, so the cap
+# was never the binding constraint (`docs/notes/asr-backends-and-harness.md`
+# §4.2).
 SEGMENT_MAX_S = 15.0
 
 # A `parakeet_mlx` token whose text starts with this begins a new word. The
@@ -414,9 +437,22 @@ class ParakeetMlxBackend:
         model decide. That is the honest value; inventing a detected language
         would not be.
         """
-        repo = PARAKEET_MODEL_REPOS[model]
+        repo = MODEL_REPOS[model]
 
-        from parakeet_mlx import from_pretrained
+        try:
+            from parakeet_mlx import from_pretrained
+        except ImportError as e:
+            # The one predictable way this import fails is an environment built
+            # before D-381 that has not picked up the new lock yet — e.g. an
+            # install that has been offline since the upgrade, where
+            # `apelles_ai::ai_env` cannot fetch `parakeet-mlx` and backs off.
+            # Said as a sentence (B-119) rather than as a ModuleNotFoundError in
+            # a subprocess's stderr tail, because the fix is the user's to make.
+            raise UserFacingError(
+                "the speech model's package (parakeet-mlx) is not installed in the AI "
+                "environment yet. Apelles installs it automatically the next time it "
+                "starts with an internet connection — or run ./ai-env/setup.sh."
+            ) from e
 
         # B-174's fix applies here too — `from_pretrained` reaches the Hub on
         # every load unless handed a path that already exists. See

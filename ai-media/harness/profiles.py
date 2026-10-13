@@ -10,14 +10,24 @@ itself, and nothing in `harness/` imports a backend module.
 **Why this exists at all.** `crates/apelles-speech/src/dark.rs` is the check
 this file was written for. Its algorithm is general — *VAD says speech,
 transcript says nothing ⇒ a dark region* — but one of its numbers is not: the
-2.0 s too-long-word bound is `mlx_whisper/transcribe.py`'s own anomaly
-threshold, and it exists because Whisper's DTW alignment **stretches a single
-word across a hole it did not transcribe** (c038's ` down.` at 217.26-222.74 s
-is 5.48 s for one word), so a word that long must contribute no coverage.
+too-long-word bound. It existed for `mlx-whisper`, whose DTW alignment
+**stretched a single word across a hole it did not transcribe** (c038's
+` down.` at 217.26-222.74 s, 5.48 s for one word), so a word that long had to
+contribute no coverage; the bound was its own anomaly threshold, 2.0 s.
 Parakeet's duration head caps a *token* at ~0.32 s and cannot produce a
 stretched word at all, which makes the bound meaningless there rather than
-merely differently-valued. One check, two backends, and the number is the
-backend's — so it travels in the thing that gets passed in, never in the check.
+merely differently-valued. One check, and the number is the backend's — so it
+travels in the thing that gets passed in, never in the check.
+
+**One profile today.** D-381 decommissioned Whisper, so [`PROFILES`] holds
+Parakeet alone. The profile machinery stays exactly as it was, because it is
+what lets the next backend be harnessed without touching a check — the reason
+D-374 built the harness this way. A transcript from a model no profile names
+(including a pre-D-381 Whisper transcript read back off disk, `model:
+"large-v3"`) is refused by [`profile_for`] rather than given Parakeet's
+constants: running a decoder that stretches words against "the bound does not
+apply" is the same silent wrong answer this file exists to prevent, the other
+way round.
 
 **Deliberately three fields wide.** Anything a check does not read does not
 belong in a profile — the same rule `asr/base.py` applies to its own
@@ -57,18 +67,8 @@ __all__ = [
     "NO_WORD_LENGTH_BOUND_SECS",
     "PARAKEET",
     "PROFILES",
-    "WHISPER",
-    "WHISPER_ANOMALY_WORD_SECS",
     "profile_for",
 ]
-
-# `mlx_whisper/transcribe.py`'s own bound for a too-long word (`if duration >
-# 2.0`). Not a number picked to fit: taking it from "any word" to "a word under
-# 2.0 s" moved `dark.rs`'s candidate count from 2 to 4 on one real source and
-# from 4 to 9 on another, and it is worth more than half the real cases on both
-# (`crates/apelles-speech/src/dark.rs`'s module doc; the 111-window scoring in
-# `docs/notes/whisper-dark-region-research.md`).
-WHISPER_ANOMALY_WORD_SECS = 2.0
 
 # What a backend that cannot stretch a word asks the dark-region detector for:
 # no word is ever excluded from coverage for being too long.
@@ -119,33 +119,12 @@ class BackendProfile:
         )
 
 
-#: `mlx-whisper` — today's default backend (D-374 §5). Mirrors
-#: `asr.whisper_mlx.DESCRIPTOR`. Every model listed is a key of that backend's
-#: `MLX_MODEL_REPOS`, i.e. a `model` value a real contract can actually carry;
-#: they share one profile because they share the decoder whose DTW alignment
-#: produces the stretched word.
-WHISPER = BackendProfile(
-    name="whisper",
-    models=frozenset(
-        {
-            "tiny",
-            "base",
-            "small",
-            "medium",
-            "large-v2",
-            "large-v3",
-            "large",
-            "distil-large-v3",
-        }
-    ),
-    max_word_secs=WHISPER_ANOMALY_WORD_SECS,
-)
-
-#: `parakeet-tdt-0.6b-v3` — 0.6 B params, measured at 17.6× realtime on the
-#: owner's own 989.5 s C038 source (D-374). Mirrors
-#: `asr.parakeet_mlx.DESCRIPTOR`. `max_word_secs=None`: its duration head caps
-#: a token at 0.320 s, so the stretched-word failure the bound exists for cannot
-#: occur, and excluding long words would only throw away real coverage.
+#: `parakeet-tdt-0.6b-v3` — the one ASR backend since D-381; 0.6 B params,
+#: ~25× realtime end-to-end on the owner's own 989.5 s C038 source (D-377).
+#: Mirrors `asr.parakeet_mlx.DESCRIPTOR`. `max_word_secs=None`: its duration
+#: head caps a token at 0.320 s, so the stretched-word failure the bound exists
+#: for cannot occur, and excluding long words would only throw away real
+#: coverage.
 PARAKEET = BackendProfile(
     name="parakeet",
     models=frozenset({"parakeet-tdt-0.6b-v3"}),
@@ -155,7 +134,7 @@ PARAKEET = BackendProfile(
 #: Every profile the harness knows, in resolution order. A tuple rather than a
 #: dict keyed by model so the registry reads as a list of backends rather than
 #: as a flattened index, and so iteration order is fixed.
-PROFILES: tuple[BackendProfile, ...] = (WHISPER, PARAKEET)
+PROFILES: tuple[BackendProfile, ...] = (PARAKEET,)
 
 
 def profile_for(contract: Mapping[str, Any]) -> BackendProfile:
@@ -163,10 +142,10 @@ def profile_for(contract: Mapping[str, Any]) -> BackendProfile:
     `model` field.
 
     Raises `KeyError` naming the known models rather than guessing. Guessing
-    would mean silently running a Parakeet transcript against Whisper's 2.0 s
-    word bound, which is exactly the mistake this file exists to make
-    impossible — and the resulting wrong answer would be a plausible-looking
-    list of dark regions, not an error anyone would notice.
+    would mean silently running one backend's transcript against another's
+    word bound — in either direction — which is exactly the mistake this file
+    exists to make impossible, and the resulting wrong answer would be a
+    plausible-looking list of dark regions, not an error anyone would notice.
     """
     model = contract.get("model")
     for profile in PROFILES:
