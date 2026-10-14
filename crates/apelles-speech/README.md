@@ -96,7 +96,7 @@ not contain. Its own module doc has the full command.
 
 ## Dark regions, and why they need a detector at all (D-349, B-216)
 
-Whisper's whole-file pass does not merely mis-hear some utterances — it emits no
+Historically (Whisper, removed by D-381): its whole-file pass did not merely mis-hear some utterances — it emits no
 tokens for them, inside a 30-second window it is otherwise decoding confidently,
 at temperature 0.0 with `no_speech_prob` 0.043-0.171 against a 0.6 threshold.
 Nothing in its machinery notices, so there is no error and no confidence score to
@@ -114,6 +114,18 @@ detector misses more than half the real cases), and the amplitude floor is
 calibrated **per file** from the quietest speech that file's own transcript read
 correctly (which is what takes precision from 72.7 % to 90-100 %). Full trail,
 with the 111-window scoring: `docs/notes/whisper-dark-region-research.md`.
+
+**Parakeet, the only backend now (2026-10-13).** The detector is
+backend-agnostic and outlived Whisper because Parakeet has the same kind of
+failure — measured 21 real dark stretches in 2,192 s of C019 / C038 / C040, in
+different places than Whisper (it reads all nine windows Whisper dropped).
+What changed is the first rule above: Parakeet's duration head cannot stretch a
+word across a hole, so `DarkParams::default().max_word_secs` is
+`NO_WORD_LENGTH_BOUND_SECS` (1e6, "no word is too long" — finite because the
+app's command guard and JSON echo need a finite number). A caller with a
+stretching backend passes a real bound (Whisper's was 2.0 s). `dark_live`
+defaults to the same; pass `APELLES_DARK_MAX_WORD_SECS=2.0` to score a Whisper
+transcript the old way.
 
 ## Why a retake is a span, and why there is no embedding model (D-327)
 

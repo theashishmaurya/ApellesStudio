@@ -5,7 +5,7 @@
 //! own unit tests cover the algorithm against fixtures with known-correct
 //! answers, which is where the correctness lives. What they cannot cover is the
 //! thing this detector is actually for: whether, on a real camera original and
-//! the real whisper transcript of it, the findings are the utterances a human
+//! the real transcript of it, the findings are the utterances a human
 //! can hear and the transcript does not contain. That needs a multi-GB source
 //! file, a downloaded ONNX model and a located ONNX Runtime — none of which a
 //! clean checkout has — so it is opt-in, exactly like [`silero_live`].
@@ -15,6 +15,7 @@
 //! ```text
 //! ffmpeg -i source.MOV -f f32le -ac 1 -ar 16000 source.f32
 //! ai-env/.venv/bin/python ai-media/transcribe.py --audio source.MOV --output source.json
+//! # or reuse a committed Parakeet transcript: eval/retake/transcripts/<source>.parakeet.words.json
 //!
 //! ORT_DYLIB_PATH=app/src-tauri/resources/libonnxruntime.dylib \
 //! APELLES_SILERO_MODEL="$HOME/Library/Application Support/studio.apelles.app/models/silero_vad_v6.2.1.onnx" \
@@ -37,7 +38,9 @@
 //!
 //! - `APELLES_DARK_MAX_WORD_SECS` overrides [`DarkParams::max_word_secs`],
 //!   which is what `harness.vad.dark_params_for(profile)` emits. Omitted, the
-//!   measured Whisper default stands.
+//!   default stands: [`NO_WORD_LENGTH_BOUND_SECS`], Parakeet's (the only
+//!   backend's) "no bound". Pass `2.0` to score a Whisper transcript the way
+//!   D-349 measured it.
 //! - `APELLES_DARK_REPORT_JSON` writes the whole [`DarkReport`] to that path as
 //!   JSON — the same `serde` shape `chroma_detect_dark_regions` already returns
 //!   to the app — which `harness.vad.fold_dark_report` consumes directly.
@@ -49,6 +52,7 @@
 //!   is the whole-file case every existing caller is.
 //!
 //! [`silero_live`]: ../silero_live.rs
+//! [`NO_WORD_LENGTH_BOUND_SECS`]: apelles_speech::dark::NO_WORD_LENGTH_BOUND_SECS
 
 use std::path::{Path, PathBuf};
 
@@ -129,7 +133,7 @@ fn dark_regions_on_real_footage() {
     };
     // The one parameter that is the BACKEND's rather than the algorithm's
     // (D-375). The harness supplies it per backend; a bare run keeps the
-    // measured Whisper default, which is what every existing caller gets.
+    // crate default, "no bound", which is what the only backend (Parakeet) needs.
     let params = DarkParams {
         max_word_secs: env_f64(
             "APELLES_DARK_MAX_WORD_SECS",

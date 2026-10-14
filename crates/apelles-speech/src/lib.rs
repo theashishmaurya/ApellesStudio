@@ -15,8 +15,9 @@
 //!   [`phrase`]'s repeated-n-gram test ("the same *phrase* again inside two
 //!   different sentences", D-365). A pair matched by either is a retake.
 //! - **Dark regions**, from both at once ([`dark`], D-349). Where the VAD hears
-//!   a voice and the transcript has no words, whisper silently dropped a
-//!   multi-second utterance — a real, measured, ~once-per-three-minutes failure
+//!   a voice and the transcript has no words, the ASR silently dropped a
+//!   multi-second utterance — a real, measured failure (Whisper ~once per three
+//!   minutes; Parakeet, now the only backend, at a comparable or higher rate)
 //!   that is *biased towards retakes* and therefore blinds the detector above
 //!   (B-216). This one is a third detector rather than a note on the other two
 //!   precisely because neither can see it: the silence detector reads no

@@ -2705,12 +2705,15 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       yet. Deliberately deferred: how many passes, at which offsets, and whether
       `low_confidence` renders in the Recut panel are what step 4's numbers
       decide.
-    - ⬜ **Pass the backend's `max_word_secs` through the app.**
-      `chroma_detect_dark_regions` still defaults to Whisper's bound because
-      nothing app-side knows which backend produced a cached transcript.
-      Correct while Whisper is the default; a real gap the day it is not —
-      **still open and still correct after step 4**, which kept the default
-      (D-377).
+    - ✅ **Pass the backend's `max_word_secs` through the app** — closed
+      2026-10-13 by making the question moot (Whisper decommissioned, D-381
+      pending; Parakeet the only backend). `DarkParams::default().max_word_secs`
+      is now `NO_WORD_LENGTH_BOUND_SECS` (1e6, "no bound"), matching Parakeet's
+      descriptor `None`; no per-transcript backend tag is needed. Measured on
+      Parakeet transcripts of C019 / C038 / C040 + the nine silent sources:
+      21 real dark stretches in 2,192 s — Parakeet drops speech too, in
+      different places than Whisper, so the detector stays
+      (`docs/notes/whisper-dark-region-research.md` "Parakeet, 2026-10-13").
     - ✅ **Step 4 — re-derive, then decide** (2026-10-10, **D-377**). Both
       backends over **all twelve** raw camera originals through the real seam;
       nine turned out to be silent B-roll, so the decision rests on three speech

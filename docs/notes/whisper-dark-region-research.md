@@ -1,5 +1,11 @@
 # Whisper "dark regions": root cause, a second video, and a validated detector
 
+> **Historical motivation: Whisper, removed by D-381.** Sections 1-7 are the
+> 2026-09-18 research that built the detector against Whisper transcripts and
+> are kept as measured. The detector itself is backend-agnostic and survived the
+> removal — see **"8. Parakeet, 2026-10-13"** at the end for why, with the
+> measurement.
+
 Research trail for **B-216**'s transcription sub-finding — *"Whisper's whole-file
 pass silently swallows multi-second regions of real, audible speech."* Dated
 2026-09-18.
@@ -357,3 +363,145 @@ positive at zero cost to recall.
 | `reference_level.py` | per-file speech RMS calibration |
 | `score.py` / `score2.py` / `final_score.py` | the scoring above |
 | `probe.py` | one window, three ways: words, VAD, RMS |
+
+---
+
+## 8. Parakeet, 2026-10-13
+
+Whisper is decommissioned (D-381, pending) and Parakeet is the only ASR backend.
+Two questions: does the detector still find anything on Parakeet transcripts,
+and what should `DarkParams::default().max_word_secs` (2.0 s, Whisper's anomaly
+bound) become?
+
+**Method.** `crates/apelles-speech/tests/dark_live.rs` (`--ignored`, Silero
+v6.2.1, `APELLES_DARK_MAX_WORD_SECS=1000000` = no bound) over the committed
+word-level Parakeet transcripts `eval/retake/transcripts/<source>.parakeet.words.json`
+for C019 / C038 / C040, and over an empty word list for the nine silent B-roll
+sources (their committed Parakeet transcripts are `[]`). PCM extracted with
+`ffmpeg -f f32le -ac 1 -ar 16000` into a temp directory, never the repo.
+Evidence is what exists without a listener: the VAD sum, the RMS peak against the
+file's own calibrated floor, and **what the other ASR read there**
+(`crates/apelles-speech/tests/fixtures/transcripts/<source>.whisper.json`).
+Whisper is evidence that speech exists, not ground truth; nobody listened.
+
+### 8a. The result: Parakeet drops speech too
+
+| source | length | words | VAD speech / covered | floor (spans) | regions | stretches |
+|---|---|---|---|---|---|---|
+| C019 | 517.1 s | 977 | 426.3 / 373.4 s | 0.058 (37) | 9 | 7 |
+| C038 | 989.5 s | 1296 | 534.8 / 506.8 s | 0.016 (82) | 13 | 10 |
+| C040 | 686.3 s | 903 | 346.4 / 347.8 s | 0.151 (57) | 4 | 4 |
+| **total** | **2192.9 s** | | | | **26** | **21** |
+| 9 silent B-roll | 6.2-124.6 s each | 0 | <= 2.0 s | none (0 spans) | 2 (one source) | 1 |
+
+`gated_out` was 0 everywhere. 21 stretches in 2,193 s is one per ~1.7 minutes of
+footage, against the Whisper study's one confirmed per ~3 (10 in 1,676 s) — not
+a like-for-like number (those were confirmed by isolated re-transcription, these
+are corroborated by a second ASR), but it is not smaller.
+
+**Different places, not the same ones.** All nine windows the Whisper study
+confirmed Whisper had dropped (C040 162.66, 173.32, 365.70, 518.18, 614.76;
+C038 217.26, 328.07, 464.99, 863.87) are read by Parakeet at 84-100 % coverage
+(worst: 2.12 of 2.52 s). The regions below are Parakeet's own drops, which
+Whisper reads. The two backends' failures are close to complementary on this
+footage, which is an argument for the cross-check, not for either model.
+
+### 8b. Every region, with the evidence
+
+"Parakeet around it" = the words either side (the hole sits between them);
+"Whisper read there" = the Whisper segment(s) overlapping the region. Peak RMS
+is in 0-1 float units, against the floor in the table above.
+
+| source | region (s) | stretch (s) | speech (s) | rms peak | Parakeet around it | Whisper read there |
+|---|---|---|---|---|---|---|
+| C019 | 62.72-63.77, 66.34-73.95, 74.69-78.00 | 62.64-78.00 | 11.97 | 0.607 | "...free." / "That's not" | "Sounds free. Actually, it's not. And the reason it's free ... silently does nothing. The fingerprint has to match exactly." |
+| C019 | 91.68-95.92 | 91.52-95.92 | 4.24 | 0.599 | "different." / "This is the mistake." | "...and the model reads the whole thing like caching was never on." |
+| C019 | 97.36-99.60 | 97.36-99.60 | 2.24 | 0.445 | "mistake." / "People enabling" | "People enabling caching drop a current IP" |
+| C019 | 275.17-284.32 | 275.04-284.32 | 9.15 | 0.719 | "forever." / "And next" | "There's a one hour option that costs a bit more ... with gaps." |
+| C019 | 311.59-318.14 | 309.12-318.64 | 6.56 | 0.463 | "spend it." / "So the per token" | "longer contexts, more agents, steps, more back and forth in a single task because now they can afford it" |
+| C019 | 326.60-329.08 | 326.60-329.08 | 2.48 | 0.559 | seven words, all zero-width at 326.6 | "there's actually a name for this" — **text present, timestamps collapsed** |
+| C019 | 493.86-501.60 | 468.72-501.60 | 7.74 | 0.542 | "7001." / "Why is my AI" | "...a stenographer ... finally click subscribe" |
+| C038 | 53.79-54.17, 55.52-59.44 | 45.44-59.44 | 4.30 | 0.284 | "models." / "Running an already" | "The whole business is building the chips for only one thing" |
+| C038 | 72.07-77.95 | 66.72-84.00 | 5.88 | 0.247 | "inference." / "A few months later" | "Nvidia's biggest deal ever and it wasn't even about the part that AI makes headlines about." |
+| C038 | 185.31-191.20 | 177.08-204.60 | 5.88 | 0.405 | "shift." / "Today I" | "Running a model has quietly become more expensive than building it in the first place." |
+| C038 | 334.18-335.64 | 330.84-335.64 | 1.46 | 0.233 | "inference is everything" zero-width at 330.8 | "Inference is everything after that." — **text present, timestamps collapsed** |
+| C038 | 485.79-486.88 | 479.44-487.68 | 1.31 | 0.182 | "message." / "Who" | "It's like a stenographer who before writing every single next word rereads the entire" |
+| C038 | 501.92-505.04 | 501.92-505.04 | 3.12 | 0.402 | "everything." / "Plus" | "Word one reread everything, word two reread everything again plus the word you already" |
+| C038 | 513.67-521.28 | 509.44-528.84 | 7.61 | 0.271 | "one." / "That's an" | "...and by word 200 that's 200 full rereads just to write one response" |
+| C038 | 839.49-840.13, 843.52-846.56, 850.95-852.00 | 836.44-852.44 | 4.72 | 0.307 | "first place." / "So quick recap." | only 848.3-851.4 "So quick recap,"; **839.5-846.6 (3.7 s of VAD speech) is silent in both** |
+| C038 | 929.35-933.84 | 929.28-933.84 | 4.49 | 0.452 | "free." / "Running right" | "real compute real electricity real hardware running right" |
+| C038 | 985.57-987.55 | 979.64-989.46 | 1.98 | 0.210 | "do." (979.6) | "Thanks for watching, see you in the next one." |
+| C040 | 79.75-81.84 | 63.52-81.84 | 2.16 | 0.216 | "Okay." / "It's just the model" | "attention in simple term it's just the model deciding for every word it's about" |
+| C040 | 188.77-193.00 | 180.84-193.00 | 4.23 | 0.267 | "it." / "It's called self-attention" | "The specific version of this used inside these models is called self-attention" |
+| C040 | 280.99-283.52 | 275.84-289.76 | 2.52 | 0.214 | "constantly." / "Every word" | "There's an actual mechanism behind that checking in." |
+| C040 | 514.56-517.44 | 505.60-518.08 | 2.88 | 0.312 | "input." / "So if something's" | "...don't bury it in the middle of a long task." |
+| C029 (B-roll) | 9.76-10.91, 13.19-14.08 | 0.00-16.64 | 2.04 | 0.021 | no words at all | nothing (`[]`) |
+
+Reading it, of the 21 stretches in the three speech sources: **18 are speech
+Parakeet left out and Whisper read** (rms peaks well above each file's floor:
+floors 0.016-0.15, peaks 0.18-0.72; the 836.44-852.44 stretch is counted here
+for its Whisper-read tail). **2 are timestamp collapses** (C019 326.6, C038
+330.8): the words are in the transcript at zero duration, so nothing was lost
+from the *text* — but a zero-width word is not coverage here (the detector
+requires `duration > 0`), and a cut or caption that trusts those times is wrong,
+so reporting them is right. **One sub-region is unresolved**: C038
+839.49-846.56, 3.7 s the VAD calls speech at rms peak 0.307 (well above the 0.016
+floor) that neither ASR transcribed — it needs a listen; it may be a cough, a
+laugh or a real drop both models missed. Two edge cases: C038 985.57-987.55 is a
+sign-off Whisper may or may not have hallucinated (rms 0.21 against a 0.016
+floor says there is real sound there), and C038 53.79-54.17 is a 0.38 s sliver
+that only exists because it sits in a stretch whose other region clears the
+threshold.
+
+### 8c. The silent B-roll
+
+Eight of the nine report **0 regions** (VAD speech 0.0-0.6 s, nowhere near the
+1.2 s threshold). **C029 reports 2 regions** (9.76-10.91 and 13.19-14.08, 2.04 s
+of VAD speech in 16.6 s): neither ASR heard anything there, the RMS peak is
+0.021, and — because a silent source has no transcribed speech to calibrate a
+floor from — the report is **ungated** (`rms_floor: None`, the documented
+behaviour) so nothing could reject it. This is a faint non-speech sound the VAD
+leans towards speech on, in a clip with no speech: a known precision limit of
+the ungated path, not a Parakeet defect. It does not affect the retake path
+(which runs the detector only over clips it groups) but a user running
+`editor_detect_dark_regions` on this clip would see a false positive whose
+`rmsFloor: null` is the caveat the tool already states.
+
+### 8d. What changed in the code
+
+`DarkParams::default().max_word_secs` 2.0 -> `NO_WORD_LENGTH_BOUND_SECS`
+(1.0e6). The meaning is Parakeet's descriptor `max_word_secs=None` ("no word can
+stretch across a hole") and the representation is the one
+`ai-media/harness/profiles.py` already uses for that `None`: a very large
+**finite** number, because the app's command guard requires finite positive
+parameters and the value is echoed in the JSON result, where `inf` has no form.
+The measurement agrees with the descriptor: with no bound, every Parakeet hole
+above is still a finding — Parakeet's shape is a hole with *no* word in it (or
+zero-width words), not a stretched word, so the stretched-word rule that was
+"worth more than half the real cases" for Whisper has nothing to catch. The
+tests that exercise the stretched-word rule pass 2.0 explicitly.
+
+### 8e. Keep or remove — the owner's call
+
+The measurement does not support removing the detector: it finds 18
+corroborated multi-second drops in 36 minutes of real Parakeet output, it is the
+only check that does, and it costs one VAD pass. What it does *not* yet say is
+how many of those matter to the downstream user (a dropped retake is the costly
+case; the retake path already re-reads these windows in isolation via
+`recoverDarkRegions`). Nothing was removed.
+
+### 8f. Reproducing
+
+```text
+ffmpeg -i ~/Downloads/<source>.MOV -vn -f f32le -ac 1 -ar 16000 /tmp/<source>.f32
+ORT_DYLIB_PATH=app/src-tauri/resources/libonnxruntime.dylib \
+APELLES_SILERO_MODEL="$HOME/Library/Application Support/studio.apelles.app/models/silero_vad_v6.2.1.onnx" \
+APELLES_DARK_PCM=/tmp/<source>.f32 \
+APELLES_DARK_TRANSCRIPT=eval/retake/transcripts/<source>.parakeet.words.json \
+  cargo test -p apelles-speech --test dark_live -- --ignored --nocapture
+```
+
+(`dark_live` aborts with `libc++abi: mutex lock failed` while tearing down ONNX
+Runtime after the report is printed and written; the numbers above are complete
+by then. Pre-existing, unrelated to the detector.) A silent source needs a
+transcript file of `{"words": []}`.
