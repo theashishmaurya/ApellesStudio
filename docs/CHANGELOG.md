@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-14** — **B-250 fixed:** `editor_get_word_transcript` now says "transcription is running" when another caller already started one, instead of telling the agent to pass `start: true`.
+
 - **2026-10-14** — **B-249 fixed: polling `editor_detect_retakes_status` finishes a retake job instead of stalling.** A start call now records its request in the store, and a poll for that request carries the job through the dark-region re-reads and into the grouping. A status read nobody asked for still starts nothing, and now says so (`idle`).
 
 - **2026-10-14** — **D-380 live smoke on C040 passed end to end; B-248 fixed.** Client loop: 11 groups proposed, 4 refused and resolved by the client (7 verified, 4 AI-confirmed, 0 refused); Recut panel shows badges, highlighted words and reasons; MCP cut of the verified groups (892 → 778 words, one undo entry), then `undo` / `redo` / `undo` each one step. B-248: `undo` / `redo` returned the whole Colorist grade + histogram; they now have a `CROSS_TAB` answer path. The ~15/19-min "UI freeze" seen earlier was the Mac in Low Power Sleep at 1% battery (`pmset -g log`), not the app.

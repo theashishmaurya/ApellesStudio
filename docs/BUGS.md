@@ -27,6 +27,15 @@ Still real:
 
 ## Open
 
+## B-250 — `editor_get_word_transcript` told the agent to start a transcription that was already running
+
+status: **fixed** (2026-10-14) · severity: low (a wrong instruction, not a wrong result: following it only re-asks for a job already in flight) · area: `packages/editor/src/retakeProposalOps.ts`
+
+- **found:** 2026-10-14, live MCP test: a source on the track had no transcript yet and a transcription for it was already running, started by another caller. `editor_get_word_transcript` (without `start`) still answered "Call editor_get_word_transcript with start: true to transcribe them."
+- **cause:** the pending note chose its wording from the call's own `start` argument ("did *this* call start it?") instead of from the store ("is a transcription running for these files?"). Only a call that started the job itself was told it was running.
+- **fix:** the note reads `mediaUnderstandingStore.transcribing` for the pending files. If all are running it says transcription is running and to call again shortly; if none are, it says to call with `start: true`; for a mix it says how many are running and how many still need `start: true`. No tool description changed.
+- **verification:** new case in `retakeProposalOps.dom.test.tsx`: a transcription started outside the op makes the note say "Transcription is running; call this again" with no `start: true`. With the old code it fails on exactly that assertion. Whole `@apelles/editor` suite green (2160 tests); `tsc` in `app/` at the 65-error baseline.
+
 ## B-249 — retake dark-region recovery stalled forever when the agent polled, as the start call told it to
 
 status: **fixed** (2026-10-14) · severity: medium (a retake sweep never answered unless the agent ignored its own instructions and called the start tool again) · area: `packages/editor/src/useEditorControl.ts`, `packages/editor/src/mediaUnderstandingStore.ts`

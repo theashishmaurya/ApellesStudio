@@ -85,6 +85,12 @@ function resolveInput(
     if ('error' in input) return input;
   }
   if (input.pending.length > 0) {
+    // B-250 — what to do next depends on whether a transcription is actually
+    // RUNNING for each file, not on whether this call started it: another
+    // caller (the Index panel, a retake sweep, an earlier `start: true`) may
+    // already have one going, and telling the agent to start it again is wrong.
+    const transcribing = useMediaUnderstandingStore.getState().transcribing;
+    const notRunning = input.pending.filter((path) => !transcribing[path]).length;
     return {
       pending: {
         ok: true,
@@ -94,9 +100,12 @@ function resolveInput(
         note:
           `${input.pending.length} source file(s) on this track have no transcript yet — the word view is ` +
           'only served whole, because word indices would shift when they land. ' +
-          (start
+          (notRunning === 0
             ? 'Transcription is running; call this again in a few seconds.'
-            : 'Call editor_get_word_transcript with start: true to transcribe them.'),
+            : notRunning === input.pending.length
+              ? 'Call editor_get_word_transcript with start: true to transcribe them.'
+              : `${input.pending.length - notRunning} are being transcribed already; call ` +
+                `editor_get_word_transcript with start: true to transcribe the other ${notRunning}.`),
       },
     };
   }

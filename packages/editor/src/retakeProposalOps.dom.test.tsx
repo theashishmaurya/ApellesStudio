@@ -237,6 +237,29 @@ describe('editor_get_word_transcript', () => {
       }
     });
   });
+
+  /** B-250 — a transcription another caller already started is running, so the
+   *  note must say so, not tell the agent to start one. */
+  it('says transcription is running when another caller started it', async () => {
+    await mountWith(false);
+    const before = await callOp('editor_get_word_transcript', { track: 0 });
+    expect(before.result.note).toMatch(/with start: true to transcribe them/);
+
+    // Started by someone else — not by an `editor_get_word_transcript` call.
+    act(() => {
+      useMediaUnderstandingStore.getState().startTranscript(SOURCE, { wordTimestamps: true });
+    });
+    const during = await callOp('editor_get_word_transcript', { track: 0 });
+    expect(during.result).toMatchObject({ state: 'transcribing', pending: [SOURCE] });
+    expect(during.result.note).toMatch(/Transcription is running; call this again/);
+    expect(during.result.note).not.toMatch(/start: true/);
+
+    await act(async () => {
+      for (let i = 0; i < 100 && useMediaUnderstandingStore.getState().transcribing[SOURCE]; i += 1) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    });
+  });
 });
 
 describe('editor_propose_retakes', () => {
