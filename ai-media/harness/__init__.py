@@ -9,7 +9,7 @@ contract plus annotations. Nothing in here transcribes anything.
 
 **Why it exists.** D-374's premise, in the owner's words: *"we can not get 100%
 thats not possible we will build the Harness arround it."* A backend that is
-17× faster and 2 % worse is a better input to a harness than a slower one,
+~10× faster and 2 % worse is a better input to a harness than a slower one,
 because the saved time buys passes and the harness can then say **where it is
 unsure** instead of pretending. The harness is the product; the backend is a
 swappable part. Design, measurements and the staged migration:
@@ -27,7 +27,9 @@ without touching the others.
 
 **Where the backend-specific numbers live.** In the [`BackendProfile`], passed
 in — never in a check. `profiles.py` is the whole of this package's knowledge
-that backends differ at all, and it is three fields wide.
+that backends differ at all, and it is three fields wide. Since D-381 it holds
+one profile, Parakeet's; the seam is kept so the next backend needs a profile
+and nothing else.
 
 **What is NOT here, deliberately:**
 
@@ -58,7 +60,6 @@ from .pipeline import CheckContext, run_checks
 from .profiles import (
     BackendProfile,
     PARAKEET,
-    WHISPER,
     profile_for,
 )
 from .reconcile import MultiPassReconcile, reconcile_passes
@@ -72,7 +73,6 @@ __all__ = [
     "MultiPassReconcile",
     "PARAKEET",
     "VadCrossCheck",
-    "WHISPER",
     "align_word_streams",
     "analysed_range",
     "dark_params_for",

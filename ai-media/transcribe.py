@@ -17,15 +17,20 @@ what is being asked: "find where I said X" → here; "find where the picture
 changed" → there.
 
 **The MODEL is swappable; this file's return value is not** (D-374, 2026-10-09).
-Until then `mlx-whisper large-v3` was hard-coded here. It now lives in
-`asr/whisper_mlx.py` behind the [`asr.AsrBackend`] Protocol, along
-`asr/parakeet_mlx.py` (`parakeet-tdt-0.6b-v3`, 17.6× realtime, opt-in via
-`backend="parakeet"`), and **whisper stays the default** — D-374's step 4,
-re-deriving `apelles-speech`'s five corpus tests and re-sweeping the retake
-thresholds against a Parakeet transcript, is what moves it, and that has not
-happened. What a backend is, and what it owes, is `asr/base.py`; the
-measurements and the staged migration are
-`docs/notes/asr-backends-and-harness.md`.
+`mlx-whisper large-v3` was hard-coded here until D-374 moved it behind the
+[`asr.AsrBackend`] Protocol beside `parakeet-tdt-0.6b-v3`. **Since D-381
+(2026-10-13) Parakeet is the only backend** (`asr/parakeet_mlx.py`, ~25×
+realtime end-to-end): Whisper was decommissioned and its module deleted, and
+the seam stays so another backend can be added without touching anything above
+this file. What a backend is, and what it owes, is `asr/base.py`; the
+measurements and the migration are `docs/notes/asr-backends-and-harness.md`.
+
+**Languages.** Parakeet covers 25 European languages; **Hindi and code-switched
+Hinglish are not supported** (D-381, the owner's call — until then this file
+promised Hinglish on Whisper). A caller that names a language outside the set is
+refused with a sentence saying so; one that names none gets the model's own
+behaviour, which on a Hindi source is fluent, wrong English — there is no
+detected language to refuse on (`asr.base.check_language`).
 
 **The seam is at the contract that already existed.** [`transcribe`]'s return
 value IS the interface, unchanged since D-189, and this file keeps every piece
@@ -35,22 +40,20 @@ into absolute source seconds, the flattened `words`, the `model`/`source`/
 audio file and returns window-local seconds — which is why D-349's windowing
 below works identically on a backend that knows nothing about it.
 
-`condition_on_previous_text=False`, the `large-v3` repo map, B-224's seed and
-the two deliberate simplifications carried over from videoAgent's own
-`/whisper-mlx` script all moved with the implementation and are documented at
-their definitions in `asr/whisper_mlx.py`.
+**Determinism.** Parakeet decodes greedily — no sampling, no RNG — so the same
+file and the same arguments give byte-identical output with no seed set. D-349
+seeded MLX's global RNG for Whisper (B-224, its temperature-fallback ladder
+sampled); that seed left with the Whisper backend (D-381).
 
-**Two things D-349 added, both of them about B-216/B-224 and both documented at
-their own definitions:** [`asr.whisper_mlx.MLX_RANDOM_SEED`] makes a run
-reproducible (B-224 — the fallback ladder was sampling on an unseeded global
-RNG), and [`transcribe`]'s `start_secs`/`duration_secs` transcribe one WINDOW of a source
-with its timestamps shifted back to absolute source seconds — the recovery
-primitive `apelles-speech`'s dark-region detector feeds, since an isolated pass
-reads the speech a whole-file pass silently drops.
+**D-349's window**: [`transcribe`]'s `start_secs`/`duration_secs` transcribe one
+WINDOW of a source with its timestamps shifted back to absolute source seconds —
+the recovery primitive `apelles-speech`'s dark-region detector feeds, and the
+way the harness's multi-pass reconciliation moves a backend's chunk seams.
 
 **Why this runs as a SUBPROCESS of `server.py` and not in-process** (D-189):
-`large-v3` weights are ~3 GB, and the Metal buffers a run allocates are several
-times that again. `ai/server.py` had to grow a whole TTL idle-unloader (D-084)
+an MLX model's weights (~2.3 GB for Parakeet; ~3 GB for the `large-v3` this was
+written for) and the Metal buffers a run allocates are several times that
+again. `ai/server.py` had to grow a whole TTL idle-unloader (D-084)
 because its lazily-loaded singletons never released theirs. Running each job as
 its own process means the OS reclaims every byte on exit, so this sidecar's
 idle footprint stays at roughly the FastAPI process itself and the D-084
@@ -87,20 +90,9 @@ from asr import (
     get_backend,
     validate_body,
 )
-from asr import whisper_mlx
 from errors import UserFacingError
 
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
-
-# The whisper backend's own default model and repo map, re-exported under the
-# names they have always had here because callers above this file read them from
-# this module and D-374 step 1 changes nothing above it: `server.py` defaults
-# `TranscribeReq.model` to the first, validates a request against the second and
-# reports the resolved repo from `/health`. A backend's model list in general is
-# `backend.descriptor.models`; these two are specifically whisper's, spelled
-# where their existing callers already look.
-DEFAULT_MODEL = whisper_mlx.DEFAULT_MODEL
-MLX_MODEL_REPOS = whisper_mlx.MLX_MODEL_REPOS
 
 # --------------------------------------------------------------------------- #
 # the process boundary (B-189 / D-322)
@@ -109,9 +101,10 @@ MLX_MODEL_REPOS = whisper_mlx.MLX_MODEL_REPOS
 # A ceiling, not a schedule. Before D-322 a transcribe job had no timeout at all,
 # which is how B-174's dead-TCP hang could sit at 0% CPU forever with nothing to
 # report; a subprocess that is killed at least ends as a job error the poller can
-# see. One hour covers roughly five hours of audio at `large-v3`'s real MLX
-# speed, so it can only fire on a job that is genuinely stuck — killing a real
-# long take would be the worse failure of the two.
+# see. It was sized when `large-v3` was the model — one hour covered roughly
+# five hours of audio at its measured ~2.7× realtime, and Parakeet's ~25× makes
+# the margin far wider — so it can only fire on a job that is genuinely stuck;
+# killing a real long take would be the worse failure of the two.
 TRANSCRIBE_TIMEOUT_S = 3600
 
 # A `UserFacingError` is a SENTENCE written for the person reading it (B-119),
@@ -147,8 +140,9 @@ def extract_audio(
     start_secs: float | None = None,
     duration_secs: float | None = None,
 ) -> str:
-    """16 kHz mono WAV in a temp file — whisper's own native input rate, so the
-    model never has to resample.
+    """16 kHz mono WAV in a temp file — the ASR model's own native input rate
+    (Parakeet's preprocessor, as Whisper's was), so the model never has to
+    resample.
 
     `start_secs` / `duration_secs` cut a WINDOW out of the source instead of the
     whole thing (D-349). `-ss` goes **before** `-i` so ffmpeg seeks the input
@@ -202,8 +196,8 @@ def extract_audio(
 
 def _shift(value: object, offset: float) -> object:
     """A timestamp moved into absolute source seconds, or left alone if the
-    model did not emit one. `None` is a real possibility in mlx-whisper's word
-    entries and must not become `None + offset`."""
+    backend did not emit one. The contract allows an untimed word (`asr/base.py`
+    — mlx-whisper emitted them), and `None` must not become `None + offset`."""
     if offset == 0.0 or not isinstance(value, (int, float)) or isinstance(value, bool):
         return value
     return round(float(value) + offset, 6)
@@ -221,24 +215,23 @@ def transcribe(
     """`{text, language, model, source, segments: [{start, end, text, words:
     [{word, start, end, probability?}]}], words: [...]}`.
 
-    `language`: "en", "hi", … or `None` to auto-detect (code-switched Hinglish
-    auto-detects fine on `large-v3`). `word_timestamps=False` returns
-    segment-level timings only — faster on whisper, but not enough to cut to a
-    word.
+    `language`: an ISO code ("en", "de", …) or `None` to let the model decide.
+    Parakeet takes no language argument, so a named language is only ever
+    checked: one outside its 25 European languages is **refused** with a
+    sentence, before any model loads, rather than silently mis-transcribed
+    (`asr.base.check_language`). Hindi/Hinglish is unsupported (D-381).
+    `word_timestamps=False` returns segment-level timings only — not enough to
+    cut to a word, and not faster on Parakeet (its own docstring says why).
 
     `words` is the flattened per-word list across every segment: the shape a
     caller actually wants for "find the word at 12.4s" without walking the
     segment tree itself. Absent (rather than empty) when the model returned no
     word timings at all.
 
-    **`backend`** selects the model family — `"whisper"` (the default,
-    `mlx-whisper`) or `"parakeet"` (`parakeet-tdt-0.6b-v3`, 17.6× realtime,
-    opt-in). D-374: the contract above is identical either way, which is the
-    whole point of the seam; `model=None` means "that backend's own default", so
-    a caller switching backend does not have to know the model names. A language
-    the chosen backend cannot transcribe is **refused here** rather than
-    silently mis-transcribed — Parakeet is 25 European languages and Hindi is
-    not among them (`asr.base.check_language`).
+    **`backend`** selects the implementation behind the seam (D-374). Since
+    D-381 there is one, `"parakeet"` (`parakeet-tdt-0.6b-v3`), and it is the
+    default; the argument stays because the seam does. `model=None` means "that
+    backend's own default", so a caller never has to know model names.
 
     **`start_secs` / `duration_secs` transcribe one WINDOW of the source**
     (D-349, the recovery half of B-216's dark-region fix). The window is cut out
@@ -249,20 +242,15 @@ def transcribe(
     This is done HERE and not in a backend, so a new backend gets it for free
     and the shift arithmetic exists exactly once.
 
-    Transcribing a window in ISOLATION is not merely a speed optimisation: it is
-    the one technique measured to recover the multi-second regions of real
-    speech that whisper's whole-file pass silently declines to transcribe
-    (B-216 — the model reads the audio and emits no tokens for an utterance
-    inside a window it is otherwise decoding confidently, at temperature 0.0
-    with every quality metric healthy). It recovered every confirmed case across
-    two real sources; `docs/notes/whisper-dark-region-research.md` has the
-    measurements.
+    Transcribing a window in ISOLATION is not merely a speed optimisation: it
+    was the one technique measured to recover the multi-second regions of real
+    speech that Whisper's whole-file pass silently declined to transcribe
+    (B-216; `docs/notes/whisper-dark-region-research.md`). It is also how the
+    harness's multi-pass reconciliation moves a backend's chunk seams (D-375).
 
-    **Deterministic since D-349** (B-224): MLX's global RNG is seeded from
-    [`asr.whisper_mlx.MLX_RANDOM_SEED`] before every whisper run, so the same
-    file and the same arguments give the same transcript. That is
-    reproducibility, not correctness — see the constant's own note. The parakeet
-    backend decodes greedily and needs no seed at all."""
+    **Deterministic**: Parakeet decodes greedily with no RNG, so the same file
+    and the same arguments give the same transcript, byte for byte, with no
+    seed (D-381 retired D-349's Whisper-only seeding along with Whisper)."""
     src = Path(path)
     if not src.exists():
         raise FileNotFoundError(path)
@@ -345,7 +333,7 @@ def _subprocess_cmd(
 
     `sys.executable` is correct by construction and for the same reason
     `video_understand` relies on it: whatever interpreter imported this module
-    is the one whose environment has `mlx_whisper` (D-314 — both sidecars share
+    is the one whose environment has `parakeet_mlx` (D-314 — both sidecars share
     `ai-env/.venv`, and `/health` reports the prefix so that is externally
     visible). `__file__` is resolved rather than passed bare so the child's
     implicit `sys.path[0]` is this directory and its `from errors import
@@ -356,8 +344,8 @@ def _subprocess_cmd(
     server runs.
 
     `--backend` is omitted when it is the default, exactly as `--language` is
-    omitted for auto-detect: the flag's absence IS the default, so a whisper
-    job's argv is byte-for-byte what it was before D-374."""
+    omitted for auto-detect: the flag's absence IS the default, so a default
+    job's argv names only what the caller actually chose."""
     cmd = [
         sys.executable,
         str(Path(__file__).resolve()),
@@ -380,7 +368,8 @@ def _subprocess_cmd(
 
 def _user_facing_message(stderr: str) -> str | None:
     """The child's marked line, un-marked — or `None` if it never wrote one.
-    Scanned from the end: `mlx_whisper`'s own progress bar owns stderr too."""
+    Scanned from the end: the model library's own progress output and warnings
+    own stderr too."""
     for line in reversed(stderr.splitlines()):
         line = line.strip()
         if line.startswith(USER_FACING_MARKER):
@@ -401,9 +390,9 @@ def transcribe_subprocess(
     """[`transcribe`], run as its own OS process — same arguments, same return
     value, no model weights and no Metal buffers left in the caller (B-189).
 
-    This is what a long-lived process must call. `mlx_whisper` loads ~3 GB of
+    This is what a long-lived process must call. An MLX model loads GBs of
     weights and allocates several GB more of GPU-resident buffers per run, and
-    MLX's Metal allocator keeps them: measured at 11 GB of
+    MLX's Metal allocator keeps them: measured (on `mlx_whisper`, B-189) at 11 GB of
     `IOAccelerator (graphics)` in the uvicorn parent after two real jobs, which
     `ps`/`top` cannot see at all (they reported ~35 MB RSS throughout — only
     `footprint <pid>` shows it). Letting the OS reclaim it at process exit is
@@ -411,8 +400,8 @@ def transcribe_subprocess(
     no cache-trim call and no knowledge of MLX's allocator internals.
 
     The result travels through a temp file, not stdout, because stdout belongs
-    to the child's own libraries — the run's progress bar and any warning
-    `mlx_whisper` decides to print. `--output` is the CLI's own already-
+    to the child's own libraries — any progress output and any warning the
+    model library decides to print. `--output` is the CLI's own already-
     documented way to say "put the JSON here," so the parent's contract with
     the child is the same one a human at a terminal gets.
 
@@ -459,7 +448,7 @@ def transcribe_subprocess(
             # have here at all.
             raise UserFacingError(
                 f"transcribing “{src.name}” took longer than {timeout_s // 60} minutes "
-                "and was stopped. Try a shorter clip, or a smaller model."
+                "and was stopped. Try a shorter clip."
             ) from e
 
         if proc.returncode == USER_FACING_EXIT:
@@ -496,8 +485,7 @@ def main() -> int:
         "--backend",
         default=DEFAULT_BACKEND,
         choices=sorted(BACKENDS),
-        help=f"ASR backend (default {DEFAULT_BACKEND}; parakeet is ~17x realtime but "
-        "covers 25 European languages only)",
+        help=f"ASR backend (default and only: {DEFAULT_BACKEND})",
     )
     # Not `choices=` scoped to one backend, because the valid set depends on
     # `--backend` and argparse cannot express that. The union is the help text;
@@ -508,8 +496,14 @@ def main() -> int:
         default=None,
         help=f"one of: {', '.join(sorted(backend_models()))} (default: the backend's own)",
     )
-    parser.add_argument("--language", default=None, help="en, hi, … or omit for auto-detect")
-    parser.add_argument("--no-word-timestamps", action="store_true", help="Segment-level timings only (faster)")
+    parser.add_argument(
+        "--language",
+        default=None,
+        help="ISO code of the source's language, checked against the model's 25 European "
+        "languages and refused if outside them (Hindi is not supported); omit to let the "
+        "model decide",
+    )
+    parser.add_argument("--no-word-timestamps", action="store_true", help="Segment-level timings only")
     parser.add_argument("--output", default=None, help="Save JSON to this path")
     parser.add_argument(
         "--start-secs",

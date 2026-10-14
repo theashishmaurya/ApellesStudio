@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """B-189 / D-322 — the transcribe job must cross a real process boundary.
 
-`server.py` used to `import transcribe` and call it, so mlx-whisper's weights
+`server.py` used to `import transcribe` and call it, so the model's weights
 and its Metal buffers loaded into the long-lived uvicorn process and were never
-released (11 GB of `IOAccelerator (graphics)` after two real jobs; `ps` showed
+released (11 GB of `IOAccelerator (graphics)` after two real mlx-whisper jobs; `ps` showed
 ~35 MB throughout and saw none of it). `transcribe.transcribe_subprocess` is
 the fix. What has a correct answer, and is therefore checked here:
 
@@ -24,7 +24,7 @@ the fix. What has a correct answer, and is therefore checked here:
   7. `POST /transcribe` is wired to `transcribe_subprocess` and NOT to
      `transcribe`, which is the regression B-189 actually was.
 
-Deliberately importable-free of MLX: nothing here loads whisper, so it runs on a
+Deliberately importable-free of MLX: nothing here loads a model, so it runs on a
 plain `python3` without the sidecar's multi-GB venv. Only `ffmpeg` is needed
 (for 6), and that section skips when it is absent — the same skip discipline
 `test_transcribe_errors.py` and `ai/test_depth_track.py` use.
@@ -100,28 +100,30 @@ def _synth(out: Path, args: list[str]) -> bool:
 
 
 def check_argv(audio: Path) -> None:
-    cmd = transcribe_mod._subprocess_cmd(str(audio), "large-v3", "en", True, "/tmp/out.json")
+    cmd = transcribe_mod._subprocess_cmd(
+        str(audio), "parakeet-tdt-0.6b-v3", "en", True, "/tmp/out.json"
+    )
     assert cmd[0] == sys.executable, f"the child must run on this interpreter: {cmd[0]}"
     assert cmd[1] == str(Path(transcribe_mod.__file__).resolve()), cmd[1]
     assert cmd[2:] == [
         "--audio", str(audio),
-        "--model", "large-v3",
+        "--model", "parakeet-tdt-0.6b-v3",
         "--output", "/tmp/out.json",
         "--language", "en",
     ], cmd[2:]
 
     # auto-detect is the ABSENCE of --language, exactly as the in-process call
-    # omits the kwarg — "auto" is not a language mlx-whisper knows.
+    # never forwards it — "auto" is a request, not a language.
     for lang in (None, "auto", ""):
-        cmd = transcribe_mod._subprocess_cmd(str(audio), "base", lang, True, "/o.json")
+        cmd = transcribe_mod._subprocess_cmd(str(audio), "parakeet-tdt-0.6b-v3", lang, True, "/o.json")
         assert "--language" not in cmd, f"language={lang!r} must not be passed: {cmd}"
 
     # word timestamps are ON by default and only the opt-OUT is a flag.
     assert "--no-word-timestamps" not in transcribe_mod._subprocess_cmd(
-        str(audio), "base", None, True, "/o.json"
+        str(audio), "parakeet-tdt-0.6b-v3", None, True, "/o.json"
     )
     assert "--no-word-timestamps" in transcribe_mod._subprocess_cmd(
-        str(audio), "base", None, False, "/o.json"
+        str(audio), "parakeet-tdt-0.6b-v3", None, False, "/o.json"
     )
     print("ok: child argv is this interpreter, this file, and documented flags only")
 
@@ -130,7 +132,7 @@ def check_result_roundtrip(audio: Path) -> None:
     payload = {
         "text": "hello there",
         "language": "en",
-        "model": "large-v3",
+        "model": "parakeet-tdt-0.6b-v3",
         "source": str(audio),
         "segments": [{"start": 0.0, "end": 1.0, "text": "hello there", "words": []}],
         "words": [{"word": "hello", "start": 0.0, "end": 0.4, "probability": 0.9}],
@@ -237,7 +239,7 @@ def check_timeout(audio: Path) -> None:
 
 def check_real_spawn(tmp: Path) -> None:
     """The one check that runs a REAL child. A video-only file fails inside
-    `extract_audio`'s ffmpeg call, which happens before `import mlx_whisper` —
+    `extract_audio`'s ffmpeg call, which happens before `import parakeet_mlx` —
     so this exercises the whole boundary (spawn, `sys.path[0]`, `from errors
     import …`, the marker, the exit code, the parent's translation) for the
     price of a 1-second black clip and no model at all."""
@@ -317,7 +319,7 @@ def check_server_wiring(tmp: Path) -> None:
     assert calls == [
         {
             "path": str(fixture),
-            "model": transcribe_mod.DEFAULT_MODEL,
+            "model": "parakeet-tdt-0.6b-v3",
             "language": "en",
             "word_timestamps": False,
             "start_secs": None,

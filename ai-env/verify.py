@@ -20,8 +20,9 @@ out of disk — which leaves an interpreter that starts fine and a `site-package
 is missing or half-writes the thing a sidecar needs. Only importing it finds that.
 
 These are the imports that were the whole question in D-314 — ViTMatte (the
-`transformers<5` pin that split the venvs) and the two MLX top-levels — plus the
-heavyweights whose absence means a torn install.
+`transformers<5` pin that split the venvs) and the MLX top-levels — plus the
+heavyweights whose absence means a torn install, and the one ASR backend
+(`parakeet_mlx`, D-381).
 
 What this does NOT do: download a model, start a server, check ffmpeg (a hard
 requirement of `ai-media/` but not pip-installable, so not this file's business), or
@@ -42,7 +43,12 @@ CHECKS = [
     ("ai", "utils3d_moge (MoGe-2)", "utils3d_moge"),
     ("ai-media", "mlx", "mlx"),
     ("ai-media", "mlx_vlm (Qwen3-VL)", "mlx_vlm"),
-    ("ai-media", "mlx_whisper", "mlx_whisper"),
+    # The ASR backend (D-381: Parakeet is the only one; `mlx_whisper` was checked
+    # here until it was decommissioned). Adding this line is what makes an install
+    # that predates D-381 read as Broken on its next launch, which is the point:
+    # `apelles_ai::ai_env` then re-installs the lock over the top and the venv
+    # gains `parakeet-mlx` without a rebuild. See D-381 for the full upgrade path.
+    ("ai-media", "parakeet_mlx (Parakeet ASR)", "parakeet_mlx"),
 ]
 
 

@@ -368,7 +368,7 @@ positive at zero cost to recall.
 
 ## 8. Parakeet, 2026-10-13
 
-Whisper is decommissioned (D-381, pending) and Parakeet is the only ASR backend.
+Whisper is decommissioned (D-381) and Parakeet is the only ASR backend.
 Two questions: does the detector still find anything on Parakeet transcripts,
 and what should `DarkParams::default().max_word_secs` (2.0 s, Whisper's anomaly
 bound) become?

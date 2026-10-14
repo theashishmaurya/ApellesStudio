@@ -2,10 +2,12 @@
 
 **What it is:** Apelles' *second* supervised Python sidecar. It answers the two
 "understand this footage" questions the Edit tab needs and the app itself
-cannot: what was SAID and when (`transcribe.py`, mlx-whisper large-v3), and
-what CHANGED on screen and when (`video_understand.py`, ffmpeg scene-detect +
-Qwen3-VL). Same FastAPI + supervised-subprocess shape as `ai/server.py`, one
-more instance of a pattern that already works — not a new one.
+cannot: what was SAID and when (`transcribe.py`, Parakeet
+`parakeet-tdt-0.6b-v3` behind the D-374 backend seam — the only ASR backend
+since D-381), and what CHANGED on screen and when (`video_understand.py`,
+ffmpeg scene-detect + Qwen3-VL). Same FastAPI + supervised-subprocess shape as
+`ai/server.py`, one more instance of a pattern that already works — not a new
+one.
 
 **Why it is a separate process from `ai/server.py`** (D-189, and the whole
 reason `docs/notes/media-understanding-sidecar-scope.md` exists): `ai/` is
@@ -71,7 +73,14 @@ from pydantic import BaseModel
 
 import transcribe as transcribe_mod
 import video_understand as vu_mod
+from asr import get_backend
 from errors import UserFacingError
+
+# The descriptor of the backend `/transcribe` runs — the default one, since a
+# request does not choose a backend (nothing above `transcribe.py` does, D-374).
+# `/health` reports its default model and a request's `model` is validated
+# against its list, so neither can name a model the job would not run (D-381).
+_ASR = get_backend(None).descriptor
 
 app = FastAPI(title="chroma-ai-media")
 
@@ -190,7 +199,8 @@ def health() -> dict:
         # Settings status card instead of only as a job failure later.
         "ffmpeg": shutil.which("ffmpeg"),
         "models": {
-            "transcribe": transcribe_mod.MLX_MODEL_REPOS[transcribe_mod.DEFAULT_MODEL],
+            # The repo the default ASR model's weights load from (`_ASR`).
+            "transcribe": _ASR.model_repos[_ASR.default_model],
             "understand_video": vu_mod.MODEL,
         },
         "jobs_running": running,
@@ -211,7 +221,7 @@ class TranscribeReq(BaseModel):
     path: str
     language: Optional[str] = None
     word_timestamps: bool = True
-    model: str = transcribe_mod.DEFAULT_MODEL
+    model: str = _ASR.default_model
     # One WINDOW of the source instead of the whole thing (D-349). Timestamps
     # come back in absolute SOURCE seconds either way, so a windowed result
     # splices straight into a whole-file one. This is the recovery half of
@@ -225,8 +235,8 @@ class TranscribeReq(BaseModel):
 def start_transcribe(req: TranscribeReq) -> dict:
     if not os.path.exists(req.path):
         return {"error": f"file not found: {req.path}"}
-    if req.model not in transcribe_mod.MLX_MODEL_REPOS:
-        return {"error": f"unknown model {req.model!r} — one of {', '.join(sorted(transcribe_mod.MLX_MODEL_REPOS))}"}
+    if req.model not in _ASR.models:
+        return {"error": f"unknown model {req.model!r} — one of {', '.join(_ASR.models)}"}
     if req.duration_secs is not None and req.duration_secs <= 0:
         return {"error": "duration_secs must be greater than zero"}
     if req.start_secs is not None and req.start_secs < 0:

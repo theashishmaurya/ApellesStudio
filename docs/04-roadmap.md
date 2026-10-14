@@ -2647,8 +2647,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     iteration :/ we can not get 100% thats not possible we will build the
     Harness arround it also make sure every harness it easily takes other
     ones"*. **D-374**, detail and measurements in
-    `docs/notes/asr-backends-and-harness.md`. Four deliberate stages; the first
-    three are done.
+    `docs/notes/asr-backends-and-harness.md`. Four deliberate stages, all done,
+    and a fifth: **Whisper decommissioned, Parakeet the only backend (D-381,
+    2026-10-13)**.
     - ✅ **Step 1 — the seam** (2026-10-09). `ai-media/asr/` with `base.py`
       (the `AsrBackend` Protocol, `BackendDescriptor`, `validate_body`,
       `check_language`, and B-174's offline model-path resolver, now shared
@@ -2664,7 +2665,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       one synthetic shape (`None` segment timings) the new validator now
       refuses and the real model never emits. §4.1 of the note has the detail.
     - ✅ **Step 2 — the Parakeet backend** (2026-10-09), opt-in via
-      `backend="parakeet"`. **Whisper is still the default.** Measured
+      `backend="parakeet"` (the default since D-381). Measured
       end-to-end on the real 989.5 s C038 source: **87 segments, median 5.12 s,
       max 14.96 s, none over 30 s, 1296 words**, against the committed Whisper
       fixture's 121 / 5.36 / 15.92 / 1316 and raw `result.sentences`' 75 / 9.44
@@ -2674,16 +2675,14 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       **D-376**, `parakeet-mlx` timestamping sentence-final punctuation at the
       end of the following silence. Deterministic across two runs; D-349
       windowing verified on it.
-    - ⬜ **Run `ai-env/setup.sh --relock`** so the shared venv carries
-      `parakeet-mlx==0.5.3`. It is in `ai-media/requirements.txt` and
-      deliberately not in `ai-env/requirements.lock.txt` — the relock
-      re-resolves BOTH sidecars and rewrites every transitive pin, too large a
-      change to make as a side effect of landing an opt-in backend. Until it
-      runs, `backend="parakeet"` raises `ImportError` on a lock-built venv; the
-      default path is unaffected. **Do not add `parakeet_mlx` to
-      `ai-env/verify.py`** — that file decides whether `apelles_ai::ai_env`
-      wipes and rebuilds the venv (D-315), so an opt-in backend there would
-      condemn every existing install.
+    - ✅ **Relock with `parakeet-mlx`, and `verify.py` checks it** (2026-10-13,
+      **D-381**). Done once Parakeet stopped being opt-in: `mlx-whisper` out of
+      `ai-media/requirements.txt`, `ai-env/setup.sh --relock` (both sidecars
+      re-resolved; `ai/`'s test and `verify.py` green on a fresh venv),
+      `verify.py` checks `parakeet_mlx` instead of `mlx_whisper`. An existing
+      install upgrades in place — Broken verdict → stage-1 re-install over the
+      top (19 s measured) → Ready, no wipe; offline it backs off and destroys
+      nothing. `setup.sh --fetch-models` also fetches the Parakeet repo.
     - ✅ **Step 3 — the harness** (2026-10-10, **D-375**). `ai-media/harness/`,
       seven stdlib-only modules + a README. "A check never sees a model" is a
       property of the signature: a check is called with a contract `dict` and a
@@ -2706,8 +2705,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       `low_confidence` renders in the Recut panel are what step 4's numbers
       decide.
     - ✅ **Pass the backend's `max_word_secs` through the app** — closed
-      2026-10-13 by making the question moot (Whisper decommissioned, D-381
-      pending; Parakeet the only backend). `DarkParams::default().max_word_secs`
+      2026-10-13 by making the question moot (Whisper decommissioned, D-381; Parakeet the only backend). `DarkParams::default().max_word_secs`
       is now `NO_WORD_LENGTH_BOUND_SECS` (1e6, "no bound"), matching Parakeet's
       descriptor `None`; no per-transcript backend tag is needed. Measured on
       Parakeet transcripts of C019 / C038 / C040 + the nine silent sources:
@@ -2794,11 +2792,18 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ⬜ **A Claude skill that wraps the client loop** (owner, 2026-10-13) —
       the tools serve their own instructions, so any MCP client can run the
       loop today; the skill packages it.
-    - ⬜ **Re-decide the ASR default on the eval** (D-377 is `revisit`). D-378
-      does not reproduce D-377's 10.5×, because D-377 counted one shape of loss
-      of three. In the same pass as B-246's fix, not before — today both
-      backends fail every corpus task, so the comparison is between two
-      failures.
+    - ✅ **Re-decide the ASR default** (2026-10-13, **D-381**, superseding
+      D-377): the owner decommissioned Whisper; Parakeet is the default and
+      only backend, and Hindi/Hinglish sources are unsupported. Decided on
+      D-378/D-379's evidence rather than in B-246's pass — D-378 did not
+      reproduce D-377's deciding number, and D-379's blind proposers working
+      from Parakeet transcripts lost nothing.
+    - ⬜ **Two Parakeet drops its own windowed recovery does not get back**
+      (D-381 measured all 19 dropped stretches on C019/C038/C040: 15 recovered,
+      2 partly, 2 not — C019 97.36-99.60 comes back garbled, C038 836.44-852.44
+      empty, at two window offsets each). Not a regression against Whisper —
+      these are Parakeet's own drops, which Whisper read — but the recovery
+      path has no fallback for them now.
     - ⬜ **Explain the fixture divergence, or re-baseline deliberately.**
       Re-transcribing C038/C040 with `mlx-whisper large-v3` today gives 126 and
       83 segments against the committed fixtures' 121 and 66 (D-377 §8.4). The
@@ -2807,11 +2812,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       hand-classifies against those exact files — and the re-derived pair is
       committed and audited separately, so this is a provenance gap, not a
       blocked measurement.
-    - ⬜ **Expose `backend` above `transcribe.py`** when the default moves or a
-      caller wants the choice — `server.py`'s `/transcribe`,
-      `editor_get_transcript` and the Recut panel have no way to ask for
-      Parakeet today, which is intentional for step 2 and is why this does not
-      yet owe the GUI+MCP pair `CLAUDE.md` requires.
+    - ~~**Expose `backend` above `transcribe.py`**~~ — moot since D-381: one
+      backend, so there is no choice for a GUI or MCP surface to offer. The
+      `backend=` argument stays on `transcribe()` because the seam does.
 
 ### Then — the deeper migration (D-039 steps 2–7, `architecture-lock.md`)
 

@@ -7,15 +7,18 @@
 #   ./ai-env/setup.sh --relock       re-resolve BOTH sidecar requirement files
 #                                    into a fresh .venv and rewrite
 #                                    requirements.lock.txt
-#   ./ai-env/setup.sh --fetch-models one-time, EXPLICIT download of
-#                                    ai-media/video_understand.py's VLM weights
-#                                    (network on for this step only) — B-172/D-354
+#   ./ai-env/setup.sh --fetch-models one-time, EXPLICIT download of ai-media/'s
+#                                    model weights — the VLM (B-172/D-354) and
+#                                    the ASR model (D-381) — network on for this
+#                                    step only
 #
 # What it does NOT do: install ffmpeg (a hard requirement of ai-media/, not
 # pip-installable). Most models pull from the HF cache on first use; the one
 # exception is understand_video's Qwen3-VL, whose subprocess runs fully
 # offline always (D-354's local-first call) and so must be fetched explicitly
 # via --fetch-models — see ai-media/video_understand.py and docs/BUGS.md B-172.
+# The ASR model (Parakeet) does pull on first use, and is fetched here too so a
+# machine that will be offline can have it ahead of time (D-381).
 # See ai-env/README.md.
 set -euo pipefail
 
@@ -37,23 +40,30 @@ esac
 
 if [ "$FETCH_MODELS" = 1 ]; then
   # B-172/D-354 — the one explicit, one-time step that populates the HF cache
-  # for understand_video's VLM. Deliberately its own early-exit branch: this
-  # does not touch the venv build/relock flow above or below it, it just needs
-  # that venv (and its huggingface_hub) to already exist.
+  # for ai-media/'s models: understand_video's VLM (never fetched implicitly)
+  # and the default ASR backend's default model (D-381 — fetched implicitly on
+  # first transcript too, but offline use needs it ahead of time). Both repo
+  # ids are read from the code that loads them, never restated here.
+  # Deliberately its own early-exit branch: this does not touch the venv
+  # build/relock flow above or below it, it just needs that venv (and its
+  # huggingface_hub) to already exist.
   if [ ! -x "$VENV/bin/python" ]; then
     echo "error: no $VENV yet — run '$0' first to create it, then retry --fetch-models" >&2
     exit 1
   fi
-  echo "==> fetching understand_video's model (one-time, ~2.9 GB; network on for"
-  echo "    this step only — every real call after this stays HF_HUB_OFFLINE=1)"
+  echo "==> fetching ai-media's models (one-time, ~2.9 GB VLM + ~2.3 GB ASR;"
+  echo "    network on for this step only — every real call after this is offline)"
   env -u HF_HUB_OFFLINE "$VENV/bin/python" -c "
 import sys
 sys.path.insert(0, '$ROOT/ai-media')
 from huggingface_hub import snapshot_download
+from asr import get_backend
 from video_understand import MODEL
-print(f'downloading {MODEL} into the HF cache ...')
-snapshot_download(MODEL)
-print('done — understand_video will now run fully offline.')
+asr = get_backend(None).descriptor
+for repo in (MODEL, asr.model_repos[asr.default_model]):
+    print(f'downloading {repo} into the HF cache ...')
+    snapshot_download(repo)
+print('done — understand_video and transcription will now run fully offline.')
 "
   exit 0
 fi

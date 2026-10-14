@@ -2,30 +2,35 @@
 """`ai-media/asr/` — the ASR backend registry (D-374).
 
 **What it is:** the name → backend lookup `transcribe.py` resolves `backend=`
-and `--backend` against. One module, two entries, no plugin machinery.
+and `--backend` against. One module, no plugin machinery.
+
+**One entry, and the registry stays anyway.** Since D-381 (2026-10-13) Parakeet
+is the only backend — `mlx-whisper` was decommissioned and its module deleted.
+The seam is kept on purpose: D-374 built it so a backend can be swapped or added
+without touching anything above `transcribe.py`, and the owner's own framing of
+that decision was that the harness must "easily take other ones". A registry of
+one is the cheapest form of that promise that still runs; `README.md` says what
+adding a second takes.
 
 **What it does NOT do:** it does not transcribe and it does not import a model
-library. Every backend here keeps its `mlx_whisper` / `parakeet_mlx` import
-*inside* its `transcribe` method, so importing this package costs nothing and
-asking for the whisper backend never requires `parakeet-mlx` to be installed —
-which is what makes the Parakeet backend genuinely opt-in rather than a new hard
-dependency of the sidecar.
+library. A backend keeps its model import (`parakeet_mlx`) *inside* its
+`transcribe` method, so importing this package costs nothing — which is what
+lets the harness's tests, and every test that needs no model, run on a plain
+`python3`.
 
 The contract every backend produces, and why it is this contract, is in
-`base.py`. Whisper is and stays the default (D-374: the default moves only after
-step 4 re-derives `apelles-speech`'s corpus tests against a Parakeet transcript).
+`base.py`.
 """
 
 from __future__ import annotations
 
-from asr import parakeet_mlx, whisper_mlx
+from asr import parakeet_mlx
 from asr.base import AsrBackend, BackendDescriptor, check_language, validate_body
 
-#: The default, and deliberately still Whisper — see the module docstring.
-DEFAULT_BACKEND = whisper_mlx.NAME
+#: The backend a caller gets when it names none — Parakeet, the only one (D-381).
+DEFAULT_BACKEND = parakeet_mlx.NAME
 
 BACKENDS: dict[str, AsrBackend] = {
-    whisper_mlx.NAME: whisper_mlx.BACKEND,
     parakeet_mlx.NAME: parakeet_mlx.BACKEND,
 }
 
@@ -47,8 +52,8 @@ def get_backend(name: str | None) -> AsrBackend:
 
 
 def backend_models() -> tuple[str, ...]:
-    """Every model name any backend accepts — what the CLI's `--model` help
-    lists. Backend-relative validation is the descriptor's job
+    """Every model name any registered backend accepts — what the CLI's
+    `--model` help lists. Backend-relative validation is the descriptor's job
     ([`BackendDescriptor.require_model`]); this is only the union, so `--model`
     can stay one flag instead of one per backend."""
     seen: dict[str, None] = {}

@@ -128,7 +128,7 @@ def check_three_way_disagreement():
 
 
 def check_drifting_timestamps():
-    # A pass started a little earlier moves whisper's 30 s window grid, so every
+    # A pass started a little earlier moves the backend's chunk grid, so every
     # timestamp lands slightly elsewhere. Same words, same order, no disagreement.
     a = stream(SENTENCE)
     b = stream(SENTENCE, drift=0.18)

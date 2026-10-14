@@ -1,6 +1,9 @@
-# ASR backends and the transcript harness (D-374)
+# ASR backends and the transcript harness (D-374, D-381)
 
-**Why this exists.** `ai-media/transcribe.py` hard-codes one model
+**Status, 2026-10-13: Parakeet is the only ASR backend; Whisper is
+decommissioned (D-381, §4.3).** The history below is kept as it happened.
+
+**Why this exists.** `ai-media/transcribe.py` hard-coded one model
 (`mlx-whisper large-v3`). The owner's call, 2026-10-09, after a measured
 head-to-head on real footage: **move to Parakeet for speed, accept that no
 model is 100%, and build a harness around it — one that any backend can be
@@ -69,7 +72,8 @@ seconds** — a windowed run shifts its own output, which is what lets a window
 be spliced into a whole-file pass (D-349, the B-216 recovery primitive).
 
 **`ai-media/asr/`**: `base.py` (the Protocol + a shared validator),
-`whisper_mlx.py` (today's code, moved unchanged), `parakeet_mlx.py` (new).
+`whisper_mlx.py` (the code of the day, moved unchanged — deleted by D-381),
+`parakeet_mlx.py` (new; the only backend since D-381).
 `transcribe.py` keeps its public functions and gains a `backend` argument.
 Nothing above `transcribe.py` changes shape — `apelles-ai`'s sidecar,
 `editor_get_transcript`, the Recut panel and `apelles-speech` all keep
@@ -276,9 +280,10 @@ internals is a backend feature, not a check.
   `harness/` imports a backend**, the profile registry matching `asr/`'s
   descriptors field-for-field, a broken check failing at its own boundary, and
   determinism. No model, no venv — that is the property under test.
-- **`test_harness_live.py`** — opt-in, against the **real Whisper backend**,
-  which is how the agnosticism is proved rather than asserted (step 3 of §4
-  exists for this reason). Measured 2026-10-10 on the real C038 source, window
+- **`test_harness_live.py`** — opt-in, against the real backend. First run
+  against **Whisper**, which is how the agnosticism was proved rather than
+  asserted (step 3 of §4 exists for this reason); since D-381 against Parakeet
+  (§4.3). Measured 2026-10-10 on Whisper on the real C038 source, window
   200-260 s, offsets 0/10/20 s: three passes of **82 / 84 / 96 words** in
   15.5 / 14.0 / 17.9 s → **82 words, 79 unanimous, 2 disagreed, 1 partial, 15
   discarded, 3 low-confidence spans**, the harness itself taking 0.01 s.
@@ -302,8 +307,10 @@ tool — so it has no human/AI surface pair yet; that is named in §5.
    *existing Whisper backend* first, which is how its backend-agnosticism got
    proved rather than asserted. Detail: §3.
 4. ✅ **Re-derive, then decide** (2026-10-10, **D-377**) — done, and the answer
-   is **do not switch**. Detail: §4.2 below and
-   `docs/notes/retake-detection.md` §8. Parakeet stays shipped and opt-in.
+   then was **do not switch**. Detail: §4.2 below and
+   `docs/notes/retake-detection.md` §8. **Superseded by D-381** (step 5).
+5. ✅ **Whisper decommissioned** (2026-10-13, **D-381**) — Parakeet is the
+   default and only backend, the lock carries it, `verify.py` checks it. §4.3.
 
 **Step 4 was the expensive one and it was not optional.** B-237, B-238, D-365
 and D-366 were four sessions of tuning against Whisper's output shape, pinned
@@ -376,7 +383,7 @@ too long and produced a 19.92 s single-word segment on the windowed run,
 defeating the cap. Fixed at the merge: such a token keeps its text and loses its
 vote on the word's `end`.
 
-**Not done, deliberately:** `parakeet-mlx==0.5.3` is in
+**Not done, deliberately (resolved by D-381, §4.3):** `parakeet-mlx==0.5.3` is in
 `ai-media/requirements.txt` but **not** in `ai-env/requirements.lock.txt` — the
 relock is a full re-resolution of both sidecars and rewrites every transitive
 pin, which is a bigger change than this one. `ai-env/verify.py` deliberately
@@ -387,7 +394,7 @@ in `docs/04-roadmap.md`. **Still true after step 4** — a default that did not
 move needs no relock, and §4.2's own measurement was taken with
 `parakeet-mlx` in a venv of its own rather than by touching the shared one.
 
-### 4.2 What step 4 measured, and why the default did not move (D-377, 2026-10-10)
+### 4.2 What step 4 measured, and why the default did not move then (D-377, 2026-10-10 — superseded by D-381)
 
 The full working is `docs/notes/retake-detection.md` §8; the decision and its
 rejected options are **D-377**. The short version, because it is the one number
@@ -439,22 +446,119 @@ Three things this pass established that bear on the rest of this note:
 backend — **B-246** — and D-366's guard never covered the case that produces it.
 Whisper's one violation is on C019, the source this pass added.
 
+### 4.3 Whisper decommissioned — Parakeet is the only backend (D-381, 2026-10-13)
+
+The owner's call, after D-378/D-379's labelled eval: Whisper goes, Parakeet is the
+default and only backend, Hindi does not matter. D-377's reason for keeping
+Whisper (one proxy number from the retake rules) did not survive D-378's eval,
+and D-379 found retake proposals made from Parakeet's word-timed transcripts
+losing nothing. What changed in `ai-media/` and `ai-env/`:
+
+- `asr/whisper_mlx.py` deleted; `asr/__init__.py`'s registry holds Parakeet
+  alone and `DEFAULT_BACKEND = "parakeet"`. The seam, the validator, the
+  descriptor and B-174's resolver stay — the seam is what the next backend
+  needs. `BackendDescriptor.models` became `model_repos` (name → repo), so
+  `server.py` reads the default backend's descriptor for `/health`'s repo and
+  for `/transcribe`'s `model` default and validation instead of Whisper's map.
+- D-349's `MLX_RANDOM_SEED` went with the Whisper module. Parakeet needs none:
+  C040 transcribed twice through the CLI gave byte-identical JSON
+  (sha256 `784505ea…`, 903 words, 58 segments).
+- Languages: a named language outside Parakeet's 25 is refused with a sentence
+  that no longer points at a Whisper backend; **Hindi/Hinglish is unsupported**.
+- `harness/profiles.py`: the `WHISPER` profile and its constant are gone,
+  `PROFILES = (PARAKEET,)`. `vad.py`'s cross-backend guard stays — the
+  detector's own `DarkParams::default()` is still the Whisper-era 2.0 s as of
+  this commit, so a report produced without `dark_params_for` is exactly the
+  mismatch it refuses. A pre-D-381 Whisper transcript (`model: "large-v3"`) is
+  refused by `profile_for` rather than given Parakeet's constants.
+- The harness's live test now runs on Parakeet (C038, 200-260 s, offsets
+  0/10/20 s): passes of **65 / 69 / 80 words** in 14.3 / 3.1 / 3.1 s → **65 words,
+  all 65 unanimous**, 15 discarded outside the common range, 0 low-confidence
+  spans. `start_secs` offsets work on Parakeet unchanged (§5's bullet on
+  `chunk_duration`).
+- `ai-media/requirements.txt` drops `mlx-whisper`; `ai-env/setup.sh --relock`
+  re-resolved both sidecars (the lock moved — D-381 lists which pins); `verify.py`
+  checks `parakeet_mlx` instead of `mlx_whisper`. What that does to an existing
+  install is D-381's "install upgrade" and `docs/notes/ai-env-bootstrap.md`.
+- `setup.sh --fetch-models` also fetches the Parakeet repo, for offline use.
+
+#### 4.3.1 Does Parakeet recover what it drops? (the dark-region recovery path)
+
+Without Whisper, D-349's recovery — re-transcribe in isolation a stretch the VAD
+hears but the transcript lacks — runs on Parakeet only. Phase 6b's
+`dark_live` run over the committed Parakeet transcripts of C019/C038/C040
+(`docs/notes/whisper-dark-region-research.md` §8) found 21 stretches: 2 are
+timestamp collapses (text present) and 19 are speech Parakeet's whole-file pass
+left out, corroborated by Whisper's reading (6b counts 18 of them as dropped
+speech; one, C038 836-852, is mostly speech neither model read). Each of the 19
+was re-transcribed through the real path — `transcribe(path, start_secs,
+duration_secs)` on the real source, windows exactly as the app's
+`recoveryWindows` (`packages/editor/src/darkRegions.ts`) cuts them: the stretch,
+grown to ≥ 4 s, split into ≤ 30 s pieces — and again with 5 s more context
+either side. A word counts as recovered if its midpoint falls in a dark region
+(±0.25 s). Nobody listened; Whisper's reading is the comparison, not ground
+truth.
+
+| source | stretch (s) | dark (s) | Parakeet whole-file words in it | windowed pass (app window) | ±5 s window | verdict |
+|---|---|---|---|---|---|---|
+| C019 | 62.64-78.00 | 11.97 | 0 | 30 w, 11.09 s — "Actually it's not. And the reason it's free and the reason it's not free is also the reason most people caching silently does nothing. The fingerprint has to match exactly." | 30 w | recovered |
+| C019 | 91.52-95.92 | 4.24 | 1 | 14 w — "And the model we read is the whole thing like caching was never on." | 13 w ("rereads") | recovered |
+| C019 | 97.36-99.60 | 2.24 | 1 | 7 w — "People in people in a enab people" | 8 w, same | **not recovered** (garbled; Whisper: "People enabling caching drop a current IP") |
+| C019 | 275.04-284.32 | 9.15 | 1 | 28 w — "Uh there's a one-a-way options that cost a bit more to write first stuff that runs in burst with gaps. Past that window, the notes are gone and" | 28 w | partly (Whisper: "a one hour option") |
+| C019 | 309.12-318.64 | 6.55 | 0 | 19 w — "Longer contacts, more agents steps, more back and forth in a single task because now they can afford it." | 18 w | recovered |
+| C019 | 468.72-501.60 | 7.74 | 1 | 18 w — "…between the 400,000 bill and 701. If this made the whole" | 24 w | recovered |
+| C038 | 45.44-59.44 | 4.30 | 1 | 11 w — "The whole business is building the chips for only one thing." | 12 w | recovered |
+| C038 | 66.72-84.00 | 5.88 | 0 | 15 w — "Nvidia's biggest deal ever, and it wasn't even about the part that AI makes headlines" | 16 w (+"about.") | recovered |
+| C038 | 177.08-204.60 | 5.89 | 0 | 15 w — "Running a model has quietly become more expensive than building it in the first place." | 15 w | recovered |
+| C038 | 479.44-487.68 | 1.09 | 0 | 4 w — "It's like a stenographer." | 4 w | recovered |
+| C038 | 501.92-505.04 | 3.12 | 0 | 7 w — "Word two. We read everything. Again. Plus" | 5 w | partly (Whisper: "word two reread everything again plus") |
+| C038 | 509.44-528.84 | 7.61 | 0 | 14 w — "by word two hundred, that's two hundred full rereads, just to write one response." | 13 w | recovered |
+| C038 | 836.44-852.44 | 4.73 | 0 | **0 words** | **0 words** | **not recovered** (Whisper read only "So quick recap,"; 3.7 s of it is silent in both ASRs) |
+| C038 | 929.28-933.84 | 4.49 | 0 | 8 w — "That's real compute, real electricity, real hardware, real." | 7 w | recovered |
+| C038 | 979.64-989.46 | 1.98 | 0 | 8 w — "Thanks for watching. See you in the next" | 8 w | recovered |
+| C040 | 63.52-81.84 | 2.09 | 1 | 4 w — "Attention, in simple terms." | 5 w | recovered |
+| C040 | 180.84-193.00 | 4.23 | 1 | 9 w — "The specific version of this use inside these models." | 10 w | recovered |
+| C040 | 275.84-289.76 | 2.53 | 0 | 8 w — "There's an actual mechanism behind the checking in." | 8 w | recovered |
+| C040 | 505.60-518.08 | 2.88 | 0 | 7 w — "if something's genuinely important, don't bury the" | 8 w | recovered |
+
+**Result: of 19 stretches, 15 recovered (the windowed pass reads what Whisper
+read, modulo a word), 2 partly (recovered with one mis-heard phrase), 2 not at
+all** — C019 97.36-99.60 comes back as a garbled repetition ("People in people
+in a enab people") at both offsets, and C038 836.44-852.44 comes back empty at
+both. In time: **79.0 s of the 92.7 s of dark speech** gets word coverage from
+the windowed pass (85 %), 226 words, in 42.8 s of compute for all 19 windows.
+The second offset fixed neither failure; it changed a word here and there
+elsewhere ("rereads" for "we read", "about." at a window edge).
+
+So Parakeet's own drops are mostly recoverable by the same isolation trick that
+recovered Whisper's (B-216) — the drops are context-dependent, not
+acoustic. The two failures are short (2.2 s and 4.7 s of VAD speech, the latter
+mostly unread by Whisper too). Scripts and the raw JSON stayed in the session
+scratchpad; the table above is the record.
+
 ---
 
 ## 5. Open, named
 
 - ~~**Default backend is still Whisper** until step 4's numbers exist.~~
-  **Settled 2026-10-10 (D-377): Whisper stays the default, measured.** The
-  deciding number is 56.92 s against 5.42 s of never-repeated speech proposed
-  for deletion (§4.2). Not "pending more data" — a decision, revisitable only by
-  a *shorter-segment* Parakeet configuration, since segment length is the whole
-  cause.
+  ~~Settled 2026-10-10 (D-377): Whisper stays the default.~~ **Settled
+  2026-10-13 (D-381): Parakeet is the default and only backend; Whisper is
+  decommissioned** (§4.3). D-377's deciding number did not survive D-378's
+  labelled eval.
+- ~~`parakeet-mlx` is not in `ai-env/requirements.lock.txt`, and `verify.py`
+  does not check it.~~ **Done (D-381):** relocked, and `verify.py` checks
+  `parakeet_mlx` instead of `mlx_whisper` — which is what upgrades an existing
+  install (D-381; `docs/notes/ai-env-bootstrap.md`).
+- **Dark-region recovery on Parakeet is measured, not perfect** (§4.3.1): 15 of
+  19 dropped stretches recovered, 2 partly, 2 not at all. Nothing retries a
+  failed window with a different context yet; a second offset did not help
+  either failure.
 - ~~`dark.rs`'s Whisper-specific constants are not yet moved to a
   descriptor.~~ **Done 2026-10-10 (D-375):** `BackendDescriptor` now carries
   `max_word_secs` (Whisper 2.0 s, Parakeet `None`), read by
   `harness.vad.dark_params_for`, which was the consumer whose absence kept the
   field out. **The app-side gap is closed (2026-10-13):** with Whisper
-  decommissioned (D-381, pending) Parakeet is the only backend, so
+  decommissioned (D-381) Parakeet is the only backend, so
   `DarkParams::default().max_word_secs` is now `NO_WORD_LENGTH_BOUND_SECS`
   (1e6 — the same constant and the same finite-not-`inf` reasoning as
   `harness.profiles.NO_WORD_LENGTH_BOUND_SECS`) and
@@ -518,8 +622,8 @@ Whisper's one violation is on C019, the source this pass added.
   one of Parakeet's five over-claimed cuts, nor any difference in group count,
   turns on a spelled-out number. It stays open as a transcript-quality issue,
   not as a retake-detection one.
-- Parakeet is 25 European languages. `transcribe.py`'s docstring claims
-  code-switched Hinglish auto-detects fine on `large-v3` — **Hindi is not in
-  Parakeet's set**, so any Hinglish source must stay on Whisper. The backend
-  descriptor carries the language set so a caller can be refused rather than
-  silently mis-transcribed.
+- Parakeet is 25 European languages and **Hindi/Hinglish is unsupported**
+  (D-381, the owner's call — there is no longer a Whisper to send it to). The
+  descriptor's language set refuses a caller that *names* an unsupported
+  language; a source transcribed with no language named is not caught, because
+  Parakeet reports no detected language.

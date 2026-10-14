@@ -68,6 +68,122 @@ labelled word fixtures are Parakeet's).
 
 ---
 
+## D-381 — Whisper is decommissioned: Parakeet is the only ASR backend, and Hindi/Hinglish sources are unsupported
+
+**Status: `decided`** (2026-10-13, owner). **Supersedes D-377**, **amends D-374**
+(Parakeet is the default and only backend; the seam stays), and **ends D-349's
+MLX seeding** (it existed only for Whisper). This entry covers the Python side
+and the environment (`ai-media/`, `ai-env/`); the app, MCP and
+`apelles-speech` strings and defaults that still say Whisper are later phases of
+the same decommission. Detail: `docs/notes/asr-backends-and-harness.md` §4.3.
+
+**Context.** D-374 put ASR behind a seam with Parakeet opt-in; D-377 kept
+Whisper the default on one number from the retake detector's rules (5.42 s vs
+56.92 s of never-repeated speech proposed for cutting). D-378's labelled eval
+did not reproduce that number (on content lost Whisper 60.40 s, Parakeet
+46.48 s) and put D-377 up for revisit; D-379's blind MCP-client proposers,
+working from Parakeet's word-timed transcripts, lost 0.00 s on every task.
+Parakeet is ~10× faster end-to-end (C038: 38.3 s vs 369.6 s) and does not
+hallucinate on silence (D-377). The owner's call: Whisper goes, and Hindi does
+not matter for this product.
+
+**Options.**
+1. *Keep both, flip the default.* Keeps a ~3 GB second model, `mlx-whisper` in
+   the lock, its seed, its profile and its language promise alive for a case
+   the owner has said does not matter — dead weight under `CLAUDE.md`'s no-dead-
+   code rule.
+2. *Remove Whisper and the seam with it* — hard-code Parakeet the way Whisper
+   once was. Throws away the one property D-374 was for ("make sure every
+   harness it easily takes other ones").
+3. **Remove Whisper, keep the seam with one backend.**
+
+**Choice: option 3.**
+
+- `ai-media/asr/whisper_mlx.py` deleted; the registry holds Parakeet alone,
+  `DEFAULT_BACKEND = "parakeet"`. `BackendDescriptor.models` became
+  `model_repos` (name → repo) so `server.py` reads the default backend's
+  descriptor for `/health`'s repo and `/transcribe`'s `model` default and
+  validation; `transcribe.py`'s Whisper re-exports (`DEFAULT_MODEL`,
+  `MLX_MODEL_REPOS`) are gone. A request naming `large-v3` is now refused.
+- **Hindi/Hinglish is unsupported.** A caller that names a language outside
+  Parakeet's 25 European ones is refused with a sentence that no longer points
+  at a Whisper backend; one that names none gets fluent wrong English on such a
+  source, because Parakeet reports no detected language. Recorded, not fixed.
+- **Determinism without seeding.** `MLX_RANDOM_SEED` (D-349, B-224) existed
+  because mlx-whisper's temperature-fallback ladder sampled from MLX's global
+  RNG. Parakeet's greedy TDT draws from no RNG; re-verified for this decision:
+  C040 through the CLI twice, byte-identical JSON (sha256 `784505ea…`, 903
+  words, 58 segments). `test_asr_seam.py` asserts nothing seeds an RNG.
+- **Harness:** the `WHISPER` profile and `WHISPER_ANOMALY_WORD_SECS` are gone,
+  `PROFILES = (PARAKEET,)`; `vad.py`'s cross-backend guard stays (the
+  detector's own default was still the Whisper-era 2.0 s when this entry was
+  written — since changed to "no bound" by the dark-region half of this
+  decommission, `NO_WORD_LENGTH_BOUND_SECS` — and the next backend needs it), tested against a synthetic stretching profile.
+  `profile_for` refuses a pre-D-381 Whisper transcript rather than giving it
+  Parakeet's constants. `test_harness_live.py` now runs real Parakeet on C038
+  200-260 s: 65 / 69 / 80 words per pass → 65 words, all unanimous; start-offset
+  passes work on Parakeet unchanged.
+- **Environment.** `mlx-whisper` out of `ai-media/requirements.txt`; `ai-env/
+  setup.sh --relock` re-resolved both sidecars (89 → 101 pinned packages):
+  removed `mlx-whisper` 0.4.3, `tiktoken`, `more-itertools`; added
+  `parakeet-mlx` 0.5.3 and its audio stack (`librosa`, `soundfile`, `soxr`,
+  `audioread`, `pooch`, `scikit-learn`, `joblib`, `threadpoolctl`, `lazy-loader`,
+  `decorator`, `msgpack`, `dacite`, `platformdirs`, `narwhals`); two major bumps
+  in transitives, `filelock` 3.32.6 → 4.1.1 and `polars` 1.44.2 → 2.0.0; minor/
+  patch bumps including `mlx`/`mlx-metal` 0.32.2 → 0.32.3, `mlx-audio` 0.5.3 →
+  0.5.8, `tokenizers` 0.23.2 → 0.23.3, `torchvision` 0.29.0 → 0.29.1, `numba`
+  0.67 → 0.68. Every direct pin (`torch` 2.14.0, `transformers` 5.17.0, `numpy`,
+  `mlx-vlm` 0.6.17, `fastapi`…) is unchanged. On the fresh venv: `verify.py`
+  all nine ok, `ai/test_depth_track.py` passes (VDA 1.54× steadier than DA-V2),
+  `ai/server.py` imports. `verify.py` checks `parakeet_mlx` instead of
+  `mlx_whisper`; `setup.sh --fetch-models` also fetches the Parakeet repo so an
+  offline machine can have it ahead of time — verified into an empty `HF_HOME`,
+  then a windowed C040 transcript with `HF_HUB_OFFLINE=1` against it.
+
+**What this does to an existing install** (read from `crates/apelles-ai/src/
+ai_env.rs`'s `health`/`attempt`, then measured with its exact uv steps on a
+venv built from the old lock): on the next launch the new `verify.py` returns a
+*verdict* — `parakeet_mlx` will not import — so `health` is **Broken**, not
+Inconclusive; `attempt` runs **stage 1**, `uv pip install -r` the new lock over
+the top (needs network; **19 s** measured with a warm wheel cache), and the
+venv verifies — **stage 2's wipe-and-rebuild never runs**. A second launch is a
+no-op (`Checked 103 packages in 2ms`). **Offline**, stage 1 cannot download, the
+attempt fails and backs off (5 s → 15 min, Retry now in Settings); nothing is
+destroyed, every other AI feature keeps working from the old venv, and a
+transcript fails with a sentence naming the fix (`parakeet_mlx.py` turns the
+`ImportError` into a `UserFacingError`). **`mlx-whisper`, `tiktoken` and
+`more-itertools` stay installed, orphaned** — `uv pip install` never uninstalls;
+harmless, consistent with deleting nothing of the user's, and gone on the next
+from-scratch build. Likewise **no model cache is touched**: Whisper's ~2.9 GB in
+the HF cache stays until the user deletes it. A leftover pre-D-314 per-sidecar
+`ai-media/.venv` (which the interpreter ladder prefers) is not healed by the
+bootstrap and needs removing by hand.
+
+**Gating measurement: does Parakeet recover what it drops?** Without Whisper,
+D-349's dark-region recovery runs on Parakeet only. Over the 19 stretches of
+speech Parakeet's whole-file pass dropped on C019/C038/C040 (the dark-region
+detector's findings over the committed Parakeet transcripts, corroborated by
+Whisper's reading; `whisper-dark-region-research.md` §8), each was
+re-transcribed through the real `transcribe(start_secs, duration_secs)` path
+with the app's own `recoveryWindows` sizing, and again with ±5 s more context:
+
+| result | stretches |
+|---|---|
+| recovered (reads what Whisper read, modulo a word) | **15** |
+| partly (recovered with a mis-heard phrase: C019 275 s "one-a-way options" for "one hour option"; C038 502 s "We read" for "reread") | **2** |
+| **not recovered** — C019 97.36-99.60 garbled ("People in people in a enab people"), C038 836.44-852.44 empty | **2** |
+
+79.0 of 92.7 s of dark speech regained word coverage (85 %), 226 words, 42.8 s of
+compute for all 19 windows. The second offset fixed neither failure. Per-stretch
+table: `asr-backends-and-harness.md` §4.3.1. Nobody listened; Whisper's reading
+is the comparison, not ground truth.
+
+**Why.** The deciding number for keeping Whisper is gone, the remaining case for
+it (Hindi) is one the owner has ruled out, and the seam keeps the door open for
+the next backend at the cost of one registry entry.
+
+---
+
 ## D-380 — Retake judgement moves to the MCP client, behind a deterministic coverage gate
 
 **Status: `decided`** (2026-10-13). Step 1 (this entry's code) is the pure
@@ -391,7 +507,8 @@ re-decided on this eval in the same pass as B-246's fix.
 
 ## D-377 — Whisper stays the default ASR, because Parakeet's longer segments turn the retake detector's over-claimed cuts from 5.42 s into 56.92 s
 
-**Status: `revisit`** — decided 2026-10-10; put up for revisit 2026-10-13 by
+**Status: `superseded by D-381`** (2026-10-13 — Whisper decommissioned,
+Parakeet the only ASR backend). History: decided 2026-10-10; put up for revisit 2026-10-13 by
 **D-378**, whose labelled eval charges two shapes of lost content this
 decision's deciding column left out and does not reproduce its 10.5× (on
 content lost: Whisper 60.40 s, Parakeet 46.48 s; protected content: 6.18 s vs
@@ -36580,6 +36697,9 @@ what remains, and B-234 says so.
 ---
 
 ## D-374 — ASR becomes a swappable backend behind the existing transcript contract, and the product is the harness around it
+
+**Amended by D-381 (2026-10-13): Parakeet is the default and only backend;
+Whisper is decommissioned and the seam stays.**
 
 **Status: `decided`** (2026-10-09, owner: *"lets move to parakeet its light fast
 and we can run multi iteration :/ we can not get 100% thats not possible we

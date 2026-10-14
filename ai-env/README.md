@@ -40,10 +40,16 @@ nothing ever populates the HF cache for it either. Run this once, with network
 access, before the first `/understand_video` call on a fresh machine:
 
 ```sh
-./ai-env/setup.sh --fetch-models   # one-time ~2.9 GB download, network on for
-                                    # this step only; every real call after
-                                    # this stays fully offline
+./ai-env/setup.sh --fetch-models   # one-time download (~2.9 GB VLM + ~2.3 GB
+                                    # Parakeet ASR), network on for this step
+                                    # only; every real call after this stays
+                                    # fully offline
 ```
+
+It also fetches the ASR model (`mlx-community/parakeet-tdt-0.6b-v3`, D-381),
+which otherwise downloads on the first transcript — so a machine that will be
+offline can have it ahead of time. Both repo ids are read from the code that
+loads them (`video_understand.MODEL`, the default ASR backend's descriptor).
 
 Skipping it is not silently dangerous: `/understand_video` fails fast with a
 message naming this exact command, rather than an opaque subprocess dump.
@@ -107,6 +113,28 @@ convenience — that is what makes pip reconcile the two sidecars' constraints
 against each other instead of letting the second install silently move what the
 first one pinned.
 
+## What a dependency change does to an existing install
+
+The lock and `verify.py` ship together, so changing what `verify.py` imports is
+how an existing venv learns it is out of date. Worked example, **D-381**
+(Whisper decommissioned, `mlx_whisper` → `parakeet_mlx` in `verify.py`,
+measured on a venv built from the pre-D-381 lock with the app's own uv steps):
+
+1. on the next launch `verify.py` returns a **verdict**: `parakeet_mlx` will not
+   import → `apelles_ai::ai_env` reads it as *Broken*;
+2. stage 1 re-installs the new lock **over the top** (`uv pip install -r
+   requirements.lock.txt`) — 19 s measured, warm uv cache; it moves every pin
+   the relock moved and adds `parakeet-mlx`;
+3. `verify.py` passes → *Ready*. The wipe-and-rebuild (stage 2) never runs.
+
+**Offline**, stage 1 fails to download, the attempt fails and the bootstrap
+backs off (5 s → 15 min, "Retry now" in Settings); nothing is removed, the old
+venv keeps serving every other AI feature, and a transcript fails with a
+sentence naming the fix. Packages the new lock no longer lists (`mlx-whisper`,
+`tiktoken`, `more-itertools`) **stay installed, orphaned**: `uv pip install -r`
+never uninstalls, and that is harmless — nothing imports them. A venv rebuilt
+from scratch (`--relock`, or stage 2) does not carry them.
+
 ## Per-sidecar venvs still work
 
 `apelles_ai::sidecar` checks `<sidecar dir>/.venv` *before* `ai-env/.venv`, so a
@@ -116,3 +144,9 @@ change breaks no existing checkout — an install with the old two venvs keeps
 working exactly as before, it just gets none of the disk saving until those are
 removed. The app logs which interpreter it picked and why, and warns when a
 per-sidecar venv is shadowing this shared one.
+
+**A per-sidecar venv is never healed by the bootstrap**, which only builds
+`ai-env/.venv`. So after a dependency change like D-381 a leftover
+`ai-media/.venv` keeps its old packages — a transcript there fails with the
+"parakeet-mlx is not installed" sentence until it is removed (preferred:
+`rm -rf ai-media/.venv`) or updated by hand.

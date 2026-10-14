@@ -164,7 +164,8 @@ needs, through the venv's own interpreter, by running `ai-env/verify.py`:
 - `ai/` — `torch`, `ultralytics`, `cv2`, `scipy`, `utils3d_moge`, and ViTMatte
   (`from transformers import VitMatteForImageMatting`, not a bare `import transformers`
   — D-314 turned on exactly that class surviving into `transformers` 5.x)
-- `ai-media/` — `mlx`, `mlx_vlm`, `mlx_whisper`
+- `ai-media/` — `mlx`, `mlx_vlm`, `parakeet_mlx` (`mlx_whisper` until D-381
+  decommissioned Whisper — see "A changed check list" below)
 
 `verify.py` is the **same file** `ai-env/setup.sh` runs at the end of a human install.
 That is the point: a Rust-side copy of the module list would drift from the bash-side
@@ -197,6 +198,28 @@ rebuilt and the bootstrap would retry the same failing command forever. This was
 bug in the first draft, caught by
 `a_damaged_environment_is_healed_rather_than_reported_ready` — which is precisely why
 that test drives a real `uv` instead of a mock.
+
+### A changed check list is how an install upgrades (D-381)
+
+Because the health check is "can it import what the sidecars need", changing that
+list in `verify.py` is what moves an existing install forward. D-381 replaced
+`mlx_whisper` with `parakeet_mlx` and relocked, and the upgrade path was measured
+with the bootstrap's own uv steps (uv 0.11.6, CPython 3.11.15) on a venv built
+from the **old** lock:
+
+- old `verify.py` on it: all nine checks ok; new `verify.py --json`: `ok: false`,
+  the one failed check `parakeet_mlx` → a **Broken verdict**, not Inconclusive;
+- stage 1, `uv pip install -r` the new lock over it: **19 s** (warm wheel cache),
+  then the new `verify.py` passes — stage 2's wipe never fires;
+- a second stage-1 run: `Checked 103 packages in 2ms` — a no-op;
+- `mlx-whisper`, `tiktoken` and `more-itertools` remain installed and
+  importable, orphaned (`uv pip install` does not uninstall). Harmless; gone on
+  the next from-scratch build.
+
+Offline, stage 1 cannot download `parakeet-mlx`: the attempt fails, the backoff
+applies, nothing is destroyed, and every AI feature except transcription keeps
+working off the old venv (a transcript fails with a sentence naming
+`ai-env/setup.sh`). Detail: D-381.
 
 ## Stalls
 

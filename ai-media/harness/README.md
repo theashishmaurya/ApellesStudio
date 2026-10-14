@@ -11,7 +11,7 @@ backend ─► [ multi-pass reconcile ] ─► [ VAD cross-check ] ─► [ … 
 100% thats not possible we will build the Harness arround it also make sure
 every harness it easily takes other ones."* No ASR is perfect, so the product
 is the thing that says **where the transcript is unsure** instead of pretending.
-A backend 17× faster and 2 % worse is a better input to this than a slower,
+A backend ~10× faster and 2 % worse is a better input to this than a slower,
 marginally better one, because the saved time buys passes.
 
 **What it does NOT do.** It does not transcribe, run a model, read audio, cut
@@ -69,7 +69,7 @@ only ever sees contracts.
 precision. It is **not** reimplemented here. Its second input is *audio* —
 Silero probabilities and an RMS envelope — which the contract does not carry
 and `ai-media/` has no model or decoder to produce; and what was
-Whisper-specific about it was never the algorithm but one number, which
+backend-specific about it (written for `mlx-whisper`) was never the algorithm but one number, which
 `DarkParams::max_word_secs` already took as a parameter. Full reasoning: D-375.
 
 So `vad.py` is the half that genuinely is contract-layer:
@@ -86,8 +86,11 @@ integration test (`APELLES_DARK_REPORT_JSON` / `APELLES_DARK_MAX_WORD_SECS` /
 ## Backend profiles
 
 `asr/base.py`'s `BackendDescriptor` is the single source of truth for
-`max_word_secs`. `BackendProfile.from_descriptor` converts one. The registry
-here mirrors them so the harness can resolve a profile from a transcript's own
+`max_word_secs`. `BackendProfile.from_descriptor` converts one. **Since D-381
+the registry holds one profile, Parakeet's** — the machinery stays for the next
+backend, and a transcript from a model no profile names (including a pre-D-381
+Whisper transcript, `model: "large-v3"`) is refused rather than given
+Parakeet's constants. The registry mirrors the descriptors so the harness can resolve a profile from a transcript's own
 `model` field **with no backend in the process** — a transcript read off disk,
 or over the sidecar's HTTP boundary — and `test_harness_pipeline.py` pins the
 mirror to the descriptors field-for-field, so drift is a failing test.
@@ -103,7 +106,7 @@ iteration over a set. Pinned by tests in both files.
 python3 ai-media/test_harness_align.py       # the aligner, 12 scenarios
 python3 ai-media/test_harness_pipeline.py    # checks + pipeline, 15 checks
 APELLES_HARNESS_SOURCE=<a real file> \
-  ai-env/.venv/bin/python ai-media/test_harness_live.py   # real Whisper, opt-in
+  ai-env/.venv/bin/python ai-media/test_harness_live.py   # real Parakeet, opt-in
 ```
 
 The first two need no model and no venv — that is the point, not a convenience.

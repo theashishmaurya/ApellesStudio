@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""D-374 step 3 — the harness end-to-end against the REAL Whisper backend.
+"""D-374 step 3 / D-381 — the harness end-to-end against the REAL ASR backend.
 
 **Why this exists, and why it is opt-in.** `test_harness_align.py` and
 `test_harness_pipeline.py` cover every check as a pure function over
 contract-shaped fixtures, which is where correctness lives. What they cannot
-cover is the claim D-374 actually makes: that the harness composes over a real
-backend's real output, and that it is **the existing Whisper backend** it was
-proved against rather than the Parakeet one it was designed for. If it only
-worked once Parakeet landed, it would not be backend-agnostic.
+cover is that the harness composes over a real backend's real output. It was
+first proved (D-375) against the `mlx-whisper` backend, so that its
+agnosticism was shown rather than asserted; since D-381 decommissioned Whisper
+it runs against Parakeet, the only backend, which is the one it was designed
+for.
 
-So this runs `transcribe.transcribe()` as it exists today — no backend seam, no
-new model — three times over one window of a real source with the **chunk
-offset varied**, and reconciles the three. Varying the offset is the measured
-knob (D-374 §3.1): the failures cluster at chunk seams, so a pass whose seams
-fall elsewhere disagrees informatively instead of reproducing the first.
-`mlx-whisper` has no chunk-size argument, but it does not need one — its 30 s
-window grid starts at the start of the audio it is handed, so a pass that
+So this runs `transcribe.transcribe()` three times over one window of a real
+source with the **chunk offset varied**, and reconciles the three. Varying the
+offset is the measured knob (D-374 §3.1): the failures cluster at chunk seams,
+so a pass whose seams fall elsewhere disagrees informatively instead of
+reproducing the first. It is expressed through `start_secs` alone:
+`parakeet-mlx`'s chunker starts from the audio it is handed, so a pass that
 starts 10 s earlier has every seam 10 s elsewhere, and D-349 already shifts a
 windowed pass's timestamps back to absolute source seconds precisely so
 windowed passes are comparable. The harness reconciles only the range every
@@ -39,7 +39,7 @@ ffmpeg -i source.wav -f f32le -ac 1 -ar 16000 source.f32
 ORT_DYLIB_PATH=app/src-tauri/resources/libonnxruntime.dylib \
 APELLES_SILERO_MODEL="$HOME/Library/Application Support/studio.apelles.app/models/silero_vad_v6.2.1.onnx" \
 APELLES_DARK_PCM=source.f32 APELLES_DARK_TRANSCRIPT=source.json \
-APELLES_DARK_MAX_WORD_SECS=2.0 APELLES_DARK_REPORT_JSON=/tmp/report.json \
+APELLES_DARK_MAX_WORD_SECS=1000000 APELLES_DARK_REPORT_JSON=/tmp/report.json \
   cargo test -p apelles-speech --test dark_live -- --ignored --nocapture
 
 APELLES_HARNESS_SOURCE=source.wav APELLES_HARNESS_DARK_REPORT=/tmp/report.json \
@@ -71,20 +71,21 @@ from harness.reconcile import AGREEMENT_STATES  # noqa: E402
 
 #: The window reconciled by default, in absolute source seconds. 200-260 s of
 #: the owner's C038 is where the measured interesting material is: the 5.48 s
-#: stretched ` down.` at 217.26 s that B-216 turns on, and the `"Cut from here"`
-#: at 223.8 s that Whisper dropped and Parakeet caught (D-374 §1).
+#: stretched ` down.` at 217.26 s that B-216 turned on (a Whisper drop), and the
+#: `"Cut from here"` at 223.8 s that Whisper dropped and Parakeet caught
+#: (D-374 §1).
 DEFAULT_START = 200.0
 DEFAULT_DURATION = 60.0
 
 #: How far apart the passes' chunk grids are pushed, in seconds. Three passes,
-#: 10 s apart, so no two share a 30 s window boundary anywhere in the reconciled
-#: range — which is the whole point of varying the offset.
+#: 10 s apart, so no two share a chunk seam anywhere in the reconciled range —
+#: which is the whole point of varying the offset.
 OFFSETS = (0.0, 10.0, 20.0)
 
 
 def passes_over(source: str, start: float, duration: float) -> list[dict]:
     """One contract per chunk offset, each covering `[start, start + duration]`
-    and each with its 30 s grid somewhere else.
+    and each with its chunk seams somewhere else.
 
     A pass with offset `d` starts `d` seconds earlier and runs `d` seconds
     longer, so every pass covers the window and the harness's range
@@ -171,9 +172,9 @@ def main() -> int:
         print(f"skip: APELLES_HARNESS_SOURCE={source} does not exist")
         return 0
     try:
-        import mlx_whisper  # noqa: F401
+        import parakeet_mlx  # noqa: F401
     except ImportError:
-        print("skip: mlx_whisper is not importable — run this on ai-env/.venv's python")
+        print("skip: parakeet_mlx is not importable — run this on ai-env/.venv's python")
         return 0
 
     start = float(os.environ.get("APELLES_HARNESS_START", DEFAULT_START))
@@ -199,7 +200,11 @@ def main() -> int:
         Path(out).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"  reconciled contract written to {out}")
 
-    print("the harness composes over the real Whisper backend")
+    # The profile came from the contract's own `model` field, and it is the one
+    # backend's — so a real report, if one was folded, was checked against
+    # Parakeet's constants and not the detector's Whisper-era default.
+    assert result["harness"]["profile"] == "parakeet", result["harness"]
+    print("the harness composes over the real Parakeet backend")
     return 0
 
 

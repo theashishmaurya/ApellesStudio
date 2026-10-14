@@ -4,18 +4,21 @@
 **What it is.** The check the owner's speed requirement exists for. Run the
 same source N times, varying something that moves the model's own boundaries
 without changing a sample of the audio, then say per word whether the passes
-agreed. At 17.6× realtime three passes of a 989 s source cost ~170 s (D-374's
-measurement), which is what buys this.
+agreed. At ~25× realtime end-to-end three passes of a 989 s source cost ~115 s
+(D-377's timing of the Parakeet backend through the seam), which is what buys
+this.
 
 **The knob is the chunk offset**, and that is a measured choice, not an
 aesthetic one: Parakeet's two real failures — run-on segments and dropped words
 — cluster at chunk seams, so moving the seams is what makes a second pass
-disagree *informatively* rather than reproduce the first. Both backends expose
-it through the contract this check already reads: for `mlx-whisper` a pass
-started a little earlier shifts its 30 s window grid (`transcribe()`'s
-`start_secs`/`duration_secs`, D-349, whose timestamps come back in absolute
-source seconds precisely so windowed passes are comparable); for
-`parakeet-mlx` it is `chunk_duration`/`overlap_duration`.
+disagree *informatively* rather than reproduce the first. It is expressed
+through the contract this check already reads: a pass started a little earlier
+(`transcribe()`'s `start_secs`/`duration_secs`, D-349, whose timestamps come
+back in absolute source seconds precisely so windowed passes are comparable)
+has every chunk seam somewhere else, because `parakeet-mlx`'s chunker — like
+`mlx-whisper`'s 30 s grid, which the check was first proved against — starts
+from the audio it is handed. `chunk_duration`/`overlap_duration` are the more
+direct knob and stay unthreaded until a caller wants them.
 
 **Producing the passes is NOT this check's job** — running a backend N times is
 a backend's job. [`MultiPassReconcile`] is constructed *with* the other passes,

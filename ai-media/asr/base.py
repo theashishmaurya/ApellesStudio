@@ -33,18 +33,23 @@ exists exactly once and a windowed pass can be spliced straight into a
 whole-file one — D-349, the recovery primitive `apelles-speech`'s dark-region
 detector feeds (B-216).
 
-**Why a validator and not just a docstring.** D-374 step 1's acceptance test is
-"nothing changed", and the committed Whisper fixtures cannot be cheaply
-re-derived from the model. What *can* be pinned is the shape, on every call, for
-every backend — so a backend that returns a 98-second segment, a sub-word
-fragment where a word belongs, or an un-shifted timestamp fails at its own
-boundary instead of several layers downstream in a retake group.
+**One backend today, and the seam stays.** D-374 built this for two
+(`mlx-whisper` and Parakeet); D-381 decommissioned Whisper, leaving Parakeet as
+the only implementation. Nothing here was specific to either — that was the
+point — so the seam is unchanged and a future backend still plugs in the way
+`README.md` describes.
+
+**Why a validator and not just a docstring.** A transcript cannot be cheaply
+re-derived from a model on every run, so what is pinned instead is the shape,
+on every call, for every backend — a backend that returns a 98-second segment,
+a sub-word fragment where a word belongs, or an un-shifted timestamp fails at
+its own boundary instead of several layers downstream in a retake group.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Mapping, Protocol, runtime_checkable
 
 from errors import UserFacingError
 
@@ -53,9 +58,9 @@ from errors import UserFacingError
 class BackendDescriptor:
     """Everything a caller can learn about a backend WITHOUT running it.
 
-    Deliberately small: which models the backend accepts, which languages it
-    can actually transcribe, and the one anomaly constant a *general* check
-    cannot hard-code ([`Self.max_word_secs`]).
+    Deliberately small: which models the backend accepts and where each one's
+    weights load from, which languages it can actually transcribe, and the one
+    anomaly constant a *general* check cannot hard-code ([`Self.max_word_secs`]).
 
     That last field arrived with the harness (D-375). D-374 §3.2 said from the
     start that `dark.rs`'s Whisper-specific constants belong in the descriptor
@@ -68,13 +73,15 @@ class BackendDescriptor:
     name: str
     #: Used when a caller passes no model at all.
     default_model: str
-    #: Every model name this backend accepts, in the order a help string lists
-    #: them.
-    models: tuple[str, ...]
+    #: Every model name this backend accepts → the Hugging Face repo id (or
+    #: local directory) its weights load from, in the order a help string lists
+    #: them. The one place a model name meets its weights: the backend loads
+    #: from it, and `server.py`'s `/health` reports the default's entry.
+    model_repos: Mapping[str, str]
     #: ISO-639-1 codes the backend can transcribe, or `None` for "not
-    #: constrained" (mlx-whisper's 99-language multilingual set, where the
-    #: practical answer is "try it"). A finite set is a REFUSAL surface, not
-    #: documentation: see [`check_language`].
+    #: constrained" — a backend whose practical answer for any language is "try
+    #: it". A finite set is a REFUSAL surface, not documentation: see
+    #: [`check_language`].
     languages: frozenset[str] | None
     #: One clause naming the language coverage, for the refusal sentence.
     language_summary: str
@@ -83,13 +90,20 @@ class BackendDescriptor:
     #: across an untranscribed hole and the bound does not apply to it at all.
     #:
     #: `crates/apelles-speech/src/dark.rs` excludes a word longer than this from
-    #: transcript coverage, because Whisper's DTW alignment spreads the few
-    #: tokens it *did* emit across a region it dropped — c038's ` down.` at
-    #: 217.26-222.74 s is 5.48 s for one word — so a gap that looks covered is
+    #: transcript coverage, because a decoder that aligns words after the fact
+    #: can spread the few tokens it *did* emit across a region it dropped —
+    #: mlx-whisper's DTW alignment did exactly that (c038's ` down.` at
+    #: 217.26-222.74 s, 5.48 s for one word), so a gap that looks covered is
     #: not. The algorithm is general; this number is the backend's, which is why
-    #: it lives here and is passed in. See [`harness.vad.dark_params_for`], its
-    #: only reader, and D-375.
+    #: it lives here and is passed in. Parakeet's is `None` (its own module says
+    #: why). See [`harness.vad.dark_params_for`], its only reader, and D-375.
     max_word_secs: float | None
+
+    @property
+    def models(self) -> tuple[str, ...]:
+        """Every model name this backend accepts, in [`Self.model_repos`]'s
+        order."""
+        return tuple(self.model_repos)
 
     def require_model(self, model: str | None) -> str:
         """`model`, or the default when it is `None` — raising `ValueError` if
@@ -109,8 +123,10 @@ class BackendDescriptor:
         return resolved
 
     def supports_language(self, language: str | None) -> bool:
-        """`None` / `"auto"` is always supported — it is a request to let the
-        model decide, which every backend here can do within its own set."""
+        """`None` / `"auto"` is always supported — it is a request for the
+        backend's own default behaviour inside its own set, never a claim about
+        the source. (Parakeet takes no language argument at all, so for it
+        "auto" is simply what always happens.)"""
         if not language or language == "auto":
             return True
         if self.languages is None:
@@ -121,12 +137,15 @@ class BackendDescriptor:
 def check_language(descriptor: BackendDescriptor, language: str | None) -> None:
     """Refuse a language the backend cannot transcribe, with the reason named.
 
-    This exists because of one measured, specific mismatch (D-374): `transcribe.
-    py`'s own docstring promises code-switched Hinglish auto-detects fine on
-    `large-v3`, and **Hindi is not among parakeet-tdt-0.6b-v3's 25 European
-    languages**. Silently handing Hindi to Parakeet does not fail — it returns
-    confident, fluent, wrong English, which is the worst possible outcome for a
-    transcript an editor is about to cut to.
+    This exists because of one measured, specific mismatch (D-374): **Hindi is
+    not among parakeet-tdt-0.6b-v3's 25 European languages**, and silently
+    handing Hindi to Parakeet does not fail — it returns confident, fluent,
+    wrong English, which is the worst possible outcome for a transcript an
+    editor is about to cut to. Until D-381 the refusal pointed at the
+    multilingual Whisper backend; since Whisper was decommissioned there is no
+    backend to point at, and the sentence says so plainly: a source outside the
+    set is unsupported (D-381 records Hindi/Hinglish as unsupported, by the
+    owner's call).
 
     A plain [`UserFacingError`] rather than a new exception subclass:
     `errors.py` states that its one-bit taxonomy ("was this message written for
@@ -135,15 +154,18 @@ def check_language(descriptor: BackendDescriptor, language: str | None) -> None:
     what the caller and the Edit tab both actually show.
 
     A `None`/`"auto"` language is NOT refused — it is a request for the
-    backend's own detection, inside its own set.
+    backend's own default behaviour, not a statement about the source. Which
+    also means this cannot catch a Hindi source transcribed with no language
+    named; nothing local can, since Parakeet reports no detected language
+    (`docs/notes/asr-backends-and-harness.md` §5).
     """
     if descriptor.supports_language(language):
         return
     codes = ", ".join(sorted(descriptor.languages or ()))
     raise UserFacingError(
-        f"the {descriptor.name} speech model cannot transcribe {language!r}: it covers "
-        f"{descriptor.language_summary} ({codes}). Transcribe this source with the "
-        "whisper backend instead, which is multilingual."
+        f"the speech model ({descriptor.default_model}) cannot transcribe {language!r}: it "
+        f"covers {descriptor.language_summary} only ({codes}), and Apelles has no other "
+        "speech model. A source in another language is not supported."
     )
 
 
@@ -227,10 +249,12 @@ def _validate_word(word: object, where: str) -> None:
             raise ValueError(f"{where} has no {key!r}")
     if not isinstance(word["word"], str):
         raise ValueError(f"{where} has a non-string 'word'")
-    # `start`/`end` may legitimately be `None`: mlx-whisper emits word entries
-    # with no timing, and `transcribe.py`'s own `_shift` exists to leave those
-    # alone rather than compute `None + offset`. The contract carries that
-    # possibility; it does not invent a number for it.
+    # `start`/`end` may legitimately be `None`: the contract has always allowed
+    # an untimed word (mlx-whisper emitted them), and `transcribe.py`'s own
+    # `_shift` leaves those alone rather than compute `None + offset`. Parakeet
+    # always times its words, but the contract is the backends' common shape,
+    # not one backend's output, so it keeps carrying that possibility rather
+    # than inventing a number for it.
     _require_time_or_none(word["start"], f"{where} start")
     _require_time_or_none(word["end"], f"{where} end")
     if "probability" in word and not isinstance(word["probability"], (int, float)):
@@ -252,27 +276,26 @@ def local_snapshot_or_repo(repo: str) -> str:
     """Resolve `repo` to its cached local snapshot path, or return `repo`
     unchanged if it is not cached yet (B-174).
 
-    **Shared by both backends because both have the same bug to avoid.**
-    `mlx_whisper.load_models.load_model` and `parakeet_mlx.utils.from_pretrained`
-    each reach the Hub with no `local_files_only` even when every file is
-    already cached — `snapshot_download(repo_id=...)` and
-    `hf_hub_download(repo, "config.json")` respectively — which contradicts this
-    sidecar's own promise ("no network calls beyond a first-run model download")
-    and was caught live on the whisper path: a dead TCP connection (CLOSE_WAIT —
-    the peer had already closed, the client never noticed) left a transcribe job
-    hung indefinitely with 0% CPU, no timeout, no error.
+    **On the seam rather than in the Parakeet backend because it is a property
+    of Hub loaders, not of one model.** `parakeet_mlx.utils.from_pretrained`
+    reaches the Hub with no `local_files_only` even when every file is already
+    cached (`hf_hub_download(repo, "config.json")`), which contradicts this
+    sidecar's own promise ("no network calls beyond a first-run model
+    download"). B-174 was caught live on the decommissioned `mlx_whisper`
+    loader, which had the same bug: a dead TCP connection (CLOSE_WAIT — the peer
+    had already closed, the client never noticed) left a transcribe job hung
+    indefinitely with 0% CPU, no timeout, no error. Any future Hub-loaded
+    backend wants the same treatment, which is why it stays here.
 
-    Both loaders fall back to treating their argument as a local directory when
-    it already exists on disk (`mlx_whisper`'s `load_model` only calls
-    `snapshot_download` when `Path(path_or_hf_repo)` does NOT exist;
-    `from_pretrained` wraps its two `hf_hub_download` calls in a `try` whose
-    `except` reads `Path(hf_id_or_path) / "config.json"`). So resolving the
-    cached snapshot path ourselves, with `local_files_only=True` (which raises
-    immediately rather than touching the network when the repo isn't cached),
-    and handing the loader that path instead of the bare repo id skips the
-    network call entirely on every call after the first — with no global state
-    (`HF_HUB_OFFLINE`) to mutate and no thread-safety concern with concurrent
-    jobs for different models.
+    `from_pretrained` falls back to treating its argument as a local directory
+    when it already exists on disk (it wraps its two `hf_hub_download` calls in
+    a `try` whose `except` reads `Path(hf_id_or_path) / "config.json"`). So
+    resolving the cached snapshot path ourselves, with `local_files_only=True`
+    (which raises immediately rather than touching the network when the repo
+    isn't cached), and handing the loader that path instead of the bare repo id
+    skips the network call entirely on every call after the first — with no
+    global state (`HF_HUB_OFFLINE`) to mutate and no thread-safety concern with
+    concurrent jobs.
     """
     try:
         from huggingface_hub import snapshot_download

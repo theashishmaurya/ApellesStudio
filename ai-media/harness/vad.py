@@ -15,9 +15,10 @@ placement decision and its reasoning in full.** The short version:
   no model and no decoder to produce. The harness's own rule, that a check sees
   only the contract, is in fact the reason this one cannot live inside the
   harness as a self-contained check;
-- what was actually Whisper-specific about it was never the algorithm. It was
-  **one number**, and `dark.rs` already takes that number as a parameter
-  (`DarkParams::max_word_secs`, overridable right through
+- what was actually backend-specific about it was never the algorithm. It was
+  **one number** (written for `mlx-whisper`'s stretched words), and `dark.rs`
+  already takes that number as a parameter (`DarkParams::max_word_secs`,
+  overridable right through
   `chroma_detect_dark_regions`'s wire contract). The seam existed; what did not
   exist was anything that knew what to put in it per backend.
 
@@ -41,10 +42,14 @@ only ever sees contracts and plain data.
 
 **The guard is the point of the generalisation.** [`fold_dark_report`] refuses
 a report produced under parameters that are not this backend's. Running a
-Parakeet transcript against Whisper's 2.0 s word bound does not fail — it
-returns a plausible-looking list of dark regions that is wrong, which nobody
-would catch by reading it. That is the exact mistake D-374 §3.2 names, and it
-is now a refusal.
+Parakeet transcript against a stretched-word bound (the 2.0 s written for
+`mlx-whisper`) does not fail — it returns a plausible-looking list of dark
+regions that is wrong, which nobody would catch by reading it. That is the
+exact mistake D-374 §3.2 names, and it is a refusal. **It is kept with one
+backend on purpose** (D-381): as of D-381 the detector's own default
+(`DarkParams::default()`) is still the Whisper-era 2.0 s, so a report produced
+without [`dark_params_for`] is exactly the mismatch the guard catches, and the
+next backend added to the seam brings its own constant.
 """
 
 from __future__ import annotations
