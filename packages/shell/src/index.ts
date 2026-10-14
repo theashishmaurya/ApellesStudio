@@ -28,3 +28,4 @@
 export { Shell, type ShellTab, type ShellProps } from './Shell';
 export { useShellStore, useActiveTab, type ShellTabId } from './store';
 export { useWindowChrome, MacTrafficLights, WindowControls } from './WindowChrome';
+export { stepHistory, SHELL_TAB_IDS, type HistoryDirection, type HistoryStepResult } from './historyStep';

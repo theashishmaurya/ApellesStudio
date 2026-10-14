@@ -4819,7 +4819,8 @@ impl ApellesMcp {
 
     One call is **one undo entry**, however many ranges it removes — which is
     the reason this exists rather than looping `editor_split_clip` +
-    `editor_remove_clip` + `editor_remove_gap` yourself.
+    `editor_remove_clip` + `editor_remove_gap` yourself. The `undo` tool
+    reverses the whole call as that one entry.
 
     **Read the answer; do not assume it (B-197).** `ok: true` means every range
     really was cut. A range that CANNOT be — a sync-locked track has a clip

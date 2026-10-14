@@ -3628,7 +3628,7 @@
     },
     {
       "name": "editor_ripple_delete_ranges",
-      "description": "Cut N stretches out of one track and close every gap behind them, **as a\n    single edit** \u2014 the apply half of `editor_detect_silences` /\n    `editor_detect_retakes`, and the same thing the Recut panel's Cut button\n    does.\n\n    - `track` \u2014 the track index to cut on.\n    - `ranges` \u2014 a list of `{\"startFrame\": int, \"endFrame\": int}` in **TIMELINE**\n      frames, half-open. The `startFrame`/`endFrame` of a detected silence or\n      retake take are already in exactly this form.\n\n    Ranges are sorted, merged and applied back-to-front for you, so overlapping\n    or out-of-order input is safe and you never have to compensate for an\n    earlier cut having moved a later one.\n\n    One call is **one undo entry**, however many ranges it removes \u2014 which is\n    the reason this exists rather than looping `editor_split_clip` +\n    `editor_remove_clip` + `editor_remove_gap` yourself.\n\n    **Read the answer; do not assume it (B-197).** `ok: true` means every range\n    really was cut. A range that CANNOT be \u2014 a sync-locked track has a clip\n    straddling the point its ripple would have to close (B-033), an A/V-linked\n    partner cannot be razored there (D-129), the range describes no real\n    material \u2014 is left ENTIRELY alone (its material stays, no half-cut hole),\n    and the call answers `ok: false` with `applied` (how many ranges did land,\n    still as one undo entry), `requested`, and `skipped`: each un-cut range's\n    `startFrame`/`endFrame` and the `reason` it was refused. Re-read the\n    timeline before trusting any frame number you were holding, or undo.\n    Refused outright with an `error`, nothing applied, if the track is locked\n    or not one range could be cut.",
+      "description": "Cut N stretches out of one track and close every gap behind them, **as a\n    single edit** \u2014 the apply half of `editor_detect_silences` /\n    `editor_detect_retakes`, and the same thing the Recut panel's Cut button\n    does.\n\n    - `track` \u2014 the track index to cut on.\n    - `ranges` \u2014 a list of `{\"startFrame\": int, \"endFrame\": int}` in **TIMELINE**\n      frames, half-open. The `startFrame`/`endFrame` of a detected silence or\n      retake take are already in exactly this form.\n\n    Ranges are sorted, merged and applied back-to-front for you, so overlapping\n    or out-of-order input is safe and you never have to compensate for an\n    earlier cut having moved a later one.\n\n    One call is **one undo entry**, however many ranges it removes \u2014 which is\n    the reason this exists rather than looping `editor_split_clip` +\n    `editor_remove_clip` + `editor_remove_gap` yourself. The `undo` tool\n    reverses the whole call as that one entry.\n\n    **Read the answer; do not assume it (B-197).** `ok: true` means every range\n    really was cut. A range that CANNOT be \u2014 a sync-locked track has a clip\n    straddling the point its ripple would have to close (B-033), an A/V-linked\n    partner cannot be razored there (D-129), the range describes no real\n    material \u2014 is left ENTIRELY alone (its material stays, no half-cut hole),\n    and the call answers `ok: false` with `applied` (how many ranges did land,\n    still as one undo entry), `requested`, and `skipped`: each un-cut range's\n    `startFrame`/`endFrame` and the `reason` it was refused. Re-read the\n    timeline before trusting any frame number you were holding, or undo.\n    Refused outright with an `error`, nothing applied, if the track is locked\n    or not one range could be cut.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -9147,6 +9147,15 @@
       }
     },
     {
+      "name": "redo",
+      "description": "Redo the action `undo` last reversed, on any tab \u2014 exactly what Cmd/Ctrl+Y\n    does (D-383). A fresh edit after an undo discards the redo branch, so redo\n    only works until you do something else. The app switches to the tab the\n    redone action belongs to. An empty redo stack is `ok: true` with\n    `redone: null` and a `note`, not an error.\n\n    Returns {ok, redone: {tab, label} | null, activeTab, canUndo, canRedo,\n    undoLabel, redoLabel, note?}.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "redoArguments"
+      }
+    },
+    {
       "name": "request_human",
       "description": "Hand back to the user \u2014 call this when you are genuinely unsure, when a\n    call is creative rather than technical, or when you are done and want them to\n    review.\n\n    This is NOT a routine step. Use it for: \"the skin tone is a judgement call I\n    shouldn't make\", \"the matte edge on the hair needs manual cleanup here\",\n    \"I've balanced the shot to the reference \u2014 does this look right to you?\".\n    Don't use it to narrate ordinary progress.\n\n    reason: a short, specific sentence shown to the user in a banner.\n    roi: optional {x, y, w, h} normalized to 0..1 (top-left origin) \u2014 a region\n      drawn as a rectangle on the canvas so the user knows where to look\n      (e.g. a face crop, a matte-edge artifact, the darkest patch).\n\n    Non-blocking: this posts the request and returns immediately with\n    {posted: true, reason, roi}. It does NOT wait for the user. To find out\n    whether they have acted, call `get_state` and read `pendingHumanRequest`:\n    it becomes null / `cleared: true` once they click \"Resume agent\". Keep going\n    once it's cleared.\n\n    Every change you made is already visible to the user in the GUI \"Agent\n    activity\" feed, with a per-field diff and an undo button \u2014 you don't need to\n    summarise your edits here, just say what you need from them.",
       "inputSchema": {
@@ -10384,6 +10393,15 @@
         ],
         "type": "object",
         "title": "track_subjectArguments"
+      }
+    },
+    {
+      "name": "undo",
+      "description": "Undo the most recent undoable action, on ANY tab \u2014 exactly what Cmd/Ctrl+Z\n    does (D-383). The history is one stack shared by Edit, Motion and Colorist,\n    so this reverses the latest thing done anywhere, whether a person or an\n    agent did it, and the app switches to the tab that action belonged to, the\n    way the keyboard shortcut does. A multi-step tool such as\n    `editor_ripple_delete_ranges` is one entry, so one `undo` reverses all of it.\n\n    An empty stack is not an error: you get `ok: true` and `undone: null`\n    with a `note`. Read `undone` before acting on the result \u2014 it names what was\n    reversed \u2014 and `undoLabel` to see what the NEXT `undo` would reverse.\n\n    Returns {ok, undone: {tab, label} | null, activeTab, canUndo, canRedo,\n    undoLabel, redoLabel, note?}.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "undoArguments"
       }
     }
   ],
@@ -17539,6 +17557,25 @@
       ]
     },
     {
+      "tool": "redo",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "redo",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "request_human",
       "case": "minimal",
       "arguments": {
@@ -18478,6 +18515,25 @@
         {
           "type": "text",
           "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  }\n}"
+        }
+      ]
+    },
+    {
+      "tool": "undo",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "undo",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
         }
       ]
     }

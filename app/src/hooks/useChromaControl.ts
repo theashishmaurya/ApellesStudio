@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 // B-217/D-358 — the cross-store project-identity guard. See the call site in the
 // dispatcher below for why every op runs it, reads included.
 import { assertProjectIdentity } from '@apelles/store';
+import { stepHistory } from '@apelles/shell';
 import { safeUnlisten } from '../utils/tauriListeners';
 
 // D-183 — the three Edit-tab ops that used to live here (`get_timeline`,
@@ -182,6 +183,22 @@ function assembleGrade() {
   return { schema: GRADE_SCHEMA, shot, adjustments: s.adjustments, notes: '' };
 }
 
+/** D-383 — the `undo` / `redo` ops' answer, shaped for the MCP tools. An empty
+ *  stack is a normal outcome (`ok`, a null entry, a note), never an error. */
+function historyStepResult(direction: 'undo' | 'redo') {
+  const r = stepHistory(direction);
+  const key = direction === 'undo' ? 'undone' : 'redone';
+  return {
+    [key]: r.entry,
+    activeTab: r.activeTab,
+    canUndo: r.canUndo,
+    canRedo: r.canRedo,
+    undoLabel: r.undoLabel,
+    redoLabel: r.redoLabel,
+    ...(r.entry ? {} : { note: `nothing to ${direction}: the ${direction} stack is empty` }),
+  };
+}
+
 /** default grade.json path: `<source dir>/<source basename>.grade.json`. */
 function defaultGradePath(): string | null {
   const cv = useChromaStore.getState().videoInfo;
@@ -357,6 +374,14 @@ export function useChromaControl() {
       // editor_get_timeline / editor_set_clip_fade / editor_set_track_duck
       // — see docs/notes/mcp-architecture.md's "every tab owns its own ops"
       // rule, and this file's own top-of-file comment.
+
+      // ---- global undo / redo (D-383) ---------------------------------------
+      // Cross-tab, so they live in this un-prefixed registry rather than in a
+      // tab's own: the history stack is shared by Edit / Motion / Colorist. Both
+      // go through `stepHistory`, the very function Cmd/Ctrl+Z / Cmd/Ctrl+Y call,
+      // so the agent gets the same tab-follow behaviour as the keyboard.
+      undo: () => historyStepResult('undo'),
+      redo: () => historyStepResult('redo'),
 
       // ---- multi-shot session (round-3, D-033) ----------------------------
       // list_shots / set_active_shot / add_shots so the agent can grade shot 2,
@@ -1534,6 +1559,9 @@ export function useChromaControl() {
         'get_state', 'list_masks', 'inspect_color', 'sample', 'sample_region',
         'export', 'export_progress', 'get_grade', 'save_grade', 'request_human',
         'list_shots', 'list_mask_keyframes',
+        // undo/redo render nothing of their own (the history entry's tab does),
+        // and are not a new activity-feed entry — they step the existing stack.
+        'undo', 'redo',
         'list_projects', 'save_project', 'set_project_settings',
       ]);
       // pure navigation — changes the playhead / open clip / active shot, not

@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-14** — **D-383: `undo` / `redo` MCP tools (186 tools).** An agent could ripple-delete retakes but had no way to reverse its own cut; Cmd+Z was GUI-only. Both interfaces now call `@apelles/shell`'s `stepHistory` (extracted from the `Shell.tsx` handler, tab-follow included); an empty stack is `ok` with a null entry.
+
 - **2026-10-14** — **`debug_set_library_mode` (debug-only MCP tool, 184 tools).** `debug_ui_state` reported `libraryMode`/`libraryModes` but nothing could set them, so an agent could not open the Recut panel to check retake proposals; the new op sets the Edit library column's mode AND opens the column, refusing an unknown mode with the accepted list. Python + Rust + parity corpus re-captured.
 
 - **2026-10-14** — **B-247 fixed: dark-region recovery and `editor_retranscribe_words` were dead on Parakeet.** Found by the first live D-380 smoke on C040: the app pins every re-read to the transcript's own `language`, Parakeet reports `"unknown"`, and the seam refused its own value — so all four recovery windows failed silently and every re-read errored. The seam now accepts back every `language` it emits (`asr.base.UNDETECTED_LANGUAGE`); a round-trip test reproduces the live failure without the fix.

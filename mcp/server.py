@@ -4870,7 +4870,8 @@ def editor_ripple_delete_ranges(track: int, ranges: list) -> str:
 
     One call is **one undo entry**, however many ranges it removes — which is
     the reason this exists rather than looping `editor_split_clip` +
-    `editor_remove_clip` + `editor_remove_gap` yourself.
+    `editor_remove_clip` + `editor_remove_gap` yourself. The `undo` tool
+    reverses the whole call as that one entry.
 
     **Read the answer; do not assume it (B-197).** `ok: true` means every range
     really was cut. A range that CANNOT be — a sync-locked track has a clip
@@ -4905,6 +4906,41 @@ def list_shots() -> str:
     import json
 
     return json.dumps(_op("list_shots"), indent=2, default=str)
+
+
+@mcp.tool()
+def undo() -> str:
+    """Undo the most recent undoable action, on ANY tab — exactly what Cmd/Ctrl+Z
+    does (D-383). The history is one stack shared by Edit, Motion and Colorist,
+    so this reverses the latest thing done anywhere, whether a person or an
+    agent did it, and the app switches to the tab that action belonged to, the
+    way the keyboard shortcut does. A multi-step tool such as
+    `editor_ripple_delete_ranges` is one entry, so one `undo` reverses all of it.
+
+    An empty stack is not an error: you get `ok: true` and `undone: null`
+    with a `note`. Read `undone` before acting on the result — it names what was
+    reversed — and `undoLabel` to see what the NEXT `undo` would reverse.
+
+    Returns {ok, undone: {tab, label} | null, activeTab, canUndo, canRedo,
+    undoLabel, redoLabel, note?}."""
+    import json
+
+    return json.dumps(_op("undo"), indent=2, default=str)
+
+
+@mcp.tool()
+def redo() -> str:
+    """Redo the action `undo` last reversed, on any tab — exactly what Cmd/Ctrl+Y
+    does (D-383). A fresh edit after an undo discards the redo branch, so redo
+    only works until you do something else. The app switches to the tab the
+    redone action belongs to. An empty redo stack is `ok: true` with
+    `redone: null` and a `note`, not an error.
+
+    Returns {ok, redone: {tab, label} | null, activeTab, canUndo, canRedo,
+    undoLabel, redoLabel, note?}."""
+    import json
+
+    return json.dumps(_op("redo"), indent=2, default=str)
 
 
 @mcp.tool()

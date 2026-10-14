@@ -36938,3 +36938,16 @@ report's 0 dark regions is an observation about the three-pass result, not a
 measured improvement over one pass. Nothing above `transcribe.py` calls the
 harness, so it has no GUI/MCP pair yet — named as open in the note's §5, with
 the reason (the surface's shape is what step 4's numbers decide).
+
+---
+
+## D-383 — `undo` / `redo` are real MCP tools, and the keyboard and the agent share one `stepHistory`
+
+**decided (2026-10-14)** · extends D-051 (global history) · CLAUDE.md "every feature for a human AND an AI"
+
+- **Context.** Found in a live test: an agent could `editor_ripple_delete_ranges` a set of retakes (one history entry) but had no way to undo its own cut. Cmd/Ctrl+Z lived only in `Shell.tsx`'s shortcut handler, which pops `useHistoryStore` and then switches to the entry's tab (D-051). A GUI-only control is half a feature.
+- **Options.** (1) Reimplement pop + tab-switch inside the control op: two copies that drift. (2) Have the op synthesise a keydown: fragile, and the shortcut dispatcher refuses while a field is focused. (3) **Extract the step into one function and call it from both.**
+- **Choice.** (3). `packages/shell/src/historyStep.ts` exports `stepHistory(direction, tabs?)`: pop the shared stack, follow the entry to its tab (only if that tab is in the caller's registry), return `{entry, activeTab, canUndo, canRedo, undoLabel, redoLabel}`. `Shell.tsx`'s two shortcuts call it with the rendered tab registry; the new `undo` / `redo` ops call it with `SHELL_TAB_IDS`. The tools return `{ok, undone|redone: {tab, label} | null, activeTab, canUndo, canRedo, undoLabel, redoLabel, note?}`. An empty stack is `ok: true` with a null entry and a `note`, not an error.
+- **Where the ops live.** They are cross-tab, so not in any tab's prefixed registry (`editor_` / `motion_` / `debug_`). They sit in the un-prefixed registry in `app/src/hooks/useChromaControl.ts` beside the other cross-tab ops (`open_project`, `list_shots`); that file is app-layer and may import `@apelles/shell`. They are in its `READ_ONLY` set, which means "no settle-and-capture of a Colorist frame, no activity-feed entry" (an Edit undo has no Colorist frame to capture); the set's name is a slight misnomer for them and is commented as such. **Flagged as a compromise:** a dedicated cross-tab registry would be the cleaner shape; it was not built because it needs a new prefix claim in the `control.rs` handshake for two ops.
+- **Not debug-gated.** Unlike `debug_set_library_mode`, undo is product behaviour, so these are ordinary tools in release builds.
+- **Verified.** `stepHistory` unit tests (empty stack, tab-follow, redo, tab outside the registry); parity corpus re-captured (186 tools); `cargo test -p apelles-mcp` green. Not exercised against the running app in this pass.

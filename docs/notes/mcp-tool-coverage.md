@@ -31,6 +31,9 @@ prerequisite is the underlying capability already existing and being reachable f
 
 `open`, `get_state`, `get_grade`, `save_grade`, `load_grade`, `list_masks`,
 `set_primary`, `set_curve`, `set_color_grade`, `seek`, `list_shots`,
+`undo`, `redo` (D-383 — cross-tab: they step the one shared `@apelles/history`
+stack through `@apelles/shell`'s `stepHistory`, the function Cmd/Ctrl+Z calls, and
+live in this un-prefixed registry because no single tab owns them),
 `set_active_shot`, `add_shots`, `list_projects`, `open_project`, `new_project`,
 `save_project`, `set_project_settings`, `add_subject_mask`, `add_component`,
 `set_submask_mode`, `add_mask_keyframe`, `list_mask_keyframes`,

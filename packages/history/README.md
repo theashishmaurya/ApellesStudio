@@ -47,11 +47,13 @@ D-051's "what's deferred").
 
 ## Consumers
 
-- `@apelles/shell`'s `Shell.tsx` — owns the actual Cmd/Ctrl+Z / Cmd/Ctrl+Y
-  keydown handler, calls `undo()`/`redo()` here regardless of which tab is
-  active, and switches the active tab to whichever tab the returned entry
-  belongs to (see D-051 for why "switch tabs" was chosen over "apply
-  silently in the background").
+- `@apelles/shell`'s `stepHistory()` (`historyStep.ts`, D-383) — the one place
+  that calls `undo()`/`redo()` here regardless of which tab is active, and
+  switches the active tab to whichever tab the returned entry belongs to (see
+  D-051 for why "switch tabs" was chosen over "apply silently in the
+  background"). Two callers: `Shell.tsx`'s Cmd/Ctrl+Z / Cmd/Ctrl+Y shortcuts and
+  the `undo` / `redo` control ops in `app/src/hooks/useChromaControl.ts`, i.e.
+  the `undo` / `redo` MCP tools.
 - `app/src/store/coloristHistoryBridge.ts` — bridges the Colorist's
   pre-existing `useEditorStore` grade-adjustment history into this store
   (adapter, not a rewrite — `useEditorStore`'s own 50-deep stack is
