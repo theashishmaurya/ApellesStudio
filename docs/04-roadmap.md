@@ -2796,9 +2796,11 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       detector inputs, labelled as such.
     - ⬜ **Live smoke of D-380 step 2 on C040** — not runnable from the
       worktree that built it; the script is in `retake-detection.md` §12.7.
-    - ⬜ **A Claude skill that wraps the client loop** (owner, 2026-10-13) —
-      the tools serve their own instructions, so any MCP client can run the
-      loop today; the skill packages it.
+    - ✅ **A Claude skill that wraps the client loop** (owner, 2026-10-13;
+      `.claude/skills/apelles-retake-review/SKILL.md`, 2026-10-14) — the tools
+      serve their own instructions, so the skill carries only the workflow:
+      start + poll, paging with a provisional tail, the refusal loop, the
+      Recut-panel handoff, and the eval loop for prompt changes.
     - ✅ **Re-decide the ASR default** (2026-10-13, **D-381**, superseding
       D-377): the owner decommissioned Whisper; Parakeet is the default and
       only backend, and Hindi/Hinglish sources are unsupported. Decided on
