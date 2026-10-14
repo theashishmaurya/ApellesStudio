@@ -2401,6 +2401,8 @@ pub fn run() {
             chroma::speech::chroma_detect_silences,
             chroma::speech::chroma_detect_retakes,
             chroma::speech::chroma_detect_dark_regions,
+            chroma::retake_proposals::chroma_retake_word_view,
+            chroma::retake_proposals::chroma_check_retake_proposals,
             apply_adjustments,
             generate_preview_for_path,
             generate_preset_preview,

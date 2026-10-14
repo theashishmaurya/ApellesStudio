@@ -39,8 +39,9 @@ use std::path::PathBuf;
 
 use apelles_speech::proposal::{GateParams, INDEXED_VIEW_LEGEND, check_and_resolve_with};
 use apelles_speech::{
-    GroupVerdict, IndexedWord, ProposedGroup, Refusal, RetakeGroup, RetakeParams, RunSpan,
-    TranscriptSegment, detect_retakes, index_transcript, render_indexed,
+    GroupVerdict, IndexedWord, JUDGING_RULES, ProposedGroup, Refusal, RetakeGroup, RetakeParams,
+    RunSpan, TranscriptSegment, ViewPiece, detect_retakes, index_pieces, index_transcript,
+    render_indexed,
 };
 use common::load_path;
 use serde::Deserialize;
@@ -1006,7 +1007,10 @@ fn gated(
         .enumerate()
     {
         match v {
-            GroupVerdict::Accepted { cuts } => {
+            // The eval never waives (no client vouches for anything here), so a
+            // `Confirmed` verdict cannot arise; were it to, it is what the app
+            // would apply once a human ticked it, so it is scored as applied.
+            GroupVerdict::Accepted { cuts } | GroupVerdict::Confirmed { cuts, .. } => {
                 let (a, b) = g.takes[g.keep];
                 accepted.push(Proposed {
                     kept: normalise(vec![(words[a].start_secs, words[b].end_secs)]),
@@ -1436,6 +1440,55 @@ fn the_indexed_view_is_the_pocs_input() {
         );
         assert_eq!(&ours[..ours.len() - body(&ours).len()], INDEXED_VIEW_LEGEND);
     }
+}
+
+/// The app's track view (D-380 step 2) is a list of clip windows; one clip
+/// showing a whole source must give exactly the POC's input too, run numbers
+/// and all — the same golden as above, through `index_pieces`.
+#[test]
+fn a_one_clip_track_view_is_the_pocs_input() {
+    for t in parakeet_tasks() {
+        let labels: Labels = read_json(&t.input.labels);
+        let tr: WordTranscript = read_json(&format!(
+            "eval/retake/transcripts/{}.parakeet.words.json",
+            labels.source
+        ));
+        let (words, runs) = index_transcript(&tr.segments);
+        let view = index_pieces(
+            &[tr.segments],
+            &[ViewPiece {
+                source: 0,
+                start_secs: 0.0,
+                end_secs: f64::INFINITY,
+            }],
+        )
+        .unwrap_or_else(|e| panic!("{}: {e}", t.id));
+        assert_eq!(view.words, words, "{}", t.id);
+        assert_eq!(
+            render_indexed(&view.words, &view.runs).ok(),
+            render_indexed(&words, &runs).ok(),
+            "{}",
+            t.id
+        );
+    }
+}
+
+/// The judging rules the app serves with the view are the POC's prompt,
+/// verbatim — the rules D-379's 0.00 s was measured under, not a paraphrase.
+#[test]
+fn the_served_rules_are_the_pocs_prompt() {
+    let prompt = std::fs::read_to_string(repo_path("eval/retake/client_runs/prompt.md"))
+        .unwrap_or_else(|e| panic!("reading prompt.md: {e}"));
+    assert!(
+        prompt.contains(JUDGING_RULES),
+        "JUDGING_RULES drifted from eval/retake/client_runs/prompt.md"
+    );
+    assert!(JUDGING_RULES.starts_with("The transcript is of one raw"));
+    assert!(
+        JUDGING_RULES
+            .trim_end()
+            .ends_with("far worse than missing a retake.")
+    );
 }
 
 /// Every label file a task points at, once each.

@@ -255,6 +255,22 @@ describe('spliceTranscript', () => {
     const rec = [recovered(9, 16, [segment([word(' x', 10, 11)])])];
     expect(spliceTranscript(segments, rec)).toEqual(spliceTranscript(segments, rec));
   });
+
+  /** D-380 step 2 — a client's re-read may overlap an earlier recovery. Applied
+   *  in order, the later window replaces the earlier window's words it holds
+   *  rather than sitting beside them as a duplicate. */
+  it('a later window replaces an earlier window\'s words where they overlap', () => {
+    const segments = [segment([word(' a', 0, 1), word(' type', 10, 11), word(' z', 20, 21)])];
+    const first = recovered(9, 14, [segment([word(' type', 10, 11), word(' it', 12, 13)])]);
+    const later = recovered(9.5, 11.5, [segment([word(' time', 10, 11)])]);
+    const out = spliceTranscript(segments, [first, later]);
+    const read = (ss: typeof out) =>
+      ss.flatMap((s) => s.words).sort((x, y) => x.start - y.start).map((w) => w.word.trim());
+    expect(read(out)).toEqual(['a', 'time', 'it', 'z']);
+    // The order is the rule: applied the other way round, the wide window wins.
+    const swapped = spliceTranscript(segments, [later, first]);
+    expect(read(swapped)).toEqual(['a', 'type', 'it', 'z']);
+  });
 });
 
 describe('spliceTranscriptDoc', () => {

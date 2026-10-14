@@ -109,7 +109,15 @@ export function clipTranscriptView(
         ...(s.recovered ? { recovered: true as const } : {}),
       }));
   const raw = (extra: Partial<ClipTranscriptView> = {}): ClipTranscriptView => ({
-    utterances: toUtterances(transcript.segments ?? []),
+    // "Raw" means without the D-349 scan, not without the client's applied
+    // re-reads (D-380 step 2): those are part of the file's transcript for
+    // every consumer, whether or not dark regions are being recovered.
+    utterances: toUtterances(
+      spliceTranscript(
+        transcript.segments ?? [],
+        useMediaUnderstandingStore.getState().appliedRereadsFor(path),
+      ),
+    ),
     recovered: 0,
     pending: null,
     ...extra,

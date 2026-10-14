@@ -42,6 +42,7 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { DEFAULT_MIN_SILENCE_MS, type RetakeGroupWire } from './recut';
 import type { DarkDetection, RecoveredWindow, RecoveryWindow } from './darkRegions';
+import type { RetakeProposalSet } from './retakeProposals';
 
 /** How often to poll a running sidecar job. Coarse on purpose: these jobs run
  *  for tens of seconds to minutes, so a tighter loop would just add IPC
@@ -241,9 +242,19 @@ export function darkKey(a: DarkDetectionArgs): string {
 
 /** The cache key for one recovery pass — an isolated re-transcription of one
  *  window of one file. Same `<path>|…` prefix convention as every other key
- *  here, so `clear(path)` drops these too. */
+ *  here, so `clear(path)` drops these too. Also the key of a client's re-read
+ *  (D-380 step 2) — the same question about the same audio, held in its own
+ *  map because it is a preview until the client applies it. */
 export function recoveryKey(path: string, window: RecoveryWindow): string {
   return [path, window.startSecs, window.durationSecs].join('|');
+}
+
+/** A re-read the MCP client chose to APPLY (D-380 step 2): spliced into the
+ *  file's transcript after every dark-region recovery, in the order applied, a
+ *  later one winning wherever two overlap (see `spliceTranscript`). `seq` is
+ *  that order — a counter, not a clock, so the splice is deterministic. */
+export interface AppliedReread extends RecoveredWindow {
+  seq: number;
 }
 
 export interface TranscribeOptions {
@@ -312,6 +323,23 @@ interface MediaUnderstandingState {
   recoveries: Record<string, RecoveredWindow>;
   recovering: Record<string, boolean>;
   recoveryErrors: Record<string, string>;
+  /** [`recoveryKey`] -> an isolated re-read a client asked for over a stretch
+   *  of words (`editor_retranscribe_words`, D-380 step 2), and its twins. A
+   *  PREVIEW: nothing reads these until one is applied. */
+  rereads: Record<string, RecoveredWindow>;
+  rereading: Record<string, boolean>;
+  rereadErrors: Record<string, string>;
+  /** [`recoveryKey`] -> the re-reads a client APPLIED. Part of the transcript
+   *  from then on, for every consumer, through [`recoveriesFor`]. */
+  appliedRereads: Record<string, AppliedReread>;
+  /** The next [`AppliedReread.seq`]. */
+  rereadSeq: number;
+  /** Track index -> the MCP client's retake proposals for that track, as the
+   *  coverage gate judged them (D-380 step 2). The Recut panel subscribes to
+   *  this; `editor_propose_retakes` writes it. Held here rather than in the
+   *  panel because the agent writes it and the human reads it — component
+   *  state cannot be fed from outside. */
+  retakeProposals: Record<number, RetakeProposalSet>;
 
   /** Run to completion. Resolves with the result (cached, if there is one).
    *  Callers that cannot wait minutes — anything reached through
@@ -364,11 +392,31 @@ interface MediaUnderstandingState {
     force?: boolean,
   ): AnalysisPhase;
   recoveryStatus(key: string): AnalysisStatus<RecoveredWindow>;
-  /** Every recovery held for one file, in time order — what [`spliceTranscript`]
-   *  takes. Pure read.
+  /** Every window spliced into one file's transcript, in splice order — what
+   *  [`spliceTranscript`] takes, so every consumer reads one transcript. The
+   *  dark-region recoveries first, in time order (disjoint by construction),
+   *  then the client re-reads it applied, in the order applied (D-380 step 2),
+   *  so a re-read replaces whatever it overlaps. Pure read.
    *
    *  [`spliceTranscript`]: ./darkRegions.ts */
   recoveriesFor(path: string): RecoveredWindow[];
+  /** Only the client re-reads applied to one file, in the order applied — the
+   *  part of [`recoveriesFor`] that is part of the transcript even when the
+   *  D-349 dark-region pass is not run. Pure read. */
+  appliedRereadsFor(path: string): RecoveredWindow[];
+
+  /** Re-transcribe one window of a file for a client to inspect (D-380 step
+   *  2) — the same isolated pass a dark-region recovery runs, cached as a
+   *  preview. Start-then-poll like every other job here. */
+  startReread(path: string, window: RecoveryWindow, language?: string, force?: boolean): AnalysisPhase;
+  rereadStatus(key: string): AnalysisStatus<RecoveredWindow>;
+  /** Splice a finished re-read into the file's transcript (see
+   *  [`recoveriesFor`]). `false` when there is no finished re-read under that
+   *  key. Re-applying the same window moves it to the end of the order. */
+  applyReread(key: string): boolean;
+
+  /** Store or replace one track's client proposals; `null` clears them. */
+  setRetakeProposals(track: number, set: RetakeProposalSet | null): void;
 
   /** Drop a cached result (or everything, with no argument) — the escape hatch
    *  for "this file changed and I don't want to pass `force` at every call
@@ -426,6 +474,62 @@ async function runJob<T>(
   }
 }
 
+/** One isolated, windowed transcription pass — the dark-region recovery's
+ *  (D-349) and a client re-read's (D-380 step 2), which are the same question
+ *  about the same audio. The sidecar returns its words already in absolute
+ *  source seconds. `language` should be the whole-file pass's own (see
+ *  `recoverWindow`'s doc for why it is pinned). The backend is the sidecar's
+ *  default — the same one the whole-file transcript came from. */
+async function transcribeWindow(
+  path: string,
+  window: RecoveryWindow,
+  language: string | undefined,
+  label: string,
+): Promise<RecoveredWindow> {
+  const result = await runJob<Transcript>(
+    'chroma_transcribe',
+    'chroma_transcribe_status',
+    {
+      path,
+      language: language ?? null,
+      wordTimestamps: true,
+      startSecs: window.startSecs,
+      durationSecs: window.durationSecs,
+    },
+    label,
+  );
+  return { window, segments: result.segments ?? [] };
+}
+
+/** [`MediaUnderstandingState.recoveriesFor`] over plain maps: the dark-region
+ *  recoveries in time order, then the client re-reads in the order applied.
+ *  Exported so a component that SUBSCRIBES to both maps (the Recut panel's
+ *  staleness check) computes from what it subscribed to, not from `getState()`. */
+export function recoveriesIn(
+  s: Pick<MediaUnderstandingState, 'recoveries' | 'appliedRereads'>,
+  path: string,
+): RecoveredWindow[] {
+  const prefix = `${path}|`;
+  const dark = Object.entries(s.recoveries)
+    .filter(([k]) => k.startsWith(prefix))
+    .map(([, v]) => v)
+    .sort((a, b) => a.window.startSecs - b.window.startSecs);
+  return [...dark, ...appliedRereadsIn(s, path)];
+}
+
+/** [`MediaUnderstandingState.appliedRereadsFor`] over a plain map. */
+export function appliedRereadsIn(
+  s: Pick<MediaUnderstandingState, 'appliedRereads'>,
+  path: string,
+): RecoveredWindow[] {
+  const prefix = `${path}|`;
+  return Object.entries(s.appliedRereads)
+    .filter(([k]) => k.startsWith(prefix))
+    .map(([, v]) => v)
+    .sort((a, b) => a.seq - b.seq)
+    .map(({ window, segments }) => ({ window, segments }));
+}
+
 /** The shared "start it if it isn't already going" body. Returns the phase as
  *  of right now; the promise deliberately isn't awaited or returned — a
  *  rejection is captured into the error map by the actions' own `catch`, so it
@@ -478,6 +582,12 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
   recoveries: {},
   recovering: {},
   recoveryErrors: {},
+  rereads: {},
+  rereading: {},
+  rereadErrors: {},
+  appliedRereads: {},
+  rereadSeq: 0,
+  retakeProposals: {},
 
   getTranscript: async (path, options = {}) => {
     const cached = get().transcripts[path];
@@ -727,20 +837,8 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
       return { recovering: { ...s.recovering, [key]: true }, recoveryErrors };
     });
     try {
-      const result = await runJob<Transcript>(
-        'chroma_transcribe',
-        'chroma_transcribe_status',
-        {
-          path,
-          // Pinned, not auto-detected — see the interface doc.
-          language: language ?? null,
-          wordTimestamps: true,
-          startSecs: window.startSecs,
-          durationSecs: window.durationSecs,
-        },
-        'recover',
-      );
-      const recovered: RecoveredWindow = { window, segments: result.segments ?? [] };
+      // Language pinned, not auto-detected — see the interface doc.
+      const recovered = await transcribeWindow(path, window, language, 'recover');
       set((s) => ({ recoveries: { ...s.recoveries, [key]: recovered } }));
       return recovered;
     } catch (e: unknown) {
@@ -771,12 +869,57 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
     return { phase: 'idle' };
   },
 
-  recoveriesFor: (path) => {
-    const prefix = `${path}|`;
-    return Object.entries(get().recoveries)
-      .filter(([k]) => k.startsWith(prefix))
-      .map(([, v]) => v)
-      .sort((a, b) => a.window.startSecs - b.window.startSecs);
+  recoveriesFor: (path) => recoveriesIn(get(), path),
+
+  appliedRereadsFor: (path) => appliedRereadsIn(get(), path),
+
+  startReread: (path, window, language, force = false) => {
+    const key = recoveryKey(path, window);
+    const s = get();
+    return startJob(!!s.rereading[key], !!s.rereads[key], s.rereadErrors[key], force, async () => {
+      set((st) => {
+        const { [key]: _cleared, ...rereadErrors } = st.rereadErrors;
+        return { rereading: { ...st.rereading, [key]: true }, rereadErrors };
+      });
+      try {
+        const reread = await transcribeWindow(path, window, language, 'reread');
+        set((st) => ({ rereads: { ...st.rereads, [key]: reread } }));
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        set((st) => ({ rereadErrors: { ...st.rereadErrors, [key]: message } }));
+        throw e;
+      } finally {
+        set((st) => {
+          const { [key]: _dropped, ...rest } = st.rereading;
+          return { rereading: rest };
+        });
+      }
+    });
+  },
+
+  rereadStatus: (key) => {
+    const s = get();
+    if (s.rereads[key]) return { phase: 'done', result: s.rereads[key] };
+    if (s.rereading[key]) return { phase: 'running' };
+    if (s.rereadErrors[key]) return { phase: 'error', error: s.rereadErrors[key] };
+    return { phase: 'idle' };
+  },
+
+  applyReread: (key) => {
+    const reread = get().rereads[key];
+    if (!reread) return false;
+    set((s) => ({
+      appliedRereads: { ...s.appliedRereads, [key]: { ...reread, seq: s.rereadSeq } },
+      rereadSeq: s.rereadSeq + 1,
+    }));
+    return true;
+  },
+
+  setRetakeProposals: (track, proposals) => {
+    set((s) => {
+      const { [track]: _dropped, ...rest } = s.retakeProposals;
+      return { retakeProposals: proposals ? { ...rest, [track]: proposals } : rest };
+    });
   },
 
   transcriptStatus: (path) => {
@@ -804,6 +947,7 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
         retakeErrors: {},
         darkErrors: {},
         recoveryErrors: {},
+        rereadErrors: {},
       });
       return;
     }
@@ -813,6 +957,7 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
       return {
         transcriptErrors,
         analysisErrors,
+        rereadErrors: withoutPath(s.rereadErrors, path),
         // Detection and recovery keys are `<path>|…`, not the bare path.
         silenceErrors: withoutPath(s.silenceErrors, path),
         retakeErrors: withoutPath(s.retakeErrors, path),
@@ -837,6 +982,10 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
         darkErrors: {},
         recoveries: {},
         recoveryErrors: {},
+        rereads: {},
+        rereadErrors: {},
+        appliedRereads: {},
+        retakeProposals: {},
       });
       return;
     }
@@ -861,6 +1010,11 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
         darkErrors: withoutPath(s.darkErrors, path),
         recoveries: withoutPath(s.recoveries, path),
         recoveryErrors: withoutPath(s.recoveryErrors, path),
+        // A client's re-reads are facts about this file's audio too; a changed
+        // file must not keep splicing its old words in.
+        rereads: withoutPath(s.rereads, path),
+        rereadErrors: withoutPath(s.rereadErrors, path),
+        appliedRereads: withoutPath(s.appliedRereads, path),
       };
     });
   },

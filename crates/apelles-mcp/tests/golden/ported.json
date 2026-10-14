@@ -187,6 +187,9 @@
     "editor_detect_retakes_status",
     "editor_detect_dark_regions",
     "editor_detect_dark_regions_status",
-    "editor_ripple_delete_ranges"
+    "editor_ripple_delete_ranges",
+    "editor_get_word_transcript",
+    "editor_propose_retakes",
+    "editor_retranscribe_words"
   ]
 }

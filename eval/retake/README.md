@@ -422,7 +422,12 @@ APELLES_RETAKE_GATE_SWEEP=1 cargo test -p apelles-speech --test retake_eval cove
 ```
 
 The app's word view itself is pinned by `the_indexed_view_is_the_pocs_input`:
-below its legend, byte-identical to `client_runs/input/`.
+below its legend, byte-identical to `client_runs/input/` — and, since D-380
+step 2, by `a_one_clip_track_view_is_the_pocs_input` for the timeline path
+(`index_pieces` over one untrimmed clip). `the_served_rules_are_the_pocs_prompt`
+pins the rules the app serves a client (`JUDGING_RULES`) to the judging block of
+`client_runs/prompt.md`: the app hands every client the rules this eval
+measured, verbatim.
 
 ## Boundary
 

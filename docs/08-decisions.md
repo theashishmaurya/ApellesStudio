@@ -12,9 +12,8 @@ Status: `open` · `decided` · `revisit`
 core: `crates/apelles-speech/src/proposal.rs`, measured by
 `crates/apelles-speech/tests/retake_eval.rs` against `eval/retake/`
 (`gate_baseline.json`, `client_runs/`). Detail and the sweep:
-`docs/notes/retake-detection.md` §11. **Step 2 — the app + MCP pair** (a tool
-that hands a client the word-indexed view, one that takes its groups back
-through the gate, and the GUI review surface) is the next phase, not done here.
+`docs/notes/retake-detection.md` §11. **Step 2 — the app + MCP pair** landed
+2026-10-14; its section is at the end of this entry, detail in §12.
 
 **Context.** D-379's POC: nine blind Claude runs, each given one anonymised
 Parakeet transcript as numbered words, proposed retake groups as word-index
@@ -116,6 +115,56 @@ stutter forgiveness is "equal to a deleted token the alignment used", not
 third of correct groups, almost all for words it cannot hear. So a refused group
 should reach the human as an *unverified* proposal with its offending words,
 not vanish — the app-side decision step 2 owns.
+
+### Step 2 — the app + MCP pair (2026-10-14)
+
+**"The AI" is the MCP client throughout; the app runs no model and judges
+nothing.** Owner answers that bind this (2026-10-13): the judging instructions
+are served by the app; a refused group is resolved by the client in a loop
+(understand it, re-transcribe the stretch, narrow, or confirm with a per-word
+justification); nothing is cut by these tools.
+
+- **Three tools, one op each, both MCP servers.** `editor_get_word_transcript`
+  serves the track's view in pages (global indices, ~2500 words — a client's
+  tool output is capped) with a `viewId`; `editor_propose_retakes` runs the
+  client's groups through the gate and stores them for the Recut panel;
+  `editor_retranscribe_words` re-reads a word range on the ASR in isolation.
+  Cutting stays `editor_ripple_delete_ranges` / the panel's Cut.
+- **The view is the crate's, the timeline the op layer's.** `index_pieces`
+  builds a multi-clip view (midpoint rule, runs never shared across clips; one
+  untrimmed clip = the POC input exactly, golden-tested); the TS side only says
+  which clip windows, in what order. A TS copy of the word rules was rejected:
+  the client would read one view and the gate judge another.
+- **`viewId` = blake3 of the rendered view + the windows.** A stale one is
+  refused outright, never remapped.
+- **Instructions: a field on page one, not MCP prompts.** `JUDGING_RULES` is
+  the POC prompt's rules verbatim (test-pinned to `prompt.md`). An MCP prompt is
+  user-invoked and never reaches the model unasked; neither server serves
+  prompts; a client that just called the tool would judge without the rules
+  D-379's 0.00 s was measured under.
+- **Confirm path → `ai_confirmed`, never `verified`.**
+  `check_and_resolve_waived`: a client may vouch, word by word, for words a
+  *content* refusal names; structural and cross-group refusals cannot be
+  waived; a waiver never downgrades a verified group; the verdict is
+  `Confirmed` with the waived words, shown to the person with the reasons and
+  never bulk-ticked.
+- **An applied re-read updates the transcript — one source of truth.** Options
+  were a proposal-private re-read (the gate would judge words no other surface
+  shows) or splicing it into the file's transcript. Chosen: a preview first
+  (an ASR re-read can be worse; the client decides), then, on `apply`, it joins
+  the splice list after the dark-region recoveries, a later window replacing
+  earlier words by midpoint. Every consumer reads it; the `viewId` changes and
+  the answer carries the new indices and `indexShift`.
+- **The person reviews in the one list** (reference: Descript's filler sidebar
+  and Underlord's struck-through review, Premiere's per-pause review with a
+  risky "Delete All" — `scratch/retake-review-reference/`): verified /
+  AI-confirmed / refused badges, offending words marked, refused rows
+  untickable until a listener unlocks one (the gate cannot hear, a person can),
+  "Tick all suggested" takes verified rows only, a stale-view banner, one Cut,
+  one undo.
+
+Not done: a live smoke against the running app (script:
+`retake-detection.md` §12.6), and the Claude skill that will wrap the loop.
 
 ---
 

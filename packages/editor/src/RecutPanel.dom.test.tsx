@@ -67,6 +67,9 @@ import {
   useMediaUnderstandingStore,
 } from './mediaUnderstandingStore';
 import { RecutPanel } from './RecutPanel';
+import { spanToFrames } from './recut';
+import { buildWordViewInput, viewBasisKey } from './retakeWordView';
+import type { ProposalGroupView, ProposalStatus, ProposalTake, RetakeProposalSet } from './retakeProposals';
 
 /** One 480-frame (20s @24fps) talking-head clip on one video track. */
 function fixture() {
@@ -607,5 +610,190 @@ describe('RecutPanel (D-318)', () => {
       expect(rows().map((r) => r.textContent!.match(/#(\d+)/)?.[1])).toEqual(['0', '2', '3']);
       expect(q('[data-chroma-recut-error]')).toBeNull();
     });
+  });
+});
+
+/**
+ * D-380 step 2 — the MCP client's proposals, reviewed in this same list. The
+ * store is seeded the way `editor_propose_retakes` writes it; what is on
+ * trial is the review surface: client rows arrive unticked, a refused group
+ * cannot be ticked until a listener unlocks it, an AI-confirmed group shows
+ * the AI's reasons with the words marked, "tick all suggested" takes only
+ * verified groups, a cut is one op, and a timeline that moved since the AI
+ * read it locks the rows behind a banner.
+ */
+describe('RecutPanel — client proposals (D-380 step 2)', () => {
+  const WORDS = 'final bin final bill the cat sat the cat sat'.split(' ');
+
+  /** One untrimmed clip's transcript, a word every 0.5 s. */
+  function seedTranscript(): void {
+    const words = WORDS.map((word, i) => ({ word: ` ${word}`, start: i * 0.5, end: i * 0.5 + 0.4 }));
+    actSync(() =>
+      useMediaUnderstandingStore.setState({
+        transcripts: {
+          [SOURCE]: {
+            text: WORDS.join(' '),
+            language: 'en',
+            model: 'test',
+            source: SOURCE,
+            segments: [{ start: 0, end: words[words.length - 1].end, text: WORDS.join(' '), words }],
+            words,
+          },
+        },
+      } as never),
+    );
+  }
+
+  const clip = () => fixture().tracks[0].clips[0] as never;
+
+  function take(first: number, last: number, keep: boolean): ProposalTake {
+    const span = spanToFrames(clip(), first * 0.5, last * 0.5 + 0.4, 24);
+    const seg = [{ clip: 0, clipId: 'a', span }];
+    return {
+      first,
+      last,
+      keep,
+      text: WORDS.slice(first, last + 1).join(' '),
+      words: WORDS.slice(first, last + 1).map((word, i) => ({ index: first + i, word })),
+      startSecs: first * 0.5,
+      endSecs: last * 0.5 + 0.4,
+      segments: seg,
+      extent: seg,
+    };
+  }
+
+  function group(
+    index: number,
+    status: ProposalStatus,
+    takes: ProposalTake[],
+    extra: Partial<ProposalGroupView> = {},
+  ): ProposalGroupView {
+    return {
+      group: index,
+      status,
+      keep: takes.findIndex((t) => t.keep),
+      takes,
+      offending: [],
+      justifications: {},
+      unlockable: false,
+      ...extra,
+    };
+  }
+
+  /** The set the store would hold after one submission against the CURRENT
+   *  view of the fixture — its basis key computed exactly as the op does. */
+  function seedProposals(groups: ProposalGroupView[]): void {
+    const st = useMediaUnderstandingStore.getState();
+    const input = buildWordViewInput(
+      useEditorTimelineStore.getState().timeline as never,
+      0,
+      st.transcripts,
+      st.recoveriesFor,
+    );
+    if ('error' in input) throw new Error(input.error);
+    const set: RetakeProposalSet = {
+      track: 0,
+      viewId: 'v1',
+      basisKey: viewBasisKey(input),
+      receivedAt: 0,
+      groups,
+    };
+    actSync(() => useMediaUnderstandingStore.getState().setRetakeProposals(0, set));
+  }
+
+  const verified = () => group(0, 'verified', [take(4, 6, false), take(7, 9, true)]);
+  const refused = () =>
+    group(1, 'refused', [take(0, 1, false), take(2, 3, true)], {
+      reason: { kind: 'content_absent_from_kept_take' },
+      reasonText: 'a deleted take has words the kept take does not',
+      offending: [{ index: 1, word: 'bin' }],
+      unlockable: true,
+    });
+  const confirmed = () =>
+    group(1, 'ai_confirmed', [take(0, 1, false), take(2, 3, true)], {
+      offending: [{ index: 1, word: 'bin' }],
+      justifications: { 1: 'misheard: the speaker says "bill" both times' },
+    });
+
+  const row = (id: string) => q<HTMLElement>(`[data-chroma-recut-candidate="${id}"]`);
+  const box = (id: string) => row(id)!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+
+  it('client rows join the list unticked, with their status', async () => {
+    await mountPanel(false);
+    seedTranscript();
+    seedProposals([verified(), refused()]);
+    await waitFrames(2);
+
+    expect(q('[data-chroma-recut-client]')!.textContent).toContain('1 verified');
+    expect(row('cli-0-0-0')!.getAttribute('data-chroma-recut-status')).toBe('verified');
+    expect(row('cli-0-1-0')!.getAttribute('data-chroma-recut-source')).toBe('client');
+    expect(rows().every((r) => !r.querySelector<HTMLInputElement>('input')!.checked)).toBe(true);
+    expect(row('cli-0-0-1')!.textContent).toContain('keep');
+  });
+
+  it('a refused take cannot be ticked until a listener unlocks it, and says why', async () => {
+    await mountPanel(false);
+    seedTranscript();
+    seedProposals([refused()]);
+    await waitFrames(2);
+
+    expect(box('cli-0-1-0').disabled).toBe(true);
+    expect(row('cli-0-1-0')!.querySelector('[data-chroma-recut-reason]')!.textContent).toContain(
+      'kept take does not',
+    );
+    expect(row('cli-0-1-0')!.querySelector('[data-chroma-recut-flagged="1"]')!.textContent).toBe('bin');
+    await click(q('[data-chroma-recut-unlock="1"]'));
+    expect(box('cli-0-1-0').disabled).toBe(false);
+  });
+
+  it('an AI-confirmed take shows the reasons, marks the words, and is not bulk-ticked', async () => {
+    await mountPanel(false);
+    seedTranscript();
+    seedProposals([verified(), confirmed()]);
+    await waitFrames(2);
+
+    const r = row('cli-0-1-0')!;
+    expect(r.querySelector('[data-chroma-recut-justifications]')!.textContent).toContain('misheard');
+    expect(r.querySelector('[data-chroma-recut-flagged="1"]')).not.toBeNull();
+    expect(box('cli-0-1-0').disabled).toBe(false);
+
+    await click(q('[data-chroma-recut-tick-suggested]'));
+    expect(box('cli-0-0-0').checked, 'the verified deletion is ticked').toBe(true);
+    expect(box('cli-0-0-1').checked, 'never the keeper').toBe(false);
+    expect(box('cli-0-1-0').checked, 'never an AI-confirmed take in bulk').toBe(false);
+  });
+
+  it('cutting ticked client takes is ONE op, and the applied proposals are cleared', async () => {
+    await mountPanel(false);
+    seedTranscript();
+    seedProposals([verified(), confirmed()]);
+    await waitFrames(2);
+
+    await click(q('[data-chroma-recut-tick-suggested]'));
+    await click(box('cli-0-1-0'));
+    expect(q('[data-chroma-recut-cut]')!.textContent).toContain('Cut 2 ranges');
+
+    const { useHistoryStore } = await import('@apelles/history');
+    const before = useHistoryStore.getState().undoStack.length;
+    await click(q('[data-chroma-recut-cut]'));
+    expect(useHistoryStore.getState().undoStack.length - before, 'one undo entry').toBe(1);
+    expect(useMediaUnderstandingStore.getState().retakeProposals[0]).toBeUndefined();
+    expect(q('[data-chroma-recut-notice]')!.textContent).toContain('Cut 2 ranges');
+  });
+
+  it('a timeline that moved since the AI read it locks the rows behind a banner', async () => {
+    await mountPanel(false);
+    seedTranscript();
+    seedProposals([verified()]);
+    await waitFrames(2);
+    expect(q('[data-chroma-recut-client-stale]')).toBeNull();
+
+    const tl = fixture();
+    tl.tracks[0].clips[0].duration = 240; // trimmed: the view the AI read is gone
+    actSync(() => useEditorTimelineStore.setState({ timeline: tl as never }));
+    await waitFrames(2);
+
+    expect(q('[data-chroma-recut-client-stale]')!.textContent).toContain('re-read');
+    expect(box('cli-0-0-0').disabled).toBe(true);
   });
 });

@@ -88,6 +88,18 @@ fn default_editor_get_transcript_force() -> bool {
     false
 }
 
+fn default_editor_get_word_transcript_start() -> bool {
+    false
+}
+
+fn default_editor_retranscribe_words_apply() -> bool {
+    false
+}
+
+fn default_editor_retranscribe_words_force() -> bool {
+    false
+}
+
 fn default_editor_get_timeline_transcript_start() -> bool {
     false
 }
@@ -1061,6 +1073,41 @@ pub struct EditorDetectDarkRegionsStatusArgs {
     pub max_word_secs: Option<f64>,
     #[serde(default)]
     pub rms_floor_scale: Option<f64>,
+}
+
+/// D-380 step 2 — one page of a track's word-indexed view.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorGetWordTranscriptArgs {
+    pub track: i64,
+    #[serde(default)]
+    pub offset: Option<i64>,
+    #[serde(default)]
+    pub max_words: Option<i64>,
+    #[serde(default = "default_editor_get_word_transcript_start")]
+    pub start: bool,
+}
+
+/// D-380 step 2 — the client's retake groups for the coverage gate.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorProposeRetakesArgs {
+    pub track: i64,
+    #[schemars(schema_with = "untyped_array_schema")]
+    pub groups: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub view_id: Option<String>,
+}
+
+/// D-380 step 2 — an isolated ASR re-read of a word range.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorRetranscribeWordsArgs {
+    pub track: i64,
+    pub view_id: String,
+    pub first: i64,
+    pub last: i64,
+    #[serde(default = "default_editor_retranscribe_words_apply")]
+    pub apply: bool,
+    #[serde(default = "default_editor_retranscribe_words_force")]
+    pub force: bool,
 }
 
 /// The schema for a parameter the Python tool declares as a bare `list`.
@@ -4508,6 +4555,145 @@ impl ApellesMcp {
             args = args.set("recoverDarkRegions", false);
         }
         let env = self.op("editor_detect_retakes_status", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_get_word_transcript",
+        description = r#"Read one timeline track as numbered words, to find its RETAKES yourself
+    (D-380). The app runs no model for this: you judge, it checks.
+
+    Returns `text` — one word per line, `index<TAB>start-end<TAB>word`, times in
+    the source file's seconds, with `--- segment` hint lines (a new segment also
+    starts at every clip boundary) — plus `viewId`, `totalWords`, `offset`,
+    `returned` and `nextOffset`. **The first page (offset 0) also carries
+    `instructions`: the rules to judge by and how to answer. Read them before
+    proposing anything.** They are the rules a blind evaluation measured at
+    0.00 s of unique speech lost across nine runs.
+
+    - `track` — required. The view is every clip on it that has audio, in play
+      order, showing only the words those clips still show (a word belongs to
+      the clip holding its midpoint).
+    - `offset` / `max_words` — paging (default 2500 words a page, at most 4000).
+      Indices are GLOBAL: page two starts at `nextOffset`, not at 0. Keep
+      calling until `nextOffset` is null.
+    - `start` — transcribe any source on the track that has no transcript yet
+      (once per file). Until every source has one this answers
+      `state: "transcribing"` and serves no words, because the indices would
+      shift when the rest lands.
+
+    **`viewId` is what your indices mean.** It changes whenever the track's
+    words change — an edit, a newly finished transcript, an applied re-read —
+    and `editor_propose_retakes` / `editor_retranscribe_words` refuse a stale
+    one. Re-read and re-derive when that happens.
+
+    `editor_detect_retakes` is the deterministic fallback detector; it does not
+    read this view's judgement and is gated the same way (D-382). Nothing is
+    cut by this tool."#
+    )]
+    pub async fn editor_get_word_transcript(
+        &self,
+        Parameters(p): Parameters<EditorGetWordTranscriptArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .put("offset", p.offset)
+            .put("maxWords", p.max_words)
+            .put_if("start", p.start);
+        let env = self.op("editor_get_word_transcript", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_propose_retakes",
+        description = r#"Hand the app YOUR retake groups for one track, as word-index ranges from
+    `editor_get_word_transcript` (D-380). Each group goes through a
+    deterministic coverage gate and is stored for the person to review in the
+    Recut panel. **Nothing is cut.**
+
+    - `track` — required.
+    - `view_id` — the `viewId` your indices were read under. A stale one is
+      refused outright and nothing changes: re-read, re-derive, resubmit.
+    - `groups` — `[{"line": str, "takes": [{"first": int, "last": int}, ...],
+      "keep": int, "note": str, "confirm": {"<word index>": "<reason>"}}]`.
+      Takes are inclusive word ranges in spoken order, non-overlapping; `keep`
+      indexes `takes`. `line`, `note` and `confirm` are optional. **Each call
+      REPLACES the track's whole set**, so send every group you still stand by.
+      An empty list clears it (no `view_id` needed).
+
+    The gate accepts a group only if every word a deleted take holds also
+    survives in the kept take (stopwords, fillers, false starts and stutters
+    forgiven; near-identical spellings of long words match). It cannot hear,
+    and does not judge which take is better. Each group comes back as:
+
+    - `verified` — the gate proved the deletions lose no word;
+    - `ai_confirmed` — the gate refused on content, and you vouched for every
+      word it named via `confirm`; shown to the person with your reasons;
+    - `refused` — with `reason`, `reasonText` and `offending` (word indices and
+      words). `notConfirmable: true` means the group is malformed or fights
+      another group, so it must be fixed, not confirmed.
+
+    **Resolving a refusal is your loop:** (1) narrow the take so unique words
+    fall outside it; (2) if a word looks misheard, `editor_retranscribe_words`
+    over that stretch and apply a better reading (the `viewId` then changes);
+    (3) if the content truly survives (an inflection, a mishearing the re-read
+    kept, a word only in the abandoned attempt), resubmit with `confirm` giving
+    a reason for EVERY offending word; (4) otherwise drop it. An unresolved
+    group stays `refused` and is still shown to the person, untickable.
+
+    Each take carries its `text` and `segments` — the same timeline-frame
+    entries `editor_detect_retakes` returns — so if the person asks you to cut,
+    pass every segment of every non-kept take to `editor_ripple_delete_ranges`.
+    Do not cut unless asked."#
+    )]
+    pub async fn editor_propose_retakes(
+        &self,
+        Parameters(p): Parameters<EditorProposeRetakesArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("groups", p.groups)
+            .put("viewId", p.view_id);
+        let env = self.op("editor_propose_retakes", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_retranscribe_words",
+        description = r#"Re-run the speech recogniser over a stretch of words, to check whether
+    a word the coverage gate refused was misheard (D-380). ASR only — the app
+    makes no judgement; deciding whether the new reading is better is yours.
+
+    - `track`, `view_id` — as in `editor_propose_retakes`; a stale `view_id`
+      is refused.
+    - `first` / `last` — the inclusive word range to check (one source file,
+      at most about a minute with context). The app re-reads that audio in
+      isolation with ~2 s of context either side, never cutting a word in half.
+    - `apply` — false (default): a PREVIEW. Returns `current` (the view's words
+      in that window, with their indices) beside `reread` (the fresh reading)
+      and `identical`; nothing changes. true: splice the reading into the
+      file's transcript — for every consumer, the Transcript panel and the
+      detectors included — and return the new `viewId`, the words now in the
+      window with their new indices, and `indexShift` (how far every later
+      index moved). Re-derive your groups, then resubmit with the new `viewId`.
+    - `force` — re-run a re-read already cached for this window.
+
+    A re-read takes a few seconds; one that outlasts this call answers
+    `state: "running"` — call again with the same arguments to collect it.
+    Nothing is cut."#
+    )]
+    pub async fn editor_retranscribe_words(
+        &self,
+        Parameters(p): Parameters<EditorRetranscribeWordsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("viewId", p.view_id)
+            .set("first", p.first)
+            .set("last", p.last)
+            .put_if("apply", p.apply)
+            .put_if("force", p.force);
+        let env = self.op("editor_retranscribe_words", args).await?;
         Ok(render::json_text(&env))
     }
 

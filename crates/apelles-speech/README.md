@@ -208,3 +208,16 @@ hear. Measured: it accepts none of the old detector's six over-cutting groups
 and refuses 17 of 46 correct ones — nearly all for a word the ASR mis-heard.
 `examples/render_word_transcript.rs` prints the view for any `transcribe.py`
 JSON. Detail: `docs/notes/retake-detection.md` §11.
+
+**Step 2 (D-380), the app's side of the exchange.** `index_pieces` builds the
+view of a whole timeline track (clip windows onto source transcripts, a word
+kept by midpoint, runs never shared across clips — one untrimmed clip is exactly
+`index_transcript`), `render_indexed_page` serves it in pages with global
+indices, and `JUDGING_RULES` is the POC's prompt verbatim, which the app serves
+with the first page. `check_and_resolve_waived` adds the client's confirm path:
+a content refusal whose every offending word the client vouched for becomes
+`GroupVerdict::Confirmed` (listing the waived words), never `Accepted`;
+structural and cross-group refusals are not waivable. `would_cut` resolves a
+refused group's deletions for a human who has listened and chooses to cut
+anyway. `take_from_span` maps a take in seconds to word indices by midpoint
+(the deterministic detector's groups, D-382).

@@ -2769,11 +2769,21 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       nine POC runs still lose 0.00 s — at a recall cost: 17 of 46 correct label
       groups are refused, nearly all for an ASR mis-hearing in the flubbed take
       (`docs/notes/retake-detection.md` §11).
-    - ⬜ **D-380 step 2 — the app + MCP pair over that core**: an
-      `editor_*` tool that hands a client the indexed view and one that takes
-      its groups back through `check_and_resolve`, the matching GUI review
-      surface, and a decision on how a refused group reaches the human (shown
-      as *unverified* with its offending words, rather than dropped — §11.5).
+    - ✅ **D-380 step 2 — the app + MCP pair over that core** (2026-10-14).
+      `editor_get_word_transcript` (paged track view + `viewId` + the POC's
+      rules served as `instructions`), `editor_propose_retakes` (the gate, with
+      a per-word `confirm` path → `ai_confirmed`), `editor_retranscribe_words`
+      (an isolated Parakeet re-read of a word range, preview or applied to the
+      transcript for every consumer) on both MCP servers; the Recut panel shows
+      the client's groups in its one review list — verified / AI-confirmed /
+      refused badges, offending words marked, refused rows untickable until a
+      listener unlocks them, a stale-view banner, one Cut. The loop is the
+      client's; the app runs no model (`retake-detection.md` §12).
+    - ⬜ **Live smoke of D-380 step 2 on C040** — not runnable from the
+      worktree that built it; the script is in `retake-detection.md` §12.6.
+    - ⬜ **A Claude skill that wraps the client loop** (owner, 2026-10-13) —
+      the tools serve their own instructions, so any MCP client can run the
+      loop today; the skill packages it.
     - ⬜ **Re-decide the ASR default on the eval** (D-377 is `revisit`). D-378
       does not reproduce D-377's 10.5×, because D-377 counted one shape of loss
       of three. In the same pass as B-246's fix, not before — today both

@@ -213,6 +213,15 @@ export interface SplicedSegment extends TranscriptSegment {
  * fallback rather than a silent approximation, and every caller in this repo
  * asks for word timings.
  *
+ * **Windows are applied in the order given, and a later one wins** (D-380 step
+ * 2). Each window trims every word already in the list — the whole-file pass's
+ * and any earlier window's re-read — whose midpoint it holds, then adds its own
+ * segments. The dark-region windows are disjoint by construction, so for them
+ * this is exactly the one-shot splice it always was; it matters for a client's
+ * isolated re-read of a stretch (`editor_retranscribe_words`), which may
+ * overlap an earlier recovery or an earlier re-read and must replace those
+ * words rather than sit beside them as a duplicate.
+ *
  * Pure: `segments` is not mutated, and the same inputs give the same output in
  * the same order.
  */
@@ -220,33 +229,47 @@ export function spliceTranscript(
   segments: readonly TranscriptSegment[],
   recovered: readonly RecoveredWindow[],
 ): SplicedSegment[] {
-  const windows = recovered
-    .map((r) => ({ start: r.window.startSecs, end: r.window.startSecs + r.window.durationSecs }))
-    .filter((w) => w.end > w.start);
-  if (windows.length === 0) return segments.map((s) => ({ ...s }));
+  let out: SplicedSegment[] = segments.map((s) => ({ ...s }));
+  for (const r of recovered) {
+    const win = { start: r.window.startSecs, end: r.window.startSecs + r.window.durationSecs };
+    // An empty window read nothing and replaces nothing.
+    if (!(win.end > win.start)) continue;
+    out = trimWindow(out, win);
+    for (const s of r.segments) {
+      if (!s.text.trim()) continue;
+      out.push({ ...s, recovered: true });
+    }
+  }
 
-  const inside = (start: number, end: number) =>
-    windows.some((w) => start >= w.start && end <= w.end);
-  const overlaps = (start: number, end: number) =>
-    windows.some((w) => end > w.start && start < w.end);
-  /** A word belongs to a window when its MIDPOINT is inside one — an endpoint
-   *  test would drop a word that merely abuts the edge. */
-  const wordInside = (w: TranscriptWord) =>
-    windows.some((win) => {
-      const mid = (w.start + w.end) / 2;
-      return mid >= win.start && mid < win.end;
-    });
+  // Stable by start, then by end — two segments starting on the same instant
+  // (a recovered one landing exactly on a kept boundary) read in the order a
+  // person would say them.
+  return out.sort((a, b) => (a.start !== b.start ? a.start - b.start : a.end - b.end));
+}
 
+/** One window's trim, the word-granular rule [`spliceTranscript`] documents:
+ *  a segment the window does not overlap is untouched; one with words keeps
+ *  the words whose MIDPOINT is outside it (an endpoint test would drop a word
+ *  that merely abuts the edge), rebuilt from them; one without word timings is
+ *  dropped only when wholly inside. Flags such as `recovered` survive. */
+function trimWindow(
+  segments: readonly SplicedSegment[],
+  win: { start: number; end: number },
+): SplicedSegment[] {
+  const wordInside = (w: TranscriptWord) => {
+    const mid = (w.start + w.end) / 2;
+    return mid >= win.start && mid < win.end;
+  };
   const out: SplicedSegment[] = [];
   for (const s of segments) {
-    if (!overlaps(s.start, s.end)) {
-      out.push({ ...s });
+    if (!(s.end > win.start && s.start < win.end)) {
+      out.push(s);
       continue;
     }
     const words = s.words ?? [];
     if (words.length === 0) {
       // No word timings: all-or-nothing is the only honest call.
-      if (!inside(s.start, s.end)) out.push({ ...s });
+      if (!(s.start >= win.start && s.end <= win.end)) out.push(s);
       continue;
     }
     const kept = words.filter((w) => !wordInside(w));
@@ -259,18 +282,7 @@ export function spliceTranscript(
       words: kept,
     });
   }
-
-  for (const r of recovered) {
-    for (const s of r.segments) {
-      if (!s.text.trim()) continue;
-      out.push({ ...s, recovered: true });
-    }
-  }
-
-  // Stable by start, then by end — two segments starting on the same instant
-  // (a recovered one landing exactly on a kept boundary) read in the order a
-  // person would say them.
-  return out.sort((a, b) => (a.start !== b.start ? a.start - b.start : a.end - b.end));
+  return out;
 }
 
 /** [`spliceTranscript`] applied to a whole [`Transcript`], for the consumers

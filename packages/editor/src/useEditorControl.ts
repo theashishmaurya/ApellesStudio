@@ -213,6 +213,8 @@ import {
   type DynamicZoomFraming,
 } from './dynamicZoom';
 import { scrubSourceAt, waveformWindowAt, WAVEFORM_WINDOW_SECS } from './scrubSource';
+import { DETECT_GRACE_MS, settleWithin } from './settle';
+import { getWordTranscript, proposeRetakes, retranscribeWords } from './retakeProposalOps';
 // D-236 — the speed ramp. `MIN_SPEED`/`MAX_SPEED` are shared with the GUI and
 // with Rust so an agent, the Inspector and the preview all agree on the range.
 import { MIN_SPEED, MAX_SPEED, resolveSpeedSegments, type SpeedPoint } from './speedRamp';
@@ -567,37 +569,6 @@ function analysisResult(path: string) {
     // cap, so raise `maxCandidates` and re-run.
     truncated: a?._meta?.truncated ?? false,
   };
-}
-
-/** How long a `editor_detect_*` start op will wait for its own detection
- *  before handing the caller a poll handle instead (B-188/D-321).
- *
- *  Comfortably inside `chroma::control`'s 20 s `BRIDGE_TIMEOUT`, so the op
- *  always answers rather than 504-ing. The point of the window is that a
- *  normal recut — a few seconds of decode plus VAD — still completes in ONE
- *  call, exactly as it did before this became pollable; only a detection that
- *  genuinely runs long falls through to `state: "running"`. */
-const DETECT_GRACE_MS = 12_000;
-
-/** How often the grace window re-reads the store. Fine-grained on purpose:
- *  unlike the sidecar's minute-scale jobs, a detection that lands at 900 ms
- *  should return at ~900 ms, not at the next coarse tick. */
-const DETECT_POLL_MS = 50;
-
-/** Wait up to `ms` for a store-backed job to leave `running`, then report
- *  wherever it got to. Never rejects: a failure is already recorded in the
- *  store and comes back as `phase: 'error'`. */
-async function settleWithin<T>(
-  read: () => AnalysisStatus<T>,
-  ms: number,
-): Promise<AnalysisStatus<T>> {
-  const deadline = Date.now() + ms;
-  let status = read();
-  while (status.phase === 'running' && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, DETECT_POLL_MS));
-    status = read();
-  }
-  return status;
 }
 
 /** The exact clip-fade shape `get_timeline` (pre-D-183, `useChromaControl
@@ -4991,6 +4962,31 @@ export function useEditorControl(): void {
         const { found, c, fps, key } = resolved;
         const status = useMediaUnderstandingStore.getState().darkDetectionStatus(key);
         return darkEnvelope(status, found, c, fps);
+      },
+
+      // **Retakes judged by the MCP client (D-380 step 2).** The client reads
+      // the track's word-indexed view, proposes groups as word ranges, and
+      // resolves refusals itself (narrow, re-transcribe, confirm with a reason,
+      // or drop). The app renders, gates, re-runs its own ASR on request, and
+      // stores the result for the Recut panel — no model, no judgement, and
+      // nothing cut. `editor_detect_retakes` above stays the deterministic
+      // fallback, behind the same gate (D-382).
+      editor_get_word_transcript: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return await getWordTranscript(tl, a);
+      },
+
+      editor_propose_retakes: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return await proposeRetakes(tl, a);
+      },
+
+      editor_retranscribe_words: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        return await retranscribeWords(tl, a);
       },
 
       editor_ripple_delete_ranges: (a) => {
