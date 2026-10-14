@@ -391,7 +391,30 @@ describe('editor_set_selection — gap selection (D-105)', () => {
     expect(env.result.selectedGap).toEqual({ track: 0, frame: 150 });
     expect(env.result.gapStart).toBe(100);
     expect(env.result.gapEnd).toBe(200);
+    // B-236 — track 1's clip ends at 100, nothing straddles the gap's end.
+    expect(env.result.closeable).toBe(true);
+    expect(env.result.closeRefusedReason).toBeUndefined();
     expect(useEditorTimelineStore.getState().selection).toEqual([]);
+  });
+
+  it('B-236: says when a real gap is selectable but NOT closeable, with the reason editor_remove_gap then gives', async () => {
+    // Track 1's clip runs [0,300), straddling the gap's end (200) on a
+    // sync-locked timeline, so closing the gap is refused (B-033).
+    await mountHarness(
+      fixtureTimeline([
+        { kind: 'video', clips: [clipOf('a', 0), clipOf('b', 200)] },
+        { kind: 'video', clips: [clipOf('c', 0, { duration: 300 })] },
+      ]),
+    );
+    const env = await callOp('editor_set_selection', { gap: { track: 0, frame: 150 } });
+    expect(env.ok).toBe(true);
+    expect(env.result.selectedGap).toEqual({ track: 0, frame: 150 });
+    expect(env.result.closeable).toBe(false);
+    expect(env.result.closeRefusedReason).toContain('B-033');
+
+    const removed = await callOp('editor_remove_gap', { track: 0, frame: 150 });
+    expect(removed.ok).toBe(false);
+    expect(removed.error).toBe(env.result.closeRefusedReason);
   });
 
   it('refuses trailing empty space past the last clip — not a closeable gap', async () => {

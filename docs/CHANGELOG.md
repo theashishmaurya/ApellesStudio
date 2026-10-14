@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-14** — **B-236 fixed:** a selected gap that sync-lock won't let you close (B-033: another track's clip straddles its end) now stays selected and shows why. Close Gap is disabled with the reason in its tooltip, instead of silently doing nothing and dropping the selection. `editor_set_selection` with `gap=` now reports `closeable` / `closeRefusedReason`. `gapAt` was never the fault.
+
 - **2026-10-14** — **B-250 fixed:** `editor_get_word_transcript` now says "transcription is running" when another caller already started one, instead of telling the agent to pass `start: true`.
 
 - **2026-10-14** — **B-249 fixed: polling `editor_detect_retakes_status` finishes a retake job instead of stalling.** A start call now records its request in the store, and a poll for that request carries the job through the dark-region re-reads and into the grouping. A status read nobody asked for still starts nothing, and now says so (`idle`).

@@ -2017,6 +2017,42 @@ describe('cross-track ripple sync (D-106)', () => {
     expect(after.tracks[0].clips.find((c) => c.id === 'b')!.start_frame).toBe(50);
   });
 
+  it('B-236: a gap cut out by a manual split is SELECTABLE (gapAt finds it) but not CLOSEABLE while a synced track straddles its end', () => {
+    // The owner's shape: an overlay clip on track 0 over a long talking-head
+    // clip on track 1, both sync-locked (the default). Razor the overlay
+    // twice and lift the middle piece — the ordinary way a gap gets made.
+    let t = twoTrack([clip('p', 'Overlay', { start_frame: 0, duration: 200, source_len: 200 })], [
+      clip('m', 'Talking head', { start_frame: 0, duration: 300, source_len: 300 }),
+    ]);
+    t = applyOp(t, { kind: 'split', track: 0, clip: 0, atFrame: 80 });
+    t = applyOp(t, { kind: 'split', track: 0, clip: 1, atFrame: 140 });
+    expect(t.tracks[0].clips.map((c) => [c.start_frame, endFrame(c, 24)])).toEqual([
+      [0, 80],
+      [80, 140],
+      [140, 200],
+    ]);
+    t = applyOp(t, { kind: 'remove', track: 0, clip: 1 });
+
+    // The gap is real and the click/`editor_set_selection` test finds it at
+    // every frame inside it — hit-testing was never the defect.
+    for (const f of [80, 110, 139]) expect(gapAt(t.tracks[0], f, 24)).toEqual({ gapStart: 80, gapEnd: 140 });
+
+    // Closing it would ripple track 1 too, whose clip straddles frame 140, so
+    // B-033 refuses — and the refusal has a reason the GUI can now show.
+    const check = checkRemoveGap(t, 0, 110, 24);
+    expect(check.ok).toBe(false);
+    if (!check.ok) expect(check.reason).toMatch(/B-033.*track 1 has a clip straddling the gap's end frame \(140\)/);
+    expect(applyOp(t, { kind: 'remove_gap', track: 0, frame: 110 })).toBe(t);
+
+    // Taking track 1 out of sync-lock is one of the remedies the reason names,
+    // and it really does make the same gap closeable.
+    const unsynced = applyOp(t, { kind: 'set_track_sync_locked', track: 1, syncLocked: false });
+    expect(checkRemoveGap(unsynced, 0, 110, 24).ok).toBe(true);
+    const closed = applyOp(unsynced, { kind: 'remove_gap', track: 0, frame: 110 });
+    expect(closed.tracks[0].clips.map((c) => c.start_frame)).toEqual([0, 80]);
+    expect(closed.tracks[1].clips[0].start_frame).toBe(0);
+  });
+
   it('remove_gap ripple propagates without a matching gap on the synced track', () => {
     const before = twoTrack(
       [clip('a', 'A', { start_frame: 0, duration: 50 }), clip('b', 'B', { start_frame: 80, duration: 50 })],
