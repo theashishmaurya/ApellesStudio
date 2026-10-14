@@ -2218,16 +2218,20 @@ export function useEditorControl(): void {
           const frame = Math.round(Number(gapArg?.frame));
           if (!Number.isFinite(frame)) return { error: 'gap.frame must be a finite timeline frame' };
           // The SAME `gapAt` test `TimelinePane`'s own empty-area click makes
-          // before it selects a gap, and the same one `remove_gap`'s reducer
-          // makes before it closes one — so this op can never produce a gap
-          // selection the GUI could not have produced, or one `editor_remove_gap`
-          // would then refuse as a no-op.
+          // before it selects a gap, so this op can never produce a gap
+          // selection the GUI could not have produced. Being selectable is NOT
+          // the same as being closeable, though (B-236): on a sync-locked
+          // timeline `remove_gap` also refuses when another track has a clip
+          // straddling the gap's end (B-033). The response says which, from the
+          // same `checkRemoveGap` the GUI's Close Gap button and
+          // `editor_remove_gap` both run.
           const gap = gapAt(tr, frame, timelineFps(tl));
           if (!gap) {
             return {
               error: `frame ${frame} on track ${track} is not inside a real, closeable gap (a gap needs a clip after it — trailing empty space past the last clip is not one)`,
             };
           }
+          const closeCheck = checkRemoveGap(tl, track, frame, timelineFps(tl));
           setSelection([]);
           setSelectedGap({ track, frame });
           const after = useEditorTimelineStore.getState();
@@ -2240,6 +2244,10 @@ export function useEditorControl(): void {
             // without a second round trip.
             gapStart: gap.gapStart,
             gapEnd: gap.gapEnd,
+            // B-236 — whether `editor_remove_gap` would close it, and if not,
+            // the exact reason the GUI's (disabled) Close Gap button shows.
+            closeable: closeCheck.ok,
+            ...(closeCheck.ok ? {} : { closeRefusedReason: closeCheck.reason }),
             singleClipSelected: false,
           };
         }

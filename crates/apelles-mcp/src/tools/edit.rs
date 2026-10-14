@@ -1776,11 +1776,15 @@ impl ApellesMcp {
 
     `gap`: `{"track": N, "frame": F}` selects a GAP (empty space between two
     clips) instead — mutually exclusive with a clip selection, exactly as in
-    the GUI. `frame` must fall inside a real, CLOSEABLE gap (one with a clip
-    after it); trailing empty space past the last clip is not a gap and is
-    refused rather than silently selecting nothing. The response reports the
-    gap's real `gapStart`/`gapEnd` bounds, so you can hand `gapStart` straight
-    to `editor_remove_gap`.
+    the GUI. `frame` must fall inside a real gap (one with a clip after it);
+    trailing empty space past the last clip is not a gap and is refused
+    rather than silently selecting nothing. The response reports the gap's
+    real `gapStart`/`gapEnd` bounds, so you can hand `gapStart` straight to
+    `editor_remove_gap`, plus `closeable` (B-236): a real gap can still be
+    one `editor_remove_gap` refuses — on a sync-locked timeline, when another
+    sync-locked track has a clip straddling the gap's end (B-033) — and when
+    it is `false`, `closeRefusedReason` is the reason, the same text the
+    GUI's disabled Close Gap button shows.
 
     **Not undoable, by design** (D-216): selection is UI state, not document
     content — it is not part of the `Timeline` that gets persisted, so the

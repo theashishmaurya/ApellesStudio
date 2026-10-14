@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-14** — **B-236 fixed:** a selected gap that sync-lock won't let you close (B-033: another track's clip straddles its end) now stays selected and shows why. Close Gap is disabled with the reason in its tooltip, instead of silently doing nothing and dropping the selection. `editor_set_selection` with `gap=` now reports `closeable` / `closeRefusedReason`. `gapAt` was never the fault.
+
 - **2026-10-14** — **B-251 fixed:** Recut panel AI-confirmed reasons are all labelled `“word” (#index)`; ones whose word sat in a sibling take used to fall back to a bare `#index`.
 
 - **2026-10-14** — **B-232 + B-233 fixed: `tsc` is clean in `@apelles/motion-engine` and `@apelles/motion`.** motion-engine gained `"dom"` in `lib`; motion declares `node` + `vite/client` types (the same entry `packages/editor`/`store` use). No test types loosened.

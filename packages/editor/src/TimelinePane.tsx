@@ -415,6 +415,7 @@ import {
   DEFAULT_SYNC_LOCKED,
   DEFAULT_TRACK_GAIN,
   checkLink,
+  checkRemoveGap,
   checkTransition,
   computeInsertion,
   cutFrames,
@@ -3066,11 +3067,31 @@ export function TimelinePane() {
     applyOp({ kind: 'link', trackA: at.track, clipA: at.clip, trackB: bt.track, clipB: bt.clip });
   };
 
+  /** B-236 — whether the selected gap can actually be closed, from the SAME
+   *  `checkRemoveGap` that `applyOp`'s `remove_gap` case and the MCP's
+   *  `editor_remove_gap` both run (B-227), so the button, the Delete key and
+   *  the agent can never disagree about it. `null` when no gap is selected.
+   *
+   *  A gap can be perfectly real and selectable yet still not closeable: on a
+   *  sync-locked timeline (every track here defaults to sync-locked), closing
+   *  it ripples every other sync-locked track, and B-033 refuses that ripple
+   *  when some other track has a clip straddling the gap's end. Before this,
+   *  the GUI never asked — `doRemoveGap` dispatched, the reducer silently
+   *  returned the timeline unchanged, and the selection was cleared anyway,
+   *  so the gap looked like it could neither be kept selected nor deleted.
+   *
+   *  Cost: one pass over every track's clips, only while a gap is selected —
+   *  the same O(clips) walk `gapAt` already does for the highlight below. */
+  const gapCloseCheck =
+    selectedGap && timeline ? checkRemoveGap(timeline, selectedGap.track, selectedGap.frame, fps) : null;
+
   /** D-105 — the deliberate mirror image of `doRemove`: close a selected
    *  GAP, rippling everything after it earlier, rather than lifting a clip
-   *  and leaving the space behind. */
+   *  and leaving the space behind. B-236 — a refused close leaves the gap
+   *  selected (the Close Gap button says why), rather than dropping the
+   *  selection as if something had happened. */
   const doRemoveGap = () => {
-    if (!selectedGap) return;
+    if (!selectedGap || !gapCloseCheck?.ok) return;
     applyOp({ kind: 'remove_gap', track: selectedGap.track, frame: selectedGap.frame });
     setSelectedGap(null);
   };
@@ -4099,11 +4120,21 @@ export function TimelinePane() {
               underlying operation (D-105's `remove_gap` ripples; `remove`
               deliberately doesn't). Same Delete/Backspace keybinding covers
               both — see this component's `onKeyDown`. */}
-          {selectedGap && (
+          {/* B-236 — disabled, with the refusal's own reason in the tooltip,
+              when `checkRemoveGap` says no: the same "surface the reason
+              rather than silently do nothing" treatment the Link button
+              (D-138) already gets. */}
+          {selectedGap && gapCloseCheck && (
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Button variant="ghost" size="icon-sm" onClick={doRemoveGap} aria-label="Close gap">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={doRemoveGap}
+                    disabled={!gapCloseCheck.ok}
+                    aria-label="Close gap"
+                  >
                     <ArrowsInLineHorizontalIcon />
                   </Button>
                 }
@@ -4111,7 +4142,9 @@ export function TimelinePane() {
               <TooltipContent>
                 <span className="font-medium">Close Gap</span>
                 <span className="ml-1.5 text-text-secondary">
-                  Close the selected gap — everything after it shifts left
+                  {gapCloseCheck.ok
+                    ? 'Close the selected gap — everything after it shifts left'
+                    : gapCloseCheck.reason}
                 </span>
               </TooltipContent>
             </Tooltip>
