@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-14** — **B-251 fixed:** Recut panel AI-confirmed reasons are all labelled `“word” (#index)`; ones whose word sat in a sibling take used to fall back to a bare `#index`.
+
 - **2026-10-14** — **B-232 + B-233 fixed: `tsc` is clean in `@apelles/motion-engine` and `@apelles/motion`.** motion-engine gained `"dom"` in `lib`; motion declares `node` + `vite/client` types (the same entry `packages/editor`/`store` use). No test types loosened.
 
 - **2026-10-14** — **B-250 fixed:** `editor_get_word_transcript` now says "transcription is running" when another caller already started one, instead of telling the agent to pass `start: true`.

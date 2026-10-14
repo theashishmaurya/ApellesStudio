@@ -2815,9 +2815,9 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       `editor_retranscribe_words` reading the client APPLIED is lost, changing
       the word view (932 → 892 words between two runs). The store's header
       already names the `media_cache` on-disk namespace as the next step.
-    - ⬜ **Recut panel: confirm reasons are labelled inconsistently** — the
-      first offending word is labelled by its text ("masses"), the rest by
-      index ("#203"); one label form for all.
+    - ✅ **Recut panel: confirm reasons are labelled inconsistently** — the
+      first offending word was labelled by its text ("masses"), the rest by
+      index ("#203"). Fixed (B-251): every reason reads `“word” (#index)`.
     - ✅ **A Claude skill that wraps the client loop** (owner, 2026-10-13;
       `.claude/skills/apelles-retake-review/SKILL.md`, 2026-10-14) — the tools
       serve their own instructions, so the skill carries only the workflow:

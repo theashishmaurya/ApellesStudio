@@ -168,6 +168,10 @@ interface Candidate {
   /** Client rows: words to mark (the gate's offending words, or the ones the
    *  AI vouched for), each with the AI's reason when it gave one. */
   flagged?: Record<number, string>;
+  /** Client rows: the group's offending words themselves. They can sit in a
+   *  sibling take, not this row's `words`, so the reasons are labelled from
+   *  here (B-251) rather than looked up in the row's own text. */
+  offending?: ProposalWord[];
   /** Refused client rows: why. */
   reasonText?: string;
   /** Refused client rows: a human who has listened may unlock the group. */
@@ -198,6 +202,7 @@ function clientRows(set: RetakeProposalSet, nameOf: (clip: number) => string): C
         text: t.text,
         words: t.words,
         flagged: t.keep ? {} : flagged,
+        offending: g.offending,
         suggestedKeep: t.keep,
         groupIndex: g.group,
         groupKey: `cli-${set.track}-${g.group}`,
@@ -676,6 +681,7 @@ export function RecutPanel() {
                     status: gate.status,
                     ...(gate.takeWords[t.index]?.length ? { words: gate.takeWords[t.index] } : {}),
                     flagged: t.suggestedKeep ? {} : flagged,
+                    offending: gate.offending,
                     ...(gate.reasonText ? { reasonText: gate.reasonText } : {}),
                     unlockable: gate.unlockable,
                   }
@@ -1030,7 +1036,7 @@ export function RecutPanel() {
                     Refused: {c.reasonText}
                   </span>
                 )}
-                {c.status && !c.suggestedKeep && <Justifications flagged={c.flagged ?? {}} words={c.words ?? []} />}
+                {c.status && !c.suggestedKeep && <Justifications flagged={c.flagged ?? {}} offending={c.offending ?? []} />}
                 {c.status === 'refused' &&
                   !c.suggestedKeep &&
                   c.unlockable &&
@@ -1174,15 +1180,21 @@ function TakeWords({
 
 /** The AI's per-word reasons, one line each — what the human weighs before
  *  ticking an AI-confirmed take. */
-function Justifications({ flagged, words }: { flagged: Record<number, string>; words: ProposalWord[] }) {
+function Justifications({ flagged, offending }: { flagged: Record<number, string>; offending: ProposalWord[] }) {
   const lines = Object.entries(flagged).filter(([, why]) => why.length > 0);
   if (lines.length === 0) return null;
-  const text = (i: number) => words.find((w) => w.index === i)?.word.trim() ?? `#${i}`;
+  // One label form for every reason: the word, then its index. The offending
+  // word can live in a sibling take, so it is read from the group's own list.
+  const label = (i: number) => {
+    const word = offending.find((w) => w.index === i)?.word.trim();
+    return word ? `“${word}” (#${i})` : `#${i}`;
+  };
   return (
     <span data-chroma-recut-justifications className="mt-0.5 block text-text-secondary">
       {lines.map(([i, why]) => (
         <span key={i} className="block">
-          <RobotIcon className="mr-0.5 inline size-3 align-[-2px]" />“{text(Number(i))}” — {why}
+          <RobotIcon className="mr-0.5 inline size-3 align-[-2px]" />
+          {label(Number(i))} — {why}
         </span>
       ))}
     </span>
