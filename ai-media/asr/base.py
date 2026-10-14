@@ -126,12 +126,26 @@ class BackendDescriptor:
         """`None` / `"auto"` is always supported — it is a request for the
         backend's own default behaviour inside its own set, never a claim about
         the source. (Parakeet takes no language argument at all, so for it
-        "auto" is simply what always happens.)"""
-        if not language or language == "auto":
+        "auto" is simply what always happens.)
+
+        So is [`UNDETECTED_LANGUAGE`]: it is the value a backend itself reports
+        when nothing named a language and it detected none, and every
+        `language` the seam emits must be accepted back unchanged — callers pin
+        a re-read to the whole-file pass's own `language` (D-349), so refusing
+        it refused every re-read (B-247)."""
+        if not language or language in ("auto", UNDETECTED_LANGUAGE):
             return True
         if self.languages is None:
             return True
         return language.lower().split("-")[0] in self.languages
+
+
+#: The `language` a contract reports when no language was named and the backend
+#: detected none (Parakeet surfaces no detection at all). A sentinel, not a
+#: language: [`BackendDescriptor.supports_language`] accepts it back as "not
+#: specified", because a caller that pins a re-read to the transcript's own
+#: `language` must never be refused for it (B-247).
+UNDETECTED_LANGUAGE = "unknown"
 
 
 def check_language(descriptor: BackendDescriptor, language: str | None) -> None:

@@ -27,6 +27,15 @@ Still real:
 
 ## Open
 
+## B-247 — every dark-region re-read and every `editor_retranscribe_words` call was refused on Parakeet: the seam rejected the `language` it had itself reported
+
+status: **fixed** (2026-10-14) · severity: high (dark-region recovery — the only net under Parakeet's measured drops — silently did nothing, and D-380's re-transcribe step of the refusal loop always errored) · area: `ai-media/asr/base.py`, `ai-media/asr/parakeet_mlx.py`
+
+- **found:** 2026-10-14, the first live smoke of D-380 on C040 in the running app. `editor_detect_retakes` found the four dark regions and re-read all four, yet reported `recoveredUtterances: 0`; `editor_retranscribe_words` over the first region then answered with the reason: *"the speech model (parakeet-tdt-0.6b-v3) cannot transcribe 'unknown'…"*.
+- **cause:** with no language named, the Parakeet backend reports `language: "unknown"` — the honest value, since Parakeet surfaces no detection (D-381). The app pins every re-read to the whole-file pass's own `language` (D-349: auto-detection on short windows was unreliable on Whisper), so every window was sent back with `language: "unknown"`, and `check_language` refused it as an unsupported language. Recovery degrades by design (a failed window never blocks the rest), so it failed silently. Not caught by D-381's measurement because that ran windowed recovery through the Python entry point, which never pins a language; not caught by tests because nothing round-tripped a contract's own `language` back through the seam.
+- **fix:** at the seam, as an invariant rather than in one caller: `asr.base.UNDETECTED_LANGUAGE` names the sentinel, and `BackendDescriptor.supports_language` accepts it back as "not specified" — **every `language` the seam emits must be accepted back unchanged**. The app's pinning rule is untouched (still right for any backend that does detect a language).
+- **verification:** `test_asr_seam.py` now round-trips a Parakeet contract's own `language` through `check_language` and through a pinned `transcribe(...)`; with the old `base.py` it fails with the exact live message, with the fix it passes. All model-free ai-media suites green. Re-run live on C040 after the merge (see the D-380 live smoke).
+
 ## B-246 — the retake detector still proposes cutting speech that repeats nothing: D-366's guard exempts single-utterance takes, and `similarity`'s containment arm admits a long utterance on a matching tail
 
 status: **mitigated** (D-382, 2026-10-14 — the over-cut no longer reaches a person as a tickable cut; the grouping defect in `retake.rs` remains) · severity: high (over-cutting — the one direction D-318 rules out: a proposal a human accepts silently deletes speech absent from the result) · area: `crates/apelles-speech/src/retake.rs`
