@@ -130,7 +130,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { CaretLeftIcon, KeyboardIcon, PlugsConnectedIcon, SidebarSimpleIcon } from '@phosphor-icons/react';
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@apelles/ui';
-import { useHistoryStore, type HistoryEntry } from '@apelles/history';
+import { stepHistory } from './historyStep';
 import { KeyboardShortcutsDialog, useKeymapStore, useShortcut } from '@apelles/keymap';
 import { useShellStore, type ShellTabId } from './store';
 import { useWindowChrome, MacTrafficLights, WindowControls } from './WindowChrome';
@@ -270,13 +270,10 @@ export function Shell({
   // don't-hijack-an-in-progress-edit guard (including its "a number input is
   // not prose" refinement) moved into the shared dispatcher in D-273, where it
   // now protects every shortcut in the app rather than only these two.
-  const applyHistoryEntry = (entry: HistoryEntry | null) => {
-    if (entry && tabs.some((t) => t.id === entry.tab) && entry.tab !== active) {
-      setActiveTab(entry.tab as ShellTabId);
-    }
-  };
-  useShortcut('app.undo', () => applyHistoryEntry(useHistoryStore.getState().undo()), { enabled: projectOpen });
-  useShortcut('app.redo', () => applyHistoryEntry(useHistoryStore.getState().redo()), { enabled: projectOpen });
+  // D-383 — the step itself (pop, then follow the entry to its tab) lives in
+  // `historyStep.ts`, shared with the `undo` / `redo` control ops.
+  useShortcut('app.undo', () => stepHistory('undo', tabs.map((t) => t.id)), { enabled: projectOpen });
+  useShortcut('app.redo', () => stepHistory('redo', tabs.map((t) => t.id)), { enabled: projectOpen });
 
   return (
     <div

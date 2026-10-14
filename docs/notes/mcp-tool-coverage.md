@@ -31,6 +31,9 @@ prerequisite is the underlying capability already existing and being reachable f
 
 `open`, `get_state`, `get_grade`, `save_grade`, `load_grade`, `list_masks`,
 `set_primary`, `set_curve`, `set_color_grade`, `seek`, `list_shots`,
+`undo`, `redo` (D-383 — cross-tab: they step the one shared `@apelles/history`
+stack through `@apelles/shell`'s `stepHistory`, the function Cmd/Ctrl+Z calls, and
+live in this un-prefixed registry because no single tab owns them),
 `set_active_shot`, `add_shots`, `list_projects`, `open_project`, `new_project`,
 `save_project`, `set_project_settings`, `add_subject_mask`, `add_component`,
 `set_submask_mode`, `add_mask_keyframe`, `list_mask_keyframes`,
@@ -500,6 +503,7 @@ DOM behind the pixels:
 | `debug_ui_state` | active tab, Sources panel, Edit Inspector, selection/playhead, and every dialog the DOM has open. The read half of the four below. |
 | `debug_set_active_tab` | Edit / Motion / Colorist, through `useShellStore.setActiveTab` — the function the tab button's own onClick calls. |
 | `debug_set_sources_panel` | the shell's docked Sources column, through its own store action. |
+| `debug_set_library_mode` | which panel the Edit tab's left library column shows (sources / titles / effects / subtitles / recut / index), through `useEditorTimelineStore.setLibraryMode`, and opens the column so it is visible. An unknown mode is refused with the accepted list. |
 | `debug_set_editor_inspector` | the Edit tab's Inspector column, ditto. |
 | `debug_set_inspector_tab` | that Inspector's own Video/Audio tab (D-246), through `useEditorTimelineStore.setInspectorTab` — the action the tab button's own onClick calls. Only one tab renders at a time, so this is what puts the half you want to look at on screen before a screenshot or a DOM dump. |
 | `debug_dom_tree` | bounded JSON of the real DOM under a selector: hierarchy, semantic attributes, `getBoundingClientRect()`, chosen computed styles. The "why is it positioned like that" answer a screenshot cannot give. |

@@ -62,6 +62,11 @@ pub struct DebugSetSourcesPanelArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct DebugSetLibraryModeArgs {
+    pub mode: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DebugSetEditorInspectorArgs {
     pub open: bool,
 }
@@ -318,6 +323,30 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new().set("open", p.open);
         let env = self.op("debug_set_sources_panel", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "debug_set_library_mode",
+        description = r#"Switch which panel the Edit tab's left library column shows, and open
+    the column so that panel is actually visible — the same state the library
+    rail's own buttons drive.
+
+    `mode` is one of "sources", "titles", "effects", "subtitles", "recut" or
+    "index" (`debug_ui_state`'s `editor.libraryModes` lists them). The column
+    is opened as well because the rail lives inside it: choosing a mode while
+    the column is closed would change nothing on screen. Useful to reach the
+    Recut panel and check a retake proposal there. An unknown mode is refused
+    with the accepted list rather than silently ignored.
+
+    Returns {ok, libraryMode, sourcesPanelOpen}."#
+    )]
+    pub async fn debug_set_library_mode(
+        &self,
+        Parameters(p): Parameters<DebugSetLibraryModeArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().set("mode", p.mode);
+        let env = self.op("debug_set_library_mode", args).await?;
         Ok(render::json_text(&env))
     }
 

@@ -675,6 +675,45 @@ impl ApellesMcp {
     }
 
     #[tool(
+        name = "undo",
+        description = r#"Undo the most recent undoable action, on ANY tab — exactly what Cmd/Ctrl+Z
+    does (D-383). The history is one stack shared by Edit, Motion and Colorist,
+    so this reverses the latest thing done anywhere, whether a person or an
+    agent did it, and the app switches to the tab that action belonged to, the
+    way the keyboard shortcut does. A multi-step tool such as
+    `editor_ripple_delete_ranges` is one entry, so one `undo` reverses all of it.
+
+    An empty stack is not an error: you get `ok: true` and `undone: null`
+    with a `note`. Read `undone` before acting on the result — it names what was
+    reversed — and `undoLabel` to see what the NEXT `undo` would reverse.
+
+    Returns {ok, undone: {tab, label} | null, activeTab, canUndo, canRedo,
+    undoLabel, redoLabel, note?}."#
+    )]
+    pub async fn undo(&self) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new();
+        let env = self.op("undo", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "redo",
+        description = r#"Redo the action `undo` last reversed, on any tab — exactly what Cmd/Ctrl+Y
+    does (D-383). A fresh edit after an undo discards the redo branch, so redo
+    only works until you do something else. The app switches to the tab the
+    redone action belongs to. An empty redo stack is `ok: true` with
+    `redone: null` and a `note`, not an error.
+
+    Returns {ok, redone: {tab, label} | null, activeTab, canUndo, canRedo,
+    undoLabel, redoLabel, note?}."#
+    )]
+    pub async fn redo(&self) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new();
+        let env = self.op("redo", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
         name = "add_shots",
         description = r#"Add one or more clips to the session by ABSOLUTE path and switch to the
     last one. A clip already in the session is updated in place. Use this to load
