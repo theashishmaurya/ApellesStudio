@@ -8,7 +8,11 @@
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": []
+    // B-233 — `theme.test.ts` reads fixtures via `node:fs`/`node:url`/`node:path`
+    // (needs `node`). `vite/client` types `import.meta.hot`, used by
+    // `@apelles/store` (pulled in through `motionProjectStore.ts`), same entry
+    // `packages/editor` and `packages/store` list.
+    "types": ["node", "vite/client"]
   },
   "include": ["src"]
 }

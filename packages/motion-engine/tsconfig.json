@@ -6,7 +6,9 @@
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
-    "lib": ["es2015"],
+    // B-232 — `dom`: `Scene3D.tsx` uses `document`, `Emphasis.dom.test.tsx`
+    // uses `HTMLElement`. Remotion compositions render in a browser.
+    "lib": ["es2015", "dom"],
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
