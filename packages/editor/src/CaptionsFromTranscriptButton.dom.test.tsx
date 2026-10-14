@@ -59,7 +59,7 @@ function fixtureTranscript(): Transcript {
   return {
     text: 'We always visit this beach.',
     language: 'en',
-    model: 'large-v3',
+    model: 'parakeet-tdt-0.6b-v3',
     source: SOURCE_PATH,
     segments: [
       {
@@ -164,7 +164,7 @@ describe('CaptionsFromTranscriptButton (D-238)', () => {
         [SOURCE_PATH]: {
           text: 'untimed',
           language: 'en',
-          model: 'large-v3',
+          model: 'parakeet-tdt-0.6b-v3',
           source: SOURCE_PATH,
           segments: [{ start: 0, end: 2, text: 'untimed', words: [] }],
         },

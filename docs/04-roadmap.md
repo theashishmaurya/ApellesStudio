@@ -2787,6 +2787,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       (`C0xx/parakeet-gated`): over-cut 0.00 s on all three sources, precision
       1.000, recall 0.161 / 0.189 / 0.232. B-246 → mitigated; its grouping
       defect stays open below.
+    - ✅ **D-381 phase 6c — Whisper out of the app, MCP and website strings**
+      (2026-10-14). `editor_get_transcript` (Parakeet; `language` is one of 25
+      European languages, Hindi refused), `editor_get_timeline_transcript`,
+      `editor_detect_retakes`, `editor_detect_dark_regions` (`max_word_secs`
+      defaults to no bound), Rust/TS header comments and the TS fixtures'
+      model name; the Whisper transcript fixtures and eval tasks stay as
+      detector inputs, labelled as such.
     - ⬜ **Live smoke of D-380 step 2 on C040** — not runnable from the
       worktree that built it; the script is in `retake-detection.md` §12.7.
     - ⬜ **A Claude skill that wraps the client loop** (owner, 2026-10-13) —

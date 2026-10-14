@@ -88,8 +88,9 @@ async fn call(what: &str, request: reqwest::RequestBuilder) -> Result<serde_json
 /// Start a transcript job over `path` (audio or video). Returns `{job_id, state,
 /// ...}` immediately; poll [`transcribe_status`].
 ///
-/// `language` is an ISO code ("en", "hi") or `None` to auto-detect — code-switched
-/// speech auto-detects fine on `large-v3`. `word_timestamps` defaults to true;
+/// `language` is an ISO code for one of Parakeet's 25 European languages, or
+/// `None` to let the model pick (it does not report which it chose). A language
+/// outside that set (Hindi, D-381) is refused by the sidecar. `word_timestamps` defaults to true;
 /// false is faster but returns segment-level timings only, which is not enough to
 /// cut to a word.
 ///
@@ -97,7 +98,7 @@ async fn call(what: &str, request: reqwest::RequestBuilder) -> Result<serde_json
 /// of the source rather than all of it (D-349). Timestamps come back in absolute
 /// source seconds either way, so a windowed result splices straight into a
 /// whole-file one — which is the point: an isolated pass reads the multi-second
-/// regions whisper's whole-file pass silently declines to transcribe (B-216).
+/// regions the ASR's whole-file pass silently declines to transcribe (B-216).
 pub async fn transcribe(
     path: &str,
     language: Option<String>,

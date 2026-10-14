@@ -97,7 +97,7 @@ describe('cuttableSpans', () => {
 
 describe('groupTakes (D-327)', () => {
   /** Three deliveries of one line, where the middle one spans TWO transcript
-   *  utterances — the shape Whisper produces when its segment boundaries do not
+   *  utterances — the shape an ASR produces when its segment boundaries do not
    *  line up with the speaker's restarts (B-198). */
   function straddling(): RetakeGroupWire {
     return {

@@ -2,7 +2,7 @@
  * `@apelles/editor` — dark regions: plan the recovery, and splice it back into
  * the transcript (D-349, B-216).
  *
- * **What it is.** The pure half of "whisper dropped some speech here, go and get
+ * **What it is.** The pure half of "the ASR dropped some speech here, go and get
  * it." `apelles-speech`'s `dark` module says *where* the holes are; this module
  * decides *what windows to re-transcribe* and *how the recovered words rejoin
  * the transcript* that retake grouping and the Transcript panel read.
@@ -71,9 +71,10 @@ export interface RecoveryWindow {
 /**
  * The longest window handed to one isolated pass.
  *
- * Whisper's own sliding window is 30 s, so a longer extract buys nothing: it
- * would simply be chunked again, reintroducing the whole-file behaviour this
- * recovery exists to escape. An uncovered stretch longer than this is split
+ * Sized in D-349 against Whisper's 30 s sliding window and kept unchanged for
+ * Parakeet (D-381): a longer extract buys nothing, since it would simply be
+ * chunked again, reintroducing the whole-file behaviour this recovery exists
+ * to escape. An uncovered stretch longer than this is split
  * into windows around its own regions rather than truncated, so no located
  * region is left unread.
  */
@@ -82,9 +83,10 @@ export const MAX_RECOVERY_WINDOW_SECS = 30;
 /**
  * The shortest window handed to one isolated pass.
  *
- * A 1.3 s extract with no context around it is where whisper starts inventing —
- * every confirmed recovery in the research was a window with a second or two of
- * room either side. The window is grown symmetrically to reach this, clamped to
+ * A 1.3 s extract with no context around it is where a recogniser starts
+ * inventing (measured on Whisper, D-349; kept for Parakeet) — every confirmed
+ * recovery in the research was a window with a second or two of room either
+ * side. The window is grown symmetrically to reach this, clamped to
  * the analysed range.
  */
 export const MIN_RECOVERY_WINDOW_SECS = 4;
@@ -95,7 +97,7 @@ export const MIN_RECOVERY_WINDOW_SECS = 4;
  * **One window per STRETCH, not per region** — the stretch is the span between
  * the transcript words either side of the hole, so it is exactly "the audio
  * nobody has read, plus its boundaries." Several regions inside one stretch (a
- * dropped take split by a pause) share a window and cost one pass, and whisper
+ * dropped take split by a pause) share a window and cost one pass, and the recogniser
  * gets the contiguous context that makes an isolated read reliable.
  *
  * Windows are clamped to `[rangeStartSecs, rangeStartSecs + rangeSecs)` — the
@@ -130,7 +132,7 @@ export function recoveryWindows(
   // Growing to the minimum can make neighbours touch or overlap; merging those
   // keeps the promise that one second of audio is read at most once per pass.
   // **Never past the maximum**, or this would silently undo the split above and
-  // hand whisper back the long window it was just spared.
+  // hand the recogniser back the long window it was just spared.
   const merged: RecoveryWindow[] = [];
   for (const w of windows.sort((a, b) => a.startSecs - b.startSecs)) {
     const last = merged[merged.length - 1];
@@ -147,7 +149,7 @@ export function recoveryWindows(
 
 /** A stretch longer than [`MAX_RECOVERY_WINDOW_SECS`], cut into equal pieces at
  *  most that long. Equal rather than greedy so no piece is a 0.5 s remainder
- *  that whisper would read out of context. */
+ *  that the recogniser would read out of context. */
 function splitLong(start: number, end: number): Array<{ start: number; end: number }> {
   const span = end - start;
   if (span <= MAX_RECOVERY_WINDOW_SECS) return [{ start, end }];
@@ -307,7 +309,7 @@ export function spliceTranscriptDoc(
 
 /** How many segments in a spliced list came from a recovery pass — the one
  *  number a panel or a tool response needs to say "this transcript is not the
- *  one whisper handed us." */
+ *  one the ASR handed us." */
 export function recoveredCount(segments: readonly SplicedSegment[]): number {
   return segments.filter((s) => s.recovered).length;
 }

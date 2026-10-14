@@ -26,7 +26,7 @@ const PATH = '/clips/take-1.mp4';
 const TRANSCRIPT = {
   text: 'hello there',
   language: 'en',
-  model: 'large-v3',
+  model: 'parakeet-tdt-0.6b-v3',
   source: PATH,
   segments: [{ start: 0, end: 1, text: 'hello there', words: [] }],
   words: [{ word: ' hello', start: 0, end: 0.4 }],

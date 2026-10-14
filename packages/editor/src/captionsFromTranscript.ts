@@ -35,7 +35,7 @@
 //     chars_per_second` doc) targets roughly 1-6 s on screen and a reading
 //     rate around 15-20 characters/second — the range this repo already
 //     treats as the norm.
-//   - **mlx-whisper's own segments are already sentence/clause-shaped** (its
+//   - **the ASR's own segments are already sentence/clause-shaped** (its
 //     decoder breaks on natural pauses, not a fixed word count) — reusing
 //     that boundary is free sentence-boundary awareness, cheaper and more
 //     honest than re-detecting sentences from punctuation.
@@ -43,7 +43,7 @@
 // So the algorithm is two-level:
 //
 //   1. **A transcript segment is always a cue boundary.** Two segments never
-//      merge into one cue, even if both are short — mlx-whisper's segment
+//      merge into one cue, even if both are short — the ASR's segment
 //      break already IS the sentence/clause break this feature wants, and
 //      re-joining them would throw that boundary away for no benefit.
 //   2. **Within one segment, a cue breaks on the first of:** reaching
@@ -165,7 +165,7 @@ function chunkSegmentWords(
 
 /** Join a group of transcript words into one cue's text.
  *
- * mlx-whisper's own word tokens carry their OWN leading space (` want`, not
+ * the ASR's own word tokens carry their OWN leading space (` want`, not
  * `want`) - the D-189 decision entry's own verified-live example - so a plain
  * concatenation already reproduces natural spacing; `.trim()` drops the one
  * leading space the first word contributes, and collapsing repeated

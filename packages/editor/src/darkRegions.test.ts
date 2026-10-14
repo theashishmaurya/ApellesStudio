@@ -54,7 +54,7 @@ describe('recoveryWindows', () => {
 
   /** The reason windows are keyed by STRETCH: a dropped take split by a pause
    *  produces several regions inside one stretch, and re-transcribing each of
-   *  them separately would be several Whisper passes over the same audio, each
+   *  them separately would be several transcription passes over the same audio, each
    *  with less context than the one pass that covers all of them. */
   it('collapses several regions in one stretch into a single window', () => {
     const windows = recoveryWindows(
@@ -83,7 +83,7 @@ describe('recoveryWindows', () => {
     expect(recoveryWindows([], 0, 100)).toEqual([]);
   });
 
-  /** A 1.3 s extract with nothing around it is where whisper starts inventing;
+  /** A 1.3 s extract with nothing around it is where a recogniser starts inventing;
    *  every confirmed recovery in the research had a second or two of room. */
   it('grows a short stretch to the minimum window, symmetrically', () => {
     const [w] = recoveryWindows([region(50, 51.3)], 0, 100);
@@ -101,11 +101,11 @@ describe('recoveryWindows', () => {
     expect(w.durationSecs).toBeCloseTo(MIN_RECOVERY_WINDOW_SECS);
   });
 
-  /** Whisper's own sliding window is 30 s, so a longer extract would simply be
+  /** The 30 s window (sized against Whisper's, D-349) means a longer extract would simply be
    *  chunked again — reintroducing the whole-file behaviour the recovery exists
    *  to escape. Splitting rather than truncating is what keeps every located
    *  region inside some window. */
-  it('splits a stretch longer than whisper own window into equal pieces', () => {
+  it('splits a stretch longer than the maximum window into equal pieces', () => {
     const span = MAX_RECOVERY_WINDOW_SECS * 2.5;
     const windows = recoveryWindows([region(0, span, [0, span])], 0, 200);
     expect(windows.length).toBeGreaterThan(1);
@@ -277,7 +277,7 @@ describe('spliceTranscriptDoc', () => {
   const doc: Transcript = {
     text: 'before after',
     language: 'en',
-    model: 'large-v3',
+    model: 'parakeet-tdt-0.6b-v3',
     source: '/a.mov',
     segments: [segment([word(' before', 0, 1)]), segment([word(' after', 20, 21)])],
     words: [word(' before', 0, 1), word(' after', 20, 21)],

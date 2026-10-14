@@ -3,7 +3,7 @@
  * the transcript a clip should actually be judged on (D-349, B-216).
  *
  * **What it is.** The one place that turns "this clip, this source range, this
- * cached transcript" into "the utterances to group, with the speech whisper
+ * cached transcript" into "the utterances to group, with the speech the ASR
  * silently dropped put back." It is the *stateful* half of `darkRegions.ts`:
  * that module is pure maths over spans and segments, this one talks to
  * `mediaUnderstandingStore` — start the scan, start a recovery per window, read
@@ -21,7 +21,7 @@
  * and writes one store's caches and returns plain data.
  *
  * **It never blocks.** The scan is a VAD pass and each recovery is a whole
- * Whisper pass over one window — far beyond `chroma::control`'s 20 s bridge and
+ * transcription pass over one window — far beyond `chroma::control`'s 20 s bridge and
  * beyond what a panel should freeze for. So this reports `pending` and the
  * caller comes back: an agent polls the `_status` tool it already polls, and the
  * panel re-runs on the store change it is already subscribed to.

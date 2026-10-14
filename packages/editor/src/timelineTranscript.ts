@@ -102,8 +102,8 @@ export interface TimelineTranscriptRow {
   /** This row exists because the app went back and re-transcribed a region the
    *  whole-file pass silently dropped (D-349). Surfaced rather than folded in
    *  invisibly: a reader is entitled to know which words appeared for that
-   *  reason, and `true` here is the difference between "whisper said this" and
-   *  "whisper missed this and we recovered it." */
+   *  reason, and `true` here is the difference between "the ASR said this" and
+   *  "the ASR missed this and we recovered it." */
   recovered?: true;
 }
 
@@ -196,7 +196,7 @@ export function transcriptSources(tl: Timeline | null): TranscriptSourceRef[] {
  *
  * `recoveries` is the store's `sourcePath -> RecoveredWindow[]` map (D-349).
  * Every recovered window is spliced into its file's transcript before the walk,
- * so a reader sees the speech whisper silently dropped — marked `recovered` on
+ * so a reader sees the speech the ASR silently dropped — marked `recovered` on
  * the row, never smuggled in as if the model had read it. Omitting the argument
  * is the pre-D-349 behaviour exactly.
  *

@@ -15,7 +15,7 @@ import {
   sanitiseIdStem,
 } from './captionsFromTranscript';
 
-/** Build a word with mlx-whisper's own leading-space convention. */
+/** Build a word with the ASR's own leading-space convention. */
 function w(word: string, start: number, end: number): TranscriptWord {
   return { word, start, end };
 }
@@ -41,7 +41,7 @@ describe('groupTranscriptIntoCues', () => {
 
   it('never merges two segments into one cue, even when both are short', () => {
     // This IS the sentence-boundary-awareness the module doc describes:
-    // mlx-whisper's own segment break is reused as a cue break rather than
+    // the ASR's own segment break is reused as a cue break rather than
     // re-detected from punctuation.
     const segA = segment([w(' Hello', 0.0, 0.3), w(' there.', 0.3, 0.7)]);
     const segB = segment([w(' Second', 1.0, 1.3), w(' sentence.', 1.3, 1.8)]);
@@ -128,7 +128,7 @@ describe('groupTranscriptIntoCues', () => {
     expect(groupTranscriptIntoCues([])).toEqual([]);
   });
 
-  it('joins mlx-whisper leading-space words into clean natural text', () => {
+  it('joins leading-space words into clean natural text', () => {
     const seg = segment([w(' Swimming,', 8.0, 8.5), w(' surfing', 8.5, 9.0), w(' sunsets.', 9.0, 9.6)]);
     const cues = groupTranscriptIntoCues([seg]);
     expect(cues[0].text).toBe('Swimming, surfing sunsets.');
