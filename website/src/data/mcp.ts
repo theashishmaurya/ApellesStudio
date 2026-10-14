@@ -66,6 +66,12 @@ export interface ToolGroup {
  * pass silently declined to transcribe (Edit 75 → 77). Re-counted against the
  * real file, as always.
  *
+ * 179 → 183 on 2026-10-14 (D-380 step 2): `editor_get_word_transcript`,
+ * `editor_propose_retakes` and `editor_retranscribe_words` — retakes judged
+ * by the MCP client against a deterministic coverage gate — plus one Edit tool
+ * an earlier pass added without re-counting (Edit 77 → 81). Re-counted against
+ * the real file.
+ *
  * 166 → 176 on 2026-09-17 (D-339). Exactly ONE of those ten is this pass's own
  * `motion_set_project_theme` (the Motion tab's document-level theme); the other
  * nine are drift these numbers had already accumulated across four earlier
@@ -79,15 +85,15 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 179,
-  shipped: 168,
+  all: 183,
+  shipped: 172,
   debugOnly: 11,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
   {
     name: 'Edit',
-    count: 77,
+    count: 81,
     blurb:
       'The whole multi-track NLE. Browse and organise the media pool, place and trim clips, perform any of the seven edit types at the playhead, roll/slip/slide, manage tracks, key transforms, set transitions, markers, captions and per-clip EQ, then render the timeline to a real file.',
     sample: [

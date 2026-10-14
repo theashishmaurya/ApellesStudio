@@ -1,8 +1,8 @@
 {
   "$comment": "The retake eval's committed floor (D-378): today's scores at RetakeParams::default() unless a task overrides it, B-246 unfixed. NOT a target — see eval/retake/README.md. Regenerate: APELLES_RETAKE_EVAL_BASELINE=1 cargo test -p apelles-speech --test retake_eval",
   "rollup": {
-    "mean": 0.25,
-    "of": 12,
+    "mean": 0.366,
+    "of": 15,
     "pass": 3
   },
   "tasks": {
@@ -24,6 +24,22 @@
       },
       "passed": false,
       "score": 0.0
+    },
+    "C019/parakeet-gated": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.4,
+        "cut_precision": 1.0,
+        "group_recall": 0.235,
+        "keeper_agreement": 0.667,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 12.24,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.161
+      },
+      "passed": false,
+      "score": 0.741
     },
     "C019/whisper-rederived": {
       "gates_fired": [
@@ -62,6 +78,22 @@
       },
       "passed": false,
       "score": 0.0
+    },
+    "C038/parakeet-gated": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.0,
+        "cut_precision": 1.0,
+        "group_recall": 0.294,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 24.56,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.189
+      },
+      "passed": false,
+      "score": 0.846
     },
     "C038/whisper-pinned": {
       "gates_fired": [
@@ -119,6 +151,22 @@
       },
       "passed": false,
       "score": 0.0
+    },
+    "C040/parakeet-gated": {
+      "gates_fired": [],
+      "metrics": {
+        "boundary_slack_secs": 0.58,
+        "cut_precision": 1.0,
+        "group_recall": 0.455,
+        "keeper_agreement": 1.0,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 34.24,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.232
+      },
+      "passed": false,
+      "score": 0.897
     },
     "C040/whisper-pinned": {
       "gates_fired": [

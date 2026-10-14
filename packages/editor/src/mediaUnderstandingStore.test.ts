@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
 
-const { useMediaUnderstandingStore, silenceKey, retakeKey } = await import(
+const { useMediaUnderstandingStore, silenceKey, retakeKey, recoveryKey } = await import(
   './mediaUnderstandingStore',
 );
 
@@ -371,5 +371,43 @@ describe('a detection that outlives the caller waiting on it', () => {
       store.silenceDetectionStatus(silenceKey(other)).phase,
       'the other file is untouched',
     ).toBe('done');
+  });
+});
+
+describe('client re-reads (D-380 step 2)', () => {
+  const W1 = { startSecs: 1, durationSecs: 4 };
+  const W2 = { startSecs: 2, durationSecs: 1 };
+  const seg = (word: string) => ({ start: 2, end: 2.5, text: word, words: [{ word, start: 2, end: 2.5 }] });
+
+  it('a re-read is a preview until applied, then spliced after the dark recoveries in the order applied', async () => {
+    const store = useMediaUnderstandingStore.getState();
+    scriptJob({ state: 'done', result: { ...TRANSCRIPT, segments: [seg(' one')] } }, 0);
+    store.startReread(PATH, W1, 'en');
+    await until(() => store.rereadStatus(recoveryKey(PATH, W1)).phase === 'done', 'the first re-read');
+    scriptJob({ state: 'done', result: { ...TRANSCRIPT, segments: [seg(' two')] } }, 0);
+    store.startReread(PATH, W2, 'en');
+    await until(() => store.rereadStatus(recoveryKey(PATH, W2)).phase === 'done', 'the second re-read');
+
+    expect(store.recoveriesFor(PATH), 'nothing is spliced before apply').toEqual([]);
+    expect(store.applyReread(recoveryKey(PATH, W2))).toBe(true);
+    expect(store.applyReread(recoveryKey(PATH, W1))).toBe(true);
+    expect(store.applyReread('/nope|0|1')).toBe(false);
+    expect(store.recoveriesFor(PATH).map((r) => r.window)).toEqual([W2, W1]);
+    expect(store.appliedRereadsFor(PATH)).toHaveLength(2);
+
+    // The sidecar was asked for a windowed pass, language pinned.
+    expect(invokeMock).toHaveBeenCalledWith('chroma_transcribe', expect.objectContaining({ startSecs: 2, durationSecs: 1, language: 'en' }));
+
+    store.clear(PATH);
+    expect(store.recoveriesFor(PATH), 'a cleared file splices nothing').toEqual([]);
+  });
+
+  it('holds one proposal set per track and clears it on null', () => {
+    const store = useMediaUnderstandingStore.getState();
+    const set = { track: 1, viewId: 'v', basisKey: 'k', receivedAt: 0, groups: [] };
+    store.setRetakeProposals(1, set);
+    expect(useMediaUnderstandingStore.getState().retakeProposals[1]).toEqual(set);
+    store.setRetakeProposals(1, null);
+    expect(useMediaUnderstandingStore.getState().retakeProposals[1]).toBeUndefined();
   });
 });

@@ -64,8 +64,10 @@ pub use dark::{
 };
 pub use phrase::{PhraseParams, is_phrase_repeat};
 pub use proposal::{
-    CutRange, GateParams, GroupVerdict, IndexedWord, ProposedGroup, Refusal, RunSpan,
-    TranscriptSegment, TranscriptWord, check_and_resolve, index_transcript, render_indexed,
+    CutRange, GateParams, GroupVerdict, IndexedView, IndexedWord, JUDGING_RULES, ProposedGroup,
+    Refusal, RunSpan, TranscriptSegment, TranscriptWord, ViewPiece, check_and_resolve,
+    check_and_resolve_waived, index_pieces, index_transcript, is_waivable, render_indexed,
+    render_indexed_page, take_from_span, would_cut,
 };
 pub use retake::{RetakeGroup, RetakeParams, TakeSpan, Utterance, detect_retakes};
 pub use silence::{SilenceParams, Span, silence_spans, speech_spans};

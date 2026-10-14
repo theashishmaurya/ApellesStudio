@@ -130,6 +130,30 @@ pub const INDEXED_VIEW_LEGEND: &str = "# One word per line: index, start-end sec
 # A line starting with '--- segment' marks where the speech recogniser began a new segment (a pause or sentence break); it is a hint only.\n\
 \n";
 
+/// The judging rules a client is given with the word view, **verbatim** from
+/// the prompt D-379's POC was measured with (`eval/retake/client_runs/
+/// prompt.md`, the block from "The transcript is of one raw" to rule 4; pinned
+/// by `retake_eval.rs`'s `the_served_rules_are_the_pocs_prompt`). Served by the
+/// app with the first page of the view (D-380 step 2), so any MCP client judges
+/// by the rules that produced D-379's 0.00 s — not by a paraphrase of them. The
+/// POC's file-I/O framing (read this file, write that one) is not part of it;
+/// the app's own answer format and refusal loop are added around it by the op
+/// layer, which owns the tool names.
+pub const JUDGING_RULES: &str = "The transcript is of one raw, unedited talking-head camera recording. It has one word per line: a word index, the word's start-end time in seconds, and the word. Lines starting with \"--- segment\" mark where the speech recogniser started a new segment; they are hints only. The recogniser makes small spelling mistakes.\n\
+\n\
+While recording, the speaker often restarts: false starts, flubbed sentences, a line said again because the first attempt went wrong. Your job is to find every RETAKE and propose what to remove, so the edited video contains each piece of content once, in its best complete version.\n\
+\n\
+Definitions:\n\
+- A retake group is two or more TAKES of the same content. A take is a contiguous range of word indices [first, last].\n\
+- \"keep\" is the take that stays: the most complete and fluent delivery. It is often, but NOT always, the last one.\n\
+- Every take in a group other than \"keep\" will be deleted from the video.\n\
+\n\
+Rules:\n\
+1. Nothing said only once may be deleted. A deleted take must contain only words whose content survives in the kept take. If an attempt is welded to unique words (the end of the previous sentence, or the start of the next one), draw the take's boundaries so those unique words are OUTSIDE it. Boundaries can fall anywhere, including mid-segment.\n\
+2. If the kept take is incomplete without part of another take, choose the boundaries or the keep so that the full line survives.\n\
+3. Only retakes. Do not propose removing pauses, asides, filler or anything that is not a repeat.\n\
+4. When unsure, leave it out: deleting unique speech is far worse than missing a retake.\n";
+
 /// Two float times this close are the same instant. Transcript times are
 /// two-decimal model output.
 const TIME_EPS: f64 = 1e-6;
@@ -264,6 +288,17 @@ pub enum GroupVerdict {
     Accepted {
         cuts: Vec<CutRange>,
     },
+    /// Refused by the content rule alone, and accepted because the client
+    /// vouched, word by word, for every word the gate could not account for
+    /// (D-380 step 2) — see [`check_and_resolve_waived`]. Distinct from
+    /// `Accepted` on purpose: the gate did NOT prove this cut safe; a client
+    /// that can read but cannot hear said it is.
+    Confirmed {
+        cuts: Vec<CutRange>,
+        /// The words the client's justification had to cover — the ones the
+        /// gate would otherwise have refused the group for. Sorted, unique.
+        waived: Vec<usize>,
+    },
     Refused {
         reason: Refusal,
         /// Word indices, sorted and unique — what to narrow before resubmitting.
@@ -338,9 +373,34 @@ pub struct UnknownRun {
 /// trimmed. Below the legend this is byte-identical to the input D-379's POC
 /// was measured on (pinned by the eval's golden test).
 pub fn render_indexed(words: &[IndexedWord], runs: &[RunSpan]) -> Result<String, UnknownRun> {
-    let mut out = String::from(INDEXED_VIEW_LEGEND);
+    render_indexed_page(words, runs, 0, words.len())
+}
+
+/// One page of [`render_indexed`]: the words `from..to` (clamped to the
+/// transcript), each line still carrying its **global** index, so a client
+/// that read the view in pages cites the same numbers as one that read it
+/// whole (D-380 step 2 — an MCP client's tool output is capped, so a long
+/// recording is served in pages).
+///
+/// The legend is printed only on the page that starts at word 0, and a page
+/// always opens with the `--- segment` line of its first word's run — so a
+/// page that starts mid-run repeats that hint line once. That is the only way
+/// the concatenated pages differ from the whole view; `render_indexed` itself
+/// is this function over every word, and is unchanged.
+pub fn render_indexed_page(
+    words: &[IndexedWord],
+    runs: &[RunSpan],
+    from: usize,
+    to: usize,
+) -> Result<String, UnknownRun> {
+    let to = to.min(words.len());
+    let mut out = if from == 0 {
+        String::from(INDEXED_VIEW_LEGEND)
+    } else {
+        String::new()
+    };
     let mut current: Option<u32> = None;
-    for (i, w) in words.iter().enumerate() {
+    for (i, w) in words.iter().enumerate().take(to).skip(from) {
         if current != Some(w.run) {
             let span = usize::try_from(w.run)
                 .ok()
@@ -365,6 +425,102 @@ pub fn render_indexed(words: &[IndexedWord], runs: &[RunSpan]) -> Result<String,
     Ok(out)
 }
 
+/// One clip's window onto one source transcript, for a view built from a
+/// whole timeline track rather than one untrimmed file (D-380 step 2).
+///
+/// `source` indexes the `sources` slice handed to [`index_pieces`];
+/// `start_secs..end_secs` is the clip's trimmed range in that source's own
+/// seconds, half-open.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ViewPiece {
+    pub source: usize,
+    pub start_secs: f64,
+    pub end_secs: f64,
+}
+
+/// A multi-clip view: the words in play order, the run spans their
+/// `--- segment` lines print, and which [`ViewPiece`] each word came from.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct IndexedView {
+    pub words: Vec<IndexedWord>,
+    pub runs: Vec<RunSpan>,
+    /// `piece_of_word[i]` is the index into the pieces of word `i`.
+    pub piece_of_word: Vec<usize>,
+}
+
+/// A [`ViewPiece`] naming a source that was not handed in.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("piece {piece} names source {named}, but only {sources} were given")]
+pub struct UnknownSource {
+    pub piece: usize,
+    // Not `source`: thiserror reads a field of that name as the error's cause.
+    pub named: usize,
+    pub sources: usize,
+}
+
+/// Index several clips' windows onto their sources into one view, in the
+/// order the pieces are given (the track's play order).
+///
+/// **The rules.** Each source is indexed once by [`index_transcript`] — so a
+/// word's segment is decided by the same start-time rule as everywhere else.
+/// A piece then holds the words of its source whose **midpoint** lies in
+/// `[start_secs, end_secs)`: the same midpoint rule `darkRegions.ts`'s splice
+/// uses, so a word straddling a cut belongs to the clip holding most of it and
+/// to exactly one of two abutting clips. A piece's runs are its source's
+/// segments offset by every earlier piece's segment count, so two clips never
+/// share a run (the gate never pads one clip's cut towards another's word) and
+/// **a single piece covering a whole source is exactly [`index_transcript`]**,
+/// run numbers included — which is what keeps a one-clip, untrimmed track's
+/// view byte-identical to the POC's input.
+pub fn index_pieces(
+    sources: &[Vec<TranscriptSegment>],
+    pieces: &[ViewPiece],
+) -> Result<IndexedView, UnknownSource> {
+    let indexed: Vec<(Vec<IndexedWord>, Vec<RunSpan>)> =
+        sources.iter().map(|s| index_transcript(s)).collect();
+    let mut view = IndexedView::default();
+    for (pi, piece) in pieces.iter().enumerate() {
+        let (words, runs) = indexed.get(piece.source).ok_or(UnknownSource {
+            piece: pi,
+            named: piece.source,
+            sources: sources.len(),
+        })?;
+        // A view with more than u32::MAX segments is not a recording.
+        let offset = u32::try_from(view.runs.len()).unwrap_or(u32::MAX);
+        for w in words {
+            let mid = (w.start_secs + w.end_secs) / 2.0;
+            if mid >= piece.start_secs && mid < piece.end_secs {
+                view.words.push(IndexedWord {
+                    run: w.run.saturating_add(offset),
+                    ..w.clone()
+                });
+                view.piece_of_word.push(pi);
+            }
+        }
+        view.runs.extend_from_slice(runs);
+    }
+    Ok(view)
+}
+
+/// The inclusive word-index range of the `eligible` words whose midpoint lies
+/// in `[start_secs, end_secs)`, or `None` when there are none — how a take
+/// stated in seconds (the deterministic detector's, D-382) becomes a take the
+/// gate can judge. The same midpoint rule as [`index_pieces`].
+pub fn take_from_span(
+    words: &[IndexedWord],
+    start_secs: f64,
+    end_secs: f64,
+    eligible: impl Fn(usize) -> bool,
+) -> Option<(usize, usize)> {
+    let mut hit = words.iter().enumerate().filter(|&(i, w)| {
+        let mid = (w.start_secs + w.end_secs) / 2.0;
+        eligible(i) && mid >= start_secs && mid < end_secs
+    });
+    let first = hit.next()?.0;
+    let last = hit.last().map_or(first, |(i, _)| i);
+    Some((first, last))
+}
+
 /// Judge every group at the measured thresholds — see [`check_and_resolve_with`].
 pub fn check_and_resolve(words: &[IndexedWord], groups: &[ProposedGroup]) -> Vec<GroupVerdict> {
     check_and_resolve_with(words, groups, &GateParams::default())
@@ -377,6 +533,9 @@ struct Held {
     cuts: Vec<(usize, usize)>,
     /// Words inside `keep` that groups nested in it delete.
     nested_cut: BTreeSet<usize>,
+    /// Words the client vouched for when this group was confirmed — still
+    /// accounted for when a nested group re-checks this group's deletions.
+    waived: BTreeSet<usize>,
 }
 
 /// One normalised token and the word it came from (a word like `"it's"`
@@ -393,10 +552,69 @@ pub fn check_and_resolve_with(
     groups: &[ProposedGroup],
     p: &GateParams,
 ) -> Vec<GroupVerdict> {
+    check_and_resolve_waived(words, groups, &[], p)
+}
+
+/// Is this a refusal a client may answer with a justification? Only the
+/// content rule's two: a structural refusal is a malformed group, and a
+/// cross-group conflict (including [`Refusal::StarvesContainer`]) is two
+/// groups disagreeing about one stretch — neither is a word the gate cannot
+/// hear, which is the one thing a justification can speak to.
+pub fn is_waivable(r: Refusal) -> bool {
+    matches!(
+        r,
+        Refusal::ContentAbsentFromKeptTake | Refusal::UnalignedContentRun
+    )
+}
+
+/// [`check_and_resolve_with`], with a per-group **waiver**: word indices the
+/// client has vouched for (D-380 step 2's confirm path). `waivers[i]` belongs
+/// to `groups[i]`; a missing entry is an empty waiver, so `&[]` is exactly the
+/// unwaived gate.
+///
+/// A waived word is treated by the content rule as accounted for, like a
+/// stopword. A group is judged first with **no** waiver; only if the content
+/// rule refuses it, and every word that refusal names is in its waiver, is it
+/// judged again with those words waived — repeated, because accounting for one
+/// take's words can expose the next reason (an out-of-order run behind an
+/// absent word). It ends as:
+///
+/// - [`GroupVerdict::Accepted`] when it passes without any waiver — a waiver
+///   never downgrades a group the gate proved safe;
+/// - [`GroupVerdict::Confirmed`] when it passes only with waived words, which
+///   it lists;
+/// - [`GroupVerdict::Refused`] otherwise, naming what is still unaccounted for
+///   (structural and cross-group refusals are never waivable — see
+///   [`is_waivable`]).
+///
+/// A confirmed group is held like an accepted one, so later groups are checked
+/// against it exactly as against a verified group.
+pub fn check_and_resolve_waived(
+    words: &[IndexedWord],
+    groups: &[ProposedGroup],
+    waivers: &[BTreeSet<usize>],
+    p: &GateParams,
+) -> Vec<GroupVerdict> {
+    let none = BTreeSet::new();
     let mut held: Vec<Held> = Vec::new();
     let mut verdicts = Vec::with_capacity(groups.len());
     for (gi, g) in groups.iter().enumerate() {
-        match judge(words, g, &held, p) {
+        let waiver = waivers.get(gi).unwrap_or(&none);
+        let mut waived: BTreeSet<usize> = BTreeSet::new();
+        let judged = loop {
+            match judge(words, g, &held, p, &waived) {
+                Err((reason, offending))
+                    if is_waivable(reason)
+                        && !offending.is_empty()
+                        && offending.iter().all(|i| waiver.contains(i))
+                        && !offending.iter().all(|i| waived.contains(i)) =>
+                {
+                    waived.extend(offending);
+                }
+                other => break other,
+            }
+        };
+        match judged {
             Ok((keep, cuts)) => {
                 let cut_words: BTreeSet<usize> = cuts.iter().flat_map(|&(a, b)| a..=b).collect();
                 for h in held.iter_mut() {
@@ -409,17 +627,24 @@ pub fn check_and_resolve_with(
                     .filter(|h| nested_in_takes(&h.cuts, h.keep, keep))
                     .flat_map(|h| h.cuts.iter().flat_map(|&(a, b)| a..=b))
                     .collect();
-                verdicts.push(GroupVerdict::Accepted {
-                    cuts: cuts
-                        .iter()
-                        .flat_map(|&(a, b)| resolve(words, a, b))
-                        .collect(),
+                let resolved = cuts
+                    .iter()
+                    .flat_map(|&(a, b)| resolve(words, a, b))
+                    .collect();
+                verdicts.push(if waived.is_empty() {
+                    GroupVerdict::Accepted { cuts: resolved }
+                } else {
+                    GroupVerdict::Confirmed {
+                        cuts: resolved,
+                        waived: waived.iter().copied().collect(),
+                    }
                 });
                 held.push(Held {
                     index: gi,
                     keep,
                     cuts,
                     nested_cut,
+                    waived,
                 });
             }
             Err((reason, offending)) => {
@@ -437,7 +662,13 @@ pub fn check_and_resolve_with(
 type Judged = Result<((usize, usize), Vec<(usize, usize)>), (Refusal, Vec<usize>)>;
 
 /// One group against the transcript and the groups already accepted.
-fn judge(words: &[IndexedWord], g: &ProposedGroup, held: &[Held], p: &GateParams) -> Judged {
+fn judge(
+    words: &[IndexedWord],
+    g: &ProposedGroup,
+    held: &[Held],
+    p: &GateParams,
+    waived: &BTreeSet<usize>,
+) -> Judged {
     // Structure first: nothing below is meaningful on a malformed group.
     let past: Vec<usize> = g
         .takes
@@ -496,7 +727,7 @@ fn judge(words: &[IndexedWord], g: &ProposedGroup, held: &[Held], p: &GateParams
     let kept = tokens(words, keep, &nested);
     let mut first_failure: Option<(Refusal, Vec<usize>)> = None;
     for &c in &cuts {
-        if let Some(f) = content_shortfall(&tokens(words, c, &BTreeSet::new()), &kept, p) {
+        if let Some(f) = content_shortfall(&tokens(words, c, &BTreeSet::new()), &kept, p, waived) {
             first_failure = Some(match first_failure {
                 Some((r, mut w)) if r == f.0 => {
                     w.extend(f.1);
@@ -520,7 +751,12 @@ fn judge(words: &[IndexedWord], g: &ProposedGroup, held: &[Held], p: &GateParams
             .cuts
             .iter()
             .filter_map(|&c| {
-                content_shortfall(&tokens(words, c, &BTreeSet::new()), &container_kept, p)
+                content_shortfall(
+                    &tokens(words, c, &BTreeSet::new()),
+                    &container_kept,
+                    p,
+                    &h.waived,
+                )
             })
             .flat_map(|(_, w)| w)
             .collect();
@@ -529,6 +765,26 @@ fn judge(words: &[IndexedWord], g: &ProposedGroup, held: &[Held], p: &GateParams
         }
     }
     Ok((keep, cuts))
+}
+
+/// The source-second ranges `g` would delete if it were applied, ignoring the
+/// gate — for a group the gate refused on content, so a human who has
+/// LISTENED to it can still choose to cut it (D-380 step 2: the gate cannot
+/// hear, a person can). Empty for a group too malformed to resolve (an index
+/// past the transcript, an inverted take, a `keep` out of range). Never used
+/// to apply anything on a client's say-so.
+pub fn would_cut(words: &[IndexedWord], g: &ProposedGroup) -> Vec<CutRange> {
+    let well_formed =
+        g.keep < g.takes.len() && g.takes.iter().all(|&(a, b)| a <= b && b < words.len());
+    if !well_formed {
+        return Vec::new();
+    }
+    g.takes
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| i != g.keep)
+        .flat_map(|(_, &(a, b))| resolve(words, a, b))
+        .collect()
 }
 
 /// Every take of `g` lies inside `range`.
@@ -636,11 +892,20 @@ fn lcs_aligned(cut: &[Tok], kept: &[Tok], p: &GateParams) -> Vec<bool> {
 /// - **F5** the same word ([`same_word`]) as some `kept` token — present, but
 ///   not where the alignment could use it.
 ///
+/// A word in `waived` is forgiven outright, like F1 (D-380 step 2's confirm
+/// path — see [`check_and_resolve_waived`]); the unwaived gate passes an empty
+/// set.
+///
 /// F1-F4 tokens are neutral for the second check; an F5 token is not, because
 /// it is the one that is present only out of order: at least
 /// [`GateParams::max_unaligned_content_run`] consecutive unaligned content
 /// tokens refuse the take even when each is forgiven alone.
-fn content_shortfall(cut: &[Tok], kept: &[Tok], p: &GateParams) -> Option<(Refusal, Vec<usize>)> {
+fn content_shortfall(
+    cut: &[Tok],
+    kept: &[Tok],
+    p: &GateParams,
+    waived: &BTreeSet<usize>,
+) -> Option<(Refusal, Vec<usize>)> {
     let aligned = lcs_aligned(cut, kept, p);
     let mut absent = Vec::new();
     let mut runs: Vec<usize> = Vec::new();
@@ -652,7 +917,9 @@ fn content_shortfall(cut: &[Tok], kept: &[Tok], p: &GateParams) -> Option<(Refus
         run.clear();
     };
     for (i, t) in cut.iter().enumerate() {
-        let neutral = is_stopword(&t.text) || is_filler(&t.text);
+        // A waived word (the client vouched for it, D-380 step 2) is accounted
+        // for the way a stopword is: it neither refuses nor counts to the run.
+        let neutral = is_stopword(&t.text) || is_filler(&t.text) || waived.contains(&t.word);
         if aligned[i] {
             if !neutral {
                 close_run(&mut run, &mut runs);
@@ -773,7 +1040,7 @@ mod tests {
     fn refusal(v: &GroupVerdict) -> Option<(Refusal, Vec<usize>)> {
         match v {
             GroupVerdict::Refused { reason, offending } => Some((*reason, offending.clone())),
-            GroupVerdict::Accepted { .. } => None,
+            GroupVerdict::Accepted { .. } | GroupVerdict::Confirmed { .. } => None,
         }
     }
 
@@ -1142,5 +1409,209 @@ mod tests {
         for _ in 0..5 {
             assert_eq!(check_and_resolve(&w, &gs), a);
         }
+    }
+
+    fn seg(start: f64, end: f64, ws: &[(&str, f64, f64)]) -> TranscriptSegment {
+        TranscriptSegment {
+            start,
+            end,
+            words: ws
+                .iter()
+                .map(|&(w, s, e)| TranscriptWord {
+                    word: format!(" {w}"),
+                    start: s,
+                    end: e,
+                })
+                .collect(),
+        }
+    }
+
+    /// Two segments of one source: "alpha beta" 0-1, "gamma delta" 2-3.
+    fn two_segments() -> Vec<TranscriptSegment> {
+        vec![
+            seg(0.0, 1.0, &[("alpha", 0.0, 0.4), ("beta", 0.5, 1.0)]),
+            seg(2.0, 3.0, &[("gamma", 2.0, 2.4), ("delta", 2.5, 3.0)]),
+        ]
+    }
+
+    #[test]
+    fn pages_carry_global_indices_and_concatenate_to_the_whole_view() {
+        let (w, runs) = index_transcript(&two_segments());
+        let whole = render_indexed(&w, &runs).unwrap_or_else(|e| panic!("{e}"));
+        let p0 = render_indexed_page(&w, &runs, 0, 3).unwrap_or_else(|e| panic!("{e}"));
+        let p1 = render_indexed_page(&w, &runs, 3, 99).unwrap_or_else(|e| panic!("{e}"));
+        assert!(p0.starts_with(INDEXED_VIEW_LEGEND));
+        assert!(!p1.contains("# One word"), "the legend is on page one only");
+        // Page two starts mid-run, so it repeats that run's separator once.
+        assert_eq!(p1, "--- segment 1  2.00-3.00\n3\t2.50-3.00\tdelta\n");
+        let rejoined = format!("{p0}{}", p1.split_once('\n').map_or("", |(_, r)| r));
+        assert_eq!(rejoined, whole);
+        assert_eq!(render_indexed_page(&w, &runs, 9, 12), Ok(String::new()));
+    }
+
+    #[test]
+    fn one_piece_over_a_whole_source_is_index_transcript() {
+        let segs = two_segments();
+        let (w, runs) = index_transcript(&segs);
+        let v = index_pieces(
+            std::slice::from_ref(&segs),
+            &[ViewPiece {
+                source: 0,
+                start_secs: 0.0,
+                end_secs: f64::INFINITY,
+            }],
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(v.words, w);
+        assert_eq!(v.runs, runs);
+        assert_eq!(v.piece_of_word, vec![0; 4]);
+    }
+
+    #[test]
+    fn pieces_keep_words_by_midpoint_and_never_share_a_run() {
+        let a = two_segments();
+        let b = vec![seg(0.0, 1.0, &[("other", 0.0, 0.5)])];
+        // Piece 0 trims source A to 0.7..2.6: "beta" (mid 0.75) and "gamma"
+        // (mid 2.2) are in; "delta" (mid 2.75) straddles the out-point and its
+        // midpoint is outside, so it belongs to whatever shows the rest of it.
+        // Piece 1 is source B; piece 2 is source A again from 2.6 on.
+        let v = index_pieces(
+            &[a, b],
+            &[
+                ViewPiece {
+                    source: 0,
+                    start_secs: 0.7,
+                    end_secs: 2.6,
+                },
+                ViewPiece {
+                    source: 1,
+                    start_secs: 0.0,
+                    end_secs: 9.0,
+                },
+                ViewPiece {
+                    source: 0,
+                    start_secs: 2.6,
+                    end_secs: 9.0,
+                },
+            ],
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        let texts: Vec<&str> = v.words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(texts, vec!["beta", "gamma", "other", "delta"]);
+        assert_eq!(v.piece_of_word, vec![0, 0, 1, 2]);
+        // Runs: piece 0 = 0..2, piece 1 = 2, piece 2 = 3..5 — "delta" is in
+        // source A's segment 1, offset by the three runs before it.
+        assert_eq!(
+            v.words.iter().map(|w| w.run).collect::<Vec<_>>(),
+            vec![0, 1, 2, 4]
+        );
+        assert_eq!(v.runs.len(), 5);
+        assert!(render_indexed(&v.words, &v.runs).is_ok());
+        assert_eq!(
+            index_pieces(
+                &[],
+                &[ViewPiece {
+                    source: 0,
+                    start_secs: 0.0,
+                    end_secs: 1.0
+                }]
+            ),
+            Err(UnknownSource {
+                piece: 0,
+                named: 0,
+                sources: 0
+            })
+        );
+    }
+
+    #[test]
+    fn a_take_in_seconds_maps_to_the_words_whose_midpoint_it_holds() {
+        let w = words("a b c d e");
+        // Words sit at 0.0-0.4, 0.5-0.9, 1.0-1.4 ... midpoints 0.2, 0.7, 1.2.
+        assert_eq!(take_from_span(&w, 0.6, 1.3, |_| true), Some((1, 2)));
+        assert_eq!(take_from_span(&w, 0.6, 1.3, |i| i != 2), Some((1, 1)));
+        assert_eq!(take_from_span(&w, 5.0, 6.0, |_| true), None);
+    }
+
+    fn waive(sets: &[&[usize]]) -> Vec<BTreeSet<usize>> {
+        sets.iter().map(|s| s.iter().copied().collect()).collect()
+    }
+
+    #[test]
+    fn a_waiver_confirms_a_content_refusal_and_lists_what_it_waived() {
+        // "final bin final bill": bin (1) is not in the keeper.
+        let w = words("final bin final bill");
+        let g = group(&[(0, 1), (2, 3)], 1);
+        let v = check_and_resolve_waived(
+            &w,
+            std::slice::from_ref(&g),
+            &waive(&[&[1]]),
+            &GateParams::default(),
+        );
+        let GroupVerdict::Confirmed { cuts, waived } = &v[0] else {
+            panic!("{v:?}")
+        };
+        assert_eq!(waived, &vec![1]);
+        assert_eq!((cuts[0].first, cuts[0].last), (0, 1));
+        // A waiver that misses an offending word leaves it refused.
+        let w = words("final bin money final bill");
+        let v = check_and_resolve_waived(
+            &w,
+            &[group(&[(0, 2), (3, 4)], 1)],
+            &waive(&[&[1]]),
+            &GateParams::default(),
+        );
+        assert_eq!(
+            refusal(&v[0]),
+            Some((Refusal::ContentAbsentFromKeptTake, vec![1, 2]))
+        );
+    }
+
+    #[test]
+    fn a_waiver_never_downgrades_a_verified_group_or_excuses_structure() {
+        let w = words("the cache costs money the cache costs money");
+        let v = check_and_resolve_waived(
+            &w,
+            &[group(&[(0, 3), (4, 7)], 1)],
+            &waive(&[&[0, 1, 2, 3]]),
+            &GateParams::default(),
+        );
+        assert!(accepted(&v[0]), "{v:?}");
+        let v = check_and_resolve_waived(
+            &w,
+            &[group(&[(0, 4), (4, 7)], 1)],
+            &waive(&[&[4]]),
+            &GateParams::default(),
+        );
+        assert_eq!(refusal(&v[0]).map(|r| r.0), Some(Refusal::OverlappingTakes));
+        assert!(is_waivable(Refusal::UnalignedContentRun));
+        assert!(!is_waivable(Refusal::StarvesContainer { group: 0 }));
+    }
+
+    #[test]
+    fn a_confirmed_group_is_held_against_later_groups() {
+        // Group 0 (confirmed) keeps 2-3; group 1 then cuts into that keeper.
+        let w = words("final bin final bill final bill");
+        let v = check_and_resolve_waived(
+            &w,
+            &[group(&[(0, 1), (2, 3)], 1), group(&[(2, 3), (4, 5)], 1)],
+            &waive(&[&[1]]),
+            &GateParams::default(),
+        );
+        assert!(matches!(v[0], GroupVerdict::Confirmed { .. }), "{v:?}");
+        assert_eq!(
+            refusal(&v[1]),
+            Some((Refusal::CutsKeptTakeOf { group: 0 }, vec![2, 3]))
+        );
+    }
+
+    #[test]
+    fn would_cut_resolves_a_refused_group_and_nothing_malformed() {
+        let w = words("final bin final bill");
+        let cuts = would_cut(&w, &group(&[(0, 1), (2, 3)], 1));
+        assert_eq!(cuts.len(), 1);
+        assert_eq!((cuts[0].first, cuts[0].last), (0, 1));
+        assert!(would_cut(&w, &group(&[(0, 1), (2, 9)], 1)).is_empty());
+        assert!(would_cut(&w, &group(&[(0, 1), (2, 3)], 2)).is_empty());
     }
 }

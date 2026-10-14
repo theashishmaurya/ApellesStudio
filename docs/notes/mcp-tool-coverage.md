@@ -208,6 +208,9 @@ inclusion, no longer a silent video).
 > > | `editor_detect_retakes_status` | Poll a started retake grouping. |
 > > | `editor_detect_dark_regions` | **Where there is speech nobody transcribed** (D-349, fixes the transcription half of B-216). Crosses the VAD against the transcript's own word coverage: whisper's whole-file pass emits no tokens for some utterances inside windows it otherwise decodes confidently, ~1 per 3 minutes of raw footage, with no error and no low-confidence score to filter on. `clip` is REQUIRED here (no sweep — the sweep case is `editor_detect_retakes`, which runs this itself). Reports only; the retake tool is what recovers. |
 > > | `editor_detect_dark_regions_status` | Poll a started dark-region scan. |
+> > | `editor_get_word_transcript` | **D-380 step 2 — retakes judged by the MCP client.** One track as numbered words (paged, global indices), its `viewId`, and on the first page the `instructions` to judge by (the D-379 POC's rules, verbatim, served by the app). The app runs no model; the client judges. |
+> > | `editor_propose_retakes` | The client's groups (word-index takes + `keep`, optional per-word `confirm` reasons) through the deterministic coverage gate; each comes back `verified` / `ai_confirmed` / `refused` with offending words, and the set is stored for the Recut panel. A stale `viewId` is refused. Nothing is cut. |
+> > | `editor_retranscribe_words` | Re-run the ASR over a word range in isolation (the dark-region recovery's windowed pass) to check a refused word for a mishearing; preview by default, `apply: true` splices it into the transcript for every consumer and changes the `viewId`. |
 > > | `editor_ripple_delete_ranges` | The apply half: cut N timeline ranges and close every gap, as **one undo entry**. |
 > >
 > > **`clip` is OPTIONAL on all four of the silence/retake detectors (D-343,

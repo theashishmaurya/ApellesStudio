@@ -39,8 +39,9 @@ use std::path::PathBuf;
 
 use apelles_speech::proposal::{GateParams, INDEXED_VIEW_LEGEND, check_and_resolve_with};
 use apelles_speech::{
-    GroupVerdict, IndexedWord, ProposedGroup, Refusal, RetakeGroup, RetakeParams, RunSpan,
-    TranscriptSegment, detect_retakes, index_transcript, render_indexed,
+    GroupVerdict, IndexedWord, JUDGING_RULES, ProposedGroup, Refusal, RetakeGroup, RetakeParams,
+    RunSpan, TranscriptSegment, ViewPiece, detect_retakes, index_pieces, index_transcript,
+    render_indexed, take_from_span,
 };
 use common::load_path;
 use serde::Deserialize;
@@ -294,6 +295,12 @@ struct Task {
     #[serde(default)]
     gates: Vec<Limit>,
     expect: Expect,
+    /// D-382: score the detector as the app now applies it — every group mapped
+    /// to word ranges in the source's word transcript and put through the
+    /// coverage gate together, refused groups not applied. Needs the source's
+    /// `eval/retake/transcripts/` word file, so Parakeet tasks only.
+    #[serde(default)]
+    gated: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -742,12 +749,65 @@ fn judge(task: &Task, (metrics, lost): (Metrics, Vec<LostRange>)) -> Outcome {
 fn run(task: &Task, proposal: Option<Reference>) -> Outcome {
     let groups = match proposal {
         Some(kind) => reference(kind, &task.input.transcript),
+        None if task.gated => gated_detector(task),
         None => {
             let u = load_path(&repo_path(&task.input.transcript).to_string_lossy());
             from_detector(&detect_retakes(&u, &task.params.unwrap_or_default()))
         }
     };
     run_with(task, &groups)
+}
+
+/// **The detector as the app applies it since D-382.** Each group's takes are
+/// mapped to word ranges by word midpoint (`take_from_span` — the rule the app
+/// uses on its track view), the groups go through the coverage gate together in
+/// the detector's order, and only accepted groups are scored, as the padded cut
+/// ranges the app would apply. A group none of whose takes maps to a word, or
+/// with fewer than two that do, is not proposable and is dropped, as in the app.
+fn gated_detector(task: &Task) -> Vec<Proposed> {
+    let labels: Labels = read_json(&task.input.labels);
+    let (words, _) = word_transcript(&labels.source);
+    let u = load_path(&repo_path(&task.input.transcript).to_string_lossy());
+    let groups: Vec<ProposedGroup> = detect_retakes(&u, &task.params.unwrap_or_default())
+        .iter()
+        .filter_map(|g| detector_group_as_words(g, &words))
+        .collect();
+    let (accepted, refused) = gated(&words, &groups, &GateParams::default());
+    println!(
+        "  {}: {} detector groups, {} applied, {} refused by the gate",
+        task.id,
+        groups.len(),
+        accepted.len(),
+        refused.len()
+    );
+    print_refused(&refused);
+    accepted
+}
+
+/// One detector group as an index-form proposal, or `None` when it cannot be
+/// one: a take with no word inside it is dropped (and the keep re-indexed);
+/// fewer than two takes left, or the keeper gone, is no group at all.
+fn detector_group_as_words(g: &RetakeGroup, words: &[IndexedWord]) -> Option<ProposedGroup> {
+    let mut takes = Vec::new();
+    let mut keep = None;
+    for (ti, t) in g.takes.iter().enumerate() {
+        let Some(r) = take_from_span(
+            words,
+            g.members[t.first].start_secs,
+            g.members[t.last].end_secs,
+            |_| true,
+        ) else {
+            continue;
+        };
+        if ti == g.keep {
+            keep = Some(takes.len());
+        }
+        takes.push(r);
+    }
+    match (keep, takes.len() >= 2) {
+        (Some(keep), true) => Some(ProposedGroup { takes, keep }),
+        _ => None,
+    }
 }
 
 /// Score any proposal against a task's labels — the detector's, a reference
@@ -1006,7 +1066,10 @@ fn gated(
         .enumerate()
     {
         match v {
-            GroupVerdict::Accepted { cuts } => {
+            // The eval never waives (no client vouches for anything here), so a
+            // `Confirmed` verdict cannot arise; were it to, it is what the app
+            // would apply once a human ticked it, so it is scored as applied.
+            GroupVerdict::Accepted { cuts } | GroupVerdict::Confirmed { cuts, .. } => {
                 let (a, b) = g.takes[g.keep];
                 accepted.push(Proposed {
                     kept: normalise(vec![(words[a].start_secs, words[b].end_secs)]),
@@ -1436,6 +1499,55 @@ fn the_indexed_view_is_the_pocs_input() {
         );
         assert_eq!(&ours[..ours.len() - body(&ours).len()], INDEXED_VIEW_LEGEND);
     }
+}
+
+/// The app's track view (D-380 step 2) is a list of clip windows; one clip
+/// showing a whole source must give exactly the POC's input too, run numbers
+/// and all — the same golden as above, through `index_pieces`.
+#[test]
+fn a_one_clip_track_view_is_the_pocs_input() {
+    for t in parakeet_tasks() {
+        let labels: Labels = read_json(&t.input.labels);
+        let tr: WordTranscript = read_json(&format!(
+            "eval/retake/transcripts/{}.parakeet.words.json",
+            labels.source
+        ));
+        let (words, runs) = index_transcript(&tr.segments);
+        let view = index_pieces(
+            &[tr.segments],
+            &[ViewPiece {
+                source: 0,
+                start_secs: 0.0,
+                end_secs: f64::INFINITY,
+            }],
+        )
+        .unwrap_or_else(|e| panic!("{}: {e}", t.id));
+        assert_eq!(view.words, words, "{}", t.id);
+        assert_eq!(
+            render_indexed(&view.words, &view.runs).ok(),
+            render_indexed(&words, &runs).ok(),
+            "{}",
+            t.id
+        );
+    }
+}
+
+/// The judging rules the app serves with the view are the POC's prompt,
+/// verbatim — the rules D-379's 0.00 s was measured under, not a paraphrase.
+#[test]
+fn the_served_rules_are_the_pocs_prompt() {
+    let prompt = std::fs::read_to_string(repo_path("eval/retake/client_runs/prompt.md"))
+        .unwrap_or_else(|e| panic!("reading prompt.md: {e}"));
+    assert!(
+        prompt.contains(JUDGING_RULES),
+        "JUDGING_RULES drifted from eval/retake/client_runs/prompt.md"
+    );
+    assert!(JUDGING_RULES.starts_with("The transcript is of one raw"));
+    assert!(
+        JUDGING_RULES
+            .trim_end()
+            .ends_with("far worse than missing a retake.")
+    );
 }
 
 /// Every label file a task points at, once each.

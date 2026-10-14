@@ -1902,7 +1902,7 @@
     },
     {
       "name": "editor_detect_retakes",
-      "description": "Group the places in a timeline clip \u2014 or across a WHOLE TRACK \u2014 where the\n    speaker **said the same line more than once**: the flubbed take, the\n    stumble, the third attempt.\n\n    Unlike `editor_detect_silences` this needs the transcript, because a retake\n    is a fact about words. If one has not been made yet this starts it and\n    returns `state: \"running\"` with a `note` \u2014 poll\n    `editor_get_transcript_status`, then call this again. A transcript is made\n    once per SOURCE FILE, so a sweep of fifty clips cut from one recording\n    costs one transcription, not fifty.\n\n    Once the words exist, the grouping itself follows the same start-then-poll\n    contract as `editor_detect_silences` (D-321): `state: \"done\"` with `groups`\n    if it finished inside this call, otherwise `state: \"running\"` \u2014 poll\n    `editor_detect_retakes_status` with the same arguments. `force` re-runs a\n    grouping that is already cached for this range and these thresholds.\n\n    - `track` \u2014 required.\n    - `clip` \u2014 **optional**. Name a clip index to ask about that one clip.\n      **Omit it to sweep every analysable clip on the track in a single call**\n      (D-342, fixes B-216) \u2014 do this for any cleanup pass. Asking one clip at a\n      time is exactly how real retakes survived to a final cut. Either way the\n      words are read across the whole continuous TAKE a clip belongs to rather\n      than that clip alone (D-364, below); a named clip is still answered about\n      on its own.\n    - `similarity` \u2014 how alike two utterances must be to count as the same line\n      (0..1, default 0.82).\n    - `window_secs` \u2014 how far apart two takes may be (default 30). A line\n      repeated half an hour later is a callback, not a retake.\n    - `min_words` \u2014 a take with fewer than this many DISTINCT words is never\n      grouped (default 3), which is what stops every \"Yeah.\" pairing with every\n      other one.\n    - `max_span_utterances` \u2014 how many adjacent transcript utterances may be\n      joined into one take (default 3). This is what finds a restart Whisper cut\n      on boundaries of its own, which do not line up with the speaker's (D-327):\n      a take is a SPAN of utterances, so one delivery can cover several. 1\n      restores the old utterance-to-utterance behaviour.\n    - `phrase_min_words` \u2014 the detector's SECOND, independent signal (D-365):\n      the shortest repeated PHRASE, in words, that marks two spans as one\n      self-correction even when `similarity` says they are different sentences\n      (default 3; **0 turns it off**). `similarity` asks \"is this the same LINE\n      again\" and misses the equally common disfluency where a speaker repairs\n      one phrase inside two otherwise-different sentences \u2014 measured on real\n      footage, \"and the third one called speculative speculating and the third\n      one's called speculating speculative\" against \"speculative decoding okay\n      and the third one call is speculative decoding and it's kind of clever\"\n      scores 0.495 against the 0.82 bar. A pair matched by EITHER signal is a\n      group. The tradeoff is real and measured: across two whole real\n      transcripts (698 utterance pairs) this arm newly admits 22 pairs, 21 of\n      them genuine missed retakes and 1 a false positive \u2014 a deliberate\n      parallel construction (\"Every word turns itself into a question.\" /\n      \"Every other word turns itself into a kind of answer key...\"), which text\n      alone cannot tell from a repair. Groups found this way report a LOW\n      `similarity`, so they sort to the top of anything ranked by it.\n    - `recover_dark_regions` \u2014 **default true, and leave it that way** (D-349,\n      B-216). Whisper's whole-file pass silently declines to transcribe some\n      utterances inside windows it otherwise reads confidently: roughly one\n      dropped multi-second region per three minutes of raw footage, measured on\n      two independent camera originals, with no error and no low-confidence\n      score to filter on. The loss is **biased towards near-duplicate repeated\n      material** \u2014 i.e. towards retakes \u2014 so grouping the raw transcript is\n      blind in exactly the place this tool is looking. With this on, each clip's\n      range is scanned for stretches where the VAD hears a voice and the\n      transcript has no words, those windows are re-transcribed on their own,\n      and the recovered lines are spliced in before grouping. The answer then\n      carries `darkRegions` (how many holes were found) and\n      `recoveredUtterances` (how many grouped lines exist only because of it).\n      Set it false only when you already know the source is clean and want the\n      answer in one round trip: the scan and each re-read are extra passes, so a\n      first call typically returns `state: \"transcribing\"` once or twice more\n      than it would otherwise.\n\n    **Detection reads a continuous TAKE, not a clip** (D-364, fixes B-237).\n    Consecutive clips cut from one uninterrupted stretch of one source file \u2014\n    what an earlier fine-grained silence pass leaves behind \u2014 are merged back\n    into one run and grouped once. They have to be: a clip is routinely shorter\n    than the sentence it is part of (the project this was measured on has clips\n    of 0.25s and 0.58s), so a restart's two halves land in different clips and a\n    view scoped to one clip can never hold both. Six of seven real retakes on\n    that project spanned 2-5 clips each and were invisible for exactly that\n    reason. A run stops at a change of source file, a jump backwards through the\n    source, or more removed material than `window_secs` \u2014 nothing is compared\n    that was never one take \u2014 and only material still ON the timeline is read,\n    so a removed stretch between two clips of a run contributes nothing.\n\n    Each group has `takes`, a `similarity` score, and `keep` \u2014 the index of the\n    take this **suggests** keeping, which is the last one, normally what the\n    speaker settled on. `keep` is a suggestion and nothing more: text alone\n    cannot always tell a retake from a later line that merely extends an earlier\n    one, so read the `text` before cutting.\n\n    Each take carries its `text`, its `startSecs`/`endSecs`, the `clips` it\n    lands in, and one `segments` entry per clip with the same three frame spaces\n    `editor_detect_silences` returns. **A take inside one clip also carries the\n    flat `startFrame`/`endFrame` it always did; a take that spans several does\n    NOT** \u2014 no single range describes it, and a clamped one would quietly\n    under-cut. Pass every entry of `segments` to `editor_ripple_delete_ranges`.\n\n    A single-clip answer also carries `readAcrossClips` when the clip was read\n    as part of a longer run: the clip indices that run covered.\n\n    **A SWEEP (no `clip`) answers in a different, aggregate shape**: `flagged`\n    is the clips that found something, in full, each with its own `clip` index\n    and `groups`; `clean` is a bare list of clip indices with nothing in them;\n    `running` / `transcribing` / `notStarted` / `failed` / `skipped` say what\n    has not answered and why (`transcribing` is waiting on the words, not on\n    the grouping); `totals` counts all of it, and `runs` says how many\n    continuous takes the track's clips were read as. A group that spans several\n    clips is reported ONCE, under the earliest clip it touches, with every clip\n    it covers named inside its takes. Act on `flagged`.\n\n    **Nothing is cut**, by either form. Pass the takes you want gone to\n    `editor_ripple_delete_ranges`.",
+      "description": "Group the places in a timeline clip \u2014 or across a WHOLE TRACK \u2014 where the\n    speaker **said the same line more than once**: the flubbed take, the\n    stumble, the third attempt.\n\n    Unlike `editor_detect_silences` this needs the transcript, because a retake\n    is a fact about words. If one has not been made yet this starts it and\n    returns `state: \"running\"` with a `note` \u2014 poll\n    `editor_get_transcript_status`, then call this again. A transcript is made\n    once per SOURCE FILE, so a sweep of fifty clips cut from one recording\n    costs one transcription, not fifty.\n\n    Once the words exist, the grouping itself follows the same start-then-poll\n    contract as `editor_detect_silences` (D-321): `state: \"done\"` with `groups`\n    if it finished inside this call, otherwise `state: \"running\"` \u2014 poll\n    `editor_detect_retakes_status` with the same arguments. `force` re-runs a\n    grouping that is already cached for this range and these thresholds.\n\n    - `track` \u2014 required.\n    - `clip` \u2014 **optional**. Name a clip index to ask about that one clip.\n      **Omit it to sweep every analysable clip on the track in a single call**\n      (D-342, fixes B-216) \u2014 do this for any cleanup pass. Asking one clip at a\n      time is exactly how real retakes survived to a final cut. Either way the\n      words are read across the whole continuous TAKE a clip belongs to rather\n      than that clip alone (D-364, below); a named clip is still answered about\n      on its own.\n    - `similarity` \u2014 how alike two utterances must be to count as the same line\n      (0..1, default 0.82).\n    - `window_secs` \u2014 how far apart two takes may be (default 30). A line\n      repeated half an hour later is a callback, not a retake.\n    - `min_words` \u2014 a take with fewer than this many DISTINCT words is never\n      grouped (default 3), which is what stops every \"Yeah.\" pairing with every\n      other one.\n    - `max_span_utterances` \u2014 how many adjacent transcript utterances may be\n      joined into one take (default 3). This is what finds a restart Whisper cut\n      on boundaries of its own, which do not line up with the speaker's (D-327):\n      a take is a SPAN of utterances, so one delivery can cover several. 1\n      restores the old utterance-to-utterance behaviour.\n    - `phrase_min_words` \u2014 the detector's SECOND, independent signal (D-365):\n      the shortest repeated PHRASE, in words, that marks two spans as one\n      self-correction even when `similarity` says they are different sentences\n      (default 3; **0 turns it off**). `similarity` asks \"is this the same LINE\n      again\" and misses the equally common disfluency where a speaker repairs\n      one phrase inside two otherwise-different sentences \u2014 measured on real\n      footage, \"and the third one called speculative speculating and the third\n      one's called speculating speculative\" against \"speculative decoding okay\n      and the third one call is speculative decoding and it's kind of clever\"\n      scores 0.495 against the 0.82 bar. A pair matched by EITHER signal is a\n      group. The tradeoff is real and measured: across two whole real\n      transcripts (698 utterance pairs) this arm newly admits 22 pairs, 21 of\n      them genuine missed retakes and 1 a false positive \u2014 a deliberate\n      parallel construction (\"Every word turns itself into a question.\" /\n      \"Every other word turns itself into a kind of answer key...\"), which text\n      alone cannot tell from a repair. Groups found this way report a LOW\n      `similarity`, so they sort to the top of anything ranked by it.\n    - `recover_dark_regions` \u2014 **default true, and leave it that way** (D-349,\n      B-216). Whisper's whole-file pass silently declines to transcribe some\n      utterances inside windows it otherwise reads confidently: roughly one\n      dropped multi-second region per three minutes of raw footage, measured on\n      two independent camera originals, with no error and no low-confidence\n      score to filter on. The loss is **biased towards near-duplicate repeated\n      material** \u2014 i.e. towards retakes \u2014 so grouping the raw transcript is\n      blind in exactly the place this tool is looking. With this on, each clip's\n      range is scanned for stretches where the VAD hears a voice and the\n      transcript has no words, those windows are re-transcribed on their own,\n      and the recovered lines are spliced in before grouping. The answer then\n      carries `darkRegions` (how many holes were found) and\n      `recoveredUtterances` (how many grouped lines exist only because of it).\n      Set it false only when you already know the source is clean and want the\n      answer in one round trip: the scan and each re-read are extra passes, so a\n      first call typically returns `state: \"transcribing\"` once or twice more\n      than it would otherwise.\n\n    **Detection reads a continuous TAKE, not a clip** (D-364, fixes B-237).\n    Consecutive clips cut from one uninterrupted stretch of one source file \u2014\n    what an earlier fine-grained silence pass leaves behind \u2014 are merged back\n    into one run and grouped once. They have to be: a clip is routinely shorter\n    than the sentence it is part of (the project this was measured on has clips\n    of 0.25s and 0.58s), so a restart's two halves land in different clips and a\n    view scoped to one clip can never hold both. Six of seven real retakes on\n    that project spanned 2-5 clips each and were invisible for exactly that\n    reason. A run stops at a change of source file, a jump backwards through the\n    source, or more removed material than `window_secs` \u2014 nothing is compared\n    that was never one take \u2014 and only material still ON the timeline is read,\n    so a removed stretch between two clips of a run contributes nothing.\n\n    Each group has `takes`, a `similarity` score, and `keep` \u2014 the index of the\n    take this **suggests** keeping, which is the last one, normally what the\n    speaker settled on. `keep` is a suggestion and nothing more: text alone\n    cannot always tell a retake from a later line that merely extends an earlier\n    one, so read the `text` before cutting.\n\n    Each take carries its `text`, its `startSecs`/`endSecs`, the `clips` it\n    lands in, and one `segments` entry per clip with the same three frame spaces\n    `editor_detect_silences` returns. **A take inside one clip also carries the\n    flat `startFrame`/`endFrame` it always did; a take that spans several does\n    NOT** \u2014 no single range describes it, and a clamped one would quietly\n    under-cut. Pass every entry of `segments` to `editor_ripple_delete_ranges`.\n\n    A single-clip answer also carries `readAcrossClips` when the clip was read\n    as part of a longer run: the clip indices that run covered.\n\n    **A SWEEP (no `clip`) answers in a different, aggregate shape**: `flagged`\n    is the clips that found something, in full, each with its own `clip` index\n    and `groups`; `clean` is a bare list of clip indices with nothing in them;\n    `running` / `transcribing` / `notStarted` / `failed` / `skipped` say what\n    has not answered and why (`transcribing` is waiting on the words, not on\n    the grouping); `totals` counts all of it, and `runs` says how many\n    continuous takes the track's clips were read as. A group that spans several\n    clips is reported ONCE, under the earliest clip it touches, with every clip\n    it covers named inside its takes. Act on `flagged`.\n\n    **Every group carries `status`** (D-382): the detector's groups go through\n    the same deterministic coverage gate an `editor_propose_retakes` group\n    does, mapped onto the track's words by word midpoint. `\"verified\"` means\n    every word a cut would remove survives in the kept take; `\"refused\"` comes\n    with `reason`, `reasonText` and `offending` \u2014 the words the cut would lose.\n    This detector over-cuts (B-246), so do not cut a refused group unless the\n    person has listened and asks for it. For your own judgement of the track\n    instead, read it with `editor_get_word_transcript` and propose with\n    `editor_propose_retakes`; this tool is the deterministic fallback.\n\n    **Nothing is cut**, by either form. Pass the takes you want gone to\n    `editor_ripple_delete_ranges`.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -2886,6 +2886,52 @@
       }
     },
     {
+      "name": "editor_get_word_transcript",
+      "description": "Read one timeline track as numbered words, to find its RETAKES yourself\n    (D-380). The app runs no model for this: you judge, it checks.\n\n    Returns `text` \u2014 one word per line, `index<TAB>start-end<TAB>word`, times in\n    the source file's seconds, with `--- segment` hint lines (a new segment also\n    starts at every clip boundary) \u2014 plus `viewId`, `totalWords`, `offset`,\n    `returned` and `nextOffset`. **The first page (offset 0) also carries\n    `instructions`: the rules to judge by and how to answer. Read them before\n    proposing anything.** They are the rules a blind evaluation measured at\n    0.00 s of unique speech lost across nine runs.\n\n    - `track` \u2014 required. The view is every clip on it that has audio, in play\n      order, showing only the words those clips still show (a word belongs to\n      the clip holding its midpoint).\n    - `offset` / `max_words` \u2014 paging (default 2500 words a page, at most 4000).\n      Indices are GLOBAL: page two starts at `nextOffset`, not at 0. Keep\n      calling until `nextOffset` is null.\n    - `start` \u2014 transcribe any source on the track that has no transcript yet\n      (once per file). Until every source has one this answers\n      `state: \"transcribing\"` and serves no words, because the indices would\n      shift when the rest lands.\n\n    **`viewId` is what your indices mean.** It changes whenever the track's\n    words change \u2014 an edit, a newly finished transcript, an applied re-read \u2014\n    and `editor_propose_retakes` / `editor_retranscribe_words` refuse a stale\n    one. Re-read and re-derive when that happens.\n\n    `editor_detect_retakes` is the deterministic fallback detector; it does not\n    read this view's judgement and is gated the same way (D-382). Nothing is\n    cut by this tool.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Offset"
+          },
+          "max_words": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Words"
+          },
+          "start": {
+            "default": false,
+            "title": "Start",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track"
+        ],
+        "type": "object",
+        "title": "editor_get_word_transcriptArguments"
+      }
+    },
+    {
       "name": "editor_import_media",
       "description": "Import one or more absolute file paths into the project's shared media\n    pool. Required before `editor_add_clip` can place them \u2014 that tool looks\n    an item up by the `id`/`sourcePath` this one returns.\n\n    A macOS screen recording's filename has a NARROW NO-BREAK SPACE (U+202F),\n    not a regular space, before AM/PM \u2014 a hand-typed path with an ordinary\n    space silently matches nothing. Resolve the real path via a shell glob or\n    directory listing first; see `editor_get_capabilities` for the full story\n    (docs/BUGS.md B-070). If this reports success but a later `editor_add_clip`\n    on the same path still can't find the pool item, see B-073 there too \u2014\n    don't just retry.\n\n    A path already in the pool is skipped, not duplicated \u2014 with one\n    exception (B-073): an entry whose own first probe failed and therefore\n    has no probed metadata is re-probed here and returned if it now succeeds,\n    so re-importing really is a valid repair for that case. To repair such an\n    item by id instead \u2014 keeping its id and every reference to it \u2014 use\n    `editor_reprobe_media`.\n\n    STILL IMAGES are importable too (D-292): `.png`, `.jpg`/`.jpeg`, `.webp`,\n    `.tif`/`.tiff`, `.bmp`. They come back with an `image` key (width/height)\n    where footage has `video`, and are placed by `editor_add_clip` on a video\n    track with a synthesized duration \u2014 see that tool. Animated GIF and camera\n    RAW are deliberately NOT importable: a GIF is not one frame, and RAW cannot\n    be opened by the export engine.",
       "inputSchema": {
@@ -3364,6 +3410,41 @@
       }
     },
     {
+      "name": "editor_propose_retakes",
+      "description": "Hand the app YOUR retake groups for one track, as word-index ranges from\n    `editor_get_word_transcript` (D-380). Each group goes through a\n    deterministic coverage gate and is stored for the person to review in the\n    Recut panel. **Nothing is cut.**\n\n    - `track` \u2014 required.\n    - `view_id` \u2014 the `viewId` your indices were read under. A stale one is\n      refused outright and nothing changes: re-read, re-derive, resubmit.\n    - `groups` \u2014 `[{\"line\": str, \"takes\": [{\"first\": int, \"last\": int}, ...],\n      \"keep\": int, \"note\": str, \"confirm\": {\"<word index>\": \"<reason>\"}}]`.\n      Takes are inclusive word ranges in spoken order, non-overlapping; `keep`\n      indexes `takes`. `line`, `note` and `confirm` are optional. **Each call\n      REPLACES the track's whole set**, so send every group you still stand by.\n      An empty list clears it (no `view_id` needed).\n\n    The gate accepts a group only if every word a deleted take holds also\n    survives in the kept take (stopwords, fillers, false starts and stutters\n    forgiven; near-identical spellings of long words match). It cannot hear,\n    and does not judge which take is better. Each group comes back as:\n\n    - `verified` \u2014 the gate proved the deletions lose no word;\n    - `ai_confirmed` \u2014 the gate refused on content, and you vouched for every\n      word it named via `confirm`; shown to the person with your reasons;\n    - `refused` \u2014 with `reason`, `reasonText` and `offending` (word indices and\n      words). `notConfirmable: true` means the group is malformed or fights\n      another group, so it must be fixed, not confirmed.\n\n    **Resolving a refusal is your loop:** (1) narrow the take so unique words\n    fall outside it; (2) if a word looks misheard, `editor_retranscribe_words`\n    over that stretch and apply a better reading (the `viewId` then changes);\n    (3) if the content truly survives (an inflection, a mishearing the re-read\n    kept, a word only in the abandoned attempt), resubmit with `confirm` giving\n    a reason for EVERY offending word; (4) otherwise drop it. An unresolved\n    group stays `refused` and is still shown to the person, untickable.\n\n    Each take carries its `text` and `segments` \u2014 the same timeline-frame\n    entries `editor_detect_retakes` returns \u2014 so if the person asks you to cut,\n    pass every segment of every non-kept take to `editor_ripple_delete_ranges`.\n    Do not cut unless asked.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "groups": {
+            "items": {},
+            "title": "Groups",
+            "type": "array"
+          },
+          "view_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "View Id"
+          }
+        },
+        "required": [
+          "track",
+          "groups"
+        ],
+        "type": "object",
+        "title": "editor_propose_retakesArguments"
+      }
+    },
+    {
       "name": "editor_remove_clip",
       "description": "Remove one clip from the timeline, leaving a gap in its place. Follow\n    with `editor_remove_gap` to ripple-close the gap, or leave it if the gap\n    is wanted (e.g. to hold a still frame of nothing).\n\n    If the clip is one half of an A/V link group, removing it removes its\n    linked partner too (the same as `editor_swap_clip_media`'s own A/V link\n    but the OPPOSITE of that tool's behavior \u2014 that one deliberately does\n    NOT propagate; this one deliberately does, matching the GUI's own\n    delete). The response's `removed` list names every clip actually taken\n    out, `{track, clip, id}` each, so a second deletion shows up here\n    instead of only in a later `get_timeline` read (B-221).",
       "inputSchema": {
@@ -3484,6 +3565,48 @@
         ],
         "type": "object",
         "title": "editor_reprobe_mediaArguments"
+      }
+    },
+    {
+      "name": "editor_retranscribe_words",
+      "description": "Re-run the speech recogniser over a stretch of words, to check whether\n    a word the coverage gate refused was misheard (D-380). ASR only \u2014 the app\n    makes no judgement; deciding whether the new reading is better is yours.\n\n    - `track`, `view_id` \u2014 as in `editor_propose_retakes`; a stale `view_id`\n      is refused.\n    - `first` / `last` \u2014 the inclusive word range to check (one source file,\n      at most about a minute with context). The app re-reads that audio in\n      isolation with ~2 s of context either side, never cutting a word in half.\n    - `apply` \u2014 false (default): a PREVIEW. Returns `current` (the view's words\n      in that window, with their indices) beside `reread` (the fresh reading)\n      and `identical`; nothing changes. true: splice the reading into the\n      file's transcript \u2014 for every consumer, the Transcript panel and the\n      detectors included \u2014 and return the new `viewId`, the words now in the\n      window with their new indices, and `indexShift` (how far every later\n      index moved). Re-derive your groups, then resubmit with the new `viewId`.\n    - `force` \u2014 re-run a re-read already cached for this window.\n\n    A re-read takes a few seconds; one that outlasts this call answers\n    `state: \"running\"` \u2014 call again with the same arguments to collect it.\n    Nothing is cut.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "view_id": {
+            "title": "View Id",
+            "type": "string"
+          },
+          "first": {
+            "title": "First",
+            "type": "integer"
+          },
+          "last": {
+            "title": "Last",
+            "type": "integer"
+          },
+          "apply": {
+            "default": false,
+            "title": "Apply",
+            "type": "boolean"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "track",
+          "view_id",
+          "first",
+          "last"
+        ],
+        "type": "object",
+        "title": "editor_retranscribe_wordsArguments"
       }
     },
     {
@@ -12733,6 +12856,58 @@
       ]
     },
     {
+      "tool": "editor_get_word_transcript",
+      "case": "minimal",
+      "arguments": {
+        "track": 97
+      },
+      "requests": [
+        {
+          "op": "editor_get_word_transcript",
+          "args": {
+            "track": 97
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_get_word_transcript",
+      "case": "full",
+      "arguments": {
+        "track": 97,
+        "offset": 42,
+        "max_words": 23,
+        "start": true
+      },
+      "requests": [
+        {
+          "op": "editor_get_word_transcript",
+          "args": {
+            "track": 97,
+            "offset": 42,
+            "maxWords": 23,
+            "start": true
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_import_media",
       "case": "minimal",
       "arguments": {
@@ -13108,6 +13283,66 @@
       ]
     },
     {
+      "tool": "editor_propose_retakes",
+      "case": "minimal",
+      "arguments": {
+        "track": 47,
+        "groups": [
+          "any_editor_propose_retakes.groups[0]"
+        ]
+      },
+      "requests": [
+        {
+          "op": "editor_propose_retakes",
+          "args": {
+            "track": 47,
+            "groups": [
+              "any_editor_propose_retakes.groups[0]"
+            ]
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_propose_retakes",
+      "case": "full",
+      "arguments": {
+        "track": 47,
+        "groups": [
+          "any_editor_propose_retakes.groups[0]"
+        ],
+        "view_id": "v_editor_propose_retakes.view_id"
+      },
+      "requests": [
+        {
+          "op": "editor_propose_retakes",
+          "args": {
+            "track": 47,
+            "groups": [
+              "any_editor_propose_retakes.groups[0]"
+            ],
+            "viewId": "v_editor_propose_retakes.view_id"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "editor_remove_clip",
       "case": "minimal",
       "arguments": {
@@ -13247,6 +13482,67 @@
             "ids": [
               "v_editor_reprobe_media.ids[0]"
             ]
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_retranscribe_words",
+      "case": "minimal",
+      "arguments": {
+        "track": 51,
+        "view_id": "v_editor_retranscribe_words.view_id",
+        "first": 55,
+        "last": 11
+      },
+      "requests": [
+        {
+          "op": "editor_retranscribe_words",
+          "args": {
+            "track": 51,
+            "viewId": "v_editor_retranscribe_words.view_id",
+            "first": 55,
+            "last": 11
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_retranscribe_words",
+      "case": "full",
+      "arguments": {
+        "track": 51,
+        "view_id": "v_editor_retranscribe_words.view_id",
+        "first": 55,
+        "last": 11,
+        "apply": true,
+        "force": false
+      },
+      "requests": [
+        {
+          "op": "editor_retranscribe_words",
+          "args": {
+            "track": 51,
+            "viewId": "v_editor_retranscribe_words.view_id",
+            "first": 55,
+            "last": 11,
+            "apply": true
           },
           "timeout_ms": 20000
         }

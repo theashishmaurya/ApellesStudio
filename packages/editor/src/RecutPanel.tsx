@@ -43,6 +43,21 @@
  * panel admits where it came from — and `clipTranscriptView` is literally the
  * same function `editor_detect_retakes` runs, so the two cannot drift.
  *
+ * **It also reviews the MCP client's retake proposals (D-380 step 2).** The
+ * groups an MCP client submits through `editor_propose_retakes` land in the
+ * store's `retakeProposals` slice and join this same list — one row per take,
+ * unticked, with the coverage gate's status: verified, AI-confirmed (the
+ * client vouched for words the gate could not account for; its reasons shown,
+ * those words marked) or refused (reason shown, not tickable until a person
+ * who has listened unlocks it). "Tick all suggested" never ticks the last two,
+ * a banner locks the rows when the timeline moves after the client read it,
+ * and the same Cut applies them. No model runs here or anywhere in the app.
+ *
+ * **The detector's own groups go through the same gate (D-382).** After
+ * `chroma_detect_retakes` answers, each group is mapped onto the track's words
+ * and checked (`detectorGate.ts`); a refused detector row is treated exactly
+ * like a refused client row. The detector itself is unchanged.
+ *
  * **What it does NOT do.** It does not transcribe (it asks
  * `mediaUnderstandingStore` for a cached transcript and reports honestly when
  * one is still running), it owns no timeline state, and it does not paint
@@ -57,7 +72,17 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { ScissorsIcon, SpinnerIcon, WaveformIcon, RepeatIcon } from '@phosphor-icons/react';
+import {
+  LockOpenIcon,
+  ProhibitIcon,
+  RepeatIcon,
+  RobotIcon,
+  ScissorsIcon,
+  SealCheckIcon,
+  SpinnerIcon,
+  WarningIcon,
+  WaveformIcon,
+} from '@phosphor-icons/react';
 import { Button } from '@apelles/ui';
 
 import {
@@ -77,6 +102,7 @@ import { clipRuns, takeSegments, type ClipRun } from './recutRuns';
 import { applyRippleDeleteRanges, timelineFps, type Clip } from './timeline';
 import { useEditorTimelineStore } from './timelineStore';
 import {
+  recoveriesIn,
   retakeKey,
   silenceKey,
   useMediaUnderstandingStore,
@@ -88,6 +114,13 @@ import {
 // `editor_detect_retakes` runs, so the human's recut and the agent's cannot end
 // up grouping two different transcripts of one file.
 import { clipTranscriptView, runTranscriptView } from './darkRecovery';
+// D-380 step 2 — the MCP client's retake proposals, gated, from the store
+// `editor_propose_retakes` writes. Reviewed in this same list, cut by the
+// same Cut button.
+import { buildWordViewInput, viewBasisKey } from './retakeWordView';
+// D-382 — the detector's own groups through the same gate.
+import { detectedForGate, gateDetectorGroups, type DetectorGateResult } from './detectorGate';
+import type { ProposalStatus, ProposalWord, RetakeProposalSet } from './retakeProposals';
 
 /** One row the user can tick. A silence is its own candidate; a retake group
  *  contributes one candidate per take, with the suggested keep marked so the
@@ -120,6 +153,63 @@ interface Candidate {
   groupIndex?: number;
   takeIndex?: number;
   takeCount?: number;
+  /** Which group the row belongs to, unique across detector and client rows
+   *  — what a listener's unlock is keyed by. */
+  groupKey?: string;
+  /** D-380 step 2 — who proposed the row. Absent means the detector. */
+  source?: 'detector' | 'client';
+  /** Client rows: the coverage gate's status for the row's group. */
+  status?: ProposalStatus;
+  /** Client rows: the client's own one-line description of the group. */
+  line?: string;
+  /** Client rows: the take's words, so the ones a cut would lose can be
+   *  marked inside the text rather than listed apart from it. */
+  words?: ProposalWord[];
+  /** Client rows: words to mark (the gate's offending words, or the ones the
+   *  AI vouched for), each with the AI's reason when it gave one. */
+  flagged?: Record<number, string>;
+  /** Refused client rows: why. */
+  reasonText?: string;
+  /** Refused client rows: a human who has listened may unlock the group. */
+  unlockable?: boolean;
+}
+
+/** Client rows for one track's proposals: one row per take, like the
+ *  detector's, carrying the group's status and the words to mark. A take whose
+ *  words land on no frame (outside every clip) has nothing to show. */
+function clientRows(set: RetakeProposalSet, nameOf: (clip: number) => string): Candidate[] {
+  const rows: Candidate[] = [];
+  for (const g of set.groups) {
+    const flagged: Record<number, string> = {};
+    for (const w of g.offending) flagged[w.index] = g.justifications[w.index] ?? '';
+    g.takes.forEach((t, ti) => {
+      const shown = t.extent[0];
+      if (!shown) return;
+      rows.push({
+        id: `cli-${set.track}-${g.group}-${ti}`,
+        kind: 'retake',
+        source: 'client',
+        status: g.status,
+        span: shown.span,
+        spans: t.segments.map((s) => s.span),
+        clip: shown.clip,
+        clipName: nameOf(shown.clip),
+        ...(t.extent.length > 1 ? { clipSpan: t.extent.length } : {}),
+        text: t.text,
+        words: t.words,
+        flagged: t.keep ? {} : flagged,
+        suggestedKeep: t.keep,
+        groupIndex: g.group,
+        groupKey: `cli-${set.track}-${g.group}`,
+        takeIndex: ti,
+        takeCount: g.takes.length,
+        ...(g.line ? { line: g.line } : {}),
+        ...(g.reasonText ? { reasonText: g.reasonText } : {}),
+        unlockable: g.unlockable,
+      });
+    });
+  }
+  return rows;
 }
 
 /** `mm:ss.s` — short enough for a narrow column, precise enough to find. */
@@ -199,6 +289,9 @@ export function RecutPanel() {
    *  selection: a cut must go to the track that was scanned, not to whatever
    *  the user clicked on while reading the results. */
   const [resultTrack, setResultTrack] = useState<number | null>(null);
+  /** D-380 step 2 — refused client groups a human has unlocked after
+   *  listening, by group index. Cleared whenever the proposals change. */
+  const [unlocked, setUnlocked] = useState<Record<string, boolean>>({});
 
   // Subscribed as whole maps rather than through a key-dependent selector: the
   // key only exists once a run has started, and a map's identity changes
@@ -247,6 +340,57 @@ export function RecutPanel() {
     timeline !== null &&
     track !== null &&
     (effectiveScope === 'track' ? true : analysable);
+
+  // ---- D-380 step 2: the MCP client's proposals -------------------------
+  // They belong to a track; the panel shows the ones for the track its
+  // detector results are on, or else the track a scan would cover.
+  const retakeProposals = useMediaUnderstandingStore((s) => s.retakeProposals);
+  const appliedRereads = useMediaUnderstandingStore((s) => s.appliedRereads);
+  const displayTrack = resultTrack ?? track;
+  const clientSet = displayTrack !== null ? retakeProposals[displayTrack] : undefined;
+
+  /** Has the track moved away from the view the AI judged? The same inputs
+   *  the view id is built from (`viewBasisKey`), recomputed here so the human
+   *  is told BEFORE ticking rows whose frames now point at other material. */
+  const clientStale = useMemo(() => {
+    if (!clientSet || !timeline) return false;
+    const maps = { recoveries, appliedRereads };
+    const input = buildWordViewInput(
+      timeline,
+      clientSet.track,
+      transcripts,
+      (path) => recoveriesIn(maps, path),
+      transcriptErrors,
+    );
+    return 'error' in input || viewBasisKey(input) !== clientSet.basisKey;
+  }, [clientSet, timeline, transcripts, transcriptErrors, recoveries, appliedRereads]);
+
+  const clientCandidates = useMemo(() => {
+    if (!clientSet) return [];
+    const clips = timeline?.tracks[clientSet.track]?.clips ?? [];
+    return clientRows(clientSet, (i) => clips[i]?.name ?? `clip ${i}`);
+  }, [clientSet, timeline]);
+
+  // A new submission is a new set of groups: an unlock given to the old
+  // group 3 must not carry over to whatever is group 3 now.
+  useEffect(() => {
+    setUnlocked({});
+  }, [clientSet]);
+
+  /** Every row in the list, read along the timeline. */
+  const rows = useMemo(
+    () => [...candidates, ...clientCandidates].sort((a, b) => a.span.startFrame - b.span.startFrame),
+    [candidates, clientCandidates],
+  );
+
+  /** Can this row be ticked at all? A silence always; a retake the gate
+   *  refused (a client's or, since D-382, the detector's) only once a person
+   *  who listened unlocks it; a client row not while its view is stale. */
+  const tickable = (c: Candidate): boolean => {
+    if (c.source === 'client' && (clientStale || c.spans.length === 0)) return false;
+    if (c.status === 'refused') return Boolean(unlocked[c.groupKey ?? '']);
+    return true;
+  };
 
   const reset = () => {
     setCandidates([]);
@@ -459,131 +603,191 @@ export function RecutPanel() {
     );
     if (!settled) return;
 
-    const { fps } = pending;
-    const rows: Candidate[] = [];
-    const failures: string[] = [];
+    /** D-382 — build the list once the detector's groups have been through
+     *  the coverage gate (retakes only; a silence has no words to check). */
+    const finish = (gates: Readonly<Record<string, DetectorGateResult[]>>) => {
+      const { fps } = pending;
+      const rows: Candidate[] = [];
+      const failures: string[] = [];
 
-    for (const c of pending.clips) {
-      if (c.failure) {
-        failures.push(c.failure);
-        continue;
-      }
-      const key = c.key as string;
-      const failure = errors[key];
-      if (failure) {
-        failures.push(failure);
-        continue;
-      }
+      for (const c of pending.clips) {
+        if (c.failure) {
+          failures.push(c.failure);
+          continue;
+        }
+        const key = c.key as string;
+        const failure = errors[key];
+        if (failure) {
+          failures.push(failure);
+          continue;
+        }
 
-      if (pending.kind === 'silence') {
-        const found = silences[key];
-        found.silences.forEach((s, i) => {
-          const span = spanToFrames(c.clip, s.start_secs, s.end_secs, fps);
-          if (span.endFrame <= span.startFrame) return;
-          rows.push({
-            id: `sil-${c.index}-${i}`,
-            kind: 'silence',
-            span,
-            spans: [span],
-            clip: c.index,
-            clipName: c.clip.name,
+        if (pending.kind === 'silence') {
+          const found = silences[key];
+          found.silences.forEach((s, i) => {
+            const span = spanToFrames(c.clip, s.start_secs, s.end_secs, fps);
+            if (span.endFrame <= span.startFrame) return;
+            rows.push({
+              id: `sil-${c.index}-${i}`,
+              kind: 'silence',
+              span,
+              spans: [span],
+              clip: c.index,
+              clipName: c.clip.name,
+            });
+          });
+          continue;
+        }
+
+        // One row per TAKE, not per member: since D-327 a delivery can span
+        // several utterances, and a row per member would offer half a delivery
+        // for cutting while marking the other half as the keeper.
+        retakes[key].groups.forEach((g, gi) => {
+          const takes = groupTakes(g);
+          const gate = gates[key]?.[gi];
+          const flagged: Record<number, string> = {};
+          for (const w of gate?.offending ?? []) flagged[w.index] = '';
+          takes.forEach((t) => {
+            // D-364/B-237 — a take can land in several clips of the run, and one
+            // row has to carry every one of those ranges or the cut leaves the
+            // other halves behind. `spans[0]` is where the row sorts and reads.
+            const segments = takeSegments(c.run as ClipRun, t.startSecs, t.endSecs, fps);
+            if (segments.length === 0) return;
+            const spans = segments.map((seg) => seg.span);
+            rows.push({
+              id: `ret-${c.index}-${gi}-${t.index}`,
+              kind: 'retake',
+              span: spans[0],
+              spans,
+              clip: segments[0].clip,
+              clipName:
+                (c.run as ClipRun).targets.find((rt) => rt.clip === segments[0].clip)?.c.name ??
+                c.clip.name,
+              ...(segments.length > 1 ? { clipSpan: segments.length } : {}),
+              text: t.text,
+              suggestedKeep: t.suggestedKeep,
+              groupIndex: gi,
+              groupKey: `ret-${c.index}-${gi}`,
+              takeIndex: t.index,
+              takeCount: takes.length,
+              ...(gate
+                ? {
+                    source: 'detector' as const,
+                    status: gate.status,
+                    ...(gate.takeWords[t.index]?.length ? { words: gate.takeWords[t.index] } : {}),
+                    flagged: t.suggestedKeep ? {} : flagged,
+                    ...(gate.reasonText ? { reasonText: gate.reasonText } : {}),
+                    unlockable: gate.unlockable,
+                  }
+                : {}),
+            });
           });
         });
-        continue;
       }
 
-      // One row per TAKE, not per member: since D-327 a delivery can span
-      // several utterances, and a row per member would offer half a delivery
-      // for cutting while marking the other half as the keeper.
-      retakes[key].groups.forEach((g, gi) => {
-        const takes = groupTakes(g);
-        takes.forEach((t) => {
-          // D-364/B-237 — a take can land in several clips of the run, and one
-          // row has to carry every one of those ranges or the cut leaves the
-          // other halves behind. `spans[0]` is where the row sorts and reads.
-          const segments = takeSegments(c.run as ClipRun, t.startSecs, t.endSecs, fps);
-          if (segments.length === 0) return;
-          const spans = segments.map((seg) => seg.span);
-          rows.push({
-            id: `ret-${c.index}-${gi}-${t.index}`,
-            kind: 'retake',
-            span: spans[0],
-            spans,
-            clip: segments[0].clip,
-            clipName:
-              (c.run as ClipRun).targets.find((rt) => rt.clip === segments[0].clip)?.c.name ??
-              c.clip.name,
-            ...(segments.length > 1 ? { clipSpan: segments.length } : {}),
-            text: t.text,
-            suggestedKeep: t.suggestedKeep,
-            groupIndex: gi,
-            takeIndex: t.index,
-            takeCount: takes.length,
-          });
-        });
-      });
-    }
+      // A whole run that failed is an error; a run where SOME clips failed still
+      // has real answers in it, and burying them behind one red box would be the
+      // same "you only looked at part of it" failure this scan exists to fix.
+      if (failures.length === pending.clips.length) {
+        setError(failures[0] ?? 'detection failed');
+        setPending(null);
+        return;
+      }
 
-    // A whole run that failed is an error; a run where SOME clips failed still
-    // has real answers in it, and burying them behind one red box would be the
-    // same "you only looked at part of it" failure this scan exists to fix.
-    if (failures.length === pending.clips.length) {
-      setError(failures[0] ?? 'detection failed');
+      // Sorted by where the cut lands, not by which clip answered first — the
+      // list reads along the timeline, which is how a human reviews it.
+      rows.sort((a, b) => a.span.startFrame - b.span.startFrame);
+      setCandidates(rows);
+      setResultTrack(pending.track);
+
+      // Counted in CLIPS, not in units: since D-364 a retake unit is a whole run
+      // of clips, and "1 clip on this track" for a run of twenty would be a lie.
+      const clipsIn = (c: PendingClip) => c.run?.targets.length ?? 1;
+      const scannedUnits = pending.clips.filter((c) => !c.failure);
+      const scanned = scannedUnits.reduce((n, c) => n + clipsIn(c), 0);
+      const where = scanned === 1 ? 'this clip' : `${scanned} clips on this track`;
+      // D-349 — say it out loud whenever the grouping read words the transcript
+      // did not originally contain. A human reading this list is entitled to know
+      // that, and a line of text is cheaper than being blindsided by a take
+      // appearing that was invisible five minutes ago.
+      const recovered = pending.clips.reduce((n, c) => n + (c.recovered ?? 0), 0);
+      const recoveredNote =
+        recovered > 0
+          ? ` Recovered ${recovered} line${recovered === 1 ? '' : 's'} the transcription had silently skipped, and grouped those too.`
+          : '';
+      if (rows.length === 0) {
+        setNotice(
+          (pending.kind === 'silence'
+            ? `No silence of ${pending.minSilenceMs}ms or longer in ${where}.`
+            : `No retakes found in ${where}.`) + recoveredNote,
+        );
+      } else if (failures.length > 0) {
+        setNotice(`${failures.length} clip(s) could not be analysed: ${failures[0]}${recoveredNote}`);
+      } else if (recoveredNote) {
+        setNotice(recoveredNote.trim());
+      }
       setPending(null);
+    };
+
+    if (pending.kind === 'silence') {
+      finish({});
       return;
     }
-
-    // Sorted by where the cut lands, not by which clip answered first — the
-    // list reads along the timeline, which is how a human reviews it.
-    rows.sort((a, b) => a.span.startFrame - b.span.startFrame);
-    setCandidates(rows);
-    setResultTrack(pending.track);
-
-    // Counted in CLIPS, not in units: since D-364 a retake unit is a whole run
-    // of clips, and "1 clip on this track" for a run of twenty would be a lie.
-    const clipsIn = (c: PendingClip) => c.run?.targets.length ?? 1;
-    const scannedUnits = pending.clips.filter((c) => !c.failure);
-    const scanned = scannedUnits.reduce((n, c) => n + clipsIn(c), 0);
-    const where = scanned === 1 ? 'this clip' : `${scanned} clips on this track`;
-    // D-349 — say it out loud whenever the grouping read words the transcript
-    // did not originally contain. A human reading this list is entitled to know
-    // that, and a line of text is cheaper than being blindsided by a take
-    // appearing that was invisible five minutes ago.
-    const recovered = pending.clips.reduce((n, c) => n + (c.recovered ?? 0), 0);
-    const recoveredNote =
-      recovered > 0
-        ? ` Recovered ${recovered} line${recovered === 1 ? '' : 's'} the transcription had silently skipped, and grouped those too.`
-        : '';
-    if (rows.length === 0) {
-      setNotice(
-        (pending.kind === 'silence'
-          ? `No silence of ${pending.minSilenceMs}ms or longer in ${where}.`
-          : `No retakes found in ${where}.`) + recoveredNote,
-      );
-    } else if (failures.length > 0) {
-      setNotice(`${failures.length} clip(s) could not be analysed: ${failures[0]}${recoveredNote}`);
-    } else if (recoveredNote) {
-      setNotice(recoveredNote.trim());
-    }
-    setPending(null);
+    // Every unit's groups through the gate together, then the list — still
+    // all-or-nothing (see above). A newer run of this effect cancels this one.
+    let cancelled = false;
+    const tl = useEditorTimelineStore.getState().timeline;
+    const units = pending.clips.filter((c) => !c.failure && c.key !== null && retakes[c.key]);
+    void Promise.all(
+      units.map(async (c) => {
+        const key = c.key as string;
+        const gate = tl
+          ? await gateDetectorGroups(tl, pending.track, c.source, detectedForGate(retakes[key].groups))
+          : [];
+        return [key, gate] as const;
+      }),
+    ).then((entries) => {
+      if (!cancelled) finish(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [pending, silences, silenceErrors, retakes, retakeErrors]);
 
-  /** Tick every take a group suggests dropping, leaving its keeper alone. */
+  /** Tick every take a group suggests dropping, leaving its keeper alone.
+   *
+   *  Client rows join only when the gate VERIFIED them (D-380 step 2). An
+   *  AI-confirmed take is the AI's word against the gate's, and a refused one
+   *  the gate's no: each is ticked by hand, after reading its reason, never in
+   *  bulk — the asymmetry D-318 is built on (a missed cut is a second's work; a
+   *  lost line is gone behind an undo nobody thinks to press). */
   const tickSuggested = () => {
     const next: Record<string, boolean> = {};
-    for (const c of candidates) {
+    for (const c of rows) {
+      if (!tickable(c)) continue;
+      if (c.source === 'client') {
+        if (c.status === 'verified' && !c.suggestedKeep) next[c.id] = true;
+        continue;
+      }
+      // D-382 — a detector group the gate refused is never ticked in bulk,
+      // even once unlocked: a person ticks it, row by row, after listening.
+      if (c.status === 'refused') continue;
       if (c.kind === 'silence' || !c.suggestedKeep) next[c.id] = true;
     }
     setTicked(next);
   };
 
-  const chosen = candidates.filter((c) => ticked[c.id]);
+  const chosen = rows.filter((c) => ticked[c.id] && tickable(c));
+  /** The track a cut goes to: the one the detector rows were measured on, or
+   *  — with only client rows showing — the one the client's proposals are for.
+   *  Never the live selection. */
+  const cutTrack = resultTrack ?? clientSet?.track ?? null;
 
   const cut = () => {
-    // `resultTrack`, not the live selection: these candidates were measured
+    // `cutTrack`, not the live selection: these candidates were measured
     // against one track, and reading the results may well have moved the
     // selection somewhere else.
-    if (!timeline || chosen.length === 0 || resultTrack === null) return;
+    if (!timeline || chosen.length === 0 || cutTrack === null) return;
     // Every range each ticked row covers, not just its first: a retake take
     // split across clips by an earlier silence cut is several ranges (D-364).
     const ranges = chosen.flatMap((c) =>
@@ -594,17 +798,21 @@ export function RecutPanel() {
     // that quietly dropped some of its ranges (a sync-locked clip straddling a
     // gap's end, an L-cut link partner that can't be razored there), and the
     // panel used to report "Cut N ranges" either way.
-    const outcome = applyRippleDeleteRanges(timeline, resultTrack, ranges, timelineFps(timeline));
+    const outcome = applyRippleDeleteRanges(timeline, cutTrack, ranges, timelineFps(timeline));
     const skipped = outcome.results.filter((r) => !r.applied);
     if (outcome.timeline === timeline) {
       setError(skipped[0]?.reason ?? 'Nothing was cut — the track may be locked.');
       return;
     }
-    applyOp({ kind: 'ripple_delete_ranges', track: resultTrack, ranges });
+    applyOp({ kind: 'ripple_delete_ranges', track: cutTrack, ranges });
     // The candidates described the timeline as it was a moment ago; after a
     // ripple every later frame number is stale, so they go rather than linger
-    // as numbers that now point at the wrong material.
+    // as numbers that now point at the wrong material. The client's proposals
+    // for this track go too: their word indices described the same timeline.
     reset();
+    if (clientSet && clientSet.track === cutTrack) {
+      useMediaUnderstandingStore.getState().setRetakeProposals(cutTrack, null);
+    }
     const cutCount = outcome.results.length - skipped.length;
     // One message, not two: the notice is hidden while an error is showing, and
     // "some of it did not happen" is the half the user has to read.
@@ -725,60 +933,138 @@ export function RecutPanel() {
         )}
       </div>
 
+      {/* D-380 step 2 — what the MCP client proposed for this track, as the
+          coverage gate judged it. Summary, its age, and a way for the human
+          to throw it away; the rows themselves join the list below. */}
+      {clientSet && (
+        <div
+          data-chroma-recut-client
+          className="shrink-0 border-b border-border-color px-2.5 py-2 text-[11px] leading-snug text-text-secondary"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span>
+              <RobotIcon className="mr-1 inline size-3.5 align-[-2px]" />
+              AI proposals ·{' '}
+              {clientSet.groups.filter((g) => g.status === 'verified').length} verified,{' '}
+              {clientSet.groups.filter((g) => g.status === 'ai_confirmed').length} AI-confirmed,{' '}
+              {clientSet.groups.filter((g) => g.status === 'refused').length} refused
+            </span>
+            <button
+              type="button"
+              data-chroma-recut-client-dismiss
+              onClick={() =>
+                useMediaUnderstandingStore.getState().setRetakeProposals(clientSet.track, null)
+              }
+              className="shrink-0 underline-offset-2 hover:underline"
+              title="Discard the AI's proposals for this track (nothing on the timeline changes)"
+            >
+              Dismiss
+            </button>
+          </div>
+          {clientStale && (
+            <p data-chroma-recut-client-stale className="mt-1 text-destructive">
+              <WarningIcon className="mr-1 inline size-3.5 align-[-2px]" />
+              The timeline changed since the AI read it — ask it to re-read the track. These rows can no longer be
+              ticked.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto p-2" data-chroma-recut-list>
-        {candidates.length === 0 && !notice && !error && canScan && (
+        {rows.length === 0 && !notice && !error && canScan && (
           <p className="text-[11px] leading-snug text-text-secondary">
             Nothing detected yet — run one of the two above.
           </p>
         )}
-        {candidates.map((c) => (
-          <label
-            key={c.id}
-            data-chroma-recut-candidate={c.id}
-            className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1.5 text-[11px] leading-snug hover:bg-bg-primary"
-          >
-            <input
-              type="checkbox"
-              checked={Boolean(ticked[c.id])}
-              onChange={(e) => setTicked((t) => ({ ...t, [c.id]: e.target.checked }))}
-              className="mt-0.5 accent-accent"
-            />
-            <span className="min-w-0 flex-1">
-              <span className="flex items-baseline justify-between gap-2">
-                <span className="font-medium">
-                  {c.kind === 'silence'
-                    ? 'Silence'
-                    : `Take ${(c.takeIndex ?? 0) + 1} of ${c.takeCount ?? 1}`}
-                  {c.suggestedKeep && (
-                    <span className="ml-1 font-normal text-accent">· suggested keep</span>
+        {rows.map((c) => {
+          const enabled = tickable(c);
+          return (
+            <label
+              key={c.id}
+              data-chroma-recut-candidate={c.id}
+              data-chroma-recut-source={c.source ?? 'detector'}
+              data-chroma-recut-status={c.status}
+              title={c.line}
+              className={`flex items-start gap-2 rounded px-1.5 py-1.5 text-[11px] leading-snug hover:bg-bg-primary ${
+                enabled ? 'cursor-pointer' : 'cursor-default'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={enabled && Boolean(ticked[c.id])}
+                disabled={!enabled}
+                onChange={(e) => setTicked((t) => ({ ...t, [c.id]: e.target.checked }))}
+                className="mt-0.5 accent-accent disabled:opacity-40"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline justify-between gap-2">
+                  <span className="font-medium">
+                    {c.kind === 'silence'
+                      ? 'Silence'
+                      : `Take ${(c.takeIndex ?? 0) + 1} of ${c.takeCount ?? 1}`}
+                    {c.suggestedKeep && (
+                      <span className="ml-1 font-normal text-accent">
+                        · {c.source === 'client' ? 'keep' : 'suggested keep'}
+                      </span>
+                    )}
+                    {c.status && <StatusBadge status={c.status} />}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-text-secondary">
+                    {stamp(c.span.startSecs)}–{stamp(c.span.endSecs)}
+                  </span>
+                </span>
+                {/* Which clip this came from — a whole-track scan's rows are
+                    otherwise indistinguishable, and a reviewer needs to know
+                    where on the track they are about to cut. */}
+                <span className="mt-0.5 block truncate text-text-secondary">
+                  <span className="tabular-nums opacity-70">#{c.clip}</span> {c.clipName}
+                  {c.clipSpan && (
+                    <span className="ml-1 opacity-70">+{c.clipSpan - 1} more clip{c.clipSpan > 2 ? 's' : ''}</span>
                   )}
+                  {c.text && !c.words && <span className="ml-1 opacity-100">· {c.text}</span>}
                 </span>
-                <span className="shrink-0 tabular-nums text-text-secondary">
-                  {stamp(c.span.startSecs)}–{stamp(c.span.endSecs)}
-                </span>
-              </span>
-              {/* Which clip this came from — a whole-track scan's rows are
-                  otherwise indistinguishable, and a reviewer needs to know
-                  where on the track they are about to cut. */}
-              <span className="mt-0.5 block truncate text-text-secondary">
-                <span className="tabular-nums opacity-70">#{c.clip}</span> {c.clipName}
-                {c.clipSpan && (
-                  <span className="ml-1 opacity-70">+{c.clipSpan - 1} more clip{c.clipSpan > 2 ? 's' : ''}</span>
+                {c.words && <TakeWords words={c.words} flagged={c.flagged ?? {}} status={c.status} />}
+                {c.status === 'refused' && !c.suggestedKeep && c.reasonText && (
+                  <span data-chroma-recut-reason className="mt-0.5 block text-destructive">
+                    Refused: {c.reasonText}
+                  </span>
                 )}
-                {c.text && <span className="ml-1 opacity-100">· {c.text}</span>}
+                {c.status && !c.suggestedKeep && <Justifications flagged={c.flagged ?? {}} words={c.words ?? []} />}
+                {c.status === 'refused' &&
+                  !c.suggestedKeep &&
+                  c.unlockable &&
+                  !unlocked[c.groupKey ?? ''] &&
+                  !(c.source === 'client' && clientStale) && (
+                    <button
+                      type="button"
+                      data-chroma-recut-unlock={c.groupKey}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        const group = c.groupKey ?? '';
+                        setUnlocked((u) => ({ ...u, [group]: true }));
+                      }}
+                      className="mt-1 inline-flex items-center gap-1 text-text-secondary underline-offset-2 hover:underline"
+                      title="The gate reads text and cannot hear. Unlock only after listening to this take: the marked words may be lost."
+                    >
+                      <LockOpenIcon className="size-3.5" />
+                      I listened — let me tick it
+                    </button>
+                  )}
               </span>
-            </span>
-          </label>
-        ))}
+            </label>
+          );
+        })}
       </div>
 
-      {candidates.length > 0 && (
+      {rows.length > 0 && (
         <div className="shrink-0 border-t border-border-color p-2">
           <div className="mb-1.5 flex items-center justify-between">
             <button
               type="button"
               data-chroma-recut-tick-suggested
               onClick={tickSuggested}
+              title="Tick every take a detector or a verified AI group suggests dropping. AI-confirmed and refused takes are ticked one by one, after reading why."
               className="text-[11px] text-text-secondary underline-offset-2 hover:underline"
             >
               Tick all suggested
@@ -831,5 +1117,74 @@ export function RecutPanel() {
         </button>
       )}
     </div>
+  );
+}
+
+/** The gate's verdict on a client row (D-380 step 2), as a short badge. */
+function StatusBadge({ status }: { status: ProposalStatus }) {
+  if (status === 'verified') {
+    return (
+      <span className="ml-1 inline-flex items-center gap-0.5 font-normal text-accent" title="The coverage gate checked that every word this take holds is also in the kept take">
+        <SealCheckIcon className="size-3" /> verified
+      </span>
+    );
+  }
+  if (status === 'ai_confirmed') {
+    return (
+      <span className="ml-1 inline-flex items-center gap-0.5 font-normal text-text-primary" title="The gate could not account for some words; the AI vouched for each one — read its reasons">
+        <RobotIcon className="size-3" /> AI-confirmed
+      </span>
+    );
+  }
+  return (
+    <span className="ml-1 inline-flex items-center gap-0.5 font-normal text-destructive" title="The gate found words this take would lose that the kept take does not hold">
+      <ProhibitIcon className="size-3" /> refused
+    </span>
+  );
+}
+
+/** A client take's words, with the ones a cut would lose marked in place. */
+function TakeWords({
+  words,
+  flagged,
+  status,
+}: {
+  words: ProposalWord[];
+  flagged: Record<number, string>;
+  status?: ProposalStatus;
+}) {
+  const mark = status === 'refused' ? 'bg-destructive/20' : 'bg-accent/25';
+  return (
+    <span data-chroma-recut-words className="mt-0.5 block text-text-primary">
+      {words.map((w, i) => (
+        <span key={w.index}>
+          {i > 0 && ' '}
+          {w.index in flagged ? (
+            <mark data-chroma-recut-flagged={w.index} className={`rounded-sm px-0.5 text-text-primary ${mark}`}>
+              {w.word.trim()}
+            </mark>
+          ) : (
+            w.word.trim()
+          )}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** The AI's per-word reasons, one line each — what the human weighs before
+ *  ticking an AI-confirmed take. */
+function Justifications({ flagged, words }: { flagged: Record<number, string>; words: ProposalWord[] }) {
+  const lines = Object.entries(flagged).filter(([, why]) => why.length > 0);
+  if (lines.length === 0) return null;
+  const text = (i: number) => words.find((w) => w.index === i)?.word.trim() ?? `#${i}`;
+  return (
+    <span data-chroma-recut-justifications className="mt-0.5 block text-text-secondary">
+      {lines.map(([i, why]) => (
+        <span key={i} className="block">
+          <RobotIcon className="mr-0.5 inline size-3 align-[-2px]" />“{text(Number(i))}” — {why}
+        </span>
+      ))}
+    </span>
   );
 }

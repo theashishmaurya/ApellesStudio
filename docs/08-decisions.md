@@ -6,15 +6,76 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-382 — The deterministic retake detector sits behind the same coverage gate as the MCP client
+
+**Status: `decided`** (2026-10-14). Code: `packages/editor/src/detectorGate.ts`,
+`chroma_gate_detected_retakes` in `app/src-tauri/src/chroma/retake_proposals.rs`.
+Measurement: `eval/retake/` tasks `C0xx/parakeet-gated`. Detail:
+`docs/notes/retake-detection.md` §12.6. Mitigates **B-246**.
+
+**Context.** D-380 made the MCP client the primary retake judge, but
+`editor_detect_retakes` and the Recut panel's Retakes button remain — the
+fallback with no client connected, and a tool an agent may still call. That
+detector over-cuts (B-246; D-378's eval: 40.24 s of unique speech on the
+Parakeet corpus), and D-380 measured that the gate refuses every one of its
+over-cutting groups. Without this, the app would hold a client's proposal to a
+standard its own detector skips.
+
+**Options.**
+1. *Fix `retake.rs`'s grouping* (B-246's real fix). Four rounds of string-rule
+   tuning have each ended on a proxy (B-198 → B-246); it is still worth doing,
+   but it is not a guarantee, and it is not this pass.
+2. *Retire the detector* in favour of the client. Leaves a person with no
+   client connected and no AI with no retake tool at all.
+3. **Map each detector group onto the same word view and run the same gate**;
+   mark refused groups exactly as a client's. The detector is unchanged.
+
+**Choice: option 3.** One gate, one status vocabulary, one review treatment
+whichever proposer made the group. Details that are decisions:
+
+- **Mapping by word midpoint** (`take_from_span`), restricted to the group's
+  own source — the splice's and `index_pieces`' rule, so a detector take and a
+  client take over the same words map to the same indices.
+- **Judged together, in the detector's order** — cross-group conflicts count,
+  as for a client's set.
+- **Unchecked is refused.** A group that cannot be placed on words (fewer than
+  two takes hold a word, or its keeper holds none), or any group when the gate
+  could not run, is reported refused ("not checked") — never verified by
+  default. It stays unlockable: a person who listens can still cut it, as they
+  always could.
+- **No waivers for the detector.** Nothing vouches for it; a refused detector
+  group is resolved by a person, or by a client re-proposing it through
+  `editor_propose_retakes`.
+- **Gated in the op layer and in the panel**, through the same
+  `detectedForGate` → `gateDetectorGroups`, so the MCP answer and the panel's
+  rows cannot disagree.
+
+**Measured** (tasks pinned in `eval/retake/baseline.json`, verdicts all
+`fail`, on recall only):
+
+| source (Parakeet) | over-cut | precision | retake recall | groups applied / refused |
+|---|---|---|---|---|
+| C019 | 24.40 → **0.00 s** | 0.443 → 1.000 | 0.265 → 0.161 | 4 / 3 |
+| C038 | 12.64 → **0.00 s** | 0.843 → 1.000 | 0.523 → 0.189 | 5 / 5 |
+| C040 | 3.20 → **0.00 s** | 0.965 → 1.000 | 0.606 → 0.232 | 5 / 5 |
+
+**What it costs.** About half the detector's recall: the gate also refuses its
+correct groups whose deleted take holds a word the keeper does not (the same
+ASR-mishearing / inflection cost §11.4 measured for the oracle). Those still
+reach the person, marked. **What it does not do:** fix B-246's grouping, or
+measure Whisper transcripts (the gate runs on any word-timed transcript; the
+labelled word fixtures are Parakeet's).
+
+---
+
 ## D-380 — Retake judgement moves to the MCP client, behind a deterministic coverage gate
 
 **Status: `decided`** (2026-10-13). Step 1 (this entry's code) is the pure
 core: `crates/apelles-speech/src/proposal.rs`, measured by
 `crates/apelles-speech/tests/retake_eval.rs` against `eval/retake/`
 (`gate_baseline.json`, `client_runs/`). Detail and the sweep:
-`docs/notes/retake-detection.md` §11. **Step 2 — the app + MCP pair** (a tool
-that hands a client the word-indexed view, one that takes its groups back
-through the gate, and the GUI review surface) is the next phase, not done here.
+`docs/notes/retake-detection.md` §11. **Step 2 — the app + MCP pair** landed
+2026-10-14; its section is at the end of this entry, detail in §12.
 
 **Context.** D-379's POC: nine blind Claude runs, each given one anonymised
 Parakeet transcript as numbered words, proposed retake groups as word-index
@@ -116,6 +177,56 @@ stutter forgiveness is "equal to a deleted token the alignment used", not
 third of correct groups, almost all for words it cannot hear. So a refused group
 should reach the human as an *unverified* proposal with its offending words,
 not vanish — the app-side decision step 2 owns.
+
+### Step 2 — the app + MCP pair (2026-10-14)
+
+**"The AI" is the MCP client throughout; the app runs no model and judges
+nothing.** Owner answers that bind this (2026-10-13): the judging instructions
+are served by the app; a refused group is resolved by the client in a loop
+(understand it, re-transcribe the stretch, narrow, or confirm with a per-word
+justification); nothing is cut by these tools.
+
+- **Three tools, one op each, both MCP servers.** `editor_get_word_transcript`
+  serves the track's view in pages (global indices, ~2500 words — a client's
+  tool output is capped) with a `viewId`; `editor_propose_retakes` runs the
+  client's groups through the gate and stores them for the Recut panel;
+  `editor_retranscribe_words` re-reads a word range on the ASR in isolation.
+  Cutting stays `editor_ripple_delete_ranges` / the panel's Cut.
+- **The view is the crate's, the timeline the op layer's.** `index_pieces`
+  builds a multi-clip view (midpoint rule, runs never shared across clips; one
+  untrimmed clip = the POC input exactly, golden-tested); the TS side only says
+  which clip windows, in what order. A TS copy of the word rules was rejected:
+  the client would read one view and the gate judge another.
+- **`viewId` = blake3 of the rendered view + the windows.** A stale one is
+  refused outright, never remapped.
+- **Instructions: a field on page one, not MCP prompts.** `JUDGING_RULES` is
+  the POC prompt's rules verbatim (test-pinned to `prompt.md`). An MCP prompt is
+  user-invoked and never reaches the model unasked; neither server serves
+  prompts; a client that just called the tool would judge without the rules
+  D-379's 0.00 s was measured under.
+- **Confirm path → `ai_confirmed`, never `verified`.**
+  `check_and_resolve_waived`: a client may vouch, word by word, for words a
+  *content* refusal names; structural and cross-group refusals cannot be
+  waived; a waiver never downgrades a verified group; the verdict is
+  `Confirmed` with the waived words, shown to the person with the reasons and
+  never bulk-ticked.
+- **An applied re-read updates the transcript — one source of truth.** Options
+  were a proposal-private re-read (the gate would judge words no other surface
+  shows) or splicing it into the file's transcript. Chosen: a preview first
+  (an ASR re-read can be worse; the client decides), then, on `apply`, it joins
+  the splice list after the dark-region recoveries, a later window replacing
+  earlier words by midpoint. Every consumer reads it; the `viewId` changes and
+  the answer carries the new indices and `indexShift`.
+- **The person reviews in the one list** (reference: Descript's filler sidebar
+  and Underlord's struck-through review, Premiere's per-pause review with a
+  risky "Delete All" — `scratch/retake-review-reference/`): verified /
+  AI-confirmed / refused badges, offending words marked, refused rows
+  untickable until a listener unlocks one (the gate cannot hear, a person can),
+  "Tick all suggested" takes verified rows only, a stale-view banner, one Cut,
+  one undo.
+
+Not done: a live smoke against the running app (script:
+`retake-detection.md` §12.7), and the Claude skill that will wrap the loop.
 
 ---
 

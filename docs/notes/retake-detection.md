@@ -1264,3 +1264,185 @@ entirely for words it cannot hear. Two things follow for the app + MCP pair
   take to exclude a trailing abandoned word and resubmit. Whether an inflection
   rule (`chip`/`chips`, roughly four of the seventeen) is worth its risk is a separate,
   measurable question for the same eval.
+
+---
+
+## 12. The app + MCP pair: the client's loop, the app's tools (D-380 step 2, 2026-10-14)
+
+§11 built the core; this section is what an MCP client and a person actually
+use. **"The AI" here is always the MCP client** (Claude, or any other). The
+app runs no model and makes no judgement anywhere in this feature: it renders
+words, runs the deterministic gate, re-runs the ASR it already runs, and stores
+and shows what the client decided.
+
+### 12.1 The tools (both `mcp/server.py` and `crates/apelles-mcp`)
+
+| tool | what the app does |
+|---|---|
+| `editor_get_word_transcript {track, offset?, max_words?, start?}` | builds the track's word view and serves a page: `text`, `viewId`, `totalWords`, `nextOffset`; on offset 0 also `instructions` |
+| `editor_propose_retakes {track, view_id, groups}` | refuses a stale `view_id`; runs each group through the gate (the client's `confirm` words as waivers); stores the reviewed set for the Recut panel; answers each group's status, reason, offending words and frame `segments` |
+| `editor_retranscribe_words {track, view_id, first, last, apply?, force?}` | re-reads that stretch of audio in isolation (the D-349 recovery's windowed pass); a preview by default, `apply: true` splices it into the transcript |
+
+Nothing is cut by any of them. Cutting is `editor_ripple_delete_ranges` (the
+client, when the user asks — every `segments` entry of every non-kept take is
+already in its form) or the Recut panel's Cut (the person). Tauri side:
+`app/src-tauri/src/chroma/retake_proposals.rs` (`chroma_retake_word_view`,
+`chroma_check_retake_proposals`); op layer: `packages/editor/src/
+retakeProposalOps.ts`, `retakeProposals.ts`, `retakeWordView.ts`.
+
+### 12.2 The view of a track
+
+A track is a list of clip windows onto source transcripts. `retakeWordView.ts`
+decides only the timeline facts — which clips (`sweepTargets`, the same set the
+sweep and `editor_detect_retakes` cover), in play order, onto which window of
+which file — and sends each source's spliced transcript once plus one window
+per clip. **The word rules are the crate's** (`index_pieces`): a word belongs
+to the clip holding its midpoint (the splice's rule, so a word straddling a
+cut is in exactly one of two abutting clips); runs are offset per clip, so the
+gate never pads one clip's cut toward another's word; and one window over a
+whole source is exactly `index_transcript`, so a one-clip, untrimmed track's
+view is byte-identical to the POC input (`a_one_clip_track_view_is_the_pocs_input`).
+A TypeScript copy of those rules would let the client read one view and the
+gate judge another.
+
+**Paging.** Claude Code caps a tool result at ~25k tokens; a word line is ~6-8.
+2500 words a page (max 4000), indices global, the legend only on page one.
+
+**`viewId`** = the first 16 hex of blake3 over the whole rendered view plus
+each window's path and range. Every page of one view shares it; any change to
+what an index means (an edit, a newly landed transcript, an applied re-read)
+changes it. `editor_propose_retakes` and `editor_retranscribe_words` refuse a
+stale one outright — mapping old indices onto new words is exactly the silent
+over-cut D-318 forbids. The view is only served whole: while any source on the
+track is still being transcribed the tool answers `transcribing`, because the
+indices would shift when it lands.
+
+### 12.3 The served instructions — a tool field, not MCP prompts
+
+The rules are `JUDGING_RULES`, the POC prompt's judging block **verbatim**
+(pinned to `eval/retake/client_runs/prompt.md` by
+`the_served_rules_are_the_pocs_prompt`), wrapped by `retakeInstructions` in
+how to answer in Apelles and how to resolve a refusal. They ride on the first
+page as `instructions`. MCP prompts were considered and not used: a prompt is
+something a *user* invokes (Claude Code surfaces them as slash commands), it is
+never handed to the model unasked, and neither server exposes prompts today —
+so a client that just calls the tool would judge without the rules that
+produced D-379's 0.00 s. A field on the page the client must read anyway cannot
+be skipped. A Claude skill wrapping the loop is a later phase.
+
+### 12.4 The refusal loop — the client's, not the app's
+
+The gate refuses about a third of correct groups (§11.4), nearly all for a
+word it cannot hear. The owner's call (2026-10-13): the client resolves each
+refusal itself, iterating until it is resolved or dropped:
+
+1. **Narrow** — offending words that are unique speech the take swallowed go
+   outside the take; resubmit.
+2. **Re-transcribe** — an offending word that looks misheard (`type`/`time`,
+   `bin`/`bill`): `editor_retranscribe_words` over the stretch. The window is
+   the words ± 2 s with each edge moved off any word it would cut in half (the
+   splice replaces by midpoint), one source file, at most 60 s. The answer puts
+   `current` (the view's words, with indices) beside `reread`; `identical`
+   says whether the re-read heard anything different. Nothing changes until
+   `apply: true`.
+3. **Confirm** — resubmit the group with `confirm: {index: reason}` for every
+   offending word. The gate re-judges it with those words waived
+   (`check_and_resolve_waived`): only the content rule's two refusals are
+   waivable, a waiver never downgrades a group the gate verified, and a group
+   that passes only with waivers is `Confirmed`, listing the waived words —
+   stored as **`ai_confirmed`**, distinct from gate-`verified`.
+4. **Drop** — when still unsure (rule 4). An unresolved group stays `refused`
+   and is still shown to the person.
+
+**Does an applied re-read update the transcript? Yes — one source of truth.**
+An applied re-read joins the file's splice list after the dark-region
+recoveries, in the order applied, and `spliceTranscript` now applies windows in
+order, a later window replacing whatever earlier words it holds by midpoint
+(for D-349's disjoint windows this is the old one-shot splice exactly). So the
+Transcript panel, `editor_get_timeline_transcript`, `editor_detect_retakes` and
+the word view all read the corrected words — even with dark-region recovery off
+(`clipTranscriptView`'s raw view includes them). The alternative, a re-read
+only the proposal saw, would have the gate judging words no other surface
+shows: two transcripts of one file. The price is designed in: applying changes
+the `viewId`, and the answer returns the new id, the window's words with their
+new indices and `indexShift` (how far every later index moved), so the client
+re-derives instead of re-reading everything. A re-read is a preview first
+because an ASR re-read can also be *worse*; the client decides, not the app.
+Re-reads use the sidecar's default backend (the one the whole-file transcript
+came from), pin its language, are cached by window like recoveries, and
+`clear(path)` drops them.
+
+### 12.5 The person's side — the Recut panel
+
+Researched first (`scratch/retake-review-reference/README.md`): Descript's
+filler-word review is a sidebar list, one row per hit with its timestamp and a
+per-item choice; its Underlord edits show removed text struck through for review
+before "Remove ignored text"; Premiere's text-based editing highlights each
+pause/filler for individual review, with a "Delete All" its own users call
+risky, and deletes by Extract (ripple). Neither says *why* a take was chosen or
+flags an unsafe one.
+
+So the client's groups join the panel's **one** review list (store slice
+`retakeProposals`, written by `editor_propose_retakes` — the panel's own rows
+were component state nothing outside could feed): one row per take, unticked,
+the keeper marked, a status badge — **verified**, **AI-confirmed** (the AI's
+per-word reasons shown, the vouched words marked in the take's text), or
+**refused** (reason and offending words shown, checkbox disabled). A content
+refusal can be unlocked by a person who has listened ("I listened — let me tick
+it"): the gate cannot hear, a person can; the cut is then the gate's own
+`would_cut` resolution. "Tick all suggested" takes detector rows and *verified*
+client rows only — never an AI-confirmed or refused take in bulk. One Cut, one
+`ripple_delete_ranges`, one undo, and the applied proposals are cleared (their
+indices described the old timeline). When the timeline moves after the client
+read it (`viewBasisKey`, the view's inputs, recomputed on every change) a banner
+says "the timeline changed since the AI read it — ask it to re-read" and the
+rows lock.
+
+### 12.6 The deterministic detector behind the same gate (D-382)
+
+`editor_detect_retakes` and the panel's Retakes button still run `retake.rs`
+unchanged, and then each detection's groups go to
+`chroma_gate_detected_retakes` (`detectorGate.ts`): each take (its source
+seconds) is mapped onto the same track view by word midpoint
+(`take_from_span`, restricted to that source's words), a take holding no word
+is dropped, a group left with fewer than two takes or without its keeper is
+`unmapped`, and the rest are judged together, in the detector's order, with no
+waivers. An unmapped group — or any group when the gate cannot run — is
+reported **refused** ("not checked"), not verified: D-318's direction. Each
+group then carries `status` in the client vocabulary, and the panel treats a
+refused detector row exactly like a refused client row (reason, marked words,
+locked until a listener unlocks it, never bulk-ticked).
+
+Measured (`eval/retake/` `C0xx/parakeet-gated`, README table): over-cut 24.40 /
+12.64 / 3.20 s → 0.00 s, precision 1.000, recall roughly halved (0.161 /
+0.189 / 0.232), 13 of 27 groups refused. B-246 is mitigated, not fixed — the
+grouping that forms the over-cutting groups is unchanged.
+
+### 12.7 Not done here: the live smoke (for the coordinator)
+
+The building worktree cannot drive the running app. On the main checkout, with
+C040 (`A001_09122356_C040`) on track 0 as one untrimmed clip and a Parakeet
+transcript (D-381 merged, or Parakeet as the sidecar default — otherwise the
+view is Whisper's and the POC indices below do not line up):
+
+1. `editor_get_word_transcript {track: 0, start: true}` — repeat until `state`
+   is not `transcribing`. Check `instructions` is present, `totalWords` = 903,
+   and `text` below the legend equals `cargo run -p apelles-speech --example
+   render_word_transcript -- eval/retake/transcripts/A001_09122356_C040.parakeet.words.json`
+   (if the transcript is a fresh run, small differences mean the run differs,
+   not the view).
+2. `editor_propose_retakes {track: 0, view_id, groups: <the 11 groups of
+   eval/retake/client_runs/2026-10-13-opus-run1/C040__parakeet.json>}` — expect
+   7 verified and 4 refused (§11.4), each refusal with `offending` words. The
+   Recut panel shows them, refused rows disabled.
+3. Take one refused group: `editor_retranscribe_words {track: 0, view_id,
+   first, last}` over its offending words; compare `current` and `reread`. If
+   they differ, repeat with `apply: true`; check the `viewId` changed and that
+   step 2 with the old id now answers `stale view_id`.
+4. Resubmit every group under the new `view_id`, with `confirm` reasons for
+   one refusal's offending words — expect it `ai_confirmed`; the panel shows
+   the reasons and marks the words.
+5. In the panel: Tick all suggested (only verified deletions tick), tick the
+   AI-confirmed take by hand, Cut — one undo entry; undo restores.
+6. Re-propose, then trim the clip slightly — the stale banner appears and the
+   rows lock.
