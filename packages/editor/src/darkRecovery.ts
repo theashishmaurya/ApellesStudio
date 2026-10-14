@@ -82,8 +82,11 @@ export interface ClipTranscriptView {
  * behaviour, byte for byte, which is what `recoverDarkRegions: false` and a
  * transcript without word timings both fall back to.
  *
- * `start: false` reads without kicking anything off, for a caller that is
- * polling rather than asking.
+ * `start: false` reads without kicking anything off, for a read nobody asked
+ * for. A caller polling a job a start call DID ask for passes `true`: each
+ * step here can only begin once the previous one has landed, so a poll that
+ * never advanced it would stall at whichever step it reached (B-249 — see
+ * `retakeRequests` in `mediaUnderstandingStore.ts`).
  */
 export function clipTranscriptView(
   path: string,

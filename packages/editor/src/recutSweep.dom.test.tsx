@@ -65,6 +65,11 @@ const backend = vi.hoisted(() => ({
   retakeMode: 'any' as 'any' | 'similar',
   /** D-382 — what the stubbed coverage gate answers for every group. */
   gate: { verdict: 'accepted', takeWords: [] } as Record<string, unknown>,
+  /** B-249 — the stub VAD scan holds its answer until a test releases it, so
+   *  the start call returns with the scan still running, the way a real
+   *  multi-minute source does. Each pending scan's release is queued here. */
+  darkRegions: [] as Array<Record<string, unknown>>,
+  releaseScans: [] as Array<() => void>,
 }));
 
 /** Word-set overlap, the crudest possible stand-in for "the same line again".
@@ -142,6 +147,44 @@ vi.mock('@tauri-apps/api/core', () => ({
         ],
       };
     },
+    chroma_detect_dark_regions: (args) => {
+      backend.calls.push({ cmd: 'chroma_detect_dark_regions', args });
+      const startSecs = Number(args?.startSecs ?? 0);
+      const durationSecs = Number(args?.durationSecs ?? 0);
+      return new Promise((resolve) => {
+        backend.releaseScans.push(() =>
+          resolve({
+            source: args?.path,
+            start_secs: startSecs,
+            duration_secs: durationSecs,
+            analysed_secs: durationSecs,
+            min_dark_secs: 1.2,
+            max_word_secs: 2.0,
+            model: 'silero_vad_v6.2.1.onnx',
+            regions: backend.darkRegions,
+            rms_floor: 0.1,
+            calibration_spans: 5,
+            gated_out: 0,
+            speech_secs: durationSecs,
+            covered_secs: durationSecs,
+          }),
+        );
+      });
+    },
+    // One recovery re-read (D-349): a job id, then a finished job on the first
+    // poll, with the words the whole-file pass dropped.
+    chroma_transcribe: (args) => {
+      backend.calls.push({ cmd: 'chroma_transcribe', args });
+      return { job_id: 'recover-1' };
+    },
+    chroma_transcribe_status: () => ({
+      state: 'done',
+      result: {
+        text: 'the line it dropped',
+        language: 'en',
+        segments: [{ start: 4.2, end: 5.8, text: 'the line it dropped' }],
+      },
+    }),
     chroma_gate_detected_retakes: (args) => {
       backend.calls.push({ cmd: 'chroma_gate_detected_retakes', args });
       return { groups: ((args?.groups ?? []) as unknown[]).map(() => backend.gate) };
@@ -270,6 +313,8 @@ beforeEach(() => {
   backend.retakeGroups = 0;
   backend.retakeMode = 'any';
   backend.gate = { verdict: 'accepted', takeWords: [] };
+  backend.darkRegions = [];
+  backend.releaseScans = [];
   bus.emitted.length = 0;
   bus.dispatches.length = 0;
   useMediaUnderstandingStore.setState({
@@ -282,6 +327,13 @@ beforeEach(() => {
     retakes: {},
     detectingRetakes: {},
     retakeErrors: {},
+    dark: {},
+    detectingDark: {},
+    darkErrors: {},
+    recoveries: {},
+    recovering: {},
+    recoveryErrors: {},
+    retakeRequests: {},
   });
 });
 
@@ -716,5 +768,115 @@ describe('a restart split across clips by an earlier silence cut (B-237)', () =>
 
     expect(env.result.note).toMatch(/nothing was cut/);
     expect(backend.calls.some((c) => c.cmd === 'chroma_timeline_set')).toBe(false);
+  });
+});
+
+/** B-249 — the D-349 chain a start call asked for must be carried to its answer
+ *  by POLLING, because that is what the start call's own note tells the agent
+ *  to do. Before the fix the `_status` twin read the chain without advancing it,
+ *  so once the scan landed nothing ever started the re-reads, and the sweep
+ *  said `transcribing` for ever. */
+describe('a retake job a start call asked for is finished by polling (B-249)', () => {
+  /** One 10 s clip whose transcript reads 0-3 s and 7-10 s and has a hole
+   *  between: the shape a dropped utterance leaves, so the scan finds it. */
+  function wordedTranscript(): Transcript {
+    const w = (word: string, start: number, end: number) => ({ word, start, end });
+    const words = [w(' first', 0.5, 1.0), w(' line', 1.0, 1.5), w(' last', 7.5, 8.0), w(' line', 8.0, 8.5)];
+    return {
+      text: 'first line last line',
+      language: 'en',
+      segments: [
+        { start: 0.5, end: 1.5, text: 'first line', words: words.slice(0, 2) },
+        { start: 7.5, end: 8.5, text: 'last line', words: words.slice(2) },
+      ],
+      words,
+    } as Transcript;
+  }
+
+  function region(): Record<string, unknown> {
+    return {
+      start_secs: 4.0,
+      end_secs: 6.0,
+      duration_secs: 2.0,
+      stretch_start_secs: 1.5,
+      stretch_end_secs: 7.5,
+      stretch_speech_secs: 2.0,
+      rms_peak: 0.2,
+    };
+  }
+
+  const count = (cmd: string) => backend.calls.filter((c) => c.cmd === cmd).length;
+
+  /** Release the held scan and let its promise chain settle into the store. */
+  async function releaseScan(): Promise<void> {
+    await act(async () => {
+      for (const release of backend.releaseScans.splice(0)) release();
+      await Promise.resolve();
+    });
+  }
+
+  it.each([
+    ['a whole-track sweep', { track: 0 }],
+    ['a single named clip', { track: 0, clip: 0 }],
+  ])('%s: polling carries scan -> re-read -> grouping to done', async (_label, args) => {
+    backend.darkRegions = [region()];
+    useMediaUnderstandingStore.setState({ transcripts: { [SOURCE]: wordedTranscript() } });
+    await mountWith(fixture(1));
+
+    // The start call kicks the scan and returns while it is still running.
+    const started = await callOp('editor_detect_retakes', args);
+    expect(started.ok).toBe(true);
+    expect(count('chroma_detect_dark_regions')).toBe(1);
+    expect(count('chroma_transcribe')).toBe(0);
+
+    await releaseScan();
+
+    // THE bug: this poll used to read the finished scan and start nothing.
+    const polled = await callOp('editor_detect_retakes_status', args);
+    expect(polled.ok).toBe(true);
+    expect(count('chroma_transcribe')).toBe(1);
+    // The re-read is the stretch, pinned to the whole-file language (D-349).
+    expect(backend.calls.find((c) => c.cmd === 'chroma_transcribe')?.args).toMatchObject({
+      path: SOURCE,
+      language: 'en',
+      startSecs: 1.5,
+      durationSecs: 6.0,
+    });
+
+    // The re-read is a polled sidecar job; let it land.
+    await vi.waitFor(
+      () => expect(Object.keys(useMediaUnderstandingStore.getState().recoveries)).toHaveLength(1),
+      { timeout: 5000 },
+    );
+
+    // The next poll starts the grouping on the spliced words and answers.
+    const answered = await callOp('editor_detect_retakes_status', args);
+    expect(count('chroma_detect_retakes')).toBe(1);
+    const handed = (backend.calls.find((c) => c.cmd === 'chroma_detect_retakes')?.args?.utterances ??
+      []) as Array<{ text: string }>;
+    expect(handed.map((u) => u.text)).toContain('the line it dropped');
+    expect(answered.result.state).toBe('done');
+    // Answered, so the request is settled: a further poll is a pure read.
+    expect(useMediaUnderstandingStore.getState().retakeRequests).toEqual({});
+    await callOp('editor_detect_retakes_status', args);
+    expect(count('chroma_detect_retakes')).toBe(1);
+  }, 15000);
+
+  /** The other half of the rule: a status read nobody asked for still starts
+   *  nothing, and says so instead of claiming work is in progress. */
+  it('a status read no start call asked for starts nothing and says so', async () => {
+    backend.darkRegions = [region()];
+    useMediaUnderstandingStore.setState({ transcripts: { [SOURCE]: wordedTranscript() } });
+    await mountWith(fixture(1));
+
+    const sweep = await callOp('editor_detect_retakes_status', { track: 0 });
+    const single = await callOp('editor_detect_retakes_status', { track: 0, clip: 0 });
+
+    expect(count('chroma_detect_dark_regions')).toBe(0);
+    expect(count('chroma_detect_retakes')).toBe(0);
+    expect(sweep.result.state).toBe('idle');
+    expect(sweep.result.notStarted).toEqual([0]);
+    expect(single.result.state).toBe('idle');
+    expect(single.result.note).toMatch(/call editor_detect_retakes/);
   });
 });
