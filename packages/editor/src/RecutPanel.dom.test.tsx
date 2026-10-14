@@ -760,6 +760,27 @@ describe('RecutPanel — client proposals (D-380 step 2)', () => {
     expect(box('cli-0-1-0').disabled).toBe(false);
   });
 
+  it('every AI-confirmed reason is labelled word-then-index, even for words outside the take (B-251)', async () => {
+    await mountPanel(false);
+    seedTranscript();
+    // Two offending "masses" (indices 1 and 3): index 3 is not in take 0's words.
+    seedProposals([
+      group(1, 'ai_confirmed', [take(0, 1, false), take(2, 3, true)], {
+        offending: [
+          { index: 1, word: ' masses' },
+          { index: 3, word: ' masses' },
+        ],
+        justifications: { 1: 'first reason', 3: 'second reason' },
+      }),
+    ]);
+    await waitFrames(2);
+
+    const lines = [
+      ...row('cli-0-1-0')!.querySelectorAll('[data-chroma-recut-justifications] > span'),
+    ].map((l) => l.textContent);
+    expect(lines).toEqual(['“masses” (#1) — first reason', '“masses” (#3) — second reason']);
+  });
+
   it('an AI-confirmed take shows the reasons, marks the words, and is not bulk-ticked', async () => {
     await mountPanel(false);
     seedTranscript();

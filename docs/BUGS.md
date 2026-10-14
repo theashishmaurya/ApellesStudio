@@ -27,6 +27,10 @@ Still real:
 
 ## Open
 
+## B-251 — Recut panel labelled some AI-confirmed reasons by bare index (`"#203"`) instead of the word
+
+The reason lines looked each offending word up in the row's own take text. The offending words belong to the whole group, so one in a sibling take (or outside the shown window) was not found and fell back to `#index`, while the first, which was in the take, showed its text. Fixed: the rows carry the group's offending words and every reason reads `“word” (#index)`. Test: `RecutPanel.dom.test.tsx` "every AI-confirmed reason is labelled word-then-index".
+
 ## B-250 — `editor_get_word_transcript` told the agent to start a transcription that was already running
 
 status: **fixed** (2026-10-14) · severity: low (a wrong instruction, not a wrong result: following it only re-asks for a job already in flight) · area: `packages/editor/src/retakeProposalOps.ts`
