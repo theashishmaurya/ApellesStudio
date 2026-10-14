@@ -1,5 +1,7 @@
 # Timeline feature audit — what a real NLE has vs. what Apelles' Edit tab has (2026-09-04)
 
+> Dated note: where it names Whisper as the speech recogniser, that was true when written; Parakeet is the only ASR backend since D-381 (`docs/notes/asr-backends-and-harness.md`).
+
 Owner, after a night of one-off live-tested bug reports on the NLE timeline: "can you not
 do a Research and get all the cases for timeline instead of me telling you." Fair — this
 is that pass. Real references checked (not memory), the actual current code audited

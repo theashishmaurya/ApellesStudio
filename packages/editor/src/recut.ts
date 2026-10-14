@@ -55,7 +55,7 @@ export interface RetakeMemberWire {
 /** A retake group as `chroma_detect_retakes` puts it on the wire.
  *
  *  `takes` is the unit that matters, not `members`: since D-327 a single
- *  delivery can span several utterances (Whisper's segment boundaries do not
+ *  delivery can span several utterances (the ASR's segment boundaries do not
  *  line up with a speaker's restarts), and `keep` indexes `takes`. Cutting
  *  "every member except `members[keep]`" — which is what this panel did before
  *  D-327, when every take was exactly one utterance — would now eat the tail of

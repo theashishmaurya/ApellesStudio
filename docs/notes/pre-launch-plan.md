@@ -1,5 +1,7 @@
 # Pre-launch plan — monetization, cloud AI, Windows, and distribution
 
+> Dated note: where it names Whisper as the speech recogniser, that was true when written; Parakeet is the only ASR backend since D-381 (`docs/notes/asr-backends-and-harness.md`).
+
 Owner, 2026-09-08: six things to plan now and build **last, right before launch** —
 explicitly not now, not blocking the Edit-tab build-out in progress. This note is the
 research-and-scope pass; none of the six below has been built. Revisit this note

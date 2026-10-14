@@ -268,7 +268,7 @@ import {
   type SilenceDetectionArgs,
   type Transcript,
 } from './mediaUnderstandingStore';
-// D-349/B-216 — dark regions: where whisper silently dropped speech, and the
+// D-349/B-216 — dark regions: where the ASR silently dropped speech, and the
 // one shared step that scans for it, re-reads those windows and splices the
 // recovered words back in. The SAME step the Recut panel runs, so the human's
 // recut and the agent's cannot read two different transcripts of one file.
@@ -1192,8 +1192,8 @@ function retakeArgsFor(rv: RunTranscriptView, tuning: RetakeTuning): RetakeDetec
 /** Should this call scan for and recover dropped speech before grouping?
  *
  *  **Default ON** (D-349). Reading the raw whole-file transcript is not a
- *  neutral default for THIS tool: the material whisper drops is biased towards
- *  retakes, so a grouper reading it is blind in exactly the place it is looking.
+ *  neutral default for THIS tool: the material the ASR drops was measured (on Whisper) biased
+ *  towards retakes, so a grouper reading it is blind in exactly the place it is looking.
  *  `recoverDarkRegions: false` opts out — worth it when the caller already knows
  *  the file is clean and wants the answer in one round trip instead of three. */
 function recoverRequested(a: OpArgs): boolean {
@@ -1213,7 +1213,7 @@ function recoveryPending(pending: 'scanning' | 'recovering'): {
     state: 'transcribing',
     note:
       pending === 'scanning'
-        ? 'scanning for speech whisper did not transcribe (D-349) — poll editor_detect_retakes_status, or pass recoverDarkRegions: false to group the raw transcript now'
+        ? 'scanning for speech the ASR did not transcribe (D-349) — poll editor_detect_retakes_status, or pass recoverDarkRegions: false to group the raw transcript now'
         : 're-transcribing the dropped speech this clip contains — poll editor_detect_retakes_status; the recovered words will be spliced in before grouping',
   };
 }
@@ -1340,7 +1340,7 @@ async function retakeEnvelope(
       ? { readAcrossClips: rv.run.targets.map((t) => t.clip) }
       : {}),
     // D-349 — a caller is entitled to know the transcript it is being told about
-    // is NOT the one whisper handed us.
+    // is NOT the one the ASR handed us.
     ...darkSummary(rv),
   };
   if (status.phase !== 'done') {
@@ -4848,7 +4848,7 @@ export function useEditorControl(): void {
         // D-349 — whatever the recut pass has already recovered is spliced in,
         // so the transcript a reader gets here and the one the retake grouper
         // reads are the same transcript. This tool never STARTS a scan or a
-        // recovery: it reports the timeline's speech, and kicking off Whisper
+        // recovery: it reports the timeline's speech, and kicking off a transcription
         // passes from a read would be a surprise. `editor_detect_dark_regions`
         // and `editor_detect_retakes` are the tools that do that.
         const recoveries = Object.fromEntries(
@@ -4971,7 +4971,7 @@ export function useEditorControl(): void {
 
       // **`editor_detect_dark_regions` (D-349, B-216)** — the third detector,
       // and the only one that reads BOTH signals: where the VAD hears a voice
-      // and the transcript has no words, whisper silently declined to transcribe
+      // and the transcript has no words, the ASR silently declined to transcribe
       // real speech. Measured at roughly one dropped multi-second region per
       // three minutes of raw footage across two independent camera originals,
       // and *biased towards retakes*, which is why `editor_detect_retakes` runs
@@ -4980,7 +4980,7 @@ export function useEditorControl(): void {
       //
       // This tool exists on its own anyway, for two real jobs the automatic
       // pass does not do: auditing a source BEFORE cutting it ("how much of
-      // this file did whisper not read?"), and answering "why did content
+      // this file did the ASR not read?"), and answering "why did content
       // appear in my transcript that was not there before?" with the exact
       // ranges and the amplitude evidence behind each one.
       //

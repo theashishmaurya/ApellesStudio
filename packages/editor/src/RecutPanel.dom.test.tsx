@@ -374,7 +374,7 @@ describe('RecutPanel (D-318)', () => {
 
   // D-349 (fixes the transcription half of B-216) — the panel's half of the
   // dark-region recovery. Two claims, and the second is the one that matters
-  // for trust: the grouping reads the speech whisper silently dropped, and the
+  // for trust: the grouping reads the speech the ASR silently dropped, and the
   // panel SAYS it did. Content appearing in a recut list that was not in the
   // transcript five minutes ago is exactly the thing a human must not be
   // blindsided by.

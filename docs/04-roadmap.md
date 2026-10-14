@@ -2787,11 +2787,27 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       (`C0xx/parakeet-gated`): over-cut 0.00 s on all three sources, precision
       1.000, recall 0.161 / 0.189 / 0.232. B-246 → mitigated; its grouping
       defect stays open below.
+    - ✅ **D-381 phase 6c — Whisper out of the app, MCP and website strings**
+      (2026-10-14). `editor_get_transcript` (Parakeet; `language` is one of 25
+      European languages, Hindi refused), `editor_get_timeline_transcript`,
+      `editor_detect_retakes`, `editor_detect_dark_regions` (`max_word_secs`
+      defaults to no bound), Rust/TS header comments and the TS fixtures'
+      model name; the Whisper transcript fixtures and eval tasks stay as
+      detector inputs, labelled as such.
+    - ✅ **D-381 phase 7 — the as-is docs sweep** (2026-10-14).
+      `03-architecture.md`, `architecture-lock.md`, `sidecar-lifecycle.md`,
+      `mcp-tool-coverage.md`, `crates/README.md` and the media-understanding
+      scope note describe Parakeet; the dated notes (`editor-mvp`,
+      `pre-launch-plan`, `product-direction`, `video-search`,
+      `timeline-feature-audit`) carry a one-line pointer. `00`/`01`/`02` never
+      named the ASR or the retake detector, so needed no change.
     - ⬜ **Live smoke of D-380 step 2 on C040** — not runnable from the
       worktree that built it; the script is in `retake-detection.md` §12.7.
-    - ⬜ **A Claude skill that wraps the client loop** (owner, 2026-10-13) —
-      the tools serve their own instructions, so any MCP client can run the
-      loop today; the skill packages it.
+    - ✅ **A Claude skill that wraps the client loop** (owner, 2026-10-13;
+      `.claude/skills/apelles-retake-review/SKILL.md`, 2026-10-14) — the tools
+      serve their own instructions, so the skill carries only the workflow:
+      start + poll, paging with a provisional tail, the refusal loop, the
+      Recut-panel handoff, and the eval loop for prompt changes.
     - ✅ **Re-decide the ASR default** (2026-10-13, **D-381**, superseding
       D-377): the owner decommissioned Whisper; Parakeet is the default and
       only backend, and Hindi/Hinglish sources are unsupported. Decided on

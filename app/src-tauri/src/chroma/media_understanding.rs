@@ -28,7 +28,7 @@ use std::path::Path;
 /// stream, `None` when it has one **or when we could not tell** (B-119).
 ///
 /// **What this is for.** `ai-media/transcribe.py` extracts a 16 kHz mono WAV
-/// with `ffmpeg` before it hands anything to whisper. On a source with no audio
+/// with `ffmpeg` before it hands anything to the ASR. On a source with no audio
 /// stream — a screen recording captured without audio, say — that `ffmpeg` call
 /// correctly fails ("Output file #0 does not contain any stream"), and before
 /// this the resulting `CalledProcessError` travelled all the way to the Edit
@@ -42,15 +42,15 @@ use std::path::Path;
 /// envelope for — through the same disk-backed `probe_cached` (D-128), so there
 /// is one answer to "does this file have sound", not two that can disagree. It
 /// also refuses *before* the job starts, so the user gets the message
-/// immediately instead of after the sidecar has spun up a ~3 GB whisper
+/// immediately instead of after the sidecar has spun up the ASR
 /// subprocess to fail. `transcribe.py` keeps its own translation of the same
 /// ffmpeg failure (`errors.UserFacingError`) — that is the sidecar being correct
 /// on its own for callers that are not this app, not a second source of truth.
 ///
 /// **`None` when we could not tell is deliberate.** An unprobeable path is not
 /// evidence of silence, and turning a failed probe into a refusal would break
-/// transcription of any container `ffprobe` cannot read but `symphonia`/whisper
-/// can. The sidecar remains the backstop for that case.
+/// transcription of any container `ffprobe` cannot read but the sidecar's own
+/// decode can. The sidecar remains the backstop for that case.
 pub(crate) fn no_audio_message(path: &str) -> Option<String> {
     let info = super::edit::probe_cached(Path::new(path)).ok()?;
     if info.has_audio {
@@ -76,7 +76,7 @@ pub(crate) fn no_audio_message(path: &str) -> Option<String> {
 /// `start_secs` / `duration_secs` transcribe **one window** of the source rather
 /// than the whole file (D-349). Timestamps come back in absolute source seconds
 /// either way, so a windowed result splices straight into a whole-file one. This
-/// is how a dark region gets its words back: whisper's whole-file pass silently
+/// is how a dark region gets its words back: the ASR's whole-file pass silently
 /// drops multi-second utterances, and an isolated pass over the same audio reads
 /// them (B-216).
 ///
@@ -269,7 +269,7 @@ mod tests {
 
     /// An unprobeable path is NOT evidence of silence — see
     /// [`no_audio_message`]'s doc. Refusing here would break transcription of
-    /// any container `ffprobe` cannot read but whisper can.
+    /// any container `ffprobe` cannot read but the sidecar can.
     #[test]
     fn a_path_that_cannot_be_probed_is_not_refused() {
         let missing = std::env::temp_dir().join("chroma_b114_does_not_exist.mov");

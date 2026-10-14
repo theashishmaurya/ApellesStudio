@@ -185,13 +185,13 @@ pub struct TranscriptWordTime {
 
 /// Find the stretches of `path` between `start_secs` and
 /// `start_secs + duration_secs` where the VAD hears a voice and `words` has
-/// nothing — the regions whisper's whole-file pass silently dropped (D-349,
+/// nothing — the regions the ASR's whole-file pass silently dropped (D-349,
 /// B-216).
 ///
 /// **Takes the words rather than a path to them** for the same reason
 /// [`chroma_detect_retakes`] does: the transcript is cached in the
 /// `@apelles/editor` store, and asking for a path here would mean a second cache
-/// or a second multi-minute Whisper pass. It takes the AUDIO as a path because
+/// or a second transcription pass. It takes the AUDIO as a path because
 /// that is not cached anywhere and is cheap to decode.
 ///
 /// Returns spans in **absolute source seconds**, offset already added back, the
@@ -356,14 +356,14 @@ pub struct TranscriptUtterance {
 /// Takes the transcript rather than a path on purpose: the transcript is cached
 /// in the `@apelles/editor` store (there is no Rust-side cache — see
 /// `media_understanding.rs`), so asking for a path here would mean either a
-/// second cache or a second multi-minute Whisper pass. The caller already has
+/// second cache or a second transcription pass. The caller already has
 /// the words; this command turns them into groups.
 ///
 /// Every group carries a recommended `keep` index — the **last** take, normally
 /// the one the speaker settled on — as a *suggestion*. Nothing is cut (D-318).
 ///
 /// A take is a **span** of adjacent utterances, not a single one, because
-/// Whisper's segment boundaries do not line up with a speaker's restarts
+/// the ASR's segment boundaries do not line up with a speaker's restarts
 /// (D-327, fixes B-198). Each group's `takes` say which of its `members` form
 /// each delivery, and `keep` indexes `takes` — a caller that cuts "every member
 /// except `keep`" rather than "every take except `keep`" will eat words the

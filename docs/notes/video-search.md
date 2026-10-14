@@ -1,5 +1,7 @@
 # Visual understanding for the Editor tab
 
+> Dated note: where it names Whisper as the speech recogniser, that was true when written; Parakeet is the only ASR backend since D-381 (`docs/notes/asr-backends-and-harness.md`).
+
 Owner asked 2026-09-02, starting from *"find me where I was driving the car and said
 X, bring it to the front."* Reframed after discussion: this isn't one search feature,
 it's **a visual-understanding layer the Editor tab needs generally** — search is just

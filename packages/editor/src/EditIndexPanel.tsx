@@ -400,7 +400,7 @@ function TranscriptView() {
   const transcribing = useMediaUnderstandingStore((s) => s.transcribing);
   const transcriptErrors = useMediaUnderstandingStore((s) => s.transcriptErrors);
   // D-349 — the recut pass's recovered windows, so this panel shows the speech
-  // whisper silently dropped rather than the hole it left. Subscribed to the
+  // the ASR silently dropped rather than the hole it left. Subscribed to the
   // raw map (not the `recoveriesFor` selector) so the memo below re-runs only
   // when a recovery actually lands.
   const recoveries = useMediaUnderstandingStore((s) => s.recoveries);
@@ -513,8 +513,8 @@ interface SourceStatus extends TranscriptSourceRef {
 /**
  * Per-FILE transcription progress, and the button that starts the missing ones.
  *
- * **Why this is per file rather than one spinner.** A whisper-large-v3 run on
- * long footage takes minutes, and a timeline can need several of them; a
+ * **Why this is per file rather than one spinner.** A transcription run on
+ * long footage takes a while, and a timeline can need several of them; a
  * single opaque spinner for "the timeline" would hide both which file is slow
  * and the fact that the others have already finished. So: a count, a row per
  * file that is not done, that file's own state, and — for a running one — how
@@ -662,7 +662,7 @@ function TranscriptRow({
         <span className="rounded bg-bg-primary px-1 text-[9px] tabular-nums text-text-secondary">
           {formatRowDuration(row, fps)}
         </span>
-        {/* D-349 — these words are NOT in the transcript whisper returned: the
+        {/* D-349 — these words are NOT in the transcript the ASR returned: the
             whole-file pass silently dropped this stretch and the app went back
             and re-read it in isolation. Said out loud rather than folded in
             invisibly, so a reader is never blindsided by content appearing in a

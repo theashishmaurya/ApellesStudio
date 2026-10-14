@@ -18,6 +18,11 @@ APELLES_RETAKE_EVAL_BASELINE=1 cargo test -p apelles-speech --test retake_eval  
 
 No model, no audio, no venv, no network: every input here is JSON.
 
+**Provenance of the Whisper-labelled inputs.** The Whisper transcripts and the
+tasks over them were produced by the since-removed Whisper backend (D-381). They
+are kept as inputs to the ASR-agnostic detector and so that D-365..D-379 stay
+reproducible; nothing in the app produces one any more.
+
 ## Why this exists
 
 The retake detector has been declared fixed three times and each round produced

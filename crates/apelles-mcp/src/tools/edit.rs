@@ -77,9 +77,10 @@ fn default_editor_detect_dark_regions_force() -> bool {
 
 /// D-349 — dark-region recovery is ON by default on the retake tools.
 ///
-/// Not a taste call: whisper's dropped speech is biased towards near-duplicate
-/// repeated material, so grouping the raw transcript is blind in exactly the
-/// place retake detection is looking (B-216).
+/// Not a taste call: the ASR's silently dropped speech was measured (on
+/// Whisper) biased towards near-duplicate repeated material, so grouping the
+/// raw transcript is blind in exactly the place retake detection is looking
+/// (B-216).
 fn default_editor_recover_dark_regions() -> bool {
     true
 }
@@ -2478,7 +2479,7 @@ impl ApellesMcp {
 
     **Cue grouping** (see `packages/editor/src/captionsFromTranscript.ts` for
     the full reasoning): a transcript SEGMENT is always a cue boundary
-    (mlx-whisper's own segment breaks are reused as sentence/clause
+    (the transcript's own segment breaks are reused as sentence/clause
     boundaries); within one segment a cue breaks at `max_words` words
     (default 8), `max_duration_s` seconds of source span (default 3.0), or a
     pause to the next word of at least `max_pause_gap_s` (default 0.7) —
@@ -4193,14 +4194,17 @@ impl ApellesMcp {
     want answered BEFORE importing), or with `media_id`/`source_path` for an
     item already in the project's media pool.
 
-    `language` is an ISO code ("en", "hi") or omitted to auto-detect
-    (code-switched speech auto-detects fine). `word_timestamps=True` (the
-    default) gives per-word start/end times — the format you need to cut to an
-    exact word; `False` is faster but segment-level only.
+    `language` is an ISO code ("en", "de", ...) for one of Parakeet's 25
+    European languages, or omitted — Parakeet then picks the language itself and
+    does not report which it chose. Languages outside that set (Hindi, for one,
+    and so Hinglish) are unsupported: a named one is refused, and an omitted one
+    comes back as fluent wrong English. `word_timestamps=True` (the default)
+    gives per-word start/end times — the format you need to cut to an exact
+    word; `False` is faster but segment-level only.
 
     Complements `editor_analyze_video`, does not overlap it: this finds NOTHING
     in silent or music-only footage. Roughly 12 s for a short clip, longer for
-    a long one (mlx-whisper large-v3, local)."#
+    a long one (Parakeet, local)."#
     )]
     pub async fn editor_get_transcript(
         &self,
@@ -4264,8 +4268,8 @@ impl ApellesMcp {
     sequence of 40 clips typically needs one or two jobs, not 40. Pass
     `start=True` to kick off the missing ones — one per file, cached files
     skipped, and a previous failure retried. Then poll this same tool until
-    `pending` is `0`. Each job is a full mlx-whisper run: tens of seconds to
-    minutes per file.
+    `pending` is `0`. Each job is a full Parakeet run: seconds to
+    tens of seconds per file.
 
     **`rows` is always usable, even while `pending > 0`** — it covers every
     file that IS transcribed, so a partly-transcribed timeline gives you real
@@ -4412,10 +4416,10 @@ impl ApellesMcp {
       grouped (default 3), which is what stops every "Yeah." pairing with every
       other one.
     - `max_span_utterances` — how many adjacent transcript utterances may be
-      joined into one take (default 3). This is what finds a restart Whisper cut
-      on boundaries of its own, which do not line up with the speaker's (D-327):
-      a take is a SPAN of utterances, so one delivery can cover several. 1
-      restores the old utterance-to-utterance behaviour.
+      joined into one take (default 3). This is what finds a restart the ASR cut
+      on segment boundaries of its own, which do not line up with the
+      speaker's (D-327): a take is a SPAN of utterances, so one delivery can
+      cover several. 1 restores the old utterance-to-utterance behaviour.
     - `phrase_min_words` — the detector's SECOND, independent signal (D-365):
       the shortest repeated PHRASE, in words, that marks two spans as one
       self-correction even when `similarity` says they are different sentences
@@ -4434,12 +4438,12 @@ impl ApellesMcp {
       alone cannot tell from a repair. Groups found this way report a LOW
       `similarity`, so they sort to the top of anything ranked by it.
     - `recover_dark_regions` — **default true, and leave it that way** (D-349,
-      B-216). Whisper's whole-file pass silently declines to transcribe some
-      utterances inside windows it otherwise reads confidently: roughly one
-      dropped multi-second region per three minutes of raw footage, measured on
-      two independent camera originals, with no error and no low-confidence
-      score to filter on. The loss is **biased towards near-duplicate repeated
-      material** — i.e. towards retakes — so grouping the raw transcript is
+      B-216). The ASR's whole-file pass silently declines to transcribe some
+      utterances inside windows it otherwise reads confidently: Parakeet
+      dropped 19 stretches (about 93 s) across the three measured sources, with
+      no error and no low-confidence score to filter on. Measured on Whisper,
+      which this was first built against, the loss was **biased towards
+      near-duplicate repeated material** — i.e. towards retakes — so grouping the raw transcript is
       blind in exactly the place this tool is looking. With this on, each clip's
       range is scanned for stretches where the VAD hears a voice and the
       transcript has no words, those windows are re-transcribed on their own,
@@ -4712,14 +4716,12 @@ impl ApellesMcp {
         description = r#"Find the stretches of a clip where **there is speech nobody transcribed**
     (D-349, fixes the transcription half of B-216).
 
-    Whisper's whole-file pass does not merely mis-hear some utterances — it
-    emits no tokens for them, inside a 30-second window it is otherwise decoding
-    confidently, at temperature 0.0 with every quality metric healthy. There is
-    no error, no warning and no low-confidence score to filter on; the word
-    alignment then stretches whatever words survived across the hole, so the
-    transcript reads plausibly and is wrong. Measured rate on real footage:
-    roughly one dropped multi-second region per three minutes of raw source,
-    across two independent camera originals.
+    The ASR's whole-file pass does not merely mis-hear some utterances — it can
+    emit no words for them, inside a window it is otherwise reading
+    confidently. There is no error, no warning and no low-confidence score to
+    filter on, so the transcript reads plausibly and is missing a sentence.
+    Measured on real footage with Parakeet: 19 dropped stretches (about 93 s)
+    across three sources.
 
     This tool crosses the two signals the app already has — the acoustic VAD
     ("is anyone talking") and the transcript ("what was read") — and reports
@@ -4733,9 +4735,10 @@ impl ApellesMcp {
       before it is flagged (default 1.2). Measured on a plateau: 1.0 to 1.5 give
       the same answer on both test files.
     - `max_word_secs` — a transcript word LONGER than this contributes no
-      coverage (default 2.0, whisper's own anomaly bound). This is load-bearing,
-      not a refinement: the alignment smears one word across the hole, so a
-      naive "is there a word here" test misses more than half the real cases.
+      coverage. The default is NO bound: Parakeet cannot stretch a word across
+      a hole, so there is nothing for a bound to catch. Pass a real value (e.g.
+      2.0) only for a transcript from an aligner that can smear one word over
+      a silent stretch.
     - `rms_floor_scale` — multiplier on the amplitude floor (default 1.0). The
       floor is calibrated **per file** from the quietest speech this recording's
       own transcript read correctly, never a constant — mic, gain and room

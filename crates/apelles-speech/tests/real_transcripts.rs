@@ -17,6 +17,9 @@
 //! are plain JSON — so unlike [`dark_live`] and [`silero_live`] this one runs
 //! in an ordinary `cargo test`.
 //!
+//! **Provenance.** The `.json` fixtures were produced by the since-removed Whisper backend (D-381); they are kept as inputs to the
+//! ASR-agnostic detector and so that D-365..D-379 stay reproducible.
+//!
 //! | fixture | segments | duration | what it is |
 //! |---|---|---|---|
 //! | `A001_09122319_C038.json` | 121 | 987 s | the inference-cost explainer; the footage behind B-237 and D-365 |

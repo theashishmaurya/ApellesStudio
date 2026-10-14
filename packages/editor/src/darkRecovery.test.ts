@@ -47,7 +47,7 @@ function transcript(overrides: Partial<Transcript> = {}): Transcript {
   return {
     text: 'the cat sat down again',
     language: 'en',
-    model: 'large-v3',
+    model: 'parakeet-tdt-0.6b-v3',
     source: SOURCE,
     segments: [
       { start: 1.0, end: 1.8, text: 'the cat', words: words.slice(0, 2) },
@@ -146,7 +146,7 @@ describe('clipTranscriptView', () => {
     expect(v.detection).toBeUndefined();
   });
 
-  /** A status poll must never kick off a VAD pass or a Whisper run of its own. */
+  /** A status poll must never kick off a VAD pass or a transcription run of its own. */
   it('starts nothing when asked to read rather than to run', () => {
     const v = view(transcript(), true, false);
     expect(invoke).not.toHaveBeenCalled();

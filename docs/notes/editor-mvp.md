@@ -1,5 +1,7 @@
 # Editor tab MVP (D-041)
 
+> Dated note: where it names Whisper as the speech recogniser, that was true when written; Parakeet is the only ASR backend since D-381 (`docs/notes/asr-backends-and-harness.md`).
+
 The first real cut of the Edit tab — a working timeline. Deliberately bounded.
 
 ## In

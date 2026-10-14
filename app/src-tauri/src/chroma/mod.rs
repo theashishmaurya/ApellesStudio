@@ -105,7 +105,7 @@
 //!   **global** grade only; masks/crop/relight are stripped with a warning
 //! - `motion`   — the Motion tab bridge: manifest sidecar + `apelles-motion` render (D-046)
 //! - `media_understanding` — transcript + "what changed on screen, and when"
-//!   via the `ai-media/` sidecar (mlx-whisper + Qwen3-VL, D-189); just the 4
+//!   via the `ai-media/` sidecar (Parakeet + Qwen3-VL, D-189/D-374/D-381); just the 4
 //!   `#[tauri::command]`s — the wire client is `apelles_ai::media_understanding`
 //! - `retake_proposals` — **retake proposals from the MCP client (D-380 step
 //!   2)**: the word-indexed view of a track with its view id, and a client's

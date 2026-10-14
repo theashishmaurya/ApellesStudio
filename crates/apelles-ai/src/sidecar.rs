@@ -8,7 +8,7 @@
 //! app (see "not only Python" below):
 //!   - [`AI`] — `ai/`, PyTorch/MPS: SAM 2 → ViTMatte matting (D-012/D-016),
 //!     Video-Depth-Anything depth tracking (D-036), MoGe-2 normals (D-077).
-//!   - [`AI_MEDIA`] — `ai-media/`, MLX: word-level transcript (mlx-whisper) and
+//!   - [`AI_MEDIA`] — `ai-media/`, MLX: word-level transcript (Parakeet) and
 //!     video understanding (ffmpeg scene-detect + Qwen3-VL), D-189. A separate
 //!     PROCESS for crash isolation and D-084's independent idle-unload — but, as
 //!     of **D-314**, no longer a separate *environment*: both Python sidecars run

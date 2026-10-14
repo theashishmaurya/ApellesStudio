@@ -51,6 +51,9 @@
 //! sessions of tuning (B-237, B-238, D-365, D-366) were fitted to the other two,
 //! and it is the only source where *Whisper* over-claims too.
 //!
+//! **Provenance.** The `.whisper.json` fixtures were produced by the since-removed Whisper backend (D-381); they are kept as inputs to the
+//! ASR-agnostic detector and so that D-365..D-379 stay reproducible.
+//!
 //! Both backends run over all three so the comparison is like-for-like:
 //! `.whisper.json` is `mlx-whisper large-v3`, `.parakeet.json` is
 //! `parakeet-tdt-0.6b-v3` through `transcribe(..., backend="parakeet")`

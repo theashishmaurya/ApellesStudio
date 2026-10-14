@@ -32,7 +32,7 @@
  * deleted by a checkbox nobody read is gone behind an undo the user has to
  * think to press.
  *
- * **It reads the speech whisper silently dropped, too (D-349, B-216).** Before
+ * **It reads the speech the ASR silently dropped, too (D-349, B-216).** Before
  * grouping, a retake run scans each clip's range for stretches where the VAD
  * hears a voice and the transcript has no words, re-transcribes those windows on
  * their own, and splices the result in. That is not a bonus feature bolted on
@@ -109,7 +109,7 @@ import {
   type RetakeDetectionArgs,
   type SilenceDetectionArgs,
 } from './mediaUnderstandingStore';
-// D-349/B-216 — the shared step that scans for speech whisper silently dropped,
+// D-349/B-216 — the shared step that scans for speech the ASR silently dropped,
 // re-reads those windows and splices the words back in. The SAME function
 // `editor_detect_retakes` runs, so the human's recut and the agent's cannot end
 // up grouping two different transcripts of one file.
@@ -250,7 +250,7 @@ interface PendingClip {
    *  the scan carries on, which is the point of a whole-track scan. */
   failure?: string;
   /** D-349 — how many of this clip's utterances came back only because the app
-   *  re-read a stretch whisper silently dropped. Carried on the pending record
+   *  re-read a stretch the ASR silently dropped. Carried on the pending record
    *  so the finished list can say so; `undefined` until the words have landed. */
   recovered?: number;
 }
@@ -499,7 +499,7 @@ export function RecutPanel() {
       // failed last time — the D-349 scan and its re-reads do not auto-retry a
       // failure (they degrade to the raw transcript instead, so a broken model
       // cannot spin forever). Errors only, never results: `clear(source)` would
-      // throw away the transcript and cost a fresh multi-minute Whisper pass.
+      // throw away the transcript and cost a fresh multi-minute transcription pass.
       store.clearErrors(source);
       const status = store.transcriptStatus(source);
       if (status.phase === 'done') continue;
@@ -541,7 +541,7 @@ export function RecutPanel() {
       const transcript = transcripts[c.source];
       if (!transcript) return c;
 
-      // D-349 — scan for the speech whisper silently dropped, re-read it, and
+      // D-349 — scan for the speech the ASR silently dropped, re-read it, and
       // splice it in BEFORE grouping. Not an optional extra: the dropped speech
       // is biased towards near-duplicate repeats, i.e. towards exactly the
       // retakes this button is looking for (B-216). The view reports `pending`

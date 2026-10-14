@@ -23,8 +23,8 @@
  * interval — see `POLL_MS`.
  *
  * **Two of the caches here are not optimizations at all (D-349).** A
- * dark-region scan says where whisper silently dropped speech, and a *recovery*
- * is a whole extra Whisper pass over one window to get those words back. Every
+ * dark-region scan says where the ASR silently dropped speech, and a *recovery*
+ * is a whole extra transcription pass over one window to get those words back. Every
  * consumer of the transcript — retake grouping, the Transcript panel,
  * `editor_get_timeline_transcript` — must read the SAME spliced result, or two
  * callers disagree about what was said; caching the recovery by
@@ -318,7 +318,7 @@ interface MediaUnderstandingState {
   darkErrors: Record<string, string>;
   /** [`recoveryKey`] -> one window's isolated re-transcription, and its twins.
    *  Cached as hard as a transcript is, and for a stronger reason: a recovery is
-   *  a whole Whisper pass, and the whole point of splicing is that every
+   *  a whole transcription pass, and the whole point of splicing is that every
    *  consumer of the transcript sees the same recovered words. */
   recoveries: Record<string, RecoveredWindow>;
   recovering: Record<string, boolean>;
@@ -428,7 +428,7 @@ interface MediaUnderstandingState {
    *
    *  The retry a human means by clicking a button again, without [`clear`]'s
    *  cost: `clear` would drop the transcript too and re-run a multi-minute
-   *  Whisper pass to retry a two-second VAD scan. Added with D-349, whose
+   *  transcription pass to retry a two-second VAD scan. Added with D-349, whose
    *  `clipTranscriptView` deliberately does NOT auto-retry a failed scan —
    *  auto-retrying it would spin a broken model forever instead of degrading to
    *  the raw transcript, so "forget the failure" has to be something a caller
