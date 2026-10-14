@@ -2801,8 +2801,23 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       `pre-launch-plan`, `product-direction`, `video-search`,
       `timeline-feature-audit`) carry a one-line pointer. `00`/`01`/`02` never
       named the ASR or the retake detector, so needed no change.
-    - ⬜ **Live smoke of D-380 step 2 on C040** — not runnable from the
-      worktree that built it; the script is in `retake-detection.md` §12.7.
+    - ✅ **Live smoke of D-380 step 2 on C040** (2026-10-14) — passed end to
+      end in the running app: Parakeet word view + served instructions, 11
+      client groups (4 refusals resolved by the client: 7 verified / 4
+      AI-confirmed / 0 refused), Recut panel badges + highlighted words +
+      reasons, stale-view lock after a cut, MCP cut of the verified groups
+      (892 → 778 words, one entry) and `undo` / `redo` / `undo` (D-383). Found
+      and fixed on the way: B-247 (Parakeet re-reads refused), B-248 (undo
+      payload), plus the missing `debug_set_library_mode` / `undo` / `redo`.
+    - ⬜ **Persist transcripts and applied re-reads across restarts.** The
+      `mediaUnderstandingStore` cache is in-memory by design, so every launch
+      re-runs Parakeet (~20 s for C040) and — the part that matters — an
+      `editor_retranscribe_words` reading the client APPLIED is lost, changing
+      the word view (932 → 892 words between two runs). The store's header
+      already names the `media_cache` on-disk namespace as the next step.
+    - ⬜ **Recut panel: confirm reasons are labelled inconsistently** — the
+      first offending word is labelled by its text ("masses"), the rest by
+      index ("#203"); one label form for all.
     - ✅ **A Claude skill that wraps the client loop** (owner, 2026-10-13;
       `.claude/skills/apelles-retake-review/SKILL.md`, 2026-10-14) — the tools
       serve their own instructions, so the skill carries only the workflow:
