@@ -41,7 +41,7 @@ use apelles_speech::proposal::{GateParams, INDEXED_VIEW_LEGEND, check_and_resolv
 use apelles_speech::{
     GroupVerdict, IndexedWord, JUDGING_RULES, ProposedGroup, Refusal, RetakeGroup, RetakeParams,
     RunSpan, TranscriptSegment, ViewPiece, detect_retakes, index_pieces, index_transcript,
-    render_indexed,
+    render_indexed, take_from_span,
 };
 use common::load_path;
 use serde::Deserialize;
@@ -295,6 +295,12 @@ struct Task {
     #[serde(default)]
     gates: Vec<Limit>,
     expect: Expect,
+    /// D-382: score the detector as the app now applies it — every group mapped
+    /// to word ranges in the source's word transcript and put through the
+    /// coverage gate together, refused groups not applied. Needs the source's
+    /// `eval/retake/transcripts/` word file, so Parakeet tasks only.
+    #[serde(default)]
+    gated: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -743,12 +749,65 @@ fn judge(task: &Task, (metrics, lost): (Metrics, Vec<LostRange>)) -> Outcome {
 fn run(task: &Task, proposal: Option<Reference>) -> Outcome {
     let groups = match proposal {
         Some(kind) => reference(kind, &task.input.transcript),
+        None if task.gated => gated_detector(task),
         None => {
             let u = load_path(&repo_path(&task.input.transcript).to_string_lossy());
             from_detector(&detect_retakes(&u, &task.params.unwrap_or_default()))
         }
     };
     run_with(task, &groups)
+}
+
+/// **The detector as the app applies it since D-382.** Each group's takes are
+/// mapped to word ranges by word midpoint (`take_from_span` — the rule the app
+/// uses on its track view), the groups go through the coverage gate together in
+/// the detector's order, and only accepted groups are scored, as the padded cut
+/// ranges the app would apply. A group none of whose takes maps to a word, or
+/// with fewer than two that do, is not proposable and is dropped, as in the app.
+fn gated_detector(task: &Task) -> Vec<Proposed> {
+    let labels: Labels = read_json(&task.input.labels);
+    let (words, _) = word_transcript(&labels.source);
+    let u = load_path(&repo_path(&task.input.transcript).to_string_lossy());
+    let groups: Vec<ProposedGroup> = detect_retakes(&u, &task.params.unwrap_or_default())
+        .iter()
+        .filter_map(|g| detector_group_as_words(g, &words))
+        .collect();
+    let (accepted, refused) = gated(&words, &groups, &GateParams::default());
+    println!(
+        "  {}: {} detector groups, {} applied, {} refused by the gate",
+        task.id,
+        groups.len(),
+        accepted.len(),
+        refused.len()
+    );
+    print_refused(&refused);
+    accepted
+}
+
+/// One detector group as an index-form proposal, or `None` when it cannot be
+/// one: a take with no word inside it is dropped (and the keep re-indexed);
+/// fewer than two takes left, or the keeper gone, is no group at all.
+fn detector_group_as_words(g: &RetakeGroup, words: &[IndexedWord]) -> Option<ProposedGroup> {
+    let mut takes = Vec::new();
+    let mut keep = None;
+    for (ti, t) in g.takes.iter().enumerate() {
+        let Some(r) = take_from_span(
+            words,
+            g.members[t.first].start_secs,
+            g.members[t.last].end_secs,
+            |_| true,
+        ) else {
+            continue;
+        };
+        if ti == g.keep {
+            keep = Some(takes.len());
+        }
+        takes.push(r);
+    }
+    match (keep, takes.len() >= 2) {
+        (Some(keep), true) => Some(ProposedGroup { takes, keep }),
+        _ => None,
+    }
 }
 
 /// Score any proposal against a task's labels — the detector's, a reference

@@ -215,6 +215,13 @@ import {
 import { scrubSourceAt, waveformWindowAt, WAVEFORM_WINDOW_SECS } from './scrubSource';
 import { DETECT_GRACE_MS, settleWithin } from './settle';
 import { getWordTranscript, proposeRetakes, retranscribeWords } from './retakeProposalOps';
+import { detectedForGate, gateDetectorGroups, type DetectorGateResult } from './detectorGate';
+
+/** What a retake answer says about the gate behind its `status` (D-382). */
+const GATE_NOTE =
+  'Each group carries `status`: "verified" means the coverage gate checked that every word a cut would ' +
+  'remove survives in the kept take; "refused" names the words it would lose (`offending`) — do not cut a ' +
+  'refused group unless the person has listened and asks for it.';
 // D-236 — the speed ramp. `MIN_SPEED`/`MAX_SPEED` are shared with the GUI and
 // with Rust so an agent, the Inspector and the preview all agree on the range.
 import { MIN_SPEED, MAX_SPEED, resolveSpeedSegments, type SpeedPoint } from './speedRamp';
@@ -1219,11 +1226,18 @@ function recoveryPending(pending: 'scanning' | 'recovering'): {
  *
  *  Shared by the single-clip envelope and the whole-track sweep (D-342) so the
  *  two cannot report the same group differently. */
-function retakeGroupsDto(status: AnalysisStatus<RetakeDetection>, run: ClipRun, fps: number) {
+function retakeGroupsDto(
+  status: AnalysisStatus<RetakeDetection>,
+  run: ClipRun,
+  fps: number,
+  gates?: readonly DetectorGateResult[],
+) {
   return (status.result?.groups ?? [])
-    .map((g) => ({
+    .map((g, gi) => ({
       similarity: g.similarity,
       keep: g.keep,
+      // D-382 — the coverage gate's verdict on this group, as for a client's.
+      ...gateDto(gates?.[gi]),
       takes: groupTakes(g).map((t) => {
         const segments = takeSegments(run, t.startSecs, t.endSecs, fps);
         return {
@@ -1258,6 +1272,34 @@ function retakeGroupsDto(status: AnalysisStatus<RetakeDetection>, run: ClipRun, 
     .filter((g) => g.takes.some((t) => t.segments.length > 0));
 }
 
+/** One detector group's gate verdict as the MCP answer carries it (D-382):
+ *  `status` in the same vocabulary `editor_propose_retakes` uses, and for a
+ *  refusal the reason and the words its cut would lose. */
+function gateDto(gate: DetectorGateResult | undefined) {
+  if (!gate) return {};
+  return gate.status === 'verified'
+    ? { status: 'verified' as const }
+    : {
+        status: 'refused' as const,
+        reason: gate.reason,
+        reasonText: gate.reasonText,
+        offending: gate.offending,
+      };
+}
+
+/** Run one detection's groups through the coverage gate (D-382). `undefined`
+ *  while there is nothing to gate (not done yet). */
+async function gateDetection(
+  status: AnalysisStatus<RetakeDetection>,
+  run: ClipRun,
+  track: number,
+): Promise<DetectorGateResult[] | undefined> {
+  if (status.phase !== 'done' || !status.result) return undefined;
+  const tl = useEditorTimelineStore.getState().timeline;
+  if (!tl) return undefined;
+  return gateDetectorGroups(tl, track, run.source, detectedForGate(status.result.groups));
+}
+
 /** The clip a group is reported under: the earliest one any of its takes
  *  touches. Reported ONCE, not once per clip it spans — a sweep's caller acts
  *  on the `flagged` list as a whole, and repeating a group under each of its
@@ -1275,7 +1317,7 @@ function silenceSpansDto(status: AnalysisStatus<SilenceDetection>, c: Clip, fps:
 }
 
 /** [`silenceEnvelope`]'s retake twin. */
-function retakeEnvelope(
+async function retakeEnvelope(
   status: AnalysisStatus<RetakeDetection>,
   found: ResolvedClip,
   c: Clip,
@@ -1316,7 +1358,8 @@ function retakeEnvelope(
   // still answers about clip K — a group entirely inside K's neighbours is not
   // K's business, and a group STRADDLING K is, which is the case that used to
   // be missing altogether.
-  const groups = retakeGroupsDto(status, rv.run, fps).filter((g) =>
+  const gates = await gateDetection(status, rv.run, found.track);
+  const groups = retakeGroupsDto(status, rv.run, fps, gates).filter((g) =>
     g.takes.some((t) => t.clips.includes(found.clip)),
   );
   return {
@@ -1326,7 +1369,8 @@ function retakeEnvelope(
     note:
       groups.length === 0
         ? 'no retakes found in this clip'
-        : 'nothing was cut — `keep` is a SUGGESTION (the last take); cut the others with editor_ripple_delete_ranges',
+        : 'nothing was cut — `keep` is a SUGGESTION (the last take); cut the others with editor_ripple_delete_ranges. ' +
+          GATE_NOTE,
   };
 }
 
@@ -1682,7 +1726,10 @@ async function retakeSweep(a: OpArgs, start: boolean) {
       continue;
     }
     const status = read(key);
-    const groups = status.phase === 'done' ? retakeGroupsDto(status, run, fps) : [];
+    const groups =
+      status.phase === 'done'
+        ? retakeGroupsDto(status, run, fps, await gateDetection(status, run, track))
+        : [];
     for (const head of heads) {
       results.push({
         ...head,
@@ -4909,7 +4956,7 @@ export function useEditorControl(): void {
           () => useMediaUnderstandingStore.getState().retakeDetectionStatus(key),
           DETECT_GRACE_MS,
         );
-        return retakeEnvelope(status, found, c, fps, args.utterances.length, rv);
+        return await retakeEnvelope(status, found, c, fps, args.utterances.length, rv);
       },
 
       editor_detect_retakes_status: async (a) => {
@@ -4919,7 +4966,7 @@ export function useEditorControl(): void {
         if ('pending' in resolved) return resolved.pending;
         const { found, c, fps, args, key, rv } = resolved;
         const status = useMediaUnderstandingStore.getState().retakeDetectionStatus(key);
-        return retakeEnvelope(status, found, c, fps, args.utterances.length, rv);
+        return await retakeEnvelope(status, found, c, fps, args.utterances.length, rv);
       },
 
       // **`editor_detect_dark_regions` (D-349, B-216)** — the third detector,

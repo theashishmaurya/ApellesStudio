@@ -4529,6 +4529,16 @@ def editor_detect_retakes(
     clips is reported ONCE, under the earliest clip it touches, with every clip
     it covers named inside its takes. Act on `flagged`.
 
+    **Every group carries `status`** (D-382): the detector's groups go through
+    the same deterministic coverage gate an `editor_propose_retakes` group
+    does, mapped onto the track's words by word midpoint. `"verified"` means
+    every word a cut would remove survives in the kept take; `"refused"` comes
+    with `reason`, `reasonText` and `offending` — the words the cut would lose.
+    This detector over-cuts (B-246), so do not cut a refused group unless the
+    person has listened and asks for it. For your own judgement of the track
+    instead, read it with `editor_get_word_transcript` and propose with
+    `editor_propose_retakes`; this tool is the deterministic fallback.
+
     **Nothing is cut**, by either form. Pass the takes you want gone to
     `editor_ripple_delete_ranges`."""
     import json

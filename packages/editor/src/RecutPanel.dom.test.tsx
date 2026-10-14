@@ -48,10 +48,22 @@ const RETAKES = {
   ],
 };
 
+/** D-382 — what the stubbed coverage gate answers for every detector group.
+ *  `accepted` by default, so the pre-D-382 tests see the list they always did;
+ *  a test that sets a refusal sees the gate's refusal reach the row. */
+const gate = vi.hoisted(() => ({
+  answer: { verdict: 'accepted', takeWords: [] } as Record<string, unknown>,
+  calls: 0,
+}));
+
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: createInvokeStub({
     chroma_detect_silences: () => SILENCES,
     chroma_detect_retakes: () => RETAKES,
+    chroma_gate_detected_retakes: (args) => {
+      gate.calls += 1;
+      return { groups: ((args?.groups ?? []) as unknown[]).map(() => gate.answer) };
+    },
     chroma_timeline_set: () => undefined,
   }),
 }));
@@ -138,6 +150,8 @@ async function mountPanel(
 
 beforeEach(() => {
   console_ = captureConsole();
+  gate.answer = { verdict: 'accepted', takeWords: [] };
+  gate.calls = 0;
 });
 
 afterEach(() => {
@@ -742,7 +756,7 @@ describe('RecutPanel — client proposals (D-380 step 2)', () => {
       'kept take does not',
     );
     expect(row('cli-0-1-0')!.querySelector('[data-chroma-recut-flagged="1"]')!.textContent).toBe('bin');
-    await click(q('[data-chroma-recut-unlock="1"]'));
+    await click(q('[data-chroma-recut-unlock="cli-0-1"]'));
     expect(box('cli-0-1-0').disabled).toBe(false);
   });
 
@@ -795,5 +809,64 @@ describe('RecutPanel — client proposals (D-380 step 2)', () => {
 
     expect(q('[data-chroma-recut-client-stale]')!.textContent).toContain('re-read');
     expect(box('cli-0-0-0').disabled).toBe(true);
+  });
+});
+
+/** D-382 — the deterministic detector's groups go through the same gate. */
+describe('RecutPanel — the detector behind the coverage gate (D-382)', () => {
+  function seedSegments(): void {
+    actSync(() =>
+      useMediaUnderstandingStore.setState({
+        transcripts: {
+          [SOURCE]: {
+            text: 'x',
+            language: 'en',
+            model: 'test',
+            source: SOURCE,
+            segments: [
+              { start: 1.0, end: 2.5, text: 'The cat sat—', words: [] },
+              { start: 3.0, end: 5.0, text: 'The cat sat on the mat.', words: [] },
+              { start: 6.0, end: 8.0, text: 'The cat sat on the mat!', words: [] },
+            ],
+          },
+        },
+      } as never),
+    );
+  }
+
+  it('a refused detector group is shown with its reason, untickable, and never bulk-ticked', async () => {
+    gate.answer = {
+      verdict: 'refused',
+      takeWords: [],
+      reason: { kind: 'content_absent_from_kept_take' },
+      reasonText: 'a deleted take has words the kept take does not',
+      offending: [{ index: 4, word: 'mat.' }],
+      waivable: true,
+    };
+    await mountPanel(true);
+    seedSegments();
+    await click(q('[data-chroma-recut-find-retakes]'));
+
+    expect(gate.calls).toBe(1);
+    expect(rows()).toHaveLength(3);
+    expect(rows().every((r) => r.getAttribute('data-chroma-recut-status') === 'refused')).toBe(true);
+    expect(boxes().every((b) => b.disabled)).toBe(true);
+    expect(rows()[0].querySelector('[data-chroma-recut-reason]')!.textContent).toContain('kept take does not');
+
+    await click(q('[data-chroma-recut-tick-suggested]'));
+    expect(boxes().every((b) => !b.checked)).toBe(true);
+
+    // A person who listened may unlock it and tick it by hand.
+    await click(q('[data-chroma-recut-unlock="ret-0-0"]'));
+    expect(boxes()[0].disabled).toBe(false);
+  });
+
+  it('a verified detector group behaves as it always did, with its badge', async () => {
+    await mountPanel(true);
+    seedSegments();
+    await click(q('[data-chroma-recut-find-retakes]'));
+    expect(rows().every((r) => r.getAttribute('data-chroma-recut-status') === 'verified')).toBe(true);
+    await click(q('[data-chroma-recut-tick-suggested]'));
+    expect(boxes().map((b) => b.checked)).toEqual([true, true, false]);
   });
 });

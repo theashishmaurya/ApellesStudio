@@ -126,6 +126,28 @@
       "expect": "fail"
     },
     {
+      "id": "C019/parakeet-gated",
+      "description": "D-382: the same detector on the same transcript, applied as the app now applies it — every group mapped to word ranges by word midpoint and put through D-380's coverage gate; refused groups are shown to the person but not applied, so they are not scored.",
+      "gated": true,
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/transcripts/A001_08302215_C019.parakeet.json",
+        "labels": "eval/retake/labels/A001_08302215_C019.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
       "id": "C038/whisper-pinned",
       "description": "The inference-cost explainer (989 s), mlx-whisper large-v3 — the fixture real_transcripts.rs pins, 121 segments.",
       "input": {
@@ -189,6 +211,28 @@
       "expect": "fail"
     },
     {
+      "id": "C038/parakeet-gated",
+      "description": "D-382: the same detector on the same transcript, applied as the app now applies it — every group mapped to word ranges by word midpoint and put through D-380's coverage gate; refused groups are shown to the person but not applied, so they are not scored.",
+      "gated": true,
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/transcripts/A001_09122319_C038.parakeet.json",
+        "labels": "eval/retake/labels/A001_09122319_C038.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
       "id": "C040/whisper-pinned",
       "description": "The attention explainer (686 s), mlx-whisper large-v3 — the fixture real_transcripts.rs pins, 66 segments.",
       "input": {
@@ -233,6 +277,28 @@
     {
       "id": "C040/parakeet",
       "description": "The same 686 s of audio, parakeet-tdt-0.6b-v3 — 58 segments. B-246's C040 case lives here.",
+      "input": {
+        "transcript": "crates/apelles-speech/tests/fixtures/transcripts/A001_09122356_C040.parakeet.json",
+        "labels": "eval/retake/labels/A001_09122356_C040.json"
+      },
+      "goal": {
+        "checks": [
+          { "id": "precision", "metric": "cut_precision", "min": 1.0 },
+          { "id": "recall", "metric": "retake_recall", "min": 0.5 },
+          { "id": "groups", "metric": "group_recall", "min": 0.6 },
+          { "id": "keeper", "metric": "keeper_agreement", "min": 1.0 }
+        ]
+      },
+      "gates": [
+        { "metric": "over_cut_secs", "max": 0.0 },
+        { "metric": "protected_secs_cut", "max": 0.0 }
+      ],
+      "expect": "fail"
+    },
+    {
+      "id": "C040/parakeet-gated",
+      "description": "D-382: the same detector on the same transcript, applied as the app now applies it — every group mapped to word ranges by word midpoint and put through D-380's coverage gate; refused groups are shown to the person but not applied, so they are not scored.",
+      "gated": true,
       "input": {
         "transcript": "crates/apelles-speech/tests/fixtures/transcripts/A001_09122356_C040.parakeet.json",
         "labels": "eval/retake/labels/A001_09122356_C040.json"

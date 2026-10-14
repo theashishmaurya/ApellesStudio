@@ -14,6 +14,11 @@
 //!   through the coverage gate, with its per-word confirmations (waivers); each
 //!   verdict carries the cut ranges in source seconds and the clip window they
 //!   fall in.
+//! - [`chroma_gate_detected_retakes`] — **D-382**: the deterministic
+//!   detector's groups (takes in source seconds) mapped onto the same view by
+//!   word midpoint and put through the same gate, so `editor_detect_retakes`
+//!   and the Recut panel's detector rows carry the same verified / refused
+//!   status as a client's proposal. The detector itself is unchanged.
 //!
 //! **What it does NOT do.** No judgement and no model: which stretches are
 //! retakes is the MCP client's call, and whether a cut loses words is the
@@ -27,8 +32,8 @@ use std::collections::BTreeSet;
 
 use apelles_speech::proposal::{
     GroupVerdict, IndexedView, JUDGING_RULES, ProposedGroup, Refusal, TranscriptSegment, ViewPiece,
-    check_and_resolve_waived, index_pieces, is_waivable, render_indexed, render_indexed_page,
-    would_cut,
+    check_and_resolve, check_and_resolve_waived, index_pieces, is_waivable, render_indexed,
+    render_indexed_page, take_from_span, would_cut,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -82,6 +87,23 @@ pub struct ProposalWire {
     pub keep: usize,
     #[serde(default)]
     pub waive: Vec<usize>,
+}
+
+/// One take of a detector group, in its source's own seconds.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpanTakeWire {
+    pub start_secs: f64,
+    pub end_secs: f64,
+}
+
+/// One detector group as the op layer forwards it (D-382): which source its
+/// takes are in (an index into `sources`), its takes, and its suggested keep.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DetectedGroupWire {
+    pub source: usize,
+    pub takes: Vec<SpanTakeWire>,
+    pub keep: usize,
 }
 
 /// A view, built and identified.
@@ -256,6 +278,129 @@ pub fn check_proposals(
         "verdicts": verdicts,
         "words": words_json(&built.view),
     }))
+}
+
+/// The words of a take, `{index, word}`, for a reviewer to read.
+fn take_words(v: &IndexedView, (a, b): (usize, usize)) -> Vec<Value> {
+    (a..=b)
+        .filter_map(|i| {
+            v.words
+                .get(i)
+                .map(|w| json!({ "index": i, "word": w.text }))
+        })
+        .collect()
+}
+
+/// **D-382: the detector's groups through the coverage gate.** Each take is
+/// mapped to the view words of its own source whose midpoint lies inside it
+/// (`take_from_span`); a take holding no word is dropped and the keep
+/// re-indexed; a group left with fewer than two takes, or without its keeper,
+/// cannot be judged and is answered `unmapped` — which the op layer treats as
+/// refused, because a cut nobody could check is the over-cut D-318 forbids.
+/// The mapped groups are judged together, in the detector's order, with no
+/// waivers: nothing vouches for a detector. Pure; the command wraps it.
+pub fn gate_detected(
+    sources: &[ViewSource],
+    pieces: &[ViewPieceWire],
+    groups: &[DetectedGroupWire],
+) -> Result<Value, String> {
+    let built = build_view(sources, pieces)?;
+    let v = &built.view;
+    let source_of = |i: usize| {
+        v.piece_of_word
+            .get(i)
+            .and_then(|&p| pieces.get(p))
+            .map(|p| p.source)
+    };
+    // Per detector take, the word range it maps to (`None`: no word inside).
+    let ranges: Vec<Vec<Option<(usize, usize)>>> = groups
+        .iter()
+        .map(|g| {
+            g.takes
+                .iter()
+                .map(|t| {
+                    take_from_span(&v.words, t.start_secs, t.end_secs, |i| {
+                        source_of(i) == Some(g.source)
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    let mapped: Vec<Option<ProposedGroup>> = groups
+        .iter()
+        .zip(&ranges)
+        .map(|(g, rs)| {
+            let mut takes = Vec::new();
+            let mut keep = None;
+            for (ti, r) in rs.iter().enumerate() {
+                let Some(r) = *r else { continue };
+                if ti == g.keep {
+                    keep = Some(takes.len());
+                }
+                takes.push(r);
+            }
+            match (keep, takes.len() >= 2) {
+                (Some(keep), true) => Some(ProposedGroup { takes, keep }),
+                _ => None,
+            }
+        })
+        .collect();
+    let judged: Vec<ProposedGroup> = mapped.iter().flatten().cloned().collect();
+    let mut verdicts = check_and_resolve(&v.words, &judged).into_iter();
+    let word = |i: usize| {
+        v.words
+            .get(i)
+            .map(|w| json!({ "index": i, "word": w.text }))
+    };
+    let out: Vec<Value> = mapped
+        .iter()
+        .zip(&ranges)
+        .map(|(m, rs)| {
+            // Aligned with the DETECTOR's takes, so the op layer can mark each
+            // of its rows: `null` for a take that holds no word.
+            let takes: Vec<Value> = rs
+                .iter()
+                .map(|r| r.map_or(Value::Null, |(a, b)| json!(take_words(v, (a, b)))))
+                .collect();
+            if m.is_none() {
+                return json!({ "verdict": "unmapped", "takeWords": takes });
+            }
+            match verdicts.next() {
+                Some(GroupVerdict::Accepted { .. }) => {
+                    json!({ "verdict": "accepted", "takeWords": takes })
+                }
+                Some(GroupVerdict::Refused { reason, offending }) => {
+                    let (kind, text) = reason_json(reason);
+                    let offending: Vec<Value> = offending.iter().filter_map(|&i| word(i)).collect();
+                    json!({
+                        "verdict": "refused",
+                        "takeWords": takes,
+                        "reason": kind,
+                        "reasonText": text,
+                        "offending": offending,
+                        "waivable": is_waivable(reason),
+                    })
+                }
+                // No waivers are passed, so `Confirmed` cannot arise; were it
+                // to, it is not a proof, so it is never reported as verified.
+                Some(GroupVerdict::Confirmed { .. }) | None => {
+                    json!({ "verdict": "unmapped", "takeWords": takes })
+                }
+            }
+        })
+        .collect();
+    Ok(json!({ "groups": out }))
+}
+
+/// The deterministic detector's groups through the coverage gate (D-382) —
+/// see [`gate_detected`]. Answers one verdict per group, in order.
+#[tauri::command]
+pub async fn chroma_gate_detected_retakes(
+    sources: Vec<ViewSource>,
+    pieces: Vec<ViewPieceWire>,
+    groups: Vec<DetectedGroupWire>,
+) -> Result<Value, String> {
+    gate_detected(&sources, &pieces, &groups)
 }
 
 /// The word-indexed view of a track, one page of it, and its view id
@@ -439,6 +584,61 @@ mod tests {
         assert_eq!(r["waivable"], json!(true));
         assert_eq!(r["wouldCut"][0]["first"], json!(0));
         assert!(r["reasonText"].as_str().is_some_and(|t| !t.is_empty()));
+    }
+
+    fn span(start_secs: f64, end_secs: f64) -> SpanTakeWire {
+        SpanTakeWire {
+            start_secs,
+            end_secs,
+        }
+    }
+
+    #[test]
+    fn detector_groups_are_gated_by_word_midpoint() {
+        // Words every 0.5 s: "the cache the cache final bin final bill".
+        let s = [source("/a.mov", "the cache the cache final bin final bill")];
+        let out = gate_detected(
+            &s,
+            &[whole(0)],
+            &[
+                // 0.0-0.9 / 1.0-1.9: the cache x2 — verified.
+                DetectedGroupWire {
+                    source: 0,
+                    takes: vec![span(0.0, 0.95), span(1.0, 1.95)],
+                    keep: 1,
+                },
+                // bin / bill — refused, with the word named.
+                DetectedGroupWire {
+                    source: 0,
+                    takes: vec![span(2.0, 2.95), span(3.0, 3.95)],
+                    keep: 1,
+                },
+                // A take on silence holds no word: one take left, unmapped.
+                DetectedGroupWire {
+                    source: 0,
+                    takes: vec![span(20.0, 21.0), span(3.0, 3.95)],
+                    keep: 1,
+                },
+                // The wrong source: no words of it in the view.
+                DetectedGroupWire {
+                    source: 1,
+                    takes: vec![span(0.0, 0.95), span(1.0, 1.95)],
+                    keep: 1,
+                },
+            ],
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        let g = &out["groups"];
+        assert_eq!(g[0]["verdict"], json!("accepted"));
+        assert_eq!(
+            g[0]["takeWords"][0][1],
+            json!({ "index": 1, "word": "cache" })
+        );
+        assert_eq!(g[1]["verdict"], json!("refused"));
+        assert_eq!(g[1]["offending"], json!([{ "index": 5, "word": "bin" }]));
+        assert_eq!(g[2]["verdict"], json!("unmapped"));
+        assert_eq!(g[2]["takeWords"][0], Value::Null);
+        assert_eq!(g[3]["verdict"], json!("unmapped"));
     }
 
     #[test]

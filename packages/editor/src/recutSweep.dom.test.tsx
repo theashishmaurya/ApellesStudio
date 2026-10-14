@@ -63,6 +63,8 @@ const backend = vi.hoisted(() => ({
    *  scoring is `apelles-speech`'s own Rust suite's subject; what is on trial
    *  here is what gets HANDED to it. */
   retakeMode: 'any' as 'any' | 'similar',
+  /** D-382 — what the stubbed coverage gate answers for every group. */
+  gate: { verdict: 'accepted', takeWords: [] } as Record<string, unknown>,
 }));
 
 /** Word-set overlap, the crudest possible stand-in for "the same line again".
@@ -139,6 +141,10 @@ vi.mock('@tauri-apps/api/core', () => ({
           },
         ],
       };
+    },
+    chroma_gate_detected_retakes: (args) => {
+      backend.calls.push({ cmd: 'chroma_gate_detected_retakes', args });
+      return { groups: ((args?.groups ?? []) as unknown[]).map(() => backend.gate) };
     },
     chroma_timeline_set: () => undefined,
     chroma_text_fonts: () => [],
@@ -263,6 +269,7 @@ beforeEach(() => {
   backend.silenceAt = [];
   backend.retakeGroups = 0;
   backend.retakeMode = 'any';
+  backend.gate = { verdict: 'accepted', takeWords: [] };
   bus.emitted.length = 0;
   bus.dispatches.length = 0;
   useMediaUnderstandingStore.setState({
@@ -525,6 +532,36 @@ describe('the single-clip answer is unchanged (the regression guarantee)', () =>
     // A take inside one clip still carries the flat frame fields it always did.
     expect(env.result.groups[0].takes[0]).toHaveProperty('startFrame');
     expect(env.result.flagged).toBeUndefined();
+    // D-382 — and the gate's verdict, from one gate call for the run.
+    expect(env.result.groups[0].status).toBe('verified');
+    expect(backend.calls.filter((c) => c.cmd === 'chroma_gate_detected_retakes')).toHaveLength(1);
+  });
+
+  /** D-382 — a group the coverage gate refuses is still reported (a person
+   *  can listen and decide), but marked, with the words its cut would lose. */
+  it('marks a group the coverage gate refuses, naming the words it would lose', async () => {
+    backend.retakeGroups = 1;
+    backend.gate = {
+      verdict: 'refused',
+      takeWords: [],
+      reason: { kind: 'content_absent_from_kept_take' },
+      reasonText: 'a deleted take has words the kept take does not',
+      offending: [{ index: 3, word: 'unique' }],
+      waivable: true,
+    };
+    useMediaUnderstandingStore.setState({ transcripts: { [SOURCE]: transcript(40) } });
+    await mountWith(fixture(4));
+
+    const single = await callOp('editor_detect_retakes', { track: 0, clip: 0 });
+    expect(single.result.groups[0]).toMatchObject({
+      status: 'refused',
+      reason: { kind: 'content_absent_from_kept_take' },
+      offending: [{ index: 3, word: 'unique' }],
+    });
+    expect(single.result.note).toContain('refused');
+
+    const sweep = await callOp('editor_detect_retakes', { track: 0 });
+    expect(sweep.result.flagged[0].groups[0].status).toBe('refused');
   });
 
   /** D-364 — asking about one clip answers about THAT clip, even though the

@@ -429,6 +429,27 @@ pins the rules the app serves a client (`JUDGING_RULES`) to the judging block of
 `client_runs/prompt.md`: the app hands every client the rules this eval
 measured, verbatim.
 
+## The detector behind the gate (D-382)
+
+Three more tasks, `C019|C038|C040/parakeet-gated` (`"gated": true` in
+`tasks.json`), score the detector **as the app now applies it**: each group's
+takes mapped onto the source's word transcript by word midpoint
+(`take_from_span`), all groups through the coverage gate together in the
+detector's order, refused groups not scored — the app shows them to the person
+but does not let them be ticked unless someone who listened unlocks one.
+
+| task | over-cut | precision | retake recall | group recall | groups (applied / refused) |
+|---|---|---|---|---|---|
+| C019 / parakeet → gated | 24.40 → **0.00 s** | 0.443 → 1.000 | 0.265 → 0.161 | 0.353 → 0.235 | 4 / 3 |
+| C038 / parakeet → gated | 12.64 → **0.00 s** | 0.843 → 1.000 | 0.523 → 0.189 | 0.611 → 0.294 | 5 / 5 |
+| C040 / parakeet → gated | 3.20 → **0.00 s** | 0.965 → 1.000 | 0.606 → 0.232 | 0.909 → 0.455 | 5 / 5 |
+
+All three still `expect: "fail"` — on recall, never on a gate. The refusals are
+the detector's over-cutters and its groups whose keeper does not hold every
+word (an ASR mis-hearing, an inflection), the same two kinds the gate refuses
+for a client. The ungated rows are unchanged; the gated rows are the floor
+for B-246's remaining fix (`retake.rs`'s grouping).
+
 ## Boundary
 
 Internal dev tooling, like `eval/` — **not a feature users see**, so

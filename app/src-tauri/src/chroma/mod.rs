@@ -110,7 +110,8 @@
 //! - `retake_proposals` — **retake proposals from the MCP client (D-380 step
 //!   2)**: the word-indexed view of a track with its view id, and a client's
 //!   groups through `apelles_speech::proposal`'s coverage gate (with per-word
-//!   confirmations). No judgement, no timeline — the op layer maps clips
+//!   confirmations), and the deterministic detector's groups through the same
+//!   gate (D-382). No judgement, no timeline — the op layer maps clips
 //! - `sidecar`  — spawn + supervise the `ai/` and `ai-media/` FastAPI sidecars,
 //!   kill them on exit (D-028; second sidecar D-189, N-sidecar supervisor D-190)
 //! - `write_text_file` — generic "write this UTF-8 text to this absolute path"

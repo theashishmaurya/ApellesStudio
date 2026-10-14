@@ -2779,8 +2779,15 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       refused badges, offending words marked, refused rows untickable until a
       listener unlocks them, a stale-view banner, one Cut. The loop is the
       client's; the app runs no model (`retake-detection.md` §12).
+    - ✅ **D-382 — the deterministic detector behind the same gate**
+      (2026-10-14). `editor_detect_retakes` and the Recut panel's detector
+      rows are mapped onto the track's words (word midpoint) and gated; refused
+      groups are marked, untickable until a listener unlocks one. Eval
+      (`C0xx/parakeet-gated`): over-cut 0.00 s on all three sources, precision
+      1.000, recall 0.161 / 0.189 / 0.232. B-246 → mitigated; its grouping
+      defect stays open below.
     - ⬜ **Live smoke of D-380 step 2 on C040** — not runnable from the
-      worktree that built it; the script is in `retake-detection.md` §12.6.
+      worktree that built it; the script is in `retake-detection.md` §12.7.
     - ⬜ **A Claude skill that wraps the client loop** (owner, 2026-10-13) —
       the tools serve their own instructions, so any MCP client can run the
       loop today; the skill packages it.

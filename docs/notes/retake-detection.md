@@ -1398,7 +1398,27 @@ read it (`viewBasisKey`, the view's inputs, recomputed on every change) a banner
 says "the timeline changed since the AI read it — ask it to re-read" and the
 rows lock.
 
-### 12.6 Not done here: the live smoke (for the coordinator)
+### 12.6 The deterministic detector behind the same gate (D-382)
+
+`editor_detect_retakes` and the panel's Retakes button still run `retake.rs`
+unchanged, and then each detection's groups go to
+`chroma_gate_detected_retakes` (`detectorGate.ts`): each take (its source
+seconds) is mapped onto the same track view by word midpoint
+(`take_from_span`, restricted to that source's words), a take holding no word
+is dropped, a group left with fewer than two takes or without its keeper is
+`unmapped`, and the rest are judged together, in the detector's order, with no
+waivers. An unmapped group — or any group when the gate cannot run — is
+reported **refused** ("not checked"), not verified: D-318's direction. Each
+group then carries `status` in the client vocabulary, and the panel treats a
+refused detector row exactly like a refused client row (reason, marked words,
+locked until a listener unlocks it, never bulk-ticked).
+
+Measured (`eval/retake/` `C0xx/parakeet-gated`, README table): over-cut 24.40 /
+12.64 / 3.20 s → 0.00 s, precision 1.000, recall roughly halved (0.161 /
+0.189 / 0.232), 13 of 27 groups refused. B-246 is mitigated, not fixed — the
+grouping that forms the over-cutting groups is unchanged.
+
+### 12.7 Not done here: the live smoke (for the coordinator)
 
 The building worktree cannot drive the running app. On the main checkout, with
 C040 (`A001_09122356_C040`) on track 0 as one untrimmed clip and a Parakeet

@@ -53,6 +53,11 @@
  * a banner locks the rows when the timeline moves after the client read it,
  * and the same Cut applies them. No model runs here or anywhere in the app.
  *
+ * **The detector's own groups go through the same gate (D-382).** After
+ * `chroma_detect_retakes` answers, each group is mapped onto the track's words
+ * and checked (`detectorGate.ts`); a refused detector row is treated exactly
+ * like a refused client row. The detector itself is unchanged.
+ *
  * **What it does NOT do.** It does not transcribe (it asks
  * `mediaUnderstandingStore` for a cached transcript and reports honestly when
  * one is still running), it owns no timeline state, and it does not paint
@@ -113,6 +118,8 @@ import { clipTranscriptView, runTranscriptView } from './darkRecovery';
 // `editor_propose_retakes` writes. Reviewed in this same list, cut by the
 // same Cut button.
 import { buildWordViewInput, viewBasisKey } from './retakeWordView';
+// D-382 — the detector's own groups through the same gate.
+import { detectedForGate, gateDetectorGroups, type DetectorGateResult } from './detectorGate';
 import type { ProposalStatus, ProposalWord, RetakeProposalSet } from './retakeProposals';
 
 /** One row the user can tick. A silence is its own candidate; a retake group
@@ -146,6 +153,9 @@ interface Candidate {
   groupIndex?: number;
   takeIndex?: number;
   takeCount?: number;
+  /** Which group the row belongs to, unique across detector and client rows
+   *  — what a listener's unlock is keyed by. */
+  groupKey?: string;
   /** D-380 step 2 — who proposed the row. Absent means the detector. */
   source?: 'detector' | 'client';
   /** Client rows: the coverage gate's status for the row's group. */
@@ -190,6 +200,7 @@ function clientRows(set: RetakeProposalSet, nameOf: (clip: number) => string): C
         flagged: t.keep ? {} : flagged,
         suggestedKeep: t.keep,
         groupIndex: g.group,
+        groupKey: `cli-${set.track}-${g.group}`,
         takeIndex: ti,
         takeCount: g.takes.length,
         ...(g.line ? { line: g.line } : {}),
@@ -280,7 +291,7 @@ export function RecutPanel() {
   const [resultTrack, setResultTrack] = useState<number | null>(null);
   /** D-380 step 2 — refused client groups a human has unlocked after
    *  listening, by group index. Cleared whenever the proposals change. */
-  const [unlocked, setUnlocked] = useState<Record<number, boolean>>({});
+  const [unlocked, setUnlocked] = useState<Record<string, boolean>>({});
 
   // Subscribed as whole maps rather than through a key-dependent selector: the
   // key only exists once a run has started, and a map's identity changes
@@ -372,12 +383,12 @@ export function RecutPanel() {
     [candidates, clientCandidates],
   );
 
-  /** Can this row be ticked at all? A detector row always; a client row not
-   *  while its view is stale, and a refused one only once unlocked. */
+  /** Can this row be ticked at all? A silence always; a retake the gate
+   *  refused (a client's or, since D-382, the detector's) only once a person
+   *  who listened unlocks it; a client row not while its view is stale. */
   const tickable = (c: Candidate): boolean => {
-    if (c.source !== 'client') return true;
-    if (clientStale || c.spans.length === 0) return false;
-    if (c.status === 'refused') return Boolean(unlocked[c.groupIndex ?? -1]);
+    if (c.source === 'client' && (clientStale || c.spans.length === 0)) return false;
+    if (c.status === 'refused') return Boolean(unlocked[c.groupKey ?? '']);
     return true;
   };
 
@@ -592,113 +603,155 @@ export function RecutPanel() {
     );
     if (!settled) return;
 
-    const { fps } = pending;
-    const rows: Candidate[] = [];
-    const failures: string[] = [];
+    /** D-382 — build the list once the detector's groups have been through
+     *  the coverage gate (retakes only; a silence has no words to check). */
+    const finish = (gates: Readonly<Record<string, DetectorGateResult[]>>) => {
+      const { fps } = pending;
+      const rows: Candidate[] = [];
+      const failures: string[] = [];
 
-    for (const c of pending.clips) {
-      if (c.failure) {
-        failures.push(c.failure);
-        continue;
-      }
-      const key = c.key as string;
-      const failure = errors[key];
-      if (failure) {
-        failures.push(failure);
-        continue;
-      }
+      for (const c of pending.clips) {
+        if (c.failure) {
+          failures.push(c.failure);
+          continue;
+        }
+        const key = c.key as string;
+        const failure = errors[key];
+        if (failure) {
+          failures.push(failure);
+          continue;
+        }
 
-      if (pending.kind === 'silence') {
-        const found = silences[key];
-        found.silences.forEach((s, i) => {
-          const span = spanToFrames(c.clip, s.start_secs, s.end_secs, fps);
-          if (span.endFrame <= span.startFrame) return;
-          rows.push({
-            id: `sil-${c.index}-${i}`,
-            kind: 'silence',
-            span,
-            spans: [span],
-            clip: c.index,
-            clipName: c.clip.name,
+        if (pending.kind === 'silence') {
+          const found = silences[key];
+          found.silences.forEach((s, i) => {
+            const span = spanToFrames(c.clip, s.start_secs, s.end_secs, fps);
+            if (span.endFrame <= span.startFrame) return;
+            rows.push({
+              id: `sil-${c.index}-${i}`,
+              kind: 'silence',
+              span,
+              spans: [span],
+              clip: c.index,
+              clipName: c.clip.name,
+            });
+          });
+          continue;
+        }
+
+        // One row per TAKE, not per member: since D-327 a delivery can span
+        // several utterances, and a row per member would offer half a delivery
+        // for cutting while marking the other half as the keeper.
+        retakes[key].groups.forEach((g, gi) => {
+          const takes = groupTakes(g);
+          const gate = gates[key]?.[gi];
+          const flagged: Record<number, string> = {};
+          for (const w of gate?.offending ?? []) flagged[w.index] = '';
+          takes.forEach((t) => {
+            // D-364/B-237 — a take can land in several clips of the run, and one
+            // row has to carry every one of those ranges or the cut leaves the
+            // other halves behind. `spans[0]` is where the row sorts and reads.
+            const segments = takeSegments(c.run as ClipRun, t.startSecs, t.endSecs, fps);
+            if (segments.length === 0) return;
+            const spans = segments.map((seg) => seg.span);
+            rows.push({
+              id: `ret-${c.index}-${gi}-${t.index}`,
+              kind: 'retake',
+              span: spans[0],
+              spans,
+              clip: segments[0].clip,
+              clipName:
+                (c.run as ClipRun).targets.find((rt) => rt.clip === segments[0].clip)?.c.name ??
+                c.clip.name,
+              ...(segments.length > 1 ? { clipSpan: segments.length } : {}),
+              text: t.text,
+              suggestedKeep: t.suggestedKeep,
+              groupIndex: gi,
+              groupKey: `ret-${c.index}-${gi}`,
+              takeIndex: t.index,
+              takeCount: takes.length,
+              ...(gate
+                ? {
+                    source: 'detector' as const,
+                    status: gate.status,
+                    ...(gate.takeWords[t.index]?.length ? { words: gate.takeWords[t.index] } : {}),
+                    flagged: t.suggestedKeep ? {} : flagged,
+                    ...(gate.reasonText ? { reasonText: gate.reasonText } : {}),
+                    unlockable: gate.unlockable,
+                  }
+                : {}),
+            });
           });
         });
-        continue;
       }
 
-      // One row per TAKE, not per member: since D-327 a delivery can span
-      // several utterances, and a row per member would offer half a delivery
-      // for cutting while marking the other half as the keeper.
-      retakes[key].groups.forEach((g, gi) => {
-        const takes = groupTakes(g);
-        takes.forEach((t) => {
-          // D-364/B-237 — a take can land in several clips of the run, and one
-          // row has to carry every one of those ranges or the cut leaves the
-          // other halves behind. `spans[0]` is where the row sorts and reads.
-          const segments = takeSegments(c.run as ClipRun, t.startSecs, t.endSecs, fps);
-          if (segments.length === 0) return;
-          const spans = segments.map((seg) => seg.span);
-          rows.push({
-            id: `ret-${c.index}-${gi}-${t.index}`,
-            kind: 'retake',
-            span: spans[0],
-            spans,
-            clip: segments[0].clip,
-            clipName:
-              (c.run as ClipRun).targets.find((rt) => rt.clip === segments[0].clip)?.c.name ??
-              c.clip.name,
-            ...(segments.length > 1 ? { clipSpan: segments.length } : {}),
-            text: t.text,
-            suggestedKeep: t.suggestedKeep,
-            groupIndex: gi,
-            takeIndex: t.index,
-            takeCount: takes.length,
-          });
-        });
-      });
-    }
+      // A whole run that failed is an error; a run where SOME clips failed still
+      // has real answers in it, and burying them behind one red box would be the
+      // same "you only looked at part of it" failure this scan exists to fix.
+      if (failures.length === pending.clips.length) {
+        setError(failures[0] ?? 'detection failed');
+        setPending(null);
+        return;
+      }
 
-    // A whole run that failed is an error; a run where SOME clips failed still
-    // has real answers in it, and burying them behind one red box would be the
-    // same "you only looked at part of it" failure this scan exists to fix.
-    if (failures.length === pending.clips.length) {
-      setError(failures[0] ?? 'detection failed');
+      // Sorted by where the cut lands, not by which clip answered first — the
+      // list reads along the timeline, which is how a human reviews it.
+      rows.sort((a, b) => a.span.startFrame - b.span.startFrame);
+      setCandidates(rows);
+      setResultTrack(pending.track);
+
+      // Counted in CLIPS, not in units: since D-364 a retake unit is a whole run
+      // of clips, and "1 clip on this track" for a run of twenty would be a lie.
+      const clipsIn = (c: PendingClip) => c.run?.targets.length ?? 1;
+      const scannedUnits = pending.clips.filter((c) => !c.failure);
+      const scanned = scannedUnits.reduce((n, c) => n + clipsIn(c), 0);
+      const where = scanned === 1 ? 'this clip' : `${scanned} clips on this track`;
+      // D-349 — say it out loud whenever the grouping read words the transcript
+      // did not originally contain. A human reading this list is entitled to know
+      // that, and a line of text is cheaper than being blindsided by a take
+      // appearing that was invisible five minutes ago.
+      const recovered = pending.clips.reduce((n, c) => n + (c.recovered ?? 0), 0);
+      const recoveredNote =
+        recovered > 0
+          ? ` Recovered ${recovered} line${recovered === 1 ? '' : 's'} the transcription had silently skipped, and grouped those too.`
+          : '';
+      if (rows.length === 0) {
+        setNotice(
+          (pending.kind === 'silence'
+            ? `No silence of ${pending.minSilenceMs}ms or longer in ${where}.`
+            : `No retakes found in ${where}.`) + recoveredNote,
+        );
+      } else if (failures.length > 0) {
+        setNotice(`${failures.length} clip(s) could not be analysed: ${failures[0]}${recoveredNote}`);
+      } else if (recoveredNote) {
+        setNotice(recoveredNote.trim());
+      }
       setPending(null);
+    };
+
+    if (pending.kind === 'silence') {
+      finish({});
       return;
     }
-
-    // Sorted by where the cut lands, not by which clip answered first — the
-    // list reads along the timeline, which is how a human reviews it.
-    rows.sort((a, b) => a.span.startFrame - b.span.startFrame);
-    setCandidates(rows);
-    setResultTrack(pending.track);
-
-    // Counted in CLIPS, not in units: since D-364 a retake unit is a whole run
-    // of clips, and "1 clip on this track" for a run of twenty would be a lie.
-    const clipsIn = (c: PendingClip) => c.run?.targets.length ?? 1;
-    const scannedUnits = pending.clips.filter((c) => !c.failure);
-    const scanned = scannedUnits.reduce((n, c) => n + clipsIn(c), 0);
-    const where = scanned === 1 ? 'this clip' : `${scanned} clips on this track`;
-    // D-349 — say it out loud whenever the grouping read words the transcript
-    // did not originally contain. A human reading this list is entitled to know
-    // that, and a line of text is cheaper than being blindsided by a take
-    // appearing that was invisible five minutes ago.
-    const recovered = pending.clips.reduce((n, c) => n + (c.recovered ?? 0), 0);
-    const recoveredNote =
-      recovered > 0
-        ? ` Recovered ${recovered} line${recovered === 1 ? '' : 's'} the transcription had silently skipped, and grouped those too.`
-        : '';
-    if (rows.length === 0) {
-      setNotice(
-        (pending.kind === 'silence'
-          ? `No silence of ${pending.minSilenceMs}ms or longer in ${where}.`
-          : `No retakes found in ${where}.`) + recoveredNote,
-      );
-    } else if (failures.length > 0) {
-      setNotice(`${failures.length} clip(s) could not be analysed: ${failures[0]}${recoveredNote}`);
-    } else if (recoveredNote) {
-      setNotice(recoveredNote.trim());
-    }
-    setPending(null);
+    // Every unit's groups through the gate together, then the list — still
+    // all-or-nothing (see above). A newer run of this effect cancels this one.
+    let cancelled = false;
+    const tl = useEditorTimelineStore.getState().timeline;
+    const units = pending.clips.filter((c) => !c.failure && c.key !== null && retakes[c.key]);
+    void Promise.all(
+      units.map(async (c) => {
+        const key = c.key as string;
+        const gate = tl
+          ? await gateDetectorGroups(tl, pending.track, c.source, detectedForGate(retakes[key].groups))
+          : [];
+        return [key, gate] as const;
+      }),
+    ).then((entries) => {
+      if (!cancelled) finish(Object.fromEntries(entries));
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [pending, silences, silenceErrors, retakes, retakeErrors]);
 
   /** Tick every take a group suggests dropping, leaving its keeper alone.
@@ -716,6 +769,9 @@ export function RecutPanel() {
         if (c.status === 'verified' && !c.suggestedKeep) next[c.id] = true;
         continue;
       }
+      // D-382 — a detector group the gate refused is never ticked in bulk,
+      // even once unlocked: a person ticks it, row by row, after listening.
+      if (c.status === 'refused') continue;
       if (c.kind === 'silence' || !c.suggestedKeep) next[c.id] = true;
     }
     setTicked(next);
@@ -978,14 +1034,14 @@ export function RecutPanel() {
                 {c.status === 'refused' &&
                   !c.suggestedKeep &&
                   c.unlockable &&
-                  !unlocked[c.groupIndex ?? -1] &&
-                  !clientStale && (
+                  !unlocked[c.groupKey ?? ''] &&
+                  !(c.source === 'client' && clientStale) && (
                     <button
                       type="button"
-                      data-chroma-recut-unlock={c.groupIndex}
+                      data-chroma-recut-unlock={c.groupKey}
                       onClick={(e) => {
                         e.preventDefault();
-                        const group = c.groupIndex ?? -1;
+                        const group = c.groupKey ?? '';
                         setUnlocked((u) => ({ ...u, [group]: true }));
                       }}
                       className="mt-1 inline-flex items-center gap-1 text-text-secondary underline-offset-2 hover:underline"

@@ -6,6 +6,68 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-382 — The deterministic retake detector sits behind the same coverage gate as the MCP client
+
+**Status: `decided`** (2026-10-14). Code: `packages/editor/src/detectorGate.ts`,
+`chroma_gate_detected_retakes` in `app/src-tauri/src/chroma/retake_proposals.rs`.
+Measurement: `eval/retake/` tasks `C0xx/parakeet-gated`. Detail:
+`docs/notes/retake-detection.md` §12.6. Mitigates **B-246**.
+
+**Context.** D-380 made the MCP client the primary retake judge, but
+`editor_detect_retakes` and the Recut panel's Retakes button remain — the
+fallback with no client connected, and a tool an agent may still call. That
+detector over-cuts (B-246; D-378's eval: 40.24 s of unique speech on the
+Parakeet corpus), and D-380 measured that the gate refuses every one of its
+over-cutting groups. Without this, the app would hold a client's proposal to a
+standard its own detector skips.
+
+**Options.**
+1. *Fix `retake.rs`'s grouping* (B-246's real fix). Four rounds of string-rule
+   tuning have each ended on a proxy (B-198 → B-246); it is still worth doing,
+   but it is not a guarantee, and it is not this pass.
+2. *Retire the detector* in favour of the client. Leaves a person with no
+   client connected and no AI with no retake tool at all.
+3. **Map each detector group onto the same word view and run the same gate**;
+   mark refused groups exactly as a client's. The detector is unchanged.
+
+**Choice: option 3.** One gate, one status vocabulary, one review treatment
+whichever proposer made the group. Details that are decisions:
+
+- **Mapping by word midpoint** (`take_from_span`), restricted to the group's
+  own source — the splice's and `index_pieces`' rule, so a detector take and a
+  client take over the same words map to the same indices.
+- **Judged together, in the detector's order** — cross-group conflicts count,
+  as for a client's set.
+- **Unchecked is refused.** A group that cannot be placed on words (fewer than
+  two takes hold a word, or its keeper holds none), or any group when the gate
+  could not run, is reported refused ("not checked") — never verified by
+  default. It stays unlockable: a person who listens can still cut it, as they
+  always could.
+- **No waivers for the detector.** Nothing vouches for it; a refused detector
+  group is resolved by a person, or by a client re-proposing it through
+  `editor_propose_retakes`.
+- **Gated in the op layer and in the panel**, through the same
+  `detectedForGate` → `gateDetectorGroups`, so the MCP answer and the panel's
+  rows cannot disagree.
+
+**Measured** (tasks pinned in `eval/retake/baseline.json`, verdicts all
+`fail`, on recall only):
+
+| source (Parakeet) | over-cut | precision | retake recall | groups applied / refused |
+|---|---|---|---|---|
+| C019 | 24.40 → **0.00 s** | 0.443 → 1.000 | 0.265 → 0.161 | 4 / 3 |
+| C038 | 12.64 → **0.00 s** | 0.843 → 1.000 | 0.523 → 0.189 | 5 / 5 |
+| C040 | 3.20 → **0.00 s** | 0.965 → 1.000 | 0.606 → 0.232 | 5 / 5 |
+
+**What it costs.** About half the detector's recall: the gate also refuses its
+correct groups whose deleted take holds a word the keeper does not (the same
+ASR-mishearing / inflection cost §11.4 measured for the oracle). Those still
+reach the person, marked. **What it does not do:** fix B-246's grouping, or
+measure Whisper transcripts (the gate runs on any word-timed transcript; the
+labelled word fixtures are Parakeet's).
+
+---
+
 ## D-380 — Retake judgement moves to the MCP client, behind a deterministic coverage gate
 
 **Status: `decided`** (2026-10-13). Step 1 (this entry's code) is the pure
@@ -164,7 +226,7 @@ justification); nothing is cut by these tools.
   one undo.
 
 Not done: a live smoke against the running app (script:
-`retake-detection.md` §12.6), and the Claude skill that will wrap the loop.
+`retake-detection.md` §12.7), and the Claude skill that will wrap the loop.
 
 ---
 
