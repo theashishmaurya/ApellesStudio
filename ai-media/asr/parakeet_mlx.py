@@ -111,7 +111,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-from asr.base import BackendDescriptor, local_snapshot_or_repo
+from asr.base import UNDETECTED_LANGUAGE, BackendDescriptor, local_snapshot_or_repo
 from errors import UserFacingError
 
 NAME = "parakeet"
@@ -484,7 +484,7 @@ class ParakeetMlxBackend:
 
         return {
             "text": text,
-            "language": language if language and language != "auto" else "unknown",
+            "language": language if language and language != "auto" else UNDETECTED_LANGUAGE,
             "segments": segments,
         }
 

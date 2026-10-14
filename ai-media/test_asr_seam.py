@@ -567,6 +567,18 @@ def check_parakeet_glue(audio: Path) -> None:
 
     # Auto-detect reports "unknown"; no word timings → segments kept, `words` absent.
     assert bare["language"] == "unknown", bare["language"]
+    # B-247: the value a contract reports must be accepted back. The app pins
+    # every dark-region re-read and every `editor_retranscribe_words` to the
+    # whole-file pass's own `language` (D-349) — and refusing "unknown" refused
+    # them all, silently, in the live app.
+    check_language(get_backend("parakeet").descriptor, bare["language"])
+    pinned = _stub_modules(
+        stubs,
+        lambda: transcribe_mod.transcribe(
+            str(audio), language=bare["language"], word_timestamps=False
+        ),
+    )
+    assert pinned["language"] == "unknown", pinned["language"]
     assert "words" not in bare and all(s["words"] == [] for s in bare["segments"]), bare
     assert [s["text"] for s in bare["segments"]] == ["In", "December.", "Next year"], bare
 
