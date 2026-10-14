@@ -858,6 +858,23 @@
       }
     },
     {
+      "name": "debug_set_library_mode",
+      "description": "Switch which panel the Edit tab's left library column shows, and open\n    the column so that panel is actually visible \u2014 the same state the library\n    rail's own buttons drive.\n\n    `mode` is one of \"sources\", \"titles\", \"effects\", \"subtitles\", \"recut\" or\n    \"index\" (`debug_ui_state`'s `editor.libraryModes` lists them). The column\n    is opened as well because the rail lives inside it: choosing a mode while\n    the column is closed would change nothing on screen. Useful to reach the\n    Recut panel and check a retake proposal there. An unknown mode is refused\n    with the accepted list rather than silently ignored.\n\n    Returns {ok, libraryMode, sourcesPanelOpen}.",
+      "inputSchema": {
+        "properties": {
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object",
+        "title": "debug_set_library_modeArguments"
+      }
+    },
+    {
       "name": "debug_set_sources_panel",
       "description": "Show or hide the shell's docked left library column \u2014 the same state the\n    panel's own toggle drives (on the Edit tab, that toggle is the library\n    rail's own buttons).\n\n    D-263: this column shows the shared media pool by default, but the Edit\n    tab's rail can switch it to that tab's Titles / Effects / Subtitles\n    libraries. `debug_ui_state`'s `editor.libraryMode` says which one is\n    showing, so a screenshot of this column can be read correctly; this tool\n    still only controls whether the column is open at all.\n\n    Returns {ok, sourcesPanelOpen}.",
       "inputSchema": {
@@ -11185,6 +11202,29 @@
           "op": "debug_set_inspector_tab",
           "args": {
             "tab": "v_debug_set_inspector_tab.tab"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "debug_set_library_mode",
+      "case": "minimal",
+      "arguments": {
+        "mode": "v_debug_set_library_mode.mode"
+      },
+      "requests": [
+        {
+          "op": "debug_set_library_mode",
+          "args": {
+            "mode": "v_debug_set_library_mode.mode"
           },
           "timeout_ms": 20000
         }

@@ -5857,6 +5857,25 @@ def debug_set_sources_panel(open: bool) -> str:
 
 
 @mcp.tool()
+def debug_set_library_mode(mode: str) -> str:
+    """Switch which panel the Edit tab's left library column shows, and open
+    the column so that panel is actually visible — the same state the library
+    rail's own buttons drive.
+
+    `mode` is one of "sources", "titles", "effects", "subtitles", "recut" or
+    "index" (`debug_ui_state`'s `editor.libraryModes` lists them). The column
+    is opened as well because the rail lives inside it: choosing a mode while
+    the column is closed would change nothing on screen. Useful to reach the
+    Recut panel and check a retake proposal there. An unknown mode is refused
+    with the accepted list rather than silently ignored.
+
+    Returns {ok, libraryMode, sourcesPanelOpen}."""
+    import json
+
+    return json.dumps(_op("debug_set_library_mode", mode=mode), indent=2, default=str)
+
+
+@mcp.tool()
 def debug_set_editor_inspector(open: bool) -> str:
     """Show or hide the Edit tab's Inspector column — the same state its own
     toggle button (top-right of the preview) drives.

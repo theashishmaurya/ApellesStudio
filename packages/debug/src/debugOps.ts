@@ -34,6 +34,10 @@
  *                                   Edit tab's rail switch it to Titles /
  *                                   Effects / Subtitles, reported as
  *                                   `editor.libraryMode`).
+ *   `debug_set_library_mode`      — which panel the Edit tab's left library
+ *                                   column shows (sources / titles / effects /
+ *                                   subtitles / recut / index) AND opens that
+ *                                   column, so the panel is actually visible.
  *   `debug_set_editor_inspector`  — the Edit tab's Inspector column.
  *   `debug_set_inspector_tab`     — that Inspector's Video/Audio tab (D-246).
  *   `debug_set_popover_open`      — any registered Edit-tab popover/dialog by
@@ -78,6 +82,7 @@ import {
   PANEL_IDS,
   parsePanelId,
   EDIT_LIBRARY_MODES,
+  parseEditLibraryMode,
 } from '@apelles/editor';
 
 import { describeOpenDialogs, serializeDomTree } from './domTree';
@@ -170,6 +175,25 @@ export const DEBUG_OPS: Record<string, OpHandler> = {
     // The same action the Sources toggle's `onClick` calls (`Shell.tsx`).
     useShellStore.getState().setSourcesPanelOpen(open.value);
     return { ok: true, sourcesPanelOpen: useShellStore.getState().sourcesPanelOpen };
+  },
+
+  debug_set_library_mode: (a) => {
+    const mode = parseEditLibraryMode(a?.mode);
+    // D-216's rule: recognise or refuse by name — never accept a typo, do
+    // nothing and answer `ok`.
+    if (mode === null) {
+      return { error: `unknown mode ${JSON.stringify(a?.mode)} — expected one of ${EDIT_LIBRARY_MODES.join(', ')}` };
+    }
+    // The same action the library rail's own buttons call, plus the shell's
+    // open flag: the rail lives inside the column, so a mode chosen while the
+    // column is closed would otherwise change nothing anyone can see.
+    useEditorTimelineStore.getState().setLibraryMode(mode);
+    useShellStore.getState().setSourcesPanelOpen(true);
+    return {
+      ok: true,
+      libraryMode: useEditorTimelineStore.getState().libraryMode,
+      sourcesPanelOpen: useShellStore.getState().sourcesPanelOpen,
+    };
   },
 
   debug_set_editor_inspector: (a) => {

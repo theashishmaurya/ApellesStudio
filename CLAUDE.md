@@ -216,7 +216,7 @@ chroma/
                           9 exist, 8 of them real+load-bearing: apelles-{types,gpu,media,
                           timeline,grade-model,project,motion,ai} (waves 1-3, 2026-09-05)
                           + apelles-mcp (D-312, the MCP tool surface — port complete, all
-                          183 tools pass the parity harness against mcp/server.py; the
+                          184 tools pass the parity harness against mcp/server.py; the
                           MIGRATION off Python is a separate, not-yet-made call, see
                           docs/notes/mcp-rust-port.md). Still future: apelles-grade,
                           apelles-compositor, apelles-agent. Live table + per-crate
