@@ -1446,3 +1446,40 @@ view is Whisper's and the POC indices below do not line up):
    AI-confirmed take by hand, Cut — one undo entry; undo restores.
 6. Re-propose, then trim the clip slightly — the stale banner appears and the
    rows lock.
+
+## 13. A poll carries a started job to its answer (B-249, 2026-10-14)
+
+`editor_detect_retakes` is not one job but a chain: the file's transcript, the
+D-349 dark-region scan, one isolated re-read per dark window, then the grouping.
+Each step can only start once the one before it has landed, which is usually
+long after the start call has returned — and the start call's own note tells the
+agent to poll `editor_detect_retakes_status`. Before B-249 the whole-track
+status read the chain with `start: false`, so once the scan landed nothing ever
+started the re-reads and the sweep said `transcribing` forever; the single-clip
+status did advance the re-reads (it always passed `start: true`) but never
+started the grouping, so it stopped one step later with "nothing has been
+started — call editor_detect_retakes".
+
+**The rule now.** A start call records a **retake request** in
+`mediaUnderstandingStore.retakeRequests`, keyed by `retakeRequestKey` — the run
+(source, range), `recoverDarkRegions` and the tuning knobs; not the utterances,
+which do not exist yet when the request is made. A `_status` call (one clip or
+a sweep) whose run has a recorded request **continues** the chain: it drives
+`runTranscriptView` with `start: true` and starts the grouping once the words
+are in. For any run without a request, a status call is a pure read and starts
+nothing; it answers `state: "idle"` with a note naming `editor_detect_retakes`
+(a sweep lists those clips under `notStarted`).
+
+D-349's rules are unchanged: the re-read language is still pinned to the
+whole-file pass, a failed scan or re-read still degrades to the raw transcript
+and is retried only by `force`, and every cache key is the same. The grouping is
+started from a poll only from `idle`, never re-run from `error`, and the request
+is settled as soon as the grouping has a terminal answer, so polling never
+retries a failure. The Recut panel is unaffected: it always runs with
+`start: true`, as a human asking.
+
+One behaviour change: the single-clip `_status` used to start the D-349 scan
+for a clip nobody had asked about. It now starts nothing for one, like the
+sweep. The pins are the B-249 block in `recutSweep.dom.test.tsx`; with the old
+op code all three fail (the sweep never re-reads, the single clip never groups,
+an unasked status read starts a scan).

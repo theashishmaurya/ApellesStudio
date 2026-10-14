@@ -211,6 +211,40 @@ export function retakeKey(a: RetakeDetectionArgs): string {
   ].join('|');
 }
 
+/** What a START call asked for when it asked for retakes over one run of one
+ *  source (B-249) — everything that decides which scan, which recoveries and
+ *  which grouping that request leads to, and nothing that only exists once
+ *  the words are in (the utterances are not known yet when the request is
+ *  made, which is exactly why [`retakeKey`] cannot be used for it). */
+export interface RetakeRequestArgs {
+  path: string;
+  startSecs: number;
+  durationSecs: number;
+  /** Whether the request includes the D-349 dark-region scan and recovery. */
+  recoverDarkRegions: boolean;
+  similarity?: number;
+  windowSecs?: number;
+  minWords?: number;
+  maxSpanUtterances?: number;
+  phraseMinWords?: number;
+}
+
+/** The key one retake REQUEST is recorded under (B-249). Path first, like every
+ *  other key here, so [`MediaUnderstandingState.clear`] can drop a file's. */
+export function retakeRequestKey(a: RetakeRequestArgs): string {
+  return [
+    a.path,
+    a.startSecs,
+    a.durationSecs,
+    a.recoverDarkRegions ? 'recover' : 'raw',
+    a.similarity ?? '',
+    a.windowSecs ?? '',
+    a.minWords ?? '',
+    a.maxSpanUtterances ?? '',
+    a.phraseMinWords ?? '',
+  ].join('|');
+}
+
 /** Everything that changes what `chroma_detect_dark_regions` would answer
  *  (D-349). The WORDS are not in the key: they come from the file's own
  *  transcript, which is cached by path and cannot differ between two calls for
@@ -334,6 +368,15 @@ interface MediaUnderstandingState {
   appliedRereads: Record<string, AppliedReread>;
   /** The next [`AppliedReread.seq`]. */
   rereadSeq: number;
+  /** [`retakeRequestKey`] -> a retake job a START call asked for that has not
+   *  answered yet (B-249). The job is a chain — transcript, dark-region scan,
+   *  one recovery per window, grouping — and each step can only be started
+   *  once the one before it has landed, usually long after the start call has
+   *  returned. This record is what lets the `_status` twin carry the chain on:
+   *  a poll for a request recorded here CONTINUES it, and a poll for anything
+   *  else is a pure read that starts nothing. Settled once the grouping has a
+   *  terminal answer, so a failure is never retried by a poll. */
+  retakeRequests: Record<string, true>;
   /** Track index -> the MCP client's retake proposals for that track, as the
    *  coverage gate judged them (D-380 step 2). The Recut panel subscribes to
    *  this; `editor_propose_retakes` writes it. Held here rather than in the
@@ -368,6 +411,12 @@ interface MediaUnderstandingState {
   detectRetakes(args: RetakeDetectionArgs, force?: boolean): Promise<RetakeDetection>;
   startRetakeDetection(args: RetakeDetectionArgs, force?: boolean): AnalysisPhase;
   retakeDetectionStatus(key: string): AnalysisStatus<RetakeDetection>;
+
+  /** Record / read / settle a START call's retake request (B-249) — see
+   *  [`retakeRequests`]. */
+  requestRetakes(key: string): void;
+  retakeRequested(key: string): boolean;
+  settleRetakeRequest(key: string): void;
 
   /** The dark-region scan (D-349), in the same three shapes. */
   detectDarkRegions(args: DarkDetectionArgs, force?: boolean): Promise<DarkDetection>;
@@ -588,6 +637,7 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
   appliedRereads: {},
   rereadSeq: 0,
   retakeProposals: {},
+  retakeRequests: {},
 
   getTranscript: async (path, options = {}) => {
     const cached = get().transcripts[path];
@@ -776,6 +826,21 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
     if (s.detectingRetakes[key]) return { phase: 'running' };
     if (s.retakeErrors[key]) return { phase: 'error', error: s.retakeErrors[key] };
     return { phase: 'idle' };
+  },
+
+  requestRetakes: (key) => {
+    if (get().retakeRequests[key]) return;
+    set((s) => ({ retakeRequests: { ...s.retakeRequests, [key]: true } }));
+  },
+
+  retakeRequested: (key) => !!get().retakeRequests[key],
+
+  settleRetakeRequest: (key) => {
+    if (!get().retakeRequests[key]) return;
+    set((s) => {
+      const { [key]: _settled, ...retakeRequests } = s.retakeRequests;
+      return { retakeRequests };
+    });
   },
 
   detectDarkRegions: async (args, force = false) => {
@@ -986,6 +1051,7 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
         rereadErrors: {},
         appliedRereads: {},
         retakeProposals: {},
+        retakeRequests: {},
       });
       return;
     }
@@ -1015,6 +1081,9 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
         rereads: withoutPath(s.rereads, path),
         rereadErrors: withoutPath(s.rereadErrors, path),
         appliedRereads: withoutPath(s.appliedRereads, path),
+        // A request is for answers about this file's audio; forgetting the
+        // file forgets what was asked of it too.
+        retakeRequests: withoutPath(s.retakeRequests, path),
       };
     });
   },

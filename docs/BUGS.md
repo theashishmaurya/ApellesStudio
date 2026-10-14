@@ -27,6 +27,24 @@ Still real:
 
 ## Open
 
+## B-250 — `editor_get_word_transcript` told the agent to start a transcription that was already running
+
+status: **fixed** (2026-10-14) · severity: low (a wrong instruction, not a wrong result: following it only re-asks for a job already in flight) · area: `packages/editor/src/retakeProposalOps.ts`
+
+- **found:** 2026-10-14, live MCP test: a source on the track had no transcript yet and a transcription for it was already running, started by another caller. `editor_get_word_transcript` (without `start`) still answered "Call editor_get_word_transcript with start: true to transcribe them."
+- **cause:** the pending note chose its wording from the call's own `start` argument ("did *this* call start it?") instead of from the store ("is a transcription running for these files?"). Only a call that started the job itself was told it was running.
+- **fix:** the note reads `mediaUnderstandingStore.transcribing` for the pending files. If all are running it says transcription is running and to call again shortly; if none are, it says to call with `start: true`; for a mix it says how many are running and how many still need `start: true`. No tool description changed.
+- **verification:** new case in `retakeProposalOps.dom.test.tsx`: a transcription started outside the op makes the note say "Transcription is running; call this again" with no `start: true`. With the old code it fails on exactly that assertion. Whole `@apelles/editor` suite green (2160 tests); `tsc` in `app/` at the 65-error baseline.
+
+## B-249 — retake dark-region recovery stalled forever when the agent polled, as the start call told it to
+
+status: **fixed** (2026-10-14) · severity: medium (a retake sweep never answered unless the agent ignored its own instructions and called the start tool again) · area: `packages/editor/src/useEditorControl.ts`, `packages/editor/src/mediaUnderstandingStore.ts`
+
+- **found:** 2026-10-14, live MCP test: `editor_detect_retakes` (sweep) started the D-349 dark-region scan and answered `state: transcribing`, with a note saying to poll `editor_detect_retakes_status`. Polling then reported the run as still transcribing (recovering) forever; only another start call got it moving.
+- **cause:** the job is a chain (transcript, scan, one re-read per dark window, grouping), and each step can only start once the previous one lands. The sweep's status path called `runTranscriptView` with `start: false`, so after the scan finished nothing ever called `startRecovery`. The single-clip status path had the same gap one step later: it advanced the re-reads but never started the grouping. Nothing recorded that a start call had asked for the job, so a status read could not tell "continue what was asked for" from "read only".
+- **fix:** a start call records a retake request in the store (`retakeRequests`, keyed by `retakeRequestKey`: run, `recoverDarkRegions`, tuning). A status call for a recorded request continues the chain through the re-reads and into the grouping. It starts the grouping only from `idle`, and the request is settled once the grouping has a terminal answer, so a poll never retries a failure. A status call with no recorded request is a pure read that starts nothing and answers `idle` naming the start tool. That last part is a change for the single-clip status, which used to start the scan for any clip. D-349's rules are unchanged: language pinned, errors degrade and only `force` retries them, same cache keys. The Recut panel always runs as a start, so it is unaffected. The start/status notes and the `editor_detect_retakes_status` description (Python + Rust, parity corpus re-captured) now describe this. Write-up: `docs/notes/retake-detection.md` §13.
+- **verification:** new B-249 block in `recutSweep.dom.test.tsx` (sweep and single clip: start, scan lands, poll starts the re-read pinned to `en`, re-read lands, poll groups the spliced words and answers `done`; plus an unasked status read starting nothing). With the old op code all three fail. Whole `@apelles/editor` suite green (2159 tests); `tsc` in `app/` at the 65-error baseline; `cargo test -p apelles-mcp` green.
+
 ## B-248 — `undo` / `redo` answered every call with the whole Colorist grade and histogram
 
 status: **fixed** (2026-10-14) · severity: low (correct behaviour, ~30 KB of irrelevant payload on every undo — an agent's context, not the app, paid for it) · area: `app/src/hooks/useChromaControl.ts`

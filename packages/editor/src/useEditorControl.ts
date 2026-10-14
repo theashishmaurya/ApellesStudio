@@ -258,8 +258,10 @@ import { warmGradeLuts } from './gradeLuts';
 import {
   darkKey,
   retakeKey,
+  retakeRequestKey,
   silenceKey,
   useMediaUnderstandingStore,
+  type AnalysisPhase,
   type AnalysisStatus,
   type DarkDetectionArgs,
   type RetakeDetection,
@@ -1039,9 +1041,14 @@ function silenceEnvelope(
  *  to `editor_get_transcript_status` — the pre-existing D-318 behaviour, kept
  *  verbatim rather than folded into the new job vocabulary, because "the
  *  transcript isn't ready" and "the detection is still running" are genuinely
- *  different states with different things to poll. */
+ *  different states with different things to poll.
+ *
+ *  `start` is true for `editor_detect_retakes` and false for its `_status`
+ *  twin; `drive` in the result says whether this call advances the job (a start,
+ *  or a poll continuing a request a start recorded — B-249). */
 function resolveRetakeArgs(
   a: OpArgs,
+  start: boolean,
 ):
   | { error: string }
   | { pending: Record<string, unknown> }
@@ -1053,6 +1060,8 @@ function resolveRetakeArgs(
       key: string;
       run: ClipRun;
       rv: RunTranscriptView;
+      request: string;
+      drive: boolean;
     } {
   const tl = useEditorTimelineStore.getState().timeline;
   if (!tl) return noTimeline();
@@ -1063,12 +1072,37 @@ function resolveRetakeArgs(
     return { error: 'that clip is generated (a title or adjustment) and has no speech to analyse' };
   }
 
-  const transcript = useMediaUnderstandingStore.getState().transcriptStatus(c.source_path);
+  const fps = timelineFps(tl);
+  const tuning = retakeTuning(a);
+  const recover = recoverRequested(a);
+  // D-364/B-237 — a named clip is still ANSWERED about on its own, but it is
+  // READ as part of the continuous take it belongs to. Scoping the view to one
+  // clip is what made a restart whose halves sit in two clips structurally
+  // undetectable, and a human reviewing clip K in the Recut panel wants the
+  // stumble K is part of, not the half of it that happens to fall inside K.
+  // Building the run here (rather than only in the sweep) also means one clip
+  // and a sweep derive the IDENTICAL `RetakeDetectionArgs`, so they share a
+  // cache key and can never report the same material differently.
+  const run = runFor(tl, found.track, found.clip, c, fps, tuning.windowSecs);
+
+  // B-249 — the start call RECORDS its request; the `_status` twin carries a
+  // recorded request on (`drive`) and is a pure read for anything else. The
+  // chain behind one request (transcript, D-349 scan, one recovery per window,
+  // grouping) can only advance a step at a time as each lands, so a status
+  // poll that never advanced it stalled at whichever step it had reached.
+  const store = useMediaUnderstandingStore.getState();
+  const request = retakeRequestFor(run, recover, tuning);
+  if (start) store.requestRetakes(request);
+  const drive = start || store.retakeRequested(request);
+
+  const transcript = store.transcriptStatus(c.source_path);
   if (transcript.phase === 'error') {
+    store.settleRetakeRequest(request);
     return { error: transcript.error ?? 'transcription failed' };
   }
   if (transcript.phase !== 'done') {
-    useMediaUnderstandingStore.getState().startTranscript(c.source_path, { wordTimestamps: true });
+    if (!drive) return { pending: { ok: true, source: c.source_path, ...retakesNotRequested() } };
+    store.startTranscript(c.source_path, { wordTimestamps: true });
     return {
       pending: {
         ok: true,
@@ -1079,25 +1113,14 @@ function resolveRetakeArgs(
     };
   }
 
-  const fps = timelineFps(tl);
-  const tuning = retakeTuning(a);
-  // D-364/B-237 — a named clip is still ANSWERED about on its own, but it is
-  // READ as part of the continuous take it belongs to. Scoping the view to one
-  // clip is what made a restart whose halves sit in two clips structurally
-  // undetectable, and a human reviewing clip K in the Recut panel wants the
-  // stumble K is part of, not the half of it that happens to fall inside K.
-  // Building the run here (rather than only in the sweep) also means one clip
-  // and a sweep derive the IDENTICAL `RetakeDetectionArgs`, so they share a
-  // cache key and can never report the same material differently.
-  const run = runFor(tl, found.track, found.clip, c, fps, tuning.windowSecs);
   const rv = runTranscriptView(
     run,
     transcript.result as Transcript,
-    recoverRequested(a),
-    // Started from the `_status` twin as well, exactly as the transcript above
-    // already is: a poll that kicked nothing off would report `scanning` for
-    // ever if the caller reached the status tool first.
-    true,
+    recover,
+    // Only a requested job advances (B-249): the start call itself, or a poll
+    // continuing one. A status read nobody asked for starts no scan and no
+    // re-read of its own.
+    drive,
     // `force` retries a scan or a re-read that FAILED — which is the only way
     // to retry one, since a failure otherwise degrades to the raw transcript
     // rather than spinning (see `clipTranscriptView`).
@@ -1105,11 +1128,50 @@ function resolveRetakeArgs(
     fps,
   );
   if (rv.pending) {
-    return { pending: { ok: true, source: c.source_path, ...recoveryPending(rv.pending) } };
+    return {
+      pending: {
+        ok: true,
+        source: c.source_path,
+        ...(drive ? recoveryPending(rv.pending) : retakesNotRequested()),
+      },
+    };
   }
 
   const args = retakeArgsFor(rv, tuning);
-  return { found, c, fps, args, key: retakeKey(args), run, rv };
+  return { found, c, fps, args, key: retakeKey(args), run, rv, request, drive };
+}
+
+/** The key a start call records its retake request under (B-249) — the run and
+ *  every knob that decides what the request leads to. Shared by the single-clip
+ *  path and the sweep so a sweep's start and a single clip's poll (or the other
+ *  way round) are the same request, exactly as they share `retakeKey`. */
+function retakeRequestFor(run: ClipRun, recover: boolean, tuning: RetakeTuning): string {
+  return retakeRequestKey({
+    path: run.source,
+    startSecs: run.startSecs,
+    durationSecs: run.durationSecs,
+    recoverDarkRegions: recover,
+    ...tuning,
+  });
+}
+
+/** A `_status` read for a retake job no start call asked for, whose words are
+ *  not all in yet (B-249). Nothing will advance it — a status read starts
+ *  nothing — so the note says what will. */
+function retakesNotRequested(): { state: 'idle'; note: string } {
+  return {
+    state: 'idle',
+    note: 'no editor_detect_retakes call has asked about this clip, and a status read starts nothing — call editor_detect_retakes',
+  };
+}
+
+/** Settle a retake request once its grouping has a terminal answer (B-249):
+ *  from then on there is nothing left to carry on, and a later poll must not
+ *  re-run a grouping that failed. */
+function settleIfAnswered(request: string, phase: AnalysisPhase): void {
+  if (phase === 'done' || phase === 'error') {
+    useMediaUnderstandingStore.getState().settleRetakeRequest(request);
+  }
 }
 
 /** The retake tuning knobs, parsed once.
@@ -1213,8 +1275,8 @@ function recoveryPending(pending: 'scanning' | 'recovering'): {
     state: 'transcribing',
     note:
       pending === 'scanning'
-        ? 'scanning for speech the ASR did not transcribe (D-349) — poll editor_detect_retakes_status, or pass recoverDarkRegions: false to group the raw transcript now'
-        : 're-transcribing the dropped speech this clip contains — poll editor_detect_retakes_status; the recovered words will be spliced in before grouping',
+        ? 'scanning for speech the ASR did not transcribe (D-349) — poll editor_detect_retakes_status (each poll carries the job on: re-reads, then grouping), or pass recoverDarkRegions: false to group the raw transcript now'
+        : 're-transcribing the dropped speech this clip contains — poll editor_detect_retakes_status; the recovered words are spliced in and the grouping starts by itself once they land',
   };
 }
 
@@ -1565,6 +1627,11 @@ function resolveSweepTrack(
 interface SweepJob {
   run: ClipRun;
   key: string | null;
+  /** The run's [`retakeRequestFor`] key (B-249). */
+  request: string;
+  /** Whether this call advances the run: a start call, or a poll carrying on a
+   *  request a start call recorded. A run nothing drives reports `idle`. */
+  drive: boolean;
   /** Set when the run failed before any detection could start (a transcript
    *  that errored), so the sweep reports the real reason rather than an eternal
    *  `running`. */
@@ -1672,12 +1739,21 @@ async function retakeSweep(a: OpArgs, start: boolean) {
   // merged view, so a restart whose two halves were split across clips by an
   // earlier silence cut is inside one view for the first time.
   const runs = clipRuns(targets, fps, runGapSecs(tuning.windowSecs));
+  const store = useMediaUnderstandingStore.getState();
   const jobs: SweepJob[] = runs.map((run) => {
-    const transcript = useMediaUnderstandingStore.getState().transcriptStatus(run.source);
+    // B-249 — the start call records one request per run; a status poll
+    // carries a recorded one on and only reads the rest (see
+    // `resolveRetakeArgs`, which keys the same request for one named clip).
+    const request = retakeRequestFor(run, recover, tuning);
+    if (start) store.requestRetakes(request);
+    const drive = start || store.retakeRequested(request);
+
+    const transcript = store.transcriptStatus(run.source);
     if (transcript.phase === 'error') {
-      return { run, key: null, failure: transcript.error ?? 'transcription failed' };
+      store.settleRetakeRequest(request);
+      return { run, key: null, request, drive, failure: transcript.error ?? 'transcription failed' };
     }
-    if (transcript.phase !== 'done') return { run, key: null };
+    if (transcript.phase !== 'done') return { run, key: null, request, drive };
 
     // The D-349 scan and splice still happen per CLIP, with the same keys and
     // the same windows — only the grouping input is merged. A sweep that
@@ -1687,28 +1763,36 @@ async function retakeSweep(a: OpArgs, start: boolean) {
       run,
       transcript.result as Transcript,
       recover,
-      start,
+      drive,
       !!a?.force,
       fps,
     );
     // Still scanning or still recovering: the words are not all here, which is
     // the same thing `transcribing` already means on this track.
-    if (rv.pending) return { run, key: null, rv };
+    if (rv.pending) return { run, key: null, request, drive, rv };
 
     const args = retakeArgsFor(rv, tuning);
-    if (start) useMediaUnderstandingStore.getState().startRetakeDetection(args, !!a?.force);
-    return { run, key: retakeKey(args), rv };
+    const key = retakeKey(args);
+    // A start call (re)starts the grouping as it always has; a poll carrying a
+    // request on starts it only from `idle`, so it never re-runs a failure.
+    if (start) store.startRetakeDetection(args, !!a?.force);
+    else if (drive && store.retakeDetectionStatus(key).phase === 'idle') {
+      store.startRetakeDetection(args, false);
+    }
+    return { run, key, request, drive, rv };
   });
 
   const read = (key: string) => useMediaUnderstandingStore.getState().retakeDetectionStatus(key);
-  if (start) await settleSweep(() => jobs.some((j) => j.key !== null && read(j.key).phase === 'running'));
+  if (jobs.some((j) => j.drive)) {
+    await settleSweep(() => jobs.some((j) => j.key !== null && read(j.key).phase === 'running'));
+  }
 
   // A run's answer is reported against the CLIPS it was read over, so the
   // report's shape is unchanged — one row per clip, `flagged` acted on the same
   // way. A group that spans several clips is reported once, under the earliest
   // clip it touches, with every clip and frame range it covers inside it.
   const results: SweepClipResult[] = [];
-  for (const { run, key, failure } of jobs) {
+  for (const { run, key, failure, request, drive } of jobs) {
     const heads = run.targets.map((t) => ({
       clip: t.clip,
       clipId: t.c.id,
@@ -1721,11 +1805,15 @@ async function retakeSweep(a: OpArgs, start: boolean) {
     if (key === null) {
       // No key means no words yet: the grouping has not been asked for, and the
       // thing to wait on is the transcript — or, since D-349, the scan/recovery
-      // that is still going and getting the rest of the words.
-      for (const head of heads) results.push({ ...head, state: 'transcribing', findings: [] });
+      // that is still going and getting the rest of the words. A run nothing
+      // drives (B-249: a status read of a run no start call asked for) is
+      // `idle` instead — nothing is going to bring its words in.
+      const state = drive ? 'transcribing' : 'idle';
+      for (const head of heads) results.push({ ...head, state, findings: [] });
       continue;
     }
     const status = read(key);
+    settleIfAnswered(request, status.phase);
     const groups =
       status.phase === 'done'
         ? retakeGroupsDto(status, run, fps, await gateDetection(status, run, track))
@@ -4946,26 +5034,36 @@ export function useEditorControl(): void {
 
       editor_detect_retakes: async (a) => {
         if (isSweep(a)) return await retakeSweep(a, true);
-        const resolved = resolveRetakeArgs(a);
+        const resolved = resolveRetakeArgs(a, true);
         if ('error' in resolved) return resolved;
         if ('pending' in resolved) return resolved.pending;
-        const { found, c, fps, args, key, rv } = resolved;
+        const { found, c, fps, args, key, rv, request } = resolved;
 
         useMediaUnderstandingStore.getState().startRetakeDetection(args, !!a?.force);
         const status = await settleWithin(
           () => useMediaUnderstandingStore.getState().retakeDetectionStatus(key),
           DETECT_GRACE_MS,
         );
+        settleIfAnswered(request, status.phase);
         return await retakeEnvelope(status, found, c, fps, args.utterances.length, rv);
       },
 
+      // B-249 — a pure read, EXCEPT for a job a start call asked for: that one
+      // it carries on, all the way to the grouping. The grouping is started
+      // only from `idle`, never re-run from `error`, so a poll retries nothing.
       editor_detect_retakes_status: async (a) => {
         if (isSweep(a)) return await retakeSweep(a, false);
-        const resolved = resolveRetakeArgs(a);
+        const resolved = resolveRetakeArgs(a, false);
         if ('error' in resolved) return resolved;
         if ('pending' in resolved) return resolved.pending;
-        const { found, c, fps, args, key, rv } = resolved;
-        const status = useMediaUnderstandingStore.getState().retakeDetectionStatus(key);
+        const { found, c, fps, args, key, rv, request, drive } = resolved;
+        const read = () => useMediaUnderstandingStore.getState().retakeDetectionStatus(key);
+        let status = read();
+        if (drive && status.phase === 'idle') {
+          useMediaUnderstandingStore.getState().startRetakeDetection(args, false);
+          status = await settleWithin(read, DETECT_GRACE_MS);
+        }
+        settleIfAnswered(request, status.phase);
         return await retakeEnvelope(status, found, c, fps, args.utterances.length, rv);
       },
 

@@ -4597,7 +4597,11 @@ def editor_detect_retakes_status(
     there is nothing to group until there are words. `state: "transcribing"` can
     also mean the D-349 dark-region scan or one of its re-reads is still going;
     the `note` says which. Keep `recover_dark_regions` the same as you started
-    with, for the same reason the thresholds must match. A pure read."""
+    with, for the same reason the thresholds must match. Polling carries a job
+    the start tool began on to its answer (the scan's re-reads, then the
+    grouping), so keep polling this rather than calling the start tool again
+    (B-249). For arguments no start call used it is a pure read that starts
+    nothing, and says so with `state: "idle"`."""
     import json
 
     args: dict = {"track": track}
