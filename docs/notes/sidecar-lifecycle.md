@@ -11,7 +11,7 @@ they are separate processes with separate ports and separate status. Since
 | spec | dir | port | what it does | why it's a separate PROCESS |
 |---|---|---|---|---|
 | `AI` | `ai/` | 8765 | SAM 2 → ViTMatte matting (D-012/D-016), depth track (D-036), MoGe-2 normals (D-077) | — |
-| `AI_MEDIA` | `ai-media/` | 8766 | word-level transcript (mlx-whisper) + video understanding (ffmpeg scene-detect + Qwen3-VL), D-189 | crash isolation, and D-084's independent idle-unload (each frees its own multi-GB model on its own timer) |
+| `AI_MEDIA` | `ai-media/` | 8766 | word-level transcript (Parakeet) + video understanding (ffmpeg scene-detect + Qwen3-VL), D-189 | crash isolation, and D-084's independent idle-unload (each frees its own multi-GB model on its own timer) |
 
 **D-314 — one environment, still two processes.** D-189 gave each sidecar its own
 venv because `mlx-vlm` needs `transformers>=5.5` while `ai/` pinned `<5` for

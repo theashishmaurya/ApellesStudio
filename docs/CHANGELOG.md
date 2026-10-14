@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-14** — **D-381 phase 7: the as-is docs describe the system that exists.** `03-architecture.md` (sidecar tree + models table), `architecture-lock.md`, `sidecar-lifecycle.md`, `crates/README.md`, and `mcp-tool-coverage.md` (transcript row, `editor_detect_retakes` as the gated fallback beside the D-380 tools, dark-region numbers on Parakeet) now name Parakeet; the 2026-09-07 sidecar scope note and five other dated notes carry a pointer to D-381 rather than a rewrite.
+
 - **2026-10-14** — **D-380: the `apelles-retake-review` Claude skill.** `.claude/skills/apelles-retake-review/SKILL.md` wraps the client loop (start + poll the word view, page with a provisional tail so no group straddles unread words, propose, the refusal loop with `editor_retranscribe_words`, hand-off to the Recut panel, cut only on explicit request, and the 3x eval loop for prompt changes). It does not copy the judging rules - the app serves them on page 0.
 
 - **2026-10-14** — **D-381 phase 6c: every as-is string that named Whisper now names the system that exists.** `editor_get_transcript` / `_timeline_transcript` / `_detect_retakes` / `_detect_dark_regions` descriptions on both MCP servers (byte-identical, parity + golden corpus re-captured; `max_word_secs` documented as "no bound" by default, `language` as Parakeet's 25 European languages with Hindi refused), `mcp/README.md`, Rust headers in `app/src-tauri/src/chroma/` and `apelles-ai`, TS headers/tests in `packages/editor`. The Whisper transcript fixtures and eval tasks stay, labelled as detector inputs that keep D-365..D-379 reproducible.

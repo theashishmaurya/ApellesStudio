@@ -97,7 +97,7 @@ chroma/
   crates/               ← Apelles' own layered Rust crates — see table below
   packages/             ← Apelles' frontend workspace — see table below
   ai/                    ← the Python AI sidecar (SAM2, ViTMatte, Video Depth Anything, relight)
-  ai-media/               ← the SECOND supervised sidecar (D-189) — transcript (mlx-whisper)
+  ai-media/               ← the SECOND supervised sidecar (D-189) — transcript (Parakeet, D-374/D-381)
                              + video understanding (Qwen3-VL). A separate process on purpose:
                              D-189 rejected bolting these onto `ai/` (different model stack,
                              different failure modes, different memory profile)
@@ -494,7 +494,7 @@ both mutate and the renderer only reads.
 | GPU | wgpu / WGSL | inherited from RapidRAW |
 | Video I/O | ffmpeg CLI subprocess (not linked) | D-015; persistent rawvideo pipes for decode (D-030) and export (D-022), not per-frame spawns |
 | Colour mgmt | display-referred Rec.709 only | v1 scope, D-004; OpenColorIO/ACES/HDR deferred to v2 |
-| AI models | SAM 2.1 + ViTMatte + MoGe-2 normals (sidecar), Video Depth Anything-vits (sidecar), Depth Anything V2 (in-process ONNX), mlx-whisper + Qwen3-VL (`ai-media/` sidecar) | D-009/D-012/D-016/D-018/D-036/D-078/D-189 |
+| AI models | SAM 2.1 + ViTMatte + MoGe-2 normals (sidecar), Video Depth Anything-vits (sidecar), Depth Anything V2 (in-process ONNX), Parakeet (speech-to-text; the only ASR backend since D-381) + Qwen3-VL (`ai-media/` sidecar) | D-009/D-012/D-016/D-018/D-036/D-078/D-189/D-374/D-381 |
 | Grade doc | JSON, git-tracked, versioned (`chroma.grade/1`) | D-025 |
 | Project format | a `<name>.chroma` directory of plain JSON | D-037 |
 | Agent bridge | in-app HTTP control server ⇄ 4 prefixed frontend op registries ⇄ Python MCP (stdio) | D-020/D-183, **115 tools** |

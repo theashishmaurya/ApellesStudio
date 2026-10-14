@@ -2794,6 +2794,13 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       defaults to no bound), Rust/TS header comments and the TS fixtures'
       model name; the Whisper transcript fixtures and eval tasks stay as
       detector inputs, labelled as such.
+    - ✅ **D-381 phase 7 — the as-is docs sweep** (2026-10-14).
+      `03-architecture.md`, `architecture-lock.md`, `sidecar-lifecycle.md`,
+      `mcp-tool-coverage.md`, `crates/README.md` and the media-understanding
+      scope note describe Parakeet; the dated notes (`editor-mvp`,
+      `pre-launch-plan`, `product-direction`, `video-search`,
+      `timeline-feature-audit`) carry a one-line pointer. `00`/`01`/`02` never
+      named the ASR or the retake detector, so needed no change.
     - ⬜ **Live smoke of D-380 step 2 on C040** — not runnable from the
       worktree that built it; the script is in `retake-detection.md` §12.7.
     - ✅ **A Claude skill that wraps the client loop** (owner, 2026-10-13;

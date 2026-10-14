@@ -63,7 +63,7 @@ binary, Tauri.**
 ### Layer 3 — services
 | crate | responsibility | depends on |
 |---|---|---|
-| `apelles-ai` | sidecar client: SAM / ViTMatte / YOLO / depth / whisper HTTP bridges + the sidecar lifecycle supervisor (D-028) | `apelles-types` |
+| `apelles-ai` | sidecar client: SAM / ViTMatte / YOLO / depth / transcript (Parakeet) HTTP bridges + the sidecar lifecycle supervisor (D-028) | `apelles-types` |
 | `apelles-agent` | the in-app control server (D-020) + the MCP-facing op registry + scope exposure | `apelles-project`, `apelles-grade-model`, `apelles-timeline`, `apelles-types` |
 
 ### Layer 4 — the app

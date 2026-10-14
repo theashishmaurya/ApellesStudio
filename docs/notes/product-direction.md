@@ -1,5 +1,7 @@
 # Product direction — decided (D-039), this is the research record
 
+> Dated note: where it names Whisper as the speech recogniser, that was true when written; Parakeet is the only ASR backend since D-381 (`docs/notes/asr-backends-and-harness.md`).
+
 **Status: DECIDED.** Apelles is a 3-tab AI-native video app — **Edit / Motion /
 Colorist** — locked as **D-039** (`docs/08-decisions.md`) and under active
 construction (`docs/04-roadmap.md`). This file is the **research and rationale

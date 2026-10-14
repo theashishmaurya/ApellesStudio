@@ -9,6 +9,10 @@ home. This extends `docs/notes/video-search.md`'s own roadmap ("an `ai/`
 sidecar addition, Qwen3-VL, sized per device... an MCP tool") with a concrete,
 already-validated design instead of an unstarted proposal.
 
+> **Update (D-381, 2026-10-13):** this is the 2026-09-07 scoping note, kept as history. The transcript
+> model it names (mlx-whisper large-v3) is gone: Parakeet is the only ASR backend and the sidecar's
+> `/transcribe` is `ai-media/asr/` (`docs/notes/asr-backends-and-harness.md`).
+
 ## What's being extracted (already built + tested, just in the wrong repo)
 
 **Video understanding** — "what changed on screen, and when," with RELIABLE
