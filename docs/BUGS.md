@@ -27,6 +27,15 @@ Still real:
 
 ## Open
 
+## B-248 — `undo` / `redo` answered every call with the whole Colorist grade and histogram
+
+status: **fixed** (2026-10-14) · severity: low (correct behaviour, ~30 KB of irrelevant payload on every undo — an agent's context, not the app, paid for it) · area: `app/src/hooks/useChromaControl.ts`
+
+- **found:** 2026-10-14, the first live run of D-383: undoing an Edit-tab ripple delete returned `{result: {undone: …}}` plus the full Colorist `adjustments` object and a four-channel 256-bin `histogram`.
+- **cause:** D-383 placed `undo` / `redo` in the Colorist dispatcher's `READ_ONLY` set to skip the frame capture and the activity feed, but that set's response path still spreads `adjustments` + `histogram` into every answer — right for a Colorist read, meaningless for a cross-tab history step. Not caught by the parity corpus, which records the MCP layer against a canned bridge envelope and never runs this dispatcher.
+- **fix:** a `CROSS_TAB` op class in the same dispatcher (`undo`, `redo`): no settle-and-capture, no activity-feed entry, and the answer is only `{ok, error, result}`. D-383's "where the ops live" paragraph updated.
+- **verification:** live, after the change hot-reloaded: `undo` / `redo` answer with only their result (see CHANGELOG 2026-10-14).
+
 ## B-247 — every dark-region re-read and every `editor_retranscribe_words` call was refused on Parakeet: the seam rejected the `language` it had itself reported
 
 status: **fixed** (2026-10-14) · severity: high (dark-region recovery — the only net under Parakeet's measured drops — silently did nothing, and D-380's re-transcribe step of the refusal loop always errored) · area: `ai-media/asr/base.py`, `ai-media/asr/parakeet_mlx.py`

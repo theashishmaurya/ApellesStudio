@@ -1559,17 +1559,22 @@ export function useChromaControl() {
         'get_state', 'list_masks', 'inspect_color', 'sample', 'sample_region',
         'export', 'export_progress', 'get_grade', 'save_grade', 'request_human',
         'list_shots', 'list_mask_keyframes',
-        // undo/redo render nothing of their own (the history entry's tab does),
-        // and are not a new activity-feed entry — they step the existing stack.
-        'undo', 'redo',
         'list_projects', 'save_project', 'set_project_settings',
       ]);
+      // B-248 — cross-tab ops (D-383's undo/redo). They are not Colorist ops:
+      // they do not touch the grade unless the history entry they step happens
+      // to be a Colorist one, they are not a new activity-feed entry (they step
+      // the existing stack), and their answer is ONLY their own result. Riding
+      // `READ_ONLY` instead attached the whole grade + histogram (~30 KB) to an
+      // Edit-tab undo. An agent that undoes a grade change reads the result with
+      // `get_state` / `inspect_color`, the same as after any other op.
+      const CROSS_TAB = new Set(['undo', 'redo']);
       // pure navigation — changes the playhead / open clip / active shot, not
       // the grade of the current shot. Not logged to the activity feed (a shot
       // switch restores that shot's own feed — D-033). `settleAndCapture` still
       // runs so the agent gets the new shot's frame back.
       const NAV = new Set(['seek', 'open', 'set_active_shot', 'add_shots', 'open_project', 'new_project']);
-      const shouldLog = !READ_ONLY.has(op) && !NAV.has(op);
+      const shouldLog = !READ_ONLY.has(op) && !NAV.has(op) && !CROSS_TAB.has(op);
 
       try {
         // B-217/D-358 — before anything else: refuse to run while this app's
@@ -1592,6 +1597,11 @@ export function useChromaControl() {
           : null;
 
         const result = await fn(args || {});
+
+        if (CROSS_TAB.has(op)) {
+          respond({ ok: !result?.error, error: result?.error ?? null, result });
+          return;
+        }
 
         const frame = READ_ONLY.has(op)
           ? {
