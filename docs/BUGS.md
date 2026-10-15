@@ -269,7 +269,7 @@ status: **fixed** (2026-10-14) · severity: medium (no data loss — the materia
 
 ## B-235 — deleting/cutting on the Edit timeline leaves live playback audibly muted for a beat before it comes back
 
-status: **fixed** (2026-10-15, **D-384**; live check pending, see below) · severity: medium (no data loss, and it self-recovers, but a real, reproducible playback defect on the single most common editing action — cutting something) · area: `crates/apelles-media/src/audio.rs` (`run_session`, `advance_mix`), `app/src-tauri/src/chroma/audio.rs` (`resolve_sources_at`), `crates/apelles-timeline` (`Timeline::edit_fingerprint`)
+status: **fixed** (2026-10-15, **D-384**; verified live — see the last bullet) · severity: medium (no data loss, and it self-recovers, but a real, reproducible playback defect on the single most common editing action — cutting something) · area: `crates/apelles-media/src/audio.rs` (`run_session`, `advance_mix`), `app/src-tauri/src/chroma/audio.rs` (`resolve_sources_at`), `crates/apelles-timeline` (`Timeline::edit_fingerprint`)
 
 - **found:** 2026-09-24, reported live by the owner while reviewing the `2026-09-12-c038-mgfx` timeline (screenshot: `scratch/bug-reports/B-235-audio-mute-after-timeline-edit.png`, a lifted clip leaving a gap at ~01:34) — "probably a re-rendering of the voice once we change the timeline".
 - **the owner's hypothesis is refuted.** Nothing restarts the session on an edit. `PreviewPane.tsx`'s audio effect is keyed on `[playing, hasTimeline, playbackRate]` (D-130), not on the timeline object, and nothing on the Rust side calls `begin_request` on a save. The session keeps running. The bug is that it keeps running **on the timeline as it was before the edit**.
@@ -292,6 +292,7 @@ status: **fixed** (2026-10-15, **D-384**; live check pending, see below) · seve
     - `apelles-timeline`: `edit_fingerprint_changes_on_an_edit_and_only_on_an_edit`.
   - **Both mix-loop tests were run against the old behaviour** (the revision check disabled) **and both failed** at their B-235 assertions: the deleted clip audible over the silence, and a second of digital silence where the moved-back clip belongs.
 - **not verified here:** a live listen in the running app (the agent's worktree cannot run it). The coordinator's script is in D-384's "Live check". The fingerprint costs one serialization of the active timeline per resolve, on the audio thread at 10 Hz. That cost is estimated, not measured.
+- **live verification (2026-10-15):** on `retake-live-test-C040`, at 1×, a ripple delete while playing carried straight on into the rippled-in speech (rms 0.054-0.056 past the cut), and `undo` while playing — the case that used to go silent — played room tone through the restored pause (rms 0.0025, not digital zero) and then the restored speech at full level (rms 0.087). At 2× the same cut + undo was confirmed by the owner by ear: no dropout.
 
 ## B-231 — `editor_export`'s status can't be trusted in either direction
 
