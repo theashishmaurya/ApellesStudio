@@ -2862,12 +2862,22 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       D-378/D-379's evidence rather than in B-246's pass — D-378 did not
       reproduce D-377's deciding number, and D-379's blind proposers working
       from Parakeet transcripts lost nothing.
-    - ⬜ **Two Parakeet drops its own windowed recovery does not get back**
+    - ✅ **Two Parakeet drops its own windowed recovery does not get back**
       (D-381 measured all 19 dropped stretches on C019/C038/C040: 15 recovered,
-      2 partly, 2 not — C019 97.36-99.60 comes back garbled, C038 836.44-852.44
-      empty, at two window offsets each). Not a regression against Whisper —
-      these are Parakeet's own drops, which Whisper read — but the recovery
-      path has no fallback for them now.
+      2 partly, 2 not). **Investigated and fixed 2026-10-15 (D-387, B-252):**
+      C019 97.36-99.60 was a correct read of a false start scored against
+      Whisper's disfluency-free text; C038 836-852 and C038 502 lacked context
+      (a long stretch was read bare); and the old 4 s growth let the splice
+      delete whole-file words at a window edge. Every window now reads 10 s of
+      context and changes only its hole: **17 recovered, 2 partly, 0 not; 0
+      words deleted (was 2)**. The three sub-regions no pass can read (C038
+      53.8, 839.5, 843.5 s — voiced bursts with no words in any read) are
+      reported in `unreadDarkRegions` and the Recut panel notice.
+      `asr-backends-and-harness.md` §4.3.2.
+    - ⬜ **C019 275 s still reads "one-away options" for "one hour option"** at
+      D-387's 10 s context (12 s reads it right; a knife edge, not a plateau).
+      Candidate: a second attempt at a different context when two reads of a
+      hole disagree — not built, because one homophone is not evidence it pays.
     - ⬜ **Explain the fixture divergence, or re-baseline deliberately.**
       Re-transcribing C038/C040 with `mlx-whisper large-v3` today gives 126 and
       83 segments against the committed fixtures' 121 and 66 (D-377 §8.4). The

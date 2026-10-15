@@ -40,7 +40,9 @@ import {
 import {
   recoveryWindows,
   spliceTranscript,
+  unreadRegions,
   type DarkDetection,
+  type DarkRegionWire,
   type SplicedSegment,
 } from './darkRegions';
 import { clipSourceRangeSecs } from './recut';
@@ -73,6 +75,10 @@ export interface ClipTranscriptView {
   /** The scan or a recovery failed. The view still carries the RAW utterances:
    *  a failed recovery degrades to the pre-D-349 answer, never to no answer. */
   error?: string;
+  /** Located regions in this clip's range that no word covers even after every
+   *  recovery landed (D-387, `unreadRegions`) — speech-like sound nothing could
+   *  read. Present only on a complete, scanned view. */
+  unread?: DarkRegionWire[];
 }
 
 /**
@@ -197,6 +203,9 @@ export function clipTranscriptView(
     pending: null,
     detection: scan.result,
     error: failure,
+    // A window that FAILED to re-read leaves its regions unread too, and says
+    // so through `error`; reporting them here as well is still true.
+    unread: unreadRegions(scan.result.regions, spliced),
   };
 }
 
@@ -231,6 +240,8 @@ export interface RunTranscriptView {
    *  Counted on the MERGED list: a recovered line straddling two clips of the
    *  run is one line, not two. */
   recovered: number;
+  /** Every clip's [`ClipTranscriptView.unread`], in run order. */
+  unread: DarkRegionWire[];
   /** Any clip of the run still waiting on words. A run cannot be grouped until
    *  all of them are in — a half-present run is exactly the partial view B-237
    *  is about. */
@@ -270,6 +281,7 @@ export function runTranscriptView(
     views,
     utterances,
     recovered: utterances.filter((u) => u.recovered).length,
+    unread: views.flatMap((v) => v.unread ?? []),
     pending,
   };
 }

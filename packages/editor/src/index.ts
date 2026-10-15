@@ -86,17 +86,21 @@ export type {
  *  and the Recut panel run, so the agent's recut and the human's cannot end up
  *  grouping two different transcripts of one file. */
 export {
+  MAX_RECOVERY_HOLE_SECS,
   MAX_RECOVERY_WINDOW_SECS,
-  MIN_RECOVERY_WINDOW_SECS,
+  RECOVERY_CONTEXT_SECS,
+  RECOVERY_PLAN,
   recoveredCount,
   recoveryWindows,
   spliceTranscript,
   spliceTranscriptDoc,
+  unreadRegions,
 } from './darkRegions';
 export type {
   DarkDetection,
   DarkRegionWire,
   RecoveredWindow,
+  HoleSpan,
   RecoveryWindow,
   SplicedSegment,
 } from './darkRegions';

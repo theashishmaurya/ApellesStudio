@@ -27,6 +27,14 @@ Still real:
 
 ## Open
 
+## B-252 — dark-region recovery deleted correct whole-file words next to a short stretch
+
+status: **fixed** (2026-10-15, D-387) · severity: medium (silently removes real words from the transcript retake grouping and captions read) · area: `packages/editor/src/darkRegions.ts`
+
+- **found:** 2026-10-15, investigating D-381's four imperfect recoveries. On C038 the whole-file word "everything." (501.20-501.92 s) was missing from the spliced transcript — "Word one, reread Word two…" — and on C019 "for" (325.96 s) next to a timestamp-collapse stretch.
+- **cause:** `recoveryWindows` grew a stretch shorter than 4 s symmetrically to 4 s without regard to word boundaries, so the window began or ended inside a neighbouring word. `spliceTranscript` replaced every word whose midpoint the window held, with whatever the isolated read heard there — and a read of half a word at a window edge is usually nothing.
+- **fix (D-387):** a window reads context but changes only its `holes` (the stretch); words outside a hole are never replaced. Measured on all 19 stretches: 2 deleted words → 0. Pinned by `darkRegions.test.ts` "keeps the whole-file words in the context it read, even when the read lost them".
+
 ## B-251 — Recut panel labelled some AI-confirmed reasons by bare index (`"#203"`) instead of the word
 
 The reason lines looked each offending word up in the row's own take text. The offending words belong to the whole group, so one in a sibling take (or outside the shown window) was not found and fell back to `#index`, while the first, which was in the take, showed its text. Fixed: the rows carry the group's offending words and every reason reads `“word” (#index)`. Test: `RecutPanel.dom.test.tsx` "every AI-confirmed reason is labelled word-then-index".

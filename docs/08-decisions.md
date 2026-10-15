@@ -6,6 +6,82 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-387 — A dark-region recovery reads its hole with 10 s of context either side and changes only the hole; regions no pass can read are reported, not silent
+
+**Status: `decided`** (2026-10-15). Amends **D-349**'s window plan and splice.
+Fixes **B-252**. Code: `recoveryWindows` / `spliceTranscript` / `unreadRegions`
+in `packages/editor/src/darkRegions.ts`; `clipTranscriptView` /
+`runTranscriptView` (`darkRecovery.ts`); `parsePersisted` / `recoveryKey`
+(`mediaUnderstandingStore.ts`); the Recut panel notice; `editor_detect_retakes`'
+`unreadDarkRegions` on both MCP servers. Measurement:
+`docs/notes/asr-backends-and-harness.md` §4.3.2.
+
+**Context.** D-381 measured Parakeet's windowed recovery of its own 19 dropped
+stretches at 15 recovered, 2 partly, 2 not. Reproduced and root-caused: C019
+97 s was a correct read of a false start scored against Whisper's
+disfluency-free text; C038 502 s and C038 836-852 s lacked context — a stretch
+over 4 s was read bare, with no audio around it; C019 275 s is a near-homophone
+context only sometimes resolves; and C038 839.5 s / 843.5 s are voiced bursts no
+read at any context puts words to. Separately, D-349's growth of a short
+stretch to 4 s cut into the neighbouring whole-file words, and the splice
+(replace every word whose midpoint the window holds) deleted two of them
+(B-252). The language pin and Parakeet's chunking were ruled out (no language
+argument exists; a ≤40 s window is one 120 s chunk).
+
+**Options.**
+1. *Grow the window more, keep the whole-window splice.* More context, but
+   every context word re-read replaces a correct whole-file word, and a cut
+   edge deletes one — B-252 made wider.
+2. *A second attempt with different padding when a hole reads nothing.* Fixes
+   only empty reads; C038 502 and C038 851 were wrong or empty *because* of
+   missing context, so this is a retry of the wrong thing. At the chosen
+   context no hole of the 19 read nothing.
+3. **Read context, splice only the hole.** Each window reads its hole plus
+   `RECOVERY_CONTEXT_SECS` (10 s) either side and carries the hole as `holes`;
+   the splice replaces only words whose midpoint is in a hole and adds only
+   recovered words whose midpoint is in one (a re-read word that repeats the
+   kept word it overlaps is not added twice). Holes ≤ 20 s, windows ≤ 40 s.
+   What still has no words after every recovery is reported.
+
+**Choice: option 3.**
+
+- 10 s is the middle of the measured plateau: 5 s fixed C038 502 but not C038
+  851; 8-12 s fixed both. Context is never spliced, so the width cannot cost a
+  correct word.
+- Windows ≤ 40 s (was 30 s): the 30 s was sized against Whisper's decoding
+  window; Parakeet chunks at 120 s, so 40 s is still one chunk.
+- D-349's 4 s minimum window is gone — a window is its hole plus all the context
+  the clip's range allows, so the minimum could never bind except by being
+  wrong.
+- A client re-read (`editor_retranscribe_words`, D-380) has no `holes` and
+  replaces its whole read range, unchanged.
+- **Unread regions are surfaced.** `unreadRegions` lists the located regions no
+  word covers after the splice; `editor_detect_retakes` answers
+  `unreadDarkRegions` (source seconds + RMS peak), and the Recut panel says
+  "N stretches of speech-like sound could not be read by any pass (…) — listen
+  there before cutting." A hole the model cannot read is not an error, but a
+  transcript that says nothing about it reads as complete.
+- **Persisted recoveries (D-385) cannot mask it.** A dark-region window carries
+  `plan: RECOVERY_PLAN` (2); `parsePersisted` drops a persisted recovery from
+  another plan and keeps the transcript and applied re-reads beside it. The
+  holes are part of `recoveryKey` (appended to its last field, so a re-read's
+  key and `pathOfRecoveryKey` are unchanged). Chosen over bumping
+  `understanding_cache::RECORD_SCHEMA`, which would also have discarded every
+  applied re-read — the one thing in that record no re-run can recover.
+
+**Measured on all 19, once each** (both plans' real code, the same real reads):
+15 / 2 / 2 → **17 / 2 / 0** (recovered / partly / not); whole-file words deleted
+by the splice 2 → 0; unread regions 4 silent → 3 reported. Read compute for the
+three files 10.4 s → 22.6 s. Still partly: C019 275 s ("one-away" for "one
+hour"; 12 s of context reads it right) and C038 836-852 s, whose remainder is
+not recoverable by ASR.
+
+**Why.** It addresses the measured causes rather than the symptoms: context was
+missing, the splice was too wide, and the unreadable remainder was silent. Each
+of the three is now a property of the plan, tested without a model.
+
+---
+
 ## D-386 — A retake group keeps a non-kept take only when its keeper holds that take's every content word: the coverage gate's content rule, inside the detector
 
 **Status: `decided`** (2026-10-15). Code: `keep_only_covered_takes` in
@@ -35977,7 +36053,9 @@ spot-checking.
 - **Recovery is per STRETCH, not per region**, clamped to the clip's own trimmed range,
   grown to at least 4 s of context (a bare 1.3 s extract is where whisper starts
   inventing) and split at 30 s (whisper's own window — a longer extract would simply be
-  chunked again, reintroducing the behaviour this exists to escape).
+  chunked again, reintroducing the behaviour this exists to escape). *(Superseded by
+  **D-387**, 2026-10-15: on Parakeet a window reads its stretch with 10 s of context
+  either side, up to 40 s, and changes only the stretch.)*
 
 - **The splice replaces at WORD granularity.** A recovery window is an uncovered
   stretch, so the only whole-file words inside it are the >2 s ones the detector already

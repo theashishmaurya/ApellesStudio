@@ -4490,8 +4490,11 @@ def editor_detect_retakes(
       range is scanned for stretches where the VAD hears a voice and the
       transcript has no words, those windows are re-transcribed on their own,
       and the recovered lines are spliced in before grouping. The answer then
-      carries `darkRegions` (how many holes were found) and
-      `recoveredUtterances` (how many grouped lines exist only because of it).
+      carries `darkRegions` (how many holes were found),
+      `recoveredUtterances` (how many grouped lines exist only because of it)
+      and `unreadDarkRegions` (each located region no re-read could put words
+      to, in source seconds — speech-like sound the transcript is still blind
+      to; listen there before cutting across it, D-387).
       Set it false only when you already know the source is clean and want the
       answer in one round trip: the scan and each re-read are extra passes, so a
       first call typically returns `state: "transcribing"` once or twice more

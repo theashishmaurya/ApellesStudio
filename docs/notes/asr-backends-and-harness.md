@@ -530,11 +530,117 @@ the windowed pass (85 %), 226 words, in 42.8 s of compute for all 19 windows.
 The second offset fixed neither failure; it changed a word here and there
 elsewhere ("rereads" for "we read", "about." at a window edge).
 
-So Parakeet's own drops are mostly recoverable by the same isolation trick that
+**Superseded in part by §4.3.2 (D-387):** the 4 below were investigated, C019
+97 s turned out to be a correct read scored against Whisper's disfluency-free
+text, and the window plan changed. So Parakeet's own drops are mostly recoverable by the same isolation trick that
 recovered Whisper's (B-216) — the drops are context-dependent, not
 acoustic. The two failures are short (2.2 s and 4.7 s of VAD speech, the latter
 mostly unread by Whisper too). Scripts and the raw JSON stayed in the session
 scratchpad; the table above is the record.
+
+#### 4.3.2 The four that did not come back cleanly, and the fix (D-387, B-252, 2026-10-15)
+
+§4.3.1 left two stretches partly recovered and two not at all. Each was
+re-read at a sweep of window shapes through the real `transcribe(start_secs,
+duration_secs)` path, with listen-level evidence beside it: per-100 ms RMS,
+Silero v6.2.1 probability (the app's model, run from 0 s so its state is the
+app's), and for the unread bursts a voicing check (normalised autocorrelation
+peak in the 75-400 Hz pitch range; voiced speech in this file measures
+0.64-0.72). Nobody listened.
+
+**What was ruled out.** *The language pin*: `parakeet_mlx` 0.5.3 takes no
+language argument, so there is no pin to get wrong. *Parakeet's chunking*: a
+recovery window is at most 40 s and Parakeet chunks at 120 s, so a window is
+always one chunk and `chunk_duration` / `overlap_duration` never apply to it.
+(The whole-file drops are a separate question; only C038 836-852 sits in a
+120/15 s chunk overlap, 840-855 s.)
+
+**What it was, per stretch.**
+
+| stretch | D-381 verdict | cause | evidence |
+|---|---|---|---|
+| C019 97.36-99.60 | not recovered ("garbled") | **a scoring error, not a recovery failure.** The read is a faithful false start: the speaker said "People in — people in a en—" and then restarted the line twice ("People enabling caching drop a current type in / people enabling caching drop a current time is 3:42 pm…"). Whisper's segment 93.84-102.30 runs straight through the false start and omits it, as Whisper does with disfluencies, so comparing to it called a correct read garbled. | VAD bursts 97.4-97.9 and 98.2-99.4 s line up with "People in" (97.36-97.76) and "people in a en-" (98.24-99.20). Every context from 0 to 12 s read the same false start; a 24 s window read the hole *and* both redos verbatim. |
+| C019 275.04-284.32 | partly ("one-a-way options") | **acoustic ambiguity that context only sometimes resolves.** "one hour" and "one-away" are near-homophones here; the preceding "5 minutes… timer resets" is what disambiguates. | Read with 0 / 2 / 5 / 8 / 10 s of context: "one-a-way", "one-away" ×4. With 12 s: "one-hour". A 30 s window starting at 265 s: "one-hour". Still on a knife edge at the adopted 10 s, so still **partly** after the fix. |
+| C038 501.92-505.04 | partly ("We read") | **too little context.** Bare, the hole reads "we read everything"; the sentence before it ("Word one, reread everything") is what tells the decoder the second is "reread". **And a splice bug (B-252):** the 3.12 s stretch was grown to a 4 s window starting at 501.48 s, inside the whole-file word "everything." (501.20-501.92). Its re-read had no such word, and the splice — which replaced every word whose midpoint the window held — deleted it. | Context 0 / 2 s: "we read"; 5 / 8 / 10 / 12 s: "reread". Before the fix the spliced transcript read "Word one, reread Word two…" |
+| C038 836.44-852.44 | not recovered (0 words) | **no context, plus sound that is not words.** At 16 s the stretch was over the old 4 s minimum, so its window was the bare stretch: 16 s of mostly silence with the false start "So quick…" (850.9-851.6 s) at its very end. With context Parakeet reads it ("So kickup." — Whisper "So quick recap,", the line restarted at 852.44 s). **The rest is not recoverable by ASR:** 839.49-840.13 and 843.52-846.56 hold two isolated voiced bursts (0.5 s and 0.4 s, RMS peak 0.205 / 0.217) and 2 s of low-level voiced sound (RMS ≤ 0.04), 3.4 s apart. | Voicing 0.63 / 0.67 (speech-like, not a click or cough). No window from 0 to 12 s of context put a word over them, and Whisper read nothing there either. Consistent with non-lexical vocalisation ("mm", a hum); a listen would settle it. |
+
+**The fix (D-387).** `recoveryWindows` (`packages/editor/src/darkRegions.ts`)
+now reads every stretch with `RECOVERY_CONTEXT_SECS = 10` s of context either
+side, and records the stretch as the window's **hole**; `spliceTranscript`
+changes only the holes. Context is read, never spliced, so it cannot overwrite
+a correct whole-file word — which is what made wide context safe, and is also
+the B-252 fix. 10 s is the middle of the measured plateau (5 s fixed C038 502
+but read only "So" at C038 851; 8-12 s read both). Stretches are cut into holes
+of at most 20 s, so a window is at most 40 s (still one Parakeet chunk); nearby
+holes whose reads touch share one pass. A recovered word that repeats the kept
+word it overlaps (same text, overlapping time) is not added twice. Located
+regions that no word covers after every recovery are now **reported, not
+silent** (`unreadRegions`): `editor_detect_retakes` answers with
+`unreadDarkRegions` (source seconds + RMS peak) on both MCP servers, and the
+Recut panel's notice names them ("1 stretch of speech-like sound could not be
+read by any pass (source 14:03.5–14:06.6) — listen there before cutting").
+D-349's 4 s minimum window went: a window is now its hole plus all the context
+the clip's range allows.
+
+**Measured, all 19, once each.** Both plans' windows produced by the *real*
+`recoveryWindows` (the pre-D-387 file and the new one, bundled with esbuild),
+each window read once through the real `transcribe()`, spliced by each plan's
+real `spliceTranscript` into the committed whole-file words
+(`eval/retake/transcripts/*.parakeet.words.json`). Same detector stretches as
+§4.3.1 plus the two timestamp-collapse stretches, so the windows merge as they
+would in the app.
+
+| source | stretch (s) | before (D-349 plan) | after (D-387) | verdict before → after |
+|---|---|---|---|---|
+| C019 | 62.64-78.00 | 30 w "Actually it's not… has to match exactly." | 30 w, same | recovered → recovered |
+| C019 | 91.52-95.92 | 14 w "…the model we read is the whole thing…" | 12 w "…the model rereads the whole thing…" | recovered → recovered |
+| C019 | 97.36-99.60 | 6 w "People in people in a enab" | 4 w "People in people in" | not (by D-381's Whisper reference) → **recovered** (a false start, read faithfully; the 0.4 s "a en-" fragment is not emitted at 10 s context, its region still has words over it) |
+| C019 | 275.04-284.32 | 28 w "…a one-a-way options… write first stuff…" | 26 w "…a one-away options… write for stuff…" | partly → partly |
+| C019 | 309.12-318.64 | 19 w; **splice deleted whole-file "for" @325.96** (the neighbouring collapse window) | 19 w; nothing deleted | recovered → recovered |
+| C019 | 468.72-501.60 | 19 w "…the 400,000 bill and 701…" | 23 w "…the four hundred thousand bill and seven hundred one…" | recovered → recovered |
+| C038 | 45.44-59.44 | 11 w; 53.79-54.17 unread | 11 w; 53.79-54.17 unread, **reported** | recovered → recovered |
+| C038 | 66.72-84.00 | 16 w | 16 w, same | recovered → recovered |
+| C038 | 177.08-204.60 | 15 w | 15 w, same | recovered → recovered |
+| C038 | 479.44-487.68 | 4 w "It's like a stenographer." | 4 w, same | recovered → recovered |
+| C038 | 501.92-505.04 | 7 w "Word two. We read everything. Again. Plus"; **splice deleted whole-file "everything." @501.2** | 5 w "Word two, reread everything. Again," ("Plus" kept from the whole-file pass) | partly → **recovered** |
+| C038 | 509.44-528.84 | 15 w | 15 w, same | recovered → recovered |
+| C038 | 836.44-852.44 | **0 w**; all 3 regions unread, silently | 2 w "So kickup."; 839.49-840.13 and 843.52-846.56 unread, **reported** | not → **partly** (the remainder is not recoverable by ASR, above) |
+| C038 | 929.28-933.84 | 8 w "…real hardware, real." | 7 w "…real hardware" | recovered → recovered |
+| C038 | 979.64-989.46 | 9 w | 9 w, same | recovered → recovered |
+| C040 | 63.52-81.84 | 4 w "Attention, in simple terms." | 4 w "Attention, in simple term," | recovered → recovered |
+| C040 | 180.84-193.00 | 9 w | 9 w, same | recovered → recovered |
+| C040 | 275.84-289.76 | 8 w | 8 w, same | recovered → recovered |
+| C040 | 505.60-518.08 | 8 w "…don't bury the" | 8 w "…don't bury it." | recovered → recovered |
+
+| | before | after |
+|---|---|---|
+| recovered | 15 (16 with C019 97 scored as the false start it is) | **17** |
+| partly | 2 | 2 (C019 275 "one-away"; C038 836-852, remainder reported) |
+| not recovered | 2 | **0** |
+| whole-file words deleted by the splice | 2 ("everything." C038 501.2; "for" C019 325.96) | **0** |
+| regions left unread | 4, none reported | 3, **all reported** (C038 53.79-54.17, 839.49-840.13, 843.52-846.56) |
+| windows / read compute (3 files) | 22 / 10.4 s | 21 / 22.6 s |
+
+The compute roughly doubles because every window now carries 20 s of context;
+it is still ~23 s for 36 minutes of footage, paid once (recoveries persist,
+D-385).
+
+**One instability, recorded rather than engineered around.** At 2 s of context
+C019 97's hole read *nothing*, while 0, 5, 8, 10 and 12 s all read the false
+start. No hole read nothing at 10 s on any of the 19, so no second attempt with
+different padding was built; if one does, `unreadDarkRegions` reports it, which
+is the honest floor whatever the cause.
+
+**Persisted recoveries made under the old plan (D-385) cannot mask this.** A
+dark-region window now carries `plan: RECOVERY_PLAN` (2); `parsePersisted`
+drops a persisted recovery whose plan differs, while the transcript and the
+applied re-reads in the same record are kept. A window's holes are part of its
+`recoveryKey` (appended to the last field, so a client re-read's key is
+unchanged).
+
+Reproduction scripts (`pk.py`, `sweep4.py`, `vadprobe.py`, `voicing.py`,
+`driver.ts`, `readall.py`) stayed in the session scratchpad; the tables above
+are the record.
 
 ---
 
@@ -549,10 +655,15 @@ scratchpad; the table above is the record.
   does not check it.~~ **Done (D-381):** relocked, and `verify.py` checks
   `parakeet_mlx` instead of `mlx_whisper` — which is what upgrades an existing
   install (D-381; `docs/notes/ai-env-bootstrap.md`).
-- **Dark-region recovery on Parakeet is measured, not perfect** (§4.3.1): 15 of
-  19 dropped stretches recovered, 2 partly, 2 not at all. Nothing retries a
-  failed window with a different context yet; a second offset did not help
-  either failure.
+- ~~**Dark-region recovery on Parakeet is measured, not perfect** (§4.3.1): 15 of
+  19 dropped stretches recovered, 2 partly, 2 not at all.~~ **Investigated and
+  fixed 2026-10-15 (D-387, B-252, §4.3.2):** 17 recovered, 2 partly, 0 not;
+  every window now reads 10 s of context and changes only its hole, and the
+  three sub-regions no pass can read are reported (`unreadDarkRegions`, the
+  Recut panel notice) instead of left silent. Still open: C019 275 s reads
+  "one-away" for "one hour" at the adopted context (12 s reads it right), and
+  no second attempt with different padding exists — at 10 s none was needed on
+  the 19.
 - ~~`dark.rs`'s Whisper-specific constants are not yet moved to a
   descriptor.~~ **Done 2026-10-10 (D-375):** `BackendDescriptor` now carries
   `max_word_secs` (Whisper 2.0 s, Parakeet `None`), read by

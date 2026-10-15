@@ -835,12 +835,13 @@ describe('a retake job a start call asked for is finished by polling (B-249)', (
     const polled = await callOp('editor_detect_retakes_status', args);
     expect(polled.ok).toBe(true);
     expect(count('chroma_transcribe')).toBe(1);
-    // The re-read is the stretch, pinned to the whole-file language (D-349).
+    // The re-read is the stretch plus context (D-387) — here clamped to the
+    // 10 s clip — pinned to the whole-file language (D-349).
     expect(backend.calls.find((c) => c.cmd === 'chroma_transcribe')?.args).toMatchObject({
       path: SOURCE,
       language: 'en',
-      startSecs: 1.5,
-      durationSecs: 6.0,
+      startSecs: 0,
+      durationSecs: 10,
     });
 
     // The re-read is a polled sidecar job; let it land.
@@ -856,6 +857,8 @@ describe('a retake job a start call asked for is finished by polling (B-249)', (
       []) as Array<{ text: string }>;
     expect(handed.map((u) => u.text)).toContain('the line it dropped');
     expect(answered.result.state).toBe('done');
+    // The re-read put words over the region, so nothing is reported unread.
+    expect(answered.result.unreadDarkRegions).toEqual([]);
     // Answered, so the request is settled: a further poll is a pure read.
     expect(useMediaUnderstandingStore.getState().retakeRequests).toEqual({});
     await callOp('editor_detect_retakes_status', args);
