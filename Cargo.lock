@@ -241,6 +241,8 @@ dependencies = [
 name = "apelles-ai"
 version = "0.0.0"
 dependencies = [
+ "apelles-media",
+ "blake3",
  "image",
  "log",
  "reqwest",

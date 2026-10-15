@@ -14,3 +14,13 @@ log = "0.4"
 sha2 = "0.11"
 image = "0.25.10"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+# D-385 — `understanding_cache` persists transcripts + applied re-reads through
+# `apelles_media::media_cache` (D-128) rather than a second cache. A downward
+# L3 → L1 edge, allowed by D-039's one-way graph. `blake3` is the version
+# `apelles-media` already pins, used for the record key.
+apelles-media = { path = "../apelles-media" }
+blake3 = "1.8.7"
+
+[dev-dependencies]
+# `media_cache::init_for_tests` binds a temp cache root for this crate's tests.
+apelles-media = { path = "../apelles-media", features = ["test-support"] }

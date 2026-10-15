@@ -17,10 +17,46 @@
  *
  * **What it does NOT do:** it does not cut, mark, or otherwise touch the
  * timeline — it holds facts, and the ops/UI that act on them are separate. It
- * does not persist across app restarts (an in-memory cache; a `media_cache`
- * namespace on disk is the obvious next step, and is deliberately not this
- * pass's scope). It does not own the polling *cadence* policy beyond a fixed
- * interval — see `POLL_MS`.
+ * does not own the polling *cadence* policy beyond a fixed interval — see
+ * `POLL_MS`.
+ *
+ * **What survives a restart (D-385).** One record per source file is persisted
+ * through `chroma_media_understanding_save` / `_load` into the Rust
+ * `media_cache` (`app_cache_dir()/chroma/understanding`, keyed by the file's
+ * identity — path + mtime + size — and the ASR model, so a changed file or a
+ * model change is a clean miss). The record holds:
+ *   - **the whole-file transcript** — a Parakeet pass is ~20 s for an 11-min
+ *     file, paid again on every launch before this;
+ *   - **the re-reads a client APPLIED** (D-380 step 2), in the order applied —
+ *     not an optimization at all: they are the client's judgement, they change
+ *     the word indices every consumer reads, and no re-run can recover them
+ *     (losing them across a restart moved C040's word view between 932 and
+ *     892 words, 2026-10-14);
+ *   - **the dark-region recoveries** (D-349) — each is a whole isolated ASR
+ *     pass, produced by the same model and keyed by the same window the
+ *     re-run scan finds again, so persisting them makes a relaunch serve the
+ *     same spliced transcript without re-running any ASR.
+ * Deliberately NOT persisted: the dark-region SCANS (a ~2 s VAD pass, cheap to
+ * repeat, and keyed by parameters and a word count rather than by anything
+ * worth holding), un-applied re-read PREVIEWS (nothing reads them until a
+ * client applies one, in the same session), silence and retake DETECTIONS
+ * (cheap, range/parameter-keyed, and derived from what IS persisted), video
+ * analyses (question-dependent; out of D-385's scope, roadmapped), and the
+ * client's retake PROPOSALS — those are keyed by track and pinned to a
+ * `viewId` of one timeline state, so after a restart they describe a view that
+ * may no longer exist; the stale-view lock would refuse them anyway, and a
+ * source-keyed cache is the wrong home for a fact about a track.
+ *
+ * Loading is **lazy**: nothing is read at startup. A file's record is read the
+ * first time anything asks about that file — [`getTranscript`] /
+ * [`startTranscript`] read it before deciding to run the ASR, and the
+ * Transcript panel calls [`hydrate`] for the files on the timeline it shows —
+ * once per file per session, off the UI thread (a Tauri command). `force: true`
+ * still re-runs the ASR and the result overwrites the record.
+ *
+ * [`getTranscript`]: MediaUnderstandingState.getTranscript
+ * [`startTranscript`]: MediaUnderstandingState.startTranscript
+ * [`hydrate`]: MediaUnderstandingState.hydrate
  *
  * **Two of the caches here are not optimizations at all (D-349).** A
  * dark-region scan says where the ASR silently dropped speech, and a *recovery*
@@ -291,6 +327,16 @@ export interface AppliedReread extends RecoveredWindow {
   seq: number;
 }
 
+/** The record persisted for one source file (D-385) — the shape
+ *  `apelles_ai::understanding_cache::UnderstandingRecord` stores verbatim.
+ *  `appliedRereads` is in the order applied (that order is the splice order),
+ *  so `seq` itself is not stored: it is re-assigned on load. */
+export interface PersistedUnderstanding {
+  transcript: Transcript | null;
+  recoveries: RecoveredWindow[];
+  appliedRereads: RecoveredWindow[];
+}
+
 export interface TranscribeOptions {
   language?: string;
   wordTimestamps?: boolean;
@@ -389,6 +435,12 @@ interface MediaUnderstandingState {
    *  `chroma::control`'s 20 s bridge — should use `start*` + `*Status` below
    *  instead. */
   getTranscript(path: string, options?: TranscribeOptions): Promise<Transcript>;
+  /** Read `path`'s persisted record (D-385) into memory — the transcript, the
+   *  dark-region recoveries and the applied re-reads — without ever running
+   *  the ASR. Once per file per session (a repeat returns the same promise);
+   *  never rejects (a failed read is a miss). What is already in memory wins
+   *  over what is on disk. */
+  hydrate(path: string): Promise<void>;
   analyzeVideo(path: string, options?: AnalyzeOptions): Promise<VideoAnalysis>;
 
   /** Fire-and-forget: kick the job off if it isn't already cached or running,
@@ -469,7 +521,9 @@ interface MediaUnderstandingState {
 
   /** Drop a cached result (or everything, with no argument) — the escape hatch
    *  for "this file changed and I don't want to pass `force` at every call
-   *  site." */
+   *  site." Memory only: the persisted record (D-385) is keyed by the file's
+   *  identity, so a really-changed file already misses on disk; the next ask
+   *  for a cleared file reads its record again. */
   clear(path?: string): void;
 
   /** Forget every recorded FAILURE for one file (or for everything), keeping
@@ -612,479 +666,660 @@ function withoutPath<T>(map: Record<string, T>, path: string): Record<string, T>
   return Object.fromEntries(Object.entries(map).filter(([k]) => !k.startsWith(prefix)));
 }
 
-export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, get) => ({
-  transcripts: {},
-  analyses: {},
-  transcribing: {},
-  analyzing: {},
-  transcriptErrors: {},
-  analysisErrors: {},
-  silences: {},
-  detectingSilences: {},
-  silenceErrors: {},
-  retakes: {},
-  detectingRetakes: {},
-  retakeErrors: {},
-  dark: {},
-  detectingDark: {},
-  darkErrors: {},
-  recoveries: {},
-  recovering: {},
-  recoveryErrors: {},
-  rereads: {},
-  rereading: {},
-  rereadErrors: {},
-  appliedRereads: {},
-  rereadSeq: 0,
-  retakeProposals: {},
-  retakeRequests: {},
+// --------------------------------------------------------------------------- //
+// Persistence (D-385)
+// --------------------------------------------------------------------------- //
 
-  getTranscript: async (path, options = {}) => {
-    const cached = get().transcripts[path];
-    if (cached && !options.force) return cached;
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
 
-    set((s) => {
-      const { [path]: _cleared, ...transcriptErrors } = s.transcriptErrors;
-      return { transcribing: { ...s.transcribing, [path]: true }, transcriptErrors };
+function isRecoveredWindow(v: unknown): v is RecoveredWindow {
+  if (!isRecord(v) || !isRecord(v.window) || !Array.isArray(v.segments)) return false;
+  return typeof v.window.startSecs === 'number' && typeof v.window.durationSecs === 'number';
+}
+
+function isTranscript(v: unknown): v is Transcript {
+  return isRecord(v) && Array.isArray(v.segments) && typeof v.text === 'string';
+}
+
+/** What `chroma_media_understanding_load` answered, checked before anything is
+ *  trusted: the Rust side treats the payloads as opaque JSON, so this is the
+ *  one place their shape is verified. Anything malformed is dropped piecewise
+ *  rather than failing the whole record — a bad recovery must not cost the
+ *  transcript. `null` for a miss. Pure; exported for the unit tests. */
+export function parsePersisted(v: unknown): PersistedUnderstanding | null {
+  if (!isRecord(v)) return null;
+  const transcript = isTranscript(v.transcript) ? v.transcript : null;
+  const recoveries = Array.isArray(v.recoveries) ? v.recoveries.filter(isRecoveredWindow) : [];
+  const appliedRereads = Array.isArray(v.appliedRereads)
+    ? v.appliedRereads.filter(isRecoveredWindow)
+    : [];
+  if (!transcript && recoveries.length === 0 && appliedRereads.length === 0) return null;
+  return { transcript, recoveries, appliedRereads };
+}
+
+/** The record to persist for `path`: exactly what memory holds for it now. */
+function persistedOf(s: MediaUnderstandingState, path: string): PersistedUnderstanding {
+  const prefix = `${path}|`;
+  return {
+    transcript: s.transcripts[path] ?? null,
+    recoveries: Object.entries(s.recoveries)
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([, v]) => v)
+      .sort((a, b) => a.window.startSecs - b.window.startSecs),
+    appliedRereads: appliedRereadsIn(s, path),
+  };
+}
+
+/** The state update that folds a loaded record for `path` into memory. Memory
+ *  wins everywhere it already has an answer — a transcript, a recovery or an
+ *  applied re-read that landed this session is newer than the disk's. The
+ *  applied order is rebuilt as "disk's, in its order, then this session's",
+ *  with fresh `seq`s from the store's counter so the splice stays
+ *  deterministic and later applies still sort last. */
+function mergePersisted(
+  s: MediaUnderstandingState,
+  path: string,
+  rec: PersistedUnderstanding,
+): Partial<MediaUnderstandingState> {
+  const out: Partial<MediaUnderstandingState> = {};
+  if (rec.transcript && !s.transcripts[path]) {
+    out.transcripts = { ...s.transcripts, [path]: rec.transcript };
+  }
+  const recoveries = { ...s.recoveries };
+  let recovered = false;
+  for (const r of rec.recoveries) {
+    const key = recoveryKey(path, r.window);
+    if (recoveries[key]) continue;
+    recoveries[key] = r;
+    recovered = true;
+  }
+  if (recovered) out.recoveries = recoveries;
+
+  const prefix = `${path}|`;
+  const live = Object.entries(s.appliedRereads)
+    .filter(([k]) => k.startsWith(prefix))
+    .sort(([, a], [, b]) => a.seq - b.seq);
+  const liveKeys = new Set(live.map(([k]) => k));
+  const fromDisk = rec.appliedRereads
+    .map((r) => [recoveryKey(path, r.window), r] as const)
+    .filter(([k]) => !liveKeys.has(k));
+  if (fromDisk.length > 0) {
+    const ordered: Array<readonly [string, RecoveredWindow]> = [...fromDisk, ...live];
+    const applied = withoutPath(s.appliedRereads, path);
+    ordered.forEach(([k, { window, segments }], i) => {
+      applied[k] = { window, segments, seq: s.rereadSeq + i };
     });
-    try {
-      const transcript = await runJob<Transcript>(
-        'chroma_transcribe',
-        'chroma_transcribe_status',
-        {
-          path,
-          language: options.language ?? null,
-          wordTimestamps: options.wordTimestamps ?? null,
-        },
-        'transcribe',
-      );
-      set((s) => ({ transcripts: { ...s.transcripts, [path]: transcript } }));
-      return transcript;
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      set((s) => ({ transcriptErrors: { ...s.transcriptErrors, [path]: message } }));
-      throw e;
-    } finally {
+    out.appliedRereads = applied;
+    out.rereadSeq = s.rereadSeq + ordered.length;
+  }
+  return out;
+}
+
+/** The path a [`recoveryKey`] was built from — everything before its last two
+ *  `|`-separated fields, so even a path that contains `|` comes back whole. */
+function pathOfRecoveryKey(key: string): string {
+  const last = key.lastIndexOf('|');
+  return key.slice(0, key.lastIndexOf('|', last - 1));
+}
+
+/** path -> the one load of its persisted record this session (D-385). Module
+ *  state rather than store state: it is bookkeeping no component renders, and
+ *  a promise does not belong in a serialisable store. [`clear`] drops entries,
+ *  and a load whose entry was dropped while it was in flight discards its
+ *  answer rather than repopulating a cleared store. */
+const hydrations = new Map<string, Promise<void>>();
+
+/** path -> the tail of that file's persist chain. Writes for one file are
+ *  serialised so a slow earlier write can never land after a later one and
+ *  put an older record back on disk. */
+const persistChains = new Map<string, Promise<void>>();
+
+export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, get) => {
+  /** Write `path`'s record as memory holds it when the write RUNS (not when it
+   *  was queued), after the file's record has been loaded — so a write can
+   *  never replace a persisted record this session has not seen yet. A failure
+   *  is logged with its reason, never thrown: nothing in-session depends on
+   *  it, but it is the one place a lost applied re-read would show. */
+  const persist = (path: string): Promise<void> => {
+    const prev = persistChains.get(path) ?? Promise.resolve();
+    const next = prev
+      .then(() => get().hydrate(path))
+      .then(async () => {
+        const record = persistedOf(get(), path);
+        if (!record.transcript && record.recoveries.length === 0 && record.appliedRereads.length === 0) {
+          return;
+        }
+        try {
+          await invoke('chroma_media_understanding_save', { path, record });
+        } catch (e: unknown) {
+          console.error('[mediaUnderstanding] could not persist the record for', path, e);
+        }
+      });
+    persistChains.set(path, next);
+    return next;
+  };
+
+  return {
+    transcripts: {},
+    analyses: {},
+    transcribing: {},
+    analyzing: {},
+    transcriptErrors: {},
+    analysisErrors: {},
+    silences: {},
+    detectingSilences: {},
+    silenceErrors: {},
+    retakes: {},
+    detectingRetakes: {},
+    retakeErrors: {},
+    dark: {},
+    detectingDark: {},
+    darkErrors: {},
+    recoveries: {},
+    recovering: {},
+    recoveryErrors: {},
+    rereads: {},
+    rereading: {},
+    rereadErrors: {},
+    appliedRereads: {},
+    rereadSeq: 0,
+    retakeProposals: {},
+    retakeRequests: {},
+
+    getTranscript: async (path, options = {}) => {
+      const cached = get().transcripts[path];
+      if (cached && !options.force) return cached;
+
       set((s) => {
-        const { [path]: _dropped, ...rest } = s.transcribing;
-        return { transcribing: rest };
-      });
-    }
-  },
-
-  analyzeVideo: async (path, options = {}) => {
-    const cached = get().analyses[path];
-    if (cached && !options.force) return cached;
-
-    set((s) => {
-      const { [path]: _cleared, ...analysisErrors } = s.analysisErrors;
-      return { analyzing: { ...s.analyzing, [path]: true }, analysisErrors };
-    });
-    try {
-      const analysis = await runJob<VideoAnalysis>(
-        'chroma_analyze_video',
-        'chroma_analyze_video_status',
-        {
-          path,
-          question: options.question ?? null,
-          sceneThreshold: options.sceneThreshold ?? null,
-          minGapS: options.minGapS ?? null,
-          maxCandidates: options.maxCandidates ?? null,
-        },
-        'analyze_video',
-      );
-      set((s) => ({ analyses: { ...s.analyses, [path]: analysis } }));
-      return analysis;
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      set((s) => ({ analysisErrors: { ...s.analysisErrors, [path]: message } }));
-      throw e;
-    } finally {
-      set((s) => {
-        const { [path]: _dropped, ...rest } = s.analyzing;
-        return { analyzing: rest };
-      });
-    }
-  },
-
-  startTranscript: (path, options = {}) => {
-    const s = get();
-    return startJob(
-      !!s.transcribing[path],
-      !!s.transcripts[path],
-      s.transcriptErrors[path],
-      !!options.force,
-      () => get().getTranscript(path, options),
-    );
-  },
-
-  startAnalysis: (path, options = {}) => {
-    const s = get();
-    return startJob(
-      !!s.analyzing[path],
-      !!s.analyses[path],
-      s.analysisErrors[path],
-      !!options.force,
-      () => get().analyzeVideo(path, options),
-    );
-  },
-
-  detectSilences: async (args, force = false) => {
-    const key = silenceKey(args);
-    const cached = get().silences[key];
-    if (cached && !force) return cached;
-
-    set((s) => {
-      const { [key]: _cleared, ...silenceErrors } = s.silenceErrors;
-      return { detectingSilences: { ...s.detectingSilences, [key]: true }, silenceErrors };
-    });
-    try {
-      // One `invoke`, not a start/poll pair: the work is a Tauri command that
-      // runs to completion in-process (there is no sidecar job id to poll).
-      // The store IS the job record — which is the whole point of B-188/D-321,
-      // because this promise outliving its caller's timeout is exactly the
-      // case that used to throw the answer away.
-      const detection = await invoke<SilenceDetection>('chroma_detect_silences', {
-        path: args.path,
-        startSecs: args.startSecs,
-        durationSecs: args.durationSecs,
-        minSilenceMs: args.minSilenceMs ?? null,
-      });
-      set((s) => ({ silences: { ...s.silences, [key]: detection } }));
-      return detection;
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      set((s) => ({ silenceErrors: { ...s.silenceErrors, [key]: message } }));
-      throw e;
-    } finally {
-      set((s) => {
-        const { [key]: _dropped, ...rest } = s.detectingSilences;
-        return { detectingSilences: rest };
-      });
-    }
-  },
-
-  startSilenceDetection: (args, force = false) => {
-    const key = silenceKey(args);
-    const s = get();
-    return startJob(!!s.detectingSilences[key], !!s.silences[key], s.silenceErrors[key], force, () =>
-      get().detectSilences(args, force),
-    );
-  },
-
-  silenceDetectionStatus: (key) => {
-    const s = get();
-    if (s.silences[key]) return { phase: 'done', result: s.silences[key] };
-    if (s.detectingSilences[key]) return { phase: 'running' };
-    if (s.silenceErrors[key]) return { phase: 'error', error: s.silenceErrors[key] };
-    return { phase: 'idle' };
-  },
-
-  detectRetakes: async (args, force = false) => {
-    const key = retakeKey(args);
-    const cached = get().retakes[key];
-    if (cached && !force) return cached;
-
-    set((s) => {
-      const { [key]: _cleared, ...retakeErrors } = s.retakeErrors;
-      return { detectingRetakes: { ...s.detectingRetakes, [key]: true }, retakeErrors };
-    });
-    try {
-      const detection = await invoke<RetakeDetection>('chroma_detect_retakes', {
-        utterances: args.utterances,
-        similarity: args.similarity ?? null,
-        windowSecs: args.windowSecs ?? null,
-        minWords: args.minWords ?? null,
-        maxSpanUtterances: args.maxSpanUtterances ?? null,
-        phraseMinWords: args.phraseMinWords ?? null,
-      });
-      set((s) => ({ retakes: { ...s.retakes, [key]: detection } }));
-      return detection;
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      set((s) => ({ retakeErrors: { ...s.retakeErrors, [key]: message } }));
-      throw e;
-    } finally {
-      set((s) => {
-        const { [key]: _dropped, ...rest } = s.detectingRetakes;
-        return { detectingRetakes: rest };
-      });
-    }
-  },
-
-  startRetakeDetection: (args, force = false) => {
-    const key = retakeKey(args);
-    const s = get();
-    return startJob(!!s.detectingRetakes[key], !!s.retakes[key], s.retakeErrors[key], force, () =>
-      get().detectRetakes(args, force),
-    );
-  },
-
-  retakeDetectionStatus: (key) => {
-    const s = get();
-    if (s.retakes[key]) return { phase: 'done', result: s.retakes[key] };
-    if (s.detectingRetakes[key]) return { phase: 'running' };
-    if (s.retakeErrors[key]) return { phase: 'error', error: s.retakeErrors[key] };
-    return { phase: 'idle' };
-  },
-
-  requestRetakes: (key) => {
-    if (get().retakeRequests[key]) return;
-    set((s) => ({ retakeRequests: { ...s.retakeRequests, [key]: true } }));
-  },
-
-  retakeRequested: (key) => !!get().retakeRequests[key],
-
-  settleRetakeRequest: (key) => {
-    if (!get().retakeRequests[key]) return;
-    set((s) => {
-      const { [key]: _settled, ...retakeRequests } = s.retakeRequests;
-      return { retakeRequests };
-    });
-  },
-
-  detectDarkRegions: async (args, force = false) => {
-    const key = darkKey(args);
-    const cached = get().dark[key];
-    if (cached && !force) return cached;
-
-    set((s) => {
-      const { [key]: _cleared, ...darkErrors } = s.darkErrors;
-      return { detectingDark: { ...s.detectingDark, [key]: true }, darkErrors };
-    });
-    try {
-      const detection = await invoke<DarkDetection>('chroma_detect_dark_regions', {
-        path: args.path,
-        startSecs: args.startSecs,
-        durationSecs: args.durationSecs,
-        words: args.words,
-        minDarkSecs: args.minDarkSecs ?? null,
-        maxWordSecs: args.maxWordSecs ?? null,
-        rmsFloorScale: args.rmsFloorScale ?? null,
-      });
-      set((s) => ({ dark: { ...s.dark, [key]: detection } }));
-      return detection;
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      set((s) => ({ darkErrors: { ...s.darkErrors, [key]: message } }));
-      throw e;
-    } finally {
-      set((s) => {
-        const { [key]: _dropped, ...rest } = s.detectingDark;
-        return { detectingDark: rest };
-      });
-    }
-  },
-
-  startDarkDetection: (args, force = false) => {
-    const key = darkKey(args);
-    const s = get();
-    return startJob(!!s.detectingDark[key], !!s.dark[key], s.darkErrors[key], force, () =>
-      get().detectDarkRegions(args, force),
-    );
-  },
-
-  darkDetectionStatus: (key) => {
-    const s = get();
-    if (s.dark[key]) return { phase: 'done', result: s.dark[key] };
-    if (s.detectingDark[key]) return { phase: 'running' };
-    if (s.darkErrors[key]) return { phase: 'error', error: s.darkErrors[key] };
-    return { phase: 'idle' };
-  },
-
-  recoverWindow: async (path, window, language, force = false) => {
-    const key = recoveryKey(path, window);
-    const cached = get().recoveries[key];
-    if (cached && !force) return cached;
-
-    set((s) => {
-      const { [key]: _cleared, ...recoveryErrors } = s.recoveryErrors;
-      return { recovering: { ...s.recovering, [key]: true }, recoveryErrors };
-    });
-    try {
-      // Language pinned, not auto-detected — see the interface doc.
-      const recovered = await transcribeWindow(path, window, language, 'recover');
-      set((s) => ({ recoveries: { ...s.recoveries, [key]: recovered } }));
-      return recovered;
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      set((s) => ({ recoveryErrors: { ...s.recoveryErrors, [key]: message } }));
-      throw e;
-    } finally {
-      set((s) => {
-        const { [key]: _dropped, ...rest } = s.recovering;
-        return { recovering: rest };
-      });
-    }
-  },
-
-  startRecovery: (path, window, language, force = false) => {
-    const key = recoveryKey(path, window);
-    const s = get();
-    return startJob(!!s.recovering[key], !!s.recoveries[key], s.recoveryErrors[key], force, () =>
-      get().recoverWindow(path, window, language, force),
-    );
-  },
-
-  recoveryStatus: (key) => {
-    const s = get();
-    if (s.recoveries[key]) return { phase: 'done', result: s.recoveries[key] };
-    if (s.recovering[key]) return { phase: 'running' };
-    if (s.recoveryErrors[key]) return { phase: 'error', error: s.recoveryErrors[key] };
-    return { phase: 'idle' };
-  },
-
-  recoveriesFor: (path) => recoveriesIn(get(), path),
-
-  appliedRereadsFor: (path) => appliedRereadsIn(get(), path),
-
-  startReread: (path, window, language, force = false) => {
-    const key = recoveryKey(path, window);
-    const s = get();
-    return startJob(!!s.rereading[key], !!s.rereads[key], s.rereadErrors[key], force, async () => {
-      set((st) => {
-        const { [key]: _cleared, ...rereadErrors } = st.rereadErrors;
-        return { rereading: { ...st.rereading, [key]: true }, rereadErrors };
+        const { [path]: _cleared, ...transcriptErrors } = s.transcriptErrors;
+        return { transcribing: { ...s.transcribing, [path]: true }, transcriptErrors };
       });
       try {
-        const reread = await transcribeWindow(path, window, language, 'reread');
-        set((st) => ({ rereads: { ...st.rereads, [key]: reread } }));
+        // The persisted record first (D-385): a relaunch must not pay for an ASR
+        // pass it already paid for. Loaded even under `force`, so the applied
+        // re-reads and recoveries on disk are in memory before the re-run's
+        // record replaces it — `force` re-runs the TRANSCRIPT, it does not
+        // discard a client's judgement about the audio.
+        await get().hydrate(path);
+        const persisted = get().transcripts[path];
+        if (persisted && !options.force) return persisted;
+
+        const transcript = await runJob<Transcript>(
+          'chroma_transcribe',
+          'chroma_transcribe_status',
+          {
+            path,
+            language: options.language ?? null,
+            wordTimestamps: options.wordTimestamps ?? null,
+          },
+          'transcribe',
+        );
+        set((s) => ({ transcripts: { ...s.transcripts, [path]: transcript } }));
+        void persist(path);
+        return transcript;
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e);
-        set((st) => ({ rereadErrors: { ...st.rereadErrors, [key]: message } }));
+        set((s) => ({ transcriptErrors: { ...s.transcriptErrors, [path]: message } }));
         throw e;
       } finally {
-        set((st) => {
-          const { [key]: _dropped, ...rest } = st.rereading;
-          return { rereading: rest };
+        set((s) => {
+          const { [path]: _dropped, ...rest } = s.transcribing;
+          return { transcribing: rest };
         });
       }
-    });
-  },
+    },
 
-  rereadStatus: (key) => {
-    const s = get();
-    if (s.rereads[key]) return { phase: 'done', result: s.rereads[key] };
-    if (s.rereading[key]) return { phase: 'running' };
-    if (s.rereadErrors[key]) return { phase: 'error', error: s.rereadErrors[key] };
-    return { phase: 'idle' };
-  },
+    hydrate: (path) => {
+      const existing = hydrations.get(path);
+      if (existing) return existing;
+      const load: Promise<void> = (async () => {
+        let raw: unknown = null;
+        try {
+          raw = await invoke('chroma_media_understanding_load', { path });
+        } catch (e: unknown) {
+          // A failed read is a miss: the ASR runs, exactly as before D-385.
+          console.warn('[mediaUnderstanding] could not read the persisted record for', path, e);
+          return;
+        }
+        // `clear` ran while this was in flight — its answer is for a store that
+        // no longer exists.
+        if (hydrations.get(path) !== load) return;
+        const record = parsePersisted(raw);
+        if (!record) return;
+        set((s) => mergePersisted(s, path, record));
+      })();
+      hydrations.set(path, load);
+      return load;
+    },
 
-  applyReread: (key) => {
-    const reread = get().rereads[key];
-    if (!reread) return false;
-    set((s) => ({
-      appliedRereads: { ...s.appliedRereads, [key]: { ...reread, seq: s.rereadSeq } },
-      rereadSeq: s.rereadSeq + 1,
-    }));
-    return true;
-  },
+    analyzeVideo: async (path, options = {}) => {
+      const cached = get().analyses[path];
+      if (cached && !options.force) return cached;
 
-  setRetakeProposals: (track, proposals) => {
-    set((s) => {
-      const { [track]: _dropped, ...rest } = s.retakeProposals;
-      return { retakeProposals: proposals ? { ...rest, [track]: proposals } : rest };
-    });
-  },
-
-  transcriptStatus: (path) => {
-    const s = get();
-    if (s.transcripts[path]) return { phase: 'done', result: s.transcripts[path] };
-    if (s.transcribing[path]) return { phase: 'running' };
-    if (s.transcriptErrors[path]) return { phase: 'error', error: s.transcriptErrors[path] };
-    return { phase: 'idle' };
-  },
-
-  analysisStatus: (path) => {
-    const s = get();
-    if (s.analyses[path]) return { phase: 'done', result: s.analyses[path] };
-    if (s.analyzing[path]) return { phase: 'running' };
-    if (s.analysisErrors[path]) return { phase: 'error', error: s.analysisErrors[path] };
-    return { phase: 'idle' };
-  },
-
-  clearErrors: (path) => {
-    if (path === undefined) {
-      set({
-        transcriptErrors: {},
-        analysisErrors: {},
-        silenceErrors: {},
-        retakeErrors: {},
-        darkErrors: {},
-        recoveryErrors: {},
-        rereadErrors: {},
+      set((s) => {
+        const { [path]: _cleared, ...analysisErrors } = s.analysisErrors;
+        return { analyzing: { ...s.analyzing, [path]: true }, analysisErrors };
       });
-      return;
-    }
-    set((s) => {
-      const { [path]: _t, ...transcriptErrors } = s.transcriptErrors;
-      const { [path]: _a, ...analysisErrors } = s.analysisErrors;
-      return {
-        transcriptErrors,
-        analysisErrors,
-        rereadErrors: withoutPath(s.rereadErrors, path),
-        // Detection and recovery keys are `<path>|…`, not the bare path.
-        silenceErrors: withoutPath(s.silenceErrors, path),
-        retakeErrors: withoutPath(s.retakeErrors, path),
-        darkErrors: withoutPath(s.darkErrors, path),
-        recoveryErrors: withoutPath(s.recoveryErrors, path),
-      };
-    });
-  },
+      try {
+        const analysis = await runJob<VideoAnalysis>(
+          'chroma_analyze_video',
+          'chroma_analyze_video_status',
+          {
+            path,
+            question: options.question ?? null,
+            sceneThreshold: options.sceneThreshold ?? null,
+            minGapS: options.minGapS ?? null,
+            maxCandidates: options.maxCandidates ?? null,
+          },
+          'analyze_video',
+        );
+        set((s) => ({ analyses: { ...s.analyses, [path]: analysis } }));
+        return analysis;
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        set((s) => ({ analysisErrors: { ...s.analysisErrors, [path]: message } }));
+        throw e;
+      } finally {
+        set((s) => {
+          const { [path]: _dropped, ...rest } = s.analyzing;
+          return { analyzing: rest };
+        });
+      }
+    },
 
-  clear: (path) => {
-    if (path === undefined) {
-      set({
-        transcripts: {},
-        analyses: {},
-        transcriptErrors: {},
-        analysisErrors: {},
-        silences: {},
-        silenceErrors: {},
-        retakes: {},
-        retakeErrors: {},
-        dark: {},
-        darkErrors: {},
-        recoveries: {},
-        recoveryErrors: {},
-        rereads: {},
-        rereadErrors: {},
-        appliedRereads: {},
-        retakeProposals: {},
-        retakeRequests: {},
+    startTranscript: (path, options = {}) => {
+      const s = get();
+      return startJob(
+        !!s.transcribing[path],
+        !!s.transcripts[path],
+        s.transcriptErrors[path],
+        !!options.force,
+        () => get().getTranscript(path, options),
+      );
+    },
+
+    startAnalysis: (path, options = {}) => {
+      const s = get();
+      return startJob(
+        !!s.analyzing[path],
+        !!s.analyses[path],
+        s.analysisErrors[path],
+        !!options.force,
+        () => get().analyzeVideo(path, options),
+      );
+    },
+
+    detectSilences: async (args, force = false) => {
+      const key = silenceKey(args);
+      const cached = get().silences[key];
+      if (cached && !force) return cached;
+
+      set((s) => {
+        const { [key]: _cleared, ...silenceErrors } = s.silenceErrors;
+        return { detectingSilences: { ...s.detectingSilences, [key]: true }, silenceErrors };
       });
-      return;
-    }
-    set((s) => {
-      const { [path]: _t, ...transcripts } = s.transcripts;
-      const { [path]: _a, ...analyses } = s.analyses;
-      const { [path]: _te, ...transcriptErrors } = s.transcriptErrors;
-      const { [path]: _ae, ...analysisErrors } = s.analysisErrors;
-      // Detections are keyed by `<path>|<range>|<params>`, not by path alone,
-      // so "forget this file" has to drop every key that file contributed —
-      // otherwise a changed file keeps serving its old cut list.
-      return {
-        transcripts,
-        analyses,
-        transcriptErrors,
-        analysisErrors,
-        silences: withoutPath(s.silences, path),
-        silenceErrors: withoutPath(s.silenceErrors, path),
-        retakes: withoutPath(s.retakes, path),
-        retakeErrors: withoutPath(s.retakeErrors, path),
-        dark: withoutPath(s.dark, path),
-        darkErrors: withoutPath(s.darkErrors, path),
-        recoveries: withoutPath(s.recoveries, path),
-        recoveryErrors: withoutPath(s.recoveryErrors, path),
-        // A client's re-reads are facts about this file's audio too; a changed
-        // file must not keep splicing its old words in.
-        rereads: withoutPath(s.rereads, path),
-        rereadErrors: withoutPath(s.rereadErrors, path),
-        appliedRereads: withoutPath(s.appliedRereads, path),
-        // A request is for answers about this file's audio; forgetting the
-        // file forgets what was asked of it too.
-        retakeRequests: withoutPath(s.retakeRequests, path),
-      };
-    });
-  },
-}));
+      try {
+        // One `invoke`, not a start/poll pair: the work is a Tauri command that
+        // runs to completion in-process (there is no sidecar job id to poll).
+        // The store IS the job record — which is the whole point of B-188/D-321,
+        // because this promise outliving its caller's timeout is exactly the
+        // case that used to throw the answer away.
+        const detection = await invoke<SilenceDetection>('chroma_detect_silences', {
+          path: args.path,
+          startSecs: args.startSecs,
+          durationSecs: args.durationSecs,
+          minSilenceMs: args.minSilenceMs ?? null,
+        });
+        set((s) => ({ silences: { ...s.silences, [key]: detection } }));
+        return detection;
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        set((s) => ({ silenceErrors: { ...s.silenceErrors, [key]: message } }));
+        throw e;
+      } finally {
+        set((s) => {
+          const { [key]: _dropped, ...rest } = s.detectingSilences;
+          return { detectingSilences: rest };
+        });
+      }
+    },
+
+    startSilenceDetection: (args, force = false) => {
+      const key = silenceKey(args);
+      const s = get();
+      return startJob(!!s.detectingSilences[key], !!s.silences[key], s.silenceErrors[key], force, () =>
+        get().detectSilences(args, force),
+      );
+    },
+
+    silenceDetectionStatus: (key) => {
+      const s = get();
+      if (s.silences[key]) return { phase: 'done', result: s.silences[key] };
+      if (s.detectingSilences[key]) return { phase: 'running' };
+      if (s.silenceErrors[key]) return { phase: 'error', error: s.silenceErrors[key] };
+      return { phase: 'idle' };
+    },
+
+    detectRetakes: async (args, force = false) => {
+      const key = retakeKey(args);
+      const cached = get().retakes[key];
+      if (cached && !force) return cached;
+
+      set((s) => {
+        const { [key]: _cleared, ...retakeErrors } = s.retakeErrors;
+        return { detectingRetakes: { ...s.detectingRetakes, [key]: true }, retakeErrors };
+      });
+      try {
+        const detection = await invoke<RetakeDetection>('chroma_detect_retakes', {
+          utterances: args.utterances,
+          similarity: args.similarity ?? null,
+          windowSecs: args.windowSecs ?? null,
+          minWords: args.minWords ?? null,
+          maxSpanUtterances: args.maxSpanUtterances ?? null,
+          phraseMinWords: args.phraseMinWords ?? null,
+        });
+        set((s) => ({ retakes: { ...s.retakes, [key]: detection } }));
+        return detection;
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        set((s) => ({ retakeErrors: { ...s.retakeErrors, [key]: message } }));
+        throw e;
+      } finally {
+        set((s) => {
+          const { [key]: _dropped, ...rest } = s.detectingRetakes;
+          return { detectingRetakes: rest };
+        });
+      }
+    },
+
+    startRetakeDetection: (args, force = false) => {
+      const key = retakeKey(args);
+      const s = get();
+      return startJob(!!s.detectingRetakes[key], !!s.retakes[key], s.retakeErrors[key], force, () =>
+        get().detectRetakes(args, force),
+      );
+    },
+
+    retakeDetectionStatus: (key) => {
+      const s = get();
+      if (s.retakes[key]) return { phase: 'done', result: s.retakes[key] };
+      if (s.detectingRetakes[key]) return { phase: 'running' };
+      if (s.retakeErrors[key]) return { phase: 'error', error: s.retakeErrors[key] };
+      return { phase: 'idle' };
+    },
+
+    requestRetakes: (key) => {
+      if (get().retakeRequests[key]) return;
+      set((s) => ({ retakeRequests: { ...s.retakeRequests, [key]: true } }));
+    },
+
+    retakeRequested: (key) => !!get().retakeRequests[key],
+
+    settleRetakeRequest: (key) => {
+      if (!get().retakeRequests[key]) return;
+      set((s) => {
+        const { [key]: _settled, ...retakeRequests } = s.retakeRequests;
+        return { retakeRequests };
+      });
+    },
+
+    detectDarkRegions: async (args, force = false) => {
+      const key = darkKey(args);
+      const cached = get().dark[key];
+      if (cached && !force) return cached;
+
+      set((s) => {
+        const { [key]: _cleared, ...darkErrors } = s.darkErrors;
+        return { detectingDark: { ...s.detectingDark, [key]: true }, darkErrors };
+      });
+      try {
+        const detection = await invoke<DarkDetection>('chroma_detect_dark_regions', {
+          path: args.path,
+          startSecs: args.startSecs,
+          durationSecs: args.durationSecs,
+          words: args.words,
+          minDarkSecs: args.minDarkSecs ?? null,
+          maxWordSecs: args.maxWordSecs ?? null,
+          rmsFloorScale: args.rmsFloorScale ?? null,
+        });
+        set((s) => ({ dark: { ...s.dark, [key]: detection } }));
+        return detection;
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        set((s) => ({ darkErrors: { ...s.darkErrors, [key]: message } }));
+        throw e;
+      } finally {
+        set((s) => {
+          const { [key]: _dropped, ...rest } = s.detectingDark;
+          return { detectingDark: rest };
+        });
+      }
+    },
+
+    startDarkDetection: (args, force = false) => {
+      const key = darkKey(args);
+      const s = get();
+      return startJob(!!s.detectingDark[key], !!s.dark[key], s.darkErrors[key], force, () =>
+        get().detectDarkRegions(args, force),
+      );
+    },
+
+    darkDetectionStatus: (key) => {
+      const s = get();
+      if (s.dark[key]) return { phase: 'done', result: s.dark[key] };
+      if (s.detectingDark[key]) return { phase: 'running' };
+      if (s.darkErrors[key]) return { phase: 'error', error: s.darkErrors[key] };
+      return { phase: 'idle' };
+    },
+
+    recoverWindow: async (path, window, language, force = false) => {
+      const key = recoveryKey(path, window);
+      const cached = get().recoveries[key];
+      if (cached && !force) return cached;
+
+      set((s) => {
+        const { [key]: _cleared, ...recoveryErrors } = s.recoveryErrors;
+        return { recovering: { ...s.recovering, [key]: true }, recoveryErrors };
+      });
+      try {
+        // Language pinned, not auto-detected — see the interface doc.
+        const recovered = await transcribeWindow(path, window, language, 'recover');
+        set((s) => ({ recoveries: { ...s.recoveries, [key]: recovered } }));
+        void persist(path);
+        return recovered;
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        set((s) => ({ recoveryErrors: { ...s.recoveryErrors, [key]: message } }));
+        throw e;
+      } finally {
+        set((s) => {
+          const { [key]: _dropped, ...rest } = s.recovering;
+          return { recovering: rest };
+        });
+      }
+    },
+
+    startRecovery: (path, window, language, force = false) => {
+      const key = recoveryKey(path, window);
+      const s = get();
+      return startJob(!!s.recovering[key], !!s.recoveries[key], s.recoveryErrors[key], force, () =>
+        get().recoverWindow(path, window, language, force),
+      );
+    },
+
+    recoveryStatus: (key) => {
+      const s = get();
+      if (s.recoveries[key]) return { phase: 'done', result: s.recoveries[key] };
+      if (s.recovering[key]) return { phase: 'running' };
+      if (s.recoveryErrors[key]) return { phase: 'error', error: s.recoveryErrors[key] };
+      return { phase: 'idle' };
+    },
+
+    recoveriesFor: (path) => recoveriesIn(get(), path),
+
+    appliedRereadsFor: (path) => appliedRereadsIn(get(), path),
+
+    startReread: (path, window, language, force = false) => {
+      const key = recoveryKey(path, window);
+      const s = get();
+      return startJob(!!s.rereading[key], !!s.rereads[key], s.rereadErrors[key], force, async () => {
+        set((st) => {
+          const { [key]: _cleared, ...rereadErrors } = st.rereadErrors;
+          return { rereading: { ...st.rereading, [key]: true }, rereadErrors };
+        });
+        try {
+          const reread = await transcribeWindow(path, window, language, 'reread');
+          set((st) => ({ rereads: { ...st.rereads, [key]: reread } }));
+        } catch (e: unknown) {
+          const message = e instanceof Error ? e.message : String(e);
+          set((st) => ({ rereadErrors: { ...st.rereadErrors, [key]: message } }));
+          throw e;
+        } finally {
+          set((st) => {
+            const { [key]: _dropped, ...rest } = st.rereading;
+            return { rereading: rest };
+          });
+        }
+      });
+    },
+
+    rereadStatus: (key) => {
+      const s = get();
+      if (s.rereads[key]) return { phase: 'done', result: s.rereads[key] };
+      if (s.rereading[key]) return { phase: 'running' };
+      if (s.rereadErrors[key]) return { phase: 'error', error: s.rereadErrors[key] };
+      return { phase: 'idle' };
+    },
+
+    applyReread: (key) => {
+      const reread = get().rereads[key];
+      if (!reread) return false;
+      set((s) => ({
+        appliedRereads: { ...s.appliedRereads, [key]: { ...reread, seq: s.rereadSeq } },
+        rereadSeq: s.rereadSeq + 1,
+      }));
+      // The client's judgement is persisted the moment it is applied (D-385) —
+      // the one thing in this store no re-run can recover.
+      void persist(pathOfRecoveryKey(key));
+      return true;
+    },
+
+    setRetakeProposals: (track, proposals) => {
+      set((s) => {
+        const { [track]: _dropped, ...rest } = s.retakeProposals;
+        return { retakeProposals: proposals ? { ...rest, [track]: proposals } : rest };
+      });
+    },
+
+    transcriptStatus: (path) => {
+      const s = get();
+      if (s.transcripts[path]) return { phase: 'done', result: s.transcripts[path] };
+      if (s.transcribing[path]) return { phase: 'running' };
+      if (s.transcriptErrors[path]) return { phase: 'error', error: s.transcriptErrors[path] };
+      return { phase: 'idle' };
+    },
+
+    analysisStatus: (path) => {
+      const s = get();
+      if (s.analyses[path]) return { phase: 'done', result: s.analyses[path] };
+      if (s.analyzing[path]) return { phase: 'running' };
+      if (s.analysisErrors[path]) return { phase: 'error', error: s.analysisErrors[path] };
+      return { phase: 'idle' };
+    },
+
+    clearErrors: (path) => {
+      if (path === undefined) {
+        set({
+          transcriptErrors: {},
+          analysisErrors: {},
+          silenceErrors: {},
+          retakeErrors: {},
+          darkErrors: {},
+          recoveryErrors: {},
+          rereadErrors: {},
+        });
+        return;
+      }
+      set((s) => {
+        const { [path]: _t, ...transcriptErrors } = s.transcriptErrors;
+        const { [path]: _a, ...analysisErrors } = s.analysisErrors;
+        return {
+          transcriptErrors,
+          analysisErrors,
+          rereadErrors: withoutPath(s.rereadErrors, path),
+          // Detection and recovery keys are `<path>|…`, not the bare path.
+          silenceErrors: withoutPath(s.silenceErrors, path),
+          retakeErrors: withoutPath(s.retakeErrors, path),
+          darkErrors: withoutPath(s.darkErrors, path),
+          recoveryErrors: withoutPath(s.recoveryErrors, path),
+        };
+      });
+    },
+
+    clear: (path) => {
+      // Memory only — the persisted record stays (D-385). It is keyed by the
+      // file's identity, so a file that really changed already misses on disk,
+      // and `force` is how a caller replaces a record for an unchanged one.
+      // Forgetting the load means the next ask reads the record again.
+      if (path === undefined) {
+        hydrations.clear();
+        persistChains.clear();
+        set({
+          transcripts: {},
+          analyses: {},
+          transcriptErrors: {},
+          analysisErrors: {},
+          silences: {},
+          silenceErrors: {},
+          retakes: {},
+          retakeErrors: {},
+          dark: {},
+          darkErrors: {},
+          recoveries: {},
+          recoveryErrors: {},
+          rereads: {},
+          rereadErrors: {},
+          appliedRereads: {},
+          retakeProposals: {},
+          retakeRequests: {},
+        });
+        return;
+      }
+      hydrations.delete(path);
+      persistChains.delete(path);
+      set((s) => {
+        const { [path]: _t, ...transcripts } = s.transcripts;
+        const { [path]: _a, ...analyses } = s.analyses;
+        const { [path]: _te, ...transcriptErrors } = s.transcriptErrors;
+        const { [path]: _ae, ...analysisErrors } = s.analysisErrors;
+        // Detections are keyed by `<path>|<range>|<params>`, not by path alone,
+        // so "forget this file" has to drop every key that file contributed —
+        // otherwise a changed file keeps serving its old cut list.
+        return {
+          transcripts,
+          analyses,
+          transcriptErrors,
+          analysisErrors,
+          silences: withoutPath(s.silences, path),
+          silenceErrors: withoutPath(s.silenceErrors, path),
+          retakes: withoutPath(s.retakes, path),
+          retakeErrors: withoutPath(s.retakeErrors, path),
+          dark: withoutPath(s.dark, path),
+          darkErrors: withoutPath(s.darkErrors, path),
+          recoveries: withoutPath(s.recoveries, path),
+          recoveryErrors: withoutPath(s.recoveryErrors, path),
+          // A client's re-reads are facts about this file's audio too; a changed
+          // file must not keep splicing its old words in.
+          rereads: withoutPath(s.rereads, path),
+          rereadErrors: withoutPath(s.rereadErrors, path),
+          appliedRereads: withoutPath(s.appliedRereads, path),
+          // A request is for answers about this file's audio; forgetting the
+          // file forgets what was asked of it too.
+          retakeRequests: withoutPath(s.retakeRequests, path),
+        };
+      });
+    },
+  };
+});

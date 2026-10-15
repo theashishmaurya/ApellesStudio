@@ -6,6 +6,79 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-385 — Transcripts, dark-region recoveries and applied re-reads persist across restarts, keyed by file identity + ASR model
+
+**Status: `decided`** (2026-10-14). Code: `crates/apelles-ai/src/understanding_cache.rs`,
+`chroma_media_understanding_{load,save}` in
+`app/src-tauri/src/chroma/media_understanding.rs`, `hydrate` / `persist` in
+`packages/editor/src/mediaUnderstandingStore.ts`. Closes the roadmap item
+"Persist transcripts and applied re-reads across restarts".
+
+**Context.** `mediaUnderstandingStore` held everything in memory. Seen live on
+C040 (2026-10-14): every launch re-ran Parakeet (~20 s for an 11-min file), and
+— the real defect — a re-read the MCP client APPLIED with
+`editor_retranscribe_words apply: true` (D-380 step 2) was gone after a
+restart, so the word view every consumer indexes into changed size (932 vs 892
+words) between two runs. A re-run cannot recover a client's judgement.
+
+**Options.**
+1. *A second cache* — a frontend-side store (IndexedDB / `localStorage`) or a
+   new Rust directory. Two caches with two eviction stories and two ideas of
+   "same file"; `localStorage` is also size-capped and synchronous.
+2. *Save into the project (`project.json`)*. A transcript is a fact about a
+   FILE, shared by every project that uses it; per-project copies would
+   disagree, and a 900-word transcript does not belong in the manifest.
+3. **One record per (source file, ASR model) in the existing `media_cache`
+   (D-128)**, loaded lazily by the store.
+
+**Choice: option 3.** Details that are decisions:
+
+- **Key = `blake3(media_cache::source_key(path) ‖ model ‖ RECORD_SCHEMA)`**, in
+  namespace `understanding`. `source_key` is the identity D-128 already settled
+  (path + mtime + size, not a content hash, for its documented reasons), so a
+  changed file misses. The stored envelope repeats schema / model / source and
+  `load` re-checks them; `save` refuses a transcript whose own `model` field
+  names a different model.
+- **The app pins the model.** `apelles_ai::media_understanding::ASR_MODEL`
+  (`parakeet-tdt-0.6b-v3`) is now sent on every `/transcribe` request instead
+  of relying on the sidecar's default, so the model a record is keyed by and
+  the model a request runs are one value. The sidecar validates `model`
+  against its published list, so a drifted sidecar fails loudly rather than
+  returning another model's words under this key.
+- **What persists:** the whole-file transcript; the applied re-reads, in apply
+  order (the splice order — `seq` is re-assigned on load, after which new
+  applies still sort last); and the D-349 dark-region **recoveries** — each is
+  a whole ASR pass by the same model, keyed by a window the re-run scan finds
+  again, so a relaunch serves the same spliced transcript with no ASR at all.
+- **What does not:** dark-region **scans** (a ~2 s VAD pass, keyed by
+  parameters and a word count — cheap to redo); un-applied re-read previews
+  (nothing reads them until applied, in-session); silence / retake detections
+  (cheap, derived from what does persist); video analyses (question-dependent,
+  out of scope — roadmapped); and **retake proposals**, which are keyed by
+  track and pinned to one `viewId` of one timeline state — after a restart the
+  view they were checked against may not exist, the stale-view lock would
+  refuse them anyway, and a source-keyed cache is the wrong home for a fact
+  about a track.
+- **Lazy, never at startup.** `hydrate(path)` reads one file's record through
+  an async Tauri command (`spawn_blocking` on the Rust side), once per file per
+  session. `getTranscript` / `startTranscript` await it before deciding to run
+  the ASR; the Transcript panel hydrates the timeline's files when it mounts.
+  Memory always wins over disk where both have an answer.
+- **Writes** happen when a transcript lands, a recovery lands, or a re-read is
+  applied; each writes the file's whole record as memory holds it when the
+  write runs, serialised per file and always after that file's load — so a
+  write can never replace a record the session has not read.
+- **`force: true`** loads the record (keeping its applied re-reads and
+  recoveries), re-runs the ASR, and overwrites the transcript. `clear()` is
+  memory-only: a really-changed file already misses on disk.
+
+**What it costs.** A stat + one small read per file on first ask, and one
+small write per landed result. A failed read is a miss (the ASR runs, as
+before); a failed write is logged with its reason. Records share D-128's 1 GB
+LRU budget — a transcript record is a few hundred KB.
+
+---
+
 ## D-382 — The deterministic retake detector sits behind the same coverage gate as the MCP client
 
 **Status: `decided`** (2026-10-14). Code: `packages/editor/src/detectorGate.ts`,

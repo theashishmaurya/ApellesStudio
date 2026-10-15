@@ -15,9 +15,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invokeMock = vi.fn();
-vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invokeMock(...args) }));
+/** The persisted-record commands (D-385) answer from this fake disk instead of
+ *  `invokeMock`, so the job-protocol tests below keep asserting exactly the
+ *  sidecar calls they always did. `disk` survives `clear()` — that is what a
+ *  simulated restart is. */
+const disk = new Map<string, unknown>();
+const diskMock = vi.fn((command: string, args: { path: string; record?: unknown }) => {
+  if (command === 'chroma_media_understanding_load') {
+    return Promise.resolve(disk.get(args.path) ?? null);
+  }
+  disk.set(args.path, structuredClone(args.record));
+  return Promise.resolve(null);
+});
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (command: string, args: { path: string; record?: unknown }) =>
+    command.startsWith('chroma_media_understanding_')
+      ? diskMock(command, args)
+      : invokeMock(command, args),
+}));
 
-const { useMediaUnderstandingStore, silenceKey, retakeKey, recoveryKey } = await import(
+const { useMediaUnderstandingStore, silenceKey, retakeKey, recoveryKey, parsePersisted } = await import(
   './mediaUnderstandingStore',
 );
 
@@ -71,6 +88,8 @@ async function until(predicate: () => boolean, label: string) {
 
 beforeEach(() => {
   invokeMock.mockReset();
+  diskMock.mockClear();
+  disk.clear();
   useMediaUnderstandingStore.getState().clear();
   vi.useFakeTimers();
 });
@@ -409,5 +428,177 @@ describe('client re-reads (D-380 step 2)', () => {
     expect(useMediaUnderstandingStore.getState().retakeProposals[1]).toEqual(set);
     store.setRetakeProposals(1, null);
     expect(useMediaUnderstandingStore.getState().retakeProposals[1]).toBeUndefined();
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// D-385 — what survives a restart.
+//
+// A "restart" here is `clear()` (every in-memory map AND the once-per-session
+// load bookkeeping gone) with the fake `disk` left as it was — exactly what a
+// relaunch looks like to this store. The failure these exist for was seen live
+// on C040 (2026-10-14): every launch re-ran Parakeet, and an
+// `editor_retranscribe_words apply: true` the client had made was simply gone,
+// so the word view everyone indexes into changed size between two runs.
+// --------------------------------------------------------------------------- //
+
+describe('persistence across a restart (D-385)', () => {
+  const W1 = { startSecs: 1, durationSecs: 4 };
+  const W2 = { startSecs: 2, durationSecs: 1 };
+  const seg = (word: string) => ({ start: 2, end: 2.5, text: word, words: [{ word, start: 2, end: 2.5 }] });
+  /** Whole-file transcription starts only — a windowed re-read is not one. */
+  const transcribeStarts = () =>
+    invokeMock.mock.calls.filter(
+      ([c, a]) => c === 'chroma_transcribe' && (a as { startSecs?: number }).startSecs === undefined,
+    ).length;
+
+  /** Transcribe PATH to completion, the way a real first launch does. */
+  async function firstLaunchTranscript() {
+    scriptJob({ state: 'done', result: TRANSCRIPT }, 0);
+    const p = useMediaUnderstandingStore.getState().getTranscript(PATH);
+    await until(() => disk.has(PATH), 'the transcript to be persisted');
+    await p;
+  }
+
+  async function applyRereads(...windows: Array<{ startSecs: number; durationSecs: number }>) {
+    const store = useMediaUnderstandingStore.getState();
+    for (const [i, w] of windows.entries()) {
+      scriptJob({ state: 'done', result: { ...TRANSCRIPT, segments: [seg(` r${i}`)] } }, 0);
+      store.startReread(PATH, w, 'en');
+      await until(() => store.rereadStatus(recoveryKey(PATH, w)).phase === 'done', 're-read');
+      expect(store.applyReread(recoveryKey(PATH, w))).toBe(true);
+    }
+    // Let the persist chain run.
+    await vi.advanceTimersByTimeAsync(0);
+  }
+
+  function restart() {
+    useMediaUnderstandingStore.getState().clear();
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((command: string) => {
+      throw new Error(`the sidecar must not be asked anything here: ${command}`);
+    });
+  }
+
+  it('a relaunch serves the persisted transcript without running the ASR', async () => {
+    await firstLaunchTranscript();
+    expect(transcribeStarts()).toBe(1);
+
+    restart();
+    const store = useMediaUnderstandingStore.getState();
+    expect(store.transcriptStatus(PATH).phase, 'nothing is loaded at startup').toBe('idle');
+    await expect(store.getTranscript(PATH)).resolves.toEqual(TRANSCRIPT);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('start-then-poll (the MCP shape) also hydrates instead of transcribing', async () => {
+    await firstLaunchTranscript();
+    restart();
+    const store = useMediaUnderstandingStore.getState();
+    expect(store.startTranscript(PATH, { wordTimestamps: true })).toBe('running');
+    await until(() => store.transcriptStatus(PATH).phase === 'done', 'the persisted words to land');
+    expect(store.transcriptStatus(PATH).result).toEqual(TRANSCRIPT);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('an applied re-read survives the restart, in the order it was applied', async () => {
+    await firstLaunchTranscript();
+    await applyRereads(W2, W1);
+    expect(useMediaUnderstandingStore.getState().recoveriesFor(PATH).map((r) => r.window)).toEqual([W2, W1]);
+
+    restart();
+    const store = useMediaUnderstandingStore.getState();
+    expect(store.recoveriesFor(PATH), 'not loaded until something asks').toEqual([]);
+    await store.getTranscript(PATH);
+    const spliced = store.recoveriesFor(PATH);
+    expect(spliced.map((r) => r.window), 'same windows, same splice order').toEqual([W2, W1]);
+    expect(spliced.map((r) => r.segments[0]?.text)).toEqual([' r0', ' r1']);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('a re-read applied after the restart still splices LAST', async () => {
+    await firstLaunchTranscript();
+    await applyRereads(W1);
+    restart();
+    await useMediaUnderstandingStore.getState().getTranscript(PATH);
+
+    invokeMock.mockReset();
+    await applyRereads(W2);
+    expect(useMediaUnderstandingStore.getState().recoveriesFor(PATH).map((r) => r.window)).toEqual([W1, W2]);
+    // ...and that new order is what is on disk now.
+    expect(parsePersisted(disk.get(PATH))?.appliedRereads.map((r) => r.window)).toEqual([W1, W2]);
+  });
+
+  it('a re-read applied before the file was asked about does not clobber the persisted transcript', async () => {
+    await firstLaunchTranscript();
+    restart();
+    invokeMock.mockReset();
+    await applyRereads(W1);
+    const onDisk = parsePersisted(disk.get(PATH));
+    expect(onDisk?.transcript, 'the write loaded the record first').toEqual(TRANSCRIPT);
+    expect(onDisk?.appliedRereads).toHaveLength(1);
+  });
+
+  it('force re-runs the ASR and overwrites the record, keeping the applied re-reads', async () => {
+    await firstLaunchTranscript();
+    await applyRereads(W1);
+    restart();
+
+    const updated = { ...TRANSCRIPT, text: 'a fresh pass' };
+    invokeMock.mockReset();
+    scriptJob({ state: 'done', result: updated }, 0);
+    const p = useMediaUnderstandingStore.getState().getTranscript(PATH, { force: true });
+    await until(
+      () => parsePersisted(disk.get(PATH))?.transcript?.text === updated.text,
+      'the forced record to be written',
+    );
+    await expect(p).resolves.toEqual(updated);
+    expect(transcribeStarts(), 'force really re-ran').toBe(1);
+    expect(parsePersisted(disk.get(PATH))?.appliedRereads.map((r) => r.window)).toEqual([W1]);
+  });
+
+  it('persists dark-region recoveries, and serves them after a restart', async () => {
+    await firstLaunchTranscript();
+    scriptJob({ state: 'done', result: { ...TRANSCRIPT, segments: [seg(' found')] } }, 0);
+    useMediaUnderstandingStore.getState().startRecovery(PATH, W1, 'en');
+    await until(
+      () => (parsePersisted(disk.get(PATH))?.recoveries.length ?? 0) === 1,
+      'the recovery to be persisted',
+    );
+
+    restart();
+    await useMediaUnderstandingStore.getState().getTranscript(PATH);
+    expect(useMediaUnderstandingStore.getState().recoveryStatus(recoveryKey(PATH, W1)).phase).toBe('done');
+  });
+
+  it('hydrate is disk-only, once per file, and never overrides what memory already has', async () => {
+    disk.set(PATH, { transcript: { ...TRANSCRIPT, text: 'stale disk' }, recoveries: [], appliedRereads: [] });
+    useMediaUnderstandingStore.setState((s) => ({ transcripts: { ...s.transcripts, [PATH]: TRANSCRIPT } }));
+    const store = useMediaUnderstandingStore.getState();
+    await store.hydrate(PATH);
+    await store.hydrate(PATH);
+    expect(diskMock.mock.calls.filter(([c]) => c === 'chroma_media_understanding_load')).toHaveLength(1);
+    expect(useMediaUnderstandingStore.getState().transcripts[PATH]?.text).toBe(TRANSCRIPT.text);
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it('a failed read is a miss — the ASR runs exactly as it did before persistence', async () => {
+    diskMock.mockImplementationOnce(() => Promise.reject(new Error('disk on fire')));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    scriptJob({ state: 'done', result: TRANSCRIPT }, 0);
+    const p = useMediaUnderstandingStore.getState().getTranscript(PATH);
+    await until(() => useMediaUnderstandingStore.getState().transcripts[PATH] !== undefined, 'the ASR result');
+    await expect(p).resolves.toEqual(TRANSCRIPT);
+    expect(transcribeStarts()).toBe(1);
+    warn.mockRestore();
+  });
+
+  it('parsePersisted keeps the good parts of a damaged record and calls an empty one a miss', () => {
+    const good = { window: W1, segments: [] };
+    expect(parsePersisted(null)).toBeNull();
+    expect(parsePersisted({ transcript: null, recoveries: [], appliedRereads: [] })).toBeNull();
+    expect(
+      parsePersisted({ transcript: { nope: 1 }, recoveries: [good, { window: 'x' }], appliedRereads: 'bad' }),
+    ).toEqual({ transcript: null, recoveries: [good], appliedRereads: [] });
   });
 });

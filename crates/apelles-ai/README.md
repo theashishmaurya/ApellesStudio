@@ -6,8 +6,13 @@ to the `ai/` FastAPI sidecar that doesn't need Tauri (D-145,
 
 - **Deps:** `serde` + `serde_json`, `log`, `sha2` (content-hash staleness,
   D-101), `image` (matte/depth PNG decode), `reqwest` (json + rustls, no
-  default features). **No `tauri`, no `wgpu`, no fork types.**
-- **What it is:** three modules, one per source file it came from:
+  default features), and — since D-385 — `apelles-media` (for `media_cache`)
+  + `blake3` (the record key). **No `tauri`, no `wgpu`, no fork types.**
+- **What it is:** the three modules below, one per source file it came from,
+  plus three added later (`ai_env`, D-315; `media_understanding`, the
+  `ai-media/` sidecar's client, D-189; and `understanding_cache`, D-385 — the
+  persisted transcript / dark-region recoveries / applied re-reads of one
+  source file under one ASR model, stored in `apelles_media::media_cache`):
   - `sidecar` — spawn/health/backoff/respawn lifecycle for the `ai/` FastAPI
     process (SAM 2 → ViTMatte, D-012/D-016/D-028), plus the D-101
     content-`sha256` staleness check for an externally-run sidecar.

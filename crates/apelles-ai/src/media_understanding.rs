@@ -12,8 +12,9 @@
 //! **What it does NOT do:** no `#[tauri::command]` (D-039 §1 — commands do not
 //! move; the wrappers live in `app/src-tauri/src/chroma/media_understanding.rs`),
 //! no knowledge of the timeline or the media pool, no caching (the frontend
-//! store owns that), and no interpretation of the results — it hands the
-//! sidecar's JSON back verbatim.
+//! store owns the in-memory cache; its on-disk half is
+//! [`crate::understanding_cache`], D-385), and no interpretation of the
+//! results — it hands the sidecar's JSON back verbatim.
 //!
 //! **Why both capabilities are start-then-poll rather than one blocking call**
 //! (D-189): `chroma::control`'s `BRIDGE_TIMEOUT` is 20 s, and these jobs run for
@@ -23,6 +24,17 @@
 //! `/track` and `/depth_track`.
 
 use serde_json::json;
+
+/// The ASR model every transcript this app asks for comes from — pinned on
+/// every `/transcribe` request rather than left to the sidecar's default
+/// (D-385). The persisted transcripts in [`crate::understanding_cache`] are
+/// keyed by it, so the model a record claims and the model a request runs are
+/// one value: a model change here is a clean cache miss, and a sidecar whose
+/// default drifted can never hand back words from a model the key does not
+/// name (it validates `model` against its published list and refuses an
+/// unknown one). Must name a model in `ai-media/asr/parakeet_mlx.py`'s
+/// descriptor — the only ASR backend since D-381.
+pub const ASR_MODEL: &str = "parakeet-tdt-0.6b-v3";
 
 /// The `ai-media/` sidecar's base URL — `http://127.0.0.1:<CHROMA_AI_MEDIA_PORT
 /// or 8766>`. Deliberately separate from [`crate::sidecar_base_url`]: this is a
@@ -110,6 +122,7 @@ pub async fn transcribe(
     );
     let body = json!({
         "path": path,
+        "model": ASR_MODEL,
         "language": language,
         "word_timestamps": word_timestamps.unwrap_or(true),
         "start_secs": window.map(|(start, _)| start),
