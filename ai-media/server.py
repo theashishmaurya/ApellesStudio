@@ -61,7 +61,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 import sys
 import threading
 import time
@@ -75,6 +74,7 @@ import transcribe as transcribe_mod
 import video_understand as vu_mod
 from asr import get_backend
 from errors import UserFacingError
+from ffmpeg_bin import ffmpeg_available
 
 # The descriptor of the backend `/transcribe` runs — the default one, since a
 # request does not choose a backend (nothing above `transcribe.py` does, D-374).
@@ -197,7 +197,7 @@ def health() -> dict:
         # the 16 kHz audio extract), and it is the one dependency that is not
         # in the venv — surface it here so a missing binary is visible in the
         # Settings status card instead of only as a job failure later.
-        "ffmpeg": shutil.which("ffmpeg"),
+        "ffmpeg": ffmpeg_available(),
         "models": {
             # The repo the default ASR model's weights load from (`_ASR`).
             "transcribe": _ASR.model_repos[_ASR.default_model],

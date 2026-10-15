@@ -59,8 +59,11 @@ Env vars, mirroring `ai/`'s exactly: `CHROMA_AI_MEDIA_DIR`,
 `CHROMA_AI_MEDIA_PYTHON`, `CHROMA_AI_MEDIA_PORT`, `CHROMA_AI_MEDIA_NO_SPAWN`.
 Lifecycle details: `docs/notes/sidecar-lifecycle.md`.
 
-Also needs `ffmpeg` on `PATH` (both capabilities use it). `GET /health` reports
-where it found it, or `null`.
+Also needs `ffmpeg` (both capabilities use it), run through `ffmpeg_bin.py`:
+`CHROMA_FFMPEG` if set — the app's supervisor always sets it to the binary the
+app itself resolved, normally the copy bundled in Apelles.app (D-389) — else
+`ffmpeg` on `PATH` (standalone/CLI/tests; `brew install ffmpeg`). `GET /health`
+reports which one, or `null`.
 
 ## Endpoints
 

@@ -297,12 +297,7 @@ mod motion_relink_tests {
     const SCENE_ID: &str = "hook";
 
     fn have_ffmpeg() -> bool {
-        std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        apelles_media::ffmpeg_locate::ffmpeg_path().is_ok()
     }
 
     /// A flat, solid-colour clip — `ffmpeg` standing in for a Remotion render
@@ -313,7 +308,8 @@ mod motion_relink_tests {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).expect("mkdir render dir");
         }
-        let ok = std::process::Command::new("ffmpeg")
+        let ok = apelles_media::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",

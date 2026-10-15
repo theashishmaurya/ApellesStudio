@@ -5,7 +5,9 @@
       "signingIdentity": "-"
     },
     "externalBin": [
-      "binaries/uv"
+      "binaries/uv",
+      "binaries/ffmpeg",
+      "binaries/ffprobe"
     ]
   }
 }

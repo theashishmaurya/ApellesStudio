@@ -209,6 +209,11 @@ hex = "0.4"
 # rust-lang-adjacent crates (MIT/Apache-2.0).
 flate2 = "1"
 tar = "0.4"
+# D-389 — unpack the pinned static ffmpeg/ffprobe builds (each shipped as a
+# one-member `.zip`) at build time. `zip` (zip-rs/zip2, MIT, actively maintained)
+# with default features off and only the flate2-backed deflate reader, so it
+# reuses the `flate2` above rather than pulling in zopfli/zstd/lzma/bzip2/AES.
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 # Build profiles moved to the workspace root `Cargo.toml` (D-039) — Cargo ignores
 # `[profile.*]` in a non-root workspace member.

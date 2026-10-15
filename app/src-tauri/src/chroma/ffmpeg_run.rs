@@ -23,8 +23,9 @@
 //! whole input already exists on disk. [`FfmpegStdinSink`] is the streaming
 //! one, for a caller whose frames do not exist yet when ffmpeg starts and
 //! arrive over seconds (the debug video recorder, `debug_record.rs`). Both go
-//! through the same [`build_command`], so there is still exactly one place
-//! this app decides which `ffmpeg` binary to run.
+//! through the same [`build_command`]. Which `ffmpeg` binary that is, is not
+//! decided here at all: it is `apelles_media::ffmpeg_locate`'s, the one
+//! resolver every spawn in the workspace uses (D-389, B-253).
 //!
 //! **Both stdout AND stderr are captured and returned**, unlike
 //! `apelles-motion`'s own `RenderOutcome` (stdout only, since Remotion's CLI
@@ -36,15 +37,6 @@
 use std::io::Write;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-
-/// Which `ffmpeg` to run. `CHROMA_FFMPEG` overrides it, matching
-/// `apelles-media`'s `video.rs`/`decode_pipe.rs` and `chroma::export` — this
-/// module hard-coded the bare name until D-330 needed the same override for
-/// the debug recorder, and having one of four ffmpeg call sites ignore the
-/// env var was a trap, not a feature.
-pub fn ffmpeg_bin() -> String {
-    std::env::var("CHROMA_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_string())
-}
 
 /// One ffmpeg invocation: just the argv that follows `ffmpeg` itself. No
 /// cwd of its own (unlike `apelles_motion::RenderRequest`, which must run
@@ -77,10 +69,13 @@ pub struct FfmpegRunOutcome {
 /// `Command` construction itself needs. Split out from [`run_ffmpeg`] so
 /// the exact argv is unit-testable without actually spawning `ffmpeg`,
 /// mirroring `apelles_motion::build_command`'s own reason for existing.
-pub fn build_command(req: &FfmpegRunRequest) -> Command {
-    let mut cmd = Command::new(ffmpeg_bin());
+///
+/// Fails only when no `ffmpeg` can be found at all, with the resolver's own
+/// explanation of where it looked.
+pub fn build_command(req: &FfmpegRunRequest) -> Result<Command, String> {
+    let mut cmd = apelles_media::ffmpeg_locate::ffmpeg().map_err(|e| e.to_string())?;
     cmd.args(&req.args);
-    cmd
+    Ok(cmd)
 }
 
 /// A running `ffmpeg` that frames are fed to over stdin (D-330).
@@ -109,7 +104,7 @@ impl FfmpegStdinSink {
     /// exactly as [`build_command`] carries no knowledge of what its args
     /// mean.
     pub fn spawn(req: &FfmpegRunRequest) -> Result<Self, String> {
-        let mut child = build_command(req)
+        let mut child = build_command(req)?
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -275,7 +270,7 @@ pub fn run_ffmpeg(req: &FfmpegRunRequest) -> Result<FfmpegRunOutcome, String> {
     // B-243 — `_graph_file` must stay in scope until ffmpeg has exited.
     let (args, _graph_file) = spill_oversized_filtergraph(&req.args)
         .map_err(|e| format!("failed to write filtergraph script: {e}"))?;
-    let output = build_command(&FfmpegRunRequest::new(args))
+    let output = build_command(&FfmpegRunRequest::new(args))?
         .output()
         .map_err(|e| format!("failed to spawn ffmpeg: {e}"))?;
 
@@ -322,9 +317,17 @@ mod tests {
             "/tmp/in.mov".to_string(),
             "/tmp/out.mp4".to_string(),
         ]);
-        let cmd = build_command(&req);
+        let Ok(cmd) = build_command(&req) else {
+            eprintln!("skip: no ffmpeg found");
+            return;
+        };
 
-        assert_eq!(cmd.get_program(), ffmpeg_bin().as_str());
+        assert_eq!(
+            Some(cmd.get_program()),
+            apelles_media::ffmpeg_locate::ffmpeg_path()
+                .ok()
+                .map(|p| p.as_os_str())
+        );
         let args: Vec<String> = cmd
             .get_args()
             .map(|a| a.to_string_lossy().to_string())
@@ -335,8 +338,16 @@ mod tests {
     #[test]
     fn build_command_with_no_args_is_just_the_bare_program() {
         let req = FfmpegRunRequest::new(vec![]);
-        let cmd = build_command(&req);
-        assert_eq!(cmd.get_program(), ffmpeg_bin().as_str());
+        let Ok(cmd) = build_command(&req) else {
+            eprintln!("skip: no ffmpeg found");
+            return;
+        };
+        assert_eq!(
+            Some(cmd.get_program()),
+            apelles_media::ffmpeg_locate::ffmpeg_path()
+                .ok()
+                .map(|p| p.as_os_str())
+        );
         assert_eq!(cmd.get_args().count(), 0);
     }
 

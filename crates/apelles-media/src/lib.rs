@@ -7,6 +7,10 @@
 //!
 //! Modules, one per source file it was extracted from
 //! (`app/src-tauri/src/chroma/`):
+//! - [`ffmpeg_locate`] — the one resolver for which `ffmpeg`/`ffprobe` binary
+//!   runs: env override → bundled beside the executable → well-known install
+//!   dirs → `PATH`, resolved once and cached (D-389, B-253). Every spawn of
+//!   either tool in the workspace goes through it.
 //! - [`video`] — `ffprobe` metadata + single-frame / thumbnail `ffmpeg`
 //!   decode (D-015, D-124, D-128).
 //! - [`conform`] — the one definition of what "source frame `N`" means, as the
@@ -56,6 +60,7 @@ pub mod audio;
 pub mod conform;
 pub mod decode_pipe;
 pub mod ffmpeg_gate;
+pub mod ffmpeg_locate;
 pub mod filmstrip;
 pub mod media_cache;
 pub mod probe;

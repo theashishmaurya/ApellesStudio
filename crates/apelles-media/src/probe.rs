@@ -135,20 +135,15 @@ mod tests {
     use super::*;
 
     fn have_ffmpeg() -> bool {
-        std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        crate::ffmpeg_locate::ffmpeg_path().is_ok()
     }
 
     /// Synthesize a real, probeable clip at `path` — `testsrc` at a given
     /// size and duration, so two calls with different arguments produce files
     /// whose `VideoInfo` genuinely differs.
     fn synth(path: &Path, size: &str, secs: &str, fps: &str) {
-        let out = std::process::Command::new("ffmpeg")
+        let out = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-hide_banner",
                 "-loglevel",

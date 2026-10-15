@@ -13,7 +13,7 @@
 #                                    step only
 #
 # What it does NOT do: install ffmpeg (a hard requirement of ai-media/, not
-# pip-installable). Most models pull from the HF cache on first use; the one
+# pip-installable; the app bundles its own and passes it as CHROMA_FFMPEG, D-389). Most models pull from the HF cache on first use; the one
 # exception is understand_video's Qwen3-VL, whose subprocess runs fully
 # offline always (D-354's local-first call) and so must be fetched explicitly
 # via --fetch-models — see ai-media/video_understand.py and docs/BUGS.md B-172.

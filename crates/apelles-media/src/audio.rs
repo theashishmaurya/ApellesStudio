@@ -5256,7 +5256,8 @@ mod tests {
     /// not reasoned about in advance).
     fn synth_sine_wav(dir: &Path, freq_hz: u32, duration_secs: f64, rate: u32) -> PathBuf {
         let out = dir.join("sine.wav");
-        let status = std::process::Command::new("ffmpeg")
+        let status = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",
@@ -5279,7 +5280,8 @@ mod tests {
     /// [`synth_sine_wav`]'s tone: a recut timeline's deleted pause, as a clip.
     fn synth_silence_wav(dir: &Path, duration_secs: f64, rate: u32) -> PathBuf {
         let out = dir.join("silence.wav");
-        let status = std::process::Command::new("ffmpeg")
+        let status = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",
@@ -6819,22 +6821,25 @@ mod tests {
         let src = tmp.path().join("tone-in-the-middle.m4a");
         // `aevalsrc`'s `between(t,1,2)` gate is what makes the tone's position
         // a FACT of the fixture rather than something the test has to trust.
-        let Ok(status) = std::process::Command::new("ffmpeg")
-            .args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-            ])
-            .arg("aevalsrc=0.8*sin(2*PI*440*t)*between(t\\,1\\,2):s=48000:d=4:c=stereo")
-            .args(["-c:a", "aac", "-b:a", "192k"])
-            .arg(&src)
-            .status()
+        let Ok(status) = crate::ffmpeg_locate::ffmpeg()
+            .map_err(std::io::Error::from)
+            .and_then(|mut cmd| {
+                cmd.args([
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                ])
+                .arg("aevalsrc=0.8*sin(2*PI*440*t)*between(t\\,1\\,2):s=48000:d=4:c=stereo")
+                .args(["-c:a", "aac", "-b:a", "192k"])
+                .arg(&src)
+                .status()
+            })
         else {
-            eprintln!("skip: ffmpeg not on PATH");
+            eprintln!("skip: no ffmpeg found");
             return;
         };
         if !status.success() || !src.exists() {
@@ -7059,13 +7064,7 @@ mod tests {
     }
 
     fn have_ffmpeg() -> bool {
-        std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        crate::ffmpeg_locate::ffmpeg_path().is_ok()
     }
 
     /// B-048, the real regression test: a source must fall silent at its
@@ -7239,7 +7238,8 @@ mod tests {
     /// alone.
     fn synth_short_video_long_audio(dir: &Path, video_secs: f64, tone_from_secs: f64) -> PathBuf {
         let out = dir.join("short_video.mov");
-        let status = std::process::Command::new("ffmpeg")
+        let status = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",
@@ -7413,7 +7413,8 @@ mod tests {
     /// sample-for-sample without needing `rubato` in the test itself.
     fn synth_test_tone(dir: &Path, freq_hz: u32, duration_secs: f64, sample_rate: u32) -> PathBuf {
         let out = dir.join("tone.m4a");
-        let status = std::process::Command::new("ffmpeg")
+        let status = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",
@@ -7531,7 +7532,8 @@ mod tests {
     /// than the tolerances below.
     fn synth_position_ramp_wav(dir: &Path, duration_secs: f64, rate: u32) -> PathBuf {
         let out = dir.join("position-ramp.wav");
-        let status = std::process::Command::new("ffmpeg")
+        let status = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",
@@ -7919,7 +7921,8 @@ mod tests {
     /// container, nothing lossy between the filter and the measurement.
     fn ffmpeg_stereo_through(dir: &Path, mono_path: &Path, chain: &str, tag: &str) -> Vec<f32> {
         let out = dir.join(format!("{tag}.raw"));
-        let status = std::process::Command::new("ffmpeg")
+        let status = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-hide_banner",

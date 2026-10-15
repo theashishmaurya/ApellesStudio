@@ -3067,6 +3067,8 @@ flag itself).
 
 No urgency — each needs an earlier item to land first, or is a bigger bet.
 
+- **A minimal ffmpeg/ffprobe build of our own, to shrink the DMG (D-389).** The bundled third-party static build is 66 MB per binary (`.app` +132.5 MB, DMG 49 → ~111 MB) because it carries every codec and library (AV1/VP9/VVC, OpenSSL, libbluray, …). A reproducible build pipeline configured with only what the app uses (H.264/HEVC/ProRes decode, x264 + `prores_ks` + AAC encode, the filters D-389 lists, VideoToolbox) would likely be ~15-25 MB each. Needs: a pinned-source build script (CI), the same sha256 pinning, and the licence notice regenerated from its own configure line.
+
 - **XMEML/FCP7 XML interchange export (Premiere)** — D-196 shipped the
   FCPXML 1.7 half of "move a Apelles edit to another NLE" (DaVinci
   Resolve/Final Cut Pro), deliberately scoping XMEML out rather than guess at

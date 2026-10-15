@@ -36,10 +36,11 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Instant;
 
+use apelles_media::ffmpeg_locate;
 use apelles_project::manifest::ProjectSettings;
 use apelles_timeline::{Timeline, TrackKind};
 use shared_child::SharedChild;
@@ -47,7 +48,6 @@ use shared_child::SharedChild;
 use super::edit::{self, FrameIntent};
 use super::export::{drain_stderr_pipe, tail};
 use super::export_status::{self, ExportJob};
-use super::ffmpeg_run::ffmpeg_bin;
 
 /// One headless render + encode.
 ///
@@ -576,7 +576,8 @@ fn render_range(
     // and killing by raw pid races with the `wait` below reaping it.
     let child = Arc::new(
         SharedChild::spawn(
-            Command::new(ffmpeg_bin())
+            ffmpeg_locate::ffmpeg()
+                .map_err(|e| e.to_string())?
                 .args(args)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())
@@ -864,7 +865,8 @@ fn render_segmented(
     // normally finishes" is exactly what B-231 says about the rest of this path.
     let joiner = Arc::new(
         SharedChild::spawn(
-            Command::new(ffmpeg_bin())
+            ffmpeg_locate::ffmpeg()
+                .map_err(|e| e.to_string())?
                 .args(&concat)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -1322,6 +1324,7 @@ mod tests {
 mod parity_tests {
     use super::*;
     use apelles_media::decode_pipe::PipeLane;
+    use std::process::Command;
 
     /// How close is close enough — and **why PSNR is reported but not asserted
     /// on**, which is the one genuinely non-obvious thing about this test.
@@ -1365,7 +1368,7 @@ mod parity_tests {
     const MAX_GROSS_DIFF_SHARE: f64 = 0.02;
     const MAX_SOLID_DIFF_SHARE: f64 = 0.0005;
 
-    fn have(bin: &str) -> bool {
+    fn have(bin: &Path) -> bool {
         Command::new(bin)
             .arg("-version")
             .stdout(Stdio::null())
@@ -1376,7 +1379,8 @@ mod parity_tests {
     }
 
     fn ffmpeg_available() -> bool {
-        have(&ffmpeg_bin()) && have("ffprobe")
+        ffmpeg_locate::ffmpeg_path().is_ok_and(have)
+            && ffmpeg_locate::ffprobe_path().is_ok_and(have)
     }
 
     /// **D-351's own number: how fast does this path actually render?**
@@ -2028,7 +2032,8 @@ mod parity_tests {
         fps: f64,
     ) -> Result<(), String> {
         let secs = frames as f64 / fps;
-        let status = Command::new(ffmpeg_bin())
+        let status = ffmpeg_locate::ffmpeg()
+            .map_err(|e| e.to_string())?
             .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
             .arg(format!(
                 "color=c=0x{:02x}{:02x}{:02x}:size={}x{}:rate={fps}:duration={secs}",
@@ -2106,7 +2111,8 @@ mod parity_tests {
     }
 
     fn run_ffmpeg(args: &[String]) -> Result<(), String> {
-        let out = Command::new(ffmpeg_bin())
+        let out = ffmpeg_locate::ffmpeg()
+            .map_err(|e| e.to_string())?
             .args(args)
             .output()
             .map_err(|e| format!("spawn ffmpeg: {e}"))?;
@@ -2739,7 +2745,8 @@ mod parity_tests {
     /// segment boundary changes, and the one the container's own metadata is
     /// least likely to be honest about.
     fn frame_count(video: &Path) -> Result<u64, String> {
-        let out = Command::new("ffprobe")
+        let out = ffmpeg_locate::ffprobe()
+            .map_err(|e| e.to_string())?
             .args([
                 "-v",
                 "error",
@@ -3074,7 +3081,8 @@ mod parity_tests {
         let old_out = dir.join("stress-old.mp4");
         let old_args = localise(&st.filter_args, dir, &old_out);
         let started = Instant::now();
-        let mut child = Command::new(ffmpeg_bin())
+        let mut child = ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg for the old path")
             .args(&old_args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
