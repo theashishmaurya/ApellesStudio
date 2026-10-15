@@ -1,29 +1,26 @@
 {
-  "$comment": "The retake eval's committed floor (D-378): today's scores at RetakeParams::default() unless a task overrides it, B-246 unfixed. NOT a target — see eval/retake/README.md. Regenerate: APELLES_RETAKE_EVAL_BASELINE=1 cargo test -p apelles-speech --test retake_eval",
+  "$comment": "The retake eval's committed floor (D-378): today's scores at RetakeParams::default() unless a task overrides it, B-246 fixed (D-386: over-cut 0.00 s on every task, at a recall cost). NOT a target — see eval/retake/README.md. Regenerate: APELLES_RETAKE_EVAL_BASELINE=1 cargo test -p apelles-speech --test retake_eval",
   "rollup": {
-    "mean": 0.366,
+    "mean": 0.722,
     "of": 15,
-    "pass": 3
+    "pass": 2
   },
   "tasks": {
     "C019/parakeet": {
-      "gates_fired": [
-        "OverCutSecs=24.40",
-        "ProtectedSecsCut=22.96"
-      ],
+      "gates_fired": [],
       "metrics": {
         "boundary_slack_secs": 0.4,
-        "cut_precision": 0.443,
-        "group_recall": 0.353,
-        "keeper_agreement": 0.8,
+        "cut_precision": 1.0,
+        "group_recall": 0.235,
+        "keeper_agreement": 0.667,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 24.4,
-        "proposed_secs": 44.24,
-        "protected_secs_cut": 22.96,
-        "retake_recall": 0.265
+        "over_cut_secs": 0.0,
+        "proposed_secs": 17.44,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.232
       },
       "passed": false,
-      "score": 0.0
+      "score": 0.758
     },
     "C019/parakeet-gated": {
       "gates_fired": [],
@@ -34,50 +31,44 @@
         "keeper_agreement": 0.667,
         "neutral_cut_secs": 0.0,
         "over_cut_secs": 0.0,
-        "proposed_secs": 12.24,
+        "proposed_secs": 17.44,
         "protected_secs_cut": 0.0,
-        "retake_recall": 0.161
+        "retake_recall": 0.232
       },
       "passed": false,
-      "score": 0.741
+      "score": 0.758
     },
     "C019/whisper-rederived": {
-      "gates_fired": [
-        "OverCutSecs=12.40",
-        "ProtectedSecsCut=7.86"
-      ],
+      "gates_fired": [],
       "metrics": {
-        "boundary_slack_secs": 0.7,
-        "cut_precision": 0.77,
-        "group_recall": 0.412,
-        "keeper_agreement": 1.0,
-        "neutral_cut_secs": 1.8,
-        "over_cut_secs": 12.4,
-        "proposed_secs": 56.32,
-        "protected_secs_cut": 7.86,
-        "retake_recall": 0.564
+        "boundary_slack_secs": 0.0,
+        "cut_precision": 1.0,
+        "group_recall": 0.059,
+        "keeper_agreement": null,
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 4.12,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.056
       },
       "passed": false,
-      "score": 0.0
+      "score": 0.504
     },
     "C038/parakeet": {
-      "gates_fired": [
-        "OverCutSecs=12.64",
-        "ProtectedSecsCut=12.64"
-      ],
+      "gates_fired": [],
       "metrics": {
-        "boundary_slack_secs": 0.56,
-        "cut_precision": 0.843,
-        "group_recall": 0.611,
+        "boundary_slack_secs": 0.0,
+        "cut_precision": 1.0,
+        "group_recall": 0.294,
         "keeper_agreement": 1.0,
-        "neutral_cut_secs": 0.96,
-        "over_cut_secs": 12.64,
-        "proposed_secs": 82.28,
-        "protected_secs_cut": 12.64,
-        "retake_recall": 0.523
+        "neutral_cut_secs": 0.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 24.56,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.189
       },
       "passed": false,
-      "score": 0.0
+      "score": 0.846
     },
     "C038/parakeet-gated": {
       "gates_fired": [],
@@ -96,129 +87,113 @@
       "score": 0.846
     },
     "C038/whisper-pinned": {
-      "gates_fired": [
-        "OverCutSecs=10.36",
-        "ProtectedSecsCut=2.10"
-      ],
+      "gates_fired": [],
       "metrics": {
-        "boundary_slack_secs": 0.7,
-        "cut_precision": 0.874,
-        "group_recall": 0.611,
-        "keeper_agreement": 0.857,
+        "boundary_slack_secs": 0.2,
+        "cut_precision": 1.0,
+        "group_recall": 0.235,
+        "keeper_agreement": 0.667,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 10.36,
-        "proposed_secs": 82.78,
-        "protected_secs_cut": 2.1,
-        "retake_recall": 0.551
+        "over_cut_secs": 0.0,
+        "proposed_secs": 19.12,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.145
       },
       "passed": false,
-      "score": 0.0
+      "score": 0.737
     },
     "C038/whisper-rederived": {
-      "gates_fired": [
-        "OverCutSecs=15.06",
-        "ProtectedSecsCut=2.10"
-      ],
+      "gates_fired": [],
       "metrics": {
-        "boundary_slack_secs": 1.06,
-        "cut_precision": 0.826,
-        "group_recall": 0.647,
-        "keeper_agreement": 0.857,
+        "boundary_slack_secs": 0.2,
+        "cut_precision": 1.0,
+        "group_recall": 0.294,
+        "keeper_agreement": 0.667,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 15.06,
-        "proposed_secs": 87.8,
-        "protected_secs_cut": 2.1,
-        "retake_recall": 0.551
+        "over_cut_secs": 0.0,
+        "proposed_secs": 22.44,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.171
       },
       "passed": false,
-      "score": 0.0
+      "score": 0.758
     },
     "C040/parakeet": {
-      "gates_fired": [
-        "OverCutSecs=3.20",
-        "ProtectedSecsCut=1.84"
-      ],
+      "gates_fired": [],
       "metrics": {
         "boundary_slack_secs": 0.58,
-        "cut_precision": 0.965,
-        "group_recall": 0.909,
-        "keeper_agreement": 0.9,
+        "cut_precision": 1.0,
+        "group_recall": 0.545,
+        "keeper_agreement": 1.0,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 3.2,
-        "proposed_secs": 91.84,
-        "protected_secs_cut": 1.84,
-        "retake_recall": 0.606
+        "over_cut_secs": 0.0,
+        "proposed_secs": 43.6,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.296
       },
       "passed": false,
-      "score": 0.0
+      "score": 0.935
     },
     "C040/parakeet-gated": {
       "gates_fired": [],
       "metrics": {
         "boundary_slack_secs": 0.58,
         "cut_precision": 1.0,
-        "group_recall": 0.455,
+        "group_recall": 0.545,
         "keeper_agreement": 1.0,
         "neutral_cut_secs": 0.0,
         "over_cut_secs": 0.0,
-        "proposed_secs": 34.24,
+        "proposed_secs": 43.6,
         "protected_secs_cut": 0.0,
-        "retake_recall": 0.232
+        "retake_recall": 0.296
       },
       "passed": false,
-      "score": 0.897
+      "score": 0.935
     },
     "C040/whisper-pinned": {
-      "gates_fired": [
-        "OverCutSecs=17.60"
-      ],
+      "gates_fired": [],
       "metrics": {
-        "boundary_slack_secs": 1.02,
-        "cut_precision": 0.82,
-        "group_recall": 0.636,
-        "keeper_agreement": 0.857,
+        "boundary_slack_secs": 0.5,
+        "cut_precision": 1.0,
+        "group_recall": 0.364,
+        "keeper_agreement": 0.75,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 17.6,
-        "proposed_secs": 98.78,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 28.58,
         "protected_secs_cut": 0.0,
-        "retake_recall": 0.551
+        "retake_recall": 0.193
       },
       "passed": false,
-      "score": 0.0
+      "score": 0.802
     },
     "C040/whisper-rederived": {
-      "gates_fired": [
-        "OverCutSecs=24.16"
-      ],
+      "gates_fired": [],
       "metrics": {
-        "boundary_slack_secs": 1.5,
-        "cut_precision": 0.801,
+        "boundary_slack_secs": 0.24,
+        "cut_precision": 1.0,
         "group_recall": 0.636,
         "keeper_agreement": 0.714,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 24.16,
-        "proposed_secs": 123.0,
+        "over_cut_secs": 0.0,
+        "proposed_secs": 53.3,
         "protected_secs_cut": 0.0,
-        "retake_recall": 0.67
+        "retake_recall": 0.365
       },
       "passed": false,
-      "score": 0.0
+      "score": 0.895
     },
     "bad/b246_tail_repeat": {
-      "gates_fired": [
-        "OverCutSecs=8.40",
-        "ProtectedSecsCut=8.40"
-      ],
+      "gates_fired": [],
       "metrics": {
         "boundary_slack_secs": 0.0,
-        "cut_precision": 0.3,
+        "cut_precision": null,
         "group_recall": 0.0,
         "keeper_agreement": null,
         "neutral_cut_secs": 0.0,
-        "over_cut_secs": 8.4,
-        "proposed_secs": 12.0,
-        "protected_secs_cut": 8.4,
-        "retake_recall": 0.9
+        "over_cut_secs": 0.0,
+        "proposed_secs": 0.0,
+        "protected_secs_cut": 0.0,
+        "retake_recall": 0.0
       },
       "passed": false,
       "score": 0.0
@@ -227,17 +202,17 @@
       "gates_fired": [],
       "metrics": {
         "boundary_slack_secs": 0.0,
-        "cut_precision": 1.0,
-        "group_recall": 1.0,
-        "keeper_agreement": 1.0,
+        "cut_precision": null,
+        "group_recall": 0.0,
+        "keeper_agreement": null,
         "neutral_cut_secs": 0.0,
         "over_cut_secs": 0.0,
-        "proposed_secs": 6.4,
+        "proposed_secs": 0.0,
         "protected_secs_cut": 0.0,
-        "retake_recall": 1.0
+        "retake_recall": 0.0
       },
-      "passed": true,
-      "score": 1.0
+      "passed": false,
+      "score": 0.05
     },
     "bad/verbatim_retake": {
       "gates_fired": [],

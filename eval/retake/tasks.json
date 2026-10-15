@@ -46,7 +46,7 @@
     },
     {
       "id": "bad/glued_anchor_unique_head",
-      "description": "CONTROL, expected to pass. D-366 / B-238's shape: a unique setup line immediately before a genuine repeat, which a speculatively glued anchor would carry into the cut. Passes because D-366's anchor guard is genuinely fixed; fails against pre-D-366 code.",
+      "description": "CONTROL, expected to FAIL since D-386, on recall only (over-cut 0.00 s). D-366 / B-238's shape: a unique setup line immediately before a genuine repeat, which a speculatively glued anchor would carry into the cut. D-366's anchor guard still keeps the setup line out; what changed is that the remaining take says 'the trick behind used' where the keeper says 'the trick being used' (the ASR mishearing in C038's real run, which this control copies), and the detector now proposes a take only when the keeper holds its every content word (the coverage gate's content rule, which cannot hear). So nothing is proposed. Fails against pre-D-366 code on over-cut instead.",
       "input": {
         "transcript": "eval/retake/bad_examples/glued_anchor_unique_head.transcript.json",
         "labels": "eval/retake/bad_examples/glued_anchor_unique_head.labels.json"
@@ -63,7 +63,7 @@
         { "metric": "over_cut_secs", "max": 0.0 },
         { "metric": "protected_secs_cut", "max": 0.0 }
       ],
-      "expect": "pass"
+      "expect": "fail"
     },
     {
       "id": "bad/whisper_thank_you_hallucination",

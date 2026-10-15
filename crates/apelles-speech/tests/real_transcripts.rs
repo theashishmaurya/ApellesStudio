@@ -252,6 +252,14 @@ fn disabling_the_phrase_signal_restores_the_old_detector_exactly() {
 /// `window_secs` — because gluing the 20-second "the middle." fragment on the
 /// end of the anchor is what carried the window far enough to reach it. It is
 /// gone from both counts now.
+///
+/// **All four counts moved in B-246 / D-386** — C038 5 → 3 and 11 → 5, C040
+/// 6 → 3 and 7 → 4 — because a group now keeps only the non-kept takes whose
+/// content the keeper holds (the coverage gate's content rule), and drops
+/// whatever is left with fewer than two takes. The pairwise admissions above are
+/// untouched: they are properties of the predicates, and the predicates did not
+/// change. What changed is the cut, which `proposed_cuts.rs` and
+/// `retake_eval.rs` measure — over-cut 0.00 s on every task.
 #[test]
 fn whole_transcript_runs_stay_well_formed_with_the_phrase_signal_on() {
     let p = RetakeParams::default();
@@ -261,8 +269,8 @@ fn whole_transcript_runs_stay_well_formed_with_the_phrase_signal_on() {
     };
 
     for (name, before, after) in [
-        ("A001_09122319_C038.json", 5, 11),
-        ("A001_09122356_C040.json", 6, 7),
+        ("A001_09122319_C038.json", 3, 5),
+        ("A001_09122356_C040.json", 3, 4),
     ] {
         let u = load(name);
         assert_eq!(

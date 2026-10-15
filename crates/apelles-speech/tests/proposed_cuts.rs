@@ -5,7 +5,8 @@
 //! dodging: **does `detect_retakes` ever propose cutting speech that repeats
 //! nothing?**
 //!
-//! **It does, and this file is where that is measured** (B-246). The method is
+//! **It did, and this file is where that was measured** (B-246; fixed by
+//! D-386 — every verdict column below is now pinned at zero). The method is
 //! D-366's own, reused rather than reinvented
 //! (`docs/notes/retake-detection.md` §6): for every member of every non-kept
 //! take, score [`word_overlap`] of its own vocabulary against the union of the
@@ -227,18 +228,26 @@ type Row = (
     f64,
 );
 
-/// Measured 2026-10-10 (D-377) at `RetakeParams::default()`.
+/// Measured 2026-10-15 (D-386, B-246 fixed) at `RetakeParams::default()`.
+///
+/// D-377's rows (2026-10-10), for the record — `absent` / `unique` seconds:
+/// C019 whisper 18.14 / 5.42, C019 parakeet 27.20 / 27.20, C038 whisper
+/// 27.44 / 0.00, C038 parakeet 25.88 / 25.88, C040 whisper 43.82 / 0.00, C040
+/// parakeet 3.84 / 3.84, from 25 / 27 groups proposing 237.88 s / 218.36 s.
 const PINNED: &[Row] = &[
-    ("C019", "whisper", 83, 7, 9, 56.32, 3, 18.14, 1, 5.42),
-    ("C019", "parakeet", 45, 7, 9, 44.24, 2, 27.20, 2, 27.20),
-    ("C038", "whisper", 121, 11, 14, 82.78, 4, 27.44, 0, 0.00),
-    ("C038", "parakeet", 87, 10, 14, 82.28, 2, 25.88, 2, 25.88),
-    ("C040", "whisper", 66, 7, 15, 98.78, 7, 43.82, 0, 0.00),
-    ("C040", "parakeet", 58, 10, 16, 91.84, 1, 3.84, 1, 3.84),
+    ("C019", "whisper", 83, 1, 1, 4.12, 0, 0.00, 0, 0.00),
+    ("C019", "parakeet", 45, 5, 6, 17.44, 0, 0.00, 0, 0.00),
+    ("C038", "whisper", 121, 5, 6, 19.12, 0, 0.00, 0, 0.00),
+    ("C038", "parakeet", 87, 5, 8, 24.56, 0, 0.00, 0, 0.00),
+    ("C040", "whisper", 66, 4, 5, 28.58, 0, 0.00, 0, 0.00),
+    ("C040", "parakeet", 58, 6, 8, 43.60, 0, 0.00, 0, 0.00),
 ];
 
 /// **The per-source audit, pinned — and the number the backend decision turned
-/// on.**
+/// on.** Since D-386 both verdict columns are **zero on every row**: a group
+/// keeps a non-kept take only when the keeper holds its content (the coverage
+/// gate's content rule), so nothing proposed is absent from the keeper. The
+/// table below is D-377's, kept because D-377's decision cites it.
 ///
 /// Summed over the three speech sources (2,192.6 s of footage):
 ///
@@ -335,50 +344,43 @@ fn the_per_source_audit_is_this() {
         );
     }
 
-    // The headline of D-377's recommendation, asserted so it cannot be quoted
-    // after it stops being true.
-    assert_eq!(
-        (totals[0].unique_utterances, totals[1].unique_utterances),
-        (1, 5)
-    );
-    assert!((totals[0].unique_secs - 5.42).abs() < 0.005);
-    assert!((totals[1].unique_secs - 56.92).abs() < 0.005);
+    // B-246's fix, asserted so it cannot be quoted after it stops being true:
+    // nothing proposed on either backend repeats nothing, and nothing proposed
+    // is even absent from its keeper (D-386).
+    for t in &totals {
+        assert_eq!(t.unique_utterances, 0);
+        assert_eq!(t.unique_secs, 0.0);
+        assert_eq!(t.absent_secs, 0.0);
+    }
 }
 
 /// **B-246 itemised: every proposed cut, on either backend, whose speech
-/// repeats nothing in its own group.** Six of them, each a single-utterance
-/// take admitted by [`similarity`]'s containment arm on a matching tail.
+/// repeats nothing in its own group.** There were six (D-377), each a
+/// single-utterance take admitted by [`similarity`]'s containment arm on a
+/// matching tail; D-386 emptied the list, which is what this test now pins.
 ///
 /// [`similarity`]: apelles_speech::retake::similarity
 ///
-/// Pinned by index, duration and overlap rather than counted, because the fix
-/// has to remove *these* and nothing else: the two columns above show the
-/// detector already proposes 237.88 s / 218.36 s, and a change that zeroed this
-/// list by finding fewer retakes would be a recall loss wearing the fix's
-/// clothes. A deliberate fix makes this test fail with the list it emptied.
+/// The six, for the record (source, backend, utterance, seconds, overlap vs
+/// keeper — and the only part that repeated):
+///
+/// | | | # | s | vs keeper | repeats |
+/// |---|---|---|---|---|---|
+/// | C019 | whisper | 50 | 5.42 | 0.417 | "there's actually a name for this" |
+/// | C019 | parakeet | 14 | 14.96 | 0.156 | "Writing the notes into the" |
+/// | C019 | parakeet | 23 | 12.24 | 0.381 | "One more thing to know the notes never" |
+/// | C038 | parakeet | 17 | 11.36 | 0.280 | "and the trick behind use to bring that cost" |
+/// | C038 | parakeet | 40 | 14.52 | 0.240 | "But the real reason it's this expensive" |
+/// | C040 | parakeet | 36 | 3.84 | 0.375 | "read than write" |
+///
+/// A zero here alone could be a recall loss wearing the fix's clothes, which is
+/// why the fix is judged on `retake_eval.rs` (recall per task, against labels)
+/// and not on this list.
 #[test]
 fn b246_the_cuts_that_repeat_nothing_are_exactly_these() {
     let p = RetakeParams::default();
     // (source, backend, utterance index, secs, overlap vs keeper)
-    let expected: &[(&str, &str, usize, f64, f64)] = &[
-        // "monthly invoice still goes up there's actually a name for this
-        // there's" — the Jevons-paradox setup. Only "there's actually a name for
-        // this" repeats; the invoice line is said once and cut.
-        ("C019", "whisper", 50, 5.42, 0.417),
-        // 14.96 s, of which only the trailing "Writing the notes into the"
-        // repeats: the cache-ordering explanation and "Let's actually go to the
-        // maths" are each said once.
-        ("C019", "parakeet", 14, 14.96, 0.156),
-        // 12.24 s; only "One more thing to know the notes never" repeats.
-        ("C019", "parakeet", 23, 12.24, 0.381),
-        // 11.36 s; only "and the trick behind use to bring that cost" repeats.
-        ("C038", "parakeet", 17, 11.36, 0.280),
-        // 14.52 s; only "But the real reason it's this expensive" repeats.
-        ("C038", "parakeet", 40, 14.52, 0.240),
-        // 3.84 s; "It's less, it's less read than write, and more" against
-        // "read than write while constantly rechecking."
-        ("C040", "parakeet", 36, 3.84, 0.375),
-    ];
+    let expected: &[(&str, &str, usize, f64, f64)] = &[];
 
     let mut got = Vec::new();
     for s in SPEECH {
@@ -429,22 +431,24 @@ fn b246_the_cuts_that_repeat_nothing_are_exactly_these() {
 fn whisper_re_derived_today_also_proposes_nothing_that_repeats_nothing() {
     let p = RetakeParams::default();
     // (fixture, segments, groups, cut utterances, cut secs, absent secs)
+    // Re-pinned by D-386 (D-377's: 11 / 19 / 87.80 / 27.62 and
+    // 9 / 22 / 123.00 / 47.40).
     let fresh: &[(&str, usize, usize, usize, f64, f64)] = &[
         (
             "transcripts/A001_09122319_C038.whisper.json",
             126,
-            11,
-            19,
-            87.80,
-            27.62,
+            6,
+            8,
+            22.44,
+            0.0,
         ),
         (
             "transcripts/A001_09122356_C040.whisper.json",
             83,
             9,
-            22,
-            123.00,
-            47.40,
+            11,
+            53.30,
+            0.0,
         ),
     ];
     for &(path, segments, groups, cuts, secs, absent) in fresh {

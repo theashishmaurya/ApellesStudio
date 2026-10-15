@@ -799,6 +799,35 @@ fn nested_in_takes(cuts: &[(usize, usize)], keep: (usize, usize), range: (usize,
         .all(|&(a, b)| a >= range.0 && b <= range.1)
 }
 
+/// **The content rule on plain text** — does deleting `cut` keep every content
+/// word `kept` does not already hold? Both sides are already
+/// [`normalise`]d strings; the default [`GateParams`], no waivers.
+///
+/// This is [`content_shortfall`] itself, not a second copy of it: the
+/// deterministic detector (`retake.rs`, D-386 / B-246) asks it of every
+/// non-kept take against its group's keeper while it is still *forming* the
+/// group, so a group it emits is one this gate would not refuse on content.
+/// One rule, one implementation, two callers.
+pub(crate) fn text_is_covered(cut: &str, kept: &str) -> bool {
+    let toks = |s: &str| -> Vec<Tok> {
+        s.split(' ')
+            .filter(|t| !t.is_empty())
+            .enumerate()
+            .map(|(word, t)| Tok {
+                text: t.to_string(),
+                word,
+            })
+            .collect()
+    };
+    content_shortfall(
+        &toks(cut),
+        &toks(kept),
+        &GateParams::default(),
+        &BTreeSet::new(),
+    )
+    .is_none()
+}
+
 /// The word indices two inclusive ranges share.
 fn shared_words(x: (usize, usize), y: (usize, usize)) -> Vec<usize> {
     (x.0.max(y.0)..=x.1.min(y.1)).collect()

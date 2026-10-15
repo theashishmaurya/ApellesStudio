@@ -932,7 +932,7 @@ fn the_task_set_scores_as_pinned() {
     );
 
     let now = json!({
-        "$comment": "The retake eval's committed floor (D-378): today's scores at RetakeParams::default() unless a task overrides it, B-246 unfixed. NOT a target — see eval/retake/README.md. Regenerate: APELLES_RETAKE_EVAL_BASELINE=1 cargo test -p apelles-speech --test retake_eval",
+        "$comment": "The retake eval's committed floor (D-378): today's scores at RetakeParams::default() unless a task overrides it, B-246 fixed (D-386: over-cut 0.00 s on every task, at a recall cost). NOT a target — see eval/retake/README.md. Regenerate: APELLES_RETAKE_EVAL_BASELINE=1 cargo test -p apelles-speech --test retake_eval",
         "rollup": { "mean": r3(sum / tasks.len() as f64), "pass": passes, "of": tasks.len() },
         "tasks": Value::Object(rows),
     });

@@ -195,7 +195,7 @@ harness adds.
 | field | why |
 |---|---|
 | `params` | `RetakeParams` overrides; absent means `RetakeParams::default()` |
-| `expect` | `"pass"` or `"fail"`, **pinned**. B-246 is a known-open defect, so all eight corpus tasks and one control case are expected to FAIL today. A task that stops matching its `expect` fails the run — so a fix cannot land silently and a regression cannot hide. |
+| `expect` | `"pass"` or `"fail"`, **pinned**. Every corpus task and two control cases are expected to FAIL today — since D-386 on recall only, never on a gate. A task that stops matching its `expect` fails the run — so a fix cannot land silently and a regression cannot hide. |
 
 A `gates[]` entry that fires zeroes the task **regardless of score**. That
 primitive is the whole structural defence against a vacuous pass, which is why
@@ -291,10 +291,10 @@ eval**, which is why one of them is `expect: "fail"` against today's code.
 
 | case | the known answer | today |
 |---|---|---|
-| `b246_tail_repeat` | B-246's exact shape: a single-utterance take whose tail repeats the next delivery while its head is unique. There is no correct cut of it. | **fails** — the detector cuts it whole |
+| `b246_tail_repeat` | B-246's exact shape: a single-utterance take whose tail repeats the next delivery while its head is unique. There is no correct whole-segment cut of it. | **fails, on recall only** since D-386 — the detector proposes nothing (over-cut 8.40 → 0.00 s); before, it cut the take whole |
 | `whisper_thank_you_hallucination` | two verbatim `"Thank you."` phantoms 27.3 s apart on room tone, similarity 1.000. Must not be cut. | passes (`min_words: 3` is the only thing stopping it) |
 | `verbatim_retake` | the same line delivered twice, verbatim. Must be cut. | passes — the case that stops a detector winning by proposing nothing |
-| `glued_anchor_unique_head` | D-366's own shape: a glued anchor carrying a unique setup line. | passes — this one is genuinely fixed |
+| `glued_anchor_unique_head` | D-366's own shape: a glued anchor carrying a unique setup line. | **fails, on recall only** since D-386 — the setup line is still kept out, but the remaining takes differ by "behind"/"being" (C038's real mis-hearing) and the detector now proposes only takes the keeper holds word for word; over-cut 0.00 s |
 
 ## Files
 
@@ -317,16 +317,31 @@ exactly one copy of each.
 
 ## The baseline is a pinned-defect floor, not a target
 
-`baseline.json` records today's behaviour, and today's behaviour includes
-**B-246 unfixed**. **All eight corpus tasks fail their `over_cut_secs` gate, on
-both backends.** That is recorded as the floor so a *regression* is visible, and
-it is explicitly not the goal: the goal is `expect: "pass"` on every task, which
-needs B-246's fix and its own measurement of the recall cost
+`baseline.json` records today's behaviour. Since **D-386 (B-246 fixed)** no
+corpus task fires a gate: over-cut and protected-cut are 0.00 s on all eleven,
+precision 1.000, and every task still fails — on recall. That is the floor, and
+it is not the goal: the goal is `expect: "pass"` on every task
 (`docs/04-roadmap.md`).
 
-Today's detector, at `RetakeParams::default()`, on the word-precise labels
-(2026-10-13, D-379; D-378's first numbers, on segment-level labels, are in
-that decision):
+D-386, before → after, at `RetakeParams::default()`:
+
+| task | over-cut | protected cut | precision | retake recall | group recall |
+|---|---|---|---|---|---|
+| C019 / parakeet | 24.40 → **0.00 s** | 22.96 → 0.00 s | 0.443 → 1.000 | 0.265 → 0.232 | 0.353 → 0.235 |
+| C038 / parakeet | 12.64 → **0.00 s** | 12.64 → 0.00 s | 0.843 → 1.000 | 0.523 → 0.189 | 0.611 → 0.294 |
+| C040 / parakeet | 3.20 → **0.00 s** | 1.84 → 0.00 s | 0.965 → 1.000 | 0.606 → 0.296 | 0.909 → 0.545 |
+| C019 / parakeet → gated (what the app shows) | 0.00 → 0.00 s | 0.00 → 0.00 s | 1.000 → 1.000 | 0.161 → **0.232** | 0.235 → 0.235 |
+| C038 / parakeet → gated | 0.00 → 0.00 s | 0.00 → 0.00 s | 1.000 → 1.000 | 0.189 → 0.189 | 0.294 → 0.294 |
+| C040 / parakeet → gated | 0.00 → 0.00 s | 0.00 → 0.00 s | 1.000 → 1.000 | 0.232 → **0.296** | 0.455 → **0.545** |
+| C019 / whisper (re-derived) | 12.40 → **0.00 s** | 7.86 → 0.00 s | 0.770 → 1.000 | 0.564 → 0.056 | 0.412 → 0.059 |
+| C038 / whisper (pinned) | 10.36 → **0.00 s** | 2.10 → 0.00 s | 0.874 → 1.000 | 0.551 → 0.145 | 0.611 → 0.235 |
+| C038 / whisper (re-derived) | 15.06 → **0.00 s** | 2.10 → 0.00 s | 0.826 → 1.000 | 0.551 → 0.171 | 0.647 → 0.294 |
+| C040 / whisper (pinned) | 17.60 → **0.00 s** | 0.00 → 0.00 s | 0.820 → 1.000 | 0.551 → 0.193 | 0.636 → 0.364 |
+| C040 / whisper (re-derived) | 24.16 → **0.00 s** | 0.00 → 0.00 s | 0.801 → 1.000 | 0.670 → 0.365 | 0.636 → 0.636 |
+
+The table below is the state **before D-386**, kept because the three shapes it
+names are what D-386 closed (2026-10-13, D-379; D-378's first numbers, on
+segment-level labels, are in that decision):
 
 | task | over-cut | of it protected | precision | retake recall | group recall | keeper |
 |---|---|---|---|---|---|---|
@@ -449,11 +464,12 @@ but does not let them be ticked unless someone who listened unlocks one.
 | C038 / parakeet → gated | 12.64 → **0.00 s** | 0.843 → 1.000 | 0.523 → 0.189 | 0.611 → 0.294 | 5 / 5 |
 | C040 / parakeet → gated | 3.20 → **0.00 s** | 0.965 → 1.000 | 0.606 → 0.232 | 0.909 → 0.455 | 5 / 5 |
 
-All three still `expect: "fail"` — on recall, never on a gate. The refusals are
+All three still `expect: "fail"` — on recall, never on a gate. The refusals were
 the detector's over-cutters and its groups whose keeper does not hold every
 word (an ASR mis-hearing, an inflection), the same two kinds the gate refuses
-for a client. The ungated rows are unchanged; the gated rows are the floor
-for B-246's remaining fix (`retake.rs`'s grouping).
+for a client. **Since D-386 the detector forms neither kind**, so the gate
+refuses none of its groups and the gated rows equal the ungated ones: recall
+0.232 / 0.189 / 0.296 (from 0.161 / 0.189 / 0.232).
 
 ## Boundary
 

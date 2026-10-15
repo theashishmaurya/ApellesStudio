@@ -180,7 +180,7 @@ shape are all unchanged. **When changing this crate, measure the proposed cut an
 not only the grouping**: they are two claims, and two consecutive passes verified
 only the first.
 
-### …and it is still not fully fixed (B-246, found by D-377)
+### …and it was still not fully fixed (B-246, found by D-377; fixed by D-386)
 
 D-366's guard applies to *glued* spans only — `MIN_UTTERANCE_OVERLAP`'s own doc
 says single-utterance takes stay "judged by `similarity` alone" — and its
@@ -195,6 +195,17 @@ which is why the new tier — `tests/proposed_cuts.rs`, 24 committed transcript
 fixtures — audits whole transcripts of every source rather than another excerpt.
 `docs/notes/retake-detection.md` §8 has the table, the threshold sweep that
 removes none of it, and why `phrase_min_words: 0` is not the fix.
+
+**Fixed by D-386.** A group now keeps a non-kept take only when its keeper holds
+that take's every content word, judged by the coverage gate's own content rule
+(`proposal::text_is_covered`), and is dropped when fewer than two takes remain.
+That closes all three shapes D-378's eval charged (a take repeating nothing, a
+fragment keeper, unique speech `word_overlap` forgave) — over-cut **0.00 s on
+every `eval/retake/` task** and 0.00 s "repeats nothing" in `proposed_cuts.rs`
+— at a recall cost: a take whose words the ASR mis-heard is no longer proposed.
+What the app shows after the gate is unchanged or better (D-382's gated tasks:
+recall 0.161 / 0.189 / 0.232 → 0.232 / 0.189 / 0.296), and the gate refuses
+none of the detector's groups. §14 of the note has the options measured.
 
 The obvious fix — an on-device sentence-embedding model — was built in full,
 verified correct to four decimals against upstream's own reference

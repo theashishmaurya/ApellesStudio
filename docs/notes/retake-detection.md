@@ -1415,8 +1415,9 @@ locked until a listener unlocks it, never bulk-ticked).
 
 Measured (`eval/retake/` `C0xx/parakeet-gated`, README table): over-cut 24.40 /
 12.64 / 3.20 s → 0.00 s, precision 1.000, recall roughly halved (0.161 /
-0.189 / 0.232), 13 of 27 groups refused. B-246 is mitigated, not fixed — the
-grouping that forms the over-cutting groups is unchanged.
+0.189 / 0.232), 13 of 27 groups refused. B-246 was mitigated, not fixed, by
+this — the grouping was fixed by D-386 (§14), after which the gate refuses none
+of the detector's groups.
 
 ### 12.7 Not done here: the live smoke (for the coordinator)
 
@@ -1483,3 +1484,97 @@ for a clip nobody had asked about. It now starts nothing for one, like the
 sweep. The pins are the B-249 block in `recutSweep.dom.test.tsx`; with the old
 op code all three fail (the sweep never re-reads, the single clip never groups,
 an unasked status read starts a scan).
+
+
+---
+
+## 14. B-246 fixed: a group keeps only the takes its keeper covers (D-386, 2026-10-15)
+
+The end of the §8-§12 thread.
+
+### 14.1 What was wrong, in one sentence
+
+The detector cut each non-kept take whole and never asked the finished group
+whether the **keeper** holds what those takes say. D-366's guard asked a
+narrower question — is each *glued* anchor utterance in the union of the other
+takes, by `word_overlap` ≥ 0.5 — so three shapes passed (§9.2): a single
+utterance matched on its tail (the guard skipped `len == 1`), a fragment keeper
+(the reference was the union, not the keeper), and unique speech carried by a
+0.5 fraction.
+
+### 14.2 The options, measured (one eval run each)
+
+Ungated over-cut, Parakeet C019 / C038 / C040, then the range over the five
+Whisper tasks:
+
+| variant | Parakeet | Whisper |
+|---|---|---|
+| before | 24.40 / 12.64 / 3.20 s | 10.36-24.16 s |
+| `anchor_is_justified` on single-utterance anchors (B-246's proposal) | 1.44 / 0.00 / 0.00 s | 9.68-24.16 s |
+| non-kept utterances vs the **keeper**, `word_overlap` ≥ 0.5, reject chain | 1.44 / 0.00 / 0.00 s | 2.96-9.68 s |
+| …content words only | 0.00 / 0.00 / **3.20** s | 2.96-7.74 s |
+| **the gate's content rule vs the keeper** | **0.00 / 0.00 / 0.00 s** | **0.00 s** |
+
+The overlap variants fail for the reason §11.2 gives for the gate not using
+`word_overlap`: a fraction forgives part of an utterance by construction, and
+the part it forgives is the unique head. C019's left-over 1.44 s is `"This is
+the mistake."` riding in a take whose other words repeat.
+
+Within the content-rule variant: rejecting the whole chain on a failing take vs
+**dropping that take** — identical except C040 (Parakeet recall 0.259 → 0.296,
+Whisper re-derived 0.249 → 0.365); choosing the keeper as the latest take that
+covers the rest — identical to dropping. Dropping was chosen.
+
+### 14.3 The fix
+
+`keep_only_covered_takes` (`retake.rs`) runs once a chain exists and its anchor
+is justified: each non-kept take stays only if
+`proposal::text_is_covered(take, keeper)`, which is `content_shortfall` — the
+gate's own rule, the one function both now call — over the two normalised
+strings; fewer than two takes left, no group. `similarity` is recomputed over
+the takes kept. Detection (`similarity`, the phrase arm, the span window, the
+anchor guard) is unchanged, which is why `real_transcripts.rs`'s pairwise
+admissions did not move while its group counts did.
+
+### 14.4 Before / after
+
+| task | over-cut | protected cut | precision | retake recall | group recall |
+|---|---|---|---|---|---|
+| C019 / parakeet | 24.40 → **0.00 s** | 22.96 → 0.00 s | 0.443 → 1.000 | 0.265 → 0.232 | 0.353 → 0.235 |
+| C038 / parakeet | 12.64 → **0.00 s** | 12.64 → 0.00 s | 0.843 → 1.000 | 0.523 → 0.189 | 0.611 → 0.294 |
+| C040 / parakeet | 3.20 → **0.00 s** | 1.84 → 0.00 s | 0.965 → 1.000 | 0.606 → 0.296 | 0.909 → 0.545 |
+| C019 / parakeet → gated (what the app shows) | 0.00 → 0.00 s | 0.00 → 0.00 s | 1.000 → 1.000 | 0.161 → **0.232** | 0.235 → 0.235 |
+| C038 / parakeet → gated | 0.00 → 0.00 s | 0.00 → 0.00 s | 1.000 → 1.000 | 0.189 → 0.189 | 0.294 → 0.294 |
+| C040 / parakeet → gated | 0.00 → 0.00 s | 0.00 → 0.00 s | 1.000 → 1.000 | 0.232 → **0.296** | 0.455 → **0.545** |
+| C019 / whisper (re-derived) | 12.40 → **0.00 s** | 7.86 → 0.00 s | 0.770 → 1.000 | 0.564 → 0.056 | 0.412 → 0.059 |
+| C038 / whisper (pinned) | 10.36 → **0.00 s** | 2.10 → 0.00 s | 0.874 → 1.000 | 0.551 → 0.145 | 0.611 → 0.235 |
+| C038 / whisper (re-derived) | 15.06 → **0.00 s** | 2.10 → 0.00 s | 0.826 → 1.000 | 0.551 → 0.171 | 0.647 → 0.294 |
+| C040 / whisper (pinned) | 17.60 → **0.00 s** | 0.00 → 0.00 s | 0.820 → 1.000 | 0.551 → 0.193 | 0.636 → 0.364 |
+| C040 / whisper (re-derived) | 24.16 → **0.00 s** | 0.00 → 0.00 s | 0.801 → 1.000 | 0.670 → 0.365 | 0.636 → 0.636 |
+
+`proposed_cuts.rs` (all fixtures, both backends): "repeats nothing" 5.42 /
+56.92 s → **0.00 / 0.00 s**; "absent from the keeper" 89.40 / 56.92 s → 0.00 /
+0.00 s; groups 25 / 27 → 10 / 16, proposed 237.88 / 218.36 s → 51.82 /
+85.60 s. `gate_baseline.json`: detector groups the eval charges 6 → 0, clean
+groups the gate refuses 7 → 0 — the detector's output now passes the gate it
+sits behind.
+
+### 14.5 What it costs, and what stays open
+
+- **Recall.** Every group the gate would refuse for a mis-heard word (`bag` /
+  `back`, `behind` / `being`, `masses` / `message`) is no longer formed, and a
+  chain whose last take is a fragment now loses the takes it cannot cover. On
+  Whisper's shorter segments that is most groups (C019 recall 0.564 → 0.056).
+  What the app shows was already gated, so there it is unchanged or better.
+- **Two controls flip to `expect: "fail"`, on recall only.**
+  `b246_tail_repeat` proposes nothing (the right answer for a whole-segment
+  cutter; its only correct cut is the free-standing repeat, kept);
+  `glued_anchor_unique_head` copies C038's `behind`/`being` mis-hearing, which
+  the rule cannot hear.
+- **Unit tests that pinned an over-cut were changed, each with its reason in
+  its doc comment**: the D-327 triple repeat drops `#0` (`bag`, and its keeper
+  ends before "model"); B-238 case 1's `#30` was a fixture labelled
+  "redundant" whose head, "it so expensive", D-378's ground truth protects; the
+  C040 glued-anchor case kept a fragment; the five `REAL_PHRASE_REPAIRS` each
+  cut a segment carrying said-once speech around the repaired phrase.
+- **Not changed:** no label file, no threshold, no `RetakeParams` field.
