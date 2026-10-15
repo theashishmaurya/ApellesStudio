@@ -66,6 +66,22 @@
 //!   ([`ResolvedAudio::timeline_end_frame`]), so silence between two clips is
 //!   mixed through rather than mistaken for the end of the timeline.
 //!
+//! ## Edits while playing (B-235 / D-384)
+//!
+//! A session outlives the edits made while it plays. Every resolve reports a
+//! fingerprint of the edit it answered from ([`ResolvedAudio::revision`]);
+//! when it changes, the session does not try to patch its open set (whose
+//! decoders were each opened for a clip as it used to be). It rebuilds the
+//! set from the edited timeline ([`reopen_at`]) at a position just past the
+//! one the listener is hearing — the mixer runs up to ~2 s ahead of the ear,
+//! because that is how full the backpressure keeps the ring — mixes a short
+//! replacement, and splices it into the ring there with a 10 ms crossfade
+//! ([`splice_point`], [`crossfade_into`]). The audio already queued for the
+//! next [`SPLICE_LEAD_SECS`] keeps playing throughout, so an edit costs no
+//! silence; before this, a deleted clip kept sounding to its old out-point,
+//! a clip moved back under the playhead stayed silent until the next unplayed
+//! clip, and two seconds of pre-edit audio played out either way.
+//!
 //! ## Waveform extraction (D-051 — the mature timeline UI pass)
 //!
 //! [`waveform`] is a second, unrelated-at-runtime feature bolted
@@ -1895,6 +1911,25 @@ pub struct ResolvedAudio {
     /// below would have produced anyway; understating it would resurrect
     /// B-192.
     pub timeline_end_frame: u64,
+    /// **B-235 — an opaque fingerprint of the timeline these sources were
+    /// resolved from.** Two resolves that report the same number were answered
+    /// from the same edit; a different number means the timeline was edited in
+    /// between. This crate never interprets it beyond that comparison (see
+    /// [`resolve_and_open_new`] and [`splice_point`]).
+    ///
+    /// It exists because a play session outlives edits. Before B-235 a
+    /// session's open decoders were frozen to the clips they were opened for:
+    /// a clip deleted while it played kept sounding to its old out-point, a
+    /// clip that moved back under the playhead (an undo, an insert, a trim
+    /// that extends) stayed silent because its id had already been played, and
+    /// ~2 s of audio already mixed into the ring buffer from the pre-edit
+    /// timeline played out regardless. A change of this number is how the
+    /// session learns it must rebuild its open set and splice the result in at
+    /// the listener's position instead.
+    ///
+    /// A caller with nothing to fingerprint reports a constant (`0` via
+    /// `Default`), which never triggers a rebuild — the pre-B-235 behaviour.
+    pub revision: u64,
 }
 
 /// Resolve the timeline at one frame. A source's stable identity across two
@@ -1928,6 +1963,11 @@ pub type ResolveAt = Box<dyn Fn(u64) -> Result<ResolvedAudio, String> + Send>;
 /// position, each at its own track's gain. D-129's A/V-link suppression lives
 /// there too, for the same reason: it is a question about clips.
 ///
+/// **`opening` is the resolve at `start_frame`** — its `sources` are what
+/// play first, and (B-235) its `revision` is the edit they were resolved from,
+/// so an edit landing between this resolve and the session's first scheduled
+/// one is still noticed.
+///
 /// **`start_frame`/`fps`/`resolve_at` are B-111's fix.** `sources` is only
 /// ever this session's OPENING set — frozen the instant it was built, exactly
 /// as before. `resolve_at` is the SAME resolution, as a `Send` closure
@@ -1946,7 +1986,7 @@ pub type ResolveAt = Box<dyn Fn(u64) -> Result<ResolvedAudio, String> + Send>;
 /// (D-242), and is part of the project.
 pub fn start(
     session: PlaySession,
-    sources: Vec<AudioSourceSpec>,
+    opening: ResolvedAudio,
     start_frame: u64,
     fps: f64,
     rate: f64,
@@ -1956,6 +1996,11 @@ pub fn start(
         generation: my_gen,
         requested_at,
     } = session;
+    let ResolvedAudio {
+        sources,
+        revision,
+        timeline_end_frame: _,
+    } = opening;
 
     if sources.is_empty() {
         return Ok(());
@@ -1969,9 +2014,12 @@ pub fn start(
                 sources,
                 my_gen,
                 requested_at,
-                start_frame,
-                fps,
-                rate,
+                SessionTimeline {
+                    start_frame,
+                    fps,
+                    rate,
+                    revision,
+                },
                 resolve_at,
             ) {
                 log::warn!("chroma audio session ({n} source(s)): {e}");
@@ -3249,12 +3297,21 @@ fn session_is_over(all_done: bool, current_frame: u64, timeline_end_frame: u64) 
 /// every open source runs dry (B-190).
 ///
 /// Returns what the timeline said its own end frame is
-/// ([`ResolvedAudio::timeline_end_frame`]), or `None` if the resolve failed.
+/// ([`ResolvedAudio::timeline_end_frame`]) as [`ResolveOutcome::Applied`], or
+/// [`ResolveOutcome::Failed`] if the resolve failed.
 /// A resolve failure is logged and treated as "nothing new", never fatal: the
 /// timeline being momentarily unreadable must not take down a session that is
 /// mid-playback — and, B-192, must not be mistaken for "the timeline is over"
 /// either, which is why the caller keeps the last answer it did get rather
 /// than defaulting to one.
+///
+/// **B-235 — `known_revision` is the edit this session's open set was built
+/// from.** A resolve answered from a *different* edit opens nothing and
+/// reports [`ResolveOutcome::Edited`] instead: "which clips are new since last
+/// time" is only a meaningful question against the same timeline, and asking
+/// it across an edit is exactly how a deleted clip kept sounding and a clip
+/// moved back under the playhead stayed silent. The caller rebuilds the open
+/// set from scratch instead ([`reopen_at`]).
 fn resolve_and_open_new(
     resolve_at: &ResolveAt,
     open: &mut OpenSources,
@@ -3262,14 +3319,18 @@ fn resolve_and_open_new(
     out_rate: u32,
     out_channels: usize,
     pos_frames: u64,
-) -> Option<u64> {
+    known_revision: u64,
+) -> ResolveOutcome {
     let resolved = match resolve_at(current_frame) {
         Ok(f) => f,
         Err(e) => {
             log::warn!("chroma audio: timeline re-resolve failed: {e}");
-            return None;
+            return ResolveOutcome::Failed;
         }
     };
+    if resolved.revision != known_revision {
+        return ResolveOutcome::Edited;
+    }
     for spec in newly_active_sources(&resolved.sources, &open.ever_opened) {
         match open.open_and_track(spec, out_rate, out_channels, pos_frames) {
             Ok(()) => {
@@ -3283,7 +3344,61 @@ fn resolve_and_open_new(
             }
         }
     }
-    Some(resolved.timeline_end_frame)
+    ResolveOutcome::Applied {
+        timeline_end_frame: resolved.timeline_end_frame,
+    }
+}
+
+/// What one [`resolve_and_open_new`] call came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolveOutcome {
+    /// The resolve failed. Logged, never fatal, and — B-192 — never read as
+    /// "the timeline is over": the caller keeps the last answer it did get.
+    Failed,
+    /// Same edit as before; any newly-active clip has been opened. Carries
+    /// [`ResolvedAudio::timeline_end_frame`].
+    Applied { timeline_end_frame: u64 },
+    /// B-235 — the timeline was edited since the open set was built. Nothing
+    /// was opened; the caller must rebuild with [`reopen_at`].
+    Edited,
+}
+
+/// **B-235 — rebuild a session's whole open set from the timeline as it is
+/// NOW, at session position `pos_frames`.** The structural half of the fix:
+/// after an edit nothing the old set holds can be trusted (a decoder's
+/// out-point, its gain and envelopes, even whether its clip still exists were
+/// all fixed when it opened), so it is replaced outright rather than patched.
+///
+/// Every source is opened with `pos_frames` as its own `opened_at`, exactly
+/// as a mid-session open is, because `resolve_at` built each spec's envelopes
+/// as "seconds since this source opened" at the frame it was asked about.
+/// `ever_opened` starts again from the fresh set, which is what lets a clip
+/// that an undo or an insert has moved back under the playhead be heard: its
+/// id may have been played earlier in this session, but under the old edit.
+///
+/// A source that fails to open is logged and skipped — the same rule every
+/// mid-session open follows. Returns the fresh set plus the resolve's own
+/// `timeline_end_frame` and `revision` for the caller's [`MixClock`], or the
+/// resolve error, in which case the caller keeps its old set (an unreadable
+/// timeline must not take down a session that is still producing sound).
+fn reopen_at(
+    resolve_at: &ResolveAt,
+    frame: u64,
+    pos_frames: u64,
+    out_rate: u32,
+    out_channels: usize,
+) -> Result<(OpenSources, u64, u64), String> {
+    let resolved = resolve_at(frame)?;
+    let mut fresh = OpenSources::default();
+    for spec in &resolved.sources {
+        if let Err(e) = fresh.open_and_track(spec, out_rate, out_channels, pos_frames) {
+            log::warn!(
+                "chroma audio: re-open after an edit skipped {}: {e}",
+                spec.path.display()
+            );
+        }
+    }
+    Ok((fresh, resolved.timeline_end_frame, resolved.revision))
 }
 
 /// Every per-source vec [`run_session`] keeps index-parallel, in one place.
@@ -3563,11 +3678,15 @@ fn run_session(
     sources: Vec<AudioSourceSpec>,
     my_gen: u64,
     requested_at: Instant,
-    start_frame: u64,
-    fps: f64,
-    rate: f64,
+    timeline: SessionTimeline,
     resolve_at: ResolveAt,
 ) -> Result<(), String> {
+    let SessionTimeline {
+        start_frame,
+        fps,
+        rate,
+        revision,
+    } = timeline;
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -3735,6 +3854,7 @@ fn run_session(
         // B-192 — see the field's own doc: `0` until the first resolve sets it,
         // which is the pre-B-192 "nothing playing means stop" behaviour.
         timeline_end_frame: 0,
+        revision,
     };
 
     'mix: loop {
@@ -3743,10 +3863,27 @@ fn run_session(
         }
 
         // B-192 — the timeline side of D-280's seam, in one place: resolve,
-        // decide whether the session is over, retire, mix. `None` is the only
+        // decide whether the session is over, retire, mix. `Over` is the only
         // way this loop ends other than being superseded.
-        let Some(mixed) = advance_mix(&mut open, &resolve_at, &mut clock, &cfg)? else {
-            break 'mix;
+        let mixed = match advance_mix(&mut open, &resolve_at, &mut clock, &cfg)? {
+            MixStep::Mixed(mixed) => mixed,
+            MixStep::Over => break 'mix,
+            // B-235 — the timeline was edited while it played. Rebuild the
+            // open set at the listener's position and splice it into the
+            // ring there, rather than letting the pre-edit set (and the ~2 s
+            // of its audio already queued) play on.
+            MixStep::Edited => {
+                let edit = SpliceContext {
+                    ring: &ring,
+                    resolve_at: &resolve_at,
+                    cfg: &cfg,
+                    rate,
+                };
+                if splice_edit(&edit, &mut open, &mut clock, &mut stretch)? {
+                    break 'mix;
+                }
+                continue 'mix;
+            }
         };
         // D-280 — timeline audio becomes real-time audio here, and only here.
         // At 4x this is a quarter as many samples per mixed chunk, which is
@@ -3829,12 +3966,29 @@ struct MixClock {
     /// behaviour ("nothing playing means stop") and is only ever read after the
     /// forced resolve in [`advance_mix`] has had its chance to set it.
     timeline_end_frame: u64,
+    /// **B-235 — the [`ResolvedAudio::revision`] the open set was built
+    /// from.** A resolve reporting anything else is an edit; see
+    /// [`resolve_and_open_new`].
+    revision: u64,
+}
+
+/// **The fixed facts a play session is started with** — where on the
+/// timeline it begins, the timeline's rate, D-280's playback rate, and
+/// (B-235) the revision of the timeline its opening sources were resolved
+/// from. Bundled so [`run_session`]'s signature stays readable.
+struct SessionTimeline {
+    start_frame: u64,
+    fps: f64,
+    rate: f64,
+    revision: u64,
 }
 
 /// **One iteration of [`run_session`]'s mix loop, from the TIMELINE side of
 /// D-280's seam** — resolve, decide whether the session is over, retire what
-/// the resolve made redundant, mix one chunk. `Ok(None)` is "the session is
-/// over", the one thing that ends the loop short of being superseded.
+/// the resolve made redundant, mix one chunk. [`MixStep::Over`] is "the
+/// session is over", the one thing that ends the loop short of being
+/// superseded; [`MixStep::Edited`] (B-235) is "the timeline changed under the
+/// open set — rebuild it before mixing anything more".
 ///
 /// **B-192 extracted this from the loop body.** It was inline while its only
 /// decision was "is everything exhausted"; it now holds the judgement that
@@ -3851,7 +4005,7 @@ fn advance_mix(
     resolve_at: &ResolveAt,
     clock: &mut MixClock,
     cfg: &MixConfig,
-) -> Result<Option<Vec<f32>>, String> {
+) -> Result<MixStep, String> {
     // B-192 — computed once, used by both the resolve and the terminal
     // condition; see `timeline_frame_at`.
     let current_frame = timeline_frame_at(cfg.start_frame, cfg.fps, cfg.out_rate, clock.pos_frames);
@@ -3865,15 +4019,21 @@ fn advance_mix(
     let mut resolved_here = false;
     if clock.pos_frames >= clock.next_resolve_at_pos_frames {
         clock.next_resolve_at_pos_frames = clock.pos_frames + cfg.resolve_interval_frames;
-        if let Some(end) = resolve_and_open_new(
+        match resolve_and_open_new(
             resolve_at,
             open,
             current_frame,
             cfg.out_rate,
             cfg.out_channels,
             clock.pos_frames,
+            clock.revision,
         ) {
-            clock.timeline_end_frame = end;
+            ResolveOutcome::Applied { timeline_end_frame } => {
+                clock.timeline_end_frame = timeline_end_frame;
+            }
+            // B-235 — mix nothing more from the pre-edit set.
+            ResolveOutcome::Edited => return Ok(MixStep::Edited),
+            ResolveOutcome::Failed => {}
         }
         resolved_here = true;
     }
@@ -3920,19 +4080,27 @@ fn advance_mix(
         // hot loop for the length of the silence.
         if !resolved_here {
             clock.next_resolve_at_pos_frames = clock.pos_frames + cfg.resolve_interval_frames;
-            if let Some(end) = resolve_and_open_new(
+            match resolve_and_open_new(
                 resolve_at,
                 open,
                 current_frame,
                 cfg.out_rate,
                 cfg.out_channels,
                 clock.pos_frames,
+                clock.revision,
             ) {
-                clock.timeline_end_frame = end;
+                ResolveOutcome::Applied { timeline_end_frame } => {
+                    clock.timeline_end_frame = timeline_end_frame;
+                }
+                // B-235 — an edit may be exactly what made everything run
+                // dry (the playing clip was deleted); rebuild before deciding
+                // anything about the end of the timeline.
+                ResolveOutcome::Edited => return Ok(MixStep::Edited),
+                ResolveOutcome::Failed => {}
             }
         }
         if session_is_over(open.all_done(), current_frame, clock.timeline_end_frame) {
-            return Ok(None); // genuinely nothing left
+            return Ok(MixStep::Over); // genuinely nothing left
         }
     }
 
@@ -3960,7 +4128,258 @@ fn advance_mix(
         cfg.out_rate,
     )?;
     clock.pos_frames += (mixed.len() / cfg.out_channels.max(1)) as u64;
-    Ok(Some(mixed))
+    Ok(MixStep::Mixed(mixed))
+}
+
+/// What one [`advance_mix`] call produced.
+#[derive(Debug)]
+enum MixStep {
+    /// One chunk of TIMELINE audio, mixed from the current open set.
+    Mixed(Vec<f32>),
+    /// **B-235** — the timeline was edited since the open set was built.
+    /// Nothing was mixed; the caller rebuilds the set with [`reopen_at`] at
+    /// the position the listener has reached and splices it in.
+    Edited,
+    /// The session is over — the one thing that ends the loop short of being
+    /// superseded (B-192).
+    Over,
+}
+
+/// **B-235 — how far past the listener a post-edit splice is aimed**, in
+/// seconds. The rebuilt sources are opened at this position and the already
+/// queued pre-edit audio is kept only up to it, so the edit is heard about
+/// this long after the session notices it — instead of after the whole ring
+/// (~2 s, see `run_session`'s backpressure) has drained. It only needs to
+/// cover the reopen itself; when the reopen takes longer, [`splice_point`]
+/// skips the fresh audio forward instead, so this is a target, not a
+/// correctness bound.
+const SPLICE_LEAD_SECS: f64 = 0.1;
+
+/// **B-235 — how much fresh audio is mixed before the splice is made**, in
+/// seconds of timeline time. Generous next to [`SPLICE_LEAD_SECS`] so that a
+/// slow reopen (a cold multi-gigabyte container) is absorbed by skipping into
+/// this replacement rather than by running the ring dry.
+const SPLICE_REPLACEMENT_SECS: f64 = 0.4;
+
+/// **B-235 — the crossfade across the splice**, in seconds. Linear, because in
+/// the common case the two sides are the same material at the same position
+/// (an edit somewhere else on the timeline), where a linear fade sums back to
+/// the original exactly; where they differ, 10 ms is short enough to read as a
+/// cut, not a fade, and long enough to remove the click.
+const SPLICE_CROSSFADE_SECS: f64 = 0.01;
+
+/// **B-235 — the session position the listener is hearing right now**:
+/// `pos_frames` (where the mixer has got to, in timeline sample-frames) minus
+/// whatever is still queued in the ring. `queued_samples` is the ring's length
+/// in interleaved REAL-time samples, so it is converted to timeline frames
+/// through `ring_rate` — D-280's playback rate when a stretch stage is in the
+/// chain, `1.0` otherwise. Pure.
+fn heard_pos_frames(
+    pos_frames: u64,
+    queued_samples: usize,
+    out_channels: usize,
+    ring_rate: f64,
+) -> u64 {
+    let queued_frames = (queued_samples / out_channels.max(1)) as f64 * ring_rate;
+    pos_frames.saturating_sub(queued_frames.round() as u64)
+}
+
+/// **B-235 — how to cut the fresh audio into the ring.** Pure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Splice {
+    /// How many interleaved samples at the FRONT of the ring to keep playing.
+    /// Everything after them is pre-edit audio for positions the fresh set now
+    /// covers, and is dropped (all but the crossfade's worth).
+    keep_samples: usize,
+    /// How many timeline sample-frames to drop from the FRONT of the fresh
+    /// audio, because the listener has already passed the position it was
+    /// opened at (the reopen took longer than [`SPLICE_LEAD_SECS`]).
+    skip_frames: u64,
+}
+
+/// Where the fresh audio, opened at session position `target_pos`, joins the
+/// ring as it stands now — the mixer at `pos_frames`, `queued_samples` still
+/// queued. If the listener has not reached `target_pos` yet, keep exactly the
+/// queued audio up to it; if they already passed it, keep nothing and skip the
+/// fresh audio forward to where they are. Either way the first fresh sample
+/// lands at the position the last kept sample was followed by, so there is no
+/// repeat and no jump. Pure.
+fn splice_point(
+    target_pos: u64,
+    pos_frames: u64,
+    queued_samples: usize,
+    out_channels: usize,
+    ring_rate: f64,
+) -> Splice {
+    let heard = heard_pos_frames(pos_frames, queued_samples, out_channels, ring_rate);
+    if target_pos >= heard {
+        let keep_frames = ((target_pos - heard) as f64 / ring_rate.max(f64::EPSILON)).round();
+        let keep_samples = (keep_frames as usize).saturating_mul(out_channels.max(1));
+        Splice {
+            keep_samples: keep_samples.min(queued_samples),
+            skip_frames: 0,
+        }
+    } else {
+        Splice {
+            keep_samples: 0,
+            skip_frames: heard - target_pos,
+        }
+    }
+}
+
+/// Fade `fresh` in over `old` for the first `xfade_frames` sample-frames, in
+/// place. `old` is the dropped pre-edit audio that would have played from the
+/// same position. Shorter of the three wins, so an empty `old` (nothing was
+/// queued) leaves `fresh` untouched. Pure.
+fn crossfade_into(old: &[f32], fresh: &mut [f32], out_channels: usize, xfade_frames: usize) {
+    let ch = out_channels.max(1);
+    let frames = xfade_frames.min(old.len() / ch).min(fresh.len() / ch);
+    for f in 0..frames {
+        let t = (f + 1) as f32 / (frames + 1) as f32;
+        for c in 0..ch {
+            let i = f * ch + c;
+            fresh[i] = old[i] * (1.0 - t) + fresh[i] * t;
+        }
+    }
+}
+
+/// **B-235 — replace the open set with one rebuilt from the edited timeline,
+/// opened at session position `target_pos`, and move the clock there.** The
+/// part of a post-edit splice that touches no device, shared by
+/// [`splice_edit`] and the tests, so what they exercise is this and not a
+/// copy of it. Returns `false` (and leaves everything as it was, with the next
+/// attempt pushed one resolve interval out) if the timeline could not be read.
+fn rebuild_at(
+    resolve_at: &ResolveAt,
+    open: &mut OpenSources,
+    clock: &mut MixClock,
+    cfg: &MixConfig,
+    target_pos: u64,
+) -> bool {
+    let frame = timeline_frame_at(cfg.start_frame, cfg.fps, cfg.out_rate, target_pos);
+    match reopen_at(
+        resolve_at,
+        frame,
+        target_pos,
+        cfg.out_rate,
+        cfg.out_channels,
+    ) {
+        Ok((fresh, timeline_end_frame, revision)) => {
+            *open = fresh;
+            clock.pos_frames = target_pos;
+            clock.next_resolve_at_pos_frames = target_pos + cfg.resolve_interval_frames;
+            clock.timeline_end_frame = timeline_end_frame;
+            clock.revision = revision;
+            log::debug!(
+                "chroma audio: timeline edited mid-play — rebuilt {} source(s) at timeline frame {frame}",
+                open.decoded.len()
+            );
+            true
+        }
+        Err(e) => {
+            log::warn!("chroma audio: rebuilding after a timeline edit failed: {e}");
+            clock.next_resolve_at_pos_frames = clock.pos_frames + cfg.resolve_interval_frames;
+            false
+        }
+    }
+}
+
+/// What [`splice_edit`] needs from [`run_session`] that does not change while
+/// it runs.
+struct SpliceContext<'a> {
+    ring: &'a Mutex<VecDeque<f32>>,
+    resolve_at: &'a ResolveAt,
+    cfg: &'a MixConfig,
+    /// D-280's playback rate for this session.
+    rate: f64,
+}
+
+/// **B-235 — apply a timeline edit to a session that is playing.** Rebuilds
+/// the open set ([`rebuild_at`]) a little past the position the listener is
+/// hearing, mixes [`SPLICE_REPLACEMENT_SECS`] of fresh audio from it, then —
+/// holding the ring's lock only for the splice itself — drops the pre-edit
+/// audio queued past that position and puts the fresh audio there instead,
+/// crossfaded ([`splice_point`], [`crossfade_into`]).
+///
+/// The audio already queued keeps playing while the rebuild runs, so the
+/// splice costs no silence at all unless the ring was nearly empty to begin
+/// with; the only thing that can ever be lost is audio for positions the
+/// listener has already passed, which [`splice_point`] skips rather than
+/// replaying.
+///
+/// D-280: the stretch stage's state belongs to the pre-edit audio, so it is
+/// replaced with a fresh one at the splice.
+///
+/// Returns `Ok(true)` when the rebuilt timeline is already over at the splice
+/// (an edit that removed everything after the playhead), so the caller ends
+/// the loop exactly as it would for [`MixStep::Over`].
+fn splice_edit(
+    ctx: &SpliceContext<'_>,
+    open: &mut OpenSources,
+    clock: &mut MixClock,
+    stretch: &mut PlaybackStretch,
+) -> Result<bool, String> {
+    let cfg = ctx.cfg;
+    let ch = cfg.out_channels.max(1);
+    let ring_rate = if stretch.is_some() { ctx.rate } else { 1.0 };
+    let queued = ctx.ring.lock().unwrap_or_else(|e| e.into_inner()).len();
+    let mixer_pos = clock.pos_frames;
+    let heard = heard_pos_frames(mixer_pos, queued, ch, ring_rate);
+    let lead = (SPLICE_LEAD_SECS * cfg.out_rate as f64).round() as u64;
+    let target = (heard + lead).min(mixer_pos);
+
+    if !rebuild_at(ctx.resolve_at, open, clock, cfg, target) {
+        return Ok(false); // keep playing the old set; retried next interval
+    }
+    *stretch = crate::timestretch::TimeStretch::new(ctx.rate, cfg.out_rate, ch);
+
+    // The replacement, mixed while the queued pre-edit audio keeps playing.
+    let replacement_frames = (SPLICE_REPLACEMENT_SECS * cfg.out_rate as f64).round() as u64;
+    let mut fresh: Vec<f32> = Vec::new();
+    let mut over = false;
+    while clock.pos_frames < target + replacement_frames {
+        match advance_mix(open, ctx.resolve_at, clock, cfg)? {
+            MixStep::Mixed(mixed) => fresh.extend(to_output(stretch, mixed)),
+            // A second edit inside the replacement window: splice what there
+            // is, and let the loop rebuild again on its next iteration.
+            MixStep::Edited => break,
+            MixStep::Over => {
+                over = true;
+                break;
+            }
+        }
+    }
+
+    let xfade_frames = (SPLICE_CROSSFADE_SECS * cfg.out_rate as f64).round() as usize;
+    let fresh_len = fresh.len();
+    let leftover_skip_frames = {
+        let mut ring = ctx.ring.lock().unwrap_or_else(|e| e.into_inner());
+        let splice = splice_point(target, mixer_pos, ring.len(), ch, ring_rate);
+        let old_tail: Vec<f32> = ring.drain(splice.keep_samples..).collect();
+        let skip_samples =
+            ((splice.skip_frames as f64 / ring_rate).round() as usize).saturating_mul(ch);
+        let mut tail = if skip_samples < fresh_len {
+            fresh.split_off(skip_samples)
+        } else {
+            Vec::new()
+        };
+        crossfade_into(&old_tail, &mut tail, ch, xfade_frames);
+        ring.extend(tail);
+        // How far the listener had got past ALL of the replacement — only a
+        // reopen slower than the whole replacement window gets here.
+        let overrun = skip_samples.saturating_sub(fresh_len) / ch;
+        (overrun as f64 * ring_rate).round() as u64
+    };
+    if leftover_skip_frames > 0 && !over {
+        log::warn!(
+            "chroma audio: rebuilding after an edit outran the {SPLICE_REPLACEMENT_SECS}s \
+             replacement window by {leftover_skip_frames} frames; skipping ahead"
+        );
+        let n = (leftover_skip_frames as usize).saturating_mul(ch);
+        discard_samples(&mut open.decoded, n, ch, cfg.chunk_len)?;
+        clock.pos_frames += leftover_skip_frames;
+    }
+    Ok(over)
 }
 
 /// Build the `cpal` output stream for whichever `sample_format` the device's
@@ -4418,17 +4837,32 @@ mod tests {
         /// pre-B-192 signal (the closure could not say anything about the
         /// timeline's extent) and is how the regression test proves the bug.
         end_frame_override: Option<u64>,
+        /// **B-235 — an edit made while the session plays**: from the first
+        /// resolve at or past timeline frame `.0` on, the timeline IS `.1`
+        /// (and reports a new [`ResolvedAudio::revision`]). The harness asks
+        /// about monotonically later frames, so "at or past" is exactly "after
+        /// the user edited". `None` is a timeline nobody touches.
+        edit: Option<(u64, Vec<GapClip>)>,
     }
 
     impl GapTimeline {
-        fn end_frame(&self) -> u64 {
+        /// The clips the timeline holds when asked about `frame`, and the
+        /// revision that answer belongs to.
+        fn clips_at(&self, frame: u64) -> (&[GapClip], u64) {
+            match &self.edit {
+                Some((at, edited)) if frame >= *at => (edited, 1),
+                _ => (&self.clips, 0),
+            }
+        }
+
+        fn end_frame(&self, clips: &[GapClip]) -> u64 {
             self.end_frame_override
-                .unwrap_or_else(|| self.clips.iter().map(|c| c.end_frame).max().unwrap_or(0))
+                .unwrap_or_else(|| clips.iter().map(|c| c.end_frame).max().unwrap_or(0))
         }
 
         fn resolve(&self, frame: u64) -> ResolvedAudio {
-            let sources = self
-                .clips
+            let (clips, revision) = self.clips_at(frame);
+            let sources = clips
                 .iter()
                 .filter(|c| frame >= c.start_frame && frame < c.end_frame)
                 .map(|c| {
@@ -4461,7 +4895,8 @@ mod tests {
                 .collect();
             ResolvedAudio {
                 sources,
-                timeline_end_frame: self.end_frame(),
+                timeline_end_frame: self.end_frame(clips),
+                revision,
             }
         }
     }
@@ -4527,6 +4962,7 @@ mod tests {
             pos_frames: 0,
             next_resolve_at_pos_frames: (RESOLVE_INTERVAL_SECS * out_rate as f64).round() as u64,
             timeline_end_frame: 0,
+            revision: opening.revision,
         };
 
         let mut chunks = Vec::new();
@@ -4534,14 +4970,23 @@ mod tests {
         for _ in 0..max_chunks {
             let at = clock.pos_frames;
             match advance_mix(&mut open, &resolve_at, &mut clock, &cfg).expect("advance_mix") {
-                Some(mixed) => {
+                MixStep::Mixed(mixed) => {
                     let peak = mixed.iter().fold(0.0f32, |m, s| m.max(s.abs()));
                     chunks.push((at, peak));
                     if let (Some(st), Some(out)) = (stretch.as_mut(), stretched_out.as_mut()) {
                         out.extend(st.push(&mixed));
                     }
                 }
-                None => {
+                // B-235 — no ring here, so the listener IS the mixer: rebuild
+                // exactly where the clock stands, which is what `splice_edit`
+                // reduces to with nothing queued.
+                MixStep::Edited => {
+                    assert!(
+                        rebuild_at(&resolve_at, &mut open, &mut clock, &cfg, at),
+                        "the edited timeline is readable"
+                    );
+                }
+                MixStep::Over => {
                     ended_at_pos_frames = Some(at);
                     break;
                 }
@@ -4584,6 +5029,7 @@ mod tests {
                     },
                 ],
                 end_frame_override: None,
+                edit: None,
             },
             0,
             out_rate,
@@ -4637,6 +5083,7 @@ mod tests {
                     speed: 1.0,
                 }],
                 end_frame_override: None,
+                edit: None,
             },
             0,
             out_rate,
@@ -4688,6 +5135,7 @@ mod tests {
                     },
                 ],
                 end_frame_override: Some(0),
+                edit: None,
             },
             0,
             out_rate,
@@ -4751,6 +5199,7 @@ mod tests {
                     },
                 ],
                 end_frame_override: None,
+                edit: None,
             },
             0,
             out_rate,
@@ -4824,6 +5273,320 @@ mod tests {
             .expect("spawn ffmpeg to synthesize a sine WAV");
         assert!(status.success(), "ffmpeg sine WAV synthesis failed");
         out
+    }
+
+    /// B-235 — a `pcm_s16le` file of exact digital silence, the same format as
+    /// [`synth_sine_wav`]'s tone: a recut timeline's deleted pause, as a clip.
+    fn synth_silence_wav(dir: &Path, duration_secs: f64, rate: u32) -> PathBuf {
+        let out = dir.join("silence.wav");
+        let status = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("anullsrc=channel_layout=stereo:sample_rate={rate}"),
+                "-t",
+                &format!("{duration_secs}"),
+                "-c:a",
+                "pcm_s16le",
+            ])
+            .arg(&out)
+            .status()
+            .expect("spawn ffmpeg to synthesize a silent WAV");
+        assert!(status.success(), "ffmpeg silent WAV synthesis failed");
+        out
+    }
+
+    /// **B-235 — deleting the clip that is playing must silence it at once.**
+    /// Tone A (0–1 s), silent B (1–2 s), tone C (2–3 s). Half a second in, A is
+    /// ripple-deleted: B moves to 0–1 s and C to 1–2 s, so from the edit on the
+    /// session must play B's silence and then C. Before the fix A's decoder,
+    /// frozen to the clip it was opened for, kept sounding to its old
+    /// out-point — the deleted clip audibly playing on after the cut.
+    #[test]
+    fn a_clip_deleted_while_it_plays_stops_sounding() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out_rate = 48_000u32;
+        let tone = synth_sine_wav(tmp.path(), 440, 4.0, out_rate);
+        let silence = synth_silence_wav(tmp.path(), 4.0, out_rate);
+        let clip = |clip_id, path: &PathBuf, start_frame, end_frame| GapClip {
+            clip_id,
+            path: path.clone(),
+            start_frame,
+            end_frame,
+            speed: 1.0,
+        };
+
+        let result = drive_mix(
+            GapTimeline {
+                fps: 24.0,
+                clips: vec![
+                    clip("clip-a", &tone, 0, 24),
+                    clip("clip-b", &silence, 24, 48),
+                    clip("clip-c", &tone, 48, 72),
+                ],
+                end_frame_override: None,
+                // 0.5 s in: A is ripple-deleted.
+                edit: Some((
+                    12,
+                    vec![
+                        clip("clip-b", &silence, 0, 24),
+                        clip("clip-c", &tone, 24, 48),
+                    ],
+                )),
+            },
+            0,
+            out_rate,
+            2,
+            400,
+            None,
+            None,
+        );
+
+        assert!(
+            result.peak_between(0.1, 0.4, out_rate) > AUDIBLE,
+            "sanity: A plays before it is deleted"
+        );
+        assert!(
+            result.peak_between(0.65, 0.95, out_rate) < 1e-6,
+            "B-235: once A is deleted the playhead is over B's silence — A's \
+             decoder must not keep playing the deleted clip"
+        );
+        assert!(
+            result.peak_between(1.1, 1.9, out_rate) > AUDIBLE,
+            "C, rippled to 1–2 s, plays where it now sits"
+        );
+        let ended_secs =
+            result.ended_at_pos_frames.expect("the session ends") as f64 / out_rate as f64;
+        assert!(
+            (1.9..2.3).contains(&ended_secs),
+            "and the session ends at the EDITED timeline's end (2.0 s) — got {ended_secs:.3}s"
+        );
+    }
+
+    /// **B-235 — the mute itself.** Tone B (0–1 s), tone C (1–2 s). Half a
+    /// second in, the timeline gains a clip A in front of them (an undo of a
+    /// ripple delete — the very next thing anyone does after a delete they did
+    /// not mean), so B now sits at 1–2 s and C at 2–3 s. Before the fix B's id
+    /// had already been played this session, so when the playhead reached B's
+    /// new position nothing reopened it: a full second of silence, and then
+    /// sound "came back on its own" at C — exactly the reported symptom.
+    #[test]
+    fn a_clip_moved_back_under_the_playhead_is_heard_again() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out_rate = 48_000u32;
+        let tone = synth_sine_wav(tmp.path(), 440, 4.0, out_rate);
+        let clip = |clip_id, start_frame, end_frame| GapClip {
+            clip_id,
+            path: tone.clone(),
+            start_frame,
+            end_frame,
+            speed: 1.0,
+        };
+
+        let result = drive_mix(
+            GapTimeline {
+                fps: 24.0,
+                clips: vec![clip("clip-b", 0, 24), clip("clip-c", 24, 48)],
+                end_frame_override: None,
+                edit: Some((
+                    12,
+                    vec![
+                        clip("clip-a", 0, 24),
+                        clip("clip-b", 24, 48),
+                        clip("clip-c", 48, 72),
+                    ],
+                )),
+            },
+            0,
+            out_rate,
+            2,
+            400,
+            None,
+            None,
+        );
+
+        assert!(
+            result.peak_between(0.6, 0.9, out_rate) > AUDIBLE,
+            "A, newly in front, plays from the edit on"
+        );
+        assert!(
+            result.peak_between(1.1, 1.9, out_rate) > AUDIBLE,
+            "B-235: B, played once already under the old edit, must be heard \
+             again where the edit put it. Before the fix this was a second of \
+             digital silence."
+        );
+        assert!(
+            result.peak_between(2.1, 2.9, out_rate) > AUDIBLE,
+            "and C after it"
+        );
+    }
+
+    /// **B-235 — the splice against a real ring buffer** (no device: the ring
+    /// is just the `Mutex<VecDeque>` the `cpal` callback would drain). Two
+    /// seconds of pre-edit audio are queued, as `run_session`'s backpressure
+    /// leaves them in steady state; the edit replaces what is playing with
+    /// silence. Before the fix all two seconds would play out before the edit
+    /// was audible. After it, only [`SPLICE_LEAD_SECS`] of the old audio stays
+    /// queued, followed by the edited timeline's audio.
+    #[test]
+    fn an_edit_splices_in_at_the_listener_not_after_the_queued_audio() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out_rate = 48_000u32;
+        let ch = 2usize;
+        let tone = synth_sine_wav(tmp.path(), 440, 4.0, out_rate);
+        let silence = synth_silence_wav(tmp.path(), 4.0, out_rate);
+        let timeline = GapTimeline {
+            fps: 24.0,
+            clips: vec![GapClip {
+                clip_id: "talk",
+                path: tone.clone(),
+                start_frame: 0,
+                end_frame: 96,
+                speed: 1.0,
+            }],
+            end_frame_override: None,
+            // Edited before the very first resolve this test makes.
+            edit: Some((
+                0,
+                vec![GapClip {
+                    clip_id: "pause",
+                    path: silence,
+                    start_frame: 0,
+                    end_frame: 96,
+                    speed: 1.0,
+                }],
+            )),
+        };
+
+        // The pre-edit session: the tone open, the mixer two seconds ahead of
+        // the listener, every queued sample a recognisable 0.5.
+        let mut open = OpenSources::default();
+        let pre_edit = AudioSourceSpec {
+            path: tone,
+            start_secs: 2.0,
+            duration_secs: Some(2.0),
+            speed: Vec::new(),
+            gain: 1.0,
+            fade: None,
+            duck: None,
+            level: None,
+            eq_bands: Vec::new(),
+            clip_id: "talk".to_string(),
+        };
+        open.open_and_track(&pre_edit, out_rate, ch, 0)
+            .expect("open the pre-edit source");
+        let queued_frames = 2 * out_rate as usize;
+        let ring = Mutex::new(VecDeque::from(vec![0.5f32; queued_frames * ch]));
+        let resolve_at: ResolveAt = Box::new(move |f| Ok(timeline.resolve(f)));
+        let cfg = MixConfig {
+            start_frame: 0,
+            fps: 24.0,
+            out_rate,
+            out_channels: ch,
+            chunk_len: 1024 * ch,
+            resolve_interval_frames: (RESOLVE_INTERVAL_SECS * out_rate as f64).round() as u64,
+        };
+        let mut clock = MixClock {
+            pos_frames: queued_frames as u64,
+            next_resolve_at_pos_frames: queued_frames as u64,
+            timeline_end_frame: 96 * 2000,
+            revision: 0,
+        };
+        let mut stretch: PlaybackStretch = None;
+
+        let over = splice_edit(
+            &SpliceContext {
+                ring: &ring,
+                resolve_at: &resolve_at,
+                cfg: &cfg,
+                rate: 1.0,
+            },
+            &mut open,
+            &mut clock,
+            &mut stretch,
+        )
+        .expect("splice_edit");
+
+        assert!(
+            !over,
+            "the edited timeline still has audio after the splice"
+        );
+        assert_eq!(
+            clock.revision, 1,
+            "the session now tracks the edited timeline"
+        );
+        let ring = ring.into_inner().unwrap_or_else(|e| e.into_inner());
+        let keep = (SPLICE_LEAD_SECS * out_rate as f64).round() as usize * ch;
+        let xfade = (SPLICE_CROSSFADE_SECS * out_rate as f64).round() as usize * ch;
+        assert!(
+            ring.iter().take(keep).all(|s| *s == 0.5),
+            "the audio already at the listener's ear is kept, untouched"
+        );
+        assert!(
+            ring.iter().skip(keep + xfade).all(|s| s.abs() < 1e-6),
+            "B-235: past the splice it is the EDITED timeline (silence), not the \
+             two seconds of pre-edit audio that were queued"
+        );
+        let expected_len_secs = SPLICE_LEAD_SECS + SPLICE_REPLACEMENT_SECS;
+        let got_len_secs = ring.len() as f64 / ch as f64 / out_rate as f64;
+        assert!(
+            (expected_len_secs..expected_len_secs + 0.05).contains(&got_len_secs),
+            "what is queued is the lead plus the fresh replacement ({expected_len_secs:.2}s), \
+             not 2 s of stale audio — got {got_len_secs:.3}s"
+        );
+    }
+
+    /// B-235 — the splice arithmetic, on its own. All pure.
+    #[test]
+    fn splice_point_keeps_up_to_the_target_or_skips_past_the_listener() {
+        // Mixer at 2 s, 2 s queued (stereo): the listener is at 0.
+        assert_eq!(heard_pos_frames(96_000, 192_000, 2, 1.0), 0);
+        // D-280: at 2x, a second of queued REAL audio is two of timeline.
+        assert_eq!(heard_pos_frames(96_000, 96_000, 2, 2.0), 0);
+        // Nothing queued: the listener is at the mixer.
+        assert_eq!(heard_pos_frames(96_000, 0, 2, 1.0), 96_000);
+
+        // Target ahead of the listener: keep exactly the audio up to it.
+        assert_eq!(
+            splice_point(4_800, 96_000, 192_000, 2, 1.0),
+            Splice {
+                keep_samples: 9_600,
+                skip_frames: 0
+            }
+        );
+        // Listener already past the target (a slow reopen): keep nothing, and
+        // skip the fresh audio forward to where they are.
+        assert_eq!(
+            splice_point(4_800, 96_000, 2_000, 2, 1.0),
+            Splice {
+                keep_samples: 0,
+                skip_frames: 95_000 - 4_800
+            }
+        );
+        // Never keeps more than is queued.
+        assert_eq!(splice_point(96_000, 96_000, 10, 2, 1.0).keep_samples, 10);
+    }
+
+    /// B-235 — the crossfade: fades the old audio out under the new, and is
+    /// transparent where the two sides are the same material.
+    #[test]
+    fn crossfade_into_ramps_old_to_new_and_is_transparent_on_identical_audio() {
+        let mut fresh = vec![0.0f32; 10];
+        crossfade_into(&[1.0; 10], &mut fresh, 2, 3);
+        assert_eq!(
+            fresh,
+            vec![0.75, 0.75, 0.5, 0.5, 0.25, 0.25, 0.0, 0.0, 0.0, 0.0]
+        );
+
+        let mut same = vec![0.3f32; 8];
+        crossfade_into(&[0.3; 8], &mut same, 2, 4);
+        assert!(same.iter().all(|s| (s - 0.3).abs() < 1e-6));
+
+        let mut untouched = vec![0.2f32; 4];
+        crossfade_into(&[], &mut untouched, 2, 4);
+        assert_eq!(untouched, vec![0.2; 4]);
     }
 
     /// B-111 — `mix_chunk`'s per-source position offset, against real decoded

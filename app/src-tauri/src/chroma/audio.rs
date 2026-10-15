@@ -247,9 +247,18 @@ fn timeline_frame_span_to_secs(frames: u64, fps: f64) -> f64 {
 /// is in a genuine silent gap between two clips, keep playing" from "the
 /// playhead is past the last clip, stop". Reported on every call rather than
 /// once at session start, so a clip appended while the timeline plays extends
-/// the session playing it. See `edit::timeline_fps_and_end_frame` for why it
+/// the session playing it. See `edit::timeline_audio_facts` for why it
 /// is the timeline's plain length rather than an exact "where does the audio
 /// end".
+///
+/// **B-235 — and which edit it answered from** (`ResolvedAudio::revision`,
+/// the active timeline's `edit_fingerprint`), so a session that is playing
+/// while the user cuts, deletes or undoes notices and rebuilds instead of
+/// playing on from decoders opened for the timeline as it used to be. Read
+/// FIRST, before the sources: if a save lands between that read and the
+/// source reads below, the sources are newer than the revision, and the very
+/// next resolve reports the newer revision and rebuilds again — one redundant
+/// rebuild, never a missed one.
 fn resolve_sources_at(frame: u64) -> Result<ResolvedAudio, String> {
     let mut sources: Vec<AudioSourceSpec> = Vec::new();
     // B-079 — the active timeline's own rate, for every `end_frame_at(fps)`
@@ -258,10 +267,14 @@ fn resolve_sources_at(frame: u64) -> Result<ResolvedAudio, String> {
     // widening `resolve_video_position`/`resolve_audio_track_positions`.
     //
     // B-192 — and, from the same read, how long the timeline is. See
-    // `timeline_fps_and_end_frame` for why it is the timeline's plain length
+    // `timeline_audio_facts` for why it is the timeline's plain length
     // rather than an exact "where does the audio end", and `ResolvedAudio`
-    // for what the mixer does with it.
-    let (fps, timeline_end_frame) = super::edit::timeline_fps_and_end_frame()?;
+    // for what the mixer does with it. B-235 — and the edit fingerprint.
+    let super::edit::TimelineAudioFacts {
+        fps,
+        end_frame: timeline_end_frame,
+        revision,
+    } = super::edit::timeline_audio_facts()?;
 
     if let Some((track_index, clip, source_frame, info)) =
         super::edit::resolve_video_position(frame)?
@@ -398,6 +411,7 @@ fn resolve_sources_at(frame: u64) -> Result<ResolvedAudio, String> {
     Ok(ResolvedAudio {
         sources,
         timeline_end_frame,
+        revision,
     })
 }
 
@@ -445,7 +459,7 @@ pub fn chroma_audio_play(start_frame: u64, seq: u64, rate: f64) -> Result<(), St
 
     apelles_media::audio::start(
         session,
-        resolved.sources,
+        resolved,
         start_frame,
         fps,
         clamp_playback_rate(rate),

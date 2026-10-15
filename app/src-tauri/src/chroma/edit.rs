@@ -632,12 +632,31 @@ pub(crate) fn resolve_audio_track_positions(pos: u64) -> Result<Vec<AudioTrackPo
 /// (no media probing) re-read of the manifest rather than widening either of
 /// those signatures for a single extra `f64`.
 pub(crate) fn timeline_fps() -> Result<f64, String> {
-    Ok(timeline_fps_and_end_frame()?.0)
+    Ok(resolve_timeline(false)?.fps())
+}
+
+/// The timeline-wide facts `chroma::audio::resolve_sources_at` reports
+/// alongside its sources, from **one** manifest read. See
+/// [`timeline_audio_facts`].
+pub(crate) struct TimelineAudioFacts {
+    /// [`apelles_timeline::Timeline::fps`].
+    pub(crate) fps: f64,
+    /// B-192 — the timeline's total length in frames.
+    pub(crate) end_frame: u64,
+    /// B-235 — [`apelles_timeline::Timeline::edit_fingerprint`].
+    pub(crate) revision: u64,
 }
 
 /// B-192 — [`timeline_fps`] plus the active timeline's total length in frames
-/// ([`apelles_timeline::Timeline::duration`], the longest track), from **one**
-/// manifest read rather than two.
+/// ([`apelles_timeline::Timeline::duration`], the longest track), and (B-235)
+/// its edit fingerprint, from **one** manifest read rather than three.
+///
+/// The fingerprint is what `chroma::audio::resolve_sources_at` reports as
+/// `ResolvedAudio::revision`, which is how a play session notices the timeline
+/// was edited while it plays and rebuilds what it is playing (B-235). It
+/// costs one serialization of the active timeline per resolve — tens of
+/// microseconds on a ~150-clip recut, on a 10 Hz schedule, off the main
+/// thread.
 ///
 /// The length is what `chroma::audio::resolve_sources_at` reports to
 /// `apelles_media::audio` as `ResolvedAudio::timeline_end_frame`, which is how
@@ -646,9 +665,15 @@ pub(crate) fn timeline_fps() -> Result<f64, String> {
 /// not "where the audio ends": the exact answer would need an audio-stream
 /// probe per clip on that closure's 10 Hz schedule, and overstating it costs
 /// only mixed silence the session's own idle path would have produced anyway.
-pub(crate) fn timeline_fps_and_end_frame() -> Result<(f64, u64), String> {
+pub(crate) fn timeline_audio_facts() -> Result<TimelineAudioFacts, String> {
     let timeline = resolve_timeline(false)?;
-    Ok((timeline.fps(), timeline.duration().max(0) as u64))
+    Ok(TimelineAudioFacts {
+        fps: timeline.fps(),
+        end_frame: timeline.duration().max(0) as u64,
+        revision: timeline
+            .edit_fingerprint()
+            .map_err(|e| format!("fingerprint the active timeline: {e}"))?,
+    })
 }
 
 /// D-149 — one track's ducking configuration resolved against the active
