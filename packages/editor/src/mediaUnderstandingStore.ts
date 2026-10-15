@@ -890,7 +890,10 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
     hydrate: (path) => {
       const existing = hydrations.get(path);
       if (existing) return existing;
-      const load: Promise<void> = (async () => {
+      // Declared, then started: the body compares against `load` itself (the
+      // `clear` check below), which an immediately-invoked initializer cannot
+      // reference without TS2454 even though the `await` always runs first.
+      const read = async (): Promise<void> => {
         let raw: unknown = null;
         try {
           raw = await invoke('chroma_media_understanding_load', { path });
@@ -905,7 +908,8 @@ export const useMediaUnderstandingStore = create<MediaUnderstandingState>((set, 
         const record = parsePersisted(raw);
         if (!record) return;
         set((s) => mergePersisted(s, path, record));
-      })();
+      };
+      const load = read();
       hydrations.set(path, load);
       return load;
     },
