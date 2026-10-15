@@ -4965,18 +4965,14 @@ mod composition_size_tests {
     use super::*;
 
     fn have_ffmpeg() -> bool {
-        std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        apelles_media::ffmpeg_locate::ffmpeg_path().is_ok()
     }
 
     /// A tiny real, decodable video fixture at `(w, h)` — one frame is enough,
     /// `clip_source_size` only probes the stream's dimensions.
     fn video_fixture(path: &std::path::Path, w: u32, h: u32) {
-        let ok = std::process::Command::new("ffmpeg")
+        let ok = apelles_media::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",
@@ -5146,18 +5142,14 @@ mod preview_text_tests {
     use super::super::PROJECT_STATE_LOCK;
 
     fn have_ffmpeg() -> bool {
-        std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        apelles_media::ffmpeg_locate::ffmpeg_path().is_ok()
     }
 
     /// A flat black clip, so any lit pixel in the composited frame is the
     /// title and nothing else.
     fn black_clip(path: &std::path::Path) {
-        let ok = std::process::Command::new("ffmpeg")
+        let ok = apelles_media::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",
@@ -5419,18 +5411,14 @@ mod preview_transition_tests {
     const TOL: i32 = 26;
 
     fn have_ffmpeg() -> bool {
-        std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        apelles_media::ffmpeg_locate::ffmpeg_path().is_ok()
     }
 
     /// 96 frames (4s at 24fps) of one flat colour, so a decoded pixel at any
     /// time IS the layer's own identity.
     fn flat_clip(path: &std::path::Path, color: &str) {
-        let ok = std::process::Command::new("ffmpeg")
+        let ok = apelles_media::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",
@@ -5807,7 +5795,8 @@ mod preview_throughput_tests {
     /// A 24 fps fixture long enough for the cut jumps below to land inside it.
     fn synth_long_fixture(dir: &std::path::Path, frames: i64) -> String {
         let out = dir.join("cuts.mp4");
-        let status = std::process::Command::new("ffmpeg")
+        let status = apelles_media::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
             .arg(format!(
                 "testsrc=size=320x240:rate=24:duration={}",
@@ -6295,18 +6284,14 @@ mod preview_adjustment_tests {
     }
 
     fn have_ffmpeg() -> bool {
-        std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        apelles_media::ffmpeg_locate::ffmpeg_path().is_ok()
     }
 
     /// 96 frames (4s at 24fps) of one flat colour, so a decoded pixel at any
     /// time IS the layer's own identity.
     fn flat_clip(path: &std::path::Path, color: &str) {
-        let ok = std::process::Command::new("ffmpeg")
+        let ok = apelles_media::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",
@@ -6632,12 +6617,7 @@ mod grade_bridge_tests {
     const GREY: i32 = 128;
 
     fn have_ffmpeg() -> bool {
-        std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
+        apelles_media::ffmpeg_locate::ffmpeg_path().is_ok()
     }
 
     fn have_gpu() -> bool {
@@ -6646,7 +6626,8 @@ mod grade_bridge_tests {
 
     /// 96 frames (4s at 24fps) of flat grey.
     fn grey_clip(path: &std::path::Path) {
-        let ok = std::process::Command::new("ffmpeg")
+        let ok = apelles_media::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",
@@ -7000,7 +6981,8 @@ mod grade_bridge_tests {
             .luts
             .get("A")
             .expect("a graded clip must produce a LUT");
-        let out = std::process::Command::new("ffmpeg")
+        let out = apelles_media::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args(["-v", "error", "-i"])
             .arg(&clip)
             .arg("-vf")

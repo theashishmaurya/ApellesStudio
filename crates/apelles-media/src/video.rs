@@ -25,11 +25,13 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use image::DynamicImage;
+
+use crate::ffmpeg_locate;
 
 /// Container/stream facts we need. Colour tags are best-effort (may be empty).
 ///
@@ -138,13 +140,6 @@ pub fn is_media_file<P: AsRef<Path>>(path: P) -> bool {
             .unwrap_or(false)
 }
 
-pub(crate) fn ffprobe_bin() -> String {
-    std::env::var("CHROMA_FFPROBE").unwrap_or_else(|_| "ffprobe".to_string())
-}
-pub(crate) fn ffmpeg_bin() -> String {
-    std::env::var("CHROMA_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_string())
-}
-
 /// Parse "30000/1001" style rationals; falls back to (0, 1) on garbage.
 fn parse_rational(s: &str) -> (u32, u32) {
     let mut it = s.split('/');
@@ -158,7 +153,7 @@ fn parse_rational(s: &str) -> (u32, u32) {
 }
 
 pub fn probe(path: &Path) -> Result<VideoInfo> {
-    let out = Command::new(ffprobe_bin())
+    let out = ffmpeg_locate::ffprobe()?
         .args([
             "-v", "error",
             "-select_streams", "v:0",
@@ -296,7 +291,10 @@ fn probe_audio_only(path: &Path, fmt: Option<&serde_json::Value>) -> Result<Vide
 /// `(false, 0, 0)`, not an error — a source with no audio is a normal case
 /// `audio.rs` handles by simply not opening a device stream.
 fn probe_audio_stream(path: &Path) -> (bool, u32, u16) {
-    let out = Command::new(ffprobe_bin())
+    let Ok(mut cmd) = ffmpeg_locate::ffprobe() else {
+        return (false, 0, 0);
+    };
+    let out = cmd
         .args([
             "-v",
             "error",
@@ -352,7 +350,7 @@ pub fn decode_frame(path: &Path, at: FramePos, info: &VideoInfo) -> Result<Dynam
     };
     let grid = crate::conform::from_frame(info, frame);
 
-    let mut cmd = Command::new(ffmpeg_bin());
+    let mut cmd = ffmpeg_locate::ffmpeg()?;
     cmd.args(["-hide_banner", "-loglevel", "error"])
         .args(&grid.input_args)
         .arg("-i")
@@ -440,7 +438,7 @@ const KEYFRAME_PROBE_WINDOW_SECS: u32 = 30;
 /// decode). The max gap, not the mean, so a file with irregular keyframes
 /// (VFR screen recordings, which the owner has) is judged on its worst case.
 pub fn probe_keyframe_interval(path: &Path) -> Result<f64> {
-    let out = Command::new(ffprobe_bin())
+    let out = ffmpeg_locate::ffprobe()?
         .args([
             "-v",
             "error",
@@ -536,7 +534,7 @@ pub fn extract_thumb_chunk(
     // ffmpeg reads/decodes at all — the entire reason a windowed filmstrip
     // costs a fraction of a whole-clip one.
     let run = |hwaccel: bool| -> Result<std::process::Output> {
-        let mut cmd = Command::new(ffmpeg_bin());
+        let mut cmd = ffmpeg_locate::ffmpeg()?;
         cmd.args(["-hide_banner", "-loglevel", "error"]);
         if hwaccel {
             // Apple Silicon hardware HEVC/H.264 decode — measured live
@@ -629,7 +627,7 @@ pub fn extract_thumb(path: &Path, info: &VideoInfo, frame: u64, height: u32) -> 
     // ~3s hardware on; there was no reason for the shot strip to be the one
     // extraction path still paying the software price.
     let run = |hwaccel: bool| -> Result<std::process::Output> {
-        let mut cmd = Command::new(ffmpeg_bin());
+        let mut cmd = ffmpeg_locate::ffmpeg()?;
         cmd.args(["-hide_banner", "-loglevel", "error"]);
         if hwaccel {
             cmd.args(["-hwaccel", "videotoolbox"]);
@@ -1021,21 +1019,24 @@ mod tests {
             std::thread::current().id()
         ));
         let _ = std::fs::remove_file(&path);
-        let out = Command::new(ffmpeg_bin())
-            .args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-            ])
-            .arg("sine=frequency=440:duration=2")
-            .arg(&path)
-            .output();
+        let out = ffmpeg_locate::ffmpeg()
+            .map_err(std::io::Error::from)
+            .and_then(|mut cmd| {
+                cmd.args([
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                ])
+                .arg("sine=frequency=440:duration=2")
+                .arg(&path)
+                .output()
+            });
         let Ok(out) = out else {
-            eprintln!("skip: ffmpeg not on PATH");
+            eprintln!("skip: no ffmpeg found");
             return;
         };
         if !out.status.success() {

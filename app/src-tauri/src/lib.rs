@@ -2018,6 +2018,10 @@ pub fn run() {
             }
 
             setup_logging(&app_handle);
+            // D-389/B-253 — resolve ffmpeg/ffprobe once, now, so the log names
+            // the binary this run uses (bundled / override / Homebrew / PATH)
+            // before the first decode, thumbnail or sidecar spawn needs it.
+            apelles_media::ffmpeg_locate::log_resolution();
 
             if let Some(backend) = &settings.processing_backend
                 && backend != "auto" {

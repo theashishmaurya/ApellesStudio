@@ -216,7 +216,8 @@ mod tests {
             std::thread::current().id()
         ));
         let _ = std::fs::remove_file(&out);
-        let status = std::process::Command::new("ffmpeg")
+        let status = apelles_media::ffmpeg_locate::ffmpeg()
+            .ok()?
             .args(["-hide_banner", "-loglevel", "error", "-y"])
             .args(args)
             .arg(&out)

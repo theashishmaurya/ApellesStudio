@@ -1182,7 +1182,8 @@ mod tests {
         let out =
             std::env::temp_dir().join(format!("chroma_infer_{tag}_{}.mp4", std::process::id()));
         let _ = std::fs::remove_file(&out);
-        let status = std::process::Command::new("ffmpeg")
+        let status = apelles_media::ffmpeg_locate::ffmpeg()
+            .ok()?
             .args([
                 "-hide_banner",
                 "-loglevel",
@@ -1213,7 +1214,8 @@ mod tests {
         let out =
             std::env::temp_dir().join(format!("chroma_asym_{tag}_{}.mp4", std::process::id()));
         let _ = std::fs::remove_file(&out);
-        let status = std::process::Command::new("ffmpeg")
+        let status = apelles_media::ffmpeg_locate::ffmpeg()
+            .ok()?
             .args([
                 "-hide_banner",
                 "-loglevel",

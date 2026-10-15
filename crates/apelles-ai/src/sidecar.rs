@@ -923,8 +923,13 @@ pub fn supervise(spec: &'static SidecarSpec) {
         // could drift from what is actually spawned.
         log::info!("[sidecar/{name}] starting: {command:?}");
 
+        // D-389/B-253 — hand every sidecar the ffmpeg/ffprobe this process
+        // resolved (normally the copy bundled inside the app), so `ai-media/`'s
+        // audio extract and scene-detect run the same binary the app does
+        // instead of searching a Finder launch's minimal `PATH` for one.
         let mut child = match command
             .env(spec.port_env, port.to_string())
+            .envs(apelles_media::ffmpeg_locate::child_env())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

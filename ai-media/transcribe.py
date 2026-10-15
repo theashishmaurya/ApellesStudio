@@ -91,6 +91,7 @@ from asr import (
     validate_body,
 )
 from errors import UserFacingError
+from ffmpeg_bin import ffmpeg_bin
 
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
@@ -168,7 +169,7 @@ def extract_audio(
     correct on its own — for its CLI, and for any caller that is not that app.
     """
     tmp = tempfile.mktemp(suffix=".wav")
-    cmd = ["ffmpeg", "-y"]
+    cmd = [ffmpeg_bin(), "-y"]
     if start_secs is not None and start_secs > 0:
         cmd += ["-ss", f"{start_secs:.6f}"]
     cmd += ["-i", video_path]

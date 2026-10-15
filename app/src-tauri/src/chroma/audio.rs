@@ -1498,7 +1498,8 @@ mod tests {
     /// sample-for-sample without needing `rubato` in the test itself.
     fn synth_test_tone(dir: &Path, freq_hz: u32, duration_secs: f64, sample_rate: u32) -> PathBuf {
         let out = dir.join("tone.m4a");
-        let status = std::process::Command::new("ffmpeg")
+        let status = apelles_media::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args([
                 "-y",
                 "-f",

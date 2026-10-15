@@ -291,8 +291,10 @@ took the environment half only. What it needs:
 - a deliberate answer for `__pycache__`: the resource dir is inside the signed bundle
   and Python will want to write bytecode next to the source
   (`PYTHONDONTWRITEBYTECODE=1` is the obvious one, but it should be a decision);
-- **`ffmpeg`**, which `ai-media/` hard-requires and which is not pip-installable, so
-  D-315's bootstrap cannot supply it. Either bundle a binary or detect-and-degrade.
+- ~~**`ffmpeg`**, which `ai-media/` hard-requires and which is not pip-installable~~ —
+  **done (D-389):** ffmpeg/ffprobe are bundled as `externalBin`s and the supervisor
+  spawns every sidecar with `CHROMA_FFMPEG`/`CHROMA_FFPROBE` set to
+  `apelles_media::ffmpeg_locate`'s answer, which `ai-media/ffmpeg_bin.py` reads.
 
 Until that lands a packaged build still needs `CHROMA_AI_DIR` + `CHROMA_AI_MEDIA_DIR`
 baked in, or those two sidecars disabled — but it no longer needs

@@ -475,9 +475,9 @@ change the ladder that chooses one.
 
 - **Download models.** Unchanged: they pull from the HF cache on first `/segment`,
   `/transcribe`, etc. Not in the installer, not in this bootstrap.
-- **Install ffmpeg.** A hard `ai-media/` requirement, not pip-installable, and not
-  something this can fix. Still a real gap for a packaged app — see
-  `docs/notes/sidecar-lifecycle.md`.
+- **Install ffmpeg.** A hard `ai-media/` requirement, not pip-installable. No longer a
+  gap for a packaged app: D-389 bundles ffmpeg/ffprobe as `externalBin`s and the sidecar
+  supervisor hands the resolved path to `ai-media/` as `CHROMA_FFMPEG`.
 - **Ship the sidecar *source*.** `ai/server.py` and `ai-media/server.py` are still
   resolved from a dev-layout path. This note covers the *environment* half of Phase 4;
   the code half is still open and is tracked in `sidecar-lifecycle.md`.

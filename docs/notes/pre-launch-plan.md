@@ -278,8 +278,9 @@ named.** A direct codebase survey (not assumed) found:
 - **`mlx-audiocraft` (SFX generation) is hard Apple-Silicon-only** — already
   covered in item 3 above (Metal has no container GPU passthrough; needs a
   separate CUDA-native AudioCraft build for non-Mac).
-- **ffmpeg is assumed on PATH** (macOS dev workflow: `brew install ffmpeg`) —
-  Windows should bundle a static ffmpeg build in the installer's resource
+- **ffmpeg on Windows.** On macOS it is now bundled (D-389: a pinned static build
+  as a Tauri `externalBin`, found by `apelles_media::ffmpeg_locate`); `brew install
+  ffmpeg` remains only a dev/test convenience. Windows should bundle a static ffmpeg build in the installer's resource
   directory instead of requiring a separate user install, the exact same
   pattern `onnxruntime.dll`'s resource-path resolution already uses. FFmpeg
   ships no official Windows installer; BtbN's and gyan.dev's static builds are

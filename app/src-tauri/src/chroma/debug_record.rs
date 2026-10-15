@@ -589,7 +589,8 @@ mod tests {
 
         // Ask ffprobe what actually landed, rather than trusting that a
         // non-empty file is a valid one.
-        let probe = std::process::Command::new("ffprobe")
+        let probe = apelles_media::ffmpeg_locate::ffprobe()
+            .expect("an ffprobe to check the output")
             .args([
                 "-v",
                 "error",

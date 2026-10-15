@@ -105,6 +105,7 @@ import tempfile
 from pathlib import Path
 
 from errors import UserFacingError
+from ffmpeg_bin import ffmpeg_bin
 
 MODEL = "mlx-community/Qwen3-VL-4B-Instruct-4bit"
 
@@ -175,7 +176,7 @@ def detect_scene_changes(
     near-duplicate detections (e.g. a multi-frame animated transition) into one
     candidate at its first frame."""
     cmd = [
-        "ffmpeg", "-i", video_path,
+        ffmpeg_bin(), "-i", video_path,
         "-vf", f"select='gt(scene,{threshold})',showinfo",
         "-f", "null", "-",
     ]
@@ -192,7 +193,7 @@ def detect_scene_changes(
 
 def extract_frame_at(video_path: str, time_s: float, out_path: str) -> None:
     cmd = [
-        "ffmpeg", "-y", "-ss", str(time_s), "-i", video_path,
+        ffmpeg_bin(), "-y", "-ss", str(time_s), "-i", video_path,
         "-frames:v", "1", "-q:v", "3", out_path,
     ]
     subprocess.run(cmd, capture_output=True, check=True)

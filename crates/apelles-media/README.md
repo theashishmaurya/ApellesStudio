@@ -8,6 +8,16 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
   `once_cell`, `image`, `base64`, `blake3` + `walkdir` + `filetime` (the disk
   cache). **No `tauri`, no `wgpu`, no `apelles-timeline`, no fork types.**
 - **Modules**, one per source file it was extracted from:
+  - `ffmpeg_locate` — **the one resolver for which `ffmpeg`/`ffprobe` runs
+    (D-389, B-253)**, and the `ffmpeg()` / `ffprobe()` `Command` constructors
+    every spawn in the workspace uses. Ladder: `CHROMA_FFMPEG`/`CHROMA_FFPROBE`
+    → beside `current_exe()` (the Tauri `externalBin` copy bundled in the app)
+    → `/opt/homebrew/bin`, `/usr/local/bin` → `PATH`. Resolved once, cached,
+    logged at startup (`log_resolution`); a miss is a `ToolMissing` error naming
+    every place checked. `child_env()` hands the answer to a sidecar process.
+    It does not fetch the binaries (`app/src-tauri/build.rs` does) or run them
+    to check a version. **Never spawn `Command::new("ffmpeg")` directly** — a
+    Finder-launched app has no Homebrew on its `PATH`.
   - `conform` — the single definition of what "source frame `N`" means (*the
     picture at `N / source_fps` seconds*), expressed as the `ffmpeg` options
     that deliver it. Every decode path below builds its command through it, so

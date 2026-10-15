@@ -201,12 +201,13 @@ mod tests {
         }
     }
 
-    /// The bundled `uv` has to actually be declared as an `externalBin`, or the whole
+    /// The bundled `uv` (and, since D-389, `ffmpeg`/`ffprobe`) has to actually be
+    /// declared as an `externalBin`, or the whole
     /// mechanism ships with nothing to run. It lives in the macOS-only config because
     /// v1 is macOS ARM (`docs/02-scope.md`) and a Linux build must not break on a
     /// binary this repo does not fetch for it.
     #[test]
-    fn uv_is_declared_as_an_external_bin_for_macos() {
+    fn bundled_tools_are_declared_as_external_bins_for_macos() {
         let conf: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.macos.conf.json"),
@@ -218,9 +219,13 @@ mod tests {
         let bins = conf["bundle"]["externalBin"]
             .as_array()
             .expect("bundle.externalBin should be an array");
-        assert!(
-            bins.iter().any(|b| b.as_str() == Some("binaries/uv")),
-            "uv must be declared as an externalBin, got {bins:?}"
-        );
+        // D-389/B-253 — and so do ffmpeg/ffprobe: without them a Finder-launched
+        // release build can decode, probe and export nothing.
+        for bin in ["binaries/uv", "binaries/ffmpeg", "binaries/ffprobe"] {
+            assert!(
+                bins.iter().any(|b| b.as_str() == Some(bin)),
+                "{bin} must be declared as an externalBin, got {bins:?}"
+            );
+        }
     }
 }

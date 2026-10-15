@@ -33,7 +33,7 @@
 use std::borrow::Cow;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -134,10 +134,6 @@ pub fn progress_snapshot() -> ExportProgress {
 // ffmpeg helpers
 // --------------------------------------------------------------------------- //
 
-fn ffmpeg_bin() -> String {
-    std::env::var("CHROMA_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_string())
-}
-
 /// Drain a child's stderr on a thread, keeping the last ~16 KiB for error reports.
 ///
 /// `pub(super)` since D-350: `chroma::edit_render` spawns its own encoder child
@@ -219,7 +215,7 @@ fn spawn_decoder(path: &Path, info: &VideoInfo, from: u64, to: u64) -> Result<Ch
     let count = to.saturating_sub(from) + 1;
     let grid = apelles_media::conform::from_frame(info, from);
 
-    let mut cmd = Command::new(ffmpeg_bin());
+    let mut cmd = apelles_media::ffmpeg_locate::ffmpeg().map_err(|e| e.to_string())?;
     cmd.args(["-hide_banner", "-loglevel", "error"])
         .args(&grid.input_args)
         .arg("-i")
@@ -254,7 +250,7 @@ fn spawn_encoder(
     codec: &str,
     quality: Option<i64>,
 ) -> Result<Child, String> {
-    let mut cmd = Command::new(ffmpeg_bin());
+    let mut cmd = apelles_media::ffmpeg_locate::ffmpeg().map_err(|e| e.to_string())?;
     cmd.args(["-y", "-hide_banner", "-loglevel", "error"])
         .args(["-f", "rawvideo", "-pixel_format", "rgb24"])
         .args(["-video_size", &format!("{w}x{h}")])
@@ -1405,7 +1401,8 @@ mod tests {
     fn synth_clip(name: &str, w: u32, h: u32, frames: u32) -> Option<PathBuf> {
         let out = std::env::temp_dir().join(name);
         let _ = std::fs::remove_file(&out);
-        let ok = Command::new(ffmpeg_bin())
+        let ok = apelles_media::ffmpeg_locate::ffmpeg()
+            .ok()?
             .args([
                 "-y",
                 "-hide_banner",

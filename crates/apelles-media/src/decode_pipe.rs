@@ -147,7 +147,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result, anyhow};
@@ -155,10 +155,6 @@ use image::{DynamicImage, RgbImage};
 use once_cell::sync::Lazy;
 
 use crate::video::VideoInfo;
-
-fn ffmpeg_bin() -> String {
-    std::env::var("CHROMA_FFMPEG").unwrap_or_else(|_| "ffmpeg".to_string())
-}
 
 /// How far forward we'll fast-skip (discard decoded frames) before a respawn —
 /// with its keyframe seek — becomes the cheaper option. ~2 s at 24 fps.
@@ -335,7 +331,7 @@ impl FramePipe {
         let grid = crate::conform::from_frame(info, start);
         let own_scale = scale.map(|(sw, sh)| format!("scale={sw}:{sh}:flags=fast_bilinear"));
 
-        let mut cmd = Command::new(ffmpeg_bin());
+        let mut cmd = crate::ffmpeg_locate::ffmpeg()?;
         cmd.args(["-hide_banner", "-loglevel", "error"]);
         if hwaccel {
             // Decoded frames are downloaded back to system memory (no
@@ -1287,20 +1283,15 @@ mod tests {
     #[test]
     fn drop_pipes_for_path_drops_only_that_file() {
         let _pool = pool_guard();
-        let ffmpeg_ok = std::process::Command::new("ffmpeg")
-            .arg("-version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success());
-        if !ffmpeg_ok {
-            eprintln!("skip: ffmpeg not on PATH");
+        if crate::ffmpeg_locate::ffmpeg_path().is_err() {
+            eprintln!("skip: no ffmpeg found");
             return;
         }
         let tmp = tempfile::tempdir().expect("tempdir");
         let make = |name: &str| {
             let p = tmp.path().join(name);
-            let ok = std::process::Command::new("ffmpeg")
+            let ok = crate::ffmpeg_locate::ffmpeg()
+                .expect("ffmpeg was found above")
                 .args([
                     "-y",
                     "-f",
@@ -1362,7 +1353,8 @@ mod tests {
     /// A 24 fps `testsrc` long enough to seek around inside.
     fn synth_seekable(dir: &Path, secs: u32) -> PathBuf {
         let out = dir.join("seekable.mp4");
-        let status = Command::new(ffmpeg_bin())
+        let status = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
             .arg(format!("testsrc=size=320x240:rate=24:duration={secs}"))
             .args(["-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p"])
@@ -2006,7 +1998,8 @@ mod tests {
     /// a genuine VFR source with `avg_frame_rate` 15 and one long hold.
     fn synth_vfr_with_a_hold(dir: &Path) -> PathBuf {
         let out = dir.join("vfr_hold.mp4");
-        let status = Command::new(ffmpeg_bin())
+        let status = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
             .arg("testsrc=size=160x120:rate=30:duration=4")
             .args([
@@ -2046,7 +2039,8 @@ mod tests {
     /// nothing for footage that already sits on its own grid.
     fn synth_cfr(dir: &Path) -> PathBuf {
         let out = dir.join("cfr.mp4");
-        let status = Command::new(ffmpeg_bin())
+        let status = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
             .arg("testsrc=size=160x120:rate=30:duration=3")
             .args(["-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p"])
@@ -2288,7 +2282,8 @@ mod tests {
 
         // The oracle: every coded frame's presentation time, straight from
         // ffprobe. Nothing in `conform`/`decode_pipe` contributes to this.
-        let out = Command::new(crate::video::ffprobe_bin())
+        let out = crate::ffmpeg_locate::ffprobe()
+            .expect("an ffprobe for the oracle")
             .args([
                 "-v",
                 "error",
@@ -2389,7 +2384,8 @@ mod tests {
     /// on purpose: nothing in the app should ever address a source this way,
     /// which is the whole point of `conform`.
     fn decode_coded_frame(path: &Path, coded: u64) -> RgbImage {
-        let out = Command::new(ffmpeg_bin())
+        let out = crate::ffmpeg_locate::ffmpeg()
+            .expect("an ffmpeg to build the fixture")
             .args(["-hide_banner", "-loglevel", "error", "-i"])
             .arg(path)
             .args([
