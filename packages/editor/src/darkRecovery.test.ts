@@ -24,7 +24,7 @@ import {
   type DarkDetectionArgs,
   type Transcript,
 } from './mediaUnderstandingStore';
-import type { DarkDetection, DarkRegionWire, RecoveredWindow } from './darkRegions';
+import { recoveryWindows, type DarkDetection, type DarkRegionWire, type RecoveredWindow } from './darkRegions';
 
 const SOURCE = '/fixtures/talk.mov';
 /** The clip's trimmed source range, in absolute source seconds. */
@@ -87,6 +87,14 @@ function detection(regions: DarkRegionWire[]): DarkDetection {
     speech_secs: 12,
     covered_secs: 8,
   };
+}
+
+/** The one window the view plans for the test's single region — derived with
+ *  the real planner, never hand-written, so the window plan (D-387) can change
+ *  without these tests silently missing the cache. */
+function plannedWindow() {
+  const [w] = recoveryWindows([region(9, 12, [6.8, 14.0])], RANGE.start, RANGE.secs);
+  return w;
 }
 
 /** The store key the view will look a scan up under, derived the same way the
@@ -163,15 +171,18 @@ describe('clipTranscriptView', () => {
     const v = view(t);
     expect(v.pending).toBe('recovering');
     expect(v.detection?.regions).toHaveLength(1);
-    // The window is the STRETCH, and the language is PINNED to the whole-file
-    // pass's own detection — auto-detect on a short extract is unreliable.
+    // The window READS the stretch plus context (D-387) — clamped here to the
+    // 20 s range — and the language is PINNED to the whole-file pass's own
+    // detection: auto-detect on a short extract is unreliable.
+    const w = plannedWindow();
+    expect(w.holes).toEqual([{ startSecs: 6.8, endSecs: 14.0 }]);
     expect(invoke).toHaveBeenCalledWith(
       'chroma_transcribe',
       expect.objectContaining({
         path: SOURCE,
         language: 'en',
-        startSecs: 6.8,
-        durationSecs: 7.2,
+        startSecs: w.startSecs,
+        durationSecs: w.durationSecs,
       }),
     );
   });
@@ -181,7 +192,7 @@ describe('clipTranscriptView', () => {
    *  words inside that window gone. */
   it('splices the recovered words into the utterances it hands back', () => {
     const t = transcript();
-    const window = { startSecs: 6.8, durationSecs: 7.2 };
+    const window = plannedWindow();
     const recovered: RecoveredWindow = {
       window,
       segments: [
@@ -189,7 +200,12 @@ describe('clipTranscriptView', () => {
           start: 9.2,
           end: 11.5,
           text: 'the cat sat down',
-          words: [word(' the', 9.2, 9.6), word(' cat', 9.6, 10.0)],
+          words: [
+            word(' the', 9.2, 9.6),
+            word(' cat', 9.6, 10.0),
+            word(' sat', 10.0, 10.6),
+            word(' down', 10.6, 11.5),
+          ],
         },
       ],
     };
@@ -207,6 +223,8 @@ describe('clipTranscriptView', () => {
       'the cat sat down',
       'again',
     ]);
+    // The region now has words over it, so nothing is left unread.
+    expect(v.unread).toEqual([]);
   });
 
   /** `recoverDarkRegions: false` must be the pre-D-349 behaviour exactly, and
@@ -251,7 +269,7 @@ describe('clipTranscriptView', () => {
    *  visible and the transcript unspliced, rather than blocking forever. */
   it('finishes with the unspliced transcript when a recovery fails', () => {
     const t = transcript();
-    const window = { startSecs: 6.8, durationSecs: 7.2 };
+    const window = plannedWindow();
     useMediaUnderstandingStore.setState({
       dark: { [scanKey(t)]: detection([region(9, 12, [6.8, 14.0])]) },
       recoveryErrors: { [recoveryKey(SOURCE, window)]: 'transcription timed out' },
@@ -262,6 +280,8 @@ describe('clipTranscriptView', () => {
     expect(v.error).toBe('transcription timed out');
     expect(v.recovered).toBe(0);
     expect(v.utterances).toHaveLength(3);
+    // D-387 — and the region it could not re-read is named, not dropped.
+    expect(v.unread?.map((r) => r.start_secs)).toEqual([9]);
   });
 
   /** A clean file: the scan ran, found nothing, and the answer is the raw

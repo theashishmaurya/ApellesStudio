@@ -14,6 +14,8 @@
 // Each is asserted below. `invoke` is mocked, so no sidecar is needed.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { RECOVERY_PLAN } from './darkRegions';
+
 const invokeMock = vi.fn();
 /** The persisted-record commands (D-385) answer from this fake disk instead of
  *  `invokeMock`, so the job-protocol tests below keep asserting exactly the
@@ -445,6 +447,9 @@ describe('client re-reads (D-380 step 2)', () => {
 describe('persistence across a restart (D-385)', () => {
   const W1 = { startSecs: 1, durationSecs: 4 };
   const W2 = { startSecs: 2, durationSecs: 1 };
+  /** A dark-region window under the current plan (D-387): what the planner
+   *  produces and what a persisted recovery must carry to be trusted. */
+  const DW = { startSecs: 1, durationSecs: 4, holes: [{ startSecs: 2, endSecs: 3 }], plan: RECOVERY_PLAN };
   const seg = (word: string) => ({ start: 2, end: 2.5, text: word, words: [{ word, start: 2, end: 2.5 }] });
   /** Whole-file transcription starts only — a windowed re-read is not one. */
   const transcribeStarts = () =>
@@ -560,7 +565,7 @@ describe('persistence across a restart (D-385)', () => {
   it('persists dark-region recoveries, and serves them after a restart', async () => {
     await firstLaunchTranscript();
     scriptJob({ state: 'done', result: { ...TRANSCRIPT, segments: [seg(' found')] } }, 0);
-    useMediaUnderstandingStore.getState().startRecovery(PATH, W1, 'en');
+    useMediaUnderstandingStore.getState().startRecovery(PATH, DW, 'en');
     await until(
       () => (parsePersisted(disk.get(PATH))?.recoveries.length ?? 0) === 1,
       'the recovery to be persisted',
@@ -568,7 +573,31 @@ describe('persistence across a restart (D-385)', () => {
 
     restart();
     await useMediaUnderstandingStore.getState().getTranscript(PATH);
-    expect(useMediaUnderstandingStore.getState().recoveryStatus(recoveryKey(PATH, W1)).phase).toBe('done');
+    expect(useMediaUnderstandingStore.getState().recoveryStatus(recoveryKey(PATH, DW)).phase).toBe('done');
+  });
+
+  /** D-387 — a recovery persisted under the pre-D-387 plan (no `plan`: a bare
+   *  stretch read that replaced its whole range) must not mask the current
+   *  plan's answer, so it is dropped on load. The transcript and the applied
+   *  re-reads beside it are kept. */
+  it('drops a persisted recovery made under an older window plan', () => {
+    const stale = { window: W1, segments: [] };
+    const current = { window: DW, segments: [] };
+    const reread = { window: W2, segments: [] };
+    expect(
+      parsePersisted({ transcript: TRANSCRIPT, recoveries: [stale, current], appliedRereads: [reread] }),
+    ).toEqual({ transcript: TRANSCRIPT, recoveries: [current], appliedRereads: [reread] });
+  });
+
+  /** The holes are part of the question: the same read range spliced over
+   *  different holes is a different answer, so it is a different key. A
+   *  re-read (no holes) keeps the three-field key `pathOfRecoveryKey` reads. */
+  it('keys a recovery by its holes too, and a re-read exactly as before', () => {
+    expect(recoveryKey(PATH, W1)).toBe(`${PATH}|1|4`);
+    expect(recoveryKey(PATH, DW)).toBe(`${PATH}|1|4#2-3`);
+    expect(recoveryKey(PATH, { ...DW, holes: [{ startSecs: 2, endSecs: 3.5 }] })).not.toBe(
+      recoveryKey(PATH, DW),
+    );
   });
 
   it('hydrate is disk-only, once per file, and never overrides what memory already has', async () => {
@@ -594,7 +623,7 @@ describe('persistence across a restart (D-385)', () => {
   });
 
   it('parsePersisted keeps the good parts of a damaged record and calls an empty one a miss', () => {
-    const good = { window: W1, segments: [] };
+    const good = { window: DW, segments: [] };
     expect(parsePersisted(null)).toBeNull();
     expect(parsePersisted({ transcript: null, recoveries: [], appliedRereads: [] })).toBeNull();
     expect(

@@ -79,6 +79,7 @@ import {
   useMediaUnderstandingStore,
 } from './mediaUnderstandingStore';
 import { RecutPanel } from './RecutPanel';
+import { recoveryWindows } from './darkRegions';
 import { spanToFrames } from './recut';
 import { buildWordViewInput, viewBasisKey } from './retakeWordView';
 import type { ProposalGroupView, ProposalStatus, ProposalTake, RetakeProposalSet } from './retakeProposals';
@@ -390,7 +391,31 @@ describe('RecutPanel (D-318)', () => {
       { word: ' sat', start: 6.0, end: 6.4 },
       { word: ' down', start: 6.4, end: 6.8 },
     ];
-    const window = { startSecs: 6.8, durationSecs: 7.2 };
+    const regions = [
+      {
+        start_secs: 9,
+        end_secs: 11,
+        duration_secs: 2,
+        stretch_start_secs: 6.8,
+        stretch_end_secs: 14.0,
+        stretch_speech_secs: 3,
+        rms_peak: 0.2,
+      },
+      // D-387 — a second region in the same stretch that the re-read puts no
+      // words over: the panel must say where the transcript is still blind.
+      {
+        start_secs: 12.5,
+        end_secs: 13.5,
+        duration_secs: 1,
+        stretch_start_secs: 6.8,
+        stretch_end_secs: 14.0,
+        stretch_speech_secs: 3,
+        rms_peak: 0.2,
+      },
+    ];
+    // Planned by the real planner, so the window plan can change without this
+    // test silently missing the cache.
+    const [window] = recoveryWindows(regions, 0, 20);
     actSync(() =>
       useMediaUnderstandingStore.setState({
         transcripts: {
@@ -423,17 +448,7 @@ describe('RecutPanel (D-318)', () => {
             min_dark_secs: 1.2,
             max_word_secs: 2.0,
             model: 'silero_vad_v6.2.1.onnx',
-            regions: [
-              {
-                start_secs: 9,
-                end_secs: 12,
-                duration_secs: 3,
-                stretch_start_secs: 6.8,
-                stretch_end_secs: 14.0,
-                stretch_speech_secs: 3,
-                rms_peak: 0.2,
-              },
-            ],
+            regions,
             rms_floor: 0.1,
             calibration_spans: 4,
             gated_out: 0,
@@ -465,6 +480,7 @@ describe('RecutPanel (D-318)', () => {
     const notice = q('[data-chroma-recut-notice]')!.textContent ?? '';
     expect(notice, `the panel must disclose the splice: ${notice}`).toContain('Recovered 1 line');
     expect(notice).toContain('silently skipped');
+    expect(notice).toContain('1 stretch of speech-like sound could not be read by any pass (source 0:12.5–0:13.5)');
   });
 
   /** The degrade path, which every clip on a pre-D-349 cached transcript takes:

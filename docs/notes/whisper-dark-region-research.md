@@ -447,7 +447,11 @@ requires `duration > 0`), and a cut or caption that trusts those times is wrong,
 so reporting them is right. **One sub-region is unresolved**: C038
 839.49-846.56, 3.7 s the VAD calls speech at rms peak 0.307 (well above the 0.016
 floor) that neither ASR transcribed — it needs a listen; it may be a cough, a
-laugh or a real drop both models missed. Two edge cases: C038 985.57-987.55 is a
+laugh or a real drop both models missed. (**2026-10-15, D-387:** measured — two
+isolated voiced bursts of 0.5 s and 0.4 s plus 2 s of low-level voiced sound;
+no Parakeet window at 0-12 s of context puts a word over them. The app now
+reports them as unread rather than staying silent;
+`asr-backends-and-harness.md` §4.3.2.) Two edge cases: C038 985.57-987.55 is a
 sign-off Whisper may or may not have hallucinated (rms 0.21 against a 0.016
 floor says there is real sound there), and C038 53.79-54.17 is a 0.38 s sliver
 that only exists because it sits in a stretch whose other region clears the

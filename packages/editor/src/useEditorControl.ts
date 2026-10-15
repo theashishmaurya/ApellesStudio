@@ -1575,9 +1575,10 @@ function darkEnvelope(
  *
  *  `darkRegions` is how many holes the scan found in this clip's range;
  *  `recoveredUtterances` is how many of the grouped utterances exist only
- *  because the app went back for them. Both are omitted entirely when no scan
- *  ran (`recoverDarkRegions: false`, or a transcript with no word timings) —
- *  a zero would claim a clean scan that never happened. */
+ *  because the app went back for them; `unreadDarkRegions` lists the regions
+ *  still holding speech-like sound no re-read could put words to (D-387). All
+ *  three are omitted entirely when no scan ran (`recoverDarkRegions: false`,
+ *  or a transcript with no word timings) — a zero would claim a clean scan that never happened. */
 function darkSummary(rv: RunTranscriptView): Record<string, unknown> {
   // Summed over the run's clips (D-364). A run of one — the only shape that
   // existed before it — reduces to exactly the old numbers.
@@ -1589,8 +1590,17 @@ function darkSummary(rv: RunTranscriptView): Record<string, unknown> {
   return {
     darkRegions: scanned.reduce((n, v) => n + (v.detection?.regions.length ?? 0), 0),
     recoveredUtterances: rv.recovered,
+    unreadDarkRegions: rv.unread.map(unreadWire),
     ...(error ? { darkScanError: error } : {}),
   };
+}
+
+/** One region no recovery could read (D-387), as a retake answer lists it:
+ *  absolute source seconds and its RMS peak, so a caller can seek there and
+ *  listen. Listing them is the point — a count alone would not say where the
+ *  transcript is still blind. */
+function unreadWire(r: DarkRegionWire): Record<string, number> {
+  return { startSecs: r.start_secs, endSecs: r.end_secs, rmsPeak: r.rms_peak };
 }
 
 /** Is this call a whole-track SWEEP rather than a single-clip question?
@@ -1840,6 +1850,7 @@ async function retakeSweep(a: OpArgs, start: boolean) {
       ? {
           darkRegions: scannedViews.reduce((n, v) => n + (v.detection?.regions.length ?? 0), 0),
           recoveredUtterances: jobs.reduce((n, j) => n + (j.rv?.recovered ?? 0), 0),
+          unreadDarkRegions: jobs.flatMap((j) => j.rv?.unread ?? []).map(unreadWire),
           darkScanned: scannedViews.length,
         }
       : {}),

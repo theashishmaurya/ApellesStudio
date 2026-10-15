@@ -77,7 +77,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import { DEFAULT_MIN_SILENCE_MS, type RetakeGroupWire } from './recut';
-import type { DarkDetection, RecoveredWindow, RecoveryWindow } from './darkRegions';
+import { RECOVERY_PLAN, type DarkDetection, type RecoveredWindow, type RecoveryWindow } from './darkRegions';
 import type { RetakeProposalSet } from './retakeProposals';
 
 /** How often to poll a running sidecar job. Coarse on purpose: these jobs run
@@ -314,9 +314,19 @@ export function darkKey(a: DarkDetectionArgs): string {
  *  window of one file. Same `<path>|…` prefix convention as every other key
  *  here, so `clear(path)` drops these too. Also the key of a client's re-read
  *  (D-380 step 2) — the same question about the same audio, held in its own
- *  map because it is a preview until the client applies it. */
+ *  map because it is a preview until the client applies it.
+ *
+ *  A dark-region window's `holes` (D-387) are part of the question — the same
+ *  read range spliced over different holes is a different answer — so they
+ *  are appended to the LAST field (`<duration>#<start>-<end>,…`) rather than
+ *  added as fields: the key keeps exactly three `|`-separated fields, which
+ *  `pathOfRecoveryKey` relies on. A re-read has no holes, so its key is
+ *  unchanged. */
 export function recoveryKey(path: string, window: RecoveryWindow): string {
-  return [path, window.startSecs, window.durationSecs].join('|');
+  const holes = window.holes?.length
+    ? `#${window.holes.map((h) => `${h.startSecs}-${h.endSecs}`).join(',')}`
+    : '';
+  return [path, window.startSecs, `${window.durationSecs}${holes}`].join('|');
 }
 
 /** A re-read the MCP client chose to APPLY (D-380 step 2): spliced into the
@@ -691,7 +701,13 @@ function isTranscript(v: unknown): v is Transcript {
 export function parsePersisted(v: unknown): PersistedUnderstanding | null {
   if (!isRecord(v)) return null;
   const transcript = isTranscript(v.transcript) ? v.transcript : null;
-  const recoveries = Array.isArray(v.recoveries) ? v.recoveries.filter(isRecoveredWindow) : [];
+  // A recovery cut and spliced under an older window plan (D-387: before it,
+  // a bare-stretch read that replaced its whole range) is dropped, not
+  // trusted — it would otherwise be spliced beside the current plan's answer
+  // for the same hole. The scan re-plans it and the re-read runs again.
+  const recoveries = Array.isArray(v.recoveries)
+    ? v.recoveries.filter(isRecoveredWindow).filter((r) => r.window.plan === RECOVERY_PLAN)
+    : [];
   const appliedRereads = Array.isArray(v.appliedRereads)
     ? v.appliedRereads.filter(isRecoveredWindow)
     : [];

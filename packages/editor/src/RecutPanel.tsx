@@ -258,6 +258,10 @@ interface PendingClip {
    *  re-read a stretch the ASR silently dropped. Carried on the pending record
    *  so the finished list can say so; `undefined` until the words have landed. */
   recovered?: number;
+  /** D-387 — the located regions no re-read could put words to (source
+   *  seconds). Carried so the finished list can say where the transcript is
+   *  still blind instead of implying it is complete. */
+  unread?: Array<{ start: number; end: number }>;
 }
 
 /** One run of one detector, over one clip or over a whole track (D-342).
@@ -578,7 +582,12 @@ export function RecutPanel() {
       };
       store.startRetakeDetection(args, true);
       changed = true;
-      return { ...c, key: retakeKey(args), recovered: view.recovered };
+      return {
+        ...c,
+        key: retakeKey(args),
+        recovered: view.recovered,
+        unread: view.unread.map((r) => ({ start: r.start_secs, end: r.end_secs })),
+      };
     });
 
     if (pendingRecovery) {
@@ -721,16 +730,29 @@ export function RecutPanel() {
         recovered > 0
           ? ` Recovered ${recovered} line${recovered === 1 ? '' : 's'} the transcription had silently skipped, and grouped those too.`
           : '';
+      // D-387 — and say where it is STILL blind. A region the VAD hears and no
+      // re-read could put words to is not an error, but a list that stays quiet
+      // about it reads as a complete transcript, and a cut across it is a cut
+      // nobody judged.
+      const unread = pending.clips.flatMap((c) => c.unread ?? []);
+      const unreadNote =
+        unread.length > 0
+          ? ` ${unread.length} stretch${unread.length === 1 ? '' : 'es'} of speech-like sound could not be read by any pass (source ${unread
+              .slice(0, 3)
+              .map((r) => `${stamp(r.start)}–${stamp(r.end)}`)
+              .join(', ')}${unread.length > 3 ? ', …' : ''}) — listen there before cutting.`
+          : '';
+      const darkNote = recoveredNote + unreadNote;
       if (rows.length === 0) {
         setNotice(
           (pending.kind === 'silence'
             ? `No silence of ${pending.minSilenceMs}ms or longer in ${where}.`
-            : `No retakes found in ${where}.`) + recoveredNote,
+            : `No retakes found in ${where}.`) + darkNote,
         );
       } else if (failures.length > 0) {
-        setNotice(`${failures.length} clip(s) could not be analysed: ${failures[0]}${recoveredNote}`);
-      } else if (recoveredNote) {
-        setNotice(recoveredNote.trim());
+        setNotice(`${failures.length} clip(s) could not be analysed: ${failures[0]}${darkNote}`);
+      } else if (darkNote) {
+        setNotice(darkNote.trim());
       }
       setPending(null);
     };

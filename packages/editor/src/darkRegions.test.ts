@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  MAX_RECOVERY_HOLE_SECS,
   MAX_RECOVERY_WINDOW_SECS,
-  MIN_RECOVERY_WINDOW_SECS,
+  RECOVERY_CONTEXT_SECS,
+  RECOVERY_PLAN,
   recoveredCount,
   recoveryWindows,
   spliceTranscript,
   spliceTranscriptDoc,
+  unreadRegions,
   type DarkRegionWire,
   type RecoveredWindow,
 } from './darkRegions';
@@ -46,35 +49,38 @@ function segment(words: TranscriptWord[]): TranscriptSegment {
 }
 
 describe('recoveryWindows', () => {
-  it('turns one region into one window covering its stretch', () => {
-    const [w] = recoveryWindows([region(10, 15, [9, 16])], 0, 100);
-    expect(w.startSecs).toBeCloseTo(9);
-    expect(w.durationSecs).toBeCloseTo(7);
+  const end = (w: { startSecs: number; durationSecs: number }) => w.startSecs + w.durationSecs;
+
+  /** D-387 — the hole is the stretch; the read is the stretch plus context
+   *  either side, because a bare stretch is read without the sentence around
+   *  it (C038 836-852 s came back empty that way). */
+  it('reads a stretch with context either side and marks the stretch as the hole', () => {
+    const [w] = recoveryWindows([region(50, 55, [49, 56])], 0, 100);
+    expect(w.startSecs).toBeCloseTo(49 - RECOVERY_CONTEXT_SECS);
+    expect(end(w)).toBeCloseTo(56 + RECOVERY_CONTEXT_SECS);
+    expect(w.holes).toEqual([{ startSecs: 49, endSecs: 56 }]);
+    expect(w.plan).toBe(RECOVERY_PLAN);
   });
 
-  /** The reason windows are keyed by STRETCH: a dropped take split by a pause
-   *  produces several regions inside one stretch, and re-transcribing each of
-   *  them separately would be several transcription passes over the same audio, each
-   *  with less context than the one pass that covers all of them. */
-  it('collapses several regions in one stretch into a single window', () => {
+  /** The reason holes are keyed by STRETCH: a dropped take split by a pause
+   *  produces several regions inside one stretch, and they share one pass. */
+  it('collapses several regions in one stretch into a single hole', () => {
     const windows = recoveryWindows(
       [region(10, 11, [9, 20]), region(14, 15, [9, 20]), region(18, 19, [9, 20])],
       0,
       100,
     );
     expect(windows).toHaveLength(1);
-    expect(windows[0].startSecs).toBeCloseTo(9);
-    expect(windows[0].durationSecs).toBeCloseTo(11);
+    expect(windows[0].holes).toEqual([{ startSecs: 9, endSecs: 20 }]);
   });
 
-  /** A window must never read material the clip does not show — a recovery
-   *  outside the trim would splice words into a transcript for audio that is
-   *  not on the timeline. */
-  it('clamps a window to the clip range at both edges', () => {
+  /** A window must never read material the clip does not show. */
+  it('clamps the read and the hole to the clip range at both edges', () => {
     const windows = recoveryWindows([region(48, 62, [45, 65])], 50, 10);
     expect(windows).toHaveLength(1);
     expect(windows[0].startSecs).toBe(50);
-    expect(windows[0].startSecs + windows[0].durationSecs).toBe(60);
+    expect(end(windows[0])).toBe(60);
+    expect(windows[0].holes).toEqual([{ startSecs: 50, endSecs: 60 }]);
   });
 
   it('drops a stretch that does not intersect the range at all', () => {
@@ -83,54 +89,128 @@ describe('recoveryWindows', () => {
     expect(recoveryWindows([], 0, 100)).toEqual([]);
   });
 
-  /** A 1.3 s extract with nothing around it is where a recogniser starts inventing;
-   *  every confirmed recovery in the research had a second or two of room. */
-  it('grows a short stretch to the minimum window, symmetrically', () => {
-    const [w] = recoveryWindows([region(50, 51.3)], 0, 100);
-    expect(w.durationSecs).toBeCloseTo(MIN_RECOVERY_WINDOW_SECS);
-    // Centred on the region: the same amount of context either side.
-    expect(50 - w.startSecs).toBeCloseTo(w.startSecs + w.durationSecs - 51.3);
+  /** A clip shorter than hole + context reads the whole clip — the most
+   *  context there is — and never past it. */
+  it('reads the whole clip when the clip is shorter than hole plus context', () => {
+    const [w] = recoveryWindows([region(50.2, 51.3)], 50, 5);
+    expect(w.startSecs).toBe(50);
+    expect(w.durationSecs).toBeCloseTo(5);
   });
 
-  /** Growing at the very start of a clip cannot reach backwards, so it takes
-   *  the whole allowance from the other side rather than returning half a
-   *  window. */
-  it('takes the whole context from one side when the other is clamped', () => {
-    const [w] = recoveryWindows([region(0, 1.3)], 0, 100);
-    expect(w.startSecs).toBe(0);
-    expect(w.durationSecs).toBeCloseTo(MIN_RECOVERY_WINDOW_SECS);
-  });
-
-  /** The 30 s window (sized against Whisper's, D-349) means a longer extract would simply be
-   *  chunked again — reintroducing the whole-file behaviour the recovery exists
-   *  to escape. Splitting rather than truncating is what keeps every located
-   *  region inside some window. */
-  it('splits a stretch longer than the maximum window into equal pieces', () => {
-    const span = MAX_RECOVERY_WINDOW_SECS * 2.5;
-    const windows = recoveryWindows([region(0, span, [0, span])], 0, 200);
-    expect(windows.length).toBeGreaterThan(1);
+  it('splits a stretch longer than the maximum hole into equal pieces that tile it', () => {
+    const span = MAX_RECOVERY_HOLE_SECS * 2.5;
+    const windows = recoveryWindows([region(100, 100 + span, [100, 100 + span])], 0, 400);
+    const holes = windows.flatMap((w) => w.holes ?? []);
+    expect(holes.length).toBe(3);
     for (const w of windows) expect(w.durationSecs).toBeLessThanOrEqual(MAX_RECOVERY_WINDOW_SECS + 1e-9);
-    // No gaps: the pieces tile the stretch, so nothing inside it goes unread.
-    expect(windows[0].startSecs).toBeCloseTo(0);
-    const last = windows[windows.length - 1];
-    expect(last.startSecs + last.durationSecs).toBeCloseTo(span);
+    expect(holes[0].startSecs).toBeCloseTo(100);
+    for (let i = 1; i < holes.length; i += 1) expect(holes[i].startSecs).toBeCloseTo(holes[i - 1].endSecs);
+    expect(holes[holes.length - 1].endSecs).toBeCloseTo(100 + span);
   });
 
-  it('returns windows in time order with no overlaps', () => {
+  /** Nearby holes whose reads touch cost one pass, but never past the maximum. */
+  it('merges touching reads within the maximum and keeps their holes separate', () => {
+    const windows = recoveryWindows([region(30, 32), region(36, 38)], 0, 100);
+    expect(windows).toHaveLength(1);
+    expect(windows[0].holes).toEqual([
+      { startSecs: 30, endSecs: 32 },
+      { startSecs: 36, endSecs: 38 },
+    ]);
+    expect(windows[0].durationSecs).toBeLessThanOrEqual(MAX_RECOVERY_WINDOW_SECS);
+  });
+
+  it('returns windows in time order with disjoint holes', () => {
     const windows = recoveryWindows(
-      [region(80, 82), region(10, 12), region(11.5, 13)],
+      [region(80, 82), region(10, 12), region(12.5, 13), region(60, 75, [60, 75])],
       0,
       100,
     );
     for (let i = 1; i < windows.length; i += 1) {
-      const prev = windows[i - 1];
-      expect(windows[i].startSecs).toBeGreaterThanOrEqual(prev.startSecs + prev.durationSecs);
+      expect(windows[i].startSecs).toBeGreaterThanOrEqual(windows[i - 1].startSecs);
+    }
+    const holes = windows.flatMap((w) => w.holes ?? []).sort((a, b) => a.startSecs - b.startSecs);
+    for (let i = 1; i < holes.length; i += 1) {
+      expect(holes[i].startSecs).toBeGreaterThanOrEqual(holes[i - 1].endSecs - 1e-9);
     }
   });
 
   it('is pure — the same regions give the same windows', () => {
     const regions = [region(10, 11, [9, 20]), region(14, 15, [9, 20])];
     expect(recoveryWindows(regions, 0, 100)).toEqual(recoveryWindows(regions, 0, 100));
+  });
+});
+
+/** D-387 — a window with holes changes only its holes. */
+describe('spliceTranscript with holes', () => {
+  const holed = (
+    start: number,
+    end: number,
+    holes: Array<[number, number]>,
+    segments: TranscriptSegment[],
+  ): RecoveredWindow => ({
+    window: {
+      startSecs: start,
+      durationSecs: end - start,
+      holes: holes.map(([a, b]) => ({ startSecs: a, endSecs: b })),
+      plan: RECOVERY_PLAN,
+    },
+    segments,
+  });
+  const read = (ss: TranscriptSegment[]) =>
+    ss.flatMap((s) => s.words ?? []).sort((x, y) => x.start - y.start).map((w) => w.word.trim());
+
+  /** The measured fault (C038 501.2 s): the old 4 s window began inside
+   *  "everything.", its re-read had no such word, and the splice deleted the
+   *  whole-file one. The context a window reads is never spliced. */
+  it('keeps the whole-file words in the context it read, even when the read lost them', () => {
+    const wholeFile = [
+      segment([word(' reread', 500.64, 501.2), word(' everything.', 501.2, 501.92)]),
+      segment([word(' Plus', 505.04, 505.68)]),
+    ];
+    const out = spliceTranscript(wholeFile, [
+      holed(491.92, 515.04, [[501.92, 505.04]], [
+        segment([word(' Word', 501.88, 502.28), word(' two,', 502.28, 502.84), word(' reread', 502.84, 503.4)]),
+        segment([word(' sent', 507.5, 507.8)]),
+      ]),
+    ]);
+    expect(read(out)).toEqual(['reread', 'everything.', 'Word', 'two,', 'reread', 'Plus']);
+    expect(out.filter((s) => s.recovered).flatMap((s) => s.words.map((w) => w.word.trim()))).toEqual([
+      'Word',
+      'two,',
+      'reread',
+    ]);
+  });
+
+  /** The same spoken word, timed a few frames apart by two passes, at a hole
+   *  edge: added once, not twice. */
+  it('does not add a recovered word that repeats the kept word it overlaps', () => {
+    const wholeFile = [segment([word(' Plus', 505.04, 505.68)])];
+    const out = spliceTranscript(wholeFile, [
+      holed(495, 515, [[501.92, 505.04]], [
+        segment([word(' again.', 504.0, 504.6), word(' Plus', 504.84, 505.16)]),
+      ]),
+    ]);
+    expect(read(out)).toEqual(['again.', 'Plus']);
+  });
+
+  it('replaces zero-width whole-file words inside a hole (a timestamp collapse)', () => {
+    const wholeFile = [segment([word(' before', 320, 320.5)]), segment([word(' inference', 330.84, 330.84)])];
+    const out = spliceTranscript(wholeFile, [
+      holed(320.84, 345.64, [[330.84, 335.64]], [segment([word(' Inference', 334.2, 334.8)])]),
+    ]);
+    expect(read(out)).toEqual(['before', 'Inference']);
+  });
+});
+
+describe('unreadRegions', () => {
+  it('reports a region no word overlaps, and not one a recovered word reads', () => {
+    const regions = [region(839.49, 840.13), region(850.95, 852.0)];
+    const spliced = [segment([word(' So', 850.6, 850.76), word(' kickup.', 850.92, 851.64)])];
+    expect(unreadRegions(regions, spliced).map((r) => r.start_secs)).toEqual([839.49]);
+  });
+
+  it('counts a zero-width word inside a region as read — its text is present', () => {
+    expect(unreadRegions([region(330, 335)], [segment([word(' is', 331, 331)])])).toEqual([]);
   });
 });
 
