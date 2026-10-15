@@ -2819,6 +2819,20 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
     - ⬜ **Persist video analyses too** (`editor_analyze_video`) — same
       `understanding_cache` shape, but keyed by the question and tuning knobs
       as well as the file and VLM model; left out of D-385's scope.
+    - ⬜ **Measure, then maybe: transcript words as a protect-only veto on
+      silence cuts** (owner, 2026-10-15). Silence detection reads audio only
+      (silero-vad, D-318/D-319), which is right: a transcript-driven cutter
+      would cut the speech Parakeet drops (D-349) and clip words on ASR's
+      ±0.1-0.3 s timing. The open question is the VAD's own weak spot, quiet
+      or mumbled speech scored as silence. **Step 1, measure (cheap,
+      deterministic, no agent):** run `editor_detect_silences` over C040 and
+      the other eval sources and count transcript words whose midpoint falls
+      inside a proposed silence cut. Zero → close this item. Non-zero →
+      **step 2:** a span is silence only if the VAD says silence AND no
+      transcript word overlaps it (speech = VAD ∪ words), so the transcript
+      can only prevent a cut, never cause one; a missing word degrades to
+      today's audio-only behaviour. Same op for the GUI and
+      `editor_detect_silences`.
     - ✅ **Recut panel: confirm reasons are labelled inconsistently** — the
       first offending word was labelled by its text ("masses"), the rest by
       index ("#203"). Fixed (B-251): every reason reads `“word” (#index)`.
