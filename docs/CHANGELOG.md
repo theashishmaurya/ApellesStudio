@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-15** — **D-385: transcripts, dark-region recoveries and applied re-reads survive a restart.** One record per (file identity, `parakeet-tdt-0.6b-v3`) in `media_cache`'s `understanding` namespace (`apelles_ai::understanding_cache`, `chroma_media_understanding_{load,save}`), loaded lazily per file, so a relaunch no longer re-runs Parakeet and an `editor_retranscribe_words apply: true` no longer vanishes. The app now pins the ASR model on every `/transcribe` request; `force: true` still re-runs and overwrites.
+
 - **2026-10-15** — **B-235 fixed (D-384): an edit while playing no longer mutes the audio for a beat.** A play session never noticed an edit. It kept the decoders it had opened for the old timeline: a deleted clip kept sounding, and a clip moved back under the playhead stayed silent. It also played out ~2 s of already-queued pre-edit audio. Every resolve now carries the timeline's `edit_fingerprint`. On a change the session rebuilds its sources 100 ms past the listener and splices them into the ring with a 10 ms crossfade, with no restart. Both new mix-loop tests fail without the fix. Live check pending (script in D-384). Also restored B-231's lost heading in `BUGS.md`.
 
 - **2026-10-14** — **B-236 fixed:** a selected gap that sync-lock won't let you close (B-033: another track's clip straddles its end) now stays selected and shows why. Close Gap is disabled with the reason in its tooltip, instead of silently doing nothing and dropping the selection. `editor_set_selection` with `gap=` now reports `closeable` / `closeRefusedReason`. `gapAt` was never the fault.

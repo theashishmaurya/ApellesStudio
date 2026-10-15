@@ -5,7 +5,7 @@
 //! Depth Anything depth tracking, D-036) that does not require `tauri::State`,
 //! an `AppHandle`, or a fork-side global (`chroma::state::current_video()`).
 //!
-//! Five modules — three per source file it was extracted from, plus two added
+//! Six modules — three per source file it was extracted from, plus three added
 //! later:
 //! - [`ai_env`] — builds and repairs the shared Python environment both sidecars
 //!   run from, using a bundled `uv` and no system Python (D-315, Phase 4 of
@@ -20,6 +20,10 @@
 //!   `/transcribe` + `/understand_video` and their two job-status polls
 //!   (D-189). Written here rather than extracted from the fork, since the
 //!   capability is new — but the same shape as [`depth`], for the same reason.
+//! - [`understanding_cache`] — the persisted transcript / dark-region
+//!   recoveries / applied re-reads of one source file under one ASR model
+//!   (D-385), stored through `apelles_media::media_cache` (D-128). This crate's
+//!   one `apelles-media` edge.
 //! - [`depth`] — the `/depth_track` + `/depth_track/<id>` HTTP client and the
 //!   per-frame tracked-depth-PNG lookup (from `chroma/depth.rs`, D-036).
 //! - [`mask`] — the `/segment`, `/track`, `/track/<id>`, `/refine_track`,
@@ -59,6 +63,7 @@ pub mod depth;
 pub mod mask;
 pub mod media_understanding;
 pub mod sidecar;
+pub mod understanding_cache;
 
 /// The Apelles AI sidecar's base URL — `http://127.0.0.1:<CHROMA_AI_PORT or 8765>`.
 /// Shared by every submodule that talks to the sidecar over HTTP (`depth`,

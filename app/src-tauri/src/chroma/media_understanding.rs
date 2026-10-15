@@ -7,9 +7,13 @@
 //! crate-side, only the `#[tauri::command]` attribute stays in the fork). Same
 //! shape as `chroma/depth.rs`, which wraps `apelles_ai::depth` the same way.
 //!
-//! What it does NOT do: no caching (the `@apelles/editor` store owns that, so a
-//! repeated ask for the same file is free and a future UI has one place to read
-//! from), no polling loop of its own (the frontend drives it), no
+//! Plus two commands that load and save the store's persisted record of a file
+//! (transcript, dark-region recoveries, applied re-reads) through
+//! `apelles_ai::understanding_cache` (D-385).
+//!
+//! What it does NOT do: no caching policy (the `@apelles/editor` store owns
+//! what is cached and when it is persisted, so a repeated ask for the same file
+//! is free and a UI has one place to read from), no polling loop of its own (the frontend drives it), no
 //! interpretation of the results, and nothing at all with the timeline — these
 //! commands answer questions about a file on disk and return the sidecar's JSON
 //! verbatim.
@@ -161,6 +165,38 @@ pub async fn chroma_analyze_video(
 #[tauri::command]
 pub async fn chroma_analyze_video_status(job_id: String) -> Result<serde_json::Value, String> {
     apelles_ai::media_understanding::understand_video_status(&job_id).await
+}
+
+/// The persisted transcript, dark-region recoveries and applied re-reads of
+/// `path` (D-385), or `None` on any miss — a changed file, a different ASR
+/// model, no record. The `@apelles/editor` store calls this lazily, the first
+/// time anything asks about a file, never for every file at startup.
+///
+/// `spawn_blocking`: a stat plus a read of a few hundred KB is short, but it is
+/// still disk I/O and has no business on Tauri's async runtime threads.
+#[tauri::command]
+pub async fn chroma_media_understanding_load(
+    path: String,
+) -> Result<Option<apelles_ai::understanding_cache::UnderstandingRecord>, String> {
+    tokio::task::spawn_blocking(move || apelles_ai::understanding_cache::load(Path::new(&path)))
+        .await
+        .map_err(|e| format!("loading the persisted media understanding: {e}"))
+}
+
+/// Persist `record` as `path`'s understanding, replacing the previous record
+/// (D-385). `Err` when it could not be persisted, so the store can say so — an
+/// applied re-read that silently failed to persist is exactly the loss this
+/// exists to prevent.
+#[tauri::command]
+pub async fn chroma_media_understanding_save(
+    path: String,
+    record: apelles_ai::understanding_cache::UnderstandingRecord,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        apelles_ai::understanding_cache::save(Path::new(&path), &record)
+    })
+    .await
+    .map_err(|e| format!("persisting the media understanding: {e}"))?
 }
 
 #[cfg(test)]

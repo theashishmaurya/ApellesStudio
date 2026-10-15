@@ -2809,12 +2809,16 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       (892 → 778 words, one entry) and `undo` / `redo` / `undo` (D-383). Found
       and fixed on the way: B-247 (Parakeet re-reads refused), B-248 (undo
       payload), plus the missing `debug_set_library_mode` / `undo` / `redo`.
-    - ⬜ **Persist transcripts and applied re-reads across restarts.** The
-      `mediaUnderstandingStore` cache is in-memory by design, so every launch
-      re-runs Parakeet (~20 s for C040) and — the part that matters — an
-      `editor_retranscribe_words` reading the client APPLIED is lost, changing
-      the word view (932 → 892 words between two runs). The store's header
-      already names the `media_cache` on-disk namespace as the next step.
+    - ✅ **Persist transcripts and applied re-reads across restarts**
+      (2026-10-15, **D-385**). One record per (source file identity, ASR
+      model) in `media_cache`'s `understanding` namespace: the transcript, the
+      D-349 recoveries and the applied re-reads in apply order, loaded lazily
+      the first time a file is asked about. Dark scans, re-read previews,
+      detections and retake proposals deliberately stay in memory (D-385 says
+      why). Not yet live-smoked in the running app.
+    - ⬜ **Persist video analyses too** (`editor_analyze_video`) — same
+      `understanding_cache` shape, but keyed by the question and tuning knobs
+      as well as the file and VLM model; left out of D-385's scope.
     - ✅ **Recut panel: confirm reasons are labelled inconsistently** — the
       first offending word was labelled by its text ("masses"), the rest by
       index ("#203"). Fixed (B-251): every reason reads `“word” (#index)`.

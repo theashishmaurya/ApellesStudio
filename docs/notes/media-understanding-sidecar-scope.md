@@ -213,7 +213,9 @@ from a running Apelles app at least once.
    scope; added because an agent asks about the same file across separate tool
    calls with no memory of the previous one, and each miss costs the full model
    run again. In-memory only — a `media_cache` disk namespace is the obvious
-   next step and is deliberately out of this pass.
+   next step and is deliberately out of this pass. (Done since: D-385 persists
+   transcripts, recoveries and applied re-reads in `media_cache`'s
+   `understanding` namespace; video analyses are still in-memory.)
 
 ### What was live-tested vs. only type-checked
 

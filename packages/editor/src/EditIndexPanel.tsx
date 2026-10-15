@@ -432,6 +432,17 @@ function TranscriptView() {
     [sources, transcripts, transcribing, transcriptErrors],
   );
 
+  // D-385 — read each timeline file's persisted transcript (and its applied
+  // re-reads / recoveries) as this view mounts, so a relaunch shows the words
+  // it already has instead of a "Transcribe" prompt. Disk only — never the
+  // ASR — and once per file per session (the store dedupes), so it is lazy in
+  // exactly the sense that matters: only files this view shows, only when it
+  // is open, never on the UI thread.
+  useEffect(() => {
+    const store = useMediaUnderstandingStore.getState();
+    for (const s of sources) void store.hydrate(s.path);
+  }, [sources]);
+
   const pending = statuses.filter((s) => s.phase !== 'done');
   const doneCount = statuses.length - pending.length;
 
