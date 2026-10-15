@@ -2729,7 +2729,15 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       (+ 24 committed transcript fixtures). Detail:
       `docs/notes/retake-detection.md` §8,
       `docs/notes/asr-backends-and-harness.md` §4.2.
-    - ⬜ **B-246 — the retake detector still proposes cutting speech that
+    - ✅ **B-246 fixed by D-386 (2026-10-15)** — a group keeps a non-kept take
+      only when its keeper holds every content word of it (the coverage gate's
+      content rule, inside `retake.rs`): over-cut **0.00 s on all eleven corpus
+      tasks** of `eval/retake/`, precision 1.000. The "done means" below is
+      met for over-cut and **not** for recall: every corpus task still
+      `expect: "fail"`, on recall only (Parakeet ungated 0.232 / 0.189 /
+      0.296; gated, what the app shows, 0.161 / 0.189 / 0.232 → 0.232 / 0.189 /
+      0.296). The original entry, for the record:
+    - ~~**B-246 — the retake detector still proposes cutting speech that
       repeats nothing**, on *both* backends (Whisper 5.42 s, Parakeet 56.92 s).
       Found by step 4. D-366's `anchor_is_justified` guard exempts
       single-utterance takes, and all six violations are single-utterance takes
@@ -2744,7 +2752,14 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       misses (a kept take that is a fragment; unique speech `word_overlap`
       waves through), and the obvious fix clears only the first. Done means
       every corpus task in `eval/retake/tasks.json` flips to `expect: "pass"`
-      with its recall measured in the same baseline diff.
+      with its recall measured in the same baseline diff.~~
+    - ⬜ **Retake-detector recall after D-386.** The whole-segment detector
+      now proposes only takes its keeper covers word for word, so a mis-heard
+      word (`bag`/`back`, `behind`/`being`) or a fragment keeper costs the
+      group. The MCP client (D-380) is the primary path and recovers these by
+      re-reading; for the fallback detector the open question is a
+      word-level take boundary (`docs/notes/retake-detection.md` §2's limit),
+      measured on `eval/retake/`.
     - ✅ **D-378 — a labelled eval for the retake detector** (2026-10-13).
       `eval/retake/`: hand-labelled ground truth in source-audio seconds for
       C019 / C038 / C040 (28 retake groups, 9 protected ranges), a 4-case
@@ -2786,7 +2801,7 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
       groups are marked, untickable until a listener unlocks one. Eval
       (`C0xx/parakeet-gated`): over-cut 0.00 s on all three sources, precision
       1.000, recall 0.161 / 0.189 / 0.232. B-246 → mitigated; its grouping
-      defect stays open below.
+      defect was fixed by D-386 (above).
     - ✅ **D-381 phase 6c — Whisper out of the app, MCP and website strings**
       (2026-10-14). `editor_get_transcript` (Parakeet; `language` is one of 25
       European languages, Hindi refused), `editor_get_timeline_transcript`,

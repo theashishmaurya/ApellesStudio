@@ -123,6 +123,18 @@
 //! to check are separate: "is this group real?" and "is the range it offers to
 //! delete right?"** Only the first was ever measured, twice, and both times the
 //! second was wrong. `docs/notes/retake-detection.md` §6.
+//!
+//! ## A group cuts only what its keeper holds (D-386, B-246)
+//!
+//! D-366's guard still left three ways to cut speech the keeper does not say: a
+//! single-utterance take matched on its tail, a keeper that is a fragment of
+//! the line, and unique words a 0.5 overlap fraction forgave. So once a chain
+//! is complete, `keep_only_covered_takes` keeps a non-kept take only if the
+//! coverage gate's own content rule ([`crate::proposal`]) finds its every
+//! content word in the keeper, and drops a group left with one take. **The
+//! contract is now: every group this module emits is one the gate would not
+//! refuse on content.** It costs recall where the ASR mis-heard a word in one
+//! take; it cannot hear. `docs/notes/retake-detection.md` §14.
 
 use serde::{Deserialize, Serialize};
 
@@ -407,9 +419,11 @@ pub fn word_overlap(part: &str, whole: &str) -> f64 {
 /// 0.600-1.000 and non-redundant ones 0.000-0.500
 /// (`docs/notes/retake-detection.md` §6).
 ///
-/// Single-utterance takes are judged by [`similarity`] alone, as they always
-/// were: this is about what may be glued together, not about what counts as a
-/// match.
+/// Single-utterance takes are not judged by this bar: it is about what may be
+/// glued together, not about what counts as a match. What a *finished* group may
+/// cut — single utterances included — is a stricter question, answered by the
+/// coverage gate's content rule against the keeper (`keep_only_covered_takes`,
+/// D-386).
 pub const MIN_UTTERANCE_OVERLAP: f64 = 0.5;
 
 /// A candidate delivery: `len` utterances starting at `start`.
@@ -593,7 +607,6 @@ fn extend_chain(
         start,
         len: anchor_len,
     }];
-    let mut worst = 1.0_f64;
     let mut cursor = start + anchor_len;
     let mut latest_end = utterances[cursor - 1].end_secs;
 
@@ -602,11 +615,10 @@ fn extend_chain(
     // `cursor` is only ever assigned here, between passes — mutating it inside
     // the scan would read as if it moved that scan's own bound, which it does
     // not.
-    while let Some((j, len, score)) = next_take(
+    while let Some((j, len)) = next_take(
         utterances, normalised, spans, taken, anchor, cursor, latest_end, p,
     ) {
         takes.push(Span { start: j, len });
-        worst = worst.min(score);
         latest_end = utterances[j + len - 1].end_secs;
         cursor = j + len;
     }
@@ -614,10 +626,70 @@ fn extend_chain(
     if takes.len() < 2 {
         return None;
     }
-    let chain = Chain { takes, worst };
+    // `worst` is settled by `keep_only_covered_takes`, once the takes that
+    // survive it are known.
+    let chain = Chain { takes, worst: 1.0 };
     // The anchor's half of the overlap guard, which can only be asked now that
     // the deliveries are known (B-238 / D-366).
-    anchor_is_justified(&chain, normalised, p).then_some(chain)
+    if !anchor_is_justified(&chain, normalised, p) {
+        return None;
+    }
+    keep_only_covered_takes(chain, normalised)
+}
+
+/// Drop every non-kept take whose content the keeper does not hold (B-246,
+/// D-386). `None` when fewer than two takes are left.
+///
+/// **Why this exists.** A group discards each non-kept take *whole*, so the
+/// claim it makes is "everything in these takes is said again in the keeper".
+/// Nothing before this asked that question of the finished group:
+/// [`similarity`]'s [`containment`] arm admits a long single utterance on a
+/// matching *tail* (B-246's six, all single-utterance takes D-366's guard
+/// exempted), the anchor and the candidates are matched against the *anchor*
+/// and not against the take that survives (the "straddled" class, where a
+/// group keeps a fragment and cuts every complete delivery), and
+/// [`word_overlap`] at 0.5 forgives half an utterance's vocabulary by
+/// construction. Measured on `eval/retake/`, those three shapes were the whole
+/// of the detector's over-cut: 3.20-24.40 s per task.
+///
+/// **The test is the coverage gate's own content rule**
+/// ([`crate::proposal::text_is_covered`]), the same function `proposal.rs`
+/// judges every proposal with — not a second, looser bar here. With it, a group
+/// this module emits is one the gate does not refuse on content; measured, the
+/// over-cut is 0.00 s on every eval task (`docs/notes/retake-detection.md`
+/// §14). Applying [`MIN_UTTERANCE_OVERLAP`] to single-utterance takes instead
+/// (B-246's first proposed fix) clears the Parakeet tasks except 1.44 s of
+/// C019 and leaves every Whisper task over-cutting 3-24 s: it reads a
+/// fraction, and a fraction is what forgives the unique head.
+///
+/// **Drop the take, don't reject the chain.** The keeper is only known once the
+/// chain is complete, and a take it does not cover is evidence about *that
+/// take*, not about the others, which each cleared the same rule. Dropped
+/// utterances stay unclaimed, so a later anchor can still use them. Measured
+/// against rejecting the whole chain: identical on every task but C040's two
+/// (retake recall 0.259 → 0.296 Parakeet, 0.249 → 0.365 Whisper re-derived),
+/// over-cut 0.00 s either way.
+fn keep_only_covered_takes(chain: Chain, normalised: &[String]) -> Option<Chain> {
+    let text = |t: &Span| normalised[t.start..t.end()].join(" ");
+    let (&keeper, rest) = chain.takes.split_last()?;
+    let kept = text(&keeper);
+    let mut takes: Vec<Span> = rest
+        .iter()
+        .copied()
+        .filter(|t| crate::proposal::text_is_covered(&text(t), &kept))
+        .collect();
+    if takes.is_empty() {
+        return None;
+    }
+    takes.push(keeper);
+    // The group's reported confidence is over the takes it actually carries:
+    // the lowest similarity of its first take to any other.
+    let first = text(&takes[0]);
+    let worst = takes[1..]
+        .iter()
+        .map(|t| similarity(&first, &text(t)))
+        .fold(1.0_f64, f64::min);
+    Some(Chain { takes, worst })
 }
 
 /// Is every utterance glued into this chain's anchor actually justified by the
@@ -686,7 +758,7 @@ fn anchor_is_justified(chain: &Chain, normalised: &[String], p: &RetakeParams) -
 }
 
 /// The next delivery at or after `cursor` that matches `anchor`, as
-/// `(start, len, score)`.
+/// `(start, len)`.
 ///
 /// The **earliest** position wins, and at that position the **shortest** span
 /// that clears the bar wins — not the best-scoring one. `containment` sweeps
@@ -719,7 +791,7 @@ fn next_take(
     cursor: usize,
     latest_end: f64,
     p: &RetakeParams,
-) -> Option<(usize, usize, f64)> {
+) -> Option<(usize, usize)> {
     let max_span = p.max_span_utterances.max(1);
 
     for j in cursor..utterances.len() {
@@ -745,16 +817,13 @@ fn next_take(
                 {
                     continue;
                 }
-                // `score` is the line-level similarity whichever arm matched,
-                // so a phrase-only match honestly reports its low number
-                // rather than a flattering stand-in.
                 let score = similarity(anchor, text);
                 let matched = match arm {
                     MatchArm::Similarity => score >= p.similarity,
                     MatchArm::Phrase => is_phrase_repeat(anchor, text, &p.phrase()),
                 };
                 if matched {
-                    return Some((j, len, score));
+                    return Some((j, len));
                 }
             }
         }
@@ -1108,12 +1177,18 @@ mod tests {
     /// can sort the shakiest groupings to the top. The third take here swaps a
     /// word rather than extending the line — a substitution is the case that is
     /// genuinely imperfect, since an extension scores 1.0 by containment.
+    ///
+    /// The swapped word is a stopword ("on" → "upon"), so the keeper still holds
+    /// every content word of the takes it cuts. Before D-386 this fixture
+    /// swapped "mat" for "rug" — and the group then proposed cutting the only
+    /// two deliveries that say "mat", which is B-246's over-cut in miniature.
+    /// With the keeper-coverage rule that group is no longer formed.
     #[test]
     fn similarity_reports_the_weakest_match_in_the_group() {
         let u = vec![
             utt(0, 0.0, 2.0, "The cat sat on the mat."),
             utt(1, 2.5, 4.5, "The cat sat on the mat."),
-            utt(2, 5.0, 7.0, "The cat sat on the rug."),
+            utt(2, 5.0, 7.0, "The cat sat upon the mat."),
         ];
         let g = detect_retakes(&u, &RetakeParams::default());
         assert_eq!(g.len(), 1, "{g:?}");
@@ -1164,10 +1239,13 @@ mod tests {
             ..RetakeParams::default()
         };
         let g = detect_retakes(&REAL_TRIPLE_REPEAT.utterances(), &p);
-        assert_eq!(
-            indices(&g),
-            vec![vec![0, 2]],
-            "the old detector found exactly one pair and missed the rest"
+        // Before D-386 this found one pair, [0, 2]. #2 ends mid-line ("…than
+        // the others, the") and so does not hold #0's "model", and the ASR
+        // heard #0's "glancing bag" where #2 has "glancing back": the keeper
+        // does not cover the cut, so the pair is no longer proposed.
+        assert!(
+            g.is_empty(),
+            "the old knobs over this run now propose nothing: {g:?}"
         );
     }
 
@@ -1186,7 +1264,9 @@ mod tests {
             ..RetakeParams::default()
         };
         let g = detect_retakes(&REAL_TRIPLE_REPEAT.utterances(), &p);
-        assert_eq!(indices(&g), vec![vec![0, 2, 3, 4]]);
+        // [0, 2, 3, 4] before D-386; #0 ("glancing bag") and #2 (ends before
+        // "model") are not covered by the keeper #4 and are dropped from it.
+        assert_eq!(indices(&g), vec![vec![1, 4]]);
     }
 
     /// ---------------------------------------------------------------------
@@ -1253,32 +1333,38 @@ mod tests {
         assert_eq!(g.len(), 1, "expected one run of restarts, got {g:?}");
         let group = &g[0];
 
-        // The speaker delivered the line three times. The old detector found
-        // two members in one pair; this must find three deliveries.
+        // The speaker delivered the line three times. D-327 found all three
+        // ([0], [2], [3..4]); since D-386 the first is dropped, because the
+        // keeper does not hold everything it says — the ASR heard "glancing
+        // bag" in #0 and "glancing back" in the keeper, and the gate's content
+        // rule cannot hear that they are one word. Cutting #0 is still right
+        // to a listener; the detector no longer claims what it cannot check
+        // (D-318's direction). The two deliveries it keeps are still the run
+        // the pre-D-327 detector missed entirely.
         assert_eq!(
             group.takes.len(),
-            3,
-            "the speaker delivered this line three times, got {:?}",
+            2,
+            "two deliveries the keeper covers, got {:?}",
             group.takes
         );
 
         assert_eq!(
             group.members.iter().map(|m| m.index).collect::<Vec<_>>(),
-            vec![0, 2, 3, 4],
-            "the run is #0 through #4; #1 is a fragment no delivery claims \
+            vec![2, 3, 4],
+            "#0 is uncovered (above), #1 is a fragment no delivery claims \
              (see below) and #5 has moved on to self-attention"
         );
 
         // The headline number: the old detector's group stopped at 157.48 s and
         // left everything after it uncut. This one reaches the end of the run.
-        let covered_to = group.members[group.takes[2].last].end_secs;
+        let covered_to = group.members[group.takes[1].last].end_secs;
         assert!(
             (covered_to - 179.92).abs() < 1e-9,
             "the group must reach the end of the restart run, got {covered_to}"
         );
 
         // The recommended keeper is the last delivery.
-        assert_eq!(group.keep, 2);
+        assert_eq!(group.keep, 1);
         assert_eq!(group.members[group.takes[group.keep].last].index, 4);
 
         assert!(
@@ -1425,16 +1511,26 @@ mod tests {
                 "{what}: scored {score:.3}, which is already over the bar"
             );
 
-            let after = detect_retakes(&u, &default);
-            assert_eq!(
-                after.len(),
-                1,
-                "{what}: the phrase signal must group this, got {after:?}"
+            // The phrase arm admits every pair: this is the D-365 signal
+            // seeing what edit distance cannot.
+            assert!(
+                is_phrase_repeat(&normalise(a), &normalise(b), &default.phrase()),
+                "{what}: the phrase signal must admit this pair"
             );
-            assert_eq!(after[0].takes.len(), 2, "{what}: two deliveries");
-            assert_eq!(
-                after[0].keep, 1,
-                "{what}: the LAST delivery is the recommended keep"
+
+            // Whether a GROUP follows is a second question (D-386): the first
+            // segment is cut whole, so it may be proposed only if the second
+            // holds every content word of it. Each of these segments carries
+            // speech around the repaired phrase that is said once — "is
+            // something else entirely", "repetitive … constant", "the actual
+            // economy and mechanism" — so none is proposed. That is B-246 shape
+            // 1 exactly; before D-386 all five were grouped, and every one
+            // would have deleted speech the keeper does not hold.
+            let after = detect_retakes(&u, &default);
+            assert!(
+                after.is_empty(),
+                "{what}: the keeper does not cover the first segment, so no \
+                 whole-segment cut of it is proposed, got {after:?}"
             );
         }
     }
@@ -1446,9 +1542,21 @@ mod tests {
     /// `similarity` exists so a reviewer can sort the shakiest groupings to the
     /// top, and a group found only by the phrase arm is exactly one a person
     /// should eyeball before cutting.
+    ///
+    /// Since D-386 none of [`REAL_PHRASE_REPAIRS`] is grouped (their first
+    /// segments carry speech the second does not), so this uses a synthetic
+    /// phrase repair the keeper covers: a clipped restart of the line, then
+    /// the whole line.
     #[test]
     fn a_phrase_matched_group_reports_its_genuinely_low_similarity() {
-        let (_, a, b) = REAL_PHRASE_REPAIRS[0];
+        // More than three times the clipped start's length, so `containment`
+        // does not score it (MAX_CONTAINMENT_LENGTH_RATIO) and only the phrase
+        // arm can match.
+        let (a, b) = (
+            "the third one is called speculative",
+            "and the third one is called speculative decoding and it is kind of clever \
+             because it guesses ahead and then checks",
+        );
         let g = detect_retakes(
             &[utt(0, 0.0, 6.0, a), utt(1, 6.1, 12.0, b)],
             &RetakeParams::default(),
@@ -1490,7 +1598,10 @@ mod tests {
             "the phrase arm must change nothing about a run the similarity arm \
              already grouped"
         );
-        assert_eq!(with[0].takes.len(), 3, "still three deliveries, not four");
+        // Two since D-386 (the first delivery is not covered by the keeper —
+        // see `the_real_triple_repeat_is_found`); the point is that it is not
+        // three, which is what the phrase arm splitting `#3..#4` produced.
+        assert_eq!(with[0].takes.len(), 2, "the [3..4] delivery is not split");
     }
 
     /// Ordinary spoken English that merely shares a topic must stay ungrouped
@@ -1559,10 +1670,15 @@ mod tests {
             "565 s apart is a callback, not a flubbed take"
         );
 
-        // …and the pair really does share the phrase — it is the window doing
-        // the work here, not a failure to notice.
+        // …and the pair really does share the phrase — the window rejects it
+        // before the phrase arm is asked, not a failure to notice.
+        let p = RetakeParams::default();
+        assert!(is_phrase_repeat(&normalise(a), &normalise(b), &p.phrase()));
+        // Brought within the window it is still not grouped since D-386, for a
+        // second, independent reason: the first line says "every" and "1 in
+        // 5", which the second does not, so cutting it would lose them.
         let near = vec![utt(0, 0.0, 5.0, a), utt(1, 5.5, 12.0, b)];
-        assert_eq!(detect_retakes(&near, &RetakeParams::default()).len(), 1);
+        assert!(detect_retakes(&near, &p).is_empty());
     }
 
     /// ---------------------------------------------------------------------
@@ -1604,8 +1720,12 @@ mod tests {
             210.26,
             "Today I actually want to show you why that's true, what's happening technically that makes",
         ),
+        // Labelled "redundant" until D-386. D-378's ground truth
+        // (`eval/retake/labels/A001_09122319_C038.json`) shows its head, "it so
+        // expensive", finishes #29's said-once setup line: it is welded, not
+        // redundant, and no whole-utterance cut of it is safe.
         (
-            "redundant",
+            "welded",
             210.26,
             222.74,
             "it so expensive and the trick behind used to bring that cost back down.",
@@ -1683,46 +1803,26 @@ mod tests {
             .collect()
     }
 
-    /// **Case 1, the full correct outcome** (B-238 / D-366).
+    /// **Case 1, the full correct outcome** (B-238 / D-366, D-386).
     ///
-    /// The group is still found — detection is not what was broken — and the
-    /// proposed cut is now *only* the utterance that actually repeats the
-    /// keeper's line. Pre-fix this asserted-away range covered 190.52-222.74 s,
-    /// including the whole "Today I actually want to show you why that's true"
-    /// setup, which shares almost no words with the keeper and is not a retake
-    /// of anything.
+    /// Pre-D-366 the proposed cut covered 190.52-222.74 s, including the whole
+    /// "Today I actually want to show you why that's true" setup line. D-366
+    /// narrowed it to #30 alone — but #30 opens with "it so expensive", the end
+    /// of that same said-once line (the welded row above), and the keeper does
+    /// not hold "expensive" or "behind". So since D-386 nothing here is
+    /// proposed: there is no whole-utterance cut of this run that loses nothing.
+    /// Under-cutting, D-318's safe direction; a word-level proposer (the MCP
+    /// client, D-380) can still cut "and the trick behind used to bring that
+    /// cost" alone.
     #[test]
     fn a_glued_anchor_does_not_propose_the_unique_setup_line_for_deletion() {
         let u = from_rows(REAL_GLUED_ANCHORS);
         let g = detect_retakes(&u, &RetakeParams::default());
-
-        assert_eq!(g.len(), 1, "the retake must still be detected: {g:?}");
-        let group = &g[0];
-        assert_eq!(group.takes.len(), 2, "two deliveries of the line");
-
-        // The genuinely redundant utterance is still proposed for the cut…
-        assert_eq!(
-            proposed_cut(group),
-            rows_labelled(REAL_GLUED_ANCHORS, "redundant"),
-            "only the utterance that actually repeats the line may be cut"
+        assert!(
+            g.is_empty(),
+            "no utterance of this run may be proposed for deletion: {g:?}"
         );
-        // …and the keeper is the later, clean delivery.
-        let keeper = &group.members[group.takes[group.keep].first];
-        assert_eq!(
-            vec![(keeper.start_secs, keeper.end_secs)],
-            rows_labelled(REAL_GLUED_ANCHORS, "keep"),
-            "the later, clean delivery is the keeper"
-        );
-
-        // Stated the other way round, as the defect: neither unique utterance
-        // may appear anywhere in the group at all.
-        let claimed: Vec<usize> = group.members.iter().map(|m| m.index).collect();
-        assert_eq!(
-            claimed,
-            vec![2, 3],
-            "#0 (\"place.\") and #1 (the setup line) are not part of any \
-             delivery and must not be members"
-        );
+        assert!(rows_labelled(REAL_GLUED_ANCHORS, "redundant").is_empty());
     }
 
     /// **Case 2, the full correct outcome** — the same defect reached through
@@ -1811,8 +1911,18 @@ mod tests {
     /// The fix must not become "never glue an anchor." Real C040 #8-#11: the
     /// speaker delivers the definition of attention, trails off, and delivers it
     /// again — and Whisper cut *both* deliveries across its own boundary, so the
-    /// anchor is genuinely two utterances and **both** of them repeat. The cut
-    /// this proposes is 44.60-65.46 s, all of it, and that is correct.
+    /// anchor is genuinely two utterances and **both** of them repeat.
+    ///
+    /// **What D-386 changed here.** The chain this run forms is `[#8..#9]`,
+    /// `[#10]`, `[#11]` — the shortest span wins at each position — so its
+    /// recommended keeper is `#11` alone, "to write, how much to focus on each
+    /// word you gave it.": a *fragment* of the line. Until D-386 the group cut
+    /// both complete deliveries against it (D-378's eval charges 79.28-85.00 s
+    /// of `c040-attention-in-simple-terms` as lost: B-246's "straddled" shape).
+    /// The fragment does not hold "attention … deciding for every word", so
+    /// neither earlier take is covered and no group is proposed. The anchor
+    /// guard's union measurement below is unchanged and still the reason that
+    /// guard is referenced to the union.
     ///
     /// This case is also the proof that the guard's reference has to be the
     /// **union** of the other deliveries and not the first matching one: "much to
@@ -1820,7 +1930,7 @@ mod tests {
     /// 0.875 against the union, because Whisper put its repeat in #11. Checked
     /// take by take, this genuine glue would be wrongly rejected.
     #[test]
-    fn a_glued_anchor_whose_every_member_repeats_is_still_cut_whole() {
+    fn a_glued_anchor_whose_every_member_repeats_is_not_cut_against_a_fragment() {
         let u = vec![
             utt(
                 0,
@@ -1843,19 +1953,9 @@ mod tests {
             ),
         ];
         let g = detect_retakes(&u, &RetakeParams::default());
-
-        assert_eq!(g.len(), 1, "{g:?}");
-        let group = &g[0];
-        assert_eq!(
-            group.takes[0].len(),
-            2,
-            "the anchor really is two utterances"
-        );
-        assert_eq!(
-            proposed_cut(group),
-            vec![(44.60, 60.28), (60.28, 65.46), (79.28, 85.00)],
-            "both glued anchor utterances genuinely repeat, so the whole anchor \
-             is still cut — as is the second delivery, leaving #11 as the keeper"
+        assert!(
+            g.is_empty(),
+            "no complete delivery may be cut against the fragment #11: {g:?}"
         );
 
         // And the reason the second one survives, measured rather than asserted.
@@ -1880,13 +1980,14 @@ mod tests {
     /// predates the guard and it matters that its result did not move: the
     /// winning chain there has a **single-utterance** anchor (`better` prefers the
     /// shortest anchor that explains the same deliveries), so the guard has
-    /// nothing to check and cannot have changed the answer.
+    /// nothing to check and cannot have changed the answer. (The keeper-coverage
+    /// rule did change it — #0 is dropped since D-386, see that test.)
     #[test]
     fn the_d327_run_is_untouched_by_the_anchor_guard() {
         let g = detect_retakes(&REAL_TRIPLE_REPEAT.utterances(), &RetakeParams::default());
-        assert_eq!(indices(&g), vec![vec![0, 2, 3, 4]]);
-        assert_eq!(g[0].takes.len(), 3);
-        assert_eq!(g[0].takes[0].len(), 1, "a single-utterance anchor");
+        assert_eq!(indices(&g), vec![vec![2, 3, 4]]);
+        assert_eq!(g[0].takes.len(), 2);
+        assert_eq!(g[0].takes[0].len(), 1, "a single-utterance first take");
     }
 
     /// The other non-regression shape: a run of short single-utterance restarts
@@ -1920,6 +2021,42 @@ mod tests {
         }
     }
 
+    /// **B-246's shape, fixed (D-386):** a single-utterance take whose *tail*
+    /// repeats the next delivery while its head is said once is not proposed.
+    ///
+    /// `similarity`'s containment arm scores the pair 1.0 on the shared tail,
+    /// and D-366's overlap guard never looked at a single-utterance take, so
+    /// until D-386 the whole 12-second utterance — the invoice line with it —
+    /// was offered for deletion. The keeper does not hold "per-token price …
+    /// monthly invoice", so the take is dropped and no group remains. The same
+    /// transcript is `eval/retake/bad_examples/b246_tail_repeat`.
+    #[test]
+    fn a_single_utterance_take_whose_tail_repeats_is_not_proposed() {
+        let u = vec![
+            utt(0, 0.0, 4.0, "Right, let's get into it."),
+            utt(
+                1,
+                5.0,
+                17.0,
+                "The per-token price goes down and the monthly invoice still goes up, and there is actually a name for this.",
+            ),
+            utt(2, 18.0, 22.0, "There is actually a name for this."),
+            utt(
+                3,
+                23.0,
+                29.0,
+                "It comes from economics, and it is called the Jevons paradox.",
+            ),
+        ];
+        let n: Vec<String> = u.iter().map(|x| normalise(&x.text)).collect();
+        assert!(
+            similarity(&n[1], &n[2]) >= RetakeParams::default().similarity,
+            "the pair still matches — detection is not what changed"
+        );
+        let g = detect_retakes(&u, &RetakeParams::default());
+        assert!(g.is_empty(), "nothing here can be cut whole: {g:?}");
+    }
+
     /// An utterance too short for its overlap *fraction* to mean anything is not
     /// glued in either (B-238 / D-366).
     ///
@@ -1930,6 +2067,10 @@ mod tests {
     /// response"), not part of the repeated line, which is why
     /// `anchor_is_justified` also requires `min_words` distinct words before it
     /// believes a fraction at all.
+    ///
+    /// Since D-386 the run proposes no group at all — #67 carries "repetitive
+    /// … constant", which the keeper #68 does not hold — so the guard is also
+    /// asked directly, on the chain it used to reject, to keep it exercised.
     #[test]
     fn an_utterance_too_short_to_judge_is_not_glued_into_an_anchor() {
         let u = vec![
@@ -1947,14 +2088,25 @@ mod tests {
                 "an enormous amount of work happening for every single response for every single",
             ),
         ];
-        let g = detect_retakes(&u, &RetakeParams::default());
+        let p = RetakeParams::default();
+        let g = detect_retakes(&u, &p);
+        assert!(
+            g.is_empty(),
+            "the keeper does not cover #67's \"repetitive … constant\": {g:?}"
+        );
 
-        assert_eq!(g.len(), 1, "the repair is still found: {g:?}");
-        assert_eq!(
-            indices(&g),
-            vec![vec![1, 2]],
+        // The guard itself: gluing "one response" into the anchor is refused,
+        // the same anchor without it is not.
+        let n: Vec<String> = u.iter().map(|x| normalise(&x.text)).collect();
+        let chain = |start: usize, len: usize| Chain {
+            takes: vec![Span { start, len }, Span { start: 2, len: 1 }],
+            worst: 1.0,
+        };
+        assert!(
+            !anchor_is_justified(&chain(0, 2), &n, &p),
             "\"one response\" belongs to the previous sentence, not this take"
         );
+        assert!(anchor_is_justified(&chain(1, 1), &n, &p));
 
         // The measurement behind the rule: the fraction alone would have let it
         // in on one word in common.

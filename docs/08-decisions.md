@@ -6,6 +6,74 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-386 — A retake group keeps a non-kept take only when its keeper holds that take's every content word: the coverage gate's content rule, inside the detector
+
+**Status: `decided`** (2026-10-15). Code: `keep_only_covered_takes` in
+`crates/apelles-speech/src/retake.rs`, `proposal::text_is_covered`. Fixes
+**B-246**. Measurement: `eval/retake/` (`baseline.json`, `gate_baseline.json`),
+`tests/proposed_cuts.rs`. Detail: `docs/notes/retake-detection.md` §14.
+
+**Context.** `detect_retakes` (the fallback behind `editor_detect_retakes`,
+D-382) cut each non-kept take whole, but nothing asked of a *finished* group
+whether the keeper holds what the others say. Three shapes leaked through
+(D-378): single-utterance takes admitted by containment on a matching tail
+(D-366's guard exempted them), a kept take that is a fragment of the line, and
+unique speech `word_overlap` ≥ 0.5 forgave. Over-cut 3.20-24.40 s per task.
+
+**Options** (all measured on the eval, one run each):
+1. *`MIN_UTTERANCE_OVERLAP` on single-utterance anchors too* (B-246's own
+   proposal). Parakeet C038/C040 → 0.00 s, C019 1.44 s left ("This is the
+   mistake."), every Whisper task still 9.68-24.16 s: a fraction forgives the
+   unique head, and the guard is against the anchor, not the keeper.
+2. *The same overlap bar against the keeper* (± content words only). Whisper
+   down to 2.96-9.68 s, never zero.
+3. **The coverage gate's content rule, against the keeper, inside the
+   detector.** Every task 0.00 s.
+
+**Choice: option 3.** After a chain is built, each non-kept take stays only if
+`proposal::text_is_covered(take, keeper)` — the gate's own `content_shortfall`,
+not a copy; a group left with fewer than two takes is not emitted. Details that
+are decisions:
+
+- **Drop the take, don't reject the chain.** The failing take is evidence about
+  itself; its utterances stay unclaimed for a later anchor. Measured against
+  rejecting the chain: same everywhere except C040 (recall 0.259 → 0.296
+  Parakeet), over-cut 0.00 s both ways.
+- **`similarity` is the group's first take against the others it actually
+  carries**, recomputed after the drop.
+- **The keeper is still the last take.** Keep-by-coverage (pick the latest take
+  that covers the rest) measured identical to this on every task.
+
+**Measured** (`eval/retake/baseline.json`; Whisper rows are kept inputs, D-381):
+
+| task | over-cut | protected cut | precision | retake recall | group recall |
+|---|---|---|---|---|---|
+| C019 / parakeet | 24.40 → **0.00 s** | 22.96 → 0.00 s | 0.443 → 1.000 | 0.265 → 0.232 | 0.353 → 0.235 |
+| C038 / parakeet | 12.64 → **0.00 s** | 12.64 → 0.00 s | 0.843 → 1.000 | 0.523 → 0.189 | 0.611 → 0.294 |
+| C040 / parakeet | 3.20 → **0.00 s** | 1.84 → 0.00 s | 0.965 → 1.000 | 0.606 → 0.296 | 0.909 → 0.545 |
+| C019 / parakeet → gated (what the app shows) | 0.00 → 0.00 s | 0.00 → 0.00 s | 1.000 → 1.000 | 0.161 → **0.232** | 0.235 → 0.235 |
+| C038 / parakeet → gated | 0.00 → 0.00 s | 0.00 → 0.00 s | 1.000 → 1.000 | 0.189 → 0.189 | 0.294 → 0.294 |
+| C040 / parakeet → gated | 0.00 → 0.00 s | 0.00 → 0.00 s | 1.000 → 1.000 | 0.232 → **0.296** | 0.455 → **0.545** |
+| C019 / whisper (re-derived) | 12.40 → **0.00 s** | 7.86 → 0.00 s | 0.770 → 1.000 | 0.564 → 0.056 | 0.412 → 0.059 |
+| C038 / whisper (pinned) | 10.36 → **0.00 s** | 2.10 → 0.00 s | 0.874 → 1.000 | 0.551 → 0.145 | 0.611 → 0.235 |
+| C038 / whisper (re-derived) | 15.06 → **0.00 s** | 2.10 → 0.00 s | 0.826 → 1.000 | 0.551 → 0.171 | 0.647 → 0.294 |
+| C040 / whisper (pinned) | 17.60 → **0.00 s** | 0.00 → 0.00 s | 0.820 → 1.000 | 0.551 → 0.193 | 0.636 → 0.364 |
+| C040 / whisper (re-derived) | 24.16 → **0.00 s** | 0.00 → 0.00 s | 0.801 → 1.000 | 0.670 → 0.365 | 0.636 → 0.636 |
+
+**What it costs.** Ungated recall roughly halves on Parakeet and collapses on
+Whisper (shorter segments: more groups whose keeper is a fragment). It is the
+same cost the gate already charged: what the app shows (`-gated`) is
+**unchanged or better** on all three sources, and the detector's groups are now
+never refused by the gate (13 of 27 were; `gate_baseline.json` `charged` /
+`clean_refused` 6 / 7 → 0 / 0). Two control verdicts flip to `fail`, on recall
+only: `b246_tail_repeat` (proposes nothing — the right answer for a whole-segment
+cutter) and `glued_anchor_unique_head` (its takes differ by "behind"/"being", a
+mis-hearing the rule cannot hear — the gate refuses the same group from a
+client). **What it does not do:** hear. A take with a mis-heard word is not
+proposed; the MCP client's re-read loop (D-380 §12.4) is where that recovers.
+
+---
+
 ## D-385 — Transcripts, dark-region recoveries and applied re-reads persist across restarts, keyed by file identity + ASR model
 
 **Status: `decided`** (2026-10-14). Code: `crates/apelles-ai/src/understanding_cache.rs`,

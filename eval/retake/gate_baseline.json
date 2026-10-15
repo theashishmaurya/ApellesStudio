@@ -213,8 +213,8 @@
     }
   },
   "detector": {
-    "charged": 6,
-    "clean_refused": 7,
+    "charged": 0,
+    "clean_refused": 0,
     "gated_over_cut_secs": 0.0,
     "missed": []
   },
