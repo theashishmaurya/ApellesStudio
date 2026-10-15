@@ -6,6 +6,16 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-388 — Beta binaries ship ad-hoc signed from GitHub Releases; Developer ID + notarization is a later, config-only step; the bundle version comes from the root `package.json`
+
+**decided (2026-10-15)** · owner
+
+- **Context.** First binary release to beta users, downloaded from GitHub. The macOS bundle had no signing configuration at all, and `tauri.conf.json`'s `version` still read `1.6.2`, inherited from RapidRAW (the v0.1.0 tag left it deliberately, as "a decision for a real binary release" — this is that release).
+- **What comparable apps do** (measured with `codesign -dv` / `spctl -a -vv` on the owner's own installed copies): Postman, Insomnia, OBS, VLC, Raycast and Docker are all **Developer ID + notarized**; DaVinci Resolve ships through the Mac App Store. Open-source projects (OBS, VLC) pay for it too.
+- **Options.** (1) Developer ID + notarization: no Gatekeeper prompt; needs the Apple Developer Program, $99/year; Apple waives it only for non-profits, education and government. (2) **Ad-hoc signature** (`signingIdentity: "-"`): free; Gatekeeper still treats the app as unidentified, so the user approves it once (macOS 15+: System Settings → Privacy & Security → Open Anyway — the old right-click → Open bypass is gone), but it avoids the "app is damaged and can't be opened" refusal an unsigned bundle gets on Apple Silicon. (3) Self-signed certificate: free, but Gatekeeper treats it exactly like (2). Free open-source signing services (e.g. SignPath Foundation) cover Windows only.
+- **Choice.** (2) for the beta, with the one-time approval documented in the release notes. (1) is a later step that needs no code change: the same Tauri build takes a Developer ID identity and notarization credentials from the environment (CI secrets).
+- **Version.** `tauri.conf.json`'s `version` is now `"../../package.json"` — Tauri reads the root `package.json`, which the v0.1.0 convention already bumps at every tag. One source; the DMG and `CFBundleShortVersionString` can no longer disagree with the tag. Safe to go from 1.6.2 downwards: Apelles has never shipped a binary and has no updater plugin, so nothing compares versions.
+
 ## D-387 — A dark-region recovery reads its hole with 10 s of context either side and changes only the hole; regions no pass can read are reported, not silent
 
 **Status: `decided`** (2026-10-15). Amends **D-349**'s window plan and splice.
