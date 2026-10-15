@@ -2297,6 +2297,29 @@ impl Timeline {
         }
     }
 
+    /// **B-235 — a 64-bit fingerprint of the edit**: everything that decides
+    /// what this timeline plays (its `rate` and every track with every clip),
+    /// and nothing that does not (`markers` are annotations, D-222; `id` and
+    /// `name` are labels). Two timelines with equal fingerprints play the
+    /// same; an edit changes it.
+    ///
+    /// It is how a running audio session (`apelles_media::audio`) notices that
+    /// the timeline it is playing was edited under it, without this crate
+    /// knowing anything about audio and without the session holding a copy of
+    /// the timeline to compare against. A hash of the canonical serialized
+    /// form rather than a derived `Hash`, because the model carries `f64`s and
+    /// an opaque `serde_json::Value` that do not implement `Hash`; the
+    /// serialization is deterministic (no maps with unordered keys in the
+    /// model). Stable within one process, which is all its consumer needs; it
+    /// is never persisted.
+    pub fn edit_fingerprint(&self) -> Result<u64, serde_json::Error> {
+        use std::hash::{Hash, Hasher};
+        let bytes = serde_json::to_vec(&(&self.rate, &self.tracks))?;
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        Ok(hasher.finish())
+    }
+
     /// Total timeline length in frames — the longest track.
     pub fn duration(&self) -> i64 {
         let fps = self.fps();
@@ -4712,6 +4735,51 @@ mod tests {
         t.move_clip(0, 1, 1, 0, false).unwrap(); // B: track0 -> track1 @ [0,50)
         t.move_clip(0, 1, 1, 100, false).unwrap(); // C: track0 -> track1 @ [100,300)
         t
+    }
+
+    /// B-235 — the fingerprint tells an edit from no edit, and ignores what
+    /// does not change what the timeline plays.
+    #[test]
+    fn edit_fingerprint_changes_on_an_edit_and_only_on_an_edit() {
+        let t = Timeline::from_shots(&shots());
+        let fp = t.edit_fingerprint().unwrap();
+        assert_eq!(
+            fp,
+            t.clone().edit_fingerprint().unwrap(),
+            "same edit, same number"
+        );
+
+        let mut deleted = t.clone();
+        deleted.tracks[0].clips.remove(0);
+        assert_ne!(
+            fp,
+            deleted.edit_fingerprint().unwrap(),
+            "a deleted clip is an edit"
+        );
+
+        let mut moved = t.clone();
+        moved.tracks[0].clips[1].start_frame += 1;
+        assert_ne!(
+            fp,
+            moved.edit_fingerprint().unwrap(),
+            "a moved clip is an edit"
+        );
+
+        let mut annotated = t.clone();
+        annotated.name = "renamed".into();
+        annotated.markers.push(Marker {
+            id: "m".into(),
+            frame: 10,
+            color: "#ff0000".into(),
+            duration_frames: None,
+            name: None,
+            note: None,
+        });
+        assert_eq!(
+            fp,
+            annotated.edit_fingerprint().unwrap(),
+            "a marker or a rename changes nothing anyone hears"
+        );
     }
 
     #[test]

@@ -36951,3 +36951,32 @@ the reason (the surface's shape is what step 4's numbers decide).
 - **Where the ops live.** They are cross-tab, so not in any tab's prefixed registry (`editor_` / `motion_` / `debug_`). They sit in the un-prefixed registry in `app/src/hooks/useChromaControl.ts` beside the other cross-tab ops (`open_project`, `list_shots`); that file is app-layer and may import `@apelles/shell`. They were first put in its `READ_ONLY` set, which still attached the Colorist grade + histogram (~30 KB) to every answer, an Edit undo included (**B-248**); they now have their own `CROSS_TAB` class in that dispatcher: no settle-and-capture, no activity-feed entry, and the answer is only their own result. **Flagged as a compromise:** a dedicated cross-tab registry would be the cleaner shape; it was not built because it needs a new prefix claim in the `control.rs` handshake for two ops.
 - **Not debug-gated.** Unlike `debug_set_library_mode`, undo is product behaviour, so these are ordinary tools in release builds.
 - **Verified.** `stepHistory` unit tests (empty stack, tab-follow, redo, tab outside the registry); parity corpus re-captured (186 tools); `cargo test -p apelles-mcp` green. Live (2026-10-14, C040): `editor_ripple_delete_ranges` of the 7 verified retake groups (892 → 778 words, 11:23 → 10:37), then `undo` restored all 892 words and the original `viewId` in one step, `redo` re-applied it as one entry, and a second `undo` restored it again.
+
+---
+
+## D-384 — an audio session that is playing applies a timeline edit by rebuilding and splicing at the listener, not by patching or restarting
+
+**decided (2026-10-15)** · fixes B-235 · extends B-111 (mid-session re-resolve), D-125 (open-loop sync), D-323 (retiring sources)
+
+- **Context.** B-235: an edit while playing left audio wrong for up to seconds: stale, doubled or silent. The session never restarts on an edit (D-130 keyed the frontend effect away from the timeline object on purpose). It keeps playing decoders opened for the timeline as it used to be. B-111's re-resolve only *adds* clips it has not opened before, and the mixer runs ~2 s ahead of the ear, because backpressure fills the ring to 2 s. Full cause in B-235.
+- **Options.**
+  1. **Restart the session on every save** (stop + play from the playhead). This is the owner's own guess at what was already happening, and it costs exactly the gap being reported: device warm-up, probe, seek and prefill, measured at 157-635 ms in D-125. It would also put D-130's churn back.
+  2. **Diff the fresh resolve against the open set**: retire the ids that vanished, reopen the ones that moved. The open decoders carry their old out-points, envelopes and source offsets, so every field would need its own reconciliation rule. "Same id" also does not mean "same audio": a trim keeps the id and changes the out-point. And the 2 s already queued is untouched.
+  3. **Shrink the ring** so stale audio drains faster. This trades underrun safety for latency, and it fixes neither the frozen decoders nor the silence.
+  4. **Fingerprint the timeline; on a change, rebuild the whole open set at the listener's position and splice it into the ring.**
+- **Choice: (4).** `ResolvedAudio::revision` carries `Timeline::edit_fingerprint()` (a hash of the serialized `rate` + `tracks`, so markers and names do not count). A changed revision makes `advance_mix` return `MixStep::Edited`. `splice_edit` then:
+  1. rebuilds from scratch 100 ms past the heard position (`SPLICE_LEAD_SECS`);
+  2. mixes 400 ms of replacement while the queued audio keeps playing;
+  3. replaces only the queued audio past the splice, with a 10 ms linear crossfade. Linear is transparent when the two sides are the same material, the common case for an edit elsewhere on the timeline.
+
+  If the rebuild outran the lead, the fresh audio is skipped forward to the listener, never replayed. The device, ring and thread are untouched. The crate still never sees a timeline: the fingerprint is an opaque `u64`, and the model owns how it is computed.
+- **Why rebuild rather than reconcile.** A rebuild has no edge cases to get wrong, because every source is opened exactly the way a session-start open is. Its cost is reopening the handful of sources under the playhead, roughly 10-150 ms of file work, and the 100 ms lead plus the queued ring absorb it.
+- **Cost, stated.** One serialization of the active timeline per resolve, at 10 Hz on the audio thread. It is not measured; the estimate is tens of µs for ~150 clips. Any edit triggers a splice, including one that changes nothing audible (a text clip); that splice is a no-op crossfade of identical audio.
+- **Live check (not yet run; the agent's worktree cannot launch the app).** On a recut project (e.g. `2026-09-12-c038-mgfx`):
+  1. `editor_set_playing {playing: true}`.
+  2. ~2 s in, `editor_remove_clip` (or `editor_ripple_delete_ranges`) on the clip under the playhead.
+  3. Within ~0.3 s, poll `editor_get_audio_level` every ~250 ms for 3 s. Its window is ~1 s, so look for no window at rms ≈ 0 while speech is under the playhead.
+  4. `undo`, then poll the same way. This is the case that went fully silent before the fix.
+  5. Repeat at 2x (`editor_set_playback_rate 2`).
+
+  By ear: the cut should be heard within ~0.2 s, with no click, no doubled voice and no dropout. `debug_frame_timing` should show no preview stall caused by the splice.
