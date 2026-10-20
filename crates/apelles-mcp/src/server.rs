@@ -20,21 +20,38 @@ use serde_json::Value;
 
 use crate::transport::{Envelope, OpTransport};
 
-/// What a client is told about this server before its first call.
-///
-/// Ported verbatim from `mcp/server.py`'s `instructions`. It is prose a model reads, so
-/// it is held byte-for-byte and checked that way by `tests/parity.rs` — the scope
-/// discipline in the second paragraph is the part that actually changes how an agent
-/// grades, and paraphrasing it would quietly change behaviour.
-pub const INSTRUCTIONS: &str = r#"Drive the running Apelles color-grading app. Edits move the app's real UI and re-render its canvas; reads reflect the user's manual edits. The Apelles desktop app must be open. Call get_state first to see the current image/video, adjustments and masks.
+// What a client is told about this server before its first call ([`INSTRUCTIONS`]).
+//
+// Ported verbatim from `mcp/server.py`'s `instructions`. It is prose a model reads, so
+// it is held byte-for-byte and checked that way by `tests/parity.rs` — the scope
+// discipline in the second paragraph is the part that actually changes how an agent
+// grades, and paraphrasing it would quietly change behaviour. A macro rather than a
+// `const` because `concat!` only takes literals, and the Motion paragraph is appended
+// only when this server is built with Motion (D-391).
+macro_rules! base_instructions {
+    () => {
+        r#"Drive the running Apelles color-grading app. Edits move the app's real UI and re-render its canvas; reads reflect the user's manual edits. The Apelles desktop app must be open. Call get_state first to see the current image/video, adjustments and masks.
 
 Grade by the numbers. Call `inspect_color` before and after a change and reason from the scope values (black/white points, per-zone means, warm-cool and green-magenta cast, clip %, hue histogram) or a named full-res region from `sample` / `sample_region`. Never claim a result ('looks balanced', 'skin is natural', 'the cast is gone') without citing a scope value or a sampled region. Approach each result adversarially: assume the grade is still flawed and hunt for the cast, clipping, or crushed detail you have not ruled out. Defer genuinely creative calls to the human.
 
 Mutating tools return the rendered frame, its histogram, and the compact scope summary (the new measurement, for free) after the change.
 
-The Edit tab (multi-track NLE: import/place/trim/composite/export, `editor_*`-prefixed tools) is a separate surface from grading above. Call `editor_get_capabilities` once before your first `editor_set_clip_transform`/`editor_set_clip_keyframes`/`editor_export` in a session — it is static reference data (no app round trip) covering non-obvious compositing rules and known rough edges an agent would otherwise only find by reading source or hitting them live.
+The Edit tab (multi-track NLE: import/place/trim/composite/export, `editor_*`-prefixed tools) is a separate surface from grading above. Call `editor_get_capabilities` once before your first `editor_set_clip_transform`/`editor_set_clip_keyframes`/`editor_export` in a session — it is static reference data (no app round trip) covering non-obvious compositing rules and known rough edges an agent would otherwise only find by reading source or hitting them live."#
+    };
+}
 
-The Motion tab (`motion_*`-prefixed tools, D-257) is the third surface: a scene-based motion-graphics builder — scenes, layers built from a primitive catalog, per-layer keyframes with real bezier easing, 2D/3D cameras, and a Remotion render to one video file PER SCENE. Its single source of truth is the scene manifest, the way `grade.json` is for grading. Call `motion_get_state` first (what is open, what is selected, one row per scene) and `motion_list_primitives` once before your first `motion_add_layer` — that one is static reference data listing every primitive and the fields each accepts. Note that times in Motion are SECONDS within a scene, not absolute frames."#;
+/// Built with Motion (the default): the full text, byte-for-byte the Python server's.
+#[cfg(feature = "motion")]
+pub const INSTRUCTIONS: &str = concat!(
+    base_instructions!(),
+    "\n\n",
+    r#"The Motion tab (`motion_*`-prefixed tools, D-257) is the third surface: a scene-based motion-graphics builder — scenes, layers built from a primitive catalog, per-layer keyframes with real bezier easing, 2D/3D cameras, and a Remotion render to one video file PER SCENE. Its single source of truth is the scene manifest, the way `grade.json` is for grading. Call `motion_get_state` first (what is open, what is selected, one row per scene) and `motion_list_primitives` once before your first `motion_add_layer` — that one is static reference data listing every primitive and the fields each accepts. Note that times in Motion are SECONDS within a scene, not absolute frames."#
+);
+
+/// Built without Motion (the beta bundle, D-391): the Motion paragraph is dropped so a
+/// client is not told to call tools this build does not have.
+#[cfg(not(feature = "motion"))]
+pub const INSTRUCTIONS: &str = base_instructions!();
 
 /// The MCP server. One per process; cheap to clone (the transport is shared).
 #[derive(Clone)]

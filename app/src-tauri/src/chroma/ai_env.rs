@@ -285,4 +285,28 @@ mod tests {
             "`npm run tauri:build` must pass the release overlay, got {script:?}"
         );
     }
+
+    /// D-391 — the beta bundle drops Motion on both sides at once: the UI build hides
+    /// the tab and the bundled MCP server is built without its `motion_*` tools. Both
+    /// switches live in the one release pre-build command, so a build that drops only
+    /// one (a hidden tab with live tools, or the reverse) fails here instead of shipping.
+    #[test]
+    fn the_release_build_drops_motion_from_the_ui_and_the_mcp_server_together() {
+        let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(here.join("../package.json"))
+            .unwrap_or_else(|e| panic!("app/package.json should be readable: {e}"));
+        let pkg: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or_else(|e| panic!("not JSON: {e}"));
+        let script = pkg["scripts"]["tauri:before-build"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            script.contains("cargo build -p apelles-mcp --release --no-default-features"),
+            "the release MCP server must be built without Motion, got {script:?}"
+        );
+        assert!(
+            script.contains("VITE_APELLES_MOTION=off npm run build"),
+            "the release UI must be built without the Motion tab, got {script:?}"
+        );
+    }
 }

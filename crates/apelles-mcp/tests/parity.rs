@@ -44,6 +44,10 @@
 //!     `mcp/.venv/bin/python crates/apelles-mcp/parity/capture.py`. It is deterministic:
 //!     an unchanged Python server re-captures byte-identically.
 
+// D-391 — this file pins the full tool surface, `motion_*` included, so it only
+// builds with the (default) `motion` feature on.
+#![cfg(feature = "motion")]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 

@@ -15,6 +15,13 @@ path = "src/lib.rs"
 name = "apelles-mcp"
 path = "src/main.rs"
 
+[features]
+# D-391 — the `motion_*` tools. On by default (dev, tests, the parity gate); the release
+# bundle builds this server with `--no-default-features` while the Motion tab is hidden,
+# because a Motion export needs a Node/Chrome toolchain the bundle does not carry yet.
+default = ["motion"]
+motion = []
+
 [dependencies]
 async-trait = "0.1"
 # D-313 — the HTTP host for rmcp's streamable-HTTP server. `rmcp` hands out a Tower

@@ -99,9 +99,12 @@ Either way the Apelles app must be running (the control server binds on app star
 something open. `CHROMA_CONTROL_PORT` overrides *that* port; default 19788, the same
 default the app and the Python server use.
 
-A **release** build publishes 155 tools; a **debug** build also publishes the nine
-`debug_*` ones, which are behind a real `#[cfg(debug_assertions)]` gate because internal
-debug tooling is never shipped.
+A **debug** build publishes 186 tools. A **release** build drops the twelve `debug_*`
+ones, which are behind a real `#[cfg(debug_assertions)]` gate because internal debug
+tooling is never shipped (174). The **`motion`** Cargo feature (default on) carries the
+43 `motion_*` tools; the beta bundle builds this server `--no-default-features` while the
+Motion tab is hidden, so it publishes 131 (D-391). `tests/parity.rs` and
+`tests/http_transport.rs` pin the full surface and only build with `motion` on.
 
 ## Verifying it
 
