@@ -81,3 +81,5 @@ engine-history.bundle
 app/src-tauri/binaries/
 # D-315 — ai-env inputs staged into the bundle by build.rs (generated copies)
 app/src-tauri/resources/ai-env/
+# D-390 — the Python sidecars' sources, staged into the bundle by build.rs (release builds)
+app/src-tauri/resources/sidecars/

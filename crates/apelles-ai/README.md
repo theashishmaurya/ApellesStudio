@@ -16,6 +16,10 @@ to the `ai/` FastAPI sidecar that doesn't need Tauri (D-145,
   - `sidecar` — spawn/health/backoff/respawn lifecycle for the `ai/` FastAPI
     process (SAM 2 → ViTMatte, D-012/D-016/D-028), plus the D-101
     content-`sha256` staleness check for an externally-run sidecar.
+    Where each service comes from is set by a `Layout` the app configures at startup
+    (D-390, B-254). Under `Dev`, it looks relative to `CARGO_MANIFEST_DIR`. Under
+    `Packaged`, it uses the bundle's `resources/sidecars/<dir>`, the app-data venv, and
+    binaries beside the executable. A packaged build never consults a compile-time path.
   - `depth` — the `/depth_track` + `/depth_track/<id>` HTTP client and
     per-frame tracked-depth-PNG lookup (Video Depth Anything, D-036).
   - `mask` — the `/segment`, `/track`, `/track/<id>`, `/refine_track`,

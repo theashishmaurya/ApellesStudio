@@ -73,11 +73,17 @@
 //! supervisor living in a crate named after one of its three users. That is a
 //! real naming wart, tracked in `docs/04-roadmap.md`, not left as a comment.
 //!
-//! Packaged-app path resolution is a known gap for the Python sidecars —
-//! [`resolve_dir`] keys off `CARGO_MANIFEST_DIR` (a dev path) / the spec's dir
-//! env var. See `docs/notes/sidecar-lifecycle.md` — flagged as a Phase 4
-//! follow-up. [`resolve_bin`] is in better shape: it looks beside the app's own
-//! executable first, which is correct in both a dev run and a bundle.
+//! **D-390 / B-254, dev layout vs. packaged layout.** Every lookup here that
+//! used to sweep `CARGO_MANIFEST_DIR` — the sidecar directories, the shared
+//! venv, the workspace `target/` — now does so only under [`Layout::Dev`]. A
+//! packaged app configures [`Layout::Packaged`] (from `app/src-tauri`, which
+//! alone can ask Tauri where its resources and data directory are) before any
+//! supervisor thread starts, and from then on resolves the Python sources
+//! inside the bundle's resource dir, the interpreter from the app-data venv the
+//! D-315 bootstrap builds, and compiled sidecars beside the app's executable —
+//! never a build-machine path, which on the machine that built the release
+//! still exists and so silently "works" there and nowhere else. See
+//! `docs/notes/sidecar-lifecycle.md`.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -114,6 +120,96 @@ pub(crate) const SHARED_ENV_DIR: &str = "ai-env";
 /// has to live outside that check, not inside it as a permanent exception.
 const SHARED_PYTHON_ENV: &str = "CHROMA_SIDECAR_PYTHON";
 
+/// Given to every Python sidecar in a packaged build: a writable directory of its
+/// own, under the app's data directory, for anything it would otherwise write
+/// beside its source (D-390) — `ai/` keeps its downloaded model weights there.
+/// Unset in a dev run, where the sidecar's own directory is writable and is where
+/// those files have always lived.
+pub const SIDECAR_DATA_DIR_ENV: &str = "APELLES_SIDECAR_DATA_DIR";
+
+// ---- where this build's sidecars are (D-390 / B-254) -------------------------------
+
+/// Where this process finds the sidecars' code, their interpreter and compiled
+/// sidecar binaries.
+///
+/// **Why an explicit, configured layout and not "try the dev path, then the
+/// bundle".** The dev paths are relative to `CARGO_MANIFEST_DIR`, which is baked in
+/// at compile time and names the *build machine's* checkout. On every other Mac
+/// that path is absent and a fall-through would be harmless; on the machine that
+/// built the release it is present, so a packaged `.app` would run the
+/// developer's `ai/` sources on the developer's per-sidecar venv and the
+/// developer's `target/debug/apelles-mcp` — B-254, found by testing the installed
+/// release on the build machine, which is the one place it works and therefore
+/// the one place nobody notices. `app/src-tauri/src/chroma/ai_env.rs` made the
+/// same call for the AI-env paths (D-315); this is that rule applied to the rest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Layout {
+    /// A dev checkout (`tauri dev`, `cargo run`, `cargo test`): everything is
+    /// found relative to this crate's manifest directory. The default when
+    /// nothing configured a layout, so tests and tools need no setup.
+    Dev,
+    /// A packaged app. No compile-time path is ever consulted.
+    Packaged {
+        /// Read-only directory holding each Python sidecar's sources, as
+        /// `<resources>/<dir>/server.py` (staged by `app/src-tauri/build.rs`).
+        resources: PathBuf,
+        /// Writable per-user app data directory. Python's bytecode cache and each
+        /// sidecar's [`SIDECAR_DATA_DIR_ENV`] go under it, because the resources
+        /// above live inside a code-signed bundle that must never be written to.
+        data: PathBuf,
+    },
+    /// A packaged app whose resource or data directory Tauri could not name (in
+    /// practice: `current_exe()` or `$HOME` unavailable). Every lookup that needs
+    /// them misses, so the Python sidecars report "can't start" — and, like
+    /// [`Layout::Packaged`], no compile-time path is ever consulted in their place.
+    PackagedUnresolved,
+}
+
+impl Layout {
+    /// The extra environment a Python sidecar is started with under this layout.
+    ///
+    /// **Bytecode, decided deliberately (D-390).** CPython writes `__pycache__/`
+    /// beside every module it imports. Beside the bundled sources that is inside
+    /// the signed `.app`: at best a permission error swallowed on every start, at
+    /// worst (an admin user, `/Applications` writable) a modified bundle whose
+    /// signature no longer verifies. `PYTHONDONTWRITEBYTECODE=1` would avoid that by
+    /// never caching anything — but `uv` does not precompile the venv, so torch and
+    /// transformers would then be recompiled from source on every sidecar start.
+    /// `PYTHONPYCACHEPREFIX` keeps the cache and moves the whole tree into app data
+    /// instead: one compile on first start, cached after. A dev run sets neither
+    /// and behaves as it always has.
+    fn python_env(&self, sidecar: &str) -> Vec<(&'static str, PathBuf)> {
+        match self {
+            Layout::Dev | Layout::PackagedUnresolved => Vec::new(),
+            Layout::Packaged { data, .. } => vec![
+                ("PYTHONPYCACHEPREFIX", data.join("python-cache")),
+                (
+                    SIDECAR_DATA_DIR_ENV,
+                    data.join("sidecar-data").join(sidecar),
+                ),
+            ],
+        }
+    }
+}
+
+static LAYOUT: OnceLock<Layout> = OnceLock::new();
+
+/// Tell this module which layout this process runs from. Called once by the app,
+/// in `.setup()`, *before* any supervisor thread starts — a thread that resolved
+/// against the default [`Layout::Dev`] first would be exactly B-254 again. Later
+/// calls are ignored: the layout cannot change while the process runs.
+pub fn configure_layout(layout: Layout) {
+    if LAYOUT.set(layout).is_err() {
+        log::warn!("[sidecar] layout already configured — ignoring a second configure_layout");
+    }
+}
+
+/// The configured layout, or [`Layout::Dev`] when nothing configured one.
+pub fn layout() -> &'static Layout {
+    static DEV: Layout = Layout::Dev;
+    LAYOUT.get().unwrap_or(&DEV)
+}
+
 // ---- the specs --------------------------------------------------------------------
 
 /// *What* to start, as opposed to the [`SidecarSpec`] facts (name, port, env vars)
@@ -136,10 +232,11 @@ pub enum Launch {
     /// (`<workspace>/crates/apelles-ai`) and are tried in order until one
     /// contains a `server.py`. `"../../<dir>"` is the real post-D-145 path; the
     /// shorter ones are kept so the lookup still works if this crate is ever
-    /// nested differently.
+    /// nested differently. Those candidates apply under [`Layout::Dev`] only; a
+    /// packaged build looks at `<resources>/<dir>` and nowhere else (D-390).
     PythonUvicorn {
-        /// Directory name under the workspace root, and the basis of the
-        /// dev-layout candidates.
+        /// Directory name under the workspace root, the basis of the dev-layout
+        /// candidates, and the directory name inside the bundle's resources.
         dir: &'static str,
         /// Override the resolved directory (must contain `server.py`).
         dir_env: &'static str,
@@ -499,10 +596,29 @@ fn is_stale(expected: &Option<String>, got: &Option<String>) -> bool {
 /// Where a `PythonUvicorn` sidecar's code lives. `None` for any other launch kind —
 /// there is no directory to find.
 fn resolve_dir(spec: &SidecarSpec) -> Option<PathBuf> {
+    let Launch::PythonUvicorn { dir_env, .. } = &spec.launch else {
+        return None;
+    };
+    resolve_dir_in(spec, layout(), std::env::var(dir_env).ok())
+}
+
+/// [`resolve_dir`] with the layout and the `dir_env` override's value passed in, so
+/// dev, packaged and override are each unit-testable without configuring this
+/// process's one global layout or mutating its environment.
+///
+/// The override wins under either layout. After it: the bundle's `<resources>/<dir>`
+/// when packaged — and *only* that, so a missing resource is a visible "can't
+/// start" rather than a silent fall-through to the build machine's checkout
+/// (B-254) — or the `CARGO_MANIFEST_DIR` sweep in a dev checkout.
+fn resolve_dir_in(
+    spec: &SidecarSpec,
+    layout: &Layout,
+    dir_override: Option<String>,
+) -> Option<PathBuf> {
     let Launch::PythonUvicorn { dir, dir_env, .. } = &spec.launch else {
         return None;
     };
-    if let Ok(d) = std::env::var(dir_env) {
+    if let Some(d) = dir_override {
         let p = PathBuf::from(&d);
         if p.join("server.py").is_file() {
             return Some(p);
@@ -512,11 +628,18 @@ fn resolve_dir(spec: &SidecarSpec) -> Option<PathBuf> {
             spec.name
         );
     }
+    match layout {
+        Layout::Packaged { resources, .. } => {
+            let c = resources.join(dir);
+            return c.join("server.py").is_file().then_some(c);
+        }
+        Layout::PackagedUnresolved => return None,
+        Layout::Dev => {}
+    }
     // Dev layout: CARGO_MANIFEST_DIR = <workspace>/crates/apelles-ai, the sidecar
     // dirs are <workspace>/ai and <workspace>/ai-media — both direct workspace
     // children of the repo root, so "../../<dir>" resolves. Same prefixes as
     // `resolve_shared_python`, which is looking for a sibling of these dirs.
-    // TODO(Phase 4): packaged builds need a resource-dir lookup instead — docs/notes/sidecar-lifecycle.md.
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     for prefix in DEV_LAYOUT_PREFIXES {
         let c = manifest.join(prefix).join(dir);
@@ -570,6 +693,11 @@ fn resolve_shared_python() -> Option<PathBuf> {
         // is very likely building it right now.
     }
 
+    // B-254: a packaged build's venv is the configured one above or none at all.
+    // The sweep below names the build machine's checkout.
+    if *layout() != Layout::Dev {
+        return None;
+    }
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     for prefix in DEV_LAYOUT_PREFIXES {
         let p = venv_python(&manifest.join(prefix).join(SHARED_ENV_DIR).join(".venv"));
@@ -603,23 +731,31 @@ fn resolve_shared_python() -> Option<PathBuf> {
 /// A set-but-missing *override* is a hard error, never a silent fall-through: the
 /// user named a specific interpreter, and quietly running a different one is how
 /// an afternoon gets lost. A missing *venv* is not an error — that is the fall-through.
+///
+/// **A packaged build climbs rungs 1, 2 and 4 only** (D-390 / B-254). Rung 3 is a
+/// developer's tool and the bundled sources never carry a `.venv`; rung 5 would
+/// hand a sidecar that needs torch and MLX the system's bare `python3`, which can
+/// only crash-loop. Until the D-315 bootstrap has built the app-data venv, the
+/// honest answer is "not yet", and the supervisor's slow retry picks it up the
+/// moment it exists.
 fn resolve_python(
     spec: &SidecarSpec,
     dir: &Path,
     python_env: &str,
 ) -> Result<(PathBuf, String), String> {
-    resolve_python_with(spec, dir, python_env, resolve_shared_python())
+    resolve_python_with(spec, dir, python_env, resolve_shared_python(), layout())
 }
 
-/// [`resolve_python`] with the shared-venv lookup passed in, so the ladder's
-/// ordering — the part a future change can actually get wrong — is unit-testable
-/// against real temp directories instead of depending on whether the machine
-/// running the tests happens to have run `ai-env/setup.sh`.
+/// [`resolve_python`] with the shared-venv lookup and the layout passed in, so the
+/// ladder's ordering — the part a future change can actually get wrong — is
+/// unit-testable against real temp directories instead of depending on whether the
+/// machine running the tests happens to have run `ai-env/setup.sh`.
 fn resolve_python_with(
     spec: &SidecarSpec,
     dir: &Path,
     python_env: &str,
     shared: Option<PathBuf>,
+    layout: &Layout,
 ) -> Result<(PathBuf, String), String> {
     for (var, what) in [
         (python_env, "explicit"),
@@ -635,6 +771,17 @@ fn resolve_python_with(
             }
             return Ok((pb, format!("{var}, {what}")));
         }
+    }
+
+    if *layout != Layout::Dev {
+        return shared
+            .map(|s| (s, format!("shared {SHARED_ENV_DIR} venv (app data)")))
+            .ok_or_else(|| {
+                format!(
+                    "{} sidecar can't start yet: the AI environment is still being set up (D-315). It starts on its own once that finishes.",
+                    spec.name
+                )
+            });
     }
 
     let own = venv_python(&dir.join(".venv"));
@@ -682,8 +829,25 @@ fn resolve_python_with(
 /// custom `CARGO_TARGET_DIR`, which a hardcoded `target/` would not.
 ///
 /// The workspace sweep after it is for callers nested somewhere else — a test
-/// binary in `<target>/debug/deps/`, most of all.
+/// binary in `<target>/debug/deps/`, most of all — and runs under [`Layout::Dev`]
+/// only. In a packaged build it is the build machine's `target/`, which is how the
+/// installed release came to run the developer's `target/debug/apelles-mcp`
+/// (B-254): the bundle had no `apelles-mcp` of its own, and the sweep found one.
 pub(crate) fn resolve_bin(bin: &str, bin_env: &str) -> Option<PathBuf> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf));
+    resolve_bin_in(bin, bin_env, exe_dir.as_deref(), layout())
+}
+
+/// [`resolve_bin`] with the executable's directory and the layout passed in, so the
+/// packaged-vs-dev rule is unit-testable from a test binary.
+fn resolve_bin_in(
+    bin: &str,
+    bin_env: &str,
+    exe_dir: Option<&Path>,
+    layout: &Layout,
+) -> Option<PathBuf> {
     if let Ok(p) = std::env::var(bin_env) {
         let pb = PathBuf::from(&p);
         if pb.is_file() {
@@ -692,15 +856,16 @@ pub(crate) fn resolve_bin(bin: &str, bin_env: &str) -> Option<PathBuf> {
         log::warn!("[sidecar] {bin_env}={p} is not a file — ignoring it");
     }
 
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
+    if let Some(dir) = exe_dir {
         let c = dir.join(bin);
         if c.is_file() {
             return Some(c);
         }
     }
 
+    if *layout != Layout::Dev {
+        return None;
+    }
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     for profile in ["debug", "release"] {
         let c = manifest.join("../../target").join(profile).join(bin);
@@ -761,7 +926,8 @@ fn resolve_command(spec: &SidecarSpec) -> Result<Command, String> {
                     "--port",
                 ])
                 .arg(port.to_string())
-                .current_dir(&dir);
+                .current_dir(&dir)
+                .envs(layout().python_env(spec.name));
             Ok(command)
         }
 
@@ -1473,6 +1639,7 @@ mod tests {
             &sidecar_dir,
             "CHROMA_AI_PYTHON_UNSET",
             Some(shared.clone()),
+            &Layout::Dev,
         )
         .expect("a shared venv is a resolvable interpreter");
 
@@ -1500,6 +1667,7 @@ mod tests {
             &tmp.join("ai"),
             "CHROMA_AI_PYTHON_UNSET",
             Some(shared.clone()),
+            &Layout::Dev,
         )
         .expect("a per-sidecar venv is a resolvable interpreter");
 
@@ -1521,7 +1689,13 @@ mod tests {
         let sidecar_dir = tmp.join("ai");
         std::fs::create_dir_all(&sidecar_dir).unwrap();
 
-        match resolve_python_with(&AI, &sidecar_dir, "CHROMA_AI_PYTHON_UNSET", None) {
+        match resolve_python_with(
+            &AI,
+            &sidecar_dir,
+            "CHROMA_AI_PYTHON_UNSET",
+            None,
+            &Layout::Dev,
+        ) {
             Ok((python, source)) => {
                 assert_eq!(source, "python3 on PATH");
                 assert!(
@@ -1601,5 +1775,174 @@ mod tests {
             "{found:?} is not inside a virtualenv — no pyvenv.cfg at {venv_root:?}; \
              the symlink was probably resolved away"
         );
+    }
+
+    // ---- D-390 / B-254: a packaged build never reaches the build machine ----------
+
+    fn packaged(tmp: &Path) -> Layout {
+        Layout::Packaged {
+            resources: tmp.join("Resources").join("resources"),
+            data: tmp.join("Application Support"),
+        }
+    }
+
+    /// The bundle's own copy is found, under the spec's own directory name.
+    #[test]
+    fn packaged_resolves_the_python_sources_inside_the_bundle() {
+        let tmp = tmpdir("pkg_dir");
+        let layout = packaged(&tmp);
+        let Layout::Packaged { resources, .. } = &layout else {
+            unreachable!("packaged() builds a Packaged layout");
+        };
+        for spec in ALL {
+            let Launch::PythonUvicorn { dir, .. } = &spec.launch else {
+                panic!("{} is not a Python sidecar", spec.name);
+            };
+            std::fs::create_dir_all(resources.join(dir)).unwrap();
+            std::fs::write(resources.join(dir).join("server.py"), "").unwrap();
+            assert_eq!(
+                resolve_dir_in(spec, &layout, None),
+                Some(resources.join(dir))
+            );
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// **B-254 itself.** This test runs inside a checkout, so the dev-layout `ai/`
+    /// and `ai-media/` genuinely exist — exactly the build machine's situation. A
+    /// packaged layout whose resources lack them must still say "not found" rather
+    /// than fall through to the checkout, which is what shipped.
+    #[test]
+    fn packaged_never_falls_back_to_the_checkout() {
+        let tmp = tmpdir("pkg_no_fallback");
+        for spec in ALL {
+            assert!(
+                resolve_dir_in(spec, &Layout::Dev, None).is_some(),
+                "precondition: the dev layout finds {} in this checkout",
+                spec.name
+            );
+            for layout in [packaged(&tmp), Layout::PackagedUnresolved] {
+                assert_eq!(
+                    resolve_dir_in(spec, &layout, None),
+                    None,
+                    "{layout:?} must not resolve {} to the build machine's checkout",
+                    spec.name
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// `CHROMA_AI_DIR` / `CHROMA_AI_MEDIA_DIR` keep working in both layouts, and an
+    /// override with no `server.py` is ignored, not trusted.
+    #[test]
+    fn the_dir_override_wins_in_both_layouts_and_a_bad_one_is_ignored() {
+        let tmp = tmpdir("dir_override");
+        let custom = tmp.join("custom-ai");
+        std::fs::create_dir_all(&custom).unwrap();
+        std::fs::write(custom.join("server.py"), "").unwrap();
+        let given = Some(custom.to_string_lossy().into_owned());
+
+        for layout in [Layout::Dev, packaged(&tmp)] {
+            assert_eq!(
+                resolve_dir_in(&AI, &layout, given.clone()),
+                Some(custom.clone()),
+                "{layout:?}"
+            );
+        }
+        let bogus = Some(tmp.join("nope").to_string_lossy().into_owned());
+        assert_eq!(resolve_dir_in(&AI, &packaged(&tmp), bogus), None);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A packaged build runs on the shared app-data venv and nothing else — not a
+    /// per-sidecar `.venv` (B-254's `ai` sidecar ran on the developer's), and not
+    /// `python3` on `PATH`. Before the bootstrap has built the venv it says so.
+    #[test]
+    fn packaged_python_is_the_shared_venv_or_a_clear_not_yet() {
+        let tmp = tmpdir("pkg_python");
+        let shared = fake_venv(&tmp, "ai-env");
+        let own = fake_venv(&tmp, "ai");
+        let layout = packaged(&tmp);
+
+        let (python, source) = resolve_python_with(
+            &AI,
+            &tmp.join("ai"),
+            "CHROMA_AI_PYTHON_UNSET",
+            Some(shared.clone()),
+            &layout,
+        )
+        .expect("the shared venv exists");
+        assert_eq!(python, shared, "the per-sidecar {own:?} must not win here");
+        assert!(source.contains("shared"), "got {source:?}");
+
+        let err = resolve_python_with(
+            &AI,
+            &tmp.join("ai"),
+            "CHROMA_AI_PYTHON_UNSET",
+            None,
+            &layout,
+        )
+        .expect_err("no shared venv yet must not fall to the own venv or PATH");
+        assert!(err.contains("AI environment"), "got {err:?}");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Beside the executable is found in both layouts; the workspace `target/`
+    /// sweep is dev-only.
+    #[test]
+    fn packaged_finds_a_bundled_bin_beside_the_exe_and_never_sweeps_target() {
+        let tmp = tmpdir("pkg_bin");
+        let macos = tmp.join("MacOS");
+        std::fs::create_dir_all(&macos).unwrap();
+        std::fs::write(macos.join("fake-sidecar"), "").unwrap();
+        let empty = tmp.join("Empty");
+        std::fs::create_dir_all(&empty).unwrap();
+
+        for layout in [Layout::Dev, packaged(&tmp)] {
+            assert_eq!(
+                resolve_bin_in(
+                    "fake-sidecar",
+                    "CHROMA_TEST_BIN_UNSET",
+                    Some(&macos),
+                    &layout
+                ),
+                Some(macos.join("fake-sidecar")),
+                "{layout:?}"
+            );
+        }
+        // `uv` is in `target/<profile>/` whenever the app has been built in this
+        // checkout; whether or not it is, a packaged lookup from an empty
+        // executable dir must come back empty.
+        assert_eq!(
+            resolve_bin_in("uv", "CHROMA_TEST_BIN_UNSET", Some(&empty), &packaged(&tmp)),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Nothing a packaged sidecar writes may land in the signed bundle: the
+    /// bytecode cache and the sidecar's data dir both go under app data.
+    #[test]
+    fn packaged_python_writes_go_to_app_data_and_dev_sets_nothing() {
+        assert!(Layout::Dev.python_env("ai").is_empty());
+
+        let tmp = tmpdir("pkg_env");
+        let layout = packaged(&tmp);
+        let Layout::Packaged { resources, data } = &layout else {
+            unreachable!("packaged() builds a Packaged layout");
+        };
+        let env = layout.python_env("ai");
+        for key in ["PYTHONPYCACHEPREFIX", SIDECAR_DATA_DIR_ENV] {
+            let Some((_, v)) = env.iter().find(|(k, _)| *k == key) else {
+                panic!("{key} must be set for a packaged Python sidecar");
+            };
+            assert!(v.starts_with(data), "{key}={v:?} must be under app data");
+            assert!(
+                !v.starts_with(resources),
+                "{key}={v:?} is inside the bundle"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

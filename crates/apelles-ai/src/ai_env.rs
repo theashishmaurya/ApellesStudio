@@ -169,9 +169,17 @@ pub fn configure(paths: AiEnvPaths) {
 /// checkout all work without the app having to be involved, and it is the same
 /// `CARGO_MANIFEST_DIR`-relative sweep [`sidecar::resolve_shared_python`] uses so the
 /// two can never disagree about which `ai-env/` is *the* one.
+///
+/// The fallback runs under [`sidecar::Layout::Dev`] only (D-390 / B-254): in a packaged
+/// build `CARGO_MANIFEST_DIR` is the build machine's checkout, so if the app could not
+/// configure paths the honest answer is `None` (→ `Phase::Unavailable`), not the
+/// developer's `ai-env/`.
 pub fn paths() -> Option<AiEnvPaths> {
     if let Some(p) = PATHS.get() {
         return Some(p.clone());
+    }
+    if *sidecar::layout() != sidecar::Layout::Dev {
+        return None;
     }
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     for prefix in sidecar::DEV_LAYOUT_PREFIXES {
