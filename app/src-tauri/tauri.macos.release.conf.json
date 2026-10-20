@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "externalBin": [
+      "binaries/uv",
+      "binaries/ffmpeg",
+      "binaries/ffprobe",
+      "binaries/apelles-mcp"
+    ]
+  }
+}

@@ -482,6 +482,228 @@ fn stage_ai_env_resources(manifest_dir: &Path) {
     }
 }
 
+// ---- the Python sidecars' sources, shipped inside the bundle (D-390 / B-254) -------
+//
+// Until D-390 nothing put `ai/` or `ai-media/` into the bundle at all, and the
+// packaged app found them only because `apelles_ai::sidecar` fell back to a
+// `CARGO_MANIFEST_DIR`-relative path — the build machine's checkout, which exists
+// on exactly one Mac. They are now staged into `resources/sidecars/<dir>/`, so the
+// existing `"resources"` bundle entry ships them with no `../..` reach-out, the same
+// way `stage_ai_env_resources` ships the lock file.
+
+/// The Python sidecars whose sources ship, by their directory under the workspace
+/// root. Must match the `dir` of `apelles_ai::sidecar::{AI, AI_MEDIA}`; the
+/// `the_bundled_sidecar_sources_are_the_ones_the_specs_name` test holds the two
+/// together.
+const SIDECAR_SOURCE_DIRS: [&str; 2] = ["ai", "ai-media"];
+
+/// Is `name` (a file directly inside a sidecar source tree) something the sidecar
+/// runs, or must carry?
+///
+/// An allowlist, not a denylist, so a new kind of file stays out until someone
+/// decides it belongs: Python modules (minus `test_*.py`, which only `pytest` runs),
+/// and `LICENSE*`, because the vendored model code under `ai/vendor/` is redistributed
+/// and its licence has to travel with it. Everything else — `README.md`,
+/// `requirements.txt` (the lock is shipped separately), `run.sh` — is for a developer.
+fn is_shipped_sidecar_file(name: &str) -> bool {
+    (name.ends_with(".py") && !name.starts_with("test_")) || name.starts_with("LICENSE")
+}
+
+/// Is `name` a directory to leave out entirely? Virtualenvs and every other dot-dir
+/// (`.venv`, `.pytest_cache`), bytecode caches, and — at a sidecar's top level only —
+/// `models/`, where a dev checkout's `ai/` keeps its downloaded weights.
+fn is_skipped_sidecar_dir(name: &str, top_level: bool) -> bool {
+    name.starts_with('.') || name == "__pycache__" || (top_level && name == "models")
+}
+
+/// Every shipped file under `dir`, as paths relative to `root`.
+fn collect_sidecar_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
+    let top_level = dir == root;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.file_type()?.is_dir() {
+            if !is_skipped_sidecar_dir(&name, top_level) {
+                collect_sidecar_files(root, &path, out)?;
+            }
+        } else if is_shipped_sidecar_file(&name)
+            && let Ok(rel) = path.strip_prefix(root)
+        {
+            out.push(rel.to_path_buf());
+        }
+    }
+    Ok(())
+}
+
+/// Stage each Python sidecar's runnable sources into `resources/sidecars/<dir>/`.
+///
+/// **Release profile only.** A dev run resolves the sidecars straight from the
+/// checkout (`Layout::Dev`), so staging there would only cost something: every edit
+/// to a `.py` file would re-run this script and recompile the whole `apelles` crate.
+///
+/// Mirrors the source exactly — writes only what differs (B-177: `tauri dev` watches
+/// `src-tauri/`, and an unconditional copy is a rebuild loop) and deletes a staged
+/// file whose source is gone, so a removed module cannot keep shipping.
+fn stage_sidecar_sources(manifest_dir: &Path, profile: &str) {
+    if profile != "release" {
+        return;
+    }
+    let dest_root = manifest_dir.join("resources").join("sidecars");
+    for dir in SIDECAR_SOURCE_DIRS {
+        let src_root = manifest_dir.join("../..").join(dir);
+        let dest = dest_root.join(dir);
+
+        let mut files = Vec::new();
+        if let Err(e) = collect_sidecar_files(&src_root, &src_root, &mut files) {
+            panic!(
+                "D-390: cannot read the {dir}/ sidecar sources at {}: {e}",
+                src_root.display()
+            );
+        }
+        if !files.iter().any(|f| f == Path::new("server.py")) {
+            panic!(
+                "D-390: {} has no server.py — the bundle would ship a sidecar that cannot start.",
+                src_root.display()
+            );
+        }
+
+        // Re-run when a shipped file changes, or when one is added or removed in any
+        // directory that holds one (a directory's mtime moves on both).
+        let mut watched_dirs = std::collections::BTreeSet::new();
+        for rel in &files {
+            let src = src_root.join(rel);
+            println!("cargo:rerun-if-changed={}", src.display());
+            if let Some(parent) = src.parent() {
+                watched_dirs.insert(parent.to_path_buf());
+            }
+            let Ok(bytes) = fs::read(&src) else {
+                panic!("D-390: cannot read {}", src.display());
+            };
+            let out = dest.join(rel);
+            if fs::read(&out).is_ok_and(|existing| existing == bytes) {
+                continue;
+            }
+            let written = out
+                .parent()
+                .map_or(Ok(()), fs::create_dir_all)
+                .and_then(|()| fs::write(&out, &bytes));
+            if let Err(e) = written {
+                panic!("D-390: failed to stage {}: {e}", src.display());
+            }
+        }
+        for d in watched_dirs {
+            println!("cargo:rerun-if-changed={}", d.display());
+        }
+
+        // Prune whatever is staged but no longer shipped.
+        let mut staged = Vec::new();
+        if dest.is_dir() && collect_all_files(&dest, &dest, &mut staged).is_ok() {
+            for rel in staged.iter().filter(|rel| !files.contains(rel)) {
+                if let Err(e) = fs::remove_file(dest.join(rel)) {
+                    panic!("D-390: failed to remove stale {}: {e}", rel.display());
+                }
+            }
+        }
+    }
+}
+
+/// Every file under `dir`, relative to `root` — used only to find stale staged files,
+/// so it applies no filter.
+fn collect_all_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            collect_all_files(root, &path, out)?;
+        } else if let Ok(rel) = path.strip_prefix(root) {
+            out.push(rel.to_path_buf());
+        }
+    }
+    Ok(())
+}
+
+// ---- apelles-mcp: the MCP server, bundled as an `externalBin` (D-390 / B-254) -------
+//
+// `apelles-mcp` is a binary of this same Cargo workspace, not something fetched, so
+// unlike `uv`/`ffmpeg` it cannot be downloaded here — it has to be *built* first, and
+// a build script cannot build a sibling workspace package (Cargo holds the target-dir
+// lock; artifact dependencies are unstable). `tauri:before-build` already runs
+// `cargo build -p apelles-mcp --release` before Tauri's own `cargo build` (B-169), so
+// by the time this runs the release binary is in this build's profile directory; all
+// this does is copy it to the `binaries/apelles-mcp-<triple>` name `externalBin`
+// expects.
+//
+// It is declared as an `externalBin` only in `tauri.macos.release.conf.json`, the
+// overlay `npm run tauri:build` passes with `--config` — not in `tauri.macos.conf.json`
+// like `uv`/`ffmpeg`. Declaring it there would make every `cargo check`/`cargo test`
+// on a fresh checkout fail until `apelles-mcp` had been built, and in a dev run
+// `tauri_build` would delete cargo's own `target/debug/apelles-mcp` and replace it with
+// whatever copy was last staged (`copy_binaries` removes the destination first) —
+// exactly B-169's stale-binary crash loop, reintroduced. Dev keeps running
+// `target/debug/apelles-mcp` straight from cargo, beside the dev executable.
+
+/// The externalBin path the release overlay declares, and that this stages.
+const MCP_EXTERNAL_BIN: &str = "binaries/apelles-mcp";
+
+/// Stage the release `apelles-mcp` for bundling, when — and only when — the Tauri
+/// config this build runs under declares it (`TAURI_CONFIG`, which the Tauri CLI sets
+/// from `--config` and `tauri_build` already re-runs on).
+fn stage_mcp(manifest_dir: &Path, target_os: &str, target_arch: &str, profile: &str) {
+    let declared = env::var("TAURI_CONFIG").is_ok_and(|c| c.contains(MCP_EXTERNAL_BIN));
+    if !declared {
+        return;
+    }
+    if profile != "release" {
+        panic!(
+            "D-390: {MCP_EXTERNAL_BIN} is bundled from a release build only, and this is a \
+             `{profile}` build. Build the bundle with `npm run tauri:build` (no --debug)."
+        );
+    }
+    if target_os != "macos" || target_arch != "aarch64" {
+        panic!(
+            "D-390: the bundled apelles-mcp is wired up for macOS ARM only (v1's one \
+             platform), not {target_os}-{target_arch}."
+        );
+    }
+    // OUT_DIR is `<profile dir>/build/apelles-<hash>/out`; the profile dir is where
+    // cargo puts every binary of this build, `apelles-mcp` included.
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
+    let Some(profile_dir) = out_dir.ancestors().nth(3) else {
+        panic!("D-390: unexpected OUT_DIR layout {}", out_dir.display());
+    };
+    let src = profile_dir.join("apelles-mcp");
+    let dest = manifest_dir.join(format!("{MCP_EXTERNAL_BIN}-{UV_TARGET}"));
+    let Ok(bytes) = fs::read(&src) else {
+        // Never fall back to a previously staged copy: that is how B-169 shipped.
+        fs::remove_file(&dest).ok();
+        panic!(
+            "D-390: {} is missing. `npm run tauri:build` builds it first via \
+             `tauri:before-build`; building by hand, run `cargo build -p apelles-mcp \
+             --release` first (with the same --target, if any).",
+            src.display()
+        );
+    };
+    println!("cargo:rerun-if-changed={}", src.display());
+    if fs::read(&dest).is_ok_and(|existing| existing == bytes) {
+        return;
+    }
+    let written = dest
+        .parent()
+        .map_or(Ok(()), fs::create_dir_all)
+        .and_then(|()| fs::write(&dest, &bytes));
+    if let Err(e) = written {
+        panic!("D-390: failed to stage {}: {e}", dest.display());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = fs::set_permissions(&dest, fs::Permissions::from_mode(0o755)) {
+            panic!("D-390: failed to mark {} executable: {e}", dest.display());
+        }
+    }
+}
+
 fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
@@ -594,6 +816,11 @@ fn main() {
     // D-389: the bundled ffmpeg/ffprobe every decode, probe and export runs.
     stage_ffmpeg(&manifest_dir, &target_os, &target_arch);
     stage_ai_env_resources(&manifest_dir);
+    // D-390/B-254: the Python sidecars' sources and the MCP server, so a packaged app
+    // runs its own copies instead of the build machine's.
+    let profile = env::var("PROFILE").unwrap_or_default();
+    stage_sidecar_sources(&manifest_dir, &profile);
+    stage_mcp(&manifest_dir, &target_os, &target_arch, &profile);
 
     println!("cargo:rerun-if-changed=build.rs");
 

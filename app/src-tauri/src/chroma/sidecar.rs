@@ -37,7 +37,11 @@ pub use apelles_ai::sidecar::{
 /// Cargo workspace, so there is no directory, no interpreter and no venv to
 /// resolve — `Launch::WorkspaceBin` finds it beside the app's own executable
 /// (which is `target/<profile>/` in a dev run and the bundle's binary directory
-/// in a packaged one) and appends the port.
+/// in a packaged one) and appends the port. The bundle gets its copy as an
+/// `externalBin` declared by `tauri.macos.release.conf.json` and staged by
+/// `build.rs`'s `stage_mcp` (D-390); until then a packaged app found only the
+/// build machine's `target/debug/apelles-mcp`, through a dev-only fallback that
+/// `Layout::Packaged` now switches off (B-254).
 ///
 /// `CHROMA_MCP_NO_SPAWN` stops the app starting one, for anyone who would rather
 /// run it by hand. Note that the supervisor never touches a server it did not
@@ -71,6 +75,54 @@ pub static MCP: SidecarSpec = SidecarSpec {
     // imported. `mcp_default_port_matches_the_server` below is the guard.
     default_port: 19790,
 };
+
+/// Where, under the bundle's resource directory, `build.rs`'s
+/// `stage_sidecar_sources` puts each Python sidecar's sources
+/// (`resources/sidecars/<dir>/server.py`). The test below holds the two together.
+pub const SIDECAR_SOURCES_RESOURCE: &str = "resources/sidecars";
+
+/// Tell `apelles_ai::sidecar` which layout this run uses (D-390 / B-254). Called
+/// from `lib.rs` `.setup()` **before** any supervisor thread is spawned, since a
+/// thread that resolves first would resolve against the default dev layout.
+///
+/// Gated on `tauri::is_dev()` for the reason `chroma::ai_env::resolve_paths`
+/// spells out: "does the workspace directory exist" is the subtly wrong test,
+/// because on the machine that built the release it does — which is exactly how
+/// the installed release came to run the developer's `ai/` sources, per-sidecar
+/// venv and `target/debug/apelles-mcp` (B-254).
+pub fn configure_layout(app: &tauri::AppHandle) {
+    use apelles_ai::sidecar::Layout;
+    use tauri::Manager;
+
+    if tauri::is_dev() {
+        apelles_ai::sidecar::configure_layout(Layout::Dev);
+        return;
+    }
+    let resources = app.path().resolve(
+        SIDECAR_SOURCES_RESOURCE,
+        tauri::path::BaseDirectory::Resource,
+    );
+    let data = app.path().app_data_dir();
+    let layout = match (resources, data) {
+        (Ok(resources), Ok(data)) => {
+            log::info!(
+                "[sidecar] packaged layout: sources {} | data {}",
+                resources.display(),
+                data.display()
+            );
+            Layout::Packaged { resources, data }
+        }
+        (resources, data) => {
+            log::error!(
+                "[sidecar] packaged layout unresolved (resources: {:?}, data: {:?}) — the Python sidecars cannot start",
+                resources.err(),
+                data.err()
+            );
+            Layout::PackagedUnresolved
+        }
+    };
+    apelles_ai::sidecar::configure_layout(layout);
+}
 
 /// Supervise the MCP server. Zero-argument for the same reason as the other two:
 /// `std::thread::spawn` needs an `FnOnce()`, and a spec-taking function is not
@@ -149,6 +201,43 @@ mod tests {
                 other.name
             );
         }
+    }
+
+    /// D-390/B-254 — `configure_layout` resolves the Python sources at
+    /// [`SIDECAR_SOURCES_RESOURCE`]`/<dir>`, and `build.rs` is what puts them there.
+    /// Both halves are strings no compiler relates, and a drift ships an app whose AI
+    /// sidecars say "can't start" on every Mac — so pin the staging destination and
+    /// the list of staged directories against the specs themselves.
+    #[test]
+    fn the_bundled_sidecar_sources_are_the_ones_the_specs_name() {
+        let build_rs = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("build.rs"),
+        )
+        .expect("build.rs should be readable");
+        assert_eq!(SIDECAR_SOURCES_RESOURCE, "resources/sidecars");
+        assert!(
+            build_rs.contains("join(\"resources\").join(\"sidecars\")"),
+            "build.rs must stage into {SIDECAR_SOURCES_RESOURCE}/"
+        );
+        let dirs: Vec<&str> = apelles_ai::sidecar::ALL
+            .iter()
+            .filter_map(|spec| match &spec.launch {
+                Launch::PythonUvicorn { dir, .. } => Some(*dir),
+                Launch::WorkspaceBin { .. } => None,
+            })
+            .collect();
+        let expected = format!(
+            "const SIDECAR_SOURCE_DIRS: [&str; {}] = [{}];",
+            dirs.len(),
+            dirs.iter()
+                .map(|d| format!("\"{d}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        assert!(
+            build_rs.contains(&expected),
+            "build.rs must stage exactly the Python sidecars' dirs: expected `{expected}`"
+        );
     }
 
     /// **B-169's regression guard.** The app spawns `target/<profile>/apelles-mcp`

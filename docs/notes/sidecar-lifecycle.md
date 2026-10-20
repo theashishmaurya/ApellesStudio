@@ -277,25 +277,41 @@ this: it builds the environment, not the model cache. (Note B-172 — `understan
 sets `HF_HUB_OFFLINE=1` unconditionally and so cannot download *its* model at all. A
 separate open bug, not a packaging gap.)
 
-### **STILL OPEN** — the sidecar *source* is not shipped as a resource
+### Packaged layout — what a release build runs (D-390, fixes B-254)
 
-`resolve_dir` still keys off `CARGO_MANIFEST_DIR` (a build-machine path) or the spec's
-`CHROMA_AI_DIR` / `CHROMA_AI_MEDIA_DIR` override, so a packaged bundle still has no
-`ai/server.py` or `ai-media/server.py` to run. Deliberately out of D-315's scope, which
-took the environment half only. What it needs:
+This used to be the "STILL OPEN" gap. While it stayed open, the first installed release
+started all three services from the build machine's checkout (B-254). What is true now:
 
-- both sidecar directories shipped via `bundle.resources` and resolved with
-  `app.path().resolve("ai", BaseDirectory::Resource)`, keeping the dev-layout sweep as
-  the fallback — the same two-case shape `chroma::ai_env::resolve_paths` already uses
-  for the lock file, so there is a worked precedent to copy;
-- a deliberate answer for `__pycache__`: the resource dir is inside the signed bundle
-  and Python will want to write bytecode next to the source
-  (`PYTHONDONTWRITEBYTECODE=1` is the obvious one, but it should be a decision);
-- ~~**`ffmpeg`**, which `ai-media/` hard-requires and which is not pip-installable~~ —
-  **done (D-389):** ffmpeg/ffprobe are bundled as `externalBin`s and the supervisor
-  spawns every sidecar with `CHROMA_FFMPEG`/`CHROMA_FFPROBE` set to
-  `apelles_media::ffmpeg_locate`'s answer, which `ai-media/ffmpeg_bin.py` reads.
+- **One configured layout.** `apelles_ai::sidecar::Layout` is `Dev`,
+  `Packaged { resources, data }` or `PackagedUnresolved`. `chroma::sidecar::configure_layout`
+  sets it in `.setup()` from `tauri::is_dev()`, **before** any supervisor thread starts.
+  The AI-env bootstrap's path configuration now also runs before them. Every
+  `CARGO_MANIFEST_DIR` sweep (`resolve_dir`, `resolve_shared_python`, `resolve_bin`'s
+  `target/` sweep, `ai_env::paths`' fallback) runs under `Dev` only.
 
-Until that lands a packaged build still needs `CHROMA_AI_DIR` + `CHROMA_AI_MEDIA_DIR`
-baked in, or those two sidecars disabled — but it no longer needs
-`CHROMA_SIDECAR_PYTHON`, because the interpreter is now built on the user's machine.
+  | | dev (`tauri dev`, `cargo test`) | packaged `.app` |
+  |---|---|---|
+  | `ai/`, `ai-media/` sources | `<workspace>/<dir>` | `Contents/Resources/resources/sidecars/<dir>` (read-only) |
+  | interpreter | override → `<dir>/.venv` → `<workspace>/ai-env/.venv` → `python3` | override → `<app data>/ai-env/.venv` → "AI environment still being set up" (retry) |
+  | `apelles-mcp` | cargo's `target/<profile>/apelles-mcp` (beside the exe) | `Contents/MacOS/apelles-mcp` (`externalBin`) |
+  | bytecode / model writes | beside the sources, as always | `PYTHONPYCACHEPREFIX=<app data>/python-cache`, `APELLES_SIDECAR_DATA_DIR=<app data>/sidecar-data/<name>` |
+
+  `CHROMA_AI_DIR` / `CHROMA_AI_MEDIA_DIR` / `CHROMA_*_PYTHON` / `CHROMA_SIDECAR_PYTHON` /
+  `CHROMA_MCP_BIN` override in both layouts.
+- **How the sources get in.** `build.rs`'s `stage_sidecar_sources` stages them in release
+  builds only. It copies an allowlist: `*.py` except `test_*.py`, plus `LICENSE*` for
+  the vendored model code. It skips `.venv`, dot-dirs, `__pycache__` and `ai/models/`,
+  writes only changed bytes and prunes stale files. That is 69 files, about 457 KB.
+- **How `apelles-mcp` gets in.** It is declared as an `externalBin` in
+  `tauri.macos.release.conf.json`, which `npm run tauri:build` passes with `--config`. It
+  is deliberately not in `tauri.macos.conf.json`, which dev and `cargo check` also merge;
+  see D-390 for why. `tauri:before-build` builds it (`--release`), and `build.rs`'s
+  `stage_mcp` copies it to `binaries/apelles-mcp-aarch64-apple-darwin`.
+- **Bytecode, decided.** `PYTHONPYCACHEPREFIX` keeps the cache and moves it into app data.
+  It was chosen over `PYTHONDONTWRITEBYTECODE=1`: `uv` does not precompile the venv, so
+  that option would recompile torch on every start (D-390).
+- ~~**`ffmpeg`**~~ — **done (D-389):** bundled; the supervisor passes
+  `CHROMA_FFMPEG`/`CHROMA_FFPROBE` to every sidecar.
+
+Not yet live-verified: the coordinator's installed `tauri:build` is the check. Its
+expected log lines are listed in B-254.

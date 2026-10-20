@@ -26,7 +26,7 @@
     "build": "npm run build --workspace app",
     "tauri": "npm run tauri --workspace app --",
     "tauri:dev": "npm run start --workspace app",
-    "tauri:build": "npm run tauri --workspace app -- build",
+    "tauri:build": "npm run tauri --workspace app -- build --config src-tauri/tauri.macos.release.conf.json",
     "typecheck": "npm run typecheck --workspace app",
     "test": "npm run test --workspaces --if-present"
   }

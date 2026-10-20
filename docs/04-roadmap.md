@@ -455,10 +455,10 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
      in a crate named for one of its three users. The mechanism is right and shared; only
      the home is wrong. A mechanical move — `apelles-ai` keeps `AI`/`AI_MEDIA` and
      re-exports, nothing else changes.
-   - **Packaged-build binary bundling.** `resolve_bin` already prefers the directory of
-     the app's own executable, which is where a Tauri `externalBin` lands, but nothing
-     bundles `apelles-mcp` yet. This inherits the existing Phase-4 sidecar packaging gap
-     (`docs/notes/sidecar-lifecycle.md`) rather than adding a new one.
+   - ~~**Packaged-build binary bundling.**~~ — **done, D-390 (2026-10-15).**
+     `apelles-mcp` is now an `externalBin` in `tauri.macos.release.conf.json`. It is
+     staged by `build.rs` from the `tauri:before-build` release build, and `resolve_bin`
+     no longer sweeps `target/` in a packaged build.
 
 1. ~~**One Python environment for both AI sidecars instead of two**~~ — **done, D-314
    (2026-09-12).** D-189's venv split rested on `ai/`'s `transformers<5` pin for
@@ -493,10 +493,12 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
    `docs/notes/ai-env-bootstrap.md`.
 
    Open items this leaves (both recorded in `docs/notes/sidecar-lifecycle.md`):
-   - **The sidecar *source* is still not shipped as a Tauri resource** —
-     `resolve_dir` still keys off `CARGO_MANIFEST_DIR`, so a packaged bundle has no
-     `ai/server.py` / `ai-media/server.py` to run. Needs `bundle.resources` + a
-     resource-dir rung, plus a deliberate `__pycache__` answer for a signed bundle.
+   - ~~**The sidecar *source* is still not shipped as a Tauri resource**~~ — **done,
+     D-390 (2026-10-15, fixes B-254).** The sources are staged into
+     `resources/sidecars/` for release builds, and `apelles-mcp` is a release-only
+     `externalBin`. Every `CARGO_MANIFEST_DIR` lookup is now dev-only, under a `Layout`
+     the app configures. Packaged Python sidecars run on the app-data venv, with
+     `PYTHONPYCACHEPREFIX` pointing into app data.
    - **`ffmpeg`**, which `ai-media/` hard-requires and which is not pip-installable,
      so the bootstrap cannot supply it. Bundle a binary or detect-and-degrade.
 
@@ -3259,6 +3261,11 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
 - ProRes export round-trip verified with Palmier's `swap_clip_media`.
 - **Packaging** — signed macOS build, sidecar + its Python bundled, models
   auto-downloaded (not lazy-fetched at first use, for a shipped build).
+  *Status:* ad-hoc signing is done (D-388) and ffmpeg is bundled (D-389). The
+  sidecar sources and `apelles-mcp` ship in the bundle and resolve from it (D-390).
+  The Python env is built on the user's machine (D-315). Still open: Developer ID +
+  notarization, and models are still lazy-fetched on first use (into app data since
+  D-390).
 - `docs/` cleaned for external readers, a real README, a 90-second demo.
 - **The three open product decisions** — name (D-010), licence (D-002, leaning AGPL),
   v1 headline feature (D-007). All shift under the 3-tab framing; not re-decided since.

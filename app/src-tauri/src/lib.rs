@@ -2062,6 +2062,22 @@ pub fn run() {
             jxl_oxide::integration::register_image_decoding_hook();
 
             {
+                // Apelles (D-390 / B-254): settle where every sidecar comes from —
+                // dev checkout or the bundle — and where the shared venv lives
+                // (D-315's bootstrap configures that before starting its thread),
+                // BEFORE any supervisor thread exists. A supervisor that resolved
+                // first would see the default dev layout, i.e. the build
+                // machine's checkout.
+                chroma::sidecar::configure_layout(app.handle());
+                // Apelles: the AI-env bootstrap (D-315). Not a sidecar — it
+                // builds the shared Python venv the two Python sidecars below run
+                // FROM, with a bundled `uv` so it works on a machine with no Python
+                // at all. Started here, at launch, rather than on the first AI-feature
+                // click, so it is usually finished before anyone reaches for one; it
+                // never blocks startup and every non-AI feature works throughout.
+                // Takes an `AppHandle` (unlike the three below) because it emits a
+                // live `ai-env-status` event the UI subscribes to.
+                chroma::ai_env::spawn_and_supervise(app.handle().clone());
                 // Apelles: start + supervise the `ai/` sidecar (D-028). Killed on exit
                 // via `chroma::sidecar::shutdown()` in the `.run(...)` handler below.
                 // apelles-ai extraction (D-142): `spawn_and_supervise` never used its
@@ -2080,15 +2096,6 @@ pub fn run() {
                 // supervisor: `Launch::WorkspaceBin` is the only difference, and
                 // the same `shutdown()` below kills this one too.
                 std::thread::spawn(chroma::sidecar::spawn_and_supervise_mcp);
-                // Apelles: and the AI-env bootstrap (D-315). Not a sidecar — it
-                // builds the shared Python venv the two Python sidecars above run
-                // FROM, with a bundled `uv` so it works on a machine with no Python
-                // at all. Started here, at launch, rather than on the first AI-feature
-                // click, so it is usually finished before anyone reaches for one; it
-                // never blocks startup and every non-AI feature works throughout.
-                // Takes an `AppHandle` (unlike the three above) because it emits a
-                // live `ai-env-status` event the UI subscribes to.
-                chroma::ai_env::spawn_and_supervise(app.handle().clone());
             }
 
             let window_cfg = app.config().app.windows.first().unwrap().clone();

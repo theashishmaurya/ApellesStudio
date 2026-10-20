@@ -227,5 +227,62 @@ mod tests {
                 "{bin} must be declared as an externalBin, got {bins:?}"
             );
         }
+        // D-390/B-254 — and `apelles-mcp` must NOT be declared here: this file is
+        // merged into dev builds and plain `cargo check`s too, where tauri_build
+        // would demand a built binary and then overwrite cargo's own
+        // `target/debug/apelles-mcp` with the last staged copy (B-169 again). It is
+        // the release overlay's, asserted below.
+        assert!(
+            !bins
+                .iter()
+                .any(|b| b.as_str() == Some("binaries/apelles-mcp")),
+            "apelles-mcp belongs in tauri.macos.release.conf.json, not the always-merged macOS config"
+        );
+    }
+
+    /// D-390/B-254 — the release bundle carries `apelles-mcp`, so a packaged app's
+    /// `resolve_bin` finds it beside the app's executable instead of sweeping the
+    /// build machine's `target/`. Three things must agree, and no compiler checks
+    /// any of them: the overlay declares it, the overlay still declares everything
+    /// the macOS config does (a `--config` merge *replaces* the array, it does not
+    /// append to it), and the one release-build command actually passes the overlay.
+    #[test]
+    fn the_release_overlay_bundles_apelles_mcp_alongside_every_other_tool() {
+        let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let read_json = |rel: &str| -> serde_json::Value {
+            let text = std::fs::read_to_string(here.join(rel))
+                .unwrap_or_else(|e| panic!("{rel} should be readable: {e}"));
+            serde_json::from_str(&text).unwrap_or_else(|e| panic!("{rel} is not JSON: {e}"))
+        };
+        let names = |v: &serde_json::Value| -> Vec<String> {
+            v["bundle"]["externalBin"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|b| b.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let base = names(&read_json("tauri.macos.conf.json"));
+        let release = names(&read_json("tauri.macos.release.conf.json"));
+
+        assert!(
+            release.iter().any(|b| b == "binaries/apelles-mcp"),
+            "the release overlay must bundle apelles-mcp, got {release:?}"
+        );
+        for bin in &base {
+            assert!(
+                release.contains(bin),
+                "the release overlay replaces externalBin wholesale, so it must keep {bin}; got {release:?}"
+            );
+        }
+
+        let pkg = read_json("../../package.json");
+        let script = pkg["scripts"]["tauri:build"].as_str().unwrap_or_default();
+        assert!(
+            script.contains("--config src-tauri/tauri.macos.release.conf.json"),
+            "`npm run tauri:build` must pass the release overlay, got {script:?}"
+        );
     }
 }

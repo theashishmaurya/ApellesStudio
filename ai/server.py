@@ -40,7 +40,12 @@ from PIL import Image
 from pydantic import BaseModel
 
 DEVICE = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
-MODELS_DIR = os.path.join(os.path.dirname(__file__), "models")
+# Downloaded weights. Beside this file in a dev checkout (where they have always
+# lived); in a packaged app this file is inside the signed, read-only bundle, so
+# the supervisor hands us a writable per-sidecar data dir under app data instead
+# (APELLES_SIDECAR_DATA_DIR — D-390 / B-254).
+_DATA_DIR = os.environ.get("APELLES_SIDECAR_DATA_DIR") or os.path.dirname(__file__)
+MODELS_DIR = os.path.join(_DATA_DIR, "models")
 os.makedirs(MODELS_DIR, exist_ok=True)
 os.environ.setdefault("YOLO_CONFIG_DIR", MODELS_DIR)
 
