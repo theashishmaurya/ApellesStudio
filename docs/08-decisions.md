@@ -6,6 +6,18 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-391 — The beta bundle ships without the Motion tab: one release pre-build command hides the tab and builds `apelles-mcp` without its `motion_*` tools
+
+**decided (2026-10-20, owner: "yeah hide the motion tab :) yes handle the MCP as well")** · temporary, until Motion's export toolchain downloads on demand
+
+- **Context.** Motion's editor and preview run in the webview, but its export runs `npx remotion render` (`apelles-motion::build_command`) in the checkout's `packages/motion-engine`. That needs Node.js, a headless Chrome and the engine's `node_modules`, and the release bundle carries none of them. A beta tester could build scenes they could never export. The owner chose to download that toolchain on demand when the Motion tab is first opened; until that is built, Motion is held back from the beta.
+- **Options.** (a) Hide the tab and the tools in the release build. (b) Show the tab with Export disabled ("coming soon"). (c) Bundle Node + Chrome now (+~250 MB, already rejected for the on-demand plan). Chosen: **(a)**. A tab that cannot produce output reads as broken in a first beta, and (b) would still advertise MCP tools whose one real output fails.
+- **Compile-time, both sides, one command.** The UI reads `MOTION_TAB_ENABLED` (`app/src/buildFeatures.ts`) from `VITE_APELLES_MOTION`; Vite folds it to a literal, so the release bundle has no switch to flip. `apelles-mcp` gains a `motion` Cargo feature (default **on**: dev, tests, the parity gate) gating `tools/motion/tools.rs` the way `debug.rs` gates its tools: one `cfg` on the module, an empty router twin. The server's instructions drop their Motion paragraph without it (`concat!` over a shared macro, so the default build stays byte-identical to `mcp/server.py`). `app/package.json`'s `tauri:before-build` is `cargo build -p apelles-mcp --release --no-default-features && VITE_APELLES_MOTION=off npm run build`, and an app test (`the_release_build_drops_motion_from_the_ui_and_the_mcp_server_together`) fails if either half is dropped. Rejected: tying it to `debug_assertions` (that gate means "internal tooling, never shipped"; Motion is a product surface that comes back), and a runtime flag (the owner's standing rule for gated surfaces).
+- **Tool counts.** Debug build 186. Release with Motion 174. Beta release 131 (174 minus 43 `motion_*`).
+- **Shortcuts by id, not by position.** `Shell`'s Cmd+1/2/3 used to select the Nth registered tab, so with two tabs Cmd+2 would have opened Colorist under the "Go to Motion tab" action. Each action now selects its tab by id, and does nothing when the tab is absent. The shortcuts dialog takes `hiddenIds` and leaves out "Go to Motion tab".
+- **Not gated.** The app's Rust Motion commands (`chroma_motion_render`, …) stay compiled in. Only the unmounted `MotionTab` calls them, and they are deleted or rewired when the toolchain lands anyway. `mcp/server.py` (the dev-only Python server) is unchanged.
+- **Undoing it.** When the on-demand toolchain (roadmap, "Packaging") lands, remove both switches from `tauri:before-build`. Nothing else changes.
+
 ## D-390 — A packaged app runs only its own sidecars: `ai/`+`ai-media/` sources ship as resources, `apelles-mcp` as a release-only `externalBin`, and every `CARGO_MANIFEST_DIR` lookup is dev-only
 
 **decided (2026-10-15)** · fixes **B-254** · extends D-315's `tauri::is_dev()` rule from the AI-env paths to the rest of `apelles_ai::sidecar`

@@ -680,7 +680,7 @@ fn stage_mcp(manifest_dir: &Path, target_os: &str, target_arch: &str, profile: &
         panic!(
             "D-390: {} is missing. `npm run tauri:build` builds it first via \
              `tauri:before-build`; building by hand, run `cargo build -p apelles-mcp \
-             --release` first (with the same --target, if any).",
+             --release --no-default-features` first (with the same --target, if any).",
             src.display()
         );
     };

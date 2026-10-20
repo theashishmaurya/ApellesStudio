@@ -97,7 +97,7 @@ const tabs: ShellTab[] = [
   { id: 'colorist', label: 'Colorist', element: React.createElement('div', null, 'Colorist tab body') },
 ];
 
-function mountShell(projectOpen: boolean) {
+function mountShell(projectOpen: boolean, shellTabs: ShellTab[] = tabs) {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = ReactDOMClient.createRoot(container);
@@ -106,7 +106,7 @@ function mountShell(projectOpen: boolean) {
       React.createElement(Shell, {
         projectOpen,
         launcher: React.createElement('div', null, 'launcher'),
-        tabs,
+        tabs: shellTabs,
       }),
     );
   });
@@ -160,6 +160,44 @@ describe('Shell listens for the native Help menu\'s events (lib.rs .on_menu_even
         menuEventHandlers.get('menu://connect-mcp')!();
       });
       expect(document.body.textContent).toContain('Connect an agent');
+    } finally {
+      unmount();
+    }
+  });
+});
+
+// D-391 — the beta bundle registers no Motion tab. Each "Go to" shortcut is
+// bound to its tab by id, so the Motion one does nothing rather than landing on
+// whichever tab now sits second, and the shortcuts dialog does not list it.
+describe('Shell without a Motion tab (D-391)', () => {
+  const withoutMotion = tabs.filter((t) => t.id !== 'motion');
+  const pressCmd = (code: string, key: string) =>
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, cancelable: true, code, key, metaKey: true }),
+      );
+    });
+
+  it('keeps Cmd+3 on Colorist and makes Cmd+2 a no-op', () => {
+    const { unmount } = mountShell(true, withoutMotion);
+    try {
+      pressCmd('Digit2', '2');
+      expect(useShellStore.getState().activeTab).toBe('edit');
+      pressCmd('Digit3', '3');
+      expect(useShellStore.getState().activeTab).toBe('colorist');
+    } finally {
+      unmount();
+    }
+  });
+
+  it('leaves "Go to Motion tab" out of the shortcuts dialog', () => {
+    const { unmount } = mountShell(true, withoutMotion);
+    try {
+      act(() => {
+        menuEventHandlers.get('menu://keyboard-shortcuts')!();
+      });
+      expect(document.querySelector('[data-chroma-shortcut="app.tab_colorist"]')).toBeTruthy();
+      expect(document.querySelector('[data-chroma-shortcut="app.tab_motion"]')).toBeNull();
     } finally {
       unmount();
     }

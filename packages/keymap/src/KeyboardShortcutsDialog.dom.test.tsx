@@ -40,6 +40,14 @@ afterEach(() => {
 });
 
 describe('KeyboardShortcutsDialog', () => {
+  it('leaves out the rows a build has no surface for (D-391), and only those', () => {
+    render(<KeyboardShortcutsDialog open onOpenChange={() => {}} hiddenIds={new Set(['app.tab_motion'])} />);
+
+    expect(document.querySelector('[data-chroma-shortcut="app.tab_motion"]')).toBeNull();
+    expect(document.querySelector('[data-chroma-shortcut="app.tab_edit"]')).toBeTruthy();
+    expect(document.querySelector('[data-chroma-shortcut="app.tab_colorist"]')).toBeTruthy();
+  });
+
   it('renders every category with its scope tag, and rows carry their chip', () => {
     render(<KeyboardShortcutsDialog open onOpenChange={() => {}} />);
 

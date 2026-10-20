@@ -93,9 +93,17 @@ export interface KeyboardShortcutsDialogProps {
   onOpenChange: (open: boolean) => void;
   /** i18next's `t`, injected by the app. Omit to render the English labels. */
   translate?: (key: string) => string;
+  /** Shortcut ids this build has no surface for (D-391: `app.tab_motion` when the
+   *  Motion tab is not registered). They are left out of the list, not disabled. */
+  hiddenIds?: ReadonlySet<string>;
 }
 
-export function KeyboardShortcutsDialog({ open, onOpenChange, translate }: KeyboardShortcutsDialogProps) {
+export function KeyboardShortcutsDialog({
+  open,
+  onOpenChange,
+  translate,
+  hiddenIds,
+}: KeyboardShortcutsDialogProps) {
   const overrides = useKeymapStore((s) => s.overrides);
   const osPlatform = useKeymapStore((s) => s.osPlatform);
   const setBinding = useKeymapStore((s) => s.setBinding);
@@ -160,7 +168,7 @@ export function KeyboardShortcutsDialog({ open, onOpenChange, translate }: Keybo
           data-chroma-panel="keyboard-shortcuts"
         >
           {SHORTCUT_CATEGORIES.map((category) => {
-            const defs = SHORTCUT_DEFINITIONS.filter((d) => d.category === category.id);
+            const defs = SHORTCUT_DEFINITIONS.filter((d) => d.category === category.id && !hiddenIds?.has(d.id));
             if (defs.length === 0) return null;
             return (
               <section key={category.id} className="mb-4 break-inside-avoid">

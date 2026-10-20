@@ -3266,6 +3266,11 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
   The Python env is built on the user's machine (D-315). Still open: Developer ID +
   notarization, and models are still lazy-fetched on first use (into app data since
   D-390).
+  **Motion is held back from the beta (D-391):** its export needs Node.js + Chrome
+  Headless Shell + the engine's `node_modules`. Next: download them in the background
+  when the Motion tab is first opened (pinned hashes, into app data, status with
+  retry/resume, an MCP readiness tool, Export enabled when ready; measure the engine's
+  `node_modules` first), then drop D-391's two switches from `tauri:before-build`.
 - `docs/` cleaned for external readers, a real README, a 90-second demo.
 - **The three open product decisions** — name (D-010), licence (D-002, leaning AGPL),
   v1 headline feature (D-007). All shift under the 3-tab framing; not re-decided since.

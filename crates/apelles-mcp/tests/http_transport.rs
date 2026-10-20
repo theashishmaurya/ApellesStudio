@@ -25,6 +25,10 @@
 //!     job and duplicating it here would only mean two files to update. One real tool
 //!     call is enough to prove the pipe.
 
+// D-391 — this file pins the full tool surface, `motion_*` included, so it only
+// builds with the (default) `motion` feature on.
+#![cfg(feature = "motion")]
+
 use std::sync::{Arc, Mutex};
 
 use apelles_mcp::transport::{Envelope, OpError, OpTransport};

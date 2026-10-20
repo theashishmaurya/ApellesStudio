@@ -20,6 +20,7 @@ import { useKeymapStore } from '@apelles/keymap';
 import { setProjectIdentityAlertSink } from '@apelles/store';
 import { useTranslation } from 'react-i18next';
 import App from './App';
+import { MOTION_TAB_ENABLED } from './buildFeatures';
 import AgentActivityDock from './components/chroma/AgentActivityDock';
 import ProjectLauncher from './components/chroma/ProjectLauncher';
 import { SourcesPanel } from './components/chroma/SourcesPanel';
@@ -380,11 +381,17 @@ export function Root() {
           // show the shared media pool instead — see `ShellTab.libraryPanel`.
           libraryPanel: libraryMode === 'sources' ? undefined : <EditLibraryPanel />,
         },
-        {
-          id: 'motion',
-          label: 'Motion',
-          element: <MotionTab onRendered={onMotionRendered} editLinks={motionEditLinks} />,
-        },
+        // D-391 — absent from the beta bundle: its export needs a Node/Chrome
+        // toolchain the bundle does not carry yet. See `buildFeatures.ts`.
+        ...(MOTION_TAB_ENABLED
+          ? [
+              {
+                id: 'motion' as const,
+                label: 'Motion',
+                element: <MotionTab onRendered={onMotionRendered} editLinks={motionEditLinks} />,
+              },
+            ]
+          : []),
         { id: 'colorist', label: 'Colorist', element: <App /> },
       ]}
     />

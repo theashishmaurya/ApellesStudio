@@ -136,6 +136,13 @@ import { useShellStore, type ShellTabId } from './store';
 import { useWindowChrome, MacTrafficLights, WindowControls } from './WindowChrome';
 import { ConnectMcpDialog } from './ConnectMcpDialog';
 
+/** Each tab's "Go to" shortcut action, by tab id (`@apelles/keymap` ids). */
+const TAB_SHORTCUTS = [
+  ['edit', 'app.tab_edit'],
+  ['motion', 'app.tab_motion'],
+  ['colorist', 'app.tab_colorist'],
+] as const satisfies readonly (readonly [ShellTabId, string])[];
+
 export interface ShellTab {
   id: ShellTabId;
   label: string;
@@ -258,13 +265,21 @@ export function Shell({
     if (active) useKeymapStore.getState().setActiveScope(active);
   }, [active]);
 
-  // Cmd/Ctrl+1/2/3 — now read off the registry rather than an inline
-  // `{'1':0,'2':1,'3':2}` map, so they show up in the settings window and can
-  // be rebound like anything else. Positional, as before: the Nth registry
-  // action selects the Nth registered tab.
-  useShortcut('app.tab_edit', () => tabs[0] && setActiveTab(tabs[0].id), { enabled: projectOpen });
-  useShortcut('app.tab_motion', () => tabs[1] && setActiveTab(tabs[1].id), { enabled: projectOpen });
-  useShortcut('app.tab_colorist', () => tabs[2] && setActiveTab(tabs[2].id), { enabled: projectOpen });
+  // Cmd/Ctrl+1/2/3 — read off the registry rather than an inline map, so they
+  // show up in the settings window and can be rebound like anything else. Each
+  // action selects its tab by id, not by position: a build without one tab
+  // (D-391 drops Motion from the beta bundle) must not shift Colorist onto the
+  // Motion shortcut. An action whose tab is not registered does nothing.
+  const selectTab = (id: ShellTabId) => {
+    if (tabs.some((t) => t.id === id)) setActiveTab(id);
+  };
+  useShortcut('app.tab_edit', () => selectTab('edit'), { enabled: projectOpen });
+  useShortcut('app.tab_motion', () => selectTab('motion'), { enabled: projectOpen });
+  useShortcut('app.tab_colorist', () => selectTab('colorist'), { enabled: projectOpen });
+  // …and the shortcuts dialog does not list a "Go to" for a tab this build lacks.
+  const hiddenTabShortcuts = new Set(
+    TAB_SHORTCUTS.filter(([id]) => !tabs.some((t) => t.id === id)).map(([, shortcut]) => shortcut),
+  );
 
   // D-051 — global undo/redo, see the module doc comment above. The
   // don't-hijack-an-in-progress-edit guard (including its "a number input is
@@ -401,7 +416,12 @@ export function Shell({
         </div>
       </div>
 
-      <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} translate={translate} />
+      <KeyboardShortcutsDialog
+        open={shortcutsOpen}
+        onOpenChange={setShortcutsOpen}
+        translate={translate}
+        hiddenIds={hiddenTabShortcuts}
+      />
       <ConnectMcpDialog open={mcpDialogOpen} onOpenChange={setMcpDialogOpen} />
 
       {/* D-298 — the agent activity feed, above every tab. Rendered here
