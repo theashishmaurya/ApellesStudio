@@ -15,7 +15,11 @@ thiserror = { workspace = true }
 # workspace's ONNX stack (`app/src-tauri` has run seven models on them since
 # the fork); the versions here match `app/src-tauri/Cargo.toml` exactly so the
 # workspace resolves one copy of each and one ONNX Runtime library.
-ort = { version = "=2.0.0-rc.10", features = ["ndarray", "load-dynamic"] }
+# B-256: no default features. They include `download-binaries`, which fetched a
+# prebuilt ONNX Runtime from cdn.pyke.io at build time; `load-dynamic` never links
+# it (the app loads the libonnxruntime.dylib its build.rs ships), so it was a
+# redundant network dependency of every build.
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"] }
 ndarray = "0.16"
 
 # D-320 — normalised edit distance for retake grouping.

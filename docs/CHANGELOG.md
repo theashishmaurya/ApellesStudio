@@ -8,6 +8,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 The first public beta: a DMG on GitHub Releases, built and published by the tag-triggered release workflow (D-392). Ad-hoc signed (D-388), ffmpeg bundled (D-389), every sidecar and the MCP server running from inside the app (D-390), Motion held back (D-391).
 
+- **2026-10-21** — **B-256 fixed: builds no longer download an unused ONNX Runtime.** The first release run failed in `ort-sys`'s build script fetching from cdn.pyke.io; `ort`'s default `download-binaries` was on although `load-dynamic` never links it. Default features off in both crates.
+
 - **2026-10-21** — **D-392: tagging `vX.Y.Z` builds and publishes a release.** `.github/workflows/release.yml` builds the DMG on a macOS arm64 runner with `npm run tauri:build`, verifies the bundle (signature, bundled binaries, no `motion_*` tools, version), and publishes the GitHub Release with the DMG, the FFmpeg 9.0.2 source and `SHA256SUMS.txt`. Notes live in `docs/releases/`; the checklist is `docs/releases/README.md`. Version 0.1.0 → 0.2.0.
 
 - **2026-10-21** — **Website for the beta.** New `/install/` guide (GitHub Releases DMG, the real "Not Opened" dialog, Open Anyway, the `xattr` alternative, first-launch AI setup, Motion not in this beta). Real post-rename Edit and Colorist captures on `/inside/` and a new home "Made with Apelles" section with two of the owner's YouTube videos (privacy-enhanced inline embeds; privacy page updated). The beta section now points at the guide. Also fixed stale MCP counts the site's own test caught (183 → 186). `npm run verify`: 201 tests pass.

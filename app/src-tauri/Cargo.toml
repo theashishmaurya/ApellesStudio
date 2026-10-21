@@ -82,7 +82,11 @@ imageproc = "0.27.0"
 # `imageproc::drawing::draw_text_mut` (which blends premultiplied, wrong for
 # the transparent layer the compositor needs). Apache-2.0/MIT.
 ab_glyph = "0.2.32"
-ort = { version = "=2.0.0-rc.10", features = ["ndarray", "load-dynamic"] }
+# B-256: no default features. They include `download-binaries`, which fetched a
+# prebuilt ONNX Runtime from cdn.pyke.io at build time; `load-dynamic` never links
+# it (the app loads the libonnxruntime.dylib its build.rs ships), so it was a
+# redundant network dependency of every build.
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"] }
 ndarray = "0.16"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-os = "2.3.2"

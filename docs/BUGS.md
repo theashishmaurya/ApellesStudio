@@ -27,12 +27,21 @@ Still real:
 
 ## Open
 
+## B-256 — the v0.2.0 release build failed on a fresh runner: `ort-sys` downloaded a prebuilt ONNX Runtime from cdn.pyke.io that the app never uses
+
+status: **fixed** (2026-10-21) · severity: **major** (the release pipeline could not build; any machine without the cached download could fail the same way) · area: `app/src-tauri/Cargo.toml`, `crates/apelles-speech/Cargo.toml`
+
+- **found:** 2026-10-21, the first run of the release workflow (D-392): `failed to run custom build command for ort-sys v2.0.0-rc.10` … `Failed to GET https://cdn.pyke.io/0/pyke:ort-rs/ms@1.22.0/aarch64-apple-darwin.tgz: failed to lookup address information`. The CDN answered fine from a developer Mac minutes later, so the trigger was a transient DNS failure on the runner. The developer Mac had never hit it because the download was cached there.
+- **cause:** both crates enabled `ort` with `features = ["ndarray", "load-dynamic"]` but left its **default** features on, and those include `download-binaries` (plus `copy-dylibs`). With `load-dynamic` nothing links that download: the app loads the `libonnxruntime.dylib` its own `build.rs` fetches, verifies and bundles. So every build made an extra network fetch for a binary nobody used.
+- **fix:** `default-features = false, features = ["std", "ndarray", "tracing", "load-dynamic"]` in both crates. `cargo tree -i ort -e features` no longer shows `download-binaries` or `copy-dylibs`.
+- **verification:** `cargo build -p apelles -p apelles-speech` clean; `cargo test -p apelles-speech` all green (including the ONNX-backed VAD tests); `cargo test -p apelles --lib` 427/427 (one run hit B-255, the reruns were clean). The re-tagged release run is the end-to-end check.
+
 ## B-255 — `audio_keeps_playing_across_ripple_cut_boundaries` failed once in a full `cargo test -p apelles --lib` run and passed on every rerun
 
 status: **open** (intermittent, not reproduced) · severity: **minor** (a test that can fail without a code change; the behaviour it guards was verified live by B-235's checks) · area: `app/src-tauri/src/chroma/audio.rs` (the B-190/D-323 end-to-end test)
 
 - **found:** 2026-10-21, the pre-tag run for v0.2.0 (`docs/releases/README.md`). `cargo test --workspace`: 426 passed, 1 failed, at the assertion that every peak sampled from 1.8 s on is above 0.001. The panic's peak readings were not captured (the workspace run's output was filtered to result lines).
-- **since:** passed alone (once), and in two further full `-p apelles --lib` runs (427/427 each) and the full `--workspace --no-fail-fast` run.
+- **since:** passed alone (once), and in two further full `-p apelles --lib` runs (427/427 each) and the full `--workspace --no-fail-fast` run. Failed again later the same day in a full `-p apelles --lib` run, then passed three in a row: **2 failures in 8 full runs** so far, never alone. That rate is a real problem, not noise; the next run that fails must keep its `peaks by ms` stderr line.
 - **not known:** whether this is test fragility (it plays through the real `cpal` output device and reads D-050's level meter, which refreshes about once per second of written audio, B-106, while the rest of the suite loads the machine) or a real dropout under load. Next step: rerun it in a loop under load with its `peaks by ms` line kept, and see whether a failing run is silent at a boundary (B-190's shape) or merely misses a meter refresh.
 - **not blocking v0.2.0:** the release does not run Rust tests on CI (D-392), and playback across cuts was verified live (B-235).
 
