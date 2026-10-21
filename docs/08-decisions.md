@@ -6,6 +6,15 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-392 — A release is a pushed tag: GitHub Actions builds the DMG on a macOS arm64 runner and publishes the GitHub Release with the FFmpeg source attached
+
+**decided (2026-10-21, owner: "a way so that we create a tag and release is created")**
+
+- **Context.** v0.1.0 was a tag with notes and no binaries. The beta needs a DMG on GitHub Releases (the website's install guide links `releases/latest`), and D-389's GPL-3.0 obligations call for the bundled FFmpeg's source to accompany every distributed copy.
+- **Options.** (a) Build locally and upload with `gh release create`. (b) A tag-triggered workflow that builds on a hosted macOS runner. (c) `tauri-apps/tauri-action`. Chosen: **(b)**. A release built from the tagged commit on a clean machine is reproducible and does not depend on one developer's checkout (the class of bug B-254 was). Rejected (c): it wraps the same `tauri build` with its own conventions for versions and assets, while `npm run tauri:build` already carries this repo's release overlay and D-391's flags, so the workflow runs exactly what a developer runs.
+- **Shape.** `.github/workflows/release.yml`, on `push: tags: v*.*.*`, `macos-15` (arm64). Gates: the tag equals the root `package.json` version, and `docs/releases/<tag>.md` exists (it becomes the release body verbatim). Builds with `npm run tauri:build`; verifies `codesign --verify --deep --strict`, that `apelles`/`apelles-mcp`/`ffmpeg`/`ffprobe`/`uv` and both sidecar source dirs are in the bundle, that `apelles-mcp` has no `motion_*` tools (D-391), and that `CFBundleShortVersionString` is the version. Publishes a normal (not pre-) release, because `releases/latest` (the install guide's link) skips pre-releases. Assets: the DMG, `ffmpeg-<ver>.tar.xz` from ffmpeg.org, `SHA256SUMS.txt`.
+- **Not in CI.** The test suites. Parts need a GPU or the running app, which a hosted runner lacks, and `tsc` has a known error baseline rather than zero. They are a pre-tag step in `docs/releases/README.md`, as are a local build and a quarantined install. Notarization is not done (no Developer ID, D-388).
+
 ## D-391 — The beta bundle ships without the Motion tab: one release pre-build command hides the tab and builds `apelles-mcp` without its `motion_*` tools
 
 **decided (2026-10-20, owner: "yeah hide the motion tab :) yes handle the MCP as well")** · temporary, until Motion's export toolchain downloads on demand

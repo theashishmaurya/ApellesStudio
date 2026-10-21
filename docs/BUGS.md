@@ -27,6 +27,15 @@ Still real:
 
 ## Open
 
+## B-255 — `audio_keeps_playing_across_ripple_cut_boundaries` failed once in a full `cargo test -p apelles --lib` run and passed on every rerun
+
+status: **open** (intermittent, not reproduced) · severity: **minor** (a test that can fail without a code change; the behaviour it guards was verified live by B-235's checks) · area: `app/src-tauri/src/chroma/audio.rs` (the B-190/D-323 end-to-end test)
+
+- **found:** 2026-10-21, the pre-tag run for v0.2.0 (`docs/releases/README.md`). `cargo test --workspace`: 426 passed, 1 failed, at the assertion that every peak sampled from 1.8 s on is above 0.001. The panic's peak readings were not captured (the workspace run's output was filtered to result lines).
+- **since:** passed alone (once), and in two further full `-p apelles --lib` runs (427/427 each) and the full `--workspace --no-fail-fast` run.
+- **not known:** whether this is test fragility (it plays through the real `cpal` output device and reads D-050's level meter, which refreshes about once per second of written audio, B-106, while the rest of the suite loads the machine) or a real dropout under load. Next step: rerun it in a loop under load with its `peaks by ms` line kept, and see whether a failing run is silent at a boundary (B-190's shape) or merely misses a meter refresh.
+- **not blocking v0.2.0:** the release does not run Rust tests on CI (D-392), and playback across cuts was verified live (B-235).
+
 ## B-254 — the installed release build started every sidecar from the build machine's checkout: `ai-media/` sources, the developer's `ai/.venv`, and `target/debug/apelles-mcp`
 
 status: **fixed** (D-390, 2026-10-15) · severity: **blocker** (release: on any other Mac transcription, every AI tool and MCP cannot start) · area: `crates/apelles-ai` (`sidecar.rs`, `ai_env.rs`), `app/src-tauri` (`build.rs`, `chroma/sidecar.rs`, `lib.rs`, `tauri.macos.release.conf.json`), root `package.json`, `ai/server.py`

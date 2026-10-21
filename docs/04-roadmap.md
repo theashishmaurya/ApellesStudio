@@ -3261,7 +3261,8 @@ No urgency — each needs an earlier item to land first, or is a bigger bet.
 - ProRes export round-trip verified with Palmier's `swap_clip_media`.
 - **Packaging** — signed macOS build, sidecar + its Python bundled, models
   auto-downloaded (not lazy-fetched at first use, for a shipped build).
-  *Status:* ad-hoc signing is done (D-388) and ffmpeg is bundled (D-389). The
+  *Status:* releases are cut by pushing a tag (D-392, `docs/releases/README.md`); v0.2.0
+  is the first beta with a DMG. Ad-hoc signing is done (D-388) and ffmpeg is bundled (D-389). The
   sidecar sources and `apelles-mcp` ship in the bundle and resolve from it (D-390).
   The Python env is built on the user's machine (D-315). Still open: Developer ID +
   notarization, and models are still lazy-fetched on first use (into app data since
