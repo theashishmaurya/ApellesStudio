@@ -18,6 +18,8 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHTML } from 'linkedom';
 import { BANNED_TYPEFACES } from '../src/data/palette.ts';
+import { PROOF_VIDEOS } from '../src/data/proof.ts';
+import { contentFiles, pageFile } from '../src/seo/sitemap.ts';
 
 const DIST = fileURLToPath(new URL('../dist', import.meta.url));
 
@@ -343,6 +345,66 @@ describe('the beta pages (2026-10-21)', () => {
     }
     expect(page('/').querySelectorAll('#proof iframe').length).toBeGreaterThan(0);
     expect(page('/privacy/').body?.textContent ?? '').toContain('youtube-nocookie.com');
+  });
+});
+
+describe('the sitemap', () => {
+  const xml = () => readFileSync(join(DIST, 'sitemap-0.xml'), 'utf8');
+  const entries = () =>
+    [...xml().matchAll(/<url>([\s\S]*?)<\/url>/g)].map((m) => ({
+      loc: /<loc>([^<]+)<\/loc>/.exec(m[1])?.[1] ?? '',
+      lastmod: /<lastmod>([^<]+)<\/lastmod>/.exec(m[1])?.[1],
+      body: m[1],
+    }));
+
+  it('lists every built page except the 404, each with a real lastmod', () => {
+    const listed = entries().map((e) => new URL(e.loc).pathname).sort();
+    const built = pages.map((p) => p.route).filter((r) => r !== '/404/').sort();
+    expect(listed).toEqual(built);
+    for (const e of entries()) {
+      expect(e.lastmod, e.loc).toBeTruthy();
+      expect(Number.isNaN(Date.parse(e.lastmod!)), e.loc).toBe(false);
+    }
+  });
+
+  it('robots.txt points at the sitemap index, which points at the sitemap', () => {
+    expect(readFileSync(join(DIST, 'robots.txt'), 'utf8')).toContain(
+      'Sitemap: https://apelles.studio/sitemap-index.xml',
+    );
+    expect(readFileSync(join(DIST, 'sitemap-index.xml'), 'utf8')).toContain(
+      'https://apelles.studio/sitemap-0.xml',
+    );
+  });
+
+  it('describes exactly the videos the home page embeds', () => {
+    const home = entries().find((e) => new URL(e.loc).pathname === '/')!;
+    const players = [...home.body.matchAll(/<video:player_loc>([^<]+)</g)].map((m) => m[1]);
+    expect(players).toEqual(PROOF_VIDEOS.map((v) => `https://www.youtube-nocookie.com/embed/${v.id}`));
+    const embedded = [...parseHTML(pages.find((p) => p.route === '/')!.html).document.querySelectorAll('#proof iframe')]
+      .map((f) => (f.getAttribute('src') ?? '').split('?')[0]);
+    expect(embedded).toEqual(players);
+  });
+
+  it('lists only images that ship and that the page actually shows', () => {
+    for (const e of entries()) {
+      const route = new URL(e.loc).pathname;
+      const html = pages.find((p) => p.route === route)!.html;
+      for (const m of e.body.matchAll(/<image:loc>([^<]+)</g)) {
+        const path = new URL(m[1]).pathname;
+        expect(assets.has(path), `${path} is not in dist`).toBe(true);
+        expect(html, `${route} does not show ${path}`).toContain(`src="${path}"`);
+      }
+    }
+  });
+
+  it('dates a page by its own content, not the shared chrome', () => {
+    const files = contentFiles(pageFile('/')!).map((f) => f.split('/src/')[1]);
+    expect(files).toContain('components/Proof.astro');
+    expect(files).toContain('data/product.ts');
+    expect(files).not.toContain('layouts/Base.astro');
+    expect(files).not.toContain('components/Nav.astro');
+    expect(pageFile('/terms/')).toBeTruthy();
+    expect(pageFile('/no-such-page/')).toBeUndefined();
   });
 });
 
