@@ -169,9 +169,19 @@ describe('the rebrand is complete in the shipped output', () => {
   });
 
   it('discloses the pre-rename screenshots wherever one is shown', () => {
+    // Only Demo.astro's own captures predate the rename; the room shots were
+    // retaken from the beta build (2026-10-21) and need no disclosure. The set
+    // is read out of Demo.astro's source, the same way the orphan check is.
+    const demoSrc = readFileSync(
+      fileURLToPath(new URL('../src/components/Demo.astro', import.meta.url)),
+      'utf8',
+    );
+    const preRename = [...demoSrc.matchAll(/src:\s*'(\/shots\/[^']+)'/g)].map((m) => m[1]);
+    expect(preRename.length).toBeGreaterThan(0);
     for (const p of pages) {
       const d = parseHTML(p.html).document;
-      if (d.querySelectorAll('img[src^="/shots/"]').length === 0) continue;
+      const shown = [...d.querySelectorAll('img[src^="/shots/"]')].map((i) => i.getAttribute('src'));
+      if (!shown.some((src) => preRename.includes(src ?? ''))) continue;
       // Collapse source line-wrapping before matching the sentence.
       const flat = (d.body?.textContent ?? '').replace(/\s+/g, ' ');
       expect(flat, `${p.file} shows a screenshot without the disclosure`).toContain(
@@ -299,6 +309,40 @@ describe('no broken internal links', () => {
 
     const orphans = [...assets].filter((a) => a.startsWith('/shots/') && !referenced.has(a));
     expect(orphans, `unused screenshots shipped:\n${orphans.join('\n')}`).toEqual([]);
+  });
+});
+
+describe('the beta pages (2026-10-21)', () => {
+  const page = (route: string) => {
+    const p = pages.find((x) => x.route === route);
+    expect(p, `${route} was not built`).toBeTruthy();
+    return parseHTML(p!.html).document;
+  };
+
+  it('the install guide links the GitHub release and shows the real Gatekeeper dialog', () => {
+    const d = page('/install/');
+    const hrefs = [...d.querySelectorAll('a[href]')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toContain('https://github.com/theashishmaurya/ApellesStudio/releases/latest');
+    const dialog = d.querySelector('img[src="/install/not-opened.webp"]');
+    expect(dialog?.getAttribute('alt') ?? '').toContain('Not Opened');
+    expect(d.body?.textContent ?? '').toContain('Open Anyway');
+  });
+
+  it('the footer and the beta section both lead to the install guide', () => {
+    const home = page('/');
+    expect(home.querySelector('#beta a[href="/install/"]')).toBeTruthy();
+    expect(home.querySelector('footer a[href="/install/"]')).toBeTruthy();
+  });
+
+  it('embeds videos only through YouTube’s privacy-enhanced domain, and the privacy page says so', () => {
+    for (const p of pages) {
+      for (const f of parseHTML(p.html).document.querySelectorAll('iframe')) {
+        expect(f.getAttribute('src') ?? '', p.file).toMatch(/^https:\/\/www\.youtube-nocookie\.com\/embed\//);
+        expect(f.getAttribute('title') ?? '', p.file).not.toBe('');
+      }
+    }
+    expect(page('/').querySelectorAll('#proof iframe').length).toBeGreaterThan(0);
+    expect(page('/privacy/').body?.textContent ?? '').toContain('youtube-nocookie.com');
   });
 });
 

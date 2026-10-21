@@ -1,0 +1,204 @@
+---
+/**
+ * install.astro — how to install the Apelles beta on a Mac.
+ *
+ * What it is: the steps a beta tester follows, from the download on GitHub
+ * Releases to the first launch, written against what the beta build actually
+ * does (D-388 ad-hoc signing, D-389 bundled ffmpeg, D-390 the AI environment
+ * built in app data, D-391 Motion left out).
+ * What it does NOT do: pretend the app is notarized. It is not, and macOS says
+ * so once; the page shows that exact dialog and explains why rather than
+ * hiding it. The screenshot is a real capture of it, from the owner's Mac.
+ */
+import Base from '../layouts/Base.astro';
+import PageHead from '../components/PageHead.astro';
+
+const RELEASES = 'https://github.com/theashishmaurya/ApellesStudio/releases/latest';
+const ISSUES = 'https://github.com/theashishmaurya/ApellesStudio/issues';
+const UNQUARANTINE = 'xattr -dr com.apple.quarantine /Applications/Apelles.app';
+---
+
+<Base
+  title="Install the beta — Apelles"
+  description="How to install the Apelles beta on an Apple Silicon Mac: download the DMG from GitHub, drag it to Applications, and allow it once in Privacy & Security."
+>
+  <PageHead
+    eyebrow="Beta"
+    title="Install the beta"
+    lede="Five minutes, once. Apelles is free and open source; the only unusual step is telling macOS you trust an app Apple has not reviewed yet."
+  />
+
+  <section class="section">
+    <div class="shell prose">
+      <h2>What you need</h2>
+      <ul class="plain">
+        <li>A Mac with Apple Silicon (M1 or later). Intel Macs are not supported.</li>
+        <li>macOS 13 Ventura or later.</li>
+        <li>
+          About 3 GB of free space: the app itself is 250 MB, and its AI features set up about 2 GB
+          more on first launch.
+        </li>
+      </ul>
+
+      <h2>1. Download</h2>
+      <p>
+        Open the <a class="link" href={RELEASES} rel="noopener">latest release on GitHub</a> and,
+        under <strong>Assets</strong>, download the file ending in
+        <code class="mono">_aarch64.dmg</code>.
+      </p>
+
+      <h2>2. Move it to Applications</h2>
+      <p>
+        Open the downloaded <code class="mono">.dmg</code> and drag <strong>Apelles</strong> onto the
+        <strong>Applications</strong> folder beside it. Then eject the disk image.
+      </p>
+
+      <h2>3. Open it, and allow it once</h2>
+      <p>Open Apelles from Applications. The first time, macOS stops it with this:</p>
+      <figure class="dialog">
+        <img
+          src="/install/not-opened.webp"
+          alt="macOS dialog: “Apelles” Not Opened. Apple could not verify “Apelles” is free of malware that may harm your Mac or compromise your privacy. Buttons: Done, Move to Bin."
+          width="520"
+          height="470"
+          loading="lazy"
+          decoding="async"
+        />
+      </figure>
+      <ol class="plain steps">
+        <li>Click <strong>Done</strong>. Do not move it to the Bin.</li>
+        <li>
+          Open <strong>System Settings</strong> → <strong>Privacy &amp; Security</strong>, and
+          scroll down to <strong>Security</strong>.
+        </li>
+        <li>
+          Next to <em>“Apelles” was blocked to protect your Mac</em>, click
+          <strong>Open Anyway</strong>, and confirm with your password or Touch ID.
+        </li>
+        <li>Click <strong>Open Anyway</strong> once more in the dialog that follows.</li>
+      </ol>
+      <p>
+        From then on Apelles opens like any other app. macOS asks once per download, so a newer
+        beta you download later goes through these four steps one more time.
+      </p>
+
+      <h3>Why macOS asks</h3>
+      <p>
+        Apple only skips this step for apps signed with a paid Apple developer certificate and
+        scanned by Apple (“notarized”). The beta is signed, but not with that certificate yet, so
+        macOS cannot vouch for it and leaves the decision to you. Nothing is wrong with the file;
+        the full source it is built from is public on
+        <a class="link" href="https://github.com/theashishmaurya/ApellesStudio" rel="noopener"
+          >GitHub</a
+        >, and you can build it yourself instead.
+      </p>
+
+      <h3>Or, from Terminal</h3>
+      <p>
+        If you are comfortable in Terminal, this clears the “downloaded from the internet” flag so
+        the dialog never appears. Run it after step 2:
+      </p>
+      <pre class="cmd"><code class="mono">{UNQUARANTINE}</code></pre>
+
+      <h2>4. First launch</h2>
+      <p>
+        Editing works straight away. In the background, Apelles sets up its AI environment
+        (transcription, subject masks, depth) — about 2 GB, downloaded once. AI features become
+        available as soon as it finishes, and each model downloads the first time you use its
+        feature. Everything runs on your Mac; nothing you edit is uploaded.
+      </p>
+
+      <h2>What is in this beta</h2>
+      <ul class="plain">
+        <li><strong>Edit</strong> — the multi-track editor, transcript cuts and retakes, export.</li>
+        <li><strong>Colorist</strong> — grading, AI masks, relight, scopes.</li>
+        <li>
+          <strong>Motion</strong> is not in the first beta. Its export needs Node.js and a headless
+          Chrome; it returns once the app can download those for you on first use.
+        </li>
+        <li>
+          <strong>Agents.</strong> Any MCP client (Claude Code, Claude Desktop, Cursor…) can drive
+          the app: the plug icon in the title bar opens <strong>Connect an agent</strong>.
+        </li>
+      </ul>
+
+      <h2>Something broke?</h2>
+      <p>
+        Please <a class="link" href={ISSUES} rel="noopener">open an issue on GitHub</a> with what
+        you did and what happened. The app's log is at
+        <code class="mono">~/Library/Logs/studio.apelles.app/app.log</code>; attaching it helps a
+        lot.
+      </p>
+
+      <h2>Uninstall</h2>
+      <p>
+        Drag Apelles from Applications to the Bin. To also remove its AI environment, models and
+        settings, delete
+        <code class="mono">~/Library/Application Support/studio.apelles.app</code>.
+      </p>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .prose {
+    max-width: 68ch;
+  }
+
+  .prose h2 {
+    font-size: var(--step-2);
+    font-weight: 400;
+    margin-top: 2.5rem;
+  }
+  .prose h2:first-child {
+    margin-top: 0;
+  }
+
+  .prose h3 {
+    font-size: var(--step-1);
+    font-weight: 400;
+    margin-top: 2rem;
+  }
+
+  .prose p {
+    margin-top: 1rem;
+    color: var(--pigment-basalt-soft);
+    line-height: 1.7;
+  }
+
+  .prose .link {
+    color: var(--pigment-terracotta);
+    border-bottom: 1px solid color-mix(in srgb, var(--pigment-terracotta) 35%, transparent);
+  }
+  .prose .link:hover {
+    border-bottom-color: var(--pigment-terracotta);
+  }
+
+  .plain {
+    margin: 1rem 0 0;
+    padding-left: 1.2rem;
+    color: var(--pigment-basalt-soft);
+    line-height: 1.7;
+  }
+  .plain li + li {
+    margin-top: 0.4rem;
+  }
+
+  .dialog {
+    margin: 1.5rem 0 0;
+  }
+  .dialog img {
+    display: block;
+    width: min(100%, 22rem);
+    height: auto;
+  }
+
+  .cmd {
+    margin: 1rem 0 0;
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--edge);
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: var(--step--1);
+  }
+</style>

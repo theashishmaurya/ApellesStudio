@@ -4,6 +4,10 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-21** — **Website for the beta.** New `/install/` guide (GitHub Releases DMG, the real "Not Opened" dialog, Open Anyway, the `xattr` alternative, first-launch AI setup, Motion not in this beta). Real post-rename Edit and Colorist captures on `/inside/` and a new home "Made with Apelles" section with two of the owner's YouTube videos (privacy-enhanced inline embeds; privacy page updated). The beta section now points at the guide. Also fixed stale MCP counts the site's own test caught (183 → 186). `npm run verify`: 201 tests pass.
+
+- **2026-10-21** — **B-254 verified live** in the installed, translocated beta: sidecar sources, both Python sidecars (app-data venv, `cwd` in the bundle) and `apelles-mcp` all run from inside `Apelles.app`; `codesign --verify --deep --strict` still passes and no `__pycache__` lands in the bundle.
+
 - **2026-10-20** — **D-391: the beta bundle ships without the Motion tab.** Its export needs Node + headless Chrome, which the bundle lacks until the on-demand download lands. `tauri:before-build` builds the UI with `VITE_APELLES_MOTION=off` and `apelles-mcp` with `--no-default-features` (a new `motion` Cargo feature), so neither the tab nor its 43 `motion_*` tools ship (131 tools vs 174). Cmd+1/2/3 now select tabs by id, so Cmd+2 no longer lands on Colorist when Motion is absent.
 
 - **2026-10-15** — **B-254 fixed (D-390): a packaged app runs its own sidecars, not the build machine's.** The installed release had started `ai-media/`, `ai/` (on the developer's per-sidecar venv) and `target/debug/apelles-mcp` from the build checkout. Now the `ai/`+`ai-media/` sources ship in `resources/sidecars/` (69 files, 457 KB), and `apelles-mcp` ships as a release-only `externalBin` (`tauri.macos.release.conf.json`, ~6.9 MB). Every `CARGO_MANIFEST_DIR` lookup is dev-only under a configured `Layout`. Packaged Python runs on the app-data venv, with bytecode and models in app data. Expected DMG growth is about 3 MB.

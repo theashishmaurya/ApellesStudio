@@ -1,6 +1,12 @@
 # TODO — retake the screenshots after the rename
 
-**Status: open, and now hidden rather than shown-with-disclosure (D-288).**
+**Status: Edit and Colorist DONE (2026-10-21)** — retaken from the beta build
+(`public/shots/edit-room.webp`, `colorist-room.webp`), shown on `/inside/` and the
+home page's "Made with Apelles" section with no disclosure needed. **Still open:**
+the Motion room (not in the first beta, D-391) and `Demo.astro`'s three pre-rename
+frames, which stay dormant below.
+
+**Earlier status: hidden rather than shown-with-disclosure (D-288).**
 Created by D-264 (the Apelles rebrand of `website/`).
 
 Every image in `public/shots/` is a genuine capture of the running application,

@@ -59,12 +59,14 @@ export const TABS: readonly Tab[] = [
       'Frame-anchored timeline markers on Resolve’s own sixteen-colour palette',
       'Export the whole timeline to video with real mixed audio, or to DTD-verified FCPXML 1.7',
     ],
-    // D-288: hidden for now, same as Motion/Colorist below — the captures
-    // predate the rename and are being retaken (TODO-RECAPTURE-SHOTS.md);
-    // the owner's own call rather than show stand-in imagery in the meantime.
-    shot: null,
-    shotNote:
-      'A capture of the Edit room existed here, but predates the rename and is being retaken rather than shown stale. The capabilities below are all shipped and documented today.',
+    // Retaken after the rename (2026-10-21) from the beta build, which closed
+    // the D-288 gap for this room.
+    shot: {
+      src: '/shots/edit-room.webp',
+      alt: 'The Apelles Edit room: a 4K talking-head clip in the preview, the Project Settings inspector on the right, and a two-track timeline below with a real filmstrip and audio waveform, split at a cut.',
+      width: 2000,
+      height: 1301,
+    },
   },
   {
     id: 'motion',
@@ -104,9 +106,12 @@ export const TABS: readonly Tab[] = [
       'Interactive relight: draggable depth-driven light pucks, deterministic and real-time',
       'Closed-loop match_to_reference, depth-haze, ProRes/H.264 export and a .cube bake',
     ],
-    shot: null,
-    shotNote:
-      'No screenshot of the Colorist room has been captured yet. The capabilities listed here are all shipped and documented; the imagery simply does not exist to show yet.',
+    shot: {
+      src: '/shots/colorist-room.webp',
+      alt: 'The Apelles Colorist room: the same clip full-frame, a live RGB parade above the Masking panel, and AI selections for Subject, Sky, Foreground and Depth alongside brush, linear and radial masks.',
+      width: 2000,
+      height: 1301,
+    },
   },
 ];
 
@@ -216,9 +221,9 @@ export const PILLARS: readonly Pillar[] = [
  * the MCP page instead, where the reader who cares about them is.
  */
 export const LIMITS: readonly string[] = [
-  'There is no public build yet. Nothing is downloadable from this site today, and the signup below is the only thing on it that does anything.',
+  'The first public build is a beta. Apple has not notarized it yet, so macOS asks you to allow it once; the install guide shows exactly how.',
   'It runs on macOS with Apple Silicon. Windows has been surveyed and scoped, and not built.',
-  'There are no screenshots of the Motion or Colorist rooms anywhere on this site, because none have been captured. What those rooms do is described, not shown.',
+  'There is no screenshot of the Motion room on this site, because none has been captured, and the first beta build leaves Motion out until its export toolchain installs itself. What that room does is described, not shown.',
   'It will not tell you what your video should be about. Taste, timing and what is worth saying stay yours; this is a tool for executing the thing you already have in mind.',
 ];
 
