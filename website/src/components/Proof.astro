@@ -1,0 +1,126 @@
+---
+/**
+ * Proof.astro — what the app looks like, and what has been made with it.
+ *
+ * What it is: published videos the owner made with Apelles, on the owner's
+ * own YouTube channel, placed second on the home page as proof of work. The
+ * app's own screenshots live with the rooms they show (Rooms.astro).
+ * The videos are YouTube's own inline player (the owner's call: a plain
+ * embed rather than a click-to-load poster), on its privacy-enhanced
+ * youtube-nocookie.com domain and lazy-loaded, so the player is only fetched
+ * once it scrolls near the viewport. The privacy page says so, in the same
+ * commit.
+ * What it does NOT do: show app screenshots (Rooms.astro does).
+ */
+import { PROOF_VIDEOS } from '../data/proof.ts';
+---
+
+<section class="proof section" id="proof">
+  <div class="shell head">
+    <p class="eyebrow">Made with Apelles</p>
+    <h2>Real videos, published, cut in it.</h2>
+  </div>
+
+  <div class="shell videos">
+    {
+      PROOF_VIDEOS.map((v) => (
+        <figure>
+          <div class="player">
+            <iframe
+              src={`https://www.youtube-nocookie.com/embed/${v.id}?rel=0${v.start ? `&start=${v.start}` : ''}`}
+              title={v.title}
+              loading="lazy"
+              allow="encrypted-media; picture-in-picture; fullscreen"
+              referrerpolicy="strict-origin-when-cross-origin"
+              allowfullscreen
+            />
+          </div>
+          <figcaption>
+            <span class="title">{v.title}</span>
+            <span class="note">{v.note}</span>
+            <a class="link" href={v.url} rel="noopener">
+              Watch on YouTube
+            </a>
+          </figcaption>
+        </figure>
+      ))
+    }
+  </div>
+
+  <p class="shell fine">
+    The videos are YouTube’s own privacy-enhanced player, loaded as you scroll to them. See the
+    <a href="/privacy/">privacy policy</a>.
+  </p>
+</section>
+
+<style>
+  .head {
+    margin-bottom: clamp(2rem, 1.25rem + 2.5vw, 3rem);
+  }
+
+  h2 {
+    font-size: var(--step-3);
+    margin-top: 1rem;
+    max-width: 24ch;
+    font-weight: 300;
+  }
+
+  .videos {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 26rem), 1fr));
+    gap: clamp(1.5rem, 1rem + 2vw, 2.5rem);
+  }
+
+  figure {
+    margin: 0;
+  }
+
+  .player {
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--pigment-basalt);
+  }
+
+  .player {
+    aspect-ratio: 16 / 9;
+  }
+
+  .player iframe {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+
+  figcaption {
+    margin-top: 0.85rem;
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    color: var(--pigment-basalt-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .title {
+    color: var(--pigment-basalt);
+    font-weight: 500;
+  }
+
+  .link {
+    color: var(--pigment-terracotta);
+    align-self: flex-start;
+  }
+
+  .fine {
+    margin-top: 1.75rem;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    color: var(--pigment-basalt-soft);
+  }
+
+  .fine a {
+    color: var(--pigment-terracotta);
+  }
+</style>

@@ -8,7 +8,8 @@
 # neither of which this workflow or any agent sets — create them by hand:
 #   CLOUDFLARE_API_TOKEN   — a token scoped to "Cloudflare Pages: Edit" for
 #                            this account (My Profile > API Tokens > Create
-#                            Token > "Cloudflare Pages — Edit" template).
+#                            Token > Custom token: Account > Cloudflare
+#                            Pages > Edit, this account only).
 #   CLOUDFLARE_ACCOUNT_ID  — this Cloudflare account's id.
 name: Deploy website
 
@@ -36,6 +37,11 @@ jobs:
         working-directory: website
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: the sitemap's per-page lastmod is each page's last
+          # commit (website/src/seo/sitemap.ts). A shallow clone would stamp
+          # every page with the one commit it has.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:

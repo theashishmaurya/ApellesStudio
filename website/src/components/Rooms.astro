@@ -8,6 +8,9 @@
  * genuinely different jobs into one shape and gives the eye nowhere to land.
  * A vertical list with real rules between the rows lets each room be read in
  * order, which is also the order you would use them in.
+ * Each room shows its real capture under its description, where it is being
+ * talked about, and a room that is not in the current beta says so (Motion,
+ * D-391) instead of showing anything.
  * What it does NOT do: list capabilities. That is /inside/'s job; here each room
  * gets one sentence and one example of what you would actually say to it.
  */
@@ -31,15 +34,28 @@ const ASKS: Record<string, string> = {
   <ol class="shell list">
     {
       TABS.map((tab, i) => (
-        <li class="room">
+        <li class:list={['room', { 'with-shot': tab.shot }]}>
           <span class="num mono">{String(i + 1).padStart(2, '0')}</span>
           <div class="text">
             <h3>
               {tab.name} <span class="what">&mdash; {tab.line}</span>
+              {tab.coming && <span class="coming">{tab.coming}</span>}
             </h3>
             <p class="plain">{tab.plain}</p>
             <p class="ask">{ASKS[tab.id]}</p>
           </div>
+          {tab.shot && (
+            <div class="frame">
+              <img
+                src={tab.shot.src}
+                alt={tab.shot.alt}
+                width={tab.shot.width}
+                height={tab.shot.height}
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
+          )}
         </li>
       ))
     }
@@ -123,14 +139,65 @@ const ASKS: Record<string, string> = {
     max-width: 52ch;
   }
 
+  /* Built, not in the current beta. Terracotta for the same contrast reason as
+     .num above. */
+  .coming {
+    display: inline-block;
+    vertical-align: middle;
+    margin-left: 0.6rem;
+    padding: 0.15rem 0.55rem;
+    border: 1px solid var(--pigment-terracotta);
+    border-radius: 999px;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    font-style: normal;
+    letter-spacing: 0.04em;
+    color: var(--pigment-terracotta);
+  }
+
+  /* Two columns where there is a capture: the room's words on the left, the
+     room itself on the right. */
+  .room.with-shot {
+    grid-template-columns: 3.5rem minmax(0, 5fr) minmax(0, 7fr);
+    gap: 1rem clamp(1.5rem, 1rem + 2vw, 3rem);
+    align-items: start;
+  }
+
+  .frame {
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--pigment-basalt);
+  }
+
+  .frame img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
   .more {
     margin-top: 2.25rem;
   }
 
+  @media (max-width: 960px) {
+    .room.with-shot {
+      grid-template-columns: 3.5rem minmax(0, 1fr);
+    }
+    .room.with-shot .frame {
+      grid-column: 2;
+      margin-top: 1rem;
+    }
+  }
+
   @media (max-width: 620px) {
-    .room {
+    .room,
+    .room.with-shot {
       grid-template-columns: minmax(0, 1fr);
       gap: 0.4rem;
+    }
+    .room.with-shot .frame {
+      grid-column: 1;
     }
     .num {
       padding-top: 0;

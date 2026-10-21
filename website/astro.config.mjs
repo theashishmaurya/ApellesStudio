@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import sitemap from '@astrojs/sitemap';
+import { serialize } from './src/seo/sitemap.ts';
 
 /**
  * Apelles's marketing + docs website (D-255, rebuilt under the new brand by
@@ -16,11 +17,16 @@ import sitemap from '@astrojs/sitemap';
  * records the owner as having actually bought — not a placeholder; it was
  * wrongly left as `apelles.video` (an earlier placeholder) until D-288 caught
  * the drift.
+ *
+ * The sitemap's per-page `lastmod`, image and video entries come from
+ * `src/seo/sitemap.ts`, read off the same data the pages render.
  */
+const SITE = 'https://apelles.studio';
+
 export default defineConfig({
-  site: 'https://apelles.studio',
+  site: SITE,
   output: 'static',
-  integrations: [sitemap()],
+  integrations: [sitemap({ serialize: (item) => serialize(item, SITE) })],
   build: {
     // One stylesheet, inlined — the whole site's CSS is a few KB and a separate
     // request costs more than it saves.

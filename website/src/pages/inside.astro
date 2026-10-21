@@ -23,7 +23,7 @@ import { TABS, STATUS } from '../data/product.ts';
   <PageHead
     eyebrow="Inside Apelles"
     title="Three rooms, one window."
-    lede="Cutting, motion graphics and colour normally mean three applications and three round trips through an export. Here they are three parts of the same project, and everything below is shipped and working today — nothing on this page is a plan."
+    lede="Cutting, motion graphics and colour normally mean three applications and three round trips through an export. Here they are three parts of the same project, and everything below is built and working today — nothing on this page is a plan. Motion is the one room not in the first beta yet."
   />
 
   {
@@ -34,7 +34,10 @@ import { TABS, STATUS } from '../data/product.ts';
             <p class="eyebrow">
               {String(i + 1).padStart(2, '0')} &mdash; {tab.line}
             </p>
-            <h2>{tab.name}</h2>
+            <h2>
+              {tab.name}
+              {tab.coming && <span class="coming">{tab.coming}</span>}
+            </h2>
             <p class="lede">{tab.plain}</p>
           </div>
 
@@ -50,11 +53,7 @@ import { TABS, STATUS } from '../data/product.ts';
                   decoding="async"
                 />
               </div>
-              <figcaption>
-                A real capture of the running application. The captures on this site predate the
-                rename, so the title bar still reads <span class="mono">CHROMA</span> — they will be
-                retaken rather than retouched.
-              </figcaption>
+              <figcaption>A real capture of the running application, from the beta build.</figcaption>
             </figure>
           ) : (
             <p class="gap">{tab.shotNote}</p>
@@ -109,6 +108,19 @@ import { TABS, STATUS } from '../data/product.ts';
 
   .band h2 {
     color: var(--ink-inverse);
+  }
+
+  .coming {
+    display: inline-block;
+    vertical-align: middle;
+    margin-left: 0.9rem;
+    padding: 0.2rem 0.65rem;
+    border: 1px solid var(--pigment-ochre);
+    border-radius: 999px;
+    font-family: var(--font-ui);
+    font-size: var(--step--1);
+    letter-spacing: 0.04em;
+    color: var(--pigment-ochre);
   }
 
   .intro .lede {

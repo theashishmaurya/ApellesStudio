@@ -26,7 +26,7 @@
 import Base from '../layouts/Base.astro';
 import PageHead from '../components/PageHead.astro';
 
-const updated = 'September 10, 2026';
+const updated = 'October 21, 2026';
 ---
 
 <Base
@@ -85,6 +85,14 @@ const updated = 'September 10, 2026';
         that changed since this page was first written (found live, via a Lighthouse trace, not
         assumed); if the site's own behaviour changes again, this page changes with it, in the same
         commit.
+      </p>
+      <p>
+        The home page embeds two videos with YouTube's own player, using its privacy-enhanced mode
+        (<code class="mono">youtube-nocookie.com</code>). The players load as you scroll to them, and
+        from then on YouTube receives what any embedded player sends it, under
+        <a class="link" href="https://policies.google.com/privacy">Google's privacy policy</a>; in
+        privacy-enhanced mode YouTube says it does not use your viewing of the embed to personalise
+        what you see elsewhere. No other page loads anything from YouTube.
       </p>
       <p>
         One narrow exception, for transparency: a development-only tool used while building this

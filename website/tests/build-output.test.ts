@@ -18,6 +18,8 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHTML } from 'linkedom';
 import { BANNED_TYPEFACES } from '../src/data/palette.ts';
+import { PROOF_VIDEOS } from '../src/data/proof.ts';
+import { contentFiles, pageFile } from '../src/seo/sitemap.ts';
 
 const DIST = fileURLToPath(new URL('../dist', import.meta.url));
 
@@ -169,9 +171,19 @@ describe('the rebrand is complete in the shipped output', () => {
   });
 
   it('discloses the pre-rename screenshots wherever one is shown', () => {
+    // Only Demo.astro's own captures predate the rename; the room shots were
+    // retaken from the beta build (2026-10-21) and need no disclosure. The set
+    // is read out of Demo.astro's source, the same way the orphan check is.
+    const demoSrc = readFileSync(
+      fileURLToPath(new URL('../src/components/Demo.astro', import.meta.url)),
+      'utf8',
+    );
+    const preRename = [...demoSrc.matchAll(/src:\s*'(\/shots\/[^']+)'/g)].map((m) => m[1]);
+    expect(preRename.length).toBeGreaterThan(0);
     for (const p of pages) {
       const d = parseHTML(p.html).document;
-      if (d.querySelectorAll('img[src^="/shots/"]').length === 0) continue;
+      const shown = [...d.querySelectorAll('img[src^="/shots/"]')].map((i) => i.getAttribute('src'));
+      if (!shown.some((src) => preRename.includes(src ?? ''))) continue;
       // Collapse source line-wrapping before matching the sentence.
       const flat = (d.body?.textContent ?? '').replace(/\s+/g, ' ');
       expect(flat, `${p.file} shows a screenshot without the disclosure`).toContain(
@@ -299,6 +311,100 @@ describe('no broken internal links', () => {
 
     const orphans = [...assets].filter((a) => a.startsWith('/shots/') && !referenced.has(a));
     expect(orphans, `unused screenshots shipped:\n${orphans.join('\n')}`).toEqual([]);
+  });
+});
+
+describe('the beta pages (2026-10-21)', () => {
+  const page = (route: string) => {
+    const p = pages.find((x) => x.route === route);
+    expect(p, `${route} was not built`).toBeTruthy();
+    return parseHTML(p!.html).document;
+  };
+
+  it('the install guide links the GitHub release and shows the real Gatekeeper dialog', () => {
+    const d = page('/install/');
+    const hrefs = [...d.querySelectorAll('a[href]')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toContain('https://github.com/theashishmaurya/ApellesStudio/releases/latest');
+    const dialog = d.querySelector('img[src="/install/not-opened.webp"]');
+    expect(dialog?.getAttribute('alt') ?? '').toContain('Not Opened');
+    expect(d.body?.textContent ?? '').toContain('Open Anyway');
+  });
+
+  it('the footer and the beta section both lead to the install guide', () => {
+    const home = page('/');
+    expect(home.querySelector('#beta a[href="/install/"]')).toBeTruthy();
+    expect(home.querySelector('footer a[href="/install/"]')).toBeTruthy();
+  });
+
+  it('embeds videos only through YouTube’s privacy-enhanced domain, and the privacy page says so', () => {
+    for (const p of pages) {
+      for (const f of parseHTML(p.html).document.querySelectorAll('iframe')) {
+        expect(f.getAttribute('src') ?? '', p.file).toMatch(/^https:\/\/www\.youtube-nocookie\.com\/embed\//);
+        expect(f.getAttribute('title') ?? '', p.file).not.toBe('');
+      }
+    }
+    expect(page('/').querySelectorAll('#proof iframe').length).toBeGreaterThan(0);
+    expect(page('/privacy/').body?.textContent ?? '').toContain('youtube-nocookie.com');
+  });
+});
+
+describe('the sitemap', () => {
+  const xml = () => readFileSync(join(DIST, 'sitemap-0.xml'), 'utf8');
+  const entries = () =>
+    [...xml().matchAll(/<url>([\s\S]*?)<\/url>/g)].map((m) => ({
+      loc: /<loc>([^<]+)<\/loc>/.exec(m[1])?.[1] ?? '',
+      lastmod: /<lastmod>([^<]+)<\/lastmod>/.exec(m[1])?.[1],
+      body: m[1],
+    }));
+
+  it('lists every built page except the 404, each with a real lastmod', () => {
+    const listed = entries().map((e) => new URL(e.loc).pathname).sort();
+    const built = pages.map((p) => p.route).filter((r) => r !== '/404/').sort();
+    expect(listed).toEqual(built);
+    for (const e of entries()) {
+      expect(e.lastmod, e.loc).toBeTruthy();
+      expect(Number.isNaN(Date.parse(e.lastmod!)), e.loc).toBe(false);
+    }
+  });
+
+  it('robots.txt points at the sitemap index, which points at the sitemap', () => {
+    expect(readFileSync(join(DIST, 'robots.txt'), 'utf8')).toContain(
+      'Sitemap: https://apelles.studio/sitemap-index.xml',
+    );
+    expect(readFileSync(join(DIST, 'sitemap-index.xml'), 'utf8')).toContain(
+      'https://apelles.studio/sitemap-0.xml',
+    );
+  });
+
+  it('describes exactly the videos the home page embeds', () => {
+    const home = entries().find((e) => new URL(e.loc).pathname === '/')!;
+    const players = [...home.body.matchAll(/<video:player_loc>([^<]+)</g)].map((m) => m[1]);
+    expect(players).toEqual(PROOF_VIDEOS.map((v) => `https://www.youtube-nocookie.com/embed/${v.id}`));
+    const embedded = [...parseHTML(pages.find((p) => p.route === '/')!.html).document.querySelectorAll('#proof iframe')]
+      .map((f) => (f.getAttribute('src') ?? '').split('?')[0]);
+    expect(embedded).toEqual(players);
+  });
+
+  it('lists only images that ship and that the page actually shows', () => {
+    for (const e of entries()) {
+      const route = new URL(e.loc).pathname;
+      const html = pages.find((p) => p.route === route)!.html;
+      for (const m of e.body.matchAll(/<image:loc>([^<]+)</g)) {
+        const path = new URL(m[1]).pathname;
+        expect(assets.has(path), `${path} is not in dist`).toBe(true);
+        expect(html, `${route} does not show ${path}`).toContain(`src="${path}"`);
+      }
+    }
+  });
+
+  it('dates a page by its own content, not the shared chrome', () => {
+    const files = contentFiles(pageFile('/')!).map((f) => f.split('/src/')[1]);
+    expect(files).toContain('components/Proof.astro');
+    expect(files).toContain('data/product.ts');
+    expect(files).not.toContain('layouts/Base.astro');
+    expect(files).not.toContain('components/Nav.astro');
+    expect(pageFile('/terms/')).toBeTruthy();
+    expect(pageFile('/no-such-page/')).toBeUndefined();
   });
 });
 

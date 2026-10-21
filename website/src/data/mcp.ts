@@ -72,6 +72,11 @@ export interface ToolGroup {
  * an earlier pass added without re-counting (Edit 77 → 81). Re-counted against
  * the real file.
  *
+ * 183 → 186 on 2026-10-21: `ai_env_status` / `ai_env_retry` (counted in the
+ * Colorist remainder, 42 → 44) and `debug_set_library_mode` (debugOnly
+ * 11 → 12), all added without a re-count; found by this file's own test while
+ * the site was updated for the beta. Re-counted against the real file.
+ *
  * 166 → 176 on 2026-09-17 (D-339). Exactly ONE of those ten is this pass's own
  * `motion_set_project_theme` (the Motion tab's document-level theme); the other
  * nine are drift these numbers had already accumulated across four earlier
@@ -85,9 +90,9 @@ export interface ToolGroup {
  * what `tests/mcp-data.test.ts` exists to force.
  */
 export const TOOL_TOTALS = {
-  all: 183,
-  shipped: 172,
-  debugOnly: 11,
+  all: 186,
+  shipped: 174,
+  debugOnly: 12,
 } as const;
 
 export const TOOL_GROUPS: readonly ToolGroup[] = [
@@ -122,7 +127,7 @@ export const TOOL_GROUPS: readonly ToolGroup[] = [
   },
   {
     name: 'Colorist',
-    count: 42,
+    count: 44,
     blurb:
       'Grading by the numbers. Primary, curves and wheels; composable shape, AI-subject and depth masks with keyframed geometry; SAM 2 tracking; a temporal depth track; relight pucks; and real scope measurement an agent reads back before and after every change.',
     sample: [

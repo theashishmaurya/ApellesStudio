@@ -34,11 +34,12 @@ const placeholder = isPlaceholderEndpoint(endpoint);
 <section class="beta section" id="beta">
   <div class="shell wrap">
     <div class="copy">
-      <p class="eyebrow">Pre-launch</p>
-      <h2>Be there when it opens.</h2>
+      <p class="eyebrow">Beta</p>
+      <h2>The beta is out. Try it.</h2>
       <p class="lede">
-        There is no public build yet. Leave an address and you will hear from us once there is one
-        worth installing &mdash; that message, and nothing else.
+        A free build for Apple Silicon Macs &mdash; <a class="install" href="/install/">here is how
+        to install it</a>. Leave an address to hear when a new build lands &mdash; that message, and
+        nothing else.
       </p>
     </div>
 
@@ -96,6 +97,12 @@ const placeholder = isPlaceholderEndpoint(endpoint);
 </section>
 
 <style>
+  .install {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
+
   .wrap {
     display: grid;
     grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
