@@ -38,6 +38,11 @@ export interface Tab {
   } | null;
   /** Said plainly when `shot` is null, so the absence is explained not hidden. */
   readonly shotNote?: string;
+  /**
+   * Set when the room is built but not in the current public build, said plainly
+   * where the room is shown. Motion: left out of the first beta (D-391).
+   */
+  readonly coming?: string;
 }
 
 export const TABS: readonly Tab[] = [
@@ -87,7 +92,8 @@ export const TABS: readonly Tab[] = [
     ],
     shot: null,
     shotNote:
-      'No screenshot of the Motion room has been captured yet. Rather than show a mockup, this section lists only what the room really does today.',
+      'Motion is built and working in the development build, but not in the first beta: its export needs Node.js and a headless Chrome, and it returns once the app can download those for you. No screenshot of it is shown until then.',
+    coming: 'Coming next',
   },
   {
     id: 'colorist',

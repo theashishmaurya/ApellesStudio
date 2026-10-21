@@ -8,6 +8,9 @@
  * genuinely different jobs into one shape and gives the eye nowhere to land.
  * A vertical list with real rules between the rows lets each room be read in
  * order, which is also the order you would use them in.
+ * Each room shows its real capture under its description, where it is being
+ * talked about, and a room that is not in the current beta says so (Motion,
+ * D-391) instead of showing anything.
  * What it does NOT do: list capabilities. That is /inside/'s job; here each room
  * gets one sentence and one example of what you would actually say to it.
  */
@@ -36,9 +39,22 @@ const ASKS: Record<string, string> = {
           <div class="text">
             <h3>
               {tab.name} <span class="what">&mdash; {tab.line}</span>
+              {tab.coming && <span class="coming">{tab.coming}</span>}
             </h3>
             <p class="plain">{tab.plain}</p>
             <p class="ask">{ASKS[tab.id]}</p>
+            {tab.shot && (
+              <div class="frame">
+                <img
+                  src={tab.shot.src}
+                  alt={tab.shot.alt}
+                  width={tab.shot.width}
+                  height={tab.shot.height}
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+            )}
           </div>
         </li>
       ))
@@ -121,6 +137,36 @@ const ASKS: Record<string, string> = {
     border-left: 2px solid var(--pigment-ochre);
     padding-left: 0.9rem;
     max-width: 52ch;
+  }
+
+  /* Built, not in the current beta. Terracotta for the same contrast reason as
+     .num above. */
+  .coming {
+    display: inline-block;
+    vertical-align: middle;
+    margin-left: 0.6rem;
+    padding: 0.15rem 0.55rem;
+    border: 1px solid var(--pigment-terracotta);
+    border-radius: 999px;
+    font-family: var(--font-ui);
+    font-size: var(--step--2);
+    font-style: normal;
+    letter-spacing: 0.04em;
+    color: var(--pigment-terracotta);
+  }
+
+  .frame {
+    margin-top: clamp(1.5rem, 1rem + 1.5vw, 2.25rem);
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--pigment-basalt);
+  }
+
+  .frame img {
+    display: block;
+    width: 100%;
+    height: auto;
   }
 
   .more {

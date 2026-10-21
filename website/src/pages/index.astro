@@ -2,10 +2,10 @@
 /**
  * index.astro — the home page (D-264).
  *
- * The section order is an argument: the promise (hero) → who it is for and
- * who it is not (difference) → what is in it (rooms) → the proof: real
- * captures and videos made with it (proof) → why it is built this way
- * (machine) → the one ask (beta).
+ * The section order is an argument: the promise (hero) → the proof: real
+ * published videos made with it (proof) → who it is for and who it is not
+ * (difference) → what is in it, each room with its real capture (rooms) →
+ * why it is built this way (machine) → the one ask (beta).
  *
  * D-288: Demo.astro (the scrubbable filmstrip of real screenshots) is not
  * rendered for now — the owner's own call, on the same honesty grounds this
@@ -29,9 +29,9 @@ import Beta from '../components/Beta.astro';
   description="Apelles is the part you were missing: describe your video, and a real AI agent cuts, grades and animates it — free, open source, on your machine."
 >
   <Hero />
+  <Proof />
   <Difference />
   <Rooms />
-  <Proof />
   <Machine />
   <Beta />
 </Base>
