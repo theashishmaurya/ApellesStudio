@@ -45,6 +45,8 @@ export interface Tab {
   readonly coming?: string;
 }
 
+// Shown in this order everywhere. Motion is last: it is the room not in the
+// first beta (D-391).
 export const TABS: readonly Tab[] = [
   {
     id: 'edit',
@@ -74,28 +76,6 @@ export const TABS: readonly Tab[] = [
     },
   },
   {
-    id: 'motion',
-    name: 'Motion',
-    line: 'Where things move on their own.',
-    plain:
-      'Titles, callouts and graphics that animate — built in the same window as the cut, not exported out of a second app and imported back.',
-    shipped: [
-      // Ten as of D-258, not the eight D-255 transcribed: the eight abstract
-      // explainer primitives plus the first two representational ones.
-      'Ten layer primitives — text, emphasis, matrix, graph, layers, particleflow, labelbox, layerstack, plus claudechat and deviceframe',
-      'A multi-scene JSON manifest and compiler, with each scene optionally 3D',
-      'A live Remotion player preview with its own transport',
-      'On-canvas select, drag, resize, marquee and group-move in world coordinates',
-      'A per-row keyframe timeline with a real bezier ease-curve editor',
-      'A browsable primitive catalog that actually creates layers, and a typed property Inspector',
-      'Render exports every scene as its own video file, auto-imported back into Sources',
-    ],
-    shot: null,
-    shotNote:
-      'Motion is built and working in the development build, but not in the first beta: its export needs Node.js and a headless Chrome, and it returns once the app can download those for you. No screenshot of it is shown until then.',
-    coming: 'Coming next',
-  },
-  {
     id: 'colorist',
     name: 'Colorist',
     line: 'Where it stops looking like a phone recording.',
@@ -118,6 +98,28 @@ export const TABS: readonly Tab[] = [
       width: 2000,
       height: 1301,
     },
+  },
+  {
+    id: 'motion',
+    name: 'Motion',
+    line: 'Where things move on their own.',
+    plain:
+      'Titles, callouts and graphics that animate — built in the same window as the cut, not exported out of a second app and imported back.',
+    shipped: [
+      // Ten as of D-258, not the eight D-255 transcribed: the eight abstract
+      // explainer primitives plus the first two representational ones.
+      'Ten layer primitives — text, emphasis, matrix, graph, layers, particleflow, labelbox, layerstack, plus claudechat and deviceframe',
+      'A multi-scene JSON manifest and compiler, with each scene optionally 3D',
+      'A live Remotion player preview with its own transport',
+      'On-canvas select, drag, resize, marquee and group-move in world coordinates',
+      'A per-row keyframe timeline with a real bezier ease-curve editor',
+      'A browsable primitive catalog that actually creates layers, and a typed property Inspector',
+      'Render exports every scene as its own video file, auto-imported back into Sources',
+    ],
+    shot: null,
+    shotNote:
+      'Motion is built and working in the development build, but not in the first beta: its export needs Node.js and a headless Chrome, and it returns once the app can download those for you. No screenshot of it is shown until then.',
+    coming: 'Coming next',
   },
 ];
 

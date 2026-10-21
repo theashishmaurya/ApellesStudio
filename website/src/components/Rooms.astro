@@ -34,7 +34,7 @@ const ASKS: Record<string, string> = {
   <ol class="shell list">
     {
       TABS.map((tab, i) => (
-        <li class="room">
+        <li class:list={['room', { 'with-shot': tab.shot }]}>
           <span class="num mono">{String(i + 1).padStart(2, '0')}</span>
           <div class="text">
             <h3>
@@ -43,19 +43,19 @@ const ASKS: Record<string, string> = {
             </h3>
             <p class="plain">{tab.plain}</p>
             <p class="ask">{ASKS[tab.id]}</p>
-            {tab.shot && (
-              <div class="frame">
-                <img
-                  src={tab.shot.src}
-                  alt={tab.shot.alt}
-                  width={tab.shot.width}
-                  height={tab.shot.height}
-                  loading="lazy"
-                  decoding="async"
-                />
-              </div>
-            )}
           </div>
+          {tab.shot && (
+            <div class="frame">
+              <img
+                src={tab.shot.src}
+                alt={tab.shot.alt}
+                width={tab.shot.width}
+                height={tab.shot.height}
+                loading="lazy"
+                decoding="async"
+              />
+            </div>
+          )}
         </li>
       ))
     }
@@ -155,8 +155,15 @@ const ASKS: Record<string, string> = {
     color: var(--pigment-terracotta);
   }
 
+  /* Two columns where there is a capture: the room's words on the left, the
+     room itself on the right. */
+  .room.with-shot {
+    grid-template-columns: 3.5rem minmax(0, 5fr) minmax(0, 7fr);
+    gap: 1rem clamp(1.5rem, 1rem + 2vw, 3rem);
+    align-items: start;
+  }
+
   .frame {
-    margin-top: clamp(1.5rem, 1rem + 1.5vw, 2.25rem);
     border: 1px solid var(--edge);
     border-radius: 10px;
     overflow: hidden;
@@ -173,10 +180,24 @@ const ASKS: Record<string, string> = {
     margin-top: 2.25rem;
   }
 
+  @media (max-width: 960px) {
+    .room.with-shot {
+      grid-template-columns: 3.5rem minmax(0, 1fr);
+    }
+    .room.with-shot .frame {
+      grid-column: 2;
+      margin-top: 1rem;
+    }
+  }
+
   @media (max-width: 620px) {
-    .room {
+    .room,
+    .room.with-shot {
       grid-template-columns: minmax(0, 1fr);
       gap: 0.4rem;
+    }
+    .room.with-shot .frame {
+      grid-column: 1;
     }
     .num {
       padding-top: 0;
