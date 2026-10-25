@@ -64,6 +64,7 @@ registry; a manifest picks one with an optional top-level `theme`:
 |---|---|
 | `dark-excalidraw` | **the default.** Flat dark slate ground, off-white roughjs strokes, Kalam lettering, one red (emphasis) and one blue (signal) accent, a constant faint drift. Value-for-value the look this engine shipped with — see the note below. |
 | `apelles-studio` | apelles.studio's own editorial look, sourced from `website/src/styles/tokens.css` (D-264/D-284): warm-black basalt ground, marble ink, **ochre as the single working colour**, `Newsreader` / `Instrument Sans` / `IBM Plex Mono`, exact (non-sketch) geometry, no drift. |
+| `apelles-studio-light` | The same site's light **page** look (D-394): warm marble ground with marble-deep panels, basalt ink, **terracotta for emphasis and ochre for marks** (the site's own rule on marble), the same three faces, clean geometry. |
 
 How it reaches a primitive: `engine/Video.tsx` calls `resolveTheme(manifest.theme)`
 once and wraps the whole composition in `<ThemeProvider>`; every primitive calls
@@ -283,3 +284,7 @@ hand-typed value in the Inspector's keyframe-list editor). See D-159's own
 decision entry (`docs/08-decisions.md`) for the full per-property (not
 per-layer) reasoning behind that decision, including why it's scoped to the
 move-drag's position pair and does not extend to resize.
+
+## `graph` vocabulary (D-395)
+
+`node.icon` draws a real Phosphor icon tile for an infrastructure role (`GRAPH_ICONS` in `primitives/Graph.tsx`: client, server, database, cloud, gateway, reverse-proxy, load-balancer, firewall, attacker, …). `pulse.label` rides a packet; `keep`/`dy` leave it under the destination. `edgeWidth`/`edgeTone` make edges read on a light ground. A fully pinned graph is drawn exactly where pinned (B-266).

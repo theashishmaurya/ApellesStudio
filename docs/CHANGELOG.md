@@ -4,6 +4,18 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **D-395 + B-266: Motion `graph` gets real Phosphor infrastructure icons, labelled packets, visible edges and filled lit nodes; fully pinned graphs stay exactly where pinned.** Logged B-267 (open): the Edit timeline draws no clips after a restart.
+
+- **2026-10-25** — **Logged B-265 (open, roadmap Next 0a):** a webview reload silently kills an in-flight Motion render and the app forgets it ran; the reloaded dev page also ran stale engine code. Tracked with B-262/B-263/B-264 as one "renders that survive, report and resume" item.
+
+- **2026-10-25** — **Logged B-262/B-263/B-264 (open):** a manifest changed on disk is not reloaded without a project switch; a render cannot target one scene; a mid-render manifest change misaligns later scenes' frame windows.
+
+- **2026-10-25** — **Motion: a light apelles.studio theme (D-394), a `blur` channel on every layer (D-393), B-260 fixed (a lit `layers` card no longer snaps forward over its neighbour) and B-261 fixed (graph labels clear their node by 24 px).** Built for the "Black October" edit; the reveal card, the tree and the dated timeline are saved as reusable components.
+
+- **2026-10-25** — **B-258 fixed: a centred Motion title no longer wraps at half the canvas.** A positioned `text` layer shrank to fit the space right of its anchor, so `maxWidth` never applied. The wrapper now sizes to its text, capped by `maxWidth`. Also logged, not fixed: **B-259**, `editor_add_clip` on a track index that no longer exists lands on track 0 and reports failure.
+
+- **2026-10-25** — **B-257 fixed: an audio-only source placed on an audio track no longer gets a second, linked copy.** The `add_clip`/`edit_in` reducers placed D-129's linked audio half even when the clip itself landed on an audio track, doubling a VO or music bed. One reducer helper, `resolveLinkedHalf`, now drops the half there.
+
 ## [0.2.0] — 2026-10-21
 
 The first public beta: a DMG on GitHub Releases, built and published by the tag-triggered release workflow (D-392). Ad-hoc signed (D-388), ffmpeg bundled (D-389), every sidecar and the MCP server running from inside the app (D-390), Motion held back (D-391).

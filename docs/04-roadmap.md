@@ -235,6 +235,8 @@ lives in the `D-NNN` / `docs/notes/*.md` referenced. Sequenced because they shar
 files (`App.tsx`, `Shell.tsx`, `useUIStore.ts`) — one subagent at a time until the
 crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
+0a. **Motion renders that survive, report and resume — B-265, B-264, B-263, B-262** (owner, 2026-10-25: "we need a way to know these and recover and not happen at all"). Move the render job into the backend with the exact manifest snapshot it started from (B-264); persist it per project and report `interrupted` instead of a blank `idle`; offer Resume in the GUI and `motion_render(resume=true)` over MCP; render a chosen subset of scenes (B-263); reload a manifest changed on disk (B-262). Plus: root-cause the dev webview running stale engine code after a reload (B-265).
+
 0. **Export through the app's own compositor instead of an ffmpeg filter graph — D-350.**
    Moved here from "Later" 2026-09-18 when **phase 1 shipped**. Origin: B-228/B-229/B-230
    found and fixed three measured resource pathologies in `editor_export`'s ffmpeg

@@ -27,6 +27,110 @@ Still real:
 
 ## Open
 
+## B-267 — after an app restart the Edit timeline panel draws no clips, though the timeline holds all of them
+
+status: **open** · severity: **high** (the timeline looks empty; a user reasonably concludes the edit is gone) · area: `packages/editor/src/TimelinePane.tsx` (clip rendering)
+
+- **found:** 2026-10-26, owner: "see the timeline shows nothing?". After restarting the dev app (B-265) and reopening "Black October", every track row is empty at 1% zoom; markers still draw.
+- **the data is intact:** `editor_get_timeline` and `project.json` both hold 59 + 1 + 1 + 63 + 56 + 1 video clips and 56 + 1 audio clips, and the preview plays them. Before the restart the same project drew its clips at the same zoom.
+- **next:** reproduce (restart → open project at a 1% zoom with a 21,992-frame, ~240-clip timeline) and find why the clip layer does not draw. Suspects: the zoom/visible-range calculation on first layout, or clip virtualisation computing an empty window.
+
+## B-266 — a fully pinned Motion `graph` still ran the force layout and re-fit, so pinned nodes moved
+
+status: **fixed** (2026-10-26) · severity: **major** (authored layouts drifted; a pinned PHP node at x = 960 landed near 1440, on top of a neighbouring layer) · area: `packages/motion-engine/src/primitives/Graph.tsx`
+
+- **found:** 2026-10-25, owner review of the attack scene ("this one is overlapping").
+- **cause:** pinned nodes went through the d3-force pass and then the fit-to-margin rescale that exists for unpinned layouts, which moved them by a uniform scale and re-centred them.
+- **fix:** `pinnedPositions(nodes)`, a pure function. When every node carries x/y, those are the drawn positions verbatim, with no simulation and no fit. A partly pinned graph is unchanged.
+- **verification:** `pinnedPositions (B-266)` tests; `vitest run packages/motion-engine packages/motion` 946/946; the attack scene re-rendered with the server clear of the memory grid.
+
+## B-265 — a Motion render dies silently when the webview reloads, and the reloaded page can run STALE engine code
+
+status: **open — tracked in `docs/04-roadmap.md` "Next" item 0a** · severity: **high** (a ~40-minute render stopped at scene 19 of 55 with no error, no log line and no notice; the app then reported the render as never having started) · area: `packages/motion/src/renderLoop.ts` + `useMotionManifest.ts` (the loop lives in the webview), the dev webview's module loading
+
+- **found:** 2026-10-25, Black October edit. A source edit to `Graph.tsx` at 21:45 caused the dev webview to reload mid-render.
+- **what happened, in order:**
+  1. The render loop is a JavaScript loop inside the page (D-359). The reload destroyed it between scenes: `s18` landed at 21:45:15, and nothing after it.
+  2. `motion_get_state` then answered `state: idle, scenesTotal: null`, which means "never started this session". Nothing recorded that a render had been interrupted, and nothing in the app log said so either. The only way to find out was to notice no new files for 7 minutes.
+  3. The page that came back ran an OLD `design.ts` (its theme registry lacked `apelles-studio-light`, added ~15 min earlier). Vite served the current file to `curl` at the same moment, and touching the file produced no HMR update at all. So the manifest failed to parse (`theme: Invalid option`) until the whole dev app was restarted.
+- **why it matters beyond dev:** (1)-(2) are not dev-only. Any webview reload (a crash recovery, a future auto-update) kills an in-flight render the same way, and the app forgets the job.
+- **expected — prevent, detect, recover:**
+  - **Prevent:** run the render JOB in the backend, which owns the process and survives a webview reload, instead of a loop in the page. The page only starts it and watches it. This also solves B-264's snapshot problem: the job holds the exact manifest it was started with.
+  - **Detect:** persist the job (manifest hash, scene list, done/failed per scene) under the project (`motion/render-job.json`). Log start, every scene and stop. `motion_get_state.render` reports `interrupted` with what is left, never a blank `idle`.
+  - **Recover:** on project open, an interrupted job is offered as **Resume** in the GUI and resumable through MCP (`motion_render(resume=true)`), rendering only the scenes not yet written. Together with B-263's per-scene render.
+  - **Dev staleness:** reproduce and root-cause the stale module (watcher missed the edit? webview HTTP cache?) before deciding the fix. A dev-only "engine version" stamp compared at load would at least make it visible.
+- **workaround used:** checked the timeline was saved, restarted the dev app, and re-rendered only the missing scenes from a temporary manifest (see B-263).
+
+## B-264 — `motion_render` renders each scene's CONTENT from the manifest file on disk but its FRAME WINDOW from the in-memory copy, so a manifest change during a render misaligns every later scene
+
+status: **open** · severity: **major** (a render can silently write the wrong seconds of the wrong scene into a scene's file, with no error) · area: `packages/motion/src/renderLoop.ts`, `app/src-tauri/src/chroma/motion.rs` (`chroma_motion_render`)
+
+- **found:** 2026-10-25, during a 55-scene render for the "Black October" edit. A new manifest that lengthened one scene by 7 s was written to the project's sidecar mid-render.
+- **cause:** the frontend loop computes each scene's absolute `frameRange` once, from the manifest it held when the render started (`sceneStartFrame`/`sceneDurationFrames`), and passes it per scene to `chroma_motion_render`. That command renders `manifest_path(&dir)`, the file on disk, read fresh for every scene. If the file changes mid-loop, every scene after the change gets a window computed against one document and content from another.
+- **expected:** a render is a snapshot. Either the loop hands the backend the exact manifest it computed the windows from (a temp file per render, or the JSON inline), or the backend refuses when the file's content hash differs from the one the render started with.
+- **workaround used:** the original manifest was restored from the app's in-memory copy (`motion_get_manifest`) within a minute; the scenes rendered in that window were queued for re-render.
+
+## B-263 — a Motion render cannot target one scene: adding or changing a single scene means re-rendering the whole manifest
+
+status: **open** · severity: **major** (on a 55-scene, ~9-minute manifest, one changed card costs a ~40-minute full render) · area: `motion_render` (both MCP servers), `packages/motion/src/renderLoop.ts`, the Motion tab's Render button
+
+- **found:** 2026-10-25. Owner feedback changed four cards, then one more scene, in a manifest whose full render takes ~40 minutes; each round re-rendered all 55 scenes.
+- **expected:** "render this scene" / "render these scenes" (and "render what changed since its last render"), in BOTH the GUI (per-scene Render in the layer panel) and MCP (`motion_render(scene_ids=[…])`), per the human-and-AI rule. The per-scene files and D-260's refresh-in-place already make a partial render safe: each scene is its own file.
+- **workaround used:** temporarily installing a manifest that holds only the scenes to re-render, rendering, then restoring the full one. It works because files are named by scene id, but it is a workaround, not a feature.
+
+## B-262 — a Motion manifest changed outside the app is not picked up until the project is switched away and back
+
+status: **open** · severity: **minor** · area: `packages/motion/src/motionProjectStore.ts` (`setOpenProject` / `load`)
+
+- **found:** 2026-10-25, authoring a 55-scene manifest as a file (the documented, hand-authorable sidecar) for an agent-built edit.
+- **actual:** the store reads the sidecar only on a project SWITCH (`setOpenProject` is a no-op for the same path, so `open_project` on the open project does nothing), a window-focus recheck, or the Retry button. Picking up the new file meant opening a different project and then this one again: every time, for every iteration.
+- **expected:** a real reload path. Either watch the sidecar (with a "the file changed on disk — reload?" prompt when the in-app document is dirty), or a `motion_reload_manifest` tool plus a GUI "Reload from disk" action. Better still for agents, a `motion_set_manifest(manifest)` op that validates and commits a whole document as one undoable edit.
+
+## B-261 — a Motion `graph` node's label sat almost on its ring
+
+status: **fixed** (2026-10-25) · severity: **minor** (labels crowded their node; with a highlight glow the gap disappeared) · area: `packages/motion-engine/src/primitives/Graph.tsx`
+
+- **found:** 2026-10-25, owner review of the discovery timeline ("have some space between Aug 1 and the circle").
+- **cause:** the label's BASELINE was at `nodeR + 34`, so at the 30 px base label size the glyph tops sat ~10 px under the ring.
+- **fix:** the label is anchored by its top (`dominantBaseline="hanging"`) at `nodeR + GRAPH_LABEL_GAP` (24 px), a named constant, so the clearance no longer depends on the label's font size.
+- **verification:** `vitest run packages/motion-engine packages/motion`: 942/942; checked on the re-rendered timeline scene.
+
+## B-260 — the lit card in a Motion `layers` stack snapped forward, shifted 40 px right and grew over the card above it
+
+status: **fixed** (2026-10-25) · severity: **minor** (visibly broken "3D hover" on every stack with an `active` schedule) · area: `packages/motion-engine/src/primitives/Layers.tsx`, `engine/registry.ts`
+
+- **found:** 2026-10-25, owner review of the hotel-analogy stack: "the 3D hover on this component is not right".
+- **cause:** the active card got a fixed `translateZ(90px) translateX(40px)`. Under the stack's 1400 px perspective that is a 1.07× scale, so a 104 px card grew ~7 px at each edge across a 22 px gap and overlapped its neighbour. The sideways shift threw it off-centre, and it jumped on the changeover frame with no easing.
+- **fix:** `activeLift(framesSinceLit, cardH, gap)`, a pure function: the lift is capped so the grown card stays inside 90% of the gap (and at most 90 px), with no sideways shift, eased out-cubic over 8 frames from the frame the card became active. The registry passes that frame (`activeSince`, from the same `resolveActiveStep` `claudechat` uses).
+- **verification:** new `activeLift (B-260)` tests (never past the gap for four card/gap shapes; eases from 0). `vitest run packages/motion-engine packages/motion`: 942/942. Checked live in the Motion preview.
+
+## B-259 — `editor_add_clip` on a track index that no longer exists silently places the clip on track 0, then reports that it did not place it
+
+status: **open** · severity: **minor** (the clip lands somewhere unexpected and the tool's own answer is wrong) · area: `packages/editor/src/timeline.ts` (`add_clip` reducer), `packages/editor/src/useEditorControl.ts` (`editor_add_clip`)
+
+- **found:** 2026-10-25. `editor_remove_clip` removed a clip and its linked half, and the tracks they left empty were pruned. A follow-up `editor_add_clip(track=1, …)` then targeted a track that was gone.
+- **actual:** `checkAddClip` did not refuse the out-of-range index. The reducer fell back to `trackIdx = 0` (`requested < next.tracks.length ? requested : 0`) and placed the clip there. The handler then looked for it on track 1 and answered `add_clip did not place the clip`. On a timeline with no tracks at all, the same path creates a **video** track for an audio-only source (`if (next.tracks.length === 0) push video`).
+- **expected:** an out-of-range track is refused with a reason before anything is placed, and an empty timeline gets a track of the kind the source needs.
+- **not yet fixed:** recorded while building an edit; the workaround is to re-read `get_timeline` after any removal before addressing tracks by index.
+
+## B-258 — a Motion `text` layer anchored at `x` wrapped at the space right of `x`, not at its `maxWidth`, so every centred headline wrapped at half the canvas
+
+status: **fixed** (2026-10-25) · severity: **major** (any centred title wider than ~960 px broke onto two lines and overlapped whatever sat below it, in the preview and the render) · area: `packages/motion-engine/src/primitives/Text.tsx`
+
+- **found:** 2026-10-25, building title cards in the `apelles-studio` theme. `BLACK OCTOBER` at 190 px, centred at `x: 960` with `maxWidth: 1760`, rendered as two lines, and its subtitle overlapped the second one.
+- **cause:** a positioned `text` layer is an absolutely positioned box at `left: x`, shifted by `translateX(-50%)` (centre) or `-100%` (right). An absolutely positioned box with no width shrinks to fit the space between `left` and the containing block's right edge. At `x = 960` that is 960 px, so `maxWidth` never applied. Right-aligned text near the right edge wrapped sooner still.
+- **fix:** the positioned wrapper sets `width: max-content`, so the box is as wide as its text up to `maxWidth`, wherever the anchor sits. Unpositioned text is unchanged. A layer that used to wrap only because of this bug now wraps at its own `maxWidth`, which is what its author asked for.
+- **verification:** `vitest run packages/motion-engine packages/motion`: 935/935 pass. Live in the Motion preview, the same title now holds one line with its subtitle below.
+
+## B-257 — placing an audio-only source on an audio track added a second, linked copy of it on another audio track, so it played twice
+
+status: **fixed** (2026-10-25) · severity: **major** (any VO or music bed placed this way played at roughly +6 dB, doubled, in the preview and the export) · area: `packages/editor/src/timeline.ts` (`add_clip` / `edit_in` reducers)
+
+- **found:** 2026-10-25, building a voiceover-led edit over MCP. `editor_add_clip(track=0, …)` with an `.m4a` on audio track 0 answered `linkedAudio: {track: 1}`: a new audio track 1 held a second clip of the same source window, linked to the first.
+- **cause:** D-129's linked-audio rule builds the half from the source alone (`hasAudio` and not a still), in both `editor_add_clip` and the Sources-panel drag (`linkedClipsFromDraggedMedia`). The reducers then placed it unconditionally. They never asked whether the primary clip had itself landed on an audio track, where it already is the source's audio.
+- **fix:** one helper in the reducer, `resolveLinkedHalf`, used by both `add_clip` and `edit_in`. When the destination track is an audio track, it drops the linked half and clears the clip's `link_group` (a partner-less group would mean nothing). A video-track placement is unchanged. It lives in the reducer rather than in a caller so the drag and the MCP tool cannot disagree. `labelForOp` asks the same helper, so the history entry no longer says `Add "…" + audio` for a placement that added no audio.
+- **verification:** new test `B-257: a clip placed on an AUDIO track is its own audio — no second linked copy` in `timeline.test.ts` (also checks the history label). `timeline.test.ts` + `editTypes.test.ts`: 329/329 pass. `tsc -p packages/editor` shows only the 3 errors already there before (in `RecutPanel.dom.test.tsx` and `recutSweep.test.ts`). Re-placing the VO live in the running dev app gave one clip and no second track.
+
 ## B-256 — the v0.2.0 release build failed on a fresh runner: `ort-sys` downloaded a prebuilt ONNX Runtime from cdn.pyke.io that the app never uses
 
 status: **fixed** (2026-10-21) · severity: **major** (the release pipeline could not build; any machine without the cached download could fail the same way) · area: `app/src-tauri/Cargo.toml`, `crates/apelles-speech/Cargo.toml`

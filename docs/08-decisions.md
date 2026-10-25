@@ -6,6 +6,33 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-395 — Motion `graph` draws real infrastructure icons, labelled packets, visible edges and filled lit nodes
+
+**decided (2026-10-26, owner: "please use proper SVGs for Server and client … build proper reusable catalog for server client, cloud / gateway / reverse proxy etc."; "fill the circle with the primary colour"; "add the line width please")**
+
+- **Context.** Explaining an attack (attacker → server → stolen data) with plain circles read as abstract, edges were near-invisible on the light theme, and a lit node only glowed at its rim.
+- **Options.** (a) A new "architecture diagram" primitive. (b) Extend `graph`, which already has nodes, edges, pulses and highlight schedules. Chosen: **(b)**: one diagram vocabulary, and every existing graph keeps working unchanged.
+- **Shape.** `node.icon` names a role in `GRAPH_ICONS` (client, desktop, phone, user, browser, attacker, server, database, cloud, cdn, gateway, reverse-proxy, load-balancer, firewall, queue, container, api, cache, terminal, code, key, password, lock, email, bot, bug), each a real **Phosphor Icons** component (the repo's one icon library, `@phosphor-icons/react ^2.1.10`, MIT, already used by seven packages; now declared by `@apelles/motion-engine` too), drawn in a rounded tile. `pulse.label` rides the travelling dot; `keep` leaves it under the destination node and `dy` stacks several. `edgeWidth` (px at full weight, default 2.5 = unchanged) and `edgeTone` (`soft` default, `ink`). A lit node now fills with the theme's `accent`, fading in with its highlight; an icon tile does the same and its glyph flips to the ground colour.
+- **Surface.** All fields are listed in `propCatalog.ts` (the Inspector and `motion_list_primitives`), so a human and an agent see the same options. Tests: `pinnedPositions` and the icon catalog (every entry a real Phosphor component).
+
+## D-394 — Motion gets a light apelles.studio theme, `apelles-studio-light`, sourced from the site's page tokens
+
+**decided (2026-10-25, owner: "make the background light from the Apelles studio background color" … "for all the things please use the light theme in this video")**
+
+- **Context.** D-339's `apelles-studio` preset is the site's dark (basalt) band. The site's own page ground is marble, and a light documentary edit needed that look across every Motion card.
+- **Options.** (a) Override `bg` per scene and colour per layer in the manifest. (b) A third registered theme. Chosen: **(b)**. A theme is the whole look (ground, ink, accents, card fills, graph and matrix colours), and (a) would leave every primitive's internal theme reads (card borders, graph nodes, glows) on the dark palette.
+- **Values.** Every field is a `website/src/styles/tokens.css` token or one of its tints flattened to opaque hex, as D-339 did: `bg` marble, `bgDeep` marble-deep, ink basalt, dim text basalt-soft, soft lines `--edge-strong` over marble. Working colours mirror the site's rule for a marble ground: **terracotta** is `accent` (emphasis), and **ochre** is `accentSignal` (marks, fills, pulses), capped there by its 3.0:1 contrast on marble.
+- **Surface.** Registered in `design.ts`'s `THEMES` (the schema enum and `motion_list_primitives` derive from it), with fonts in `themeFonts.ts`. Both MCP servers' `motion_set_project_theme` description lists it; the parity corpus was re-captured. `theme.test.ts` checks every value against the real `tokens.css`.
+
+## D-393 — Every Motion layer can blur: `transform.blur` (static) and a keyframeable `blur` delta
+
+**decided (2026-10-25, owner: "convert it into cards which show blur cards side by side and then reveal one by one")**
+
+- **Context.** A "blurred until revealed" card had no way to be expressed: nothing in the engine could blur.
+- **Options.** (a) A new card-row primitive with its own blur. (b) A `blur` channel on the generic layer transform (D-157/D-159), beside `opacity`. Chosen: **(b)**. Blur is a property of *any* layer (a card, its label, a number, a graph), and the transform wrapper already gives every 2D layer a keyframed, eased channel. A card-row primitive would have tied the effect to one layout.
+- **Shape.** `transform.blur` is a Gaussian radius in px; `transform.keys[].blur` is a delta on it, like the other five fields. `Video.tsx` writes `filter: blur(Npx)` on the same wrapper, and **no `filter` at all** when the result is ≤ 0, so a layer that never blurs renders exactly as before. Listed in `propCatalog.ts`'s `LAYER_TRANSFORM_FIELDS`/`LAYER_TRANSFORM_KEY_FIELDS`, so the Inspector shows it and `motion_list_primitives` reports it; `motion_set_layer_transform_field`/`_keys` pass it through unchanged.
+- **Reuse.** The reveal card, its label, the PHP tree and the dated timeline built with it are saved as components in the user library.
+
 ## D-392 — A release is a pushed tag: GitHub Actions builds the DMG on a macOS arm64 runner and publishes the GitHub Release with the FFmpeg source attached
 
 **decided (2026-10-21, owner: "a way so that we create a tag and release is created")**
