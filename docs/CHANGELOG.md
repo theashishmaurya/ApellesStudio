@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **Logged B-268 (open):** Motion themes are compiled code; a new look needs an engine change. Should be runtime data (manifest / user library / tokens), editable in the GUI and over MCP.
+
 - **2026-10-26** — **D-395 + B-266: Motion `graph` gets real Phosphor infrastructure icons, labelled packets, visible edges and filled lit nodes; fully pinned graphs stay exactly where pinned.** Logged B-267 (open): the Edit timeline draws no clips after a restart.
 
 - **2026-10-25** — **Logged B-265 (open, roadmap Next 0a):** a webview reload silently kills an in-flight Motion render and the app forgets it ran; the reloaded dev page also ran stale engine code. Tracked with B-262/B-263/B-264 as one "renders that survive, report and resume" item.
