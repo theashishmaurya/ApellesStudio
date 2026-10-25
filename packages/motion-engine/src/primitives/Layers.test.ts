@@ -29,6 +29,10 @@ import {
   LAYERS_LABEL_FONT_SIZE,
   LAYERS_SUBLABEL_FONT_SIZE,
   LAYERS_TYPE_MIN_FONT_SIZE,
+  LAYERS_PERSPECTIVE,
+  LAYERS_MAX_LIFT,
+  LAYERS_LIFT_FRAMES,
+  activeLift,
   type CalloutLayout,
 } from './Layers';
 
@@ -563,5 +567,21 @@ describe('B-239 — the callout’s placement is measured at the size it will re
     // margin, so it sits LOWER — closer to where it wanted to be.
     expect(at().placement).toBe('below');
     expect(at(CALLOUT_FONT_SIZE * 0.6).top).toBeGreaterThan(at().top);
+  });
+});
+
+describe("activeLift (B-260)", () => {
+  it("never grows the lit card past the gap to its neighbours", () => {
+    for (const [cardH, gap] of [[104, 22], [110, 20], [80, 8], [200, 60]]) {
+      const z = activeLift(100, cardH, gap);
+      const k = LAYERS_PERSPECTIVE / (LAYERS_PERSPECTIVE - z);
+      expect((cardH * (k - 1)) / 2).toBeLessThanOrEqual(gap);
+      expect(z).toBeLessThanOrEqual(LAYERS_MAX_LIFT);
+    }
+  });
+  it("eases in from zero rather than snapping", () => {
+    expect(activeLift(0, 104, 22)).toBe(0);
+    expect(activeLift(LAYERS_LIFT_FRAMES / 2, 104, 22)).toBeGreaterThan(0);
+    expect(activeLift(LAYERS_LIFT_FRAMES / 2, 104, 22)).toBeLessThan(activeLift(LAYERS_LIFT_FRAMES, 104, 22));
   });
 });

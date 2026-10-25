@@ -101,7 +101,11 @@ const REGISTRY: Record<
       const g = generic(raw, fps, 0);
       const items = raw.items as (string | { label: string })[] | undefined;
       if (items) g.items = items.map((it) => (typeof it === "string" ? { label: it } : it));
-      g.active = resolveActive(raw.active as Active, fps, frame);
+      // B-260 — the changeover frame too, so the lit card can ease up rather
+      // than snap (`resolveActiveStep`, the same answer `claudechat` uses).
+      const step = resolveActiveStep(raw.active as Active, fps, frame);
+      g.active = step.i;
+      g.activeSince = step.since;
       return g;
     },
   },

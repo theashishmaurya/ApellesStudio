@@ -59,6 +59,32 @@ export const LAYERS_SUBLABEL_FONT_SIZE = 24;
  *  its width estimate from it, and the two must never drift apart. */
 export const CALLOUT_FONT_SIZE = 34;
 
+/** The stack's own CSS perspective, px. `activeLift` derives its bound from it. */
+export const LAYERS_PERSPECTIVE = 1400;
+/** The most the lit card is allowed to rise toward the camera, px. */
+export const LAYERS_MAX_LIFT = 90;
+/** Frames the lit card takes to rise. */
+export const LAYERS_LIFT_FRAMES = 8;
+
+/**
+ * B-260 — how far (px of `translateZ`) the lit card rises, `framesSinceLit`
+ * frames after it became the active one.
+ *
+ * Under perspective `P`, a card raised by `z` renders `P / (P - z)` times its
+ * size, so its top and bottom each grow by `cardH * (k - 1) / 2`. The lift is
+ * capped so that growth stays inside the gap to its neighbours (90% of it),
+ * which is what keeps a lit card from sliding over the card above — the old
+ * fixed 90 px lift grew a 104 px card past a 22 px gap. It eases out-cubic over
+ * `LAYERS_LIFT_FRAMES` instead of snapping.
+ */
+export function activeLift(framesSinceLit: number, cardH: number, gap: number): number {
+  const kMax = 1 + (2 * gap * 0.9) / cardH;
+  const zFit = LAYERS_PERSPECTIVE * (1 - 1 / kMax);
+  const zMax = Math.max(0, Math.min(LAYERS_MAX_LIFT, zFit));
+  const t = Math.min(1, Math.max(0, framesSinceLit / LAYERS_LIFT_FRAMES));
+  return zMax * (1 - Math.pow(1 - t, 3));
+}
+
 /** Below this a label stops being readable at all — the same legibility
  *  floor, and the same reasoning, as `Plot.tsx`'s `PLOT_TYPE_MIN_FONT_SIZE`
  *  and `Graph.tsx`'s `GRAPH_LABEL_MIN_FONT_SIZE`. */
@@ -332,6 +358,9 @@ export const Layers: React.FC<{
   start?: number;
   stagger?: number;
   active?: number;
+  /** B-260 — the frame `active` last changed (scene-relative); the lit card's
+   *  lift eases in from here. Supplied by the registry adapter. */
+  activeSince?: number;
   callout?: string;
   /** centre of the stack in world px; omit to centre on canvas */
   x?: number;
@@ -345,6 +374,7 @@ export const Layers: React.FC<{
   start = 0,
   stagger = 6,
   active = -1,
+  activeSince = 0,
   callout,
   x,
   y,
@@ -392,7 +422,7 @@ export const Layers: React.FC<{
         left: cx,
         top: cy,
         transform: "translate(-50%, -50%)",
-        perspective: 1400,
+        perspective: LAYERS_PERSPECTIVE,
       }}
     >
       <div style={{ transformStyle: "preserve-3d", transform: `rotateX(${tilt}deg)` }}>
@@ -400,6 +430,7 @@ export const Layers: React.FC<{
           const appear = inAt(frame, start + i * stagger, start + i * stagger + 12);
           const s = pop(frame, fps, start + i * stagger);
           const isActive = i === active;
+          const lift = isActive ? activeLift(frame - activeSince, cardH, gap) : 0;
           const topOffset = i * (cardH + gap) - stackH / 2 + (it.dy ?? 0);
           return (
             <div
@@ -422,7 +453,7 @@ export const Layers: React.FC<{
                 height: cardH,
                 left: -cardW / 2 + (it.dx ?? 0),
                 top: topOffset,
-                transform: `translateZ(${isActive ? 90 : 0}px) translateX(${isActive ? 40 : 0}px) scale(${s})`,
+                transform: `translateZ(${lift}px) scale(${s})`,
                 opacity: appear,
                 background: theme.bgDeep,
                 border: `3px solid ${isActive ? theme.accent : theme.strokeSoft}`,
