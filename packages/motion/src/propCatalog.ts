@@ -150,16 +150,18 @@ const PRIMITIVE_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'height', label: 'Height', kind: 'number', group: 'layout' },
   ],
   graph: [
-    { key: 'nodes', label: 'Nodes [{id, label?, x?, y?}]', kind: 'json', group: 'content' },
+    { key: 'nodes', label: 'Nodes [{id, label?, x?, y?, icon?}] — icon: client, desktop, phone, user, browser, attacker, server, database, cloud, cdn, gateway, reverse-proxy, load-balancer, firewall, queue, container, api, cache, terminal, code, key, password, lock, email, bot, bug', kind: 'json', group: 'content' },
     // D-340 — the label carries the item shape because `weight` is the whole
     // point of the field and a bare "Edges" makes it undiscoverable (the same
     // reason `CAM3D_KEY_FIELDS` spells out `[x,y,z]`). `weight` is 0..1,
     // default 1, and scales the edge's opacity AND stroke width.
     { key: 'edges', label: 'Edges [{from, to, directed?, weight? 0-1}]', kind: 'json', group: 'content' },
-    { key: 'pulses', label: 'Pulses', kind: 'json', group: 'content' },
+    { key: 'pulses', label: 'Pulses [{from, to, at, dur?, label?, keep?, dy?}]', kind: 'json', group: 'content' },
     { key: 'highlight', label: 'Highlight', kind: 'json', group: 'content' },
     { key: 'enter', label: 'Enter schedule', kind: 'json', group: 'timing' },
     { key: 'nodeR', label: 'Node radius', kind: 'number', group: 'layout' },
+    { key: 'edgeWidth', label: 'Edge width (px)', kind: 'number', group: 'fill' },
+    { key: 'edgeTone', label: 'Edge tone', kind: 'select', group: 'fill', options: ['soft', 'ink'] },
     { key: 'seed', label: 'Seed', kind: 'number', group: 'source' },
     { key: 'width', label: 'Layout width', kind: 'number', group: 'layout' },
     { key: 'height', label: 'Layout height', kind: 'number', group: 'layout' },
@@ -478,6 +480,7 @@ export const LAYER_TRANSFORM_FIELDS: FieldSpec[] = [
   { key: 'scale', label: 'Scale', kind: 'number', group: 'layout' },
   { key: 'rot', label: 'Rotation (deg)', kind: 'number', group: 'layout' },
   { key: 'opacity', label: 'Opacity', kind: 'number', group: 'fill' },
+  { key: 'blur', label: 'Blur (px)', kind: 'number', group: 'fill' },
   { key: 'clipWidth', label: 'Clip width', kind: 'number', group: 'layout' },
   { key: 'clipHeight', label: 'Clip height', kind: 'number', group: 'layout' },
 ];
@@ -511,5 +514,6 @@ export const LAYER_TRANSFORM_KEY_FIELDS: FieldSpec[] = [
   { key: 'scale', label: 'Scale delta', kind: 'number', group: 'layout' },
   { key: 'rot', label: 'Rotation delta (deg)', kind: 'number', group: 'layout' },
   { key: 'opacity', label: 'Opacity delta', kind: 'number', group: 'fill' },
+  { key: 'blur', label: 'Blur delta (px)', kind: 'number', group: 'fill' },
   { key: 'ease', label: 'Ease', kind: 'ease', group: 'timing' },
 ];

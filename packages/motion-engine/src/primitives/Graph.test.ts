@@ -15,7 +15,7 @@
  * scope for this fix.
  */
 import { describe, it, expect } from 'vitest';
-import { graphLabelFontSize, GRAPH_LABEL_BASE_FONT_SIZE, GRAPH_LABEL_MIN_FONT_SIZE } from './Graph';
+import { graphLabelFontSize, GRAPH_LABEL_BASE_FONT_SIZE, GRAPH_LABEL_MIN_FONT_SIZE, pinnedPositions, GRAPH_ICONS } from './Graph';
 
 /** `Graph.tsx`'s own private tuning constants for this formula, duplicated
  *  here the same way `graphEdge.test.ts` hardcodes the pre-D-340 stroke
@@ -143,5 +143,34 @@ describe('B-225 — general behaviour of the derived size', () => {
       { label: 'bbbbbbbbbb', x: 50, y: 0 },
     ]);
     expect(diagonal).toBeCloseTo(sameXOnly, 6);
+  });
+});
+
+
+describe("pinnedPositions (B-266)", () => {
+  it("returns the authored positions verbatim when every node is pinned", () => {
+    expect(pinnedPositions([{ id: "a", x: 330, y: 470 }, { id: "b", x: 960, y: 470 }])).toEqual({
+      a: { x: 330, y: 470 },
+      b: { x: 960, y: 470 },
+    });
+  });
+  it("defers to the force layout when any node is unpinned, or there are none", () => {
+    expect(pinnedPositions([{ id: "a", x: 1, y: 2 }, { id: "b" }])).toBeNull();
+    expect(pinnedPositions([{ id: "a", x: 1 }])).toBeNull();
+    expect(pinnedPositions([])).toBeNull();
+  });
+});
+
+describe("GRAPH_ICONS (D-395)", () => {
+  it("names the infrastructure roles an explainer needs", () => {
+    for (const role of ["client", "server", "database", "cloud", "gateway", "reverse-proxy", "load-balancer", "firewall", "attacker", "cdn"]) {
+      expect(GRAPH_ICONS).toHaveProperty(role);
+    }
+  });
+  it("maps every role to a real Phosphor component, never a hand-drawn path", () => {
+    for (const [role, Glyph] of Object.entries(GRAPH_ICONS)) {
+      expect(typeof Glyph === "object" || typeof Glyph === "function", role).toBe(true);
+      expect((Glyph as { displayName?: string }).displayName, role).toBeTruthy();
+    }
   });
 });

@@ -10,9 +10,13 @@
  * A 3D version belongs in Scene3D later; this covers the flat-diagram case.
  *
  * Props:
- *   nodes     [{ id, label?, x?, y? }]                  — give x/y to pin, else force-laid
+ *   nodes     [{ id, label?, x?, y?, icon? }]           — give x/y to pin, else force-laid;
+ *                                                          `icon` names a GRAPH_ICONS entry (D-395)
  *   edges     [{ from, to, directed?, weight? }]        — `weight` 0..1, default 1 (D-340)
- *   pulses    [{ from, to, at, dur?, color? }]          — a dot travels from→to over dur frames
+ *   pulses    [{ from, to, at, dur?, color?, label?, keep?, dy? }]
+ *                                                        — a dot travels from→to over dur frames;
+ *                                                          `label` rides it, `keep` leaves it at
+ *                                                          the destination (offset `dy`) — D-395
  *   highlight [{ id, at, dur? }]                        — node glows/rings on its schedule
  *   enter     { at, stagger }                           — node pop-in schedule (edges follow)
  */
@@ -30,8 +34,91 @@ import { useTheme } from "../ThemeContext";
 import { inAt, ambientDrift, pop } from "../lib/draw";
 import { mulberry32 } from "../lib/rng";
 import { roughEllipse, roughLine } from "../lib/rough";
+import {
+  ArrowsLeftRight,
+  ArrowsSplit,
+  Browser,
+  Bug,
+  Cloud,
+  Code,
+  Cube,
+  Database,
+  Desktop,
+  Detective,
+  DeviceMobile,
+  Envelope,
+  GlobeHemisphereWest,
+  HardDrives,
+  Key,
+  Laptop,
+  Lightning,
+  LockSimple,
+  Password,
+  Plugs,
+  Queue,
+  Robot,
+  ShieldCheck,
+  Terminal,
+  User,
+  Wall,
+  type Icon,
+} from "@phosphor-icons/react";
 
-export type GraphNode = { id: string; label?: string; x?: number; y?: number };
+/**
+ * D-395 — the infrastructure vocabulary a `graph` node can draw as an icon, each one a
+ * real Phosphor Icons component (the repo's one icon library — never a hand-drawn
+ * path). Keys are the ROLE an explainer names ("reverse-proxy"), not the glyph, so a
+ * manifest reads as architecture and the glyph can be swapped here in one place.
+ */
+export const GRAPH_ICONS = {
+  client: Laptop,
+  desktop: Desktop,
+  phone: DeviceMobile,
+  user: User,
+  browser: Browser,
+  attacker: Detective,
+  server: HardDrives,
+  database: Database,
+  cloud: Cloud,
+  cdn: GlobeHemisphereWest,
+  gateway: ShieldCheck,
+  "reverse-proxy": ArrowsLeftRight,
+  "load-balancer": ArrowsSplit,
+  firewall: Wall,
+  queue: Queue,
+  container: Cube,
+  api: Plugs,
+  cache: Lightning,
+  terminal: Terminal,
+  code: Code,
+  key: Key,
+  password: Password,
+  lock: LockSimple,
+  email: Envelope,
+  bot: Robot,
+  bug: Bug,
+} as const satisfies Record<string, Icon>;
+
+export type GraphIconName = keyof typeof GRAPH_ICONS;
+
+/** B-266 — a graph whose EVERY node carries x/y is laid out by its author: those are
+ *  the drawn positions, verbatim. `null` means "not fully pinned — run the force layout". */
+export function pinnedPositions(nodes: GraphNode[]): Record<string, { x: number; y: number }> | null {
+  if (nodes.length === 0 || !nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y))) return null;
+  const pos: Record<string, { x: number; y: number }> = {};
+  for (const n of nodes) pos[n.id] = { x: n.x as number, y: n.y as number };
+  return pos;
+}
+
+/** An icon node's tile corner radius, as a fraction of `nodeR`. */
+export const GRAPH_ICON_TILE_RADIUS = 0.32;
+/** The glyph's size inside its tile, as a fraction of the tile's side (2·nodeR). */
+export const GRAPH_ICON_GLYPH_SCALE = 0.58;
+/** A pulse label's type size, px, and how far above the travelling dot it rides. */
+export const GRAPH_PULSE_LABEL_SIZE = 28;
+export const GRAPH_PULSE_LABEL_LIFT = 30;
+
+export type GraphNode = { id: string; label?: string; x?: number; y?: number; icon?: GraphIconName };
 
 /**
  * D-340 — `weight` is how STRONG this connection is, `0..1`, default `1`.
@@ -124,6 +211,12 @@ export type GraphPulse = {
   at: number;
   dur?: number;
   color?: string;
+  /** D-395 — text that rides the dot ("GET /", "password"). */
+  label?: string;
+  /** D-395 — once the dot arrives, leave `label` at the destination, below its node. */
+  keep?: boolean;
+  /** D-395 — extra vertical offset for a kept label, px, so several can stack. */
+  dy?: number;
 };
 export type GraphHighlight = { id: string; at: number; dur?: number };
 
@@ -132,6 +225,11 @@ type Sim = SimulationNodeDatum & { id: string; label?: string };
 /** The primitive's own pre-B-225 constant — every existing manifest with
  *  comfortable clearance renders identically to before. */
 export const GRAPH_LABEL_BASE_FONT_SIZE = 30;
+
+/** B-261 — clear space between a node's ring and the TOP of its label, px.
+ *  The label used to sit on a baseline `nodeR + 34`, which at 30 px type left
+ *  ~10 px between the ring and the glyphs — and the ring's glow covered that. */
+export const GRAPH_LABEL_GAP = 24;
 /** Below this, a genuine collision is a content problem (the label is too
  *  long for ANY reasonable spacing, e.g. a full sentence used as a node
  *  name) rather than something a bigger shrink should paper over — so the
@@ -208,6 +306,11 @@ export const Graph: React.FC<{
   /** layout box; defaults to the canvas */
   width?: number;
   height?: number;
+  /** D-395 — an edge's stroke at full `weight`, px. Default 2.5 (unchanged). */
+  edgeWidth?: number;
+  /** D-395 — `"soft"` (the theme's hairline ink, the default) or `"ink"` (its dim-text
+   *  ink) — the latter reads clearly on a light ground. */
+  edgeTone?: "soft" | "ink";
 }> = ({
   nodes,
   edges,
@@ -218,6 +321,8 @@ export const Graph: React.FC<{
   seed = 1,
   width,
   height,
+  edgeWidth = EDGE_STROKE_FULL,
+  edgeTone = "soft",
 }) => {
   const frame = useCurrentFrame();
   const { width: cw, height: ch, fps } = useVideoConfig();
@@ -227,6 +332,14 @@ export const Graph: React.FC<{
 
   // ---- layout: once, frozen ----
   const layout = useMemo(() => {
+    // B-266 — every node pinned ⇒ the author has laid the diagram out; draw it exactly
+    // there. The force pass and the fit-to-margin rescale below exist for UNPINNED
+    // layouts, and used to move pinned nodes too (a pinned x = 960 landed near 1440).
+    const pinned = pinnedPositions(nodes);
+    if (pinned) {
+      const labelFontSize = graphLabelFontSize(nodes.map((n) => ({ label: n.label, ...pinned[n.id] })));
+      return { pos: pinned, labelFontSize };
+    }
     const sim: Sim[] = nodes.map((n) => ({
       id: n.id,
       label: n.label,
@@ -352,10 +465,13 @@ export const Graph: React.FC<{
         const draw = inAt(frame, drawStart, drawStart + 14);
         // D-340 — see `GraphEdge.weight`. `w === 1` (the default) reproduces
         // the exact `2.5` / full-opacity stroke this primitive always drew.
-        const { strokeWidth, opacity } = graphEdgeStroke(e.weight);
+        const base = graphEdgeStroke(e.weight);
+        const strokeWidth = base.strokeWidth * (edgeWidth / EDGE_STROKE_FULL);
+        const opacity = base.opacity;
+        const edgeInk = edgeTone === "ink" ? theme.textDim : theme.strokeSoft;
         const d = roughLine([a.x, a.y], [b.x, b.y], {
           seed: 100 + i,
-          color: theme.strokeSoft,
+          color: edgeInk,
           strokeWidth,
           roughness: theme.roughness,
           bowing: theme.bowing,
@@ -365,7 +481,7 @@ export const Graph: React.FC<{
             key={`e${i}`}
             d={d}
             fill="none"
-            stroke={theme.strokeSoft}
+            stroke={edgeInk}
             strokeWidth={strokeWidth}
             strokeOpacity={opacity}
             strokeLinecap="round"
@@ -380,21 +496,48 @@ export const Graph: React.FC<{
       {pulses.map((p, i) => {
         const dur = p.dur ?? 20;
         const t = inAt(frame, p.at, p.at + dur);
-        if (t <= 0 || t >= 1) return null;
         const a = at(p.from);
         const b = at(p.to);
         if (!a || !b) return null; // B-211 — dangling `from`/`to`, skip this pulse
         const col = p.color ?? theme.accentSignal;
+        const labelStyle = {
+          fontFamily: theme.fontMono,
+          fontSize: GRAPH_PULSE_LABEL_SIZE,
+          fill: theme.accent,
+          stroke: theme.bg,
+          strokeWidth: 8,
+          paintOrder: "stroke" as const,
+        };
+        // D-395 — a kept label settles under the destination node once the dot lands.
+        if (t >= 1) {
+          if (!p.keep || !p.label) return null;
+          const settle = inAt(frame, p.at + dur, p.at + dur + 8);
+          return (
+            <text
+              key={`p${i}`}
+              x={b.x}
+              y={b.y + nodeR + GRAPH_LABEL_GAP + layout.labelFontSize + 22 + (p.dy ?? 0)}
+              textAnchor="middle"
+              dominantBaseline="hanging"
+              opacity={settle}
+              style={labelStyle}
+            >
+              {p.label}
+            </text>
+          );
+        }
+        if (t <= 0) return null;
+        const x = a.x + (b.x - a.x) * t;
+        const y = a.y + (b.y - a.y) * t;
         return (
-          <circle
-            key={`p${i}`}
-            cx={a.x + (b.x - a.x) * t}
-            cy={a.y + (b.y - a.y) * t}
-            r={13}
-            fill={col}
-            opacity={Math.sin(t * Math.PI)}
-            style={{ filter: `drop-shadow(0 0 12px ${col})` }}
-          />
+          <g key={`p${i}`}>
+            <circle cx={x} cy={y} r={13} fill={col} opacity={Math.sin(t * Math.PI)} />
+            {p.label && (
+              <text x={x} y={y - GRAPH_PULSE_LABEL_LIFT} textAnchor="middle" style={labelStyle}>
+                {p.label}
+              </text>
+            )}
+          </g>
         );
       })}
 
@@ -421,11 +564,21 @@ export const Graph: React.FC<{
             opacity={appear}
             style={{ filter: g > 0.02 ? `drop-shadow(0 0 ${10 + g * 26}px ${theme.accentSignal})` : undefined }}
           >
-            <circle r={nodeR} fill={theme.bgDeep} />
-            <path d={ring} fill="none" stroke={g > 0.02 ? theme.accentSignal : theme.stroke} strokeWidth={3} />
+            {n.icon && GRAPH_ICONS[n.icon] ? (
+              <GraphIconTile name={n.icon} nodeR={nodeR} glow={g} />
+            ) : (
+              <>
+                <circle r={nodeR} fill={theme.bgDeep} />
+                {/* D-395 — a lit node fills with the theme's primary (accent) colour,
+                    fading in with the highlight, rather than only glowing at its rim */}
+                {g > 0.02 && <circle r={nodeR} fill={theme.accent} opacity={Math.min(1, g)} />}
+                <path d={ring} fill="none" stroke={g > 0.02 ? theme.accent : theme.stroke} strokeWidth={3} />
+              </>
+            )}
             {n.label && (
               <text
-                y={nodeR + 34}
+                y={nodeR + GRAPH_LABEL_GAP}
+                dominantBaseline="hanging"
                 textAnchor="middle"
                 fill={theme.textDim}
                 fontFamily={theme.fontUi}
@@ -438,5 +591,25 @@ export const Graph: React.FC<{
         );
       })}
     </svg>
+  );
+};
+
+/** D-395 — an icon node: a rounded tile in the theme's panel fill with a real Phosphor
+ *  glyph centred in it. Lit, the tile fills with the theme's primary (accent) colour as
+ *  the highlight fades in, and the glyph flips to the ground colour so it stays legible. */
+const GraphIconTile: React.FC<{ name: GraphIconName; nodeR: number; glow: number }> = ({ name, nodeR, glow }) => {
+  const theme = useTheme();
+  const Glyph = GRAPH_ICONS[name];
+  const side = nodeR * 2;
+  const glyph = side * GRAPH_ICON_GLYPH_SCALE;
+  const lit = glow > 0.02;
+  const r = nodeR * GRAPH_ICON_TILE_RADIUS;
+  return (
+    <>
+      <rect x={-nodeR} y={-nodeR} width={side} height={side} rx={r} fill={theme.bgDeep} />
+      {lit && <rect x={-nodeR} y={-nodeR} width={side} height={side} rx={r} fill={theme.accent} opacity={Math.min(1, glow)} />}
+      <rect x={-nodeR} y={-nodeR} width={side} height={side} rx={r} fill="none" stroke={lit ? theme.accent : theme.stroke} strokeWidth={3} />
+      <Glyph x={-glyph / 2} y={-glyph / 2} size={glyph} color={glow > 0.5 ? theme.bg : theme.stroke} weight="regular" />
+    </>
   );
 };
