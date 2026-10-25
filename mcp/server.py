@@ -6409,7 +6409,7 @@ def motion_set_project_theme(theme: str | None = None) -> str:
     because it is an enum that CLEARS to a default rather than a value.
 
     `motion_list_primitives` lists the registered `themes` and names the
-    `defaultTheme`. Today there are two:
+    `defaultTheme`. Today there are three:
 
       - `dark-excalidraw` (the default) — flat dark slate, off-white
         hand-drawn roughjs strokes, Kalam lettering, one red and one blue
@@ -6418,6 +6418,9 @@ def motion_set_project_theme(theme: str | None = None) -> str:
         basalt ground, marble ink, ONE ochre working colour, Newsreader /
         Instrument Sans / IBM Plex Mono, exact (non-sketch) geometry and no
         ambient drift.
+      - `apelles-studio-light` — the same site's light page look: warm
+        marble ground, basalt ink, terracotta emphasis with ochre marks, the
+        same three faces and clean geometry.
 
     A theme supplies DEFAULTS only. A scene's own `bg`, and a layer's own
     `color` / `font` / `accent`, still win over it — so re-theming never

@@ -212,9 +212,55 @@ const APELLES_STUDIO: Theme = {
   ambientDriftPx: 0,
 };
 
+/**
+ * apelles.studio's PAGE look (D-394) — the site's own light ground, where
+ * `apelles-studio` above is its inverse (basalt) band. Same sourcing rule as
+ * that preset: every value is a `website/src/styles/tokens.css` token
+ * verbatim, or one of its `color-mix()` tints flattened to an opaque hex
+ * (three.js discards alpha — see `apelles-studio`'s `strokeSoft` note).
+ *
+ * The working colours follow the site's own rule for a marble ground, the
+ * mirror of rule 1 above: TERRACOTTA is the link/emphasis colour (it reads on
+ * marble), and OCHRE is held to marks, rules and large display type (3.0:1 on
+ * marble — `tokens.css` caps it there). So `accent` is terracotta and
+ * `accentSignal` — matrix fills, graph pulses, glows — is ochre.
+ */
+const APELLES_STUDIO_LIGHT: Theme = {
+  name: "apelles-studio-light",
+  description:
+    "apelles.studio's page look: warm marble ground, basalt ink, terracotta emphasis with ochre marks, Newsreader / Instrument Sans / IBM Plex Mono, clean geometry.",
+
+  // ground — `--pigment-marble`, and `--pigment-marble-deep` (the site's own
+  // second ground) for panels and cards.
+  bg: "#f4efe6",
+  bgDeep: "#eae2d4",
+
+  // ink — `--pigment-basalt`; soft lines are `--edge-strong`
+  // (`color-mix(in srgb, basalt 28%, transparent)`) flattened over marble;
+  // dim text is `--pigment-basalt-soft` (8.5:1 on marble).
+  stroke: "#1c1a17",
+  strokeSoft: "#b8b3ac",
+  text: "#1c1a17",
+  textDim: "#4a443c",
+
+  // accents — `--pigment-terracotta` (emphasis) and `--pigment-ochre` (marks).
+  accent: "#a6432c",
+  accentSignal: "#b4823a",
+
+  // stroke feel and type — identical to `apelles-studio`: one site, one hand.
+  strokeWidth: 2,
+  roughness: 0,
+  bowing: 0,
+  fontDisplay: "'Newsreader', 'Iowan Old Style', Georgia, serif",
+  fontUi: "'Instrument Sans', system-ui, -apple-system, sans-serif",
+  fontMono: "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+  ambientDriftPx: 0,
+};
+
 export const THEMES = {
   "dark-excalidraw": DARK_EXCALIDRAW,
   "apelles-studio": APELLES_STUDIO,
+  "apelles-studio-light": APELLES_STUDIO_LIGHT,
 } as const;
 
 export type ThemeName = keyof typeof THEMES;

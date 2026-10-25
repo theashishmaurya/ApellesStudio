@@ -239,3 +239,45 @@ describe("D-339 — `apelles-studio` is the website's real palette, not a paraph
     expect(s.ambientDriftPx).toBe(0);
   });
 });
+
+describe("D-394 — `apelles-studio-light` is the website's page palette", () => {
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const tokensCss = readFileSync(resolve(HERE, '../../../website/src/styles/tokens.css'), 'utf8');
+  const token = (name: string): string => {
+    const m = tokensCss.match(new RegExp(`--${name}:\\s*([^;]+);`));
+    if (!m) throw new Error(`tokens.css has no --${name}`);
+    return m[1].trim();
+  };
+  const s = THEMES['apelles-studio-light'];
+
+  it('grounds on marble, with marble-deep as the second ground', () => {
+    expect(s.bg).toBe(token('pigment-marble'));
+    expect(s.bgDeep).toBe(token('pigment-marble-deep'));
+  });
+
+  it('inks in basalt, dim text in basalt-soft', () => {
+    expect(s.text).toBe(token('pigment-basalt'));
+    expect(s.stroke).toBe(token('pigment-basalt'));
+    expect(s.textDim).toBe(token('pigment-basalt-soft'));
+  });
+
+  it('emphasis is terracotta and marks are ochre — the site rule on marble', () => {
+    expect(s.accent).toBe(token('pigment-terracotta'));
+    expect(s.accentSignal).toBe(token('pigment-ochre'));
+  });
+
+  it('draws soft lines from --edge-strong, flattened over marble', () => {
+    expect(token('edge-strong')).toContain('28%');
+    const hex = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const marble = hex(token('pigment-marble'));
+    const basalt = hex(token('pigment-basalt'));
+    const flat = marble.map((c, i) => Math.round(basalt[i] * 0.28 + c * 0.72));
+    expect(s.strokeSoft).toBe(`#${flat.map((c) => c.toString(16).padStart(2, '0')).join('')}`);
+  });
+
+  it('shares its sibling’s type and clean geometry', () => {
+    const d = THEMES['apelles-studio'];
+    expect([s.fontDisplay, s.fontUi, s.fontMono]).toEqual([d.fontDisplay, d.fontUi, d.fontMono]);
+    expect([s.roughness, s.bowing, s.ambientDriftPx]).toEqual([0, 0, 0]);
+  });
+});

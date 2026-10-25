@@ -41,6 +41,12 @@ const LOADERS: Record<ThemeName, () => void> = {
     loadInstrumentSans("normal", { subsets: ["latin"], weights: ["400", "500", "600"] });
     loadIBMPlexMono("normal", { subsets: ["latin"], weights: ["400", "500"] });
   },
+  // D-394 — the same three faces as its dark sibling.
+  "apelles-studio-light": () => {
+    loadNewsreader("normal", { subsets: ["latin"], weights: ["400", "600"] });
+    loadInstrumentSans("normal", { subsets: ["latin"], weights: ["400", "500", "600"] });
+    loadIBMPlexMono("normal", { subsets: ["latin"], weights: ["400", "500"] });
+  },
 };
 
 const loaded = new Set<ThemeName>();
