@@ -72,6 +72,12 @@ export const Text: React.FC<{
             : align === "right"
               ? "translateX(-100%)"
               : undefined,
+        // B-258 — an absolutely positioned box shrinks to fit the space right
+        // of `left`, so centred text at x = 960 wrapped at 960 px (and
+        // right-aligned text even sooner) whatever `maxWidth` said. Sizing to
+        // the text itself, capped by `maxWidth`, makes the wrap width the
+        // author's, independent of where the anchor sits.
+        width: "max-content",
         maxWidth,
         textAlign: align,
       }
