@@ -84,6 +84,7 @@ __all__ = [
     "BezierPoints",
     "Camera2DKey",
     "Camera3DKey",
+    "ClipHighlightSpec",
     "ClipKeyframe",
     "ClipSelector",
     "ColorWheelChannel",
@@ -95,6 +96,7 @@ __all__ = [
     "ExportRenderer",
     "FitMode",
     "GapSelector",
+    "HighlightBox",
     "LayerTransformKey",
     "LinearGeometry",
     "MaskGeometry",
@@ -366,6 +368,44 @@ class ClipKeyframe(BaseModel):
             "persists — though no docstring documented it before D-310."
         ),
     )
+
+
+# `ClipHighlightSpec.box`: four fractions of the SOURCE image.
+HighlightBox = Annotated[
+    list[float],
+    Field(
+        min_length=4,
+        max_length=4,
+        description=(
+            "[x0, y0, x1, y1] as fractions of the SOURCE image (0..1, top-left origin). "
+            "Corners may come in any order; values are clamped to 0..1; the box must "
+            "have area."
+        ),
+    ),
+]
+
+
+class ClipHighlightSpec(BaseModel):
+    """One highlighter-pen sweep on a clip (`editor_set_clip_highlights`).
+
+    Drawn on the clip's own picture, left to right, starting at source frame `at`; once
+    swept it stays for the rest of the clip.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    box: HighlightBox
+    at: int = Field(
+        description=(
+            "Clip SOURCE frame the sweep starts on (the same axis as a keyframe's "
+            "`frame`), >= 0."
+        )
+    )
+    dur: int = Field(description="Frames the sweep takes, >= 0. 0 reveals the whole box at `at`.")
+    color: str | None = Field(
+        None, description="Hex colour, #RGB or #RRGGBB. Default #F2B63A (a highlighter yellow-ochre)."
+    )
+    opacity: float | None = Field(None, description="0..1. Default 0.45.")
 
 
 class DynamicZoomFraming(BaseModel):

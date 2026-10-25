@@ -130,6 +130,7 @@ import {
 // (`ClipCurveEditor.tsx` / `EditorInspectorPanel.tsx`) rather than reimplemented
 // here: one write path for the human and the agent, per CLAUDE.md.
 import { animatedParams, paramKeyframeFrames, setClipKeyframeEase } from './clipKeyframes';
+import { validateHighlights } from './clipHighlights';
 import {
   checkAddClip,
   clipOutputSourceFrames,
@@ -144,6 +145,7 @@ import {
   DEFAULT_TEXT_FONT,
   DEFAULT_TITLE_SECONDS,
   EQ_BAND_KINDS,
+  isGeneratedClip,
   describeEqBand,
   eqBandsForDisplay,
   eqKindUsesGain,
@@ -4545,6 +4547,55 @@ export function useEditorControl(): void {
             ? `band ${band + 1} is a ${stored?.kind} — it has no gain, so gain_db was stored but does nothing`
             : 'the EQ applies before this clip’s volume, fade and duck, in the preview and the render alike',
         );
+      },
+
+      // ---- clip highlights: the highlighter-pen sweep (D-396) ------------- //
+      //
+      // REPLACES the clip's whole list, like `editor_set_clip_keyframes`: the
+      // caller (an agent building a video, the Inspector's rows) already holds
+      // the whole of it, and one op shape serves add, remove and retime. `[]`
+      // clears. Validated up front and named, rather than silently dropping an
+      // unrenderable entry the way the reducer's own sanitiser would.
+      editor_set_clip_highlights: (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        if (found.tr.locked) return { error: `track ${found.track} is locked — unlock it first` };
+        if (found.tr.kind !== 'video') {
+          return {
+            error: `track ${found.track} is a ${found.tr.kind} track — a highlight is drawn on a video or still clip`,
+          };
+        }
+        if (isGeneratedClip(found.c)) {
+          return {
+            error: `clip ${found.clip} is a title, caption or adjustment clip — it has no picture to highlight`,
+          };
+        }
+        const checked = validateHighlights(a?.highlights);
+        if ('error' in checked) return checked;
+        useEditorTimelineStore.getState().applyOp({
+          kind: 'set_clip_highlights',
+          track: found.track,
+          clip: found.clip,
+          highlights: checked.highlights,
+        });
+        const stored =
+          useEditorTimelineStore.getState().timeline?.tracks[found.track]?.clips[found.clip]?.highlights ?? [];
+        return {
+          ok: true,
+          track: found.track,
+          clip: found.clip,
+          name: found.c.name,
+          // What was actually STORED (frames rounded to whole numbers, boxes
+          // ordered and clamped), so a caller reads this rather than assuming
+          // its request landed verbatim.
+          highlights: stored,
+          note:
+            stored.length === 0
+              ? 'highlights cleared — this clip renders exactly as before'
+              : 'drawn on the clip’s own picture before its crop, scale and keyframes, so each box follows every push-in; `at` is a clip SOURCE frame (the axis editor_set_clip_keyframes uses), and a swept highlight stays for the rest of the clip',
+        };
       },
 
       editor_set_track_duck: (a) => {

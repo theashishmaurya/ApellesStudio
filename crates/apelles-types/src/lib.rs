@@ -153,6 +153,10 @@ pub mod lut3d;
 
 pub use lut3d::Lut3d;
 
+/// The rounded-box pixel-coverage SDF shared by the compositor's rounded
+/// clip corners (D-344) and clip highlights (D-396). See its own doc.
+pub mod shape;
+
 #[cfg(test)]
 mod tests {
     use super::*;

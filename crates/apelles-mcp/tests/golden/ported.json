@@ -82,6 +82,7 @@
     "editor_set_caption_style",
     "editor_set_clip_audio",
     "editor_set_clip_eq",
+    "editor_set_clip_highlights",
     "editor_set_clip_keyframes",
     "editor_set_clip_transform",
     "editor_set_curve_editor",

@@ -2,8 +2,8 @@
 
 **Layer 0 (foundation).** Shared value types for the whole Apelles workspace:
 `Resolution`, `Rational`, `ChromaError`, the `fade` curve model, the `pan` law,
-the `eq` band model + biquad math, and the `adjustment` colour operator (all
-real, in use). `Frame`, `ColorSpace`, `TimeRange`, and typed IDs stay
+the `eq` band model + biquad math, the `adjustment` colour operator, and the
+`shape` rounded-box coverage SDF (D-344/D-396) (all real, in use). `Frame`, `ColorSpace`, `TimeRange`, and typed IDs stay
 undesigned — no real duplicate of any of them turned up in the `app/src-tauri`
 audit, see below.
 

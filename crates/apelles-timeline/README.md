@@ -19,6 +19,12 @@ tracks of clips, position helpers, and the edit ops.
   multiplier) stay here, where the model is. None of it touches the D-034
   keyframe engine, which stays strictly linear.
 
+- **Clip highlights (D-396)** — `highlight.rs`: `Highlight` (`Clip::highlights`,
+  a highlighter-pen sweep over a box of the clip's own picture) and the pure
+  geometry both renderers share (`sweep_at` → `Sweep`, `Sweep::coverage`).
+  Returns coverage only: the compositor in `app/src-tauri` blends it, and
+  `@apelles/editor` compiles the same formula to an ffmpeg `geq` node.
+
 ## API (D-041)
 
 - `Timeline::from_shots(&[(id, source_path, name, source_frame_count)])` — one

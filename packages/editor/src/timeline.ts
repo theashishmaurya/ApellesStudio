@@ -90,6 +90,7 @@ import { captionLines, type CaptionCue, type CaptionStyle } from './caption';
 // a one-way dependency exactly as `speedRamp.ts` below is.
 import { dropEditTypeInfo, type DropEditType } from './editTypes';
 import { clampEqBand, eqBandsForDisplay, type EqBand } from './eq';
+import { sanitizeHighlight, type ClipHighlight } from './clipHighlights';
 // D-236 — the speed ramp's arithmetic lives in its own module, which imports
 // only the `Clip` TYPE back from here (erased at build), so the runtime
 // dependency stays one-way: `timeline.ts` -> `speedRamp.ts`, never a cycle.
@@ -450,6 +451,14 @@ export interface Clip {
    *  `scale`, `rotation`, `box_*` and the crop insets do not apply at all: the
    *  correction is always full-frame. See `docs/notes/adjustment-clips.md`. */
   adjustment?: AdjustmentLayer | null;
+  /** Phrase highlights (D-396) — mirrors `apelles_timeline::Clip::highlights`.
+   *  Each sweeps left to right like a highlighter pen from its `at` source
+   *  frame, drawn on this clip's own picture BEFORE crop/scale/rotation, so it
+   *  follows every push-in. Absent = none: the clip renders byte-identically in
+   *  both engines with no extra work. Only a decoded media clip has a picture to
+   *  draw on; the reducer refuses it on a title, caption or adjustment clip. See
+   *  `clipHighlights.ts` and the Rust module for the model. */
+  highlights?: ClipHighlight[];
 }
 
 /** The five-parameter primary correction an adjustment clip carries (D-230) —
@@ -3671,6 +3680,18 @@ export type EditOp =
       patch?: Partial<EqBand>;
       clear?: boolean;
     }
+  /** D-396 — REPLACE a clip's whole phrase-highlight list ("highlighter pen"
+   *  sweeps drawn on its own picture). One op for every edit — add, remove,
+   *  retime, recolour — because the list is short and the caller (the
+   *  Inspector's rows, the on-canvas box drag, `editor_set_clip_highlights`)
+   *  already holds the whole of it; the same shape `set_clip_keyframes` has.
+   *  Each entry is sanitised (`sanitizeHighlight`): an unrenderable one is
+   *  dropped. An empty list DELETES the key, so "no highlights" serialises
+   *  exactly as a clip that never had any. A no-op returns the same timeline
+   *  object (no undo entry). Refused on a locked track, a non-video track, and
+   *  a generated clip (title, caption, adjustment) — none has a decoded picture
+   *  to draw on. */
+  | { kind: 'set_clip_highlights'; track: number; clip: number; highlights: ClipHighlight[] }
   /** D-195 — Task 2, `docs/notes/timeline-editing-feature-gap-analysis.md`
    *  item 2: replace a clip's underlying source media (`source_path`/
    *  `media_id`) IN PLACE — every other field (`start_frame`, the full
@@ -4059,6 +4080,10 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       return op.clear
         ? `Clear ${clipLabel(before, op.track, op.clip)} EQ`
         : `EQ band ${(op.band ?? 0) + 1} on ${clipLabel(before, op.track, op.clip)}`;
+    case 'set_clip_highlights':
+      return op.highlights.length === 0
+        ? `Clear ${clipLabel(before, op.track, op.clip)} highlights`
+        : `Highlight on ${clipLabel(before, op.track, op.clip)}`;
     case 'set_clip_transform':
       return `Adjust ${clipLabel(before, op.track, op.clip)}`;
     case 'set_clip_keyframes':
@@ -5479,6 +5504,23 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     bands[band] = patched;
     const next = clone(tl);
     next.tracks[op.track].clips[op.clip].eq_bands = bands;
+    return next;
+  }
+  if (op.kind === 'set_clip_highlights') {
+    const tr = tl.tracks[op.track];
+    if (!tr || tr.locked || tr.kind !== 'video') return tl;
+    const c = tr.clips[op.clip];
+    if (!c || isGeneratedClip(c)) return tl;
+    const clean = op.highlights.map(sanitizeHighlight).filter((h): h is ClipHighlight => h !== null);
+    const had = c.highlights ?? [];
+    // Already what was asked for — same object back, so no undo entry.
+    if (JSON.stringify(had) === JSON.stringify(clean)) return tl;
+    const next = clone(tl);
+    const nc = next.tracks[op.track].clips[op.clip];
+    // `delete`, not `= []`: an empty array would serialise as a real
+    // `"highlights": []` where the Rust field writes no key at all.
+    if (clean.length === 0) delete nc.highlights;
+    else nc.highlights = clean;
     return next;
   }
   if (op.kind === 'swap_media') {

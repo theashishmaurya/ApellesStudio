@@ -22,8 +22,8 @@ use serde_json::Value;
 use crate::args::WireArgs;
 use crate::render;
 use crate::schemas::{
-    ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming, ExportRenderer, FitMode,
-    GapSelector, SpeedRampPoint,
+    ClipHighlightSpec, ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming, ExportRenderer,
+    FitMode, GapSelector, SpeedRampPoint,
 };
 use crate::server::ApellesMcp;
 
@@ -823,6 +823,13 @@ pub struct EditorSetClipEqArgs {
     pub enabled: Option<bool>,
     #[serde(default = "default_editor_set_clip_eq_clear")]
     pub clear: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EditorSetClipHighlightsArgs {
+    pub track: i64,
+    pub clip: i64,
+    pub highlights: Vec<ClipHighlightSpec>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -3754,6 +3761,61 @@ impl ApellesMcp {
             .put("q", p.q)
             .put("enabled", p.enabled);
         let env = self.op("editor_set_clip_eq", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "editor_set_clip_highlights",
+        description = r##"Draw HIGHLIGHTER-PEN sweeps on one clip's own picture (D-396): each box
+    sweeps left to right like a marker while a phrase is spoken -- the effect
+    newspaper and blog explainers use over a screenshot of the article. `track`
+    and `clip` are the 0-based indices from get_timeline.
+
+    `highlights` REPLACES the clip's whole list -- pass all of them every time,
+    and pass [] to clear. Each entry is
+    `{"box": [x0, y0, x1, y1], "at": <int>, "dur": <int>, "color": "#F2B63A",
+    "opacity": 0.45}`; `color` and `opacity` are optional.
+      - `box` -- fractions (0..1, top-left origin) of the clip's SOURCE
+        image, NOT of the canvas. So a box stays on the words it was drawn over
+        however the clip is later scaled, panned or keyframed: it is painted on
+        the picture BEFORE the clip's crop, scale, rotation and keyframes.
+      - `at` -- the clip SOURCE frame the sweep starts on, the same axis
+        editor_set_clip_keyframes' `frame` uses. For a clip placed at timeline
+        frame S with source_start B (1x speed), timeline frame F is source
+        frame B + (F - S).
+      - `dur` -- frames the sweep takes (0 reveals the whole box at `at`). The
+        pen eases out (fast start, soft landing), hard square at its left edge,
+        rounded at the leading tip.
+    Once a box is swept it STAYS for the rest of the clip.
+
+    The default stroke is a yellow-ochre at 0.45 opacity blended normally (not
+    multiplied), chosen to read on a white article page AND on a dark one while
+    keeping the text under it legible (measured contrast: 4.8:1 dark text on
+    white, 4.1:1 light text on dark).
+
+    Works on a video or still clip on a video track; a title, caption or
+    adjustment clip has no picture of its own and is refused. Unlocked tracks
+    only. A clip with no highlights renders byte-identically to before.
+
+    Preview and export agree: the live preview, the compositor export and the
+    ffmpeg filter-graph export all draw the same stroke (measured against real
+    ffmpeg output). The ffmpeg path costs one per-pixel `geq` node per
+    highlight, so prefer the compositor renderer for large frames.
+
+    Returns what was actually STORED (frames are rounded to whole numbers and
+    boxes are ordered and clamped), so read that back rather than assuming your
+    request landed verbatim. Undoable: same store action and same undo stack the
+    GUI's Highlights section writes to."##
+    )]
+    pub async fn editor_set_clip_highlights(
+        &self,
+        Parameters(p): Parameters<EditorSetClipHighlightsArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("track", p.track)
+            .set("clip", p.clip)
+            .set("highlights", p.highlights);
+        let env = self.op("editor_set_clip_highlights", args).await?;
         Ok(render::json_text(&env))
     }
 

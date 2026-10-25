@@ -464,6 +464,45 @@ pub struct ClipKeyframe {
     pub extra: Map<String, Value>,
 }
 
+/// [x0, y0, x1, y1] as fractions of the SOURCE image (0..1, top-left origin). Corners may
+/// come in any order; values are clamped to 0..1; the box must have area.
+//
+// A newtype for `EaseCurve`'s reason: it carries its own length bound and description into
+// the schema, which a bare `Vec<f64>` alias would drop. Plain comments here, because a doc
+// comment reaches the published description.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct HighlightBox(#[schemars(length(min = 4, max = 4))] pub Vec<f64>);
+
+/// One highlighter-pen sweep on a clip (`editor_set_clip_highlights`).
+///
+/// Drawn on the clip's own picture, left to right, starting at source frame `at`; once
+/// swept it stays for the rest of the clip.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClipHighlightSpec {
+    #[serde(rename = "box")]
+    pub rect: HighlightBox,
+    /// Clip SOURCE frame the sweep starts on (the same axis as a keyframe's `frame`), >= 0.
+    pub at: i64,
+    /// Frames the sweep takes, >= 0. 0 reveals the whole box at `at`.
+    pub dur: i64,
+    /// Hex colour, #RGB or #RRGGBB. Default #F2B63A (a highlighter yellow-ochre).
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub color: Maybe<String>,
+    /// 0..1. Default 0.45.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opacity: Maybe<f64>,
+}
+
 /// A start or end framing for a dynamic zoom (`editor_set_dynamic_zoom`).
 ///
 /// snake_case only — there is no x/y/zoom/positionX alias. Every field is optional and

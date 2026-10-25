@@ -83,6 +83,7 @@ import {
 } from './captionAnim';
 import { captionMetricKey, type CaptionMetrics } from './captionMetrics';
 import { buildAdjustmentSteps, clipAdjustmentOps } from './adjustment';
+import { highlightGeqSteps } from './timelineExportHighlight';
 import { piecewiseLinearExpr, type ExprPoint } from './ffmpegExpr';
 // D-236 — one definition of a clip's time remap, shared with the live
 // preview's own `clipSourceFrameAt`/`Clip::source_frame_at`. See `speedRamp.ts`.
@@ -1600,6 +1601,22 @@ function buildClipFilterChain(
     );
     src = `[g${label}]`;
   }
+
+  // D-396 — **this clip's highlighter strokes**, one `geq` node each, drawn on
+  // the decoded picture after the grade and before any geometry: the point
+  // `chroma::edit::composite_video_frame` calls `apply_highlights_to_rgba`, so
+  // the stroke follows every crop, push-in and rotation in both engines. A clip
+  // with none emits nothing, so every pre-D-396 argv is byte-identical.
+  const highlighted = highlightGeqSteps({
+    highlights: clip.highlights,
+    src,
+    label,
+    sourceStart: clip.source_start,
+    fps: clipFps,
+    bigTVar,
+  });
+  steps.push(...highlighted.steps);
+  src = highlighted.src;
 
   // B-098 — the four crop insets are now keyframe-or-static, mirroring
   // `scaleExpr`'s own shape exactly: identity (no filter step) when the clip

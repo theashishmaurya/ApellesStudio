@@ -185,6 +185,7 @@ pub mod caption;
 /// (`@apelles/editor`'s `captionAnim.ts`) and a reader checking the two against
 /// each other should be able to open one file per side.
 pub mod caption_anim;
+pub mod highlight;
 /// D-236 — the speed ramp's arithmetic (see the module's own doc). Kept in its
 /// own file rather than inlined here because it is an exact, line-for-line
 /// mirror of `@apelles/editor`'s `speedRamp.ts`, and a reader checking the two
@@ -204,6 +205,7 @@ use caption::{CaptionCue, CaptionStyle};
 // in the timeline model should not have to know which crate the type came from.
 pub use apelles_types::ease::EaseCurve;
 pub use apelles_types::fade::{self, fade_gain};
+pub use highlight::Highlight;
 pub use speed_ramp::{SpeedPoint, SpeedSegment};
 
 // D-224 — same shape, same reason, one layer further: a clip's EQ band type
@@ -1547,6 +1549,22 @@ pub struct Clip {
     /// no sentinel needed, exactly [`Self::text`]'s own precedent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adjustment: Option<AdjustmentLayer>,
+
+    // --- Clip highlights (D-396) -------------------------------------------- //
+    /// Phrase highlights drawn ON this clip's own picture: each sweeps left to
+    /// right like a highlighter pen from its `at` source frame, then stays. See
+    /// [`highlight`] for the model and the shared geometry.
+    ///
+    /// Drawn in IMAGE space, before the clip's crop/scale/rotation/keyframes,
+    /// so a highlight follows every push-in for free. Only a decoded media clip
+    /// (video or still) has a picture to draw on: text, caption and adjustment
+    /// clips ignore it.
+    ///
+    /// `#[serde(default, skip_serializing_if = "Vec::is_empty")]`: a clip
+    /// without highlights (every pre-D-396 clip) has no key and renders
+    /// byte-identically in both engines, with no extra work.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub highlights: Vec<Highlight>,
 }
 
 fn default_opacity() -> f64 {
@@ -1631,6 +1649,8 @@ impl Default for Clip {
             caption: None,
             // D-230 — same, for the same reason.
             adjustment: None,
+            // D-396 — empty is "no highlights", the only sane default.
+            highlights: Vec::new(),
         }
     }
 }
@@ -5541,6 +5561,56 @@ mod tests {
         t.split(0, 1, 120).unwrap();
         for i in [1usize, 2] {
             assert_eq!(t.tracks[0].clips[i].eq_bands, vec![band]);
+        }
+    }
+
+    // D-396: clip highlights (`highlights`).
+
+    /// The migration case and the byte-identical guarantee: a clip with no
+    /// highlights writes no key, a pre-D-396 clip deserialises to none, and a
+    /// clip with highlights round-trips them.
+    #[test]
+    fn clip_highlights_round_trip_and_an_empty_list_writes_no_key() {
+        let mut t = Timeline::from_shots(&shots());
+        let bare = serde_json::to_string(&t).unwrap();
+        assert!(!bare.contains("highlights"));
+        t.tracks[0].clips[0].highlights = vec![Highlight {
+            rect: [0.1, 0.2, 0.6, 0.3],
+            at: 12,
+            dur: 24,
+            color: Some("#00ff00".into()),
+            opacity: None,
+        }];
+        let json = serde_json::to_string(&t).unwrap();
+        assert_eq!(json.matches("highlights").count(), 1, "only the one clip");
+        assert!(json.contains(r#""box":[0.1,0.2,0.6,0.3]"#));
+        let back: Timeline = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.tracks[0].clips[0].highlights,
+            t.tracks[0].clips[0].highlights
+        );
+        assert!(back.tracks[0].clips[1].highlights.is_empty());
+        assert!(Clip::default().highlights.is_empty());
+    }
+
+    /// Highlights are an appearance-class value, like crop and EQ: `split`
+    /// hands both halves the same list (the second half's sweep is simply
+    /// already finished), so a future op that rebuilds a `Clip` field by field
+    /// and drops this one fails here.
+    #[test]
+    fn split_preserves_clip_highlights_on_both_halves() {
+        let mut t = Timeline::from_shots(&shots());
+        let hl = Highlight {
+            rect: [0.0, 0.0, 0.5, 0.5],
+            at: 0,
+            dur: 10,
+            color: None,
+            opacity: Some(0.3),
+        };
+        t.tracks[0].clips[1].highlights = vec![hl.clone()];
+        t.split(0, 1, 120).unwrap();
+        for i in [1usize, 2] {
+            assert_eq!(t.tracks[0].clips[i].highlights, vec![hl.clone()]);
         }
     }
 

@@ -1301,6 +1301,10 @@ pub(crate) fn render_timeline_frame(
                 // `lut_for_clip` returns `None` for both and answers from its
                 // memo after the first frame.
                 && grade_lut::lut_for_clip(&clip.id).is_none()
+                // D-396 — nor does a clip carrying highlights: they are drawn by
+                // the compositor on the decoded picture, which a plain decode
+                // does not run.
+                && clip.highlights.is_empty()
         }
         _ => false,
     };
@@ -2425,6 +2429,12 @@ fn composite_video_frame(
         if let Some(lut) = grade_lut::lut_for_clip(&clip.id) {
             grade_lut::apply_to_rgba(std::sync::Arc::make_mut(&mut rgba), &lut);
         }
+        // D-396 — **the clip's highlighter strokes**, drawn on the decoded
+        // picture after the grade and before any geometry, so they follow every
+        // crop, push-in and rotation. The ffmpeg exporter's `geq` nodes sit at
+        // exactly this point in the per-clip chain (after `lut3d`, before
+        // `crop`). A clip with none costs one empty-slice check.
+        apply_highlights_to_rgba(&mut rgba, &clip.highlights, *source_frame);
         decoded.push(Step::Paint {
             img: rgba,
             // D-344 — `corner_radius` is the one geometry field authored in
@@ -2466,6 +2476,65 @@ fn composite_video_frame(
     }
 
     Ok(DynamicImage::ImageRgba8(canvas))
+}
+
+/// D-396 — draw a clip's highlighter strokes onto its decoded picture.
+///
+/// Each stroke is the pen's current rounded rectangle (`Highlight::sweep_at`),
+/// blended with the plain "over" operator at `coverage × opacity`: `c' = c +
+/// k·(highlight − c)`. Strokes apply in list order, a later one over an
+/// earlier. The ffmpeg exporter's `geq` node computes the identical expression,
+/// so a stroke measures the same in the preview and the export (the pixel test
+/// in `timelineExportHighlight.ffmpeg.test.ts` holds that to one level).
+///
+/// **Normal blend, not multiply**, measured on both page polarities (D-396): a
+/// multiplied stroke is invisible on a dark article page, while an over blend at
+/// the default 0.45 keeps dark text on a white page at a 4.8:1 contrast against
+/// the stroke and light text on a dark page at 4.1:1 (WCAG contrast ratios).
+///
+/// `Arc::make_mut` copies a still's shared decode-cache buffer only when a
+/// stroke is actually visible this frame; before the first sweep begins, or on
+/// a clip with none, the buffer is untouched and uncopied.
+fn apply_highlights_to_rgba(
+    img: &mut std::sync::Arc<image::RgbaImage>,
+    highlights: &[apelles_timeline::Highlight],
+    source_frame: i64,
+) {
+    if highlights.is_empty() {
+        return;
+    }
+    let (w, h) = img.dimensions();
+    let sweeps: Vec<apelles_timeline::highlight::Sweep> = highlights
+        .iter()
+        .filter_map(|hl| hl.sweep_at(source_frame, w, h))
+        .collect();
+    if sweeps.is_empty() {
+        return;
+    }
+    let stride = w as usize * 4;
+    for_each_row_mut(std::sync::Arc::make_mut(img).as_mut(), stride, |y, row| {
+        for sweep in &sweeps {
+            let (x0, y0, x1, y1) = sweep.pixel_bounds(w, h);
+            if (y as u32) < y0 || (y as u32) >= y1 {
+                continue;
+            }
+            for x in x0..x1 {
+                let k = f64::from(sweep.coverage(x, y as u32)) * f64::from(sweep.opacity);
+                if k <= 0.0 {
+                    continue;
+                }
+                let px = &mut row[x as usize * 4..x as usize * 4 + 3];
+                for (c, &target) in px.iter_mut().zip(sweep.rgb.iter()) {
+                    let cur = f64::from(*c);
+                    // Truncates, deliberately: ffmpeg's `geq` floors the float
+                    // it computes to the 8-bit level, and agreeing with it by
+                    // construction beats rounding "more correctly" and
+                    // differing from the export by a level on half the pixels.
+                    *c = (cur + k * (f64::from(target) - cur)).clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+    });
 }
 
 /// D-230 — apply an adjustment clip's colour operator to the whole canvas.
@@ -2564,11 +2633,9 @@ fn crop_pixel_rect(w: u32, h: u32, t: &ClipTransform) -> Option<(u32, u32, u32, 
 /// engines agree to within ffmpeg's own 1/255 quantisation rather than
 /// "approximately".
 fn corner_coverage(x: f64, y: f64, w: f64, h: f64, r: f64) -> f32 {
-    let r = r.max(0.0).min((w.min(h)) / 2.0);
-    let qx = (x + 0.5 - w / 2.0).abs() - (w / 2.0 - r);
-    let qy = (y + 0.5 - h / 2.0).abs() - (h / 2.0 - r);
-    let sd = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
-    (0.5 - sd).clamp(0.0, 1.0) as f32
+    // The SDF itself lives in `apelles-types` (D-396) now that clip highlights
+    // share it; this stays as the call sites' local name.
+    apelles_types::shape::rounded_box_coverage(x, y, w, h, r)
 }
 
 /// Crop → scale → **round the corners** → rotate → apply opacity (as an alpha
@@ -4946,6 +5013,205 @@ mod composite_tests {
         for (x, y) in [(0, 0), (W - 1, 0), (0, H - 1), (W - 1, H - 1)] {
             assert_eq!(canvas.get_pixel(x, y).0, [0, 0, 0, 255]);
         }
+    }
+
+    // ----------------------------------------------------------------- //
+    // D-396 — clip highlights
+    // ----------------------------------------------------------------- //
+
+    fn stroke(rect: [f64; 4], at: i64, dur: i64) -> apelles_timeline::Highlight {
+        apelles_timeline::Highlight {
+            rect,
+            at,
+            dur,
+            color: None,
+            opacity: None,
+        }
+    }
+
+    fn luminance(px: [u8; 4]) -> f64 {
+        let lin = |c: u8| {
+            let c = f64::from(c) / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * lin(px[0]) + 0.7152 * lin(px[1]) + 0.0722 * lin(px[2])
+    }
+
+    fn contrast(a: [u8; 4], b: [u8; 4]) -> f64 {
+        let (la, lb) = (luminance(a), luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    /// No highlights, or none started yet: the buffer is neither changed nor
+    /// copied (the `Arc` is still the one the caller handed in).
+    #[test]
+    fn highlights_that_have_not_started_leave_the_picture_and_its_arc_untouched() {
+        let shared = std::sync::Arc::new(noisy(40, 30, 7));
+        let mut img = shared.clone();
+        apply_highlights_to_rgba(&mut img, &[], 0);
+        apply_highlights_to_rgba(&mut img, &[stroke([0.1, 0.1, 0.9, 0.5], 10, 10)], 9);
+        assert!(
+            std::sync::Arc::ptr_eq(&img, &shared),
+            "no copy before the sweep"
+        );
+        assert_eq!(*img, *shared);
+    }
+
+    /// The stroke paints only inside its box, sweeps left to right, and leaves
+    /// every pixel outside the box byte-identical.
+    #[test]
+    fn a_highlight_paints_only_its_box_and_sweeps_left_to_right() {
+        let base = noisy(100, 60, 3);
+        let one = [stroke([0.2, 0.25, 0.8, 0.75], 0, 10)];
+        let paint = |frame: i64| {
+            let mut img = std::sync::Arc::new(base.clone());
+            apply_highlights_to_rgba(&mut img, &one, frame);
+            (*img).clone()
+        };
+        let (mid, done) = (paint(4), paint(10));
+        // Outside the box (and its antialiased rim): untouched.
+        for (x, y) in [(0, 0), (99, 59), (10, 30), (90, 30), (50, 5), (50, 55)] {
+            assert_eq!(done.get_pixel(x, y), base.get_pixel(x, y), "({x},{y})");
+        }
+        // Inside, the finished stroke has moved the pixel; mid-sweep the right
+        // part is still unpainted while the left part is.
+        assert_ne!(done.get_pixel(70, 30), base.get_pixel(70, 30));
+        assert_eq!(mid.get_pixel(70, 30), base.get_pixel(70, 30));
+        assert_ne!(mid.get_pixel(25, 30), base.get_pixel(25, 30));
+    }
+
+    /// A finished stroke stays put for the rest of the clip.
+    #[test]
+    fn a_swept_highlight_stays_for_the_rest_of_the_clip() {
+        let base = noisy(60, 40, 5);
+        let one = [stroke([0.1, 0.2, 0.9, 0.8], 0, 8)];
+        let paint = |frame: i64| {
+            let mut img = std::sync::Arc::new(base.clone());
+            apply_highlights_to_rgba(&mut img, &one, frame);
+            (*img).clone()
+        };
+        assert_eq!(paint(8), paint(9_999));
+    }
+
+    /// **The stroke reads on both an article page and a dark one** (the scope's
+    /// "test both"): the page colour changes visibly (1.3:1 on white, 3.0:1 on
+    /// dark), and text under the stroke keeps at least WCAG's large-text 3:1
+    /// against it (measured 4.8:1 dark-on-white, 4.1:1 light-on-dark).
+    #[test]
+    fn the_default_stroke_reads_on_white_and_dark_pages_and_keeps_text_legible() {
+        for (page, text) in [
+            ([255, 255, 255, 255], [20, 20, 20, 255]),
+            ([24, 24, 27, 255], [235, 235, 235, 255]),
+        ] {
+            let mut img = std::sync::Arc::new(flat(20, 20, page));
+            apply_highlights_to_rgba(&mut img, &[stroke([0.0, 0.0, 1.0, 1.0], 0, 0)], 0);
+            let stroked = img.get_pixel(10, 10).0;
+            assert!(
+                contrast(page, stroked) > 1.25,
+                "stroke is not visible on page {page:?}: {stroked:?}"
+            );
+            // Text under the stroke is blended with the same operator.
+            let mut t = std::sync::Arc::new(flat(20, 20, text));
+            apply_highlights_to_rgba(&mut t, &[stroke([0.0, 0.0, 1.0, 1.0], 0, 0)], 0);
+            let ratio = contrast(stroked, t.get_pixel(10, 10).0);
+            assert!(
+                ratio >= 3.0,
+                "text under the stroke on {page:?}: {ratio:.2}:1"
+            );
+        }
+    }
+
+    /// **The cross-engine pin.** `[frame, x, y, r, g, b]` measured from real
+    /// ffmpeg running the exporter's own `geq` node on a flat white 100x60
+    /// picture -- the identical table `HIGHLIGHT_PROFILE` in
+    /// `packages/editor/src/timelineExportHighlight.ffmpeg.test.ts` asserts on
+    /// the ffmpeg side. The compositor must reproduce every value to within one
+    /// 8-bit level (the two compute in different float widths), so a change to
+    /// either engine's formula that the other does not get fails one suite.
+    ///
+    /// The one exception is the pen's leading-edge pixel while it is still
+    /// moving (frames 2 and 4): the exporter samples the ease-out curve as 32
+    /// straight pieces where this evaluates the bezier exactly, a bounded
+    /// ~0.04 px difference in where the edge sits, worth up to ~4 levels on
+    /// that one antialiased pixel (D-197's documented asymmetry, measured).
+    #[test]
+    fn highlight_matches_real_ffmpegs_own_measured_pixels() {
+        const PROFILE: &[(i64, u32, u32, [u8; 3])] = &[
+            (10, 19, 30, [255, 255, 255]),
+            (10, 20, 30, [249, 222, 166]),
+            (10, 20, 15, [249, 222, 166]),
+            (10, 20, 44, [249, 222, 166]),
+            (10, 50, 30, [249, 222, 166]),
+            (10, 50, 14, [255, 255, 255]),
+            (10, 50, 15, [249, 222, 166]),
+            (10, 50, 44, [249, 222, 166]),
+            (10, 50, 45, [255, 255, 255]),
+            (10, 79, 30, [249, 222, 166]),
+            (10, 80, 30, [255, 255, 255]),
+            (10, 79, 15, [255, 255, 255]),
+            (10, 73, 15, [249, 224, 172]),
+            (10, 74, 15, [250, 231, 191]),
+            (10, 75, 15, [252, 242, 220]),
+            (10, 76, 16, [250, 229, 185]),
+            (10, 77, 17, [249, 224, 172]),
+            (10, 78, 18, [250, 229, 185]),
+            (10, 79, 19, [252, 242, 220]),
+            (10, 79, 21, [249, 224, 172]),
+            (2, 50, 30, [252, 241, 218]),
+            (2, 51, 30, [255, 255, 255]),
+            (4, 67, 30, [250, 231, 192]),
+            (4, 68, 30, [255, 255, 255]),
+            (7, 77, 30, [250, 228, 182]),
+            (7, 78, 30, [255, 255, 255]),
+        ];
+        let canonical = [stroke([0.2, 0.25, 0.8, 0.75], 0, 10)];
+        let mut diffs = Vec::new();
+        for &(frame, x, y, want) in PROFILE {
+            let mut img = std::sync::Arc::new(flat(100, 60, [255, 255, 255, 255]));
+            apply_highlights_to_rgba(&mut img, &canonical, frame);
+            let got = img.get_pixel(x, y).0;
+            let tolerance = if frame == 10 || frame == 7 { 1 } else { 5 };
+            if (0..3).any(|c| got[c].abs_diff(want[c]) > tolerance) {
+                diffs.push(format!(
+                    "frame {frame} ({x},{y}): got {:?}, ffmpeg measured {want:?}",
+                    &got[..3]
+                ));
+            }
+        }
+        assert!(
+            diffs.is_empty(),
+            "compositor diverged from ffmpeg:\n{}",
+            diffs.join("\n")
+        );
+    }
+
+    /// The same operator on a dark page, pinned to the ffmpeg-measured value
+    /// (truncation included): `24 + 0.45*(242-24) = 122.1`, `... = 95.1`,
+    /// `27 + 0.45*(58-27) = 40.95 -> 40`.
+    #[test]
+    fn highlight_blends_over_a_dark_page_like_ffmpeg() {
+        let mut img = std::sync::Arc::new(flat(100, 60, [24, 24, 27, 255]));
+        apply_highlights_to_rgba(&mut img, &[stroke([0.2, 0.25, 0.8, 0.75], 0, 10)], 10);
+        assert_eq!(img.get_pixel(50, 30).0, [122, 95, 40, 255]);
+        assert_eq!(img.get_pixel(5, 5).0, [24, 24, 27, 255]);
+    }
+
+    /// Strokes apply in list order: a later one is drawn over an earlier one.
+    #[test]
+    fn highlights_apply_in_list_order_later_over_earlier() {
+        let mut a = stroke([0.0, 0.0, 1.0, 1.0], 0, 0);
+        a.color = Some("#ff0000".into());
+        a.opacity = Some(1.0);
+        let mut b = stroke([0.0, 0.0, 1.0, 1.0], 0, 0);
+        b.color = Some("#0000ff".into());
+        b.opacity = Some(1.0);
+        let mut img = std::sync::Arc::new(flat(10, 10, [255, 255, 255, 255]));
+        apply_highlights_to_rgba(&mut img, &[a, b], 0);
+        assert_eq!(img.get_pixel(5, 5).0, [0, 0, 255, 255]);
     }
 }
 
