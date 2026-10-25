@@ -2407,6 +2407,18 @@ describe('add_clip with a linked audio half (D-129)', () => {
     expect(startOf(after, 1, p.audio!.id)).toBe(50);
   });
 
+  it('B-257: a clip placed on an AUDIO track is its own audio — no second linked copy', () => {
+    const before: Timeline = { id: 't', name: 't', tracks: [{ kind: 'audio', clips: [] }] };
+    const p = pair();
+    const after = applyOp(before, { kind: 'add_clip', track: 0, clip: p.video, linkedAudio: p.audio! });
+    expect(after.tracks).toHaveLength(1);
+    expect(after.tracks[0].clips).toHaveLength(1);
+    expect(after.tracks[0].clips[0].id).toBe(p.video.id);
+    expect(after.tracks[0].clips[0].link_group).toBeNull();
+    // the history entry names what was placed, not what the caller built
+    expect(labelForOp({ kind: 'add_clip', track: 0, clip: p.video, linkedAudio: p.audio! }, before)).toBe('Add "Shot"');
+  });
+
   it('without linkedAudio, behaves exactly as it did before D-129', () => {
     const before: Timeline = { id: 't', name: 't', tracks: [{ kind: 'video', clips: [] }] };
     const after = applyOp(before, { kind: 'add_clip', track: 0, clip: clipFromDraggedMedia({

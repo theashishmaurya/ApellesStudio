@@ -3076,6 +3076,23 @@ export function ensureAudioTrackWithRoom(tl: Timeline, startFrame: number, durat
   return tl.tracks.length - 1;
 }
 
+/** B-257 — what `add_clip` / `edit_in` actually place for a clip landing on
+ *  `dest`, given the D-129 linked audio half its caller built. A clip placed on
+ *  an AUDIO track already IS the source's audio: linking a second copy onto
+ *  another audio track would play the same sound twice (+6 dB). So there the
+ *  half is dropped and the clip loses the link group it would otherwise share
+ *  with nothing. On a video track both pass through unchanged. Decided here,
+ *  in the reducer, rather than in any one caller, so a Sources-panel drag and
+ *  `editor_add_clip` cannot disagree. */
+function resolveLinkedHalf(
+  dest: Track,
+  clip: NewClipFields,
+  linkedAudio: NewClipFields | undefined,
+): { clip: NewClipFields; linkedAudio: NewClipFields | undefined } {
+  if (!linkedAudio || dest.kind !== 'audio') return { clip, linkedAudio };
+  return { clip: { ...clip, link_group: null }, linkedAudio: undefined };
+}
+
 // --------------------------------------------------------------------------- //
 // pure edit ops — return a NEW timeline (or the same ref if the op is a no-op)
 // --------------------------------------------------------------------------- //
@@ -3979,7 +3996,13 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       // track, so its Undo removes one, and a history entry reading only
       // `Add "Title"` would not account for the track disappearing.
       if (op.onNewVideoTrack) return `Add "${op.clip.name}" on a new video track`;
-      return op.linkedAudio ? `Add "${op.clip.name}" + audio` : `Add "${op.clip.name}"`;
+      // B-257 — named by what the reducer actually places: no linked half on an
+      // audio track, whatever the caller built.
+      {
+        const dest = before.tracks[op.track];
+        const half = dest ? resolveLinkedHalf(dest, op.clip, op.linkedAudio).linkedAudio : op.linkedAudio;
+        return half ? `Add "${op.clip.name}" + audio` : `Add "${op.clip.name}"`;
+      }
     // D-239 — named for the EDIT TYPE, not just the clip: "Insert" and
     // "Overwrite" of the same source are two entirely different edits to undo
     // back past, and an entry saying only `Add "clip"` for both would make the
@@ -4928,7 +4951,8 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // clip at once), never left for the clip to arrive without one.
       startFrame = nextAppendFrame(track, fps);
     }
-    const clip: Clip = { ...op.clip, start_frame: startFrame };
+    const placed = resolveLinkedHalf(track, op.clip, op.linkedAudio);
+    const clip: Clip = { ...placed.clip, start_frame: startFrame };
     const defaultAt = track.clips.filter((c) => c.start_frame < startFrame).length;
     const at = Math.min(Math.max(op.atIndex ?? defaultAt, 0), track.clips.length);
     track.clips.splice(at, 0, clip);
@@ -4939,11 +4963,11 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // same room there, so the existing track is normally reused; only when
     // it genuinely can't fit is a new track appended. Never fails — a fresh
     // track is always free — so there is no half-applied outcome here.
-    if (op.linkedAudio) {
-      const linkedDurTimeline = sourceFramesToTimeline(op.linkedAudio, op.linkedAudio.duration, fps);
+    if (placed.linkedAudio) {
+      const linkedDurTimeline = sourceFramesToTimeline(placed.linkedAudio, placed.linkedAudio.duration, fps);
       const audioTrackIdx = ensureAudioTrackWithRoom(next, startFrame, linkedDurTimeline);
       const audioTrack = next.tracks[audioTrackIdx];
-      const audioClip: Clip = { ...op.linkedAudio, start_frame: startFrame };
+      const audioClip: Clip = { ...placed.linkedAudio, start_frame: startFrame };
       const audioAt = audioTrack.clips.filter((c) => c.start_frame < startFrame).length;
       audioTrack.clips.splice(audioAt, 0, audioClip);
     }
@@ -5034,19 +5058,20 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     }
 
     const dest = next.tracks[placeTrack];
-    const clip: Clip = { ...fields, start_frame: startFrame };
+    const placed = resolveLinkedHalf(dest, fields, op.linkedAudio);
+    const clip: Clip = { ...placed.clip, start_frame: startFrame };
     dest.clips.splice(dest.clips.filter((c) => c.start_frame < startFrame).length, 0, clip);
     // The dropped source's audio half, by exactly `add_clip`'s rule — see the
     // op's own doc for why it is deliberately not given its own overwrite/
     // ripple treatment.
-    if (op.linkedAudio) {
-      const linkedDur = sourceFramesToTimeline(op.linkedAudio, op.linkedAudio.duration, fps);
+    if (placed.linkedAudio) {
+      const linkedDur = sourceFramesToTimeline(placed.linkedAudio, placed.linkedAudio.duration, fps);
       const audioTrackIdx = ensureAudioTrackWithRoom(next, startFrame, linkedDur);
       const audioTrack = next.tracks[audioTrackIdx];
       audioTrack.clips.splice(
         audioTrack.clips.filter((c) => c.start_frame < startFrame).length,
         0,
-        { ...op.linkedAudio, start_frame: startFrame },
+        { ...placed.linkedAudio, start_frame: startFrame },
       );
     }
     return next;
