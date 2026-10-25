@@ -75,13 +75,14 @@ const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, scen
     let tscale = t?.scale ?? 1;
     let trot = t?.rot ?? 0;
     let topacity = t?.opacity ?? 1;
+    let tblur = t?.blur ?? 0;
     if (t?.keys && t.keys.length > 0) {
       const frameKeys = t.keys.map((k) => ({ ...k, at: Math.round(k.at * fps) }));
       const delta = interpolateKeys(
         frameKeys,
         frame,
-        ["x", "y", "scale", "rot", "opacity"] as const,
-        { x: 0, y: 0, scale: 0, rot: 0, opacity: 0 },
+        ["x", "y", "scale", "rot", "opacity", "blur"] as const,
+        { x: 0, y: 0, scale: 0, rot: 0, opacity: 0, blur: 0 },
         motion.ease.inOut,
       );
       tx += delta.x;
@@ -89,7 +90,12 @@ const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, scen
       tscale += delta.scale;
       trot += delta.rot;
       topacity += delta.opacity;
+      tblur += delta.blur;
     }
+    // D-393 — a Gaussian blur radius in px; `undefined` (no `filter` at all)
+    // whenever it resolves to <= 0, so a layer that never blurs renders exactly
+    // as it did before the field existed.
+    const tfilter = tblur > 0 ? `blur(${tblur}px)` : undefined;
     const node = t ? (
       <div
         style={
@@ -104,6 +110,7 @@ const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, scen
                 transformOrigin: "0 0",
                 transform: `translate(${tx}px, ${ty}px) rotate(${trot}deg) scale(${tscale})`,
                 opacity: topacity,
+                filter: tfilter,
               }
             : {
                 position: "absolute",
@@ -111,6 +118,7 @@ const renderLayers = (layers: SceneT["layers"], fps: number, frame: number, scen
                 transformOrigin: "0 0",
                 transform: `translate(${tx}px, ${ty}px) rotate(${trot}deg) scale(${tscale})`,
                 opacity: topacity,
+                filter: tfilter,
               }
         }
       >

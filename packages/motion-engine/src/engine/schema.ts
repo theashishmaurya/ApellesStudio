@@ -118,6 +118,8 @@ const transformKey = z.object({
   scale: z.number().optional(),
   rot: z.number().optional(),
   opacity: z.number().optional(),
+  /** D-393 — blur radius delta in px (see `layerTransform.blur`). */
+  blur: z.number().optional(),
   ease: easeCurve.optional(),
 });
 
@@ -176,6 +178,11 @@ const layerTransform = z.object({
   scale: z.number().optional(),
   rot: z.number().optional(),
   opacity: z.number().optional(),
+  /** D-393 — a Gaussian blur radius in px, applied as a CSS `filter` on this
+   *  same wrapper. Absent or <= 0 ⇒ no filter at all (byte-identical to before
+   *  the field existed). Keyframed as a delta like the other five, so a
+   *  "blurred until revealed" card is `blur: 14` plus a key taking it to `-14`. */
+  blur: z.number().optional(),
   clipWidth: z.number().optional(),
   clipHeight: z.number().optional(),
   keys: z.array(transformKey).optional(),
