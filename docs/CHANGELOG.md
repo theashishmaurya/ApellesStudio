@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **B-259 fixed: `editor_add_clip` on a track that no longer exists is refused, not placed on track 0.** The error names the valid range; an empty timeline gets a track of the kind the source needs (audio for an audio-only file).
+
 - **2026-10-26** — **D-398: the Motion render is a backend job (B-262, B-263, B-264, B-265).** It snapshots the manifest it renders from, persists every step, survives a webview reload, reports `interrupted` after a restart, and resumes (`motion_render(resume=true)`, GUI Resume). `motion_render(scene_ids)` and a per-scene Render button render chosen scenes; `motion_reload_manifest` and Reload from disk pick up a manifest changed outside the app. 189 tools. The stale dev-module symptom is still unexplained (server checked, fine).
 
 - **2026-10-26** — **B-267 investigated, not reproduced headlessly.** A DOM test pins that a 240-clip, 21,992-frame timeline zoomed to the floor mounts every clip at the right geometry; the empty-timeline report needs the live DOM of a restarted app (steps in the entry).

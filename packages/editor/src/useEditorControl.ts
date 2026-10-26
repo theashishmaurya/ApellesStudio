@@ -2639,6 +2639,10 @@ export function useEditorControl(): void {
           if (!check.ok) return { error: check.reason ?? 'that track cannot hold this clip' };
         }
 
+        // B-259 — a source with no picture at all (an audio file: probed as
+        // 0x0) on an empty timeline gets an AUDIO track, not a video one.
+        const audioOnly = !facts.still && media.video?.width === 0 && media.video?.height === 0;
+
         useEditorTimelineStore.getState().applyOp({
           kind: 'add_clip',
           track,
@@ -2647,6 +2651,7 @@ export function useEditorControl(): void {
           atIndex: a?.atIndex !== undefined ? Math.round(Number(a.atIndex)) : undefined,
           startFrame,
           ripple,
+          newTrackKind: audioOnly ? 'audio' : 'video',
         });
 
         const tl = useEditorTimelineStore.getState().timeline;

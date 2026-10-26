@@ -121,12 +121,12 @@ status: **fixed** (2026-10-25) · severity: **minor** (visibly broken "3D hover"
 
 ## B-259 — `editor_add_clip` on a track index that no longer exists silently places the clip on track 0, then reports that it did not place it
 
-status: **open** · severity: **minor** (the clip lands somewhere unexpected and the tool's own answer is wrong) · area: `packages/editor/src/timeline.ts` (`add_clip` reducer), `packages/editor/src/useEditorControl.ts` (`editor_add_clip`)
+status: **fixed (2026-10-26)** · severity: **minor** (the clip lands somewhere unexpected and the tool's own answer is wrong) · area: `packages/editor/src/timeline.ts` (`add_clip` reducer), `packages/editor/src/useEditorControl.ts` (`editor_add_clip`)
 
 - **found:** 2026-10-25. `editor_remove_clip` removed a clip and its linked half, and the tracks they left empty were pruned. A follow-up `editor_add_clip(track=1, …)` then targeted a track that was gone.
 - **actual:** `checkAddClip` did not refuse the out-of-range index. The reducer fell back to `trackIdx = 0` (`requested < next.tracks.length ? requested : 0`) and placed the clip there. The handler then looked for it on track 1 and answered `add_clip did not place the clip`. On a timeline with no tracks at all, the same path creates a **video** track for an audio-only source (`if (next.tracks.length === 0) push video`).
 - **expected:** an out-of-range track is refused with a reason before anything is placed, and an empty timeline gets a track of the kind the source needs.
-- **not yet fixed:** recorded while building an edit; the workaround is to re-read `get_timeline` after any removal before addressing tracks by index.
+- **fixed:** `checkAddClip` refuses a track that does not exist once the timeline has tracks, with the valid range and the hint to re-read `get_timeline` (pruned tracks), so the reducer returns the same timeline and `editor_add_clip` reports the reason instead of "did not place the clip". The reducer's `requested < length ? requested : 0` fallback is gone. An empty timeline is the one exception: the first track is created and the clip goes on it (index 0 whatever was named), of the kind the source needs: a new `newTrackKind` on the op, which `editor_add_clip` sets to `audio` for an audio-only source (probed 0x0) and which a title, adjustment clip or still overrides to `video` (picture is always video). Nothing in the suite or the GUI relied on the fallback. Tests: `timelineAddClipTrack.test.ts` (7).
 
 ## B-258 — a Motion `text` layer anchored at `x` wrapped at the space right of `x`, not at its `maxWidth`, so every centred headline wrapped at half the canvas
 

@@ -1496,10 +1496,13 @@ export interface TransitionCheck {
  *  inventing rules the model has never had, on the back of a bug report about
  *  one of them.
  *
- *  A track index that does not exist is NOT refused here — `add_clip`'s own
- *  documented fallbacks (an empty timeline gets a video track made for it, an
- *  out-of-range index collapses to 0) are long-standing behaviour that several
- *  callers rely on, and both of those land the clip on a video track anyway.
+ *  **B-259 — a track index that does not exist IS refused** once the timeline
+ *  has any tracks: the reducer used to collapse it to track 0 and place the
+ *  clip there, which is the wrong track and made the caller's own read-back
+ *  report that nothing had been placed. An EMPTY timeline is the one exception,
+ *  because there the op's job is to make the first track (of
+ *  `AddClipOp.newTrackKind`, a video track by default) and index 0 is by
+ *  construction where the clip goes.
  *
  *  **B-131 — occupancy, the second question this function answers.** An
  *  explicit `startFrame` with no `ripple` must land in a real, empty span:
@@ -1525,7 +1528,13 @@ export function checkAddClip(
   ripple?: boolean,
 ): TransitionCheck {
   const tr = tl.tracks[track];
-  if (!tr) return { ok: true };
+  if (!tr) {
+    if (tl.tracks.length === 0) return { ok: true };
+    return {
+      ok: false,
+      reason: `no track ${track} — the timeline has tracks 0..${tl.tracks.length - 1}. Call get_timeline for the current indices (removing a clip can prune the tracks it emptied), or add the clip without a track to get a new one.`,
+    };
+  }
   if (isGeneratedPictureClip(clip) && tr.kind !== 'video') {
     const what = isTextClip(clip) ? 'A title' : 'An adjustment clip';
     return {
@@ -3296,6 +3305,12 @@ export type EditOp =
       ripple?: boolean;
       linkedAudio?: NewClipFields;
       onNewVideoTrack?: boolean;
+      /** B-259 — the kind of track to create when (and only when) the
+       *  timeline has NO tracks yet. A video track by default; `'audio'` for an
+       *  audio-only source, which used to be given a video track. A title, an
+       *  adjustment clip or a still is picture and always gets a video track
+       *  whatever this says. Ignored once any track exists. */
+      newTrackKind?: 'video' | 'audio';
     }
   /** D-239 (roadmap item 27) — **the seven edit types on drop**: Insert,
    *  Overwrite, Replace, Fit to Fill, Place on Top, Append at End, Ripple
@@ -4928,8 +4943,19 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // on top of an existing clip is refused here rather than spliced in.
     if (!op.onNewVideoTrack && !checkAddClip(tl, op.track, op.clip, fps, op.startFrame, op.ripple).ok) return tl;
     const next = clone(tl);
-    if (next.tracks.length === 0)
-      next.tracks.push({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
+    // B-259 — the first track of an empty timeline is of the kind the source
+    // needs. Picture (a title, an adjustment clip, a still) can only be on a
+    // video track, so that overrides whatever the caller asked for.
+    const wasEmpty = next.tracks.length === 0;
+    if (wasEmpty) {
+      const picture = isGeneratedPictureClip(op.clip) || isStillSource(op.clip.source_path);
+      next.tracks.push({
+        kind: picture ? 'video' : (op.newTrackKind ?? 'video'),
+        clips: [],
+        gain: DEFAULT_TRACK_GAIN,
+        sync_locked: DEFAULT_SYNC_LOCKED,
+      });
+    }
     // B-129/D-262 — a brand-new empty video track at the TOP of the stack (see
     // the op's own doc). `unshift` is exactly what `resolvePlaceOnTopTrack`
     // does for the same "there is no room above" case, so the two ops agree on
@@ -4937,8 +4963,11 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     if (op.onNewVideoTrack) {
       next.tracks.unshift({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
     }
-    const requested = op.onNewVideoTrack ? 0 : op.track;
-    const trackIdx = requested < next.tracks.length ? requested : 0;
+    // B-259 — no silent fallback to track 0: `checkAddClip` above already
+    // refused an index that does not exist on a timeline that has tracks, so
+    // the only way to get here with one is the empty timeline just handled,
+    // whose single new track is index 0.
+    const trackIdx = op.onNewVideoTrack || wasEmpty ? 0 : op.track;
     const track = next.tracks[trackIdx];
     let startFrame: number;
     if (op.startFrame !== undefined) {
