@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — Black October final exported (1080p24, 15:14, compositor, 41 min on the debug build). Roadmap 0c: an export loudness target, since the -14 LUFS YouTube master had to be normalised by hand.
+
 - **2026-10-26** — **Logged B-274 (open, critical):** the Edit webview grows to ~18 GB under bursts of edits, gets killed and silently reloads, dropping unsaved edits.
 
 - **2026-10-26** — **Logged B-273 (open):** `editor_add_clip` with no `track` fails with "no track NaN".
