@@ -105,7 +105,7 @@ import {
 } from './recutRuns';
 import { listen, emit } from '@tauri-apps/api/event';
 
-import { useMediaPoolStore, type MediaItem } from '@apelles/bridge';
+import { newBridgeClaim, useMediaPoolStore, type MediaItem } from '@apelles/bridge';
 import { runAsAgent } from '@apelles/history';
 // B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
 import { assertProjectIdentity } from '@apelles/store';
@@ -317,7 +317,6 @@ const EDITOR_OP_PREFIX = 'editor_';
  *  in `app/src/hooks/useChromaControl.ts` is the only one with anything to
  *  defer. The event name is spelled out here rather than imported, matching how
  *  `chroma://request`/`chroma://response/` already are in all four registries. */
-const BRIDGE_CLAIM = { prefix: EDITOR_OP_PREFIX, defers: [] as string[] };
 
 /** B-032/B-034/D-112's own fix, copied verbatim from `useMotionControl.ts` —
  *  `listen()`'s cleanup is `unlistenPromise.then((f) => f())`, and Tauri's
@@ -5340,9 +5339,14 @@ export function useEditorControl(): void {
     // long before anyone can queue one. Idempotent — see `textFonts.ts`.
     void loadTextFonts();
 
+    // B-272 — this subscription's identity. The control server addresses every
+    // request to ONE announced instance, so a leaked older subscription (a
+    // failed unlisten across HMR) hears the event and ignores it.
+    const bridge = newBridgeClaim(EDITOR_OP_PREFIX);
     const unlistenP = listen('chroma://request', async (ev: any) => {
       const payload = ev?.payload || {};
       const { id, op, args } = payload;
+      if (!bridge.isForMe(payload)) return;
       if (typeof op !== 'string' || !op.startsWith(EDITOR_OP_PREFIX)) {
         // Not ours — leave it for useChromaControl.ts's Colorist registry
         // (or Motion's) to claim. Responding here would race a real handler
@@ -5384,7 +5388,7 @@ export function useEditorControl(): void {
     // promise resolving is that fact), and only if this effect is still live.
     let subscribed = true;
     void unlistenP.then(() => {
-      if (subscribed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
+      if (subscribed) void emit('chroma://bridge-ready', bridge.claim);
     });
 
     return () => {

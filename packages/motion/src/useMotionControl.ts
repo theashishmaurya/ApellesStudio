@@ -99,6 +99,7 @@
 import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
+import { newBridgeClaim } from '@apelles/bridge';
 import { runAsAgent } from '@apelles/history';
 // B-217/D-358 — the cross-store project-identity guard; see the dispatcher below.
 import { assertProjectIdentity } from '@apelles/store';
@@ -158,7 +159,6 @@ const MOTION_OP_PREFIX = 'motion_';
  *  The control server now waits for this announcement before forwarding a
  *  `motion_*` op. `defers: []`: this registry claims its prefix and nothing
  *  else, so it has nothing to hand back to another. */
-const BRIDGE_CLAIM = { prefix: MOTION_OP_PREFIX, defers: [] as string[] };
 
 /**
  * `safeUnlisten` duplicated (not imported) from `app/src/utils/
@@ -237,9 +237,12 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
       }),
     });
 
+    // B-272 — this subscription's identity; see `useEditorControl.ts`.
+    const bridge = newBridgeClaim(MOTION_OP_PREFIX);
     const unlistenP = listen('chroma://request', async (ev: { payload?: unknown }) => {
       const payload = (ev?.payload || {}) as { id?: string; op?: string; args?: Record<string, unknown> };
       const { id, op, args } = payload;
+      if (!bridge.isForMe(payload)) return;
       if (typeof op !== 'string' || !op.startsWith(MOTION_OP_PREFIX)) {
         // Not ours — leave it for useChromaControl.ts's Colorist registry
         // (or whatever else may claim this event in the future). Responding
@@ -280,7 +283,7 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
     // promise resolving is that fact), and only if this effect is still live.
     let subscribed = true;
     void unlistenP.then(() => {
-      if (subscribed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
+      if (subscribed) void emit('chroma://bridge-ready', bridge.claim);
     });
 
     return () => {

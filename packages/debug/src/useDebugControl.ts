@@ -26,6 +26,7 @@
 
 import { useEffect } from 'react';
 import { listen, emit } from '@tauri-apps/api/event';
+import { newBridgeClaim } from '@apelles/bridge';
 
 const DEBUG_OP_PREFIX = 'debug_';
 
@@ -40,7 +41,6 @@ const DEBUG_OP_PREFIX = 'debug_';
  *  that no handler exists rather than pretending one is coming.
  *  `debug_screenshot`/`debug_sample_pixel` are unaffected either way: those are
  *  answered natively in `control.rs` and never reach a frontend registry. */
-const BRIDGE_CLAIM = { prefix: DEBUG_OP_PREFIX, defers: [] as string[] };
 
 /** B-032/D-112's `listen()` teardown race, copied verbatim from
  *  `useEditorControl.ts` / `useMotionControl.ts`: the unlisten function Tauri
@@ -63,6 +63,8 @@ export function useDebugControl(): void {
     if (!import.meta.env.DEV) return;
 
     let disposed = false;
+    // B-272 — this subscription's identity; see `@apelles/bridge`'s `controlBridge`.
+    const bridge = newBridgeClaim(DEBUG_OP_PREFIX);
     let unlisten: Promise<(() => void) | undefined | void> | null = null;
 
     void import('./debugOps').then(({ DEBUG_OPS }) => {
@@ -70,6 +72,7 @@ export function useDebugControl(): void {
       unlisten = listen('chroma://request', async (ev) => {
         const payload = (ev?.payload ?? {}) as { id?: string; op?: string; args?: unknown };
         const { id, op } = payload;
+        if (!bridge.isForMe(payload)) return;
         if (typeof op !== 'string' || !op.startsWith(DEBUG_OP_PREFIX)) {
           // Not ours. Every registry claims exactly its own prefix and stays
           // silent otherwise — `control.rs` hands out one `app.once` response
@@ -97,7 +100,7 @@ export function useDebugControl(): void {
       // B-071 — announce only once the subscription has genuinely landed (the
       // promise resolving is that fact), and only if this effect is still live.
       void unlisten.then(() => {
-        if (!disposed) void emit('chroma://bridge-ready', BRIDGE_CLAIM);
+        if (!disposed) void emit('chroma://bridge-ready', bridge.claim);
       });
     });
 

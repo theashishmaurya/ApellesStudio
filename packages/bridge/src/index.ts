@@ -19,6 +19,9 @@ export type { TelemetryEvent } from './telemetry';
 
 export { safeUnlisten } from './tauriListeners';
 
+export { newBridgeClaim } from './controlBridge';
+export type { BridgeClaim, BridgeClaimWire } from './controlBridge';
+
 export {
   AI_ENV_STATUS_EVENT,
   aiEnvHeadline,

@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **B-272 fixed: a control-bridge op runs exactly once.** Every registry subscription now announces a fresh instance id and the control server addresses each `chroma://request` to one (`target`); a listener leaked across a reload ignores it. Shared `newBridgeClaim` in `@apelles/bridge` replaces four copies.
+
 - **2026-10-26** — **B-270 fixed: `editor_get_timeline` reports each clip's `highlights`** (`[]` when none), so an agent reads back what `editor_set_clip_highlights` wrote. Both MCP docstrings and the parity corpus updated.
 
 - **2026-10-26** — **B-271 fixed: clip highlights no longer clone the source still every frame.** `chroma/highlight_draw.rs` keeps one working copy per clip, redraws only the stroke rows, and reuses the finished picture once every sweep is done: 240 frames of a 2880×1620 still with 2 highlights went 500.6 ms → 137.6 ms.
