@@ -45,6 +45,9 @@ import {
   type TimelineRenderPlan,
 } from './timelinePipeExport';
 import { loadTextFonts, textFontPaths } from './textFonts';
+// D-401 — the export loudness target: preset table, validator and the report
+// the Rust normaliser answers with.
+import { resolveLoudnessTarget, type LoudnessReport, type LoudnessTarget } from './loudness';
 // D-243 — the per-word advances an animated caption is laid out from.
 import { captionMetricsSnapshot, warmCaptionMetrics } from './captionMetrics';
 import { captionLayout, captionLines } from './caption';
@@ -99,6 +102,10 @@ export interface CompiledExport {
   /** D-350 — how many frames of what size the compositor must write into the
    *  pipe. Present only for `renderer: 'compositor'`. */
   render?: TimelineRenderPlan;
+  /** D-401 — the loudness target to normalise the finished file to. Absent =
+   *  off: the export is not post-processed at all. Frozen into a queued job
+   *  alongside `args`, for the same reason. */
+  loudness?: LoudnessTarget;
 }
 
 export interface CompileError {
@@ -262,6 +269,12 @@ export function compileEditorExportArgs(a: {
   fitOverrides?: unknown;
   freezeOverrides?: unknown;
   renderer?: unknown;
+  /** D-401 — `"youtube" | "broadcast" | "podcast" | "off"`. */
+  loudnessPreset?: unknown;
+  /** D-401 — a custom integrated-loudness target, LUFS. */
+  loudnessLufs?: unknown;
+  /** D-401 — the true-peak ceiling for a custom target, dBTP (default -1). */
+  truePeakDbtp?: unknown;
 }): CompiledExport | CompileError {
   const tl = useEditorTimelineStore.getState().timeline;
   if (!tl) return { error: 'no timeline — open a project first' };
@@ -271,6 +284,10 @@ export function compileEditorExportArgs(a: {
   if (a?.renderer !== undefined && a.renderer !== 'compositor' && a.renderer !== 'filter') {
     return { error: 'renderer must be "compositor" or "filter"' };
   }
+
+  const loudnessResolved = resolveLoudnessTarget(a ?? {});
+  if (!loudnessResolved.ok) return { error: loudnessResolved.error };
+  const loudness = loudnessResolved.target ?? undefined;
 
   const outPath = a?.outPath;
   if (typeof outPath !== 'string' || !outPath) return { error: 'outPath must be a non-empty absolute file path' };
@@ -447,11 +464,12 @@ export function compileEditorExportArgs(a: {
         frames: plan.frames,
         segments: plan.segments,
       },
+      loudness,
     };
   }
 
   const args = buildExportFfmpegArgs(tl, outPath, opts);
-  return { ok: true, outPath, args, renderer };
+  return { ok: true, outPath, args, renderer, loudness };
 }
 
 /**
@@ -508,6 +526,9 @@ export interface EditorExportResult {
   stdoutTail?: string;
   stderrTail?: string;
   args?: string[];
+  /** D-401 — measured before/after loudness and true peak, when a loudness
+   *  target was requested. */
+  loudness?: LoudnessReport;
 }
 
 /** Compile + actually run — what the MCP `editor_export` op calls. */
@@ -550,7 +571,7 @@ export async function runEditorExport(
   }
   const compiled = compileEditorExportArgs(a);
   if (!('ok' in compiled)) return compiled;
-  const outcome = await runCompiledExport(compiled.args, compiled.render, compiled.outPath);
+  const outcome = await runCompiledExport(compiled.args, compiled.render, compiled.outPath, compiled.loudness);
   return {
     ok: outcome.ok,
     error: outcome.error,
@@ -558,6 +579,7 @@ export async function runEditorExport(
     stdoutTail: outcome.stdoutTail,
     stderrTail: outcome.stderrTail,
     args: compiled.args,
+    loudness: outcome.loudness,
   };
 }
 
@@ -621,6 +643,8 @@ interface TimelineRenderOutcome {
   segments: number;
   ms: number;
   stderr_tail: string;
+  /** D-401 — present when the request carried a loudness target. */
+  loudness?: LoudnessReport;
 }
 
 /** Run an ALREADY-COMPILED export's argv (from [`compileEditorExportArgs`])
@@ -637,7 +661,17 @@ export async function runCompiledExport(
   args: string[],
   render?: TimelineRenderPlan,
   outPath?: string,
-): Promise<{ ok: boolean; error: string | null; stdoutTail: string; stderrTail: string }> {
+  loudness?: LoudnessTarget,
+): Promise<{
+  ok: boolean;
+  error: string | null;
+  stdoutTail: string;
+  stderrTail: string;
+  loudness?: LoudnessReport;
+}> {
+  if (loudness && !outPath) {
+    return { ok: false, error: 'a loudness target needs the export’s output path', stdoutTail: '', stderrTail: '' };
+  }
   if (render) {
     try {
       const outcome = await invoke<TimelineRenderOutcome>('chroma_render_timeline_export', {
@@ -654,6 +688,9 @@ export async function runCompiledExport(
           // path is already inside `args`; the renderer deliberately does not
           // parse the argv it is handed, so it is said outright.
           output: outPath ?? null,
+          // D-401 — normalised INSIDE the render job (so the status poller sees
+          // a `normalising` phase, not a premature `done`).
+          loudness: loudness ?? null,
         },
       });
       return {
@@ -661,6 +698,7 @@ export async function runCompiledExport(
         error: outcome.ok ? null : outcome.stderr_tail || 'the timeline render failed with no output',
         stdoutTail: '',
         stderrTail: outcome.stderr_tail,
+        loudness: outcome.loudness,
       };
     } catch (e) {
       // A render-path failure comes back as a rejected `invoke` (the Rust side
@@ -671,6 +709,17 @@ export async function runCompiledExport(
     }
   }
   const outcome = await invoke<FfmpegRunOutcome>('chroma_run_ffmpeg', { args });
+  if (outcome.ok && loudness && outPath) {
+    // D-401 — the filter path's ONE ffmpeg has exited and the file is final but
+    // for its loudness; the same Rust normaliser the render path runs in-job.
+    try {
+      const report = await invoke<LoudnessReport>('chroma_normalize_loudness', { path: outPath, target: loudness });
+      return { ok: true, error: null, stdoutTail: outcome.stdout_tail, stderrTail: outcome.stderr_tail, loudness: report };
+    } catch (e) {
+      const msg = `the export was written but loudness normalisation failed: ${String((e as Error)?.message ?? e)}`;
+      return { ok: false, error: msg, stdoutTail: outcome.stdout_tail, stderrTail: outcome.stderr_tail };
+    }
+  }
   return {
     ok: outcome.ok,
     error: outcome.ok ? null : outcome.stderr_tail || 'ffmpeg failed with no stderr output',

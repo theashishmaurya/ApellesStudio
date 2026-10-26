@@ -155,6 +155,7 @@ pub mod grade_lut;
 pub mod highlight_draw;
 pub mod keyframes;
 pub mod load;
+pub mod loudness;
 pub mod mask;
 pub mod media_cache;
 pub mod media_understanding;

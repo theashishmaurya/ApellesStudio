@@ -62,6 +62,7 @@ pub mod decode_pipe;
 pub mod ffmpeg_gate;
 pub mod ffmpeg_locate;
 pub mod filmstrip;
+pub mod loudness;
 pub mod media_cache;
 pub mod ocr;
 pub mod probe;

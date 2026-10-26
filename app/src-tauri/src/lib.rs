@@ -2368,6 +2368,7 @@ pub fn run() {
             chroma::export::chroma_export_progress,
             chroma::export::chroma_bake_lut,
             chroma::ffmpeg_run::chroma_run_ffmpeg,
+            chroma::loudness::chroma_normalize_loudness,
             // D-350 — the Edit tab's headless timeline render path: composite
             // through the live preview's own compositor, pipe raw frames to one
             // ffmpeg process. See `chroma::edit_render`.

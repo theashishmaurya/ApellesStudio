@@ -94,6 +94,7 @@ __all__ = [
     "EaseCurve",
     "EasePresetName",
     "ExportRenderer",
+    "LoudnessPreset",
     "FitMode",
     "GapSelector",
     "HighlightBox",
@@ -478,6 +479,10 @@ FitMode = Literal["fit", "stretch"]
 # piped into one ffmpeg process; "filter" = the original `-filter_complex` graph
 # with one `-i` per clip. The handler accepts exactly these two strings.
 ExportRenderer = Literal["filter", "compositor"]
+
+# D-401 — `editor_export`'s `loudness_preset`: the delivery spec the finished
+# mix is normalised to. "off" is the default (no post-processing at all).
+LoudnessPreset = Literal["youtube", "broadcast", "podcast", "off"]
 
 
 # --------------------------------------------------------------------------- #

@@ -23,7 +23,7 @@ use crate::args::WireArgs;
 use crate::render;
 use crate::schemas::{
     ClipHighlightSpec, ClipKeyframe, ClipSelector, CurveSpec, DynamicZoomFraming, ExportRenderer,
-    FitMode, GapSelector, SpeedRampPoint,
+    FitMode, GapSelector, LoudnessPreset, SpeedRampPoint,
 };
 use crate::server::ApellesMcp;
 
@@ -935,6 +935,16 @@ pub struct EditorExportArgs {
     /// phase 1. See the tool doc.
     #[serde(default)]
     pub renderer: Option<ExportRenderer>,
+    /// D-401 — the delivery spec the finished mix is normalised to. See the
+    /// tool doc. Omitted = `"off"`.
+    #[serde(default)]
+    pub loudness_preset: Option<LoudnessPreset>,
+    /// D-401 — custom integrated-loudness target, LUFS (instead of a preset).
+    #[serde(default)]
+    pub loudness_lufs: Option<f64>,
+    /// D-401 — true-peak ceiling for a custom target, dBTP (default -1).
+    #[serde(default)]
+    pub true_peak_dbtp: Option<f64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -4278,6 +4288,24 @@ impl ApellesMcp {
     reports no progress at all — nothing outside ffmpeg knows where it is — so
     there a timeout really does leave the output file as your only signal.
 
+    **Loudness target (D-401) — `loudness_preset` / `loudness_lufs` /
+    `true_peak_dbtp`.** By default the mix is written at whatever level the
+    tracks sum to (often far too quiet for a platform: a real 15-minute export
+    measured -21.6 LUFS). Pass `loudness_preset` `"youtube"` (-14 LUFS /
+    -1 dBTP), `"broadcast"` (EBU R128, -23 LUFS / -1 dBTP) or `"podcast"`
+    (-16 LUFS / -1 dBTP) to have the finished file measured (EBU R128) and
+    corrected with one linear gain plus an oversampled true-peak limiter, then
+    re-measured; `"off"` (the default) does nothing and leaves the output
+    byte-identical to before. For a custom spec give `loudness_lufs` (-40 to
+    -5) and optionally `true_peak_dbtp` (-9 to 0, default -1) INSTEAD of a
+    preset — giving both is refused. The video stream is copied, never
+    re-encoded; only the audio is rewritten (AAC 192k). The result's
+    `loudness` object reports `before` and `after` (`integratedLufs`,
+    `truePeakDbtp`, `loudnessRangeLu`), `gainDb`, `attempts` and `targetMet`;
+    on the `"compositor"` renderer `editor_export_status` shows a
+    `normalising` phase and carries the same `loudness` report. A silent or
+    audio-less export is left untouched and says so in `loudness.skipped`.
+
     **`renderer` (D-350) — which engine composites the picture.**
     `"compositor"` renders every frame through the app's OWN live-preview
     compositor and pipes it into one ffmpeg process that only compresses and
@@ -4306,7 +4334,10 @@ impl ApellesMcp {
             .put("speedOverrides", p.speed_overrides)
             .put("fitOverrides", p.fit_overrides)
             .put("freezeOverrides", p.freeze_overrides)
-            .put("renderer", p.renderer);
+            .put("renderer", p.renderer)
+            .put("loudnessPreset", p.loudness_preset)
+            .put("loudnessLufs", p.loudness_lufs)
+            .put("truePeakDbtp", p.true_peak_dbtp);
         let mut env = self.op("editor_export", args).await?;
         // D-362 (fixes B-231 facet 1) — the bridge's 20s budget is shorter than
         // a real export, so a healthy one reliably comes back as a transport

@@ -48,6 +48,7 @@ from schemas import (
     DynamicZoomFraming,
     EaseCurve,
     ExportRenderer,
+    LoudnessPreset,
     FitMode,
     GapSelector,
     LayerTransformKey,
@@ -4092,6 +4093,9 @@ def editor_export(
     fit_overrides: dict[str, FitMode] | None = None,
     freeze_overrides: dict[str, bool] | None = None,
     renderer: ExportRenderer | None = None,
+    loudness_preset: LoudnessPreset | None = None,
+    loudness_lufs: float | None = None,
+    true_peak_dbtp: float | None = None,
 ) -> str:
     """Render the open project's ENTIRE multi-track timeline — every visible
     video track/clip, composited in z-order (track 0 on top), cropped,
@@ -4167,6 +4171,24 @@ def editor_export(
     reports no progress at all — nothing outside ffmpeg knows where it is — so
     there a timeout really does leave the output file as your only signal.
 
+    **Loudness target (D-401) — `loudness_preset` / `loudness_lufs` /
+    `true_peak_dbtp`.** By default the mix is written at whatever level the
+    tracks sum to (often far too quiet for a platform: a real 15-minute export
+    measured -21.6 LUFS). Pass `loudness_preset` `"youtube"` (-14 LUFS /
+    -1 dBTP), `"broadcast"` (EBU R128, -23 LUFS / -1 dBTP) or `"podcast"`
+    (-16 LUFS / -1 dBTP) to have the finished file measured (EBU R128) and
+    corrected with one linear gain plus an oversampled true-peak limiter, then
+    re-measured; `"off"` (the default) does nothing and leaves the output
+    byte-identical to before. For a custom spec give `loudness_lufs` (-40 to
+    -5) and optionally `true_peak_dbtp` (-9 to 0, default -1) INSTEAD of a
+    preset — giving both is refused. The video stream is copied, never
+    re-encoded; only the audio is rewritten (AAC 192k). The result's
+    `loudness` object reports `before` and `after` (`integratedLufs`,
+    `truePeakDbtp`, `loudnessRangeLu`), `gainDb`, `attempts` and `targetMet`;
+    on the `"compositor"` renderer `editor_export_status` shows a
+    `normalising` phase and carries the same `loudness` report. A silent or
+    audio-less export is left untouched and says so in `loudness.skipped`.
+
     **`renderer` (D-350) — which engine composites the picture.**
     `"compositor"` renders every frame through the app's OWN live-preview
     compositor and pipes it into one ffmpeg process that only compresses and
@@ -4194,6 +4216,12 @@ def editor_export(
         args["freezeOverrides"] = freeze_overrides
     if renderer is not None:
         args["renderer"] = renderer
+    if loudness_preset is not None:
+        args["loudnessPreset"] = loudness_preset
+    if loudness_lufs is not None:
+        args["loudnessLufs"] = loudness_lufs
+    if true_peak_dbtp is not None:
+        args["truePeakDbtp"] = true_peak_dbtp
     env = _op("editor_export", **args)
     # D-362 (fixes B-231 facet 1) — the bridge's 20s budget is shorter than a
     # real export, so a healthy one reliably comes back as a transport failure

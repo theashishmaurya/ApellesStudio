@@ -41,6 +41,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use apelles_media::ffmpeg_locate;
+use apelles_media::loudness::{self, LoudnessReport, LoudnessTarget};
 use apelles_project::manifest::ProjectSettings;
 use apelles_timeline::{Timeline, TrackKind};
 use shared_child::SharedChild;
@@ -84,6 +85,17 @@ pub struct TimelineRenderRequest {
     /// `output`.
     #[serde(default)]
     pub output: Option<String>,
+    /// **D-401 — normalise the finished file's audio to this loudness target.**
+    ///
+    /// Done HERE rather than by the caller after this returns, for one reason:
+    /// the status slot. `editor_export`'s own call outlives the bridge's budget
+    /// on a real export and the MCP layer then polls `editor_export_status` for
+    /// the verdict — which would read `done` the instant the render ended and
+    /// hand back a file still being rewritten. Running it inside the job makes
+    /// the `normalising` phase and the before/after numbers part of the status
+    /// the poller reads. The picture is never re-encoded (`-c:v copy`).
+    #[serde(default)]
+    pub loudness: Option<LoudnessTarget>,
 }
 
 /// The two extra argvs a segmented render needs, compiled by
@@ -114,6 +126,9 @@ pub struct TimelineRenderOutcome {
     pub segments: usize,
     pub ms: u128,
     pub stderr_tail: String,
+    /// D-401 — what the loudness pass measured and did, when one was requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loudness: Option<LoudnessReport>,
 }
 
 /// How many finished frames may sit between the compositor and the encoder
@@ -490,6 +505,7 @@ pub fn render_timeline(
             segments: 1,
             ms: started.elapsed().as_millis(),
             stderr_tail: one.stderr_tail,
+            loudness: None,
         }),
     };
 
@@ -498,9 +514,26 @@ pub fn render_timeline(
     // which names the symptom; the stall reason names the cause, and is the
     // thing a caller (or B-231's next reader) actually needs to see.
     match outcome {
-        Ok(o) => {
-            job.finish(Ok(()));
-            Ok(o)
+        Ok(mut o) => {
+            // D-401 — the loudness pass is part of the job: the status reads
+            // `normalising`, not `done`, until the file is final.
+            match req.loudness {
+                None => {
+                    job.finish(Ok(()));
+                    Ok(o)
+                }
+                Some(target) => match normalise_output(req, target, &job) {
+                    Ok(report) => {
+                        o.loudness = Some(report);
+                        job.finish(Ok(()));
+                        Ok(o)
+                    }
+                    Err(e) => {
+                        job.finish(Err(e.clone()));
+                        Err(e)
+                    }
+                },
+            }
         }
         Err(e) => {
             let e = job.stall_reason().unwrap_or(e);
@@ -508,6 +541,22 @@ pub fn render_timeline(
             Err(e)
         }
     }
+}
+
+/// D-401 — run the loudness pass over the finished render, inside its job.
+fn normalise_output(
+    req: &TimelineRenderRequest,
+    target: LoudnessTarget,
+    job: &ExportJob,
+) -> Result<LoudnessReport, String> {
+    let output = req
+        .output
+        .as_deref()
+        .ok_or("a loudness target needs the export's output path")?;
+    job.enter_normalise();
+    let report = loudness::normalise_in_place(Path::new(output), target)?;
+    job.set_loudness(report.clone());
+    Ok(report)
 }
 
 /// **Wait for a child, but never forever (D-362).**
@@ -891,6 +940,7 @@ fn render_segmented(
         segments: files.len(),
         ms: started.elapsed().as_millis(),
         stderr_tail,
+        loudness: None,
     })
 }
 
@@ -1832,6 +1882,7 @@ mod parity_tests {
                         frames: st.pipe_frames,
                         segments: None,
                         output: None,
+                        loudness: None,
                     },
                     &plan,
                     ranges,
@@ -1901,6 +1952,7 @@ mod parity_tests {
                     frames: st.pipe_frames,
                     segments: None,
                     output: None,
+                    loudness: None,
                 },
             )
         } else {
@@ -1918,6 +1970,7 @@ mod parity_tests {
                     frames: st.pipe_frames,
                     segments: None,
                     output: None,
+                    loudness: None,
                 },
                 &plan,
                 segments,
@@ -2268,6 +2321,7 @@ mod parity_tests {
             frames: fx.pipe_frames,
             segments: None,
             output: None,
+            loudness: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the new render path");
         assert_eq!(
@@ -2413,6 +2467,7 @@ mod parity_tests {
             frames: fx.pipe_frames,
             segments: None,
             output: None,
+            loudness: None,
         };
         let outcome = render_timeline(&timeline, &settings, &req).expect("the render path");
         assert_eq!(
@@ -2823,6 +2878,7 @@ mod parity_tests {
                 frames: fx.pipe_frames,
                 segments: None,
                 output: None,
+                loudness: None,
             },
         )
         .expect("the single-stream render");
@@ -2835,6 +2891,7 @@ mod parity_tests {
             frames: fx.pipe_frames,
             segments: None,
             output: None,
+            loudness: None,
         };
         let plan = SegmentedEncodePlan {
             segment_args: localise(&fx.segment_args, dir, &segmented_out),
@@ -3109,6 +3166,7 @@ mod parity_tests {
             frames: st.pipe_frames,
             segments: None,
             output: None,
+            loudness: None,
         };
         let timeline = localise_timeline(&st.timeline, dir);
         let settings = ProjectSettings {

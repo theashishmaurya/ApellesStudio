@@ -54,6 +54,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use apelles_media::loudness::LoudnessReport;
 use shared_child::SharedChild;
 
 /// **How long a segment may write no frame at all before the export is
@@ -140,6 +141,11 @@ pub struct ExportStatus {
     /// stretch of a long export would read as a stuck 100%.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub phase: Option<&'static str>,
+    /// D-401 — what the loudness pass measured (before/after loudness and true
+    /// peak) and did, once it has run. Absent when no loudness target was asked
+    /// for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loudness: Option<LoudnessReport>,
     pub job_id: u64,
     pub frames_total: u64,
     pub frames_written: u64,
@@ -174,6 +180,9 @@ pub struct ExportStatus {
 enum Phase {
     Rendering,
     Concatenating,
+    /// D-401 — the render is finished and the loudness pass is rewriting the
+    /// audio. The file is not final until it ends.
+    Normalising,
 }
 
 /// One segment's counters, written by its own worker and read by the watchdog
@@ -203,6 +212,8 @@ pub struct ExportJob {
     stall_after: Duration,
     segments: Vec<SegmentTrack>,
     phase: Mutex<Phase>,
+    /// D-401 — the loudness pass's report, once it has finished.
+    loudness: Mutex<Option<LoudnessReport>>,
     /// Set by a failing worker (a sibling's failure) or by the watchdog (a
     /// stall). [`super::edit_render`]'s loop checks it once a frame.
     abort: AtomicBool,
@@ -249,6 +260,16 @@ impl ExportJob {
     /// Every segment is written; the concat is now the only thing left.
     pub fn enter_concat(&self) {
         *self.phase.lock().unwrap_or_else(|e| e.into_inner()) = Phase::Concatenating;
+    }
+
+    /// D-401 — the render is done; the loudness pass is now the only thing left.
+    pub fn enter_normalise(&self) {
+        *self.phase.lock().unwrap_or_else(|e| e.into_inner()) = Phase::Normalising;
+    }
+
+    /// D-401 — record what the loudness pass did, for the status readout.
+    pub fn set_loudness(&self, report: LoudnessReport) {
+        *self.loudness.lock().unwrap_or_else(|e| e.into_inner()) = Some(report);
     }
 
     /// The watchdog's verdict, if it fired. [`super::edit_render`] prefers this
@@ -329,6 +350,7 @@ pub fn begin(
             })
             .collect(),
         phase: Mutex::new(Phase::Rendering),
+        loudness: Mutex::new(None),
         abort: AtomicBool::new(false),
         stalled: Mutex::new(None),
         finished: Mutex::new(None),
@@ -435,6 +457,7 @@ pub fn snapshot() -> ExportStatus {
         return ExportStatus {
             state: ExportState::Idle,
             phase: None,
+            loudness: None,
             job_id: 0,
             frames_total: 0,
             frames_written: 0,
@@ -523,6 +546,10 @@ pub fn snapshot() -> ExportStatus {
             "every frame is rendered; joining the {} segments and muxing the audio. Poll again.",
             job.segments.len()
         ),
+        ExportState::Running if phase == Phase::Normalising => {
+            "every frame is rendered; measuring and normalising the audio loudness. Poll again."
+                .to_string()
+        }
         ExportState::Running => format!(
             "rendering — {frames_written} of {} frames ({percent:.1}%) across {} segment(s), \
              {segments_done} finished. Poll editor_export_status again; a real export takes \
@@ -551,7 +578,13 @@ pub fn snapshot() -> ExportStatus {
         phase: running.then_some(match phase {
             Phase::Rendering => "rendering",
             Phase::Concatenating => "concatenating",
+            Phase::Normalising => "normalising",
         }),
+        loudness: job
+            .loudness
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
         job_id: job.id,
         frames_total: job.frames_total,
         frames_written,
