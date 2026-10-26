@@ -21,7 +21,12 @@ pub const MAX_PAGE_SIZE: u32 = 20;
 pub const DEFAULT_PAGE_SIZE: u32 = 10;
 /// A `429 Retry-After` up to this long is waited out once; longer is reported.
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Time allowed to open the connection.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Time allowed with no bytes arriving. Idle, not total: Openverse's search has
+/// been measured taking 34 s before its first byte (B-275), and a large music
+/// bed may take minutes to download while data is still flowing.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 /// A download longer than this is refused: this tool imports sound, not video.
 pub const MAX_DOWNLOAD_BYTES: u64 = 200 * 1024 * 1024;
 const USER_AGENT: &str = concat!(
@@ -51,7 +56,8 @@ impl Client {
     pub fn new() -> Result<Self, String> {
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
-            .timeout(REQUEST_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .read_timeout(IDLE_TIMEOUT)
             .build()
             .map_err(|e| format!("could not build the HTTP client: {e}"))?;
         Ok(Self {
@@ -114,7 +120,7 @@ impl Client {
             .get(url)
             .send()
             .await
-            .map_err(|e| format!("download failed: {e}"))?;
+            .map_err(|e| send_error("download failed", &e))?;
         if !resp.status().is_success() {
             return Err(format!("download failed: HTTP {}", resp.status()));
         }
@@ -177,7 +183,7 @@ impl Client {
                 .query(params)
                 .send()
                 .await
-                .map_err(|e| format!("could not reach Openverse: {e}"))?;
+                .map_err(|e| send_error("could not reach Openverse", &e))?;
             let status = resp.status();
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 let wait = retry_after(
@@ -218,6 +224,26 @@ impl Client {
 
 /// `Retry-After` as seconds (the HTTP-date form is not used by Openverse and is
 /// treated as unknown).
+/// A request that never got an answer, worded by why: a timeout is the server
+/// being slow (retry later), not the network being down (B-275).
+fn send_error(what: &str, e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        if e.is_connect() {
+            format!(
+                "{what}: no connection within {} s",
+                CONNECT_TIMEOUT.as_secs()
+            )
+        } else {
+            format!(
+                "{what}: Openverse sent nothing for {} s (it is slow at the moment; try again)",
+                IDLE_TIMEOUT.as_secs()
+            )
+        }
+    } else {
+        format!("{what}: {e}")
+    }
+}
+
 pub fn retry_after(header: Option<&str>) -> Option<Duration> {
     header?.trim().parse::<u64>().ok().map(Duration::from_secs)
 }
