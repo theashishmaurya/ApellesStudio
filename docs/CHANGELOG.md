@@ -19,6 +19,8 @@ One or two lines per session. Detail lives in the decision it references.
 - **2026-10-26** — **B-270 fixed: `editor_get_timeline` reports each clip's `highlights`** (`[]` when none), so an agent reads back what `editor_set_clip_highlights` wrote. Both MCP docstrings and the parity corpus updated.
 
 - **2026-10-26** — **B-271 fixed: clip highlights no longer clone the source still every frame.** `chroma/highlight_draw.rs` keeps one working copy per clip, redraws only the stroke rows, and reuses the finished picture once every sweep is done: 240 frames of a 2880×1620 still with 2 highlights went 500.6 ms → 137.6 ms.
+- **2026-10-26** — Black October final exported (1080p24, 15:14, compositor, 41 min on the debug build). Roadmap 0c: an export loudness target, since the -14 LUFS YouTube master had to be normalised by hand.
+
 - **2026-10-26** — **Logged B-274 (open, critical):** the Edit webview grows to ~18 GB under bursts of edits, gets killed and silently reloads, dropping unsaved edits.
 
 - **2026-10-26** — **Logged B-273 (open):** `editor_add_clip` with no `track` fails with "no track NaN".

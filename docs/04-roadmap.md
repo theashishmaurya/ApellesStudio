@@ -239,6 +239,8 @@ crate/package extraction phase makes true parallelism (isolated worktrees) safe.
 
 0b. **Native clip highlights (the "highlighter pen" sweep) — D-396** (owner, 2026-10-26: "for all the newspaper and blogs do that effect ... support that natively"). Shipped: `Clip.highlights`, drawn on the clip's own picture in the live compositor, the compositor export and the ffmpeg export (pixel-pinned to real ffmpeg), `editor_set_clip_highlights` and `editor_suggest_clip_highlights` (OCR + narration match, D-397) over MCP, the Inspector "Highlights" section and draggable viewer boxes. **Done**; open: the viewer boxes are not yet exercised in the running app.
 
+0c. **Export loudness target (EBU R128 / YouTube -14 LUFS)** (found 2026-10-26 finishing the Black October video). `editor_export` writes the mix at whatever level the tracks sum to (that video: -21.6 LUFS, peak -6.5 dBFS). YouTube turns loud uploads down but never quiet ones up, so the finished file had to be normalised by hand with a two-pass ffmpeg `loudnorm` outside the app (video stream copied). Needs: an export option (target LUFS + true-peak ceiling, presets YouTube -14 / broadcast -23 / off) on both export paths, as an MCP parameter and an Export dialog field, measured with a test.
+
 0. **Export through the app's own compositor instead of an ffmpeg filter graph — D-350.**
    Moved here from "Later" 2026-09-18 when **phase 1 shipped**. Origin: B-228/B-229/B-230
    found and fixed three measured resource pathologies in `editor_export`'s ffmpeg
