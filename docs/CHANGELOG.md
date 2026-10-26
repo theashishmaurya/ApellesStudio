@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **B-275 fixed:** the Openverse client waits on a slow server (15 s connect, 90 s idle, no total cap) and names a timeout as one. Live after the merge: B-272 (one op = one marker) and B-270 (62 highlights in `editor_get_timeline`) confirmed.
+
 - **2026-10-26** — Black October final exported (1080p24, 15:14, compositor, 41 min on the debug build). Roadmap 0c: an export loudness target, since the -14 LUFS YouTube master had to be normalised by hand.
 
 - **2026-10-26** — **B-265 (stale dev module): second look, no new cause.** Ruled out Vite pre-bundling (no `@apelles/*` in the dep cache) and any config override; the remaining suspect is the web content process replacement of B-274. No code change.

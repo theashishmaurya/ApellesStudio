@@ -27,6 +27,14 @@ Still real:
 
 ## Open
 
+## B-275 — `editor_search_audio` gave up on a slow Openverse after 30 s and reported it as "could not reach"
+
+status: **fixed** (2026-10-26) · severity: **major** (the D-400 tools failed outright whenever Openverse was slow; the message pointed at the network) · area: `crates/apelles-audio-library/src/client.rs`
+
+- **found:** 2026-10-26, live-checking D-400 after the merge. `curl` measured Openverse's audio search at 34 s for one query, against a 30 s total-request timeout. The error read "could not reach Openverse: error sending request". The same total timeout also capped downloads, so a large music bed on a slow link would have failed partway.
+- **fix:** a 15 s connect timeout plus a 90 s idle timeout (no bytes arriving), with no cap on total time, for search and download alike. `send_error` names a timeout as a slow server ("sent nothing for 90 s … try again") or a failed connect, rather than "could not reach".
+- **verification:** crate tests 18/18, clippy clean; live `editor_search_audio` after the dev rebuild (see the CHANGELOG line).
+
 ## B-274 — the Edit webview's memory grows to ~18 GB under a burst of edits, macOS kills it, and the reload silently drops unsaved edits
 
 status: **partly fixed (2026-10-26): the main allocation and the silent reload; journaling and live confirmation remain** · severity: **critical** (performance and data loss: edits made since the last save vanish with no message) · area: the Edit tab's frontend memory (audio decode/waveform caches, image/still caches, undo history snapshots), `WKWebView` reload handling, project autosave
