@@ -4,7 +4,7 @@ Owner request (2026-10-26): "look into a way to create new catalog / motion grap
 directly instead of tweaking the code." Context: Apelles' founder/brand-video studio direction needs
 agents to author new motion graphics and reusable templates through MCP alone, with a matching GUI
 (CLAUDE.md human-and-AI rule), deterministically, local-first. This note is the design trail;
-each phase needs its own D-NNN when built (numbers below are provisional).
+each phase needs its own D-NNN when built (numbers below are provisional; D-402 is taken by the B-274 edit journal).
 
 ## What exists today (checked in the code)
 
@@ -104,11 +104,11 @@ animated underlines, icon rows and badge bursts entirely in JSON.
 
 | Phase | What | Provisional D-NNN |
 |---|---|---|
-| 0 | Per-primitive zod prop schemas (layer schema → discriminated union; `propCatalog` derived/tested against them); `motion_validate`, `motion_insert_layers`, `motion_set_scene`, `motion_preview_frame`. Makes everything after it safe for agents. | D-402 |
-| 1 | Brand primitives: `image` (+ hashed asset store), `icon`, `shape`, `counter`, `group` with mask, `anim` property tracks. Most leverage for founder videos. | D-403 (assets), D-404 (primitives) |
-| 2 | Templates: `templateDef.ts`, `templates.ts`/`templateIO.ts`, Rust load/save beside themes, 7 MCP tools, GUI, starter pack. Records the rejections above. | D-405 |
-| 3 | Expressive: `path` (draw-on, morph), `repeater`, `textonpath`. | D-406 |
-| 4 | Lottie import as an asset, refusing expressions. | D-407 |
+| 0 | Per-primitive zod prop schemas (layer schema → discriminated union; `propCatalog` derived/tested against them); `motion_validate`, `motion_insert_layers`, `motion_set_scene`, `motion_preview_frame`. Makes everything after it safe for agents. | D-403 |
+| 1 | Brand primitives: `image` (+ hashed asset store), `icon`, `shape`, `counter`, `group` with mask, `anim` property tracks. Most leverage for founder videos. | D-404 (assets), D-405 (primitives) |
+| 2 | Templates: `templateDef.ts`, `templates.ts`/`templateIO.ts`, Rust load/save beside themes, 7 MCP tools, GUI, starter pack. Records the rejections above. | D-406 |
+| 3 | Expressive: `path` (draw-on, morph), `repeater`, `textonpath`. | D-407 |
+| 4 | Lottie import as an asset, refusing expressions. | D-408 |
 
 Every phase ships the GUI and MCP halves together, re-captures the MCP parity corpus, and verifies
 determinism (render the same frame twice, compare hashes).

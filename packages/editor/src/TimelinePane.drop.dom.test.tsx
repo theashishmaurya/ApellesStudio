@@ -556,7 +556,7 @@ describe('B-129 — adding a Title targets a NEW video track, never an occupied 
       track: 0,
       clip: title,
       startFrame: 0,
-      onNewVideoTrack: true,
+      onNewTrack: 'video',
     });
     expect(after.tracks).toHaveLength(3);
     expect(before.tracks, 'the op is pure — the pre-state is the undo target').toHaveLength(2);
@@ -599,7 +599,7 @@ describe('B-129 — adding a Title targets a NEW video track, never an occupied 
       track: 0,
       clip: adj,
       startFrame: 0,
-      onNewVideoTrack: true,
+      onNewTrack: 'video',
     });
     expect(onTop.tracks).toHaveLength(3);
     expect(onTop.tracks[0].kind).toBe('video');

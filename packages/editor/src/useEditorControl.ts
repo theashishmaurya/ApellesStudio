@@ -2638,7 +2638,17 @@ export function useEditorControl(): void {
         if ('error' in facts) return facts;
         const frames = facts.sourceLen;
 
-        const track = Math.round(Number(a?.track));
+        // B-273 — `track` is OPTIONAL: omitted (or null), the clip goes on a
+        // brand-new track of the kind the source needs (see `onNewTrack`
+        // below), in the same one op, so one Undo removes both. It used to be
+        // coerced with `Number(undefined)` and refused as "no track NaN" by the
+        // very message that told the caller to omit it. Validated only when
+        // given.
+        const newTrack = a?.track === undefined || a?.track === null;
+        const track = newTrack ? 0 : Math.round(Number(a.track));
+        if (!newTrack && (!Number.isFinite(track) || track < 0)) {
+          return { error: 'track must be a track index (0 = topmost), or omitted for a new track of the kind the source needs' };
+        }
         const sourceStart = a?.sourceStart !== undefined ? Math.round(Number(a.sourceStart)) : 0;
         // D-292 — a still's default is its SYNTHESIZED span
         // (`DEFAULT_TITLE_SECONDS`), not "all of it": `sourceLen` for a still is
@@ -2697,14 +2707,17 @@ export function useEditorControl(): void {
         // this call gets a real, actionable reason instead of a silent
         // overlap or an opaque "check track index / project state".
         const tlBefore = useEditorTimelineStore.getState().timeline;
-        if (tlBefore) {
+        if (tlBefore && !newTrack) {
           const check = checkAddClip(tlBefore, track, clip, timelineFps(tlBefore), startFrame, ripple);
           if (!check.ok) return { error: check.reason ?? 'that track cannot hold this clip' };
         }
 
         // B-259 — a source with no picture at all (an audio file: probed as
         // 0x0) on an empty timeline gets an AUDIO track, not a video one.
+        // B-273 — the same question picks the kind of the new track when
+        // `track` is omitted.
         const audioOnly = !facts.still && media.video?.width === 0 && media.video?.height === 0;
+        const kind = audioOnly ? 'audio' : 'video';
 
         useEditorTimelineStore.getState().applyOp({
           kind: 'add_clip',
@@ -2714,11 +2727,15 @@ export function useEditorControl(): void {
           atIndex: a?.atIndex !== undefined ? Math.round(Number(a.atIndex)) : undefined,
           startFrame,
           ripple,
-          newTrackKind: audioOnly ? 'audio' : 'video',
+          newTrackKind: kind,
+          onNewTrack: newTrack ? kind : undefined,
         });
 
         const tl = useEditorTimelineStore.getState().timeline;
-        const placed = tl?.tracks[track]?.clips.find((c) => c.id === clip.id);
+        // The track it REALLY landed on: a new video track is index 0 (which
+        // renumbers every existing track), a new audio track the last index.
+        const placedTrack = tl ? tl.tracks.findIndex((tr) => tr.clips.some((c) => c.id === clip.id)) : -1;
+        const placed = placedTrack >= 0 ? tl?.tracks[placedTrack]?.clips.find((c) => c.id === clip.id) : undefined;
         if (!placed) return { error: 'add_clip did not place the clip — check track index / project state' };
         // D-129 parity — report the linked audio half's own location too, so
         // an agent doesn't have to call get_timeline just to discover
@@ -2735,7 +2752,9 @@ export function useEditorControl(): void {
         }
         return {
           ok: true,
-          track,
+          track: placedTrack,
+          createdTrack: newTrack,
+          trackCount: tl?.tracks.length ?? 0,
           clipId: placed.id,
           startFrame: placed.start_frame,
           duration: placed.duration,
@@ -2976,7 +2995,7 @@ export function useEditorControl(): void {
           clip,
           startFrame,
           ripple,
-          onNewVideoTrack,
+          onNewTrack: onNewVideoTrack ? 'video' : undefined,
         });
 
         const after = useEditorTimelineStore.getState().timeline;
@@ -3421,7 +3440,7 @@ export function useEditorControl(): void {
           clip,
           startFrame,
           ripple,
-          onNewVideoTrack,
+          onNewTrack: onNewVideoTrack ? 'video' : undefined,
         });
 
         const after = useEditorTimelineStore.getState().timeline;

@@ -1567,7 +1567,7 @@ mod tests {
 
         let mut edited = tl.clone();
         edited.name = "renamed".into();
-        super::super::edit::chroma_timeline_set(edited.clone()).unwrap();
+        super::super::edit::chroma_timeline_set(edited.clone(), None).unwrap();
 
         let refetched = timeline_get().unwrap();
         assert_eq!(refetched.id, edited.id, "id is preserved across set/get");
@@ -1709,7 +1709,7 @@ mod tests {
             }],
             ..Default::default()
         });
-        super::super::edit::chroma_timeline_set(tl).unwrap();
+        super::super::edit::chroma_timeline_set(tl, None).unwrap();
 
         // link — persists a shared group on both real clips, resolved
         // against whatever timeline is active, not a bare in-memory one.
@@ -2106,6 +2106,7 @@ mod tests {
             active_timeline: 0,
             media: Vec::new(),
             folders: Vec::new(),
+            edit_journal_seq: None,
         };
         save_manifest(&project_dir, &manifest).unwrap();
         state::set_project(Some(ProjectRef {

@@ -131,7 +131,8 @@ fn default_editor_trim_clip_ripple() -> bool {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EditorAddClipArgs {
-    pub track: i64,
+    #[serde(default)]
+    pub track: Option<i64>,
     #[serde(default)]
     pub media_id: Option<String>,
     #[serde(default)]
@@ -1256,6 +1257,14 @@ impl ApellesMcp {
     track instead of appending; `ripple=True` shifts later clips to make
     room rather than overlapping them.
 
+    OMIT `track` to put the clip on a NEW track of the kind the source needs, in
+    one call and one undo (B-273): an audio-only source gets a new audio track
+    appended at the bottom; footage or a still gets a new video track at the
+    top (index 0, which renumbers every existing track by one). The response's
+    `track` is where the clip really landed, `createdTrack` says whether this
+    call made it, and `trackCount` is the new total. A `track` that is given is
+    validated: one that does not exist is refused, never redirected.
+
     STILL IMAGES (D-292). A pool item that is a still (PNG/JPEG/TIFF/WebP/BMP —
     `editor_list_media` reports it with an `image` key instead of `video`) is
     placed exactly like footage, on a VIDEO track. A still has no length of its
@@ -1276,7 +1285,8 @@ impl ApellesMcp {
         Parameters(p): Parameters<EditorAddClipArgs>,
     ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new()
-            .set("track", p.track)
+            // Omitted = a new track of the kind the source needs (B-273).
+            .put("track", p.track)
             // `ripple` is always sent, unlike every other optional here: the handler
             // reads it as a plain boolean, so omitting it and sending false differ.
             .set("ripple", p.ripple)

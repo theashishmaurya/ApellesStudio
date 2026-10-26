@@ -31,6 +31,11 @@ opinion about Tauri, the GPU, or which project happens to be open right now
     `resolve_timeline_and_settings`. Lifted out of `chroma/edit.rs`, where it
     had been living under an Edit-tab name since D-041 — see that module's doc
     for the call-graph evidence.
+  - `journal` — the Edit timeline's write-ahead journal file,
+    `<project>/edit-journal.jsonl` (B-274/D-402): `append`, `read` (a torn last
+    line is dropped), `compact`. Entries are the frontend's ops and stay opaque
+    here; only their `seq` is read. `ProjectManifest.edit_journal_seq` records,
+    atomically with the saved timeline, the last entry that save includes.
 
 ## The `apelles-project → apelles-media` edge
 
