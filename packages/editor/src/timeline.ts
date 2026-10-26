@@ -3274,9 +3274,16 @@ export type EditOp =
    *  timeline in between. Absent = today's behaviour exactly (a silent
    *  source, or a pool item whose audio status isn't known). */
   /*
-   *  B-129/D-262 — `onNewVideoTrack: true` places the clip on a **brand-new,
+   *  B-129/D-262 — `onNewTrack: 'video'` places the clip on a **brand-new,
    *  empty video track inserted at index 0**, i.e. the top of the compositing
    *  stack (a LOWER index paints on top, D-086), and `track` is ignored.
+   *
+   *  B-273 — `onNewTrack: 'audio'` is the same thing for sound: a brand-new,
+   *  empty audio track **appended at the end** (the bottom of the stack, where
+   *  `add_track` and `ensureAudioTrackWithRoom` already put audio), and
+   *  `track` is ignored. Picture (a title, an adjustment clip, a still) can
+   *  never go there and the op is refused as a no-op. `editor_add_clip` with
+   *  no `track` uses this for an audio-only source and `'video'` otherwise.
    *
    *  This is what "add a title" means: a title is an OVERLAY, and the owner's
    *  own words for the bug were "it should be added on a new timeline meaning
@@ -3304,12 +3311,13 @@ export type EditOp =
       startFrame?: number;
       ripple?: boolean;
       linkedAudio?: NewClipFields;
-      onNewVideoTrack?: boolean;
+      onNewTrack?: 'video' | 'audio';
       /** B-259 — the kind of track to create when (and only when) the
        *  timeline has NO tracks yet. A video track by default; `'audio'` for an
        *  audio-only source, which used to be given a video track. A title, an
        *  adjustment clip or a still is picture and always gets a video track
-       *  whatever this says. Ignored once any track exists. */
+       *  whatever this says. Ignored once any track exists, and ignored when
+       *  `onNewTrack` is set (that track IS the new one). */
       newTrackKind?: 'video' | 'audio';
     }
   /** D-239 (roadmap item 27) — **the seven edit types on drop**: Insert,
@@ -4031,7 +4039,7 @@ export function labelForOp(op: EditOp, before: Timeline): string {
       // B-129/D-262 — the new-track case says so: this one op also created a
       // track, so its Undo removes one, and a history entry reading only
       // `Add "Title"` would not account for the track disappearing.
-      if (op.onNewVideoTrack) return `Add "${op.clip.name}" on a new video track`;
+      if (op.onNewTrack) return `Add "${op.clip.name}" on a new ${op.onNewTrack} track`;
       // B-257 — named by what the reducer actually places: no linked half on an
       // audio track, whatever the caller built.
       {
@@ -4936,19 +4944,23 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // caller, so no path into this op can place a title or an adjustment clip
     // on an audio track. Refused as a no-op, the same way `add_transition`
     // refuses on `checkTransition`; the caller holds the `reason` string for
-    // the message. Skipped for `onNewVideoTrack`, whose track is a video track
-    // by construction.
+    // the message. Skipped for `onNewTrack`, whose track is brand new and so
+    // has no other clip to collide with; the kind half of the gate is asked
+    // directly instead (B-273: picture never lands on a new AUDIO track).
     // B-131 — occupancy is now part of the same check, against the ORIGINAL
     // (pre-clone) tracks, so an explicit non-rippled `startFrame` that lands
     // on top of an existing clip is refused here rather than spliced in.
-    if (!op.onNewVideoTrack && !checkAddClip(tl, op.track, op.clip, fps, op.startFrame, op.ripple).ok) return tl;
+    const picture = isGeneratedPictureClip(op.clip) || isStillSource(op.clip.source_path);
+    if (op.onNewTrack === 'audio' && picture) return tl;
+    if (!op.onNewTrack && !checkAddClip(tl, op.track, op.clip, fps, op.startFrame, op.ripple).ok) return tl;
     const next = clone(tl);
     // B-259 — the first track of an empty timeline is of the kind the source
     // needs. Picture (a title, an adjustment clip, a still) can only be on a
-    // video track, so that overrides whatever the caller asked for.
-    const wasEmpty = next.tracks.length === 0;
+    // video track, so that overrides whatever the caller asked for. Not done
+    // for `onNewTrack`, which creates the one track itself below (doing both
+    // left an empty extra track behind).
+    const wasEmpty = next.tracks.length === 0 && !op.onNewTrack;
     if (wasEmpty) {
-      const picture = isGeneratedPictureClip(op.clip) || isStillSource(op.clip.source_path);
       next.tracks.push({
         kind: picture ? 'video' : (op.newTrackKind ?? 'video'),
         clips: [],
@@ -4960,14 +4972,22 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
     // the op's own doc). `unshift` is exactly what `resolvePlaceOnTopTrack`
     // does for the same "there is no room above" case, so the two ops agree on
     // what "on top" means rather than each having its own idea.
-    if (op.onNewVideoTrack) {
+    // B-273 — a brand-new empty audio track at the BOTTOM, where `add_track`
+    // and `ensureAudioTrackWithRoom` append audio.
+    let trackIdx: number;
+    if (op.onNewTrack === 'video') {
       next.tracks.unshift({ kind: 'video', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
+      trackIdx = 0;
+    } else if (op.onNewTrack === 'audio') {
+      next.tracks.push({ kind: 'audio', clips: [], gain: DEFAULT_TRACK_GAIN, sync_locked: DEFAULT_SYNC_LOCKED });
+      trackIdx = next.tracks.length - 1;
+    } else {
+      // B-259 — no silent fallback to track 0: `checkAddClip` above already
+      // refused an index that does not exist on a timeline that has tracks, so
+      // the only way to get here with one is the empty timeline just handled,
+      // whose single new track is index 0.
+      trackIdx = wasEmpty ? 0 : op.track;
     }
-    // B-259 — no silent fallback to track 0: `checkAddClip` above already
-    // refused an index that does not exist on a timeline that has tracks, so
-    // the only way to get here with one is the empty timeline just handled,
-    // whose single new track is index 0.
-    const trackIdx = op.onNewVideoTrack || wasEmpty ? 0 : op.track;
     const track = next.tracks[trackIdx];
     let startFrame: number;
     if (op.startFrame !== undefined) {
@@ -4983,7 +5003,7 @@ export function applyOp(tl: Timeline, op: EditOp): Timeline {
       // real clips out of the way to make room in a track that is already
       // entirely room. An overlay is added ALONGSIDE the edit, never by moving
       // it.
-      if (op.ripple && !op.onNewVideoTrack) {
+      if (op.ripple && !op.onNewTrack) {
         // B-033 — reject upfront (checked against the ORIGINAL, pre-clone
         // tracks) if a sync-locked track has a clip straddling the
         // insertion point; never auto-split. See the doc on

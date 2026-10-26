@@ -1916,7 +1916,7 @@ def editor_move_media(id: str, folder: str | None) -> str:
 
 @mcp.tool()
 def editor_add_clip(
-    track: int,
+    track: int | None = None,
     media_id: str | None = None,
     source_path: str | None = None,
     source_start: int | None = None,
@@ -1940,6 +1940,14 @@ def editor_add_clip(
     track instead of appending; `ripple=True` shifts later clips to make
     room rather than overlapping them.
 
+    OMIT `track` to put the clip on a NEW track of the kind the source needs, in
+    one call and one undo (B-273): an audio-only source gets a new audio track
+    appended at the bottom; footage or a still gets a new video track at the
+    top (index 0, which renumbers every existing track by one). The response's
+    `track` is where the clip really landed, `createdTrack` says whether this
+    call made it, and `trackCount` is the new total. A `track` that is given is
+    validated: one that does not exist is refused, never redirected.
+
     STILL IMAGES (D-292). A pool item that is a still (PNG/JPEG/TIFF/WebP/BMP —
     `editor_list_media` reports it with an `image` key instead of `video`) is
     placed exactly like footage, on a VIDEO track. A still has no length of its
@@ -1956,7 +1964,10 @@ def editor_add_clip(
     A still is refused on an audio track: it is picture with no audio stream."""
     import json
 
-    args: dict = {"track": track, "ripple": ripple}
+    args: dict = {}
+    if track is not None:
+        args["track"] = track
+    args["ripple"] = ripple
     if media_id is not None:
         args["mediaId"] = media_id
     if source_path is not None:

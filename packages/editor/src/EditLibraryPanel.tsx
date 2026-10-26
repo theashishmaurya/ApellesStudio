@@ -144,7 +144,7 @@ export function EditLibraryPanel() {
   const [error, setError] = useState<string | null>(null);
 
   /** Place a generator at the playhead on a **brand-new video track above
-   *  everything else** (`onNewVideoTrack`, one atomic op — see that field's own
+   *  everything else** (`onNewTrack: 'video'`, one atomic op — see that field's own
    *  doc on the `add_clip` op). D-263 moved this here from the rail unchanged;
    *  the behaviour itself is D-262's (B-129), and the two landed the same
    *  night, so this is that code in its new home, not a second copy of it.
@@ -187,7 +187,7 @@ export function EditLibraryPanel() {
       // D-325's read-at-the-point-of-use pattern — the same thing the reactive
       // selector used to hand this line, without the per-frame re-render.
       startFrame: useEditorTimelineStore.getState().playhead,
-      onNewVideoTrack: true,
+      onNewTrack: 'video',
     });
     // The new track is index 0 by construction, so the clip is always there —
     // but this reads it back rather than asserting, for the same reason

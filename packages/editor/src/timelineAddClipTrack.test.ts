@@ -103,3 +103,47 @@ describe('add_clip on an empty timeline (B-259)', () => {
     expect(title.tracks.map((t) => t.kind)).toEqual(['video']);
   });
 });
+
+describe('add_clip on a brand-new track (B-273)', () => {
+  it("onNewTrack 'audio' appends one audio track at the bottom and places the clip there", () => {
+    const tl = twoTracks();
+    const out = applyOp(tl, {
+      kind: 'add_clip',
+      track: 0,
+      clip: newClip({ source_path: '/m/sfx.wav' }),
+      onNewTrack: 'audio',
+    });
+    expect(out.tracks.map((t) => t.kind)).toEqual(['video', 'audio', 'audio']);
+    expect(out.tracks[2].clips.map((c) => c.id)).toEqual(['n']);
+    expect(tl.tracks, 'the op is pure').toHaveLength(2);
+  });
+
+  it("onNewTrack 'video' inserts one video track at the top, whatever `track` says", () => {
+    const out = applyOp(twoTracks(), { kind: 'add_clip', track: 5, clip: newClip(), onNewTrack: 'video' });
+    expect(out.tracks.map((t) => t.kind)).toEqual(['video', 'video', 'audio']);
+    expect(out.tracks[0].clips.map((c) => c.id)).toEqual(['n']);
+  });
+
+  it('on an empty timeline it makes exactly one track, not an extra empty one', () => {
+    const audio = applyOp(empty(), {
+      kind: 'add_clip',
+      track: 0,
+      clip: newClip({ source_path: '/m/sfx.wav' }),
+      onNewTrack: 'audio',
+    });
+    expect(audio.tracks.map((t) => t.kind)).toEqual(['audio']);
+    const video = applyOp(empty(), { kind: 'add_clip', track: 0, clip: newClip(), onNewTrack: 'video' });
+    expect(video.tracks.map((t) => t.kind)).toEqual(['video']);
+  });
+
+  it('refuses picture on a new audio track as a no-op', () => {
+    const tl = twoTracks();
+    const out = applyOp(tl, {
+      kind: 'add_clip',
+      track: 0,
+      clip: newClip({ source_path: '/m/page.png' }),
+      onNewTrack: 'audio',
+    });
+    expect(out).toBe(tl);
+  });
+});
