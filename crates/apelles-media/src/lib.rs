@@ -63,6 +63,7 @@ pub mod ffmpeg_gate;
 pub mod ffmpeg_locate;
 pub mod filmstrip;
 pub mod media_cache;
+pub mod ocr;
 pub mod probe;
 pub mod scrub;
 pub mod still;

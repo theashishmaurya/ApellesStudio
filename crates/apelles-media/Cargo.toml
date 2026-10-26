@@ -52,3 +52,11 @@ dasp_sample = "0.11.0"
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "sync", "macros", "time"] }
 tempfile = "3.27.0"
+
+# D-397 — the macOS Vision framework, for `ocr` (the highlight suggester's text
+# boxes). Same objc2 family and versions `tauri`/`wry` already link, so the
+# only new crate in the tree is `objc2-vision` itself.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-foundation = "0.3.2"
+objc2-vision = { version = "0.3.2", default-features = false, features = ["std", "VNObservation", "VNRecognizeTextRequest", "VNRequest", "VNRequestHandler", "VNTypes", "VNRequestRevisionProviding", "objc2-core-foundation"] }

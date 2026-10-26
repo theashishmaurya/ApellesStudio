@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **D-397: `editor_suggest_clip_highlights` (188 tools).** OCR the clip's picture on-device with macOS Vision (`objc2-vision`, one new crate), match the words against the narration over it (any track), and return ready-to-apply highlights; read-only. The Inspector section follows.
+
 - **2026-10-26** — **D-396 (part 1): clip highlights.** `Clip.highlights` draws highlighter-pen sweeps on an Edit clip's own picture before its crop/scale/keyframes, in the live compositor (and so the compositor export) and in the ffmpeg export (one `geq` node each); the two are pinned to one table of pixels measured from real ffmpeg. `editor_set_clip_highlights` over MCP (187 tools). `rounded_box_coverage` extracted to `apelles-types`. Suggest-from-transcript and the Inspector section follow.
 
 - **2026-10-26** — **Logged B-268 (open):** Motion themes are compiled code; a new look needs an engine change. Should be runtime data (manifest / user library / tokens), editable in the GUI and over MCP.

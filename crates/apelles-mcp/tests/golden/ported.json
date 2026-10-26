@@ -103,6 +103,7 @@
     "editor_slide_clip",
     "editor_slip_clip",
     "editor_split_clip",
+    "editor_suggest_clip_highlights",
     "editor_swap_clip_media",
     "editor_text_fonts",
     "editor_trim_clip",

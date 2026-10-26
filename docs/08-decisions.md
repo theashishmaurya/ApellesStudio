@@ -6,6 +6,18 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-397 — `editor_suggest_clip_highlights`: on-device OCR through macOS Vision (`objc2-vision`), matched against the narration
+
+**decided (2026-10-26, scope for D-396: "OCR the clip's still (macOS Vision via a proper Rust binding such as objc2-vision ... NOT a shell-out to Homebrew tesseract")**
+
+- **Context.** Placing highlights by hand means finding each phrase's box in a screenshot and its frames in the narration. Both are already in the project: the picture's text is readable and the narration has word timings.
+- **Options.** (a) Tesseract: not shipped by the app, so a shell-out depends on the user's Homebrew. (b) A bundled ONNX OCR model: tens of MB and our own accuracy problem. (c) Apple Vision, already on every Mac the app runs on, accurate on screen text, per-word boxes, on-device. Chosen: **(c)**.
+- **Dependency.** `objc2-vision` 0.3.2 (licence Zlib OR Apache-2.0 OR MIT; maintained by the objc2 project, the family `tauri`/`wry` already link at the same 0.3.x versions). `default-features = false` with only the Vision types used (`VNObservation`, `VNRecognizeTextRequest`, `VNRequest`, `VNRequestHandler`, `VNTypes`, `VNRequestRevisionProviding`, `objc2-core-foundation`), so the default set's AVFoundation/CoreML/CoreMedia/ImageIO bindings are not pulled in: `Cargo.lock` gains exactly one package. macOS-only target dependency; other targets get a named error. Lives in `apelles-media::ocr` (L1, media analysis). One method is missing from the generated bindings (`-[VNRecognizedText boundingBoxForRange:error:]`, the per-word box), so it is a single documented `msg_send!`.
+- **Matching** (`highlightSuggest.ts`, pure). Spoken and OCR words are normalised and walked as sequences; a run of word-for-word agreement (one slip forgiven in words of six letters or more) counts if it holds at least two content words, is trimmed to its first and last content word, and longer runs win with each word claimed once. A run's boxes are grouped by line (a wrapped phrase is two boxes swept in order, the duration shared by width) and padded. With no match the largest line is swept once at the clip's start (`basis: "headline"`).
+- **Narration source.** Every non-hidden clip on any track whose source has a finished transcript and overlaps the clip, not only video tracks: a voice-over lives on an audio track, which the Edit index's dialogue list deliberately skips. A source with no transcript only blocks when nothing overlapping has one (a music bed is never transcribed); a running transcription returns `transcribing`. The tool never starts a transcription itself.
+- **Interfaces.** MCP `editor_suggest_clip_highlights(track, clip)` (read-only; both servers; 188 tools; parity corpus re-captured and green) and the Tauri command `chroma_ocr_media`. The Inspector button calls the same function.
+- **Verified.** A real Vision round trip in `chroma::ocr` tests (a headline rasterised by the app's own text engine is read back word by word, left to right, boxes where the ink is; a blank picture gives no lines); the UTF-16 word-range and coordinate-flip helpers; 12 matching tests and 9 orchestration tests.
+
 ## D-396 — Clip highlights: a native "highlighter pen" sweep drawn on an Edit clip's own picture, in both engines
 
 **decided (2026-10-26, owner: "for all the newspaper and blogs do that effect ... support that natively")**

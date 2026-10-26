@@ -2348,6 +2348,7 @@ pub fn run() {
             chroma::subtitles::chroma_import_subtitles,
             chroma::subtitles::chroma_export_subtitles,
             chroma::filmstrip::chroma_clip_thumbnails,
+            chroma::ocr::chroma_ocr_media,
             chroma::audio::chroma_audio_play,
             chroma::audio::chroma_audio_stop,
             chroma::audio::chroma_audio_set_volume,

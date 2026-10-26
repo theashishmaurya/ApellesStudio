@@ -131,6 +131,8 @@ import {
 // here: one write path for the human and the agent, per CLAUDE.md.
 import { animatedParams, paramKeyframeFrames, setClipKeyframeEase } from './clipKeyframes';
 import { validateHighlights } from './clipHighlights';
+import { suggestClipHighlights } from './highlightSuggestOp';
+import { liveSuggestDeps } from './highlightSuggestLive';
 import {
   checkAddClip,
   clipOutputSourceFrames,
@@ -4595,6 +4597,38 @@ export function useEditorControl(): void {
             stored.length === 0
               ? 'highlights cleared — this clip renders exactly as before'
               : 'drawn on the clip’s own picture before its crop, scale and keyframes, so each box follows every push-in; `at` is a clip SOURCE frame (the axis editor_set_clip_keyframes uses), and a swept highlight stays for the rest of the clip',
+        };
+      },
+
+      // Read-only: returns a suggestion and writes nothing. The same function
+      // the Inspector's "Suggest from transcript" button calls (D-396/D-397).
+      editor_suggest_clip_highlights: async (a) => {
+        const tl = useEditorTimelineStore.getState().timeline;
+        if (!tl) return noTimeline();
+        const found = resolveClip(tl, a?.track, a?.clip);
+        if ('error' in found) return found;
+        const outcome = await suggestClipHighlights(liveSuggestDeps(), found.track, found.clip);
+        if ('error' in outcome) return outcome;
+        const common = { ok: true, track: found.track, clip: found.clip, name: found.c.name };
+        if (outcome.status === 'transcribing') {
+          return {
+            ...common,
+            ...outcome,
+            note: 'a source that plays over this clip is still being transcribed — call again in a moment',
+          };
+        }
+        if (outcome.status === 'needs_transcript') {
+          return {
+            ...common,
+            ...outcome,
+            note: 'nothing playing over this clip has a transcript yet — run editor_get_transcript on the narration source (or editor_get_timeline_transcript) and call again',
+          };
+        }
+        return {
+          ...common,
+          ...outcome,
+          applied: false,
+          note: 'a suggestion only — nothing was written. Review it, then apply with editor_set_clip_highlights (pass `highlights` back as-is).',
         };
       },
 

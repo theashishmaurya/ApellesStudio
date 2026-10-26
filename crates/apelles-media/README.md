@@ -8,6 +8,9 @@ grades or the GUI (D-146, `docs/notes/crate-extraction-plan.md` §2.2).
   `once_cell`, `image`, `base64`, `blake3` + `walkdir` + `filetime` (the disk
   cache). **No `tauri`, no `wgpu`, no `apelles-timeline`, no fork types.**
 - **Modules**, one per source file it was extracted from:
+  - `ocr` (D-397) — `recognize_image` / `recognize_media`: the words in a picture
+    and their boxes, via the macOS Vision framework (`objc2-vision`), on-device.
+    macOS-only; other targets get a named error.
   - `ffmpeg_locate` — **the one resolver for which `ffmpeg`/`ffprobe` runs
     (D-389, B-253)**, and the `ffmpeg()` / `ffprobe()` `Command` constructors
     every spawn in the workspace uses. Ladder: `CHROMA_FFMPEG`/`CHROMA_FFPROBE`

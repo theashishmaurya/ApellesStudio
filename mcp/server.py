@@ -3658,6 +3658,9 @@ def editor_set_clip_highlights(track: int, clip: int, highlights: list[ClipHighl
     ffmpeg output). The ffmpeg path costs one per-pixel `geq` node per
     highlight, so prefer the compositor renderer for large frames.
 
+    Don't know where the words are? editor_suggest_clip_highlights reads the
+    picture's text and the narration over it and returns ready-to-apply entries.
+
     Returns what was actually STORED (frames are rounded to whole numbers and
     boxes are ordered and clamped), so read that back rather than assuming your
     request landed verbatim. Undoable: same store action and same undo stack the
@@ -3671,6 +3674,53 @@ def editor_set_clip_highlights(track: int, clip: int, highlights: list[ClipHighl
             clip=clip,
             highlights=to_wire(highlights),
         ),
+        indent=2,
+        default=str,
+    )
+
+
+@mcp.tool()
+def editor_suggest_clip_highlights(track: int, clip: int) -> str:
+    """Suggest highlighter-pen sweeps for one clip's picture, READ-ONLY (D-396/D-397).
+    `track` and `clip` are the 0-based indices from get_timeline. Nothing is
+    written: review the result, then apply it with editor_set_clip_highlights.
+
+    What it does, all on-device: reads the text in the clip's picture with the
+    macOS Vision framework (a still is read as it is; a video is read at the
+    clip's first frame), reads the words being SPOKEN while the clip is on screen
+    (narration on any track whose source has a finished transcript, so a
+    voice-over on its own audio track counts), and matches the two. Each matched
+    run of the spoken phrase (at least two content words, trimmed of leading and
+    trailing filler like "the") becomes one box over those words in the picture,
+    swept over exactly the frames the phrase is spoken. A phrase that wraps onto
+    a second line becomes two boxes swept in order. Longer matches win, a word is
+    claimed once, and a one-letter slip in a long word (OCR or ASR) is forgiven.
+
+    If nothing matches -- nothing is spoken over the clip, or the narration is
+    about something the picture does not say -- it falls back to the largest line
+    of text in the picture, swept once at the clip's start, and says so
+    (`basis: "headline"`). A picture with no text gives `basis: "none"` and no
+    highlights.
+
+    Returns `status: "ready"` with `highlights` (pass them straight to
+    editor_set_clip_highlights), `basis` ("transcript" | "headline" | "none"),
+    `phrases` (each matched phrase and the TIMELINE frames it is spoken over),
+    `ocrWords` / `spokenWords` counts, and `notes` for anything worth knowing
+    (a source that was not transcribed and was ignored, a failed transcript).
+    Or `status: "transcribing"` while a source playing over the clip is still
+    being transcribed (call again shortly), or `status: "needs_transcript"` when
+    nothing playing over the clip has a transcript yet (run editor_get_transcript
+    on the narration source, then call again). This tool never starts a
+    transcription itself.
+
+    Video or still clips on a video track only; a title, caption or adjustment
+    clip has no picture to read. Boxes are fractions of the clip's SOURCE image
+    and `at`/`dur` are clip source frames, exactly the units
+    editor_set_clip_highlights takes."""
+    import json
+
+    return json.dumps(
+        _op("editor_suggest_clip_highlights", track=track, clip=clip),
         indent=2,
         default=str,
     )

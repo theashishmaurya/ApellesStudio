@@ -4295,7 +4295,7 @@
     },
     {
       "name": "editor_set_clip_highlights",
-      "description": "Draw HIGHLIGHTER-PEN sweeps on one clip's own picture (D-396): each box\n    sweeps left to right like a marker while a phrase is spoken -- the effect\n    newspaper and blog explainers use over a screenshot of the article. `track`\n    and `clip` are the 0-based indices from get_timeline.\n\n    `highlights` REPLACES the clip's whole list -- pass all of them every time,\n    and pass [] to clear. Each entry is\n    `{\"box\": [x0, y0, x1, y1], \"at\": <int>, \"dur\": <int>, \"color\": \"#F2B63A\",\n    \"opacity\": 0.45}`; `color` and `opacity` are optional.\n      - `box` -- fractions (0..1, top-left origin) of the clip's SOURCE\n        image, NOT of the canvas. So a box stays on the words it was drawn over\n        however the clip is later scaled, panned or keyframed: it is painted on\n        the picture BEFORE the clip's crop, scale, rotation and keyframes.\n      - `at` -- the clip SOURCE frame the sweep starts on, the same axis\n        editor_set_clip_keyframes' `frame` uses. For a clip placed at timeline\n        frame S with source_start B (1x speed), timeline frame F is source\n        frame B + (F - S).\n      - `dur` -- frames the sweep takes (0 reveals the whole box at `at`). The\n        pen eases out (fast start, soft landing), hard square at its left edge,\n        rounded at the leading tip.\n    Once a box is swept it STAYS for the rest of the clip.\n\n    The default stroke is a yellow-ochre at 0.45 opacity blended normally (not\n    multiplied), chosen to read on a white article page AND on a dark one while\n    keeping the text under it legible (measured contrast: 4.8:1 dark text on\n    white, 4.1:1 light text on dark).\n\n    Works on a video or still clip on a video track; a title, caption or\n    adjustment clip has no picture of its own and is refused. Unlocked tracks\n    only. A clip with no highlights renders byte-identically to before.\n\n    Preview and export agree: the live preview, the compositor export and the\n    ffmpeg filter-graph export all draw the same stroke (measured against real\n    ffmpeg output). The ffmpeg path costs one per-pixel `geq` node per\n    highlight, so prefer the compositor renderer for large frames.\n\n    Returns what was actually STORED (frames are rounded to whole numbers and\n    boxes are ordered and clamped), so read that back rather than assuming your\n    request landed verbatim. Undoable: same store action and same undo stack the\n    GUI's Highlights section writes to.",
+      "description": "Draw HIGHLIGHTER-PEN sweeps on one clip's own picture (D-396): each box\n    sweeps left to right like a marker while a phrase is spoken -- the effect\n    newspaper and blog explainers use over a screenshot of the article. `track`\n    and `clip` are the 0-based indices from get_timeline.\n\n    `highlights` REPLACES the clip's whole list -- pass all of them every time,\n    and pass [] to clear. Each entry is\n    `{\"box\": [x0, y0, x1, y1], \"at\": <int>, \"dur\": <int>, \"color\": \"#F2B63A\",\n    \"opacity\": 0.45}`; `color` and `opacity` are optional.\n      - `box` -- fractions (0..1, top-left origin) of the clip's SOURCE\n        image, NOT of the canvas. So a box stays on the words it was drawn over\n        however the clip is later scaled, panned or keyframed: it is painted on\n        the picture BEFORE the clip's crop, scale, rotation and keyframes.\n      - `at` -- the clip SOURCE frame the sweep starts on, the same axis\n        editor_set_clip_keyframes' `frame` uses. For a clip placed at timeline\n        frame S with source_start B (1x speed), timeline frame F is source\n        frame B + (F - S).\n      - `dur` -- frames the sweep takes (0 reveals the whole box at `at`). The\n        pen eases out (fast start, soft landing), hard square at its left edge,\n        rounded at the leading tip.\n    Once a box is swept it STAYS for the rest of the clip.\n\n    The default stroke is a yellow-ochre at 0.45 opacity blended normally (not\n    multiplied), chosen to read on a white article page AND on a dark one while\n    keeping the text under it legible (measured contrast: 4.8:1 dark text on\n    white, 4.1:1 light text on dark).\n\n    Works on a video or still clip on a video track; a title, caption or\n    adjustment clip has no picture of its own and is refused. Unlocked tracks\n    only. A clip with no highlights renders byte-identically to before.\n\n    Preview and export agree: the live preview, the compositor export and the\n    ffmpeg filter-graph export all draw the same stroke (measured against real\n    ffmpeg output). The ffmpeg path costs one per-pixel `geq` node per\n    highlight, so prefer the compositor renderer for large frames.\n\n    Don't know where the words are? editor_suggest_clip_highlights reads the\n    picture's text and the narration over it and returns ready-to-apply entries.\n\n    Returns what was actually STORED (frames are rounded to whole numbers and\n    boxes are ordered and clamped), so read that back rather than assuming your\n    request landed verbatim. Undoable: same store action and same undo stack the\n    GUI's Highlights section writes to.",
       "inputSchema": {
         "properties": {
           "track": {
@@ -5511,6 +5511,28 @@
         ],
         "type": "object",
         "title": "editor_split_clipArguments"
+      }
+    },
+    {
+      "name": "editor_suggest_clip_highlights",
+      "description": "Suggest highlighter-pen sweeps for one clip's picture, READ-ONLY (D-396/D-397).\n    `track` and `clip` are the 0-based indices from get_timeline. Nothing is\n    written: review the result, then apply it with editor_set_clip_highlights.\n\n    What it does, all on-device: reads the text in the clip's picture with the\n    macOS Vision framework (a still is read as it is; a video is read at the\n    clip's first frame), reads the words being SPOKEN while the clip is on screen\n    (narration on any track whose source has a finished transcript, so a\n    voice-over on its own audio track counts), and matches the two. Each matched\n    run of the spoken phrase (at least two content words, trimmed of leading and\n    trailing filler like \"the\") becomes one box over those words in the picture,\n    swept over exactly the frames the phrase is spoken. A phrase that wraps onto\n    a second line becomes two boxes swept in order. Longer matches win, a word is\n    claimed once, and a one-letter slip in a long word (OCR or ASR) is forgiven.\n\n    If nothing matches -- nothing is spoken over the clip, or the narration is\n    about something the picture does not say -- it falls back to the largest line\n    of text in the picture, swept once at the clip's start, and says so\n    (`basis: \"headline\"`). A picture with no text gives `basis: \"none\"` and no\n    highlights.\n\n    Returns `status: \"ready\"` with `highlights` (pass them straight to\n    editor_set_clip_highlights), `basis` (\"transcript\" | \"headline\" | \"none\"),\n    `phrases` (each matched phrase and the TIMELINE frames it is spoken over),\n    `ocrWords` / `spokenWords` counts, and `notes` for anything worth knowing\n    (a source that was not transcribed and was ignored, a failed transcript).\n    Or `status: \"transcribing\"` while a source playing over the clip is still\n    being transcribed (call again shortly), or `status: \"needs_transcript\"` when\n    nothing playing over the clip has a transcript yet (run editor_get_transcript\n    on the narration source, then call again). This tool never starts a\n    transcription itself.\n\n    Video or still clips on a video track only; a title, caption or adjustment\n    clip has no picture to read. Boxes are fractions of the clip's SOURCE image\n    and `at`/`dur` are clip source frames, exactly the units\n    editor_set_clip_highlights takes.",
+      "inputSchema": {
+        "properties": {
+          "track": {
+            "title": "Track",
+            "type": "integer"
+          },
+          "clip": {
+            "title": "Clip",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "track",
+          "clip"
+        ],
+        "type": "object",
+        "title": "editor_suggest_clip_highlightsArguments"
       }
     },
     {
@@ -14994,6 +15016,31 @@
             "track": 54,
             "clip": 14,
             "atFrame": 12
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "editor_suggest_clip_highlights",
+      "case": "minimal",
+      "arguments": {
+        "track": 24,
+        "clip": 96
+      },
+      "requests": [
+        {
+          "op": "editor_suggest_clip_highlights",
+          "args": {
+            "track": 24,
+            "clip": 96
           },
           "timeout_ms": 20000
         }
