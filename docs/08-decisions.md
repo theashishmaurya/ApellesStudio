@@ -6,6 +6,24 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-401 — Export loudness target: a measured post-pass in `apelles-media`, not ffmpeg `loudnorm`
+
+**decided (2026-10-26, roadmap 0c; found normalising the Black October master by hand)**
+
+**Context.** `editor_export` wrote the mix at whatever level the tracks summed to (-21.6 LUFS, -6.5 dBFS peak). The YouTube master had to be fixed outside the app with a two-pass ffmpeg `loudnorm`.
+
+**Options.** (1) ffmpeg `loudnorm` inside the export graph. Rejected: in linear mode it silently falls back to dynamic compression when the measured loudness range or true peak does not allow a pure gain, which changes the mix without telling anyone, and it cannot report what it did. (2) A fixed gain from an estimate. Rejected: no true-peak guarantee. (3) A post-pass on the finished file. Chosen.
+
+**Choice.** `crates/apelles-media/src/loudness.rs` measures the exported file with `ebur128=peak=true`, applies one linear gain plus `alimiter` run at 4x the sample rate (so inter-sample peaks are seen), remuxes with `-c:v copy` and AAC 192k, re-measures, and if it missed corrects from the measurement and re-encodes from the original (up to 4 attempts). It replaces the export in place and returns a before/after report. Silent or audio-less files are left byte-identical and reported as skipped. Presets: YouTube -14 LUFS / -1 dBTP, broadcast -23 / -1, podcast -16 / -1, off, custom. Both export paths share it: the compositor runs it inside the render job (`TimelineRenderRequest.loudness`, with a `normalising` phase in `editor_export_status` so pollers do not see done early) and the ffmpeg-filter path calls the `chroma_normalize_loudness` command from `runCompiledExport`. GUI: "Audio loudness" select plus custom fields in the Export dialog, result line per job. MCP: `loudness_preset`, `loudness_lufs`, `true_peak_dbtp` on `editor_export`.
+
+**Measured.** A 12 s pink-noise mp4 went from -41.0 LUFS / -27.5 dBTP to -14.2 LUFS / -1.1 dBTP in one attempt (+27 dB, limiter engaged), confirmed by an independent ebur128 pass; a -15.9 LUFS mix went to -23.1 LUFS; the video packets are byte-identical; an audio-less file is untouched.
+
+**Research caveat.** Adobe's Premiere help page returned 403, so Premiere's loudness-normalisation layout is from memory; DaVinci Resolve's comes from forum threads, not the vendor manual. The preset set follows the published platform targets (YouTube -14, EBU R128 -23), not a copied NLE UI.
+
+**Not done.** Not run live in the app; the ffmpeg-filter path is covered by unit tests of the command only.
+
+---
+
 ## D-400 — Openverse audio search and import as MCP tools: `editor_search_audio`, `editor_import_audio`, `editor_get_credits`
 
 **decided (2026-10-26, owner: "a feature to get the SFX — MCP and API should be able to find the right one and add it; mostly MCP, I don't think GUI can be helpful here")**
