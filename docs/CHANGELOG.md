@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **Logged B-274 (open, critical):** the Edit webview grows to ~18 GB under bursts of edits, gets killed and silently reloads, dropping unsaved edits.
+
 - **2026-10-26** — **Logged B-273 (open):** `editor_add_clip` with no `track` fails with "no track NaN".
 
 - **2026-10-26** — **Logged B-272 (open, critical):** control-bridge ops run twice after dev reloads (duplicate frontend subscribers).

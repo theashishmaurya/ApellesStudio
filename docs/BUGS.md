@@ -27,6 +27,15 @@ Still real:
 
 ## Open
 
+## B-274 — the Edit webview's memory grows to ~18 GB under a burst of edits, macOS kills it, and the reload silently drops unsaved edits
+
+status: **open** · severity: **critical** (performance and data loss: edits made since the last save vanish with no message) · area: the Edit tab's frontend memory (audio decode/waveform caches, image/still caches, undo history snapshots), `WKWebView` reload handling, project autosave
+
+- **found:** 2026-10-26, Black October project (~490 clips, 14 tracks, 7 audio lanes including 803 s and 580 s music beds). The owner saw Apelles at ~18 GB in Activity Monitor. The dev log shows the frontend re-handshaking at 13:44, 13:50 and 13:59 with no app restart (the Rust process stayed up from 13:30). Each time a new `WebKit.WebContent` process appeared, i.e. the web content process was replaced. Each reload landed during a burst of a few hundred `editor_*` ops (SFX placement, per-clip volume changes).
+- **data loss seen:** 62 `editor_set_clip_audio` volume changes all read back correctly. Minutes later 39 had reverted with no undo on the stack: the reload restored `project.json` from before them. Likely also behind the doubled-op handshakes in B-272.
+- **expected:** memory stays bounded and is released (decoded audio and stills cached once per source with an LRU cap, not per clip or per edit; undo snapshots structurally shared or capped). A web content process termination is detected (`webViewWebContentProcessDidTerminate`) and surfaced, never a silent reload. Unsaved edits are flushed or journaled so a reload loses nothing.
+- **to measure first:** Safari Web Inspector memory timeline / heap snapshots before and after a burst of 200 `editor_set_clip_audio` calls; which allocations grow (AudioBuffers, ImageBitmaps, history entries).
+
 ## B-273 — `editor_add_clip` without a `track` fails with "no track NaN" (its own error text says to do exactly that)
 
 status: **open** · severity: **major** (an agent cannot get a fresh track for a clip in one call; an `editor_add_track` made first can be pruned as empty before the clip lands, B-259's shape) · area: `editor_add_clip` handler in `packages/editor/src/useEditorControl.ts` (the B-259 fix, D-398 branch)
