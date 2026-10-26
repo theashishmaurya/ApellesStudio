@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — Notes: `reference-teardown-lewis-jackson-polymarket.md` (measured sound design: an edited music bed ~19 dB under a levelled voice, 32 dropouts on story beats, few effects; a fill-in script template) and `motion-authoring-mcp.md` (design for new Motion graphics and templates as data over MCP; phased, not built).
+
 - **2026-10-26** — Roadmap 0d (owner): a per-user `taste.md` distilled from chats, choices and finished videos.
 
 - **2026-10-26** — **D-401 verified live:** a real compositor export with `loudnessPreset="youtube"` measured -14.1 LUFS / -1.2 dBTP (from -21.2 / -7.0), identical video packets (ffmpeg MD5). Logged B-276 (open): a new project with no frame size refuses to export with a misleading message.
