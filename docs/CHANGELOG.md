@@ -11,6 +11,10 @@ One or two lines per session. Detail lives in the decision it references.
 - **2026-10-26** — **B-270 fixed: `editor_get_timeline` reports each clip's `highlights`** (`[]` when none), so an agent reads back what `editor_set_clip_highlights` wrote. Both MCP docstrings and the parity corpus updated.
 
 - **2026-10-26** — **B-271 fixed: clip highlights no longer clone the source still every frame.** `chroma/highlight_draw.rs` keeps one working copy per clip, redraws only the stroke rows, and reuses the finished picture once every sweep is done: 240 frames of a 2880×1620 still with 2 highlights went 500.6 ms → 137.6 ms.
+- **2026-10-26** — **Logged B-274 (open, critical):** the Edit webview grows to ~18 GB under bursts of edits, gets killed and silently reloads, dropping unsaved edits.
+
+- **2026-10-26** — **Logged B-273 (open):** `editor_add_clip` with no `track` fails with "no track NaN".
+
 - **2026-10-26** — **Logged B-272 (open, critical):** control-bridge ops run twice after dev reloads (duplicate frontend subscribers).
 
 - **2026-10-26** — **Logged B-271 (open):** clip highlights slow the compositor ~2.5× (every frame clones the full source still).
