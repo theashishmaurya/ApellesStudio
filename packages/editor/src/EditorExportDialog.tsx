@@ -327,6 +327,11 @@ export function EditorExportDialog() {
     // below exists: the dialog may have been open across a `set_project_
     // settings` write, and a job frozen against the old size would size every
     // `scale`d clip against a composition the project no longer has.
+    // B-276 — that size is read from the PERSISTED timeline, so a save still
+    // on its debounce is settled first. A failed save is reported again, and
+    // refused, when a queued compositor job runs (`runCompiledExport`); the
+    // filter-graph path compiles from the in-memory timeline and needs none.
+    await useEditorTimelineStore.getState().flushPendingSave();
     await warmCompositionSize();
     try {
       const baked = await warmGradeLuts(timeline);

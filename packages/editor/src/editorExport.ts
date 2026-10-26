@@ -112,6 +112,18 @@ export interface CompileError {
   error: string;
 }
 
+/** B-276 — settle every timeline save the store still owes the backend before
+ *  a backend command that reads the PERSISTED timeline (the composition size,
+ *  the compositor render). `null` once the backend holds the store's timeline;
+ *  a {@link CompileError} naming the failed save otherwise, because exporting
+ *  a document other than the one on screen is worse than not exporting. */
+async function flushTimelineForBackend(): Promise<CompileError | null> {
+  const store = useEditorTimelineStore.getState();
+  if (await store.flushPendingSave()) return null;
+  const why = useEditorTimelineStore.getState().error ?? 'the save failed';
+  return { error: `could not save the timeline before exporting it (${why}) — the export would not match the edit. Try again.` };
+}
+
 /**
  * D-197 — which clips' sources are known to carry a real decodeable audio
  * stream, keyed by `Clip.id`. `buildExportFfmpegArgs` is pure (no store
@@ -535,6 +547,14 @@ export interface EditorExportResult {
 export async function runEditorExport(
   a: Parameters<typeof compileEditorExportArgs>[0],
 ): Promise<EditorExportResult | CompileError> {
+  // B-276 — the backend reads the PERSISTED timeline (the composition size
+  // below, and the compositor render itself), while edits persist on a
+  // debounce. An agent that places a clip and exports in the same breath
+  // otherwise has its export sized and rendered from the document as it was
+  // before the edit: a still placed a moment earlier is not there, and a
+  // fresh project reads as having nothing to size a composition from.
+  const flushed = await flushTimelineForBackend();
+  if (flushed) return flushed;
   // D-211 — the ONE place the (synchronous) compiler's font-catalogue read
   // can be guaranteed warm before it runs: an MCP `editor_export` can be the
   // very first thing an agent does after opening a project, before the
@@ -673,6 +693,11 @@ export async function runCompiledExport(
     return { ok: false, error: 'a loudness target needs the export’s output path', stdoutTail: '', stderrTail: '' };
   }
   if (render) {
+    // B-276 — the compositor renders the persisted timeline, so it must hold
+    // the store's edits first (a queued job runs long after its enqueue). A
+    // no-op when nothing is pending.
+    const flushed = await flushTimelineForBackend();
+    if (flushed) return { ok: false, error: flushed.error, stdoutTail: '', stderrTail: '' };
     try {
       const outcome = await invoke<TimelineRenderOutcome>('chroma_render_timeline_export', {
         req: {

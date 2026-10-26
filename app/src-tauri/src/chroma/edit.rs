@@ -453,15 +453,47 @@ pub(crate) fn resolve_timeline_and_settings(
 /// **first clip that is real footage** if one exists anywhere on the timeline;
 /// only when the timeline is images-only does it fall back to the first clip
 /// of any kind, preserving that case exactly as before.
+///
+/// **B-276 — a project with no size at all is refused by name**
+/// ([`NO_COMPOSITION_SIZE`]), telling the caller to set one, rather than with a
+/// message that blamed clips. An export does not take this refusal: it has its
+/// own requested size, see [`derived_composition_size`].
 pub(super) fn composition_size(
     settings: &project::ProjectSettings,
     timeline: &Timeline,
 ) -> Result<(u32, u32), String> {
+    derived_composition_size(settings, timeline)?.ok_or_else(|| NO_COMPOSITION_SIZE.to_string())
+}
+
+/// B-276 — why [`composition_size`] has nothing to answer with: no explicit
+/// project size, and no footage or still on any video track to read one from.
+pub(super) const NO_COMPOSITION_SIZE: &str = "this project has no frame size yet: its settings name no \
+     width/height, and no video track holds footage or a still to take one from. Set one with \
+     set_project_settings(width=..., height=...) (or the Edit tab's project settings), or put \
+     footage or a still on a video track";
+
+/// [`composition_size`]'s resolution, with "the project has no size" as
+/// `Ok(None)` instead of an error, so a caller that has a size of its own can
+/// stand it in.
+///
+/// **B-276 — the export is that caller.** `editor_export` always names an
+/// output `width`/`height`, and the export compiler
+/// (`compileEditorExportArgs` in `@apelles/editor`) already reads a sizeless
+/// project's composition as exactly that output size. The compositor render
+/// takes the same reading ([`super::edit_render::render_timeline`]), so the
+/// two engines size every clip against the same composition, and a project
+/// whose only content is audio (or that has not been given a size yet) still
+/// exports. An `Err` is a real failure (a source that will not probe), never
+/// "nothing to measure".
+pub(super) fn derived_composition_size(
+    settings: &project::ProjectSettings,
+    timeline: &Timeline,
+) -> Result<Option<(u32, u32)>, String> {
     if let (Some(w), Some(h)) = (settings.width, settings.height)
         && w > 0
         && h > 0
     {
-        return Ok((w, h));
+        return Ok(Some((w, h)));
     }
     let mut first_any: Option<&Clip> = None;
     for clip in timeline
@@ -473,17 +505,19 @@ pub(super) fn composition_size(
     {
         if !apelles_media::still::is_image_file(&clip.source_path) {
             // Real footage always wins, wherever it sits in track order.
-            return clip_source_size(&clip.source_path);
+            return clip_source_size(&clip.source_path).map(Some);
         }
         if first_any.is_none() {
             first_any = Some(clip);
         }
     }
-    let first = first_any.ok_or_else(|| "no clip to derive a composition size from".to_string())?;
+    let Some(first) = first_any else {
+        return Ok(None);
+    };
     // D-292 — `clip_source_size`, not `probe_cached`: the timeline may hold
     // only stills, and a project whose only source is a still must still be
     // able to say how big its composition is.
-    clip_source_size(&first.source_path)
+    clip_source_size(&first.source_path).map(Some)
 }
 
 /// Resolve timeline position `pos` on the **active** timeline to the single
@@ -5297,6 +5331,50 @@ mod composition_size_tests {
 
         let (w, h) = composition_size(&settings, &timeline).expect("composition size");
         assert_eq!((w, h), (1200, 800));
+    }
+
+    /// B-276 — no explicit size and nothing on a video track (a voice-over and
+    /// a music bed only): refused by name, telling the caller to set the
+    /// project size, never "no clip" while clips are there.
+    /// `derived_composition_size` answers `None` for the same project, which is
+    /// what lets an export stand its own size in.
+    #[test]
+    fn a_sizeless_project_is_refused_by_name() {
+        let audio = |id: &str| Clip {
+            id: id.into(),
+            name: id.into(),
+            source_path: format!("/nonexistent/{id}.wav"),
+            duration: 24,
+            source_len: 24,
+            ..Default::default()
+        };
+        let timeline = Timeline {
+            id: "tl1".into(),
+            name: "Timeline 1".into(),
+            rate: None,
+            tracks: vec![
+                Track {
+                    kind: TrackKind::Video,
+                    clips: Vec::new(),
+                    ..Default::default()
+                },
+                Track {
+                    kind: TrackKind::Audio,
+                    clips: vec![audio("vo"), audio("music")],
+                    ..Default::default()
+                },
+            ],
+            markers: Vec::new(),
+        };
+        let settings = project::ProjectSettings::default();
+
+        let err = composition_size(&settings, &timeline).expect_err("sizeless");
+        assert_eq!(err, NO_COMPOSITION_SIZE);
+        assert!(err.contains("set_project_settings"));
+        assert_eq!(
+            derived_composition_size(&settings, &timeline).expect("not a failure"),
+            None
+        );
     }
 
     /// An explicit project width/height always wins, even over real footage of

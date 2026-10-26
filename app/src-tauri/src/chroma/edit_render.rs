@@ -456,7 +456,10 @@ pub fn render_timeline(
         return Err("render width and height must both be > 0".to_string());
     }
     let out = (req.width, req.height);
-    let comp = edit::composition_size(settings, timeline)?;
+    // B-276 — a project with no size of its own is composed at the requested
+    // output size, the same reading the export compiler takes, rather than
+    // refused.
+    let comp = edit::derived_composition_size(settings, timeline)?.unwrap_or(out);
     let canvas = canvas_plan(comp, out);
     let started = Instant::now();
 
@@ -3363,5 +3366,67 @@ mod parity_tests {
             clips,
             "the old path opens one input per clip, which is the multiplication D-350 removes"
         );
+    }
+
+    /// B-276 — a project with no frame size of its own (no settings, nothing
+    /// on a video track to read one from: here a voice-over-only timeline)
+    /// exports at the size the export asked for, instead of refusing with "no
+    /// clip to derive a composition size from". The export compiler reads such
+    /// a project's composition as that same output size, so this is the two
+    /// engines agreeing, not a guess. (The fixture keeps the empty video track
+    /// a new project has: a timeline with NO video track at all is refused by
+    /// the frame resolver for its own reason, which this does not change.)
+    #[test]
+    fn a_sizeless_project_exports_at_the_requested_size() {
+        if !ffmpeg_available() {
+            eprintln!("skipping: ffmpeg/ffprobe not on PATH");
+            return;
+        }
+        let _guard = super::super::PROJECT_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let timeline = Timeline {
+            id: "tl1".into(),
+            name: "Timeline 1".into(),
+            rate: None,
+            tracks: vec![
+                apelles_timeline::Track {
+                    kind: apelles_timeline::TrackKind::Video,
+                    ..Default::default()
+                },
+                apelles_timeline::Track {
+                    kind: apelles_timeline::TrackKind::Audio,
+                    clips: vec![apelles_timeline::Clip {
+                        id: "vo".into(),
+                        name: "vo".into(),
+                        source_path: "/nonexistent/vo.wav".into(),
+                        duration: 24,
+                        source_len: 24,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            ],
+            markers: Vec::new(),
+        };
+        let settings = ProjectSettings::default();
+        assert!(
+            edit::composition_size(&settings, &timeline).is_err(),
+            "the fixture really is sizeless"
+        );
+        let mut args = super::pipe_input_args(64, 36, 24.0);
+        args.extend(["-f".into(), "null".into(), "-".into()]);
+        let req = TimelineRenderRequest {
+            args,
+            width: 64,
+            height: 36,
+            frames: 3,
+            segments: None,
+            output: None,
+            loudness: None,
+        };
+        let outcome = render_timeline(&timeline, &settings, &req)
+            .expect("a sizeless project renders at the export's own size");
+        assert_eq!(outcome.frames, 3);
     }
 }
