@@ -27,6 +27,13 @@ Still real:
 
 ## Open
 
+## B-276 — a new project with no explicit frame size refuses `editor_export`: "no clip to derive a composition size from", even with a still on a video track
+
+status: **open** · severity: **major** (a fresh project cannot be exported until `set_project_settings` gives it a size, and the message points at the clips, not the missing setting) · area: `editor_export`'s composition-size resolution (`app/src-tauri/src/chroma/edit_render.rs` / the export request builder)
+
+- **found:** 2026-10-26, live-verifying D-401. `new_project` → a 30 s VO clip, a music clip, a PNG still on a video track (its `boxWidth`/`boxHeight` were `null`) → `editor_export(renderer="compositor")` answered "no clip to derive a composition size from". It went away after `set_project_settings(width=1920, height=1080, fps=24)`.
+- **expected:** a still's own pixel size (or the export's `width`/`height`) is enough to size the composition. A truly sizeless project gets a named error that says to set the project size, never a message that blames clips which are there.
+
 ## B-275 — `editor_search_audio` gave up on a slow Openverse after 30 s and reported it as "could not reach"
 
 status: **fixed** (2026-10-26) · severity: **major** (the D-400 tools failed outright whenever Openverse was slow; the message pointed at the network) · area: `crates/apelles-audio-library/src/client.rs`

@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **D-401 verified live:** a real compositor export with `loudnessPreset="youtube"` measured -14.1 LUFS / -1.2 dBTP (from -21.2 / -7.0), identical video packets (ffmpeg MD5). Logged B-276 (open): a new project with no frame size refuses to export with a misleading message.
+
 - **2026-10-26** — **D-401: export loudness target (roadmap 0c done).** `editor_export` can normalise the finished file to a preset (YouTube -14 LUFS / -1 dBTP, broadcast -23, podcast -16, custom) on both export paths: a Rust post-pass in `apelles-media::loudness` measures with ebur128, applies one linear gain plus a 4x-oversampled limiter, re-measures and corrects (video stream copied). Export dialog select + `loudness_preset` / `loudness_lufs` / `true_peak_dbtp` MCP params. Measured: a -41 LUFS mix lands at -14.2 LUFS / -1.1 dBTP.
 
 - **2026-10-26** — **B-265 (stale dev module): second look, no new cause.** Ruled out Vite pre-bundling (no `@apelles/*` in the dep cache) and any config override; the remaining suspect is the web content process replacement of B-274. No code change.
