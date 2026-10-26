@@ -1154,7 +1154,7 @@ impl ApellesMcp {
     clips: [{index, id, name, sourcePath, startFrame, duration, sourceStart,
     sourceLen, sourceFps, linkGroup, fadeInFrames, fadeOutFrames, fadeInCurve,
     fadeOutCurve, fadeInCurveName, fadeOutCurveName, volume, pan, eqBands,
-    eqActive}]}]}.
+    eqActive, highlights}]}]}.
 
     `volume`/`pan` (D-223) are the CLIP's own level and stereo position, which
     MULTIPLY with the track's own `gain` rather than replacing it — see
@@ -1165,6 +1165,10 @@ impl ApellesMcp {
     it: a four-band strip whose gains are all 0 dB is completely inert, and
     `eqBands` being non-empty is NOT the same as the clip being filtered. See
     editor_set_clip_eq.
+
+    `highlights` (D-396, B-270) is that clip's phrase highlights, `[]` when it
+    has none, each `{box: [x0, y0, x1, y1], at, dur, color?, opacity?}` -- the
+    same shape editor_set_clip_highlights takes and returns.
 
     All positions and durations are in FRAMES, not seconds — the unit every
     Edit-tab number is in. `index` is what set_clip_fade and set_track_duck

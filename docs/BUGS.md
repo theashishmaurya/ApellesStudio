@@ -38,10 +38,11 @@ status: **fixed** (2026-10-26) · severity: **high** (performance is this projec
 
 ## B-270 — `editor_get_timeline` does not report a clip's `highlights`
 
-status: **open** · severity: **minor** (an agent can write highlights with `editor_set_clip_highlights` but cannot read them back from the timeline read every other clip property comes from) · area: `packages/editor/src/useEditorControl.ts` (`editor_get_timeline`'s clip summary), both MCP servers' docs
+status: **fixed** (2026-10-26) · severity: **minor** (an agent can write highlights with `editor_set_clip_highlights` but cannot read them back from the timeline read every other clip property comes from) · area: `packages/editor/src/useEditorControl.ts` (`editor_get_timeline`'s clip summary), both MCP servers' docs
 
 - **found:** 2026-10-26, applying D-396 highlights to 38 clips: `editor_get_timeline` listed every other clip field but no `highlights`; the saved `project.json` held all 62.
-- **expected:** the clip summary carries `highlights` (or a count plus a pointer to a read tool), so the read half matches the write half (human-and-AI parity).
+- **fixed:** `timelineDto` now carries `highlights` on every clip (`c.highlights ?? []`, the shape `editor_set_clip_highlights` stores and returns), and both MCP servers' `get_timeline` docstrings name it.
+- **verification:** 2 new `timelineDto highlights (B-270)` tests (`useEditorControl.test.ts` 6/6); parity corpus re-captured (192 tools, 285 cases) and `cargo test -p apelles-mcp --test parity` 5/5.
 
 ## B-269 — `editor_suggest_clip_highlights`' headline fallback picked logos, sidebar strips and photo text
 

@@ -675,6 +675,11 @@ export function timelineDto(tl: Timeline) {
         // response (there is no `kind` field on a clip — being a title IS
         // having a text layer, see `apelles_timeline::Clip::text`).
         text: c.text ?? null,
+        // D-396 / B-270 — the clip's phrase highlights, in the same shape
+        // `editor_set_clip_highlights` takes and returns (`{box, at, dur,
+        // color?, opacity?}`), so an agent can read back what it wrote with
+        // the same call every other clip property comes from. `[]` for none.
+        highlights: c.highlights ?? [],
       })),
     })),
     // D-222 — reported alongside the tracks so `editor_get_timeline` is still

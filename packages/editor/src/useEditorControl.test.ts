@@ -57,3 +57,19 @@ describe('timelineDto (B-203)', () => {
     expect(c.boxHeight).toBeNull();
   });
 });
+
+describe('timelineDto highlights (B-270)', () => {
+  it("reports a clip's highlights as editor_set_clip_highlights stores them", () => {
+    const highlights = [
+      { box: [0.1, 0.2, 0.8, 0.3] as [number, number, number, number], at: 12, dur: 30, color: '#ffcc00', opacity: 0.5 },
+    ];
+    const c = timelineDto(tl([clip('a', 'A', { highlights })])).tracks[0].clips[0];
+    expect(c.highlights).toEqual(highlights);
+  });
+
+  it('reports [] (not omitted) for a clip with none', () => {
+    const c = timelineDto(tl([clip('a', 'A')])).tracks[0].clips[0] as Record<string, unknown>;
+    expect(c).toHaveProperty('highlights');
+    expect(c.highlights).toEqual([]);
+  });
+});
