@@ -49,3 +49,14 @@ D-046 — the render-bridge MVP wired to the Motion tab's "Render" action
 (`chroma_motion_render` in `app/src-tauri/src/chroma/motion.rs`). One render
 at a time, synchronous, no cancel, no progress reporting — see
 `docs/04-roadmap.md` "Motion tab MVP" for what's deferred.
+
+## Render jobs (D-398)
+
+`src/job.rs` is the pure state of one multi-scene render: the manifest snapshot's
+hash, one entry per scene (frame window, pending / done / failed, output path,
+delivered-to-Sources), the scene in flight, and the `JobView` the GUI and
+`motion_get_state` show (`idle | running | error | interrupted`, what is done, what
+is left). It has no threads and renders nothing; the app's worker
+(`app/src-tauri/src/chroma/motion_job.rs`) runs `run_render` per scene and drives the
+transitions. Persistence is an atomic JSON write beside the project. `blake3` hashes the
+snapshot (already in the tree via `apelles-media`).

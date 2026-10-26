@@ -153,6 +153,7 @@ pub mod mask;
 pub mod media_cache;
 pub mod media_understanding;
 pub mod motion;
+pub mod motion_job;
 pub mod motion_presets;
 pub mod ocr;
 pub mod playback;

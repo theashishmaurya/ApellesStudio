@@ -159,6 +159,8 @@ export function MotionTab({
   // resolve-on-manifest-change effect below.
   const [selections, setSelections] = useState<Selection[]>([]);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('layers');
+  // B-262 - the 'Reload from disk' button's armed state when edits are unsaved.
+  const [confirmReload, setConfirmReload] = useState(false);
   // D-332 — the saved-component library. Read here, ABOVE the `loadState`
   // early returns below, because these are hooks: reading them further down
   // beside the handlers that use them put them after those returns and broke
@@ -547,7 +549,43 @@ export function MotionTab({
            minutes, and "Rendering…" alone made a stalled render and a slow
            one look identical; the scene counter is the same
            `scenesDone`/`scenesTotal` pair `motion_get_state` reports. */}
-        <Button disabled={m.rendering || !!m.parseError} onClick={m.render}>
+        {/* B-262 - re-read the sidecar after it was rewritten outside the app.
+           With unsaved in-app edits the first click arms it ("Discard edits
+           and reload?"), the second reloads: the same deliberate-second-action
+           shape the scene delete uses. */}
+        <Button
+          variant="secondary"
+          disabled={m.rendering}
+          title="Re-read the manifest file from disk (picks up a change made outside the app)"
+          onClick={() => {
+            if (m.dirty && !confirmReload) {
+              setConfirmReload(true);
+              return;
+            }
+            setConfirmReload(false);
+            void m.reloadFromDisk(true);
+          }}
+          onBlur={() => setConfirmReload(false)}
+        >
+          {confirmReload ? 'Discard edits and reload?' : 'Reload from disk'}
+        </Button>
+        {/* B-265 - a render the backend lost (the app restarted, or its worker
+           died) or that stopped on a failed scene can be continued: only the
+           scenes not yet written are rendered, from the manifest the render
+           started with. */}
+        {(m.renderStatus.state === 'interrupted' || m.renderStatus.state === 'error') &&
+          m.renderStatus.remainingSceneIds.length > 0 && (
+            <Button
+              variant="secondary"
+              disabled={m.rendering}
+              title={`Render the ${m.renderStatus.remainingSceneIds.length} scene(s) that are left: ${m.renderStatus.remainingSceneIds.join(', ')}`}
+              onClick={() => void m.render({ resume: true })}
+            >
+              {m.renderStatus.state === 'interrupted' ? 'Resume render' : 'Retry from failed scene'}
+              {` (${m.renderStatus.remainingSceneIds.length} left)`}
+            </Button>
+          )}
+        <Button disabled={m.rendering || !!m.parseError} onClick={() => void m.render()}>
           {m.rendering
             ? m.renderStatus.scenesTotal
               ? `Rendering ${Math.min(m.renderStatus.scenesDone + 1, m.renderStatus.scenesTotal)}/${m.renderStatus.scenesTotal}…`
@@ -629,6 +667,8 @@ export function MotionTab({
                       onSelect={onSelect}
                       onCommit={m.commit}
                       editLinks={editLinks}
+                      onRenderScene={(sceneId) => void m.render({ sceneIds: [sceneId] })}
+                      renderingSceneId={m.rendering ? (m.renderStatus.sceneId ?? '*') : null}
                     />
                   )
                 : (

@@ -4,6 +4,8 @@ One or two lines per session. Detail lives in the decision it references.
 
 ## [Unreleased]
 
+- **2026-10-26** — **D-398: the Motion render is a backend job (B-262, B-263, B-264, B-265).** It snapshots the manifest it renders from, persists every step, survives a webview reload, reports `interrupted` after a restart, and resumes (`motion_render(resume=true)`, GUI Resume). `motion_render(scene_ids)` and a per-scene Render button render chosen scenes; `motion_reload_manifest` and Reload from disk pick up a manifest changed outside the app. 189 tools. The stale dev-module symptom is still unexplained (server checked, fine).
+
 - **2026-10-26** — **B-267 investigated, not reproduced headlessly.** A DOM test pins that a 240-clip, 21,992-frame timeline zoomed to the floor mounts every clip at the right geometry; the empty-timeline report needs the live DOM of a restarted app (steps in the entry).
 
 - **2026-10-26** — **D-396 (part 3): the Inspector Highlights section and draggable viewer boxes.** Add at playhead, edit start/length/colour/opacity, remove, Suggest from transcript, and an Edit-boxes toggle that draws the boxes over the picture (through crop and keyframed placement). Same `set_clip_highlights` op as the MCP tool.

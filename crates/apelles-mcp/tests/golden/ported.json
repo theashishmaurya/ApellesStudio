@@ -142,6 +142,7 @@
     "motion_move_keys_by_delta",
     "motion_move_layer_keyframe",
     "motion_move_layers_by_delta",
+    "motion_reload_manifest",
     "motion_render",
     "motion_reorder_layers",
     "motion_save_layer_preset",

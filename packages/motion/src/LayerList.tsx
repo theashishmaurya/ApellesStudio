@@ -115,7 +115,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { CopyIcon, PlusIcon, TrashIcon, VideoCameraIcon } from '@phosphor-icons/react';
+import { CopyIcon, FilmSlateIcon, PlusIcon, TrashIcon, VideoCameraIcon } from '@phosphor-icons/react';
 import type { Manifest, Layer } from '@apelles/motion-engine/src/engine/schema';
 import { layerKeyCount, cameraKeyCount, scene3dCameraKeyCount } from './keyframeVisibility';
 import {
@@ -401,6 +401,8 @@ export function LayerList({
   onSelect,
   onCommit,
   editLinks,
+  onRenderScene,
+  renderingSceneId,
 }: {
   manifest: Manifest;
   selections: Selection[];
@@ -417,6 +419,12 @@ export function LayerList({
    *  package may not import the media pool or the Edit timeline itself —
    *  D-039's layer direction); omitting it simply draws no badges. */
   editLinks?: MotionEditLinks;
+  /** B-263 — render just this scene to video (the same backend job
+   *  `motion_render(scene_ids=[...])` starts). Omitted = no button. */
+  onRenderScene?: (sceneId: string) => void;
+  /** The scene the backend is rendering right now, to mark its row busy and
+   *  stop a second click from queueing a second job. */
+  renderingSceneId?: string | null;
 }) {
   const draggable = Boolean(onCommit);
   const dragRef = useRef<LayerDragState | null>(null);
@@ -542,6 +550,17 @@ export function LayerList({
         {!manifest.scenes[sceneIndex]?.camera && (
           <RowAction label="Add camera" onClick={() => doAddCamera2d(sceneIndex)}>
             <VideoCameraIcon size={11} />
+          </RowAction>
+        )}
+        {onRenderScene && (
+          <RowAction
+            label={renderingSceneId === manifest.scenes[sceneIndex]?.id ? 'Rendering this scene…' : 'Render this scene'}
+            onClick={() => {
+              const id = manifest.scenes[sceneIndex]?.id;
+              if (id && !renderingSceneId) onRenderScene(id);
+            }}
+          >
+            <FilmSlateIcon size={11} />
           </RowAction>
         )}
         <RowAction label="Duplicate scene" onClick={() => doDuplicateScene(sceneIndex)}>

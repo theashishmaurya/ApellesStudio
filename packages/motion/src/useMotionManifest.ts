@@ -72,15 +72,34 @@ import { manifestSchema, type Manifest } from '@apelles/motion-engine/src/engine
 import { sample } from '@apelles/motion-engine/src/engine/sample';
 import { useHistoryStore } from '@apelles/history';
 
-import { saveManifest, renderManifest, type MotionRenderResult } from './manifestIO';
+import {
+  acknowledgeRenderedScene,
+  getRenderJobStatus,
+  onRenderJobStatus,
+  saveManifest,
+  startRenderJob,
+  type MotionRenderResult,
+} from './manifestIO';
 import { useMotionProjectStore } from './motionProjectStore';
 import {
   IDLE_RENDER_STATUS,
+  deliverFinished,
   renderFailedBeforeAnyScene,
-  runSceneRenders,
-  sceneRenderJobs,
+  selectSceneJobs,
+  waitForSettled,
   type MotionRenderStatus,
 } from './renderLoop';
+
+/** How often an awaiting `render()` re-reads the backend job's status. */
+const RENDER_POLL_MS = 1000;
+
+/** What `render` can be asked (D-398). `sceneIds` renders only those scenes
+ *  (B-263); `resume` continues the interrupted or failed job from its own
+ *  manifest snapshot instead of starting a new one (B-265). */
+export interface RenderOptions {
+  sceneIds?: readonly string[];
+  resume?: boolean;
+}
 
 const DEBOUNCE_MS = 300;
 
@@ -102,6 +121,16 @@ export interface SaveOutcome {
  *  scene identity, per `motion.rs`'s own module doc comment). */
 export interface SceneRenderResult extends MotionRenderResult {
   sceneId: string;
+}
+
+/** B-262 — the answer to "re-read the manifest from disk". */
+export interface ReloadOutcome {
+  ok: boolean;
+  error?: string;
+  /** scenes in the document now loaded; `null` when the sidecar holds none. */
+  scenes: number | null;
+  /** false when the project has no saved manifest (the engine's sample shows). */
+  hadSavedManifest: boolean;
 }
 
 export interface RenderOutcome {
@@ -129,15 +158,55 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const [rendering, setRendering] = useState(false);
+  // True while THIS call to `render()` is starting a job or waiting on it.
+  const [renderBusy, setRenderBusy] = useState(false);
   const [renderResult, setRenderResult] = useState<SceneRenderResult[] | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);
-  // B-202 — the render's own progress, as a value anything outside this
-  // component can read: the Render button, and `motion_get_state` for a
-  // caller whose `motion_render` op has already timed out. `rendering` above
-  // stays as it was (a bare boolean the GUI's disabled-state reads); this is
-  // the answer to "which scene, how far, and what went wrong".
+  // B-202/D-398 — the render job's own progress, as a value anything outside
+  // this component can read: the Render button, and `motion_get_state` for a
+  // caller whose `motion_render` op has already timed out. It mirrors the
+  // BACKEND job (`apelles_motion::job::JobView`), which owns the render: it is
+  // fetched when a project opens (so a restart shows `interrupted`, not a
+  // blank `idle`) and updated by every event the worker emits.
   const [renderStatus, setRenderStatus] = useState<MotionRenderStatus>(IDLE_RENDER_STATUS);
+  const rendering = renderBusy || renderStatus.state === 'running';
+  const openProjectPath = useMotionProjectStore((s) => s.openProjectPath);
+  // The latest delivery callback, read at event time: the listener below is
+  // registered once per project and must not close over a stale one.
+  const onRenderedRef = useRef(onRendered);
+  const deliveringRef = useRef(new Set<string>());
+  useEffect(() => {
+    onRenderedRef.current = onRendered;
+  }, [onRendered]);
+
+  useEffect(() => {
+    if (openProjectPath === null) {
+      setRenderStatus(IDLE_RENDER_STATUS);
+      return;
+    }
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+    // Show the status and hand every finished-but-undelivered scene to the app
+    // layer (Sources import + Edit clip refresh), acknowledging each: a scene
+    // that finished while no page was listening is delivered when one returns.
+    const apply = (status: MotionRenderStatus) => {
+      if (cancelled) return;
+      setRenderStatus(status);
+      void deliverFinished(status, deliveringRef.current, {
+        deliver: (o) => onRenderedRef.current?.({ sceneId: o.sceneId, outputPath: o.outputPath, stdoutTail: '' }),
+        acknowledge: acknowledgeRenderedScene,
+      });
+    };
+    void onRenderJobStatus(apply).then((u) => {
+      if (cancelled) u();
+      else unlisten = u;
+    });
+    void getRenderJobStatus().then(apply, () => undefined);
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [openProjectPath]);
 
   const debounceRef = useRef<number | null>(null);
 
@@ -268,86 +337,118 @@ export function useMotionManifest(onRendered?: (r: SceneRenderResult) => void | 
     }
   }, [manifest, parseError, text]);
 
-  const render = useCallback(async (): Promise<RenderOutcome> => {
-    setRenderError(null);
-    setRenderResult(null);
-    if (!manifest || parseError) {
-      const error = 'fix the manifest errors above before rendering';
-      setRenderError(error);
-      setRenderStatus(renderFailedBeforeAnyScene(error));
-      return { ok: false, error };
-    }
-    setRendering(true);
-    try {
-      if (dirty) {
-        const saveOutcome = await save();
-        if (!saveOutcome.ok) {
-          // `save()` itself already set `saveError` — mirrors the pre-D-170
-          // behaviour exactly (a failed pre-render save surfaced only via
-          // the editor's own save-error display, never `renderError`), now
-          // additionally reported on this promise for a caller with no
-          // component state to read (`motion_render`), and — B-202 — on the
-          // pollable status for one whose op has already timed out.
-          const error = saveOutcome.error ?? 'save failed';
-          setRenderStatus(renderFailedBeforeAnyScene(error));
-          return { ok: false, error };
+  /**
+   * B-262 — re-read the manifest sidecar and replace the in-app document with
+   * it. The store's `load` mints a new generation, which the seeding effect
+   * above turns into the editor text (and a fresh parse). Refused while the
+   * in-app text differs from what was last saved, unless `force`: that is the
+   * person's (or an agent's) own unsaved work, and a reload would silently
+   * discard it.
+   */
+  const reloadFromDisk = useCallback(
+    async (force = false): Promise<ReloadOutcome> => {
+      if (dirty && !force) {
+        return {
+          ok: false,
+          error: 'the in-app manifest has unsaved edits; reloading would discard them (pass force to discard)',
+          scenes: null,
+          hadSavedManifest: false,
+        };
+      }
+      await reload();
+      const after = useMotionProjectStore.getState();
+      if (after.status === 'error') {
+        return { ok: false, error: after.error ?? 'reload failed', scenes: null, hadSavedManifest: false };
+      }
+      const saved = after.loaded?.manifest ?? null;
+      const parsed = saved === null ? null : manifestSchema.safeParse(saved);
+      return {
+        ok: true,
+        scenes: parsed?.success ? parsed.data.scenes.length : null,
+        hadSavedManifest: saved !== null,
+      };
+    },
+    [dirty, reload],
+  );
+
+  const render = useCallback(
+    async (opts: RenderOptions = {}): Promise<RenderOutcome> => {
+      const fail = (error: string, setStatus = true): RenderOutcome => {
+        setRenderError(error);
+        if (setStatus) setRenderStatus(renderFailedBeforeAnyScene(error));
+        return { ok: false, error };
+      };
+      setRenderError(null);
+      setRenderResult(null);
+      const resume = opts.resume === true;
+      let plan: ReturnType<typeof selectSceneJobs> = { jobs: [] };
+      if (!resume) {
+        if (!manifest || parseError) return fail('fix the manifest errors above before rendering');
+        plan = selectSceneJobs(manifest, opts.sceneIds);
+        if ('error' in plan) return fail(plan.error);
+      }
+      setRenderBusy(true);
+      try {
+        if (!resume && dirty) {
+          const saveOutcome = await save();
+          if (!saveOutcome.ok) {
+            // `save()` itself already set `saveError`; additionally reported on
+            // this promise for a caller with no component state to read
+            // (`motion_render`), and on the pollable status.
+            const error = saveOutcome.error ?? 'save failed';
+            setRenderStatus(renderFailedBeforeAnyScene(error));
+            return { ok: false, error };
+          }
         }
+        // D-398 — the render is the BACKEND's job. It receives the exact
+        // manifest the frame windows were computed from (B-264), renders the
+        // chosen scenes (B-263) sequentially to their own files (D-180), keeps
+        // going if this page reloads and persists every step so a restart finds
+        // it (B-265). This call starts it and waits for it to settle; if the
+        // page is reloaded meanwhile the job carries on and the reloaded page
+        // picks its status up from the backend.
+        let started: MotionRenderStatus;
+        try {
+          started = await startRenderJob(
+            resume ? null : manifest,
+            resume || 'error' in plan ? [] : plan.jobs,
+            resume,
+          );
+        } catch (e) {
+          return fail(e instanceof Error ? e.message : String(e), false);
+        }
+        setRenderStatus(started);
+        const final = await waitForSettled(
+          getRenderJobStatus,
+          (ms) => new Promise((resolve) => window.setTimeout(resolve, ms)),
+          RENDER_POLL_MS,
+        );
+        setRenderStatus(final);
+        const results: SceneRenderResult[] = final.outputs.map((o) => ({
+          sceneId: o.sceneId,
+          outputPath: o.outputPath,
+          stdoutTail: '',
+        }));
+        // Surface whichever scenes DID finish either way, rather than
+        // discarding them on failure.
+        if (results.length > 0) setRenderResult(results);
+        if (final.state === 'error') return fail(final.error ?? 'render failed', false);
+        if (final.state === 'interrupted') {
+          return fail('the render was interrupted; resume it to render the scenes that are left', false);
+        }
+        return { ok: true, result: results };
+      } finally {
+        setRenderBusy(false);
       }
-      // D-180 — "scene should be a separate composition… exported as
-      // separate video, not on top of it": Render no longer produces one
-      // combined video. Every scene renders SEQUENTIALLY to its own file,
-      // via the SAME `chroma_motion_render` command scoped to that scene's
-      // own absolute frame window, and a scene's failure STOPS the loop.
-      //
-      // B-202/D-359 — the loop itself is `runSceneRenders`, a pure function
-      // in `renderLoop.ts`, so its progress and its failing scene id are a
-      // value (`renderStatus`) rather than component state nothing outside
-      // this hook could read. This is the shell: React state and the real
-      // `manifestIO` calls, nothing else.
-      const outcome = await runSceneRenders(sceneRenderJobs(manifest), {
-        renderScene: async (job) => {
-          const result = await renderManifest(undefined, [job.startFrame, job.endFrame], job.sceneId);
-          return { ...result, sceneId: job.sceneId };
-        },
-        // D-062: rendering used to just write the file and print its path
-        // as plain text — nothing put it anywhere the owner could actually
-        // use it, so "does render create a video I can drag into my own
-        // video?" was a real "no" until this callback. `onRendered` is
-        // owned by the app layer (D-039: a tab package like this one must
-        // not reach into `@apelles/bridge`'s media pool store directly),
-        // which imports it into Sources — called once per scene, so every
-        // scene's own file lands there individually.
-        //
-        // D-260 — it is handed the whole `SceneRenderResult`, not just the
-        // path. The app layer needs the `sceneId` to stamp provenance on the
-        // pool item, and deriving it back from the path would mean a second
-        // copy of `motion.rs`'s `default_output_path` math in TypeScript —
-        // which would then be wrong for any render that named its own output
-        // path. Awaited, so the app layer's reconcile (which re-probes the
-        // file and refreshes linked Edit clips) finishes before scene N+1
-        // starts, rather than racing two manifest writes against each other.
-        onRendered,
-        onStatus: setRenderStatus,
-      });
-      // Surface whichever scenes DID finish either way, rather than
-      // discarding them on failure — a caller re-rendering after fixing
-      // scene 3 of 3 shouldn't lose the already-succeeded 1/2 from the
-      // display.
-      if (outcome.ok || outcome.results.length > 0) setRenderResult(outcome.results);
-      if (!outcome.ok) {
-        setRenderError(outcome.error);
-        return { ok: false, error: outcome.error };
-      }
-      return { ok: true, result: outcome.results };
-    } finally {
-      setRendering(false);
-    }
-  }, [manifest, parseError, dirty, save, onRendered]);
+    },
+    [manifest, parseError, dirty, save],
+  );
 
   return {
     loadState,
     loadError,
     reload,
+    reloadFromDisk,
 
     text,
     setText: setTextLive,

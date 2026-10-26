@@ -27,7 +27,7 @@
 //! strictly bigger security surface than one narrow, single-purpose Tauri
 //! command with the exact same "the caller already knows what path it wants"
 //! contract every other `chroma_*` command already has (`chroma_run_ffmpeg`,
-//! `chroma::motion::chroma_motion_render`, etc.) — matching this crate's own
+//! `chroma::motion::chroma_motion_save_manifest`, etc.) — matching this crate's own
 //! existing pattern rather than introducing a second one for one new call site.
 
 use std::path::Path;

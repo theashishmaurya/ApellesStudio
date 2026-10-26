@@ -372,6 +372,28 @@ pub struct MotionSeekArgs {
     pub at: Option<f64>,
 }
 
+fn default_motion_render_resume() -> bool {
+    false
+}
+
+fn default_motion_reload_manifest_force() -> bool {
+    false
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionRenderArgs {
+    #[serde(default)]
+    pub scene_ids: Option<Vec<String>>,
+    #[serde(default = "default_motion_render_resume")]
+    pub resume: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionReloadManifestArgs {
+    #[serde(default = "default_motion_reload_manifest_force")]
+    pub force: bool,
+}
+
 #[tool_router(router = motion_router, vis = "pub")]
 impl ApellesMcp {
     #[tool(
@@ -392,9 +414,11 @@ impl ApellesMcp {
         output spec, all four of them written by
         `motion_set_project_settings`.
       * `render` — where a `motion_render` is: `state` (`idle`/`running`/
-        `error`), `scenesTotal` / `scenesDone` / `doneSceneIds` (real
-        progress), `sceneId` (the one rendering right now), and
-        `failedSceneId` + `error` when one failed. **This is how you find out
+        `error`/`interrupted`), `scenesTotal` / `scenesDone` / `doneSceneIds`
+        (real progress), `remainingSceneIds` (what is left), `sceneId` (the one
+        rendering right now), and `failedSceneId` + `error` when one failed.
+        `interrupted` is a render the app lost (a restart); `motion_render` with
+        `resume=true` continues it. **This is how you find out
         a render failed.** A multi-scene render always outlives the 20s
         control-bridge timeout, so `motion_render`'s own reply is gone before
         a mid-loop failure happens; poll here instead of counting files on
@@ -1950,19 +1974,65 @@ impl ApellesMcp {
     design, because a render is expensive and a surprise one mid-edit is
     worse than an out-of-date clip you chose not to refresh yet.
 
+    **Targeted and resumable renders (D-398).** `scene_ids` renders ONLY those
+    scenes: each keeps its place in the whole manifest, so its frames are exactly
+    what a full render writes for it, and an unknown id is an error naming it.
+    Use it after changing one scene instead of re-rendering everything.
+    `resume=true` continues the render that was INTERRUPTED (the app restarted or
+    its worker died) or stopped on a failed scene, rendering only the scenes not
+    yet written, from the manifest that render STARTED with; it takes no
+    `scene_ids`. The render runs in the app's backend, not the page: a window
+    reload does not stop it, and it renders from a snapshot of the manifest taken
+    at the start, so editing or rewriting the manifest while it runs cannot
+    misalign later scenes.
+
     **A slow render can look like a failure and is not.** The control bridge
     gives up after 20 seconds while the render keeps running to completion on
     disk. If this returns a timeout error, treat it as INCONCLUSIVE rather
     than failed, and poll `motion_get_state`'s `render` block instead of
     re-rendering (which would just start a second render). That block is the
     definitive answer: `running` with a scene counter means wait, `idle` with
-    `scenesDone == scenesTotal` means it finished, and `error` names the scene
-    that failed and why (B-202). Counting files in Sources cannot tell those
-    three apart."#
+    `scenesDone == scenesTotal` means it finished, `error` names the scene
+    that failed and why (B-202), and `interrupted` means the render was cut off
+    with scenes left (`remainingSceneIds`): call this tool again with
+    `resume=true`. Counting files in Sources cannot tell those apart."#
     )]
-    pub async fn motion_render(&self) -> Result<CallToolResult, ErrorData> {
-        let args = WireArgs::new();
+    pub async fn motion_render(
+        &self,
+        Parameters(p): Parameters<MotionRenderArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .put("scene_ids", p.scene_ids)
+            .put_if("resume", p.resume);
         let env = self.op("motion_render", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_reload_manifest",
+        description = r#"Re-read the Motion manifest from its sidecar file on disk, replacing the
+    app's in-memory document (B-262).
+
+    Use this after changing `<project>.chroma/motion/manifest.json` OUTSIDE the
+    app (hand-authored, or written by a script): nothing else makes the app
+    notice, and without it `motion_get_manifest` and `motion_render` keep
+    working from the old in-app copy.
+
+    The file replaces the in-app document entirely. If the in-app document has
+    UNSAVED edits this refuses (they would be lost) unless `force=true`. Earlier
+    undo history refers to the previous document; do not undo across a reload.
+
+    Returns `reloaded`, the number of `scenes` in the document now loaded
+    (`null` if the file does not validate -- `motion_get_state`'s `parseError`
+    says why) and `hadSavedManifest` (false when the project has none yet and the
+    engine's sample is showing)."#
+    )]
+    pub async fn motion_reload_manifest(
+        &self,
+        Parameters(p): Parameters<MotionReloadManifestArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new().put_if("force", p.force);
+        let env = self.op("motion_reload_manifest", args).await?;
         Ok(render::json_text(&env))
     }
 }

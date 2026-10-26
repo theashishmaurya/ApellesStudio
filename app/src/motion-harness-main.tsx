@@ -97,10 +97,22 @@ function installInvokeStub(): void {
       savedManifest = (args as { manifest: unknown }).manifest;
       return '/harness/fake-project.chroma/motion/manifest.json';
     },
-    chroma_motion_render: () => ({
-      outputPath: '/harness/fake-project.chroma/motion/render.mp4',
-      stdoutTail: '(harness stub — no real render ran)',
+    // D-398 - the render job is the backend's; the harness has none, so it
+    // reports a job that never ran and accepts the acknowledgements.
+    chroma_motion_job_status: () => ({
+      state: 'idle',
+      scenesTotal: null,
+      scenesDone: 0,
+      sceneId: null,
+      failedSceneId: null,
+      error: null,
+      doneSceneIds: [],
+      remainingSceneIds: [],
+      unreconciled: [],
+      outputs: [],
+      manifestHash: null,
     }),
+    chroma_motion_job_ack: () => undefined,
     chroma_motion_load_layer_presets: () => savedLayerPresets,
     chroma_motion_save_layer_presets: (args) => {
       savedLayerPresets = (args as { presets: unknown[] }).presets;

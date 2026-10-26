@@ -15,8 +15,7 @@
 //! What it does NOT do: build a filtergraph, validate the argv, know an
 //!   output path exists, or report progress (`run_ffmpeg` blocks the
 //!   calling thread for the whole run — the Tauri command wraps it in
-//!   `spawn_blocking`, the exact same shape `chroma::motion::
-//!   chroma_motion_render` already uses).
+//!   `spawn_blocking`, the same shape `chroma::motion_job`'s worker uses).
 //!
 //! **Two execution shapes** (D-330 added the second): [`run_ffmpeg`] is
 //! one-shot — spawn, wait, hand back the output — which is right whenever the
@@ -296,7 +295,7 @@ fn tail(s: &str, n: usize) -> String {
 /// Run an arbitrary ffmpeg command line — see this module's own doc
 /// comment for why this command has no idea what `args` means. Blocks on a
 /// background thread until ffmpeg exits (no progress reporting this pass,
-/// same floor `chroma_motion_render` already holds for its own render).
+/// same floor the Motion render worker holds).
 #[tauri::command]
 pub async fn chroma_run_ffmpeg(args: Vec<String>) -> Result<FfmpegRunOutcome, String> {
     let req = FfmpegRunRequest::new(args);

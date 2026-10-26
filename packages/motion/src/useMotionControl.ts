@@ -63,10 +63,9 @@
  * lifetime (only `.current` mutates), so they are destructured once.
  *
  * **`motion_render`'s blocking-vs-polling decision — no new machinery.**
- * `chroma_motion_render` (`app/src-tauri/src/chroma/motion.rs`) is already an
- * `async fn` that `spawn_blocking`s the real render and `.await`s it, so
- * `motion_render` just awaits the whole per-scene loop, however long that
- * takes. **One real, pre-existing constraint this does NOT paper over:**
+ * D-398: the render is a backend JOB (`app/src-tauri/src/chroma/motion_job.rs`)
+ * that survives a page reload; `motion_render` starts it and then awaits it
+ * settling, however long that takes. **One real, pre-existing constraint this does NOT paper over:**
  * `control.rs`'s `dispatch()` — shared by EVERY op, Motion or Colorist —
  * hardcodes `BRIDGE_TIMEOUT = 20s`. A render past that makes the HTTP caller
  * see a 504 ("frontend did not respond within 20s") while the frontend's own

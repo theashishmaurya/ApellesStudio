@@ -25,6 +25,8 @@
 //!
 //! **Status:** D-046 — the render-bridge MVP. See `crates/apelles-motion/README.md`.
 
+pub mod job;
+
 use std::path::PathBuf;
 use std::process::Command;
 

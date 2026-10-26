@@ -3,12 +3,16 @@
  *
  * Thin wrappers around the `chroma_motion_*` Tauri commands
  * (`app/src-tauri/src/chroma/motion.rs`): get/save the current project's
- * manifest sidecar, and run a real render via the `apelles-motion` crate.
+ * manifest sidecar, and start, watch and resume the backend render job
+ * (`motion_job.rs`, D-398).
  * Pure I/O — no manifest validation here. Validation is the engine's own
  * `zod` schema (`@apelles/motion-engine`'s `manifestSchema`), applied by
  * `useMotionManifest` before a save/render is ever attempted.
  */
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+
+import type { MotionRenderStatus, SceneRenderJob } from './renderLoop';
 
 /** The exact message `motion.rs::current_project_dir` rejects with. */
 const NO_PROJECT_MESSAGE = 'no project open — open one in the Colorist tab';
@@ -52,31 +56,56 @@ export async function saveManifest(manifest: unknown): Promise<string> {
   }
 }
 
+/** What a delivered scene is, as the app layer receives it (D-062/D-260). */
 export interface MotionRenderResult {
   outputPath: string;
   stdoutTail: string;
 }
 
-/** Render the current project's *saved* manifest — the caller must save
- *  first if dirty (`useMotionManifest.ts`'s `render()` does).
+/** Start a render job (D-398), or with `resume` continue the interrupted or
+ *  failed one from its own manifest snapshot.
  *
- *  D-180 — `frameRange` (an inclusive `[start, end]` pair of ABSOLUTE
- *  composition frames) and `sceneId` let a caller render just ONE scene's
- *  own window instead of the whole manifest; `sceneId` alone (no explicit
- *  `outputPath`) also picks `chroma_motion_render`'s per-scene default
- *  output naming (`<project>/motion/renders/<sceneId>.mp4`) on the Rust
- *  side — this function never constructs a path itself, matching
- *  `motion.rs`'s own module doc comment ("only this side actually knows
- *  where the project lives"). Omitting both renders the whole manifest to
- *  the single pre-D-180 default path, unchanged. */
-export async function renderManifest(
-  outputPath?: string,
-  frameRange?: [number, number],
-  sceneId?: string,
-): Promise<MotionRenderResult> {
+ *  `manifest` is the EXACT document `windows` were computed from; the backend
+ *  snapshots it and renders from the snapshot, so a manifest file changed
+ *  mid-render cannot misalign the frame windows (B-264). `windows` is the set of
+ *  scenes to render (B-263), each the scene's absolute inclusive frame range in
+ *  the whole manifest. Resolves with the job's first status as soon as the
+ *  backend worker has started; the render itself runs in the backend and keeps
+ *  running through a webview reload (B-265). */
+export async function startRenderJob(
+  manifest: unknown,
+  windows: SceneRenderJob[],
+  resume: boolean,
+): Promise<MotionRenderStatus> {
   try {
-    return await invoke<MotionRenderResult>('chroma_motion_render', { outputPath, frameRange, sceneId });
+    return await invoke<MotionRenderStatus>('chroma_motion_job_start', { manifest, windows, resume });
   } catch (e) {
     rethrow(e);
   }
+}
+
+/** The render job's status for the open project, live while a worker is running
+ *  it and read from the persisted job otherwise (so a restarted app reports
+ *  `interrupted`, not a blank `idle`). */
+export async function getRenderJobStatus(): Promise<MotionRenderStatus> {
+  try {
+    return await invoke<MotionRenderStatus>('chroma_motion_job_status');
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
+/** Tell the backend a finished scene has been taken into Sources. */
+export async function acknowledgeRenderedScene(sceneId: string): Promise<void> {
+  try {
+    await invoke<void>('chroma_motion_job_ack', { sceneId });
+  } catch (e) {
+    rethrow(e);
+  }
+}
+
+/** Every job transition, as it happens (the `chroma://motion-render` event the
+ *  backend worker emits). Resolves to the unsubscribe function. */
+export async function onRenderJobStatus(handler: (status: MotionRenderStatus) => void): Promise<() => void> {
+  return listen<MotionRenderStatus>('chroma://motion-render', (event) => handler(event.payload));
 }

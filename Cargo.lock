@@ -320,8 +320,10 @@ name = "apelles-motion"
 version = "0.0.0"
 dependencies = [
  "apelles-types",
+ "blake3",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

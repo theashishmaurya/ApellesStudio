@@ -169,7 +169,7 @@ import { layerLabel, type Selection } from './LayerList';
 import { sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/build';
 import type { Cam2dKey, Cam3dKey, Manifest, ThemeName, TransformKey } from '@apelles/motion-engine/src/engine/schema';
 import { DEFAULT_THEME_NAME, THEMES, THEME_NAMES } from '@apelles/motion-engine/src/design';
-import type { LoadState, RenderOutcome, SaveOutcome } from './useMotionManifest';
+import type { LoadState, ReloadOutcome, RenderOptions, RenderOutcome, SaveOutcome } from './useMotionManifest';
 import type { MotionRenderStatus } from './renderLoop';
 
 /**
@@ -186,7 +186,10 @@ export interface MotionOpsApi {
   saveError: string | null;
   commit: (next: Manifest, label: string) => void;
   save: () => Promise<SaveOutcome>;
-  render: () => Promise<RenderOutcome>;
+  render: (opts?: RenderOptions) => Promise<RenderOutcome>;
+  /** B-262 — re-read the manifest sidecar from disk, replacing the in-app
+   *  document. Refuses while there are unsaved in-app edits unless `force`. */
+  reloadFromDisk: (force?: boolean) => Promise<ReloadOutcome>;
   /** B-202 — where the render is: `idle`/`running`/`error`, how many scenes
    *  are done, and which one failed. The one field on this interface that
    *  exists for a caller who is NOT awaiting `render()` — a multi-scene render
@@ -2417,12 +2420,47 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       return { deleted: presetId, remaining: next.length };
     },
 
-    motion_render: async () => {
+    /**
+     * B-262 — re-read the manifest sidecar from disk. The sidecar is the
+     * documented, hand-authorable form of a Motion document, and an agent (or a
+     * person) that rewrites it outside the app used to have no way to make the
+     * app see it short of switching project away and back. Refuses while the
+     * in-app document has unsaved edits (they would be lost) unless `force`.
+     */
+    motion_reload_manifest: async (a) => {
       const cur = ctx.api();
-      const guard = requireManifest(cur, 'render');
-      if (isErr(guard)) return guard;
+      if (cur.loadState === 'no-project') return { error: 'no project open — open one in the Colorist tab' };
+      const outcome = await cur.reloadFromDisk(a?.force === true);
+      if (!outcome.ok) return { error: outcome.error ?? 'reload failed' };
+      return { reloaded: true, scenes: outcome.scenes, hadSavedManifest: outcome.hadSavedManifest };
+    },
 
-      const outcome = await cur.render();
+    /**
+     * Render scenes to video, in the BACKEND (D-398). `scene_ids` renders only
+     * those scenes (B-263); `resume` continues the interrupted or failed render
+     * from its own manifest snapshot instead of starting a new one (B-265).
+     * Awaits the whole job, so a long render outlives the bridge's 20s timeout
+     * as before: poll `motion_get_state`'s `render` block.
+     */
+    motion_render: async (a) => {
+      const cur = ctx.api();
+      const resume = a?.resume === true;
+      if (!resume) {
+        const guard = requireManifest(cur, 'render');
+        if (isErr(guard)) return guard;
+      } else if (cur.loadState === 'no-project') {
+        return { error: 'no project open — open one in the Colorist tab' };
+      }
+      let sceneIds: string[] | undefined;
+      if (a?.scene_ids !== undefined && a.scene_ids !== null) {
+        if (resume) return { error: 'resume continues the interrupted render as it was planned; it cannot also take scene_ids' };
+        if (!Array.isArray(a.scene_ids) || !a.scene_ids.every((id) => typeof id === 'string')) {
+          return { error: 'scene_ids must be an array of scene id strings' };
+        }
+        sceneIds = a.scene_ids as string[];
+      }
+
+      const outcome = await cur.render({ sceneIds, resume });
       if (!outcome.ok || !outcome.result) return { error: outcome.error ?? 'render failed' };
       return {
         results: outcome.result.map((r) => ({

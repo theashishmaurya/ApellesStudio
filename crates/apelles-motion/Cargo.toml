@@ -11,3 +11,8 @@ description = "Apelles L2 — the manifest -> Remotion render bridge (D-046): th
 serde = { workspace = true }
 serde_json = { workspace = true }
 apelles-types = { path = "../apelles-types" }
+# D-398 - the render job's manifest snapshot hash. Already in the tree (apelles-media).
+blake3 = "1.8.7"
+
+[dev-dependencies]
+tempfile = "3.27.0"

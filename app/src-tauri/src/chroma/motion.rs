@@ -9,24 +9,19 @@
 //! What it does: `chroma_motion_get_manifest` / `chroma_motion_save_manifest`
 //!   read/write that sidecar for the currently open project, resolved via
 //!   `state::current_project()` — the same source `edit.rs`'s
-//!   `current_project_dir()` reads. `chroma_motion_render` resolves
-//!   `packages/motion-engine` relative to this crate's own source location
-//!   and calls `apelles_motion::run_render` on a blocking thread, returning
-//!   once the render finishes (no progress reporting this pass).
-//!   **D-260** — `chroma_motion_render` additionally makes the rest of the app
-//!   see the new file: it renders to a staging sibling and `rename`s it onto
-//!   the destination (atomic replace — nothing ever reads half a video, see
-//!   [`staging_path`]), then drops any live decode pipe still holding the old
-//!   inode open. That plus the pool reconcile the frontend does next
-//!   (`chroma_media_refresh`) is what makes "re-render a scene and the clip
-//!   already on the Edit timeline updates" true without a live embedded
-//!   renderer. It still does NOT know about the media pool or the timeline —
-//!   the provenance stamp and the clip refresh are the app layer's
-//!   (`app/src/Root.tsx`), same D-062 layering.
-//!   **B-202** — it also LOGS each render's start and, on failure, the scene id
-//!   and the real error. The frontend drives one call per scene and a
-//!   multi-scene render always outlives the 20s bridge timeout, so without this
-//!   a mid-loop failure left no trace anywhere on this side of the app.
+//!   `current_project_dir()` reads. [`render_scene_file`] renders one scene of a
+//!   manifest snapshot through the `apelles-motion` crate (→ `npx remotion
+//!   render` in `packages/motion-engine`, resolved relative to this crate's own
+//!   source location) and replaces the scene's file atomically: it renders to a
+//!   staging sibling and `rename`s it onto the destination (nothing ever reads
+//!   half a video, see [`staging_path`]), then drops any live decode pipe still
+//!   holding the old inode open (D-260). That plus the pool reconcile the
+//!   frontend does next (`chroma_media_refresh`) is what makes "re-render a
+//!   scene and the clip already on the Edit timeline updates" true.
+//!   **D-398** — the multi-scene loop that calls it is no longer a webview loop
+//!   but the backend job in `motion_job.rs`, which survives a webview reload.
+//!   **B-202** — each render's start and, on failure, the scene id and the real
+//!   error are LOGGED, so a mid-loop failure leaves a trace on this side.
 //! What it does NOT do: no manifest schema validation — the frontend
 //!   validates against the `zod` schema in
 //!   `packages/motion-engine/src/engine/schema.ts` before ever calling
@@ -165,7 +160,7 @@ fn staging_path(output: &Path) -> PathBuf {
 /// place project-relative render paths get computed — kept here (not the
 /// frontend) since only this side actually knows where the project lives
 /// (`current_project_dir`/`state::current_project`).
-fn default_output_path(project_dir: &Path, scene_id: Option<&str>) -> PathBuf {
+pub(super) fn default_output_path(project_dir: &Path, scene_id: Option<&str>) -> PathBuf {
     match scene_id {
         Some(id) => project_dir
             .join("motion")
@@ -175,72 +170,46 @@ fn default_output_path(project_dir: &Path, scene_id: Option<&str>) -> PathBuf {
     }
 }
 
-/// Render the current project's saved manifest via `npx remotion render`
-/// (the `apelles-motion` crate), to `output_path` or, if `None`,
-/// [`default_output_path`]. The manifest must already be saved
-/// (`chroma_motion_save_manifest`) before calling this. Blocks on a
-/// background thread until the render finishes — no progress reporting, one
-/// render at a time (D-046).
+/// Render ONE scene of `manifest` (a snapshot file) to `out`: write beside the
+/// destination, `rename` onto it, drop live decode pipes on it. Blocking; the
+/// job worker (`motion_job`) calls it once per scene on its own thread.
 ///
-/// D-180 — `frame_range`, an inclusive `(start, end)` ABSOLUTE composition
-/// frame range, renders only that sub-range (`RenderRequest::with_frame_range`
-/// → Remotion's own `--frames=start-end`) instead of the whole manifest.
-/// `scene_id`, when given (and `output_path` is `None`), picks
-/// [`default_output_path`]'s per-scene naming. This command stays
-/// manifest-shape agnostic exactly as its own module doc comment already
-/// promises — it never computes a scene's own frame range itself; the
-/// frontend (`packages/motion/src/useMotionManifest.ts`'s `render()`, which
-/// already owns `sceneStartFrame`/`sceneDurationFrames`) works it out and
-/// passes the two numbers straight through. Both `None` renders every frame
-/// to the single whole-manifest default path, unchanged from this command's
-/// pre-D-180 behavior.
-#[tauri::command]
-pub async fn chroma_motion_render(
-    output_path: Option<String>,
-    frame_range: Option<(u32, u32)>,
-    scene_id: Option<String>,
+/// D-398 — this is what `chroma_motion_render` did around the render, lifted out
+/// when the render loop moved from the webview into a backend job. The manifest
+/// is the job's own SNAPSHOT, never `manifest_path`: the frame window the
+/// caller computed and the content Remotion reads are then one document
+/// (B-264). See [`staging_path`] for the atomic replace and the end of this
+/// function for the decode-pipe invalidation (D-260).
+pub(super) fn render_scene_file(
+    manifest_snapshot: &Path,
+    out: &Path,
+    frame_range: (u32, u32),
+    scene_id: &str,
 ) -> Result<MotionRenderResult, String> {
-    let dir = current_project_dir()?;
-    let manifest = manifest_path(&dir);
-    if !manifest.is_file() {
-        return Err("no motion manifest saved for this project yet".to_string());
-    }
-    let out = output_path
-        .map(PathBuf::from)
-        .unwrap_or_else(|| default_output_path(&dir, scene_id.as_deref()));
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
-    // D-260 — render beside the destination, then rename onto it. See
-    // `staging_path`'s own doc for why an in-place overwrite is not safe here
-    // and a rename is.
-    let staging = staging_path(&out);
-    let mut req = RenderRequest::new(engine_dir(), manifest, staging.clone());
-    if let Some((start, end)) = frame_range {
-        req = req.with_frame_range(start, end);
-    }
+    let staging = staging_path(out);
+    let req = RenderRequest::new(
+        engine_dir(),
+        manifest_snapshot.to_path_buf(),
+        staging.clone(),
+    )
+    .with_frame_range(frame_range.0, frame_range.1);
 
-    // B-202 — the log trail. A multi-scene render is driven from the frontend
-    // one scene at a time and always outlives `control.rs`'s 20s bridge
-    // timeout, so when a scene fails the op's reply is long gone and the
-    // failure used to exist NOWHERE: the loop simply stopped, the caller found
-    // N of M files on disk, and the app log was empty. These two lines are the
-    // floor under that — whatever any caller does or does not poll, the app
-    // log now names the scene that failed and why. `motion_get_state`'s
-    // `render` block is the other half (the one a caller can read back).
-    let scene = scene_id.as_deref().unwrap_or("<whole manifest>");
+    // B-202 — the log trail: whatever any caller polls, the app log names the
+    // scene that failed and why.
     log::info!(
-        "[chroma::motion] render start — scene {scene}, frames {}, → {}",
-        frame_range.map_or_else(|| "all".to_string(), |(a, b)| format!("{a}-{b}")),
+        "[chroma::motion] render start — scene {scene_id}, frames {}-{}, → {}",
+        frame_range.0,
+        frame_range.1,
         out.display()
     );
-    let outcome = tauri::async_runtime::spawn_blocking(move || apelles_motion::run_render(&req))
-        .await
-        .map_err(|e| format!("render task panicked: {e}"))
-        .and_then(|r| r.map_err(|e| e.to_string()))
-        .inspect_err(|e| log::error!("[chroma::motion] render FAILED — scene {scene}: {e}"))?;
+    let outcome = apelles_motion::run_render(&req)
+        .map_err(|e| e.to_string())
+        .inspect_err(|e| log::error!("[chroma::motion] render FAILED — scene {scene_id}: {e}"))?;
 
-    std::fs::rename(&staging, &out).map_err(|e| {
+    std::fs::rename(&staging, out).map_err(|e| {
         // Leave the staged file where it is: it is a complete, correct render
         // and the previous output is still intact, so the recoverable state is
         // the one worth reporting.
@@ -249,7 +218,7 @@ pub async fn chroma_motion_render(
             staging.display(),
             out.display()
         );
-        log::error!("[chroma::motion] render FAILED — scene {scene}: {message}");
+        log::error!("[chroma::motion] render FAILED — scene {scene_id}: {message}");
         message
     })?;
 
@@ -260,7 +229,7 @@ pub async fn chroma_motion_render(
     // filmstrip chunks, the waveform peaks — is `blake3(path ‖ mtime ‖ len)`-
     // keyed (D-128) and re-reads by itself. See
     // `apelles_media::decode_pipe::drop_pipes_for_path`.
-    let dropped = apelles_media::decode_pipe::drop_pipes_for_path(&out);
+    let dropped = apelles_media::decode_pipe::drop_pipes_for_path(out);
     if dropped > 0 {
         log::info!(
             "[chroma::motion] re-render of {} — dropped {dropped} live decode pipe(s) on it",

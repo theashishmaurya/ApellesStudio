@@ -6,6 +6,22 @@ Status: `open` · `decided` · `revisit`
 
 ---
 
+## D-398 — The Motion render is a backend job: it snapshots its manifest, persists, survives a webview reload, renders chosen scenes and resumes
+
+**decided (2026-10-26, owner: "we need a way to know these and recover and not happen at all")** · fixes B-262, B-263, B-264, B-265 (the dev stale-module half stays open)
+
+- **Context.** The per-scene render loop was JavaScript in the page (D-359). A reload killed it silently and the app then said `idle`; its frame windows came from the in-memory manifest while each scene's content was read fresh from the file on disk; it could only render everything (55 scenes, ~40 minutes); and a manifest rewritten outside the app was not seen.
+- **Options.** (a) Keep the page loop and persist its progress so a reload can resume: the reload still kills the work, and "resume" becomes the normal path. (b) A watchdog in the page: same problem one level up. (c) Move the loop into the backend, which owns the process and outlives any page. Chosen: **(c)**.
+- **Shape.** `apelles_motion::job` (pure, no threads): `JobState` = manifest hash + one entry per scene (frame window, pending/done/failed, output path, whether Sources has taken it) + the scene in flight; `view(worker_alive)` gives the phase `idle | running | error | interrupted`. `app/src-tauri/src/chroma/motion_job.rs`: `chroma_motion_job_start` (writes the snapshot `motion/render-job/manifest.json`, persists `job.json`, spawns the worker), `chroma_motion_job_status` (live if a worker is registered, else the persisted file), `chroma_motion_job_ack`. The worker renders each pending scene from the snapshot through `motion::render_scene_file` (the D-260 staging + atomic rename + decode-pipe invalidation, unchanged), persists and emits `chroma://motion-render` on every transition, and stops at the first failure (D-180). A guard clears the in-process registration on any exit including a panic, so a dead worker reads as `interrupted`, never `running`.
+- **B-264, the snapshot.** The page hands over the exact manifest its windows were computed from; that document, not the file, is what Remotion reads. The backend stays shape agnostic (the page owns `sceneStartFrame`/`sceneDurationFrames`).
+- **B-263, targeting.** The page sends the windows of only the chosen scenes (`selectSceneJobs`, which validates ids and keeps manifest order). MCP `motion_render(scene_ids)`, a per-scene button in the layer panel.
+- **B-265, detect and recover.** State persists at every step. After a restart `motion_get_state.render` is `interrupted` with `remainingSceneIds`; `resume` reloads the stored job and its own snapshot, puts failed scenes (and finished scenes whose file is gone) back to pending, and continues. GUI: **Resume render** / **Retry from failed scene**. A scene that finished while no page was listening is delivered to Sources (and the linked Edit clips refreshed, D-260) when a page returns, and acknowledged only after delivery succeeded.
+- **B-262, reload.** `motion_reload_manifest(force?)` and a **Reload from disk** button; refuses over unsaved edits unless forced. No file watcher: a silent reload mid-edit is the worse failure.
+- **Deleted, not kept.** `chroma_motion_render`, `renderManifest` and the page-side `runSceneRenders` loop are gone with their tests; the window-per-call plumbing they carried is the job's now.
+- **No wall clock, no randomness** in the job (CLAUDE.md render-path determinism): it is identified by its manifest hash and scene list. One new use of an existing dependency (`blake3`, already in the tree via `apelles-media`) for the snapshot hash.
+- **Tool counts.** 189 tools (+1: `motion_reload_manifest`), Motion 44, release 177, beta 133.
+- **Not verified.** The worker's end-to-end run needs Node + Remotion, which a test cannot depend on; it is verified by the state-machine and persistence tests plus a type-checked page, not by a live render in this pass (the owner's app was in use).
+
 ## D-397 — `editor_suggest_clip_highlights`: on-device OCR through macOS Vision (`objc2-vision`), matched against the narration
 
 **decided (2026-10-26, scope for D-396: "OCR the clip's still (macOS Vision via a proper Rust binding such as objc2-vision ... NOT a shell-out to Homebrew tesseract")**

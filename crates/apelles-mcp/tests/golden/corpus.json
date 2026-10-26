@@ -6752,7 +6752,7 @@
     },
     {
       "name": "motion_get_state",
-      "description": "Orientation for the Motion tab \u2014 call this FIRST. The Motion analogue of\n    `editor_get_state`, and the read half of `motion_select`/\n    `motion_set_selection`.\n\n    Returns:\n      * `loadState` / `dirty` / `parseError` / `saveError` \u2014 is this tab usable\n        at all. A Motion manifest lives inside a project, so `\"no-project\"`\n        means open one in the Colorist tab first. This tool ANSWERS in that\n        case rather than erroring, which is how you find it out.\n      * `selection` \u2014 what is selected right now, as `[{sceneIndex, target}]`,\n        the exact shape `motion_set_selection` takes back.\n      * `playheadFrame` / `playerMounted` \u2014 where the preview is parked.\n      * `fps`, `totalFrames`, `width`, `height`, `title` \u2014 the document's own\n        output spec, all four of them written by\n        `motion_set_project_settings`.\n      * `render` \u2014 where a `motion_render` is: `state` (`idle`/`running`/\n        `error`), `scenesTotal` / `scenesDone` / `doneSceneIds` (real\n        progress), `sceneId` (the one rendering right now), and\n        `failedSceneId` + `error` when one failed. **This is how you find out\n        a render failed.** A multi-scene render always outlives the 20s\n        control-bridge timeout, so `motion_render`'s own reply is gone before\n        a mid-loop failure happens; poll here instead of counting files on\n        disk, which cannot tell \"still rendering\" from \"stopped on a failure\".\n        A failed render stops at the failing scene, so `doneSceneIds` is\n        exactly what is on disk and `failedSceneId` is what to fix.\n      * `scenes` \u2014 one row per scene: `index`, `id`, `dur` (SECONDS), its\n        absolute `startFrame` in the combined timeline, `layerCount`,\n        `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.\n\n    **Times in this tab are SECONDS, per scene, not absolute frames.** A\n    keyframe's `at` is seconds from its own scene's start; `startFrame` here is\n    what converts between the two (`frame = startFrame + at * fps`), and\n    `motion_seek` accepts either form so you rarely have to do it yourself.",
+      "description": "Orientation for the Motion tab \u2014 call this FIRST. The Motion analogue of\n    `editor_get_state`, and the read half of `motion_select`/\n    `motion_set_selection`.\n\n    Returns:\n      * `loadState` / `dirty` / `parseError` / `saveError` \u2014 is this tab usable\n        at all. A Motion manifest lives inside a project, so `\"no-project\"`\n        means open one in the Colorist tab first. This tool ANSWERS in that\n        case rather than erroring, which is how you find it out.\n      * `selection` \u2014 what is selected right now, as `[{sceneIndex, target}]`,\n        the exact shape `motion_set_selection` takes back.\n      * `playheadFrame` / `playerMounted` \u2014 where the preview is parked.\n      * `fps`, `totalFrames`, `width`, `height`, `title` \u2014 the document's own\n        output spec, all four of them written by\n        `motion_set_project_settings`.\n      * `render` \u2014 where a `motion_render` is: `state` (`idle`/`running`/\n        `error`/`interrupted`), `scenesTotal` / `scenesDone` / `doneSceneIds`\n        (real progress), `remainingSceneIds` (what is left), `sceneId` (the one\n        rendering right now), and `failedSceneId` + `error` when one failed.\n        `interrupted` is a render the app lost (a restart); `motion_render` with\n        `resume=true` continues it. **This is how you find out\n        a render failed.** A multi-scene render always outlives the 20s\n        control-bridge timeout, so `motion_render`'s own reply is gone before\n        a mid-loop failure happens; poll here instead of counting files on\n        disk, which cannot tell \"still rendering\" from \"stopped on a failure\".\n        A failed render stops at the failing scene, so `doneSceneIds` is\n        exactly what is on disk and `failedSceneId` is what to fix.\n      * `scenes` \u2014 one row per scene: `index`, `id`, `dur` (SECONDS), its\n        absolute `startFrame` in the combined timeline, `layerCount`,\n        `scene3dChildCount`, `camera2dKeys`, `camera3dKeys`.\n\n    **Times in this tab are SECONDS, per scene, not absolute frames.** A\n    keyframe's `at` is seconds from its own scene's start; `startFrame` here is\n    what converts between the two (`frame = startFrame + at * fps`), and\n    `motion_seek` accepts either form so you rarely have to do it yourself.",
       "inputSchema": {
         "properties": {},
         "type": "object",
@@ -7262,10 +7262,46 @@
       }
     },
     {
-      "name": "motion_render",
-      "description": "Render the Motion manifest to REAL video files, via Remotion \u2014 the one\n    Motion tool that produces something outside the app. Saves first if dirty.\n\n    **One video file PER SCENE**, never one combined video: a manifest with\n    three scenes produces three MP4s, and the response's `results` array\n    carries each one's `sceneId` and `outputPath`. That is deliberate \u2014 a\n    scene is the unit of \"one shot\" here, and separate files are what an edit\n    can actually cut between.\n\n    **How a rendered scene reaches the Edit tab \u2014 NOT what you might assume.**\n    Every rendered file is imported into the Edit tab's Sources media pool\n    AUTOMATICALLY, at the pool root, as each scene finishes. You do NOT need\n    to call `editor_import_media` on these paths; it has already happened.\n    What is NOT automatic is PLACEMENT: nothing is put on the Edit timeline,\n    deliberately, because the app cannot know which track or position you\n    want. So the real chain is:\n\n        motion_render  ->  (files auto-appear in Sources)\n                       ->  editor_add_clip / editor_edit_in to place one\n\n    **Re-rendering a scene REFRESHES the Edit clips already placed from it\n    (D-260).** This replaced the old \"there is no live link\" rule. A scene\n    always renders to the same per-scene file, so a re-render replaces that\n    file atomically and every Edit clip reading it picks the new content up by\n    itself \u2014 in the preview and in the export \u2014 with its length and frame rate\n    re-read from the new render. You do NOT re-import, and you do NOT call\n    `editor_swap_clip_media`. Call `motion_get_edit_links` to see what a\n    re-render will refresh (or did). The one case where it does NOT hold is a\n    project copied on the filesystem, whose pool still names the ORIGINAL\n    project's files \u2014 `motion_get_edit_links` reports that as `staleLink` and\n    says what to do about it (B-219).\n\n    It is still not a live embed, and the difference matters: nothing\n    re-renders on its own. Editing the manifest changes nothing downstream\n    until you call this tool again \u2014 the render is the explicit trigger, by\n    design, because a render is expensive and a surprise one mid-edit is\n    worse than an out-of-date clip you chose not to refresh yet.\n\n    **A slow render can look like a failure and is not.** The control bridge\n    gives up after 20 seconds while the render keeps running to completion on\n    disk. If this returns a timeout error, treat it as INCONCLUSIVE rather\n    than failed, and poll `motion_get_state`'s `render` block instead of\n    re-rendering (which would just start a second render). That block is the\n    definitive answer: `running` with a scene counter means wait, `idle` with\n    `scenesDone == scenesTotal` means it finished, and `error` names the scene\n    that failed and why (B-202). Counting files in Sources cannot tell those\n    three apart.",
+      "name": "motion_reload_manifest",
+      "description": "Re-read the Motion manifest from its sidecar file on disk, replacing the\n    app's in-memory document (B-262).\n\n    Use this after changing `<project>.chroma/motion/manifest.json` OUTSIDE the\n    app (hand-authored, or written by a script): nothing else makes the app\n    notice, and without it `motion_get_manifest` and `motion_render` keep\n    working from the old in-app copy.\n\n    The file replaces the in-app document entirely. If the in-app document has\n    UNSAVED edits this refuses (they would be lost) unless `force=true`. Earlier\n    undo history refers to the previous document; do not undo across a reload.\n\n    Returns `reloaded`, the number of `scenes` in the document now loaded\n    (`null` if the file does not validate -- `motion_get_state`'s `parseError`\n    says why) and `hadSavedManifest` (false when the project has none yet and the\n    engine's sample is showing).",
       "inputSchema": {
-        "properties": {},
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          }
+        },
+        "type": "object",
+        "title": "motion_reload_manifestArguments"
+      }
+    },
+    {
+      "name": "motion_render",
+      "description": "Render the Motion manifest to REAL video files, via Remotion \u2014 the one\n    Motion tool that produces something outside the app. Saves first if dirty.\n\n    **One video file PER SCENE**, never one combined video: a manifest with\n    three scenes produces three MP4s, and the response's `results` array\n    carries each one's `sceneId` and `outputPath`. That is deliberate \u2014 a\n    scene is the unit of \"one shot\" here, and separate files are what an edit\n    can actually cut between.\n\n    **How a rendered scene reaches the Edit tab \u2014 NOT what you might assume.**\n    Every rendered file is imported into the Edit tab's Sources media pool\n    AUTOMATICALLY, at the pool root, as each scene finishes. You do NOT need\n    to call `editor_import_media` on these paths; it has already happened.\n    What is NOT automatic is PLACEMENT: nothing is put on the Edit timeline,\n    deliberately, because the app cannot know which track or position you\n    want. So the real chain is:\n\n        motion_render  ->  (files auto-appear in Sources)\n                       ->  editor_add_clip / editor_edit_in to place one\n\n    **Re-rendering a scene REFRESHES the Edit clips already placed from it\n    (D-260).** This replaced the old \"there is no live link\" rule. A scene\n    always renders to the same per-scene file, so a re-render replaces that\n    file atomically and every Edit clip reading it picks the new content up by\n    itself \u2014 in the preview and in the export \u2014 with its length and frame rate\n    re-read from the new render. You do NOT re-import, and you do NOT call\n    `editor_swap_clip_media`. Call `motion_get_edit_links` to see what a\n    re-render will refresh (or did). The one case where it does NOT hold is a\n    project copied on the filesystem, whose pool still names the ORIGINAL\n    project's files \u2014 `motion_get_edit_links` reports that as `staleLink` and\n    says what to do about it (B-219).\n\n    It is still not a live embed, and the difference matters: nothing\n    re-renders on its own. Editing the manifest changes nothing downstream\n    until you call this tool again \u2014 the render is the explicit trigger, by\n    design, because a render is expensive and a surprise one mid-edit is\n    worse than an out-of-date clip you chose not to refresh yet.\n\n    **Targeted and resumable renders (D-398).** `scene_ids` renders ONLY those\n    scenes: each keeps its place in the whole manifest, so its frames are exactly\n    what a full render writes for it, and an unknown id is an error naming it.\n    Use it after changing one scene instead of re-rendering everything.\n    `resume=true` continues the render that was INTERRUPTED (the app restarted or\n    its worker died) or stopped on a failed scene, rendering only the scenes not\n    yet written, from the manifest that render STARTED with; it takes no\n    `scene_ids`. The render runs in the app's backend, not the page: a window\n    reload does not stop it, and it renders from a snapshot of the manifest taken\n    at the start, so editing or rewriting the manifest while it runs cannot\n    misalign later scenes.\n\n    **A slow render can look like a failure and is not.** The control bridge\n    gives up after 20 seconds while the render keeps running to completion on\n    disk. If this returns a timeout error, treat it as INCONCLUSIVE rather\n    than failed, and poll `motion_get_state`'s `render` block instead of\n    re-rendering (which would just start a second render). That block is the\n    definitive answer: `running` with a scene counter means wait, `idle` with\n    `scenesDone == scenesTotal` means it finished, `error` names the scene\n    that failed and why (B-202), and `interrupted` means the render was cut off\n    with scenes left (`remainingSceneIds`): call this tool again with\n    `resume=true`. Counting files in Sources cannot tell those apart.",
+      "inputSchema": {
+        "properties": {
+          "scene_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scene Ids"
+          },
+          "resume": {
+            "default": false,
+            "title": "Resume",
+            "type": "boolean"
+          }
+        },
         "type": "object",
         "title": "motion_renderArguments"
       }
@@ -16496,6 +16532,48 @@
       ]
     },
     {
+      "tool": "motion_reload_manifest",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "motion_reload_manifest",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_reload_manifest",
+      "case": "full",
+      "arguments": {
+        "force": true
+      },
+      "requests": [
+        {
+          "op": "motion_reload_manifest",
+          "args": {
+            "force": true
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_render",
       "case": "minimal",
       "arguments": {},
@@ -16503,6 +16581,34 @@
         {
           "op": "motion_render",
           "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_render",
+      "case": "full",
+      "arguments": {
+        "scene_ids": [
+          "v_motion_render.scene_ids[0]"
+        ],
+        "resume": false
+      },
+      "requests": [
+        {
+          "op": "motion_render",
+          "args": {
+            "scene_ids": [
+              "v_motion_render.scene_ids[0]"
+            ]
+          },
           "timeout_ms": 20000
         }
       ],

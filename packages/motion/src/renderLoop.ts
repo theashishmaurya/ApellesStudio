@@ -1,33 +1,26 @@
 /**
- * @apelles/motion — the per-scene render loop and its STATUS, as a pure
- * function (B-202, D-359).
+ * @apelles/motion — the Motion render job's STATUS and the pure helpers around
+ * it (B-202 origin, rewritten for D-398).
  *
- * **What it is.** The sequential "render every scene to its own file" loop
- * D-180 specified, lifted out of `useMotionManifest`'s `render()` callback,
- * plus the `MotionRenderStatus` value that says what the loop is doing right
- * now: `idle` / `running` / `error`, how many scenes are done, which one is in
- * flight, and — the whole point of B-202 — which one FAILED and why.
+ * **What it is.** The `MotionRenderStatus` value that says what the render is
+ * doing (`idle` / `running` / `error` / `interrupted`, how many scenes are done,
+ * which is in flight, which failed and why, which are left), the per-scene
+ * frame windows a job is planned from, and the one pure step the shell takes
+ * when the backend reports finished scenes (`deliverFinished`).
  *
- * **What it does NOT do.** No React, no Tauri, no manifest mutation, no I/O of
- * its own: every side effect arrives as an injected callback
- * (`renderScene`/`onRendered`/`onStatus`), the same thin-shell/fat-core split
- * D-257 used to make `motionOps.ts` testable. `useMotionManifest` stays the
- * shell that owns the React state and the `manifestIO` calls.
+ * **What it does NOT do.** No React, no Tauri, no rendering, and — since D-398 —
+ * NO LOOP. The loop that renders scene after scene is the backend's job
+ * (`app/src-tauri/src/chroma/motion_job.rs`, state machine in
+ * `apelles_motion::job`): it holds the exact manifest the windows were computed
+ * from, persists every transition, and keeps running when the webview reloads.
+ * This module only plans it and reads it back. The status shape is
+ * `apelles_motion::job::JobView`'s, field for field.
  *
- * **Why it exists at all (B-202).** Before this pass the loop lived inside a
- * React `useCallback`, so a failure partway through was reachable only as
- * component state (`renderError`) — unreadable by the MCP caller whose op had
- * already timed out (`control.rs`'s 20s `BRIDGE_TIMEOUT`), unlogged anywhere,
- * and untestable in this package at all (its vitest environment is `node`;
- * there is no jsdom and no react-dom here). All three are the same root cause:
- * the loop and its progress were not a value anything outside the component
- * could hold. They are now — `motion_get_state` reports this status, the GUI's
- * Render button reads the identical one, and `runSceneRenders` is directly
- * callable from a test with a deliberately-failing `renderScene`.
- *
- * Raising `control.rs`'s timeout is deliberately NOT part of this: a long
- * render will always outlive any timeout worth having, so the answer is a
- * pollable status, not a longer wait (B-202's own "fix" note says so).
+ * **Why it changed (B-265, B-264, B-263).** The loop used to live in the page: a
+ * reload killed it silently and the app then reported `idle`; its windows came
+ * from one document while each scene's content was read from another file; and
+ * it could only render everything. All three were consequences of the page
+ * owning a process it cannot keep alive.
  */
 import { sceneStartFrame, sceneDurationFrames } from '@apelles/motion-engine/src/engine/build';
 import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
@@ -35,39 +28,46 @@ import type { Manifest } from '@apelles/motion-engine/src/engine/schema';
 /** Where a render is, as one word.
  *
  *  There is deliberately no `'done'`: a finished render is `idle` again, with
- *  `scenesDone === scenesTotal` and `error: null` saying how it ended. B-202
- *  asked for exactly these three. */
-export type MotionRenderState = 'idle' | 'running' | 'error';
+ *  `scenesDone === scenesTotal` and `error: null` saying how it ended.
+ *  `interrupted` (D-398) is a job that was mid-flight when its worker went away
+ *  (the app restarted, the worker died): it has scenes left and can be resumed. */
+export type MotionRenderState = 'idle' | 'running' | 'error' | 'interrupted';
+
+/** One finished scene's file, as the backend reports it. */
+export interface SceneOutput {
+  sceneId: string;
+  outputPath: string;
+}
 
 /**
- * B-202 — the render's own progress, the thing a timed-out caller can poll.
+ * The render's own progress, mirroring `apelles_motion::job::JobView`.
  *
- * Every field is present in every state (never a partial object), so a caller
- * reads the same keys whatever is happening. `null` always means "does not
- * apply / not known yet", never zero.
+ * Every field is present in every state; `null` means "does not apply / not
+ * known yet", never zero.
  */
 export interface MotionRenderStatus {
   state: MotionRenderState;
-  /** how many scenes this render has to do — `null` before one has ever been
-   *  started in this session. */
+  /** how many scenes the job has to do — `null` when none has ever run. */
   scenesTotal: number | null;
-  /** how many have finished. With `scenesTotal` this is the real progress a
-   *  caller previously had to reconstruct by counting files on disk. */
   scenesDone: number;
   /** the scene rendering RIGHT NOW, while `running`; `null` otherwise. */
   sceneId: string | null;
-  /** the scene whose render FAILED, while `error`. `null` when the failure was
-   *  not a scene's own (a pre-render save failure, an unparseable manifest). */
+  /** the scene whose render FAILED, while `error`. */
   failedSceneId: string | null;
-  /** the real failure message, while `error`; `null` otherwise. */
+  /** the real failure message, while `error`. */
   error: string | null;
-  /** the scenes that finished, in order — of the run in flight while
-   *  `running`, of the run that failed while `error`, of the last completed
-   *  run while `idle`. */
   doneSceneIds: string[];
+  /** the scenes still to render — what `resume` would do. Empty when the job
+   *  finished cleanly. */
+  remainingSceneIds: string[];
+  /** finished scenes the app has not yet taken into Sources. */
+  unreconciled: SceneOutput[];
+  /** every finished scene's file. */
+  outputs: SceneOutput[];
+  manifestHash: string | null;
 }
 
-/** The status before anything has ever been rendered in this session. */
+/** The status before anything has ever been rendered for the project. */
 export const IDLE_RENDER_STATUS: MotionRenderStatus = {
   state: 'idle',
   scenesTotal: null,
@@ -76,10 +76,14 @@ export const IDLE_RENDER_STATUS: MotionRenderStatus = {
   failedSceneId: null,
   error: null,
   doneSceneIds: [],
+  remainingSceneIds: [],
+  unreconciled: [],
+  outputs: [],
+  manifestHash: null,
 };
 
-/** One scene's render, as the absolute frame window `chroma_motion_render`
- *  takes. Inclusive at both ends, matching Remotion's own `--frames=a-b`. */
+/** One scene's render, as the absolute frame window the backend takes.
+ *  Inclusive at both ends, matching Remotion's own `--frames=a-b`. */
 export interface SceneRenderJob {
   sceneId: string;
   startFrame: number;
@@ -102,88 +106,90 @@ export function sceneRenderJobs(manifest: Manifest): SceneRenderJob[] {
   });
 }
 
-export interface SceneRenderLoopDeps<R> {
-  /** render one scene; rejecting is what "this scene failed" means. */
-  renderScene: (job: SceneRenderJob) => Promise<R>;
-  /** D-062/D-260 — hand the finished file to the app layer (Sources import +
-   *  the linked-clip refresh). Awaited, so scene N+1 never starts on top of
-   *  it. A throw here is SWALLOWED: reconciling Sources is the app layer's own
-   *  failure to report, and it must not fail a render that already succeeded. */
-  onRendered?: (result: R) => void | Promise<void>;
-  /** called on every transition — start, each finished scene, and the end.
-   *  The shell turns this into React state; a test just collects them. */
-  onStatus: (status: MotionRenderStatus) => void;
+/**
+ * The windows to render for a request naming `sceneIds` (B-263), or every
+ * scene when none are named. The windows are always the scene's place in the
+ * WHOLE manifest, so a one-scene render writes the same frames it would inside
+ * a full render. Unknown ids are an error naming them, never silently dropped:
+ * a typo must not look like a successful render of nothing. Manifest order is
+ * kept, so the output order never depends on the order the ids were given.
+ */
+export function selectSceneJobs(
+  manifest: Manifest,
+  sceneIds?: readonly string[] | null,
+): { jobs: SceneRenderJob[] } | { error: string } {
+  const all = sceneRenderJobs(manifest);
+  if (!sceneIds || sceneIds.length === 0) return { jobs: all };
+  const known = new Set(all.map((j) => j.sceneId));
+  const unknown = [...new Set(sceneIds)].filter((id) => !known.has(id));
+  if (unknown.length > 0) {
+    return {
+      error: `no such scene${unknown.length === 1 ? '' : 's'}: ${unknown.join(', ')} (scenes are ${all.map((j) => j.sceneId).join(', ')})`,
+    };
+  }
+  const wanted = new Set(sceneIds);
+  return { jobs: all.filter((j) => wanted.has(j.sceneId)) };
 }
 
-/** What the loop ended up doing. `results` carries the scenes that DID finish
- *  even on failure, so a caller re-rendering after a fix does not lose them. */
-export type SceneRenderLoopOutcome<R> =
-  | { ok: true; results: R[] }
-  | { ok: false; error: string; failedSceneId: string | null; results: R[] };
+/**
+ * Hand every finished-but-undelivered scene to the app layer, then tell the
+ * backend it was delivered. Sequential and awaited, so a scene's Sources import
+ * and linked-clip refresh finish before the next starts (D-260), and a scene is
+ * acknowledged only after its delivery succeeded: a failed delivery stays
+ * undelivered and is retried on the next status. `inFlight` makes a status that
+ * arrives mid-delivery (they come fast) skip scenes already being handled.
+ */
+export async function deliverFinished<R>(
+  status: Pick<MotionRenderStatus, 'unreconciled'>,
+  inFlight: Set<string>,
+  deps: {
+    deliver: (output: SceneOutput) => Promise<R> | R;
+    acknowledge: (sceneId: string) => Promise<void>;
+  },
+): Promise<string[]> {
+  const delivered: string[] = [];
+  for (const output of status.unreconciled) {
+    if (inFlight.has(output.sceneId)) continue;
+    inFlight.add(output.sceneId);
+    try {
+      await deps.deliver(output);
+      await deps.acknowledge(output.sceneId);
+      delivered.push(output.sceneId);
+    } catch {
+      /* the app layer reports its own Sources failure; left undelivered, so it
+         is offered again with the next status */
+    } finally {
+      inFlight.delete(output.sceneId);
+    }
+  }
+  return delivered;
+}
 
 /**
- * Render `jobs` SEQUENTIALLY, reporting status at every transition.
- *
- * Never in parallel: a render is CPU/GPU-heavy and overlapping N of them is a
- * real footgun (D-180). A scene's failure STOPS the loop rather than skipping
- * it, also D-180 — "the owner needs to know exactly which scene failed and
- * why" — which is the half B-202 found was true of the loop and false of
- * everything downstream of it. The failing scene id now leaves this function
- * on both the returned outcome AND the final status, so the answer survives
- * the caller's op having already timed out.
+ * Poll the backend job until it is no longer `running`, and return that final
+ * status. `getStatus` and `sleep` are injected so the wait is testable without a
+ * backend or a clock. A status read that FAILS is retried rather than treated as
+ * the job having ended: the job is the backend's, and a flaky read says nothing
+ * about it.
  */
-export async function runSceneRenders<R>(
-  jobs: readonly SceneRenderJob[],
-  deps: SceneRenderLoopDeps<R>,
-): Promise<SceneRenderLoopOutcome<R>> {
-  const { renderScene, onRendered, onStatus } = deps;
-  const results: R[] = [];
-  const doneSceneIds: string[] = [];
-  const scenesTotal = jobs.length;
-
-  const report = (patch: Partial<MotionRenderStatus> & { state: MotionRenderState }) =>
-    onStatus({
-      scenesTotal,
-      scenesDone: doneSceneIds.length,
-      sceneId: null,
-      failedSceneId: null,
-      error: null,
-      // a fresh array per report: the caller holds these snapshots (React
-      // state, a test's list) and must not see one mutate under it.
-      doneSceneIds: [...doneSceneIds],
-      ...patch,
-    });
-
-  for (const job of jobs) {
-    report({ state: 'running', sceneId: job.sceneId });
-    let result: R;
+export async function waitForSettled(
+  getStatus: () => Promise<MotionRenderStatus>,
+  sleep: (ms: number) => Promise<void>,
+  pollMs = 1000,
+): Promise<MotionRenderStatus> {
+  for (;;) {
     try {
-      result = await renderScene(job);
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      report({ state: 'error', failedSceneId: job.sceneId, error });
-      return { ok: false, error, failedSceneId: job.sceneId, results };
-    }
-    results.push(result);
-    doneSceneIds.push(job.sceneId);
-    try {
-      await onRendered?.(result);
+      const status = await getStatus();
+      if (status.state !== 'running') return status;
     } catch {
-      /* the app layer reports its own Sources failure — see `onRendered` */
+      /* retry on the next tick */
     }
-    report({ state: 'running', sceneId: job.sceneId });
+    await sleep(pollMs);
   }
-
-  report({ state: 'idle' });
-  return { ok: true, results };
 }
 
 /** The `error` status for a failure that is not any one scene's — an
- *  unparseable manifest, or the pre-render save. Exported so the shell reports
- *  those through the identical shape rather than a second hand-built literal. */
+ *  unparseable manifest, an unknown scene id, or the pre-render save. */
 export function renderFailedBeforeAnyScene(error: string): MotionRenderStatus {
-  // `doneSceneIds` is re-created rather than spread through: a spread is
-  // shallow, and handing out the shared `IDLE_RENDER_STATUS` array would let
-  // one holder's mutation reach every other status that ever came from it.
   return { ...IDLE_RENDER_STATUS, doneSceneIds: [], state: 'error', error };
 }

@@ -76,11 +76,8 @@ import {
 import { sizeFields } from './propCatalog';
 import type { Selection } from './LayerList';
 import type { MotionLayerPreset } from './layerPresets';
-import {
-  IDLE_RENDER_STATUS,
-  runSceneRenders,
-  type MotionRenderStatus,
-} from './renderLoop';
+import { IDLE_RENDER_STATUS, type MotionRenderStatus } from './renderLoop';
+import type { ReloadOutcome } from './useMotionManifest';
 
 // ---------------------------------------------------------------------------
 // harness
@@ -107,6 +104,10 @@ function harness(initial: Manifest = sample) {
     result: [{ sceneId: 'hook', outputPath: '/p/.chroma/motion/hook.mp4', stdoutTail: 'done', sceneId2: undefined }],
   }));
 
+  const reloadFromDisk = vi.fn(
+    async (): Promise<ReloadOutcome> => ({ ok: true, scenes: 3, hadSavedManifest: true }),
+  );
+
   const api: MotionOpsApi = {
     get loadState() {
       return state.loadState;
@@ -123,6 +124,7 @@ function harness(initial: Manifest = sample) {
     },
     save: save as unknown as MotionOpsApi['save'],
     render: render as unknown as MotionOpsApi['render'],
+    reloadFromDisk: reloadFromDisk as unknown as MotionOpsApi['reloadFromDisk'],
     // B-202 — the render's own progress. Mutable through `state` so a test can
     // put the tab into "a scene failed" and read it back out of
     // `motion_get_state`, which is the whole point of the field existing.
@@ -182,6 +184,7 @@ function harness(initial: Manifest = sample) {
     seeks,
     save,
     render,
+    reloadFromDisk,
     presetLib,
     presetWrites,
     presetCommitOk,
@@ -248,6 +251,7 @@ const ALL_OPS = [
   'motion_seek',
   'motion_save_manifest',
   'motion_render',
+  'motion_reload_manifest',
   'motion_list_layer_presets',
   'motion_save_layer_preset',
   'motion_add_layer_from_preset',
@@ -257,11 +261,11 @@ const ALL_OPS = [
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 43 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 44 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(43);
+    expect(names).toHaveLength(44);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 
@@ -365,69 +369,49 @@ describe('reads', () => {
     expect(h.run('motion_get_state').render).toEqual(IDLE_RENDER_STATUS);
   });
 
-  it('THE headline (B-202): a scene that FAILS mid-render is named by motion_get_state', async () => {
+  it('THE headline (B-202): a scene that FAILS mid-render is named by motion_get_state', () => {
     // The whole bug: `motion_render` renders one scene at a time and always
     // outlives control.rs's 20s bridge timeout, so when scene 2 of 3 fails the
-    // op's reply is long gone. This is the route by which a caller who was
-    // told "treat the timeout as inconclusive" can find out what happened —
-    // before this pass there was none, in the reply, the log or here.
+    // op's reply is long gone. The route by which a caller finds out what
+    // happened is this block, which mirrors the BACKEND job (D-398).
     const h = harness();
-
-    // the REAL loop, with a deliberately-failing scene — not a hand-written
-    // status literal, so this covers the wiring rather than the shape.
-    const outcome = await runSceneRenders(
-      sample.scenes.map((s, i) => ({ sceneId: s.id, startFrame: i * 100, endFrame: i * 100 + 99 })),
-      {
-        renderScene: async (job) => {
-          if (job.sceneId === 'stack') throw new Error('remotion render exited 1: ENOMEM');
-          return job.sceneId;
-        },
-        onStatus: (s) => {
-          h.state.renderStatus = s;
-        },
-      },
-    );
-    expect(outcome.ok).toBe(false);
-
+    h.state.renderStatus = {
+      ...IDLE_RENDER_STATUS,
+      state: 'error',
+      scenesTotal: 3,
+      scenesDone: 1,
+      failedSceneId: 'stack',
+      error: 'remotion render exited 1: ENOMEM',
+      doneSceneIds: ['hook'],
+      remainingSceneIds: ['stack', 'outro'],
+    };
     const render = h.run('motion_get_state').render as Record<string, unknown>;
     expect(render.state).toBe('error');
     expect(render.failedSceneId).toBe('stack');
     expect(render.error).toContain('ENOMEM');
-    // and the progress that used to be reconstructable only by counting files
     expect(render.scenesTotal).toBe(3);
     expect(render.scenesDone).toBe(1);
     expect(render.doneSceneIds).toEqual(['hook']);
+    expect(render.remainingSceneIds).toEqual(['stack', 'outro']);
   });
 
-  it('motion_get_state distinguishes a RUNNING render from a stalled one', async () => {
-    // "still rendering", "stopped on a failure" and "finished early" were
-    // indistinguishable from a directory listing. They are three states here.
+  it('motion_get_state reports an INTERRUPTED render with what is left (B-265)', () => {
+    // A webview reload used to leave a blank `idle`. The backend job persists,
+    // so a render cut off mid-flight reads as `interrupted` with the scenes
+    // that remain — what `motion_render(resume=true)` would do.
     const h = harness();
-    let release = () => {};
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const loop = runSceneRenders([{ sceneId: 'hook', startFrame: 0, endFrame: 99 }], {
-      renderScene: async () => {
-        await blocked;
-        return 'hook';
-      },
-      onStatus: (s) => {
-        h.state.renderStatus = s;
-      },
-    });
-
-    const mid = h.run('motion_get_state').render as Record<string, unknown>;
-    expect(mid.state).toBe('running');
-    expect(mid.sceneId).toBe('hook');
-    expect(mid.scenesDone).toBe(0);
-
-    release();
-    await loop;
-    const after = h.run('motion_get_state').render as Record<string, unknown>;
-    expect(after.state).toBe('idle');
-    expect(after.scenesDone).toBe(1);
-    expect(after.error).toBeNull();
+    h.state.renderStatus = {
+      ...IDLE_RENDER_STATUS,
+      state: 'interrupted',
+      scenesTotal: 55,
+      scenesDone: 18,
+      doneSceneIds: ['s01', 's02'],
+      remainingSceneIds: ['s19', 's20'],
+    };
+    const render = h.run('motion_get_state').render as Record<string, unknown>;
+    expect(render.state).toBe('interrupted');
+    expect(render.scenesDone).toBe(18);
+    expect(render.remainingSceneIds).toEqual(['s19', 's20']);
   });
 
   it('motion_get_state survives the player not being mounted', () => {
@@ -1694,6 +1678,58 @@ describe('navigation, persistence and render', () => {
     expect((await h.runAsync('motion_render')).error).toBe('remotion exited 1');
   });
 
+  it('motion_render(scene_ids) renders only those scenes (B-263), and forwards resume (B-265)', async () => {
+    const h = harness();
+    await h.runAsync('motion_render', { scene_ids: ['stack'] });
+    expect(h.render).toHaveBeenLastCalledWith({ sceneIds: ['stack'], resume: false });
+    await h.runAsync('motion_render', {});
+    expect(h.render).toHaveBeenLastCalledWith({ sceneIds: undefined, resume: false });
+    await h.runAsync('motion_render', { resume: true });
+    expect(h.render).toHaveBeenLastCalledWith({ sceneIds: undefined, resume: true });
+  });
+
+  it('motion_render rejects malformed scene_ids and a resume that also names scenes', async () => {
+    const h = harness();
+    expect((await h.runAsync('motion_render', { scene_ids: 'hook' })).error).toMatch(/array of scene id strings/);
+    expect((await h.runAsync('motion_render', { scene_ids: [1] })).error).toMatch(/array of scene id strings/);
+    expect((await h.runAsync('motion_render', { resume: true, scene_ids: ['hook'] })).error).toMatch(/cannot also take scene_ids/);
+    expect(h.render).not.toHaveBeenCalled();
+  });
+
+  it('a resume does not need a loaded manifest (it renders the interrupted job\'s own)', async () => {
+    const h = harness();
+    h.state.manifest = null;
+    await h.runAsync('motion_render', { resume: true });
+    expect(h.render).toHaveBeenCalledWith({ sceneIds: undefined, resume: true });
+  });
+
+  it('motion_reload_manifest re-reads the sidecar and reports what it found (B-262)', async () => {
+    const h = harness();
+    expect(await h.runAsync('motion_reload_manifest', {})).toEqual({
+      reloaded: true,
+      scenes: 3,
+      hadSavedManifest: true,
+    });
+    expect(h.reloadFromDisk).toHaveBeenLastCalledWith(false);
+    await h.runAsync('motion_reload_manifest', { force: true });
+    expect(h.reloadFromDisk).toHaveBeenLastCalledWith(true);
+  });
+
+  it('motion_reload_manifest surfaces a refusal (unsaved edits) and a missing project', async () => {
+    const h = harness();
+    h.reloadFromDisk.mockResolvedValueOnce({
+      ok: false,
+      error: 'the in-app manifest has unsaved edits',
+      scenes: null,
+      hadSavedManifest: false,
+    });
+    expect((await h.runAsync('motion_reload_manifest', {})).error).toMatch(/unsaved edits/);
+    h.state.loadState = 'no-project';
+    expect((await h.runAsync('motion_reload_manifest', {})).error).toBe(
+      'no project open — open one in the Colorist tab',
+    );
+  });
+
   it('save/render refuse with their own specific no-manifest message', async () => {
     const h = harness();
     h.state.manifest = null;
@@ -1956,6 +1992,7 @@ describe('saved components (D-332)', () => {
         commit: () => {},
         save: (async () => ({ ok: true })) as unknown as MotionOpsApi['save'],
         render: (async () => ({ ok: true })) as unknown as MotionOpsApi['render'],
+        reloadFromDisk: (async () => ({ ok: true, scenes: 3, hadSavedManifest: true })) as unknown as MotionOpsApi['reloadFromDisk'],
         renderStatus: IDLE_RENDER_STATUS,
       }),
       selections: () => [],

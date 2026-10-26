@@ -8,7 +8,7 @@
 //!     the transport, not the ops.
 //!
 //! WHAT IT IS FOR, GIVEN `parity.rs` EXISTS
-//!     `parity.rs` proves the 188 tools behave; it does that over an in-process duplex
+//!     `parity.rs` proves the 189 tools behave; it does that over an in-process duplex
 //!     stream, which is stdio's shape. It would keep passing if `--http` were broken,
 //!     unroutable, or serving a different tool set. This file is the one that fails in
 //!     that case: it checks the surface a client reaches *by URL* is the identical
@@ -21,7 +21,7 @@
 //!     request and then dies used to pass this file cleanly.
 //!
 //! WHAT IT DOES NOT DO
-//!     It does not re-check all 188 tools' schemas or rendering. That is `parity.rs`'s
+//!     It does not re-check all 189 tools' schemas or rendering. That is `parity.rs`'s
 //!     job and duplicating it here would only mean two files to update. One real tool
 //!     call is enough to prove the pipe.
 
@@ -42,7 +42,7 @@ use serde_json::{Value, json};
 
 /// The tool set the parity gate pins. Asserted here too, because "the HTTP transport
 /// serves a *different* server" is precisely the failure this file exists to catch.
-const TOOL_COUNT: usize = 188;
+const TOOL_COUNT: usize = 189;
 
 /// Answers every op with one canned envelope and writes down what it was asked. The
 /// cut-down twin of `parity.rs`'s recorder — this file needs "what op went out", not
