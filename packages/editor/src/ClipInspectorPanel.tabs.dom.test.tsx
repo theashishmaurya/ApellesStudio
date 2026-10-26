@@ -60,8 +60,8 @@ const TEXT_CLIP_ID = 'title-1';
 /** Every section the pre-D-246 Inspector rendered for an ordinary media clip,
  *  by its own heading. The point of the list is completeness: the union of the
  *  two tabs has to be exactly this, or the reorganisation dropped something. */
-const ALL_SECTIONS = ['Transform', 'Crop', 'Dynamic Zoom', 'Speed', 'Fade', 'Audio', 'EQ', 'Keyframes'];
-const VIDEO_SECTIONS = ['Transform', 'Crop', 'Dynamic Zoom', 'Speed', 'Fade', 'Keyframes'];
+const ALL_SECTIONS = ['Transform', 'Crop', 'Dynamic Zoom', 'Highlights', 'Speed', 'Fade', 'Audio', 'EQ', 'Keyframes'];
+const VIDEO_SECTIONS = ['Transform', 'Crop', 'Dynamic Zoom', 'Highlights', 'Speed', 'Fade', 'Keyframes'];
 const AUDIO_SECTIONS = ['Audio', 'EQ'];
 
 function fixture(): Timeline {

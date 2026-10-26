@@ -203,7 +203,7 @@ describe('clip Inspector tab chrome (B-124 / D-254)', () => {
     expect(videoPanel.className).toContain('[&>*+*]:border-border-color');
     // Six sections on Video ⇒ five seams, and the rule is a `* + *` so it can
     // never land above the first one.
-    expect([...videoPanel.children].length).toBe(6);
+    expect([...videoPanel.children].length).toBe(7);
 
     await clickTab('Audio');
     const audioPanel = panels().filter((p) => !p.hasAttribute('inert'))[0];

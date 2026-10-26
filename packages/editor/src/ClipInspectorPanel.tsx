@@ -222,6 +222,7 @@ import type { SpeedPoint } from './speedRamp';
 // curve, each band's screen point, its own pointer-drag/wheel gesture state)
 // rather than being a row of inputs.
 import { EqResponseGraph } from './EqResponseGraph';
+import { ClipHighlightsSection } from './ClipHighlightsSection';
 import {
   EQ_BAND_KINDS,
   EQ_BAND_KIND_LABELS,
@@ -911,6 +912,13 @@ export function ClipInspectorPanel({
               )}
             </InspectorSection>
           )}
+
+          {/* D-396 — Highlights: the highlighter-pen sweeps drawn on this clip's
+              own picture. Hidden for a title, caption or adjustment clip, which
+              have no decoded picture to draw on. Self-contained (reads the
+              stores itself) because it needs the playhead, the selection and an
+              async suggestion, none of which this presentational panel threads. */}
+          {!clip.text && !clip.adjustment && !clip.caption && <ClipHighlightsSection />}
 
           {/* D-236 — Speed (retime). Placed above Fade because a retime changes
               the clip's LENGTH, which is what every duration below it is

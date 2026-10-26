@@ -181,6 +181,7 @@ import { useEditorTimelineStore } from './timelineStore';
 import { timelineDuration, timelineFps } from './timeline';
 import { TransformOverlay } from './TransformOverlay';
 import { DynamicZoomOverlay } from './DynamicZoomOverlay';
+import { HighlightOverlay } from './HighlightOverlay';
 import { CaptionTransformOverlay } from './CaptionTransformOverlay';
 import { CanvasBoundary } from './CanvasBoundary';
 import { useCanvasClipPick } from './useCanvasClipPick';
@@ -937,6 +938,9 @@ export function PreviewPane() {
                   which mode is active. */}
               <TransformOverlay container={surfaceEl} />
               <DynamicZoomOverlay container={surfaceEl} />
+              {/* D-396 — the clip's highlight boxes, only while the Inspector's
+                  "Edit boxes" is on for it; draws nothing otherwise. */}
+              <HighlightOverlay container={surfaceEl} />
               {/* D-316 — and the caption box, mutually exclusive with the two
                   above by exactly the same construction: it draws only for a
                   selected CAPTION clip, which `TransformOverlay` now explicitly
