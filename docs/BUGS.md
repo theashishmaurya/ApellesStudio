@@ -27,6 +27,14 @@ Still real:
 
 ## Open
 
+## B-271 — clip highlights make the compositor ~2.5× slower: every frame clones the whole source still
+
+status: **open** · severity: **high** (performance is this project's first priority: a 15-minute 960×540 compositor export went from ~4 to ~10+ minutes once 38 clips carried highlights) · area: `app/src-tauri/src/chroma/edit.rs` (`apply_highlights_to_rgba`)
+
+- **found:** 2026-10-26, exporting the Black October draft after applying D-396 highlights.
+- **cause:** `Arc::make_mut` on the decoded still. The still is shared through the decode cache, so every frame clones the full source image (2880×1620×4 ≈ 18 MB) before drawing a few small boxes. That includes every frame after the last sweep has finished, when the highlighted picture never changes again.
+- **fix direction:** (1) cache the highlighted still per clip and sweep state; once every sweep is complete it is a constant image, computed once. (2) During a sweep, clone/draw only the rows the boxes touch, or draw onto the already-scaled layer through the same crop→scale mapping. Keep the D-396 parity table: the export path must still match within its measured bound.
+
 ## B-270 — `editor_get_timeline` does not report a clip's `highlights`
 
 status: **open** · severity: **minor** (an agent can write highlights with `editor_set_clip_highlights` but cannot read them back from the timeline read every other clip property comes from) · area: `packages/editor/src/useEditorControl.ts` (`editor_get_timeline`'s clip summary), both MCP servers' docs
