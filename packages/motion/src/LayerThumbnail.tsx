@@ -143,7 +143,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Thumbnail } from '@remotion/player';
 import type { Layer, Manifest } from '@apelles/motion-engine/src/engine/schema';
 import { lookup } from '@apelles/motion-engine/src/engine/registry';
-import { resolveTheme } from '@apelles/motion-engine/src/design';
+import { resolveManifestTheme } from '@apelles/motion-engine/src/themeDef';
 import { ThemeProvider } from '@apelles/motion-engine/src/ThemeContext';
 import { catalogEntry, type PrimitiveUse } from './catalog';
 import { PrimitiveGlyph } from './PrimitiveGlyph';
@@ -176,6 +176,7 @@ function SingleLayerComposition({
   layer,
   fps,
   theme: themeName,
+  themeDef,
 }: {
   layer: Layer;
   fps: number;
@@ -184,10 +185,12 @@ function SingleLayerComposition({
    *  (every manifest with no `theme` key) resolves to the engine default,
    *  which is the constant this used to read. */
   theme?: string;
+  /** D-399 — the manifest's embedded theme definition, when it has one. */
+  themeDef?: Manifest['themeDef'];
 }) {
   const { component: Component, adapt } = lookup(layer.use);
   const props = adapt(layer as unknown as Record<string, unknown>, fps, THUMBNAIL_FRAME);
-  const theme = resolveTheme(themeName);
+  const theme = resolveManifestTheme({ theme: themeName, themeDef });
   return (
     <ThemeProvider theme={theme}>
       <div style={{ position: 'absolute', inset: 0, background: theme.bg, overflow: 'hidden' }}>
@@ -249,7 +252,7 @@ export function LayerThumbnail({ layer, manifest }: { layer: Layer; manifest: Ma
       {visible && (
         <Thumbnail
           component={SingleLayerComposition}
-          inputProps={{ layer, fps: manifest.fps, theme: manifest.theme }}
+          inputProps={{ layer, fps: manifest.fps, theme: manifest.theme, themeDef: manifest.themeDef }}
           compositionWidth={manifest.width}
           compositionHeight={manifest.height}
           durationInFrames={THUMBNAIL_FRAME + 1}

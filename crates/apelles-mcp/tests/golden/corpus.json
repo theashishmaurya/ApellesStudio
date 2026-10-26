@@ -6241,6 +6241,347 @@
       }
     },
     {
+      "name": "motion_define_theme",
+      "description": "Define a theme as DATA and give it to the document (B-268): a look that is not\n    one of the compiled built-ins, with no engine change, commit or rebuild.\n\n    A theme is a validated document: eight opaque `#rrggbb` colours (ground,\n    deep ground, stroke, soft stroke, text, dim text, accent, signal accent),\n    the stroke feel (`strokeWidth`, `roughness`, `bowing`, `ambientDriftPx`),\n    three CSS font stacks (`fontDisplay`, `fontUi`, `fontMono`) and the Google\n    Fonts families to download for them (`fonts`). It is built in this order, then\n    validated as a whole, and nothing partial is ever stored:\n      1. `base` -- a built-in, library or embedded theme to start from (default:\n         the engine default, `dark-excalidraw`), so a few overrides are enough;\n      2. `tokens_css` -- an optional CSS token file whose `--apelles-theme-*`\n         custom properties override the base: `--apelles-theme-bg: #1c1a17;`,\n         `--apelles-theme-stroke-width: 2;`, `--apelles-theme-font-display:\n         'Newsreader', serif;`, `--apelles-theme-fonts: Newsreader:400,600 |\n         Instrument Sans:400` (families separated by `|`). Values must be literal\n         (no `var()`), which keeps the derivation deterministic;\n      3. `theme` -- explicit fields, which win over both.\n    `name` is the new theme's id (lowercase letters, digits, hyphens; never a\n    built-in's name). Errors name the field (`bg: an opaque #rrggbb colour`).\n\n    Where it goes -- `apply` (default true) EMBEDS the definition in this\n    document's manifest (`themeDef`), which is what makes a render deterministic:\n    the same manifest renders the same pixels on any machine, whatever that\n    machine's library holds. `to_library` also saves it to the user library so\n    other projects can pick it (`motion_set_project_theme`). `apply: false` with\n    `to_library: false` is a dry run that returns the validated definition.\n\n    A scene's own `bg` and a layer's own `color` / `font` still win over any\n    theme. Fonts load from Google Fonts by family name at render time; a family\n    Google does not have is skipped (the stack's fallbacks render) rather than\n    failing the render.\n\n    Undoable in the app when applied, like any other Motion edit. The library is\n    user-level state, not part of the project, and is not in the undo stack.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base"
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ThemeFields"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tokens_css": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Tokens Css"
+          },
+          "to_library": {
+            "default": false,
+            "title": "To Library",
+            "type": "boolean"
+          },
+          "apply": {
+            "default": true,
+            "title": "Apply",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object",
+        "$defs": {
+          "ThemeFields": {
+            "additionalProperties": false,
+            "description": "Theme fields for `motion_define_theme`: every one optional, applied over the base.\n\nColours are opaque #rrggbb (three.js discards alpha, so a translucent colour would render\ndifferently in 3D than in 2D).",
+            "properties": {
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "One line describing the look (optional).",
+                "title": "Description"
+              },
+              "bg": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Scene ground. Opaque #rrggbb colour.",
+                "title": "Bg"
+              },
+              "bgDeep": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Second ground: panels, cards, 3D faces, the vignette edge. Opaque #rrggbb colour.",
+                "title": "Bgdeep"
+              },
+              "stroke": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Primary stroke: graph rings, roughjs default. Opaque #rrggbb colour.",
+                "title": "Stroke"
+              },
+              "strokeSoft": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Secondary lines: borders, graph edges. Opaque #rrggbb colour.",
+                "title": "Strokesoft"
+              },
+              "text": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Primary text. Opaque #rrggbb colour.",
+                "title": "Text"
+              },
+              "textDim": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Secondary text: captions, labels. Opaque #rrggbb colour.",
+                "title": "Textdim"
+              },
+              "accent": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Emphasis / active-state colour. Opaque #rrggbb colour.",
+                "title": "Accent"
+              },
+              "accentSignal": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Signal / energy colour: fills, pulses, glows. Opaque #rrggbb colour.",
+                "title": "Accentsignal"
+              },
+              "strokeWidth": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Stroke width in px at 1080p, 0.5..20.",
+                "title": "Strokewidth"
+              },
+              "roughness": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "roughjs roughness, 0..10. 0 draws exact geometry.",
+                "title": "Roughness"
+              },
+              "bowing": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "roughjs bowing, 0..10. 0 keeps straight lines straight.",
+                "title": "Bowing"
+              },
+              "fontDisplay": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS font-family stack for headlines (no ; { } < > or backslash).",
+                "title": "Fontdisplay"
+              },
+              "fontUi": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS font-family stack for labels and body.",
+                "title": "Fontui"
+              },
+              "fontMono": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS font-family stack for numbers and data.",
+                "title": "Fontmono"
+              },
+              "ambientDriftPx": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Amplitude of the always-on drift in px, 0..20. 0 = nothing drifts.",
+                "title": "Ambientdriftpx"
+              },
+              "fonts": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/$defs/ThemeFontSpec"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Google Fonts families to download for the stacks above (at most 8).",
+                "title": "Fonts"
+              }
+            },
+            "title": "ThemeFields",
+            "type": "object"
+          },
+          "ThemeFontSpec": {
+            "additionalProperties": false,
+            "description": "One Google Fonts family a theme downloads (`motion_define_theme`).",
+            "properties": {
+              "family": {
+                "description": "Google Fonts family name exactly as Google spells it (\"Newsreader\", \"IBM Plex Mono\").",
+                "title": "Family",
+                "type": "string"
+              },
+              "weights": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "CSS weights to load, e.g. [\"400\", \"600\"]. Omitted loads the regular weight.",
+                "title": "Weights"
+              },
+              "italic": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Load the italic face instead of the upright one.",
+                "title": "Italic"
+              }
+            },
+            "required": [
+              "family"
+            ],
+            "title": "ThemeFontSpec",
+            "type": "object"
+          }
+        },
+        "title": "motion_define_themeArguments"
+      }
+    },
+    {
       "name": "motion_delete_layer",
       "description": "Remove one layer (or one 3D scene child) \u2014 the delete button on that row\n    in the layer list.\n\n    **Address it by `id` when you can.** Deleting a layer shifts every index\n    after it, so a plan that deletes several layers by bare `index` deletes the\n    wrong ones after the first. `motion_list_layers` gives you each layer's\n    `target` including its `id`, and an `id` keeps naming the same layer no\n    matter what moves. (A hand-authored manifest's layers may have no `id` at\n    all \u2014 then delete from the HIGHEST index downwards.)\n\n    The GUI selection moves to the layer that slid into the deleted slot, or to\n    the parent scene when that was the last one. Emptying `scene.layers`\n    removes the key rather than leaving an empty array; an emptied\n    `scene3d.children` stays, because the 3D camera lives in that same block.\n\n    Undoable in the app (Cmd/Ctrl+Z). Returns what was removed and how many\n    layers remain.\n\n    Args:\n        scene_index: which scene the layer is in.\n        target: {kind, index?, id?} \u2014 kind is \"layer\" or \"scene3d-child\".",
       "inputSchema": {
@@ -6473,6 +6814,23 @@
         ],
         "type": "object",
         "title": "motion_delete_sceneArguments"
+      }
+    },
+    {
+      "name": "motion_delete_theme",
+      "description": "Remove a theme from the user's theme library (B-268). Projects that already\n    embed it keep their own copy by design: that copy is what makes their renders\n    deterministic. Does not touch the compiled built-ins. Needs no project open.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object",
+        "title": "motion_delete_themeArguments"
       }
     },
     {
@@ -6797,6 +7155,15 @@
         "properties": {},
         "type": "object",
         "title": "motion_list_primitivesArguments"
+      }
+    },
+    {
+      "name": "motion_list_themes",
+      "description": "List every theme a Motion project can use (B-268): the compiled\n    built-ins, the user's saved library, and what THIS document uses. Read-only;\n    needs no project open for the first two.\n\n    Returns `builtin` (name, description, `default`), `library` (each with its\n    full `definition`, so you can copy or adapt one), `project` (`theme` name,\n    `source` = `builtin` | `embedded` | `default`, and the `definition` when the\n    document carries its own) or null when no manifest is loaded, and\n    `defaultTheme`. Define a new one with `motion_define_theme`.",
+      "inputSchema": {
+        "properties": {},
+        "type": "object",
+        "title": "motion_list_themesArguments"
       }
     },
     {
@@ -9041,7 +9408,7 @@
     },
     {
       "name": "motion_set_project_theme",
-      "description": "Set the DOCUMENT's theme \u2014 which registered look the whole manifest renders\n    in (`manifest.theme`). A project-level setting: not per scene, not per\n    layer. The document's other project-level fields (`title`/`width`/\n    `height`/`fps`) are `motion_set_project_settings`; this one is separate\n    because it is an enum that CLEARS to a default rather than a value.\n\n    `motion_list_primitives` lists the registered `themes` and names the\n    `defaultTheme`. Today there are three:\n\n      - `dark-excalidraw` (the default) \u2014 flat dark slate, off-white\n        hand-drawn roughjs strokes, Kalam lettering, one red and one blue\n        accent, everything drifting very slightly.\n      - `apelles-studio` \u2014 apelles.studio's own editorial look: warm-black\n        basalt ground, marble ink, ONE ochre working colour, Newsreader /\n        Instrument Sans / IBM Plex Mono, exact (non-sketch) geometry and no\n        ambient drift.\n      - `apelles-studio-light` \u2014 the same site's light page look: warm\n        marble ground, basalt ink, terracotta emphasis with ochre marks, the\n        same three faces and clean geometry.\n\n    A theme supplies DEFAULTS only. A scene's own `bg`, and a layer's own\n    `color` / `font` / `accent`, still win over it \u2014 so re-theming never\n    silently discards a colour that was set deliberately, and a layer pinned\n    to a literal colour will NOT follow the new palette.\n\n    Pass null to clear the field back to the default look. That DELETES the\n    key rather than writing the default's name into it, which is the shape\n    every manifest authored before themes existed already has.\n\n    An unregistered name is rejected outright, unlike `motion_set_scene_field`\n    (which warns and writes anyway): the manifest schema declares this field\n    as an enum, so a name outside the registry would not parse at all.\n\n    Undoable in the app (Cmd/Ctrl+Z), like any other Motion edit.\n\n    Args:\n        theme: the theme name, or null to clear it back to the default.",
+      "description": "Set the DOCUMENT's theme \u2014 which registered look the whole manifest renders\n    in (`manifest.theme`). A project-level setting: not per scene, not per\n    layer. The document's other project-level fields (`title`/`width`/\n    `height`/`fps`) are `motion_set_project_settings`; this one is separate\n    because it is an enum that CLEARS to a default rather than a value.\n\n    `motion_list_primitives` lists the registered `themes` and names the\n    `defaultTheme`. Today there are three:\n\n      - `dark-excalidraw` (the default) \u2014 flat dark slate, off-white\n        hand-drawn roughjs strokes, Kalam lettering, one red and one blue\n        accent, everything drifting very slightly.\n      - `apelles-studio` \u2014 apelles.studio's own editorial look: warm-black\n        basalt ground, marble ink, ONE ochre working colour, Newsreader /\n        Instrument Sans / IBM Plex Mono, exact (non-sketch) geometry and no\n        ambient drift.\n      - `apelles-studio-light` \u2014 the same site's light page look: warm\n        marble ground, basalt ink, terracotta emphasis with ochre marks, the\n        same three faces and clean geometry.\n\n    A theme supplies DEFAULTS only. A scene's own `bg`, and a layer's own\n    `color` / `font` / `accent`, still win over it \u2014 so re-theming never\n    silently discards a colour that was set deliberately, and a layer pinned\n    to a literal colour will NOT follow the new palette.\n\n    Pass null to clear the field back to the default look. That DELETES the\n    key rather than writing the default's name into it, which is the shape\n    every manifest authored before themes existed already has.\n\n    A name nothing defines is rejected outright, unlike `motion_set_scene_field`\n    (which warns and writes anyway): the manifest schema refuses a theme name\n    that is neither a built-in nor the document's own embedded definition.\n    A theme from the user LIBRARY is also a legal name (`motion_list_themes`):\n    its definition is copied INTO the document, so the render stays\n    deterministic on any machine. Define new themes with `motion_define_theme`.\n\n    Undoable in the app (Cmd/Ctrl+Z), like any other Motion edit.\n\n    Args:\n        theme: the theme name, or null to clear it back to the default.",
       "inputSchema": {
         "properties": {
           "theme": {
@@ -15867,6 +16234,114 @@
       ]
     },
     {
+      "tool": "motion_define_theme",
+      "case": "minimal",
+      "arguments": {
+        "name": "v_motion_define_theme.name"
+      },
+      "requests": [
+        {
+          "op": "motion_define_theme",
+          "args": {
+            "name": "v_motion_define_theme.name"
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_define_theme",
+      "case": "full",
+      "arguments": {
+        "name": "v_motion_define_theme.name",
+        "base": "v_motion_define_theme.base",
+        "theme": {
+          "description": "v_motion_define_theme.theme.description",
+          "bg": "v_motion_define_theme.theme.bg",
+          "bgDeep": "v_motion_define_theme.theme.bgDeep",
+          "stroke": "v_motion_define_theme.theme.stroke",
+          "strokeSoft": "v_motion_define_theme.theme.strokeSoft",
+          "text": "v_motion_define_theme.theme.text",
+          "textDim": "v_motion_define_theme.theme.textDim",
+          "accent": "v_motion_define_theme.theme.accent",
+          "accentSignal": "v_motion_define_theme.theme.accentSignal",
+          "strokeWidth": 42.05,
+          "roughness": -10.15,
+          "bowing": -25.65,
+          "fontDisplay": "v_motion_define_theme.theme.fontDisplay",
+          "fontUi": "v_motion_define_theme.theme.fontUi",
+          "fontMono": "v_motion_define_theme.theme.fontMono",
+          "ambientDriftPx": 5.3,
+          "fonts": [
+            {
+              "family": "v_motion_define_theme.theme.fonts[0].family",
+              "weights": [
+                "v_motion_define_theme.theme.fonts[0].weights[0]"
+              ],
+              "italic": false
+            }
+          ]
+        },
+        "tokens_css": "v_motion_define_theme.tokens_css",
+        "to_library": true,
+        "apply": false
+      },
+      "requests": [
+        {
+          "op": "motion_define_theme",
+          "args": {
+            "name": "v_motion_define_theme.name",
+            "base": "v_motion_define_theme.base",
+            "theme": {
+              "description": "v_motion_define_theme.theme.description",
+              "bg": "v_motion_define_theme.theme.bg",
+              "bgDeep": "v_motion_define_theme.theme.bgDeep",
+              "stroke": "v_motion_define_theme.theme.stroke",
+              "strokeSoft": "v_motion_define_theme.theme.strokeSoft",
+              "text": "v_motion_define_theme.theme.text",
+              "textDim": "v_motion_define_theme.theme.textDim",
+              "accent": "v_motion_define_theme.theme.accent",
+              "accentSignal": "v_motion_define_theme.theme.accentSignal",
+              "strokeWidth": 42.05,
+              "roughness": -10.15,
+              "bowing": -25.65,
+              "fontDisplay": "v_motion_define_theme.theme.fontDisplay",
+              "fontUi": "v_motion_define_theme.theme.fontUi",
+              "fontMono": "v_motion_define_theme.theme.fontMono",
+              "ambientDriftPx": 5.3,
+              "fonts": [
+                {
+                  "family": "v_motion_define_theme.theme.fonts[0].family",
+                  "weights": [
+                    "v_motion_define_theme.theme.fonts[0].weights[0]"
+                  ],
+                  "italic": false
+                }
+              ]
+            },
+            "tokens_css": "v_motion_define_theme.tokens_css",
+            "to_library": true,
+            "apply": false
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
       "tool": "motion_delete_layer",
       "case": "minimal",
       "arguments": {
@@ -15976,6 +16451,29 @@
           "op": "motion_delete_scene",
           "args": {
             "scene_index": 63
+          },
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_delete_theme",
+      "case": "minimal",
+      "arguments": {
+        "name": "v_motion_delete_theme.name"
+      },
+      "requests": [
+        {
+          "op": "motion_delete_theme",
+          "args": {
+            "name": "v_motion_delete_theme.name"
           },
           "timeout_ms": 20000
         }
@@ -16222,6 +16720,25 @@
       "requests": [
         {
           "op": "motion_list_primitives",
+          "args": {},
+          "timeout_ms": 20000
+        }
+      ],
+      "isError": false,
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"ok\": true,\n  \"error\": null,\n  \"result\": {\n    \"applied\": true,\n    \"note\": \"stub-default-result\"\n  },\n  \"frame\": 42,\n  \"scopes\": {\n    \"blackPoint\": 3.25,\n    \"whitePoint\": 249.5,\n    \"warmCool\": -1.75\n  },\n  \"histogram\": {\n    \"r\": [\n      1,\n      2,\n      3\n    ],\n    \"g\": [\n      4,\n      5,\n      6\n    ],\n    \"b\": [\n      7,\n      8,\n      9\n    ]\n  },\n  \"adjustments\": {\n    \"exposure\": 0.5,\n    \"contrast\": -12\n  },\n  \"image_b64\": \"/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==\"\n}"
+        }
+      ]
+    },
+    {
+      "tool": "motion_list_themes",
+      "case": "minimal",
+      "arguments": {},
+      "requests": [
+        {
+          "op": "motion_list_themes",
           "args": {},
           "timeout_ms": 20000
         }

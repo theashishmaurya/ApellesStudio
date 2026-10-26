@@ -30,11 +30,14 @@
  *   design while developing").
  */
 
+import type { ThemeFont } from "./themeDef";
+
 /** The complete look one render resolves to. Every field is consumed by at
  *  least one primitive — see each field's own note for who reads it. */
 export interface Theme {
-  /** the registry key this theme is published under */
-  name: ThemeName;
+  /** the registry key this theme is published under; for a user theme
+   *  (`themeDef.ts`, D-399) its own id, which is never a built-in's */
+  name: string;
   /** one line, for a picker/tool listing */
   description: string;
 
@@ -90,6 +93,11 @@ export interface Theme {
   // ---- ambient motion ----
   /** amplitude of the always-on drift, in px. `0` ⇒ nothing drifts at all. */
   ambientDriftPx: number;
+
+  // ---- webfonts (user themes only) ----
+  /** Google Fonts families to download for the stacks above. Built-ins leave
+   *  this unset: their faces load through `themeFonts.ts`'s own loaders. */
+  fonts?: ThemeFont[];
 }
 
 /**

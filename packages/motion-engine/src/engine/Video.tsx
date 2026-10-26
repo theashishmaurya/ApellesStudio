@@ -9,7 +9,8 @@ import { Camera } from "../primitives/Camera";
 import { interpolateKeys } from "../lib/interpolateKeys";
 import { Scene3D } from "../primitives/Scene3D";
 import { FilmGrain, Vignette } from "../primitives/postfx";
-import { motion, resolveTheme } from "../design";
+import { motion } from "../design";
+import { resolveManifestTheme } from "../themeDef";
 import { ThemeProvider, useTheme } from "../ThemeContext";
 import { ensureThemeFonts } from "../themeFonts";
 import { lookup } from "./registry";
@@ -230,8 +231,9 @@ const OneScene: React.FC<{
  * theme is a property of the DOCUMENT: everything under here — 2D layers, the
  * camera, the 3D scene, the post-FX — is inside exactly one manifest.
  *
- * `theme` absent ⇒ `resolveTheme(undefined)` ⇒ the engine default, i.e. every
- * manifest written before this pass renders exactly as it did.
+ * `theme` absent ⇒ `resolveManifestTheme` ⇒ the engine default, i.e. every
+ * manifest written before this pass renders exactly as it did. D-399: a
+ * manifest's own `themeDef` (an embedded user theme) wins over a name.
  *
  * `ensureThemeFonts` runs here rather than at module scope so a theme nobody
  * selected never pays for its webfonts; it is idempotent per theme per
@@ -241,8 +243,8 @@ const OneScene: React.FC<{
  */
 export const Video: React.FC<Manifest> = (manifest) => {
   const { fps } = manifest;
-  const theme = resolveTheme(manifest.theme);
-  ensureThemeFonts(theme.name);
+  const theme = resolveManifestTheme(manifest);
+  ensureThemeFonts(theme);
   return (
     <ThemeProvider theme={theme}>
     <Series>

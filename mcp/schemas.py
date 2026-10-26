@@ -106,6 +106,8 @@ __all__ = [
     "RadialGeometry",
     "Roi",
     "SpeedRampPoint",
+    "ThemeFields",
+    "ThemeFontSpec",
 ]
 
 
@@ -406,6 +408,50 @@ class ClipHighlightSpec(BaseModel):
         None, description="Hex colour, #RGB or #RRGGBB. Default #F2B63A (a highlighter yellow-ochre)."
     )
     opacity: float | None = Field(None, description="0..1. Default 0.45.")
+
+
+class ThemeFontSpec(BaseModel):
+    """One Google Fonts family a theme downloads (`motion_define_theme`)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    family: str = Field(
+        description='Google Fonts family name exactly as Google spells it ("Newsreader", "IBM Plex Mono").'
+    )
+    weights: list[str] | None = Field(
+        None, description='CSS weights to load, e.g. ["400", "600"]. Omitted loads the regular weight.'
+    )
+    italic: bool | None = Field(None, description="Load the italic face instead of the upright one.")
+
+
+class ThemeFields(BaseModel):
+    """Theme fields for `motion_define_theme`: every one optional, applied over the base.
+
+    Colours are opaque #rrggbb (three.js discards alpha, so a translucent colour would render
+    differently in 3D than in 2D).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str | None = Field(None, description='One line describing the look (optional).')
+    bg: str | None = Field(None, description='Scene ground. Opaque #rrggbb colour.')
+    bgDeep: str | None = Field(None, description='Second ground: panels, cards, 3D faces, the vignette edge. Opaque #rrggbb colour.')
+    stroke: str | None = Field(None, description='Primary stroke: graph rings, roughjs default. Opaque #rrggbb colour.')
+    strokeSoft: str | None = Field(None, description='Secondary lines: borders, graph edges. Opaque #rrggbb colour.')
+    text: str | None = Field(None, description='Primary text. Opaque #rrggbb colour.')
+    textDim: str | None = Field(None, description='Secondary text: captions, labels. Opaque #rrggbb colour.')
+    accent: str | None = Field(None, description='Emphasis / active-state colour. Opaque #rrggbb colour.')
+    accentSignal: str | None = Field(None, description='Signal / energy colour: fills, pulses, glows. Opaque #rrggbb colour.')
+    strokeWidth: float | None = Field(None, description='Stroke width in px at 1080p, 0.5..20.')
+    roughness: float | None = Field(None, description='roughjs roughness, 0..10. 0 draws exact geometry.')
+    bowing: float | None = Field(None, description='roughjs bowing, 0..10. 0 keeps straight lines straight.')
+    fontDisplay: str | None = Field(None, description='CSS font-family stack for headlines (no ; { } < > or backslash).')
+    fontUi: str | None = Field(None, description='CSS font-family stack for labels and body.')
+    fontMono: str | None = Field(None, description='CSS font-family stack for numbers and data.')
+    ambientDriftPx: float | None = Field(None, description='Amplitude of the always-on drift in px, 0..20. 0 = nothing drifts.')
+    fonts: list[ThemeFontSpec] | None = Field(
+        None, description="Google Fonts families to download for the stacks above (at most 8)."
+    )
 
 
 class DynamicZoomFraming(BaseModel):

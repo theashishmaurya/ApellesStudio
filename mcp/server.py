@@ -57,6 +57,7 @@ from schemas import (
     MotionTarget,
     Roi,
     SpeedRampPoint,
+    ThemeFields,
     to_wire,
 )
 
@@ -6557,9 +6558,12 @@ def motion_set_project_theme(theme: str | None = None) -> str:
     key rather than writing the default's name into it, which is the shape
     every manifest authored before themes existed already has.
 
-    An unregistered name is rejected outright, unlike `motion_set_scene_field`
-    (which warns and writes anyway): the manifest schema declares this field
-    as an enum, so a name outside the registry would not parse at all.
+    A name nothing defines is rejected outright, unlike `motion_set_scene_field`
+    (which warns and writes anyway): the manifest schema refuses a theme name
+    that is neither a built-in nor the document's own embedded definition.
+    A theme from the user LIBRARY is also a legal name (`motion_list_themes`):
+    its definition is copied INTO the document, so the render stays
+    deterministic on any machine. Define new themes with `motion_define_theme`.
 
     Undoable in the app (Cmd/Ctrl+Z), like any other Motion edit.
 
@@ -6568,6 +6572,92 @@ def motion_set_project_theme(theme: str | None = None) -> str:
     import json
 
     return json.dumps(_op("motion_set_project_theme", theme=theme), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_list_themes() -> str:
+    """List every theme a Motion project can use (B-268): the compiled
+    built-ins, the user's saved library, and what THIS document uses. Read-only;
+    needs no project open for the first two.
+
+    Returns `builtin` (name, description, `default`), `library` (each with its
+    full `definition`, so you can copy or adapt one), `project` (`theme` name,
+    `source` = `builtin` | `embedded` | `default`, and the `definition` when the
+    document carries its own) or null when no manifest is loaded, and
+    `defaultTheme`. Define a new one with `motion_define_theme`."""
+    import json
+
+    return json.dumps(_op("motion_list_themes"), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_define_theme(
+    name: str,
+    base: str | None = None,
+    theme: ThemeFields | None = None,
+    tokens_css: str | None = None,
+    to_library: bool = False,
+    apply: bool = True,
+) -> str:
+    """Define a theme as DATA and give it to the document (B-268): a look that is not
+    one of the compiled built-ins, with no engine change, commit or rebuild.
+
+    A theme is a validated document: eight opaque `#rrggbb` colours (ground,
+    deep ground, stroke, soft stroke, text, dim text, accent, signal accent),
+    the stroke feel (`strokeWidth`, `roughness`, `bowing`, `ambientDriftPx`),
+    three CSS font stacks (`fontDisplay`, `fontUi`, `fontMono`) and the Google
+    Fonts families to download for them (`fonts`). It is built in this order, then
+    validated as a whole, and nothing partial is ever stored:
+      1. `base` -- a built-in, library or embedded theme to start from (default:
+         the engine default, `dark-excalidraw`), so a few overrides are enough;
+      2. `tokens_css` -- an optional CSS token file whose `--apelles-theme-*`
+         custom properties override the base: `--apelles-theme-bg: #1c1a17;`,
+         `--apelles-theme-stroke-width: 2;`, `--apelles-theme-font-display:
+         'Newsreader', serif;`, `--apelles-theme-fonts: Newsreader:400,600 |
+         Instrument Sans:400` (families separated by `|`). Values must be literal
+         (no `var()`), which keeps the derivation deterministic;
+      3. `theme` -- explicit fields, which win over both.
+    `name` is the new theme's id (lowercase letters, digits, hyphens; never a
+    built-in's name). Errors name the field (`bg: an opaque #rrggbb colour`).
+
+    Where it goes -- `apply` (default true) EMBEDS the definition in this
+    document's manifest (`themeDef`), which is what makes a render deterministic:
+    the same manifest renders the same pixels on any machine, whatever that
+    machine's library holds. `to_library` also saves it to the user library so
+    other projects can pick it (`motion_set_project_theme`). `apply: false` with
+    `to_library: false` is a dry run that returns the validated definition.
+
+    A scene's own `bg` and a layer's own `color` / `font` still win over any
+    theme. Fonts load from Google Fonts by family name at render time; a family
+    Google does not have is skipped (the stack's fallbacks render) rather than
+    failing the render.
+
+    Undoable in the app when applied, like any other Motion edit. The library is
+    user-level state, not part of the project, and is not in the undo stack."""
+    import json
+
+    args: dict = {"name": name}
+    if base is not None:
+        args["base"] = base
+    if theme is not None:
+        args["theme"] = to_wire(theme)
+    if tokens_css is not None:
+        args["tokens_css"] = tokens_css
+    if to_library:
+        args["to_library"] = True
+    if not apply:
+        args["apply"] = False
+    return json.dumps(_op("motion_define_theme", **args), indent=2, default=str)
+
+
+@mcp.tool()
+def motion_delete_theme(name: str) -> str:
+    """Remove a theme from the user's theme library (B-268). Projects that already
+    embed it keep their own copy by design: that copy is what makes their renders
+    deterministic. Does not touch the compiled built-ins. Needs no project open."""
+    import json
+
+    return json.dumps(_op("motion_delete_theme", name=name), indent=2, default=str)
 
 
 @mcp.tool()

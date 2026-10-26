@@ -24,7 +24,8 @@
  * }
  */
 import { z } from "zod";
-import { THEME_NAMES, type ThemeName } from "../design";
+import { THEME_NAMES } from "../design";
+import { themeDefSchema } from "../themeDef";
 
 const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const timed = z.object({ at: z.number(), i: z.number() });
@@ -259,23 +260,32 @@ const scene = z.object({
 });
 
 /**
- * D-339 — which registered look (`../design.ts`'s `THEMES`) the whole
- * document renders in. Read once per render by `Video.tsx`, which resolves it
+ * D-339/D-399 — which look the whole document renders in. Read once per render
+ * by `Video.tsx`, which resolves it (`themeDef.ts`'s `resolveManifestTheme`)
  * and publishes it to every primitive through `../ThemeContext.tsx`.
  *
- * `.optional()`, deliberately NOT `.default()` like `width`/`height`/`fps`
- * directly above: a `.default()` would make `manifestSchema.parse()` MATERIALISE
- * a `theme` key that the author never wrote, and this schema's parse output is
- * what the app commits and saves back (`@apelles/motion`'s `manifestIO.ts`) —
- * so every existing project file on disk would silently gain a line the first
- * time it was opened and saved. Absent means absent; `resolveTheme(undefined)`
- * supplies the default at the one point that actually needs a value.
+ * `theme` is a theme NAME: one of the compiled built-ins (`../design.ts`'s
+ * `THEMES`) or the name of the definition this manifest embeds as `themeDef`.
+ * It stays a plain string in the schema, and the cross-field rule below does
+ * the checking, because the set of legal names is no longer fixed at compile
+ * time (D-399, B-268).
  *
- * A z.enum (rather than a bare `z.string()`) so a typo is a parse error
- * pointing at the field, not a silent fall back to the default look several
- * scenes into a render.
+ * Both fields are `.optional()`, deliberately NOT `.default()` like
+ * `width`/`height`/`fps` below them: a `.default()` would make
+ * `manifestSchema.parse()` MATERIALISE a `theme` key that the author never
+ * wrote, and this schema's parse output is what the app commits and saves back
+ * (`@apelles/motion`'s `manifestIO.ts`) — so every existing project file on
+ * disk would silently gain a line the first time it was opened and saved.
+ * Absent means absent; `resolveManifestTheme` supplies the default at the one
+ * point that actually needs a value.
+ *
+ * **Determinism.** A name that is not a built-in is only legal when the same
+ * manifest embeds its definition, so a document renders identically on a
+ * machine whose theme library lacks that theme. A typo is therefore still a
+ * parse error pointing at the field, not a silent fall back to the default look
+ * several scenes into a render.
  */
-const themeName = z.enum(THEME_NAMES as [ThemeName, ...ThemeName[]]);
+const themeName = z.string().min(1).max(48);
 
 export const manifestSchema = z.object({
   title: z.string(),
@@ -284,11 +294,32 @@ export const manifestSchema = z.object({
   fps: z.number().default(30),
   /** D-339 — see `themeName` above. Absent ⇒ the engine default look. */
   theme: themeName.optional(),
+  /** D-399 — the document's OWN theme definition, embedded so it renders the
+   *  same anywhere. When present it IS the look, and `theme` (if given) must be
+   *  its name. */
+  themeDef: themeDefSchema.optional(),
   grain: z.boolean().optional(),
   vignette: z.union([z.boolean(), z.number()]).optional(),
   /** render with no background paint — for a ProRes4444 overlay to composite in Palmier */
   transparent: z.boolean().optional(),
   scenes: z.array(scene).min(1),
+}).superRefine((m, ctx) => {
+  // D-399 — the theme rules: `theme` names a built-in or the embedded
+  // definition, and an embedded definition and a name must agree.
+  if (m.themeDef && m.theme !== undefined && m.theme !== m.themeDef.name) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["theme"],
+      message: `is "${m.theme}" but themeDef is named "${m.themeDef.name}"; they must match (or omit theme)`,
+    });
+  }
+  if (!m.themeDef && m.theme !== undefined && !(THEME_NAMES as string[]).includes(m.theme)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["theme"],
+      message: `"${m.theme}" is not a built-in theme (${THEME_NAMES.join(", ")}) and the manifest does not embed its definition (themeDef). Add it with motion_define_theme, or pick a built-in.`,
+    });
+  }
 });
 
 export type Manifest = z.infer<typeof manifestSchema>;

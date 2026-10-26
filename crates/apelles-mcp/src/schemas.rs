@@ -503,6 +503,165 @@ pub struct ClipHighlightSpec {
     pub opacity: Maybe<f64>,
 }
 
+/// One Google Fonts family a theme downloads (`motion_define_theme`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ThemeFontSpec {
+    /// Google Fonts family name exactly as Google spells it ("Newsreader", "IBM Plex Mono").
+    pub family: String,
+    /// CSS weights to load, e.g. ["400", "600"]. Omitted loads the regular weight.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub weights: Maybe<Vec<String>>,
+    /// Load the italic face instead of the upright one.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub italic: Maybe<bool>,
+}
+
+/// Theme fields for `motion_define_theme`: every one optional, applied over the base.
+///
+/// Colours are opaque #rrggbb (three.js discards alpha, so a translucent colour would render
+/// differently in 3D than in 2D).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ThemeFields {
+    /// One line describing the look (optional).
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub description: Maybe<String>,
+    /// Scene ground. Opaque #rrggbb colour.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub bg: Maybe<String>,
+    /// Second ground: panels, cards, 3D faces, the vignette edge. Opaque #rrggbb colour.
+    #[serde(
+        rename = "bgDeep",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub bg_deep: Maybe<String>,
+    /// Primary stroke: graph rings, roughjs default. Opaque #rrggbb colour.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stroke: Maybe<String>,
+    /// Secondary lines: borders, graph edges. Opaque #rrggbb colour.
+    #[serde(
+        rename = "strokeSoft",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stroke_soft: Maybe<String>,
+    /// Primary text. Opaque #rrggbb colour.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub text: Maybe<String>,
+    /// Secondary text: captions, labels. Opaque #rrggbb colour.
+    #[serde(
+        rename = "textDim",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub text_dim: Maybe<String>,
+    /// Emphasis / active-state colour. Opaque #rrggbb colour.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub accent: Maybe<String>,
+    /// Signal / energy colour: fills, pulses, glows. Opaque #rrggbb colour.
+    #[serde(
+        rename = "accentSignal",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub accent_signal: Maybe<String>,
+    /// Stroke width in px at 1080p, 0.5..20.
+    #[serde(
+        rename = "strokeWidth",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stroke_width: Maybe<f64>,
+    /// roughjs roughness, 0..10. 0 draws exact geometry.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub roughness: Maybe<f64>,
+    /// roughjs bowing, 0..10. 0 keeps straight lines straight.
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub bowing: Maybe<f64>,
+    /// CSS font-family stack for headlines (no ; { } < > or backslash).
+    #[serde(
+        rename = "fontDisplay",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub font_display: Maybe<String>,
+    /// CSS font-family stack for labels and body.
+    #[serde(
+        rename = "fontUi",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub font_ui: Maybe<String>,
+    /// CSS font-family stack for numbers and data.
+    #[serde(
+        rename = "fontMono",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub font_mono: Maybe<String>,
+    /// Amplitude of the always-on drift in px, 0..20. 0 = nothing drifts.
+    #[serde(
+        rename = "ambientDriftPx",
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ambient_drift_px: Maybe<f64>,
+    /// Google Fonts families to download for the stacks above (at most 8).
+    #[serde(
+        default,
+        deserialize_with = "maybe",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub fonts: Maybe<Vec<ThemeFontSpec>>,
+}
+
 /// A start or end framing for a dynamic zoom (`editor_set_dynamic_zoom`).
 ///
 /// snake_case only — there is no x/y/zoom/positionX alias. Every field is optional and

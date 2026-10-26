@@ -30,6 +30,7 @@
  * `layerLabel` already uses.
  */
 import type { Manifest, Scene, Layer, Cam2dKey, Cam3dKey, TransformKey, ThemeName } from '@apelles/motion-engine/src/engine/schema';
+import type { ThemeDef } from '@apelles/motion-engine/src/themeDef';
 import { interpolateKeys } from '@apelles/motion-engine/src/lib/interpolateKeys';
 import { motion } from '@apelles/motion-engine/src/design';
 import { deviceBodyRect } from '@apelles/motion-engine/src/lib/device';
@@ -1376,8 +1377,27 @@ export function setSceneField(manifest: Manifest, sceneIndex: number, key: strin
  */
 export function setProjectTheme(manifest: Manifest, theme: ThemeName | undefined): Manifest {
   const next = clone(manifest);
+  // D-399 — switching to a built-in (or clearing) leaves the embedded
+  // definition behind as a stale second look: drop it, so `theme` is the whole
+  // answer again.
+  delete (next as unknown as Raw).themeDef;
   if (theme === undefined) delete (next as unknown as Raw).theme;
   else next.theme = theme;
+  return next;
+}
+
+/**
+ * D-399 (B-268) — give the document a theme of its OWN: embed `def` as
+ * `manifest.themeDef` and name it in `manifest.theme`. This is how a library
+ * theme, a newly defined one or one derived from a token file becomes part of a
+ * document, and embedding (rather than referencing) is the point: the manifest
+ * then renders the same pixels on any machine, whatever that machine's library
+ * holds (the determinism rule, D-339).
+ */
+export function setProjectThemeDef(manifest: Manifest, def: ThemeDef): Manifest {
+  const next = clone(manifest);
+  next.theme = def.name;
+  next.themeDef = JSON.parse(JSON.stringify(def)) as ThemeDef;
   return next;
 }
 

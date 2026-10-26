@@ -19,7 +19,7 @@ use crate::args::WireArgs;
 use crate::render;
 use crate::schemas::{
     ActiveScheduleEntry, Camera2DKey, Camera3DKey, EaseCurve, LayerTransformKey, MotionKeyTarget,
-    MotionSelection, MotionTarget,
+    MotionSelection, MotionTarget, ThemeFields,
 };
 use crate::server::ApellesMcp;
 
@@ -394,6 +394,34 @@ pub struct MotionReloadManifestArgs {
     pub force: bool,
 }
 
+fn default_motion_define_theme_to_library() -> bool {
+    false
+}
+
+fn default_motion_define_theme_apply() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionDefineThemeArgs {
+    pub name: String,
+    #[serde(default)]
+    pub base: Option<String>,
+    #[serde(default)]
+    pub theme: Option<ThemeFields>,
+    #[serde(default)]
+    pub tokens_css: Option<String>,
+    #[serde(default = "default_motion_define_theme_to_library")]
+    pub to_library: bool,
+    #[serde(default = "default_motion_define_theme_apply")]
+    pub apply: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MotionDeleteThemeArgs {
+    pub name: String,
+}
+
 #[tool_router(router = motion_router, vis = "pub")]
 impl ApellesMcp {
     #[tool(
@@ -601,9 +629,12 @@ impl ApellesMcp {
     key rather than writing the default's name into it, which is the shape
     every manifest authored before themes existed already has.
 
-    An unregistered name is rejected outright, unlike `motion_set_scene_field`
-    (which warns and writes anyway): the manifest schema declares this field
-    as an enum, so a name outside the registry would not parse at all.
+    A name nothing defines is rejected outright, unlike `motion_set_scene_field`
+    (which warns and writes anyway): the manifest schema refuses a theme name
+    that is neither a built-in nor the document's own embedded definition.
+    A theme from the user LIBRARY is also a legal name (`motion_list_themes`):
+    its definition is copied INTO the document, so the render stays
+    deterministic on any machine. Define new themes with `motion_define_theme`.
 
     Undoable in the app (Cmd/Ctrl+Z), like any other Motion edit.
 
@@ -616,6 +647,97 @@ impl ApellesMcp {
     ) -> Result<CallToolResult, ErrorData> {
         let args = WireArgs::new().set("theme", p.theme);
         let env = self.op("motion_set_project_theme", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_list_themes",
+        description = r#"List every theme a Motion project can use (B-268): the compiled
+    built-ins, the user's saved library, and what THIS document uses. Read-only;
+    needs no project open for the first two.
+
+    Returns `builtin` (name, description, `default`), `library` (each with its
+    full `definition`, so you can copy or adapt one), `project` (`theme` name,
+    `source` = `builtin` | `embedded` | `default`, and the `definition` when the
+    document carries its own) or null when no manifest is loaded, and
+    `defaultTheme`. Define a new one with `motion_define_theme`."#
+    )]
+    pub async fn motion_list_themes(&self) -> Result<CallToolResult, ErrorData> {
+        let env = self.op("motion_list_themes", WireArgs::new()).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_define_theme",
+        description = r#"Define a theme as DATA and give it to the document (B-268): a look that is not
+    one of the compiled built-ins, with no engine change, commit or rebuild.
+
+    A theme is a validated document: eight opaque `#rrggbb` colours (ground,
+    deep ground, stroke, soft stroke, text, dim text, accent, signal accent),
+    the stroke feel (`strokeWidth`, `roughness`, `bowing`, `ambientDriftPx`),
+    three CSS font stacks (`fontDisplay`, `fontUi`, `fontMono`) and the Google
+    Fonts families to download for them (`fonts`). It is built in this order, then
+    validated as a whole, and nothing partial is ever stored:
+      1. `base` -- a built-in, library or embedded theme to start from (default:
+         the engine default, `dark-excalidraw`), so a few overrides are enough;
+      2. `tokens_css` -- an optional CSS token file whose `--apelles-theme-*`
+         custom properties override the base: `--apelles-theme-bg: #1c1a17;`,
+         `--apelles-theme-stroke-width: 2;`, `--apelles-theme-font-display:
+         'Newsreader', serif;`, `--apelles-theme-fonts: Newsreader:400,600 |
+         Instrument Sans:400` (families separated by `|`). Values must be literal
+         (no `var()`), which keeps the derivation deterministic;
+      3. `theme` -- explicit fields, which win over both.
+    `name` is the new theme's id (lowercase letters, digits, hyphens; never a
+    built-in's name). Errors name the field (`bg: an opaque #rrggbb colour`).
+
+    Where it goes -- `apply` (default true) EMBEDS the definition in this
+    document's manifest (`themeDef`), which is what makes a render deterministic:
+    the same manifest renders the same pixels on any machine, whatever that
+    machine's library holds. `to_library` also saves it to the user library so
+    other projects can pick it (`motion_set_project_theme`). `apply: false` with
+    `to_library: false` is a dry run that returns the validated definition.
+
+    A scene's own `bg` and a layer's own `color` / `font` still win over any
+    theme. Fonts load from Google Fonts by family name at render time; a family
+    Google does not have is skipped (the stack's fallbacks render) rather than
+    failing the render.
+
+    Undoable in the app when applied, like any other Motion edit. The library is
+    user-level state, not part of the project, and is not in the undo stack."#
+    )]
+    pub async fn motion_define_theme(
+        &self,
+        Parameters(p): Parameters<MotionDefineThemeArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let args = WireArgs::new()
+            .set("name", p.name)
+            .put("base", p.base)
+            .put("theme", p.theme)
+            .put("tokens_css", p.tokens_css)
+            .put_if("to_library", p.to_library);
+        // `apply` defaults TRUE, so only a `false` is sent.
+        let args = if p.apply {
+            args
+        } else {
+            args.set("apply", false)
+        };
+        let env = self.op("motion_define_theme", args).await?;
+        Ok(render::json_text(&env))
+    }
+
+    #[tool(
+        name = "motion_delete_theme",
+        description = r#"Remove a theme from the user's theme library (B-268). Projects that already
+    embed it keep their own copy by design: that copy is what makes their renders
+    deterministic. Does not touch the compiled built-ins. Needs no project open."#
+    )]
+    pub async fn motion_delete_theme(
+        &self,
+        Parameters(p): Parameters<MotionDeleteThemeArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let env = self
+            .op("motion_delete_theme", WireArgs::new().set("name", p.name))
+            .await?;
         Ok(render::json_text(&env))
     }
 

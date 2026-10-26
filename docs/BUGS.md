@@ -29,11 +29,12 @@ Still real:
 
 ## B-268 — a Motion theme can only be added by changing engine code; themes are not data
 
-status: **open** · severity: **major** (a look that is not already compiled in needs an engine change, a commit and a rebuild; neither a user nor an agent can add one at runtime) · area: `packages/motion-engine/src/design.ts` (`THEMES`), `engine/schema.ts` (`theme` is a `z.enum` of the compiled names), `themeFonts.ts`, `motion_set_project_theme`
+status: **fixed (D-399, 2026-10-26)** · severity: **major** (a look that is not already compiled in needs an engine change, a commit and a rebuild; neither a user nor an agent can add one at runtime) · area: `packages/motion-engine/src/design.ts` (`THEMES`), `engine/schema.ts` (`theme` is a `z.enum` of the compiled names), `themeFonts.ts`, `motion_set_project_theme`
 
 - **found:** 2026-10-26, owner: "why we needed to do code change to convert to light theme — themes should be dynamic". Making the Black October edit light required adding `apelles-studio-light` to the code (D-394).
 - **actual:** switching among EXISTING themes is a setting, but a theme itself is a compiled TypeScript object, the manifest schema only accepts compiled names, and each theme's fonts are a code loader.
 - **expected:** a theme is a validated DATA document (the existing `Theme` shape plus its font list) that can live in the manifest (`manifest.themeDef`), in the user library (shared across projects, like components) or be derived from a token file. It is creatable and editable in the GUI (a theme editor next to the Theme picker) and over MCP (`motion_define_theme`, `motion_list_themes`), and resolved at render time with the compiled presets as built-in defaults. Fonts load from the same Google Fonts mechanism by family name.
+- **fixed (D-399):** a theme is a validated `ThemeDef` (colours as opaque `#rrggbb`, stroke feel, font stacks, Google Fonts families). It can be embedded in the manifest (`themeDef`, which `manifestSchema` REQUIRES for any non-built-in `theme` name), kept in a user library, or derived from a `--apelles-theme-*` token file. MCP `motion_define_theme` / `motion_list_themes` / `motion_delete_theme`, a theme editor beside the picker, compiled presets kept as built-ins. Verified by tests and a real offline Remotion render of a custom theme; the custom-font download and the GUI editor in the running app are not verified (see D-399).
 - **note:** keep D-339's determinism rule. A manifest naming a user theme must embed or pin its definition, so the same document renders the same pixels on any machine.
 
 ## B-267 — after an app restart the Edit timeline panel draws no clips, though the timeline holds all of them

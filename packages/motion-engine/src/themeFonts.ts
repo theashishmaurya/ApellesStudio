@@ -24,7 +24,9 @@ import { loadFont as loadKalam } from "@remotion/google-fonts/Kalam";
 import { loadFont as loadNewsreader } from "@remotion/google-fonts/Newsreader";
 import { loadFont as loadInstrumentSans } from "@remotion/google-fonts/InstrumentSans";
 import { loadFont as loadIBMPlexMono } from "@remotion/google-fonts/IBMPlexMono";
-import { DEFAULT_THEME_NAME, type ThemeName } from "./design";
+import { continueRender, delayRender } from "remotion";
+import { getAvailableFonts } from "@remotion/google-fonts";
+import { DEFAULT_THEME_NAME, THEMES, type Theme, type ThemeName } from "./design";
 
 const LOADERS: Record<ThemeName, () => void> = {
   "dark-excalidraw": () => {
@@ -49,14 +51,63 @@ const LOADERS: Record<ThemeName, () => void> = {
   },
 };
 
-const loaded = new Set<ThemeName>();
+const loaded = new Set<string>();
 
-export const ensureThemeFonts = (name: ThemeName): void => {
-  if (loaded.has(name)) return;
-  loaded.add(name);
-  LOADERS[name]();
+/** The one shape of a family module's `loadFont` this file relies on; the
+ *  generated per-family typings differ in their weight/subset unions, which
+ *  user-supplied data cannot satisfy statically. */
+type LoadFont = (
+  style: "normal" | "italic",
+  options: { weights?: string[]; subsets?: string[] },
+) => { waitUntilDone: () => Promise<unknown> };
+
+/**
+ * D-399 — a user theme's webfonts, by Google Fonts family NAME.
+ *
+ * Each family is looked up in `@remotion/google-fonts`' catalogue, loaded
+ * through its dynamic import, and held with `delayRender` until the face is
+ * ready, so a frame is never rendered in the fallback font. A family the
+ * catalogue does not have is warned about and skipped: the stack's own
+ * fallbacks (`serif`, `monospace`, …) then render, which is a degraded look,
+ * not a failed render.
+ */
+const loadCustomFonts = (theme: Theme): void => {
+  const available = getAvailableFonts();
+  for (const font of theme.fonts ?? []) {
+    const entry = available.find((f) => f.fontFamily === font.family);
+    if (!entry) {
+      console.warn(`[themeFonts] theme "${theme.name}": no Google Fonts family "${font.family}"`);
+      continue;
+    }
+    const handle = delayRender(`theme font ${font.family}`);
+    void entry
+      .load()
+      .then((mod) => {
+        const loadFont = (mod as unknown as { loadFont: LoadFont }).loadFont;
+        return loadFont(font.italic ? "italic" : "normal", {
+          weights: font.weights,
+          subsets: ["latin"],
+        }).waitUntilDone();
+      })
+      .catch((e: unknown) => {
+        console.warn(`[themeFonts] theme "${theme.name}": could not load "${font.family}": ${String(e)}`);
+      })
+      .finally(() => continueRender(handle));
+  }
+};
+
+/** Load the faces `theme` needs, at most once per theme name per process. A
+ *  built-in uses its own loader above; a user theme loads its `fonts`. */
+export const ensureThemeFonts = (theme: Theme): void => {
+  // A user theme can be redefined under the same name with other fonts, so its
+  // key includes them; a built-in's name is its whole identity.
+  const key = theme.name in THEMES ? theme.name : `${theme.name}|${JSON.stringify(theme.fonts ?? [])}`;
+  if (loaded.has(key)) return;
+  loaded.add(key);
+  if (theme.name in THEMES) LOADERS[theme.name as ThemeName]();
+  else loadCustomFonts(theme);
 };
 
 // The default theme's face, loaded at module scope exactly as `Video.tsx` did
 // before D-339 — see this file's header for why this one is not lazy.
-ensureThemeFonts(DEFAULT_THEME_NAME);
+ensureThemeFonts(THEMES[DEFAULT_THEME_NAME]);

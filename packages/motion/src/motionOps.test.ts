@@ -78,6 +78,7 @@ import type { Selection } from './LayerList';
 import type { MotionLayerPreset } from './layerPresets';
 import { IDLE_RENDER_STATUS, type MotionRenderStatus } from './renderLoop';
 import type { ReloadOutcome } from './useMotionManifest';
+import type { ThemeDef } from '@apelles/motion-engine/src/themeDef';
 
 // ---------------------------------------------------------------------------
 // harness
@@ -156,6 +157,11 @@ function harness(initial: Manifest = sample) {
   const presetCommitOk = { value: true };
   const presetNow = { value: '2026-09-16T00:00:00.000Z' };
 
+  // D-399 — the saved-theme library, in memory, with the same two knobs the
+  // preset library has: what was written, and whether the write succeeds.
+  const themeLib: { current: ThemeDef[] } = { current: [] };
+  const themeCommitOk = { value: true };
+
   const ops: MotionOps = createMotionOps({
     api: () => api,
     selections: () => state.selections,
@@ -174,6 +180,14 @@ function harness(initial: Manifest = sample) {
       },
       now: () => presetNow.value,
     }),
+    themes: () => ({
+      list: () => themeLib.current,
+      commit: async (next) => {
+        if (!themeCommitOk.value) return false;
+        themeLib.current = [...next];
+        return true;
+      },
+    }),
   });
 
   return {
@@ -186,6 +200,8 @@ function harness(initial: Manifest = sample) {
     render,
     reloadFromDisk,
     presetLib,
+    themeLib,
+    themeCommitOk,
     presetWrites,
     presetCommitOk,
     presetNow,
@@ -221,6 +237,9 @@ const ALL_OPS = [
   'motion_delete_scene',
   'motion_duplicate_scene',
   'motion_set_project_theme',
+  'motion_list_themes',
+  'motion_define_theme',
+  'motion_delete_theme',
   'motion_set_project_settings',
   'motion_set_scene_field',
   'motion_set_camera_2d',
@@ -261,11 +280,11 @@ const ALL_OPS = [
 // ---------------------------------------------------------------------------
 
 describe('the registry itself', () => {
-  it('exposes exactly the 44 documented ops, all motion_-prefixed', () => {
+  it('exposes exactly the 47 documented ops, all motion_-prefixed', () => {
     const { ops } = harness();
     const names = Object.keys(ops).sort();
     expect(names).toEqual([...ALL_OPS].sort());
-    expect(names).toHaveLength(44);
+    expect(names).toHaveLength(47);
     expect(names.every((n) => n.startsWith('motion_'))).toBe(true);
   });
 
@@ -275,7 +294,7 @@ describe('the registry itself', () => {
    *  which likewise reports project-open status instead of erroring on it;
    *  refusing here would make "is a project open?" unanswerable without
    *  first triggering an error. */
-  const ORIENTATION_OPS = ['motion_get_manifest', 'motion_get_state', 'motion_list_primitives'];
+  const ORIENTATION_OPS = ['motion_get_manifest', 'motion_get_state', 'motion_list_primitives', 'motion_list_themes'];
 
   /** D-332 — the two ops that act on the user's COMPONENT LIBRARY rather than
    *  on a project. The library lives in the app data directory and is shared
@@ -285,7 +304,7 @@ describe('the registry itself', () => {
    *  refusal with no reason behind it. The other two preset ops
    *  (`motion_save_layer_preset`, `motion_add_layer_from_preset`) DO touch a
    *  manifest, so they stay in the sweep below. */
-  const LIBRARY_OPS = ['motion_list_layer_presets', 'motion_delete_layer_preset'];
+  const LIBRARY_OPS = ['motion_list_layer_presets', 'motion_delete_layer_preset', 'motion_delete_theme'];
 
   it('every op except the orientation reads and the library ops refuses cleanly with no project open, and never commits', async () => {
     const h = harness();
@@ -585,6 +604,92 @@ describe('scenes', () => {
     expect(r.error).toMatch(/apelles-studio/);
     expect(h.commits).toHaveLength(0);
     expect(h.run('motion_set_project_theme', {}).error).toMatch(/theme is required/);
+  });
+
+  // D-399 (B-268) — themes as data.
+  it('motion_define_theme builds from a base, embeds the result in the document and reports it', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_define_theme', {
+      name: 'night-ink',
+      base: 'apelles-studio',
+      theme: { bg: '#101820', accent: '#ff7a00', fontDisplay: "'Fraunces', serif", fonts: [{ family: 'Fraunces', weights: ['400', '700'] }] },
+    });
+    expect(r.error).toBeUndefined();
+    expect(r).toMatchObject({ savedToLibrary: false, appliedToProject: true });
+    const m = h.current();
+    expect(m.theme).toBe('night-ink');
+    expect(m.themeDef).toMatchObject({ name: 'night-ink', bg: '#101820', accent: '#ff7a00', stroke: '#f4efe6' });
+    expect(m.themeDef?.fonts).toEqual([{ family: 'Fraunces', weights: ['400', '700'] }]);
+    expect(h.commits.at(-1)?.label).toBe('Theme: night-ink');
+    expect(h.themeLib.current).toHaveLength(0);
+  });
+
+  it('motion_define_theme to_library saves it for other projects, replacing a same-named one', async () => {
+    const h = harness();
+    await h.runAsync('motion_define_theme', { name: 'a', theme: { bg: '#111111' }, to_library: true });
+    await h.runAsync('motion_define_theme', { name: 'a', theme: { bg: '#222222' }, to_library: true });
+    expect(h.themeLib.current.map((t) => [t.name, t.bg])).toEqual([['a', '#222222']]);
+  });
+
+  it('motion_define_theme can derive a theme from a token file (and apply: false is a dry run)', async () => {
+    const h = harness();
+    const r = await h.runAsync('motion_define_theme', {
+      name: 'from-tokens',
+      apply: false,
+      tokens_css: ':root { --apelles-theme-bg: #0a0a0a; --apelles-theme-stroke-width: 4; --apelles-theme-font-ui: "Inter", sans-serif; --apelles-theme-fonts: Inter:400,600; }',
+    });
+    expect(r).toMatchObject({ appliedToProject: false, savedToLibrary: false });
+    const def = r.defined as ThemeDef;
+    expect(def).toMatchObject({ name: 'from-tokens', bg: '#0a0a0a', strokeWidth: 4, fontUi: '"Inter", sans-serif' });
+    expect(def.fonts).toEqual([{ family: 'Inter', weights: ['400', '600'] }]);
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('motion_define_theme refuses a bad colour, a built-in name and an unknown base, naming each', async () => {
+    const h = harness();
+    expect((await h.runAsync('motion_define_theme', { name: 'x', theme: { bg: 'red' } })).error).toMatch(/bg: an opaque #rrggbb/);
+    expect((await h.runAsync('motion_define_theme', { name: 'apelles-studio', theme: {} })).error).toMatch(/built-in/);
+    expect((await h.runAsync('motion_define_theme', { name: 'x', base: 'nope' })).error).toMatch(/unknown base theme "nope"/);
+    expect((await h.runAsync('motion_define_theme', { name: 'x', theme: { fontUi: 'a;b' } })).error).toMatch(/fontUi/);
+    expect(h.commits).toHaveLength(0);
+  });
+
+  it('motion_set_project_theme copies a LIBRARY theme into the document (deterministic anywhere)', async () => {
+    const h = harness();
+    await h.runAsync('motion_define_theme', { name: 'lib-theme', theme: { bg: '#123456' }, to_library: true, apply: false });
+    const r = h.run('motion_set_project_theme', { theme: 'lib-theme' });
+    expect(r).toMatchObject({ theme: 'lib-theme', embedded: true });
+    expect(h.current().themeDef?.bg).toBe('#123456');
+    // and switching back to a built-in drops the embedded copy
+    h.run('motion_set_project_theme', { theme: 'apelles-studio' });
+    expect('themeDef' in h.current()).toBe(false);
+    expect(h.current().theme).toBe('apelles-studio');
+  });
+
+  it('motion_list_themes reports built-ins, the library and what the document uses', async () => {
+    const h = harness();
+    expect((h.run('motion_list_themes').project as Record<string, unknown>).source).toBe('default');
+    await h.runAsync('motion_define_theme', { name: 'mine', theme: { bg: '#123456' }, to_library: true });
+    const r = h.run('motion_list_themes');
+    expect((r.builtin as { name: string }[]).map((t) => t.name)).toContain('apelles-studio-light');
+    expect((r.library as { name: string }[]).map((t) => t.name)).toEqual(['mine']);
+    expect(r.project).toMatchObject({ theme: 'mine', source: 'embedded' });
+  });
+
+  it('motion_delete_theme removes from the library only; a document keeps its embedded copy', async () => {
+    const h = harness();
+    await h.runAsync('motion_define_theme', { name: 'mine', theme: { bg: '#123456' }, to_library: true });
+    expect(await h.runAsync('motion_delete_theme', { name: 'mine' })).toEqual({ deleted: 'mine', remaining: 0 });
+    expect(h.current().themeDef?.name).toBe('mine');
+    expect((await h.runAsync('motion_delete_theme', { name: 'mine' })).error).toMatch(/no theme named/);
+  });
+
+  it('a failed library write is reported, not claimed', async () => {
+    const h = harness();
+    h.themeCommitOk.value = false;
+    const r = await h.runAsync('motion_define_theme', { name: 'mine', to_library: true });
+    expect(r.error).toMatch(/could not write the theme library/);
+    expect(h.commits).toHaveLength(0);
   });
 
   // D-345 (fixes B-222) — the manifest's OWN top-level fields.

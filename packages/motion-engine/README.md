@@ -20,6 +20,8 @@ src/
   design.ts            ← the THEME REGISTRY (D-339): the `Theme` shape, `THEMES`,
                          `resolveTheme`, `DEFAULT_THEME_NAME` — plus `motion`,
                          the deliberately UN-themed fps/easing constants
+  themeDef.ts          ← a theme as DATA (D-399): `ThemeDef` + zod schema, the manifest's
+                         `resolveManifestTheme`, token-file derivation
   ThemeContext.tsx     ← `ThemeProvider` / `useTheme()` — how a resolved theme
                          reaches every primitive
   themeFonts.ts        ← each theme's webfaces, loaded once per theme per process

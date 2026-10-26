@@ -94,7 +94,10 @@
  */
 import { useState } from 'react';
 import type { Manifest, Cam2dKey, Cam3dKey, ThemeName, TransformKey } from '@apelles/motion-engine/src/engine/schema';
-import { THEME_NAMES } from '@apelles/motion-engine/src/design';
+import { DEFAULT_THEME_NAME, THEME_NAMES } from '@apelles/motion-engine/src/design';
+import { ThemeEditor } from './ThemeEditor';
+import { useMotionThemeLibraryStore } from './themeLibraryIO';
+import { findNamedTheme, upsertTheme } from './themeLibrary';
 import { InspectorEmptyState, InspectorSection } from '@apelles/inspector';
 // D-253 — the SUBPATH, never `@apelles/ui`'s barrel: that barrel exports
 // `Text`, whose polymorphic `as`-prop typing breaks once
@@ -132,6 +135,7 @@ import {
   setLayerItemField,
   setProjectSettings,
   setProjectTheme,
+  setProjectThemeDef,
   resetLayerItemPosition,
 } from './manifestEdit';
 import {
@@ -853,6 +857,19 @@ function ProjectInspector({ manifest, onChange }: { manifest: Manifest; onChange
   // default.
   const [reflow, setReflow] = useState(true);
 
+  const library = useMotionThemeLibraryStore((st) => st.themes);
+  const themeOptions = [
+    ...THEME_NAMES,
+    ...library.map((t) => t.name),
+    ...(manifest.themeDef && !library.some((t) => t.name === manifest.themeDef?.name) ? [manifest.themeDef.name] : []),
+  ];
+  const pickTheme = (name: string | undefined) => {
+    if (name === undefined) return onChange(setProjectTheme(manifest, undefined));
+    const found = findNamedTheme(name, library, manifest.themeDef);
+    if (!found || found.source === 'embedded') return;
+    onChange(found.source === 'builtin' ? setProjectTheme(manifest, found.name) : setProjectThemeDef(manifest, found.def));
+  };
+
   const commit = (key: string, value: unknown) => {
     const result = setProjectSettings(manifest, { [key]: value }, { reflow });
     if (!result.ok) {
@@ -874,10 +891,21 @@ function ProjectInspector({ manifest, onChange }: { manifest: Manifest; onChange
       {error && <span className="text-[10px] text-red-400">{error}</span>}
       {!error && warning && <span className="text-[10px] text-text-secondary">{warning}</span>}
       <InspectorSection label="Look">
+        {/* D-399 — the picker lists the built-ins, the user's saved themes and
+            the document's own embedded one; picking a saved theme COPIES its
+            definition into the manifest (see `setProjectThemeDef`). */}
         <FieldControl
-          spec={THEME_FIELD}
+          spec={{ ...THEME_FIELD, options: themeOptions }}
           value={manifest.theme}
-          onCommit={(v) => onChange(setProjectTheme(manifest, v as ThemeName | undefined))}
+          onCommit={(v) => pickTheme(typeof v === 'string' && v !== '' ? v : undefined)}
+        />
+        <ThemeEditor
+          currentName={manifest.theme ?? DEFAULT_THEME_NAME}
+          embedded={manifest.themeDef}
+          library={library}
+          onUse={(def) => onChange(setProjectThemeDef(manifest, def))}
+          onSaveToLibrary={(def) => useMotionThemeLibraryStore.getState().commit(upsertTheme(library, def))}
+          onRemoveFromLibrary={(name) => useMotionThemeLibraryStore.getState().commit(library.filter((t) => t.name !== name))}
         />
       </InspectorSection>
       <InspectorEmptyState>Select a scene, camera, or layer to edit its properties.</InspectorEmptyState>

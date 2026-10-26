@@ -132,6 +132,7 @@ import {
   setLayerTransformKeys,
   setProjectSettings,
   setProjectTheme,
+  setProjectThemeDef,
   setSceneField,
   setTransformFieldOnSelections,
   upsertLayerTransformKeyXY,
@@ -169,6 +170,8 @@ import { layerLabel, type Selection } from './LayerList';
 import { sceneStartFrame, totalFrames } from '@apelles/motion-engine/src/engine/build';
 import type { Cam2dKey, Cam3dKey, Manifest, ThemeName, TransformKey } from '@apelles/motion-engine/src/engine/schema';
 import { DEFAULT_THEME_NAME, THEMES, THEME_NAMES } from '@apelles/motion-engine/src/design';
+import type { ThemeDef } from '@apelles/motion-engine/src/themeDef';
+import { buildThemeDef, findNamedTheme, removeTheme, upsertTheme } from './themeLibrary';
 import type { LoadState, ReloadOutcome, RenderOptions, RenderOutcome, SaveOutcome } from './useMotionManifest';
 import type { MotionRenderStatus } from './renderLoop';
 
@@ -244,6 +247,16 @@ export interface MotionOpsContext {
    *  supplies, so the op is deterministic and its test does not have to mock
    *  a global. */
   presets?: () => MotionPresetAccess;
+  /** D-399 — the saved-theme library, accessed the same way `presets` is. */
+  themes?: () => MotionThemeAccess;
+}
+
+/** D-399 — the ops layer's window onto the saved-theme library. */
+export interface MotionThemeAccess {
+  /** the CURRENT library, read fresh per call. */
+  list: () => ThemeDef[];
+  /** persist a replacement library; `false` when the write failed. */
+  commit: (next: readonly ThemeDef[]) => Promise<boolean>;
 }
 
 /** D-332 — the ops layer's window onto the saved-component library. */
@@ -606,6 +619,9 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         // reported separately rather than collapsed so an agent can tell
         // "never set" from "explicitly set to the default".
         theme: manifest?.theme ?? null,
+        // D-399 — whether the document carries its OWN theme definition
+        // (`themeDef`) rather than naming a built-in.
+        themeEmbedded: manifest?.themeDef !== undefined,
         defaultTheme: DEFAULT_THEME_NAME,
         // B-202 — the render's own progress, verbatim from `renderLoop.ts`'s
         // `MotionRenderStatus`. The GUI's Render button reads the identical
@@ -769,11 +785,20 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
       // D-339 — the theme registry, so `motion_set_project_theme`'s legal
       // values are discoverable from the same one static reference call
       // every other Motion vocabulary comes from.
-      themes: THEME_NAMES.map((name) => ({
-        name,
-        description: THEMES[name].description,
-        default: name === DEFAULT_THEME_NAME,
-      })),
+      themes: [
+        ...THEME_NAMES.map((name) => ({
+          name,
+          source: 'builtin',
+          description: THEMES[name].description,
+          default: name === DEFAULT_THEME_NAME,
+        })),
+        ...(ctx.themes?.().list() ?? []).map((t) => ({
+          name: t.name,
+          source: 'library',
+          description: t.description ?? '',
+          default: false,
+        })),
+      ],
       defaultTheme: DEFAULT_THEME_NAME,
       // D-345 — the manifest's own top-level fields, for
       // `motion_set_project_settings`, discoverable from the same one static
@@ -917,13 +942,14 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
      * identically, and absent is the form every existing project file has,
      * so "put it back the way it was" has to be reachable exactly.
      *
-     * A name outside the registry is a hard error listing the legal ones —
+     * A name nothing defines is a hard error listing the legal ones —
      * unlike `motion_set_scene_field`/`motion_set_layer_field`, which warn
      * and write anyway because a hand-authored manifest may legitimately
      * carry a field the Inspector does not know. There is no equivalent here:
-     * `manifestSchema` declares `theme` as an enum, so an unregistered name
-     * does not parse at all, and writing one would break the document rather
-     * than extend it.
+     * `manifestSchema` refuses a theme name that is neither a built-in nor the
+     * embedded `themeDef`'s own, so writing one would break the document.
+     * D-399: a LIBRARY theme's name is legal, and is copied into the document
+     * as `themeDef` (see `setProjectThemeDef`).
      */
     motion_set_project_theme: (a) => {
       const cur = ctx.api();
@@ -935,24 +961,145 @@ export function createMotionOps(ctx: MotionOpsContext): MotionOps {
         return { error: 'theme is required (use JSON null to clear it back to the default)' };
       }
       const raw = a.theme;
-      let theme: ThemeName | undefined;
+      const library = ctx.themes?.().list() ?? [];
+      let next: Manifest;
+      let label: string;
       if (raw === null || raw === undefined) {
-        theme = undefined;
-      } else if (typeof raw === 'string' && (THEME_NAMES as string[]).includes(raw)) {
-        theme = raw as ThemeName;
+        next = setProjectTheme(manifest, undefined);
+        label = 'Theme: default';
+      } else if (typeof raw === 'string') {
+        const found = findNamedTheme(raw, library, manifest.themeDef);
+        if (!found) {
+          return {
+            error: `unknown theme ${JSON.stringify(raw)} — built-in: ${THEME_NAMES.join(', ')}${
+              library.length ? `; library: ${library.map((t) => t.name).join(', ')}` : ''
+            }. Define one with motion_define_theme.`,
+          };
+        }
+        // A built-in is named; a library theme is COPIED INTO the document
+        // (D-399), so the manifest renders the same on a machine without it.
+        next =
+          found.source === 'builtin'
+            ? setProjectTheme(manifest, found.name)
+            : found.source === 'library'
+              ? setProjectThemeDef(manifest, found.def)
+              : manifest;
+        label = `Theme: ${raw}`;
       } else {
-        return {
-          error: `unknown theme ${JSON.stringify(raw)} — known themes: ${THEME_NAMES.join(', ')}`,
-        };
+        return { error: 'theme must be a theme name, or null to clear it' };
       }
 
-      const next = setProjectTheme(manifest, theme);
-      cur.commit(next, theme ? `Theme: ${theme}` : 'Theme: default');
+      if (next !== manifest) cur.commit(next, label);
       return {
         theme: next.theme ?? null,
+        embedded: next.themeDef !== undefined,
         effectiveTheme: next.theme ?? DEFAULT_THEME_NAME,
         defaultTheme: DEFAULT_THEME_NAME,
       };
+    },
+
+    /**
+     * D-399 (B-268) — list every theme a project can use: the compiled
+     * built-ins, the user's saved library, and what THIS document uses (a name,
+     * and whether it carries the definition itself). Needs no manifest or
+     * project open for the first two, the way `motion_list_primitives` doesn't.
+     */
+    motion_list_themes: () => {
+      const library = ctx.themes?.().list() ?? [];
+      const cur = ctx.api();
+      const manifest = cur.manifest;
+      return {
+        builtin: THEME_NAMES.map((name) => ({
+          name,
+          description: THEMES[name].description,
+          default: name === DEFAULT_THEME_NAME,
+        })),
+        library: library.map((t) => ({ name: t.name, description: t.description ?? '', definition: t })),
+        project: manifest
+          ? {
+              theme: manifest.theme ?? null,
+              source: manifest.themeDef ? 'embedded' : manifest.theme ? 'builtin' : 'default',
+              definition: manifest.themeDef ?? null,
+            }
+          : null,
+        defaultTheme: DEFAULT_THEME_NAME,
+      };
+    },
+
+    /**
+     * D-399 (B-268) — define a theme as DATA and (by default) give it to the
+     * document. Built from a `base` (a built-in, library or embedded theme;
+     * default the engine default), an optional CSS token file and explicit
+     * `theme` fields, in that order, then validated as a whole: nothing partial
+     * is ever stored. `to_library` also saves it for other projects; `apply`
+     * (default true) embeds it in this document, which is what makes a render of
+     * the document deterministic. `apply: false` with `to_library: false` is a
+     * dry run that just reports the validated definition.
+     */
+    motion_define_theme: async (a) => {
+      // A theme that is to be applied needs an open project; a library-only or
+      // dry-run definition (`apply: false`) does not.
+      if (a?.apply !== false && ctx.api().loadState === 'no-project') {
+        return { error: 'no project open — open one in the Colorist tab' };
+      }
+      const name = a?.name;
+      if (typeof name !== 'string' || name.length === 0) return { error: 'name (the new theme\'s id) is required' };
+      const fieldsRaw = a?.theme;
+      if (fieldsRaw !== undefined && (fieldsRaw === null || typeof fieldsRaw !== 'object' || Array.isArray(fieldsRaw))) {
+        return { error: 'theme must be an object of theme fields (bg, text, fontDisplay, …)' };
+      }
+      if (a?.tokens_css !== undefined && typeof a.tokens_css !== 'string') {
+        return { error: 'tokens_css must be a string of --apelles-theme-* custom properties' };
+      }
+      if (a?.base !== undefined && typeof a.base !== 'string') return { error: 'base must be a theme name' };
+
+      const cur = ctx.api();
+      const library = ctx.themes?.().list() ?? [];
+      const built = buildThemeDef(
+        {
+          name,
+          base: a?.base as string | undefined,
+          fields: fieldsRaw as Record<string, unknown> | undefined,
+          tokensCss: a?.tokens_css as string | undefined,
+        },
+        library,
+        cur.manifest?.themeDef,
+      );
+      if ('error' in built) return { error: built.error };
+      const def = built.def;
+
+      const toLibrary = a?.to_library === true;
+      const apply = a?.apply !== false;
+      if (apply) {
+        const guard = requireManifest(cur);
+        if (isErr(guard)) return guard;
+      }
+      if (toLibrary) {
+        const access = ctx.themes?.();
+        if (!access) return { error: 'the theme library is unavailable in this context' };
+        if (!(await access.commit(upsertTheme(access.list(), def)))) {
+          return { error: 'could not write the theme library to disk' };
+        }
+      }
+      if (apply) {
+        const manifest = requireManifest(ctx.api());
+        if (!isErr(manifest)) ctx.api().commit(setProjectThemeDef(manifest.manifest, def), `Theme: ${def.name}`);
+      }
+      return { defined: def, savedToLibrary: toLibrary, appliedToProject: apply };
+    },
+
+    /** D-399 — remove a theme from the user library. A project that already
+     *  embeds it keeps its copy, by design (that is what makes it portable). */
+    motion_delete_theme: async (a) => {
+      const name = a?.name;
+      if (typeof name !== 'string' || name.length === 0) return { error: 'name is required' };
+      const access = ctx.themes?.();
+      if (!access) return { error: 'the theme library is unavailable in this context' };
+      const list = access.list();
+      const next = removeTheme(list, name);
+      if (next === list) return { error: `no theme named "${name}" in the library` };
+      if (!(await access.commit(next))) return { error: 'could not write the theme library to disk' };
+      return { deleted: name, remaining: next.length };
     },
 
     /**

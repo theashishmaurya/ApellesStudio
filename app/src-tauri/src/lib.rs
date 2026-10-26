@@ -2402,6 +2402,8 @@ pub fn run() {
             chroma::motion_job::chroma_motion_job_ack,
             chroma::motion_presets::chroma_motion_load_layer_presets,
             chroma::motion_presets::chroma_motion_save_layer_presets,
+            chroma::motion_presets::chroma_motion_load_themes,
+            chroma::motion_presets::chroma_motion_save_themes,
             chroma::sidecar::chroma_ai_status,
             chroma::sidecar::chroma_ai_media_status,
             chroma::sidecar::chroma_mcp_status,

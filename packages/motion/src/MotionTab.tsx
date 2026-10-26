@@ -92,6 +92,7 @@ import {
 } from './manifestEdit';
 import { presetFromLayer, removePreset, upsertPreset } from './layerPresets';
 import { useMotionLayerPresetStore } from './layerPresetIO';
+import { useMotionThemeLibraryStore } from './themeLibraryIO';
 import type { PrimitiveUse } from './catalog';
 import { useMotionManifest, type SceneRenderResult } from './useMotionManifest';
 import { useMotionControl } from './useMotionControl';
@@ -251,6 +252,11 @@ export function MotionTab({
   useEffect(() => {
     if (!presetsLoaded) void useMotionLayerPresetStore.getState().reload();
   }, [presetsLoaded]);
+  // D-399 - the saved-theme library, loaded once for the Theme picker and editor.
+  const themesLoaded = useMotionThemeLibraryStore((s) => s.loaded);
+  useEffect(() => {
+    if (!themesLoaded) void useMotionThemeLibraryStore.getState().reload();
+  }, [themesLoaded]);
 
   // B-058 — this screen is now driven by the app's own "a project is open"
   // signal (`motionProjectStore.openProjectPath`) and nothing else, so it can no

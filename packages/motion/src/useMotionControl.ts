@@ -106,6 +106,7 @@ import type { PlayerRef } from '@remotion/player';
 
 import { createMotionOps, type MotionOpsApi, type MotionEditLinks } from './motionOps';
 import { useMotionLayerPresetStore } from './layerPresetIO';
+import { useMotionThemeLibraryStore } from './themeLibraryIO';
 import type { Selection } from './LayerList';
 import type { MotionCanvasMeasureApi } from './MotionPreview';
 import type { useMotionManifest } from './useMotionManifest';
@@ -227,6 +228,12 @@ export function useMotionControl(m: MotionManifestApi, refs: MotionControlRefs):
         list: () => useMotionLayerPresetStore.getState().presets,
         commit: (next) => useMotionLayerPresetStore.getState().commit(next),
         now: () => new Date().toISOString(),
+      }),
+      // D-399 — the saved-theme library, read the same way (`getState()` at
+      // call time, never a captured list).
+      themes: () => ({
+        list: () => useMotionThemeLibraryStore.getState().themes,
+        commit: (next) => useMotionThemeLibraryStore.getState().commit(next),
       }),
     });
 

@@ -1,8 +1,10 @@
-//! motion_presets.rs — the saved-layer-preset ("component") library (D-332).
+//! motion_presets.rs — the saved-layer-preset ("component") library (D-332) and
+//!   the saved-theme library (D-399).
 //!
-//! What it is: two Tauri commands that read and write the user's library of
-//!   saved Motion layer presets, as one JSON file in the app data directory
-//!   (`<app_data_dir>/motion/layer-presets.json`).
+//! What it is: Tauri commands that read and write the user's libraries of saved
+//!   Motion layer presets and saved Motion themes, each as one JSON file in the
+//!   app data directory (`<app_data_dir>/motion/layer-presets.json`,
+//!   `<app_data_dir>/motion/themes.json`). The two share every rule below.
 //! What it does: `chroma_motion_load_layer_presets` returns the list (an
 //!   ABSENT file is an empty list, not an error — a user who has never saved
 //!   one is the normal case, not a failure); `chroma_motion_save_layer_presets`
@@ -42,11 +44,14 @@ use std::path::PathBuf;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-/// `<app_data_dir>/motion/layer-presets.json`, creating the directory if it
+const LAYER_PRESETS_FILE: &str = "layer-presets.json";
+const THEMES_FILE: &str = "themes.json";
+
+/// `<app_data_dir>/motion/<file>`, creating the directory if it
 /// is not there yet. Mirrors `file_management.rs`'s `get_presets_path`,
 /// including that it is the PATH helper's job to make the parent exist so
 /// neither caller has to.
-fn library_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+fn library_path(app_handle: &AppHandle, file: &str) -> Result<PathBuf, String> {
     let dir = app_handle
         .path()
         .app_data_dir()
@@ -57,7 +62,7 @@ fn library_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
         std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
 
-    Ok(dir.join("layer-presets.json"))
+    Ok(dir.join(file))
 }
 
 /// The saved library, or an empty list when nothing has been saved yet.
@@ -68,7 +73,7 @@ fn library_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
 /// with the next save. A file that does not EXIST is not an error at all.
 #[tauri::command]
 pub fn chroma_motion_load_layer_presets(app_handle: AppHandle) -> Result<Vec<Value>, String> {
-    let path = library_path(&app_handle)?;
+    let path = library_path(&app_handle, LAYER_PRESETS_FILE)?;
     if !path.is_file() {
         return Ok(Vec::new());
     }
@@ -88,8 +93,39 @@ pub fn chroma_motion_save_layer_presets(
     presets: Vec<Value>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
-    let path = library_path(&app_handle)?;
+    let path = library_path(&app_handle, LAYER_PRESETS_FILE)?;
     let pretty = serde_json::to_string_pretty(&presets).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{pretty}\n"))
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// The saved theme library (D-399), or an empty list when none has been saved.
+/// Same contract as [`chroma_motion_load_layer_presets`], including that an
+/// unparseable file is an error and not a silent empty list. Validation of each
+/// theme is the frontend's (`themeDef.ts`'s schema).
+#[tauri::command]
+pub fn chroma_motion_load_themes(app_handle: AppHandle) -> Result<Vec<Value>, String> {
+    let path = library_path(&app_handle, THEMES_FILE)?;
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_str(&text).map_err(|e| format!("parse {}: {e}", path.display()))
+}
+
+/// Replace the theme library with `themes`; returns the file path.
+#[tauri::command]
+pub fn chroma_motion_save_themes(
+    themes: Vec<Value>,
+    app_handle: AppHandle,
+) -> Result<String, String> {
+    let path = library_path(&app_handle, THEMES_FILE)?;
+    let pretty = serde_json::to_string_pretty(&themes).map_err(|e| e.to_string())?;
     std::fs::write(&path, format!("{pretty}\n"))
         .map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path.to_string_lossy().to_string())
