@@ -27,6 +27,13 @@ Still real:
 
 ## Open
 
+## B-277 — after the web content process is killed, the reloaded app opens no project, so the recovered edits only appear once the user reopens it
+
+status: **open** · severity: **major** (nothing is lost — D-402 replays the journal — but the user lands with no project open and can reasonably think the work is gone) · area: the reload path after `on_web_content_process_terminate` (`app/src-tauri/src/chroma/webview_lifecycle.rs`), the page's start-up project restore, `packages/editor/src/editJournal.ts`
+
+- **found:** 2026-10-26, live-verifying B-274. 3 `editor_set_clip_audio` edits, then `kill -9` of the WebKit content process. The app logged the termination at `warn`, reloaded and raised the notice, but came back with no project open (`editor_get_timeline`: "no timeline — open a project first"). The 3 edits replayed (volume 0.3, saved; the journal emptied) only after `open_project`.
+- **expected:** a termination reload reopens the project that was open, on the tab that was active, and replays the journal straight away, with the "Restored N changes" notice in view.
+
 ## B-276 — a new project with no explicit frame size refuses `editor_export`: "no clip to derive a composition size from", even with a still on a video track
 
 status: **fixed** (2026-10-26; not reproduced live) · severity: **major** (a fresh project cannot be exported until `set_project_settings` gives it a size, and the message points at the clips, not the missing setting) · area: `editor_export`'s composition-size resolution (`app/src-tauri/src/chroma/edit_render.rs` / the export request builder)
